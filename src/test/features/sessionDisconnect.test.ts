@@ -98,7 +98,7 @@ describe("session disconnect confirmation", () => {
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     const [message, options] = mocks.ask.mock.calls[0];
     expect(message).toContain("2 个终端正在运行");
-    expect(message).toContain("普通终端的进程将终止且无法恢复");
+    expect(message).toContain("临时终端的进程将终止且无法恢复");
     expect(message).toContain("持久终端会保留在「后台会话」，可稍后接管");
     expect(message).toContain("web-01");
     expect(options.kind).toBe("warning");

@@ -182,7 +182,7 @@ const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: st
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
   { value: "durable", label: "持久终端（推荐）" },
-  { value: "regular", label: "普通终端" },
+  { value: "regular", label: "临时终端" },
 ];
 
 function loadNavOpen(): boolean {
@@ -739,8 +739,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             </div>
             <p className="nx-hint mt-1.5">
               {terminalPrefs.defaultMode === "durable"
-                ? "持久终端断开后进程继续运行，可在「后台会话」接管。打开主机时会在后台准备持久组件；准备好之前新建的是普通终端，标签上会标明原因。"
-                : "普通终端随连接断开而结束，打开主机时不会准备或安装持久组件。"}
+                ? "持久终端断开后进程继续运行，可在「后台会话」接管。打开主机时会在后台准备持久组件；准备好之前新建的是临时终端，标签上会标明原因。"
+                : "临时终端随连接断开而结束，打开主机时不会准备或安装持久组件。"}
               资产单独设置优先；只影响新开的终端。
             </p>
           </div>

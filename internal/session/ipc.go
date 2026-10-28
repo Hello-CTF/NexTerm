@@ -114,7 +114,7 @@ func userMessage(err error) string {
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
 		return "主机上的 helper 比当前客户端新，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
-		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
+		return "该 SSH 资产已设置为临时终端，不能新建持久终端；已有持久终端可从后台会话恢复"
 	case errors.Is(err, durable.ErrLimit):
 		return "持久终端组件已达到会话数量或创建频率上限，已拒绝新建终端；请结束不用的后台会话后重试（" + err.Error() + "）"
 	case errors.Is(err, ErrAmbiguousDurable):

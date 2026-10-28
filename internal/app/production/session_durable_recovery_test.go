@@ -779,7 +779,7 @@ func TestProductionRegularSSHModeOnlyAffectsNewTabs(t *testing.T) {
 		t.Fatalf("helper resolution calls = %d; regular mode must not start helper for new tabs", calls)
 	}
 	forced := dispatchDurableTest(t, production, "terminal_attach", `{"sessionId":"`+connected.ID+`","cols":80,"rows":24,"durable":true}`, "regular-forced-channel", "client-a")
-	if forced.OK || forced.Error == nil || forced.Error.Code != ipc.CodeUnsupported || !strings.Contains(forced.Error.Message, "普通终端") {
+	if forced.OK || forced.Error == nil || forced.Error.Code != ipc.CodeUnsupported || !strings.Contains(forced.Error.Message, "临时终端") {
 		t.Fatalf("explicit durable attach in regular mode = %+v", forced)
 	}
 	if len(resolver.recorded()) != 0 {

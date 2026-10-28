@@ -226,7 +226,7 @@ describe("BackgroundSessions table", () => {
     ];
     mocks.listLive.mockResolvedValue([
       ...states.map(([state]) => liveTab({ tabId: state, title: state, durable: true, state })),
-      liveTab({ tabId: "regular", title: "普通" }),
+      liveTab({ tabId: "regular", title: "临时" }),
       liveTab({ tabId: "future", title: "新状态", durable: true, state: "thinking" as SessionAttentionState }),
     ]);
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(7));
@@ -239,7 +239,7 @@ describe("BackgroundSessions table", () => {
       }
       const regular = cell(row(view, "regular"), "background-status");
       expect(regular.textContent).toBe("—");
-      expect(regular.title).toContain("普通终端不会报告状态");
+      expect(regular.title).toContain("临时终端不会报告状态");
       const future = cell(row(view, "future"), "background-status");
       expect(future.textContent).toBe("—");
       expect(future.title).toBe("未知状态");

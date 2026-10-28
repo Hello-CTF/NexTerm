@@ -47,7 +47,7 @@ function detachBlockOf(
 
 function detachBlockLabel(block: "exec" | "winrm" | "local" | "regular" | "unknown"): string {
   if (block === "exec") return "容器 exec";
-  if (block === "regular") return "普通";
+  if (block === "regular") return "临时";
   if (block === "winrm") return "WinRM 非交互";
   if (block === "local") return "本地";
   return "其他";
@@ -310,7 +310,7 @@ async function requestCloseTabWithAction(
     if (block === "regular" && (decided !== undefined || action !== "kill")) {
       // A regular SSH terminal has a single outcome, so offer only the red close action.
       const { askChoice } = await import("../../ui/dialogs");
-      const choice = await askChoice(`「${target.title}」是普通终端，进程随连接结束，不能转到后台。`, {
+      const choice = await askChoice(`「${target.title}」是临时终端，进程随连接结束，不能转到后台。`, {
         title: `关闭「${target.title}」`,
         level: "warning",
         choices: [{ key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true }],

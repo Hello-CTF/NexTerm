@@ -132,7 +132,7 @@ function statusView(tab: BackgroundTab): StatusView {
     label: "—",
     hint: tab.durable || tab.remote
       ? "这台主机上的 NexTerm 组件未开启状态检测"
-      : "普通终端不会报告状态",
+      : "临时终端不会报告状态",
     tone: "muted",
   };
 }
@@ -912,7 +912,7 @@ export function BackgroundSessions({
                         : hostScope === "local"
                           ? "关闭标签时选择「转到后台运行」，或由 AI 在后台创建的本机终端，会列在这里；退出应用后它们会结束"
                           : ownerWorkspace?.assetKind === "ssh"
-                            ? "持久终端关闭标签后会继续在主机上运行并出现在这里；普通模式的终端关闭后会结束"
+                            ? "持久终端关闭标签后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
                             : "关闭标签时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}
                   </div>
                 </td>

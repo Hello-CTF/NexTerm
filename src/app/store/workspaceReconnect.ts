@@ -69,7 +69,7 @@ export async function confirmSuspectReconnect(workspaceId: string | undefined): 
   const workspace = workspaceId ? useUi.getState().workspaces.find((item) => item.id === workspaceId) : undefined;
   if (!workspaceHasOrdinaryTerminals(workspace)) return true;
   const { confirmDialog } = await import("../../ui/dialogs");
-  return confirmDialog("普通终端会断开，正在运行的程序会结束");
+  return confirmDialog("临时终端会断开，正在运行的程序会结束");
 }
 
 // reconnectWorkspaceConnection reconnects the host session of a workspace from outside any terminal pane: a live

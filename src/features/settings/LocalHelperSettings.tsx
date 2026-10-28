@@ -7,7 +7,7 @@ import { refreshLocalHelperStatus, useLocalHelperStatus } from "../terminal/loca
 
 const LOCAL_MODE_OPTIONS: { value: LocalTerminalMode; label: string }[] = [
   { value: "durable", label: "持久" },
-  { value: "regular", label: "普通" },
+  { value: "regular", label: "临时" },
 ];
 
 const STATE_TEXT: Record<string, string> = {

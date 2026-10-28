@@ -79,7 +79,7 @@ describe("local terminals in the local helper", () => {
     const view = mount(createElement(LocalHelperSettings));
     try {
       await flush();
-      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "普通");
+      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "临时");
       await waitForRendered(() => expect(regular?.disabled).toBe(false));
       await act(async () => regular!.click());
       await flush();

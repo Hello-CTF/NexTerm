@@ -178,7 +178,7 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await waitForRendered(() => expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端"));
-      expect(view.container.textContent).toContain("持久终端关闭标签后会继续在主机上运行并出现在这里；普通模式的终端关闭后会结束");
+      expect(view.container.textContent).toContain("持久终端关闭标签后会继续在主机上运行并出现在这里；临时终端关闭后会结束");
     } finally {
       view.unmount();
     }

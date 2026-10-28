@@ -950,7 +950,7 @@ export function TerminalPane({
       if (code !== "not_found") {
         if (ordinaryStarting) {
           setOrdinaryStarting(false);
-          pushToast("error", `新建普通终端失败：${code}；原持久终端未被接管或终止`);
+          pushToast("error", `新建临时终端失败：${code}；原持久终端未被接管或终止`);
         }
         return;
       }
@@ -965,7 +965,7 @@ export function TerminalPane({
         st.updateTab(storeTabId, { dead: true });
         setKernelTabId(null);
         setAttachDead(true);
-        pushToast("error", "新建普通终端失败：会话已不存在；原持久终端未被接管或终止");
+        pushToast("error", "新建临时终端失败：会话已不存在；原持久终端未被接管或终止");
         return;
       }
       if (!containerId && !effectiveWinrm && session?.kind !== "ssh" && session?.kind !== "device" && tab?.tabId !== undefined && session?.status === "connected") {
@@ -1254,7 +1254,7 @@ export function TerminalPane({
     // A toast instead of opening the dialog keeps focus with whatever the user is typing.
     pushToast(
       helperOperation.kind === "reattach" ? "error" : "info",
-      helperOperation.kind === "reattach" ? "原持久终端恢复失败，请选择重试或新建普通终端" : "持久终端暂时不可用，当前标签使用普通终端",
+      helperOperation.kind === "reattach" ? "原持久终端恢复失败，请选择重试或新建临时终端" : "持久终端暂时不可用，当前标签使用临时终端",
       { label: "查看选项", onSelect: () => setHelperPanelOpen(true) },
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
@@ -2452,8 +2452,8 @@ export function TerminalPane({
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 {ordinaryStarting
-                  ? "正在新建普通终端和新的 shell；原持久会话未恢复，原远端进程状态未知，完成后才会更新此标签"
-                  : "所属连接已在服务端删除。重新连接会先尝试恢复原终端并回放输出；恢复失败时可明确选择新建普通 shell。历史输出可在「终端历史」中查看"}
+                  ? "正在新建临时终端和新的 shell；原持久会话未恢复，原远端进程状态未知，完成后才会更新此标签"
+                  : "所属连接已在服务端删除。重新连接会先尝试恢复原终端并回放输出；恢复失败时可明确选择新建临时终端。历史输出可在「终端历史」中查看"}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -2515,7 +2515,7 @@ export function TerminalPane({
               ? () => void replaceLegacyHelper(helperDetails.legacy?.consentToken ?? "")
               : undefined}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
-            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开普通终端…" : undefined}
+            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开临时终端…" : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
             onRetryPersistent={helperOperation?.status === "awaiting_choice" ? () => void retryPersistent() : undefined}
             onContinueOrdinary={helperOperation?.status === "awaiting_choice" ? () => void continueOrdinary() : undefined}

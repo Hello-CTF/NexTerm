@@ -68,7 +68,7 @@ export function tabTooltip(
   const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
   if (persistence) notes.push(persistence);
   else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
-  else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
+  else if (t.kind === "terminal" && t.regularReason) notes.push(`临时终端：${t.regularReason}`);
   else if (t.kind === "terminal" && t.durable === false) notes.push(EPHEMERAL_NOTE);
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
