@@ -418,6 +418,32 @@ describe("kill danger actions", () => {
     expect(toastText()).toContain("已结束");
   });
 
+  it("requestKillTab on an unreachable host closes locally and never claims the process ended", async () => {
+    const tab = { ...terminal(), durable: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "持久终端组件暂时无法访问" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill", "s");
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-terminal", "detach", "s");
+    expect(useUi.getState().workspaces[0].panes[0].tabs).toEqual([]);
+    expect(toastText()).toContain("远端进程未能结束");
+    expect(toastText()).toContain("后台会话");
+    expect(toastText()).not.toContain("已结束「");
+  });
+
+  it("requestKillTab keeps a regular remote tab when its kill fails as disconnected", async () => {
+    const tab = { ...terminal(), durable: false, retainable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.closeTab.mockRejectedValueOnce({ code: "disconnected", message: "会话已断开，请重新连接" });
+
+    await requestKillTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces[0].panes[0].tabs[0]?.closeError).toContain("会话已断开");
+  });
+
   it("requestKillTab cancel keeps the tab and the process", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);

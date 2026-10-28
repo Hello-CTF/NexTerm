@@ -6,7 +6,7 @@ import { runningAiTabs as getRunningAiTabs, type AiCloseTab } from "../../featur
 import { getTerminalPrefs, setTerminalCloseAction, type TerminalCloseAction } from "../preferences";
 import { GLOBAL_AI_BOARD_KEY } from "./model";
 import { findTab } from "./tabActions";
-import type { AppTab, SqlDraft, WorkspaceKind } from "./types";
+import type { AppTab, CloseTabReport, SqlDraft, WorkspaceKind } from "./types";
 import { useUi } from "./useUi";
 
 export async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boolean> {
@@ -91,6 +91,8 @@ export interface WorkspaceCloseSummary extends ClosePreferencePlan {
 interface WorkspaceCloseOutcome {
   detached: number;
   killed: number;
+  // Kills a host that cannot be reached could not perform: the tabs closed locally and the processes still run.
+  killUnreachable: number;
   failed: number;
   failureText?: string;
   dbFailed: number;
@@ -207,7 +209,11 @@ export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Pro
     ...summary.cleanup.map((tab) => ({ tab, mode: undefined })),
   ];
   const results = await Promise.all(
-    operations.map(async ({ tab, mode }) => ({ tab, ok: await useUi.getState().closeTab(tab.id, mode, true) })),
+    operations.map(async ({ tab, mode }) => {
+      const report: CloseTabReport = {};
+      const ok = await useUi.getState().closeTab(tab.id, mode, true, report);
+      return { tab, ok, killSkipped: report.remoteKillSkipped === true };
+    }),
   );
   const failed = results.filter((result) => !result.ok);
   const dbResults = failed.length === 0
@@ -219,7 +225,8 @@ export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Pro
   const killEnd = killStart + summary.preferredKills.length + summary.blocked.length;
   return {
     detached: results.filter((r, i) => r.ok && i < killStart).length,
-    killed: results.filter((r, i) => r.ok && i >= killStart && i < killEnd).length,
+    killed: results.filter((r, i) => r.ok && !r.killSkipped && i >= killStart && i < killEnd).length,
+    killUnreachable: results.filter((r) => r.ok && r.killSkipped).length,
     failed: failed.length,
     failureText: failed[0] ? findTab(failed[0].tab.id)?.tab.closeError : undefined,
     dbFailed: dbFailed.length,
@@ -239,6 +246,14 @@ export function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOu
   if (outcome.killed > 0) parts.push(`${outcome.killed} 个进程已结束`);
   if (outcome.failed > 0) {
     pushToast("error", `关闭「${title}」：${outcome.failed} 个终端操作失败：${outcome.failureText}`);
+    return;
+  }
+  if (outcome.killUnreachable > 0) {
+    // The kill was skipped, not performed: say so as a warning, never inside the success summary.
+    parts.push(
+      `${outcome.killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束`,
+    );
+    pushToast("error", `${deleted ? `已关闭「${title}」` : `已关闭部分标签「${title}」`}：${parts.join("，")}`);
     return;
   }
   if (parts.length === 0) return;
@@ -456,7 +471,8 @@ export async function requestKillTab(id: string): Promise<void> {
     kind: "warning",
   });
   if (!ok) return;
-  if (await st.closeTab(id, "kill")) {
+  const report: CloseTabReport = {};
+  if ((await st.closeTab(id, "kill", false, report)) && !report.remoteKillSkipped) {
     st.pushToast("success", `已结束「${target.title}」的进程`);
   }
 }

@@ -148,7 +148,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
       }));
     },
 
-    closeTab: async (id, mode, suppressErrorToast) => {
+    closeTab: async (id, mode, suppressErrorToast, report) => {
       const st = get();
       const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, id);
       if (!hit) return false;
@@ -159,19 +159,31 @@ export function createTabSlice(set: UiSet, get: UiGet) {
       let closeMode: "kill" | "detach" | undefined;
       let detachConfirmed = false;
       let remoteCloseUnknown = false;
+      let remoteKillSkipped = false;
       let remote = false;
+      let regularRemote = false;
       if (target.tabId) {
+        const tabId = target.tabId;
         try {
           const kind = st.sessions.find((session) => session.id === target.sessionId)?.kind
             ?? st.workspaces.find((workspace) => workspace.id === wsId)?.assetKind;
           remote = !target.containerId && (kind === "ssh" || kind === "device");
           // A regular remote PTY ends with its connection and can never run in the background, whatever was asked.
-          const regularRemote = remote && (target.durable === false || (target.durable === undefined && target.retainable === false));
+          regularRemote = remote && (target.durable === false || (target.durable === undefined && target.retainable === false));
           closeMode = regularRemote && target.exited !== true ? "kill" : (mode ?? (remote && target.exited !== true ? "detach" : undefined));
           if (remote) {
-            await terminalApi.closeTab(target.tabId, closeMode, target.sessionId);
+            try {
+              await terminalApi.closeTab(tabId, closeMode, target.sessionId);
+            } catch (e) {
+              // A durable terminal on a host that cannot be reached cannot be ended now. Dropping only this client's
+              // attachment needs no remote call, so the tab still closes and the process stays in 后台会话.
+              if (closeMode !== "kill" || regularRemote || (e as { code?: string } | null)?.code !== "disconnected") throw e;
+              closeMode = "detach";
+              remoteKillSkipped = true;
+              await terminalApi.closeTab(tabId, "detach", target.sessionId);
+            }
           } else {
-            await terminalApi.closeTab(target.tabId, closeMode);
+            await terminalApi.closeTab(tabId, closeMode);
           }
           detachConfirmed = closeMode === "detach";
         } catch (e) {
@@ -236,7 +248,15 @@ export function createTabSlice(set: UiSet, get: UiGet) {
         detached: detachConfirmed,
       });
       if (closedEntry) useClosedTabs.getState().capture(closedEntry, closedTabGeneration);
-      if (remoteCloseUnknown && !suppressErrorToast) {
+      if (remoteKillSkipped) {
+        if (report) report.remoteKillSkipped = true;
+        if (!suppressErrorToast) {
+          get().pushToast(
+            "error",
+            `「${target.title}」已在本地关闭，但主机已断开或无法访问，远端进程未能结束；它仍在「后台会话」中，重新连接后可接管或结束`,
+          );
+        }
+      } else if (remoteCloseUnknown && !suppressErrorToast) {
         get().pushToast("info", "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看");
       }
       void get().resyncSessions({ silent: true });

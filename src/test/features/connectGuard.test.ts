@@ -57,6 +57,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 });
 
 import { connectAsset, connectDevice, connectQuickTarget, saveQuickConnectAsset, useUi, type ConnectOutcome, type SqlDraft } from "../../app/store";
+import { setTerminalCloseAction } from "../../app/preferences";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { sessionApi, type SessionInfo } from "../../ipc/commands";
 
@@ -725,5 +726,91 @@ describe("connectAsset focus guard", () => {
     expect(state.connectingAssetIds).not.toContain("asset-1");
     expect(state.activeWorkspaceId).toBe(manualWorkspace?.id);
     expect(manualWorkspace?.panes[0].tabs.some((t) => t.kind === "terminal")).toBe(false);
+  });
+});
+
+describe("closing a workspace whose host dropped", () => {
+  function seedDroppedHost() {
+    useUi.setState({
+      sessions: [{ ...SESSION, status: "failed" }],
+      workspaces: [
+        {
+          id: "ws-1",
+          kind: "session" as const,
+          sessionId: "s1",
+          title: "dev-m4",
+          assetId: "asset-1",
+          assetKind: "ssh",
+          panes: [{
+            id: "p1",
+            tabs: [{
+              id: "t1",
+              kind: "terminal" as const,
+              title: "Terminal 1",
+              sessionId: "s1",
+              tabId: "kernel-t1",
+              durable: true,
+              retainable: true,
+              closable: true,
+            }],
+            activeTabId: "t1",
+          }],
+          activePaneId: "p1",
+          closable: true,
+        },
+      ],
+      activeWorkspaceId: "ws-1",
+    });
+  }
+  const unreachable = {
+    code: "disconnected",
+    message: "持久终端组件暂时无法访问：主机连接可能已断开或不可达，或 helper 暂时不可用；请重新连接后重试",
+  };
+
+  afterEach(() => setTerminalCloseAction("ask"));
+
+  it("closes locally when the kill cannot reach the host, says why, and reopens with a fresh connection", async () => {
+    setTerminalCloseAction("kill");
+    seedDroppedHost();
+    mocks.closeTab.mockImplementation((_tabId: string, mode?: string) =>
+      mode === "kill" ? Promise.reject(unreachable) : Promise.resolve(undefined));
+
+    expect(await useUi.getState().closeWorkspace("ws-1")).toBe(true);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "kill", "s1");
+    expect(mocks.closeTab).toHaveBeenLastCalledWith("kernel-t1", "detach", "s1");
+    expect(useUi.getState().workspaces).toEqual([]);
+    const toasts = mocks.toast.mock.calls.map((call) => String(call[1])).join("\n");
+    expect(toasts).toContain("已关闭「dev-m4」");
+    expect(toasts).toContain("主机已断开或无法访问");
+    expect(toasts).toContain("后台会话");
+    expect(toasts).not.toContain("不支持");
+    expect(toasts).not.toContain("进程已结束");
+
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome).toEqual({ ok: true });
+    expect(mocks.sessionReconnect).not.toHaveBeenCalled();
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().workspaces).toHaveLength(1);
+    expect(useUi.getState().workspaces[0]).toMatchObject({ assetId: "asset-1", sessionId: "s1" });
+  });
+
+  it("detaches without a remote kill and leaves reopening to the normal connection failure while the host is down", async () => {
+    setTerminalCloseAction("detach");
+    seedDroppedHost();
+    mocks.closeTab.mockImplementation((_tabId: string, mode?: string) =>
+      mode === "kill" ? Promise.reject(unreachable) : Promise.resolve(undefined));
+
+    expect(await useUi.getState().closeWorkspace("ws-1")).toBe(true);
+    expect(mocks.closeTab).toHaveBeenCalledTimes(1);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t1", "detach", "s1");
+    expect(useUi.getState().workspaces).toEqual([]);
+    expect(mocks.toast.mock.calls.map((call) => String(call[1])).join("\n")).not.toContain("不支持");
+
+    mocks.sessionConnect.mockRejectedValueOnce({ code: "ssh", message: "dial tcp: connection refused" });
+    const outcome = (await connectAsset(SSH_ASSET)) as ConnectOutcome;
+    expect(outcome.ok).toBe(false);
+    expect(mocks.sessionReconnect).not.toHaveBeenCalled();
+    expect(Object.values(useUi.getState().connectionProblems)).toHaveLength(1);
   });
 });
