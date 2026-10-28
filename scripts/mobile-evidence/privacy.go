@@ -9,16 +9,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 )
 
 func (c *checker) checkPrivacyRuntime() {
-	err := c.validatePrivacyRuntime()
+	sizes, err := c.validatePrivacyRuntime()
 	if err != nil {
 		c.add("privacy-runtime", "failed", err.Error())
 		return
 	}
-	c.add("privacy-runtime", "passed", "local inference libraries and license notices match package platform, architecture and runtime manifest")
+	c.add("privacy-runtime", "passed", "ONNX Runtime library and license notices match package platform, architecture and runtime manifest; sizes: "+strings.Join(sizes, ", "))
 }
 
 func (c *checker) privacyEntry(name string) ([]byte, error) {
@@ -29,45 +30,47 @@ func (c *checker) privacyEntry(name string) ([]byte, error) {
 	return readEntry(c.handle, entry, maxExecutableBytes)
 }
 
-func (c *checker) validatePrivacyRuntime() error {
+// validatePrivacyRuntime returns the packaged ONNX Runtime sizes as evidence.
+func (c *checker) validatePrivacyRuntime() ([]string, error) {
 	if c.id == "mobile-ios" {
-		for _, name := range []string{"NexTermPrivacy", "onnxruntime"} {
-			base := "Payload/nexterm.app/Frameworks/" + name + ".framework/"
-			plist, err := c.privacyEntry(base + "Info.plist")
-			if err != nil {
-				return err
-			}
-			parsed, err := parsePlist(plist)
-			if err != nil {
-				return err
-			}
-			dict, ok := parsed.(map[string]any)
-			if !ok || dict["CFBundleExecutable"] != name {
-				return fmt.Errorf("invalid framework executable in %sInfo.plist", base)
-			}
-			data, err := c.privacyEntry(base + name)
-			if err != nil {
-				return err
-			}
-			platforms, err := machOBuildPlatforms(data)
-			if err != nil {
-				return err
-			}
-			for _, platform := range platforms {
-				if platform != iosDevicePlatform {
-					return fmt.Errorf("%s is not an iOS device runtime", name)
-				}
-			}
-			binary, err := macho.NewFile(bytes.NewReader(data))
-			if err != nil {
-				return fmt.Errorf("%s must be a thin arm64 runtime: %w", name, err)
-			}
-			if binary.Cpu != macho.CpuArm64 || binary.Type != macho.TypeDylib {
-				return fmt.Errorf("%s must be an arm64 dynamic library", name)
+		const name = "onnxruntime"
+		base := "Payload/nexterm.app/Frameworks/" + name + ".framework/"
+		plist, err := c.privacyEntry(base + "Info.plist")
+		if err != nil {
+			return nil, err
+		}
+		parsed, err := parsePlist(plist)
+		if err != nil {
+			return nil, err
+		}
+		dict, ok := parsed.(map[string]any)
+		if !ok || dict["CFBundleExecutable"] != name {
+			return nil, fmt.Errorf("invalid framework executable in %sInfo.plist", base)
+		}
+		data, err := c.privacyEntry(base + name)
+		if err != nil {
+			return nil, err
+		}
+		platforms, err := machOBuildPlatforms(data)
+		if err != nil {
+			return nil, err
+		}
+		for _, platform := range platforms {
+			if platform != iosDevicePlatform {
+				return nil, fmt.Errorf("%s is not an iOS device runtime", name)
 			}
 		}
-		return c.validatePrivacyLicenses("Payload/nexterm.app/Frameworks/", "ios", "arm64")
+		binary, err := macho.NewFile(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("%s must be a thin arm64 runtime: %w", name, err)
+		}
+		if binary.Cpu != macho.CpuArm64 || binary.Type != macho.TypeDylib {
+			return nil, fmt.Errorf("%s must be an arm64 dynamic library", name)
+		}
+		sizes := []string{fmt.Sprintf("%s.framework/%s=%d bytes", name, name, len(data))}
+		return sizes, c.validatePrivacyLicenses("Payload/nexterm.app/Frameworks/", "ios", "arm64")
 	}
+	var sizes []string
 	found := false
 	for name := range c.manifest.entries {
 		if !strings.HasPrefix(name, "lib/") || !strings.HasSuffix(name, "/libwails.so") {
@@ -79,37 +82,38 @@ func (c *checker) validatePrivacyRuntime() error {
 		}
 		machine := map[string]elf.Machine{"arm64-v8a": elf.EM_AARCH64, "x86_64": elf.EM_X86_64}[parts[1]]
 		if machine == 0 {
-			return fmt.Errorf("unsupported Android runtime ABI: %s", parts[1])
+			return nil, fmt.Errorf("unsupported Android runtime ABI: %s", parts[1])
 		}
 		found = true
-		for _, library := range []string{"libnexterm_privacy.so", "libonnxruntime.so"} {
-			data, err := c.privacyEntry("lib/" + parts[1] + "/" + library)
-			if err != nil {
-				return err
-			}
-			binary, err := elf.NewFile(bytes.NewReader(data))
-			if err != nil {
-				return err
-			}
-			if binary.Class != elf.ELFCLASS64 || binary.Machine != machine || binary.Type != elf.ET_DYN {
-				return fmt.Errorf("%s does not match Android ABI %s", library, parts[1])
-			}
+		const library = "libonnxruntime.so"
+		data, err := c.privacyEntry("lib/" + parts[1] + "/" + library)
+		if err != nil {
+			return nil, err
 		}
+		binary, err := elf.NewFile(bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		if binary.Class != elf.ELFCLASS64 || binary.Machine != machine || binary.Type != elf.ET_DYN {
+			return nil, fmt.Errorf("%s does not match Android ABI %s", library, parts[1])
+		}
+		sizes = append(sizes, fmt.Sprintf("lib/%s/%s=%d bytes", parts[1], library, len(data)))
 		arch := "arm64"
 		if parts[1] == "x86_64" {
 			arch = "amd64"
 		}
 		if err := c.validatePrivacyLicenses("assets/ai-runtime/"+parts[1]+"/", "android", arch); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if !found {
-		return fmt.Errorf("Android package has no supported libwails.so ABI")
+		return nil, fmt.Errorf("Android package has no supported libwails.so ABI")
 	}
-	return nil
+	sort.Strings(sizes)
+	return sizes, nil
 }
 
-var requiredPrivacyNotices = []string{"ASTRLINK-LICENSE", "ASTRLINK-SOURCE.md", "ONNX-RUNTIME-LICENSE", "ONNX-RUNTIME-THIRD-PARTY-NOTICES", "native-dependencies.json"}
+var requiredPrivacyNotices = []string{"ASTRLINK-LICENSE", "ASTRLINK-NOTICE.md", "ONNX-RUNTIME-LICENSE", "ONNX-RUNTIME-THIRD-PARTY-NOTICES"}
 
 func (c *checker) validatePrivacyLicenses(base, platform, arch string) error {
 	data, err := c.privacyEntry(base + "runtime.json")

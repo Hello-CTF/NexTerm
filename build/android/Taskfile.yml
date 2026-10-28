@@ -101,13 +101,15 @@ tasks:
 
         go build -buildmode=c-shared -overlay build/android/overlay.json {{.BUILD_FLAGS}} \
           -o build/android/app/src/main/jniLibs/$JNI_DIR/libwails.so ./cmd/nexterm-desktop
-        ANDROID_NDK_HOME="$NDK_ROOT" node scripts/ai-privacy-runtime.mjs \
-          --os=android --arch="$GOARCH" --output="build/android/app/src/main/jniLibs/$JNI_DIR"
+        PRIVACY_RUNTIME="build/android/gen/privacy-runtime/$JNI_DIR"
+        rm -rf "$PRIVACY_RUNTIME"
+        node scripts/ai-privacy-runtime.mjs --os=android --arch="$GOARCH" --output="$PRIVACY_RUNTIME"
+        cp "$PRIVACY_RUNTIME/libonnxruntime.so" "build/android/app/src/main/jniLibs/$JNI_DIR/libonnxruntime.so"
         PRIVACY_ASSETS="build/android/gen/privacy-assets/ai-runtime/$JNI_DIR"
         rm -rf "$PRIVACY_ASSETS"
         mkdir -p "$PRIVACY_ASSETS"
-        cp -R "build/android/app/src/main/jniLibs/$JNI_DIR/licenses" "$PRIVACY_ASSETS/licenses"
-        cp "build/android/app/src/main/jniLibs/$JNI_DIR/runtime.json" "$PRIVACY_ASSETS/runtime.json"
+        cp -R "$PRIVACY_RUNTIME/licenses" "$PRIVACY_ASSETS/licenses"
+        cp "$PRIVACY_RUNTIME/runtime.json" "$PRIVACY_ASSETS/runtime.json"
     vars:
       BUILD_FLAGS:
         sh: 'node scripts/mobile-source.mjs ldflags --platform=android --production={{.PRODUCTION | default "false"}}'
@@ -467,6 +469,6 @@ tasks:
     summary: Clean build artifacts
     cmds:
       - rm -rf {{.BIN_DIR}}
-      - rm -rf build/android/app/build build/android/gen/privacy-assets
-      - rm -f build/android/app/src/main/jniLibs/*/libwails.so build/android/app/src/main/jniLibs/*/libnexterm_privacy.so build/android/app/src/main/jniLibs/*/libonnxruntime.so
+      - rm -rf build/android/app/build build/android/gen/privacy-assets build/android/gen/privacy-runtime
+      - rm -f build/android/app/src/main/jniLibs/*/libwails.so build/android/app/src/main/jniLibs/*/libonnxruntime.so
       - rm -rf build/android/.gradle

@@ -75,6 +75,8 @@ export NEXTERM_RELEASE_VERSION="$VERSION"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 1
 RUNTIME_DIR="$(dirname "$BIN")/ai-runtime"
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$RUNTIME_DIR" linux "$ARCH" "$BIN.manifest.json"
+# The archive installs on RHEL 8 / Debian 11 / Ubuntu 20.04; refuse newer glibc symbol requirements.
+node "$ROOT/scripts/lib/elf-glibc.mjs" 2.28 "$BIN" "$RUNTIME_DIR/libonnxruntime.so"
 
 for unit in nexterm-server.service nexterm-onlyserver.service; do
   [ -f "$ROOT/deploy/systemd/$unit" ] || { echo "missing systemd unit: deploy/systemd/$unit" >&2; exit 1; }
@@ -125,7 +127,6 @@ package_full() {
   for member in \
     nexterm-server \
     ai-runtime/runtime.json \
-    ai-runtime/libnexterm_privacy.so \
     ai-runtime/libonnxruntime.so \
     nexterm-server.service \
     nexterm-onlyserver.service \

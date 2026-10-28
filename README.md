@@ -75,7 +75,7 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备 agent �
 
 ## 部署服务端
 
-在带 systemd 的 Linux（amd64 / arm64）上以 root 运行：
+在带 systemd、glibc 2.28 或更新的 Linux（amd64 / arm64，如 RHEL 8、Debian 11、Ubuntu 20.04 及更新版本；不支持 Alpine 等 musl 发行版）上以 root 运行：
 
 ```bash
 curl -fsSL https://nexterm.work/install.sh | sudo bash
@@ -95,7 +95,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 
 ## 开发
 
-工具链：Go 1.27、Node 24+、pnpm。
+工具链：Go 1.27、Node 24+、pnpm；Linux 服务端发布构建另需 `node scripts/install-zig.mjs ~/.cache/nexterm-zig` 安装的固定版本 zig（链接到 glibc 2.28）。
 
 ```bash
 pnpm install && pnpm build && go build ./...

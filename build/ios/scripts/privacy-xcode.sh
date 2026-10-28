@@ -8,6 +8,7 @@ case "${PLATFORM_NAME}" in
 esac
 PRIVACY_OUTPUT="${DERIVED_FILE_DIR}/nexterm-privacy-${PRIVACY_PLATFORM}"
 cd "$APP_ROOT"
+rm -rf "$PRIVACY_OUTPUT"
 node scripts/ai-privacy-runtime.mjs --os=ios --arch=arm64 --ios-platform="$PRIVACY_PLATFORM" --output="$PRIVACY_OUTPUT"
 PRIVACY_DESTINATION="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 mkdir -p "$PRIVACY_DESTINATION"

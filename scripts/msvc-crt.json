@@ -1,0 +1,4 @@
+{
+  "comment": "SHA-256 of the app-local Visual C++ runtime DLLs shipped beside onnxruntime.dll, keyed by Microsoft.VC*.CRT redist version and GOARCH. Release builds refuse an unlisted version or a mismatching file.",
+  "versions": {}
+}

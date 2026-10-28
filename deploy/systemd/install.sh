@@ -1247,6 +1247,23 @@ bootstrap_admin() {
   esac
 }
 
+# Run the payload binary before mutating anything so an unsupported C library or
+# CPU fails the install instead of leaving a service that cannot start.
+preflight_server_binary() {
+  local output rc=0 missing
+  output="$("$SOURCE_DIR/nexterm-server" --version 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    die "payload nexterm-server cannot run on this host (exit $rc): ${output:-no output}; it requires glibc 2.28 or newer (RHEL 8, Debian 11, Ubuntu 20.04 or later) and a matching CPU architecture"
+  fi
+  log "payload server version: ${output:-unknown}"
+  if [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] && command -v ldd >/dev/null 2>&1; then
+    missing="$(ldd "$SOURCE_DIR/ai-runtime/libonnxruntime.so" 2>/dev/null | grep 'not found' || true)"
+    if [ -n "$missing" ]; then
+      log "WARNING: optional local AI redaction will be unavailable until these ONNX Runtime dependencies are installed: $(printf '%s' "$missing" | tr -s ' \t\n' ' ')"
+    fi
+  fi
+}
+
 run_install() {
   fail_at preflight
   local f
@@ -1255,10 +1272,9 @@ run_install() {
   done
   [ -f "$SOURCE_DIR/web/index.html" ] || die "payload is missing web/index.html"
   if [ -d "$SOURCE_DIR/ai-runtime" ]; then
-    for f in libnexterm_privacy.so libonnxruntime.so; do
-      [ -f "$SOURCE_DIR/ai-runtime/$f" ] || die "payload is missing ai-runtime/$f"
-    done
+    [ -f "$SOURCE_DIR/ai-runtime/libonnxruntime.so" ] || die "payload is missing ai-runtime/libonnxruntime.so"
   fi
+  preflight_server_binary
   detect_platform
   require_systemctl
   require_root_when_real

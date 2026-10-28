@@ -228,11 +228,13 @@ test("the CLI requires NEXTERM_RELEASE_VERSION instead of reading the placeholde
 });
 
 
-test("rejects desktop packages without native privacy runtime verification", (t) => {
-  const directory = makeCandidate(t);
-  const name = [...releaseArtifacts(VERSION).keys()].find((name) => name.endsWith(".dmg"));
-  editReport(directory, name, (report) => { report.assertions = report.assertions.filter((item) => item.id !== "privacy-runtime"); });
-  const result = withVersion(t, VERSION, () => verifyReleaseEvidence(directory));
-  assert.equal(result.passed, false);
-  assert.ok(result.artifacts.find((artifact) => artifact.name === name).failures.includes("privacy-runtime"));
-});
+for (const suffix of [".dmg", ".apk"]) {
+  test(`rejects ${suffix} packages without privacy runtime verification`, (t) => {
+    const directory = makeCandidate(t);
+    const name = [...releaseArtifacts(VERSION).keys()].find((name) => name.endsWith(suffix));
+    editReport(directory, name, (report) => { report.assertions = report.assertions.filter((item) => item.id !== "privacy-runtime"); });
+    const result = withVersion(t, VERSION, () => verifyReleaseEvidence(directory));
+    assert.equal(result.passed, false);
+    assert.ok(result.artifacts.find((artifact) => artifact.name === name).failures.includes("privacy-runtime"));
+  });
+}

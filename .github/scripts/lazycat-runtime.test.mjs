@@ -19,11 +19,11 @@ function fixture(t) {
   const payload = path.join(root, "payload");
   fs.writeFileSync(path.join(payload, "nexterm-server-linux-amd64"), "server", { mode: 0o755 });
   const files = {};
-  for (const name of ["libnexterm_privacy.so", "libonnxruntime.so", "licenses/ASTRLINK-LICENSE", "licenses/ONNX-RUNTIME-LICENSE", "licenses/native-dependencies.json"]) {
+  for (const name of ["libonnxruntime.so", "licenses/ASTRLINK-LICENSE", "licenses/ASTRLINK-NOTICE.md", "licenses/ONNX-RUNTIME-LICENSE", "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"]) {
     fs.writeFileSync(path.join(payload, "ai-runtime", name), name);
     files[name] = crypto.createHash("sha256").update(name).digest("hex");
   }
-  const manifest = JSON.stringify({ abi: 1, platform: "linux", arch: "amd64", files });
+  const manifest = JSON.stringify({ abi: 2, platform: "linux", arch: "amd64", files });
   fs.writeFileSync(path.join(payload, "ai-runtime/runtime.json"), manifest);
   fs.writeFileSync(path.join(payload, "nexterm-server-linux-amd64.manifest.json"), JSON.stringify({ privacy_runtime_sha256: crypto.createHash("sha256").update(manifest).digest("hex") }));
   const scripts = {
@@ -31,18 +31,15 @@ function fixture(t) {
 case "$1" in
   */helper-matrix.mjs) cat "$FIXTURE_ROOT/helpers.txt" ;;
   */verify-reused-binary.mjs) printf '%s\\n' "$*" >> "$FIXTURE_ROOT/verified" ;;
-  scripts/build.mjs) exit 0 ;;
+  scripts/build.mjs)
+    if [ "$2" = server ]; then
+      printf '%s\\n' "$*" > "$FIXTURE_ROOT/server-build-args"
+      mkdir -p "$FIXTURE_ROOT/target/go-build"
+      cp -R "$FIXTURE_ROOT/payload/." "$FIXTURE_ROOT/target/go-build/"
+    fi
+    exit 0 ;;
   *) exec "$REAL_NODE" "$@" ;;
 esac
-`,
-    docker: `#!/bin/sh
-printf '%s\\n' "$*" > "$FIXTURE_ROOT/docker-args"
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = --output ]; then destination="\${2#type=local,dest=}"; break; fi
-  shift
-done
-mkdir -p "$destination"
-cp -R "$FIXTURE_ROOT/payload/." "$destination/"
 `,
     file: `#!/bin/sh
 case "$2" in
@@ -70,7 +67,7 @@ test("Lazycat stages the verified CGO server runtime and retains static helper c
   assert.equal(fs.readFileSync(path.join(runtime, "libonnxruntime.so"), "utf8"), "libonnxruntime.so");
   assert.equal(fs.readFileSync(path.join(runtime, "licenses/ASTRLINK-LICENSE"), "utf8"), "licenses/ASTRLINK-LICENSE");
   assert.match(fs.readFileSync(path.join(root, "verified"), "utf8"), /server-linux-amd64 linux amd64 1/);
-  assert.match(fs.readFileSync(path.join(root, "docker-args"), "utf8"), /--platform=linux\/amd64/);
+  assert.match(fs.readFileSync(path.join(root, "server-build-args"), "utf8"), /server --release --os=linux --arch=amd64/);
 });
 
 test("Lazycat refuses a corrupted runtime before creating the container payload", (t) => {

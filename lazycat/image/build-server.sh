@@ -33,7 +33,7 @@ else
 fi
 
 echo "[lzc-build] repository root: $ROOT"
-echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, Debian bookworm container build)"
+echo "[lzc-build] target architecture: ${LZC_ARCH} (linux/${LZC_ARCH}, CGO server linked by zig against glibc 2.28)"
 echo "[lzc-build] binary version: ${LZC_VERSION}"
 
 BASE_REF="$(grep -E '^FROM ' "$HERE/Dockerfile" | tail -1 | awk '{print $NF}')"
@@ -91,15 +91,9 @@ cp "$HERE"/../injects/*.js "$CONTENT/lazycat-injects/"
 echo "[lzc-build]     inject scripts ready: $CONTENT/lazycat-injects"
 
 echo "[lzc-build] 3/4 building the server and nine SSH target helpers"
-SERVER_OUTPUT="$ROOT/target/lazycat-server"
-command -v docker >/dev/null 2>&1 || { echo "[lzc-build] error: Docker with BuildKit is required for the Linux CGO server and privacy runtime" >&2; exit 1; }
-rm -rf "$SERVER_OUTPUT"
-SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
-docker build --platform=linux/amd64 \
-  --file "$HERE/build-runtime.Dockerfile" \
-  --target output --output "type=local,dest=$SERVER_OUTPUT" \
-  --build-arg "NEXTERM_RELEASE_VERSION=${NEXTERM_RELEASE_VERSION:-}" \
-  --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" "$ROOT"
+# zig links the CGO server against glibc 2.28, below the bookworm base image.
+node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
+SERVER_OUTPUT="$ROOT/target/go-build"
 SERVER_BINARY="$SERVER_OUTPUT/nexterm-server-linux-${LZC_ARCH}"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$SERVER_BINARY" "server-linux-$LZC_ARCH" linux "$LZC_ARCH" 1
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$SERVER_OUTPUT/ai-runtime" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"

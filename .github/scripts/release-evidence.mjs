@@ -18,7 +18,7 @@ function gatesPassed(report) {
 }
 
 function privacyRuntimePassed(report) {
-  return !/^(?:desktop-|server-)/.test(report?.id || "")
+  return !/^(?:desktop-|server-|mobile-)/.test(report?.id || "")
     || report.assertions?.some((item) => item.id === "privacy-runtime" && item.status === "passed");
 }
 
@@ -54,7 +54,7 @@ function validateIntermediateReport(result, name, file, seenReportIDs) {
     return;
   }
   const initialIssueCount = result.issues.length;
-  if (!privacyRuntimePassed(report)) issue("privacy-runtime", "desktop/server evidence must verify the packaged native privacy runtime");
+  if (!privacyRuntimePassed(report)) issue("privacy-runtime", "desktop/server/mobile evidence must verify the packaged ONNX Runtime privacy runtime");
   if (!gatesPassed(report)) issue("gates", "intermediate artifact report must have a passed status and non-empty passing assertions");
   if (report?.version !== result.version) issue("wrong-version", `intermediate report version ${JSON.stringify(report?.version)} does not match ${result.version}`);
   if (report?.commit !== result.commit) {
