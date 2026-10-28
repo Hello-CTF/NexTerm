@@ -17,6 +17,9 @@ import (
 )
 
 func TestKillCleanupFailureRetry(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires an unprivileged user; directory permissions do not bind root")
+	}
 	supervisor := testSupervisor(t)
 	id := ids.New()
 	testScriptSessionID(t, supervisor, id, `sleep 30`)
