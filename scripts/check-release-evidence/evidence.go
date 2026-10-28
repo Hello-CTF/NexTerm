@@ -141,7 +141,7 @@ func writeBinaryManifest(binary, kind, goos, goarch, cgo, version, commit string
 		if err := writeStubPrivacyRuntime(binary, goos, goarch); err != nil {
 			return err
 		}
-		raw, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "ai-runtime", "runtime.json"))
+		raw, err := os.ReadFile(filepath.Join(filepath.Dir(binary), "ai-runtime-"+goos+"-"+goarch, "runtime.json"))
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func runEvidenceChecks(root string) []checkResult {
 // The evidence fixture validates packaging contracts without loading inference.
 // The stub library reuses the host binary so architecture checks still apply.
 func writeStubPrivacyRuntime(binary, goos, goarch string) error {
-	directory := filepath.Join(filepath.Dir(binary), "ai-runtime")
+	directory := filepath.Join(filepath.Dir(binary), "ai-runtime-"+goos+"-"+goarch)
 	library := map[string]string{
 		"linux":   "libonnxruntime.so",
 		"darwin":  "libonnxruntime.dylib",

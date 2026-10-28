@@ -73,7 +73,7 @@ GO_INFO="$(go version -m "$BIN")"
 printf '%s' "$GO_INFO" | grep -q 'CGO_ENABLED=1' || { echo "server was not built with CGO_ENABLED=1" >&2; exit 1; }
 export NEXTERM_RELEASE_VERSION="$VERSION"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$BIN" "server-linux-$ARCH" linux "$ARCH" 1
-RUNTIME_DIR="$(dirname "$BIN")/ai-runtime"
+RUNTIME_DIR="$(dirname "$BIN")/ai-runtime-linux-$ARCH"
 node "$ROOT/scripts/lib/privacy-runtime.mjs" "$RUNTIME_DIR" linux "$ARCH" "$BIN.manifest.json"
 # The archive installs on RHEL 8 / Debian 11 / Ubuntu 20.04; refuse newer glibc symbol requirements.
 node "$ROOT/scripts/lib/elf-glibc.mjs" 2.28 "$BIN" "$RUNTIME_DIR/libonnxruntime.so"

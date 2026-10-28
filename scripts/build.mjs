@@ -595,8 +595,12 @@ function reproduceBinary(args, outputPath, kind, goos, goarch) {
   }
 }
 
+// Staged per target so builds for another os/arch never overwrite each other;
+// packages and archives map it back to the plain ai-runtime name.
 function privacyRuntimeDirectory(binary) {
-  return path.join(path.dirname(binary), "ai-runtime");
+  const target = /^nexterm-(?:desktop|server)-([a-z]+)-([a-z0-9]+)(?:\.exe)?$/.exec(path.basename(binary));
+  if (!target) die(`cannot derive the privacy runtime target from ${binary}`);
+  return path.join(path.dirname(binary), `ai-runtime-${target[1]}-${target[2]}`);
 }
 
 function preparePrivacyRuntime(binary, goos, goarch, packageOnly) {

@@ -96,7 +96,7 @@ node scripts/build.mjs server --release --os=linux --arch="$LZC_ARCH"
 SERVER_OUTPUT="$ROOT/target/go-build"
 SERVER_BINARY="$SERVER_OUTPUT/nexterm-server-linux-${LZC_ARCH}"
 node "$ROOT/.github/scripts/verify-reused-binary.mjs" "$SERVER_BINARY" "server-linux-$LZC_ARCH" linux "$LZC_ARCH" 1
-node "$ROOT/scripts/lib/privacy-runtime.mjs" "$SERVER_OUTPUT/ai-runtime" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"
+node "$ROOT/scripts/lib/privacy-runtime.mjs" "$SERVER_OUTPUT/ai-runtime-linux-$LZC_ARCH" linux "$LZC_ARCH" "$SERVER_BINARY.manifest.json"
 if [ -z "${NEXTERM_HELPERS_DIR:-}" ]; then
   node scripts/build.mjs helpers --release
 fi
@@ -107,7 +107,7 @@ fi
 rm -rf "$IMAGE_CONTEXT"
 mkdir -p "$IMAGE_CONTEXT"
 install -m 0755 "$SERVER_BINARY" "$IMAGE_CONTEXT/nexterm-server"
-cp -R "$SERVER_OUTPUT/ai-runtime" "$IMAGE_CONTEXT/ai-runtime"
+cp -R "$SERVER_OUTPUT/ai-runtime-linux-$LZC_ARCH" "$IMAGE_CONTEXT/ai-runtime"
 while IFS='|' read -r HELPER_OS HELPER_ARCH HELPER_NAME; do
   install -m 0755 "$HELPERS_DIR/$HELPER_NAME" "$IMAGE_CONTEXT/$HELPER_NAME"
 done < <(node .github/scripts/helper-matrix.mjs --shell)

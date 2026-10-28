@@ -208,7 +208,7 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then suffix=".exe"; fi
           binary="nexterm-desktop-${{ matrix.os }}-${{ matrix.arch }}${suffix}"
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
-          cp -R target/release-work/reused-native/go-build/ai-runtime target/go-build/ai-runtime
+          cp -R target/release-work/reused-native/go-build/ai-runtime-* target/go-build/
           if [ "${{ matrix.os }}" != "windows" ]; then chmod +x "target/go-build/${binary}"; fi
           while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/
@@ -318,7 +318,7 @@ jobs:
           binary="nexterm-server-linux-${{ matrix.arch }}"
           mkdir -p target/go-build
           cp "target/release-work/reused-native/go-build/${binary}" "target/release-work/reused-native/go-build/${binary}.manifest.json" target/go-build/
-          cp -R target/release-work/reused-native/go-build/ai-runtime target/go-build/ai-runtime
+          cp -R target/release-work/reused-native/go-build/ai-runtime-* target/go-build/
           chmod +x "target/go-build/${binary}"
           while IFS='|' read -r helper_os helper_arch helper; do
             cp "target/release-work/verified-helpers/go-build/$helper" "target/release-work/verified-helpers/go-build/$helper.manifest.json" target/go-build/

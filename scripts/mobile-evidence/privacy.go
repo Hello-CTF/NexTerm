@@ -68,7 +68,7 @@ func (c *checker) validatePrivacyRuntime() ([]string, error) {
 			return nil, fmt.Errorf("%s must be an arm64 dynamic library", name)
 		}
 		sizes := []string{fmt.Sprintf("%s.framework/%s=%d bytes", name, name, len(data))}
-		return sizes, c.validatePrivacyLicenses("Payload/nexterm.app/Frameworks/", "ios", "arm64")
+		return sizes, c.validatePrivacyLicenses("Payload/nexterm.app/ai-runtime/", "ios", "arm64")
 	}
 	var sizes []string
 	found := false

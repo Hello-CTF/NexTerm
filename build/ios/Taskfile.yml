@@ -132,7 +132,9 @@ tasks:
       - chmod 0755 "{{.BIN_DIR}}/{{.APP_NAME}}.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/"
       - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/." "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks/"
+      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/onnxruntime.framework" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Frameworks/"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/ai-runtime"
+      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/runtime.json" "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/licenses" "{{.BIN_DIR}}/{{.APP_NAME}}.app/ai-runtime/"
       - |
         if [ -n "${NEXTERM_RELEASE_VERSION:-}" ] || [ -n "${IOS_BUILD_NUMBER:-}" ]; then
           version="${NEXTERM_RELEASE_VERSION:-0.0.0}"
@@ -393,7 +395,9 @@ tasks:
       - cp "{{.BIN_DIR}}/{{.APP_NAME | lower}}" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/{{.APP_NAME | lower}}"
       - cp build/ios/Info.dev.plist "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Info.plist"
       - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks"
-      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/." "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks/"
+      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/onnxruntime.framework" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/Frameworks/"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/ai-runtime"
+      - cp -R "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/runtime.json" "{{.BIN_DIR}}/ai-runtime-ios-{{.IOS_PLATFORM}}/licenses" "{{.BIN_DIR}}/{{.APP_NAME}}.dev.app/ai-runtime/"
       - |
         # Compile asset catalog and embed icons for dev bundle
         APP_BUNDLE="{{.BIN_DIR}}/{{.APP_NAME}}.dev.app"

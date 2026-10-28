@@ -10,7 +10,7 @@ import { helperTargets } from "./helper-matrix.mjs";
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexterm-lazycat-runtime-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const directory of ["lazycat/image", "lazycat/injects", "scripts/lib", ".github/scripts", "node_modules", "dist", "helpers", "bin", "payload/ai-runtime/licenses"]) fs.mkdirSync(path.join(root, directory), { recursive: true });
+  for (const directory of ["lazycat/image", "lazycat/injects", "scripts/lib", ".github/scripts", "node_modules", "dist", "helpers", "bin", "payload/ai-runtime-linux-amd64/licenses"]) fs.mkdirSync(path.join(root, directory), { recursive: true });
   for (const file of ["lazycat/image/build-server.sh", "lazycat/image/Dockerfile", "lazycat/image/entrypoint.sh", "scripts/lib/privacy-runtime.mjs"]) fs.copyFileSync(file, path.join(root, file));
   fs.writeFileSync(path.join(root, "dist/index.html"), "<html>fixture</html>");
   fs.writeFileSync(path.join(root, "lazycat/injects/fixture.js"), "");
@@ -20,11 +20,11 @@ function fixture(t) {
   fs.writeFileSync(path.join(payload, "nexterm-server-linux-amd64"), "server", { mode: 0o755 });
   const files = {};
   for (const name of ["libonnxruntime.so", "licenses/ASTRLINK-LICENSE", "licenses/ASTRLINK-NOTICE.md", "licenses/ONNX-RUNTIME-LICENSE", "licenses/ONNX-RUNTIME-THIRD-PARTY-NOTICES"]) {
-    fs.writeFileSync(path.join(payload, "ai-runtime", name), name);
+    fs.writeFileSync(path.join(payload, "ai-runtime-linux-amd64", name), name);
     files[name] = crypto.createHash("sha256").update(name).digest("hex");
   }
   const manifest = JSON.stringify({ abi: 2, platform: "linux", arch: "amd64", files });
-  fs.writeFileSync(path.join(payload, "ai-runtime/runtime.json"), manifest);
+  fs.writeFileSync(path.join(payload, "ai-runtime-linux-amd64/runtime.json"), manifest);
   fs.writeFileSync(path.join(payload, "nexterm-server-linux-amd64.manifest.json"), JSON.stringify({ privacy_runtime_sha256: crypto.createHash("sha256").update(manifest).digest("hex") }));
   const scripts = {
     node: `#!/bin/sh
@@ -72,7 +72,7 @@ test("Lazycat stages the verified CGO server runtime and retains static helper c
 
 test("Lazycat refuses a corrupted runtime before creating the container payload", (t) => {
   const { root, run } = fixture(t);
-  fs.writeFileSync(path.join(root, "payload/ai-runtime/libonnxruntime.so"), "corrupt");
+  fs.writeFileSync(path.join(root, "payload/ai-runtime-linux-amd64/libonnxruntime.so"), "corrupt");
   const result = run();
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /checksum mismatch/);

@@ -58,7 +58,7 @@ func privacyLicenseFixtures(base, platform, arch string) []zipFixture {
 
 func TestPrivacyLicenseEvidence(t *testing.T) {
 	for _, platform := range []string{"ios", "android"} {
-		base := "Payload/nexterm.app/Frameworks/"
+		base := "Payload/nexterm.app/ai-runtime/"
 		if platform == "android" {
 			base = "assets/ai-runtime/arm64-v8a/"
 		}

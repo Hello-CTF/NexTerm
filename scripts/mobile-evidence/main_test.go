@@ -232,7 +232,7 @@ func makePlistIPA(t *testing.T, plist []byte, options ipaOptions) string {
 	}
 	base := "Payload/nexterm.app/Frameworks/onnxruntime.framework/"
 	entries = append(entries, zipFixture{name: base + "onnxruntime", data: thinMachO(2), mode: 0o755}, zipFixture{name: base + "Info.plist", data: []byte("<plist><dict><key>CFBundleExecutable</key><string>onnxruntime</string></dict></plist>"), mode: 0o644})
-	entries = append(entries, privacyLicenseFixtures("Payload/nexterm.app/Frameworks/", "ios", "arm64")...)
+	entries = append(entries, privacyLicenseFixtures("Payload/nexterm.app/ai-runtime/", "ios", "arm64")...)
 	if !options.noProfile {
 		profile := options.profile
 		if profile == nil {
