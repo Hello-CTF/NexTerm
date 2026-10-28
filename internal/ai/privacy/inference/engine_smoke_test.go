@@ -47,6 +47,19 @@ func TestRuntimeSmoke(t *testing.T) {
 	if runtimeDir == "" {
 		t.Skip("runtime path not configured")
 	}
+	// A platform without an ONNX Runtime build stages a manifest that says so; the loader must then refuse it.
+	if raw, err := os.ReadFile(filepath.Join(runtimeDir, "runtime.json")); err == nil {
+		var staged struct {
+			Unavailable string `json:"unavailable"`
+		}
+		if json.Unmarshal(raw, &staged) == nil && staged.Unavailable != "" {
+			if Available(runtimeDir) == nil {
+				t.Fatalf("runtime staged as unavailable (%s) but the loader accepted it", staged.Unavailable)
+			}
+			t.Logf("runtime unavailable on this platform: %s", staged.Unavailable)
+			return
+		}
+	}
 	if err := Available(runtimeDir); err != nil {
 		t.Fatal(err)
 	}
