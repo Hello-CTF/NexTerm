@@ -48,7 +48,7 @@ export function AppRail({
   const setLeftMode = useUi((s) => s.setLeftMode);
   // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
   const hasHost = workspace?.kind === "session" && Boolean(workspace.sessionId);
-  const { openBackground, openHistory, openFiles, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
+  const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
 
   const railPanels: {
     key: string;
@@ -77,9 +77,24 @@ export function AppRail({
         setLeftOpen(true);
       },
     },
+    ...(hasHost
+      ? [
+          {
+            key: "files",
+            label: "文件树",
+            hint: "打开当前连接的文件树：浏览远程目录，双击文件直接编辑；双击本按钮收起侧栏",
+            icon: IconFolderOpen,
+            onClick: () => {
+              setLeftMode("files");
+              setLeftOpen(true);
+            },
+          },
+        ]
+      : []),
   ];
 
-  const railActive = leftMode;
+  // Saved "files" mode without a session shows the asset tree, so the asset button is the active one.
+  const railActive = leftMode === "files" && !hasHost ? "assets" : leftMode;
 
   const railItems: {
     key: string;
@@ -89,17 +104,6 @@ export function AppRail({
     onClick: () => void;
     badge?: number;
   }[  ] = [
-    ...(hasHost
-      ? [
-          {
-            key: "files",
-            label: "文件",
-            hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
-            icon: IconFolderOpen,
-            onClick: openFiles,
-          },
-        ]
-      : []),
     ...(backgroundAvailable ? [{
       key: "background",
       label: "后台会话",

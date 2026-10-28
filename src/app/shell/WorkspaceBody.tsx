@@ -10,7 +10,7 @@ import {
 } from "../store";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
-import { AiSidebar, AssetTree, CredentialsSidebar } from "../lazyPanels";
+import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
@@ -86,6 +86,9 @@ export function WorkspaceBody({
         <div className="nx-left-dock" role="navigation" aria-label="左栏">
           {leftMode === "credentials" ? (
             <Lazy><CredentialsSidebar /></Lazy>
+          ) : leftMode === "files" && ws?.kind === "session" && ws.sessionId ? (
+            // Without a session the saved mode is kept and the asset tree shows instead.
+            <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
           ) : (
             // Keyed by account epoch: on account switch the tree remounts so template, runbook,
             // inventory discovery/watch, and bulk panels never show the previous account's state.

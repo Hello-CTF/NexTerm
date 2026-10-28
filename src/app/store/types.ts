@@ -26,7 +26,7 @@ export type PaneKind =
   | "host";
 
 // The left dock no longer has a file tree mode; a stored "files" mode reads as "assets".
-export type LeftMode = "assets" | "credentials";
+export type LeftMode = "assets" | "credentials" | "files";
 
 export type DbKind = "mysql" | "postgres" | "redis";
 
