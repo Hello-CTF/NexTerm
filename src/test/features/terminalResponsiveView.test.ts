@@ -216,7 +216,7 @@ vi.mock("../../ipc/events", () => ({
     return vi.fn();
   },
 }));
-vi.mock("../../ipc/env", () => ({ clientId: () => "me", get WEB() { return harness.web; } }));
+vi.mock("../../ipc/env", () => ({ clientId: () => "me", DESKTOP: false, get WEB() { return harness.web; } }));
 vi.mock("../../ui/dialogs", () => ({ ask: vi.fn() }));
 
 import { XtermView, type TerminalHandle, type XtermViewProps } from "../../features/terminal/XtermView";
