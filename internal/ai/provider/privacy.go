@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
@@ -47,6 +48,7 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 			frameExtra = message.Extra
 			copy.Content = text.Push(message.Content, false)
 			copy.ReasoningContent = reasoning.Push(message.ReasoningContent, false)
+			copy.Extra = restoredExtra(message.Extra, copy.ReasoningContent)
 			// Arguments may split inside JSON escapes as well as placeholders.
 			// Only emit calls once the complete JSON has been safely restored.
 			copy.ToolCalls = nil
@@ -77,6 +79,7 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 		copy.MultiContent = nil
 		copy.AssistantGenMultiContent = nil
 		copy.ReasoningContent = exchange.Restore(copy.ReasoningContent)
+		copy.Extra = restoredExtra(copy.Extra, copy.ReasoningContent)
 		copy.ToolCalls = slices.Clone(copy.ToolCalls)
 		for i := range copy.ToolCalls {
 			arguments, err := exchange.RestoreJSON(copy.ToolCalls[i].Function.Arguments)
@@ -88,7 +91,8 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 		result.message = &copy
 	}
 	if onFrame != nil && frameErr == nil {
-		last := &schema.Message{Role: schema.Assistant, Content: text.Push("", true), ReasoningContent: reasoning.Push("", true), Extra: frameExtra}
+		last := &schema.Message{Role: schema.Assistant, Content: text.Push("", true), ReasoningContent: reasoning.Push("", true)}
+		last.Extra = restoredExtra(frameExtra, last.ReasoningContent)
 		if requestErr == nil {
 			for i, call := range result.completion.ToolCalls {
 				last.ToolCalls = append(last.ToolCalls, schema.ToolCall{Index: new(i), ID: call.ID, Type: call.Type, Function: schema.FunctionCall{Name: call.Function.Name, Arguments: call.Function.Arguments}})
@@ -103,7 +107,65 @@ func (c *Client) runNative(ctx context.Context, input []*schema.Message, options
 	return result, requestErr
 }
 
+const privacyInstruction = "Privacy placeholders such as <PRIVATE_EMAIL_...> and <SECRET_...> represent original values retained locally. Preserve each placeholder exactly when referencing that value, including in tool argument string values. Do not infer, modify, or decode them."
+
+// reasoningExtraKey is where eino-ext's OpenAI adapter mirrors reasoning text
+// (GetReasoningContent); it must carry restored text, never placeholders.
+const reasoningExtraKey = "reasoning-content"
+
 func protectNativeRequest(ctx context.Context, e *privacy.Exchange, input []*schema.Message, options []model.Option) ([]*schema.Message, []model.Option, error) {
+	// The first pass collects every value the detector finds anywhere in the
+	// request, so the second pass redacts each one in every field, including
+	// fields where the detector alone would have missed it. Detection results
+	// are cached by the exchange, so the second pass does not re-infer.
+	if _, err := protectNativeMessages(ctx, e, input); err != nil {
+		return nil, nil, err
+	}
+	result, err := protectNativeMessages(ctx, e, input)
+	if err != nil {
+		return nil, nil, err
+	}
+	if e.Redacted() {
+		result = withPrivacyInstruction(result)
+	}
+	// Match AstrLink's default declaration policy: built-in tool schemas are
+	// harness metadata. Their protocol names, enums and documentation stay
+	// unchanged; user data in call arguments and results is protected above.
+	return result, options, nil
+}
+
+// withPrivacyInstruction merges into a leading system message because some
+// backends reject more than one system message.
+func withPrivacyInstruction(messages []*schema.Message) []*schema.Message {
+	if len(messages) > 0 && messages[0] != nil && messages[0].Role == schema.System {
+		first := *messages[0]
+		if first.Content == "" {
+			first.Content = privacyInstruction
+		} else {
+			first.Content = privacyInstruction + "\n\n" + first.Content
+		}
+		messages[0] = &first
+		return messages
+	}
+	return append([]*schema.Message{schema.SystemMessage(privacyInstruction)}, messages...)
+}
+
+// restoredExtra copies metadata, replacing the adapter's reasoning mirror with
+// restored text so it never exposes placeholders to consumers.
+func restoredExtra(extra map[string]any, reasoning string) map[string]any {
+	if _, ok := extra[reasoningExtraKey]; !ok {
+		return extra
+	}
+	copy := maps.Clone(extra)
+	if reasoning == "" {
+		delete(copy, reasoningExtraKey)
+	} else {
+		copy[reasoningExtraKey] = reasoning
+	}
+	return copy
+}
+
+func protectNativeMessages(ctx context.Context, e *privacy.Exchange, input []*schema.Message) ([]*schema.Message, error) {
 	protect := func(text string) (string, error) { return e.Protect(ctx, text) }
 	result := make([]*schema.Message, 0, len(input)+1)
 	for _, message := range input {
@@ -115,49 +177,45 @@ func protectNativeRequest(ctx context.Context, e *privacy.Exchange, input []*sch
 		var err error
 		copy.Content, err = protect(message.Content)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		copy.ReasoningContent, err = protect(message.ReasoningContent)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		copy.MultiContent = slices.Clone(message.MultiContent)
 		for i := range copy.MultiContent {
 			if copy.MultiContent[i].Type != "" && copy.MultiContent[i].Type != schema.ChatMessagePartTypeText {
-				return nil, nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
+				return nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
 			}
 			copy.MultiContent[i].Text, err = protect(copy.MultiContent[i].Text)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		copy.UserInputMultiContent = slices.Clone(message.UserInputMultiContent)
 		for i := range copy.UserInputMultiContent {
 			if copy.UserInputMultiContent[i].Type != schema.ChatMessagePartTypeText {
-				return nil, nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
+				return nil, errors.New("本地脱敏仅支持文本，当前请求包含图片或其他媒体")
 			}
 			copy.UserInputMultiContent[i].Text, err = protect(copy.UserInputMultiContent[i].Text)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		if len(copy.AssistantGenMultiContent) > 0 {
-			return nil, nil, errors.New("本地脱敏暂不支持多媒体历史消息")
+			return nil, errors.New("本地脱敏暂不支持多媒体历史消息")
 		}
 		copy.ToolCalls = slices.Clone(message.ToolCalls)
 		for i := range copy.ToolCalls {
 			copy.ToolCalls[i].Function.Arguments, err = e.ProtectJSON(ctx, copy.ToolCalls[i].Function.Arguments)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		}
 		result = append(result, &copy)
 	}
-	result = append([]*schema.Message{schema.SystemMessage("Privacy placeholders such as <PRIVATE_EMAIL_...> and <SECRET_...> represent original values retained locally. Preserve each placeholder exactly when referencing that value, including in tool argument string values. Do not infer, modify, or decode them.")}, result...)
-	// Match AstrLink's default declaration policy: built-in tool schemas are
-	// harness metadata. Their protocol names, enums and documentation stay
-	// unchanged; user data in call arguments and results is protected above.
-	return result, options, nil
+	return result, nil
 }
 
 func privacyTextResponse(message *schema.Message) error {

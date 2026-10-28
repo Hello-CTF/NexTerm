@@ -93,7 +93,7 @@ func TestPrivacyStableOutboundHistoryAcrossTurns(t *testing.T) {
 		var user struct {
 			Content string `json:"content"`
 		}
-		_ = json.Unmarshal(request.Messages[2], &user)
+		_ = json.Unmarshal(request.Messages[1], &user)
 		writePrivacyBlock(w, user.Content, nil)
 	}, privacyOption(privateValues(secret)))
 	first := ChatRequest{Messages: []ChatMessage{{Role: "system", Content: "Fixed system prompt"}, UserMessage(secret)}, Tools: []ToolSchema{{Name: "read_file", Description: "Documentation https://example.org/tool", Parameters: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string", "enum": []string{"https://example.org/tool"}}}}}}}
@@ -396,5 +396,115 @@ func TestPrivacySensitiveToolArgumentKeysBlockNetwork(t *testing.T) {
 	_, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call", Type: "function", Function: FunctionCall{Name: "lookup", Arguments: `{"sensitive-key":"value"}`}}}}}})
 	if err == nil || calls.Load() != 0 {
 		t.Fatalf("sensitive key sent: calls=%d err=%v", calls.Load(), err)
+	}
+}
+
+func TestPrivacyKnownSecretRedactedInEveryField(t *testing.T) {
+	const secret = "hunter22"
+	// The detector only recognizes the value when it is labelled as a password.
+	detector := privacyDetectorFunc(func(_ context.Context, text string) ([]privacy.Span, error) {
+		const prefix = "my password: "
+		at := strings.Index(text, prefix+secret)
+		if at < 0 {
+			return nil, nil
+		}
+		start := at + len(prefix)
+		return []privacy.Span{{Start: start, End: start + len(secret), Label: "common_secret", Score: 1}}, nil
+	})
+	var body string
+	client := privacyClient(t, func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		writePrivacyBlock(w, "ok", nil)
+	}, privacyOption(detector))
+	_, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{
+		UserMessage("my password: " + secret),
+		{Role: "assistant", Content: "Running echo " + secret, ToolCalls: []ToolCall{{ID: "call", Type: "function", Function: FunctionCall{Name: "exec", Arguments: `{"command":"echo ` + secret + `"}`}}}},
+		{Role: "tool", Content: secret + "\n", ToolCallID: "call"},
+		UserMessage("thanks"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body == "" || strings.Contains(body, secret) {
+		t.Fatalf("known secret escaped upstream: %s", body)
+	}
+}
+
+func TestPrivacyEmptyToolArgumentsDoNotFailConversation(t *testing.T) {
+	client := privacyClient(t, func(w http.ResponseWriter, r *http.Request) {
+		writePrivacyBlock(w, "", []any{map[string]any{"id": "next", "type": "function", "function": map[string]any{"name": "list_hosts", "arguments": ""}}})
+	}, privacyOption(privateValues("secret")))
+	response, err := client.ChatBlock(t.Context(), ChatRequest{Messages: []ChatMessage{
+		UserMessage("secret"),
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call", Type: "function", Function: FunctionCall{Name: "list_hosts", Arguments: ""}}}},
+		{Role: "tool", Content: "[]", ToolCallID: "call"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Function.Name != "list_hosts" {
+		t.Fatalf("calls = %+v", response.ToolCalls)
+	}
+}
+
+func TestPrivacyInstructionMergedOnlyWhenRedacted(t *testing.T) {
+	type wireMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var received []wireMessage
+	client := privacyClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Messages []wireMessage `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		received = request.Messages
+		writePrivacyBlock(w, "ok", nil)
+	}, privacyOption(privateValues("secret")))
+	systemCount := func() int {
+		count := 0
+		for _, message := range received {
+			if message.Role == "system" {
+				count++
+			}
+		}
+		return count
+	}
+	for _, test := range []struct {
+		name     string
+		messages []ChatMessage
+		system   int
+		marked   bool
+	}{
+		{name: "nothing-redacted", messages: []ChatMessage{{Role: "system", Content: "Fixed"}, UserMessage("hello")}, system: 1},
+		{name: "merged", messages: []ChatMessage{{Role: "system", Content: "Fixed"}, UserMessage("secret")}, system: 1, marked: true},
+		{name: "inserted", messages: []ChatMessage{UserMessage("secret")}, system: 1, marked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := client.ChatBlock(t.Context(), ChatRequest{Messages: test.messages}); err != nil {
+				t.Fatal(err)
+			}
+			if systemCount() != test.system {
+				t.Fatalf("system messages = %+v", received)
+			}
+			if strings.Contains(received[0].Content, "Privacy placeholders") != test.marked {
+				t.Fatalf("instruction presence wrong: %+v", received)
+			}
+			if test.name == "merged" && !strings.HasSuffix(received[0].Content, "Fixed") {
+				t.Fatalf("system prompt lost: %q", received[0].Content)
+			}
+		})
+	}
+}
+
+func TestPrivacyRestoredExtraReasoning(t *testing.T) {
+	extra := map[string]any{reasoningExtraKey: "<SECRET_0123456789abcdef>", MessageExtraRunID: "run"}
+	restored := restoredExtra(extra, "plain")
+	if restored[reasoningExtraKey] != "plain" || restored[MessageExtraRunID] != "run" || extra[reasoningExtraKey] != "<SECRET_0123456789abcdef>" {
+		t.Fatalf("restored extra = %+v (source %+v)", restored, extra)
+	}
+	if _, ok := restoredExtra(extra, "")[reasoningExtraKey]; ok {
+		t.Fatal("empty restored reasoning kept the placeholder mirror")
 	}
 }

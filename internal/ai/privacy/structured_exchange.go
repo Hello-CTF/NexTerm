@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -21,6 +20,14 @@ func (e *Exchange) ProtectJSON(ctx context.Context, raw string) (string, error) 
 	if !utf8.ValidString(raw) {
 		return "", ErrUnsafeInput
 	}
+	// No-parameter tools stream "" from OpenAI-compatible backends, and some
+	// models emit non-JSON arguments; neither may poison the conversation.
+	if strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+	if !json.Valid([]byte(raw)) {
+		return e.Protect(ctx, raw)
+	}
 	_, duplicate, err := parsePrivacyJSON([]byte(raw), false)
 	if err != nil {
 		return "", err
@@ -28,19 +35,24 @@ func (e *Exchange) ProtectJSON(ctx context.Context, raw string) (string, error) 
 	if duplicate {
 		return "", errors.New("privacy refuses duplicate JSON keys")
 	}
-	spans, err := e.detector.Detect(ctx, raw)
+	spans, err := e.detect(ctx, raw)
 	if err != nil {
-		return "", fmt.Errorf("privacy detection failed: %w", err)
-	}
-	for _, span := range spans {
-		if span.Start < 0 || span.End <= span.Start || span.End > len(raw) || !utf8.RuneStart(raw[span.Start]) || (span.End < len(raw) && !utf8.RuneStart(raw[span.End])) {
-			return "", errors.New("privacy detector returned invalid offsets")
-		}
+		return "", err
 	}
 	scanned := scanStructuredJSONLiterals(raw)
 	var aligned []Span
 	for _, span := range spans {
 		aligned = scanned.align(aligned, span)
+	}
+	// Numbers equal to a value redacted elsewhere in this exchange.
+	for _, literal := range scanned.literals {
+		value := raw[literal.start:literal.end]
+		if !literal.number || len(value) < minPropagatedValueBytes {
+			continue
+		}
+		if marker, known := e.markers[value]; known {
+			aligned = append(aligned, Span{Start: literal.start, End: literal.end, Label: string(e.allocator.used[marker].kind)})
+		}
 	}
 	sort.Slice(aligned, func(i, j int) bool {
 		if aligned[i].Start != aligned[j].Start {
@@ -130,12 +142,22 @@ func (e *Exchange) numberMarker(label, value string) (string, error) {
 	e.numbers[marker] = json.Number(value)
 	e.values[marker] = value
 	e.restorer = nil
+	// A text marker lets the same digits be redacted in prose and strings.
+	if _, err := e.textMarker(label, value); err != nil {
+		return "", err
+	}
 	return marker, nil
 }
 
 // RestoreJSON restores numeric markers as JSON numbers only when the complete
 // string is that marker. A marker embedded in a command remains a string.
 func (e *Exchange) RestoreJSON(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+	if utf8.ValidString(raw) && !json.Valid([]byte(raw)) {
+		return e.Restore(raw), nil
+	}
 	redactions := make([]Redaction, 0, len(e.numbers))
 	for marker := range e.numbers {
 		redactions = append(redactions, Redaction{Placeholder: marker, Value: ""})
