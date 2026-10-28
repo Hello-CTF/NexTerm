@@ -69,6 +69,7 @@ import {
   TERMINAL_CONTROL,
   uniquePasteFileNames,
 } from "./imagePaste";
+import { DEFAULT_PASTE_DIRS, joinPastePath, pasteDirSettings, terminalPastePath, type PasteDirSettings } from "./pasteUploadDir";
 import { fileChunkSource, UPLOAD_CHUNK_SIZE, uploadChunked } from "../files/chunkedUpload";
 import { createTransferTaskId } from "../files/transferTaskId";
 import { confirmMultilinePaste } from "./terminalPaste";
@@ -1477,14 +1478,31 @@ export function TerminalPane({
         setImagePaste({ phase: "error", message: "这台主机使用 Windows 路径，没有 /tmp；请改用文件面板上传" });
         return;
       }
+      // The asset may map the upload directory (as the file channel sees it) to another path in the shell, for
+      // chrooted SFTP accounts. Read it at paste time so an edited asset applies without reconnecting.
+      let pasteDirs: PasteDirSettings = DEFAULT_PASTE_DIRS;
+      if (sessionAssetId && typeof assetApi.get === "function") {
+        let options: Record<string, unknown> | undefined;
+        try {
+          options = (await assetApi.get(sessionAssetId))?.options as Record<string, unknown> | undefined;
+        } catch {
+          options = undefined;
+        }
+        const resolved = pasteDirSettings(options);
+        if (!resolved.ok) {
+          setImagePaste({ phase: "error", message: `资产高级选项中的${resolved.error}；请在资产设置中修正` });
+          return;
+        }
+        pasteDirs = resolved.settings;
+      }
       const run: PasteUploadRun = { cancelled: false, transfer: null };
       pasteUploadRef.current = run;
       const totalBytes = accepted.reduce((sum, file) => sum + file.size, 0);
       const uploadingMessage = (done: number) =>
-        `正在上传 ${accepted.length} 个文件到这台主机的 /tmp…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
+        `正在上传 ${accepted.length} 个文件到这台主机的 ${pasteDirs.terminalDir}…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
       setImagePaste({ phase: "uploading", message: uploadingMessage(0), cancellable: true });
       // An unguessable, exclusively created 0700 directory: nobody else on the host can pre-create, link or read it.
-      const dir = `/tmp/nexterm-paste-${crypto.randomUUID()}`;
+      const dir = joinPastePath(pasteDirs.uploadDir, `nexterm-paste-${crypto.randomUUID()}`);
       let dirCreated = false;
       try {
         await fsApi.mkdirPrivate(sessionId, dir);
@@ -1526,7 +1544,7 @@ export function TerminalPane({
           if (pasteUploadRef.current === run && !run.cancelled) {
             setImagePaste({ phase: "uploading", message: uploadingMessage(doneBytes), cancellable: true });
           }
-          links.push(markdownFileLink(name, path));
+          links.push(markdownFileLink(name, terminalPastePath(pasteDirs, path)));
         }
         if (run.cancelled) throw new PasteUploadCancelled();
         const text = links.join(" ");
@@ -1535,7 +1553,7 @@ export function TerminalPane({
         handleRef.current?.paste(text);
         setImagePaste({
           phase: "success",
-          message: `已上传 ${links.length} 个文件到这台主机的 /tmp 并插入链接${skippedNote ? `；${skippedNote}` : ""}`,
+          message: `已上传 ${links.length} 个文件到这台主机的 ${pasteDirs.terminalDir} 并插入链接${skippedNote ? `；${skippedNote}` : ""}`,
         });
       } catch (e) {
         let cleanupNote = "";
@@ -1550,15 +1568,17 @@ export function TerminalPane({
           e instanceof PasteUploadCancelled || run.cancelled
             ? `已取消上传${cleanupNote}`
             : (e as { code?: unknown } | null)?.code === "not_found"
-              ? // The SFTP view has no /tmp, typically a chrooted SFTP account.
-                `文件上传到 /tmp 失败：这台主机的 SFTP 中没有 /tmp（常见于受限的 chroot SFTP 账号），请改用文件面板上传到可写目录${cleanupNote}`
-              : `文件上传到 /tmp 失败：${describeError(e)}${cleanupNote}`;
+              ? pasteDirs.custom
+                ? `文件上传到 ${pasteDirs.uploadDir} 失败：这台主机的 SFTP 中没有该目录，请检查资产高级选项中的粘贴上传目录${cleanupNote}`
+                : // The SFTP view has no /tmp, typically a chrooted SFTP account.
+                  `文件上传到 /tmp 失败：这台主机的 SFTP 中没有 /tmp（常见于受限的 chroot SFTP 账号），请改用文件面板上传到可写目录，或在资产高级选项中设置粘贴上传目录${cleanupNote}`
+              : `文件上传到 ${pasteDirs.uploadDir} 失败：${describeError(e)}${cleanupNote}`;
         setImagePaste({ phase: "error", message });
       } finally {
         if (pasteUploadRef.current === run) pasteUploadRef.current = null;
       }
     },
-    [kernelTabId, pushToast, sessionId, sessionKind, containerId, effectiveWinrm],
+    [kernelTabId, pushToast, sessionId, sessionKind, sessionAssetId, containerId, effectiveWinrm],
   );
 
   const cancelPasteUpload = () => {

@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => {
     fsCancel: vi.fn(),
     uploadChunked: vi.fn(),
     paste: vi.fn(),
+    assetGet: vi.fn(),
+    sessionList: vi.fn(),
   };
 });
 
@@ -30,12 +32,12 @@ vi.mock("../../app/platform", () => ({
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  assetApi: {},
+  assetApi: { get: mocks.assetGet },
   dbApi: {},
   vaultApi: {},
   sessionApi: {
     probeHostKey: vi.fn().mockResolvedValue({ state: "known" }),
-    list: vi.fn().mockResolvedValue([]),
+    list: mocks.sessionList,
   },
   terminalApi: {
     listLive: mocks.listLive,
@@ -186,6 +188,15 @@ function resetFsMocks() {
   mocks.fsRoots.mockResolvedValue({ pathStyle: "posix", roots: [], homePath: null, supported: true });
   mocks.fsCancel.mockResolvedValue(true);
   mocks.uploadChunked.mockResolvedValue(undefined);
+  mocks.assetGet.mockResolvedValue({ id: "asset-1", options: {} });
+  mocks.sessionList.mockResolvedValue([]);
+}
+
+// The pane resyncs the session list on attach; keep the asset-backed session in it.
+function keepAssetSession() {
+  mocks.sessionList.mockImplementation(async () => [
+    { id: "s1", assetId: "asset-1", name: "web-01", kind: "ssh", status: "connected", tabs: [], createdAt: 0 },
+  ]);
 }
 
 function png(name: string): File {
@@ -534,6 +545,62 @@ describe("TerminalPane file paste orchestration", () => {
     await waitForRendered(() => expect(statusText()).toContain("临时目录已存在"));
     expect(mocks.fsWrite).not.toHaveBeenCalled();
     expect(mocks.fsDelete).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it("uploads into the asset's configured directory and inserts the mapped terminal path", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteUploadDir: "/", pasteTerminalDir: "/tmp" } });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    expect(mocks.assetGet).toHaveBeenCalledWith("asset-1");
+    const dir = mocks.fsMkdirPrivate.mock.calls[0]?.[1] as string;
+    expect(dir).toMatch(/^\/nexterm-paste-[0-9a-f-]{36}$/);
+    expect(mocks.fsWrite).toHaveBeenCalledWith("s1", `${dir}/shot.png`, "iVBORw==", false, expect.any(String), expect.any(String));
+    expect(mocks.paste).toHaveBeenCalledWith(`[shot.png](/tmp${dir}/shot.png)`);
+    expect(statusText()).toContain("这台主机的 /tmp 并插入链接");
+  });
+
+  it("names the configured directory when it is missing over SFTP and cleans nothing it did not create", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteUploadDir: "/upload" } });
+    mocks.fsMkdirPrivate.mockRejectedValue({ code: "not_found", message: "file does not exist" });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(statusText()).toContain("/upload"));
+    expect(statusText()).toContain("粘贴上传目录");
+    expect(mocks.fsDelete).not.toHaveBeenCalled();
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
+  it("suggests the asset setting when the default /tmp is missing over SFTP", async () => {
+    mocks.fsMkdirPrivate.mockRejectedValue({ code: "not_found", message: "file does not exist" });
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(statusText()).toContain("文件面板"));
+    expect(statusText()).toContain("资产高级选项");
+  });
+
+  it("refuses invalid stored directory options before creating anything", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteUploadDir: "/a/../etc" } });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(statusText()).toContain("资产高级选项"));
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
     expect(mocks.paste).not.toHaveBeenCalled();
   });
 

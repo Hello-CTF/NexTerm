@@ -28,6 +28,7 @@ import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
+import { PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -2041,6 +2042,12 @@ export function AssetEditor({
   const [startupCommand, setStartupCommand] = useState(
     typeof initial?.options?.startupCommand === "string" ? (initial.options.startupCommand as string) : "",
   );
+  const [pasteUploadDir, setPasteUploadDir] = useState(
+    typeof initial?.options?.[PASTE_UPLOAD_DIR_KEY] === "string" ? (initial.options[PASTE_UPLOAD_DIR_KEY] as string) : "",
+  );
+  const [pasteTerminalDir, setPasteTerminalDir] = useState(
+    typeof initial?.options?.[PASTE_TERMINAL_DIR_KEY] === "string" ? (initial.options[PASTE_TERMINAL_DIR_KEY] as string) : "",
+  );
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2078,6 +2085,8 @@ export function AssetEditor({
   }, [host, port, groupKind]);
 
   const advancedPanelId = useId();
+  const pasteUploadDirId = useId();
+  const pasteTerminalDirId = useId();
   const terminalModeId = useId();
   const IconPreview = assetIcon(groupKind, icon);
   const hostInputId = useId();
@@ -2309,6 +2318,16 @@ export function AssetEditor({
     else delete options.env;
     if (forwardAgent) options.forwardAgent = true;
     else delete options.forwardAgent;
+    const pasteDirs = validatePasteDirOptions(pasteUploadDir, pasteTerminalDir);
+    if (groupKind === "ssh" && pasteDirs.ok && pasteDirs.uploadDir) {
+      options[PASTE_UPLOAD_DIR_KEY] = pasteDirs.uploadDir;
+      if (pasteDirs.terminalDir && pasteDirs.terminalDir !== pasteDirs.uploadDir) {
+        options[PASTE_TERMINAL_DIR_KEY] = pasteDirs.terminalDir;
+      } else delete options[PASTE_TERMINAL_DIR_KEY];
+    } else {
+      delete options[PASTE_UPLOAD_DIR_KEY];
+      delete options[PASTE_TERMINAL_DIR_KEY];
+    }
     return options;
   };
 
@@ -2330,6 +2349,14 @@ export function AssetEditor({
       const parsedEnv = parseEnvText(envText);
       if (!parsedEnv.ok) {
         setSaveError(parsedEnv.error);
+        return;
+      }
+    }
+    if (kind === "asset" && groupKind === "ssh") {
+      const pasteDirs = validatePasteDirOptions(pasteUploadDir, pasteTerminalDir);
+      if (!pasteDirs.ok) {
+        setAdvancedOpen(true);
+        setSaveError(pasteDirs.error);
         return;
       }
     }
@@ -3293,6 +3320,39 @@ export function AssetEditor({
                           </div>
                         </div>
                       </div>
+
+                      {groupKind === "ssh" && (
+                        <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
+                          <div className="nx-form-row">
+                            <label className="nx-label" htmlFor={pasteUploadDirId}>
+                              粘贴上传目录
+                            </label>
+                            <input
+                              id={pasteUploadDirId}
+                              className="nx-input font-mono text-[12px]"
+                              value={pasteUploadDir}
+                              onChange={(e) => setPasteUploadDir(e.target.value)}
+                              placeholder="/tmp"
+                            />
+                          </div>
+                          <div className="nx-form-row">
+                            <label className="nx-label" htmlFor={pasteTerminalDirId}>
+                              终端中的对应路径
+                            </label>
+                            <input
+                              id={pasteTerminalDirId}
+                              className="nx-input font-mono text-[12px]"
+                              value={pasteTerminalDir}
+                              onChange={(e) => setPasteTerminalDir(e.target.value)}
+                              placeholder="与上传目录相同"
+                            />
+                            <div className="nx-hint mt-1.5">
+                              ↳ 选填。粘贴或拖入终端的文件经 SFTP 上传到该目录，插入终端的链接改用对应路径；适用于 chroot 的
+                              SFTP 账号（如上传目录填 /，终端中的对应路径填 /tmp）。填写对应路径时必须同时填写上传目录。
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
