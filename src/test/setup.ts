@@ -10,15 +10,21 @@ if (typeof HTMLCanvasElement !== "undefined") {
   } as typeof getContext;
 }
 
-// @wailsio/runtime arms a 50ms setInterval at import time (drag.js polling for its environment) and never clears it
-// unless it fires. A test file that finishes sooner lets the tick run after the jsdom window is gone and throw
-// "window is not defined" as an unhandled error. Track the intervals a file creates and clear them at file teardown.
-const openIntervals = new Set<ReturnType<typeof setInterval>>();
+// Timers a test file leaves armed can fire after its jsdom environment is torn down and throw "window/document is
+// not defined" as unhandled errors (e.g. @wailsio/runtime's drag.js environment poll, a debounced awareness scan).
+// Track the timers each file creates and clear them at file teardown.
+const openTimers = new Set<ReturnType<typeof setTimeout>>();
 if (typeof window !== "undefined") {
+  const realSetTimeout = globalThis.setTimeout;
   const realSetInterval = globalThis.setInterval;
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    const id = realSetTimeout(...args);
+    openTimers.add(id);
+    return id;
+  }) as typeof setTimeout;
   globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => {
     const id = realSetInterval(...args);
-    openIntervals.add(id);
+    openTimers.add(id);
     return id;
   }) as typeof setInterval;
 }
@@ -44,8 +50,8 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  for (const id of openIntervals) clearInterval(id);
-  openIntervals.clear();
+  for (const id of openTimers) clearTimeout(id);
+  openTimers.clear();
   console.error = originalConsoleError;
   expect(reactWarnings, "React act/unmounted-update warnings during teardown").toEqual([]);
 });
