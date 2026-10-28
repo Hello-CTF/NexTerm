@@ -1,7 +1,13 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+const askMock = vi.hoisted(() => vi.fn());
+vi.mock("../../ui/dialogs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ui/dialogs")>()),
+  ask: askMock,
+}));
+
 import { click, mount, type MountedView } from "./reactTestUtils";
 import { ShortcutsCard } from "../../features/settings/ShortcutsCard";
 import {
@@ -120,7 +126,7 @@ describe("shortcuts editor", () => {
     keyDown(input as HTMLInputElement, "a", { code: "KeyA" });
     expect(getKeybinding("commandPalette")).toBe("Mod+Shift+p");
     expect(captureInput()).not.toBeNull();
-    expect(mounted?.container.textContent).toContain("修饰键");
+    expect(row("commandPalette").querySelector('[role="alert"]')?.textContent).toContain("修饰键");
   });
 
   it("cancels capture with Escape", () => {
@@ -160,7 +166,8 @@ describe("shortcuts editor", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("resets all bindings at once", () => {
+  it("resets all bindings only after confirmation", async () => {
+    askMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     click(editButton("newTerminal"));
     keyDown(captureInput() as HTMLInputElement, "n", { code: "KeyN", ctrlKey: true });
     click(editButton("toggleSidebar"));
@@ -169,7 +176,14 @@ describe("shortcuts editor", () => {
       (b) => b.textContent?.trim() === "全部恢复默认",
     );
     expect(resetAll).not.toBeUndefined();
-    click(resetAll as HTMLButtonElement);
+    await act(async () => {
+      click(resetAll as HTMLButtonElement);
+    });
+    expect(kbdText("newTerminal")).toBe("Ctrl+N");
+    expect(askMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      click(resetAll as HTMLButtonElement);
+    });
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
     expect(kbdText("toggleSidebar")).toBe("Ctrl+B");
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();

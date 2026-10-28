@@ -19,6 +19,7 @@ import { isMac } from "../../app/platform";
 import { WEB } from "../../ipc/env";
 import { formatKeySequence } from "../terminal/terminalKeys";
 import { terminalShortcutConflicts, type TerminalShortcutConflict } from "../terminal/terminalInput/shortcutConflicts";
+import { ask } from "../../ui/dialogs";
 import { IconChevronDown, IconChevronRight, IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 
 function describeWithheldInput(conflict: TerminalShortcutConflict): string {
@@ -62,6 +63,11 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
     setCaptureFor(id);
   };
 
+  const resetAll = async () => {
+    const ok = await ask("恢复全部快捷键的默认设置？\n你自定义的所有快捷键都会被重置。", { title: "全部恢复默认", kind: "warning" });
+    if (ok) resetAllKeybindings();
+  };
+
   const finishCapture = () => {
     setCaptureFor(null);
     setCaptureError(null);
@@ -93,16 +99,22 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
   const renderRow = (action: KeybindingAction) => {
     if (captureFor === action.id) {
       return (
-        <div key={action.id} className="flex items-center gap-2 text-xs" data-shortcut-row={action.id}>
+        <div key={action.id} className="flex flex-col gap-1 text-xs" data-shortcut-row={action.id}>
           <input
             autoFocus
             readOnly
             className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
             placeholder={`按下新快捷键（当前 ${formatBinding(bindings[action.id])}）`}
             aria-label={`捕获快捷键：${action.label}`}
+            aria-invalid={captureError ? true : undefined}
             onKeyDown={(event) => handleCaptureKey(action.id, event)}
             onBlur={finishCapture}
           />
+          {captureError && (
+            <p role="alert" className="text-xs text-red-300">
+              {captureError}
+            </p>
+          )}
         </div>
       );
     }
@@ -161,7 +173,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
         <IconCommand size={15} className="text-neutral-400" />
         <span className="nx-card-title">快捷键</span>
         <div className="nx-spacer" />
-        <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={resetAllKeybindings}>
+        <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void resetAll()}>
           <IconRefresh size={11} />
           全部恢复默认
         </button>
@@ -172,7 +184,6 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 @min-[640px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}
       </div>
-      {captureError && <p className="mt-2 text-[11px] text-red-300">{captureError}</p>}
       {conflicts.length > 0 && (
         <p className="mt-2 text-[11px] text-amber-300">
           检测到 {conflicts.length} 组冲突：
