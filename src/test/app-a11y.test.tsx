@@ -111,7 +111,7 @@ describe("landmarks and skip link", () => {
     }
     const dock = document.querySelector<HTMLElement>(".nx-left-dock");
     expect(dock?.getAttribute("role")).toBe("navigation");
-    expect(dock?.getAttribute("aria-label")).toBe("左栏");
+    expect(dock?.getAttribute("aria-label")).toBe("左侧栏");
   });
 
   it("makes the skip link the app's first child and points it at the main content", async () => {

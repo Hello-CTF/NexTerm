@@ -44,7 +44,7 @@ export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
     >
       {!showCron && !showWatch && !showAgents && (
         <div className="nx-hint px-3 py-3 text-center text-[11.5px]">
-          现在没有后台任务。AI 设置的定时任务、监视和子代理会显示在这里。
+          暂无后台任务。AI 设置的定时任务、监视和子代理会显示在这里。
         </div>
       )}
       {showCron && conversationId && (

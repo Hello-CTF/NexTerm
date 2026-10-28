@@ -71,7 +71,7 @@ function textOf(view: MountedView): string {
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签页"] [role="tab"]'),
   ];
 }
 
@@ -177,7 +177,7 @@ describe("AiSidebar tab context menu", () => {
 
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("无法重新生成标题"),
+      expect.stringContaining("未能重新生成标题"),
     );
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs[0].title).toBe("主机名: 旧主题");
   });
@@ -212,8 +212,8 @@ describe("AiSidebar tab context menu", () => {
 
     openTabMenu(view!, 0);
     expect(menuItem(view!, "关闭").disabled).toBe(false);
-    expect(menuItem(view!, "关闭左侧全部标签").disabled).toBe(true);
-    expect(menuItem(view!, "关闭右侧全部标签").disabled).toBe(false);
+    expect(menuItem(view!, "关闭左侧全部标签页").disabled).toBe(true);
+    expect(menuItem(view!, "关闭右侧全部标签页").disabled).toBe(false);
 
     click(menuItem(view!, "关闭"));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 1);
@@ -233,7 +233,7 @@ describe("AiSidebar tab context menu", () => {
     expect(ids).toHaveLength(3);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左侧全部标签"));
+    click(menuItem(view!, "关闭左侧全部标签页"));
     await flushUntil(() => useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.length === 2);
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id)).toEqual([
       ids[1],
@@ -254,7 +254,7 @@ describe("AiSidebar tab context menu", () => {
     const ids = useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭右侧全部标签"));
+    click(menuItem(view!, "关闭右侧全部标签页"));
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs.map((t) => t.id)).toEqual([
       ids[0],
@@ -272,7 +272,7 @@ describe("AiSidebar tab context menu", () => {
     await flush();
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左侧全部标签"));
+    click(menuItem(view!, "关闭左侧全部标签页"));
     await flushUntil(() => mocks.cancel.mock.calls.length > 0);
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("将停止本次回答"),
@@ -297,7 +297,7 @@ describe("AiSidebar tab context menu", () => {
     mocks.ask.mockResolvedValue(false);
 
     openTabMenu(view!, 1);
-    click(menuItem(view!, "关闭左侧全部标签"));
+    click(menuItem(view!, "关闭左侧全部标签页"));
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     await flush();
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(2);
@@ -325,7 +325,7 @@ describe("AiSidebar tab context menu", () => {
     mocks.cancel.mockRejectedValueOnce(new Error("offline"));
 
     openTabMenu(view!, 2);
-    click(menuItem(view!, "关闭左侧全部标签"));
+    click(menuItem(view!, "关闭左侧全部标签页"));
     await flushUntil(() => mocks.toast.mock.calls.some(([, text]) => String(text).includes("未能确认任务已停止")));
 
     expect(useUi.getState().aiBoards[GLOBAL_AI_BOARD_KEY].tabs).toHaveLength(3);

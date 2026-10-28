@@ -52,9 +52,9 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
     >
       <p className="text-neutral-200">收件箱说明</p>
       <p className="nx-hint mt-1">
-        终端标签上的圆点表示该会话需要你处理（响铃、程序通知或停在提问处），或刚刚结束了一条长命令。顶栏铃铛汇总所有工作区的这类会话，点击即可跳转。
+        终端标签页上的圆点表示该会话需要处理（响铃、程序通知或停在提问处），或刚结束了一条长命令。顶栏铃铛汇总所有工作区的此类会话，选择即可跳转。
       </p>
-      <p className="nx-hint mt-1">允许系统通知后，窗口不在前台时也能收到提醒；只影响本设备。</p>
+      <p className="nx-hint mt-1">允许系统通知后，窗口不在前台时也会收到提醒；仅影响本机。</p>
       {error && <p className="mt-1 text-[11.5px] text-red-400">{error}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {canEnable && (
@@ -66,7 +66,7 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
           通知设置
         </button>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" data-guidance="dismiss" onClick={dismissInboxGuidance}>
-          知道了
+          确定
         </button>
       </div>
     </section>

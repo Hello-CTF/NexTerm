@@ -82,7 +82,7 @@ function FleetUnsupported() {
             className="nx-btn nx-btn-outline nx-btn-sm"
             onClick={() => openAccountSyncSettings()}
           >
-            去设置 → 账号同步登录
+            前往「设置 → 账号同步」登录
           </button>
         </div>
       </div>
@@ -163,7 +163,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
   const revoke = async () => {
     const ok = await ask(
-      `撤销设备「${device.name}」的接入？\n\n撤销后，这台设备的登录凭据立即失效、远程连接会断开，且无法恢复。设备上的文件和程序不会被删除；要再次使用，需要重新生成接入码并重新接入。`,
+      `确定要撤销设备「${device.name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开，且无法恢复。设备上的文件和程序不会被删除；如需再次使用，请重新生成接入码并接入。`,
       { title: "撤销接入", kind: "warning" },
     );
     if (!ok) return;
@@ -206,7 +206,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const enabled = !agent.terminal_enabled;
     if (!enabled) {
       const ok = await ask(
-        `关闭「${device.name}」的远程终端？\n\n关闭后，这台设备将拒绝新的远程终端、文件和端口转发连接，「打开工作区」也不可用。已经打开的连接不会被强制断开，会保持到你自己关闭为止。之后可以随时重新开启。${online ? "" : "\n\n设备当前离线，设备本身会在下次连接服务器后同步这项设置。"}`,
+        `确定要关闭「${device.name}」的远程终端吗？\n\n关闭后，该设备将拒绝新的远程终端、文件和端口转发连接，「打开工作区」也不可用。已打开的连接不会被强制断开，将保持到手动关闭为止。之后可随时重新开启。${online ? "" : "\n\n设备当前离线，设备将在下次连接服务器后同步此设置。"}`,
         { title: "关闭远程终端", kind: "warning" },
       );
       if (!ok) return;
@@ -265,7 +265,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const statusTitle = !agent || revoked
     ? undefined
     : online
-      ? heartbeatOnline ? "最近 3 分钟内联系过服务器" : "与服务器保持连接"
+      ? heartbeatOnline ? "最近 3 分钟内与服务器有联系" : "与服务器保持连接"
       : `最近一次上报：${lastSeenAt ? formatTime(lastSeenAt) : "从未"}`;
 
   const lastSeenText = lastSeenAt ? (
@@ -296,7 +296,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
           <button
             type="button"
             className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
-            title="在这台设备上打开工作区"
+            title="在该设备上打开工作区"
             onClick={() => void connectDevice(device)}
           >
             <IconTerminal size={11} />
@@ -344,17 +344,17 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {versionBehind && (
         <div className="nx-hint mt-1 text-[11px]" role="note">
-          agent 版本过旧（代理版本 {agentRelease}，服务端 {serverRelease}）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需用安装脚本重装一次）。
+          设备代理版本过旧（设备 {agentRelease}，服务端 {serverRelease}）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需使用安装脚本重新安装一次）。
         </div>
       )}
 
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
           <div>
-            设备{lastSeenAt ? `在 ${formatTime(lastSeenAt)} 之后就没有再联系服务器` : "还没有联系过服务器"}。常见原因：设备关机或断网、后台服务没有运行。
+            设备{lastSeenAt ? `自 ${formatTime(lastSeenAt)} 起未再联系服务器` : "尚未联系过服务器"}。常见原因：设备关机或断网，或后台服务未运行。
           </div>
           <div className="mt-1 text-neutral-400">
-            先确认设备已开机联网；若后台服务没有运行，可在设备上重新执行 <code className="nx-code font-mono">nexterm-agent install</code>。仍无法恢复时，用页面右上角的「接入新设备」重新接入。
+            请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行 <code className="nx-code font-mono">nexterm-agent install</code>。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。
           </div>
         </div>
       )}
@@ -363,10 +363,10 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-amber-300" role="status">
           <span>
             {agent?.desired_autostart
-              ? "已设置随用户登录自动启动，但当前没有生效"
+              ? "已设置随用户登录自动启动，但当前未生效"
               : "已设置不自动启动，但后台服务当前仍会随登录启动"}
           </span>
-          {!online && <span className="nx-hint">设备离线，上线后才会调整</span>}
+          {!online && <span className="nx-hint">设备离线，上线后生效</span>}
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -407,7 +407,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       {!revoked && agent && detailsOpen && (
         <dl className="m-0 mt-2 flex flex-col gap-1.5">
           <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
-          <DetailRow label="代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
+          <DetailRow label="设备代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
           {agent.platform && <DetailRow label="系统平台">{platformLabel(agent.platform)}</DetailRow>}
           <DetailRow label="接入地址">
             {agent.current_url ? (
@@ -439,7 +439,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               <span>{agent.terminal_enabled ? "已开启" : "已关闭"}</span>
               <span className="nx-hint">· {agent.terminal_enabled ? "允许新建终端、文件和端口转发连接" : "拒绝新建远程连接，已打开的连接不受影响"}</span>
             </label>
-            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置拒绝或放行，设备上线后同步</div>}
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置处理连接请求，设备上线后同步</div>}
           </DetailRow>
           {!localHelper && <DetailRow label="随登录自动启动">
             <label className="flex flex-wrap items-center gap-1.5">
@@ -469,7 +469,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {!agent && !revoked && (
         <div className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-          该设备未安装设备代理，没有运行状态和指标。
+          该设备未安装设备代理，无运行状态和指标。
         </div>
       )}
       {createPortal(<ContextMenu state={menu} onClose={() => setMenu(null)} />, document.body)}
@@ -797,9 +797,9 @@ export function DevicesView() {
             </div>
             <div>
               <div className="text-[13px] text-neutral-300">
-                {authOff ? "这台服务器关闭了账号功能，设备管理不可用。" : "登录后才能查看与管理接入的设备。"}
+                {authOff ? "该服务器已关闭账号功能，设备管理不可用。" : "登录后方可查看与管理设备。"}
               </div>
-              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">登录入口在「设置 → 账号同步」里的「账号」卡。</div>}
+              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">登录入口位于「设置 → 账号同步」的「账号」卡片。</div>}
             </div>
           </div>
         </div>
@@ -858,9 +858,9 @@ export function DevicesView() {
         <IconMonitor size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">设备管理</span>
         <span className="nx-hint">
-          {error && devices === null ? "无法加载设备列表" : devices === null ? "正在加载…" : `共 ${devices.length} 台`}
+          {error && devices === null ? "未能加载设备列表" : devices === null ? "正在加载…" : `共 ${devices.length} 台`}
         </span>
-        {error && devices !== null && <span className="nx-hint text-red-300">刷新失败 · {error}</span>}
+        {error && devices !== null && <span className="nx-hint text-red-300">未能刷新设备列表：{error}</span>}
         <div className="nx-spacer" />
         <button
           ref={enrollButtonRef}
@@ -909,7 +909,7 @@ export function DevicesView() {
               </span>
             )}
             {deviceFilter !== "revoked" && hiddenRevokedCount > 0 && (
-              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已撤销接入的设备（过滤选「已撤销接入」可见）</span>
+              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已撤销接入的设备（选择「已撤销接入」过滤项可查看）</span>
             )}
           </div>
         )}
@@ -941,7 +941,7 @@ export function DevicesView() {
         {error && devices === null && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">无法加载设备列表 · {error}</span>
+            <span className="min-w-0 flex-1 break-words">未能加载设备列表：{error}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={load} disabled={loading}>
               <IconRefresh size={12} />
               重试
@@ -961,7 +961,7 @@ export function DevicesView() {
           </div>
         )}
         {devices !== null && devices.length > 0 && visibleDevices?.length === 0 && (
-          <div className="nx-hint py-2 text-center text-[12px]">没有符合当前搜索或过滤条件的设备。</div>
+          <div className="nx-hint py-2 text-center text-[12px]">无符合当前搜索或过滤条件的设备。</div>
         )}
 
         {visibleDevices && visibleDevices.length > 0 && (devicesVirtualized ? (
@@ -1005,7 +1005,7 @@ export function DevicesView() {
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          你只能看到自己接入的设备；超级管理员可以看到所有人的设备。
+          普通用户仅可查看自己接入的设备；超级管理员可查看所有设备。
         </span>
       </div>
     </div>

@@ -70,7 +70,7 @@ describe("Model usage summary", () => {
     mocks.usageSummary.mockRejectedValue(new Error("boom"));
     const view = mount(createElement(UsageSummarySection));
     await flush();
-    expect(view.container.textContent).toContain("用量加载失败");
+    expect(view.container.textContent).toContain("未能加载用量");
     view.unmount();
   });
 
@@ -78,7 +78,7 @@ describe("Model usage summary", () => {
     mocks.usageSummary.mockResolvedValue([]);
     const view = mount(createElement(UsageSummarySection));
     await flush();
-    expect(view.container.textContent).toContain("还没有已完成的 AI 任务");
+    expect(view.container.textContent).toContain("暂无已完成的 AI 任务");
     view.unmount();
   });
 });

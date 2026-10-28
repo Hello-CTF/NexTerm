@@ -57,7 +57,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconAlert size={19} />
               </span>
-              <div className="text-xs text-red-300">无法打开此会话：{conversationError}。请检查网络后重试。</div>
+              <div className="text-xs text-red-300">未能打开此会话：{conversationError}。请检查网络后重试</div>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 onClick={() => {
@@ -208,7 +208,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                       ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                     }}
                   >
-                    以后都拦截
+                    始终拦截
                   </button>
                 )}
               </div>

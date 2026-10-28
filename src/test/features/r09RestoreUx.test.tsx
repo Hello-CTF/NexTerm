@@ -289,7 +289,7 @@ async function openWorkspaceSwitcher(): Promise<void> {
 
 function restoreMenuItem(): HTMLButtonElement | undefined {
   return [...(mounted?.container.querySelectorAll<HTMLButtonElement>(".nx-menu-item") ?? [])].find(
-    (item) => item.textContent?.includes("恢复关闭的标签"),
+    (item) => item.textContent?.includes("恢复关闭的标签页"),
   );
 }
 

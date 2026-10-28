@@ -24,10 +24,10 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   };
   const sendDisabled = (!input.trim() && images.length === 0) || editSubmitting;
   const permTitle = permError
-    ? "AI 权限读取失败（点击查看并重试）"
+    ? "未能读取 AI 权限（选择以查看并重试）"
     : perm
       ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "这台主机" : "全局默认"}），含计划模式和免确认授权`
-      : "AI 权限与模式：读取中（点击设置）";
+      : "AI 权限与模式：读取中（选择以设置）";
   // Rarely used or experimental actions live here; with no terminal tab the
   // takeover entry is omitted instead of shown disabled.
   const moreItems: ComposerMoreItem[] = tabId
@@ -199,7 +199,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             <IconAlert size={10} className="shrink-0" />
             <span className="min-w-0 flex-1">{PRIVACY_IMAGE_NOTICE}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={acknowledgePrivacyImageNotice}>
-              知道了
+              确定
             </button>
           </div>
         )}
@@ -224,7 +224,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               ))
             )}
             {modelQuery === null && skillOptions !== null && skillOptions.length === 0 && (
-              <div className="border-t border-neutral-800/70 px-2 pt-1.5 text-[10.5px] text-neutral-500">在「设置 → AI 技能」里写好的技能也会出现在这里。</div>
+              <div className="border-t border-neutral-800/70 px-2 pt-1.5 text-[10.5px] text-neutral-500">在「设置 → AI 技能」中定义的技能也会显示在此处。</div>
             )}
           </div>
         )}
@@ -338,9 +338,9 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 aria-label="停止"
                 title={
                   activeRun?.cancellation === "cancelling"
-                    ? "停止当前任务：已受理，等待终态"
+                    ? "停止当前任务：已提交停止请求，等待任务结束"
                     : activeRun?.cancellation === "unconfirmed"
-                      ? "停止当前任务：停止未确认，点击重试"
+                      ? "停止当前任务：停止未确认，选择以重试"
                       : "停止当前任务（保留已完成的输出）"
                 }
                 disabled={activeRun?.cancellation === "cancelling"}

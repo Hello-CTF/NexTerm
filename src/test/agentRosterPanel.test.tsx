@@ -127,7 +127,7 @@ describe("AgentRosterPanel", () => {
     await mountPanel([entry({ presence: "gone", evidence: null })]);
     const row = rowFor("build");
     expect(row.textContent).toContain("未知");
-    expect(row.textContent).not.toContain("已消失");
+    expect(row.textContent).not.toContain("已不存在");
   });
 
   it("open and attach call the api and report the opened tab", async () => {
@@ -151,7 +151,7 @@ describe("AgentRosterPanel", () => {
     const row = rowFor("build");
     expect(buttonIn(row, "打开").disabled).toBe(true);
     expect(buttonIn(row, "附加").disabled).toBe(true);
-    expect(row.textContent).toContain("已消失");
+    expect(row.textContent).toContain("已不存在");
     expect(api.open).not.toHaveBeenCalled();
   });
 
@@ -213,7 +213,7 @@ describe("AgentRosterPanel", () => {
     expect(mocks.ask).toHaveBeenCalledOnce();
     expect(api.release).toHaveBeenCalledWith("build");
     expect(rowFor("build").textContent).toContain("释放待确认");
-    expect(rowFor("build").textContent).not.toContain("已消失");
+    expect(rowFor("build").textContent).not.toContain("已不存在");
     expect(buttonIn(rowFor("build"), "释放").disabled).toBe(true);
   });
 
@@ -251,7 +251,7 @@ describe("AgentRosterPanel", () => {
   it("unverifiable rows surface the automatic-write ban", async () => {
     await mountPanel([entry({ presence: "unverifiable", evidence: null })]);
     const row = rowFor("build");
-    expect(row.textContent).toContain("无法验证");
+    expect(row.textContent).toContain("无法确认");
     expect(row.textContent).toContain("自动写入已禁止");
   });
 
@@ -260,7 +260,7 @@ describe("AgentRosterPanel", () => {
     api.list.mockRejectedValueOnce(new Error("roster offline"));
     view = mount(createElement(AgentRosterPanel, { api }));
     await flush();
-    expect(view.container.textContent).toContain("加载失败");
+    expect(view.container.textContent).toContain("未能加载子代理列表");
     clickButton(view.container, "重试");
     await flush();
     expect(api.list).toHaveBeenCalledTimes(2);
@@ -281,10 +281,10 @@ describe("AgentRosterPanel", () => {
         expect(attach.disabled).toBe(true);
         expect(open.title).toContain("未知");
         expect(attach.title).toContain("未知");
-        expect(open.title).not.toContain("已消失");
+        expect(open.title).not.toContain("已不存在");
         expect(open.title).not.toContain("已被替换");
         expect(open.title).not.toContain("已退出");
-        expect(attach.title).not.toContain("已消失");
+        expect(attach.title).not.toContain("已不存在");
         expect(attach.title).not.toContain("已被替换");
         expect(attach.title).not.toContain("已退出");
       });

@@ -131,7 +131,7 @@ export function AppHeader({
           className="nx-header-hint text-xs text-neutral-500"
           data-wails-drag-region style={wailsDragRegionStyle}
         >
-          还没有工作区，双击左侧资产连接一台主机
+          暂无工作区，双击左侧资产连接主机
         </span>
       )}
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />

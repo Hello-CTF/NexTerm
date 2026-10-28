@@ -321,9 +321,9 @@ describe("Device management view - role differences", () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("登录后才能查看") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后方可查看") ?? false);
 
-    expect(document.body.textContent).toContain("登录入口在「设置 → 账号同步」里的「账号」卡");
+    expect(document.body.textContent).toContain("登录入口位于「设置 → 账号同步」的「账号」卡片");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
@@ -332,10 +332,10 @@ describe("Device management view - role differences", () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: false, registration_open: false, auth: "off" } });
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("已关闭账号功能") ?? false);
 
-    expect(document.body.textContent).toContain("这台服务器关闭了账号功能，设备管理不可用。");
-    expect(document.body.textContent).not.toContain("登录入口在");
+    expect(document.body.textContent).toContain("该服务器已关闭账号功能，设备管理不可用。");
+    expect(document.body.textContent).not.toContain("登录入口位于");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
@@ -581,7 +581,7 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("这段时间内没有数据");
+    expect(container.textContent).toContain("所选时间范围内暂无数据");
     expect(container.textContent).not.toContain("采样点数");
   });
 
@@ -596,12 +596,12 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("无法加载趋势") || false);
+    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("未能加载趋势") || false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("无法加载趋势");
+    expect(container.textContent).toContain("未能加载趋势");
     expect(container.textContent).toContain("context deadline exceeded");
-    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+    expect(container.textContent).not.toContain("设备离线，暂无近期指标");
   });
 
   it("does not confuse a trend failure without latest with an empty device", async () => {
@@ -614,10 +614,10 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("无法加载趋势") ?? false);
+    await flushUntil(() => container.textContent?.includes("未能加载趋势") ?? false);
 
     expect(container.textContent).toContain("database unavailable");
-    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+    expect(container.textContent).not.toContain("设备离线，暂无近期指标");
   });
 
   it("uses the requested window for a single sample time axis", async () => {
@@ -696,7 +696,7 @@ describe("Device management view - device list and metrics", () => {
   it("does not infer latest samples or window metadata from a samples-only response", async () => {
     route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 12.5)] } }));
     const container = mountMetrics();
-    await flushUntil(() => container.textContent?.includes("设备还没有上报指标") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备尚未上报指标") ?? false);
 
     expect(container.textContent).not.toContain("12.5%");
     expect(container.textContent).not.toContain("趋势窗口");
@@ -706,9 +706,9 @@ describe("Device management view - device list and metrics", () => {
   it("keeps the offline empty state distinct from a trend error", async () => {
     route(() => ({ payload: { samples: [], windowStart: NOW - 3600_000, windowEnd: NOW } }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("设备离线，没有近期指标") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备离线，暂无近期指标") ?? false);
 
-    expect(container.textContent).not.toContain("无法加载趋势");
+    expect(container.textContent).not.toContain("未能加载趋势");
   });
 
   it("filters the current list locally by search and all/online/offline/revoked status without new requests", async () => {
@@ -1055,7 +1055,7 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => document.body.textContent?.includes("browser-01") ?? false);
 
     const browserCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("browser-01"));
-    expect(browserCard?.textContent).toContain("没有运行状态和指标");
+    expect(browserCard?.textContent).toContain("无运行状态和指标");
     expect([...(browserCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
 
     expect([...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"))).toBeUndefined();
@@ -1075,7 +1075,7 @@ describe("Device management view - device list and metrics", () => {
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("无法加载设备列表") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("未能加载设备列表") ?? false);
     expect(document.body.textContent).toContain("数据库错误");
   });
 });
@@ -1273,7 +1273,7 @@ describe("Device management view - revocation and autostart", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("无法恢复");
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("重新接入");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("重新生成接入码");
     expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1441,7 +1441,7 @@ describe("Device management view - remote terminal switch and version note", () 
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("old-01") ?? false);
 
-    expect(cardWith("old-01")?.textContent).toContain("agent 版本过旧（代理版本 0.2.2，服务端 0.3.0）");
+    expect(cardWith("old-01")?.textContent).toContain("设备代理版本过旧（设备 0.2.2，服务端 0.3.0）");
     expect(cardWith("old-01")?.textContent).toContain("nexterm-agent update");
     for (const name of ["new-01", "same-01", "dev-01", "zero-01", "db-02"]) {
       expect(cardWith(name)?.textContent).not.toContain("服务端 0.3.0");
@@ -1494,7 +1494,7 @@ describe("Device management view - autostart drift from installed/enabled", () =
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
-    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前没有生效");
+    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前未生效");
     expandDetails(card);
     expect(card?.textContent).toContain("当前未生效");
     expect(card?.textContent).toContain("运行中");

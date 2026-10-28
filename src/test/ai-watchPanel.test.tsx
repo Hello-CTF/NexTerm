@@ -81,7 +81,7 @@ describe("WatchPanel", () => {
   it("shows an empty state when nothing is armed", async () => {
     const api = new SyntheticApi();
     view = mount(createElement(WatchPanel, { api, owner }));
-    await flushUntil(() => text().includes("当前没有进行中的监视"));
+    await flushUntil(() => text().includes("暂无进行中的监视"));
   });
 
   it("shows a spinner on refresh and ignores the response of a superseded load", async () => {
@@ -124,7 +124,7 @@ describe("WatchPanel", () => {
     });
     await flush();
     expect(text()).toContain("已取消监视「等待构建」");
-    expect(text()).toContain("当前没有进行中的监视");
+    expect(text()).toContain("暂无进行中的监视");
     const ended = view!.container.querySelector("details");
     expect(ended).not.toBeNull();
     expect(ended!.open).toBe(false);
@@ -139,7 +139,7 @@ describe("WatchPanel", () => {
     view = mount(createElement(WatchPanel, { api, owner }));
     await flushUntil(() => text().includes("等待构建"));
     click(button("取消监视「等待构建」"));
-    await flushUntil(() => text().includes("无法取消监视：后端不可用"));
+    await flushUntil(() => text().includes("未能取消监视：后端不可用"));
     expect(button("取消监视「等待构建」").disabled).toBe(false);
     expect(view!.container.querySelector("details")).toBeNull();
   });

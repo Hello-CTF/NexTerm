@@ -211,7 +211,7 @@ describe("CronPanel", () => {
     mocks.list.mockResolvedValue([]);
     mounted = mountPanel();
     await flush();
-    expect(mounted.container.textContent).toContain("这个会话还没有定时任务");
+    expect(mounted.container.textContent).toContain("此会话暂无定时任务");
   });
 
   it("shows loading errors and allows retry", async () => {
@@ -219,7 +219,7 @@ describe("CronPanel", () => {
     mounted = mountPanel();
     await flush();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("无法读取定时任务");
+    expect(text).toContain("未能读取定时任务");
     expect(text).toContain("存储故障");
 
     clickButton(mounted.container, "重试");
@@ -283,7 +283,7 @@ describe("CronPanel", () => {
     clickRowButton(mounted.container, "磁盘巡检", "停用");
     await flush();
     expect(mocks.setEnabled).toHaveBeenCalledWith(CONV_ID, "j-1", false);
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法停用任务"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("未能停用任务"));
     expect(mocks.list).toHaveBeenCalledTimes(2);
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
@@ -319,7 +319,7 @@ describe("CronPanel", () => {
     expect(mocks.unregister).toHaveBeenCalledWith(CONV_ID, "j-1");
     expect(mocks.toast).toHaveBeenCalledWith("success", "定时任务已删除");
     expect(mounted.container.textContent).not.toContain("磁盘巡检");
-    expect(mounted.container.textContent).toContain("这个会话还没有定时任务");
+    expect(mounted.container.textContent).toContain("此会话暂无定时任务");
   });
 
   it("keeps the job and reports deletion failures", async () => {
@@ -330,7 +330,7 @@ describe("CronPanel", () => {
 
     clickRowButton(mounted.container, "磁盘巡检", "删除");
     await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法删除任务"));
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("未能删除任务"));
     expect(mounted.container.textContent).toContain("磁盘巡检");
   });
 
@@ -591,7 +591,7 @@ describe("CronPanel", () => {
     expect(mocks.unregister).toHaveBeenNthCalledWith(2, CONV_ID, "j-10");
     expect(mocks.setEnabled).not.toHaveBeenCalled();
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("未能删除原任务");
+    expect(text).toContain("无法删除原任务");
     expect(text).toContain("原任务保持不变，请重试");
     expect(text).toContain("任务正在执行，不能删除");
     expect(mounted.container.querySelector('textarea[aria-label="任务提示词"]')).not.toBeNull();
@@ -828,12 +828,12 @@ describe("CronPanel", () => {
     expect(text).not.toContain("档案已删除");
 
     clickButton(mounted.container, "新建定时任务");
-    expect(mounted.container.textContent).toContain("无法读取模型列表：档案服务不可用");
+    expect(mounted.container.textContent).toContain("未能读取模型列表：档案服务不可用");
     const select = mounted.container.querySelector<HTMLSelectElement>(
       'select[aria-label="模型档案"]',
     )!;
     expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
-      "跟随当前档案（读取失败）",
+      "跟随当前档案（未能读取）",
     ]);
 
     setInputValue(
@@ -868,7 +868,7 @@ describe("CronPanel", () => {
 
     clickRowButton(mounted.container, "磁盘巡检", "编辑");
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("无法读取模型列表：档案服务不可用");
+    expect(text).toContain("未能读取模型列表：档案服务不可用");
     expect(text).toContain("无法确认该任务所用的模型");
     expect(text).not.toContain("可能已删除");
     expect(text).not.toContain("已不存在");
@@ -877,9 +877,9 @@ describe("CronPanel", () => {
     )!;
     expect(select.value).toBe("p-other");
     const labels = [...select.options].map((o) => o.textContent ?? "");
-    expect(labels[0]).toContain("跟随当前档案（读取失败）");
+    expect(labels[0]).toContain("跟随当前档案（未能读取）");
     expect(
-      labels.some((l) => l.includes("已存档案（读取失败）") && l.includes("p-other")),
+      labels.some((l) => l.includes("已存档案（未能读取）") && l.includes("p-other")),
     ).toBe(true);
   });
 

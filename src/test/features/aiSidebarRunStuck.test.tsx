@@ -102,7 +102,7 @@ function textOf(view: MountedView): string {
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签页"] [role="tab"]'),
   ];
 }
 
@@ -394,7 +394,7 @@ describe("AiSidebar stuck busy-state fixes", () => {
     click(shield);
     await flush();
 
-    expect(textOf(view!)).toContain("这台主机的模式");
+    expect(textOf(view!)).toContain("当前主机的模式");
     expect(textOf(view!)).toContain("改为跟随全局");
 
     const readonlyOption = [...view!.container.querySelectorAll("button")].find((b) =>

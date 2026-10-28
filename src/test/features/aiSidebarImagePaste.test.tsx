@@ -289,7 +289,7 @@ describe("AiSidebar image paste and attachment", () => {
     await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
     dispatchPaste(view!, pasteDataTransfer([imageItem(png("ack.png"))], []));
     await flushUntil(() => view!.container.textContent?.includes(PRIVACY_IMAGE_NOTICE) ?? false);
-    const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "知道了")!;
+    const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "确定")!;
     click(ack);
     await flush();
     expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);

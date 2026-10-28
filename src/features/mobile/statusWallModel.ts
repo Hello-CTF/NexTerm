@@ -16,14 +16,14 @@ export const WALL_GROUPS = ["needs_me", "running", "finished", "unknown"] as con
 export type WallGroup = (typeof WALL_GROUPS)[number];
 
 export const WALL_GROUP_LABELS: Record<WallGroup, string> = {
-  needs_me: "需要我",
+  needs_me: "需要处理",
   running: "运行中",
   finished: "已结束",
   unknown: "状态未知",
 };
 
 const STATE_LABELS: Record<AwarenessState, string> = {
-  needs_me: "需要我",
+  needs_me: "需要处理",
   running: "运行中",
   idle: "空闲",
   just_finished: "刚完成",

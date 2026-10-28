@@ -255,7 +255,7 @@ describe("app shell modes", () => {
     expect(mocks.toggleMaximiseWindow).toHaveBeenCalledTimes(1);
 
     await openAssetsSidebar();
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     expect(button("收起侧栏")).toBeNull();
     expect(document.documentElement.querySelector(".nx-app.is-compact")).toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(true);
@@ -268,11 +268,11 @@ describe("app shell modes", () => {
 
     expect(button("最小化窗口")).not.toBeNull();
     await openAssetsSidebar();
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     const backdrop = button("收起侧栏");
     expect(backdrop).not.toBeNull();
     act(() => backdrop?.click());
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).toBeNull();
   });
 
   it("mobile: overlay sidebars, no window controls, no double-click maximise and no local terminal", async () => {
@@ -288,7 +288,7 @@ describe("app shell modes", () => {
 
     expect(document.querySelector(".nx-app.is-compact")).not.toBeNull();
     await openAssetsSidebar();
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     expect(button("收起侧栏")).not.toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(false);
   });
@@ -307,7 +307,7 @@ describe("app shell modes", () => {
     // The asset drawer opens over the wall without closing it.
     await openAssetsSidebar();
     expect(wall()).not.toBeNull();
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     act(() => home()?.click());
     expect(wall()).toBeNull();
     expect(area()?.classList.contains("hidden")).toBe(false);
@@ -379,7 +379,7 @@ describe("app shell modes", () => {
 
     expect(button("最小化窗口")).toBeNull();
     await openAssetsSidebar();
-    expect(document.querySelector('[role="navigation"][aria-label="左栏"]')).not.toBeNull();
+    expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).not.toBeNull();
     expect(button("收起侧栏")).toBeNull();
   });
 

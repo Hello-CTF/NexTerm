@@ -22,9 +22,9 @@ const KIND_LABEL: Record<AiGrantKind, string> = {
 };
 
 const KIND_HINT: Record<AiGrantKind, string> = {
-  terminal_write: "AI 在终端里输入普通内容时不再询问",
+  terminal_write: "AI 在终端中输入普通内容时不再询问",
   session_exec: "AI 执行普通命令时不再询问",
-  db_query: "AI 查询这个数据库时不再询问",
+  db_query: "AI 查询此数据库时不再询问",
 };
 
 // Database assets support exactly one grant kind: db_query covers the AI
@@ -110,7 +110,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   const account = useAuth((s) => s.user);
   const scopeNote = account
     ? "授权只对当前账号生效。"
-    : "授权对这个 NexTerm 实例的所有会话生效，请只用于可信主机。";
+    : "授权对当前 NexTerm 实例的所有会话生效，请仅用于可信主机。";
   const storeName = account ? "当前账号" : "当前 NexTerm 实例";
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [devices, setDevices] = useState<FleetDevice[]>([]);
@@ -167,7 +167,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
       const confirmed = await ask(
-        `让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问？\n\n即使在只读模式下也会放行；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
+        `确定要让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问吗？\n\n只读模式下同样生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
         { title: "开启免确认授权", kind: "warning" },
       );
       if (!confirmed) return;
@@ -187,7 +187,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       }
       pushToast("success", on ? `「${target.name}」${KIND_LABEL[kind]}已免确认` : `「${target.name}」${KIND_LABEL[kind]}恢复为逐次确认`);
     } catch (e) {
-      pushToast("error", `无法${on ? "开启" : "关闭"}授权：${describeError(e)}`);
+      pushToast("error", `未能${on ? "开启" : "关闭"}授权：${describeError(e)}`);
     } finally {
       setBusy(null);
     }
@@ -200,7 +200,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const option = RULE_EXPIRY_OPTIONS.find((o) => o.value === expiry) ?? RULE_EXPIRY_OPTIONS[0];
     const scope = needsPath ? `${RULE_ACTION_LABEL[action]} ${pattern}` : RULE_ACTION_LABEL[action];
     const confirmed = await ask(
-      `为「${target.name}」添加授权规则？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问，只读模式下也会放行；高危和无法判断的操作仍会询问。`,
+      `确定要为「${target.name}」添加授权规则吗？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问，只读模式下同样生效；高危和无法判断的操作仍会询问。`,
       { title: "添加授权规则", kind: "warning" },
     );
     if (!confirmed) return false;
@@ -211,7 +211,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       pushToast("success", `已添加规则：${target.name} ${scope}`);
       return true;
     } catch (e) {
-      pushToast("error", `无法添加规则：${describeError(e)}`);
+      pushToast("error", `未能添加规则：${describeError(e)}`);
       return false;
     } finally {
       setBusy(null);
@@ -225,7 +225,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
       pushToast("success", `已撤销规则：${ruleScopeText(rule)}`);
     } catch (e) {
-      pushToast("error", `无法撤销规则：${describeError(e)}`);
+      pushToast("error", `未能撤销规则：${describeError(e)}`);
     } finally {
       setBusy(null);
     }
@@ -245,7 +245,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       setRules((prev) => prev.filter((r) => r.deviceId !== target.id));
       pushToast("success", `已撤销「${target.name}」的全部授权`);
     } catch (e) {
-      pushToast("error", `无法撤销授权：${describeError(e)}`);
+      pushToast("error", `未能撤销授权：${describeError(e)}`);
       void reload();
     } finally {
       setBusy(null);
@@ -257,7 +257,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   if (loadError) {
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-red-400">
-        <span className="min-w-0 flex-1">无法读取授权：{loadError}。请检查网络后重试。</span>
+        <span className="min-w-0 flex-1">未能读取授权：{loadError}。请检查网络后重试</span>
         <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
           重试
         </button>
@@ -287,7 +287,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       {current && (
         <div className="rounded-lg border border-neutral-800/60 px-2 py-1.5">
           <div className="mb-1 flex items-center gap-1.5">
-            <span className="text-[10.5px] text-neutral-500">这台主机</span>
+            <span className="text-[10.5px] text-neutral-500">当前主机</span>
             <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{current.name}</span>
             <span className="nx-count">{ASSET_KIND_LABEL[current.kind] ?? current.kind}</span>
           </div>
@@ -300,7 +300,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
           {current ? "其他已授权主机" : "已授权主机"}
           <span className="nx-count">{authorized.length}</span>
         </div>
-        {authorized.length === 0 && <div className="nx-hint text-[10.5px]">没有其他主机开启免确认授权。</div>}
+        {authorized.length === 0 && <div className="nx-hint text-[10.5px]">暂无其他主机开启免确认授权。</div>}
         {authorized.map((target) => {
           const open = expanded === target.id;
           const grant = grants[target.id];
@@ -325,7 +325,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                   disabled={busy === target.id}
-                  title="撤销这台主机的全部免确认授权和规则"
+                  title="撤销当前主机的全部免确认授权和规则"
                   aria-label={`撤销「${target.name}」的全部免确认授权和规则`}
                   onClick={() => void revokeAll(target)}
                 >
@@ -371,7 +371,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
             ))}
           </div>
         )}
-        {needle && matches.length === 0 && !pickedTarget && <div className="nx-hint mt-1 text-[10.5px]">没有匹配的未授权主机。</div>}
+        {needle && matches.length === 0 && !pickedTarget && <div className="nx-hint mt-1 text-[10.5px]">无匹配的未授权主机。</div>}
         {pickedTarget && (
           <div className="mt-1 rounded-lg border border-neutral-800/60 px-2 py-1.5">
             <div className="mb-1 flex items-center gap-1.5">
@@ -449,7 +449,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
             <div className="flex flex-wrap items-center gap-1">
               <select
                 className="nx-input py-0.5 text-[11px]"
-                aria-label="规则动作"
+                aria-label="规则操作"
                 value={action}
                 onChange={(event) => setAction(event.target.value as AiGrantRuleAction)}
               >
@@ -502,7 +502,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
             <button
               type="button"
               className="flex w-fit items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
-              title="只对匹配的路径或动作免确认，例如只允许修改 /etc/nginx/** 下的文件"
+              title="只对匹配的路径或操作免确认，例如只允许修改 /etc/nginx/** 下的文件"
               onClick={() => setFormOpen(true)}
             >
               <IconPlus size={10} />

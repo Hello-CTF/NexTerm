@@ -78,7 +78,7 @@ function rosterEntryEvidence(
     return { kind: "release", observedAt: entry.releasedAt, summary: "已确认释放" };
   }
   const label =
-    presence === "gone" ? "已消失" : presence === "replaced" ? "已被替换" : presence === "exited" ? "已退出" : null;
+    presence === "gone" ? "已不存在" : presence === "replaced" ? "已被替换" : presence === "exited" ? "已退出" : null;
   if (label === null) return null;
   if (PERSISTED_TERMINAL_STATES.has(entry.state)) {
     return { kind: "reconcile", observedAt: entry.updatedAt, summary: `${label}（已记录）` };
@@ -211,7 +211,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
               : resolution === "exited"
                 ? "终端已退出"
                 : "无法确认终端状态";
-      throw unsupported(`无法附加子代理 ${handle}：${text}`);
+      throw unsupported(`未能附加子代理 ${handle}：${text}`);
     },
 
     // Alias-only rename through the real command: the permanent handle and

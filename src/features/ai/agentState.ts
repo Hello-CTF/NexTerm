@@ -49,7 +49,7 @@ export function presenceView(
       // gone, and it always forbids automatic writes (see autoWriteAllowed).
       return {
         key: "unverifiable",
-        label: evidence ? "无法验证" : "无法验证（无证据）",
+        label: evidence ? "无法确认" : "无法确认（缺少依据）",
         tone: "warn",
         evidence,
         unknown: false,
@@ -57,7 +57,7 @@ export function presenceView(
     case "nonpersistent":
       return {
         key: "nonpersistent",
-        label: "非持久目标",
+        label: "非持久终端",
         tone: "muted",
         evidence,
         unknown: false,
@@ -65,16 +65,16 @@ export function presenceView(
     case "gone":
       // Gone requires authoritative absence; without evidence we cannot claim it.
       return evidence
-        ? { key: "gone", label: "已消失", tone: "error", evidence, unknown: false }
-        : unknownBecause("权威缺席证据");
+        ? { key: "gone", label: "已不存在", tone: "error", evidence, unknown: false }
+        : unknownBecause("终端缺失的确认依据");
     case "replaced":
       return evidence
         ? { key: "replaced", label: "已被替换", tone: "warn", evidence, unknown: false }
-        : unknownBecause("替换证据");
+        : unknownBecause("替换依据");
     case "exited":
       return evidence
         ? { key: "exited", label: "已退出", tone: "muted", evidence, unknown: false }
-        : unknownBecause("退出证据");
+        : unknownBecause("退出依据");
   }
 }
 
@@ -93,15 +93,15 @@ export function runStateView(
     case "done":
       return evidence
         ? { key: "done", label: "已完成", tone: "ok", evidence, unknown: false }
-        : unknownBecause("完成证据");
+        : unknownBecause("完成依据");
     case "error":
       return evidence
         ? { key: "error", label: "失败", tone: "error", evidence, unknown: false }
-        : unknownBecause("失败证据");
+        : unknownBecause("失败依据");
     case "canceled":
       return evidence
         ? { key: "canceled", label: "已取消", tone: "warn", evidence, unknown: false }
-        : unknownBecause("取消证据");
+        : unknownBecause("取消依据");
   }
 }
 

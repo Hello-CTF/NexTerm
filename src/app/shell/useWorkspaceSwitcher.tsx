@@ -39,7 +39,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
             w.kind === "tools" ? "工具" : null,
             w.panes.length > 1 ? "已分屏" : null,
             sessionReconnectStatusText(session) || (session ? sessionStatusText(session.status, session.liveness) : null),
-            `${tabCount} 个标签`,
+            `${tabCount} 个标签页`,
           ]
             .filter(Boolean)
             .join(" · "),
@@ -72,7 +72,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
       const latestClosed = closedTabEntries[0];
       items.push({
         kind: "item",
-        label: "恢复关闭的标签",
+        label: "恢复关闭的标签页",
         icon: <IconHistory size={12} />,
         hint: latestClosed?.title,
         accel: restoreBinding === null ? undefined : formatBinding(restoreBinding),

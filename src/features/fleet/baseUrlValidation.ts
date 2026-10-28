@@ -53,7 +53,7 @@ export function validateBaseURL(raw: string, insecure: boolean): BaseURLValidati
     return { url: "", error: "接入地址不能包含用户信息、查询参数或片段" };
   }
   if (scheme === "http" && !insecure && !isLocalOrPrivate(parsed.hostname)) {
-    return { url: "", error: "公网地址必须使用 HTTPS；设备凭证不能通过明文 HTTP 传输" };
+    return { url: "", error: "公网地址必须使用 HTTPS；设备凭据不能通过明文 HTTP 传输" };
   }
   // JS URL normalizes an empty path to "/"; here the trailing slash is manually stripped per Go semantics.
   const path = parsed.pathname.replace(/\/+$/, "");

@@ -57,7 +57,7 @@ describe("agentState presence", () => {
     expect(presenceView("gone", null).unknown).toBe(true);
     const view = presenceView("gone", evidence);
     expect(view.unknown).toBe(false);
-    expect(view.label).toBe("已消失");
+    expect(view.label).toBe("已不存在");
   });
 
   it("replaced and exited require evidence", () => {
@@ -70,14 +70,14 @@ describe("agentState presence", () => {
   it("unverifiable stays visible as unverifiable, never collapsing into gone", () => {
     const withEvidence = presenceView("unverifiable", evidence);
     const withoutEvidence = presenceView("unverifiable", null);
-    expect(withEvidence.label).toBe("无法验证");
-    expect(withoutEvidence.label).toBe("无法验证（无证据）");
-    expect(withoutEvidence.label).not.toContain("已消失");
+    expect(withEvidence.label).toBe("无法确认");
+    expect(withoutEvidence.label).toBe("无法确认（缺少依据）");
+    expect(withoutEvidence.label).not.toContain("已不存在");
     expect(withoutEvidence.unknown).toBe(false);
   });
 
   it("nonpersistent is modelled separately", () => {
-    expect(presenceView("nonpersistent", null).label).toBe("非持久目标");
+    expect(presenceView("nonpersistent", null).label).toBe("非持久终端");
   });
 });
 

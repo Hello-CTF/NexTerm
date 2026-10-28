@@ -238,7 +238,7 @@ describe("AiSidebar cron entry point", () => {
 
     mocks.cronList.mockResolvedValue([]);
     click(view!.container.querySelector('button[aria-label="刷新定时任务"]')!);
-    await flushUntil(() => textOf(view!).includes("这个会话还没有定时任务"));
+    await flushUntil(() => textOf(view!).includes("此会话暂无定时任务"));
     expect(cronButton(view!).getAttribute("aria-expanded")).toBe("true");
     expect(view!.container.querySelector('section[aria-label="后台任务"]')).not.toBeNull();
   });

@@ -27,7 +27,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
 
           {permError ? (
             <div className="px-2 py-3 text-center" role="alert">
-              <div className="nx-hint text-red-300">无法读取权限设置：{permError}</div>
+              <div className="nx-hint text-red-300">未能读取权限设置：{permError}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void loadPermission()}>
                 <IconRefresh size={11} />
                 重试
@@ -38,13 +38,13 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
           ) : (
             <>
               <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
-                {permScope ? "这台主机的模式" : "默认模式"}
+                {permScope ? "当前主机的模式" : "默认模式"}
                 <span className="nx-spacer" />
                 {permScope &&
                   (permDeviceOverride ? (
                     <button
                       className="text-[10.5px] text-neutral-500 hover:text-neutral-300"
-                      title="清除这台主机的专属模式，改用全局默认模式"
+                      title="清除当前主机的专属模式，改用全局默认模式"
                       onClick={followGlobalMode}
                     >
                       改为跟随全局
@@ -83,7 +83,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
                   <IconList size={12} />
                 </span>
                 <span className="nx-menu-label">计划模式</span>
-                <span className="nx-menu-hint">{planMode ? "已开启：先给方案，你确认后再执行" : "已关闭"}</span>
+                <span className="nx-menu-hint">{planMode ? "已开启：先提供方案，确认后再执行" : "已关闭"}</span>
               </button>
 
               <div className="mb-1 border-t border-neutral-800/60 pt-2 text-[11px] text-neutral-300">免确认授权</div>

@@ -454,7 +454,7 @@ describe("command palette workspace actions", () => {
       expect(mounted!.container.textContent).not.toContain("打开后台会话");
 
       expect(allTabs().filter((tab) => tab.kind === "forward" || tab.kind === "background")).toEqual([]);
-      expect(mocks.toast).toHaveBeenCalledWith("info", "先连接一台主机（双击左侧资产）");
+      expect(mocks.toast).toHaveBeenCalledWith("info", "请先连接主机（双击左侧资产）");
     },
   );
 
@@ -581,6 +581,6 @@ describe("command palette tab-to-new-pane actions", () => {
     setPaneTabs([], null);
     await mountPalette({ onClose: vi.fn() });
     click(optionByText(mounted!.container, "移到下方新窗格"));
-    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格没有标签");
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格无标签页");
   });
 });

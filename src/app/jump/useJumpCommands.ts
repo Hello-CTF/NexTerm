@@ -98,7 +98,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
 
   const hideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().hide(asset.id);
-    pushToast("info", `已隐藏「${asset.name}」，可点资产树里的眼睛按钮找回`);
+    pushToast("info", `已隐藏「${asset.name}」，可通过资产树中的眼睛图标恢复显示`);
   }, [pushToast]);
 
   const unhideAsset = useCallback((asset: Asset) => {
@@ -116,7 +116,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       section: "已打开的工作区",
       hint: [
         workspace.id === currentWorkspace?.id ? "当前" : null,
-        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签`,
+        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签页`,
         workspace.panes.length > 1 ? "已分屏" : null,
       ].filter(Boolean).join(" · "),
       icon: workspaceIcon(workspace),
@@ -178,7 +178,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace) {
-            pushToast("info", "先连接一台主机（双击左侧资产）");
+            pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.splitPane(direction, undefined, workspace.id);
@@ -187,13 +187,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       {
         id: "close-pane",
         label: "关闭当前窗格（保留标签页）",
-        hint: keyHint("closePane", "标签页移到相邻窗格"),
+        hint: keyHint("closePane", "标签页将移到相邻窗格"),
         icon: IconMergeH,
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace || workspace.panes.length < 2) {
-            pushToast("info", "当前工作区没有分屏");
+            pushToast("info", "当前工作区未分屏");
             return;
           }
           current.closePane(workspace.activePaneId, workspace.id);
@@ -206,7 +206,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       ] as const).map(({ id, label, edge, icon }): JumpCommand => ({
         id,
         label,
-        hint: "把当前标签移到新拆分的窗格",
+        hint: "将当前标签页移到新拆分的窗格",
         icon,
         run: () => {
           const current = useUi.getState();
@@ -217,7 +217,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
           const pane = workspace?.panes.find((item) => item.id === paneId);
           const tabId = pane?.activeTabId ?? pane?.tabs[pane.tabs.length - 1]?.id;
           if (!workspace || !pane || !tabId) {
-            pushToast("info", "当前窗格没有标签");
+            pushToast("info", "当前窗格无标签页");
             return;
           }
           current.splitPaneWithTab(tabId, pane.id, edge, workspace.id);
@@ -235,7 +235,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             current.workspaces[current.workspaces.length - 1];
           const sessionId = workspace?.kind === "session" ? workspace.sessionId : undefined;
           if (!sessionId) {
-            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            current.pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.addTab({
@@ -299,7 +299,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
             current.workspaces[current.workspaces.length - 1];
           if (workspace?.kind !== "session" || !workspace.sessionId) {
-            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            current.pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.addTab({
@@ -367,7 +367,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             pane?.tabs.find((item) => item.id === pane.activeTabId) ??
             pane?.tabs[pane.tabs.length - 1];
           if (!tab || tab.kind !== "terminal" || !tab.tabId || tab.dead || tab.exited) {
-            pushToast("info", "当前标签不是运行中的终端");
+            pushToast("info", "当前标签页不是运行中的终端");
             return;
           }
           void requestKillTab(tab.id);

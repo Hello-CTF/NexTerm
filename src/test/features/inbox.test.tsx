@@ -335,7 +335,7 @@ describe("inbox button", () => {
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();
 
     act(() => applyAwareness([attention({ tabId: "T2", seen: true }), attention({ tabId: "T1", state: "idle", reason: "input" })]));
-    expect(bell.getAttribute("aria-label")).toContain("没有");
+    expect(bell.getAttribute("aria-label")).toContain("暂无");
 
     // An older helper cannot share the mark: the entry clears on this device only.
     act(() => applyAwareness([attention({ tabId: "T2", since: "2026-10-27T11:00:00Z" })]));
@@ -343,7 +343,7 @@ describe("inbox button", () => {
     click(view.container.querySelector('button[aria-haspopup="dialog"]') as Element);
     click(view.container.querySelector('[data-inbox-tab="T2"] button[aria-label^="标记"]') as Element);
     await flush();
-    expect(bell.getAttribute("aria-label")).toContain("没有");
+    expect(bell.getAttribute("aria-label")).toContain("暂无");
   });
 
   it("explains disabled rows inline, starts focus on the first row, and closes when focus leaves", () => {
@@ -355,7 +355,7 @@ describe("inbox button", () => {
     const first = view.container.querySelector("[data-inbox-tab] button");
     expect(document.activeElement).toBe(first);
     const gone = view.container.querySelector('[data-inbox-tab="GONE"]')!;
-    expect(gone.querySelector("[data-inbox-reason]")?.textContent).toContain("此端没有打开这个终端");
+    expect(gone.querySelector("[data-inbox-reason]")?.textContent).toContain("此端未打开该终端");
     expect(view.container.querySelector('[data-inbox-tab="T2"] [data-inbox-reason]')).toBeNull();
 
     // Focus moving to a terminal elsewhere closes the panel without taking the focus back.

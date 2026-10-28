@@ -153,7 +153,7 @@ describe("UsageRing details", () => {
     await flush();
     const text = view.container.textContent ?? "";
     expect(text).toContain("用量明细");
-    expect(text).toContain("本会话 2 轮");
+    expect(text).toContain("本会话 2 次回答");
     expect(text).toContain("可重试错误 1");
     expect(text).toContain("失败 1");
     expect(text).toContain("对话 4 次");
@@ -190,7 +190,7 @@ describe("UsageRing details", () => {
     const view = mount(createElement(UsageRing, { loadSummary }));
     click(view.container.querySelector("button")!);
     await flush();
-    expect(view.container.textContent ?? "").toContain("用量汇总加载失败");
+    expect(view.container.textContent ?? "").toContain("未能加载用量汇总");
     expect(loadSummary).toHaveBeenCalledTimes(1);
     view.unmount();
   });
@@ -208,13 +208,13 @@ describe("UsageRing details", () => {
     );
     click(view.container.querySelector("button")!);
     await flush();
-    expect(view.container.textContent ?? "").toContain("用量汇总加载失败");
+    expect(view.container.textContent ?? "").toContain("未能加载用量汇总");
 
     clickButton(view.container, "重试");
     await flush();
     const text = view.container.textContent ?? "";
     expect(loadSummary).toHaveBeenCalledTimes(2);
-    expect(text).not.toContain("用量汇总加载失败");
+    expect(text).not.toContain("未能加载用量汇总");
     expect(text).toContain("对话 4 次");
     expect(text).toContain("（全部会话）");
     view.unmount();
@@ -234,7 +234,7 @@ describe("UsageRing details", () => {
       }),
     );
     const text = view.container.textContent ?? "";
-    expect(text).toContain("主调用 输入 120 · 输出 25 tokens");
+    expect(text).toContain("对话请求 输入 120 · 输出 25 tokens");
     expect(text).toContain("摘要 输入 120 · 输出 21 tokens");
     expect(text).not.toContain("价格");
     expect(text).not.toContain("¥");
