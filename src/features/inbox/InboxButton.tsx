@@ -59,7 +59,7 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
           className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
           style={wailsNoDragRegionStyle}
           disabled={!reachable || opening}
-          title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端未打开该终端"}
+          title={shown ? "转到该终端" : reachable ? `在当前客户端打开（${entry.place}）` : "当前客户端未打开该终端"}
           onClick={open}
         >
           <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
@@ -88,7 +88,7 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
       </div>
       {(!reachable || !markable) && (
         <div className="pl-[18px] pt-0.5 text-[11px] text-[var(--nx-fg-soft)]" data-inbox-reason="">
-          {!reachable && <p>此端未打开该终端，无法跳转。</p>}
+          {!reachable && <p>当前客户端未打开该终端，无法跳转。</p>}
           {!markable && <p>打开该终端后方可标记为已读。</p>}
         </div>
       )}

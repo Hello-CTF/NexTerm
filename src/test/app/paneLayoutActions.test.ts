@@ -310,7 +310,7 @@ describe("split a pane with a dragged tab", () => {
   it("refuses to split a pane off its only tab, a too-small pane, a short window and past the depth limit", () => {
     const before = useUi.getState().workspaces;
     expect(useUi.getState().splitPaneWithTab("p1-tab", "p1", "right")).toBeNull();
-    expect(useUi.getState().toasts.at(-1)?.text).toContain("只有这一个标签");
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("只有一个标签页");
     expect(useUi.getState().workspaces).toBe(before);
 
     useUi.setState({ workspaces: [ws([pane("p1", [file("a"), file("b")])])] });

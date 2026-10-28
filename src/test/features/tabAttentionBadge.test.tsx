@@ -56,8 +56,8 @@ describe("tab attention badge", () => {
   it("marks a terminal that needs its user", () => {
     report({ state: "needs_me" });
     const signalled = renderTab(terminal());
-    expect(signalled.badge?.getAttribute("aria-label")).toBe("需要你处理");
-    expect(signalled.title).toContain("需要你处理");
+    expect(signalled.badge?.getAttribute("aria-label")).toBe("需要处理");
+    expect(signalled.title).toContain("需要处理");
   });
 
   it("shows a grey question mark instead of an old state when the state is unknown", () => {

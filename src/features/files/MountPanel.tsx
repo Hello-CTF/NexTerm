@@ -46,7 +46,7 @@ function MountUnavailable({ reason }: { reason: string }) {
           <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
-            远程文件读写请使用左栏的<span className="text-neutral-300">「文件」</span>按钮
+            远程文件读写请使用左侧栏的<span className="text-neutral-300">「文件」</span>按钮
             （无需任何本机依赖）。
           </p>
         </div>

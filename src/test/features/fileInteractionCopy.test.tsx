@@ -312,7 +312,7 @@ describe("MountPanel disconnect confirmation", () => {
     );
     clickButton(mounted!.container, "断开");
     await waitFor(() =>
-      expect(mocks.ask).toHaveBeenCalledWith("断开 Z:？", { kind: "warning" }),
+      expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("断开挂载点 Z:？"), { kind: "warning" }),
     );
     expect(mocks.mountRemove).toHaveBeenCalledWith("Z:", SID);
   });

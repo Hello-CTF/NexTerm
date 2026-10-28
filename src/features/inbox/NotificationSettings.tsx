@@ -12,7 +12,7 @@ const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; la
 
 function statusText(status: SystemNotificationStatus | null): string {
   if (!status) return "正在检查系统通知…";
-  if (!status.available) return status.reason ?? "此端不支持系统通知";
+  if (!status.available) return status.reason ?? "当前客户端不支持系统通知";
   if (status.permission === "denied") return status.reason ?? "系统不允许 NexTerm 发送通知";
   if (status.permission === "prompt") return "尚未允许系统通知";
   return "系统通知可用";

@@ -25,7 +25,7 @@ export const STATE_RULE_EXPORT_VERSION = 1;
 export type StateRuleTarget = "needs_me" | "running" | "idle" | "just_finished";
 
 export const STATE_RULE_TARGETS: readonly { value: StateRuleTarget; label: string }[] = [
-  { value: "needs_me", label: "需要我" },
+  { value: "needs_me", label: "需要处理" },
   { value: "running", label: "运行中" },
   { value: "idle", label: "空闲" },
   { value: "just_finished", label: "刚结束" },

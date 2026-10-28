@@ -3068,7 +3068,7 @@ export function AssetEditor({
                           </select>
                           {privateKeys.length === 0 && (
                             <div className="nx-hint mt-1.5">
-                              ↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左栏「凭据」中新建。
+                              ↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左侧栏「凭据」中新建。
                             </div>
                           )}
                           {vaultCredId && (

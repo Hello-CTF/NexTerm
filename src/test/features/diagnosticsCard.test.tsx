@@ -192,7 +192,7 @@ describe("DiagnosticsCard", () => {
   it("surfaces status load failures", async () => {
     mocks.status.mockRejectedValue({ code: "internal", message: "boom" });
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => text().includes("boom"));
+    await flushUntil(() => text().includes("应用内部出现错误，请稍后重试"));
   });
 
   it("opens the capture root from the top-level button", async () => {

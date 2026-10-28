@@ -203,7 +203,7 @@ export function readAsDataUrl(file: File): Promise<string> {
 export function statusText(s: StatusLine): string {
   if (s.phase === "paused") return `接管已暂停：${s.detail ?? "用户暂停"}`;
   if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期的命令输出…";
-  if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 轮 · 正在思考…` : "正在思考…";
+  if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 步 · 正在思考…` : "正在思考…";
   if (s.phase === "tool_args") {
     return `${preparingLabel(s.tool)} · 已生成参数 ${formatBytes(s.chars ?? 0)}`;
   }

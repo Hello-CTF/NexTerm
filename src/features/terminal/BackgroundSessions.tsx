@@ -96,7 +96,7 @@ function ago(ms: number): string {
 
 const STATE_LABELS: Record<SessionAttentionState, string> = {
   running: "运行中",
-  needs_me: "需要我",
+  needs_me: "需要处理",
   just_finished: "刚完成",
   idle: "空闲",
   exited: "已退出",
@@ -142,7 +142,7 @@ function statusView(tab: BackgroundTab): StatusView {
 export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "exitCode">): AwarenessBadge | null {
   switch (tab.state) {
     case "needs_me":
-      return { kind: "needs_me", label: "需要你处理" };
+      return { kind: "needs_me", label: "需要处理" };
     case "just_finished": {
       const code = tab.exitCode;
       const failed = typeof code === "number" && code !== 0;
@@ -204,7 +204,7 @@ function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
 }
 
 // Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
-const NEEDS_ME_NOTE = "「需要我」表示程序正在等待回应：响铃、发出通知或显示了需要选择的提示";
+const NEEDS_ME_NOTE = "「需要处理」表示程序正在等待回应：响铃、发出通知或显示了需要选择的提示";
 
 const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
   accent: "font-medium text-blue-300",

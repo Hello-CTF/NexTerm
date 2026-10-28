@@ -572,7 +572,7 @@ export function ModelManager({
                             min={0}
                             max={2}
                             step={0.1}
-                            placeholder="端点默认（0–2）"
+                            placeholder="接口地址默认（0–2）"
                             value={draft.temperature ?? ""}
                             onChange={(e) =>
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
@@ -607,7 +607,7 @@ export function ModelManager({
                         id={`${fieldId}-reasoning-effort`}
                         ariaLabel="思考强度"
                         className="font-mono"
-                        placeholder="端点默认"
+                        placeholder="接口地址默认"
                         value={draft.reasoningEffort ?? ""}
                         options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
                         onChange={(value) => patch({ reasoningEffort: value })}
@@ -623,7 +623,7 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder="端点默认（tokens）"
+                        placeholder="接口地址默认（tokens）"
                         value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
@@ -643,7 +643,7 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder="端点默认"
+                            placeholder="接口地址默认"
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
@@ -658,7 +658,7 @@ export function ModelManager({
                             min={0}
                             max={3600}
                             step={1}
-                            placeholder="端点默认；0 为关闭"
+                            placeholder="接口地址默认；0 为关闭"
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />

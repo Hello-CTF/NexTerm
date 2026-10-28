@@ -226,7 +226,7 @@ export function AuditView() {
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
-            ? "审计记录加载失败"
+            ? "未能加载审计记录"
             : knownTotal !== null
               ? `共 ${knownTotal} 条`
               : `已加载 ${entries.length} 条`}

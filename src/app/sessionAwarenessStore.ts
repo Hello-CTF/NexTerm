@@ -125,7 +125,7 @@ export function awarenessBadge(awareness: SessionAwareness | undefined): Awarene
   switch (awareness.state) {
     case "needs_me":
       if (awareness.seen) return null;
-      return { kind: "needs_me", label: "需要你处理" };
+      return { kind: "needs_me", label: "需要处理" };
     case "just_finished": {
       if (awareness.seen) return null;
       const code = awareness.exitCode;

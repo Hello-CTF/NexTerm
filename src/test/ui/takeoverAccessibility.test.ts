@@ -44,6 +44,12 @@ function keyDown(key: string, init: KeyboardEventInit = {}): void {
   });
 }
 
+const RECLAIM_CHORD: KeyboardEventInit = { ctrlKey: true, shiftKey: true };
+
+function reclaimKey(init: KeyboardEventInit = {}): void {
+  keyDown("E", { ...RECLAIM_CHORD, ...init });
+}
+
 describe("takeover accessibility and overlay priority", () => {
   let mounted: MountedView | undefined;
 
@@ -73,7 +79,7 @@ describe("takeover accessibility and overlay priority", () => {
   it("announces the reclaim key by default and omits it when unbound", async () => {
     mounted = mount(createElement(TakeoverBanner));
     const status = () => mounted?.container.querySelector('[role="status"]');
-    expect(status()?.textContent).toContain("按 Esc 可收回控制权");
+    expect(status()?.textContent).toContain("按 Ctrl+Shift+E 可收回控制权");
     expect(status()?.textContent).not.toContain("未绑定");
 
     act(() => setKeybinding("reclaimTakeover", null));
@@ -96,22 +102,23 @@ describe("takeover accessibility and overlay priority", () => {
     expect(status?.textContent).toContain("AI 正在操作此终端，可写");
     expect(mounted.container.querySelector('[role="timer"]')?.getAttribute("aria-label")).toContain("已用时");
 
-    keyDown("Escape", { isComposing: true });
-    keyDown("Escape", { repeat: true });
-    expect(mocks.takeoverExit).not.toHaveBeenCalled();
     keyDown("Escape");
+    reclaimKey({ isComposing: true });
+    reclaimKey({ repeat: true });
+    expect(mocks.takeoverExit).not.toHaveBeenCalled();
+    reclaimKey();
     expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith("job-1");
     await flush();
     expect(mocks.takeoverExit).toHaveBeenCalledExactlyOnceWith(
       "terminal-1",
       "ownership-token",
-      "用户按 Esc 收回控制权",
+      "用户按 Ctrl+Shift+E 收回控制权",
     );
     await flush();
     expect(useUi.getState().takeover).toBeNull();
   });
 
-  it("lets a visible dialog consume Escape before takeover", async () => {
+  it("lets a visible dialog take priority over the reclaim shortcut", async () => {
     const resolve = vi.fn();
     mounted = mount(
       createElement(
@@ -127,12 +134,14 @@ describe("takeover accessibility and overlay priority", () => {
       });
     });
 
+    reclaimKey();
+    expect(mocks.takeoverExit).not.toHaveBeenCalled();
+    expect(useUi.getState().takeover).toEqual(takeover);
     keyDown("Escape");
     expect(resolve).toHaveBeenCalledExactlyOnceWith(false);
     expect(mocks.takeoverExit).not.toHaveBeenCalled();
-    expect(useUi.getState().takeover).toEqual(takeover);
 
-    keyDown("Escape");
+    reclaimKey();
     await flush();
     expect(mocks.takeoverExit).toHaveBeenCalledOnce();
     await flush();

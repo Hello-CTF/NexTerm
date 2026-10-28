@@ -204,7 +204,7 @@ describe("Unlock and empty-reference copy", () => {
 
     clickButton(mounted!.container, "解锁");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误：Incorrect master password"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码不正确，请重新输入"),
     );
   });
 

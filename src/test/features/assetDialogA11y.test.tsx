@@ -407,9 +407,9 @@ describe("asset list load failure", () => {
       .mockResolvedValueOnce([{ ...WEB }]);
     mounted = mountWithClient(createElement(AssetTree));
 
-    await waitFor(() => expect(mounted!.container.textContent).toContain("资产列表加载失败"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("未能加载资产列表"));
     const alert = mounted!.container.querySelector('[role="alert"]');
-    expect(alert?.textContent).toContain("db locked");
+    expect(alert?.textContent).toContain("应用内部出现错误，请稍后重试");
     expect(mounted!.container.textContent).not.toContain("还没有资产");
 
     clickButton(mounted!.container, "重试");
@@ -532,7 +532,7 @@ describe("asset delete failure", () => {
       expect.objectContaining({ kind: "warning" }),
     );
     await flush();
-    expect(mounted!.container.textContent).toContain("删除失败：内部错误：disk on fire");
+    expect(mounted!.container.textContent).toContain("删除失败：应用内部出现错误，请稍后重试");
     expect(mocks.toast).not.toHaveBeenCalledWith("info", "已删除资产「web-1」");
 
     clickButton(mounted!.container, "重试");
@@ -552,7 +552,7 @@ describe("asset delete failure", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     await waitFor(() => expect(mocks.assetDelete).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("删除失败：内部错误：disk on fire");
+    expect(mounted!.container.textContent).toContain("删除失败：应用内部出现错误，请稍后重试");
 
     clickButton(mounted!.container, "知道了");
     await flush();

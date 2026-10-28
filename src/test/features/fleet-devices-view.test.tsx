@@ -1070,7 +1070,7 @@ describe("Device management view - device list and metrics", () => {
     route(fleetHandler({ devices: { devices: [] } }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("还没有接入设备") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("暂无已接入的设备") ?? false);
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));

@@ -976,7 +976,7 @@ describe("terminal dead-tab overlay", () => {
     await waitFor(() => expect(mocks.helperUpdate).toHaveBeenCalledWith("s1", false));
     await waitFor(() => expect(mounted?.container.textContent).toContain("已恢复为更新前的版本"));
     expect(mounted.container.textContent).toContain("更新失败，已恢复为原版本");
-    expect(mounted.container.textContent).toContain("helper update failed; previous daemon restored");
+    expect(mounted.container.textContent).toContain("操作未成功，请稍后重试");
   });
 
   it("requires an explicit offline SHA confirmation through the real terminal menu", async () => {

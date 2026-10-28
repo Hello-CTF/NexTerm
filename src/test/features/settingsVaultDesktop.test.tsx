@@ -174,7 +174,7 @@ describe("Desktop credential protection disable paths", () => {
     click(buttonWithText(vaultCard()!, "修改密码")!);
     await flushUntil(() => passwordField(vaultCard()!, "当前密码") !== null);
     await submitPasswordForm(vaultCard()!, { current: "wrong-password", next: "new-password-1" }, "确认修改");
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("保护密码错误：incorrect protection password"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("保护密码不正确，请重新输入"));
 
     expect(mocks.unlock).toHaveBeenCalledWith("wrong-password");
     expect(mocks.changePassword).not.toHaveBeenCalled();

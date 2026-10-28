@@ -210,7 +210,7 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
-            ? "命令记录加载失败"
+            ? "未能加载命令记录"
             : knownTotal !== null
               ? `共 ${knownTotal} 条`
               : `已加载 ${entries.length} 条`}

@@ -326,7 +326,7 @@ describe("ModelManager timeouts and connectivity testing", () => {
     expect(mocks.refresh).toHaveBeenCalledOnce();
     expect(mocks.toast).toHaveBeenCalledWith(
       "info",
-      "端点返回的模型列表里有 2 个格式异常的条目，已跳过",
+      "模型列表中有 2 项无法识别，已忽略",
     );
   });
 });

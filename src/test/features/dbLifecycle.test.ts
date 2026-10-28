@@ -145,7 +145,7 @@ describe("Database tab closing", () => {
     await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(false);
 
     expect(tabExists(tab.id)).toBe(true);
-    expect(toastText()).toContain("数据库断开失败：内部错误：Internal error: failed to close database connection: driver: bad conn");
+    expect(toastText()).toContain("数据库断开失败：应用内部出现错误，请稍后重试");
 
     await expect(useUi.getState().closeTab(tab.id)).resolves.toBe(true);
 
@@ -564,7 +564,7 @@ describe("Workspace AI close guards", () => {
     expect(workspaceExists("ws")).toBe(true);
     expect(useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft).toEqual(sqlDraft());
     expect(useUi.getState().aiBoards["ws"]).toBeDefined();
-    expect(toastText()).toContain("运行状态不可用");
+    expect(toastText()).toContain("未能确认是否已停止");
   });
 
   it("keeps the workspace when cancellation is rejected", async () => {

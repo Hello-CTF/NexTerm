@@ -179,13 +179,13 @@ describe("DockerPanel copy", () => {
 
     click(mounted.container.querySelector('button[title="重启"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("success", "已重启 web"),
+      expect(mocks.toast).toHaveBeenCalledWith("success", "已重启容器 web"),
     );
 
     mocks.action.mockRejectedValueOnce(new Error("daemon unavailable"));
     click(mounted.container.querySelector('button[title="停止"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "停止 web 失败：daemon unavailable"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "停止容器 web 失败：daemon unavailable。请刷新列表后重试。"),
     );
   });
 
@@ -265,7 +265,7 @@ describe("DbPanel copy", () => {
 
   it("describes actual Redis console behavior without internal section references", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => !text().includes("正在键列表加载…"));
+    await flushUntil(() => !text().includes("正在加载键列表…"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );

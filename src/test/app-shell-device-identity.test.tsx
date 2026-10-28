@@ -259,7 +259,7 @@ describe("AppShell auth account cleanup ordering", () => {
 		expect(useAuth.getState().error?.message).toContain("t1");
 		expect(useAuth.getState().error?.message).toContain("s-dev");
 		expect(useAuth.getState().error?.message).toContain("补充清理");
-		expect(useUi.getState().toasts.some((toast) => toast.text.includes("设备清理未完成"))).toBe(true);
+		expect(useUi.getState().toasts.some((toast) => toast.text.includes("设备连接未能全部关闭"))).toBe(true);
 		expect(useUi.getState().workspaces).toEqual([]);
 	});
 

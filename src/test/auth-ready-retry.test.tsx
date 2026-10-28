@@ -321,7 +321,7 @@ describe("data refetch after successful auth=on login (real AssetTree)", () => {
     // Groups and assets inside groups all come back after login (guard against group assets being hidden), credential/snippet counts recover
     await flushUntil(() => text().includes("web-01"));
     expect(text()).toContain("生产");
-    expect(assetTreeFooterCount("凭据库（左栏查看）")).toBe("");
+    expect(assetTreeFooterCount("凭据库（左侧栏查看）")).toBe("");
     expect(assetTreeFooterCount("打开命令片段：保存常用命令，插入或在当前终端执行")).toContain("1");
     expect(vaultStatusText()).toBe("");
     expect(useUi.getState().sessions.map((s) => s.id)).toContain("s-1");
