@@ -195,6 +195,13 @@ export function EarlierHistoryPanel({
     );
   }, []);
 
+  // The copy outcome is feedback about a finished action: success clears sooner than a failure.
+  useEffect(() => {
+    if (!copyNote) return;
+    const timer = window.setTimeout(() => setCopyNote(null), copyNote.startsWith("复制失败") ? 8000 : 3500);
+    return () => window.clearTimeout(timer);
+  }, [copyNote]);
+
   const canLoad = canLoadEarlierHistory(state) && !loading;
   let status: string;
   if (error) status = `加载失败：${error}`;

@@ -382,6 +382,12 @@ export function MultiHostLogTail({ sessions, singleHost = false }: { sessions: S
   const filters = useMemo(() => compileLogFilters(include, exclude), [include, exclude]);
   const visibleLines = filterMergedLines(bufferRef.current.visibleLines(), filters);
 
+  useEffect(() => {
+    if (!saveMessage) return;
+    const timer = window.setTimeout(() => setSaveMessage(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [saveMessage]);
+
   const save = async () => {
     const content = exportMergedLines(bufferRef.current.retainedLines());
     if (!content || saving) return;

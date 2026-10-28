@@ -162,6 +162,12 @@ export function ProcessFinderPanel({
     }
   };
 
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
   const kill = async (sessionId: string, host: string, match: FinderMatch) => {
     const pid = matchPID(match);
     if (pid <= 0 || busy) return;
