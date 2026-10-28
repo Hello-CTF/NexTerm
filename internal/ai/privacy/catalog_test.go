@@ -56,6 +56,15 @@ type catalogFixture struct {
 	paths   []string
 }
 
+// fixtureValidate stands in for the inference checks: content containing
+// "incompatible" is rejected.
+func fixtureValidate(config, tokenizer []byte) error {
+	if strings.Contains(string(config), "incompatible") || strings.Contains(string(tokenizer), "incompatible") {
+		return errors.New("unsupported")
+	}
+	return nil
+}
+
 func newCatalogFixture(t *testing.T, installation Installation, files map[string][]byte) *catalogFixture {
 	t.Helper()
 	fixture := &catalogFixture{}
@@ -85,7 +94,7 @@ func newCatalogFixture(t *testing.T, installation Installation, files map[string
 		_, _ = w.Write(data)
 	}))
 	t.Cleanup(server.Close)
-	fixture.catalog = &Catalog{baseURL: server.URL, client: server.Client()}
+	fixture.catalog = &Catalog{baseURL: server.URL, client: server.Client(), validate: fixtureValidate}
 	return fixture
 }
 
@@ -118,7 +127,7 @@ func TestCatalogUsesLatestStableImmutableRevisionAndChecksums(t *testing.T) {
 	paths := append([]string(nil), fixture.paths...)
 	fixture.mu.Unlock()
 	for _, path := range paths {
-		if strings.Contains(path, "/resolve/") && !strings.Contains(path, "/resolve/"+release.Revision+"/") {
+		if rest, ok := strings.CutPrefix(path, "/"+modelRepository+"/resolve/"); ok && !revisionPattern.MatchString(strings.SplitN(rest, "/", 2)[0]) {
 			t.Fatalf("mutable download path %q", path)
 		}
 	}
@@ -207,5 +216,57 @@ func TestCatalogManifestRejectsMissingOrUnsafeEntries(t *testing.T) {
 	}
 	if _, ok := manifest.Files["../../outside"]; ok {
 		t.Fatal("remote path retained")
+	}
+}
+
+func TestCatalogChoosesByContentNotVersionNumber(t *testing.T) {
+	type release struct {
+		version, revision, config string
+	}
+	build := func(releases []release) *Catalog {
+		files := map[string]map[string][]byte{}
+		sums := map[string]map[string]ModelFile{}
+		var tags []string
+		for _, r := range releases {
+			tags = append(tags, fmt.Sprintf(`{"name":%q,"targetCommit":%q}`, r.version, r.revision))
+			installation, data := fixtureInstallation(t, INT8)
+			data["config.json"] = []byte(r.config)
+			hash := sha256.Sum256(data["config.json"])
+			installation.Files["config.json"] = ModelFile{Size: int64(len(data["config.json"])), SHA256: hex.EncodeToString(hash[:])}
+			files[r.revision] = data
+			sums[r.revision] = installation.Files
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/refs") {
+				fmt.Fprintf(w, `{"tags":[%s]}`, strings.Join(tags, ","))
+				return
+			}
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"+modelRepository+"/resolve/"), "/")
+			if len(parts) != 3 || parts[1] != "int8" || sums[parts[0]] == nil {
+				http.NotFound(w, r)
+				return
+			}
+			if parts[2] == "CHECKSUMS.json" {
+				_ = json.NewEncoder(w).Encode(sums[parts[0]])
+				return
+			}
+			_, _ = w.Write(files[parts[0]][parts[2]])
+		}))
+		t.Cleanup(server.Close)
+		return &Catalog{baseURL: server.URL, client: server.Client(), validate: fixtureValidate}
+	}
+	a, b, c := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+
+	got, err := build([]release{{"v0.9.0", a, "ok"}, {"v1.2.0", b, "ok"}, {"v2.0.0-rc.1", c, "incompatible"}}).Resolve(t.Context())
+	if err != nil || got.Release.Version != "v1.2.0" || got.NewerIncompatible != nil {
+		t.Fatalf("compatible v1 not chosen: %+v %v", got, err)
+	}
+	got, err = build([]release{{"v0.9.0", a, "ok"}, {"v1.0.0", b, "ok"}, {"v2.0.0", c, "incompatible"}}).Resolve(t.Context())
+	if err != nil || got.Release.Version != "v1.0.0" || got.NewerIncompatible == nil || got.NewerIncompatible.Version != "v2.0.0" {
+		t.Fatalf("incompatible newer release not reported: %+v %v", got, err)
+	}
+	got, err = build([]release{{"v0.9.0", a, "ok"}, {"v1.0.0", b, "incompatible"}}).Resolve(t.Context())
+	if err != nil || got.Release.Version != "v0.9.0" || got.NewerIncompatible == nil || got.NewerIncompatible.Version != "v1.0.0" {
+		t.Fatalf("fallback to compatible release failed: %+v %v", got, err)
 	}
 }

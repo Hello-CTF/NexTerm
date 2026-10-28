@@ -83,9 +83,11 @@ type Status struct {
 	Latest    *ModelRelease  `json:"latest,omitempty"`
 	// LatestSizes is the download size of each precision of Latest, when known.
 	LatestSizes map[Precision]int64 `json:"latestSizes,omitempty"`
-	Runtime     RuntimeStatus       `json:"runtime"`
-	Selection   *SelectionStatus    `json:"selection,omitempty"`
-	DiskUsage   int64               `json:"diskUsage"`
+	// NewerIncompatible is a newer release that needs a newer NexTerm to load.
+	NewerIncompatible *ModelRelease    `json:"newerIncompatible,omitempty"`
+	Runtime           RuntimeStatus    `json:"runtime"`
+	Selection         *SelectionStatus `json:"selection,omitempty"`
+	DiskUsage         int64            `json:"diskUsage"`
 	// CanManage is false for server accounts that may not download or delete
 	// the instance-wide model files.
 	CanManage bool `json:"canManage"`
@@ -103,21 +105,22 @@ func RuntimeDirectory() string {
 func defaultRuntimeCheck() error { return inference.Available(RuntimeDirectory()) }
 
 type Manager struct {
-	settings    Settings
-	protector   store.SecretProtector
-	root        string
-	shared      bool
-	catalog     *Catalog
-	load        EngineLoader
-	runtime     func() error
-	mu          sync.Mutex
-	downloads   map[string]DownloadState
-	cancels     map[string]context.CancelFunc
-	latest      *ModelRelease
-	latestSizes map[Precision]int64
-	closed      bool
-	stopped     atomic.Bool
-	workers     sync.WaitGroup
+	settings          Settings
+	protector         store.SecretProtector
+	root              string
+	shared            bool
+	catalog           *Catalog
+	load              EngineLoader
+	runtime           func() error
+	mu                sync.Mutex
+	downloads         map[string]DownloadState
+	cancels           map[string]context.CancelFunc
+	latest            *ModelRelease
+	latestSizes       map[Precision]int64
+	newerIncompatible *ModelRelease
+	closed            bool
+	stopped           atomic.Bool
+	workers           sync.WaitGroup
 	// engineSlot serializes engine use; waiting on it honors the caller's
 	// context. Never acquire mu while holding the slot.
 	engineSlot chan struct{}
@@ -256,6 +259,10 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 			}
 		}
 	}
+	if m.newerIncompatible != nil {
+		newer := *m.newerIncompatible
+		status.NewerIncompatible = &newer
+	}
 	m.mu.Unlock()
 	status.Runtime.Supported = true
 	if err := m.runtimeError(); err != nil {
@@ -311,7 +318,8 @@ func (m *Manager) CheckUpdates(ctx context.Context) (ModelRelease, error) {
 	m.mu.Lock()
 	m.clearNoticeLocked(id)
 	m.mu.Unlock()
-	release, err := m.catalog.Latest(ctx)
+	resolution, err := m.catalog.Resolve(ctx)
+	release := resolution.Release
 	if err != nil {
 		return release, err
 	}
@@ -331,6 +339,7 @@ func (m *Manager) CheckUpdates(ctx context.Context) (ModelRelease, error) {
 	m.mu.Lock()
 	m.latest = &release
 	m.latestSizes = sizes
+	m.newerIncompatible = resolution.NewerIncompatible
 	m.mu.Unlock()
 	return release, nil
 }
@@ -714,10 +723,11 @@ func (m *Manager) download(ctx context.Context, id string, precision Precision) 
 	defer m.workers.Done()
 	var installed ModelRelease
 	err := func() error {
-		release, err := m.catalog.Latest(ctx)
+		resolution, err := m.catalog.Resolve(ctx)
 		if err != nil {
 			return err
 		}
+		release := resolution.Release
 		installation, err := m.catalog.Manifest(ctx, release, precision)
 		if err != nil {
 			return err
@@ -727,6 +737,7 @@ func (m *Manager) download(ctx context.Context, id string, precision Precision) 
 			m.latestSizes = map[Precision]int64{}
 		}
 		m.latest = &release
+		m.newerIncompatible = resolution.NewerIncompatible
 		m.latestSizes[precision] = installation.Size()
 		m.mu.Unlock()
 		_, err = m.catalog.Download(ctx, m.root, installation, func(progress DownloadProgress) {

@@ -14,6 +14,7 @@ export interface PrivacyStatus {
   config: PrivacyConfig;
   installed: PrivacyInstallation[];
   latest?: PrivacyRelease;
+  newerIncompatible?: PrivacyRelease;
   latestSizes?: Partial<Record<PrivacyPrecision, number>>;
   runtime: { supported: boolean; reason?: string };
   selection?: { available: boolean; error?: string };

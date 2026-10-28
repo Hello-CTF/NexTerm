@@ -110,6 +110,12 @@ describe("AI privacy settings", () => {
     expect(mocks.download).not.toHaveBeenCalled();
   });
 
+  it("tells the user a newer incompatible release needs a NexTerm update", async () => {
+    mocks.status.mockResolvedValue({ ...baseline(), newerIncompatible: { version: "v2.0.0", revision: "e".repeat(40) } });
+    mounted = mount(createElement(PrivacyCard));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("有新版本 v2.0.0，需要更新 NexTerm 后才能使用"));
+  });
+
   it("disables downloading and enabling on an unsupported device", async () => {
     mocks.status.mockResolvedValue({ ...baseline(), runtime: { supported: false, reason: "本地 AI 脱敏需要 macOS 13.4 或更新版本" } });
     mounted = mount(createElement(PrivacyCard));

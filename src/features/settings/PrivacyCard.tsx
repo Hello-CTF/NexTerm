@@ -176,6 +176,9 @@ function PrivacyCardBody() {
                   : `有新版本 ${status.latest.version}，下载后可切换`}
             </p>
           )}
+          {status.newerIncompatible && (
+            <p className="nx-hint text-[11.5px]">有新版本 {status.newerIncompatible.version}，需要更新 NexTerm 后才能使用</p>
+          )}
           {status.download.running && (
             <div className="flex flex-col gap-1" role="status">
               <div className="flex items-center justify-between gap-2 text-xs">
