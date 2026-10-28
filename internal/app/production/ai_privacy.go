@@ -3,7 +3,6 @@ package production
 import (
 	"context"
 	"errors"
-	"os"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy/inference"
@@ -27,11 +26,7 @@ func loadPrivacyEngine(ctx context.Context, directory string, installation priva
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	runtimeDir := os.Getenv("NEXTERM_AI_RUNTIME_DIR")
-	if runtimeDir == "" {
-		runtimeDir = inference.DefaultRuntimeDirectory()
-	}
-	engine, err := inference.Open(directory, runtimeDir, string(installation.Precision))
+	engine, err := inference.Open(directory, privacy.RuntimeDirectory(), string(installation.Precision))
 	if err != nil {
 		return nil, err
 	}
@@ -44,6 +39,10 @@ type privacyConfigureRequest struct {
 	Revision  string            `json:"revision"`
 }
 type privacyDownloadRequest struct {
+	Precision privacy.Precision `json:"precision"`
+}
+type privacyRemoveRequest struct {
+	Revision  string            `json:"revision"`
 	Precision privacy.Precision `json:"precision"`
 }
 
@@ -67,6 +66,11 @@ func registerPrivacyCommands(dispatcher *ipc.Dispatcher, manager *privacy.Manage
 		func() error {
 			return ipc.Register(dispatcher, "ai_privacy_download", func(ctx context.Context, _ *ipc.Call, input privacyDownloadRequest) (privacy.Status, error) {
 				return privacyCommandResult(manager.StartDownload(ctx, input.Precision))
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_privacy_remove", func(ctx context.Context, _ *ipc.Call, input privacyRemoveRequest) (privacy.Status, error) {
+				return privacyCommandResult(manager.Remove(ctx, input.Revision, input.Precision))
 			})
 		},
 		func() error {

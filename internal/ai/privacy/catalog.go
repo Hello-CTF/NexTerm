@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,28 @@ import (
 
 const modelRepository = "QuantumNous/astrlink-guard"
 const maxModelFile = 512 << 20
+
+// supportedModelMajor is the release line this runtime can load; a later
+// major version may change inputs or labels and is never selected.
+const supportedModelMajor = "v0"
+
+const (
+	responseHeaderTimeout = 30 * time.Second
+	defaultIdleTimeout    = 60 * time.Second
+)
+
+// ErrIntegrity marks downloaded bytes that do not match the published manifest.
+var ErrIntegrity = errors.New("model integrity check failed")
+
+// ErrStalled marks a transfer that made no progress within the idle timeout.
+var ErrStalled = errors.New("model download stalled")
+
+// HTTPStatusError reports an unexpected response from the model host.
+type HTTPStatusError struct{ Code int }
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("model download returned HTTP %d", e.Code)
+}
 
 type Precision string
 
@@ -57,29 +80,78 @@ type DownloadProgress struct {
 type Catalog struct {
 	client  *http.Client
 	baseURL string
+	// idleTimeout aborts a response body that delivers no bytes for this long.
+	idleTimeout time.Duration
 }
 
+// NewCatalog bounds the wait for response headers and for each stretch without
+// progress instead of the whole transfer, so slow but steady links complete.
 func NewCatalog() *Catalog {
-	return &Catalog{client: &http.Client{Timeout: 15 * time.Minute}, baseURL: "https://huggingface.co"}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
+	return &Catalog{client: &http.Client{Transport: transport}, baseURL: "https://huggingface.co", idleTimeout: defaultIdleTimeout}
 }
 
 var revisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func (c *Catalog) get(ctx context.Context, path string) (io.ReadCloser, error) {
+	idle := c.idleTimeout
+	if idle <= 0 {
+		idle = defaultIdleTimeout
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
+		cancel(nil)
 		return nil, err
 	}
+	timer := time.AfterFunc(idle, func() { cancel(ErrStalled) })
 	resp, err := c.client.Do(req)
 	if err != nil {
+		timer.Stop()
+		cancel(nil)
+		if errors.Is(context.Cause(ctx), ErrStalled) {
+			return nil, ErrStalled
+		}
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
+		timer.Stop()
 		resp.Body.Close()
-		return nil, fmt.Errorf("model download returned HTTP %d", resp.StatusCode)
+		cancel(nil)
+		return nil, &HTTPStatusError{Code: resp.StatusCode}
 	}
-	return resp.Body, nil
+	timer.Reset(idle)
+	return &idleBody{ctx: ctx, body: resp.Body, timer: timer, idle: idle, cancel: cancel}, nil
+}
+
+// idleBody cancels its request when no bytes arrive within idle and reports
+// that as ErrStalled; caller cancellation still surfaces as the context error.
+type idleBody struct {
+	ctx    context.Context
+	body   io.ReadCloser
+	timer  *time.Timer
+	idle   time.Duration
+	cancel context.CancelCauseFunc
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.body.Read(p)
+	if n > 0 {
+		b.timer.Reset(b.idle)
+	}
+	if err != nil && err != io.EOF && errors.Is(context.Cause(b.ctx), ErrStalled) {
+		err = ErrStalled
+	}
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	err := b.body.Close()
+	b.cancel(nil)
+	return err
 }
 
 func (c *Catalog) readJSON(ctx context.Context, path string, value any) error {
@@ -109,7 +181,7 @@ func (c *Catalog) Latest(ctx context.Context) (ModelRelease, error) {
 	}
 	var release ModelRelease
 	for _, tag := range refs.Tags {
-		if !semver.IsValid(tag.Name) || semver.Prerelease(tag.Name) != "" || !revisionPattern.MatchString(tag.Commit) {
+		if !semver.IsValid(tag.Name) || semver.Prerelease(tag.Name) != "" || semver.Major(tag.Name) != supportedModelMajor || !revisionPattern.MatchString(tag.Commit) {
 			continue
 		}
 		if release.Version == "" || semver.Compare(tag.Name, release.Version) > 0 {
@@ -167,11 +239,39 @@ func (c *Catalog) Manifest(ctx context.Context, release ModelRelease, p Precisio
 	return installation, nil
 }
 
+// Size is the total number of bytes the installation downloads.
+func (i Installation) Size() int64 {
+	var total int64
+	for _, file := range i.Files {
+		total += file.Size
+	}
+	return total
+}
+
+// installedMatches reports whether directory already holds this exact manifest
+// and its files verify.
+func installedMatches(ctx context.Context, directory string, installation Installation) bool {
+	existing, err := ReadInstallation(directory)
+	if err != nil || existing.Revision != installation.Revision || existing.Precision != installation.Precision || !maps.Equal(existing.Files, installation.Files) {
+		return false
+	}
+	return VerifyInstallation(ctx, directory, existing) == nil
+}
+
 // Download writes a new installation directory and only publishes it after all
-// hashes match. The caller switches the active selection after loading succeeds.
-func (c *Catalog) Download(ctx context.Context, root string, installation Installation, progress func(DownloadProgress)) (string, error) {
+// hashes match. An identical verified installation is reused without network
+// access. release is called before an existing directory is replaced so the
+// caller can close anything that still uses its files.
+func (c *Catalog) Download(ctx context.Context, root string, installation Installation, progress func(DownloadProgress), release func(directory string) error) (string, error) {
 	if !installation.Precision.Valid() || !revisionPattern.MatchString(installation.Revision) {
 		return "", errors.New("invalid installation")
+	}
+	destination := filepath.Join(root, installation.Revision+"-"+string(installation.Precision))
+	if installedMatches(ctx, destination, installation) {
+		return destination, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return "", err
@@ -216,7 +316,7 @@ func (c *Catalog) Download(ctx context.Context, root string, installation Instal
 			return "", err
 		}
 		if n != file.Size || hex.EncodeToString(hash.Sum(nil)) != file.SHA256 {
-			return "", fmt.Errorf("model integrity check failed: %s", name)
+			return "", fmt.Errorf("%w: %s", ErrIntegrity, name)
 		}
 	}
 	data, err := json.Marshal(installation)
@@ -229,14 +329,13 @@ func (c *Catalog) Download(ctx context.Context, root string, installation Instal
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	destination := filepath.Join(root, installation.Revision+"-"+string(installation.Precision))
-	if existing, err := ReadInstallation(destination); err == nil && existing.Revision == installation.Revision && existing.Precision == installation.Precision {
-		if err := VerifyInstallation(ctx, destination, existing); err == nil {
-			return destination, nil
-		}
-	}
 	backup := ""
 	if _, err := os.Lstat(destination); err == nil {
+		if release != nil {
+			if err := release(destination); err != nil {
+				return "", err
+			}
+		}
 		backup, err = os.MkdirTemp(root, ".replaced-")
 		if err != nil {
 			return "", err
@@ -319,4 +418,53 @@ func VerifyInstallation(ctx context.Context, directory string, installation Inst
 		}
 	}
 	return nil
+}
+
+// sweepStaleDirectories removes temporary directories that an interrupted
+// download or replacement left behind. Call it only while no download runs.
+func sweepStaleDirectories(root string) error {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, ".download-") || strings.HasPrefix(name, ".replaced-") {
+			if err := os.RemoveAll(filepath.Join(root, name)); err != nil {
+				failures = append(failures, err)
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// checkInstallation inspects a selected installation without hashing it: the
+// manifest must parse and match, and every file must exist with its size.
+func checkInstallation(directory string, config Config) (Installation, error) {
+	installation, err := ReadInstallation(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return installation, userError("本地隐私模型文件缺失，请重新下载模型")
+	}
+	if err != nil {
+		var safe *UserError
+		if errors.As(err, &safe) {
+			return installation, err
+		}
+		return installation, userError("无法读取本地隐私模型，请检查文件权限或重新下载")
+	}
+	if installation.Revision != config.Revision || installation.Precision != config.Precision {
+		return installation, userError("隐私模型清单不匹配，请重新下载模型")
+	}
+	for _, name := range requiredModelFiles(installation.Precision) {
+		entry, ok := installation.Files[name]
+		info, err := os.Stat(filepath.Join(directory, name))
+		if !ok || err != nil || !info.Mode().IsRegular() || info.Size() != entry.Size {
+			return installation, userError("本地隐私模型文件缺失或不完整，请重新下载模型")
+		}
+	}
+	return installation, nil
 }

@@ -194,6 +194,11 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_privacy_remove": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_privacy_status": {
       nested: false,
       channel: false,
@@ -2878,6 +2883,7 @@ export const ipcContractManifest = {
     "ai_privacy_check_updates",
     "ai_privacy_configure",
     "ai_privacy_download",
+    "ai_privacy_remove",
     "ai_privacy_status",
     "ai_run_events",
     "ai_run_get",

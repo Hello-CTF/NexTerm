@@ -34,6 +34,7 @@ func TestProductionPrivacyCommandsAreOwnerScopedAndDefaultOff(t *testing.T) {
 		"ai_privacy_check_updates":   "{}",
 		"ai_privacy_download":        `{"precision":"int8"}`,
 		"ai_privacy_cancel_download": "{}",
+		"ai_privacy_remove":          `{"revision":"` + strings.Repeat("a", 40) + `","precision":"int8"}`,
 	}
 	for command, args := range commands {
 		response := dispatchWithOwner(production.Dispatcher, "", command, args)
@@ -65,6 +66,15 @@ func TestProductionPrivacyCommandsAreOwnerScopedAndDefaultOff(t *testing.T) {
 	response = dispatchWithOwner(production.Dispatcher, "alice", "ai_privacy_configure", `{"enabled":false,"precision":"int8","revision":"../outside"}`)
 	if response.OK {
 		t.Fatal("accepted a path as a revision")
+	}
+	if status.CanManage {
+		t.Fatal("server account may manage instance-wide models")
+	}
+	for _, command := range []string{"ai_privacy_download", "ai_privacy_check_updates", "ai_privacy_remove"} {
+		response := dispatchWithOwner(production.Dispatcher, "alice", command, commands[command])
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeForbidden {
+			t.Fatalf("non-admin %s = %+v", command, response)
+		}
 	}
 }
 

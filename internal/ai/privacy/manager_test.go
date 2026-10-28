@@ -99,12 +99,17 @@ func managedFixture(t *testing.T) (*Manager, *memoryPrivacySettings, Installatio
 		loads.Add(1)
 		return &fixtureEngine{}, nil
 	})
+	manager.runtime = nil
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
 	return manager, settings, installation, loads
 }
 func privacyOwner(t *testing.T, id, conversation string) context.Context {
 	t.Helper()
 	return WithConversation(ipc.WithUserID(t.Context(), id), conversation)
+}
+func privacyAdmin(t *testing.T, id string) context.Context {
+	t.Helper()
+	return ipc.WithRole(privacyOwner(t, id, "conversation"), "superadmin")
 }
 
 func TestManagerDefaultDisabledDoesNotReadModelsOrVault(t *testing.T) {
@@ -280,7 +285,7 @@ func TestManagerDownloadDoesNotEnableProtection(t *testing.T) {
 	manager, _, installation, _ := managedFixture(t)
 	_, files := fixtureInstallation(t, INT8)
 	manager.catalog = newCatalogFixture(t, installation, files).catalog
-	ctx := privacyOwner(t, "alice", "conversation")
+	ctx := privacyAdmin(t, "alice")
 	if _, err := manager.StartDownload(ctx, INT8); err != nil {
 		t.Fatal(err)
 	}
@@ -292,8 +297,11 @@ func TestManagerDownloadDoesNotEnableProtection(t *testing.T) {
 	if status.Download.Running || status.Download.Error != "" {
 		t.Fatalf("download=%+v", status.Download)
 	}
-	if status.Config.Enabled || status.Config.Revision != "" {
-		t.Fatal("download silently activated or selected model")
+	if status.Config.Enabled {
+		t.Fatal("download silently activated protection")
+	}
+	if status.Config.Revision != installation.Revision || status.Download.Completed == nil || status.Download.Completed.Version != installation.Version {
+		t.Fatalf("first download was not selected or reported: %+v", status)
 	}
 	if len(status.Installed) == 0 {
 		t.Fatal("download did not install a model")
@@ -351,9 +359,10 @@ func TestManagerDownloadCancellationBelongsToInitiatingOwner(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := NewManager(newPrivacySettings(), t.TempDir(), false, nil)
+	manager.runtime = nil
 	manager.catalog = &Catalog{baseURL: server.URL, client: server.Client()}
 	defer manager.Shutdown(context.Background())
-	alice := privacyOwner(t, "alice", "conversation")
+	alice := privacyAdmin(t, "alice")
 	bob := privacyOwner(t, "bob", "conversation")
 	if _, err := manager.StartDownload(alice, INT8); err != nil {
 		t.Fatal(err)
@@ -381,7 +390,7 @@ func TestManagerDownloadCancellationBelongsToInitiatingOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Download.Running || status.Download.Error == "" {
+	if status.Download.Running || status.Download.Error == "" || !status.Download.Canceled {
 		t.Fatalf("cancellation not visible: %+v", status.Download)
 	}
 	if status.Config.Enabled || status.Config.Revision != "" || len(status.Installed) > 0 {
