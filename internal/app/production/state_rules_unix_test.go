@@ -98,6 +98,22 @@ func (f stateRuleFixture) awaitRevision(t *testing.T, account string, want func(
 	}
 }
 
+// awaitStatus waits for the runtime to record the outcome of a push.
+func (f stateRuleFixture) awaitStatus(t *testing.T, account string, want func([]stateRuleHelperStatusDTO) bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		status := f.runtime.status(account)
+		if want(status) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("status of %q stayed %+v", account, status)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func listDurable(t *testing.T, provider base.DurableProvider) {
 	t.Helper()
 	if _, err := provider.ListDurableDescriptors(context.Background()); err != nil {
@@ -128,10 +144,11 @@ func TestStateRuleChangesReachAnOnlineHelper(t *testing.T) {
 	if len(rules) != 1 || rules[0].ID != hostRule.ID || rules[0].Keys != "\r" || rules[0].Lines != 5 {
 		t.Fatalf("helper rules = %+v (other host rule %s must not apply)", rules, otherHost.ID)
 	}
-	status := f.runtime.status("")
-	if len(status) != 1 || status[0].Status != stateRuleStatusApplied || status[0].Revision != revision {
-		t.Fatalf("status after push = %+v", status)
-	}
+	// The helper holds the revision before the push reply reaches the
+	// runtime, so the recorded status can trail it briefly.
+	f.awaitStatus(t, "", func(status []stateRuleHelperStatusDTO) bool {
+		return len(status) == 1 && status[0].Status == stateRuleStatusApplied && status[0].Revision == revision
+	})
 
 	// Invalid rules, and host rules for an unknown host, are rejected
 	// visibly and the helper keeps its rules.
