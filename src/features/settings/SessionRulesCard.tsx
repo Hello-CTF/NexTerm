@@ -26,6 +26,7 @@ import {
   IconUpload,
   IconXCircle,
 } from "../../ui/icons";
+import { useHostLabeler } from "../hosts/hostLabel";
 import { StateRuleForm, useRuleValidation, type HostOption } from "../session/StateRuleForm";
 import {
   emptyRuleForm,
@@ -46,7 +47,6 @@ function decodeBase64Text(base64: string): string {
 }
 
 // The built-in local device (store.BuiltinLocalAssetID), which runs the local helper.
-const BUILTIN_LOCAL_ASSET_ID = "01J0NEXTERMLOCALDEVICE0001";
 
 const STATUS_LABELS: Record<string, string> = {
   applied: "已生效",
@@ -137,11 +137,13 @@ function RuleScreenPicker({ onScreen }: { onScreen: (screen: StateRuleScreenDTO 
 function RuleEditor({
   initial,
   hosts,
+  hostLabel,
   onSaved,
   onCancel,
 }: {
   initial: StateRuleDraftForm;
   hosts: readonly HostOption[];
+  hostLabel: (id: string | undefined) => string;
   onSaved: (rule: StateRuleDTO) => void;
   onCancel: () => void;
 }) {
@@ -166,7 +168,7 @@ function RuleEditor({
 
   return (
     <div className="flex flex-col gap-3 rounded-md border border-[var(--nx-border)] p-3" data-rule-editor>
-      <StateRuleForm form={form} onChange={setForm} hosts={hosts} validation={validation} saveError={saveError} />
+      <StateRuleForm form={form} onChange={setForm} hosts={hosts} hostLabel={hostLabel} validation={validation} saveError={saveError} />
       <RuleScreenPicker onScreen={setScreen} />
       <div className="flex justify-end gap-2">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onCancel}>
@@ -204,8 +206,7 @@ export function SessionRulesCard() {
     () => (assetsQuery.data ?? []).map((asset) => ({ id: asset.id, name: asset.name })),
     [assetsQuery.data],
   );
-  const hostName = (id: string | undefined) =>
-    id ? hosts.find((host) => host.id === id)?.name ?? (id === BUILTIN_LOCAL_ASSET_ID ? "本机" : "未知主机") : "";
+  const hostName = useHostLabeler();
 
   const reload = useCallback(async () => {
     const gen = ++loadGenRef.current;
@@ -364,6 +365,7 @@ export function SessionRulesCard() {
           <RuleEditor
             initial={emptyRuleForm()}
             hosts={hosts}
+            hostLabel={hostName}
             onCancel={() => setEditing(null)}
             onSaved={() => {
               setEditing(null);
@@ -439,6 +441,7 @@ export function SessionRulesCard() {
                   <RuleEditor
                     initial={formFromRule(rule)}
                     hosts={hosts}
+                    hostLabel={hostName}
                     onCancel={() => setEditing(null)}
                     onSaved={() => {
                       setEditing(null);
@@ -463,7 +466,7 @@ export function SessionRulesCard() {
           <ul className="flex flex-col gap-1" aria-label="主机下发状态">
             {statuses.map((status) => (
               <li key={status.assetId} className="flex flex-wrap items-baseline gap-x-2 text-[12px]" data-status={status.status}>
-                <span className="text-neutral-200">{hostName(status.assetId) || status.assetId}</span>
+                <span className="text-neutral-200">{hostName(status.assetId)}</span>
                 <span className={status.status === "applied" ? "text-green-500" : status.status === "failed" ? "text-red-400" : "text-neutral-400"}>
                   {STATUS_LABELS[status.status] ?? status.status}
                 </span>
