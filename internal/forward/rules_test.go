@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"strconv"
 	"sync"
@@ -87,24 +88,26 @@ func newSavedRuleFixtureAccess(t *testing.T, openAccess bool) *savedRuleFixture 
 	return &savedRuleFixture{db: db, manager: manager, service: service, ctx: ctx, asset: asset, connected: connected, transport: transport}
 }
 
+// freeSavedRulePort returns a loopback port a saved rule can listen on. Ports below the operating systems' ephemeral
+// ranges are probed, because a kernel-assigned port is also what outgoing connections of other tests take, which
+// made a port that was free at probe time occupied by the time the rule started.
 func freeSavedRulePort(t *testing.T) int32 {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	const first, count = 20000, 10000
+	offset := rand.IntN(count)
+	for i := 0; i < count; i++ {
+		port := first + (offset+i)%count
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		if err := listener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return int32(port)
 	}
-	_, portText, err := net.SplitHostPort(listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return int32(port)
+	t.Fatal("no free loopback port in the test range")
+	return 0
 }
 
 func requireSavedRuleCode(t *testing.T, err error, code ipc.Code) {
