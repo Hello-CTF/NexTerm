@@ -60,7 +60,7 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 - Release `v*` tags come from `master`. Keep `wails.json`, `package.json`, and `lazycat/package.yml` at `0.0.0`; release builds derive the version from the tag through `NEXTERM_RELEASE_VERSION`.
 - Reused CI evidence must match the intended commit and ref. Versioned frontend, native, and mobile release artifacts must be built for that release; do not publish placeholder-version artifacts from master builds.
 - Release notes are generated from Conventional Commits plus `.github/release-template.md`. Do not add per-release notes commits or standing gap lists. Record verification limits in the change's PR or review report.
-- Before publishing, validate the complete release artifact set with `node .github/scripts/release-evidence.mjs <artifact dir>`.
+- The Release workflow runs `.github/scripts/release-evidence.mjs` on the complete artifact set before it signs and uploads the draft. Publish the draft once the workflow succeeds; do not download and re-check the assets.
 
 ## Review and Collaboration
 
