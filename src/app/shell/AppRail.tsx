@@ -104,7 +104,7 @@ export function AppRail({
     {
       key: "history",
       label: "终端历史",
-      hint: "回看和搜索终端的历史输出",
+      hint: hasHost && workspace?.assetId ? "回看和搜索当前主机的终端历史输出" : "回看和搜索终端的历史输出",
       icon: IconClock,
       onClick: openHistory,
     },

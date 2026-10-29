@@ -22,6 +22,7 @@ export type PaneKind =
   | "devices"
   | "background"
   | "history"
+  | "hostHistory"
   | "execBatch"
   | "host";
 

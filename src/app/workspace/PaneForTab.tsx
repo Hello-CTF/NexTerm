@@ -244,6 +244,12 @@ export const PaneForTab = memo(function PaneForTab({
           />
         </Lazy>
       );
+    case "hostHistory":
+      return (
+        <Lazy>
+          <TranscriptHistoryPanel visible={active} workspaceId={workspaceId} assetId={tab.assetId} fixedHost />
+        </Lazy>
+      );
     case "history":
       return (
         <Lazy>

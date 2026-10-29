@@ -50,6 +50,21 @@ export function isWorkspaceToolTab(tab: { id?: string; kind: PaneKind; sessionId
   );
 }
 
+// The history tab of one host workspace, scoped to that host; null selects the global tools view.
+export function hostHistoryTab(
+  workspace: { kind: string; sessionId?: string; assetId?: string } | null | undefined,
+): AppTab | null {
+  if (workspace?.kind !== "session" || !workspace.sessionId || !workspace.assetId) return null;
+  return {
+    id: `history-${workspace.sessionId}`,
+    kind: "hostHistory",
+    title: "终端历史",
+    sessionId: workspace.sessionId,
+    assetId: workspace.assetId,
+    closable: true,
+  };
+}
+
 export const DB_KIND_LABEL: Record<DbKind, string> = {
   mysql: "SQL",
   postgres: "PostgreSQL",

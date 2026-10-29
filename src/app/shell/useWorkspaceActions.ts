@@ -3,6 +3,7 @@ import {
   useUi,
   openTerminalTab,
   nextTabId,
+  hostHistoryTab,
   connectAsset,
   dbKindOf,
   isSessionReconnectPending,
@@ -189,10 +190,10 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   }, [ws?.id, ws?.kind, ws?.sessionId, backgroundAvailable, needSession]);
 
   const openHistory = useCallback(() => {
-    useUi
-      .getState()
-      .addTab({ id: "history", kind: "history", title: "终端历史", closable: true });
-  }, []);
+    useUi.getState().addTab(
+      hostHistoryTab(ws) ?? { id: "history", kind: "history", title: "终端历史", closable: true },
+    );
+  }, [ws]);
 
   const openNewTerminal = useCallback(async () => {
     const epoch = useUi.getState().workspaceRuntimeEpoch;

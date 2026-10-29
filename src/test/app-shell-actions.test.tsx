@@ -636,6 +636,21 @@ describe("App workspace actions", () => {
       ],
       activeTabId: "history",
     };
+    useUi.setState({ workspaces: [tools], activeWorkspaceId: tools.id });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("终端历史");
+
+    const histories = allTabs().filter((tab) => tab.kind === "history");
+    expect(histories).toHaveLength(1);
+    expect(histories[0]).toMatchObject({ assetId: "asset-user" });
+    expect(histories[0].sessionId).toBeUndefined();
+    expect(allTabs().some((tab) => tab.kind === "hostHistory")).toBe(false);
+  });
+
+  it("opens history inside the active host workspace scoped to its host and focuses it on reopen", async () => {
+    const tools = nonHostWorkspace("tools");
     const host = hostWorkspace("ws-b", "s2", "asset-2");
     useUi.setState({
       sessions: [sessionOf("s2")],
@@ -646,11 +661,14 @@ describe("App workspace actions", () => {
     await flush();
 
     await clickRail("终端历史");
+    await clickRail("终端历史");
 
-    const histories = allTabs().filter((tab) => tab.kind === "history");
+    const hostTabs = useUi.getState().workspaces.find((w) => w.id === host.id)!.panes.flatMap((p) => p.tabs);
+    const histories = hostTabs.filter((tab) => tab.kind === "hostHistory");
     expect(histories).toHaveLength(1);
-    expect(histories[0]).toMatchObject({ assetId: "asset-user" });
-    expect(histories[0].sessionId).toBeUndefined();
+    expect(histories[0]).toMatchObject({ sessionId: "s2", assetId: "asset-2" });
+    expect(allTabs().filter((tab) => tab.kind === "history")).toHaveLength(0);
+    expect(mocks.historyProps[mocks.historyProps.length - 1]).toMatchObject({ assetId: "asset-2" });
   });
 
   it("a single database asset uses the standard connectAsset flow", async () => {
