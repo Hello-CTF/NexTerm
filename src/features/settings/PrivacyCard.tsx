@@ -98,6 +98,8 @@ function PrivacyCardBody() {
   const completedKey = completed ? keyOf({ revision: completed.revision, precision: status?.download.precision ?? "int8" }) : "";
   const noModelHint = status && !status.canManage && status.installed.length === 0 ? "请联系管理员下载模型" : "尚未下载模型";
   const hasLatest = !!status?.latest && status.installed.some((item) => item.revision === status.latest?.revision);
+  // A download always fetches the latest release; the precision is the only choice.
+  const downloadTarget = `${modelDisplayName(status?.latest)}${status?.latest ? ` ${status.latest.version}` : ""}`;
 
   useEffect(() => {
     if (!status) return;
@@ -187,7 +189,7 @@ function PrivacyCardBody() {
                 ) : null}
                 {status.canManage ? (
                   <div className="flex flex-col gap-1.5">
-                    <div className="text-xs text-neutral-400">下载模型</div>
+                    <div className="text-xs text-neutral-400">下载 {downloadTarget}</div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Select className="min-w-48 flex-1 sm:flex-none" ariaLabel="下载模型精度" value={precision}
                         disabled={busy || status.download.running || !supported}
@@ -235,7 +237,7 @@ function PrivacyCardBody() {
           )}
           {/* Download state stays on the main panel so progress, completion and failures are never hidden in the dialog. */}
           {status.download.running && (
-            <DownloadProgress label={`正在下载 ${status.download.precision.toUpperCase()}`}
+            <DownloadProgress label={`正在下载 ${downloadTarget} · ${status.download.precision.toUpperCase()}`}
               transferred={progress?.downloaded ?? 0} total={progress?.total ?? 0}
               cancelDisabled={busy} onCancel={() => void run(async () => { await privacyApi.cancelDownload(); await refresh(); })} />
           )}

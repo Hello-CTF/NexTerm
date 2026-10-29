@@ -64,6 +64,7 @@ describe("AI privacy settings", () => {
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
     click(button("下载模型"));
+    expect(document.body.textContent).toContain("下载 AstrLink Guard v0.1.3");
     expect(document.body.textContent).toContain("模型从官方渠道下载，不随安装包分发。");
     expect(document.body.textContent).not.toContain("Hugging Face");
     expect(document.body.textContent).toContain("脱敏可能漏检或误报，请勿将其作为唯一的保护措施。");
@@ -71,7 +72,7 @@ describe("AI privacy settings", () => {
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
     click(button("下载"));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载 FP32"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载 AstrLink Guard v0.1.3 · FP32"));
     expect(mounted.container.querySelector('[role="progressbar"]')).not.toBeNull();
     expect(mocks.download).toHaveBeenCalledWith("fp32");
     expect(mocks.configure).not.toHaveBeenCalled();
