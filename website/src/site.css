@@ -93,6 +93,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .window-bar div { overflow: hidden; margin-left: 10px; color: #858d9c; font: 11.5px/1 var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 
 .feature-demo {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   aspect-ratio: 16 / 9;
   min-height: 420px;
@@ -103,7 +105,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .feature-demo[data-mode="ai"] { aspect-ratio: auto; height: 430px; min-height: 430px; }
 .feature-demo[data-mode="replay"] { aspect-ratio: auto; height: 400px; min-height: 400px; }
 .split-window .feature-demo { min-height: 360px; }
-.demo-scene { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--panel); font-size: 12px; }
+.demo-scene { display: flex; min-height: 0; flex-direction: column; overflow: hidden; background: var(--panel); font-size: 12px; }
 .demo-header { display: flex; min-height: 40px; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-raised); }
 .demo-header strong { font-size: 13px; white-space: nowrap; }
 .demo-host { display: inline-flex; min-width: 0; align-items: center; gap: 6px; overflow: hidden; color: var(--text-muted); text-overflow: ellipsis; white-space: nowrap; }
@@ -326,6 +328,9 @@ a.download-tab { text-decoration: none; }
   .trust-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
+  /* A definite height: WebKit resolves a child's percentage height against the aspect-ratio height, not the larger
+     min-height, which squeezed the demo into a short strip with an empty area below it. */
+  .feature-demo { aspect-ratio: auto; height: 420px; }
   .container { width: min(100% - 32px, 1180px); }
   .nav-links { display: none; }
   .hero { padding-top: 112px; }
