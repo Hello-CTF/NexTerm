@@ -153,18 +153,32 @@ func TestRecordingStatusPropagatesTerminalState(t *testing.T) {
 	}
 }
 
+// waitReentrantStop returns the result of the stop an emitter callback ran. The callback sends its event first and
+// stops afterwards, possibly on the delivery goroutine, so the result is handed over a channel instead of a
+// variable the test reads right after seeing the event.
+func waitReentrantStop(t *testing.T, stopped <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-stopped:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("the emitter's reentrant stop did not finish")
+		return nil
+	}
+}
+
 func TestStartRecordingEmitterCanStopSynchronously(t *testing.T) {
 	manager, tabID, recorder := newReentrantRecordingManager(t)
 	recorder.startStatus = terminal.RecordingStatus{State: terminal.RecordingRunning, Generation: 1}
 	recorder.stopStatus = terminal.RecordingStatus{State: terminal.RecordingStopped, Generation: 1}
 	events := make(chan Event, 4)
 	var once sync.Once
-	var stopErr error
+	stopped := make(chan error, 1)
 	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
 		events <- event
 		once.Do(func() {
 			_, err := manager.StopRecording(tabID)
-			stopErr = err
+			stopped <- err
 		})
 		return nil
 	})
@@ -175,7 +189,7 @@ func TestStartRecordingEmitterCanStopSynchronously(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitRecordingEvents(t, events, 2)
-	if stopErr != nil {
+	if stopErr := waitReentrantStop(t, stopped); stopErr != nil {
 		t.Fatal(stopErr)
 	}
 	assertControlVersionsIncrease(t, got)
@@ -192,14 +206,14 @@ func TestStopRecordingEmitterCanStopSynchronously(t *testing.T) {
 	recorder.stopStatus = terminal.RecordingStatus{State: terminal.RecordingStopped, Generation: 1}
 	events := make(chan Event, 2)
 	var once sync.Once
-	var stopErr error
+	stopped := make(chan error, 1)
 	var reenter atomic.Bool
 	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
 		events <- event
 		if reenter.Load() {
 			once.Do(func() {
 				_, err := manager.StopRecording(tabID)
-				stopErr = err
+				stopped <- err
 			})
 		}
 		return nil
@@ -215,7 +229,7 @@ func TestStopRecordingEmitterCanStopSynchronously(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitRecordingEvents(t, events, 2)
-	if stopErr != nil {
+	if stopErr := waitReentrantStop(t, stopped); stopErr != nil {
 		t.Fatal(stopErr)
 	}
 	assertControlVersionsIncrease(t, got)
@@ -235,14 +249,14 @@ func TestRecordingWriteFailureEmitterCanStopSynchronously(t *testing.T) {
 	recorder.err = writeErr
 	events := make(chan Event, 2)
 	var once sync.Once
-	var stopErr error
+	stopped := make(chan error, 1)
 	var reenter atomic.Bool
 	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
 		events <- event
 		if reenter.Load() {
 			once.Do(func() {
 				_, err := manager.StopRecording(tabID)
-				stopErr = err
+				stopped <- err
 			})
 		}
 		return nil
@@ -258,7 +272,7 @@ func TestRecordingWriteFailureEmitterCanStopSynchronously(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := waitRecordingEvents(t, events, 2)
-	if !errors.Is(stopErr, writeErr) {
+	if stopErr := waitReentrantStop(t, stopped); !errors.Is(stopErr, writeErr) {
 		t.Fatalf("reentrant stop error = %v, want %v", stopErr, writeErr)
 	}
 	assertControlVersionsIncrease(t, got)
