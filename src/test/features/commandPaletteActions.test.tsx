@@ -506,7 +506,7 @@ describe("command palette workspace actions", () => {
     });
   });
 
-  it("keeps two workspace tail instances independent when closing one", async () => {
+  it("opens one merged log tab in the tools workspace regardless of the active host workspace", async () => {
     const first = workspaceOf("ws-a", "session", "s1");
     const second = workspaceOf("ws-b", "session", "s2");
     useUi.setState({ workspaces: [first, second], activeWorkspaceId: first.id, addTab: realAddTab });
@@ -521,20 +521,12 @@ describe("command palette workspace actions", () => {
     click(optionByText(mounted!.container, "多主机日志合并"));
     await flush();
 
-    const tails = allTabs().filter((tab) => tab.id.startsWith("multi-host-log-tail:"));
-    expect(tails).toHaveLength(2);
-    expect(tails[0].id).not.toBe(tails[1].id);
-    const currentFirst = useUi.getState().workspaces.find((workspace) => workspace.id === first.id);
-    const currentSecond = useUi.getState().workspaces.find((workspace) => workspace.id === second.id);
-    const firstID = currentFirst?.panes[0].tabs[0].id;
-    const secondID = currentSecond?.panes[0].tabs[0].id;
-    expect(firstID).toBeDefined();
-    expect(secondID).toBeDefined();
-    (mounted as MountedView | undefined)?.unmount();
-    mounted = undefined;
-    await expect(useUi.getState().closeTab(firstID!)).resolves.toBe(true);
-    expect(useUi.getState().workspaces.find((workspace) => workspace.id === first.id)?.panes[0].tabs).toHaveLength(0);
-    expect(useUi.getState().workspaces.find((workspace) => workspace.id === second.id)?.panes[0].tabs.map((tab) => tab.id)).toEqual([secondID]);
+    const { workspaces } = useUi.getState();
+    const tools = workspaces.find((workspace) => workspace.kind === "tools");
+    expect(tools?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.id.startsWith("multi-host-log-tail:"))).toHaveLength(1);
+    for (const host of [first, second]) {
+      expect(workspaces.find((workspace) => workspace.id === host.id)?.panes.flatMap((pane) => pane.tabs)).toHaveLength(0);
+    }
   });
 });
 

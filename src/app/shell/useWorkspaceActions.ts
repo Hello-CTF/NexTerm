@@ -3,6 +3,7 @@ import {
   useUi,
   openTerminalTab,
   nextTabId,
+  hostHistoryTab,
   connectAsset,
   dbKindOf,
   isSessionReconnectPending,
@@ -58,10 +59,17 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
 
   useEffect(() => startCwdTracking(), []);
 
-  // openLogs opens a log follow tab; in a host workspace that host starts selected.
+  // openLogs opens the merged log tab in the tools workspace; from a host workspace that host starts selected.
   const openLogs = useCallback(() => {
-    useUi.getState().addTab({ id: createMultiHostLogTabId(), kind: "log", title: "日志", closable: true });
-  }, []);
+    const sessionId = ws?.kind === "session" ? ws.sessionId : undefined;
+    useUi.getState().addTab({
+      id: createMultiHostLogTabId(),
+      kind: "log",
+      title: "多主机日志",
+      ...(sessionId ? { logSessionIds: [sessionId] } : {}),
+      closable: true,
+    });
+  }, [ws?.kind, ws?.sessionId]);
 
   const openMount = useCallback(() => {
     if (!activeSessionId) return needSession();
@@ -182,10 +190,10 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   }, [ws?.id, ws?.kind, ws?.sessionId, backgroundAvailable, needSession]);
 
   const openHistory = useCallback(() => {
-    useUi
-      .getState()
-      .addTab({ id: "history", kind: "history", title: "终端历史", closable: true });
-  }, []);
+    useUi.getState().addTab(
+      hostHistoryTab(ws) ?? { id: "history", kind: "history", title: "终端历史", closable: true },
+    );
+  }, [ws]);
 
   const openNewTerminal = useCallback(async () => {
     const epoch = useUi.getState().workspaceRuntimeEpoch;

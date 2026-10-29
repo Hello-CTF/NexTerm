@@ -76,7 +76,7 @@ func (h *localHelperExposureHost) Blocked(ctx context.Context) string {
 
 func localHelperExposureBlocked(ctx context.Context, helper *localhelper.Service, settings localTerminalModeStore) string {
 	if helper == nil {
-		return "本机终端在此环境中不使用持久组件，无法开放给服务器"
+		return "本机终端在此环境中不使用持久终端组件，无法开放给服务器"
 	}
 	mode, err := localTerminalMode(ctx, settings)
 	if err != nil {

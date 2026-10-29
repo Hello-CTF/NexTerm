@@ -3,6 +3,8 @@
 // directory as the shell sees it, for chrooted SFTP accounts whose view differs from the shell's.
 export const PASTE_UPLOAD_DIR_KEY = "pasteUploadDir";
 export const PASTE_TERMINAL_DIR_KEY = "pasteTerminalDir";
+// PASTE_NO_RANDOM_DIR_KEY uploads files straight into the upload directory instead of a per-paste private directory.
+export const PASTE_NO_RANDOM_DIR_KEY = "pasteNoRandomDir";
 
 // DEFAULT_PASTE_DIR is used when the asset configures no upload directory.
 export const DEFAULT_PASTE_DIR = "/tmp";
@@ -34,10 +36,13 @@ export interface PasteDirSettings {
   terminalDir: string;
   // custom reports whether the asset configured its own upload directory.
   custom: boolean;
+  // flat uploads straight into uploadDir, with a random suffix on each file name, instead of creating a private
+  // random directory first. Anyone who can list that directory can see and read the files.
+  flat: boolean;
 }
 
 // DEFAULT_PASTE_DIRS keeps the original behaviour: upload to /tmp and link /tmp.
-export const DEFAULT_PASTE_DIRS: PasteDirSettings = { uploadDir: DEFAULT_PASTE_DIR, terminalDir: DEFAULT_PASTE_DIR, custom: false };
+export const DEFAULT_PASTE_DIRS: PasteDirSettings = { uploadDir: DEFAULT_PASTE_DIR, terminalDir: DEFAULT_PASTE_DIR, custom: false, flat: false };
 
 export type PasteDirSettingsResult = { ok: true; settings: PasteDirSettings } | { ok: false; error: string };
 
@@ -66,12 +71,17 @@ export function pasteDirSettings(options: Record<string, unknown> | null | undef
   const uploadRaw = read(PASTE_UPLOAD_DIR_KEY);
   const terminalRaw = read(PASTE_TERMINAL_DIR_KEY);
   if (uploadRaw === null || terminalRaw === null) return { ok: false, error: "粘贴上传目录必须是字符串" };
+  const flatRaw = options?.[PASTE_NO_RANDOM_DIR_KEY];
+  if (flatRaw !== undefined && flatRaw !== null && typeof flatRaw !== "boolean") {
+    return { ok: false, error: "不使用随机目录必须是布尔值" };
+  }
+  const flat = flatRaw === true;
   const result = validatePasteDirOptions(uploadRaw, terminalRaw);
   if (!result.ok) return result;
-  if (!result.uploadDir) return { ok: true, settings: DEFAULT_PASTE_DIRS };
+  if (!result.uploadDir) return { ok: true, settings: { ...DEFAULT_PASTE_DIRS, flat } };
   return {
     ok: true,
-    settings: { uploadDir: result.uploadDir, terminalDir: result.terminalDir || result.uploadDir, custom: true },
+    settings: { uploadDir: result.uploadDir, terminalDir: result.terminalDir || result.uploadDir, custom: true, flat },
   };
 }
 

@@ -141,6 +141,8 @@ func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Ou
 	var args struct {
 		Cursor string `json:"cursor"`
 		Limit  int    `json:"limit"`
+
+		IncludeExited bool `json:"include_exited"`
 	}
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
@@ -158,6 +160,18 @@ func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Ou
 	tabs, err := listing.ListTerminalTabs(ctx)
 	if err != nil {
 		return Fail(err)
+	}
+	hidden := 0
+	if !args.IncludeExited {
+		live := tabs[:0:0]
+		for _, tab := range tabs {
+			if tab.Exited {
+				hidden++
+				continue
+			}
+			live = append(live, tab)
+		}
+		tabs = live
 	}
 	sort.Slice(tabs, func(i, j int) bool { return tabs[i].TabID < tabs[j].TabID })
 	total := len(tabs)
@@ -177,6 +191,9 @@ func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Ou
 	fmt.Fprintf(&output, "共 %d 个终端标签页，本页 %d 个", total, len(page))
 	if next != "" {
 		fmt.Fprintf(&output, "；下一页 cursor=%s", next)
+	}
+	if hidden > 0 {
+		fmt.Fprintf(&output, "\n另有 %d 个已退出标签页已隐藏，可用 include_exited=true 查看", hidden)
 	}
 	for _, tab := range page {
 		line := "\n" + tab.Handle

@@ -25,7 +25,7 @@ describe("paste upload directory options", () => {
 
   it("defaults to /tmp and maps a chroot upload directory to the shell path", () => {
     const fallback = pasteDirSettings({});
-    expect(fallback).toEqual({ ok: true, settings: { uploadDir: "/tmp", terminalDir: "/tmp", custom: false } });
+    expect(fallback).toEqual({ ok: true, settings: { uploadDir: "/tmp", terminalDir: "/tmp", custom: false, flat: false } });
 
     const resolved = pasteDirSettings({ pasteUploadDir: "/", pasteTerminalDir: "/tmp" });
     if (!resolved.ok) throw new Error(resolved.error);
@@ -41,10 +41,25 @@ describe("paste upload directory options", () => {
     expect(terminalPastePath(nested.settings, "/uploads/a.png")).toBe("/uploads/a.png");
 
     const same = pasteDirSettings({ pasteUploadDir: "/data/" });
-    expect(same).toEqual({ ok: true, settings: { uploadDir: "/data", terminalDir: "/data", custom: true } });
+    expect(same).toEqual({ ok: true, settings: { uploadDir: "/data", terminalDir: "/data", custom: true, flat: false } });
+  });
+
+  it("reads the option that skips the random directory, with or without an upload directory", () => {
+    expect(pasteDirSettings({ pasteNoRandomDir: true })).toEqual({
+      ok: true,
+      settings: { uploadDir: "/tmp", terminalDir: "/tmp", custom: false, flat: true },
+    });
+    const mapped = pasteDirSettings({ pasteUploadDir: "/", pasteTerminalDir: "/tmp", pasteNoRandomDir: true });
+    if (!mapped.ok) throw new Error(mapped.error);
+    expect(mapped.settings.flat).toBe(true);
+    expect(joinPastePath(mapped.settings.uploadDir, "a.png")).toBe("/a.png");
+    expect(terminalPastePath(mapped.settings, "/a.png")).toBe("/tmp/a.png");
+    expect(pasteDirSettings({ pasteNoRandomDir: false })).toEqual(pasteDirSettings({}));
+    expect(pasteDirSettings({ pasteNoRandomDir: null })).toEqual(pasteDirSettings({}));
   });
 
   it("reports invalid stored options instead of guessing", () => {
+    expect(pasteDirSettings({ pasteNoRandomDir: "yes" }).ok).toBe(false);
     expect(pasteDirSettings({ pasteUploadDir: 42 }).ok).toBe(false);
     expect(pasteDirSettings({ pasteUploadDir: "relative" }).ok).toBe(false);
     expect(pasteDirSettings({ pasteTerminalDir: "/tmp" }).ok).toBe(false);

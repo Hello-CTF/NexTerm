@@ -6,6 +6,7 @@ import {
 } from "../../features/files/editorGuards";
 import { baseName } from "../../features/files/pathUtils";
 import { isFleetHealthTabId } from "../../features/fleet/fleetHealthTab";
+import { isMultiHostLogTabId } from "../../features/logs/logTailTab";
 import { syncWorkspaceTree } from "../paneLayout";
 import type {
   AiBoard,
@@ -39,8 +40,29 @@ export function isGlobalToolTab(tab: { kind: PaneKind; sessionId?: string }): bo
   return tab.kind === "forward" && !tab.sessionId;
 }
 
-export function isWorkspaceToolTab(tab: { kind: PaneKind; sessionId?: string }): boolean {
-  return isToolTabKind(tab.kind) || isGlobalToolTab(tab);
+// The merged multi-host log tab spans hosts, so it lives in the tools workspace; single-host log tabs stay in
+// their host workspace.
+export function isWorkspaceToolTab(tab: { id?: string; kind: PaneKind; sessionId?: string }): boolean {
+  return (
+    isToolTabKind(tab.kind) ||
+    isGlobalToolTab(tab) ||
+    (tab.kind === "log" && tab.id !== undefined && isMultiHostLogTabId(tab.id))
+  );
+}
+
+// The history tab of one host workspace, scoped to that host; null selects the global tools view.
+export function hostHistoryTab(
+  workspace: { kind: string; sessionId?: string; assetId?: string } | null | undefined,
+): AppTab | null {
+  if (workspace?.kind !== "session" || !workspace.sessionId || !workspace.assetId) return null;
+  return {
+    id: `history-${workspace.sessionId}`,
+    kind: "hostHistory",
+    title: "终端历史",
+    sessionId: workspace.sessionId,
+    assetId: workspace.assetId,
+    closable: true,
+  };
 }
 
 export const DB_KIND_LABEL: Record<DbKind, string> = {

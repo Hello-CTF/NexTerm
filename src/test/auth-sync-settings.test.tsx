@@ -194,7 +194,8 @@ async function openPushed(object: { id: string; blob: string }, kind: import("..
 }
 
 function text(): string {
-  return mounted?.container.textContent ?? "";
+  // The sync toggles render in a portaled dialog, so read the whole document.
+  return document.body.textContent ?? "";
 }
 
 function button(label: string): HTMLButtonElement | undefined {
@@ -203,21 +204,32 @@ function button(label: string): HTMLButtonElement | undefined {
   ) as HTMLButtonElement | undefined;
 }
 
-// Toggle checkboxes: the first is known_host, the second is the AI profile
+// Toggle checkboxes live in the "manage sync items" dialog (portaled to body): index 0 is known_host, 1 is the AI profile
+const OPT_IN_LABELS = ["同步已知主机", "同步 AI 模型档案"];
+function ensureOptInDialog(): void {
+  if (document.querySelector('[role="dialog"]')) return;
+  const manage = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "管理同步项");
+  if (manage) act(() => (manage as HTMLButtonElement).click());
+}
+function clickOptIn(index: number): void {
+  ensureOptInDialog();
+  act(() => optInCheckbox(index).click());
+}
 function optInCheckbox(index: number): HTMLInputElement {
-  const boxes = [...(mounted?.container.querySelectorAll('input[type="checkbox"]') ?? [])] as HTMLInputElement[];
-  const box = boxes[index];
+  ensureOptInDialog();
+  const boxes = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+  const box = boxes.find((b) => b.closest("label")?.textContent?.includes(OPT_IN_LABELS[index]));
   if (!box) throw new Error(`checkbox ${index} not found`);
   return box;
 }
 
-// Opt-in toggles render only after kindOptInGet arrives asynchronously; collapsed by default, open the sync content section when not auto-expanded (nothing enabled)
+// Opt-in toggles render only after kindOptInGet arrives asynchronously; open the "manage sync items" dialog once available
 async function flushUntilOptInRendered(): Promise<void> {
-  await flushUntil(() => button("同步内容开关") !== undefined);
-  if ((mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) < 2) {
-    clickButton(mounted!.container, "同步内容开关");
+  await flushUntil(() => button("管理同步项") !== undefined);
+  if (document.querySelectorAll('[role="dialog"] input[type="checkbox"]').length < 2) {
+    clickButton(mounted!.container, "管理同步项");
   }
-  await flushUntil(() => (mounted?.container.querySelectorAll('input[type="checkbox"]').length ?? 0) >= 2);
+  await flushUntil(() => document.querySelectorAll('[role="dialog"] input[type="checkbox"]').length >= 2);
 }
 
 function openDetails(): void {
@@ -311,7 +323,7 @@ describe("M165 known_host sync", () => {
 
     mounted = mountSyncCard();
     await flushUntilOptInRendered();
-    act(() => optInCheckbox(0).click());
+    clickOptIn(0);
     openDetails();
     await flushUntil(() => text().includes("10.0.0.9:22"));
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: true });
@@ -357,7 +369,7 @@ describe("M165 known_host sync", () => {
     expect(text()).not.toContain("kh-del");
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
-    act(() => optInCheckbox(0).click());
+    clickOptIn(0);
     await flushUntil(() => text().includes("待推送 1 项"));
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);
@@ -549,7 +561,7 @@ describe("M165 R2 opt-in toggle races", () => {
       await reloadGate.promise;
       return { tombstones: [], hasMore: false };
     });
-    act(() => optInCheckbox(0).click());
+    clickOptIn(0);
     await flushUntil(() => mocks.kindOptInSet.mock.calls.length > 0);
     setGate.resolve();
     // reload has started (second collectTombstones call) but not finished: the old snapshot is still (1), the button must stay disabled
@@ -570,7 +582,7 @@ describe("M165 R2 opt-in toggle races", () => {
     mounted = mountSyncCard();
     // The first load (enabled) hangs on collectKnownHosts; toggle off right after the toggles render (the load with opt-in off does not touch that mock and finishes first)
     await flushUntilOptInRendered();
-    act(() => optInCheckbox(0).click());
+    clickOptIn(0);
     openDetails();
     await flushUntil(() => text().includes("本机与服务端均暂无可同步的内容。"));
     // The slow load finishes only now: the write-back must be discarded by the generation check, and the disabled kind must not appear in compare rows
@@ -595,7 +607,7 @@ describe("M165 R2 opt-in toggle races", () => {
       await reloadGate.promise;
       return { tombstones: [], hasMore: false };
     });
-    act(() => optInCheckbox(0).click());
+    clickOptIn(0);
     await flush();
     // reload has started but not finished: the old applySet is still (1), the button must stay disabled
     await flushUntil(() => mocks.collectTombstones.mock.calls.length === 2);

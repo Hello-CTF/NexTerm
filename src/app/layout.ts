@@ -79,6 +79,7 @@ const PANE_KINDS = new Set<PaneKind>([
   "devices",
   "background",
   "history",
+  "hostHistory",
   "execBatch",
   "host",
 ]);

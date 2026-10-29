@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -96,7 +97,10 @@ func durableReadinessReason(err error) string {
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return "目标主机不支持持久终端组件"
 	case errors.Is(err, context.Canceled):
-		return "持久组件部署已取消"
+		return "持久终端组件部署已取消"
+	// A helper that needs an upgrade is something the user can act on; the raw protocol error is not.
+	case errors.Is(err, supervisor.ErrHelperUpgradeRequired), errors.Is(err, supervisor.ErrClientUpgradeRequired):
+		return userMessage(err)
 	default:
 		return err.Error()
 	}

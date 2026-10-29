@@ -79,10 +79,13 @@ function normalizeRead(result: {
 export function TranscriptHistoryPanel({
   visible = true,
   assetId: sourceAssetId,
+  fixedHost = false,
 }: {
   visible?: boolean;
   workspaceId?: string;
   assetId?: string;
+  // Scoped to one host (a host workspace tab): no host selector is shown.
+  fixedHost?: boolean;
 }) {
   const pushToast = useUi((s) => s.pushToast);
   const [hosts, setHosts] = useState<HostOption[] | null>(null);
@@ -144,14 +147,14 @@ export function TranscriptHistoryPanel({
   }, []);
 
   useEffect(() => {
-    void loadHosts();
+    if (!fixedHost) void loadHosts();
     return () => {
       hostsGenerationRef.current += 1;
       sessionsGenerationRef.current += 1;
       readerGenerationRef.current += 1;
       searchGenerationRef.current += 1;
     };
-  }, [loadHosts]);
+  }, [loadHosts, fixedHost]);
 
   useEffect(() => {
     if (sourceAssetId === undefined || sourceAssetId === appliedSourceAssetIdRef.current) return;
@@ -410,7 +413,7 @@ export function TranscriptHistoryPanel({
       <div className="nx-toolbar nx-wrap-toolbar">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">终端历史</span>
-        <select
+        {!fixedHost && <select
           className="nx-select max-w-[280px] max-[640px]:order-9 max-[640px]:max-w-none max-[640px]:basis-full"
           aria-label="选择主机"
           value={assetId ?? ""}
@@ -435,7 +438,7 @@ export function TranscriptHistoryPanel({
               {hostLabel(host)}
             </option>
           ))}
-        </select>
+        </select>}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-ghost"

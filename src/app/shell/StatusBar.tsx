@@ -14,11 +14,15 @@ const ITEM = "nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hov
 
 // The status bar only shows what the user can act on: a healthy vault and a normal sync state render nothing.
 export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings, onRetryVaultStatus }: StatusBarProps) {
-  const { total: sessionCount, connected: connectedSessions, idle: idleSessions } = useSessionSummary();
+  const { total: sessionCount, connected: connectedSessions, idle: idleSessions, background: backgroundSessions, detail } = useSessionSummary();
+  const otherNotes = [
+    idleSessions > 0 ? `${idleSessions} 个空闲` : "",
+    backgroundSessions > 0 ? `${backgroundSessions} 个后台` : "",
+  ].filter(Boolean);
   return (
     <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
       <div className="nx-statusbar-info">
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5" title={detail || undefined}>
           <IconServer size={11} />
           <strong className="font-medium text-neutral-300">{sessionCount}</strong> 个会话
           <span className="text-neutral-700">·</span>
@@ -31,8 +35,13 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
           >
             <span className="nx-dot" />
             <strong className="font-medium">{connectedSessions}</strong> 已连接
-            {idleSessions > 0 ? (
-              <span className="text-neutral-500">（{idleSessions} 空闲）</span>
+            {otherNotes.length > 0 ? (
+              <span
+                className="text-neutral-500"
+                title="另有未在打开的工作区中使用的连接。空闲：关闭工作区后留下、没有终端的连接，空闲 30 分钟后自动断开。后台：仍有后台终端等用途的连接"
+              >
+                （另有 {otherNotes.join("、")}）
+              </span>
             ) : null}
           </span>
         </span>

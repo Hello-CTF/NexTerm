@@ -16,6 +16,7 @@ import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { ServerSecurityLink } from "./ServerSecurityLink";
+import { ListPager, usePagedList } from "./ListPager";
 import { PasswordChangeForm } from "../../ui/PasswordChangeForm";
 import {
   IconCheckCircle,
@@ -70,8 +71,13 @@ export function AuthCard() {
     recovery: { formatted: string; canonical: string };
   } | null>(null);
   const devices = deviceResult?.accountKey === accountKey ? deviceResult.devices : null;
+  const [showRevoked, setShowRevoked] = useState(false);
+  const revokedCount = devices?.filter((d) => d.revoked_at !== 0).length ?? 0;
+  const visibleDevices = (devices ?? []).filter((d) => showRevoked || d.revoked_at === 0);
+  const devicePager = usePagedList(visibleDevices);
   const devicesError = deviceFailure?.accountKey === accountKey ? deviceFailure.error : null;
   const sessions = sessionResult?.accountKey === accountKey ? sessionResult.sessions : null;
+  const sessionPager = usePagedList(sessions ?? []);
   const sessionsError = sessionFailure?.accountKey === accountKey ? sessionFailure.error : null;
   const visibleRecoveryKey = DESKTOP
     ? accountKey
@@ -508,7 +514,7 @@ export function AuthCard() {
           {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">暂无有效的登录会话。</div>}
           {sessions && sessions.length > 0 && (
             <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
-              {sessions.map((session) => (
+              {sessionPager.pageItems.map((session) => (
                 <div key={session.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0">
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={session.name}>{session.name}</span>
                   <span className="nx-hint text-[11px]">{session.origin}</span>
@@ -526,6 +532,7 @@ export function AuthCard() {
                   </button>
                 </div>
               ))}
+              {sessionPager.paged && <ListPager currentPage={sessionPager.currentPage} pageCount={sessionPager.pageCount} setPage={sessionPager.setPage} />}
             </div>
           )}
           <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
@@ -560,13 +567,20 @@ export function AuthCard() {
           </div>
         )}
 
-        {devices && devices.length === 0 && (
-          <div className="nx-hint py-1 text-[12px]">尚未登记设备。</div>
+        {devices && visibleDevices.length === 0 && (
+          <div className="nx-hint py-1 text-[12px]">{devices.length === 0 ? "尚未登记设备。" : "没有生效中的设备。"}</div>
         )}
 
-        {devices && devices.length > 0 && (
+        {devices && revokedCount > 0 && (
+          <label className="nx-hint mb-2 flex items-center gap-1.5 text-[11px]">
+            <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
+            显示已吊销（{revokedCount}）
+          </label>
+        )}
+
+        {devices && visibleDevices.length > 0 && (
           <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
-            {devices.map((d) => {
+            {devicePager.pageItems.map((d) => {
               const revoked = d.revoked_at !== 0;
               return (
                 <div
@@ -594,6 +608,7 @@ export function AuthCard() {
                 </div>
               );
             })}
+            {devicePager.paged && <ListPager currentPage={devicePager.currentPage} pageCount={devicePager.pageCount} setPage={devicePager.setPage} />}
           </div>
         )}
 

@@ -47,12 +47,18 @@ func TestAssetPasteOptionsValidatedOnWrite(t *testing.T) {
 		`{"pasteUploadDir":"/tmp\u0007"}`,
 		`{"pasteUploadDir":42}`,
 		`{"pasteTerminalDir":"/tmp"}`,
+		`{"pasteNoRandomDir":"yes"}`,
+		`{"pasteNoRandomDir":1}`,
 	} {
 		_, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "bad", Host: ptr("10.0.0.3"), OptionsJSON: options})
 		requireCode(t, err, ipc.CodeBadParam)
 		value := options
 		_, err = db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &value})
 		requireCode(t, err, ipc.CodeBadParam)
+	}
+	flat := `{"pasteUploadDir":"/","pasteTerminalDir":"/tmp","pasteNoRandomDir":true}`
+	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &flat}); err != nil {
+		t.Fatalf("a boolean pasteNoRandomDir must be accepted: %v", err)
 	}
 	cleared := `{"pasteUploadDir":""}`
 	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &cleared}); err != nil {

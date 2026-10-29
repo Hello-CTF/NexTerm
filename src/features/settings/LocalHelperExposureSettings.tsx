@@ -23,7 +23,7 @@ const EXPOSE_CONFIRM = [
 ].join("\n");
 
 const EXPOSE_HINT =
-  "开放后，服务器的运维或管理员以及能控制该服务器或账号的人（含该账号的 AI 助手、定时任务和批量执行）可以当前用户身份在本机执行任意命令，并将上报运行指标。关闭开放不会结束远程打开的终端，请在「后台会话」中结束；锁定凭据库不会停止开放。";
+  "开放后，服务器的运维人员、管理员，以及能控制该服务器或账号的人（含该账号的 AI 助手、定时任务和批量执行），可以当前用户身份在本机执行任意命令；本机同时向服务器上报运行指标。关闭开放不会结束已打开的远程终端，需在「后台会话」中结束；锁定凭据库不会停止开放。";
 
 // The status changes on its own while exposure is on (connecting, online, revoked), so it is polled while shown.
 const POLL_MS = 5000;

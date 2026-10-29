@@ -106,7 +106,7 @@ export function persistenceHintNote(hint: PersistenceHint): string {
     case "ready":
       return "临时终端：持久终端已就绪，新建的终端将是持久终端";
     case "preparing":
-      return "临时终端：持久组件准备中";
+      return "临时终端：持久终端组件准备中";
     case "attention":
       return hint.message ? `临时终端：持久终端暂时不可用：${clause(hint.message)}` : "临时终端：持久终端暂时不可用";
     case "restore":
@@ -121,7 +121,7 @@ export function persistenceHintMessage(hint: PersistenceHint, local: boolean): s
     case "ready":
       return `${local ? "本机" : "该主机"}的持久终端已就绪。${REGULAR_TAIL}`;
     case "preparing":
-      return `持久组件准备中。${REGULAR_TAIL}`;
+      return `持久终端组件准备中。${REGULAR_TAIL}`;
     case "attention":
       return hint.message ? `持久终端暂时不可用：${clause(hint.message)}。${REGULAR_TAIL}` : `持久终端暂时不可用。${REGULAR_TAIL}`;
     case "restore":

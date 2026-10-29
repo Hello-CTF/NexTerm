@@ -274,7 +274,7 @@ describe("Device management - desktop logged in", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     const card = cardOf("web-01") as HTMLElement;
-    click([...card.querySelectorAll("button")].find((b) => b.textContent?.trim() === "指标") as HTMLButtonElement);
+    click([...card.querySelectorAll("button")].find((b) => b.textContent?.trim() === "详情") as HTMLButtonElement);
     await flushUntil(() => card.textContent?.includes("99.0%") ?? false);
     expect(mocks.metrics).toHaveBeenCalledWith("d-1");
     expect(card.textContent).toContain("8.0 GiB / 16.0 GiB");

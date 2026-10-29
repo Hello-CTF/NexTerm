@@ -1931,11 +1931,9 @@ function CompareConsole() {
     const epoch = ++optInEpochRef.current;
     setOptInBusy(true);
     setRefreshBusy(true);
-    setLocal(null);
-    setRemote(null);
-    setUndecryptableIds([]);
-    setUndecryptableEntries([]);
-    setCollectWarnings([]);
+    // The previous comparison stays on screen until the reload replaces it: emptying it here collapses the page
+    // below the switches and the browser clamps the scroll position to the top. The repair actions stay disabled
+    // while refreshBusy is set.
     setError(null);
     setRepairError(null);
     try {

@@ -86,7 +86,7 @@ func (e *UnavailableError) Error() string {
 	if e.Status.Reason != "" {
 		return e.Status.Reason
 	}
-	return "本机持久组件不可用"
+	return "本机持久终端组件不可用"
 }
 
 func (e *UnavailableError) Unwrap() error { return durable.ErrUnavailable }
@@ -215,7 +215,7 @@ func New(config Config) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 	initial := Status{State: StateIdle}
 	if !Supported || config.StateDir == "" {
-		initial = Status{State: StateDisabled, Reason: "此平台没有本机持久组件"}
+		initial = Status{State: StateDisabled, Reason: "此平台没有本机持久终端组件"}
 	}
 	return &Service{
 		config:   config,
@@ -376,10 +376,10 @@ func (s *Service) wait(ctx context.Context, limit time.Duration, wanted bool, pr
 			default:
 				// Not inspected yet: never answer "no helper" for a helper
 				// that may still turn out to run.
-				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "正在检查本机持久组件"}}
+				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "正在检查本机持久终端组件"}}
 			}
 			if wanted && state == StateIdle {
-				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "本机持久组件正在启动"}}
+				return nil, &UnavailableError{Status: Status{State: StateStarting, Reason: "本机持久终端组件正在启动"}}
 			}
 			return provider()
 		case <-ctx.Done():
@@ -514,7 +514,7 @@ func (s *Service) run() {
 				// Nothing runs in it, so replacing it ends no session.
 				s.config.Logger.Info("replacing an idle local helper of another protocol", "protocol", running.Protocol, "pid", running.PID)
 				if err := s.config.stop(s.ctx, s.config.StateDir, running); err != nil && s.ctx.Err() == nil {
-					s.setStatus(Status{State: StateFailed, Reason: "无法替换旧版本地持久组件：" + err.Error()}, nil)
+					s.setStatus(Status{State: StateFailed, Reason: "无法替换旧版本地持久终端组件：" + err.Error()}, nil)
 					s.markChecked()
 					if !s.awaitRetry(nil) {
 						return
@@ -536,7 +536,7 @@ func (s *Service) run() {
 			// terminals may be alive, so this is reported, never taken for
 			// "no helper", and nothing is spawned beside it.
 			s.config.Logger.Warn("local helper cannot be inspected", "error", inspectErr)
-			s.setStatus(Status{State: StateFailed, Reason: "本机持久组件无响应或无法确认，暂时无法列出或新建本机持久终端：" + inspectErr.Error()}, nil)
+			s.setStatus(Status{State: StateFailed, Reason: "本机持久终端组件无响应或无法确认，暂时无法列出或新建本机持久终端：" + inspectErr.Error()}, nil)
 			s.markChecked()
 			if !s.pauseFor(s.config.PollInterval) {
 				return
@@ -558,7 +558,7 @@ func (s *Service) run() {
 		case <-s.ensure:
 		default:
 		}
-		s.setStatus(Status{State: StateStarting, Reason: "本机持久组件正在启动"}, nil)
+		s.setStatus(Status{State: StateStarting, Reason: "本机持久终端组件正在启动"}, nil)
 		executable, err := s.helperExecutable()
 		var helper helperHandle
 		if err == nil {
@@ -587,7 +587,7 @@ func (s *Service) run() {
 			}
 			quickExits++
 			if quickExits >= s.config.BreakerThreshold {
-				s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久组件连续 %d 次未能启动，已停止自动重试（日志：%s）：%v", quickExits, s.logPath(), err)}, nil)
+				s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久终端组件连续 %d 次未能启动，已停止自动重试（日志：%s）：%v", quickExits, s.logPath(), err)}, nil)
 				s.markChecked()
 				if !s.awaitRetry(nil) {
 					return
@@ -618,7 +618,7 @@ func (s *Service) run() {
 		}
 		s.config.Logger.Warn("local helper exited", "spawned", helper.Spawned(), "uptime", lived, "quick_exits", quickExits)
 		if quickExits >= s.config.BreakerThreshold {
-			s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久组件连续 %d 次启动后立即退出，已停止自动重启（日志：%s）", quickExits, s.logPath())}, nil)
+			s.setStatus(Status{State: StateFailed, Reason: fmt.Sprintf("本机持久终端组件连续 %d 次启动后立即退出，已停止自动重启（日志：%s）", quickExits, s.logPath())}, nil)
 			if !s.awaitRetry(nil) {
 				return
 			}
@@ -631,7 +631,7 @@ func (s *Service) run() {
 		if quickExits > 0 {
 			// The exited helper's provider must not stay offered as ready
 			// while the respawn backoff runs.
-			s.setStatus(Status{State: StateStarting, Reason: "本机持久组件已退出，正在重新启动"}, nil)
+			s.setStatus(Status{State: StateStarting, Reason: "本机持久终端组件已退出，正在重新启动"}, nil)
 			if !s.pause(quickExits) {
 				return
 			}
@@ -665,7 +665,7 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	} else if running.PTYListed {
 		sessions = fmt.Sprintf("至少 %d 个终端会话（后台命令数未知）", status.ActiveSessions)
 	}
-	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用临时终端。重启组件会结束这些会话", running.Protocol, sessions)
+	status.Reason = fmt.Sprintf("本机持久终端组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用临时终端。重启组件会结束这些会话", running.Protocol, sessions)
 	return status
 }
 
@@ -674,7 +674,7 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHelper, inspected bool) Status {
 	status := Status{State: StateReady}
 	if helper.JobBound() {
-		status.Warning = "本机持久组件无法脱离当前进程所在的 Windows 作业对象，退出 NexTerm 时可能被一并结束"
+		status.Warning = "本机持久终端组件无法脱离当前进程所在的 Windows 作业对象，退出 NexTerm 时可能被一并结束"
 	}
 	if !inspected || running.Runtime == nil {
 		return status
@@ -693,7 +693,7 @@ func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHel
 	if version == "" {
 		version = "未知"
 	}
-	status.Reason = fmt.Sprintf("本机持久组件来自其他版本（%s），可更新；其中有 %d 个会话在运行，重启组件会结束这些会话", version, status.ActiveSessions)
+	status.Reason = fmt.Sprintf("本机持久终端组件来自其他版本（%s），可更新；其中有 %d 个会话在运行，重启组件会结束这些会话", version, status.ActiveSessions)
 	return status
 }
 
@@ -805,7 +805,7 @@ func (s *Service) awaitRetry(ticks <-chan time.Time) bool {
 				// Leave the failure before answering, so a caller that reads
 				// the status or waits for a terminal after Retry sees the
 				// new attempt rather than the failure it just cleared.
-				s.setStatus(Status{State: StateStarting, Reason: "本机持久组件正在启动"}, nil)
+				s.setStatus(Status{State: StateStarting, Reason: "本机持久终端组件正在启动"}, nil)
 				req.reply <- nil
 				return true
 			}

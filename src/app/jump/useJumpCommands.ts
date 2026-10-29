@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useUi, nextTabId, openTerminalTab, requestKillTab, reconnectWorkspaceConnection, workspaceConnectionState, workspaceNeedsReconnect, type Workspace, useSessionList, useWorkspaceList } from "../store";
+import { useUi, nextTabId, hostHistoryTab, openTerminalTab, requestKillTab, reconnectWorkspaceConnection, workspaceConnectionState, workspaceNeedsReconnect, type Workspace, useSessionList, useWorkspaceList } from "../store";
 import { formatBinding, useKeybindings, type KeybindingActionId } from "../keybindings";
 import { sessionApi, type Asset } from "../../ipc/commands";
 import type { SnippetDto } from "../../ipc/types";
@@ -316,7 +316,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         label: "打开终端历史",
         hint: "回看和搜索终端输出",
         icon: IconClock,
-        run: () => addTab({ id: "history", kind: "history", title: "终端历史", closable: true }),
+        run: () => {
+          const current = useUi.getState();
+          const active =
+            current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
+            current.workspaces[current.workspaces.length - 1];
+          addTab(hostHistoryTab(active) ?? { id: "history", kind: "history", title: "终端历史", closable: true });
+        },
       },
       {
         id: "refresh-status",

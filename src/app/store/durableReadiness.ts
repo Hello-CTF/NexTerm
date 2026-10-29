@@ -6,10 +6,10 @@ import { describeError } from "../../ui/errorText";
 import { getTerminalPrefs, waitAccountPreferences } from "../preferences";
 
 // Reasons shown on a terminal tab that opened as a regular terminal although durable terminals are preferred.
-export const DURABLE_PREPARING_REASON = "持久组件准备中";
-export const DURABLE_UNAVAILABLE_PREFIX = "持久组件不可用";
+export const DURABLE_PREPARING_REASON = "持久终端组件准备中";
+export const DURABLE_UNAVAILABLE_PREFIX = "持久终端组件不可用";
 export const DURABLE_FALLBACK_REASON = `${DURABLE_UNAVAILABLE_PREFIX}：创建持久终端失败，已改用临时终端`;
-export const DURABLE_NOT_READY_AT_OPEN_REASON = "打开时持久组件未就绪";
+export const DURABLE_NOT_READY_AT_OPEN_REASON = "打开时持久终端组件未就绪";
 
 // An explicit open never waits longer than this for the readiness answer; a slower answer counts as "preparing".
 export const READINESS_QUERY_TIMEOUT_MS = 1000;

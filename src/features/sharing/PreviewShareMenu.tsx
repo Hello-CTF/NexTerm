@@ -43,7 +43,18 @@ function previewPermission(link: PreviewLinkView): "read" | "read_write" {
   return raw === "read_write" ? "read_write" : "read";
 }
 
-export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessionName?: string }) {
+interface PreviewShareMenuProps {
+  tabId: string;
+  sessionName?: string;
+  // The toolbar overflow menu opens the panel by increasing this counter; the standalone button is hidden on narrow
+  // panes, where the overflow menu carries the entry instead.
+  openRequest?: number;
+  // Reports whether the tab has an active preview link, so the host can keep the sharing state visible. The list is
+  // also loaded once on mount when this is set.
+  onActiveChange?: (active: boolean) => void;
+}
+
+export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChange }: PreviewShareMenuProps) {
   const [open, setOpen] = useState(false);
   const [ttlMs, setTtlMs] = useState(PREVIEW_TTL_OPTIONS[1].ms);
   const [allowWrite, setAllowWrite] = useState(false);
@@ -91,8 +102,20 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
   }, [tabId]);
 
   useEffect(() => {
-    if (open) void refresh();
-  }, [open, refresh]);
+    if (open || onActiveChange) void refresh();
+  }, [open, onActiveChange, refresh]);
+
+  const hasActive = links.length > 0;
+  useEffect(() => {
+    onActiveChange?.(hasActive);
+  }, [hasActive, onActiveChange]);
+
+  const handledOpenRequest = useRef(openRequest ?? 0);
+  useEffect(() => {
+    if (openRequest === undefined || openRequest === handledOpenRequest.current) return;
+    handledOpenRequest.current = openRequest;
+    setOpen(true);
+  }, [openRequest]);
 
   const close = useCallback(() => {
     epochRef.current += 1;
@@ -180,14 +203,14 @@ export function PreviewShareMenu({ tabId, sessionName }: { tabId: string; sessio
       <button
         type="button"
         title="创建预览链接"
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 @max-[560px]:hidden"
         onClick={toggle}
       >
         <IconGlobe className="h-3.5 w-3.5" />
         预览链接
       </button>
       {open && (
-        <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
+        <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] @max-[560px]:fixed @max-[560px]:inset-x-3 @max-[560px]:top-14 @max-[560px]:w-auto rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
             为「{sessionName || "当前终端"}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。
           </p>

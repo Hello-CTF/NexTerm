@@ -408,6 +408,14 @@ type sshExtractor interface {
 }
 
 func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver, uploadRegistries ...*fsChunkUploadRegistry) error {
+	return registerFSCommandsWithAssets(dispatcher, sessions, staged, nil, uploadRegistries...)
+}
+
+// currentAssetOptions returns the stored options of an asset as they are now, which can differ from the snapshot a
+// connected session carries when the asset was edited after connecting.
+type currentAssetOptions func(ctx context.Context, assetID string) (any, bool)
+
+func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.Manager, staged StagedBlobResolver, assetOptions currentAssetOptions, uploadRegistries ...*fsChunkUploadRegistry) error {
 	filesystem := func(ctx context.Context, sessionID string) (base.FileSystem, string, error) {
 		transport, err := sessions.TransportFor(productionSessionRequestContext(ctx), sessionID)
 		if err != nil {
@@ -547,11 +555,21 @@ func registerFSCommands(dispatcher *ipc.Dispatcher, sessions *session.Manager, s
 		},
 		func() error {
 			return ipc.Register(dispatcher, "fs_mkdir_private", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
+				connected, err := sessions.SessionFor(productionSessionRequestContext(ctx), input.SessionID)
+				if err != nil {
+					return nil, fsIPCError("", err)
+				}
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err != nil {
 					return nil, fsIPCError(kind, err)
 				}
-				return nil, privateDirIPCError(kind, mkdirPrivate(ctx, filesystem, input.Path))
+				options := connected.Asset().Options
+				if assetOptions != nil {
+					if current, ok := assetOptions(ctx, connected.Asset().ID); ok {
+						options = current
+					}
+				}
+				return nil, privateDirIPCError(kind, mkdirPrivate(ctx, filesystem, input.Path, privateDirParentFor(options)))
 			})
 		},
 		func() error {

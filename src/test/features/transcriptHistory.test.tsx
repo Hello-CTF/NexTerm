@@ -152,6 +152,16 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(ASSET.id);
   });
 
+  it("shows no host selector and lists only the fixed host's history when scoped", async () => {
+    mounted = mount(
+      createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", assetId: ASSET.id, fixedHost: true }),
+    );
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"));
+    expect(mounted.container.querySelector('select[aria-label="选择主机"]')).toBeNull();
+    expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
+    expect(mocks.assetList).not.toHaveBeenCalled();
+  });
+
   it("uses an explicit assetId even when its source workspace is gone", async () => {
     const other = { ...ASSET, id: "01J0OTHERHOST0000000001", name: "other-host", builtin: false };
     mocks.assetList.mockResolvedValue([other, ASSET]);

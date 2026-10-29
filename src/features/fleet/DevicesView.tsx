@@ -150,7 +150,6 @@ interface DeviceCardProps {
 
 function DeviceCard({ device, serverVersion: listServerVersion, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
   const pushToast = useUi((s) => s.pushToast);
-  const [metricsOpen, setMetricsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -393,14 +392,6 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             {detailsOpen ? <IconChevronUp size={11} /> : <IconChevronDown size={11} />}
             详情
           </button>
-          <button
-            type="button"
-            className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-            onClick={() => setMetricsOpen(!metricsOpen)}
-            aria-expanded={metricsOpen}
-          >
-            指标
-          </button>
         </div>
       )}
 
@@ -461,7 +452,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         </dl>
       )}
 
-      {!revoked && agent && metricsOpen && (
+      {!revoked && agent && detailsOpen && (
         <div className="mt-2 border-t border-neutral-800/60 pt-2">
           <MetricsPanel deviceId={device.id} online={online} />
         </div>

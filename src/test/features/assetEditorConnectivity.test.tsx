@@ -290,6 +290,7 @@ describe("AssetEditor SSH connectivity", () => {
 
   it("saves ordinary terminal mode for one SSH asset", async () => {
     mountEditor();
+    click(advancedToggle());
     const mode = findSelect("默认（使用全局设置）");
     expect(mode.value).toBe("auto");
     setSelectValue(mode, "regular");
@@ -301,10 +302,12 @@ describe("AssetEditor SSH connectivity", () => {
     expect(createdPayload().options).toEqual({ terminalMode: "regular" });
   });
 
-  it("offers persistent terminal mode in the basic form and saves an explicit override", async () => {
+  it("offers persistent terminal mode in the advanced section and saves an explicit override", async () => {
     mountEditor();
-    const mode = findSelect("默认（使用全局设置）");
     expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
+    expect(mounted?.container.textContent).not.toContain("终端模式");
+    click(advancedToggle());
+    const mode = findSelect("默认（使用全局设置）");
     expect([...mode.options].map((option) => option.value)).toEqual(["auto", "durable", "regular"]);
     setSelectValue(mode, "durable");
     fillName("durable-ssh");

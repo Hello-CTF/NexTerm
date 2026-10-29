@@ -60,6 +60,7 @@ export {
   isToolTabKind,
   migrateToolTabs,
   nextTabId,
+  hostHistoryTab,
   pruneBroadcastToWorkspaces,
 } from "./store/model";
 export {

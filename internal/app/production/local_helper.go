@@ -133,7 +133,7 @@ func localHelperDisabledByEnv(value string) bool {
 func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelper.Service, database localTerminalModeStore, onModeChange func()) error {
 	current := func() localHelperStatusDTO {
 		if service == nil {
-			return localHelperStatusDTO{State: string(localhelper.StateDisabled), Reason: "本机终端在此环境中不使用持久组件"}
+			return localHelperStatusDTO{State: string(localhelper.StateDisabled), Reason: "本机终端在此环境中不使用持久终端组件"}
 		}
 		return localHelperStatus(service.Status())
 	}
@@ -148,7 +148,7 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 			// proves the user approved exactly the helper and count they saw.
 			return ipc.Register(dispatcher, "local_helper_restart", func(ctx context.Context, _ *ipc.Call, input localHelperRestartRequest) (localHelperStatusDTO, error) {
 				if service == nil {
-					return localHelperStatusDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久组件")
+					return localHelperStatusDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久终端组件")
 				}
 				if input.ConsentToken == "" {
 					return localHelperStatusDTO{}, ipc.BadParam(errors.New("缺少重启确认"))
@@ -172,7 +172,7 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 				}
 				if service == nil || database == nil {
 					// Without a local helper local terminals are always regular.
-					return localTerminalModeDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久组件")
+					return localTerminalModeDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久终端组件")
 				}
 				if err := database.SettingSet(ctx, LocalTerminalModeSettingKey, input.Mode); err != nil {
 					return localTerminalModeDTO{}, err
@@ -186,7 +186,7 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 		func() error {
 			return ipc.Register(dispatcher, "local_helper_retry", func(ctx context.Context, _ *ipc.Call, _ struct{}) (localHelperStatusDTO, error) {
 				if service == nil {
-					return localHelperStatusDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久组件")
+					return localHelperStatusDTO{}, ipc.NewError(ipc.CodeUnsupported, "本机终端在此环境中不使用持久终端组件")
 				}
 				if err := service.Retry(ctx); err != nil {
 					return localHelperStatusDTO{}, localHelperIPCError(err)
@@ -206,11 +206,11 @@ func registerLocalHelperCommands(dispatcher *ipc.Dispatcher, service *localhelpe
 func localHelperIPCError(err error) error {
 	switch {
 	case errors.Is(err, localhelper.ErrStaleConsent):
-		return ipc.WrapError(ipc.CodeNeedsConfirm, "本机持久组件的状态已变化，请重新确认后再重启", err)
+		return ipc.WrapError(ipc.CodeNeedsConfirm, "本机持久终端组件的状态已变化，请重新确认后再重启", err)
 	case errors.Is(err, localhelper.ErrNotOutdated):
-		return ipc.WrapError(ipc.CodeBadParam, "本机持久组件当前不需要重启", err)
+		return ipc.WrapError(ipc.CodeBadParam, "本机持久终端组件当前不需要重启", err)
 	case errors.Is(err, localhelper.ErrNotSupported), errors.Is(err, localhelper.ErrServiceClosed):
-		return ipc.WrapError(ipc.CodeUnsupported, "本机持久组件不可用", err)
+		return ipc.WrapError(ipc.CodeUnsupported, "本机持久终端组件不可用", err)
 	default:
 		return ipc.WrapError(ipc.Code("local_helper_restart_failed"), "重启本机持久终端组件失败："+err.Error(), err)
 	}

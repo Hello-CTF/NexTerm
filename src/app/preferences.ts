@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { getResolvedTheme, setThemePreferenceLayers, subscribeTheme, type ThemeMode } from "./theme";
 import { DESKTOP } from "../ipc/env";
 import { syncApi } from "../ipc/commands";
+import { listenEvent } from "../ipc/events";
 
 const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 
@@ -92,19 +93,48 @@ export function registerAccountPreferenceStore(store: AccountPreferenceStore | n
     .getView()
     .then((view) => {
       if (generation !== registerGeneration || store !== accountStore) return;
-      accountDefaults = view.defaults;
-      accountOverrides = view.overrides;
-      deviceOnlyPreferences = view.deviceOnly === true;
-      accountViewLoaded = true;
-      syncThemePreferenceLayers();
-      rebuildSnapshots();
-      for (const listener of accountListeners) listener();
+      applyAccountView(view);
     })
     .catch(() => undefined)
     .finally(() => {
       if (accountViewLoading === loading) accountViewLoading = null;
     });
   accountViewLoading = loading;
+  watchDeviceOnlyView();
+}
+
+function applyAccountView(view: AccountPreferenceView): void {
+  accountDefaults = view.defaults;
+  accountOverrides = view.overrides;
+  deviceOnlyPreferences = view.deviceOnly === true;
+  accountViewLoaded = true;
+  syncThemePreferenceLayers();
+  rebuildSnapshots();
+  for (const listener of accountListeners) listener();
+}
+
+// On desktop the sync session (and with it the account user id) only exists after the first round logs in, which
+// happens after the first view read at startup: that read comes back device-only and the synced appearance would stay
+// hidden until a round happens to apply remote changes. Retry the read on every sync status event until the account
+// view is real.
+let deviceOnlyWatcher = false;
+function watchDeviceOnlyView(): void {
+  if (!DESKTOP || deviceOnlyWatcher) return;
+  deviceOnlyWatcher = true;
+  void listenEvent("sync://status", () => {
+    const store = accountStore;
+    if (!store || (accountViewLoaded && !deviceOnlyPreferences)) return;
+    const generation = registerGeneration;
+    void store
+      .getView()
+      .then((view) => {
+        if (generation !== registerGeneration || store !== accountStore || view.deviceOnly === true) return;
+        applyAccountView(view);
+      })
+      .catch(() => undefined);
+  }).catch(() => {
+    deviceOnlyWatcher = false;
+  });
 }
 
 // waitAccountPreferences waits briefly for an in-flight account preference load so

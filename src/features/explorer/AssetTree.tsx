@@ -29,7 +29,7 @@ import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
-import { PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
+import { PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -2019,6 +2019,7 @@ export function AssetEditor({
   const [pasteTerminalDir, setPasteTerminalDir] = useState(
     typeof initial?.options?.[PASTE_TERMINAL_DIR_KEY] === "string" ? (initial.options[PASTE_TERMINAL_DIR_KEY] as string) : "",
   );
+  const [pasteNoRandomDir, setPasteNoRandomDir] = useState(initial?.options?.[PASTE_NO_RANDOM_DIR_KEY] === true);
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2034,7 +2035,8 @@ export function AssetEditor({
     typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
   );
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // A saved terminal mode override lives in the advanced section, so open it to keep the override visible.
+  const [advancedOpen, setAdvancedOpen] = useState(terminalMode !== "auto");
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -2299,6 +2301,8 @@ export function AssetEditor({
       delete options[PASTE_UPLOAD_DIR_KEY];
       delete options[PASTE_TERMINAL_DIR_KEY];
     }
+    if (groupKind === "ssh" && pasteNoRandomDir) options[PASTE_NO_RANDOM_DIR_KEY] = true;
+    else delete options[PASTE_NO_RANDOM_DIR_KEY];
     return options;
   };
 
@@ -2791,25 +2795,6 @@ export function AssetEditor({
             </>
           )}
 
-          {kind === "asset" && groupKind === "ssh" && (
-            <div className="nx-form-row">
-              <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
-              <select
-                id={terminalModeId}
-                className="nx-select"
-                value={terminalMode}
-                onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
-              >
-                <option value="auto">默认（使用全局设置）</option>
-                <option value="durable">持久终端（断开后可在后台接管）</option>
-                <option value="regular">临时终端（随连接断开结束）</option>
-              </select>
-              <div className="nx-hint mt-1.5">
-                首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签页生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
-              </div>
-            </div>
-          )}
-
           {kind === "asset" && groupKind !== "local" && !inventoryOnly && (
             <>
               <fieldset disabled={managed !== null} className="contents">
@@ -3170,6 +3155,24 @@ export function AssetEditor({
                   </button>
                   {advancedOpen && (
                     <div id={advancedPanelId} className="mt-2.5">
+                      {groupKind === "ssh" && (
+                        <div className="nx-form-row">
+                          <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
+                          <select
+                            id={terminalModeId}
+                            className="nx-select"
+                            value={terminalMode}
+                            onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
+                          >
+                            <option value="auto">默认（使用全局设置）</option>
+                            <option value="durable">持久终端（断开后可在后台接管）</option>
+                            <option value="regular">临时终端（随连接断开结束）</option>
+                          </select>
+                          <div className="nx-hint mt-1.5">
+                            首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签页生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
+                          </div>
+                        </div>
+                      )}
                       <div className="nx-form-row">
                         <label className="nx-label">跳板机</label>
                         <select
@@ -3321,6 +3324,23 @@ export function AssetEditor({
                               ↳ 选填。粘贴或拖入终端的文件经 SFTP 上传到该目录，插入终端的链接改用对应路径；适用于 chroot 的
                               SFTP 账号（如上传目录填 /，终端中的对应路径填 /tmp）。填写对应路径时必须同时填写上传目录。
                             </div>
+                          </div>
+                          <div className="nx-form-row">
+                            <label className="flex cursor-pointer items-start gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[12.5px] text-neutral-200">不使用随机目录</div>
+                                <p className="nx-hint mt-0.5">
+                                  默认关闭：每次粘贴先在上传目录下创建仅当前用户可访问的随机目录。开启后文件直接放在上传目录中，文件名附带随机后缀；能列出该目录的其他用户可以读取这些文件。
+                                </p>
+                              </div>
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 shrink-0"
+                                aria-label="不使用随机目录"
+                                checked={pasteNoRandomDir}
+                                onChange={(e) => setPasteNoRandomDir(e.target.checked)}
+                              />
+                            </label>
                           </div>
                         </div>
                       )}

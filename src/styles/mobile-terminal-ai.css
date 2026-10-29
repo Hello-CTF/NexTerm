@@ -4,17 +4,18 @@
 }
 
 @container term (max-width: 560px) {
+  /* One row: title, connection dot, the menu button. The labels that fill a second row on wide panes are listed in
+     the menu button's "状态" group instead. */
   .nx-toolbar.nx-term-toolbar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     overflow: visible;
     padding-top: 3px;
     padding-bottom: 3px;
-    row-gap: 3px;
     position: relative;
   }
 
   /* Let the preview-link popover anchor to the toolbar so it stays inside the pane. */
-  .nx-term-toolbar > .nx-toolbar-extra > .relative {
+  .nx-term-toolbar > .relative {
     position: static;
   }
 
@@ -34,15 +35,6 @@
   }
 
   .nx-term-toolbar > .nx-toolbar-extra {
-    order: 3;
-    display: flex;
-    flex: 1 0 100%;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .nx-term-toolbar > .nx-toolbar-extra:empty {
     display: none;
   }
 

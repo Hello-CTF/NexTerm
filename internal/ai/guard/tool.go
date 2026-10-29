@@ -68,7 +68,7 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		fields = map[string]json.RawMessage{}
 	}
 	switch name {
-	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify", "load_skill":
+	case "read_file", "list_dir", "search_files", "read_screen", "wait_for", "terminal_list", "operation_result", "list_assets", "docker_ps", "docker_logs", "db_list_tables", "db_describe", "redis_scan", "ask_user", "todo_write", "exit_plan_mode", "notify", "load_skill":
 		return Allow()
 	case "write_file", "edit_file":
 		if matchDangerRule(stringField(fields, "path"), config.DangerRules) {
@@ -92,6 +92,8 @@ func classifyTool(name string, args json.RawMessage, config Config) Ruling {
 		return ClassifySendKeys(stringField(fields, "keys"), boolField(fields, "enter"), config.DangerRules)
 	case "terminal_rename":
 		return Allow()
+	case "shell_history":
+		return Confirm(Kind("shell_history"), "读取本机 shell 历史文件（历史常包含敏感命令，需要确认）")
 	case "terminal_create":
 		result := Confirm(KindProcess, "新建终端会启动新的 shell 进程")
 		return Worst(result, ClassifyCommand(stringField(fields, "command"), config.DangerRules))

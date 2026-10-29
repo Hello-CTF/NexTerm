@@ -335,6 +335,31 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
   });
 
 
+  it("keeps the comparison on screen while a sync switch is saved so the page does not collapse", async () => {
+    await seedUndecryptableCloudOnly("cloud-only");
+    let finishSet: (view: Record<string, boolean>) => void = () => {};
+    const changed = { knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: true, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false };
+    mocks.kindOptInSet.mockImplementation(() => new Promise((resolve) => { finishSet = resolve as typeof finishSet; }));
+
+    mounted = mountSyncCard();
+    openDetails();
+    await flushUntil(() => text().includes("服务端数据 cloud-only 解密失败"));
+    clickButton(mounted.container, "管理同步项");
+    await flush();
+    const label = [...document.body.querySelectorAll("label")].find((l) => l.textContent?.includes("同步外观与快捷键"));
+    const box = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!box) throw new Error("preferences switch not found");
+    await act(async () => { box.click(); });
+
+    // The save is still pending: the comparison below the switches must not be emptied meanwhile.
+    expect(text()).toContain("服务端数据 cloud-only 解密失败");
+    expect(text()).toContain("服务端共 1 项数据");
+
+    await act(async () => { finishSet(changed); });
+    await flushUntil(() => !text().includes("正在读取本机与服务端数据"));
+    expect(text()).toContain("服务端数据 cloud-only 解密失败");
+  });
+
   it("shows the shared console title, status copy and deletion caveats in the web console", async () => {
     mounted = mountSyncCard();
     await flushUntil(() => text().includes("项数据"));

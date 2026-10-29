@@ -39,6 +39,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { showSettingsSection } from "./settingsNavigation";
+import { ListPager, usePagedList } from "./ListPager";
 
 // All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
 // the 24h default aligns with the server defaultHostShareTTL, and ttl_ms is always sent explicitly on submit.
@@ -166,6 +167,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
 
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
   const [shares, setShares] = useState<HostShareView[] | null>(null);
+  const sharePager = usePagedList(shares ?? []);
   const [listError, setListError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -393,7 +395,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       <div className="mb-1 text-[12.5px] text-neutral-200">主机分享</div>
       {shares !== null && shares.length > 0 && (
         <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
-          {shares.map((s) => {
+          {sharePager.pageItems.map((s) => {
             const state = shareState(s.expires_at, s.revoked_at, now);
             const perm = permissionBadge(s.permission);
             const direction =
@@ -436,6 +438,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
               </div>
             );
           })}
+          {sharePager.paged && <ListPager currentPage={sharePager.currentPage} pageCount={sharePager.pageCount} setPage={sharePager.setPage} />}
         </div>
       )}
       {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">正在加载分享数据…</div>}

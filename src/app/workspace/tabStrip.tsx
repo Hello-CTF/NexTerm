@@ -46,6 +46,7 @@ const TAB_ICON = {
   devices: IconMonitor,
   background: IconActivity,
   history: IconClock,
+  hostHistory: IconClock,
   execBatch: IconCommand,
   host: IconServer,
 } as const;

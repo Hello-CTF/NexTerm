@@ -12,6 +12,9 @@ import (
 const (
 	AssetOptionPasteUploadDir   = "pasteUploadDir"
 	AssetOptionPasteTerminalDir = "pasteTerminalDir"
+	// AssetOptionPasteNoRandomDir uploads pasted files straight into the upload directory instead of a
+	// per-paste private directory.
+	AssetOptionPasteNoRandomDir = "pasteNoRandomDir"
 )
 
 // normalizePasteDir validates an absolute POSIX directory and returns it without
@@ -48,6 +51,12 @@ func validateAssetPasteOptions(raw string) error {
 	var options map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(raw), &options); err != nil {
 		return nil
+	}
+	if encoded, exists := options[AssetOptionPasteNoRandomDir]; exists && string(encoded) != "null" {
+		var flag bool
+		if err := json.Unmarshal(encoded, &flag); err != nil {
+			return badParam(errString(AssetOptionPasteNoRandomDir + " 必须是布尔值"))
+		}
 	}
 	values := map[string]string{}
 	for _, key := range []string{AssetOptionPasteUploadDir, AssetOptionPasteTerminalDir} {

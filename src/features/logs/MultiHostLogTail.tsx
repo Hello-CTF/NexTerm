@@ -15,7 +15,8 @@ import {
 import { saveBrowserBlob } from "../../ipc/webFiles";
 import { describeError } from "../../ui/errorText";
 import { pickSavePath } from "../../ui/dialogs";
-import { IconDownload, IconPlay, IconServer, IconStop, IconTrash } from "../../ui/icons";
+import { IconChevronDown, IconDownload, IconInfo, IconPlay, IconServer, IconSettings, IconStop, IconTrash } from "../../ui/icons";
+import { LogPopover } from "./LogPopover";
 import { assetTagValues } from "../explorer/assetSearch";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import {
@@ -79,6 +80,9 @@ function allSourcesTerminal(
   }
   return true;
 }
+
+const INFO_TEXT =
+  "只读：仅执行只读的日志命令，不会修改主机，无需生产确认。仅支持当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不会自动连接。";
 
 const SOURCE_KIND_LABELS: Record<LogTailSourceKind, string> = {
   file: "文件",
@@ -166,6 +170,8 @@ export function MultiHostLogTail({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [, setRevision] = useState(0);
   const [capacity, setCapacity] = useState(5000);
+  const [hostsOpen, setHostsOpen] = useState(() => (initialSelected?.length ?? 0) === 0);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const bufferRef = useRef(new MergedLogBuffer(5000));
   const activeRef = useRef<ActiveRun | null>(null);
@@ -272,6 +278,7 @@ export function MultiHostLogTail({
     setRunError(null);
     setSaveMessage(null);
     if (selectedIds.length === 0) {
+      setHostsOpen(true);
       setRunError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
@@ -290,6 +297,7 @@ export function MultiHostLogTail({
       const target = targetsById.get(sessionId);
       const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
       if (!draft.value.trim()) {
+        setHostsOpen(true);
         setRunError(`请填写目标「${target?.label ?? sessionId}」的日志来源`);
         return;
       }
@@ -297,6 +305,8 @@ export function MultiHostLogTail({
       nextRunSources.push({ sourceId: sessionId, sessionId, host: target?.label ?? sessionId, ...draft });
     }
 
+    setHostsOpen(false);
+    setMoreOpen(false);
     const id = createLogTailRunId();
     bufferRef.current = new MergedLogBuffer(maxLines);
     setCapacity(maxLines);
@@ -408,131 +418,131 @@ export function MultiHostLogTail({
     }
   };
 
+  const retained = bufferRef.current.retainedLines().length;
+  const failedSources = runSources.filter((source) => statuses[source.sourceId]?.status === "failed").length;
+  const hostsSummary = selectedIds.length === 0 ? "选择主机" : `${selectedIds.length} 台主机`;
+  const emptyMessage =
+    targets.length === 0
+      ? "没有已连接的 SSH / 受管设备。先在左侧连接主机，再回到这里合并跟随日志。"
+      : retained > 0
+        ? "没有匹配当前过滤条件的日志"
+        : running
+          ? "等待日志…"
+          : selectedIds.length === 0
+            ? "点击上方「选择主机」，勾选主机并填写日志来源，然后开始跟随。"
+            : "点击「开始跟随」查看合并日志。";
+
   return (
     <section className="nx-pane" aria-label="多主机日志合并" data-testid="multi-host-log-tail">
-      <div className="nx-toolbar flex-wrap">
+      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-neutral-800/70 px-2.5 py-1.5">
         <IconServer size={14} className="text-neutral-500" />
         <h2 className="nx-toolbar-title">多主机日志</h2>
-        <span className="nx-badge nx-badge-amber" title="只执行只读的日志命令，不会修改主机，无需生产确认">
-          只读
+        <span
+          className="inline-flex text-neutral-500"
+          role="img"
+          tabIndex={0}
+          title={INFO_TEXT}
+          aria-label={INFO_TEXT}
+        >
+          <IconInfo size={13} />
         </span>
-        <span className="nx-hint">仅当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不自动连接</span>
-      </div>
-
-      <div className="flex max-h-[42%] min-h-[160px] flex-col sm:max-h-[46%] sm:min-h-[220px] gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">
-        <TargetSetPicker
-          targets={targets}
-          selectedIds={selectedIds}
-          onChange={setSelected}
-          disabled={running}
-          maxTargets={MAX_TARGETS}
-          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
-        />
-        {selectedIds.length > 0 && (
-          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-            {selectedIds.map((sessionId) => {
-              const target = targets.find((candidate) => candidate.id === sessionId);
-              const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
-              return (
-                <div key={sessionId} className="flex min-w-0 flex-wrap items-center gap-2 rounded border border-neutral-800/70 p-2 sm:flex-nowrap">
-                  <span className={`w-24 shrink-0 truncate text-[11px] ${hostColor(sessionId)}`} title={target?.label}>
-                    {target?.label ?? sessionId}
-                  </span>
-                  <select
-                    className="nx-input nx-input-sm w-28 shrink-0"
-                    value={draft.kind}
-                    disabled={running}
-                    aria-label={`来源类型 ${target?.label ?? sessionId}`}
-                    onChange={(event) =>
-                      setDrafts((current) => ({
-                        ...current,
-                        [sessionId]: { ...draft, kind: event.target.value as LogTailSourceKind },
-                      }))
-                    }
-                  >
-                    {Object.entries(SOURCE_KIND_LABELS).map(([kind, label]) => (
-                      <option key={kind} value={kind}>{label}</option>
-                    ))}
-                  </select>
-                  <input
-                    className="nx-input nx-input-sm min-w-[8rem] flex-1 basis-full font-mono sm:basis-0"
-                    value={draft.value}
-                    disabled={running}
-                    placeholder={SOURCE_PLACEHOLDERS[draft.kind]}
-                    aria-label={`来源 ${target?.label ?? sessionId}`}
-                    onChange={(event) =>
-                      setDrafts((current) => ({
-                        ...current,
-                        [sessionId]: { ...draft, value: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            并发数
-            <input
-              type="number"
-              className="nx-input w-24"
-              min={1}
-              max={MAX_CONCURRENT}
-              value={concurrency}
-              disabled={running}
-              onChange={(event) => setConcurrency(event.target.value)}
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            保留行数
-            <input
-              type="number"
-              className="nx-input w-28"
-              min={100}
-              max={MAX_LINES}
-              value={lineCap}
-              disabled={running}
-              onChange={(event) => setLineCap(event.target.value)}
-            />
-          </label>
-          <span className="nx-spacer" />
-          {running ? (
-            <button type="button" className="nx-btn nx-btn-danger" disabled={stopping} onClick={() => void stop()}>
-              <IconStop size={13} />
-              {stopping ? "正在取消…" : "停止全部"}
-            </button>
-          ) : (
+        <LogPopover
+          open={hostsOpen}
+          onOpenChange={setHostsOpen}
+          label="选择主机与来源"
+          trigger={
             <button
               type="button"
-              className="nx-btn nx-btn-primary"
-              disabled={targets.length === 0}
-              title={targets.length === 0 ? "当前没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
-              onClick={start}
+              className="nx-btn nx-btn-ghost nx-btn-sm"
+              aria-expanded={hostsOpen}
+              aria-label="选择主机与来源"
+              onClick={() => setHostsOpen((current) => !current)}
             >
-              <IconPlay size={13} />
-              开始跟随
+              {hostsSummary}
+              <IconChevronDown size={12} />
             </button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
+          }
+        >
+          <div className="flex flex-col gap-3">
+            <TargetSetPicker
+              targets={targets}
+              selectedIds={selectedIds}
+              onChange={setSelected}
+              disabled={running}
+              maxTargets={MAX_TARGETS}
+              metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+            />
+            {selectedIds.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {selectedIds.map((sessionId) => {
+                  const target = targets.find((candidate) => candidate.id === sessionId);
+                  const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
+                  return (
+                    <div key={sessionId} className="flex min-w-0 flex-wrap items-center gap-2 rounded border border-neutral-800/70 p-2 sm:flex-nowrap">
+                      <span className={`w-24 shrink-0 truncate text-[11px] ${hostColor(sessionId)}`} title={target?.label}>
+                        {target?.label ?? sessionId}
+                      </span>
+                      <select
+                        className="nx-input nx-input-sm w-28 shrink-0"
+                        value={draft.kind}
+                        disabled={running}
+                        aria-label={`来源类型 ${target?.label ?? sessionId}`}
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [sessionId]: { ...draft, kind: event.target.value as LogTailSourceKind },
+                          }))
+                        }
+                      >
+                        {Object.entries(SOURCE_KIND_LABELS).map(([kind, label]) => (
+                          <option key={kind} value={kind}>{label}</option>
+                        ))}
+                      </select>
+                      <input
+                        className="nx-input nx-input-sm min-w-[8rem] flex-1 basis-full font-mono sm:basis-0"
+                        value={draft.value}
+                        disabled={running}
+                        placeholder={SOURCE_PLACEHOLDERS[draft.kind]}
+                        aria-label={`来源 ${target?.label ?? sessionId}`}
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [sessionId]: { ...draft, value: event.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </LogPopover>
         <input
-          className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-48 sm:flex-none"
+          className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:max-w-xs"
           value={include}
           placeholder="只显示匹配的行（正则表达式），例如 ERROR|WARN"
           aria-label="包含正则"
           onChange={(event) => setInclude(event.target.value)}
         />
-        <input
-          className="nx-input nx-input-sm min-w-0 flex-1 basis-36 font-mono sm:w-44 sm:flex-none"
-          value={exclude}
-          placeholder="隐藏匹配的行（正则表达式）"
-          aria-label="排除正则"
-          onChange={(event) => setExclude(event.target.value)}
-        />
+        <span className="nx-spacer" />
+        {running ? (
+          <button type="button" className="nx-btn nx-btn-danger nx-btn-sm" disabled={stopping} onClick={() => void stop()}>
+            <IconStop size={13} />
+            {stopping ? "正在取消…" : "停止全部"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="nx-btn nx-btn-primary nx-btn-sm"
+            disabled={targets.length === 0}
+            title={targets.length === 0 ? "当前没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
+            onClick={start}
+          >
+            <IconPlay size={13} />
+            开始跟随
+          </button>
+        )}
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -546,31 +556,86 @@ export function MultiHostLogTail({
         >
           {paused ? "继续显示" : "暂停显示"}
         </button>
-        <button
-          type="button"
-          className="nx-icon-btn"
-          title="清空当前保留日志"
-          aria-label="清空日志"
-          onClick={() => {
-            bufferRef.current.clear();
-            setRevision((current) => current + 1);
-          }}
+        <LogPopover
+          open={moreOpen}
+          onOpenChange={setMoreOpen}
+          label="更多选项"
+          align="right"
+          widthClass="w-[min(18rem,calc(100vw-1.5rem))]"
+          trigger={
+            <button
+              type="button"
+              className="nx-icon-btn"
+              title="更多选项"
+              aria-label="更多选项"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((current) => !current)}
+            >
+              <IconSettings size={13} />
+            </button>
+          }
         >
-          <IconTrash size={13} />
-        </button>
-        <button
-          type="button"
-          className="nx-btn nx-btn-ghost nx-btn-sm"
-          disabled={saving || bufferRef.current.retainedLines().length === 0}
-          onClick={() => void save()}
-        >
-          <IconDownload size={13} />
-          {saving ? "正在保存…" : "保存日志"}
-        </button>
-        <span className="nx-spacer" />
-        <span className="nx-hint" role="status">
-          显示 {visibleLines.length} · 保留 {bufferRef.current.retainedLines().length} / {capacity} · 已丢弃 {bufferRef.current.droppedCount}
-        </span>
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
+              排除（正则表达式）
+              <input
+                className="nx-input nx-input-sm font-mono"
+                value={exclude}
+                placeholder="隐藏匹配的行（正则表达式）"
+                aria-label="排除正则"
+                onChange={(event) => setExclude(event.target.value)}
+              />
+            </label>
+            <div className="flex gap-2">
+              <label className="flex flex-1 flex-col gap-1 text-[11px] text-neutral-500">
+                并发数
+                <input
+                  type="number"
+                  className="nx-input nx-input-sm"
+                  min={1}
+                  max={MAX_CONCURRENT}
+                  value={concurrency}
+                  disabled={running}
+                  onChange={(event) => setConcurrency(event.target.value)}
+                />
+              </label>
+              <label className="flex flex-1 flex-col gap-1 text-[11px] text-neutral-500">
+                保留行数
+                <input
+                  type="number"
+                  className="nx-input nx-input-sm"
+                  min={100}
+                  max={MAX_LINES}
+                  value={lineCap}
+                  disabled={running}
+                  onChange={(event) => setLineCap(event.target.value)}
+                />
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-sm"
+                disabled={saving || retained === 0}
+                onClick={() => void save()}
+              >
+                <IconDownload size={13} />
+                {saving ? "正在保存…" : "保存日志"}
+              </button>
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-sm"
+                onClick={() => {
+                  bufferRef.current.clear();
+                  setRevision((current) => current + 1);
+                }}
+              >
+                <IconTrash size={13} />
+                清空日志
+              </button>
+            </div>
+          </div>
+        </LogPopover>
       </div>
       {filters.error && (
         <div role="alert" className="border-b border-amber-900/50 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">
@@ -585,36 +650,13 @@ export function MultiHostLogTail({
         </div>
       )}
 
-      {runSources.length > 0 && (
-        <details className="shrink-0 border-b border-neutral-800/70 px-3 py-1.5" open={runSources.some((source) => statuses[source.sourceId]?.status === "failed")}>
-          <summary className="cursor-pointer select-none text-[11px] text-neutral-400">
-            来源状态（{runSources.length}）
-          </summary>
-          <div className="mt-1 grid grid-cols-1 gap-1 xl:grid-cols-2">
-            {runSources.map((source) => {
-              const state = statuses[source.sourceId] ?? { status: "idle" as const };
-              return (
-                <div key={source.sourceId} className="flex min-w-0 items-start gap-2 rounded px-1 py-1 text-[11px]">
-                  <span className={`shrink-0 font-mono ${hostColor(source.sessionId)}`}>[{source.host}]</span>
-                  <span className="shrink-0 text-neutral-500">{SOURCE_KIND_LABELS[source.kind]}</span>
-                  <span className={`shrink-0 ${statusTone(state.status)}`}>{STATUS_LABELS[state.status]}</span>
-                  {state.error && <span className="min-w-0 break-all text-red-300">{state.error}</span>}
-                </div>
-              );
-            })}
-          </div>
-        </details>
-      )}
-
       <div
         role="log"
         aria-label="多主机合并日志内容"
         className="min-h-0 flex-1 overflow-auto bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]"
       >
         {visibleLines.length === 0 ? (
-          <div className="px-2 py-4 text-center text-[11px] text-neutral-500">
-            {bufferRef.current.retainedLines().length === 0 ? "等待日志…" : "没有匹配当前过滤条件的日志"}
-          </div>
+          <div className="px-2 py-4 text-center text-[11px] text-neutral-500">{emptyMessage}</div>
         ) : (
           visibleLines.map((line) => (
             <div key={line.sequence} className="flex min-w-max gap-2 rounded px-1 hover:bg-neutral-800/30">
@@ -633,6 +675,32 @@ export function MultiHostLogTail({
             </div>
           ))
         )}
+      </div>
+
+      {runSources.length > 0 && (
+        <details className="shrink-0 border-t border-neutral-800/70 px-3 py-1" open={failedSources > 0}>
+          <summary className="cursor-pointer select-none text-[11px] text-neutral-400">
+            来源状态（{runSources.length}{failedSources > 0 ? `，${failedSources} 个失败` : ""}）
+          </summary>
+          <div className="mt-1 grid max-h-32 grid-cols-1 gap-1 overflow-y-auto xl:grid-cols-2">
+            {runSources.map((source) => {
+              const state = statuses[source.sourceId] ?? { status: "idle" as const };
+              return (
+                <div key={source.sourceId} className="flex min-w-0 items-start gap-2 rounded px-1 py-1 text-[11px]">
+                  <span className={`shrink-0 font-mono ${hostColor(source.sessionId)}`}>[{source.host}]</span>
+                  <span className="shrink-0 text-neutral-500">{SOURCE_KIND_LABELS[source.kind]}</span>
+                  <span className={`shrink-0 ${statusTone(state.status)}`}>{STATUS_LABELS[state.status]}</span>
+                  {state.error && <span className="min-w-0 break-all text-red-300">{state.error}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      )}
+      <div className="flex-none border-t border-neutral-800/70 px-3 py-1">
+        <span className="nx-hint" role="status">
+          显示 {visibleLines.length} · 保留 {retained} / {capacity} · 已丢弃 {bufferRef.current.droppedCount}
+        </span>
       </div>
     </section>
   );

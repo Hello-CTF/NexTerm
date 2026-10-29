@@ -264,9 +264,10 @@ func TestSupervisorWrappedZshLoginReadsLoginFiles(t *testing.T) {
 	}
 	session, err := supervisor.Create(context.Background(), CreateOptions{
 		Command: []string{zsh, "-l"},
-		Env:     []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color"},
-		Cols:    80,
-		Rows:    24,
+		// skip_global_compinit keeps the system zshrc's compinit from prompting about insecure fpath directories.
+		Env:  []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TERM=xterm-256color", "skip_global_compinit=1"},
+		Cols: 80,
+		Rows: 24,
 	})
 	if err != nil {
 		t.Fatal(err)

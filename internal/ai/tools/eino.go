@@ -129,6 +129,8 @@ type TerminalRenameArgs struct {
 type TerminalListArgs struct {
 	Cursor string `json:"cursor,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
+
+	IncludeExited bool `json:"include_exited,omitempty" jsonschema:"description=Also list tabs whose shell has exited (hidden by default)"`
 }
 type OperationResultArgs struct {
 	OperationID string `json:"operation_id" jsonschema:"required"`
@@ -175,7 +177,7 @@ var einoDescriptions = map[string]string{
 	NotifyTool:         "Send the user an in-app notification, for long-task completion or matters needing the user's immediate attention; message is the notification content (no more than 200 characters); the content must also be written into the current reply body, because the popup may be missed.",
 	"terminal_create":  "Create a new terminal tab in the current session or on optional asset_id (an owner-checked, supported, live session; assets are never auto-connected unless connect=true explicitly opts in, in which case a missing live session is established first and a creation failure after a successful connect names the residual session). Starts a new shell and requires user confirmation; optional title sets the tab title, optional command is the startup command (supported only by ssh/docker/local/device sessions; it is written verbatim to the new shell's standard input, and when it contains newlines it runs as multiple commands in sequence; unsupported kinds such as winrm are rejected, in which case create the tab first and then send the command with send_keys passing tab_id). Returns the new tab's tab_id and stable handle; by default the tab is shown in the foreground of the user's workspace, the AI works in it, and the user can take over input at any time; with background=true the tab is created detached in the background instead, and the user can take over in 「后台会话」 (Background Sessions). Either way, send_keys/read_screen/wait_for with tab_id can later operate tabs created by this task, including tabs on another owner-checked session.",
 	"terminal_rename":  "Rename the terminal tab in the current scope; title is the new title (required), tab_id defaults to the current tab. Custom titles are not overwritten by remote title sequences and are preserved after background session reconnection.",
-	"terminal_list":    "List the open terminal tabs visible to the current owner with their stable handles, kinds, assets, titles, shell-reported cwds, and lifecycle state, paged by cursor/limit; handles resolve to the exact tab and session they were issued for and can be passed as tab_id to send_keys/read_screen/wait_for/terminal_rename.",
+	"terminal_list":    "List the open terminal tabs visible to the current owner with their stable handles, kinds, assets, titles, shell-reported cwds, and lifecycle state, paged by cursor/limit; exited tabs are hidden unless include_exited=true (the result reports how many were hidden); handles resolve to the exact tab and session they were issued for and can be passed as tab_id to send_keys/read_screen/wait_for/terminal_rename.",
 	"operation_result": "Query the recorded outcome of one uncertain mutation by its operation ID (returned by terminal_create and other mutating tools): the operation's state (initiated/succeeded/failed), failure stage, residual session or resource left behind, error, and the recorded result payload. Use it to check the original operation's result before deciding whether to retry; it never implies the operation ran exactly once.",
 }
 

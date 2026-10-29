@@ -565,6 +565,54 @@ describe("TerminalPane file paste orchestration", () => {
     expect(statusText()).toContain("该主机的 /tmp 并插入链接");
   });
 
+  it("uploads straight into the upload directory under a random name when the asset skips the random directory", async () => {
+    mocks.assetGet.mockResolvedValue({
+      id: "asset-1",
+      options: { pasteUploadDir: "/", pasteTerminalDir: "/tmp", pasteNoRandomDir: true },
+    });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(mocks.paste).toHaveBeenCalledTimes(1));
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+    const path = mocks.fsWrite.mock.calls[0]?.[1] as string;
+    expect(path).toMatch(/^\/shot-[0-9a-f]{12}\.png$/);
+    expect(mocks.paste).toHaveBeenCalledWith(`[${path.slice(1)}](/tmp${path})`);
+  });
+
+  it("gives every flat upload its own name so a repeated paste cannot overwrite an earlier file", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteNoRandomDir: true } });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(mocks.fsWrite).toHaveBeenCalledTimes(2));
+    expect(mocks.fsWrite.mock.calls[0]?.[1]).not.toBe(mocks.fsWrite.mock.calls[1]?.[1]);
+    expect(mocks.fsWrite.mock.calls[0]?.[1]).toMatch(/^\/tmp\/shot-[0-9a-f]{12}\.png$/);
+  });
+
+  it("removes only the files it uploaded when a flat upload fails", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteNoRandomDir: true } });
+    mocks.fsWrite.mockRejectedValue({ code: "internal", message: "磁盘只读" });
+    keepAssetSession();
+    mountPane();
+    await flush();
+
+    await pasteImages([png("shot.png")]);
+
+    await waitForRendered(() => expect(statusText()).toContain("磁盘只读"));
+    const path = mocks.fsWrite.mock.calls[0]?.[1] as string;
+    expect(mocks.fsDelete).toHaveBeenCalledTimes(1);
+    expect(mocks.fsDelete).toHaveBeenCalledWith("s1", path, false);
+    expect(mocks.paste).not.toHaveBeenCalled();
+  });
+
   it("names the configured directory when it is missing over SFTP and cleans nothing it did not create", async () => {
     mocks.assetGet.mockResolvedValue({ id: "asset-1", options: { pasteUploadDir: "/upload" } });
     mocks.fsMkdirPrivate.mockRejectedValue({ code: "not_found", message: "file does not exist" });

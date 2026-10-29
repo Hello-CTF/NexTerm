@@ -229,7 +229,11 @@ describe("AiSidebar history reload", () => {
     await flushUntil(() => text().includes("systemctl reload demo"));
 
     expect(text()).toContain("帮我改配置");
-    expect(text()).toContain("输出摘要");
+    expect(text()).toContain("工具执行成功");
+    expect(text()).not.toContain("Full file contents");
+    for (const toggle of view!.container.querySelectorAll<HTMLButtonElement>('button[title="展开输入和输出"]')) click(toggle);
+    await flush();
+    expect(text()).toContain("Full file contents");
     expect(text()).toContain("/etc/demo.conf");
     expect(text()).toContain("先备份再修改");
     expect(text()).toContain("已完成修改");

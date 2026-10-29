@@ -220,7 +220,7 @@ describe("connectAsset in-flight guard", () => {
     const terminals = workspace?.panes.flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "terminal") ?? [];
     expect(state.activeWorkspaceId).toBe(workspace?.id);
     expect(terminals).toHaveLength(1);
-    expect(terminals[0]).toMatchObject({ title: "终端 1", sessionId: "quick-session", regularReason: "持久组件准备中" });
+    expect(terminals[0]).toMatchObject({ title: "终端 1", sessionId: "quick-session", regularReason: "持久终端组件准备中" });
   });
 
   it("still opens a terminal right away when a quick connection is saved as an asset", async () => {

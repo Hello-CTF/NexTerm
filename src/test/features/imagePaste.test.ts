@@ -8,6 +8,7 @@ import {
   MAX_PASTE_FILE_BYTES,
   MAX_REMOTE_NAME_BYTES,
   pasteUploadFiles,
+  randomizedPasteFileName,
   sanitizePasteFileName,
   TERMINAL_CONTROL,
   truncateUtf8,
@@ -160,6 +161,16 @@ describe("remote file names", () => {
     expect(wide).toMatch(/^(𠀀)+\.png$/u);
     expect(sanitizePasteFileName("😀😀 holiday 😀.jpg")).toBe("_ holiday _.jpg");
     expect(truncateUtf8("a😀", 3)).toBe("a");
+  });
+
+  it("adds a random token before the extension without breaking the name or the byte limit", () => {
+    expect(randomizedPasteFileName("shot.png", "0a1b2c3d4e5f")).toBe("shot-0a1b2c3d4e5f.png");
+    expect(randomizedPasteFileName("archive.tar.gz", "0a1b2c3d4e5f")).toMatch(/^archive\.tar-0a1b2c3d4e5f\.gz$/);
+    expect(randomizedPasteFileName("../a b$.txt", "0a1b2c3d4e5f")).toBe("_a b_-0a1b2c3d4e5f.txt");
+    const long = `${"x".repeat(400)}.png`;
+    const randomized = randomizedPasteFileName(long, "0a1b2c3d4e5f");
+    expect(new TextEncoder().encode(randomized).length).toBeLessThanOrEqual(MAX_REMOTE_NAME_BYTES);
+    expect(randomized.endsWith("-0a1b2c3d4e5f.png")).toBe(true);
   });
 
   it("makes duplicate names unique within one paste and keeps suffixed names within the byte limit", () => {

@@ -37,8 +37,12 @@ func (f recursiveMkdirFS) Chmod(ctx context.Context, path string, mode fs.FileMo
 	return f.FileSystem.Chmod(ctx, path, mode)
 }
 
-func privateDirDispatcher(t *testing.T, kind string, filesystem base.FileSystem) func(path string) ipc.Response {
+func privateDirDispatcher(t *testing.T, kind string, filesystem base.FileSystem, options ...any) func(path string) ipc.Response {
 	t.Helper()
+	var assetOptions any
+	if len(options) > 0 {
+		assetOptions = options[0]
+	}
 	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
 		return fakeProviderTransport{kind: kind, fs: filesystem}, nil
 	})
@@ -47,7 +51,7 @@ func privateDirDispatcher(t *testing.T, kind string, filesystem base.FileSystem)
 	if err := registerFSCommands(dispatcher, manager, nil); err != nil {
 		t.Fatal(err)
 	}
-	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-private-" + t.Name(), Kind: session.KindSSH})
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-private-" + t.Name(), Kind: session.KindSSH, Options: assetOptions})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,5 +180,93 @@ func TestFSMkdirPrivateFallbackChecksForARealDirectoryBeforeChmod(t *testing.T) 
 	}
 	if info, err := os.Stat(victim); err != nil || info.Mode().Perm() != 0o755 {
 		t.Fatalf("symlink target mode changed: %v, %v", info, err)
+	}
+}
+
+// A chrooted SFTP account exposes the shell's /tmp as /, so the asset configures the directory as the file channel sees
+// it. The private directory then belongs directly in that directory, and nowhere else.
+func TestFSMkdirPrivateFollowsThePasteUploadDirOfTheAsset(t *testing.T) {
+	mapped := t.TempDir()
+	mkdir := privateDirDispatcher(t, "local", fslocal.New(), map[string]any{"pasteUploadDir": mapped})
+	usePrivateDirParent(t)
+
+	target := filepath.Join(mapped, "nexterm-paste-x")
+	if response := mkdir(target); !response.OK {
+		t.Fatalf("fs_mkdir_private(%q) = %+v", target, response)
+	}
+	if info, err := os.Lstat(target); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("private dir = %v, %v; want a 0700 directory", info, err)
+	}
+	for _, dir := range []string{
+		filepath.Join(privateDirParent, "nexterm-paste-y"),
+		filepath.Join(mapped, "sub", "nexterm-paste-y"),
+		filepath.Join(mapped, "other-dir"),
+	} {
+		response := mkdir(dir)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("fs_mkdir_private(%q) = %+v, want bad_param", dir, response)
+		}
+	}
+}
+
+func TestPrivateDirParentForFallsBackToTheTempRoot(t *testing.T) {
+	for name, options := range map[string]any{
+		"no options":       nil,
+		"not configured":   map[string]any{"pasteUploadDir": ""},
+		"relative":         map[string]any{"pasteUploadDir": "tmp"},
+		"dot dot":          map[string]any{"pasteUploadDir": "/a/../etc"},
+		"control byte":     map[string]any{"pasteUploadDir": "/a\nb"},
+		"not a string":     map[string]any{"pasteUploadDir": 7},
+		"unrelated option": map[string]any{"shell": "bash"},
+	} {
+		if got := privateDirParentFor(options); got != privateDirParent {
+			t.Errorf("%s: parent = %q, want %q", name, got, privateDirParent)
+		}
+	}
+	if got := privateDirParentFor(map[string]any{"pasteUploadDir": "/"}); got != "/" {
+		t.Errorf("root: parent = %q, want /", got)
+	}
+	if got := privateDirParentFor(map[string]any{"pasteUploadDir": "/srv//upload/"}); got != "/srv/upload" {
+		t.Errorf("unclean: parent = %q, want /srv/upload", got)
+	}
+}
+
+// The asset can be edited while a session is connected; the paste upload directory in force is the stored one, not the
+// snapshot the session was opened with.
+func TestFSMkdirPrivateReadsTheCurrentAssetOptions(t *testing.T) {
+	mapped := t.TempDir()
+	usePrivateDirParent(t)
+	connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+		return fakeProviderTransport{kind: "local", fs: fslocal.New()}, nil
+	})
+	manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
+	dispatcher := ipc.NewDispatcher()
+	var current any = map[string]any{"pasteUploadDir": mapped}
+	found := true
+	lookup := func(context.Context, string) (any, bool) { return current, found }
+	if err := registerFSCommandsWithAssets(dispatcher, manager, nil, lookup); err != nil {
+		t.Fatal(err)
+	}
+	connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-private-current", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mkdir := func(path string) ipc.Response {
+		encoded, _ := json.Marshal(path)
+		return dispatcher.Dispatch(t.Context(), ipc.Request{
+			Command: "fs_mkdir_private", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + string(encoded) + `}`),
+		}, ipc.Environment{})
+	}
+
+	if response := mkdir(filepath.Join(mapped, "nexterm-paste-x")); !response.OK {
+		t.Fatalf("under the stored upload dir: %+v", response)
+	}
+	// Nothing stored for the asset: the session's own options (none) apply, so the temp root is the parent again.
+	found = false
+	if response := mkdir(filepath.Join(mapped, "nexterm-paste-y")); response.OK {
+		t.Fatalf("without a stored upload dir the mapped dir must be refused: %+v", response)
+	}
+	if response := mkdir(filepath.Join(privateDirParent, "nexterm-paste-y")); !response.OK {
+		t.Fatalf("under the default temp root: %+v", response)
 	}
 }

@@ -64,6 +64,7 @@ import {
   MAX_PASTE_FILE_BYTES,
   markdownFileLink,
   pasteFileExtension,
+  randomizedPasteFileName,
   splitOversizedFiles,
   TERMINAL_CONTROL,
   uniquePasteFileNames,
@@ -94,6 +95,7 @@ import {
   IconCopy,
   IconEdit,
   IconEye,
+  IconGlobe,
   IconList,
   IconMergeH,
   IconPlug,
@@ -272,6 +274,11 @@ interface PasteUploadRun {
   transfer: { taskId: string; attemptId: string } | null;
 }
 
+// randomPasteToken is the unguessable suffix of a file uploaded without a private directory.
+function randomPasteToken(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 class PasteUploadCancelled extends Error {
   constructor() {
     super("cancelled");
@@ -289,6 +296,9 @@ export function TerminalPane({
 }: TerminalPaneProps) {
   const [kernelTabId, setKernelTabId] = useState<string | null>(null);
   const previewShareEnabled = usePreviewShareEnabled();
+  // The overflow menu opens the preview panel by bumping the counter; the active flag keeps sharing visible on the button.
+  const [previewOpenRequest, setPreviewOpenRequest] = useState(0);
+  const [previewActive, setPreviewActive] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
@@ -506,6 +516,20 @@ export function TerminalPane({
   // Every attached client may type. The PTY follows the size of the client
   // that typed last; the others render the PTY size until they type.
   const canResize = !controlSupported || control === null || control.sizeOwner === me;
+  // Input from a follower makes the backend hand it the size once the owner has been idle for the handoff hold; the
+  // control event announcing that can be lost (a sleeping window, a reconnect), which would leave this pane
+  // shrunken until a manual resize. One re-read of the control state after the hold catches up.
+  const followerRecheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followerRecheckAt = useRef(0);
+  const FOLLOWER_RECHECK_MS = 1700;
+  // A follower that keeps typing without being handed the size must not poll: re-read at most this often.
+  const FOLLOWER_RECHECK_GAP_MS = 5000;
+  useEffect(
+    () => () => {
+      if (followerRecheckTimer.current !== null) clearTimeout(followerRecheckTimer.current);
+    },
+    [],
+  );
 
   const refreshControl = useCallback(
     async (tabIdArg?: string) => {
@@ -592,6 +616,18 @@ export function TerminalPane({
         return "failed";
       }
       if (!kernelTabId) return "failed";
+      if (
+        controlSupported &&
+        !canResize &&
+        followerRecheckTimer.current === null &&
+        Date.now() - followerRecheckAt.current >= FOLLOWER_RECHECK_GAP_MS
+      ) {
+        followerRecheckTimer.current = setTimeout(() => {
+          followerRecheckTimer.current = null;
+          followerRecheckAt.current = Date.now();
+          void refreshControl();
+        }, FOLLOWER_RECHECK_MS);
+      }
       const broadcast = broadcastContext();
       if (broadcast) {
         const state = useUi.getState();
@@ -652,7 +688,7 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, pushToast, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
+    [kernelTabId, pushToast, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId, controlSupported, canResize, refreshControl],
   );
 
   const confirmBroadcastProduction = useCallback((environmentNames?: string[]) => {
@@ -1515,11 +1551,17 @@ export function TerminalPane({
         `正在上传 ${accepted.length} 个文件到该主机的 ${pasteDirs.terminalDir}…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
       setImagePaste({ phase: "uploading", message: uploadingMessage(0), cancellable: true });
       // An unguessable, exclusively created 0700 directory: nobody else on the host can pre-create, link or read it.
-      const dir = joinPastePath(pasteDirs.uploadDir, `nexterm-paste-${crypto.randomUUID()}`);
+      // With the asset option that skips it, files go straight into the upload directory under names with a random
+      // suffix, and only those files are cleaned up on failure.
+      const flat = pasteDirs.flat;
+      const dir = flat ? pasteDirs.uploadDir : joinPastePath(pasteDirs.uploadDir, `nexterm-paste-${crypto.randomUUID()}`);
       let dirCreated = false;
+      const uploadedPaths: string[] = [];
       try {
-        await fsApi.mkdirPrivate(sessionId, dir);
-        dirCreated = true;
+        if (!flat) {
+          await fsApi.mkdirPrivate(sessionId, dir);
+          dirCreated = true;
+        }
         const names = uniquePasteFileNames(
           accepted.map((file) => {
             if (file.name) return file.name;
@@ -1530,8 +1572,9 @@ export function TerminalPane({
         let doneBytes = 0;
         for (const [index, file] of accepted.entries()) {
           if (run.cancelled) throw new PasteUploadCancelled();
-          const name = names[index];
-          const path = `${dir}/${name}`;
+          const name = flat ? randomizedPasteFileName(names[index], randomPasteToken()) : names[index];
+          const path = joinPastePath(dir, name);
+          if (flat) uploadedPaths.push(path);
           const transfer = { taskId: createTransferTaskId(), attemptId: createTransferTaskId() };
           run.transfer = transfer;
           if (file.size <= UPLOAD_CHUNK_SIZE) {
@@ -1577,6 +1620,16 @@ export function TerminalPane({
             cleanupNote = `；未能清理 ${dir}，请手动删除`;
           }
         }
+        const leftover: string[] = [];
+        for (const path of uploadedPaths) {
+          try {
+            await fsApi.delete(sessionId, path, false);
+          } catch (cleanupError) {
+            // A file that was never created is already gone; anything else stays and is named.
+            if ((cleanupError as { code?: unknown } | null)?.code !== "not_found") leftover.push(path);
+          }
+        }
+        if (leftover.length > 0) cleanupNote = `；未能清理 ${leftover.join("、")}，请手动删除`;
         const message =
           e instanceof PasteUploadCancelled || run.cancelled
             ? `已取消上传${cleanupNote}`
@@ -1658,7 +1711,58 @@ export function TerminalPane({
     setBlocksOpen(!blocksOpen);
   };
 
+  // On narrow panes the toolbar keeps a single row; the status labels that sit in a second row on wide panes are
+  // listed here instead, and the menu button shows a dot while any of them needs attention.
+  const narrowStatusItems: MenuItem[] = [
+    ...(staleConfig
+      ? ([
+          { kind: "item", label: "配置已修改，重连后生效", disabled: true },
+          {
+            kind: "item",
+            label: "使用当前配置重连",
+            disabled: !canReconnect,
+            onSelect: () => void reconnectSession(),
+          },
+        ] satisfies MenuItem[])
+      : []),
+    ...(effectiveWinrm ? ([{ kind: "item", label: "非交互模式（WinRM）", disabled: true }] satisfies MenuItem[]) : []),
+    ...(containerId
+      ? ([{ kind: "item", label: execInterrupted ? "容器 exec 已结束" : "容器内 exec", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(throttleNow?.active
+      ? ([{ kind: "item", label: "输出积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(throttleNow?.resyncing
+      ? ([{ kind: "item", label: "输出过快，正在重新同步", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(streamBacklog
+      ? ([{ kind: "item", label: "解析积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(recording?.state === "failed"
+      ? ([{ kind: "item", label: "录制失败", hint: recording.safeError || undefined, disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(cwd
+      ? ([
+          {
+            kind: "item",
+            label: "复制当前目录",
+            hint: cwd,
+            onSelect: () => void copyText(cwd).catch(() => undefined),
+          },
+        ] satisfies MenuItem[])
+      : []),
+  ];
+  const narrowStatusAttention =
+    staleConfig ||
+    throttleNow?.active === true ||
+    throttleNow?.resyncing === true ||
+    streamBacklog != null ||
+    recording?.state === "failed";
+
   const buildToolbarOverflowMenu = (): MenuItem[] => [
+    ...(narrowStatusItems.length > 0
+      ? ([{ kind: "group", label: "状态" }, ...narrowStatusItems, { kind: "separator" }] satisfies MenuItem[])
+      : []),
     { kind: "group", label: "操作" },
     {
       kind: "item",
@@ -1671,6 +1775,17 @@ export function TerminalPane({
         if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
     },
+    ...(previewShareEnabled && kernelTabId
+      ? ([
+          {
+            kind: "item",
+            label: "预览链接",
+            icon: <IconGlobe size={13} />,
+            hint: previewActive ? "分享中" : "创建 / 管理",
+            onSelect: () => setPreviewOpenRequest((n) => n + 1),
+          },
+        ] satisfies MenuItem[])
+      : []),
     ...(blocksSupported
       ? ([
           { kind: "separator" },
@@ -2036,8 +2151,15 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
-        {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
         </div>
+        {previewShareEnabled && kernelTabId && (
+          <PreviewShareMenu
+            tabId={kernelTabId}
+            sessionName={title}
+            openRequest={previewOpenRequest}
+            onActiveChange={setPreviewActive}
+          />
+        )}
         <div className="nx-spacer" />
 
         <button
@@ -2110,6 +2232,22 @@ export function TerminalPane({
           onClick={openToolbarOverflow}
         >
           ⋯
+          {previewActive && (
+            <span
+              className="nx-dot ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              role="img"
+              aria-label="预览链接分享中"
+              data-testid="preview-active-dot"
+            />
+          )}
+          {narrowStatusAttention && (
+            <span
+              className="nx-dot nx-dot-pulse ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              role="img"
+              aria-label="有状态需要查看，点开菜单"
+              data-testid="toolbar-status-dot"
+            />
+          )}
         </button>
       </div>
 

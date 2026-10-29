@@ -474,7 +474,7 @@ describe("App workspace actions", () => {
     expect(railButton("终端历史")).toBeTruthy();
   });
 
-  it("opens files, mount, docker, forward and logs in the explicit current host", async () => {
+  it("opens files, mount, docker and forward in the explicit current host and logs in the tools workspace", async () => {
     const first = hostWorkspace("ws-a", "s1");
     const second = hostWorkspace("ws-b", "s2");
     useUi.setState({
@@ -497,9 +497,15 @@ describe("App workspace actions", () => {
       expect.objectContaining({ kind: "mount", sessionId: "s2" }),
       expect.objectContaining({ kind: "docker", sessionId: "s2" }),
       expect.objectContaining({ kind: "forward", sessionId: "s2" }),
-      expect.objectContaining({ kind: "log", title: "日志" }),
     ]);
-    expect(isMultiHostLogTabId(secondTabs?.[3]?.id ?? "")).toBe(true);
+    // The merged log is a cross-host tool: it opens in the tools workspace with the current host preselected.
+    const logTab = useUi
+      .getState()
+      .workspaces.find((workspace) => workspace.kind === "tools")
+      ?.panes.flatMap((pane) => pane.tabs)
+      .find((tab) => tab.kind === "log");
+    expect(isMultiHostLogTabId(logTab?.id ?? "")).toBe(true);
+    expect(logTab).toEqual(expect.objectContaining({ title: "多主机日志", logSessionIds: ["s2"] }));
     expect(
       useUi
         .getState()
@@ -630,6 +636,21 @@ describe("App workspace actions", () => {
       ],
       activeTabId: "history",
     };
+    useUi.setState({ workspaces: [tools], activeWorkspaceId: tools.id });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("终端历史");
+
+    const histories = allTabs().filter((tab) => tab.kind === "history");
+    expect(histories).toHaveLength(1);
+    expect(histories[0]).toMatchObject({ assetId: "asset-user" });
+    expect(histories[0].sessionId).toBeUndefined();
+    expect(allTabs().some((tab) => tab.kind === "hostHistory")).toBe(false);
+  });
+
+  it("opens history inside the active host workspace scoped to its host and focuses it on reopen", async () => {
+    const tools = nonHostWorkspace("tools");
     const host = hostWorkspace("ws-b", "s2", "asset-2");
     useUi.setState({
       sessions: [sessionOf("s2")],
@@ -640,11 +661,14 @@ describe("App workspace actions", () => {
     await flush();
 
     await clickRail("终端历史");
+    await clickRail("终端历史");
 
-    const histories = allTabs().filter((tab) => tab.kind === "history");
+    const hostTabs = useUi.getState().workspaces.find((w) => w.id === host.id)!.panes.flatMap((p) => p.tabs);
+    const histories = hostTabs.filter((tab) => tab.kind === "hostHistory");
     expect(histories).toHaveLength(1);
-    expect(histories[0]).toMatchObject({ assetId: "asset-user" });
-    expect(histories[0].sessionId).toBeUndefined();
+    expect(histories[0]).toMatchObject({ sessionId: "s2", assetId: "asset-2" });
+    expect(allTabs().filter((tab) => tab.kind === "history")).toHaveLength(0);
+    expect(mocks.historyProps[mocks.historyProps.length - 1]).toMatchObject({ assetId: "asset-2" });
   });
 
   it("a single database asset uses the standard connectAsset flow", async () => {

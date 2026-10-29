@@ -149,6 +149,10 @@ func TestAggregatorReportsSlowAndFailedHostsWithoutHoldingTheAnswer(t *testing.T
 			t.Fatalf("session attention = %+v", item.Attention)
 		}
 	}
+	// The slow host's refresh runs in its own goroutine; wait until it has entered its listing call.
+	for deadline := time.Now().Add(10 * time.Second); slow.calls.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	if fast.calls.Load() != 1 || slow.calls.Load() != 1 {
 		t.Fatalf("listing calls fast=%d slow=%d; a running or fresh host is not asked again", fast.calls.Load(), slow.calls.Load())
 	}

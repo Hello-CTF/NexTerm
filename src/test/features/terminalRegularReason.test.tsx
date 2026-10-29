@@ -141,7 +141,7 @@ afterEach(() => {
 
 describe("regular SSH terminals always say why", () => {
   it("asks the view for a regular shell when the tab was opened as regular", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
 
@@ -155,9 +155,9 @@ describe("regular SSH terminals always say why", () => {
     reportAttach({ durable: false, durableRequested: true, fallbackNotice: "持久终端不可用" });
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
 
-    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久终端组件准备中"));
     await waitForRendered(() => expect(hintBar()?.dataset.tone).toBe("neutral"));
-    expect(hintBar()?.textContent).toContain("持久组件准备中");
+    expect(hintBar()?.textContent).toContain("持久终端组件准备中");
   });
 
   it("names later fallbacks on the same connection that carry no backend notice", async () => {
@@ -167,7 +167,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false, durableRequested: true });
 
-    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久终端组件不可用：目标主机不支持持久终端组件"));
   });
 
   it("names a durable asset override that fell back under the regular default", async () => {
@@ -177,7 +177,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false, durableRequested: true });
 
-    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久组件准备中"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("持久终端组件准备中"));
   });
 
   it("names a reopened or AI-created regular terminal on a host that prefers durable terminals", async () => {
@@ -187,7 +187,7 @@ describe("regular SSH terminals always say why", () => {
     await flush();
     reportAttach({ durable: false });
 
-    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("打开时持久组件未就绪"));
+    await waitForRendered(() => expect(storeTab()?.regularReason).toBe("打开时持久终端组件未就绪"));
   });
 
   it("leaves terminals regular by choice unmarked", async () => {
@@ -216,13 +216,13 @@ describe("regular SSH terminals always say why", () => {
   });
 
   it("keeps the reason while the hint reports the helper ready", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     succeedHelper();
 
     await waitForRendered(() => expect(hintBar()?.textContent).toContain("该主机的持久终端已就绪"));
-    expect(storeTab()?.regularReason).toBe("持久组件准备中");
+    expect(storeTab()?.regularReason).toBe("持久终端组件准备中");
   });
 });
 
@@ -316,7 +316,7 @@ describe("persistence hint bar", () => {
   });
 
   it("stays quiet while the deployment this tab started runs", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     operations(startOp());
@@ -325,18 +325,18 @@ describe("persistence hint bar", () => {
   });
 
   it("explains an expected limitation with a neutral dot and the full reason", async () => {
-    seed({ regularReason: "打开时持久组件未就绪" });
+    seed({ regularReason: "打开时持久终端组件未就绪" });
     mountPane();
     await flush();
 
     expect(hintBar()?.dataset.tone).toBe("neutral");
-    expect(hintBar()?.textContent).toContain("本标签页是临时终端（打开时持久组件未就绪），断开后进程会结束。");
+    expect(hintBar()?.textContent).toContain("本标签页是临时终端（打开时持久终端组件未就绪），断开后进程会结束。");
     expect(hintButton("持久终端组件…")).toBeDefined();
   });
 
   it("marks a failed durable terminal in red with the full reason and opens the helper dialog", async () => {
     mocks.helperOperation.mockReturnValue(new Promise(() => {}));
-    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用临时终端" });
+    seed({ regularReason: "持久终端组件不可用：创建持久终端失败，已改用临时终端" });
     mountPane();
     await flush();
 
@@ -347,7 +347,7 @@ describe("persistence hint bar", () => {
   });
 
   it("asks for attention when the helper deployment needs a choice, without a duplicate toast", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     operations(startOp(), failOp("磁盘空间不足"));
@@ -361,7 +361,7 @@ describe("persistence hint bar", () => {
   });
 
   it("keeps the toast for a deployment choice on a hidden pane", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", visible: false }));
     await flush();
     operations(startOp(), failOp("磁盘空间不足"));
@@ -384,7 +384,7 @@ describe("persistence hint bar", () => {
 
   it("reopens the terminal as durable from the ready hint", async () => {
     mocks.prepareDurable.mockResolvedValue({ state: "ready" });
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     succeedHelper();
@@ -400,7 +400,7 @@ describe("persistence hint bar", () => {
 
   it("opens the new durable terminal in the folder this one is in, keeping this tab", async () => {
     mocks.prepareDurable.mockResolvedValue({ state: "ready" });
-    seed({ tabId: "kernel-1", regularReason: "打开时持久组件未就绪" });
+    seed({ tabId: "kernel-1", regularReason: "打开时持久终端组件未就绪" });
     mountPane();
     await flush();
     act(() => (harness.props?.onAttach as ((id: string) => void) | undefined)?.("kernel-1"));
@@ -419,8 +419,8 @@ describe("persistence hint bar", () => {
   });
 
   it("offers every regular tab on a session the ready helper, including after a remount", async () => {
-    const second: AppTab = { id: "t2", kind: "terminal", title: "终端 2", sessionId: "s1", closable: true, regularReason: "持久组件准备中" };
-    seed({ regularReason: "持久组件准备中" });
+    const second: AppTab = { id: "t2", kind: "terminal", title: "终端 2", sessionId: "s1", closable: true, regularReason: "持久终端组件准备中" };
+    seed({ regularReason: "持久终端组件准备中" });
     useUi.setState((state) => ({
       workspaces: state.workspaces.map((ws) => ({ ...ws, panes: ws.panes.map((pane) => ({ ...pane, tabs: [...pane.tabs, second] })) })),
     }));
@@ -445,7 +445,7 @@ describe("persistence hint bar", () => {
   });
 
   it("reports an unavailable helper on a tab that opened while it was preparing", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     helperProgress("failed", true, { error: "目标主机不支持持久终端组件" });
@@ -454,7 +454,7 @@ describe("persistence hint bar", () => {
   });
 
   it("names the live state in the tab tooltip instead of the reason recorded at open", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     const tooltip = mount(
@@ -464,16 +464,16 @@ describe("persistence hint bar", () => {
       }),
     );
     marks.push(tooltip);
-    expect(tooltip.container.textContent).toContain("持久组件准备中");
+    expect(tooltip.container.textContent).toContain("持久终端组件准备中");
 
     helperProgress("ready", true);
     await waitForRendered(() => expect(tooltip.container.textContent).toContain("持久终端已就绪"));
-    expect(tooltip.container.textContent).not.toContain("持久组件准备中");
+    expect(tooltip.container.textContent).not.toContain("持久终端组件准备中");
   });
 
   it("updates the hint when a readiness query answers, without any other change", async () => {
     mocks.prepareDurable.mockResolvedValue({ state: "ready" });
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     expect(hintBar()?.dataset.tone).toBe("neutral");
@@ -485,7 +485,7 @@ describe("persistence hint bar", () => {
   });
 
   it("does not re-render a pane for helper progress on another session", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     const before = harness.renders;
@@ -498,7 +498,7 @@ describe("persistence hint bar", () => {
   });
 
   it("stays dismissed for the tab until a different state appears", async () => {
-    seed({ regularReason: "打开时持久组件未就绪" });
+    seed({ regularReason: "打开时持久终端组件未就绪" });
     mountPane();
     await flush();
     act(() => hintButton("关闭提示")?.click());
@@ -515,7 +515,7 @@ describe("persistence hint bar", () => {
   });
 
   it("leaves a named red mark on the tab after a failure hint is dismissed", async () => {
-    seed({ regularReason: "持久组件不可用：创建持久终端失败，已改用临时终端" });
+    seed({ regularReason: "持久终端组件不可用：创建持久终端失败，已改用临时终端" });
     mountPane();
     await flush();
     expect(tabMark()).toBeNull();
@@ -533,7 +533,7 @@ describe("persistence hint bar", () => {
   });
 
   it("leaves no mark after an expected limitation is dismissed", async () => {
-    seed({ regularReason: "打开时持久组件未就绪" });
+    seed({ regularReason: "打开时持久终端组件未就绪" });
     mountPane();
     await flush();
     act(() => hintButton("关闭提示")?.click());
@@ -548,7 +548,7 @@ describe("local terminal hints", () => {
 
   it("offers a ready local helper to a regular local tab", async () => {
     setLocalHelperStatusForTest({ state: "ready" });
-    seed({ regularReason: "持久组件准备中" }, "local");
+    seed({ regularReason: "持久终端组件准备中" }, "local");
     mountPane();
     await flush();
 
@@ -559,22 +559,22 @@ describe("local terminal hints", () => {
 
   it("keeps a starting local helper neutral and a failed one red with its settings", async () => {
     setLocalHelperStatusForTest({ state: "starting" });
-    seed({ regularReason: "持久组件准备中" }, "local");
+    seed({ regularReason: "持久终端组件准备中" }, "local");
     mountPane();
     await flush();
     expect(hintBar()?.dataset.tone).toBe("neutral");
-    expect(hintButton("本机持久组件设置…")).toBeUndefined();
+    expect(hintButton("本机持久终端组件设置…")).toBeUndefined();
 
-    act(() => setLocalHelperStatusForTest({ state: "failed", reason: "本机持久组件启动失败" }));
+    act(() => setLocalHelperStatusForTest({ state: "failed", reason: "本机持久终端组件启动失败" }));
     await flush();
     expect(hintBar()?.dataset.tone).toBe("danger");
-    expect(hintBar()?.textContent).toContain("本机持久组件启动失败");
-    act(() => hintButton("本机持久组件设置…")?.click());
+    expect(hintBar()?.textContent).toContain("本机持久终端组件启动失败");
+    act(() => hintButton("本机持久终端组件设置…")?.click());
     expect(useUi.getState().workspaces.some((ws) => ws.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "settings")))).toBe(true);
   });
 
   it("keeps a remote host's ready hint while the local helper changes state", async () => {
-    seed({ regularReason: "持久组件准备中" });
+    seed({ regularReason: "持久终端组件准备中" });
     mountPane();
     await flush();
     helperProgress("ready", true);
@@ -590,7 +590,7 @@ describe("local terminal hints", () => {
 
   it("shows nothing when this device keeps local terminals regular", async () => {
     setLocalHelperStatusForTest({ state: "disabled" });
-    seed({ regularReason: "持久组件准备中" }, "local");
+    seed({ regularReason: "持久终端组件准备中" }, "local");
     mountPane();
     await flush();
     expect(hintBar()).toBeNull();

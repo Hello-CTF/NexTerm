@@ -54,11 +54,11 @@ func (s *DialServer) ServeConn(ctx context.Context, conn net.Conn) error {
 		return deviceproto.WriteError(conn, err)
 	}
 	switch msg.Network {
-	case "tcp", "tcp4", "tcp6", "unix":
+	case "tcp", "tcp4", "tcp6", "unix", "npipe":
 	default:
 		return deviceproto.WriteError(conn, fmt.Errorf("%w: unsupported dial network %q", deviceproto.ErrInvalid, msg.Network))
 	}
-	target, err := (&net.Dialer{Timeout: s.timeout}).DialContext(ctx, msg.Network, msg.Address)
+	target, err := dialTarget(ctx, msg.Network, msg.Address, s.timeout)
 	if err != nil {
 		return deviceproto.WriteError(conn, err)
 	}

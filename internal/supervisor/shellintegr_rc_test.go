@@ -25,7 +25,7 @@ func runWrapped(t *testing.T, shellName string, args []string, files map[string]
 		}
 	}
 	wrapped, ok := wrapShellIntegration(append([]string{path}, args...), []string{
-		"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TERM=dumb",
+		"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TERM=dumb", "skip_global_compinit=1",
 	})
 	if !ok {
 		t.Fatal("shell integration was not applied")
