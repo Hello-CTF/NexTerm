@@ -105,6 +105,9 @@ func TestWrappedShellsReportCWD(t *testing.T) {
 				"HOME=" + home,
 				"PATH=" + os.Getenv("PATH"),
 				"TERM=xterm-256color",
+				// Debian and Ubuntu's /etc/zsh/zshrc runs compinit, which asks a question on an interactive start
+				// when a directory in fpath is writable by others and swallows the input this test types ahead.
+				"skip_global_compinit=1",
 			}
 			if ld := os.Getenv("LD_LIBRARY_PATH"); ld != "" {
 				env = append(env, "LD_LIBRARY_PATH="+ld)
