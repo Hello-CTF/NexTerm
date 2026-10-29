@@ -172,21 +172,21 @@ describe("explicitly opening a terminal", () => {
     mocks.prepareDurable.mockResolvedValue({ state: "preparing" });
     await openTerminalTab(SSH_SESSION);
 
-    expect(terminalTabs()[0]?.regularReason).toBe("持久组件准备中");
+    expect(terminalTabs()[0]?.regularReason).toBe("持久终端组件准备中");
   });
 
   it("opens a regular terminal with the failure reason when the helper is unavailable", async () => {
     mocks.prepareDurable.mockResolvedValue({ state: "unavailable", reason: "目标主机不支持持久终端组件" });
     await openTerminalTab(SSH_SESSION);
 
-    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件");
+    expect(terminalTabs()[0]?.regularReason).toBe("持久终端组件不可用：目标主机不支持持久终端组件");
   });
 
   it("reports a failed readiness query as unavailable instead of degrading silently", async () => {
     mocks.prepareDurable.mockRejectedValue(new Error("network down"));
     await openTerminalTab(SSH_SESSION);
 
-    expect(terminalTabs()[0]?.regularReason).toMatch(/^持久组件不可用：.*network down/);
+    expect(terminalTabs()[0]?.regularReason).toMatch(/^持久终端组件不可用：.*network down/);
   });
 
   it("opens regular terminals without asking the helper when the default mode is regular", async () => {
@@ -206,10 +206,10 @@ describe("explicitly opening a terminal", () => {
   });
 
   it("names why a local terminal opens regular while the local helper is unavailable", async () => {
-    mocks.prepareDurable.mockResolvedValue({ state: "unavailable", reason: "本机持久组件为旧版本（协议 v2），有 2 个会话在运行" });
+    mocks.prepareDurable.mockResolvedValue({ state: "unavailable", reason: "本机持久终端组件为旧版本（协议 v2），有 2 个会话在运行" });
     await openTerminalTab(LOCAL_SESSION);
 
-    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：本机持久组件为旧版本（协议 v2），有 2 个会话在运行");
+    expect(terminalTabs()[0]?.regularReason).toBe("持久终端组件不可用：本机持久终端组件为旧版本（协议 v2），有 2 个会话在运行");
   });
 
   it("opens local terminals regular without a reason when this device keeps them regular", async () => {
@@ -225,7 +225,7 @@ describe("explicitly opening a terminal", () => {
     await openTerminalTab(SSH_SESSION);
 
     const [tab] = terminalTabs();
-    expect(tab && tabTooltip(tab, false)).toBe("终端 1（临时终端：持久组件准备中）");
+    expect(tab && tabTooltip(tab, false)).toBe("终端 1（临时终端：持久终端组件准备中）");
   });
 
   it("does not wait longer than the readiness timeout and opens a regular terminal meanwhile", async () => {
@@ -237,7 +237,7 @@ describe("explicitly opening a terminal", () => {
       await opening;
 
       expect(terminalTabs()).toHaveLength(1);
-      expect(terminalTabs()[0]?.regularReason).toBe("持久组件准备中");
+      expect(terminalTabs()[0]?.regularReason).toBe("持久终端组件准备中");
     } finally {
       vi.useRealTimers();
     }
@@ -262,7 +262,7 @@ describe("explicitly opening a terminal", () => {
 
     await openTerminalTab(SSH_SESSION);
 
-    expect(terminalTabs()[0]?.regularReason).toBe("持久组件不可用：目标主机不支持持久终端组件");
+    expect(terminalTabs()[0]?.regularReason).toBe("持久终端组件不可用：目标主机不支持持久终端组件");
   });
 
   it("opens durable terminals once a helper progress event reports the helper ready", async () => {

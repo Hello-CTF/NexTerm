@@ -79,7 +79,7 @@ describe("local terminals in the local helper", () => {
     const view = mount(createElement(LocalHelperSettings));
     try {
       await flush();
-      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "临时");
+      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "临时终端");
       await waitForRendered(() => expect(regular?.disabled).toBe(false));
       await act(async () => regular!.click());
       await flush();
@@ -123,13 +123,13 @@ describe("local terminals in the local helper", () => {
   });
 
   it("restarts an outdated helper only after the user confirms ending its sessions", async () => {
-    setLocalHelperStatusForTest({ state: "outdated", reason: "本机持久组件为旧版本", activeSessions: 2, activityKnown: true, consentToken: "2:42:2:1" });
+    setLocalHelperStatusForTest({ state: "outdated", reason: "本机持久终端组件为旧版本", activeSessions: 2, activityKnown: true, consentToken: "2:42:2:1" });
     mocks.getMode.mockResolvedValue("durable");
     mocks.restart.mockResolvedValue({ state: "ready" });
     const view = mount(createElement(LocalHelperSettings));
     try {
       await flush();
-      expect(view.container.textContent).toContain("本机持久组件为旧版本");
+      expect(view.container.textContent).toContain("本机持久终端组件为旧版本");
       const restart = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("结束 2 个会话"));
       expect(restart).toBeDefined();
       mocks.ask.mockResolvedValueOnce(false);

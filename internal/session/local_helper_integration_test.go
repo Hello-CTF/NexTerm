@@ -206,7 +206,7 @@ func (s unavailableLocalSource) WaitExisting(ctx context.Context, limit time.Dur
 }
 
 func TestLocalTerminalFallsBackToRegularWithAVisibleReason(t *testing.T) {
-	source := unavailableLocalSource{status: localhelper.Status{State: localhelper.StateFailed, Reason: "本机持久组件连续 3 次启动后立即退出"}}
+	source := unavailableLocalSource{status: localhelper.Status{State: localhelper.StateFailed, Reason: "本机持久终端组件连续 3 次启动后立即退出"}}
 	manager, connected := localHelperManager(t, source)
 	first := openLocalTab(t, manager, connected, "client-a")
 	if first.Durable || !first.Ephemeral || !first.Retainable {

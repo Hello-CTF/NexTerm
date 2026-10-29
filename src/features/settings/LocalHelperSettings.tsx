@@ -6,8 +6,8 @@ import { describeError } from "../../ui/errorText";
 import { refreshLocalHelperStatus, useLocalHelperStatus } from "../terminal/localHelperStatus";
 
 const LOCAL_MODE_OPTIONS: { value: LocalTerminalMode; label: string }[] = [
-  { value: "durable", label: "持久" },
-  { value: "regular", label: "临时" },
+  { value: "durable", label: "持久终端" },
+  { value: "regular", label: "临时终端" },
 ];
 
 const STATE_TEXT: Record<string, string> = {
@@ -63,14 +63,14 @@ export function LocalHelperSettings() {
     if (busy || !status.consentToken) return;
     const sessions = sessionCount(status.activeSessions, status.activityKnown);
     const ok = await ask(
-      `重启本机持久组件将结束其中正在运行的 ${sessions}，未保存的工作将丢失。\n重启后新建的本机终端将使用当前版本的组件。确定要重启吗？`,
-      { title: "重启本机持久组件", kind: "warning" },
+      `重启本机持久终端组件将结束其中正在运行的 ${sessions}，未保存的工作将丢失。\n重启后新建的本机终端将使用当前版本的组件。确定要重启吗？`,
+      { title: "重启本机持久终端组件", kind: "warning" },
     );
     if (!ok) return;
     setBusy(true);
     try {
       await localHelperApi.restart(status.consentToken);
-      pushToast("info", "本机持久组件已重启");
+      pushToast("info", "本机持久终端组件已重启");
     } catch (error) {
       pushToast("error", describeError(error));
     } finally {
@@ -98,7 +98,7 @@ export function LocalHelperSettings() {
     <div className="mb-3.5" data-local-helper-state={status.state}>
       <div className="nx-setting-label mb-1.5 flex items-center gap-2">
         本机终端
-        <span className={badge}>持久组件{STATE_TEXT[status.state] ?? status.state}</span>
+        <span className={badge}>持久终端组件{STATE_TEXT[status.state] ?? status.state}</span>
         {status.updateAvailable && <span className="nx-badge nx-badge-blue">可更新</span>}
       </div>
       <div className="nx-segment" role="group" aria-label="本机终端模式" aria-busy={busy}>
@@ -117,20 +117,20 @@ export function LocalHelperSettings() {
       </div>
       <p className="nx-hint mt-1.5">
         {mode === "regular"
-          ? "本机终端随 NexTerm 退出而结束；已在后台运行的本机终端仍可接管。"
-          : "本机终端在独立的持久组件中运行，关闭标签页或退出 NexTerm 后继续运行，可在「后台会话」中接管或终止。"}
+          ? "本机临时终端随 NexTerm 退出而结束；已在后台运行的本机终端仍可接管。"
+          : "本机持久终端运行在独立的持久终端组件中，关闭标签页或退出 NexTerm 后继续运行，可在「后台会话」中接管或终止。"}
         仅影响本机新建的终端，包括 AI 和定时任务打开的终端。
       </p>
       {status.reason && status.state !== "idle" && <p className="nx-hint mt-1.5 text-amber-300">{status.reason}</p>}
       {status.warning && <p className="nx-hint mt-1.5 text-amber-300">{status.warning}</p>}
       {restartable && (
         <button type="button" className="nx-btn nx-btn-danger nx-btn-sm mt-2" disabled={busy} onClick={() => void restart()}>
-          重启持久组件（结束 {sessionCount(status.activeSessions, status.activityKnown)}）
+          重启持久终端组件（结束 {sessionCount(status.activeSessions, status.activityKnown)}）
         </button>
       )}
       {status.state === "failed" && (
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-2" disabled={busy} onClick={() => void retry()}>
-          重试启动持久组件
+          重试启动持久终端组件
         </button>
       )}
     </div>

@@ -373,7 +373,7 @@ describe("pane tab strip persistence marks", () => {
                 tabs: [
                   ...pane.tabs,
                   { id: "t4", kind: "terminal", title: "持久的终端", sessionId: "s1", durable: true, closable: true },
-                  { id: "t5", kind: "terminal", title: "普通的终端", sessionId: "s1", regularReason: "打开时持久组件未就绪", closable: true },
+                  { id: "t5", kind: "terminal", title: "普通的终端", sessionId: "s1", regularReason: "打开时持久终端组件未就绪", closable: true },
                   { id: "t6", kind: "terminal", title: "临时的终端", sessionId: "s1", durable: false, closable: true },
                   { id: "t7", kind: "terminal", title: "未知的终端", sessionId: "s1", closable: true },
                 ],
@@ -390,6 +390,6 @@ describe("pane tab strip persistence marks", () => {
     expect(tabByText(list, "未知的终端").querySelector('[role="img"]')).toBeNull();
     expect(tabByText(list, "临时的终端").querySelector('[role="img"][aria-label^="临时终端"]')).not.toBeNull();
     expect(tabByText(list, "普通的终端").querySelector('[role="img"]')).toBeNull();
-    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("临时终端：打开时持久组件未就绪");
+    expect(tabByText(list, "普通的终端").getAttribute("title")).toContain("临时终端：打开时持久终端组件未就绪");
   });
 });

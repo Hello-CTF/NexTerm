@@ -73,7 +73,7 @@ func (m *Manager) localDurableReadiness(ctx context.Context, connected *Session)
 		return DurableReadiness{State: DurableDisabled}, nil
 	}
 	if !m.localDurableEnabled() {
-		return DurableReadiness{State: DurableUnavailable, Reason: "此环境没有本机持久组件"}, nil
+		return DurableReadiness{State: DurableUnavailable, Reason: "此环境没有本机持久终端组件"}, nil
 	}
 	_, err := m.localDurableProvider(ctx, 0, false)
 	if err == nil {
@@ -91,7 +91,7 @@ func (m *Manager) localDurableReadiness(ctx context.Context, connected *Session)
 
 func localUnavailableReason(err error) string {
 	if errors.Is(err, ErrUnsupported) {
-		return "此环境没有本机持久组件"
+		return "此环境没有本机持久终端组件"
 	}
 	return err.Error()
 }
@@ -99,7 +99,7 @@ func localUnavailableReason(err error) string {
 // localFallbackNotice explains a local terminal that opened regular because
 // the helper was not ready.
 func localFallbackNotice(cause error) string {
-	return "本机持久组件不可用（" + localUnavailableReason(cause) + "），已打开临时本机终端；关闭标签或退出 NexTerm 会结束它"
+	return "本机持久终端组件不可用（" + localUnavailableReason(cause) + "），已打开临时本机终端；关闭标签或退出 NexTerm 会结束它"
 }
 
 // claimLocalFallbackNotice reports whether this reason has not been shown for

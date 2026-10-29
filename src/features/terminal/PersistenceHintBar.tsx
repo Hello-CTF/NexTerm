@@ -22,7 +22,7 @@ export function PersistenceHintBar({
   } else if (onManageHelper && (hint.kind === "attention" || hint.kind === "restore")) {
     action = { label: "处理", onSelect: onManageHelper };
   } else if (onManageHelper && (hint.kind !== "preparing" || !local)) {
-    action = { label: local ? "本机持久组件设置…" : "持久终端组件…", onSelect: onManageHelper };
+    action = { label: local ? "本机持久终端组件设置…" : "持久终端组件…", onSelect: onManageHelper };
   }
   const dot = tone === "accent" ? "bg-[var(--color-accent)]" : tone === "danger" ? "bg-red-500" : "bg-[var(--nx-fg-tertiary)]";
   return (
