@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { SessionRuntimeInfo, UiState, Workspace } from "./types";
+import { sessionStatusText } from "./sessionStatus";
 import { useUi } from "./useUi";
 
 // Selector conventions. A component re-renders whenever its selector result changes identity, and the
@@ -73,6 +74,9 @@ export interface SessionSummary {
   // workspaces, such as the connection of a terminal moved to the background.
   idle: number;
   background: number;
+  // detail lists the session names under each count, one line per group, for the status bar's tooltip. It is a
+  // string so an unchanged list keeps the summary equal and the status bar still.
+  detail: string;
 }
 
 // useSessionSummary is the status bar's view of the session list: it re-renders only when a count changes.
@@ -89,16 +93,30 @@ export function useSessionSummary(): SessionSummary {
     let connected = 0;
     let idle = 0;
     let background = 0;
+    const inUse: string[] = [];
+    const idleNames: string[] = [];
+    const backgroundNames: string[] = [];
     for (const session of state.sessions) {
       if (used.has(session.id)) {
         total += 1;
         if (session.status === "connected") connected += 1;
+        inUse.push(session.status === "connected" ? session.name : `${session.name}（${sessionStatusText(session.status)}）`);
       } else if (session.status === "connected") {
-        if (session.kind !== "remote" && (session.tabs?.length ?? 0) === 0) idle += 1;
-        else background += 1;
+        if (session.kind !== "remote" && (session.tabs?.length ?? 0) === 0) {
+          idle += 1;
+          idleNames.push(session.name);
+        } else {
+          background += 1;
+          backgroundNames.push(session.name);
+        }
       }
     }
-    return { total, connected, idle, background };
+    const lines = [
+      inUse.length > 0 ? `使用中：${inUse.join("、")}` : "",
+      idleNames.length > 0 ? `空闲：${idleNames.join("、")}` : "",
+      backgroundNames.length > 0 ? `后台：${backgroundNames.join("、")}` : "",
+    ].filter(Boolean);
+    return { total, connected, idle, background, detail: lines.join("\n") };
   }));
 }
 

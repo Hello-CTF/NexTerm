@@ -168,8 +168,14 @@ describe("render counts for session-bound views", () => {
     mounted = probe.view;
     probe.reset();
 
+    // A rename changes the names listed in the tooltip, once; a refresh that returns equal data changes nothing.
     patchSession("s-7", { name: "renamed" });
+    expect(probe.commits()).toBe(1);
+    expect(mounted.container.querySelector("[title]")?.getAttribute("title")).toContain("renamed");
+    probe.reset();
     act(() => useUi.getState().setSessions(useUi.getState().sessions.map((item) => ({ ...item }))));
+    expect(probe.commits()).toBe(0);
+    patchSession("s-7", { liveness: "suspect" });
     expect(probe.commits()).toBe(0);
 
     patchSession("s-7", { status: "disconnected" });
@@ -192,11 +198,17 @@ describe("render counts for session-bound views", () => {
     expect(text()).toContain(`${WORKSPACES} 已连接`);
     expect(text()).toContain(`另有 ${SESSIONS - WORKSPACES} 个后台`);
     expect(text()).not.toContain("空闲");
+    // The tooltip names the sessions under each count so the numbers can be checked.
+    const tooltip = () => mounted!.container.querySelector("[title^='使用中']")?.getAttribute("title") ?? "";
+    expect(tooltip()).toContain("使用中：host-0、host-1");
+    expect(tooltip()).toContain(`后台：host-${WORKSPACES}`);
 
     // A connected session that lost its terminals and has no workspace is idle; a failed one is not listed.
     patchSession("s-30", { tabs: [] });
     patchSession("s-31", { status: "failed" });
     expect(text()).toContain(`另有 1 个空闲、${SESSIONS - WORKSPACES - 2} 个后台`);
+    expect(tooltip()).toContain("空闲：host-30");
+    expect(tooltip()).not.toContain("host-31");
     expect(text()).toContain(`${WORKSPACES} 个会话`);
 
     // Closing a workspace moves its session out of the total.
