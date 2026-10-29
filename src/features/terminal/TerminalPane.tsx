@@ -1665,7 +1665,58 @@ export function TerminalPane({
     setBlocksOpen(!blocksOpen);
   };
 
+  // On narrow panes the toolbar keeps a single row; the status labels that sit in a second row on wide panes are
+  // listed here instead, and the menu button shows a dot while any of them needs attention.
+  const narrowStatusItems: MenuItem[] = [
+    ...(staleConfig
+      ? ([
+          { kind: "item", label: "配置已修改，重连后生效", disabled: true },
+          {
+            kind: "item",
+            label: "使用当前配置重连",
+            disabled: !canReconnect,
+            onSelect: () => void reconnectSession(),
+          },
+        ] satisfies MenuItem[])
+      : []),
+    ...(effectiveWinrm ? ([{ kind: "item", label: "非交互模式（WinRM）", disabled: true }] satisfies MenuItem[]) : []),
+    ...(containerId
+      ? ([{ kind: "item", label: execInterrupted ? "容器 exec 已结束" : "容器内 exec", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(throttleNow?.active
+      ? ([{ kind: "item", label: "输出积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(throttleNow?.resyncing
+      ? ([{ kind: "item", label: "输出过快，正在重新同步", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(streamBacklog
+      ? ([{ kind: "item", label: "解析积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(recording?.state === "failed"
+      ? ([{ kind: "item", label: "录制失败", hint: recording.safeError || undefined, disabled: true }] satisfies MenuItem[])
+      : []),
+    ...(cwd
+      ? ([
+          {
+            kind: "item",
+            label: "复制当前目录",
+            hint: cwd,
+            onSelect: () => void copyText(cwd).catch(() => undefined),
+          },
+        ] satisfies MenuItem[])
+      : []),
+  ];
+  const narrowStatusAttention =
+    staleConfig ||
+    throttleNow?.active === true ||
+    throttleNow?.resyncing === true ||
+    streamBacklog != null ||
+    recording?.state === "failed";
+
   const buildToolbarOverflowMenu = (): MenuItem[] => [
+    ...(narrowStatusItems.length > 0
+      ? ([{ kind: "group", label: "状态" }, ...narrowStatusItems, { kind: "separator" }] satisfies MenuItem[])
+      : []),
     { kind: "group", label: "操作" },
     {
       kind: "item",
@@ -2059,6 +2110,7 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
+        </div>
         {previewShareEnabled && kernelTabId && (
           <PreviewShareMenu
             tabId={kernelTabId}
@@ -2067,7 +2119,6 @@ export function TerminalPane({
             onActiveChange={setPreviewActive}
           />
         )}
-        </div>
         <div className="nx-spacer" />
 
         <button
@@ -2143,6 +2194,14 @@ export function TerminalPane({
               role="img"
               aria-label="预览链接分享中"
               data-testid="preview-active-dot"
+            />
+          )}
+          {narrowStatusAttention && (
+            <span
+              className="nx-dot nx-dot-pulse ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              role="img"
+              aria-label="有状态需要查看，点开菜单"
+              data-testid="toolbar-status-dot"
             />
           )}
         </button>

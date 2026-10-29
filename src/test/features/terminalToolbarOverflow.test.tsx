@@ -378,6 +378,32 @@ describe("terminal toolbar overflow", () => {
     expect(item?.textContent).toContain("分享中");
   });
 
+  it("lists second-row status in the overflow menu and flags it on the button", async () => {
+    expect(mounted!.container.querySelector('[data-testid="toolbar-status-dot"]')).toBeNull();
+    act(() => {
+      useUi.setState({
+        sessions: useUi.getState().sessions.map((x) => (x.id === "s1" ? { ...x, staleConfig: true } : x)),
+      });
+    });
+    await flush();
+    expect(mounted!.container.querySelector('[data-testid="toolbar-status-dot"]')).not.toBeNull();
+    click(overflowButton());
+    await flush();
+    expect(menuLabels()).toEqual(expect.arrayContaining(["配置已修改，重连后生效", "使用当前配置重连"]));
+  });
+
+  it("keeps the narrow toolbar to one row", async () => {
+    const installed = await installCompiledCSS("src/styles.css");
+    try {
+      const rules = styleRules(installed);
+      const narrow = "term (max-width: 560px)";
+      expect(declared(rules, ".nx-toolbar.nx-term-toolbar", "flex-wrap", narrow)).toBe("nowrap");
+      expect(declared(rules, ".nx-term-toolbar > .nx-toolbar-extra", "display", narrow)).toBe("none");
+    } finally {
+      installed.remove();
+    }
+  });
+
   it("does not offer the preview link when previews are unavailable", async () => {
     click(overflowButton());
     await flush();
