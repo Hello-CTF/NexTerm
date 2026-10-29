@@ -155,3 +155,109 @@ func receiveClassesSkippingOwner(t *testing.T, receiver *hub.Receiver, want int)
 	}
 	return spans, out
 }
+
+// Taking the size must be announced: the new owner's view only starts sending its grid when the control event
+// names it as the size owner, and a version that never advances would be dropped as stale by the view.
+func TestSizeHandoffPublishesControlEventForNewOwner(t *testing.T) {
+	events := make(chan ControlEvent, 256)
+	clock := newSessionTestClock()
+	manager, _, _, session := openGridTestSessionAt(t, events, clock.Now)
+	ctx := context.Background()
+	tab := openTestTab(t, manager, session, "phone", "phone-1")
+	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "desktop", ChannelID: "desktop-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Resize(ctx, tab.ID, "phone", 40, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Write(ctx, tab.ID, "phone", []byte("p")); err != nil {
+		t.Fatal(err)
+	}
+	drainControlEvents(events)
+
+	clock.Advance(sizeHandoffHold)
+	if err := manager.Write(ctx, tab.ID, "desktop", []byte("d")); err != nil {
+		t.Fatal(err)
+	}
+	var announced ControlEvent
+	for event := range pendingControlEvents(events) {
+		if event.SizeOwner == "desktop" {
+			announced = event
+		}
+	}
+	if announced.SizeOwner != "desktop" {
+		t.Fatalf("no control event named the new size owner: %+v", tab.Info())
+	}
+	// The previous owner can no longer move the PTY; the new owner can.
+	if err := manager.Resize(ctx, tab.ID, "phone", 41, 21); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.Cols != 40 || info.Rows != 20 {
+		t.Fatalf("previous owner resized the PTY after the handoff: %+v", info)
+	}
+	if err := manager.Resize(ctx, tab.ID, "desktop", 120, 40); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.Cols != 120 || info.Rows != 40 {
+		t.Fatalf("new owner's resize = %+v", info)
+	}
+}
+
+// The owner's attach counts as its latest input, so another client's first input takes the size once the hold
+// since the attach has passed. An input inside the hold is not remembered: the next input after the hold takes it.
+func TestSizeHandoffFirstInputInsideHoldDoesNotStickAsFollower(t *testing.T) {
+	events := make(chan ControlEvent, 256)
+	clock := newSessionTestClock()
+	manager, _, _, session := openGridTestSessionAt(t, events, clock.Now)
+	ctx := context.Background()
+	tab := openTestTab(t, manager, session, "phone", "phone-1")
+	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "desktop", ChannelID: "desktop-1"}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(sizeHandoffHold)
+	if err := manager.Write(ctx, tab.ID, "desktop", []byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if owner := tab.Info().SizeOwner; owner != "desktop" {
+		t.Fatalf("size owner after the first input = %q, want desktop", owner)
+	}
+
+	// The phone types, then the desktop types inside the hold and again after it.
+	if err := manager.Write(ctx, tab.ID, "phone", []byte("p")); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(sizeHandoffHold)
+	if err := manager.Write(ctx, tab.ID, "phone", []byte("q")); err != nil {
+		t.Fatal(err)
+	}
+	if owner := tab.Info().SizeOwner; owner != "phone" {
+		t.Fatalf("size owner after the phone typed = %q", owner)
+	}
+	if err := manager.Write(ctx, tab.ID, "desktop", []byte("b")); err != nil {
+		t.Fatal(err)
+	}
+	if owner := tab.Info().SizeOwner; owner != "phone" {
+		t.Fatalf("size owner moved inside the hold to %q", owner)
+	}
+	clock.Advance(sizeHandoffHold)
+	if err := manager.Write(ctx, tab.ID, "desktop", []byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	if owner := tab.Info().SizeOwner; owner != "desktop" {
+		t.Fatalf("size owner after the hold = %q, want desktop", owner)
+	}
+}
+
+// pendingControlEvents returns the control events already published, without waiting for more.
+func pendingControlEvents(events chan ControlEvent) <-chan ControlEvent {
+	out := make(chan ControlEvent, cap(events))
+	for {
+		select {
+		case event := <-events:
+			out <- event
+		default:
+			close(out)
+			return out
+		}
+	}
+}

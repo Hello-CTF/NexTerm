@@ -101,6 +101,11 @@ export class TerminalGridCoordinator {
   private generation = 0;
   private observedRevision = 0;
   private observedGrid: TerminalGrid | null = null;
+  // The newest PTY grid the backend reported, kept whether or not this view owns the size, so input can tell
+  // when the PTY no longer matches what this view measured.
+  private ptyRevision = 0;
+  private ptyGrid: TerminalGrid | null = null;
+  private inputSyncKey = "";
   private inFlight: GridRequest | null = null;
   private pending: GridRequest | null = null;
   private forceOnNextMeasurement = false;
@@ -189,7 +194,12 @@ export class TerminalGridCoordinator {
   }
 
   observe(revision: number, grid: TerminalGrid): boolean {
-    if (this.closed || this.canResize || revision <= 0 || !validTerminalGrid(grid)) return false;
+    if (this.closed || revision <= 0 || !validTerminalGrid(grid)) return false;
+    if (revision >= this.ptyRevision) {
+      this.ptyRevision = revision;
+      this.ptyGrid = grid;
+    }
+    if (this.canResize) return false;
     if (
       revision < this.observedRevision ||
       (revision === this.observedRevision &&
@@ -202,6 +212,21 @@ export class TerminalGridCoordinator {
     this.committed = grid;
     this.applyLocal(grid);
     return true;
+  }
+
+  // noteInput runs on local input (keys, paste). A view that owns the size but measured a grid other than the PTY's
+  // sends its grid at once, so typing after another device resized the PTY never needs a manual window resize. It
+  // sends at most once per observed PTY state and local grid, never while a request is already on its way, and a
+  // follower sends nothing: its input makes the backend hand it the size, and setCanResize then sends at once.
+  noteInput(): void {
+    if (this.closed || !this.visible || !this.canResize || !this.tabId || !this.desired) return;
+    if (this.inFlight || this.pending || this.debounceTimer !== null) return;
+    const reference = this.ptyGrid ?? this.committed;
+    if (reference && sameGrid(reference, this.desired)) return;
+    const key = `${this.tabId}:${this.generation}:${this.ptyRevision}:${this.desired.cols}x${this.desired.rows}`;
+    if (key === this.inputSyncKey) return;
+    this.inputSyncKey = key;
+    this.schedule(true, false);
   }
 
   flush(): void {

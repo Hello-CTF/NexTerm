@@ -94,6 +94,7 @@ import {
   IconCopy,
   IconEdit,
   IconEye,
+  IconGlobe,
   IconList,
   IconMergeH,
   IconPlug,
@@ -289,6 +290,9 @@ export function TerminalPane({
 }: TerminalPaneProps) {
   const [kernelTabId, setKernelTabId] = useState<string | null>(null);
   const previewShareEnabled = usePreviewShareEnabled();
+  // The overflow menu opens the preview panel by bumping the counter; the active flag keeps sharing visible on the button.
+  const [previewOpenRequest, setPreviewOpenRequest] = useState(0);
+  const [previewActive, setPreviewActive] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
@@ -505,6 +509,17 @@ export function TerminalPane({
   // Every attached client may type. The PTY follows the size of the client
   // that typed last; the others render the PTY size until they type.
   const canResize = !controlSupported || control === null || control.sizeOwner === me;
+  // Input from a follower makes the backend hand it the size once the owner has been idle for the handoff hold; the
+  // control event announcing that can be lost (a sleeping window, a reconnect), which would leave this pane
+  // shrunken until a manual resize. One re-read of the control state after the hold catches up.
+  const followerRecheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const FOLLOWER_RECHECK_MS = 1700;
+  useEffect(
+    () => () => {
+      if (followerRecheckTimer.current !== null) clearTimeout(followerRecheckTimer.current);
+    },
+    [],
+  );
 
   const refreshControl = useCallback(
     async (tabIdArg?: string) => {
@@ -591,6 +606,12 @@ export function TerminalPane({
         return "failed";
       }
       if (!kernelTabId) return "failed";
+      if (controlSupported && !canResize && followerRecheckTimer.current === null) {
+        followerRecheckTimer.current = setTimeout(() => {
+          followerRecheckTimer.current = null;
+          void refreshControl();
+        }, FOLLOWER_RECHECK_MS);
+      }
       const broadcast = broadcastContext();
       if (broadcast) {
         const state = useUi.getState();
@@ -651,7 +672,7 @@ export function TerminalPane({
         return "failed";
       }
     },
-    [kernelTabId, pushToast, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId],
+    [kernelTabId, pushToast, broadcastContext, broadcastQueue, queueBroadcastConfirmation, containerId, execInterrupted, sessionId, storeTabId, controlSupported, canResize, refreshControl],
   );
 
   const confirmBroadcastProduction = useCallback((environmentNames?: string[]) => {
@@ -1657,6 +1678,17 @@ export function TerminalPane({
         if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
     },
+    ...(previewShareEnabled && kernelTabId
+      ? ([
+          {
+            kind: "item",
+            label: "预览链接",
+            icon: <IconGlobe size={13} />,
+            hint: previewActive ? "分享中" : "创建 / 管理",
+            onSelect: () => setPreviewOpenRequest((n) => n + 1),
+          },
+        ] satisfies MenuItem[])
+      : []),
     ...(blocksSupported
       ? ([
           { kind: "separator" },
@@ -2027,7 +2059,14 @@ export function TerminalPane({
           </span>
         )}
         <Cwd cwd={cwd} />
-        {previewShareEnabled && kernelTabId && <PreviewShareMenu tabId={kernelTabId} sessionName={title} />}
+        {previewShareEnabled && kernelTabId && (
+          <PreviewShareMenu
+            tabId={kernelTabId}
+            sessionName={title}
+            openRequest={previewOpenRequest}
+            onActiveChange={setPreviewActive}
+          />
+        )}
         </div>
         <div className="nx-spacer" />
 
@@ -2098,6 +2137,14 @@ export function TerminalPane({
           onClick={openToolbarOverflow}
         >
           ⋯
+          {previewActive && (
+            <span
+              className="nx-dot ml-0.5 inline-block align-middle @min-[561px]:hidden"
+              role="img"
+              aria-label="预览链接分享中"
+              data-testid="preview-active-dot"
+            />
+          )}
         </button>
       </div>
 

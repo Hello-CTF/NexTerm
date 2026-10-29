@@ -419,6 +419,7 @@ export function XtermView(props: XtermViewProps) {
     const sendInput = (data: string, blockText = data) => {
       blocks.feedInput(blockText);
       if (!kernelTabId) return;
+      coordinator.noteInput();
       const onData = onDataRef.current;
       if (onData) {
         onData(data);
@@ -1395,6 +1396,8 @@ export function XtermView(props: XtermViewProps) {
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
+      // Local keys and pastes check that the PTY still has this view's size; automatic replies do not count.
+      if (userInput.active()) gridRef.current?.noteInput();
       responses.submit(data);
     });
     const titleDisposable = term.onTitleChange((t) => {

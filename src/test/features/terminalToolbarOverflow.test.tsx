@@ -7,6 +7,8 @@ import { click, flush, mount, waitFor, type MountedView } from "./reactTestUtils
 
 const harness = vi.hoisted(() => ({
   mac: false,
+  web: false,
+  previewActive: false,
   switchEncoding: vi.fn(),
   listLive: vi.fn(),
   sessionList: vi.fn(),
@@ -47,7 +49,23 @@ vi.mock("../../ipc/events", () => ({
   },
 }));
 
-vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
+vi.mock("../../ipc/env", () => ({
+  clientId: () => "me",
+  get WEB() {
+    return harness.web;
+  },
+}));
+
+vi.mock("../../features/sharing/PreviewShareMenu", async () => {
+  const { useEffect } = await import("react");
+  return {
+    PreviewShareMenu: (props: { openRequest?: number; onActiveChange?: (active: boolean) => void }) => {
+      const { onActiveChange } = props;
+      useEffect(() => onActiveChange?.(harness.previewActive), [onActiveChange]);
+      return <div data-testid="preview-menu" data-open-request={props.openRequest} />;
+    },
+  };
+});
 
 vi.mock("../../ui/dialogs", () => ({
   describeTarget: () => "",
@@ -188,7 +206,17 @@ beforeEach(async () => {
 afterEach(() => {
   mounted?.unmount();
   mounted = undefined;
+  harness.web = false;
+  harness.previewActive = false;
 });
+
+async function remountWithPreview(active: boolean): Promise<void> {
+  mounted?.unmount();
+  harness.web = true;
+  harness.previewActive = active;
+  mounted = mount(createElement(TerminalPane, { sessionId: "s1", title: "term", storeTabId: "t1" }));
+  await flush();
+}
 
 describe("terminal toolbar overflow", () => {
   it("keeps every command in the overflow menu on narrow screens", async () => {
@@ -324,5 +352,35 @@ describe("terminal toolbar overflow", () => {
     } finally {
       installed.remove();
     }
+  });
+
+  it("offers the preview link in the overflow menu and opens the panel from it", async () => {
+    await remountWithPreview(false);
+    const panel = () => mounted!.container.querySelector('[data-testid="preview-menu"]')!;
+    expect(panel().getAttribute("data-open-request")).toBe("0");
+    click(overflowButton());
+    await flush();
+    expect(menuLabels()).toContain("预览链接");
+    clickMenuItem("预览链接");
+    await flush();
+    expect(panel().getAttribute("data-open-request")).toBe("1");
+    expect(mounted!.container.querySelector('[data-testid="preview-active-dot"]')).toBeNull();
+  });
+
+  it("keeps an active preview visible on the overflow button and in the menu", async () => {
+    await remountWithPreview(true);
+    expect(mounted!.container.querySelector('[data-testid="preview-active-dot"]')).not.toBeNull();
+    click(overflowButton());
+    await flush();
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
+      b.querySelector(".nx-menu-label")?.textContent?.includes("预览链接"),
+    );
+    expect(item?.textContent).toContain("分享中");
+  });
+
+  it("does not offer the preview link when previews are unavailable", async () => {
+    click(overflowButton());
+    await flush();
+    expect(menuLabels()).not.toContain("预览链接");
   });
 });
