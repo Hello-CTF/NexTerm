@@ -87,7 +87,7 @@ async function waitUntil(assertion: () => void, timeout = 5000): Promise<void> {
 }
 
 function newTerminalButton(): HTMLButtonElement {
-  const btn = document.querySelector<HTMLButtonElement>('button[aria-label="新建终端标签"]');
+  const btn = document.querySelector<HTMLButtonElement>('button[aria-label="新建终端标签页"]');
   if (!btn) throw new Error("workspace new terminal button not found");
   return btn;
 }
@@ -156,7 +156,7 @@ describe("New terminal after disconnect: one-click reconnect", () => {
     expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
     expect(useUi.getState().sessions.find((s) => s.id === "s1")?.status).toBe("connected");
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text.includes("正在重连"))).toBe(true);
+    expect(toasts.some((t) => t.text.includes("正在重新连接"))).toBe(true);
     expect(toasts.filter((t) => t.kind === "error").map((t) => t.text)).toEqual([]);
   });
 
@@ -169,7 +169,7 @@ describe("New terminal after disconnect: one-click reconnect", () => {
     await waitUntil(() =>
       expect(
         useUi.getState().toasts.some(
-          (t) => t.kind === "error" && t.text === "重新连接失败：重连未能启动",
+          (t) => t.kind === "error" && t.text === "重新连接失败：重新连接未能启动",
         ),
       ).toBe(true),
     );
@@ -179,7 +179,7 @@ describe("New terminal after disconnect: one-click reconnect", () => {
     expect(isSessionReconnectPending("s1")).toBe(false);
     expect(useUi.getState().workspaceRuntime.ws1?.problems?.[0]).toMatchObject({
       connectionKey: assetConnectionProblemKey("a1"),
-      summary: "重连未能启动",
+      summary: "重新连接未能启动",
     });
 
     mocks.sessionReconnect.mockResolvedValue(true);
@@ -205,7 +205,7 @@ describe("New terminal after disconnect: one-click reconnect", () => {
 
     expect(mocks.sessionReconnect).toHaveBeenCalledTimes(1);
     const toasts = useUi.getState().toasts;
-    expect(toasts.some((t) => t.text === "正在重连，连接成功后自动新建终端")).toBe(true);
+    expect(toasts.some((t) => t.text === "正在重新连接，连接成功后自动新建终端")).toBe(true);
   });
 
   it("does not open duplicate terminals when the session becomes connected while reconnect is pending", async () => {
@@ -282,14 +282,14 @@ describe("reconnectSessionAndWait", () => {
 
     await expect(
       reconnectSessionAndWait(session("disconnected"), { timeoutMs: 60, intervalMs: 10 }),
-    ).rejects.toThrow("重连超时");
+    ).rejects.toThrow("重新连接超时");
   });
 
   it("clears the inflight request after timeout so reconnect can be started again", async () => {
     mocks.sessionList.mockResolvedValue([session("reconnecting")]);
     await expect(
       reconnectSessionAndWait(session("disconnected"), { timeoutMs: 30, intervalMs: 10 }),
-    ).rejects.toThrow("重连超时");
+    ).rejects.toThrow("重新连接超时");
     expect(isSessionReconnectPending("s1")).toBe(false);
 
     mocks.sessionList.mockResolvedValue([session("connected")]);

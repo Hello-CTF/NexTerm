@@ -19,7 +19,7 @@ export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
           <IconPlus size={14} />
           新建终端
         </button>
-        <div className="nx-hint">在左侧栏「文件」中双击文件，可打开编辑器标签。</div>
+        <div className="nx-hint">在左侧栏的文件树中双击文件，可打开编辑器标签页。</div>
       </div>
     </div>
   );
@@ -70,7 +70,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
             ["newTerminal", "新建终端"],
             ["quickConnect", "快速连接"],
             ["commandPalette", "跳转面板"],
-            ["toggleSidebar", "左栏"],
+            ["toggleSidebar", "左侧栏"],
             ["toggleAiSidebar", "AI 侧栏"],
           ] as const
         ).map(([id, label]) => (
@@ -81,7 +81,7 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
         ))}
       </div>
       <div className="nx-hint max-w-md text-center">
-        双击左栏资产打开它的工作区（「当前设备」即本机），左侧栏的文件、容器、端口转发和日志按钮作用于当前主机；主机工作区不会自动新建终端，点「新建终端」打开。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
+        双击左侧栏中的资产可打开其工作区（「当前设备」即本机）。主机工作区的左侧栏默认显示该主机的文件树，其中的容器、端口转发和日志按钮作用于当前主机；选择「资产」或「凭据」可临时切换侧栏。主机工作区不会自动新建终端，请选择「新建终端」。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );

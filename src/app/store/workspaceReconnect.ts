@@ -69,7 +69,7 @@ export async function confirmSuspectReconnect(workspaceId: string | undefined): 
   const workspace = workspaceId ? useUi.getState().workspaces.find((item) => item.id === workspaceId) : undefined;
   if (!workspaceHasOrdinaryTerminals(workspace)) return true;
   const { confirmDialog } = await import("../../ui/dialogs");
-  return confirmDialog("普通终端会断开，正在运行的程序会结束");
+  return confirmDialog("临时终端会断开，正在运行的程序会结束");
 }
 
 // reconnectWorkspaceConnection reconnects the host session of a workspace from outside any terminal pane: a live
@@ -85,7 +85,7 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
       const result = await reconnectLiveSession(workspace.sessionId, workspaceId);
       if (result.kind === "pending") return false;
       if (result.kind === "canceled") {
-        pushToast("info", "已取消重连");
+        pushToast("info", "已取消重新连接");
         return false;
       }
       if (result.kind === "reconnected") return true;
@@ -95,7 +95,7 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
     if (outcome.ok) return true;
     pushToast(
       outcome.canceled ? "info" : "error",
-      outcome.canceled ? "已取消重连" : `重新连接失败：${outcome.error ?? "未知错误"}`,
+      outcome.canceled ? "已取消重新连接" : `重新连接失败：${outcome.error ?? "未知错误"}`,
     );
     return false;
   } catch (error) {

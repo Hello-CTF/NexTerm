@@ -122,6 +122,18 @@ function syncStatusText(): string | null {
   return null;
 }
 
+function syncFailureControl(): HTMLButtonElement | null {
+  const side = document.querySelector<HTMLElement>(".nx-statusbar-side");
+  return [...(side?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.includes("同步失败")) ?? null;
+}
+
+// The status bar renders sync only when it failed, so a quiet state is proven by waiting for the status
+// requests to settle and then finding no sync control.
+async function settleQuietSync(): Promise<void> {
+  await flushUntil(() => mocks.syncLinkGet.mock.calls.length > 0);
+  await flush();
+}
+
 function fireSyncEvent(topic: string): void {
   act(() => {
     for (const entry of [...mocks.syncEventHandlers]) {
@@ -202,9 +214,10 @@ describe("status bar sync state", () => {
       lastError: null,
     });
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
+    await settleQuietSync();
 
-    expect(syncStatusText()).toBe("同步：本地模式");
+    expect(syncStatusText()).toBeNull();
+    expect(syncFailureControl()).toBeNull();
   });
 
   it("shows configured when a sync link is configured", async () => {
@@ -217,19 +230,21 @@ describe("status bar sync state", () => {
       lastError: null,
     });
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
+    await settleQuietSync();
 
-    expect(syncStatusText()).toBe("同步：已配置");
+    expect(syncStatusText()).toBeNull();
+    expect(syncFailureControl()).toBeNull();
   });
 
   it("shows local mode when the URL, username, or password is missing", async () => {
     for (const patch of [{ url: "" }, { username: "" }, { hasPassword: false }]) {
+      mocks.syncLinkGet.mockClear();
       mocks.syncLinkGet.mockResolvedValue({ ...SAVED_LINK, ...patch });
       const view = mountApp();
       mounted = view;
-      await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
+      await settleQuietSync();
 
-      expect(syncStatusText()).toBe("同步：本地模式");
+      expect(syncStatusText()).toBeNull();
       view.unmount();
       mounted = undefined;
     }
@@ -241,7 +256,7 @@ describe("status bar sync state", () => {
     mounted = mountApp();
     await flush();
 
-    expect(syncStatusText()).toBe("服务端：浏览器模式");
+    expect(syncStatusText()).toBeNull();
     expect(mocks.syncLinkGet).not.toHaveBeenCalled();
   });
 
@@ -254,7 +269,6 @@ describe("status bar sync state", () => {
     mocks.syncLinkGet.mockResolvedValue(SAVED_LINK);
     mocks.syncStatus.mockImplementation(() => Promise.resolve(current));
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() === "同步：已配置");
     await flushUntil(() => document.body.textContent?.includes("同步警告 1") ?? false);
 
     current = {
@@ -262,8 +276,8 @@ describe("status bar sync state", () => {
       warnings: [],
     };
     fireSyncEvent("sync://round-complete");
-    await flushUntil(() => syncStatusText() === "同步失败");
-    expect(document.querySelector(".nx-statusbar-side .text-red-300")).not.toBeNull();
+    await flushUntil(() => syncFailureControl() !== null);
+    expect(syncFailureControl()?.textContent).toContain("查看");
     expect(document.body.textContent).not.toContain("同步警告 1");
 
     current = {
@@ -271,8 +285,8 @@ describe("status bar sync state", () => {
       lastSuccessAt: "2026-01-02T05:06:00.000Z",
     };
     fireSyncEvent("sync://round-complete");
-    await flushUntil(() => syncStatusText() === "同步：已配置");
-    expect(document.body.textContent).not.toContain("同步失败");
+    await flushUntil(() => syncFailureControl() === null);
+    expect(document.querySelector(".nx-statusbar-side")?.textContent ?? "").not.toContain("同步失败");
   });
 
   it("shows a locked configured sync as paused rather than failed", async () => {
@@ -283,8 +297,10 @@ describe("status bar sync state", () => {
       lastSuccessAt: "2026-01-02T03:04:00.000Z", paused: true, vaultLocked: true, warnings: [],
     });
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() === "同步已暂停：凭据库锁定");
-    expect(document.body.textContent).not.toContain("同步失败");
+    await settleQuietSync();
+    await flushUntil(() => mocks.syncStatus.mock.calls.length > 0);
+    await flush();
+    expect(syncFailureControl()).toBeNull();
     expect(document.querySelector(".nx-statusbar-side .text-red-300")).toBeNull();
   });
 
@@ -298,7 +314,8 @@ describe("status bar sync state", () => {
         detail: { code: "vault_locked", message: "凭据库已锁定，请先解锁" },
       }));
     });
-    await flushUntil(() => syncStatusText() === "同步已暂停：凭据库锁定");
+    await flush();
+    expect(syncFailureControl()).toBeNull();
     expect(useUi.getState().toasts.some((toast) => toast.kind === "error" && toast.text.includes("同步失败"))).toBe(false);
     expect(document.querySelector(".nx-statusbar-side .text-red-300")).toBeNull();
   });
@@ -312,7 +329,7 @@ describe("status bar sync state", () => {
     act(() => {
       window.dispatchEvent(new CustomEvent(WEB_SYNC_ERROR_EVENT, { detail: failure }));
     });
-    await flushUntil(() => syncStatusText() === "同步失败");
+    await flushUntil(() => syncFailureControl() !== null);
     expect(useUi.getState().toasts.filter((toast) => toast.text === "同步失败：offline")).toHaveLength(1);
 
     act(() => {
@@ -326,7 +343,6 @@ describe("status bar sync state", () => {
         detail: { warnings: ["latest warning"], lastSuccessAt: Date.now() },
       }));
     });
-    await flushUntil(() => syncStatusText() === "服务端：浏览器模式");
     await flushUntil(() => document.body.textContent?.includes("同步警告 1") ?? false);
     expect(document.querySelector("button.nx-badge")?.getAttribute("title")).toBe("latest warning");
 
@@ -405,8 +421,8 @@ describe("desktop account sync card", () => {
 
   it("calls linkSet with the account and password on login without automatically running the first sync", async () => {
     mounted = mountAppWithSyncCard();
-    await flushUntil(() => syncStatusText() !== null && syncStatusText() !== "同步：…");
-    expect(syncStatusText()).toBe("同步：本地模式");
+    await settleQuietSync();
+    expect(syncStatusText()).toBeNull();
 
     await loginSyncAccount();
 
@@ -414,7 +430,7 @@ describe("desktop account sync card", () => {
       const login = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
         (button) => button.textContent?.trim() === "登录",
       );
-      return syncStatusText() === "同步：已配置" && login?.disabled === false;
+      return mocks.syncLinkSet.mock.calls.length > 0 && login?.disabled === false;
     });
     expect(mocks.syncLinkSet).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -459,7 +475,7 @@ describe("startup forward recovery", () => {
 describe("removed manual sync entry", () => {
   it("does not trigger a sync action on Mod+Shift+S", async () => {
     mounted = mountApp();
-    await flushUntil(() => syncStatusText() === "同步：本地模式");
+    await settleQuietSync();
 
     const event = keyDown(window, "s", { ctrlKey: true, shiftKey: true });
     expect(event.defaultPrevented).toBe(false);

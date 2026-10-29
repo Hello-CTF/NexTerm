@@ -39,10 +39,10 @@ interface ConnectRow {
 }
 
 const CONNECT_ROWS: ConnectRow[] = [
-  { label: "定时任务", hint: "到点运行时目标主机未连接", connect: "cronConnectOptIn", production: "cronConnectProductionOptIn" },
+  { label: "定时任务", hint: "定时任务运行时目标主机未连接", connect: "cronConnectOptIn", production: "cronConnectProductionOptIn" },
   { label: "广播", hint: "广播目标的连接已断开", connect: "broadcastConnectOptIn", production: "broadcastConnectProductionOptIn" },
   { label: "目标集批量执行", hint: "目标集中有未连接的主机", connect: "targetSetConnectOptIn", production: "targetSetConnectProductionOptIn" },
-  { label: "AI 打开终端", hint: "AI 要在未连接的主机上打开终端", connect: "aiTerminalConnectOptIn", production: "aiTerminalConnectProductionOptIn" },
+  { label: "AI 打开终端", hint: "AI 需在未连接的主机上打开终端", connect: "aiTerminalConnectOptIn", production: "aiTerminalConnectProductionOptIn" },
 ];
 
 export function ProductionSettingsPanel() {
@@ -125,11 +125,11 @@ export function ProductionSettingsPanel() {
       setNameInput("");
       return;
     }
-    if (await saveNames([...names, name], `已将 ${name} 视为生产环境`)) setNameInput("");
+    if (await saveNames([...names, name], `已将 ${name} 设为生产环境`)) setNameInput("");
   };
 
   const removeName = (name: string) =>
-    void saveNames(names.filter((existing) => existing !== name), `${name} 不再视为生产环境`);
+    void saveNames(names.filter((existing) => existing !== name), `已移除生产环境名 ${name}`);
 
   const toggle = async (key: ProductionOptInKey, patch: ProductionSettingsUpdateRequest, message: string) => {
     setPendingKey(key);
@@ -142,13 +142,13 @@ export function ProductionSettingsPanel() {
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">生产安全</span>
-        <span className="nx-badge" title="这些设置只对当前登录的账号生效，不影响其他账号">仅对当前账号生效</span>
+        <span className="nx-badge" title="这些设置仅对当前登录的账号生效，不影响其他账号">仅对当前账号生效</span>
       </div>
       <p className="nx-hint mb-3">
-        防止在生产主机上误操作。对生产主机执行会改动系统的操作（向多个终端广播输入、批量执行命令、Docker 变更、AI 执行命令）时，会弹出确认框，需要手动输入环境名才能继续。这个确认无法在设置中关闭。
+        用于防止在生产主机上误操作。对生产主机执行会改动系统的操作（向多个终端广播输入、批量执行命令、变更 Docker、AI 执行命令）时，将弹出确认框，须手动输入环境名才能继续。该确认无法在设置中关闭。
       </p>
       <p className="nx-hint mb-3">
-        怎样让主机算作生产环境：给主机加标签 <code>production</code> 或 <code>prod</code>，始终生效；其他名称则在主机标签里写 <code>env:名称</code>，再把该名称添加到下面的列表。
+        判定生产环境的方式：为主机添加标签 <code>production</code> 或 <code>prod</code>，始终生效；使用其他名称时，在主机标签中填写 <code>env:名称</code>，并将该名称添加到下方列表。
       </p>
 
       {error && (
@@ -159,14 +159,14 @@ export function ProductionSettingsPanel() {
 
       <div className="mb-1 text-[12.5px] text-neutral-200">自定义生产环境名</div>
       <p className="nx-hint mb-2">
-        例如主机标签是 <code>env:live</code>，在这里添加 <code>live</code>，该主机就会按生产环境对待。名称不区分大小写。
+        例如主机标签为 <code>env:live</code> 时，在此添加 <code>live</code>，该主机即按生产环境处理。名称不区分大小写。
       </p>
       {settings === null && error === null ? (
         <div className="nx-hint mb-2" role="status">正在加载…</div>
       ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            {names.length === 0 && <span className="nx-hint">还没有自定义名称。目前只有带 production 或 prod 标签的主机按生产环境对待；需要更多环境时，在下方输入名称并点击添加。</span>}
+            {names.length === 0 && <span className="nx-hint">暂无自定义名称。目前仅带有 production 或 prod 标签的主机按生产环境处理；如需更多环境，请在下方输入名称并选择「添加」。</span>}
             {names.map((name) => (
               <span key={name} className="nx-chip" title={name}>
                 <span className="truncate">{name}</span>
@@ -215,7 +215,7 @@ export function ProductionSettingsPanel() {
       <div className="mb-1 mt-4 text-[12.5px] text-neutral-200">自动连接</div>
       <p className="nx-hint mb-2 flex items-start gap-1.5">
         <IconAlert size={12} className="mt-0.5 shrink-0 text-amber-300" />
-        默认关闭：这些功能只用已经打开的连接，遇到未连接的主机会直接失败。开启后它们可以自己连上主机，但只连主机密钥已确认过的主机，且凭据库需已解锁。
+        默认关闭：这些功能仅使用已建立的连接，遇到未连接的主机将直接失败。开启后可自动连接主机，但仅限已确认主机密钥的主机，且需先解锁凭据库。
       </p>
       <table className="w-full text-[12.5px]">
         <thead>
@@ -234,7 +234,7 @@ export function ProductionSettingsPanel() {
               <tr key={row.connect} className="border-t border-neutral-800/60">
                 <td className="py-1.5 pr-2">
                   <span className="block text-neutral-200">{row.label}</span>
-                  <span className="nx-hint block">{row.hint}时自动连接</span>
+                  <span className="nx-hint block">{row.hint}，将自动连接</span>
                 </td>
                 <td className="py-1.5 text-center">
                   <input
@@ -246,7 +246,7 @@ export function ProductionSettingsPanel() {
                     onChange={(event) => void toggle(
                       row.connect,
                       { [row.connect]: event.target.checked },
-                      event.target.checked ? `${row.label}可以自动连接主机` : `${row.label}不再自动连接主机`,
+                      event.target.checked ? `${row.label}已允许自动连接主机` : `${row.label}已禁止自动连接主机`,
                     )}
                   />
                 </td>
@@ -255,13 +255,13 @@ export function ProductionSettingsPanel() {
                     type="checkbox"
                     className="h-4 w-4 max-sm:h-5 max-sm:w-5"
                     aria-label={`${row.label}：也自动连接生产环境主机`}
-                    title={connect ? undefined : "先开启自动连接"}
+                    title={connect ? undefined : "请先开启自动连接"}
                     checked={connect && production}
                     disabled={busy || !connect}
                     onChange={(event) => void toggle(
                       row.production,
                       { [row.production]: event.target.checked },
-                      event.target.checked ? `${row.label}也会自动连接生产环境主机` : `${row.label}不再自动连接生产环境主机`,
+                      event.target.checked ? `${row.label}已允许自动连接生产环境主机` : `${row.label}已禁止自动连接生产环境主机`,
                     )}
                   />
                 </td>

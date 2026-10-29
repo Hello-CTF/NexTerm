@@ -87,7 +87,7 @@ describe("AgentToolCard", () => {
     );
     const text = view!.container.textContent ?? "";
     expect(text).toContain("已完成");
-    expect(text).toContain("证据：退出码 0，输出锚点匹配");
+    expect(text).toContain("依据：退出码 0，输出锚点匹配");
   });
 
   it("pending approval offers approve-once, approve-session and deny actions bound to the request id", () => {
@@ -102,9 +102,9 @@ describe("AgentToolCard", () => {
     expect(text).toContain("等待你确认");
     expect(view!.container.querySelector('[title^="请求 req-9"]')).not.toBeNull();
 
-    clickButton(view!.container, "批准一次");
+    clickButton(view!.container, "允许一次");
     expect(onApproval).toHaveBeenCalledWith("req-9", "approve_once");
-    clickButton(view!.container, "本会话批准");
+    clickButton(view!.container, "本会话允许");
     expect(onApproval).toHaveBeenCalledWith("req-9", "approve_session");
     clickButton(view!.container, "拒绝");
     expect(onApproval).toHaveBeenCalledWith("req-9", "deny");
@@ -117,8 +117,8 @@ describe("AgentToolCard", () => {
       }),
     );
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("已批准一次");
-    expect(buttons()).not.toContain("批准一次");
+    expect(text).toContain("已允许一次");
+    expect(buttons()).not.toContain("允许一次");
     expect(buttons()).not.toContain("拒绝");
   });
 
@@ -132,8 +132,8 @@ describe("AgentToolCard", () => {
     );
     const text = view!.container.textContent ?? "";
     expect(text).toContain("所有者：bob");
-    expect(button("批准一次").disabled).toBe(true);
-    expect(button("本会话批准").disabled).toBe(true);
+    expect(button("允许一次").disabled).toBe(true);
+    expect(button("本会话允许").disabled).toBe(true);
     expect(button("拒绝").disabled).toBe(true);
   });
 
@@ -145,8 +145,8 @@ describe("AgentToolCard", () => {
   it("unverifiable handles surface the ban instead of collapsing into gone", () => {
     mountCard(toolCall({ presence: "unverifiable" }));
     const text = view!.container.textContent ?? "";
-    expect(text).toContain("无法验证");
-    expect(text).not.toContain("已消失");
+    expect(text).toContain("无法确认");
+    expect(text).not.toContain("已不存在");
     expect(text).toContain("自动写入已禁止");
   });
 
@@ -154,7 +154,7 @@ describe("AgentToolCard", () => {
     mountCard(toolCall({ presence: "gone" }));
     const text = view!.container.textContent ?? "";
     expect(text).toContain("未知");
-    expect(text).not.toContain("已消失");
+    expect(text).not.toContain("已不存在");
     expect(text).toContain("自动写入已禁止");
   });
 

@@ -288,6 +288,6 @@ describe("AssetEditor creation from templates", () => {
     await flushUntil(() => useConnectTemplates.getState().templates.length === 0);
     expect(JSON.parse(localStorage.getItem(KEY) ?? "[]")).toEqual([]);
     expect(templateSelect()).toBeNull();
-    expect(mocks.toast).toHaveBeenCalledWith("info", "已删除模板");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已删除该模板");
   });
 });

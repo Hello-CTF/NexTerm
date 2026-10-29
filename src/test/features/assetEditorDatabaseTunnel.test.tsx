@@ -122,13 +122,13 @@ function findSelect(optionText: string): HTMLSelectElement {
 }
 
 function viaSelect(): HTMLSelectElement {
-  const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过SSH资产连接"]');
+  const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
   if (!select) throw new Error("via asset select not found");
   return select;
 }
 
 function queryViaSelect(): HTMLSelectElement | null {
-  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过SSH资产连接"]');
+  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
 }
 
 function fillRequiredFields(name = "orders-db"): void {
@@ -178,7 +178,7 @@ describe("AssetEditor database SSH tunnel", () => {
 
     expect(mocks.listAssets).toHaveBeenCalled();
     expect([...viaSelect().options].map((option) => option.value)).toEqual(["", "ssh-a", "ssh-b"]);
-    expect(mounted!.container.textContent).toContain("后端校验");
+    expect(mounted!.container.textContent).toContain("保存时会检查所选资产是否可用");
     setSelectValue(viaSelect(), "ssh-b");
     fillRequiredFields();
     await save();

@@ -409,6 +409,14 @@ export const IconBot = (p: IconProps) => (
   </Svg>
 );
 
+export const IconMore = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="5.5" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" />
+    <circle cx="18.5" cy="12" r="1.2" fill="currentColor" />
+  </Svg>
+);
+
 export const IconShield = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 21.5s7.5-3.6 7.5-9.5V5.6L12 2.5 4.5 5.6v6.4c0 5.9 7.5 9.5 7.5 9.5Z" />

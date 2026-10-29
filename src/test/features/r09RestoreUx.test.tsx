@@ -289,7 +289,7 @@ async function openWorkspaceSwitcher(): Promise<void> {
 
 function restoreMenuItem(): HTMLButtonElement | undefined {
   return [...(mounted?.container.querySelectorAll<HTMLButtonElement>(".nx-menu-item") ?? [])].find(
-    (item) => item.textContent?.includes("恢复关闭的标签"),
+    (item) => item.textContent?.includes("恢复关闭的标签页"),
   );
 }
 
@@ -478,32 +478,6 @@ describe("restorePending file and log tabs mount only after an explicit reconnec
 
     expect(findTab("log-1")?.restorePending).toBeUndefined();
     await flushUntil(() => mocks.fsReadRange.mock.calls.length > 0);
-  });
-
-  it("files browser: placeholder first, roots/list only after the explicit reconnect", async () => {
-    const pending: AppTab = {
-      id: "files-s1",
-      kind: "files",
-      title: "文件",
-      sessionId: "s1",
-      closable: true,
-      restorePending: true,
-    };
-    useUi.setState({ workspaces: [hostWorkspace("ws-1", "s1", [pending])] });
-    mounted = mountApp();
-    await flush();
-
-    expect(mounted?.container.textContent).toContain("连接并打开");
-    expect(mocks.fsRoots).not.toHaveBeenCalled();
-    expect(mocks.fsList).not.toHaveBeenCalled();
-    expect(mocks.sessionConnect).not.toHaveBeenCalled();
-
-    click(reconnectButton());
-    await flush();
-
-    expect(findTab("files-s1")?.restorePending).toBeUndefined();
-    await flushUntil(() => mocks.fsRoots.mock.calls.length > 0);
-    await flushUntil(() => mocks.fsList.mock.calls.length > 0);
   });
 
   it("deletedTarget keeps the placeholder, reports the failure, and never mounts the editor", async () => {

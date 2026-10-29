@@ -107,7 +107,7 @@ describe("ModelManager masked key boundary", () => {
     expect(mocks.refresh).toHaveBeenCalledOnce();
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("拉取模型列表失败"),
+      expect.stringContaining("未能获取模型列表"),
     );
     expect(view!.container.textContent).not.toContain("deepseek-reasoner");
   });

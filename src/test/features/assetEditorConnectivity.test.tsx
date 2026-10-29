@@ -145,7 +145,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(passwordInput).toBeTruthy();
     setInputValue(passwordInput, "s3cret");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     const payload = createdPayload();
     expect(payload.authKind).toBe("keyboard-interactive");
     expect(payload.credId).toBe("cred-1");
@@ -171,7 +171,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("via-jump");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({ jumpAssetId: "j1" });
   });
 
@@ -209,7 +209,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(labels.some((label) => label?.includes("web-01"))).toBe(false);
     setSelectValue(jumpSelect, "");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
   });
 
@@ -220,7 +220,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(mounted!.container.textContent).toContain(
       "默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。",
     );
-    const checkbox = mounted!.container.querySelector('input[aria-label="Agent 转发"]') as HTMLInputElement;
+    const checkbox = mounted!.container.querySelector('input[aria-label="ssh-agent 转发"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(false);
     click(checkbox);
     await flush();
@@ -229,7 +229,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("forwarder");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({
       forwardAgent: true,
       agentSocket: "/tmp/agent.sock",
@@ -248,7 +248,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("cert-user");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     const payload = createdPayload();
     expect(payload.keyPath).toBe("/home/u/.ssh/id_ed25519");
     expect(payload.options).toEqual({ certPath: "/home/u/.ssh/id_ed25519-cert.pub" });
@@ -280,7 +280,7 @@ describe("AssetEditor SSH connectivity", () => {
     expandAdvanced();
     setInputValue(findInput("nc %h %p"), "nc %h %p");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({
       proxy: "socks5://127.0.0.1:1080",
       connectTimeout: 30,
@@ -298,7 +298,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({ terminalMode: "regular" });
   });
 
@@ -313,7 +313,7 @@ describe("AssetEditor SSH connectivity", () => {
     fillName("durable-ssh");
     fillHost("10.0.0.8");
     click(saveButton());
-    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(createdPayload().options).toEqual({ terminalMode: "durable" });
   });
 
@@ -343,7 +343,7 @@ describe("AssetEditor SSH connectivity", () => {
     expect(mode.value).toBe(initialMode);
     setSelectValue(mode, "auto");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
   });
 });
@@ -407,7 +407,7 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     expandAdvanced();
     await flush();
     const checkbox = mounted!.container.querySelector(
-      'input[aria-label="Agent 转发"]',
+      'input[aria-label="ssh-agent 转发"]',
     ) as HTMLInputElement;
     expect(checkbox.checked).toBe(true);
     expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
@@ -426,7 +426,7 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     await flush();
     setInputValue(findInput("nc %h %p"), "nc -X 5 %h %p");
     const checkbox = mounted!.container.querySelector(
-      'input[aria-label="Agent 转发"]',
+      'input[aria-label="ssh-agent 转发"]',
     ) as HTMLInputElement;
     click(checkbox);
     await flush();
@@ -440,7 +440,7 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     expect(advancedToggle().getAttribute("aria-expanded")).toBe("true");
     expect(findInput("nc %h %p").value).toBe("nc -X 5 %h %p");
     const recheck = mounted!.container.querySelector(
-      'input[aria-label="Agent 转发"]',
+      'input[aria-label="ssh-agent 转发"]',
     ) as HTMLInputElement;
     expect(recheck.checked).toBe(true);
     expect(findInput("$SSH_AUTH_SOCK")).toBeTruthy();
@@ -478,7 +478,7 @@ describe("AssetEditor tags and note", () => {
     setInputValue(tagsInput, " Prod, prod, 欧洲，PROD ");
     setInputValue(noteInput, "  updated note\n");
     click(saveButton());
-    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("保存中…"));
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload()).toMatchObject({ tags: "prod, 欧洲", note: "  updated note\n" });
   });
 });

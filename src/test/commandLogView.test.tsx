@@ -207,7 +207,7 @@ describe("AuditView command view", () => {
 
     mocks.commandQuery.mockRejectedValue(new Error("网络中断"));
     clickButton(mounted.container, "刷新");
-    await flushUntil(() => text(mounted!.container).includes("命令记录加载失败"));
+    await flushUntil(() => text(mounted!.container).includes("未能加载命令记录"));
     expect(text(mounted.container)).toContain("网络中断");
   });
 

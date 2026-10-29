@@ -40,6 +40,14 @@ func updateIPCDebArchiveWithPath(t *testing.T, version, binaryPath string) (stri
 	if _, err := dataWriter.Write([]byte(content)); err != nil {
 		t.Fatal(err)
 	}
+	// Release debs always ship ai-runtime; a manifest declaring it unavailable is the smallest valid runtime.
+	runtimeManifest := `{"unavailable":"test fixture"}`
+	if err := dataWriter.WriteHeader(&tar.Header{Name: "usr/bin/ai-runtime/runtime.json", Mode: 0o644, Size: int64(len(runtimeManifest)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dataWriter.Write([]byte(runtimeManifest)); err != nil {
+		t.Fatal(err)
+	}
 	if err := dataWriter.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -306,7 +306,7 @@ describe("SSH import dialog", () => {
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
     await flush();
     expect(mounted.container.querySelector("[role=alert]")?.textContent).toContain(
-      "SSH config file not found",
+      "输入内容不正确，请检查后重试",
     );
     clickButton(mounted.container, "返回");
     await flush();

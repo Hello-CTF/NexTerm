@@ -111,7 +111,7 @@ func (e *Engine) collectCronObjects(ctx context.Context, c *localCollection) err
 func (e *Engine) applyCronObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload cronObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
-		report.warnf("定时任务对象数据损坏：%v", err)
+		report.warnf("定时任务数据已损坏：%v", err)
 		return false, false
 	}
 	jobs, list, err := e.syncableCronJobs(ctx)
@@ -142,7 +142,7 @@ func (e *Engine) applyCronObject(ctx context.Context, plaintext []byte, report *
 		}
 		expected = &local
 	}
-	err = jobs.PutSynced(ctx, cron.SyncedJob{
+	held, err := jobs.PutSynced(ctx, cron.SyncedJob{
 		ID: payload.ID, SessionID: payload.SessionID, Name: payload.Name, Prompt: payload.Prompt,
 		Schedule: payload.Schedule, Timezone: payload.Timezone, Enabled: payload.Enabled,
 		Timeout: time.Duration(payload.TimeoutMS) * time.Millisecond, ModelProfileID: payload.ModelProfileID,
@@ -153,6 +153,9 @@ func (e *Engine) applyCronObject(ctx context.Context, plaintext []byte, report *
 	case err == nil:
 		if err := e.clearTombstone(ctx, payload.ID); err != nil {
 			report.warnf("定时任务 %s 的删除标记清除失败：%v", payload.ID, err)
+		}
+		if held {
+			report.warnf("定时任务 %q 来自其他设备并绑定到本机，已默认停用；请在定时任务面板确认后再启用", payload.Name)
 		}
 		return true, false
 	case errors.Is(err, cron.ErrJobRunning):

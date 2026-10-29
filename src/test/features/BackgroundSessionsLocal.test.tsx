@@ -177,8 +177,8 @@ describe("BackgroundSessions host-scoped view", () => {
     const view = mountHost();
     try {
       await flush();
-      await waitForRendered(() => expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端"));
-      expect(view.container.textContent).toContain("持久终端关闭标签后会继续在主机上运行并出现在这里；普通模式的终端关闭后会结束");
+      await waitForRendered(() => expect(view.container.textContent).toContain("该主机上没有在后台运行的终端"));
+      expect(view.container.textContent).toContain("持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束");
     } finally {
       view.unmount();
     }
@@ -317,7 +317,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitForRendered(() => expect(view.container.textContent).toContain("SSH disconnected"));
       expect(view.container.textContent).toContain("已有后台");
-      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
+      expect(view.container.textContent).not.toContain("该主机上没有在后台运行的终端");
     } finally {
       view.unmount();
     }
@@ -377,10 +377,10 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "连接并查找").click();
         await flush();
       });
-      await waitForRendered(() => expect(toastText()).toContain("重新连接失败：重连未能启动"));
+      await waitForRendered(() => expect(toastText()).toContain("重新连接失败：重新连接未能启动"));
       expect(useUi.getState().workspaceRuntime["ws-host"]?.problems?.[0]).toMatchObject({
         connectionKey: assetConnectionProblemKey("asset-host-one"),
-        summary: "重连未能启动",
+        summary: "重新连接未能启动",
       });
 
       await act(async () => {
@@ -756,7 +756,7 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       expect(mocks.listLive).not.toHaveBeenCalled();
-      expect(view.container.textContent).toContain("不知道该查看哪台主机");
+      expect(view.container.textContent).toContain("无法确定要查看的主机");
       expect(view.container.textContent).not.toContain("构建");
     } finally {
       view.unmount();
@@ -771,14 +771,14 @@ describe("BackgroundSessions host-scoped view", () => {
     try {
       await flush();
       await waitForRendered(() => expect(view.container.querySelectorAll('tr[aria-hidden="true"]').length).toBeGreaterThan(0));
-      expect(view.container.textContent).toContain("加载中");
-      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
+      expect(view.container.textContent).toContain("正在加载");
+      expect(view.container.textContent).not.toContain("该主机上没有在后台运行的终端");
 
       await act(async () => {
         pending.resolve([]);
         await pending.promise;
       });
-      expect(view.container.textContent).toContain("这台主机上没有在后台运行的终端");
+      expect(view.container.textContent).toContain("该主机上没有在后台运行的终端");
       expect(view.container.querySelector('tr[aria-hidden="true"]')).toBeNull();
       expect(view.container.textContent).not.toContain("无法读取后台会话");
     } finally {
@@ -809,7 +809,7 @@ describe("BackgroundSessions host-scoped view", () => {
       await flush();
       await waitForRendered(() => expect(view.container.textContent).toContain("无法读取后台会话"));
       expect(view.container.textContent).toContain("database unavailable");
-      expect(view.container.textContent).not.toContain("这台主机上没有在后台运行的终端");
+      expect(view.container.textContent).not.toContain("该主机上没有在后台运行的终端");
     } finally {
       view.unmount();
     }
@@ -914,7 +914,7 @@ describe("BackgroundSessions host-scoped view", () => {
       });
       expect(mocks.resyncSessions).toHaveBeenCalledWith({ silent: true });
       expect(view.container.textContent).toContain("构建");
-      expect(toastText()).toContain("结束进程失败：boom");
+      expect(toastText()).toContain("无法结束终端中的程序：boom");
     } finally {
       view.unmount();
     }
@@ -1380,7 +1380,7 @@ describe("BackgroundSessions host-scoped view", () => {
         actionButton(view, "结束进程").click();
         await flush();
       });
-      await waitForRendered(() => expect(toastText()).toContain("结束进程失败：kill failed"));
+      await waitForRendered(() => expect(toastText()).toContain("无法结束终端中的程序：kill failed"));
       expect(view.container.textContent).toContain("构建");
     } finally {
       view.unmount();
@@ -1491,11 +1491,11 @@ describe("closing a local terminal follows explicit capability and preference", 
     const tab = { ...terminal(), retainable: true };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "local");
     expect(closeActionHint(tab)).toBe("转入后台运行");
-    expect(closeTabHint(tab)).toBe("关闭标签（转入后台运行）");
+    expect(closeTabHint(tab)).toBe("关闭标签页（转入后台运行）");
 
     const unknown = { ...terminal("unknown"), retainable: undefined };
     seed([{ id: "p", tabs: [unknown], activeTabId: unknown.id }], "local");
     expect(closeActionHint(unknown)).toBe("结束本地进程");
-    expect(closeTabHint(unknown)).toBe("关闭标签（结束本地进程）");
+    expect(closeTabHint(unknown)).toBe("关闭标签页（结束本地进程）");
   });
 });

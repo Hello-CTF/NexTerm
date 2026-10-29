@@ -213,7 +213,7 @@ func terminalErrorMessage(err error) string {
 		return "操作失败（原因未记录），请重试"
 	}
 	if errors.Is(err, provider.ErrCircuitOpen) {
-		return "AI 服务连续失败已触发熔断，请稍后重试"
+		return "AI 服务连续失败，已暂停请求，请稍后重试"
 	}
 	switch provider.ClassifyError(err) {
 	case provider.ErrorClassRateLimit:

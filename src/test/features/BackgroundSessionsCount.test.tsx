@@ -91,7 +91,7 @@ describe("background session badge and page share one rule", () => {
       try {
         await flush();
         await waitForRendered(() => expect(badge(other.container)).toBe("0"));
-        await waitForRendered(() => expect(other.container.textContent).toContain("这台主机上没有在后台运行的终端"));
+        await waitForRendered(() => expect(other.container.textContent).toContain("该主机上没有在后台运行的终端"));
         expect(rows(other.container)).toBe(0);
         expect(other.container.querySelector('[data-testid="background-host"]')?.textContent).toBe("主机乙");
       } finally {

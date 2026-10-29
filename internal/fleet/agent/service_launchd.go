@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/Hello-CTF/NexTerm/internal/usershell"
 )
 
 const launchdLabel = "com.nexterm.agent"
@@ -19,21 +17,14 @@ type launchdManager struct {
 	plistPath     string
 	uid           string
 	commandPrefix []string
-	getenv        func(string) string
-	lookupShell   func() string
 }
 
 func newLaunchdManager(runner CommandRunner, homeDir, uid string, commandPrefix ...string) ServiceManager {
 	return newLaunchdManagerEnv(runner, nil, homeDir, uid, commandPrefix...)
 }
 
-func newLaunchdManagerEnv(runner CommandRunner, getenv func(string) string, homeDir, uid string, commandPrefix ...string) *launchdManager {
-	if getenv == nil {
-		getenv = func(string) string { return "" }
-	}
+func newLaunchdManagerEnv(runner CommandRunner, _ func(string) string, homeDir, uid string, commandPrefix ...string) *launchdManager {
 	return &launchdManager{
-		getenv:        getenv,
-		lookupShell:   usershell.Lookup,
 		runner:        runner,
 		plistPath:     filepath.Join(homeDir, "Library", "LaunchAgents", launchdLabel+".plist"),
 		uid:           uid,
@@ -46,7 +37,7 @@ func (m *launchdManager) domain() string {
 }
 
 func (m *launchdManager) Install(ctx context.Context, executable, dataDir string) error {
-	plist := renderLaunchdPlistEnv(executable, dataDir, captureServiceEnvironment(m.getenv, m.lookupShell), m.commandPrefix...)
+	plist := renderLaunchdPlist(executable, dataDir, m.commandPrefix...)
 	if err := os.MkdirAll(filepath.Dir(m.plistPath), 0o755); err != nil {
 		return fmt.Errorf("create LaunchAgents directory: %w", err)
 	}
@@ -103,7 +94,7 @@ func (m *launchdManager) Status(ctx context.Context) ServiceState {
 	return status
 }
 
-// RecordedEnvironment reads the SHELL and PATH stored in the installed plist.
+// RecordedEnvironment reads a SHELL and PATH that an older install stored in the plist.
 func (m *launchdManager) RecordedEnvironment() (ServiceEnvironment, bool) {
 	data, err := os.ReadFile(m.plistPath)
 	if err != nil {
@@ -112,7 +103,6 @@ func (m *launchdManager) RecordedEnvironment() (ServiceEnvironment, bool) {
 	var env ServiceEnvironment
 	env.Shell = plistString(string(data), "SHELL")
 	env.Path = plistString(string(data), "PATH")
-	finishRecorded(&env)
 	return env, true
 }
 
@@ -175,11 +165,10 @@ func launchdFailure(output string, err error) string {
 	return err.Error()
 }
 
+// renderLaunchdPlist renders the plist without EnvironmentVariables: the agent resolves the user's shell
+// and environment at runtime, so nothing the installing process happened to have is recorded. Reinstalling
+// therefore also drops values recorded by older versions.
 func renderLaunchdPlist(executable, dataDir string, commandPrefix ...string) string {
-	return renderLaunchdPlistEnv(executable, dataDir, ServiceEnvironment{}, commandPrefix...)
-}
-
-func renderLaunchdPlistEnv(executable, dataDir string, env ServiceEnvironment, commandPrefix ...string) string {
 	arguments := make([]string, 0, len(commandPrefix)+4)
 	arguments = append(arguments, executable)
 	arguments = append(arguments, commandPrefix...)
@@ -194,16 +183,6 @@ func renderLaunchdPlistEnv(executable, dataDir string, env ServiceEnvironment, c
 		builder.WriteString("    <string>" + xmlEscape(argument) + "</string>\n")
 	}
 	builder.WriteString("  </array>\n")
-	if env.Shell != "" || env.Path != "" {
-		builder.WriteString("  <key>EnvironmentVariables</key>\n  <dict>\n")
-		if env.Path != "" {
-			builder.WriteString("    <key>PATH</key>\n    <string>" + xmlEscape(env.Path) + "</string>\n")
-		}
-		if env.Shell != "" {
-			builder.WriteString("    <key>SHELL</key>\n    <string>" + xmlEscape(env.Shell) + "</string>\n")
-		}
-		builder.WriteString("  </dict>\n")
-	}
 	builder.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
 	builder.WriteString("  <key>KeepAlive</key>\n  <dict>\n    <key>Crashed</key>\n    <true/>\n  </dict>\n")
 	builder.WriteString("</dict>\n</plist>\n")

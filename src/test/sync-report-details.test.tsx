@@ -158,14 +158,14 @@ describe("ImportReportView skipped-item details", () => {
     expect(text).toContain("对端修订 500 较本机修订 300 新");
     expect(text).toContain("生产口令");
     expect(text).toContain("（凭据）");
-    expect(text).toContain("对端与本机修订号相同（400），按 Origin 字典序裁决");
+    expect(text).toContain("对端与本机修订号相同（400），按设备标识排序决定");
   });
 
   it("uses the local side for revision labels in a pull report", () => {
     mounted = view({ title: "Pull results", dir: "pull", data: { ...REPORT_BASE, skippedNewerDetails: DETAILS } });
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("本机修订 500 较对端修订 300 新");
-    expect(text).toContain("本机与对端修订号相同（400），按 Origin 字典序裁决");
+    expect(text).toContain("本机与对端修订号相同（400），按设备标识排序决定");
   });
 
   it("labels the source side as the bundle in an asset bundle import report", () => {
@@ -261,7 +261,6 @@ describe("SyncCard comparison clock hint", () => {
 
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("请保持各设备时钟准确");
-    expect(text).toContain("否则「较新」判定可能不符合预期");
     act(() => {
       useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
     });

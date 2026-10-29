@@ -279,11 +279,7 @@ func TestRecordingFailureAndCwdControlVersionsStayOrdered(t *testing.T) {
 	recorder.startStatus = terminal.RecordingStatus{State: terminal.RecordingRunning, Generation: 1}
 	recorder.feedStatus = terminal.RecordingStatus{State: terminal.RecordingFailed, SafeError: "injected recording write failure", Generation: 1}
 	recorder.err = errors.New(recorder.feedStatus.SafeError)
-	events := make(chan Event, 4)
-	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
-		events <- event
-		return nil
-	})
+	events := recordControlEvents(manager)
 	if err := manager.StartRecording(tab.ID, filepath.Join(t.TempDir(), "cwd.log")); err != nil {
 		t.Fatal(err)
 	}
@@ -308,11 +304,7 @@ func TestRecordingOperationAndResizeControlVersionsStayOrdered(t *testing.T) {
 	recorder.startStatus = terminal.RecordingStatus{State: terminal.RecordingRunning, Generation: 1}
 	recorder.feedStatus = terminal.RecordingStatus{State: terminal.RecordingFailed, SafeError: "injected recording write failure", Generation: 1}
 	recorder.err = errors.New(recorder.feedStatus.SafeError)
-	events := make(chan Event, 4)
-	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
-		events <- event
-		return nil
-	})
+	events := recordControlEvents(manager)
 	if err := manager.StartRecording(tab.ID, filepath.Join(t.TempDir(), "resize.log")); err != nil {
 		t.Fatal(err)
 	}
@@ -450,6 +442,20 @@ func runRecordingOperation(t *testing.T, operation func() error) error {
 		t.Fatal("recording operation deadlocked")
 		return nil
 	}
+}
+
+// recordControlEvents captures terminal control events only. Attention and other session events share the emitter
+// and arrive on their own goroutines, so forwarding them through a small channel would block those senders and leak
+// them past the test.
+func recordControlEvents(manager *Manager) <-chan Event {
+	events := make(chan Event, 16)
+	manager.emitter = EmitterFunc(func(_ context.Context, event Event) error {
+		if event.Topic == TopicTerminalControl {
+			events <- event
+		}
+		return nil
+	})
+	return events
 }
 
 func waitRecordingEvents(t *testing.T, events <-chan Event, count int) []Event {

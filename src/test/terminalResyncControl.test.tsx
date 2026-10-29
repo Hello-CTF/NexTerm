@@ -544,8 +544,8 @@ describe("terminal control resync compensation", () => {
       await flush();
     });
 
-    expect(overlayText("配置已修改，重连后生效")).not.toBeNull();
-    const reconnect = mounted.container.querySelector<HTMLButtonElement>('button[title="使用当前资产配置重连"]');
+    expect(overlayText("资产配置已修改，重新连接后生效")).not.toBeNull();
+    const reconnect = mounted.container.querySelector<HTMLButtonElement>('button[title="使用新的资产配置重新连接，保留当前终端"]');
     expect(reconnect).not.toBeNull();
     expect(reconnect?.disabled).toBe(false);
     click(reconnect!);

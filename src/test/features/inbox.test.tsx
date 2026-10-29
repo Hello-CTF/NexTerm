@@ -153,7 +153,7 @@ describe("system notifications", () => {
     await grace();
     // The title is the workspace the user named; the program's text only reaches the body.
     expect(notifier.shown).toEqual([
-      { id: "attention:T2", title: "db-01 · 需要你处理", body: "来自 db-01：migration waits", tabId: "T2" },
+      { id: "attention:T2", title: "db-01 · 需要处理", body: "来自 db-01：migration waits", tabId: "T2" },
     ]);
     expect(toasts).toEqual([]);
 
@@ -220,7 +220,7 @@ describe("system notifications", () => {
     live(attention({ tabId: "T2", reason: "notify", body: "migration waits" }));
     await grace();
     expect(notifier.shown).toEqual([]);
-    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits"]);
+    expect(toasts).toEqual(["db-01 · 需要处理：migration waits"]);
     toastActions[0]();
     expect(useUi.getState().activeWorkspaceId).toBe("ws2");
 
@@ -238,12 +238,12 @@ describe("system notifications", () => {
     notifier.show = () => Promise.reject(new Error("permission refused"));
     live(attention({ tabId: "T2", reason: "notify", body: "migration waits" }));
     await grace();
-    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits"]);
+    expect(toasts).toEqual(["db-01 · 需要处理：migration waits"]);
 
     notifier.status = () => Promise.resolve({ available: true, permission: "denied" });
     live(attention({ tabId: "T2", since: "2026-10-27T11:00:00Z", body: "second" }));
     await grace();
-    expect(toasts).toEqual(["db-01 · 需要你处理：migration waits", "db-01 · 需要你处理：second"]);
+    expect(toasts).toEqual(["db-01 · 需要处理：migration waits", "db-01 · 需要处理：second"]);
   });
 
   it("notifies at the grace period when this device typed last", async () => {
@@ -286,6 +286,22 @@ describe("inbox button", () => {
     view = undefined;
   });
 
+  it("marks every listed session read from one button, shown only for two or more", async () => {
+    vi.useRealTimers();
+    applyAwareness([attention({ tabId: "T1" })]);
+    view = mount(createElement(InboxButton));
+    const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
+    click(bell);
+    expect([...view.container.querySelectorAll("button")].some((b) => b.textContent === "全部标记已读")).toBe(false);
+    act(() => applyAwareness([attention({ tabId: "T2", since: "2026-10-27T10:05:00Z" })]));
+    const all = [...view.container.querySelectorAll("button")].find((b) => b.textContent === "全部标记已读") as HTMLButtonElement;
+    expect(all).toBeTruthy();
+    click(all);
+    await flush();
+    expect(mocks.attentionSeen).toHaveBeenCalledWith("T1", "2026-10-27T10:00:00Z");
+    expect(mocks.attentionSeen).toHaveBeenCalledWith("T2", "2026-10-27T10:05:00Z");
+  });
+
   it("counts the sessions, jumps to one and marks one read on every device", async () => {
     vi.useRealTimers();
     applyAwareness([
@@ -319,7 +335,7 @@ describe("inbox button", () => {
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();
 
     act(() => applyAwareness([attention({ tabId: "T2", seen: true }), attention({ tabId: "T1", state: "idle", reason: "input" })]));
-    expect(bell.getAttribute("aria-label")).toContain("没有");
+    expect(bell.getAttribute("aria-label")).toContain("暂无");
 
     // An older helper cannot share the mark: the entry clears on this device only.
     act(() => applyAwareness([attention({ tabId: "T2", since: "2026-10-27T11:00:00Z" })]));
@@ -327,7 +343,7 @@ describe("inbox button", () => {
     click(view.container.querySelector('button[aria-haspopup="dialog"]') as Element);
     click(view.container.querySelector('[data-inbox-tab="T2"] button[aria-label^="标记"]') as Element);
     await flush();
-    expect(bell.getAttribute("aria-label")).toContain("没有");
+    expect(bell.getAttribute("aria-label")).toContain("暂无");
   });
 
   it("explains disabled rows inline, starts focus on the first row, and closes when focus leaves", () => {
@@ -339,7 +355,7 @@ describe("inbox button", () => {
     const first = view.container.querySelector("[data-inbox-tab] button");
     expect(document.activeElement).toBe(first);
     const gone = view.container.querySelector('[data-inbox-tab="GONE"]')!;
-    expect(gone.querySelector("[data-inbox-reason]")?.textContent).toContain("此端没有打开这个终端");
+    expect(gone.querySelector("[data-inbox-reason]")?.textContent).toContain("当前客户端未打开该终端");
     expect(view.container.querySelector('[data-inbox-tab="T2"] [data-inbox-reason]')).toBeNull();
 
     // Focus moving to a terminal elsewhere closes the panel without taking the focus back.

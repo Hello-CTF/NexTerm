@@ -25,10 +25,12 @@ const (
 // ServerVersion appears only in version_mismatch frames: the agent uses it as the target version to self-upgrade from the fixed official
 // release source.
 type controlMessage struct {
-	Type              string `json:"type"`
-	Code              string `json:"code,omitempty"`
-	Message           string `json:"message,omitempty"`
-	ServerVersion     string `json:"server_version,omitempty"`
+	Type          string `json:"type"`
+	Code          string `json:"code,omitempty"`
+	Message       string `json:"message,omitempty"`
+	ServerVersion string `json:"server_version,omitempty"`
+	// Reason refines a forbidden/revoke frame without changing its code or type, so old agents behave as before.
+	Reason            string `json:"reason,omitempty"`
 	DesiredAutostart  *bool  `json:"desired_autostart,omitempty"`
 	MetricsIntervalMS *int64 `json:"metrics_interval_ms,omitempty"`
 	TerminalEnabled   *bool  `json:"terminal_enabled,omitempty"`
@@ -36,6 +38,17 @@ type controlMessage struct {
 	// Purpose selects the bridge service; empty means terminal. Non-terminal purposes are requested only
 	// from agents that advertised them in hello capabilities.
 	Purpose string `json:"purpose,omitempty"`
+}
+
+// forbiddenFrame is the handshake denial frame. It stays code forbidden for every cause so old agents stop;
+// an unavailable owner account additionally carries reason owner_unavailable for agents that can wait for recovery.
+func forbiddenFrame(err error) controlMessage {
+	frame := controlMessage{Type: "error", Code: "forbidden", Message: "设备凭证无效"}
+	if isOwnerUnavailable(err) {
+		frame.Reason = agent.ErrorCodeOwnerUnavailable
+		frame.Message = "设备所属账号暂不可用"
+	}
+	return frame
 }
 
 func writeControlJSON(ctx context.Context, conn *websocket.Conn, message controlMessage) error {
@@ -71,11 +84,12 @@ func (s *Service) serveDeviceWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.AuthenticateAgent(r.Context(), hello.DeviceID, hello.Secret); err != nil {
-		_ = writeControlJSON(r.Context(), conn, controlMessage{
-			Type: "error", Code: "forbidden", Message: "设备凭证无效",
-		})
+		_ = writeControlJSON(r.Context(), conn, forbiddenFrame(err))
 		_ = conn.Close(websocket.StatusPolicyViolation, "forbidden")
 		return
+	}
+	if s.afterAuthenticate != nil {
+		s.afterAuthenticate(hello.DeviceID)
 	}
 	if hello.BridgeID != "" {
 		s.serveDeviceBridge(conn, hello)
@@ -110,6 +124,14 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 // connection (unregistration of a replaced old connection, or after service shutdown swapped the table, is rejected by the Registry).
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
 	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest, hello.Capabilities)
+	// A revoke or account disable can land between authentication and registration (its kick would then find nothing),
+	// so re-check after registering and tear the channel down if the device is no longer allowed.
+	if err := s.recheckDevice(context.Background(), hello.DeviceID); err != nil {
+		s.registry.KickDevice(hello.DeviceID)
+		_ = writeControlJSON(context.Background(), conn, forbiddenFrame(err))
+		conn.CloseNow()
+		return
+	}
 	defer func() {
 		if s.registry.UnregisterControl(hello.DeviceID, conn) {
 			s.deviceOffline(hello.DeviceID)
@@ -141,6 +163,14 @@ func (s *Service) serveDeviceBridge(conn *websocket.Conn, hello agent.HelloMessa
 			Type: "error", Code: "not_found", Message: "桥接请求不存在或已超时",
 		})
 		_ = conn.Close(websocket.StatusPolicyViolation, "unknown bridge")
+		return
+	}
+	// Same race as the control channel: re-check once the bridge is registered.
+	if err := s.recheckDevice(context.Background(), hello.DeviceID); err != nil {
+		s.registry.UnregisterBridge(bridge)
+		s.registry.KickDevice(hello.DeviceID)
+		_ = writeControlJSON(context.Background(), conn, forbiddenFrame(err))
+		_ = bridge.Close()
 		return
 	}
 	// Unregister immediately after registration: if the hello_ok write fails, deliver is never called, so unregistration must

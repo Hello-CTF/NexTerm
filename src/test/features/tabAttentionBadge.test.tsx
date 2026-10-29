@@ -1,18 +1,25 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement, Fragment } from "react";
+import { act } from "react";
 import { mount } from "./reactTestUtils";
-import { TabAttentionBadge, TabStripItem, tabTooltip } from "../../app/workspace/tabStrip";
+import { ATTENTION_HOLD_MS, TabAttentionBadge, TabStripItem, tabTooltip } from "../../app/workspace/tabStrip";
 import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessStore";
 import type { AppTab } from "../../app/store";
 import type { TerminalAttentionEvent } from "../../ipc/events";
 
 let version = 0;
 
-beforeEach(() => resetAwarenessStore());
+beforeEach(() => {
+  vi.useFakeTimers();
+  resetAwarenessStore();
+});
 
-afterEach(() => resetAwarenessStore());
+afterEach(() => {
+  vi.useRealTimers();
+  resetAwarenessStore();
+});
 
 function terminal(patch: Partial<AppTab> = {}): AppTab {
   return { id: "t1", kind: "terminal", title: "终端 1", sessionId: "s1", tabId: "T1", closable: true, ...patch };
@@ -24,7 +31,7 @@ function report(patch: Partial<TerminalAttentionEvent>): void {
 }
 
 // renderTab mounts the tab strip pieces the way the pane tab bar does and returns the badge and the tooltip.
-function renderTab(tab: AppTab, active = false): { badge: Element | null; title: string } {
+function renderTab(tab: AppTab, active = false, wait = ATTENTION_HOLD_MS): { badge: Element | null; title: string } {
   let title = "";
   const view = mount(
     createElement(TabStripItem, {
@@ -36,6 +43,9 @@ function renderTab(tab: AppTab, active = false): { badge: Element | null; title:
       },
     }),
   );
+  act(() => {
+    vi.advanceTimersByTime(wait);
+  });
   // Read the result and unmount, so later store updates do not reach a mounted view outside act.
   const badge = view.container.querySelector('[role="img"]')?.cloneNode(true) as Element | undefined;
   view.unmount();
@@ -46,8 +56,8 @@ describe("tab attention badge", () => {
   it("marks a terminal that needs its user", () => {
     report({ state: "needs_me" });
     const signalled = renderTab(terminal());
-    expect(signalled.badge?.getAttribute("aria-label")).toBe("需要你处理");
-    expect(signalled.title).toContain("需要你处理");
+    expect(signalled.badge?.getAttribute("aria-label")).toBe("需要处理");
+    expect(signalled.title).toContain("需要处理");
   });
 
   it("shows a grey question mark instead of an old state when the state is unknown", () => {
@@ -90,12 +100,28 @@ describe("tab attention badge", () => {
     expect(renderTab(terminal()).badge).toBeNull();
   });
 
-  it("shows running only on tabs the user is not on, and nothing on exited or non-terminal tabs", () => {
+  it("never shows running, and shows no needs_me badge on the tab the user is on", () => {
     report({ state: "running" });
-    expect(renderTab(terminal()).badge?.getAttribute("data-attention")).toBe("running");
+    expect(renderTab(terminal()).badge).toBeNull();
     expect(renderTab(terminal(), true).badge).toBeNull();
     report({ state: "needs_me" });
+    expect(renderTab(terminal(), true).badge).toBeNull();
     expect(renderTab(terminal({ exited: true })).badge).toBeNull();
     expect(renderTab({ id: "f1", kind: "files", title: "文件", tabId: "T1", closable: true }).badge).toBeNull();
+  });
+
+  it("holds a needs_me badge back until the state has lasted, so a flapping state never flashes", () => {
+    report({ state: "needs_me" });
+    expect(renderTab(terminal(), false, ATTENTION_HOLD_MS - 1).badge).toBeNull();
+    expect(renderTab(terminal()).badge?.getAttribute("data-attention")).toBe("needs_me");
+  });
+
+  it("does not change the rendered badge while the state flaps between running and idle", () => {
+    const seen: Array<string | null> = [];
+    for (const state of ["running", "idle", "running", "idle", "running"] as const) {
+      report({ state });
+      seen.push(renderTab(terminal()).badge?.getAttribute("data-attention") ?? null);
+    }
+    expect(new Set(seen)).toEqual(new Set([null]));
   });
 });

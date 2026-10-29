@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { hasCustomTitle, useUi, type AppTab } from "../store";
 import { useTabUnread } from "../unreadStore";
 import { awarenessBadge, useTabAwareness, type AwarenessBadge } from "../sessionAwarenessStore";
@@ -68,14 +68,14 @@ export function tabTooltip(
   const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
   if (persistence) notes.push(persistence);
   else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
-  else if (t.kind === "terminal" && t.regularReason) notes.push(`普通终端：${t.regularReason}`);
+  else if (t.kind === "terminal" && t.regularReason) notes.push(`临时终端：${t.regularReason}`);
   else if (t.kind === "terminal" && t.durable === false) notes.push(EPHEMERAL_NOTE);
   if (unread) notes.push("有新输出");
   if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
-const EPHEMERAL_NOTE = "临时终端：关闭标签或断开连接后进程会结束";
+const EPHEMERAL_NOTE = "临时终端：关闭标签页或断开连接后进程会结束";
 
 // Durable terminals (the common case) show no mark, only a tooltip note. A terminal known to be non-durable
 // (durable === false, still alive) carries a small dashed-ring mark before its title; unknown durability, a tab
@@ -108,7 +108,7 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
 
 // The attention badge sits before the title at the persistence icon's scale, and each state has its own shape so
 // it never depends on colour: "!" in a disc for needs_me, a check for a just_finished command that succeeded (a slate cross when it failed; red stays for the persistence failure dot), a turning ring while a
-// background tab runs and "?" when the state cannot be known. A tab the user is on shows no running badge, and a needs_me or
+// background tab runs (no longer shown) and "?" when the state cannot be known. A tab the user is on shows no running badge, and a needs_me or
 // just_finished state seen on any device shows nothing.
 export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
   if (!badge) return null;
@@ -139,12 +139,8 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
         </span>
       );
     case "running":
-      return (
-        <span
-          {...common}
-          className="h-2 w-2 shrink-0 rounded-full border border-slate-400 border-t-transparent motion-safe:animate-spin"
-        />
-      );
+      // Static: only list views (never the tab strip, see useCalmAttention) draw it, and it never animates.
+      return <span {...common} className="h-2 w-2 shrink-0 rounded-full border border-slate-400" />;
     case "unknown":
       return (
         <span {...common} className="shrink-0 text-[10px] font-semibold leading-none text-slate-500">
@@ -152,6 +148,30 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
         </span>
       );
   }
+}
+
+// ATTENTION_HOLD_MS: a needs_me or just_finished badge appears only after the state held this long, so a state that
+// flips during normal output never flashes. Hiding is immediate.
+export const ATTENTION_HOLD_MS = 1800;
+
+// useCalmAttention decides the badge a tab strip item shows. Running never shows (it flaps with output and is not
+// actionable). The tab the user is on shows no needs_me / just_finished badge either: it is already seen, and the
+// round trip that marks it seen would flash the badge. Other tabs show it, after the hold, without animation.
+export function useCalmAttention(badge: AwarenessBadge | null, active: boolean): AwarenessBadge | null {
+  const actionable = !active && badge && (badge.kind === "needs_me" || badge.kind === "just_finished");
+  const candidate = actionable ? badge : badge?.kind === "unknown" && !active ? badge : null;
+  const key = candidate ? `${candidate.kind}|${candidate.outcome ?? ""}` : "";
+  const [shownKey, setShownKey] = useState("");
+  useEffect(() => {
+    if (!key) {
+      setShownKey("");
+      return;
+    }
+    if (key === shownKey) return;
+    const timer = setTimeout(() => setShownKey(key), ATTENTION_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [key, shownKey]);
+  return candidate && shownKey === key ? candidate : null;
 }
 
 export function TabStripItem({
@@ -167,8 +187,7 @@ export function TabStripItem({
   const note = usePersistenceTabNote(tab.id);
   const failureMark = usePersistenceFailureMark(tab.id);
   const awareness = useTabAwareness(tab.kind === "terminal" && !tab.exited ? tab.tabId : undefined);
-  let attention = awarenessBadge(awareness);
-  if (attention?.kind === "running" && active) attention = null;
+  const attention = useCalmAttention(awarenessBadge(awareness), active);
   return children(unread, { note, failureMark }, attention);
 }
 

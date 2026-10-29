@@ -283,5 +283,6 @@ func (a *Accounts) AdminResetUser(ctx context.Context, userID string) error {
 	}
 	a.epochs.bump(userID)
 	a.epochs.clearPending(userID)
+	a.notifyUserBlocked(userID)
 	return nil
 }

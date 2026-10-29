@@ -114,7 +114,7 @@ describe("layout document v4", () => {
 
   it("rejects versions it does not know instead of guessing", () => {
     const raw = JSON.parse(JSON.stringify(serializeLayout(source([workspace()]))));
-    for (const v of [1, 5, "4", undefined, null]) {
+    for (const v of [1, 2, 3, 5, "4", undefined, null]) {
       expect(sanitizeLayout({ ...raw, v })).toBeNull();
     }
     expect(newerLayoutVersion({ ...raw, v: 5 })).toBe(5);
@@ -122,22 +122,5 @@ describe("layout document v4", () => {
     expect(newerLayoutVersion({ ...raw, v: 3 })).toBeNull();
     expect(newerLayoutVersion({ ...raw, v: "9" })).toBeNull();
     expect(newerLayoutVersion(null)).toBeNull();
-  });
-
-  it("rebuilds a pre-tree document as one pane per workspace that keeps every tab", () => {
-    const legacy = {
-      ...source([
-        { ...workspace(), layoutTree: undefined, panes: [pane("upper", [terminal("t1"), terminal("t2")]), pane("lower", [terminal("t3"), terminal("t1")])], activePaneId: "lower" },
-      ]),
-      v: 3,
-    };
-    const ws = sanitizeLayout(JSON.parse(JSON.stringify({ ...legacy, workspaces: legacy.workspaces.map((item) => ({ ...item, splitRatio: 0.3 })) })))!.workspaces[0];
-    expect(ws.panes).toHaveLength(1);
-    expect(ws.panes[0].id).toBe("upper");
-    expect(ws.panes[0].tabs.map((tab) => tab.id)).toEqual(["t1", "t2", "t3"]);
-    expect(ws.panes[0].activeTabId).toBe("t3");
-    expect(ws.layoutTree).toMatchObject({ type: "leaf", paneId: "upper" });
-    expect(ws.layoutUpdatedAt).toBe(0);
-    expect("splitRatio" in ws).toBe(false);
   });
 });

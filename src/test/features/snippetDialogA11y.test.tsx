@@ -230,7 +230,7 @@ describe("snippets panel dialog accessibility", () => {
     keyDown(nameInput, "Escape");
     await flush();
     expect(mocks.ask).toHaveBeenCalledExactlyOnceWith(
-      expect.stringContaining("还没保存"),
+      expect.stringContaining("尚未保存"),
       expect.objectContaining({ title: "放弃未保存的修改", kind: "warning" }),
     );
     expect(mounted.container.querySelectorAll(".nx-modal")).toHaveLength(2);

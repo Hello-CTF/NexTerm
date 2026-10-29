@@ -48,9 +48,9 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
   switch (state) {
     case "local-only":
-      return { text: "仅本机", tone: "", hint: "服务端还没有这条。推送会新建。" };
+      return { text: "仅本机", tone: "", hint: "服务端尚无该条数据，推送后将新建。" };
     case "remote-only":
-      return { text: "仅服务端", tone: "", hint: "本机还没有这条，拉取并应用会新建。" };
+      return { text: "仅服务端", tone: "", hint: "本机尚无该条数据，拉取并应用后将新建。" };
     case "same":
       return { text: "已一致", tone: "nx-badge-green", hint: "两边内容相同。" };
     case "local-newer":
@@ -58,11 +58,11 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
     case "remote-newer":
       return { text: "服务端较新", tone: "nx-badge-amber", hint: "服务端版本较新，拉取并应用会覆盖本机。" };
     case "local-deleted":
-      return { text: "本机已删", tone: "nx-badge-amber", hint: "这条在本机已删除。" };
+      return { text: "本机已删除", tone: "nx-badge-amber", hint: "该条目已在本机删除。" };
     case "remote-deleted":
-      return { text: "服务端已删", tone: "nx-badge-amber", hint: "这条在服务端已被删除。" };
+      return { text: "服务端已删除", tone: "nx-badge-amber", hint: "该条目已在服务端删除。" };
     case "remote-undecryptable":
-      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端对象与当前数据密钥不匹配或已损坏；自动同步已跳过此对象，修复需要手动确认。" };
+      return { text: "无法解密", tone: "nx-badge-amber", hint: "服务端数据与当前数据密钥不匹配或已损坏；自动同步已跳过这项数据，修复需手动确认。" };
   }
 }
 
@@ -74,7 +74,7 @@ const SUMMARY_KIND_ORDER = [
 // Internal bookkeeping objects are not worth a count when they match; a differing one is described plainly.
 function summaryKindLabel(kind: string): string {
   if (kind === "tombstone") return "已删除的项目";
-  if (!kind) return "无法识别的对象";
+  if (!kind) return "无法识别的数据";
   return COMPARE_KIND_LABELS[kind] ?? kind;
 }
 
@@ -85,15 +85,15 @@ export function compareRowTitle(r: CompareRowView): { title: string; secondary?:
   if (r.kind === "tombstone") return { title: "已删除的项目", secondary: r.name || r.id };
   if (r.kind === "ai_grant") return { title: "AI 授权", secondary: r.name };
   if (!r.name || r.name === r.id || OPAQUE_ID_RE.test(r.name)) {
-    return { title: r.kind ? (COMPARE_KIND_LABELS[r.kind] ?? r.kind) : "无法识别的对象", secondary: r.name || r.id };
+    return { title: r.kind ? (COMPARE_KIND_LABELS[r.kind] ?? r.kind) : "无法识别的数据", secondary: r.name || r.id };
   }
   return { title: r.name };
 }
 
 // compareSummary summary line grouped by category; rows null means still reading. Matching rows are only counted, never listed.
 export function compareSummary(rows: CompareRowView[] | null): string {
-  if (!rows) return "读取中…";
-  if (rows.length === 0) return "本机与服务端都还没有可同步的内容";
+  if (!rows) return "正在读取…";
+  if (rows.length === 0) return "本机与服务端均暂无可同步的内容";
   const counts = new Map<string, number>();
   let diff = 0;
   for (const r of rows) {
@@ -144,7 +144,7 @@ export function CompareDetails({ rows, error, onUndecryptableAction, actionsBusy
       </div>
       {open && (
         <div id={panelId} className="mt-2">
-          {rows && rows.length === 0 && <div className="nx-hint py-3 text-[12px]">本机与服务端都还没有可同步的内容。</div>}
+          {rows && rows.length === 0 && <div className="nx-hint py-3 text-[12px]">本机与服务端均暂无可同步的内容。</div>}
           {rows && rows.length > 0 && diffRows.length === 0 && (
             <div className="nx-hint px-0.5 py-2 text-[12px]">本机与服务端全部一致，无需处理。</div>
           )}

@@ -5,14 +5,14 @@ import { refreshNotificationStatus } from "./inboxNotifications";
 import { systemNotifier, type SystemNotificationStatus } from "./systemNotifications";
 
 const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
-  { key: "needsMe", label: "需要我处理", hint: "终端响铃或程序发出通知（OSC 9/777/99）" },
+  { key: "needsMe", label: "需要处理", hint: "终端响铃，或程序发出通知" },
   { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
-  { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时弹出" },
+  { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时显示" },
 ];
 
 function statusText(status: SystemNotificationStatus | null): string {
   if (!status) return "正在检查系统通知…";
-  if (!status.available) return status.reason ?? "此端不支持系统通知";
+  if (!status.available) return status.reason ?? "当前客户端不支持系统通知";
   if (status.permission === "denied") return status.reason ?? "系统不允许 NexTerm 发送通知";
   if (status.permission === "prompt") return "尚未允许系统通知";
   return "系统通知可用";
@@ -25,6 +25,7 @@ export function NotificationSettings() {
   // A browser knows its permission at once; the desktop asks the backend.
   const [status, setStatus] = useState<SystemNotificationStatus | null>(() => systemNotifier().knownStatus?.() ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
 
   useEffect(() => {
     if (systemNotifier().knownStatus) return;
@@ -39,24 +40,27 @@ export function NotificationSettings() {
   }, []);
 
   const request = useCallback(() => {
+    if (requesting) return;
     setError(null);
+    setRequesting(true);
     systemNotifier()
       .request()
       .then((next) => {
         refreshNotificationStatus();
         setStatus(next);
       })
-      .catch((e: unknown) => setError(describeError(e)));
-  }, []);
+      .catch((e: unknown) => setError(`未能开启系统通知：${describeError(e)}。请在系统设置中允许 NexTerm 发送通知。`))
+      .finally(() => setRequesting(false));
+  }, [requesting]);
 
   const usable = status?.available === true;
   return (
     <div className="mt-3.5" data-setting="system-notifications">
       <label className="flex cursor-pointer items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-[12.5px] text-neutral-200">在此设备弹出系统通知</div>
+          <div className="text-[12.5px] text-neutral-200">在本机显示系统通知</div>
           <p className="nx-hint mt-0.5">
-            另一个工作区或主机的会话需要你时弹出系统通知，点击回到该终端；正在看的终端不弹出。关闭或系统不支持时改为应用内提示。顶栏铃铛始终列出这些会话。只影响本设备。
+            其他工作区或主机的会话需要处理时显示系统通知，单击通知可返回该终端；正在查看的终端不显示通知。关闭或系统不支持时改为应用内提示，顶栏铃铛始终列出这些会话。仅影响本机。
           </p>
           <p className="nx-hint mt-0.5" role="status">
             {statusText(status)}
@@ -71,8 +75,8 @@ export function NotificationSettings() {
         />
       </label>
       {usable && status?.permission !== "granted" && (
-        <button type="button" className="nx-btn nx-btn-outline nx-btn-xs mt-1.5" onClick={request}>
-          允许系统通知
+        <button type="button" className="nx-btn nx-btn-outline nx-btn-xs mt-1.5" disabled={requesting} aria-busy={requesting} onClick={request}>
+          {requesting ? "正在请求权限…" : "允许系统通知"}
         </button>
       )}
       <div className="mt-2 flex flex-col gap-1.5 pl-1" aria-disabled={!prefs.system}>

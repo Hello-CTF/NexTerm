@@ -359,7 +359,7 @@ describe("SkillsCard", () => {
 
   it("shows an empty hint when no skills exist", async () => {
     mounted = mount(createElement(SkillsCard, { api: createSkillsMockBackend([]).apiFor("owner-a") }));
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -378,7 +378,7 @@ describe("SkillsCard", () => {
     setInputValue(inputByLabel(mounted!.container, "技能名称"), "nginx-check");
     await flush();
     expect(mounted!.container.textContent).toContain("/nginx-check");
-    setInputValue(inputByLabel(mounted!.container, "什么时候用"), "检查 nginx 配置");
+    setInputValue(inputByLabel(mounted!.container, "适用场景"), "检查 nginx 配置");
     setInputValue(textareaByLabel(mounted!.container, "技能内容"), "nginx -t\n");
     clickButton(mounted!.container, "保存");
 
@@ -392,15 +392,15 @@ describe("SkillsCard", () => {
     const api = await renderOwner();
     clickButton(mounted!.container, "新建技能");
     setInputValue(inputByLabel(mounted!.container, "技能名称"), "Bad Name");
-    setInputValue(inputByLabel(mounted!.container, "什么时候用"), "x");
+    setInputValue(inputByLabel(mounted!.container, "适用场景"), "x");
     setInputValue(textareaByLabel(mounted!.container, "技能内容"), "y");
     clickButton(mounted!.container, "保存");
-    await expectText(mounted!.container, "名称只能用小写字母、数字和中划线");
+    await expectText(mounted!.container, "名称仅支持小写字母、数字和连字符");
 
     setInputValue(inputByLabel(mounted!.container, "技能名称"), "good-name");
-    setInputValue(inputByLabel(mounted!.container, "什么时候用"), " ");
+    setInputValue(inputByLabel(mounted!.container, "适用场景"), " ");
     clickButton(mounted!.container, "保存");
-    await expectText(mounted!.container, "都要填写");
+    await expectText(mounted!.container, "请填写");
     expect(api.saveOverride).not.toHaveBeenCalled();
   });
 
@@ -409,7 +409,7 @@ describe("SkillsCard", () => {
     api.saveOverride.mockRejectedValueOnce(new Error("quota exceeded"));
     clickButton(mounted!.container, "新建技能");
     setInputValue(inputByLabel(mounted!.container, "技能名称"), "nginx-check");
-    setInputValue(inputByLabel(mounted!.container, "什么时候用"), "desc");
+    setInputValue(inputByLabel(mounted!.container, "适用场景"), "desc");
     setInputValue(textareaByLabel(mounted!.container, "技能内容"), "body");
     clickButton(mounted!.container, "保存");
     await expectText(mounted!.container, "quota exceeded");
@@ -422,7 +422,7 @@ describe("SkillsCard", () => {
     expect((await waitForTextarea(mounted!.container, "技能内容")).value).toBe("alpha body\n");
     expect(api.getEffective).toHaveBeenCalledWith("alpha-skill");
     expect(api.dispatch).not.toHaveBeenCalled();
-    setInputValue(inputByLabel(mounted!.container, "什么时候用"), "Alpha updated");
+    setInputValue(inputByLabel(mounted!.container, "适用场景"), "Alpha updated");
     clickButton(mounted!.container, "保存");
     expect(api.saveOverride).toHaveBeenLastCalledWith({ name: "alpha-skill", description: "Alpha updated", body: "alpha body\n", disabled: false });
     await expectText(mounted!.container, "Alpha updated");
@@ -507,7 +507,7 @@ describe("SkillsCard", () => {
     await flush();
     expect(mounted.container.querySelector('textarea[aria-label="技能内容"]')).toBeNull();
     expect(apiB.saveOverride).not.toHaveBeenCalled();
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
     expect(mounted.container.textContent).not.toContain("alpha-skill");
   });
 
@@ -519,7 +519,7 @@ describe("SkillsCard", () => {
     apiA.getEffective.mockReturnValueOnce(slow.promise);
     mounted = mount(createElement(SkillsCard, { api: apiA }));
     click(await waitForButton(mounted.container, "编辑技能 alpha-skill"));
-    expect(mounted.container.textContent).toContain("读取技能内容…");
+    expect(mounted.container.textContent).toContain("正在读取技能内容…");
 
     act(() => {
       mounted!.root.render(createElement(SkillsCard, { api: apiB }));
@@ -528,7 +528,7 @@ describe("SkillsCard", () => {
     slow.resolve({ name: "alpha-skill", description: "Alpha synthetic skill", body: "alpha body\n", digest: "sha256:aa", source: "custom" });
     await flush();
     expect(mounted.container.querySelector('textarea[aria-label="技能内容"]')).toBeNull();
-    expect(mounted.container.textContent).not.toContain("读取技能内容…");
+    expect(mounted.container.textContent).not.toContain("正在读取技能内容…");
   });
 
   it("abandons pending owner-A save, toggle and delete completions after the swap", async () => {
@@ -552,7 +552,7 @@ describe("SkillsCard", () => {
 
     expect(apiA.list).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalledWith("success", expect.anything());
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 
   it("hides owner-A rows while owner B's list is still loading", async () => {
@@ -568,9 +568,9 @@ describe("SkillsCard", () => {
       mounted!.root.render(createElement(SkillsCard, { api: apiB }));
     });
     expect(mounted.container.textContent).not.toContain("alpha-skill");
-    expect(mounted.container.textContent).toContain("读取中…");
+    expect(mounted.container.textContent).toContain("正在读取…");
     slow.resolve([]);
-    await expectText(mounted.container, "还没有技能");
+    await expectText(mounted.container, "暂无技能");
   });
 });
 

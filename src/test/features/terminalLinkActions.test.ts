@@ -68,7 +68,7 @@ describe("terminal link actions", () => {
     expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("opens session files as editor tabs and directories as file browser tabs", async () => {
+  it("opens session files as editor tabs and points directories at the sidebar file tree", async () => {
     const { terminalLinkDeps } = await load(false);
     const { openTerminalLink } = await import("../../features/terminal/terminalLinks");
     mocks.list.mockResolvedValue([
@@ -80,12 +80,9 @@ describe("terminal link actions", () => {
     await openTerminalLink("file://web01/var/log/nginx", deps);
     expect(mocks.list).toHaveBeenCalledWith("s1", "/var/log");
     expect(mocks.addTab).toHaveBeenNthCalledWith(1, expect.objectContaining({ kind: "files", sessionId: "s1", path: "/var/log/app.log.txt" }));
-    expect(mocks.addTab).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ kind: "files", sessionId: "s1", directory: "/var/log/nginx", title: "nginx" }),
-    );
-    expect(mocks.addTab.mock.calls[1][0].path).toBeUndefined();
-    expect(mocks.pushToast).not.toHaveBeenCalled();
+    // No file browser tab: a directory only produces a hint toward the sidebar tree.
+    expect(mocks.addTab).toHaveBeenCalledTimes(1);
+    expect(mocks.pushToast).toHaveBeenCalledWith("info", expect.stringContaining("/var/log/nginx"));
   });
 
   it("matches local sessions against the backend machine name, not the shell's reported host", async () => {

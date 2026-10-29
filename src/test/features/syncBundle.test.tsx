@@ -160,13 +160,13 @@ describe("SyncBundleCard export", () => {
     });
     await mountCard();
     expect(text()).toContain("导出凭据（密码、内联私钥和 API Key 会随资产包写入）");
-    expect(text()).toContain("路径引用仅保存路径，目标环境必须能访问同一路径");
+    expect(text()).toContain("路径引用仅保存路径，目标环境须能访问同一路径");
     const credsToggle = [...mounted!.container.querySelectorAll("label")].find((l) =>
       l.textContent?.includes("导出凭据"),
     )!;
     click(credsToggle.querySelector('input[type="checkbox"]')!);
     await flushUntil(() => text().includes("资产包将包含敏感凭据信息"));
-    expect(text()).toContain("任何拿到文件的人都能读取密码、内联私钥和 API Key");
+    expect(text()).toContain("任何获得该文件的人均可读取密码、内联私钥和 API Key");
     expect(text()).not.toContain("私钥文件也会内联到资产包中");
     click(exportableRow("web-01").querySelector('input[type="checkbox"]')!);
     clickButton(mounted!.container, "导出资产包（.nxbm）");
@@ -201,7 +201,7 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("不支持的资产包协议版本"));
+    await flushUntil(() => text().includes("不支持的资产包版本"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
@@ -210,7 +210,7 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("assets 必须是数组"));
+    await flushUntil(() => text().includes("assets 必须是列表"));
     expect(mocks.importBundle).not.toHaveBeenCalled();
   });
 
@@ -346,8 +346,8 @@ describe("SyncBundleCard import", () => {
     await mountCard();
     openImport();
     clickButton(mounted!.container, "选择资产包文件…");
-    await flushUntil(() => text().includes("删除标记"));
-    expect(text()).toContain("本机对应资产会被一并标记删除");
+    await flushUntil(() => text().includes("已删除记录"));
+    expect(text()).toContain("本机对应资产将一并标记为已删除");
   });
 });
 

@@ -160,8 +160,8 @@ describe("session selector hooks", () => {
 describe("render counts for session-bound views", () => {
   it("the status bar re-renders only when a session count changes", () => {
     const probe = profiled(createElement(StatusBar, {
-      vaultStatus: { uninitialized: false, passwordless: false, text: "凭据库已解锁" },
-      sync: { text: "同步：本地模式", title: undefined, className: "", warnings: [], showWarnings: false },
+      vaultStatus: { attention: null, uninitialized: false, passwordless: false, text: "凭据库已解锁" },
+      sync: { text: "同步：本地模式", title: undefined, className: "", warnings: [], showWarnings: false, failed: false },
       onOpenVaultProtection: () => {},
       onOpenSyncSettings: () => {},
     }));
@@ -180,7 +180,6 @@ describe("render counts for session-bound views", () => {
   it("the header follows only the active workspace session", () => {
     const probe = profiled(createElement(AppHeader, {
       ws: workspaces[0],
-      activeSessionId: "s-0",
       activeTab: null,
       rightDockOpen: false,
       commandPaletteLabel: "Ctrl+K",

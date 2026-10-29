@@ -82,7 +82,7 @@ function seedForm() {
 function consoleReady(): boolean {
   return document.body.textContent?.includes("立即同步") === true &&
     document.body.textContent?.includes("已开启 1 / 10 项") === true &&
-    document.body.textContent?.includes("服务端 0 个对象") === true;
+    document.body.textContent?.includes("服务端共 0 项数据") === true;
 }
 
 async function waitForConsole(): Promise<void> {
@@ -181,7 +181,7 @@ describe("Desktop login - reset_required branch", () => {
   async function enterReset() {
     seedForm();
     mocks.linkSet.mockResolvedValue({ ...LINK, connect: "reset_required" });
-    await mountAndLogin(() => document.body.textContent?.includes("必须先设置新密码") ?? false);
+    await mountAndLogin(() => document.body.textContent?.includes("请先设置新密码") ?? false);
   }
 
   it("requires at least eight characters and matching new passwords without making a request", async () => {
@@ -217,7 +217,7 @@ describe("Desktop login - reset_required branch", () => {
     expect(mocks.resetPassword).toHaveBeenCalledWith("new-password-1");
     // Masked by default: the key itself does not appear on the page
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
-    const finish = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement;
+    const finish = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement;
     expect(finish.disabled).toBe(true);
 
     // The show toggle reveals the key; entry is allowed only after copying
@@ -227,7 +227,7 @@ describe("Desktop login - reset_required branch", () => {
     await flushUntil(() => writeText.mock.calls.length === 1 && !finish.disabled);
     expect(writeText).toHaveBeenCalledWith(RECOVERY_KEY);
 
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement);
     await waitForConsole();
     expect(document.body.textContent).not.toContain(RECOVERY_KEY);
     expect(mocks.toast).toHaveBeenCalledWith("success", "登录信息已保存，自动同步已开启");
@@ -249,10 +249,10 @@ describe("Desktop login - reset_required branch", () => {
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制") as HTMLButtonElement);
     await flushUntil(() =>
       document.body.textContent?.includes("复制失败，请手动复制恢复密钥") === true &&
-      !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement).disabled,
+      !([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement).disabled,
     );
     expect(document.body.textContent).toContain(RECOVERY_KEY);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，进入同步")) as HTMLButtonElement);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("已保存，继续")) as HTMLButtonElement);
     await waitForConsole();
   });
 
@@ -267,7 +267,7 @@ describe("Desktop login - reset_required branch", () => {
     setInputValue(document.querySelector("#sync-new-pass2") as HTMLInputElement, "new-password-1");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("login session expired; reconnect") ?? false);
-    expect(document.body.textContent).toContain("必须先设置新密码");
+    expect(document.body.textContent).toContain("请先设置新密码");
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("设置新密码")) as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("恢复密钥（仅显示一次）") ?? false);

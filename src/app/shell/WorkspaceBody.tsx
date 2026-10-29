@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
   useUi,
   useHasSessions,
@@ -10,7 +10,7 @@ import {
 } from "../store";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
-import { AiSidebar, AssetTree, CredentialsSidebar } from "../lazyPanels";
+import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
@@ -18,6 +18,7 @@ import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree
 import { EmptyState, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
 import { WorkspaceConnectionBar } from "./WorkspaceConnectionBar";
+import { useLeftView } from "./leftView";
 
 export interface WorkspaceBodyProps {
   ws: Workspace | null | undefined;
@@ -57,7 +58,23 @@ export function WorkspaceBody({
   const covered = home !== undefined && home !== null;
   const workspaces = useWorkspaceList();
   const hasSessions = useHasSessions();
-  const leftMode = useUi((s) => s.leftMode);
+  const leftView = useLeftView(ws);
+  const connectFocusRevision = useUi((s) => s.connectFocusRevision);
+  const setLeftOverride = useUi((s) => s.setLeftOverride);
+  const wsId = ws?.id;
+  // The temporary asset/credentials sidebar of a host workspace reverts to the file tree when the active workspace
+  // changes or something is connected/opened (connectFocusRevision).
+  const lastTrigger = useRef({ wsId, connectFocusRevision });
+  useEffect(() => {
+    const last = lastTrigger.current;
+    if (last.wsId === wsId && last.connectFocusRevision === connectFocusRevision) return;
+    lastTrigger.current = { wsId, connectFocusRevision };
+    setLeftOverride(null);
+  }, [wsId, connectFocusRevision, setLeftOverride]);
+  // ...and when the user moves into the work area.
+  const leaveSidebar = useCallback(() => {
+    if (useUi.getState().leftOverride) useUi.getState().setLeftOverride(null);
+  }, []);
   const leftWidth = useUi((s) => s.leftWidth);
   const setLeftWidth = useUi((s) => s.setLeftWidth);
   const rightWidth = useUi((s) => s.rightWidth);
@@ -83,9 +100,11 @@ export function WorkspaceBody({
         />
       )}
       {leftDockOpen && (
-        <div className="nx-left-dock" role="navigation" aria-label="左栏">
-          {leftMode === "credentials" ? (
+        <div className="nx-left-dock" role="navigation" aria-label="左侧栏">
+          {leftView === "credentials" ? (
             <Lazy><CredentialsSidebar /></Lazy>
+          ) : leftView === "files" && ws?.sessionId ? (
+            <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
           ) : (
             // Keyed by account epoch: on account switch the tree remounts so template, runbook,
             // inventory discovery/watch, and bulk panels never show the previous account's state.
@@ -102,7 +121,7 @@ export function WorkspaceBody({
         </div>
       )}
 
-      <main id="nx-main" tabIndex={-1} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
+      <main id="nx-main" tabIndex={-1} onPointerDownCapture={leaveSidebar} onFocusCapture={leaveSidebar} className={`nx-workspace-main min-w-0 flex-1${workspaces.length > 0 || covered ? " flex flex-col" : ""}`}>
         {home}
         <WorkspaceArea wrapped={home !== undefined} covered={covered}>
         {workspaces.length === 0 ? (
@@ -117,7 +136,7 @@ export function WorkspaceBody({
             <div className="min-h-0 flex-1">
               {visibleWorkspaces.length === 0 && (
                 <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
-                  当前项目没有打开的工作区。切换项目不会断开其他工作区。
+                  当前项目暂无打开的工作区。切换项目不会断开其他工作区。
                 </div>
               )}
               {workspaces.map((w) => {

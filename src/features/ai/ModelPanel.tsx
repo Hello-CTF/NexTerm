@@ -195,7 +195,7 @@ export function ModelManager({
 
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
-    return ask(`当前修改还没保存，${what}会丢掉这些改动，继续？`, {
+    return ask(`存在未保存的修改，${what}将丢弃这些修改。确定要继续吗？`, {
       title: "放弃未保存的修改",
       kind: "warning",
     });
@@ -250,7 +250,7 @@ export function ModelManager({
       pushToast("info", `已保存模型档案「${saved.name}」`);
       setTestResult(null);
     } catch (e) {
-      pushToast("error", `保存失败：${describeError(e)}`);
+      pushToast("error", `未能保存：${describeError(e)}。请检查填写内容后重试`);
     } finally {
       setBusy(false);
     }
@@ -266,7 +266,7 @@ export function ModelManager({
       useUi.getState().bumpModelProfilesRevision();
       pushToast("info", `当前模型已切换为「${target.name}」`);
     } catch (e) {
-      pushToast("error", `切换失败：${describeError(e)}`);
+      pushToast("error", `未能切换模型：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -274,7 +274,7 @@ export function ModelManager({
 
   const remove = async () => {
     if (!draft || !draft.id) return;
-    const ok = await ask(`删除模型档案「${draft.name || draft.model}」？此操作不可撤销。`, {
+    const ok = await ask(`确定要删除模型档案「${draft.name || draft.model}」吗？此操作不可撤销。`, {
       title: "删除档案",
       kind: "warning",
     });
@@ -283,11 +283,11 @@ export function ModelManager({
     try {
       await modelApi.remove(draft.id);
       useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", "已删除");
+      pushToast("info", `已删除档案「${draft.name || draft.model}」`);
       setModels([]);
       setModelsOpen(false);
     } catch (e) {
-      pushToast("error", `删除失败：${describeError(e)}`);
+      pushToast("error", `未能删除：${describeError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -301,12 +301,12 @@ export function ModelManager({
       setModels(list.models);
       setModelsOpen(true);
       if (list.malformed > 0) {
-        pushToast("info", `端点返回的模型列表里有 ${list.malformed} 个格式异常的条目，已跳过`);
+        pushToast("info", `模型列表中有 ${list.malformed} 项无法识别，已忽略`);
       } else if (list.models.length === 0) {
-        pushToast("info", "这个端点没有返回任何模型");
+        pushToast("info", "该地址未返回任何模型。请检查接口地址和密钥，或手动填写模型名");
       }
     } catch (e) {
-      pushToast("error", `拉取模型列表失败：${describeError(e)}`);
+      pushToast("error", `未能获取模型列表：${describeError(e)}。请检查接口地址、密钥和网络`);
     } finally {
       setBusy(false);
     }
@@ -320,7 +320,7 @@ export function ModelManager({
       setTestResult(await modelApi.test(draft.id));
       setCircuitNonce((n) => n + 1);
     } catch (e) {
-      pushToast("error", `连接测试失败：${describeError(e)}`);
+      pushToast("error", `未能完成连接测试：${describeError(e)}`);
     } finally {
       setTesting(false);
     }
@@ -342,7 +342,7 @@ export function ModelManager({
         };
       });
     } catch (e) {
-      pushToast("error", `读取模型预设失败：${describeError(e)}`);
+      pushToast("error", `未能读取预设：${describeError(e)}`);
     }
   };
 
@@ -356,6 +356,7 @@ export function ModelManager({
             <button
               className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
               title="新增档案"
+              aria-label="新增档案"
               onClick={() => void newProfile()}
             >
               <IconPlus size={13} />
@@ -365,7 +366,7 @@ export function ModelManager({
             {!view ? (
               loadError ? (
                 <div className="px-2 py-3 text-center">
-                  <div className="nx-hint text-red-300">档案列表加载失败 · {loadError}</div>
+                  <div className="nx-hint text-red-300">未能读取档案列表：{loadError}</div>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                     onClick={() => void reload()}
@@ -375,13 +376,13 @@ export function ModelManager({
                   </button>
                 </div>
               ) : (
-                <div className="nx-hint px-2 py-3 text-center text-[11px]">模型档案加载中…</div>
+                <div className="nx-hint px-2 py-3 text-center text-[11px]">正在读取模型档案…</div>
               )
             ) : (
               <>
                 {loadError && (
                   <div className="mb-1 border-b border-neutral-800/60 px-2 pb-2 pt-1 text-center">
-                    <div className="nx-hint text-red-300">档案列表刷新失败 · {loadError}</div>
+                    <div className="nx-hint text-red-300">未能刷新档案列表：{loadError}</div>
                     <button
                       className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                       onClick={() => void reload()}
@@ -413,7 +414,7 @@ export function ModelManager({
                     </button>
                   ))
                 ) : (
-                  <div className="nx-hint px-2 py-3 text-center text-[11px]">还没有模型档案</div>
+                  <div className="nx-hint px-2 py-3 text-center text-[11px]">暂无模型档案。选择上方「+」添加，或从预设开始。</div>
                 )}
               </>
             )}
@@ -425,7 +426,7 @@ export function ModelManager({
                 <button
                   key={p.id}
                   className="nx-chip pointer-coarse:min-h-6"
-                  title={`用 ${p.id} 的默认地址与模型填充表单`}
+                  title={`使用 ${p.id} 的默认地址与模型填充表单`}
                   onClick={() => void applyPreset(p.id)}
                 >
                   <IconSparkles size={10} />
@@ -501,7 +502,7 @@ export function ModelManager({
                   />
                   <button
                     className="nx-btn nx-btn-outline shrink-0"
-                    title="用当前地址和密钥拉取模型列表"
+                    title="使用当前地址和密钥获取模型列表"
                     disabled={busy}
                     onClick={() => void refreshModels()}
                   >
@@ -571,7 +572,7 @@ export function ModelManager({
                             min={0}
                             max={2}
                             step={0.1}
-                            placeholder="端点默认（0–2）"
+                            placeholder="接口地址默认（0–2）"
                             value={draft.temperature ?? ""}
                             onChange={(e) =>
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
@@ -606,7 +607,7 @@ export function ModelManager({
                         id={`${fieldId}-reasoning-effort`}
                         ariaLabel="思考强度"
                         className="font-mono"
-                        placeholder="端点默认"
+                        placeholder="接口地址默认"
                         value={draft.reasoningEffort ?? ""}
                         options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
                         onChange={(value) => patch({ reasoningEffort: value })}
@@ -622,7 +623,7 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder="端点默认（tokens）"
+                        placeholder="接口地址默认（tokens）"
                         value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
@@ -642,7 +643,7 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder="端点默认"
+                            placeholder="接口地址默认"
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
@@ -657,7 +658,7 @@ export function ModelManager({
                             min={0}
                             max={3600}
                             step={1}
-                            placeholder="端点默认；0 为关闭"
+                            placeholder="接口地址默认；0 为关闭"
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
@@ -712,7 +713,7 @@ export function ModelManager({
                         value={draft.proxy ?? ""}
                         onChange={(e) => patch({ proxy: e.target.value || null })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">留空跟随系统代理。</div>
+                      <div className="nx-hint mt-1 text-[10.5px]">留空则使用系统代理。</div>
                     </Field>
 
                     <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
@@ -729,14 +730,14 @@ export function ModelManager({
               </div>
 
               <div className="nx-hint mt-0.5">
-                API Key 由当前 NexTerm 实例加密保存；模型请求仅发往你配置的端点。
+                API 密钥由当前 NexTerm 实例加密保存；模型请求仅发送到所填写的接口地址。
               </div>
             </div>
           ) : (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center">
               <IconKey size={20} className="text-[var(--nx-fg-tertiary)]" />
               <div className="nx-hint max-w-[280px]">
-                从档案列表选择档案进行编辑，或点击 + 新增；也可使用预设填充。
+                从左侧选择档案进行编辑，或新增档案；亦可使用预设快速填写。
               </div>
               <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void newProfile()}>
                 <IconPlus size={12} />
@@ -756,11 +757,11 @@ export function ModelManager({
           }`}
         >
           {testResult.modelsOk && testResult.chatOk ? (
-            "连接正常：模型列表与对话均可用"
+            "连接正常，可以使用"
           ) : (
             <div className="flex flex-col gap-0.5">
-              {!testResult.modelsOk && <span>模型列表：{testResult.modelsError || "不可用"}</span>}
-              {!testResult.chatOk && <span>对话：{testResult.chatError || "不可用"}</span>}
+              {!testResult.modelsOk && <span>未能获取模型列表：{testResult.modelsError || "原因未知"}</span>}
+              {!testResult.chatOk && <span>未能发起对话：{testResult.chatError || "原因未知"}。请检查接口地址、密钥和模型名后重试</span>}
             </div>
           )}
         </div>
@@ -775,7 +776,7 @@ export function ModelManager({
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title="将全部高级参数恢复默认，名称、地址、密钥和模型名保持不变；点击「保存」后生效。"
+              title="将全部高级参数恢复默认，名称、地址、密钥和模型名保持不变；选择「保存」后生效。"
               disabled={busy || paramsAtDefaults}
               onClick={resetParams}
             >
@@ -788,18 +789,18 @@ export function ModelManager({
                 isNew
                   ? "保存后才能测试连接"
                   : dirty
-                    ? "有未保存的修改，保存后才能测试这份档案"
-                    : "用这份已保存的档案测试连通性"
+                    ? "存在未保存的修改，保存后才能测试此档案"
+                    : "使用已保存的档案测试连接"
               }
               disabled={busy || testing || isNew || dirty}
               onClick={() => void testConnection()}
             >
               {testing ? <IconLoader size={12} className="animate-spin" /> : <IconRefresh size={12} />}
-              测试连接
+              {testing ? "正在测试…" : "测试连接"}
             </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title={isNew ? "保存后才能设为当前" : isActive ? "已经是当前档案" : "切换到这个档案"}
+              title={isNew ? "保存后才能设为当前" : isActive ? "已是当前档案" : "切换为此档案"}
               disabled={busy || isNew || isActive}
               onClick={() => void activate()}
             >
@@ -812,7 +813,7 @@ export function ModelManager({
               onClick={() => void remove()}
             >
               <IconTrash size={12} />
-              删除
+              删除档案
             </button>
             <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void save()}>
               {busy ? <IconLoader size={12} className="animate-spin" /> : <IconSave size={12} />}
@@ -863,7 +864,7 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
     <div className="mt-0.5 flex items-start gap-1.5">
       <span className="nx-hint flex-1 text-[10.5px]">
         {error ? (
-          <span className="text-red-300">暂停状态读取失败 · {error}</span>
+          <span className="text-red-300">未能读取暂停状态：{error}</span>
         ) : !status ? (
           "暂停状态加载中…"
         ) : (
@@ -941,11 +942,11 @@ export function UsageSummarySection() {
     <div className="border-t border-neutral-800/60 pt-3">
       <div className="mb-1.5 text-[11px] font-medium text-neutral-300">用量汇总（按场景 / 档案）</div>
       {error ? (
-        <div className="nx-hint text-red-300">用量加载失败 · {error}</div>
+        <div className="nx-hint text-red-300">未能加载用量：{error}</div>
       ) : !rows ? (
         <div className="nx-hint text-[11px]">用量加载中…</div>
       ) : rows.length === 0 ? (
-        <div className="nx-hint text-[11px]">还没有已完成的 AI 任务</div>
+        <div className="nx-hint text-[11px]">暂无已完成的 AI 任务</div>
       ) : (
         <div className="max-h-40 overflow-y-auto rounded-md border border-neutral-800/70">
           <table className="w-full text-[11px]">
@@ -991,7 +992,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
   const requestClose = async () => {
     if (
       dirty &&
-      !(await ask("当前修改还没保存，关闭面板会丢掉这些改动，继续？", {
+      !(await ask("存在未保存的修改，关闭面板将丢弃这些修改。确定要继续吗？", {
         title: "放弃未保存的修改",
         kind: "warning",
       }))
@@ -1027,7 +1028,7 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
           <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥由当前实例加密保存</span>
           <div className="nx-spacer" />
-          <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭" onClick={() => void requestClose()}>
+          <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭模型配置" aria-label="关闭模型配置" onClick={() => void requestClose()}>
             <IconClose size={13} />
           </button>
         </div>

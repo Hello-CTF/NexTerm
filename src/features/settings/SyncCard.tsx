@@ -282,9 +282,9 @@ function DesktopLinkCard() {
       } catch {
         // Exposure is unsupported or unreadable here; the plain confirmation applies.
       }
-      const exposureNote = exposing ? "登出期间会停止开放本机终端。" : "";
-      if (!(await ask(`登出当前账号？本机将停止自动登录和同步；本机和服务端的数据都会保留。${exposureNote}`, {
-        title: "登出账号", kind: "warning",
+      const exposureNote = exposing ? "退出登录期间将停止开放本机终端。" : "";
+      if (!(await ask(`确定要退出登录吗？本机将停止自动登录与同步，本机和服务端的数据均会保留。${exposureNote}`, {
+        title: "退出登录", kind: "warning",
       })) || !active.current || currentAccount.current !== account) return;
       const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
       if (!active.current || JSON.stringify([latestLink.url, latestStatus.userId, latestStatus.username, latestStatus.loggedIn]) !== account) return;
@@ -298,7 +298,7 @@ function DesktopLinkCard() {
       setDraft((d) => ({ ...d, username: "", password: "" }));
       void qc.invalidateQueries({ queryKey: ["sync-link"] });
       await load();
-      pushToast("success", "已登出账号");
+      pushToast("success", "已退出登录");
     } catch (e) {
       if (active.current) setError(describeError(e));
     } finally {
@@ -328,13 +328,13 @@ function DesktopLinkCard() {
       </div>
 
       <p className="nx-hint mb-3.5">
-        {status?.loggedIn ? "数据会在本机与服务端之间自动同步。" : "登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用。"}
+        {status?.loggedIn ? "数据将在本机与服务端之间自动同步。" : "登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。"}
       </p>
 
       {loadError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">同步配置读取失败 · {loadError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取同步配置：{loadError}。请重试。</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             重试
@@ -348,7 +348,7 @@ function DesktopLinkCard() {
         <div className="flex flex-wrap items-center gap-2">
           <span className="nx-hint min-w-0 flex-1 break-all">{link?.url}</span>
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void logout()}>
-            {busy === "logout" ? "正在登出…" : "登出"}
+            {busy === "logout" ? "正在退出…" : "退出登录"}
           </button>
           {status.lastError && !syncPaused && <span className="nx-hint text-amber-300">上次同步失败：{status.lastError}</span>}
         </div>
@@ -438,7 +438,7 @@ function DesktopLinkCard() {
               onClick={() => void login()}
             >
               {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
-              {busy === "login" ? "登录中…" : "登录"}
+              {busy === "login" ? "正在登录…" : "登录"}
             </button>
             {status?.lastError && !syncPaused && <span className="nx-hint text-amber-300">上次失败：{status.lastError}</span>}
           </div>
@@ -448,7 +448,7 @@ function DesktopLinkCard() {
       {step.kind === "mfa" && (
         <div className="flex flex-col gap-2">
           <p className="nx-hint">
-            此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；手机丢失时，也可输入未使用的恢复码。
+            此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；无法使用认证器时，也可输入未使用的恢复码。
           </p>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-mfa-code">
@@ -473,7 +473,7 @@ function DesktopLinkCard() {
               onClick={() => void submitMfa()}
             >
               {busy === "mfa" ? <IconRefresh size={12} className="animate-spin" /> : <IconShield size={12} />}
-              {busy === "mfa" ? "验证中…" : "验证并登录"}
+              {busy === "mfa" ? "正在验证…" : "验证并登录"}
             </button>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={backToForm}>
               返回
@@ -485,7 +485,7 @@ function DesktopLinkCard() {
       {step.kind === "reset" && (
         <div className="flex flex-col gap-2">
           <p className="nx-hint">
-            账号被管理员重置，必须先设置新密码。数据密钥、所有会话和两步验证绑定已清除；设置新密码后会签发新的数据密钥与一次性恢复密钥，服务端密文需从仍持有数据的设备重新同步。
+            管理员已重置此账号，请先设置新密码。加密密钥、所有登录状态和两步验证绑定均已清除；设置后将生成新的加密密钥和一次性恢复密钥，加密数据需从仍保留数据的设备重新同步。
           </p>
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
             <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-new-pass">
@@ -525,7 +525,7 @@ function DesktopLinkCard() {
               onClick={() => void submitReset()}
             >
               {busy === "reset" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
-              {busy === "reset" ? "设置中…" : "设置新密码"}
+              {busy === "reset" ? "正在设置…" : "设置新密码"}
             </button>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={backToForm}>
               返回
@@ -541,7 +541,7 @@ function DesktopLinkCard() {
             <span className="text-[13px] font-semibold text-neutral-100">恢复密钥（仅显示一次）</span>
           </div>
           <p className="nx-hint">
-            这是自行找回账号的唯一凭证，服务端只保存散列，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
+            恢复密钥是自行找回账号的唯一依据，服务端仅保存其校验值，关闭后无法再次查看。请复制并妥善保存，例如存入密码管理器或离线介质。
           </p>
           <div className="nx-alert nx-alert-danger flex flex-col gap-2">
             <code className="nx-code break-all font-mono text-[13px]">
@@ -569,7 +569,7 @@ function DesktopLinkCard() {
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={!keyConfirmed} onClick={() => void finishLogin()}>
-              已保存，进入同步
+              已保存，继续
             </button>
             {!keyConfirmed && <span className="nx-hint text-[11px]">请先复制或手动保存恢复密钥</span>}
           </div>
@@ -608,6 +608,16 @@ function DesktopSyncConsole() {
   const [kindOptIn, setKindOptIn] = useState<SyncKindOptIn | null>(null);
   const [optInBusy, setOptInBusy] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const roundWaitRef = useRef<(() => void) | null>(null);
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      roundWaitRef.current?.();
+    };
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [compareRows, setCompareRows] = useState<SyncCompareRow[] | null>(null);
   const [compareRemote, setCompareRemote] = useState<number | null>(null);
@@ -664,6 +674,7 @@ function DesktopSyncConsole() {
       if (disposed) return;
       void load();
       void loadCompare();
+      roundWaitRef.current?.();
     }).then((off) => {
       if (disposed) off();
       else unlisten = off;
@@ -686,16 +697,49 @@ function DesktopSyncConsole() {
     }
   };
 
+  // Syncing is in progress until the background round reports completion; a
+  // timeout keeps the button from staying busy if the event never arrives.
   const syncNow = async () => {
+    if (syncBusy) return;
     setSyncBusy(true);
+    setSyncResult(null);
     setError(null);
+    const before = status;
+    const startedAt = Date.now();
     try {
       await syncApi.wake();
-      pushToast("success", "已触发一轮后台同步");
+      let timer: number | undefined;
+      const finished = await new Promise<boolean>((resolve) => {
+        roundWaitRef.current = () => resolve(true);
+        timer = window.setTimeout(() => resolve(false), 60_000);
+      });
+      window.clearTimeout(timer);
+      roundWaitRef.current = null;
+      if (!aliveRef.current) return;
+      const fresh = await syncApi.status();
+      if (!aliveRef.current) return;
+      setStatus(fresh);
+      const attemptedAt = Date.parse(fresh.lastAttemptAt ?? "");
+      const failed = fresh.lastError !== "" && !(Number.isFinite(attemptedAt) && attemptedAt < startedAt - 5000);
+      let result: { ok: boolean; text: string };
+      if (!finished) {
+        result = { ok: false, text: "同步耗时较长，仍在后台进行。请稍后查看结果，或再次选择「立即同步」。" };
+      } else if (failed) {
+        result = { ok: false, text: `同步失败：${fresh.lastError}。请选择「立即同步」重试。` };
+      } else if (before && fresh.seq === before.seq && fresh.head === before.head) {
+        result = { ok: true, text: "已是最新，没有需要同步的更改。" };
+      } else {
+        result = { ok: true, text: "已同步，所有设备的更改已合并。" };
+      }
+      setSyncResult(result);
+      pushToast(result.ok ? "success" : "error", result.text);
     } catch (e) {
-      setError(describeError(e));
+      roundWaitRef.current = null;
+      if (aliveRef.current) {
+        setError(`同步失败：${describeError(e)}。请选择「立即同步」重试。`);
+      }
     } finally {
-      setSyncBusy(false);
+      if (aliveRef.current) setSyncBusy(false);
     }
   };
 
@@ -723,10 +767,10 @@ function DesktopSyncConsole() {
     try {
       const { ask } = await import("../../ui/dialogs");
       const confirmed = action === "restore-local"
-        ? await ask(`将本机「${row.name}」覆盖服务端无法解密的对象？此操作会替换服务端原有密文。`, {
-          title: "用本机副本修复服务端对象", kind: "warning",
+        ? await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+          title: "用本机副本修复服务端数据", kind: "warning",
         })
-        : await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的服务端副本？`, {
+        : await ask(`本次对比中没有可用的本机数据 ${id}。确定要清除这条无法解密且类型未知的服务端副本吗？`, {
           title: "清除无法解密的服务端副本", kind: "warning",
         });
       if (!confirmed) return;
@@ -738,7 +782,7 @@ function DesktopSyncConsole() {
         ...(hasLocal ? { localKind: row.kind, localPayloadHash: row.localPayloadHash } : {}),
       });
       if (!response.repaired) throw new Error("服务端未确认操作，请刷新对比结果");
-      pushToast("success", action === "restore-local" ? "服务端对象已用本机副本修复" : "服务端副本已清除");
+      pushToast("success", action === "restore-local" ? "服务端数据已用本机副本修复" : "服务端副本已清除");
       await loadCompare();
       await load();
     } catch (cause) {
@@ -755,7 +799,7 @@ function DesktopSyncConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        {compareRemote !== null && <span className="nx-hint">服务端 {compareRemote} 个对象</span>}
+        {compareRemote !== null && <span className="nx-hint">服务端共 {compareRemote} 项数据</span>}
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
         <button
@@ -769,12 +813,21 @@ function DesktopSyncConsole() {
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
           disabled={syncBusy}
+          aria-busy={syncBusy}
           onClick={() => void syncNow()}
         >
           <IconRefresh size={12} className={syncBusy ? "animate-spin" : ""} />
-          立即同步
+          {syncBusy ? "正在同步…" : "立即同步"}
         </button>
       </div>
+      {syncBusy && (
+        <div className="nx-hint mb-2" role="status">正在同步…完成后将显示结果。</div>
+      )}
+      {!syncBusy && syncResult && (
+        <div className={`nx-alert mb-2 ${syncResult.ok ? "nx-alert-success" : "nx-alert-danger"}`} role="status">
+          {syncResult.text}
+        </div>
+      )}
 
       <p className="nx-hint mb-3">
         {SYNC_MERGE_GUIDE}
@@ -837,7 +890,7 @@ function DesktopSyncConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。冲突以最后修改时间为准，请保持各设备时钟准确。
         </div>
       </div>
     </section>
@@ -894,11 +947,11 @@ async function readTranscriptAll(id: string): Promise<TranscriptChunk[]> {
     chunks.push(...read.chunks);
     if (read.done) return chunks;
     if (read.nextSeq <= afterSeq) {
-      throw new Error(`会话记录 ${id} 分页游标未推进(done=false 且 nextSeq 未前进)`);
+      throw new Error(`会话记录 ${id} 读取未能继续，请重试`);
     }
     afterSeq = read.nextSeq;
   }
-  throw new Error(`会话记录 ${id} 分页读取超出上限`);
+  throw new Error(`会话记录 ${id} 读取超出上限`);
 }
 
 interface TranscriptCacheEntry {
@@ -996,10 +1049,10 @@ async function collectAssetsAll(): Promise<SyncCollectAsset[]> {
     const result = await syncApi.collectAssets(true, afterId, COLLECT_PAGE_LIMIT);
     out.push(...result.assets);
     if (!result.hasMore) return out;
-    if (!result.nextAfterId) throw new Error("资产收集分页游标缺失");
+    if (!result.nextAfterId) throw new Error("资产读取不完整，请重试");
     afterId = result.nextAfterId;
   }
-  throw new Error("资产收集分页超出上限");
+  throw new Error("资产数量超出读取上限");
 }
 
 async function collectTombstonesAll(): Promise<SyncCollectTombstone[]> {
@@ -1009,10 +1062,10 @@ async function collectTombstonesAll(): Promise<SyncCollectTombstone[]> {
     const result = await syncApi.collectTombstones(afterId, COLLECT_PAGE_LIMIT);
     out.push(...result.tombstones);
     if (!result.hasMore) return out;
-    if (!result.nextAfterId) throw new Error("墓碑收集分页游标缺失");
+    if (!result.nextAfterId) throw new Error("删除标记读取不完整，请重试");
     afterId = result.nextAfterId;
   }
-  throw new Error("墓碑收集分页超出上限");
+  throw new Error("删除标记数量超出读取上限");
 }
 
 async function collectCredentialsAll(): Promise<SyncCollectCredential[]> {
@@ -1022,10 +1075,10 @@ async function collectCredentialsAll(): Promise<SyncCollectCredential[]> {
     const result = await syncApi.collectCredentials(true, afterId, COLLECT_PAGE_LIMIT);
     out.push(...result.credentials);
     if (!result.hasMore) return out;
-    if (!result.nextAfterId) throw new Error("凭据收集分页游标缺失");
+    if (!result.nextAfterId) throw new Error("凭据读取不完整，请重试");
     afterId = result.nextAfterId;
   }
-  throw new Error("凭据收集分页超出上限");
+  throw new Error("凭据数量超出读取上限");
 }
 
 async function collectKnownHostsAll(): Promise<import("../../ipc/types").SyncCollectKnownHost[]> {
@@ -1035,10 +1088,10 @@ async function collectKnownHostsAll(): Promise<import("../../ipc/types").SyncCol
     const result = await syncApi.collectKnownHosts(afterId, COLLECT_PAGE_LIMIT);
     out.push(...result.knownHosts);
     if (!result.hasMore) return out;
-    if (!result.nextAfterId) throw new Error("已知主机收集分页游标缺失");
+    if (!result.nextAfterId) throw new Error("已知主机读取不完整，请重试");
     afterId = result.nextAfterId;
   }
-  throw new Error("已知主机收集分页超出上限");
+  throw new Error("已知主机数量超出读取上限");
 }
 
 async function collectAIProfilesAll(): Promise<import("../../ipc/types").SyncCollectAIProfile[]> {
@@ -1048,10 +1101,10 @@ async function collectAIProfilesAll(): Promise<import("../../ipc/types").SyncCol
     const result = await syncApi.collectAIProfiles(true, afterId, COLLECT_PAGE_LIMIT);
     out.push(...result.profiles);
     if (!result.hasMore) return out;
-    if (!result.nextAfterId) throw new Error("AI 模型档案收集分页游标缺失");
+    if (!result.nextAfterId) throw new Error("AI 模型档案读取不完整，请重试");
     afterId = result.nextAfterId;
   }
-  throw new Error("AI 模型档案收集分页超出上限");
+  throw new Error("AI 模型档案数量超出读取上限");
 }
 
 function credentialStateLabel(state: string): string {
@@ -1314,7 +1367,7 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
   for (let offset = 0; offset < pending.length; offset += 256) {
     const batch = pending.slice(offset, offset + 256);
     const page = await syncV2Api.pull(ids.max_seq, batch.map((entry) => entry.id));
-    if (page.head !== ids.head) throw new Error("服务端对象在读取期间发生变化，请重试读取对比结果");
+    if (page.head !== ids.head) throw new Error("服务端数据在读取期间发生变化，请重试读取对比结果");
     const pulled = new Map(page.objects.map((object) => [object.id, object]));
     for (const entry of batch) {
       let wire = pulled.get(entry.id);
@@ -1322,11 +1375,11 @@ async function loadRemoteObjects(dek: Uint8Array, optIn: SyncKindOptIn, idsOverr
         // A batch may exceed the response byte budget. A single ID is always
         // returned even when its blob is larger than that budget.
         const single = await syncV2Api.pull(ids.max_seq, [entry.id]);
-        if (single.head !== ids.head) throw new Error("服务端对象在读取期间发生变化，请重试读取对比结果");
+        if (single.head !== ids.head) throw new Error("服务端数据在读取期间发生变化，请重试读取对比结果");
         wire = single.objects.find((object) => object.id === entry.id);
       }
       if (!wire || wire.seq !== entry.seq) {
-        throw new Error(`服务端对象 ${entry.id} 未按同步清单返回，请重试读取对比结果`);
+        throw new Error(`服务端数据 ${entry.id} 未按同步清单返回，请重试读取对比结果`);
       }
       try {
         const object = await decodeRemoteObject(entry, wire.blob, dek);
@@ -1483,14 +1536,14 @@ interface Snapshot {
 async function currentUndecryptableObject(expected: UndecryptableEntry, dek: Uint8Array): Promise<{ head: string; blobHash: string }> {
   const ids = await syncV2Api.ids();
   const entry = ids.entries?.find((candidate) => candidate.id === expected.id);
-  if (!entry) throw new Error("服务端对象已不存在，请重试读取对比结果");
+  if (!entry) throw new Error("服务端数据已不存在，请重试读取对比结果");
   if (entry.seq !== expected.seq || entry.blob_hash !== expected.blobHash) {
-    throw new Error("服务端对象在对比后发生变化，请刷新对比结果");
+    throw new Error("服务端数据在对比后发生变化，请刷新对比结果");
   }
   const pulled = await syncV2Api.pull(ids.max_seq, [expected.id]);
   const wire = pulled.objects.find((candidate) => candidate.id === expected.id);
   if (pulled.head !== ids.head || !wire || wire.seq !== entry.seq) {
-    throw new Error("服务端对象在检查期间发生变化，请重试读取对比结果");
+    throw new Error("服务端数据在检查期间发生变化，请重试读取对比结果");
   }
   try {
     await decodeRemoteObject(entry, wire.blob, dek);
@@ -1498,7 +1551,7 @@ async function currentUndecryptableObject(expected: UndecryptableEntry, dek: Uin
     if (!(error instanceof CryptoError && error.code === "decrypt")) throw error;
     return { head: ids.head, blobHash: entry.blob_hash };
   }
-  throw new Error("服务端对象现已可读取，请刷新对比结果后再操作");
+  throw new Error("服务端数据现已可读取，请刷新对比结果后再操作");
 }
 
 export interface WebSyncResult extends Snapshot {
@@ -1515,8 +1568,8 @@ function snapshotFromParts(local: LocalCollection, remote: RemoteState): Snapsho
     undecryptableEntries: remote.undecryptableEntries,
     warnings: [...local.warnings, ...remote.undecryptableIds.map((id) =>
       local.entities.some((entity) => entity.id === id)
-        ? `服务端对象 ${id} 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复`
-        : `服务端对象 ${id} 解密失败，已跳过；本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除服务端副本；也可从持有正确数据密钥的设备重新同步`)],
+        ? `服务端数据 ${id} 解密失败，已跳过自动覆盖；可在对比详情中手动确认用本机同 ID 副本修复`
+        : `服务端数据 ${id} 解密失败，已跳过；本次对比没有可用的同 ID 本机副本，可在对比详情中重试读取或确认清除服务端副本；也可从持有正确数据密钥的设备重新同步`)],
     head: remote.head,
     maxSeq: remote.maxSeq,
   };
@@ -1678,7 +1731,7 @@ function UnlockDEKCard() {
         <span className="nx-card-title">解锁数据密钥</span>
       </div>
       <p className="nx-hint mb-3">
-        输入账号密码在本机解锁数据密钥（约需几秒），密钥不会离开本机。
+        输入账号密码以在本机解锁数据密钥（约需数秒）。密钥不会离开本机。
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -1693,7 +1746,7 @@ function UnlockDEKCard() {
           }}
         />
         <button className="nx-btn nx-btn-primary" disabled={busy || !password} onClick={() => void submit()}>
-          {busy ? "解锁中…" : "解锁"}
+          {busy ? "正在解锁…" : "解锁"}
         </button>
       </div>
       {formError && (
@@ -1816,8 +1869,8 @@ function CompareConsole() {
       if (action === "restore-local") {
         if (!row.local) throw new Error("本机已没有同 ID 副本，请重试读取");
         const { ask } = await import("../../ui/dialogs");
-        if (!(await ask(`将本机「${row.name}」覆盖服务端无法解密的对象？此操作会替换服务端原有密文。`, {
-          title: "用本机副本修复服务端对象", kind: "warning",
+        if (!(await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+          title: "用本机副本修复服务端数据", kind: "warning",
         }))) return;
         if (!stillCurrent()) return;
         const localNow = await loadLocalEntities(view, dek);
@@ -1841,7 +1894,7 @@ function CompareConsole() {
       }
       if (row.local) throw new Error("本机有同 ID 副本，请先重试读取并选择本机修复");
       const { ask } = await import("../../ui/dialogs");
-      if (!(await ask(`本次对比没有可用的本机对象 ${id}。确认清除这条无法解密、类型未知的服务端副本？其他设备若仍保存旧的本地副本，之后同步可能重新上传。`, {
+      if (!(await ask(`本次对比中没有可用的本机数据 ${id}。确定要清除这条无法解密且类型未知的服务端副本吗？若其他设备仍保存旧的本地副本，之后同步时可能重新上传。`, {
         title: "清除无法解密的服务端副本", kind: "warning",
       }))) return;
       if (!stillCurrent()) return;
@@ -1878,11 +1931,9 @@ function CompareConsole() {
     const epoch = ++optInEpochRef.current;
     setOptInBusy(true);
     setRefreshBusy(true);
-    setLocal(null);
-    setRemote(null);
-    setUndecryptableIds([]);
-    setUndecryptableEntries([]);
-    setCollectWarnings([]);
+    // The previous comparison stays on screen until the reload replaces it: emptying it here collapses the page
+    // below the switches and the browser clamps the scroll position to the top. The repair actions stay disabled
+    // while refreshBusy is set.
     setError(null);
     setRepairError(null);
     try {
@@ -1922,7 +1973,7 @@ function CompareConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        <span className="nx-hint">服务端 {remote ? remote.length + undecryptableIds.length : "…"} 个对象</span>
+        <span className="nx-hint">服务端共 {remote ? remote.length + undecryptableIds.length : "…"} 项数据</span>
         <div className="nx-spacer" />
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled={refreshBusy || repairBusyId !== null || !kindOptIn}
@@ -1977,7 +2028,7 @@ function CompareConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          终端录像默认不同步，可在「终端历史」中单独开启。关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。
+          终端录像默认不同步，可在「终端历史」中单独开启。关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。冲突以最后修改时间为准，请保持各设备时钟准确。
         </div>
       </div>
     </section>

@@ -370,7 +370,7 @@ describe("AiSidebar permission request dialogs", () => {
     clickButton(mounted!.container, "重试");
     await flush();
     const retry = mocks.chat.mock.calls[1][0] as Record<string, unknown>;
-    expect(retry.message).toBe("[引用对象]\n- 生产机（ssh 会话）\n\n重试快照");
+    expect(retry.message).toBe("[引用]\n- 生产机（ssh 会话）\n\n重试快照");
     expect(retry.images).toEqual([expect.stringContaining("data:image/png;base64")]);
     expect(retry.planMode).toBe(true);
   });
@@ -466,7 +466,7 @@ describe("AiSidebar permission request dialogs", () => {
       { kind: "tab", id: "term-2", label: "构建机", path: undefined, sessionId: undefined },
       { kind: "file", id: "f1", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
     ]);
-    expect(call.message).toContain("[引用对象]");
+    expect(call.message).toContain("[引用]");
     expect(call.message).toContain("构建机");
   });
 
@@ -502,7 +502,7 @@ describe("AiSidebar permission request dialogs", () => {
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("已拦截");
     expect(text).toContain("拦截原因：只读权限模式禁止此操作");
-    expect(text).toContain("你拒绝了这次操作，未执行。");
+    expect(text).toContain("已拒绝本次操作，未执行。");
     expect(text).toContain("exit status 1");
     expect(text.split("已拦截").length - 1).toBe(1);
   });
@@ -541,7 +541,7 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-rule-command",
       },
     ]);
-    clickButton(mounted!.container, "以后都拦截");
+    clickButton(mounted!.container, "始终拦截");
     await flush();
     expect(useUi.getState().aiRulePrefill).toBe("ls -l\npwd");
 
@@ -562,7 +562,7 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-rule-file",
       },
     ]);
-    clickButton(mounted!.container, "以后都拦截");
+    clickButton(mounted!.container, "始终拦截");
     await flush();
     expect(useUi.getState().aiRulePrefill).toBe("/etc/nginx/nginx.conf");
   });
@@ -577,18 +577,18 @@ describe("AiSidebar permission request dialogs", () => {
         confirmationNonce: "n-unsupported",
       },
     ]);
-    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "以后都拦截")).toBe(false);
+    expect([...mounted!.container.querySelectorAll("button")].some((b) => b.textContent === "始终拦截")).toBe(false);
 
     mocks.getPermission.mockRejectedValueOnce(new Error("权限服务不可用"));
     click(mounted!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
-    expect(mounted!.container.textContent).toContain("权限读取失败 · 权限服务不可用");
-    expect(mounted!.container.textContent).not.toContain("查看直接执行");
+    expect(mounted!.container.textContent).toContain("未能读取权限设置：权限服务不可用");
+    expect(mounted!.container.textContent).not.toContain("查看操作直接执行");
 
     mocks.getPermission.mockResolvedValue({ mode: "read_write", dangerRules: [] });
     clickButton(mounted!.container, "重试");
     await flush();
-    expect(mounted!.container.textContent).toContain("查看直接执行");
+    expect(mounted!.container.textContent).toContain("查看操作直接执行");
     expect(mounted!.container.textContent).not.toContain("格式化磁盘");
   });
 });

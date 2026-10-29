@@ -27,138 +27,17 @@ vi.mock("../ui/dialogs", async (importOriginal) => {
 });
 
 import type {
-  ConversationRecoverySummary,
   RosterEntry,
-  RunHistoryEntry,
-  RunHistoryPage,
 } from "../ipc/generated/types";
 import { AgentRosterPanel } from "../features/ai/AgentRosterPanel";
-import { AgentRunHistoryPanel } from "../features/ai/AgentRunHistoryPanel";
-import { createAgentRosterApi, createAgentRunHistoryApi } from "../features/ai/agentProduction";
+import { createAgentRosterApi } from "../features/ai/agentProduction";
 import { useUi } from "../app/store";
-
-function runEntry(index: number): RunHistoryEntry {
-  const finished = index % 3 !== 0;
-  return {
-    runId: `run-${String(index).padStart(3, "0")}`,
-    state: finished ? "done" : "idle",
-    evidence: finished
-      ? { kind: "output", observedAt: 1_760_000_000_000 + index, summary: `run ${index} 完成` }
-      : null,
-    startedAt: 1_760_000_000_000 + index,
-    finishedAt: finished ? 1_760_000_000_000 + index : null,
-    summary: `run ${index}`,
-  };
-}
-
-// historyBackend emulates the real ai_run_history contract: keyset pages of
-// `size`, an opaque cursor the caller passes back verbatim, and server-side
-// status filtering.
-function historyBackend(total: number, size: number) {
-  const calls: { filter: string; cursor: string; limit: number }[] = [];
-  const handler = (args: { conversationId: string; filter: string; cursor: string; limit: number }): RunHistoryPage => {
-    calls.push({ filter: args.filter, cursor: args.cursor, limit: args.limit });
-    const offset = args.cursor === "" ? 0 : Number(args.cursor.replace("cursor-", ""));
-    const all = Array.from({ length: total }, (_, index) => runEntry(index));
-    const filtered = args.filter === "all" ? all : all.filter((entry) => entry.state === args.filter);
-    const pageRows = filtered.slice(offset, offset + args.limit);
-    const consumed = offset + pageRows.length;
-    return {
-      entries: pageRows,
-      nextCursor: consumed < filtered.length ? `cursor-${consumed}` : null,
-    };
-  };
-  return { calls, handler, pageSize: size };
-}
 
 let view: MountedView | null = null;
 
 afterEach(() => {
   view?.unmount();
   view = null;
-});
-
-describe("production integration: AI-05 run history", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("restores more than 50 runs through verbatim opaque cursors only", async () => {
-    const backend = historyBackend(120, 50);
-    const summary: ConversationRecoverySummary = {
-      conversationId: "conv-1",
-      restoredRuns: 120,
-      resumableRunId: "run-001",
-      interruptedRunIds: ["run-001", "run-004"],
-      truncated: false,
-    };
-    mocks.call.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === "ai_run_history") return Promise.resolve(backend.handler(args as never));
-      if (cmd === "ai_run_recovery_summary") return Promise.resolve(summary);
-      return Promise.reject(new Error(`unexpected call: ${cmd}`));
-    });
-
-    const api = createAgentRunHistoryApi();
-    view = mount(
-      createElement(AgentRunHistoryPanel, {
-        api,
-        scope: { ownerId: "u-1", conversationId: "conv-1" },
-      }),
-    );
-    await flush();
-
-    // First page: 50 rows, fetched with an empty cursor and the page size.
-    expect(backend.calls).toEqual([{ filter: "all", cursor: "", limit: 50 }]);
-    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(50);
-    // The backend recovery summary renders as reported (restored > 50).
-    const text = view.container.textContent ?? "";
-    expect(text).toContain("已恢复 120 个 run");
-    expect(text).toContain("可继续运行 run-001");
-    expect(text).toContain("2 个 run 中断");
-
-    clickButton(view.container, "加载更早");
-    await flush();
-    expect(backend.calls[1]).toEqual({ filter: "all", cursor: "cursor-50", limit: 50 });
-    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(100);
-
-    clickButton(view.container, "加载更早");
-    await flush();
-    expect(backend.calls[2]).toEqual({ filter: "all", cursor: "cursor-100", limit: 50 });
-    const rows = [...view.container.querySelectorAll("[data-run-id]")];
-    expect(rows).toHaveLength(120);
-    // Every row the backend returned is present exactly once.
-    expect(new Set(rows.map((row) => row.getAttribute("data-run-id"))).size).toBe(120);
-    expect(view.container.textContent).not.toContain("加载更早");
-  });
-
-  it("round-trips the server-side status filter and resets to the first page", async () => {
-    const backend = historyBackend(120, 50);
-    mocks.call.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
-      if (cmd === "ai_run_history") return Promise.resolve(backend.handler(args as never));
-      if (cmd === "ai_run_recovery_summary") return Promise.resolve(null);
-      return Promise.reject(new Error(`unexpected call: ${cmd}`));
-    });
-    const api = createAgentRunHistoryApi();
-    view = mount(
-      createElement(AgentRunHistoryPanel, {
-        api,
-        scope: { ownerId: "", conversationId: "conv-1" },
-      }),
-    );
-    await flush();
-
-    clickButton(view.container, "失败");
-    await flush();
-    expect(backend.calls.at(-1)).toEqual({ filter: "error", cursor: "", limit: 50 });
-    // The mock backend has no error rows: the filter is honestly server-side.
-    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(0);
-    expect(view.container.textContent).toContain("暂无 run 记录");
-
-    clickButton(view.container, "空闲");
-    await flush();
-    expect(backend.calls.at(-1)).toEqual({ filter: "idle", cursor: "", limit: 50 });
-    expect(view.container.querySelectorAll("[data-run-id]")).toHaveLength(40);
-  });
 });
 
 describe("production integration: roster panel", () => {

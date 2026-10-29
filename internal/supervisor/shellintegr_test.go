@@ -208,7 +208,7 @@ func TestSupervisorWrappedBashLoginReadsLoginChain(t *testing.T) {
 	}
 	supervisor := testSupervisor(t)
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("printf 'PROFILE-MARKER\\n'\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte("printf 'PROFILE-MARKER\\n'\n[ -r ~/.bashrc ] && . ~/.bashrc\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("printf 'BASHRC-MARKER\\n'\n"), 0o600); err != nil {

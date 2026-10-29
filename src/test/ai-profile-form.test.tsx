@@ -290,7 +290,7 @@ describe("ModelManager circuit runtime status", () => {
     mocks.circuitStatus.mockRejectedValue(new Error("boom"));
     await mountManager(demoProfile());
 
-    expect(view!.container.textContent).toContain("暂停状态读取失败");
+    expect(view!.container.textContent).toContain("未能读取暂停状态");
     expect(view!.container.textContent).toContain("boom");
 
     mocks.circuitStatus.mockResolvedValue({ consecutiveFailures: 1, openUntil: null });
@@ -299,7 +299,7 @@ describe("ModelManager circuit runtime status", () => {
 
     expect(mocks.circuitStatus).toHaveBeenCalledTimes(2);
     expect(view!.container.textContent).toContain("运行中：最近连续失败 1 次");
-    expect(view!.container.textContent).not.toContain("暂停状态读取失败");
+    expect(view!.container.textContent).not.toContain("未能读取暂停状态");
   });
 
   it("reloads runtime status for the newly selected profile (demo open/closed semantics)", async () => {
@@ -377,7 +377,7 @@ describe("ModelManager quick-fill presets and optional parameters", () => {
     await mountManager(demoProfile());
 
     const chips = [...view!.container.querySelectorAll("button")]
-      .filter((b) => b.title?.startsWith("用 "))
+      .filter((b) => b.title?.startsWith("使用 "))
       .map((b) => b.textContent?.trim());
     expect(chips).toEqual(["Moonshot", "DeepSeek", "Zhipu", "Ollama"]);
     expect(mocks.presets).not.toHaveBeenCalled();
@@ -399,7 +399,7 @@ describe("ModelManager quick-fill presets and optional parameters", () => {
     clickButton(view!.container, "高级参数");
     await flush();
     expect(inputFor("温度").value).toBe("");
-    expect(inputFor("温度").placeholder).toBe("端点默认（0–2）");
+    expect(inputFor("温度").placeholder).toBe("接口地址默认（0–2）");
     expect(inputFor("上下文窗口").value).toBe("200000");
     expect(inputFor("上下文窗口").placeholder).toBe("默认（256K tokens）");
 

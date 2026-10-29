@@ -64,7 +64,9 @@ describe("AI privacy settings", () => {
     expect(toggle.disabled).toBe(true);
     expect(mounted.container.textContent).toContain("当前 NexTerm 服务端");
     click(button("下载模型"));
-    expect(document.body.textContent).toContain("模型由管理员在服务端下载，所有账号共用");
+    expect(document.body.textContent).toContain("模型从官方渠道下载，不随安装包分发。");
+    expect(document.body.textContent).not.toContain("Hugging Face");
+    expect(document.body.textContent).toContain("脱敏可能漏检或误报，请勿将其作为唯一的保护措施。");
     expect(document.body.textContent).not.toContain("每台设备需单独下载");
     choose("下载模型精度", "FP32");
     mocks.download.mockResolvedValue({ ...baseline(), download: { ...baseline().download, running: true, precision: "fp32" } });
@@ -149,7 +151,7 @@ describe("AI privacy settings", () => {
     state.selection = { available: false, error: "本地隐私模型文件缺失，请重新下载模型" };
     mocks.status.mockResolvedValue(state);
     mounted = mount(createElement(PrivacyCard));
-    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭前，所有 AI 请求都会被阻止。"));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[role="alert"]')?.textContent).toContain("已启用脱敏，但所选模型不可用：本地隐私模型文件缺失，请重新下载模型。在恢复或关闭脱敏前，所有 AI 请求都将被阻止。"));
     click(button("下载模型"));
     await waitForRendered(() => expect(control("使用的本地隐私模型").textContent).toContain("（文件缺失）"));
     const toggle = mounted.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -197,15 +199,16 @@ describe("AI privacy settings", () => {
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(button("管理")).toBeTruthy());
     click(button("管理"));
-    expect(mounted.container.textContent).toContain("已下载 v0.1.3 FP32");
+    expect(mounted.container.textContent).toContain("已下载 AstrLink Guard v0.1.3 FP32");
     expect(document.body.textContent).toContain("共占用 2.0 MiB");
+    expect(document.body.textContent).toContain("AstrLink Guard · FP32 · v0.1.3 · 2.0 MiB");
     mocks.configure.mockResolvedValue({ ...state, config: { ...state.config, ...installed, enabled: false }, download: baseline().download });
     click(button("使用此模型"));
     await waitForRendered(() => expect(mocks.configure).toHaveBeenCalledWith({ enabled: false, precision: "fp32", revision: installed.revision }));
     await waitForRendered(() => expect(button("删除").disabled).toBe(false));
     mocks.confirm.mockResolvedValue(false);
     click(button("删除"));
-    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("删除模型 v0.1.3 FP32（2.0 MiB）？"));
+    await waitForRendered(() => expect(mocks.confirm).toHaveBeenCalledWith("确定要删除模型 AstrLink Guard v0.1.3 FP32（2.0 MiB）吗？"));
     expect(mocks.remove).not.toHaveBeenCalled();
     mocks.confirm.mockResolvedValue(true);
     mocks.remove.mockResolvedValue({ ...baseline() });
@@ -242,7 +245,7 @@ describe("AI privacy settings", () => {
     mounted = mount(createElement(PrivacyCard));
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("正在下载"));
     mocks.status.mockResolvedValue({ ...baseline(), installed: [installed], download: { ...baseline().download, completed: { version: "v0.1.3", revision: installed.revision } } });
-    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 v0.1.3 INT8 下载完成"]), 3000);
+    await waitForRendered(() => expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual(["模型 AstrLink Guard v0.1.3 INT8 下载完成"]), 3000);
   });
 
 });

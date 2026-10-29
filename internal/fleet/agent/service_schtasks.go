@@ -12,7 +12,7 @@ import (
 	"unicode/utf16"
 )
 
-// windowsTaskName is both the scheduled task name and the v1.x legacy system service (sc.exe) name; migration cleans up by the same name.
+// windowsTaskName is the scheduled task name.
 const windowsTaskName = "NexTermAgent"
 
 // windowsManager registers agent autostart as a scheduled task for the current user: LogonTrigger starts it at logon,
@@ -40,9 +40,6 @@ func windowsTaskUser() (string, error) {
 }
 
 func (m *windowsManager) Install(ctx context.Context, executable, dataDir string) error {
-	if err := m.removeLegacyService(ctx); err != nil {
-		return err
-	}
 	account, err := m.taskUser()
 	if err != nil {
 		return fmt.Errorf("读取当前用户失败: %w", err)
@@ -72,11 +69,11 @@ func (m *windowsManager) Uninstall(ctx context.Context) error {
 		// task already gone (exit-code failure) counts as deleted; schtasks itself being unavailable
 		// (a non-exit-code error) is not covered by this fallback.
 		if _, queryErr := m.runner.Run(ctx, "schtasks.exe", "/Query", "/TN", windowsTaskName, "/FO", "CSV", "/NH"); queryErr != nil && isExitError(queryErr) {
-			return m.removeLegacyService(ctx)
+			return nil
 		}
 		return fmt.Errorf("删除计划任务失败: %w", schtasksHint(trimOutput(output), err))
 	}
-	return m.removeLegacyService(ctx)
+	return nil
 }
 
 func (m *windowsManager) Status(ctx context.Context) ServiceState {
@@ -113,27 +110,6 @@ func (m *windowsManager) Status(ctx context.Context) ServiceState {
 
 // windowsTaskStateCommand distinguishes a missing task (Get-ScheduledTask errors) from a successfully read state via the exit code.
 const windowsTaskStateCommand = "(Get-ScheduledTask -TaskName '" + windowsTaskName + "').State.ToString()"
-
-// removeLegacyService removes the same-named system service registered with sc.exe by v1.x (LocalSystem, requires admin);
-// service missing (1060) and not running (1062) are normal; any other failure means the old deployment is still present and must error rather than be let through.
-func (m *windowsManager) removeLegacyService(ctx context.Context) error {
-	if output, err := m.runner.Run(ctx, "sc.exe", "stop", windowsTaskName); err != nil && !scMissing(trimOutput(output)) && !scNotRunning(trimOutput(output)) {
-		return fmt.Errorf("检测到旧版系统服务 %s, 停止失败 (需要管理员权限, 请以管理员身份重跑一次完成迁移): %w", windowsTaskName, err)
-	}
-	if output, err := m.runner.Run(ctx, "sc.exe", "delete", windowsTaskName); err != nil && !scMissing(trimOutput(output)) {
-		return fmt.Errorf("检测到旧版系统服务 %s, 删除失败 (需要管理员权限, 请以管理员身份重跑一次完成迁移): %w", windowsTaskName, err)
-	}
-	return nil
-}
-
-// sc error code numbers are stable across locales (the free-text messages get localized): 1060=service does not exist, 1062=service not running.
-func scMissing(output string) bool {
-	return strings.Contains(output, "FAILED 1060")
-}
-
-func scNotRunning(output string) bool {
-	return strings.Contains(output, "FAILED 1062")
-}
 
 func isExitError(err error) bool {
 	var exitError *exec.ExitError

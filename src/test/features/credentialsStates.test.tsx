@@ -89,17 +89,17 @@ describe("CredentialsSidebar states", () => {
   it("list failure shows the real error with a retry, not the empty state", async () => {
     mocks.listCredentials.mockRejectedValue(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsSidebar));
-    await flushUntil(() => text().includes("凭据列表加载失败"));
+    await flushUntil(() => text().includes("未能加载凭据列表"));
     expect(text()).toContain("vault unavailable");
-    expect(text()).not.toContain("还没有任何凭据");
+    expect(text()).not.toContain("暂无任何凭据");
   });
 
   it("after retry it recovers; only a truly empty vault shows the empty state", async () => {
     mocks.listCredentials.mockRejectedValueOnce(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsSidebar));
-    await flushUntil(() => text().includes("凭据列表加载失败"));
+    await flushUntil(() => text().includes("未能加载凭据列表"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("还没有任何凭据"));
+    await flushUntil(() => text().includes("暂无任何凭据"));
   });
 
   it("the Unused badge uses the semantic warning foreground", async () => {
@@ -158,16 +158,16 @@ describe("CredentialsSidebar states", () => {
     mocks.listCredentials.mockReturnValue(new Promise(() => {}));
     mounted = withClient(createElement(CredentialsSidebar));
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
-    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("加载中");
+    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("正在加载");
   });
 
   it("sidebar and panel share the same empty state", async () => {
     mocks.listCredentials.mockResolvedValue([]);
     mounted = withClient(createElement(CredentialsSidebar));
-    await flushUntil(() => text().includes("还没有任何凭据"));
+    await flushUntil(() => text().includes("暂无任何凭据"));
     mounted.unmount();
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
-    await flushUntil(() => text().includes("还没有任何凭据"));
+    await flushUntil(() => text().includes("暂无任何凭据"));
   });
 });
 
@@ -175,23 +175,23 @@ describe("CredentialsPanel states", () => {
   it("list failure shows the error with a retry, not the empty state", async () => {
     mocks.listCredentials.mockRejectedValue(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
-    await flushUntil(() => text().includes("凭据列表加载失败"));
-    expect(text()).not.toContain("还没有任何凭据");
+    await flushUntil(() => text().includes("未能加载凭据列表"));
+    expect(text()).not.toContain("暂无任何凭据");
   });
 
   it("retry recovers to the empty state", async () => {
     mocks.listCredentials.mockRejectedValueOnce(new Error("vault unavailable"));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
-    await flushUntil(() => text().includes("凭据列表加载失败"));
+    await flushUntil(() => text().includes("未能加载凭据列表"));
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("还没有任何凭据"));
+    await flushUntil(() => text().includes("暂无任何凭据"));
   });
 
   it("loading exposes role=status semantics", async () => {
     mocks.listCredentials.mockReturnValue(new Promise(() => {}));
     mounted = withClient(createElement(CredentialsPanel, { credId: undefined }));
     await flushUntil(() => !!mounted!.container.querySelector('[role="status"]'));
-    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("凭据加载中");
+    expect(mounted!.container.querySelector('[role="status"]')?.textContent).toContain("正在加载凭据");
   });
 });
 

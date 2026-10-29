@@ -18,7 +18,7 @@ function SkippedNewerLine({ entry, labels }: { entry: SkippedNewerEntry; labels:
       {entry.name || entry.id}
       <span className="nx-hint">（{KIND_LABELS[entry.kind] ?? entry.kind}）</span>
       {entry.equalRevision
-        ? ` — ${labels.local}与${labels.remote}修订号相同（${entry.localRevision}），按 Origin 字典序裁决`
+        ? ` — ${labels.local}与${labels.remote}修订号相同（${entry.localRevision}），按设备标识排序决定`
         : ` — ${labels.local}修订 ${entry.localRevision} 较${labels.remote}修订 ${entry.remoteRevision} 新，未覆盖`}
     </li>
   );
@@ -55,7 +55,7 @@ export function ImportReportView({
         {data.snippetsCreated + data.snippetsUpdated > 0
           ? `；片段：新建 ${data.snippetsCreated} / 更新 ${data.snippetsUpdated}`
           : ""}
-        ；跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}；被拒 {data.refused}
+        ；跳过（{dir === "push" ? "对端较新" : "本机较新"}） {data.skippedNewer}；已拒绝 {data.refused}
       </div>
       {details.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-neutral-300">
@@ -66,7 +66,7 @@ export function ImportReportView({
       )}
       {data.skippedNewer > 0 && (
         <p className="nx-hint mt-2 text-[11px]">
-          冲突按最后修改时间裁决，请保持各设备时钟准确，否则「较新」判定可能不符合预期。要覆盖较新版本，请在导入时勾选「强制覆盖较新的本机条目」。
+          冲突按最后修改时间判定，请保持各设备时钟准确，否则对「较新」的判断可能有误。如需覆盖较新的版本，请在导入时勾选「强制覆盖较新的本机条目」。
         </p>
       )}
       {data.warnings.length > 0 && (

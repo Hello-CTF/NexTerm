@@ -23,7 +23,6 @@ import {
   IconEdit,
   IconEye,
   IconEyeOff,
-  IconFolderOpen,
   IconHistory,
   IconMergeH,
   IconMonitor,
@@ -62,14 +61,13 @@ function workspaceIcon(workspace: Workspace) {
 export interface JumpCommandOptions {
   assets: Asset[];
   snippets: SnippetDto[];
-  onOpenFiles?: () => void;
   onEditAsset?: (asset: Asset) => void;
   onShowHosts: () => void;
 }
 
 // useJumpCommands lists the jump palette's commands: app actions, open workspaces, asset management and
 // snippets. Connecting to an asset is a host row, not a command.
-export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, onShowHosts }: JumpCommandOptions): JumpCommand[] {
+export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: JumpCommandOptions): JumpCommand[] {
   const qc = useQueryClient();
   const sessions = useSessionList();
   const setSessions = useUi((s) => s.setSessions);
@@ -92,15 +90,15 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       const created = await cloneAsset(asset);
       if (!created) return;
       await qc.invalidateQueries({ queryKey: ["assets"] });
-      pushToast("success", `已克隆为「${created.name}」`);
+      pushToast("success", `已复制为「${created.name}」`);
     } catch (e) {
-      pushToast("error", `克隆失败：${describeError(e)}`);
+      pushToast("error", `复制失败：${describeError(e)}`);
     }
   }, [qc, pushToast]);
 
   const hideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().hide(asset.id);
-    pushToast("info", `已隐藏「${asset.name}」— 资产树眼睛按钮可找回`);
+    pushToast("info", `已隐藏「${asset.name}」，可通过资产树中的眼睛图标恢复显示`);
   }, [pushToast]);
 
   const unhideAsset = useCallback((asset: Asset) => {
@@ -118,7 +116,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       section: "已打开的工作区",
       hint: [
         workspace.id === currentWorkspace?.id ? "当前" : null,
-        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签`,
+        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签页`,
         workspace.panes.length > 1 ? "已分屏" : null,
       ].filter(Boolean).join(" · "),
       icon: workspaceIcon(workspace),
@@ -180,7 +178,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace) {
-            pushToast("info", "先连接一台主机（双击左侧资产）");
+            pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.splitPane(direction, undefined, workspace.id);
@@ -189,13 +187,13 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       {
         id: "close-pane",
         label: "关闭当前窗格（保留标签页）",
-        hint: keyHint("closePane", "标签页移到相邻窗格"),
+        hint: keyHint("closePane", "标签页将移到相邻窗格"),
         icon: IconMergeH,
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace || workspace.panes.length < 2) {
-            pushToast("info", "当前工作区没有分屏");
+            pushToast("info", "当前工作区未分屏");
             return;
           }
           current.closePane(workspace.activePaneId, workspace.id);
@@ -208,7 +206,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       ] as const).map(({ id, label, edge, icon }): JumpCommand => ({
         id,
         label,
-        hint: "把当前标签移到新拆分的窗格",
+        hint: "将当前标签页移到新拆分的窗格",
         icon,
         run: () => {
           const current = useUi.getState();
@@ -219,19 +217,12 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
           const pane = workspace?.panes.find((item) => item.id === paneId);
           const tabId = pane?.activeTabId ?? pane?.tabs[pane.tabs.length - 1]?.id;
           if (!workspace || !pane || !tabId) {
-            pushToast("info", "当前窗格没有标签");
+            pushToast("info", "当前窗格无标签页");
             return;
           }
           current.splitPaneWithTab(tabId, pane.id, edge, workspace.id);
         },
       })),
-      {
-        id: "wide-files",
-        label: "打开文件浏览器",
-        hint: "显示文件大小和修改时间列",
-        icon: IconFolderOpen,
-        run: () => onOpenFiles?.(),
-      },
       {
         id: "port-forward",
         label: "打开端口转发",
@@ -244,7 +235,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
             current.workspaces[current.workspaces.length - 1];
           const sessionId = workspace?.kind === "session" ? workspace.sessionId : undefined;
           if (!sessionId) {
-            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            current.pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.addTab({
@@ -286,7 +277,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       {
         id: FLEET_HEALTH_TAB_ID,
         label: "主机概览",
-        hint: "当前项目 · 只读健康网格 · 默认手动刷新",
+        hint: "当前项目的主机状态 · 只读 · 手动刷新",
         icon: IconActivity,
         run: () => addTab({ id: createFleetHealthTabId(), kind: "log", title: "主机概览", closable: true }),
       },
@@ -308,7 +299,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
             current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
             current.workspaces[current.workspaces.length - 1];
           if (workspace?.kind !== "session" || !workspace.sessionId) {
-            current.pushToast("info", "先连接一台主机（双击左侧资产）");
+            current.pushToast("info", "请先连接主机（双击左侧资产）");
             return;
           }
           current.addTab({
@@ -339,7 +330,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       {
         id: "devices",
         label: "打开设备管理",
-        hint: "已安装 agent 的设备",
+        hint: "已安装设备代理的设备",
         icon: IconMonitor,
         run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
       },
@@ -359,7 +350,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       {
         id: "audit",
         label: "查看审计日志",
-        hint: "用户与 AI 的动作记录",
+        hint: "用户和 AI 的操作记录",
         icon: IconHistory,
         run: () => addTab({ id: "audit", kind: "audit", title: "审计日志", closable: true }),
       },
@@ -376,7 +367,7 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
             pane?.tabs.find((item) => item.id === pane.activeTabId) ??
             pane?.tabs[pane.tabs.length - 1];
           if (!tab || tab.kind !== "terminal" || !tab.tabId || tab.dead || tab.exited) {
-            pushToast("info", "当前标签不是运行中的终端");
+            pushToast("info", "当前标签页不是运行中的终端");
             return;
           }
           void requestKillTab(tab.id);
@@ -397,9 +388,9 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
       });
       list.push({
         id: `clone-${asset.id}`,
-        label: `克隆资产 ${asset.name}`,
+        label: `复制资产 ${asset.name}`,
         section: "资产操作",
-        hint: "共享凭据引用",
+        hint: "与原资产共用凭据",
         icon: IconCopy,
         run: () => void runClone(asset),
       });
@@ -433,7 +424,6 @@ export function useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, on
     setSessions,
     addTab,
     pushToast,
-    onOpenFiles,
     onEditAsset,
     onShowHosts,
     themeMode,

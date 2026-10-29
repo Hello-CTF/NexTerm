@@ -122,7 +122,7 @@ describe("status wall model", () => {
     expect(model.groups.finished.map((card) => card.tabId)).toEqual(["far-done", "held-done"]);
     expect(model.groups.unknown.map((card) => card.tabId)).toEqual(["held-unknown"]);
     const far = model.groups.needs_me[1];
-    expect(far).toMatchObject({ hostName: "build box", title: "任务 far-ask", uiTabId: undefined, stateLabel: "需要我" });
+    expect(far).toMatchObject({ hostName: "build box", title: "任务 far-ask", uiTabId: undefined, stateLabel: "需要处理" });
     expect(far.badge?.kind).toBe("needs_me");
     expect(far.host?.deviceId).toBe("box");
     // A seen finished command keeps its badge on the wall, with its outcome.
@@ -144,7 +144,7 @@ describe("StatusWall", () => {
       expect(cards(view, "needs_me")).toEqual(["ask"]);
       const card = view.container.querySelector<HTMLElement>('[data-wall-card="ask"]')!;
       expect(card.querySelector('[data-testid="wall-host"]')?.textContent).toBe("build box");
-      expect(card.querySelector('[data-testid="wall-state"]')?.textContent).toBe("需要我");
+      expect(card.querySelector('[data-testid="wall-state"]')?.textContent).toBe("需要处理");
       expect(card.querySelector('[data-testid="wall-time"]')?.textContent).toBe("4 分钟前");
       expect(card.querySelector('[data-attention="needs_me"]')).not.toBeNull();
       expect(mocks.sessionsAggregate).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ describe("StatusWall", () => {
       const offline = view.container.querySelector('[data-wall-host="device:off"]');
       expect(offline?.textContent).toContain("laptop");
       expect(offline?.textContent).toContain("会话状态未知");
-      expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在这台主机上打开一个终端");
+      expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在该主机上打开终端");
     } finally {
       view.unmount();
     }
@@ -275,8 +275,8 @@ describe("StatusWall", () => {
       const button = cardButton(view, "ask");
       expect(button.hasAttribute("aria-label")).toBe(false);
       const text = (ids: string | null) => (ids ?? "").split(" ").map((id) => document.getElementById(id)?.textContent).join("|");
-      expect(text(button.getAttribute("aria-labelledby"))).toBe("任务 ask|build box|需要我");
-      expect(text(button.getAttribute("aria-describedby"))).toBe("终端响铃|3 分钟前|这台主机的列表可能已过时");
+      expect(text(button.getAttribute("aria-labelledby"))).toBe("任务 ask|build box|需要处理");
+      expect(text(button.getAttribute("aria-describedby"))).toBe("终端响铃|3 分钟前|该主机的会话列表可能已过时");
     } finally {
       view.unmount();
     }
@@ -309,8 +309,8 @@ describe("StatusWall", () => {
     const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
     try {
       await act(async () => { await flush(); });
-      expect(view.container.querySelector('[data-testid="wall-progress"]')?.textContent).toBe("读取失败");
-      expect(view.container.querySelector('[data-testid="wall-empty"]')?.textContent).toContain("读取失败");
+      expect(view.container.querySelector('[data-testid="wall-progress"]')?.textContent).toBe("未能读取");
+      expect(view.container.querySelector('[data-testid="wall-empty"]')?.textContent).toContain("未能读取");
       expect(view.container.textContent).not.toContain("正在读取各主机的会话");
       mocks.sessionsAggregate.mockRejectedValueOnce(new Error("boom"));
       const retry = [...view.container.querySelectorAll("button")].find((b) => b.textContent === "重试")!;
@@ -330,7 +330,7 @@ describe("StatusWall", () => {
     const onOpenAssets = vi.fn();
     const view = mount(createElement(StatusWall, { onOpened: vi.fn(), onOpenAssets }));
     try {
-      expect(view.container.querySelector('[data-testid="wall-empty"]')?.textContent).toContain("还没有会话");
+      expect(view.container.querySelector('[data-testid="wall-empty"]')?.textContent).toContain("暂无会话");
       act(() => [...view.container.querySelectorAll("button")].find((button) => button.textContent === "打开资产")?.click());
       expect(onOpenAssets).toHaveBeenCalledTimes(1);
     } finally {

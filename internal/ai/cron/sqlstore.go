@@ -84,11 +84,14 @@ func (s *SQLStore) Close() error {
 	return db.Close()
 }
 
-// CountOwnerless counts jobs without owner information (written before owner
-// kinds existed). The scheduler never runs them and disables them when due.
-func (s *SQLStore) CountOwnerless(ctx context.Context) (int64, error) {
+// PurgeOwnerless deletes jobs that carry no owner kind; they can never run.
+func (s *SQLStore) PurgeOwnerless(ctx context.Context) (int64, error) {
 	cronJob := query.Use(s.db).CronJob
-	return cronJob.WithContext(ctx).Where(cronJob.OwnerID.Eq(""), cronJob.OwnerKind.Eq("")).Count()
+	res, err := cronJob.WithContext(ctx).Where(cronJob.OwnerID.Eq(""), cronJob.OwnerKind.Eq("")).Delete()
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected, nil
 }
 
 func (s *SQLStore) List(ctx context.Context) ([]Job, error) {

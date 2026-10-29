@@ -76,14 +76,14 @@ afterEach(() => {
 
 describe("shortcuts editor", () => {
   it("clears a single binding with the clear button and restores it from default", () => {
-    const clear = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="清除快捷键：关闭当前标签"]');
+    const clear = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="清除快捷键：关闭当前标签页"]');
     expect(clear).not.toBeNull();
     click(clear as HTMLButtonElement);
     expect(getKeybinding("closeTab")).toBeNull();
     expect(kbdText("closeTab")).toBe("未绑定");
     expect(row("closeTab").querySelector('button[aria-label^="清除快捷键"]')).toBeNull();
     expect(getKeybinding("newTerminal")).toBe("Mod+t");
-    const reset = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="恢复默认快捷键：关闭当前标签"]');
+    const reset = row("closeTab").querySelector<HTMLButtonElement>('button[aria-label="恢复默认快捷键：关闭当前标签页"]');
     click(reset as HTMLButtonElement);
     expect(getKeybinding("closeTab")).toBe("Mod+w");
   });
@@ -97,7 +97,7 @@ describe("shortcuts editor", () => {
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
     expect(kbdText("terminalSearch")).toBe("Ctrl+Shift+F");
     expect(kbdText("restoreClosedTab")).toBe("Ctrl+Shift+T");
-    expect(kbdText("reclaimTakeover")).toBe("Esc");
+    expect(kbdText("reclaimTakeover")).toBe("Ctrl+Shift+E");
     expect(kbdText("switchTab")).toBe("Ctrl+1…9");
   });
 
@@ -150,7 +150,7 @@ describe("shortcuts editor", () => {
     const badge = row("commandPalette").querySelector(".nx-badge-amber");
     expect(badge?.textContent).toContain("冲突");
     expect(row("newTerminal").querySelector(".nx-badge-amber")).not.toBeNull();
-    expect(mounted?.container.textContent).toContain("排在前面的动作生效");
+    expect(mounted?.container.textContent).toContain("排在前面的操作生效");
   });
 
   it("restores a single row to its default", () => {
@@ -158,7 +158,7 @@ describe("shortcuts editor", () => {
     keyDown(captureInput() as HTMLInputElement, "n", { code: "KeyN", ctrlKey: true });
     expect(kbdText("newTerminal")).toBe("Ctrl+N");
     const reset = row("newTerminal").querySelector<HTMLButtonElement>(
-      'button[aria-label="恢复默认快捷键：新建终端标签"]',
+      'button[aria-label="恢复默认快捷键：新建终端标签页"]',
     );
     expect(reset).not.toBeNull();
     click(reset as HTMLButtonElement);

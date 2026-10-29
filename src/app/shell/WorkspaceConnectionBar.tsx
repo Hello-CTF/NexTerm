@@ -34,7 +34,7 @@ export function reconnectingText(
 
 // WorkspaceConnectionBar is the workspace-level connection notice: it follows the host session of the active
 // workspace whatever tab is open, and is the only reconnect surface when the workspace has no terminal.
-// While the active tab is a terminal that shows its own "这个终端已失效" overlay (tab.dead), the pane already
+// While the active tab is a terminal that shows its own "该终端已失效" overlay (tab.dead), the pane already
 // offers a reconnect for the same host, so the bar steps aside instead of stacking a second one.
 export function WorkspaceConnectionBar({
   ws,
@@ -75,7 +75,7 @@ export function WorkspaceConnectionBar({
   const retryNow = () => {
     if (ws.sessionId) void sessionApi.probeLiveness(ws.sessionId).catch(() => undefined);
   };
-  const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)] animate-pulse" : "bg-red-500";
+  const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)]" : "bg-red-500";
   return (
     <div
       role="status"
@@ -92,7 +92,12 @@ export function WorkspaceConnectionBar({
         ) : (
           <>
             与 {ws.title} 的连接已断开
-            {reason ? <span className="text-[var(--nx-fg-tertiary)]">：{reason}</span> : null}
+            {reason ? (
+              <details className="text-[var(--nx-fg-tertiary)]">
+                <summary className="cursor-pointer">查看详情</summary>
+                <span className="break-all">{reason}</span>
+              </details>
+            ) : null}
           </>
         )}
       </span>
@@ -114,7 +119,7 @@ export function WorkspaceConnectionBar({
           onClick={() => void reconnect()}
         >
           <IconRefresh size={13} className={busy ? "animate-spin" : undefined} />
-          {suspect ? "立即重连" : "重新连接"}
+          {suspect ? "立即重新连接" : "重新连接"}
         </button>
       )}
     </div>

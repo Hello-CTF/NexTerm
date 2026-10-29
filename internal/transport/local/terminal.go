@@ -2,9 +2,11 @@ package local
 
 import (
 	"context"
+	"path/filepath"
 	"runtime"
 
 	"github.com/Hello-CTF/NexTerm/internal/pty"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -22,7 +24,7 @@ func (t *Transport) openPTY(ctx context.Context, args []string, options base.PTY
 	if err := t.check(ctx, options.ExpectedGeneration); err != nil {
 		return nil, err
 	}
-	env := environment(t.env, true, options.Term)
+	env := environmentFor(t.shell, t.env, true, options.Term)
 	env = append(env, shellintegr.BashBannerEnv(runtime.GOOS, t.shell, env)...)
 	session, err := pty.Start(ctx, pty.Config{
 		Path:       t.shell,
@@ -41,10 +43,20 @@ func (t *Transport) openPTY(ctx context.Context, args []string, options base.PTY
 }
 
 // DurableLaunch is what a local terminal run by the local helper starts with:
-// the same shell and directory as OpenPTY. The helper supplies the rest of
-// the environment from its own, which it inherited from the app.
+// the same shell and directory as OpenPTY. SHELL and PATH are passed explicitly: the long-lived helper
+// may have been started with a stale or minimal environment, so new terminals must not depend on it.
+// The helper resolves the rest of the login environment itself.
 func (t *Transport) DurableLaunch() (command []string, dir string, env []string) {
 	env = []string{"TERM=xterm-256color"}
+	if runtime.GOOS != "windows" {
+		resolved := shellenv.Default().Env(resolveWait)
+		if filepath.IsAbs(t.shell) {
+			env = append(env, "SHELL="+t.shell)
+		}
+		if path := shellenv.EnvValue(resolved, "PATH"); path != "" {
+			env = append(env, "PATH="+path)
+		}
+	}
 	for key, value := range t.env {
 		env = append(env, key+"="+value)
 	}

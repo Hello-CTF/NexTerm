@@ -74,7 +74,7 @@ func DescribeTestFailure(err error, service, endpoint string) (kind, message str
 	if errors.As(err, &ipcErr) {
 		switch ipcErr.Code {
 		case ipc.CodeVaultLocked, ipc.CodeVaultNotInit, ipc.CodeBadMasterPass, ipc.CodeDecrypt:
-			return TestKindVault, "密码库还没有解锁，或这条资产绑定的凭据读不出来。请先解锁密码库，再检查资产绑定的凭据"
+			return TestKindVault, "凭据库尚未解锁，或该资产绑定的凭据无法读取。请先解锁凭据库，再检查资产绑定的凭据"
 		case ipc.CodeNotFound:
 			return TestKindNotFound, "资产不存在，可能已被删除，请刷新后重试"
 		case ipc.CodeBadParam:
@@ -118,12 +118,12 @@ func DescribeTestFailure(err error, service, endpoint string) (kind, message str
 	case isConnRefused(err):
 		return TestKindRefused, target + " 拒绝了连接，请确认服务已启动且端口正确"
 	case isUnreachable(err):
-		return TestKindUnreachable, "无法连到 " + target + "，请检查网络、VPN 和防火墙"
+		return TestKindUnreachable, "无法连接到 " + target + "，请检查网络、VPN 和防火墙"
 	case errors.As(err, &netErr) && netErr.Timeout():
 		return TestKindTimeout, "连接 " + target + " 超时，请检查网络、防火墙和服务是否在运行"
 	case errors.As(err, &netErr), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, net.ErrClosed),
 		errors.Is(err, driver.ErrBadConn), errors.Is(err, mysqlDriver.ErrInvalidConn):
-		return TestKindNetwork, "无法连到 " + target + "，或连接被中途断开，请检查网络和防火墙"
+		return TestKindNetwork, "无法连接到 " + target + "，或连接被中途断开，请检查网络和防火墙"
 	}
 	return TestKindInternal, "测试没有完成，请重试；如果反复出现，请查看应用日志"
 }

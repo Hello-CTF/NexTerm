@@ -25,7 +25,9 @@ import {
   filterMergedLines,
   highlightSegments,
   hostColor,
+  LOG_STATUS_LABELS as STATUS_LABELS,
   MergedLogBuffer,
+  regexErrorNotice,
 } from "./mergedLog";
 
 const MAX_TARGETS = 64;
@@ -80,7 +82,7 @@ function allSourcesTerminal(
 }
 
 const INFO_TEXT =
-  "只读：仅执行只读日志命令，无需生产确认、不分配 PTY。仅支持当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不会自动连接。";
+  "只读：仅执行只读的日志命令，不会修改主机，无需生产确认。仅支持当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不会自动连接。";
 
 const SOURCE_KIND_LABELS: Record<LogTailSourceKind, string> = {
   file: "文件",
@@ -92,16 +94,6 @@ const SOURCE_PLACEHOLDERS: Record<LogTailSourceKind, string> = {
   file: "/var/log/app.log",
   journal: "nginx.service",
   docker: "container-name",
-};
-
-const STATUS_LABELS: Record<LogTailSourceStatus | "idle", string> = {
-  idle: "未启动",
-  queued: "等待并发槽",
-  starting: "启动中",
-  running: "跟随中",
-  exited: "已退出",
-  failed: "失败",
-  canceled: "已取消",
 };
 
 function workspaceIncludesSession(workspace: Workspace, sessionId: string): boolean {
@@ -478,7 +470,7 @@ export function MultiHostLogTail({
               onChange={setSelected}
               disabled={running}
               maxTargets={MAX_TARGETS}
-              metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+              metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
             />
             {selectedIds.length > 0 && (
               <div className="flex flex-col gap-2">
@@ -529,7 +521,7 @@ export function MultiHostLogTail({
         <input
           className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:max-w-xs"
           value={include}
-          placeholder="过滤 regex，例如 ERROR|WARN"
+          placeholder="只显示匹配的行（正则表达式），例如 ERROR|WARN"
           aria-label="包含正则"
           onChange={(event) => setInclude(event.target.value)}
         />
@@ -540,7 +532,13 @@ export function MultiHostLogTail({
             {stopping ? "正在取消…" : "停止全部"}
           </button>
         ) : (
-          <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={targets.length === 0} onClick={start}>
+          <button
+            type="button"
+            className="nx-btn nx-btn-primary nx-btn-sm"
+            disabled={targets.length === 0}
+            title={targets.length === 0 ? "当前没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
+            onClick={start}
+          >
             <IconPlay size={13} />
             开始跟随
           </button>
@@ -548,6 +546,7 @@ export function MultiHostLogTail({
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm"
+          aria-pressed={paused}
           onClick={() => {
             const next = !paused;
             bufferRef.current.setPaused(next);
@@ -578,11 +577,11 @@ export function MultiHostLogTail({
         >
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-              排除 regex
+              排除（正则表达式）
               <input
                 className="nx-input nx-input-sm font-mono"
                 value={exclude}
-                placeholder="排除 regex"
+                placeholder="隐藏匹配的行（正则表达式）"
                 aria-label="排除正则"
                 onChange={(event) => setExclude(event.target.value)}
               />
@@ -621,7 +620,7 @@ export function MultiHostLogTail({
                 onClick={() => void save()}
               >
                 <IconDownload size={13} />
-                {saving ? "保存中…" : "保存日志"}
+                {saving ? "正在保存…" : "保存日志"}
               </button>
               <button
                 type="button"
@@ -640,14 +639,14 @@ export function MultiHostLogTail({
       </div>
       {filters.error && (
         <div role="alert" className="border-b border-amber-900/50 bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-300">
-          正则无效，当前显示未过滤日志：{filters.error}
+          {regexErrorNotice(filters.error)}
         </div>
       )}
       {runError && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{runError}</div>}
       {saveMessage && <div role="status" className="px-3 py-1.5 text-[11px] text-green-300">{saveMessage}</div>}
       {paused && (
         <div role="status" className="border-b border-neutral-800/70 px-3 py-1 text-[11px] text-amber-300">
-          显示已暂停；后台仍在有界接收，恢复后展示最新保留内容。
+          显示已暂停；后台仍在接收（保留数量有上限），恢复后将显示最新内容。
         </div>
       )}
 

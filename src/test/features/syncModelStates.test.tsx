@@ -118,7 +118,7 @@ describe("SyncCard desktop states", () => {
   it("reports sync configuration read failures inline and supports retry", async () => {
     mocks.linkGet.mockRejectedValueOnce(new Error("corrupt configuration"));
     mounted = withClient(createElement(SyncCard));
-    await flushUntil(() => text().includes("同步配置读取失败 · corrupt configuration"));
+    await flushUntil(() => text().includes("未能读取同步配置：corrupt configuration"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => !text().includes("同步配置读取失败"));
     expect(mocks.linkGet).toHaveBeenCalledTimes(2);
@@ -174,7 +174,7 @@ describe("SyncCard desktop states", () => {
         password: "correct horse battery staple",
       }),
     );
-    expect(text()).toContain("登录后，数据会自动在本机与服务端之间同步");
+    expect(text()).toContain("登录后，数据将在本机与服务端之间自动同步");
     expect(text()).not.toContain("立即同步");
   });
 
@@ -205,10 +205,10 @@ describe("ModelManager states", () => {
   it("shows an error and retry instead of the empty-profile state when the profile list fails to load", async () => {
     mocks.overview.mockRejectedValueOnce(new Error("configuration unreadable"));
     mounted = mount(createElement(ModelManager));
-    await flushUntil(() => text().includes("档案列表加载失败 · configuration unreadable"));
-    expect(text()).not.toContain("还没有模型档案");
+    await flushUntil(() => text().includes("未能读取档案列表：configuration unreadable"));
+    expect(text()).not.toContain("暂无模型档案");
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => text().includes("还没有模型档案"));
+    await flushUntil(() => text().includes("暂无模型档案"));
     expect(mocks.overview).toHaveBeenCalledTimes(2);
   });
 
@@ -236,13 +236,13 @@ describe("ModelManager states", () => {
 
     mocks.overview.mockRejectedValueOnce(new Error("disk unreadable"));
     clickButton(mounted!.container, "保存");
-    await flushUntil(() => text().includes("档案列表刷新失败 · disk unreadable"));
+    await flushUntil(() => text().includes("未能刷新档案列表：disk unreadable"));
     expect(text()).toContain("DeepSeek");
-    expect(text()).not.toContain("还没有模型档案");
+    expect(text()).not.toContain("暂无模型档案");
 
     mocks.overview.mockResolvedValueOnce({ profiles: [saved], activeId: "p1" });
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => !text().includes("档案列表刷新失败"));
+    await flushUntil(() => !text().includes("未能刷新档案列表"));
     expect(text()).toContain("DeepSeek");
     expect(mocks.overview).toHaveBeenCalledTimes(3);
   });
@@ -250,7 +250,7 @@ describe("ModelManager states", () => {
   it("shows the newly saved profile instead of the empty state when the initial list is empty, saving succeeds, and reload fails", async () => {
     mocks.overview.mockResolvedValueOnce({ profiles: [], activeId: null });
     mounted = mount(createElement(ModelManager));
-    await flushUntil(() => text().includes("还没有模型档案"));
+    await flushUntil(() => text().includes("暂无模型档案"));
 
     mocks.overview.mockRejectedValueOnce(new Error("disk unreadable"));
     mocks.save.mockImplementation(async (p: { id: string; name: string }) => ({
@@ -267,12 +267,12 @@ describe("ModelManager states", () => {
     );
     setInputValue(nameInput!, "new profile");
     clickButton(mounted!.container, "保存");
-    await flushUntil(() => text().includes("档案列表刷新失败 · disk unreadable"));
+    await flushUntil(() => text().includes("未能刷新档案列表：disk unreadable"));
     const listHasNew = [...mounted!.container.querySelectorAll(".nx-menu-item")].some((b) =>
       b.textContent?.includes("new profile"),
     );
     expect(listHasNew, "After saving, the list must contain the new profile, not the empty state").toBe(true);
-    expect(text()).not.toContain("还没有模型档案");
+    expect(text()).not.toContain("暂无模型档案");
 
     mocks.overview.mockResolvedValueOnce({
       profiles: [
@@ -292,7 +292,7 @@ describe("ModelManager states", () => {
       activeId: null,
     });
     clickButton(mounted!.container, "重试");
-    await flushUntil(() => !text().includes("档案列表刷新失败"));
+    await flushUntil(() => !text().includes("未能刷新档案列表"));
     expect(text()).toContain("new profile");
   });
 });

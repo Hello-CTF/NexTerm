@@ -853,7 +853,7 @@ func TestShareHostTerminalReportsLegacyHelperQuickly(t *testing.T) {
 		if received.Type != "error" {
 			t.Fatalf("share open frame = %s, want an error", frame.payload)
 		}
-		if received.Code != "helper_upgrade_required" || !strings.Contains(received.Message, "helper") {
+		if received.Code != "helper_upgrade_required" || !strings.Contains(received.Message, "持久终端组件") {
 			t.Fatalf("share open error = %+v, want the old-helper reason", received)
 		}
 		return

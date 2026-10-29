@@ -14,7 +14,7 @@ import { assetApi, sessionApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { showSettingsSection } from "../../features/settings/settingsNavigation";
 import { createMultiHostLogTabId } from "../../features/logs/logTailTab";
-import { focusedTerminalCwd, startCwdTracking } from "../../features/files/cwdFollow";
+import { startCwdTracking } from "../../features/files/cwdFollow";
 import { isMobileShell } from "./shellMode";
 import { hideMobileHome } from "./mobileHome";
 
@@ -36,7 +36,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
 
   const needSession = useCallback(() => {
-    pushToast("info", "先连接一台主机（双击左侧资产）");
+    pushToast("info", "请先连接主机（双击左侧资产）");
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
@@ -57,21 +57,6 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   }, [pushToast, setSessions]);
 
   useEffect(() => startCwdTracking(), []);
-
-  // openFiles browses the active workspace's host, starting at the directory its terminal last reported (OSC 7).
-  const openFiles = useCallback(() => {
-    const sessionId = ws?.sessionId;
-    if (!sessionId) return needSession();
-    const directory = focusedTerminalCwd(useUi.getState().workspaces, sessionId) ?? undefined;
-    useUi.getState().addTab({
-      id: nextTabId(`files-${sessionId}`),
-      kind: "files",
-      title: "文件",
-      sessionId,
-      ...(directory ? { directory } : {}),
-      closable: true,
-    });
-  }, [ws?.sessionId, needSession]);
 
   // openLogs opens the merged log tab in the tools workspace; from a host workspace that host starts selected.
   const openLogs = useCallback(() => {
@@ -124,7 +109,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       const assets = (await assetApi.list()).filter((asset) => dbKindOf(asset.kind) !== null);
       if (useUi.getState().workspaceRuntimeEpoch !== epoch) return;
       if (assets.length === 0) {
-        pushToast("info", "还没有数据库资产，先在资产树里新建一个");
+        pushToast("info", "暂无数据库资产，请先在资产树中新建");
         return;
       }
       if (assets.length === 1) {
@@ -222,19 +207,19 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     const s = sid ? useUi.getState().sessions.find((x) => x.id === sid) : undefined;
     if (s && ws) {
       if (isSessionReconnectPending(s.id)) {
-        pushToast("info", "正在重连，连接成功后自动新建终端");
+        pushToast("info", "正在重新连接，连接成功后自动新建终端");
         return;
       }
       if (isSessionAlive(s.status)) {
         void openTerminalTab(s);
         return;
       }
-      pushToast("info", "正在重连，连接成功后自动新建终端");
+      pushToast("info", "正在重新连接，连接成功后自动新建终端");
       try {
         const fresh = await reconnectWorkspaceSession(ws, s, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重连");
+          pushToast("info", "已取消重新连接");
           return;
         }
         const list = useUi.getState().sessions;
@@ -250,7 +235,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
         const fresh = await reconnectDeadHost(ws, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重连");
+          pushToast("info", "已取消重新连接");
           return;
         }
         const list = useUi.getState().sessions;
@@ -289,7 +274,6 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     };
     return {
       openLocalTerminal: leaving(openLocalTerminal),
-      openFiles: leaving(openFiles),
       openLogs: leaving(openLogs),
       openMount: leaving(openMount),
       openForward: leaving(openForward),
@@ -304,7 +288,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       openHistory: leaving(openHistory),
       openNewTerminal: leaving(openNewTerminal),
     };
-  }, [openLocalTerminal, openFiles, openLogs, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
+  }, [openLocalTerminal, openLogs, openMount, openForward, openDocker, openDatabase, openAudit, openDevices,
     openSettings, openSyncSettings, openVaultProtection, openBackground, openHistory, openNewTerminal]);
 
   return {

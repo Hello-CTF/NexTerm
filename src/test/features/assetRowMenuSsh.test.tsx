@@ -204,7 +204,7 @@ describe("copy SSH command", () => {
     const labels = menuLabels(mounted!.container);
     expect(labels.some((l) => l.includes("克隆"))).toBe(true);
     expect(labels.some((l) => l.includes("复制 SSH 命令"))).toBe(false);
-    expect(labels.some((l) => l.includes("用其他用户名连接"))).toBe(false);
+    expect(labels.some((l) => l.includes("使用其他用户名连接"))).toBe(false);
   });
 
   it("shows a copy failure toast when clipboard writing fails", async () => {
@@ -212,7 +212,7 @@ describe("copy SSH command", () => {
     openRowMenu(mounted!.container, "web-1");
     clickMenuItem(mounted!.container, "复制 SSH 命令");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("复制失败")),
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("无法复制")),
     );
   });
 });
@@ -226,7 +226,7 @@ describe("connect as another user", () => {
   it("uses quick connect with agent authentication after entering a username and leaving the password blank", async () => {
     mocks.promptText.mockResolvedValueOnce("ops").mockResolvedValueOnce("");
     openRowMenu(mounted!.container, "web-1");
-    clickMenuItem(mounted!.container, "用其他用户名连接");
+    clickMenuItem(mounted!.container, "使用其他用户名连接");
     await waitFor(() =>
       expect(mocks.connectQuick).toHaveBeenCalledWith({
         host: "10.0.0.8",
@@ -235,13 +235,13 @@ describe("connect as another user", () => {
         authKind: "agent",
       }),
     );
-    expect(mocks.promptText).toHaveBeenNthCalledWith(1, "用其他用户名连接「web-1」", "root");
+    expect(mocks.promptText).toHaveBeenNthCalledWith(1, "使用其他用户名连接「web-1」", "root");
   });
 
   it("uses password authentication when a password is entered", async () => {
     mocks.promptText.mockResolvedValueOnce("ops").mockResolvedValueOnce("secret");
     openRowMenu(mounted!.container, "edge-1");
-    clickMenuItem(mounted!.container, "用其他用户名连接");
+    clickMenuItem(mounted!.container, "使用其他用户名连接");
     await waitFor(() =>
       expect(mocks.connectQuick).toHaveBeenCalledWith({
         host: "edge.example.com",
@@ -256,7 +256,7 @@ describe("connect as another user", () => {
   it("does not connect when username input is cancelled", async () => {
     mocks.promptText.mockResolvedValueOnce(null);
     openRowMenu(mounted!.container, "web-1");
-    clickMenuItem(mounted!.container, "用其他用户名连接");
+    clickMenuItem(mounted!.container, "使用其他用户名连接");
     await flush();
     expect(mocks.connectQuick).not.toHaveBeenCalled();
     expect(mocks.promptText).toHaveBeenCalledTimes(1);
@@ -265,7 +265,7 @@ describe("connect as another user", () => {
   it("does not connect for a blank username", async () => {
     mocks.promptText.mockResolvedValueOnce("   ");
     openRowMenu(mounted!.container, "web-1");
-    clickMenuItem(mounted!.container, "用其他用户名连接");
+    clickMenuItem(mounted!.container, "使用其他用户名连接");
     await flush();
     expect(mocks.connectQuick).not.toHaveBeenCalled();
   });

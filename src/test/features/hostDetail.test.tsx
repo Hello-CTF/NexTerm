@@ -272,7 +272,7 @@ describe("host detail page for an asset", () => {
     mountView("a-web");
     await flushUntil(() => text().includes("web-01"));
 
-    expect(section("host-sessions").textContent).toContain("尚未打开这台主机的工作区");
+    expect(section("host-sessions").textContent).toContain("尚未打开该主机的工作区");
     expect(section("host-containers").textContent).toContain("打开并连接工作区后可查看容器");
     expect(mocks.dockerPs).not.toHaveBeenCalled();
     expect(mocks.connectAsset).not.toHaveBeenCalled();
@@ -410,14 +410,14 @@ describe("host detail page for a device", () => {
   it("reports a device the account cannot see", async () => {
     routeFleet([ONLINE_DEVICE]);
     mountView("device/d-9");
-    await flushUntil(() => text().includes("无法查看这台设备"));
+    await flushUntil(() => text().includes("无法查看该设备"));
     expect(text()).not.toContain("nas-01");
   });
 
   it("shows an offline device with its workspace action disabled", async () => {
     routeFleet([ONLINE_DEVICE, OFFLINE_DEVICE]);
     mountView("device/d-2");
-    await flushUntil(() => text().includes("设备离线，没有近期指标"));
+    await flushUntil(() => text().includes("设备离线，暂无近期指标"));
     expect(section("host-device-status").textContent).toBe("离线");
     const open = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent === "打开工作区");
     expect(open?.disabled).toBe(true);

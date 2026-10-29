@@ -122,8 +122,9 @@ vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
     return null;
   },
 }));
-vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
-vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
+vi.mock("../features/files/FileTree", () => ({
+  FileTree: (props: { sessionId: string }) => <div data-testid="file-tree" data-session={props.sessionId} />,
+}));
 vi.mock("../features/files/MountPanel", () => ({ MountPanel: () => null }));
 vi.mock("../features/files/FileEditor", () => ({ FileEditor: () => null }));
 vi.mock("../features/files/LogViewer", () => ({ LogViewer: () => null }));
@@ -139,17 +140,10 @@ vi.mock("../features/ai/AiSidebar", () => ({
 vi.mock("../features/settings/SettingsView", () => ({ SettingsView: () => null }));
 vi.mock("../features/settings/AuditView", () => ({ AuditView: () => null }));
 vi.mock("../features/credentials/CredentialsPanel", () => ({ CredentialsPanel: () => null }));
-vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => null }));
-vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => null, AssetEditor: () => null }));
+vi.mock("../features/credentials/CredentialsSidebar", () => ({ CredentialsSidebar: () => <div data-testid="credentials-sidebar" /> }));
+vi.mock("../features/explorer/AssetTree", () => ({ AssetTree: () => <div data-testid="asset-tree" />, AssetEditor: () => null }));
 vi.mock("../app/JumpPalette", () => ({
-  JumpPalette: (props: { scope?: string; onOpenFiles?: () => void }) =>
-    props.scope === "all" ? (
-      <button type="button" data-testid="palette-files" onClick={props.onOpenFiles}>
-        Open file browser
-      </button>
-    ) : (
-      <div data-testid="quick-connect" data-scope={props.scope} />
-    ),
+  JumpPalette: (props: { scope?: string }) => <div data-testid="quick-connect" data-scope={props.scope} />,
 }));
 vi.mock("../app/TakeoverBanner", () => ({
   TakeoverBanner: () =>
@@ -248,17 +242,6 @@ function expectShellOrder(expected: string[]): void {
   for (const element of elements) expect(element.parentElement).toBe(column);
 }
 
-async function openPaletteFiles(): Promise<void> {
-  const paletteButton = mounted?.container.querySelector('button[aria-label^="跳转面板"]');
-  if (!paletteButton) throw new Error("Command palette button not found");
-  click(paletteButton);
-  await flush();
-  const filesButton = mounted?.container.querySelector('[data-testid="palette-files"]');
-  if (!filesButton) throw new Error("Palette files action not found");
-  click(filesButton);
-  await flush();
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -285,6 +268,7 @@ beforeEach(() => {
     leftOpen: false,
     rightOpen: false,
     leftMode: "assets",
+    leftOverride: null,
     workspaces: [],
     activeWorkspaceId: null,
     connectingAssetIds: [],
@@ -342,33 +326,131 @@ function allTabs(): AppTab[] {
   );
 }
 
-const needSessionText = "先连接一台主机（双击左侧资产）";
 
 describe("App workspace actions", () => {
-  it("openFiles does not fall back to the first session without an explicit workspace", async () => {
-    useUi.setState({ sessions: [sessionOf("s1")] });
-    mounted = mountApp();
-    await flush();
+  const tree = (id: string) => mounted?.container.querySelector(`[data-testid="${id}"]`) ?? null;
+  const active = (label: string) => railButton(label).getAttribute("aria-current") === "true";
 
-    await openPaletteFiles();
-
-    expect(useUi.getState().workspaces).toEqual([]);
-    expect(useUi.getState().toasts.some((toast) => toast.text === needSessionText)).toBe(true);
-  });
-
-  it("openFiles uses the explicit workspace session", async () => {
+  it("has no file tree rail button; a host workspace shows its file tree by default with no panel highlighted", async () => {
     useUi.setState({
-      sessions: [sessionOf("s1"), sessionOf("s2")],
-      workspaces: [workspaceOf("s2")],
-      activeWorkspaceId: "ws",
+      sessions: [sessionOf("s1")],
+      workspaces: [hostWorkspace("ws-a", "s1")],
+      activeWorkspaceId: "ws-a",
+      leftOpen: true,
     });
     mounted = mountApp();
     await flush();
 
-    await openPaletteFiles();
+    expect(mounted.container.querySelector('button[aria-label="文件树"]')).toBeNull();
+    expect(tree("file-tree")?.getAttribute("data-session")).toBe("s1");
+    expect(tree("asset-tree")).toBeNull();
+    expect(active("资产")).toBe(false);
+    expect(active("凭据")).toBe(false);
+    // The tools area keeps its saved choice meanwhile.
+    expect(useUi.getState().leftMode).toBe("assets");
+  });
 
-    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
-    expect(tabs.some((tab) => tab.kind === "files" && tab.sessionId === "s2")).toBe(true);
+  it("the tools area shows the asset tree and credentials per the rail, highlighting the match", async () => {
+    useUi.setState({ workspaces: [nonHostWorkspace("tools")], activeWorkspaceId: "ws-tools", leftOpen: true });
+    mounted = mountApp();
+    await flush();
+    expect(tree("asset-tree")).not.toBeNull();
+    expect(active("资产")).toBe(true);
+
+    await clickRail("凭据");
+    expect(tree("credentials-sidebar")).not.toBeNull();
+    expect(active("凭据")).toBe(true);
+    expect(active("资产")).toBe(false);
+    expect(useUi.getState().leftMode).toBe("credentials");
+    expect(useUi.getState().leftOverride).toBeNull();
+    expect(tree("file-tree")).toBeNull();
+  });
+
+  it("a legacy saved files mode shows the asset tree outside a host workspace", async () => {
+    useUi.setState({ workspaces: [nonHostWorkspace("tools")], activeWorkspaceId: "ws-tools", leftOpen: true, leftMode: "files" as never });
+    mounted = mountApp();
+    await flush();
+    expect(tree("file-tree")).toBeNull();
+    expect(tree("asset-tree")).not.toBeNull();
+  });
+
+  describe("temporary sidebar override in a host workspace", () => {
+    async function mountHost() {
+      useUi.setState({
+        sessions: [sessionOf("s1"), sessionOf("s2")],
+        workspaces: [hostWorkspace("ws-a", "s1"), hostWorkspace("ws-b", "s2")],
+        activeWorkspaceId: "ws-a",
+        leftOpen: true,
+      });
+      mounted = mountApp();
+      await flush();
+    }
+
+    it("switches to the asset tree or credentials and highlights the matching button", async () => {
+      await mountHost();
+      await clickRail("资产");
+      expect(tree("asset-tree")).not.toBeNull();
+      expect(tree("file-tree")).toBeNull();
+      expect(active("资产")).toBe(true);
+      expect(active("凭据")).toBe(false);
+      // The persisted tools-area choice is untouched.
+      expect(useUi.getState().leftMode).toBe("assets");
+
+      await clickRail("凭据");
+      expect(tree("credentials-sidebar")).not.toBeNull();
+      expect(active("凭据")).toBe(true);
+      expect(active("资产")).toBe(false);
+      expect(useUi.getState().leftMode).toBe("assets");
+    });
+
+    it("reverts when the active button is clicked again", async () => {
+      await mountHost();
+      await clickRail("凭据");
+      await clickRail("凭据");
+      expect(tree("file-tree")).not.toBeNull();
+      expect(active("凭据")).toBe(false);
+    });
+
+    it("reverts when the active workspace changes", async () => {
+      await mountHost();
+      await clickRail("资产");
+      act(() => useUi.getState().setActiveWorkspace("ws-b"));
+      await flush();
+      expect(tree("file-tree")?.getAttribute("data-session")).toBe("s2");
+      expect(active("资产")).toBe(false);
+    });
+
+    it("reverts when something is connected or opened (connect focus)", async () => {
+      await mountHost();
+      await clickRail("资产");
+      act(() => useUi.getState().bumpConnectFocusRevision());
+      await flush();
+      expect(tree("file-tree")).not.toBeNull();
+      expect(useUi.getState().leftOverride).toBeNull();
+    });
+
+    it("reverts when the user moves into the work area, but not on sidebar-only interaction", async () => {
+      await mountHost();
+      await clickRail("资产");
+      const dock = mounted!.container.querySelector<HTMLElement>(".nx-left-dock")!;
+      act(() => {
+        dock.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        dock.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+        dock.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+        dock.dispatchEvent(new Event("scroll"));
+      });
+      await flush();
+      expect(tree("asset-tree")).not.toBeNull();
+      expect(active("资产")).toBe(true);
+
+      const main = mounted!.container.querySelector<HTMLElement>("#nx-main")!;
+      act(() => {
+        main.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      });
+      await flush();
+      expect(tree("file-tree")).not.toBeNull();
+      expect(active("资产")).toBe(false);
+    });
   });
 
   it.each([
@@ -385,7 +467,7 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
+    for (const label of ["文件树", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
       expect(mounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
     }
     // History needs no host, so it stays.
@@ -403,7 +485,7 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件", "磁盘挂载", "容器", "端口转发", "日志"]) {
+    for (const label of ["磁盘挂载", "容器", "端口转发", "日志"]) {
       await clickRail(label);
     }
 
@@ -412,7 +494,6 @@ describe("App workspace actions", () => {
       .workspaces.find((workspace) => workspace.id === second.id)
       ?.panes.flatMap((pane) => pane.tabs);
     expect(secondTabs).toEqual([
-      expect.objectContaining({ kind: "files", sessionId: "s2" }),
       expect.objectContaining({ kind: "mount", sessionId: "s2" }),
       expect.objectContaining({ kind: "docker", sessionId: "s2" }),
       expect.objectContaining({ kind: "forward", sessionId: "s2" }),
@@ -758,7 +839,7 @@ describe("App empty states", () => {
     mounted = mountApp();
     await flush();
     expect(mounted.container.querySelector("header")?.textContent).toContain(
-      "还没有工作区，双击左侧资产连接一台主机",
+      "暂无工作区，双击左侧资产连接主机",
     );
   });
 
@@ -1139,7 +1220,7 @@ describe("App terminal rename", () => {
     await submitRenameDraft("draft-title");
     await flush();
     const modal = mounted?.container.querySelector(".nx-modal");
-    expect(modal?.textContent).toContain("metadata changed");
+    expect(modal?.textContent).toContain("名称已被其他操作修改");
     const input = modal?.querySelector<HTMLInputElement>("input");
     expect(input?.value).toBe("draft-title");
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];

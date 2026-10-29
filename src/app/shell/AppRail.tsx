@@ -1,4 +1,5 @@
-import { useUi, openCredentialsSidebar, type Workspace } from "../store";
+import { useUi, isHostWorkspace, showLeftPanel, type Workspace } from "../store";
+import { resolveLeftView } from "./leftView";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { TRANSPORT } from "../../ipc/env";
 import { isMac } from "../platform";
@@ -9,7 +10,6 @@ import {
   IconClock,
   IconDatabase,
   IconDrive,
-  IconFolderOpen,
   IconHistory,
   IconKey,
   IconList,
@@ -26,6 +26,7 @@ export interface AppRailProps {
   overlaySidebars: boolean;
   setOverlayDock: (dock: OverlayDock) => void;
   setLeftOpen: (open: boolean) => void;
+  leftDockOpen: boolean;
   backgroundAvailable: boolean;
   // workspace is the active workspace; the rail counts its background terminals itself, so a host status
   // change re-renders the rail rather than the whole app shell.
@@ -38,6 +39,7 @@ export function AppRail({
   overlaySidebars,
   setOverlayDock,
   setLeftOpen,
+  leftDockOpen,
   backgroundAvailable,
   workspace,
   hasDbAssets,
@@ -45,10 +47,12 @@ export function AppRail({
 }: AppRailProps) {
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
   const leftMode = useUi((s) => s.leftMode);
-  const setLeftMode = useUi((s) => s.setLeftMode);
+  const leftOverride = useUi((s) => s.leftOverride);
   // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
-  const hasHost = workspace?.kind === "session" && Boolean(workspace.sessionId);
-  const { openBackground, openHistory, openFiles, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
+  const hasHost = isHostWorkspace(workspace);
+  // The sidebar shows the file tree in a host workspace, so neither panel button is highlighted there.
+  const railActive = resolveLeftView(workspace, leftMode, leftOverride);
+  const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
 
   const railPanels: {
     key: string;
@@ -60,11 +64,12 @@ export function AppRail({
     {
       key: "assets",
       label: "资产",
-      hint: "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
+      hint: hasHost
+        ? "临时切换到资产树，双击资产连接后自动回到文件树；再次单击回到文件树；双击本按钮收起侧栏"
+        : "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
       icon: IconServer,
       onClick: () => {
-        setLeftMode("assets");
-        setLeftOpen(true);
+        if (showLeftPanel("assets", leftDockOpen)) setLeftOpen(true);
       },
     },
     {
@@ -73,13 +78,10 @@ export function AppRail({
       hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用；双击本按钮收起侧栏",
       icon: IconKey,
       onClick: () => {
-        openCredentialsSidebar();
-        setLeftOpen(true);
+        if (showLeftPanel("credentials", leftDockOpen)) setLeftOpen(true);
       },
     },
   ];
-
-  const railActive = leftMode;
 
   const railItems: {
     key: string;
@@ -89,23 +91,12 @@ export function AppRail({
     onClick: () => void;
     badge?: number;
   }[  ] = [
-    ...(hasHost
-      ? [
-          {
-            key: "files",
-            label: "文件",
-            hint: "浏览当前主机的文件：从终端所在目录打开，双击文件进入编辑器",
-            icon: IconFolderOpen,
-            onClick: openFiles,
-          },
-        ]
-      : []),
     ...(backgroundAvailable ? [{
       key: "background",
       label: "后台会话",
       hint: backgroundCount
-        ? `${backgroundCount} 个终端在这台主机后台运行，点击查看`
-        : "查看这台主机上在后台运行的终端，并接管回标签页",
+        ? `${backgroundCount} 个终端在该主机后台运行，单击查看`
+        : "查看该主机上在后台运行的终端，并重新接管到标签页",
       icon: IconActivity,
       onClick: openBackground,
       badge: backgroundCount ?? undefined,
@@ -144,7 +135,7 @@ export function AppRail({
       : [{
           key: "mount",
           label: "磁盘挂载",
-          hint: "把 SSH 资产的远程目录挂载到本地，像本地磁盘一样访问",
+          hint: "将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问",
           icon: IconDrive,
           onClick: openMount,
         }]),
@@ -153,14 +144,14 @@ export function AppRail({
           {
             key: "forward",
             label: "端口转发",
-            hint: "把远程端口转发到本地：本地端口映射或 SOCKS5 代理",
+            hint: "将远程端口转发到本地：本地端口映射或 SOCKS5 代理",
             icon: IconNetwork,
             onClick: openForward,
           },
           {
             key: "logs",
             label: "日志",
-            hint: "跟随日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
+            hint: "实时查看日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
             icon: IconList,
             onClick: openLogs,
           },
@@ -169,7 +160,7 @@ export function AppRail({
   ];
 
   const railBottom = [
-    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装 agent 的设备并远程打开终端", icon: IconMonitor, onClick: actions.openDevices },
+    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装设备代理的设备并远程打开终端", icon: IconMonitor, onClick: actions.openDevices },
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: actions.openAudit },
     { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: actions.openSettings },
   ];

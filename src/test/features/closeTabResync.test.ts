@@ -140,7 +140,7 @@ describe("session list resynchronization after closeTab", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("bt1", "detach", "s1");
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs).toEqual([]);
     expect(useUi.getState().toasts.map((toast) => toast.text)).toContain(
-      "本地标签已关闭；远端持久终端可能仍在运行，可在后台会话中查看",
+      "本地标签页已关闭；远端持久终端可能仍在运行，可在后台会话中查看",
     );
   });
 
@@ -188,7 +188,7 @@ describe("session list resynchronization after closeTab", () => {
     await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(false);
 
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.id).toBe("t1");
-    expect(useUi.getState().toasts[0]?.text).toContain("network unavailable");
+    expect(useUi.getState().toasts[0]?.text).toContain("连接已断开，请重新连接后再试");
   });
 
   it("preserves a running container exec and reports a failed close when the transport is unavailable", async () => {
@@ -199,6 +199,6 @@ describe("session list resynchronization after closeTab", () => {
     await expect(useUi.getState().closeTab("t1", "kill")).resolves.toBe(false);
 
     expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.id).toBe("t1");
-    expect(useUi.getState().toasts[0]?.text).toContain("network unavailable");
+    expect(useUi.getState().toasts[0]?.text).toContain("连接已断开，请重新连接后再试");
   });
 });

@@ -127,12 +127,12 @@ describe("WorkspaceConnectionBar", () => {
       renderBar(ws, tabs[0] ?? null);
     }
 
-    it("shows 连接不稳定 with 立即重连 while connected but suspect", () => {
+    it("shows 连接不稳定 with 立即重新连接 while connected but suspect", () => {
       setup([filesTab]);
       expect(bar()?.textContent).toContain("连接不稳定");
       expect(bar()?.getAttribute("data-state")).toBe("connected");
       const buttons = [...mounted!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
-      expect(buttons).toEqual(["立即重连"]);
+      expect(buttons).toEqual(["立即重新连接"]);
     });
 
     it("stays hidden for a connected session whose liveness is alive", () => {
@@ -143,7 +143,7 @@ describe("WorkspaceConnectionBar", () => {
 
     it("reconnects without a confirm when the workspace has no ordinary terminals", async () => {
       setup([filesTab, durableTerm]);
-      clickButton(mounted!.container, "立即重连");
+      clickButton(mounted!.container, "立即重新连接");
       await flush();
       expect(mocks.confirm).not.toHaveBeenCalled();
       expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
@@ -151,16 +151,16 @@ describe("WorkspaceConnectionBar", () => {
 
     it("warns before reconnecting when an ordinary terminal would be dropped", async () => {
       setup([durableTerm, ordinaryTerm]);
-      clickButton(mounted!.container, "立即重连");
+      clickButton(mounted!.container, "立即重新连接");
       await flush();
-      expect(mocks.confirm).toHaveBeenCalledWith("普通终端会断开，正在运行的程序会结束");
+      expect(mocks.confirm).toHaveBeenCalledWith("临时终端会断开，正在运行的程序会结束");
       expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
     });
 
     it("does not reconnect when the warning is declined", async () => {
       mocks.confirm.mockResolvedValue(false);
       setup([ordinaryTerm]);
-      clickButton(mounted!.container, "立即重连");
+      clickButton(mounted!.container, "立即重新连接");
       await flush();
       expect(mocks.confirm).toHaveBeenCalledTimes(1);
       expect(mocks.reconnect).not.toHaveBeenCalled();

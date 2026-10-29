@@ -44,7 +44,7 @@ const USER_B: AccountUser = {
 };
 const CLEANUP_ERROR = {
 	code: "cleanup_failed",
-	message: "已退出登录；设备清理未完成：终端 t1 关闭失败（超时：等待超过 8 秒）。服务端已收到退出请求，并按原会话触发补充清理。",
+	message: "已退出登录；设备清理未完成：终端 t1 关闭失败（超时：等待超过 8 秒）。服务端已收到退出请求，并将按原会话补充清理。",
 };
 
 let mounted: MountedView | null = null;
@@ -84,7 +84,7 @@ describe("AuthCard cleanup evidence", () => {
 		mountCard();
 		await flush();
 		const alert = mounted!.container.querySelector("[role=alert]");
-		expect(alert?.textContent).toContain("cleanup_failed");
+		expect(alert?.textContent).toContain("设备清理未完成");
 		expect(alert?.textContent).toContain("t1");
 		expect(alert?.textContent).toContain("8 秒");
 		expect(alert?.textContent).toContain("补充清理");
@@ -111,7 +111,7 @@ describe("AuthCard cleanup evidence", () => {
 		await flush();
 		expect(useAuth.getState().error).toBeNull();
 		alert = mounted!.container.querySelector("[role=alert]");
-		expect(alert?.textContent).toContain("cleanup_failed");
+		expect(alert?.textContent).toContain("设备清理未完成");
 		expect(alert?.textContent).toContain("补充清理");
 		expect(useAuth.getState().cleanupError).toEqual(CLEANUP_ERROR);
 	});

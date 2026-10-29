@@ -1,16 +1,12 @@
 import { IconShield, IconClose, IconRefresh, IconList } from "../../../ui/icons";
 import { GrantPanel } from "../GrantPanel";
 import { useUi } from "../../../app/store";
-import { CronPanel } from "../CronPanel";
-import { AgentRosterPanel } from "../AgentRosterPanel";
-import { AgentRunHistoryPanel } from "../AgentRunHistoryPanel";
-import { WatchPanel } from "../WatchPanel";
-import { watchPanelApi } from "../../../ipc/watchApi";
 import { MODE_OPTIONS, PLAN_MODE_HINT } from "./aiSidebarShared";
+import { BackgroundTasksPanel } from "./BackgroundTasksPanel";
 import type { AiChatCtx } from "./aiChatCtx";
 
 export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
-  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, cronOpen, conversationId, activeWorkspace, setCronOpen, agentOpen, agentRosterApi, mentionAgentHandle, openAgentTerminal, agentHistoryApi, agentOwnerId, watchOpen, watchOwner, setWatchOpen } = ctx;
+  const { permOpen, setPermOpen, permError, loadPermission, perm, permScope, permDeviceOverride, followGlobalMode, switchMode, planMode, setPlanMode, aiScopeAssetId, tasksOpen } = ctx;
   return (
     <>
       {permOpen && (
@@ -21,7 +17,8 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
             <span className="nx-spacer" />
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="关闭"
+              title="关闭 AI 权限面板"
+              aria-label="关闭 AI 权限面板"
               onClick={() => setPermOpen(false)}
             >
               <IconClose size={11} />
@@ -30,24 +27,24 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
 
           {permError ? (
             <div className="px-2 py-3 text-center" role="alert">
-              <div className="nx-hint text-red-300">权限读取失败 · {permError}</div>
+              <div className="nx-hint text-red-300">未能读取权限设置：{permError}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void loadPermission()}>
                 <IconRefresh size={11} />
                 重试
               </button>
             </div>
           ) : !perm ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11px]">权限读取中…</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11px]">正在读取权限设置…</div>
           ) : (
             <>
               <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
-                {permScope ? "这台主机的模式" : "默认模式"}
+                {permScope ? "当前主机的模式" : "默认模式"}
                 <span className="nx-spacer" />
                 {permScope &&
                   (permDeviceOverride ? (
                     <button
                       className="text-[10.5px] text-neutral-500 hover:text-neutral-300"
-                      title="清除这台主机的专属模式，改用全局默认模式"
+                      title="清除当前主机的专属模式，改用全局默认模式"
                       onClick={followGlobalMode}
                     >
                       改为跟随全局
@@ -86,7 +83,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
                   <IconList size={12} />
                 </span>
                 <span className="nx-menu-label">计划模式</span>
-                <span className="nx-menu-hint">{planMode ? "已开启：先给方案，你确认后再执行" : "已关闭"}</span>
+                <span className="nx-menu-hint">{planMode ? "已开启：先提供方案，确认后再执行" : "已关闭"}</span>
               </button>
 
               <div className="mb-1 border-t border-neutral-800/60 pt-2 text-[11px] text-neutral-300">免确认授权</div>
@@ -120,39 +117,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
         </div>
       )}
 
-      {cronOpen && conversationId && (
-        <CronPanel
-          conversationId={conversationId}
-          hostName={activeWorkspace?.kind === "session" ? activeWorkspace.title : undefined}
-          onClose={() => setCronOpen(false)}
-        />
-      )}
-
-      {agentOpen && conversationId && agentRosterApi && (
-        // Keyed by conversation: a switch remounts both panels, so the first
-        // committed frame of the new conversation can never show, and the
-        // composer can never mention, the previous conversation's rows —
-        // regardless of how the new conversation's load settles or fails.
-        <>
-          <AgentRosterPanel
-            key={`roster-${conversationId}`}
-            api={agentRosterApi}
-            onMention={mentionAgentHandle}
-            onOpened={openAgentTerminal}
-          />
-          <AgentRunHistoryPanel
-            key={`history-${conversationId}`}
-            api={agentHistoryApi}
-            scope={{ ownerId: agentOwnerId, conversationId }}
-          />
-        </>
-      )}
-
-      {watchOpen && (
-        <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60">
-          <WatchPanel api={watchPanelApi} owner={watchOwner} onClose={() => setWatchOpen(false)} />
-        </div>
-      )}
+      {tasksOpen && <BackgroundTasksPanel key={ctx.conversationId ?? "none"} ctx={ctx} />}
     </>
   );
 }

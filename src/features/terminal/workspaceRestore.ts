@@ -41,11 +41,11 @@ export function classifyRestoredWorkspace(workspace: Workspace): WorkspaceRestor
   const containerExecSkipped = tabs.some((tab) => tab.kind === "terminal" && Boolean(tab.containerId));
   const restorableTabs = tabs.filter((tab) => tab.kind !== "terminal" || !tab.containerId);
   let skipReason: string | undefined;
-  if (workspace.kind === "db") skipReason = "数据库工作区请在原工作区手动重连";
+  if (workspace.kind === "db") skipReason = "数据库工作区请在原工作区手动重新连接";
   else if (workspace.kind !== "session") skipReason = "不是主机工作区";
   else if (workspace.deletedTarget) skipReason = "原资产已删除";
   else if (tabs.length === 0) skipReason = "空工作区无需重新连接";
-  else if (restorableTabs.length === 0) skipReason = "容器 exec 不会自动重新执行";
+  else if (restorableTabs.length === 0) skipReason = "容器内命令不会自动重新打开";
   else if (!workspace.assetId && !workspace.quickTarget && workspace.assetKind !== "local") {
     skipReason = "缺少可恢复的主机目标";
   }
@@ -119,10 +119,10 @@ export async function reconnectRestoredWorkspaces(
         if (outcome.ok) {
           setRestoreResult(epoch, candidate.workspaceId, {
             status: "success",
-            detail: candidate.containerExecSkipped ? "主机已连接；容器 exec 标签未重新执行" : undefined,
+            detail: candidate.containerExecSkipped ? "主机已连接；容器内命令标签页未重新打开" : undefined,
           });
         } else if (outcome.canceled) {
-          setRestoreResult(epoch, candidate.workspaceId, { status: "canceled", detail: "用户取消" });
+          setRestoreResult(epoch, candidate.workspaceId, { status: "canceled", detail: "已取消" });
         } else {
           setRestoreResult(epoch, candidate.workspaceId, {
             status: "failed",

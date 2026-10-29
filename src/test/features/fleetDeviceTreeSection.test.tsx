@@ -383,7 +383,7 @@ describe("Asset tree device rows - rows only", () => {
     expect(deviceRow("web-01").getAttribute("role")).toBe("treeitem");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
     expect(document.querySelector('button[aria-label="刷新设备列表"]')).toBeNull();
-    for (const hint of ["设备列表加载中", "设备列表加载失败", "还没有接入设备", "设备都不在线"]) {
+    for (const hint of ["设备列表加载中", "设备列表加载失败", "暂无已接入的设备", "设备都不在线"]) {
       expect(tree().textContent ?? "").not.toContain(hint);
     }
   });
@@ -435,7 +435,7 @@ describe("Asset tree device rows - rows only", () => {
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices" && c.method === "GET"));
     await flush();
 
-    expect(tree().textContent ?? "").not.toContain("还没有接入设备");
+    expect(tree().textContent ?? "").not.toContain("暂无已接入的设备");
     expect(document.querySelector('[role="group"][aria-label="设备"]')).toBeNull();
   });
 
@@ -496,7 +496,7 @@ describe("Asset tree device rows - row behavior", () => {
     expect(offline.textContent).toContain("离线");
     expect(offline.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
     expect(noAgent.getAttribute("aria-disabled")).toBe("true");
-    expect(noAgent.textContent).toContain("未接入 Agent");
+    expect(noAgent.textContent).toContain("未安装设备代理");
     expect(noAgent.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
 
     const noTerm = deviceRow("noterm-01");
@@ -520,33 +520,23 @@ describe("Asset tree device rows - row behavior", () => {
     expect(deviceWorkspace()).toBeUndefined();
   });
 
-  it("keeps a revoked device visible for details while preventing connections and duplicate revoke", async () => {
-    const calls = route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
+  it("does not list revoked devices in the tree", async () => {
+    route({ devices: [ONLINE_DEVICE, REVOKED_DEVICE] });
     seedUser(SUPERADMIN);
     mountTree();
-    await flushUntil(() => document.body.textContent?.includes("old-laptop") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    expect(tree().textContent).not.toContain("old-laptop");
+    expect(tree().textContent).not.toContain("已撤销接入");
+  });
 
-    const revoked = deviceRow("old-laptop");
-    expect(revoked.textContent).toContain("已吊销");
-    expect(revoked.getAttribute("aria-disabled")).toBe("true");
-    expect(revoked.querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
-    click(revoked);
-    keydown(revoked, "Enter");
-    expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
-    openDeviceMenu("old-laptop");
-    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    const items = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")];
-    expect(items.find((item) => item.textContent?.includes("打开工作区"))?.disabled).toBe(true);
-    expect(items.some((item) => item.textContent?.includes("详情"))).toBe(true);
-    expect(items.some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
-    const openTabs = () => useUi.getState().workspaces.flatMap((workspace) => workspace.panes.flatMap((pane) => pane.tabs));
-    clickDeviceMenuItem("主机详情");
-    expect(openTabs().find((tab) => tab.kind === "host")?.assetId).toBe("device/d-4");
-    openDeviceMenu("old-laptop");
-    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("设备管理");
-    expect(openTabs().some((tab) => tab.kind === "devices")).toBe(true);
-    expect(calls.some((call) => call.url.includes("/revoke"))).toBe(false);
+  it("renders no device rows when every device is revoked", async () => {
+    const calls = route({ devices: [REVOKED_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => calls.some((c) => c.url === "/fleet/devices"));
+    await flush();
+    expect(tree().textContent).not.toContain("old-laptop");
+    expect(tree().textContent).not.toContain("已撤销接入");
   });
 
   it("keeps device management actions in the context menu", async () => {
@@ -560,7 +550,7 @@ describe("Asset tree device rows - row behavior", () => {
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
     expect(document.body.textContent).toContain("详情");
     const revokeItem = [...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].find((b) =>
-      b.textContent?.includes("吊销"),
+      b.textContent?.includes("撤销接入"),
     );
     expect(revokeItem?.classList.contains("is-danger")).toBe(true);
   });
@@ -591,7 +581,7 @@ describe("Asset tree device rows - row behavior", () => {
       vi.advanceTimersByTime(100);
       row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(document.body.textContent).toContain("吊销");
+    expect(document.body.textContent).toContain("撤销接入");
     expect(mocks.sessionConnectDevice).not.toHaveBeenCalled();
 
     act(() => {
@@ -633,7 +623,7 @@ describe("Asset tree device rows - row behavior", () => {
 });
 
 describe("Asset tree device rows - automatic convergence", () => {
-  it("polls every 60 seconds on WEB and shows devices revoked elsewhere as disabled", async () => {
+  it("polls every 60 seconds on WEB and drops devices revoked elsewhere", async () => {
     vi.useFakeTimers();
     let devices: unknown[] = [ONLINE_DEVICE];
     const calls: RecordedCall[] = [];
@@ -656,13 +646,12 @@ describe("Asset tree device rows - automatic convergence", () => {
     const deviceFetches = () => calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
     const before = deviceFetches();
 
-    // After a revoke elsewhere, the next 60s poll preserves the row and disables its terminal action.
+    // After a revoke elsewhere, the next 60s poll removes the row.
     devices = [{ ...ONLINE_DEVICE, revoked_at: NOW - 60_000 }];
     await act(async () => {
       await vi.advanceTimersByTimeAsync(61_000);
     });
-    await flushUntil(() => deviceRow("web-01").textContent?.includes("已吊销") ?? false);
-    expect(deviceRow("web-01").getAttribute("aria-disabled")).toBe("true");
+    await flushUntil(() => !(document.body.textContent?.includes("web-01") ?? false));
     expect(deviceFetches()).toBeGreaterThan(before);
   });
 
@@ -718,7 +707,7 @@ describe("Asset tree device rows - automatic convergence", () => {
 });
 
 describe("Asset tree device rows - two-step revoke confirmation", () => {
-  it("revokes only after both warnings are confirmed and leaves the disabled device visible", async () => {
+  it("revokes only after both warnings are confirmed and removes the row immediately", async () => {
     const calls = route({ devices: [ONLINE_DEVICE, SECOND_ONLINE] });
     mocks.ask.mockResolvedValue(true);
     seedUser(SUPERADMIN);
@@ -727,19 +716,16 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => calls.some((c) => c.url === "/fleet/devices/d-1/revoke" && c.method === "POST"));
-    await flushUntil(() => deviceRow("web-01").textContent?.includes("已吊销") ?? false);
+    await flushUntil(() => !(tree().textContent ?? "").includes("web-01"));
 
     expect(mocks.ask).toHaveBeenCalledTimes(2);
     expect(String(mocks.ask.mock.calls[0]?.[1]?.kind)).toBe("warning");
     expect(String(mocks.ask.mock.calls[1]?.[1]?.kind)).toBe("warning");
-    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("凭证立即失效");
-    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("设备仍显示为已吊销但无法连接");
-    expect(deviceRow("web-01").querySelector<HTMLButtonElement>(".nx-row-actions button")?.disabled).toBe(true);
-    openDeviceMenu("web-01");
-    await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    expect([...document.querySelectorAll<HTMLButtonElement>(".nx-menu-item")].some((item) => item.querySelector(".nx-menu-label")?.textContent === "吊销")).toBe(false);
+    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("撤销后无法恢复");
+    expect(String(mocks.ask.mock.calls[1]?.[0])).toContain("撤销后无法恢复");
+    expect(tree().textContent).not.toContain("web-01");
     expect(tree().textContent).toContain("nas-01");
   });
 
@@ -752,7 +738,7 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
@@ -769,7 +755,7 @@ describe("Asset tree device rows - two-step revoke confirmation", () => {
 
     openDeviceMenu("web-01");
     await flushUntil(() => document.querySelector(".nx-menu-item") !== null);
-    clickDeviceMenuItem("吊销");
+    clickDeviceMenuItem("撤销接入");
     await flushUntil(() => mocks.ask.mock.calls.length === 2);
     await flush();
     expect(calls.some((c) => c.url.includes("/revoke"))).toBe(false);

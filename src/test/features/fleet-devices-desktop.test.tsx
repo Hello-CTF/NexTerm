@@ -225,7 +225,7 @@ describe("Device management - desktop logged in", () => {
     );
     await flushUntil(() => document.body.textContent?.includes("共 0 台") ?? false);
     await flushUntil(() => mocks.devices.mock.calls.length >= 2);
-    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("还没有资产") ?? false);
+    await flushUntil(() => document.querySelector('[role="tree"]')?.textContent?.includes("暂无资产") ?? false);
     await flush();
     expect(document.querySelector('[role="tree"]')?.textContent ?? "").not.toContain("web-01");
 
@@ -292,16 +292,15 @@ describe("Device management - desktop logged in", () => {
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
     await flushUntil(() => mocks.serverVersion.mock.calls.length === 1);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("desk-code-1") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("install-device.sh") ?? false);
 
     expect(mocks.issueEnrollCode).toHaveBeenCalledWith(15 * 60_000);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("完成后不再显示");
-    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
-    expect(text).toContain("install-device.sh");
+    expect(text).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
     expect(text).toContain("--version '1.2.3'");
-    expect(text).toContain("install-device.ps1");
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Windows") as HTMLButtonElement);
+    expect(document.body.textContent).toContain("install-device.ps1");
+    expect(document.body.textContent).toContain("-Version '1.2.3'");
   });
 
   it("requires confirmation to revoke a device, then uses remote revoke and refreshes the list", async () => {

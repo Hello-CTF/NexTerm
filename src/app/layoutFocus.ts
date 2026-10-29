@@ -58,10 +58,9 @@ export interface DeviceLayoutSource {
   aiBoards: Record<string, AiBoard>;
 }
 
-// normalizeLeftMode reads a stored left dock mode. The retired "files" mode and anything unknown fall back to the asset
-// tree.
+// normalizeLeftMode reads a stored left dock mode; the legacy "files" value and anything unknown fall back to the asset tree.
 export function normalizeLeftMode(raw: unknown): LeftMode {
-  return raw === "credentials" ? "credentials" : "assets";
+  return raw === "credentials" ? raw : "assets";
 }
 
 function reference(id: string, key: string): FocusReference {
@@ -131,12 +130,12 @@ function isNullableReference(value: unknown): value is FocusReference | null {
 
 function validDeviceLayout(value: unknown): value is DeviceLayoutState {
   if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<DeviceLayoutState>;
+  // A device layout saved by an older build may hold the retired "files" mode; normalizeLeftMode maps it.
+  const candidate = value as Omit<Partial<DeviceLayoutState>, "leftMode"> & { leftMode?: string };
   return (
     candidate.v === 1 &&
     typeof candidate.leftOpen === "boolean" &&
-    // "files" is still accepted from layouts saved with the retired file tree mode and read back as "assets".
-    (candidate.leftMode === "assets" || (candidate.leftMode as string) === "files" || candidate.leftMode === "credentials") &&
+    (candidate.leftMode === "assets" || candidate.leftMode === "files" || candidate.leftMode === "credentials") &&
     typeof candidate.rightOpen === "boolean" &&
     typeof candidate.leftWidth === "number" && Number.isFinite(candidate.leftWidth) &&
     typeof candidate.rightWidth === "number" && Number.isFinite(candidate.rightWidth) &&

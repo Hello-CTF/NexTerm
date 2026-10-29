@@ -1,8 +1,8 @@
-import { IconSearch, IconClock, IconBot, IconMonitor, IconHistory, IconPlus, IconChevronUp, IconChevronDown, IconClose, IconRefresh, IconTrash } from "../../../ui/icons";
+import { IconSearch, IconClock, IconHistory, IconChevronUp, IconChevronDown, IconClose, IconRefresh, IconTrash } from "../../../ui/icons";
 import type { AiChatCtx } from "./aiChatCtx";
 
 export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
-  const { searchOpen, setSearchOpen, cronOpen, conversationId, setCronOpen, agentOpen, setAgentOpen, watchOpen, setWatchOpen, historyOpen, toggleHistory, newConversation, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, loadConversations, conversations, openConversation, runStatusByConv, deleteConversation } = ctx;
+  const { searchOpen, setSearchOpen, backgroundTaskTotal, tasksOpen, setTasksOpen, historyOpen, toggleHistory, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, loadConversations, conversations, openConversation, runStatusByConv, deleteConversation } = ctx;
   return (
     <>
       <div className="flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 [@media(max-height:480px)]:h-7">
@@ -10,52 +10,33 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
         <button
           className={`nx-icon-btn nx-icon-btn-sm ${searchOpen ? "is-active" : ""}`}
           title="搜索对话内容"
+          aria-label="搜索对话内容"
           aria-expanded={searchOpen}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={14} />
         </button>
+        {(backgroundTaskTotal > 0 || tasksOpen) && (
+          <button
+            className={`nx-btn nx-btn-ghost nx-btn-xs ${tasksOpen ? "is-active" : ""}`}
+            title="AI 创建的后台任务（定时任务、监视、子代理），可在此查看和停止"
+            aria-label={`后台任务，共 ${backgroundTaskTotal} 项`}
+            aria-expanded={tasksOpen}
+            onClick={() => setTasksOpen((v) => !v)}
+          >
+            <IconClock size={13} />
+            后台任务
+            <span className="nx-badge nx-badge-amber">{backgroundTaskTotal}</span>
+          </button>
+        )}
         <button
-          className={`nx-icon-btn nx-icon-btn-sm ${cronOpen ? "is-active" : ""}`}
-          title={
-            conversationId
-              ? "当前会话的定时任务"
-              : "定时任务挂在会话上：先发送消息开始一个会话"
-          }
-          disabled={!conversationId}
-          onClick={() => setCronOpen((v) => !v)}
-        >
-          <IconClock size={14} />
-        </button>
-        <button
-          className={`nx-icon-btn nx-icon-btn-sm ${agentOpen ? "is-active" : ""}`}
-          title={
-            conversationId
-              ? "当前会话的 Agent 句柄与 run 历史"
-              : "Agent 句柄挂在会话上：先发送消息开始一个会话"
-          }
-          disabled={!conversationId}
-          onClick={() => setAgentOpen((v) => !v)}
-        >
-          <IconBot size={14} />
-        </button>
-        <button
-          className={`nx-icon-btn nx-icon-btn-sm ${watchOpen ? "is-active" : ""}`}
-          title="Watch 监视"
-          aria-expanded={watchOpen}
-          onClick={() => setWatchOpen((v) => !v)}
-        >
-          <IconMonitor size={14} />
-        </button>
-        <button
-          className={`nx-icon-btn nx-icon-btn-sm ${historyOpen ? "is-active" : ""}`}
+          className={`nx-btn nx-btn-ghost nx-btn-xs ${historyOpen ? "is-active" : ""}`}
           title="历史会话"
+          aria-expanded={historyOpen}
           onClick={toggleHistory}
         >
-          <IconHistory size={14} />
-        </button>
-        <button className="nx-icon-btn nx-icon-btn-sm" title="新建会话" onClick={newConversation}>
-          <IconPlus size={14} />
+          <IconHistory size={13} />
+          历史
         </button>
       </div>
 
@@ -117,10 +98,10 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
       {historyOpen && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-1.5">
           {historyStatus === "loading" ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">历史会话加载中…</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">正在加载历史会话…</div>
           ) : historyStatus === "error" ? (
             <div className="px-2 py-3 text-center">
-              <div className="nx-hint text-red-300">历史会话加载失败 · {historyError}</div>
+              <div className="nx-hint text-red-300">未能加载历史会话：{historyError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void loadConversations()}
@@ -130,7 +111,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
               </button>
             </div>
           ) : conversations.length === 0 ? (
-            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">还没有历史会话</div>
+            <div className="nx-hint px-2 py-3 text-center text-[11.5px]">尚无历史会话</div>
           ) : (
             conversations.map((c) => (
               <div key={c.id} className="flex items-center gap-0.5">
@@ -147,7 +128,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
                 {runStatusByConv[c.id] && (
                   <span
                     className={`nx-badge shrink-0 ${runStatusByConv[c.id] === "running" ? "nx-badge-amber" : "nx-badge-purple"}`}
-                    title={runStatusByConv[c.id] === "running" ? "这个会话有正在运行的 AI 任务" : "这个会话有中断待恢复的 AI 任务"}
+                    title={runStatusByConv[c.id] === "running" ? "此会话有正在运行的 AI 任务" : "此会话有被中断、待恢复的 AI 任务"}
                   >
                     {runStatusByConv[c.id] === "running" ? "运行中" : "待恢复"}
                   </span>

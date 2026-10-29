@@ -266,7 +266,7 @@ describe("command palette asset secondary actions", () => {
 
     setInputValue(searchInput(mounted!.container), "web-01");
     expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
-    for (const label of ["编辑资产 web-01", "克隆资产 web-01", "隐藏资产 web-01"]) {
+    for (const label of ["编辑资产 web-01", "复制资产 web-01", "隐藏资产 web-01"]) {
       expect(optionByText(mounted!.container, label)).toBeTruthy();
     }
   });
@@ -314,8 +314,8 @@ describe("command palette asset secondary actions", () => {
     await mountPalette({ onClose: vi.fn() });
     expect(hostOption(mounted!.container, "web-01")).toBeTruthy();
 
-    setInputValue(searchInput(mounted!.container), "克隆资产 web-01");
-    click(optionByText(mounted!.container, "克隆资产 web-01"));
+    setInputValue(searchInput(mounted!.container), "复制资产 web-01");
+    click(optionByText(mounted!.container, "复制资产 web-01"));
     await waitForRendered(() => expect(mocks.create).toHaveBeenCalled());
     expect(mocks.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: "web-01 副本", credId: "cred-1", keyPath: null }),
@@ -454,7 +454,7 @@ describe("command palette workspace actions", () => {
       expect(mounted!.container.textContent).not.toContain("打开后台会话");
 
       expect(allTabs().filter((tab) => tab.kind === "forward" || tab.kind === "background")).toEqual([]);
-      expect(mocks.toast).toHaveBeenCalledWith("info", "先连接一台主机（双击左侧资产）");
+      expect(mocks.toast).toHaveBeenCalledWith("info", "请先连接主机（双击左侧资产）");
     },
   );
 
@@ -567,12 +567,12 @@ describe("command palette tab-to-new-pane actions", () => {
     await mountPalette({ onClose: vi.fn() });
     click(optionByText(mounted!.container, "移到右侧新窗格"));
     expect(panes()).toHaveLength(1);
-    expect(mocks.toast).toHaveBeenLastCalledWith("info", expect.stringContaining("只有这一个标签"));
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", expect.stringContaining("只有一个标签页"));
     mounted?.unmount();
 
     setPaneTabs([], null);
     await mountPalette({ onClose: vi.fn() });
     click(optionByText(mounted!.container, "移到下方新窗格"));
-    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格没有标签");
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", "当前窗格无标签页");
   });
 });

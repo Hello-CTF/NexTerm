@@ -5,7 +5,7 @@ import { baseName } from "../../features/files/pathUtils";
 import { focusedActiveWorkspace, focusedWorkspaces } from "../projectFocus";
 import { regularTerminalReason } from "./durableReadiness";
 import { isWorkspaceToolTab, nextTabId } from "./model";
-import type { AppTab, SessionRuntimeInfo, UiState, Workspace } from "./types";
+import type { AppTab, LeftMode, SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { useUi } from "./useUi";
 import { clipText } from "../../ui/textClip";
 
@@ -251,18 +251,6 @@ export function openFileTabInSplit(sessionId: string, path: string) {
   useUi.getState().openInLowerPane(fileTabSpec(sessionId, path, baseName(path)));
 }
 
-// openDirectoryTab opens a file browser tab at a directory of the session.
-export function openDirectoryTab(sessionId: string, path: string) {
-  useUi.getState().addTab({
-    id: nextTabId(`files-${sessionId}`),
-    kind: "files",
-    title: baseName(path) || path,
-    sessionId,
-    directory: path,
-    closable: true,
-  });
-}
-
 export function openLogTab(sessionId: string, path: string) {
   useUi.getState().addTab({
     id: `log-${sessionId}-${path}`,
@@ -285,10 +273,33 @@ function fileTabSpec(sessionId: string, path: string, name: string): AppTab {
   };
 }
 
-export function openCredentialsSidebar() {
+// isHostWorkspace reports whether the workspace is a session workspace, whose sidebar defaults to its file tree.
+export function isHostWorkspace(ws: Workspace | null | undefined): boolean {
+  return ws?.kind === "session" && Boolean(ws.sessionId);
+}
+
+// showLeftPanel is the asset/credentials switch of the left sidebar. In a host workspace it is a temporary override,
+// and a click on the already active button while the dock is open reverts to the file tree; elsewhere it sets the
+// persisted choice. dockOpen is whether the dock is visible now; the return value says whether the caller should
+// open the dock.
+export function showLeftPanel(mode: LeftMode, dockOpen = true): boolean {
   const st = useUi.getState();
-  st.setLeftMode("credentials");
-  st.setLeftOpen(true);
+  const ws = st.workspaces.find((w) => w.id === st.activeWorkspaceId);
+  if (!isHostWorkspace(ws)) {
+    st.setLeftMode(mode);
+    st.setLeftOverride(null);
+    return true;
+  }
+  if (st.leftOverride === mode && dockOpen) {
+    st.setLeftOverride(null);
+    return false;
+  }
+  st.setLeftOverride(mode);
+  return true;
+}
+
+export function openCredentialsSidebar() {
+  if (showLeftPanel("credentials", useUi.getState().leftOpen)) useUi.getState().setLeftOpen(true);
 }
 
 export function openCredentialsTab(credId?: string) {

@@ -55,36 +55,6 @@ export interface AgentRosterEntry {
 
 export type AgentRunState = "queued" | "running" | "idle" | "done" | "error" | "canceled";
 
-export interface AgentRunHistoryEntry {
-  runId: string;
-  state: AgentRunState;
-  evidence: AgentEvidence | null;
-  startedAt: number;
-  finishedAt: number | null;
-  summary: string;
-}
-
-// One backend page of run history. nextCursor is opaque to the UI: it is
-// passed back verbatim to fetch the next older page, and null means the
-// backend has no more history. The UI never slices pages in memory.
-export interface AgentRunHistoryPage {
-  entries: AgentRunHistoryEntry[];
-  nextCursor: string | null;
-}
-
-export type AgentRunStatusFilter = "all" | AgentRunState;
-
-// Recovery summary reported by the backend after restoring a conversation's
-// runs: how many were restored, which run can resume, which were interrupted,
-// and whether restoration was truncated (more runs exist than were restored).
-export interface AgentRecoverySummary {
-  conversationId: string;
-  restoredRuns: number;
-  resumableRunId: string | null;
-  interruptedRunIds: string[];
-  truncated: boolean;
-}
-
 export type AgentApprovalDecision = "approve_once" | "approve_session" | "approve_persistent" | "deny";
 
 export interface AgentApproval {

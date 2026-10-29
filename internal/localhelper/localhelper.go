@@ -628,8 +628,13 @@ func (s *Service) run() {
 		// Its terminals ended with it; the next durable terminal starts a
 		// new helper.
 		s.setWanted(false)
-		if quickExits > 0 && !s.pause(quickExits) {
-			return
+		if quickExits > 0 {
+			// The exited helper's provider must not stay offered as ready
+			// while the respawn backoff runs.
+			s.setStatus(Status{State: StateStarting, Reason: "本机持久组件已退出，正在重新启动"}, nil)
+			if !s.pause(quickExits) {
+				return
+			}
 		}
 	}
 }
@@ -660,7 +665,7 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	} else if running.PTYListed {
 		sessions = fmt.Sprintf("至少 %d 个终端会话（后台命令数未知）", status.ActiveSessions)
 	}
-	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用普通模式。重启组件会结束这些会话", running.Protocol, sessions)
+	status.Reason = fmt.Sprintf("本机持久组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用临时终端。重启组件会结束这些会话", running.Protocol, sessions)
 	return status
 }
 

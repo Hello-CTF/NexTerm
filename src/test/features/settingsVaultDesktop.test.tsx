@@ -144,7 +144,7 @@ describe("Desktop credential protection disable paths", () => {
     protectionToggle()!.click();
     await flushUntil(() => mocks.changePassword.mock.calls.length > 0);
 
-    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何拿到数据目录的人都能解密"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("任何获得数据目录的人均可解密"));
     expect(mocks.changePassword).toHaveBeenCalledWith("current-password", "");
     expect(mocks.initDpapi).not.toHaveBeenCalled();
     await flushUntil(() => mocks.toast.mock.calls.length > 0);
@@ -174,7 +174,7 @@ describe("Desktop credential protection disable paths", () => {
     click(buttonWithText(vaultCard()!, "修改密码")!);
     await flushUntil(() => passwordField(vaultCard()!, "当前密码") !== null);
     await submitPasswordForm(vaultCard()!, { current: "wrong-password", next: "new-password-1" }, "确认修改");
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("保护密码错误：incorrect protection password"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("保护密码不正确，请重新输入"));
 
     expect(mocks.unlock).toHaveBeenCalledWith("wrong-password");
     expect(mocks.changePassword).not.toHaveBeenCalled();
@@ -198,7 +198,7 @@ describe("Desktop passwordless vault", () => {
   it("shows encryption enabled without a password, with set-password primary and disable-encryption secondary actions", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设置密码"));
 
     const buttons = Array.from(vaultCard()?.querySelectorAll("button") ?? []).map(
       (b) => b.textContent,
@@ -213,7 +213,7 @@ describe("Desktop passwordless vault", () => {
   it("sets a new password with an empty old password without asking for the old password", async () => {
     mocks.vaultStatus.mockResolvedValue(PASSWORDLESS_SYSTEM_VAULT);
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设置密码"));
 
     click(buttonWithText(vaultCard()!, "设置密码")!);
     await flushUntil(() => passwordField(vaultCard()!, "新密码") !== null);
@@ -232,7 +232,7 @@ describe("Desktop passwordless vault", () => {
     const { ask, promptText } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(true);
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设置密码"));
 
     const offButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
       (b) => b.textContent === "关闭加密",
@@ -253,7 +253,7 @@ describe("Desktop passwordless vault", () => {
     const { ask } = await import("../../ui/dialogs");
     vi.mocked(ask).mockResolvedValue(false);
     mounted = withClient(createElement(SettingsView));
-    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设密码"));
+    await flushUntil(() => (vaultCard()?.textContent ?? "").includes("加密已启用 · 未设置密码"));
 
     const offButton = Array.from(vaultCard()?.querySelectorAll("button") ?? []).find(
       (b) => b.textContent === "关闭加密",

@@ -1,11 +1,41 @@
+import { useEffect, useState } from "react";
+import { modelApi } from "../../../ipc/commands";
 import { IconAlert, IconRefresh, IconBot, IconShield, IconInfo, IconList } from "../../../ui/icons";
 import { useUi } from "../../../app/store";
 import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, RULE_CAPABLE_TOOLS, permanentScopeText, interceptionRuleFromCard } from "./aiSidebarShared";
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
 import type { AiChatCtx } from "./aiChatCtx";
 
+// Onboarding: with no model profile the composer cannot work, so the empty
+// conversation says so and offers the next step.
+function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
+  const revision = useUi((s) => s.modelProfilesRevision);
+  const [none, setNone] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(modelApi.overview()).then(
+      (view) => {
+        if (alive) setNone((view?.profiles?.length ?? 1) === 0);
+      },
+      () => {},
+    );
+    return () => {
+      alive = false;
+    };
+  }, [revision]);
+  if (!none) return null;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <div className="text-xs text-amber-300">尚未配置模型，AI 暂时无法回答。</div>
+      <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={onConfigure}>
+        添加模型
+      </button>
+    </div>
+  );
+}
+
 export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
-  const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow } = ctx;
+  const { setScrollEl, messageWindowStart, loadOlderMessages, conv, conversationError, conversationIdRef, restoreConversation, virtual, activeMatchIndex, busy, handleApprovePlan, handleRetryRun, handleEditResend, agentToolCallFor, submitAgentApproval, submittingCardId, confirmCard, confirmCardRef, confirm, productionNames, handleProductionState, productionBlocked, questionCard, answer, questionInput, setQuestionInput, follow, setModelPanelOpen } = ctx;
   return (
     <>
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -27,7 +57,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconAlert size={19} />
               </span>
-              <div className="text-xs text-red-300">会话加载失败 · {conversationError}</div>
+              <div className="text-xs text-red-300">未能打开此会话：{conversationError}。请检查网络后重试</div>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 onClick={() => {
@@ -45,7 +75,8 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconBot size={19} />
               </span>
-              <div className="text-xs text-neutral-400">新建会话</div>
+              <div className="text-xs text-neutral-400">在下方输入内容，开始新的对话。</div>
+              <NoModelHint onConfigure={() => setModelPanelOpen(true)} />
             </div>
           )}
           {virtual.range.padTop > 0 && (
@@ -158,7 +189,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  title="拒绝后 AI 会收到「用户拒绝了此操作」（Esc）"
+                  title="拒绝本次操作，AI 将收到拒绝通知（Esc）"
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
@@ -177,7 +208,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                       ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                     }}
                   >
-                    以后都拦截
+                    始终拦截
                   </button>
                 )}
               </div>

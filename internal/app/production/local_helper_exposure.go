@@ -83,7 +83,7 @@ func localHelperExposureBlocked(ctx context.Context, helper *localhelper.Service
 		return "无法读取本机终端模式：" + err.Error()
 	}
 	if mode == "regular" {
-		return "本机终端为普通模式，不向服务器开放"
+		return "本机终端为临时终端，不向服务器开放"
 	}
 	return ""
 }

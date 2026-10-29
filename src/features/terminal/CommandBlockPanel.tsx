@@ -77,7 +77,7 @@ export function CommandBlockPanel({
     <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:absolute @max-[560px]:inset-x-0 @max-[560px]:bottom-0 @max-[560px]:z-10 @max-[560px]:h-[55%] @max-[560px]:w-auto @max-[560px]:border-t @max-[560px]:border-l-0 @max-[560px]:shadow-[0_-8px_24px_rgba(0,0,0,0.5)]">
       <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <IconList size={13} className="text-neutral-500" />
-        <span className="text-[11.5px] font-semibold text-neutral-200">命令块</span>
+        <span className="text-[11.5px] font-semibold text-neutral-200">命令列表</span>
         <span className="nx-count">{blocks.length}</span>
         <div className="nx-spacer" />
         <button
@@ -91,9 +91,9 @@ export function CommandBlockPanel({
 
       {blocks.length === 0 ? (
         <div className="nx-hint p-3">
-          还没有命令块。
+          暂无命令记录。
           <br />
-          在终端里执行命令后，每条命令会成为一个可折叠的块：可复制输出、可定位回终端。
+          在终端中执行命令后，可按命令复制输出或定位到终端中的位置。
         </div>
       ) : (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -132,7 +132,7 @@ export function CommandBlockPanel({
                       <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                         {b.command}
                         {!b.reliable && (
-                          <span className="ml-1 text-amber-300" title="命令含控制字符，识别出的文本可能不准确">
+                          <span className="ml-1 text-amber-300" title="命令包含控制字符，识别的文本可能不准确">
                             ?
                           </span>
                         )}
@@ -150,7 +150,7 @@ export function CommandBlockPanel({
                     <span className="mt-0.5 flex shrink-0 items-center gap-0.5">
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
-                        title="定位到此块"
+                        title="定位到此命令"
                         onClick={() => onLocate(b.index)}
                       >
                         <IconLocate size={11} />

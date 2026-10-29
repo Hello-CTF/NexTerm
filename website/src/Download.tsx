@@ -33,18 +33,18 @@ const text = {
   zh: {
     names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS", lazycat: "懒猫微服" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
-    detected: "已识别你的设备", choose: "选择其他系统",
+    detected: "已识别当前设备", choose: "选择其他系统",
     serverGuide: [
-      ["安装", "创建 nexterm 用户与目录，生成 master key，创建超管 admin 并在安装输出中打印一次初始密码（请立即记下，首次登录需修改），然后启动服务。"],
-      ["访问", "默认只监听 127.0.0.1:8080。在你的电脑上执行 ssh -L 8080:127.0.0.1:8080 用户@服务器，再打开 http://localhost:8080；公网访问请前置带 TLS 的反向代理。"],
+      ["安装", "创建 nexterm 用户与目录，生成 master key，创建超级管理员 admin 并在安装输出中打印一次初始密码（请立即记下，首次登录需修改），然后启动服务。"],
+      ["访问", "默认只监听 127.0.0.1:8080。在本机执行 ssh -L 8080:127.0.0.1:8080 用户@服务器，再打开 http://localhost:8080；公网访问请前置带 TLS 的反向代理。"],
       ["配置", "/etc/nexterm/nexterm.env，修改后执行 systemctl restart nexterm-server。默认 SQLite，也可切换 PostgreSQL / MySQL / MariaDB。请备份 /var/lib/nexterm 和 /etc/nexterm/master.key。"],
-      ["升级", "再次执行同一条命令即可升级，服务会短暂重启，配置和数据都会保留；需要撤销时加 --rollback。"],
+      ["升级", "再次执行同一条命令即可升级，服务会短暂重启，配置和数据都会保留；如需撤销，请添加 --rollback。"],
     ],
     download: "下载", testflight: "加入 TestFlight 测试", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
     copy: "复制", copied: "已复制",
     notes: {
       windows: "运行安装器即可。安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。",
-      macos: "打开后拖入「应用程序」。浏览器无法识别 Mac 芯片，Intel 机型请点上方的「Intel」。",
+      macos: "打开后拖入「应用程序」。浏览器无法识别 Mac 芯片，Intel 机型请选择上方的「Intel」。",
       linux: "需要 GTK 4.14+ 与 WebKitGTK 6.0；安装包声明了所需的最低 glibc，系统不满足时 apt 会拒绝安装。下载后执行：",
       server: "在带 systemd 的 Linux 服务器（amd64 / arm64；服务端可在任意基于 glibc 的 Linux 上运行，不支持 Alpine 等 musl 发行版；可选的本地 AI 脱敏运行库另需 glibc 2.27 或更新）上执行（需要 root 权限）：",
       android: "预览版，适用于 arm64 设备。",

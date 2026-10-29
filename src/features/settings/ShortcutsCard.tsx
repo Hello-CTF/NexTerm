@@ -64,7 +64,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
   };
 
   const resetAll = async () => {
-    const ok = await ask("恢复全部快捷键的默认设置？\n你自定义的所有快捷键都会被重置。", { title: "全部恢复默认", kind: "warning" });
+    const ok = await ask("确定要恢复全部快捷键的默认设置吗？\n所有自定义快捷键将被重置。", { title: "全部恢复默认", kind: "warning" });
     if (ok) resetAllKeybindings();
   };
 
@@ -179,7 +179,7 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        点击编辑图标后按下新组合键，按 Esc 取消，按 Backspace 或 Delete 清空；也可点击 × 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
+        单击编辑图标后按下新的组合键；按 Esc 取消，按 Backspace 或 Delete 清除，也可单击 × 清除。浏览器保留的组合键（如 Ctrl+T）在网页版中无法拦截。
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 @min-[640px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}
@@ -193,22 +193,22 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
                 `${conflict.actions[0].label}（${formatBinding(conflict.bindings[0])}）与 ${conflict.actions[1].label}（${formatBinding(conflict.bindings[1])}）重叠`,
             )
             .join("；")}
-          。使用相同快捷键时，排在前面的动作生效。
+          。使用相同快捷键时，排在前面的操作生效。
         </p>
       )}
       {terminalConflicts.length > 0 && (
         <div className="mt-4 border-t border-neutral-800/60 pt-3.5" data-testid="terminal-shortcut-conflicts">
           <div className="text-[12.5px] text-neutral-200">与终端按键的冲突</div>
           <p className="nx-hint mt-0.5 mb-2">
-            终端获得焦点时，下列组合键交给应用处理，终端里运行的程序收不到它们；需要把按键留给终端程序时，清除或改绑对应快捷键。
+            终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。
           </p>
           <div className="overflow-x-auto">
             <table className="nx-table text-[11.5px]" aria-label="与终端按键的冲突">
               <thead>
                 <tr>
                   <th scope="col">按键</th>
-                  <th scope="col">应用动作</th>
-                  <th scope="col">终端程序原本收到</th>
+                  <th scope="col">应用操作</th>
+                  <th scope="col">终端程序默认接收</th>
                 </tr>
               </thead>
               <tbody>
@@ -245,8 +245,8 @@ export function ShortcutsCard({ reveal }: { reveal?: { panel: SettingsPanelId; n
               <div className="min-w-0 flex-1">
                 <div className="text-[12.5px] text-neutral-200" data-setting="copy-on-select">选中自动复制</div>
                 <p className="nx-hint mt-0.5">
-                  在终端里选中文字后立即复制到剪贴板，成功或失败都会弹出提示；默认关闭。
-                  浏览器可能要求剪贴板权限，被拒绝时会如实提示。
+                  在终端中选中文字后立即复制到剪贴板，并提示复制结果；默认关闭。
+                  浏览器可能要求剪贴板权限，权限被拒绝时将显示提示。
                 </p>
               </div>
               <input

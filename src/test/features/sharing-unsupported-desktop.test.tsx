@@ -39,7 +39,7 @@ describe("Share card - desktop logged out", () => {
     expect(document.body.textContent).toContain("账号同步");
     expect(mocks.fetch).not.toHaveBeenCalled();
 
-    const guide = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("去设置"));
+    const guide = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("前往"));
     expect(guide).toBeTruthy();
     // The settings view opens the section's group before scrolling.
     const requested = vi.fn();

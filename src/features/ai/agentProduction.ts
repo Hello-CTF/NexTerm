@@ -1,5 +1,5 @@
 // Production wiring between the reviewed agent UI contracts and the real
-// generated IPC surface (ai_roster_*, ai_run_history, ai_run_recovery_summary).
+// generated IPC surface (ai_roster_*).
 // Every value crossing the seam is validated instead of cast; what the
 // backend cannot evidence stays unknown instead of being invented. Rename is
 // the M131 alias-only command under the exact durable identity CAS — the
@@ -10,7 +10,6 @@ import { assetApi, call, type AppError } from "../../ipc/commands";
 import type {
   RosterEntry,
   RosterListEntry,
-  RunHistoryEntry,
 } from "../../ipc/generated/types";
 import { assetEnvironment } from "../production/assetEnvironment";
 import {
@@ -19,19 +18,12 @@ import {
 } from "../production/productionSettings";
 import type {
   AgentRosterApi,
-  AgentRunHistoryApi,
-  AgentRunHistoryScope,
 } from "./agentApi";
 import type {
   AgentApprovalDecision,
   AgentEvidence,
   AgentPresence,
-  AgentRecoverySummary,
   AgentRosterEntry,
-  AgentRunHistoryEntry as AgentRunHistoryView,
-  AgentRunHistoryPage as AgentRunHistoryViewPage,
-  AgentRunState,
-  AgentRunStatusFilter,
 } from "./agentTypes";
 
 export interface AgentProductionIdentity {
@@ -83,15 +75,15 @@ function rosterEntryEvidence(
   observedAt: number,
 ): AgentEvidence | null {
   if (presence === "gone" && entry.state === "released" && entry.releasedAt !== null) {
-    return { kind: "release", observedAt: entry.releasedAt, summary: "句柄释放已确认（持久状态）" };
+    return { kind: "release", observedAt: entry.releasedAt, summary: "已确认释放" };
   }
   const label =
-    presence === "gone" ? "已消失" : presence === "replaced" ? "已被替换" : presence === "exited" ? "已退出" : null;
+    presence === "gone" ? "已不存在" : presence === "replaced" ? "已被替换" : presence === "exited" ? "已退出" : null;
   if (label === null) return null;
   if (PERSISTED_TERMINAL_STATES.has(entry.state)) {
-    return { kind: "reconcile", observedAt: entry.updatedAt, summary: `${label}（权威持久状态）` };
+    return { kind: "reconcile", observedAt: entry.updatedAt, summary: `${label}（已记录）` };
   }
-  return { kind: "reconcile", observedAt, summary: `${label}（运行时探测权威判定）` };
+  return { kind: "reconcile", observedAt, summary: `${label}（已检测确认）` };
 }
 
 interface RosterMappingContext {
@@ -140,7 +132,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
   const rawEntry = (handle: string): RosterListEntry => {
     const row = rawByHandle.get(handle);
     if (!row) {
-      throw unsupported(`句柄 ${handle} 不在当前句柄列表中，请先刷新`);
+      throw unsupported(`找不到子代理 ${handle}，请先刷新列表`);
     }
     return row;
   };
@@ -182,7 +174,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
     async open(handle: string): Promise<{ tabId: string }> {
       const row = rawEntry(handle);
       if (row.entry.tabId === "") {
-        throw unsupported(`句柄 ${handle} 没有可打开的终端标签`);
+        throw unsupported(`子代理 ${handle} 无可打开的终端标签页`);
       }
       return { tabId: row.entry.tabId };
     },
@@ -202,24 +194,24 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
           });
         }
         if (attachment.entry.tabId === "") {
-          throw unsupported(`句柄 ${handle} 已连接但没有可打开的终端标签`);
+          throw unsupported(`子代理 ${handle} 已连接，但无可打开的终端标签页`);
         }
         return { tabId: attachment.entry.tabId };
       }
       if (resolution === "nonpersistent") {
-        throw unsupported(`句柄 ${handle} 不是持久 roster 目标，无法附加`);
+        throw unsupported(`子代理 ${handle} 不在持久终端中，无法附加`);
       }
       const text =
         resolution === "disconnected"
-          ? "目标运行时已断开"
+          ? "终端已断开"
           : resolution === "gone"
-            ? "目标已消失（权威缺席）"
+            ? "终端已不存在"
             : resolution === "replaced"
-              ? "目标已被新化身替换"
+              ? "终端已被新会话替换"
               : resolution === "exited"
-                ? "目标终端已退出"
-                : "目标状态无法验证";
-      throw unsupported(`附加句柄 ${handle} 失败：${text}`);
+                ? "终端已退出"
+                : "无法确认终端状态";
+      throw unsupported(`未能附加子代理 ${handle}：${text}`);
     },
 
     // Alias-only rename through the real command: the permanent handle and
@@ -238,7 +230,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
       rawByHandle.set(handle, merged);
       const ctx = lastCtx;
       if (!ctx) {
-        throw unsupported("句柄列表上下文缺失，请刷新后重试");
+        throw unsupported("列表已过期，请刷新后重试");
       }
       return toRosterEntryView(merged, ctx);
     },
@@ -254,93 +246,6 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
 
     resolveApproval(requestId: string, decision: AgentApprovalDecision): Promise<void> {
       return deps.resolveApproval(requestId, decision);
-    },
-  };
-}
-
-const RUN_STATES: ReadonlySet<string> = new Set<AgentRunState>([
-  "queued",
-  "running",
-  "idle",
-  "done",
-  "error",
-  "canceled",
-]);
-
-const EVIDENCE_KINDS: ReadonlySet<string> = new Set<AgentEvidence["kind"]>([
-  "output",
-  "exit",
-  "attach",
-  "release",
-  "reconcile",
-  "watch",
-  "approval",
-]);
-
-function contractViolation(what: string, value: string): AppError {
-  return { code: "internal", message: `后端返回了无法识别的${what}：${value}` };
-}
-
-function toRunHistoryView(entry: RunHistoryEntry): AgentRunHistoryView {
-  if (!RUN_STATES.has(entry.state)) {
-    throw contractViolation(" run 状态", entry.state);
-  }
-  let evidence: AgentEvidence | null = null;
-  if (entry.evidence !== null) {
-    if (!EVIDENCE_KINDS.has(entry.evidence.kind)) {
-      throw contractViolation(" run 证据类型", entry.evidence.kind);
-    }
-    evidence = {
-      kind: entry.evidence.kind as AgentEvidence["kind"],
-      observedAt: entry.evidence.observedAt,
-      summary: entry.evidence.summary,
-    };
-  }
-  return {
-    runId: entry.runId,
-    state: entry.state as AgentRunState,
-    evidence,
-    startedAt: entry.startedAt,
-    finishedAt: entry.finishedAt,
-    summary: entry.summary,
-  };
-}
-
-// createAgentRunHistoryApi is the AI-05 production consumer: paging, status
-// filtering and the recovery summary stay backend-owned — the opaque cursor
-// is passed back verbatim and the UI never slices pages in memory.
-export function createAgentRunHistoryApi(): AgentRunHistoryApi {
-  return {
-    async listRuns(
-      scope: AgentRunHistoryScope,
-      filter: AgentRunStatusFilter,
-      cursor: string | null,
-      limit: number,
-    ): Promise<AgentRunHistoryViewPage> {
-      const page = await call("ai_run_history", {
-        conversationId: scope.conversationId,
-        filter,
-        cursor: cursor ?? "",
-        limit,
-      });
-      return {
-        entries: page.entries.map(toRunHistoryView),
-        nextCursor: page.nextCursor,
-      };
-    },
-
-    async recoverySummary(scope: AgentRunHistoryScope): Promise<AgentRecoverySummary | null> {
-      const summary = await call("ai_run_recovery_summary", {
-        conversationId: scope.conversationId,
-      });
-      if (summary === null) return null;
-      return {
-        conversationId: summary.conversationId,
-        restoredRuns: summary.restoredRuns,
-        resumableRunId: summary.resumableRunId,
-        interruptedRunIds: summary.interruptedRunIds,
-        truncated: summary.truncated,
-      };
     },
   };
 }

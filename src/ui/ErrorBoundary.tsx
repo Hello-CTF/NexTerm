@@ -50,7 +50,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               className="nx-btn nx-btn-ghost nx-btn-sm"
               onClick={this.props.onClose}
             >
-              关闭标签
+              关闭标签页
             </button>
           )}
         </div>

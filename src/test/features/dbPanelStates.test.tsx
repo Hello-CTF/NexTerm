@@ -131,14 +131,14 @@ describe("DbPanel MySQL states", () => {
   it("schema list failure shows the real error with a retry, not the no-tables state", async () => {
     mocks.schemas.mockRejectedValue(new Error("connection lost"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => text().includes("数据库列表加载失败 · connection lost"));
+    await flushUntil(() => text().includes("未能加载数据库列表：connection lost"));
     expect(text()).not.toContain("此数据库中没有表");
   });
 
   it("after retry it recovers; only a truly empty database shows the no-tables state", async () => {
     mocks.schemas.mockRejectedValueOnce(new Error("connection lost"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => text().includes("数据库列表加载失败"));
+    await flushUntil(() => text().includes("未能加载数据库列表"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("此数据库中没有表"));
     expect(mocks.schemas).toHaveBeenCalledTimes(2);
@@ -147,7 +147,7 @@ describe("DbPanel MySQL states", () => {
   it("table list failure shows an inline error and can be retried", async () => {
     mocks.tables.mockRejectedValueOnce(new Error("permission denied"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
-    await flushUntil(() => text().includes("表列表加载失败 · permission denied"));
+    await flushUntil(() => text().includes("未能加载表列表：permission denied"));
     expect(text()).not.toContain("此数据库中没有表");
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("此数据库中没有表"));
@@ -157,7 +157,7 @@ describe("DbPanel MySQL states", () => {
     mocks.tables.mockResolvedValue(["orders", "users"]);
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("users"));
-    expect(text()).not.toContain("表列表加载中");
+    expect(text()).not.toContain("表列表正在加载");
   });
 
   it("the toolbar exposes an accessible execution history button without a coming-soon placeholder", async () => {
@@ -196,14 +196,14 @@ describe("DbPanel Redis states", () => {
   it("SCAN failure shows the real error with a retry, not the no-keys state", async () => {
     mocks.redisScan.mockRejectedValue(new Error("LOADING error"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => text().includes("键列表加载失败 · LOADING error"));
+    await flushUntil(() => text().includes("未能加载键列表：LOADING error"));
     expect(text()).not.toContain("没有匹配的键");
   });
 
   it("after retry it recovers; only an empty result shows no matching keys", async () => {
     mocks.redisScan.mockRejectedValueOnce(new Error("LOADING error"));
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => text().includes("键列表加载失败"));
+    await flushUntil(() => text().includes("未能加载键列表"));
     clickButton(mounted!.container, "重试");
     await flushUntil(() => text().includes("没有匹配的键"));
     expect(mocks.redisScan).toHaveBeenCalledTimes(2);
@@ -219,13 +219,13 @@ describe("DbPanel Redis states", () => {
     );
     expect(row).toBeTruthy();
     click(row!);
-    await flushUntil(() => text().includes("键内容加载失败 · WRONGTYPE"));
-    expect(text()).not.toContain("从左侧选一个键查看内容");
+    await flushUntil(() => text().includes("未能加载键内容：WRONGTYPE"));
+    expect(text()).not.toContain("请选择左侧的键以查看内容");
     mocks.redisInspect.mockResolvedValue({ key: "k1", keyType: "string", ttl: -1, value: "v" });
     clickButton(mounted!.container, "重试");
     await flushUntil(
       () =>
-        !text().includes("键内容加载失败") &&
+        !text().includes("未能加载键内容") &&
         (mounted!.container.querySelector(".nx-pre")?.textContent ?? "").includes('"v"'),
     );
   });
@@ -243,8 +243,8 @@ describe("DbPanel Redis states", () => {
     );
     expect(row).toBeTruthy();
     click(row!);
-    await flushUntil(() => text().includes("键内容加载中…"));
-    expect(text()).not.toContain("从左侧选一个键查看内容");
+    await flushUntil(() => text().includes("正在加载键内容…"));
+    expect(text()).not.toContain("请选择左侧的键以查看内容");
     resolveInspect({ key: "k1", keyType: "string", ttl: -1, value: "v" });
     await flushUntil(() =>
       (mounted!.container.querySelector(".nx-pre")?.textContent ?? "").includes('"v"'),
@@ -272,9 +272,9 @@ describe("DbPanel Redis states", () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
     await flushUntil(() => text().includes("k1"));
     clickButton(mounted!.container, "下一页");
-    await flushUntil(() => text().includes("下一页加载失败 · connection reset"));
+    await flushUntil(() => text().includes("未能加载下一页：connection reset"));
     clickButton(mounted!.container, "SCAN");
-    await flushUntil(() => !text().includes("下一页加载失败") && text().includes("k2"));
+    await flushUntil(() => !text().includes("未能加载下一页") && text().includes("k2"));
     expect(text()).toContain("k2");
   });
 });
@@ -912,7 +912,7 @@ describe("DbPanel SQL execution history", () => {
     expect(mocks.query).toHaveBeenCalledTimes(2);
     expect(records()[0]).toMatchObject({ outcome: "unknown", rowsAffected: null });
     expect(records()[0].error).toContain("结果未知，请先确认数据库状态");
-    expect(records()[0].error).toContain("driver: bad connection");
+    expect(records()[0].error).toContain("连接已断开，请重新连接后再试");
   });
 
   it("marks Web RPC send and response-read disconnections unknown through the real query transport", async () => {
@@ -937,11 +937,11 @@ describe("DbPanel SQL execution history", () => {
     await execute("UPDATE orders SET paid = true;", 1);
     expect(records()[0]).toMatchObject({ outcome: "unknown", rowsAffected: null });
     expect(records()[0].error).toContain("结果未知，请先确认数据库状态");
-    expect(records()[0].error).toContain("Failed to fetch");
+    expect(records()[0].error).toContain("网络请求失败，请检查网络连接后重试");
 
     await execute("INSERT INTO orders VALUES (1);", 2);
     expect(records()[0]).toMatchObject({ outcome: "unknown", rowsAffected: null });
-    expect(records()[0].error).toContain("Response body terminated");
+    expect(records()[0].error).toContain("连接已断开，请重新连接后再试");
     expect(text()).toContain("结果未知，请先确认数据库状态");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mocks.query).toHaveBeenCalledTimes(2);

@@ -574,15 +574,15 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
 
   it("closeTabHint reflects detach capability per tab kind", () => {
     seed([{ id: "p", tabs: [], activeTabId: null }], "winrm");
-    expect(closeTabHint(terminal())).toBe("关闭标签（结束 WinRM 非交互进程）");
+    expect(closeTabHint(terminal())).toBe("关闭标签页（结束 WinRM 非交互进程）");
     expect(closeActionHint(terminal())).toBe("结束 WinRM 非交互进程");
-    expect(closeActionHint(execTerminal())).toBe("结束容器 exec 进程");
+    expect(closeActionHint(execTerminal())).toBe("结束容器内命令进程");
     seed([{ id: "p", tabs: [], activeTabId: null }], "ssh");
-    expect(closeTabHint(terminal())).toBe("关闭标签（转入后台运行）");
+    expect(closeTabHint(terminal())).toBe("关闭标签页（转入后台运行）");
     expect(closeActionHint(terminal())).toBe("转入后台运行");
     expect(closeActionHint({ ...terminal(), exited: true })).toBeUndefined();
-    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签（进程已结束）");
-    expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签");
+    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签页（进程已结束）");
+    expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签页");
   });
 });
 
@@ -649,7 +649,7 @@ describe("detach capability without session metadata", () => {
     seedAssetKind([{ id: "p", tabs: [tab], activeTabId: tab.id }], undefined);
 
     expect(closeActionHint(tab)).toBe("结束进程");
-    expect(closeTabHint(tab)).toBe("关闭标签（结束进程）");
+    expect(closeTabHint(tab)).toBe("关闭标签页（结束进程）");
 
     await requestCloseTab(tab.id);
 

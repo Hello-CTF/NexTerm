@@ -56,7 +56,6 @@ function locateTerminalTabs(workspaces: readonly Workspace[]): Map<string, TabLo
 const NEEDS_ME_REASON: Record<string, string> = {
   bell: "终端响铃",
   notify: "程序发出通知",
-  prompt: "可能在等待输入",
 };
 
 // attentionDetail describes why the session is in the inbox, with the program's own notification text when it sent one.
@@ -68,7 +67,7 @@ export function attentionDetail(awareness: SessionAwareness): string {
   }
   const text = [awareness.title, awareness.body].filter(Boolean).join("：");
   if (text) return text;
-  return NEEDS_ME_REASON[awareness.reason ?? ""] ?? "需要你处理";
+  return NEEDS_ME_REASON[awareness.reason ?? ""] ?? "需要处理";
 }
 
 function sinceTime(awareness: SessionAwareness): number {
@@ -97,7 +96,7 @@ export function buildInbox(
       tabId,
       uiTabId: where?.tab.id,
       workspaceId: where?.workspace.id,
-      title: where?.tab.title ?? (row?.session.title || "未在此端打开的终端"),
+      title: where?.tab.title ?? (row?.session.title || "未在当前客户端打开的终端"),
       place: where?.workspace.title ?? row?.host.name ?? "其他窗口或设备",
       awareness,
       badge,
@@ -161,7 +160,7 @@ export function openInboxTab(tabId: string): boolean {
 // connected session, or, for a device no workspace here holds, by opening the device first. It resolves to null once
 // the tab is open, or to the reason it could not be.
 export async function openAggregateEntry(entry: Pick<InboxEntry, "tabId" | "title" | "host">): Promise<string | null> {
-  if (!entry.host) return "此端没有打开这个终端";
+  if (!entry.host) return "当前客户端未打开该终端";
   const result = await takeOverAggregateSession(entry.host, entry.tabId, entry.title);
   if (result.ok) return null;
   return "canceled" in result ? null : result.error;

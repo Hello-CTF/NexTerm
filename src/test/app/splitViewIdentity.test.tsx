@@ -247,7 +247,7 @@ describe("split view terminal identity", () => {
 
   it("walks Tab and Shift+Tab through each pane's strip and then its panel in on-screen order", async () => {
     const settings: AppTab = { id: "z-settings", kind: "settings", title: "Settings", closable: true };
-    const files: AppTab = { id: "a-files", kind: "files", title: "Files", sessionId: "s", closable: true };
+    const files: AppTab = { id: "a-files", kind: "files", title: "Files", sessionId: "s", path: "/a.txt", closable: true };
     act(() => {
       useUi.setState({
         workspaces: [
@@ -299,7 +299,7 @@ describe("split view terminal identity", () => {
     const rightStripLast = [...paneNode("right").querySelectorAll<HTMLButtonElement>(".nx-tabstrip button")].at(-1)!;
     rightStripLast.focus();
     press();
-    expect(document.activeElement).toBe(button("browser-action"));
+    expect(document.activeElement).toBe(button("editor-action"));
   });
 
   it("moves into a panel without focusable content and leaves terminals their own Tab", async () => {

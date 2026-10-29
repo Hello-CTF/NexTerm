@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -227,6 +228,7 @@ func (e *Engine) applyPlainObject(ctx context.Context, object ApplyObject, userI
 	}
 	report := &SyncReport{}
 	applied, identical := e.applyDecryptedObject(ctx, object.ID, object.Kind, canonical, report, userIDs...)
+	report.flushClockSkewWarning()
 	entry.Warning = strings.Join(report.Warnings, "; ")
 	entry.changed = report.changedKinds
 	if applied {
@@ -276,6 +278,11 @@ func firstUserID(ids []string) string {
 func (e *Engine) applyDecryptedObject(ctx context.Context, objectID, kind string, plaintext []byte, report *SyncReport, userIDs ...string) (bool, bool) {
 	spec, ok := lookupKind(kind)
 	if !ok {
+		return false, false
+	}
+	// A far-future revision would outrank every later edit or deletion (LWW), so it is skipped, not applied.
+	if remote := localRevision(kind, plaintext); remote > time.Now().Add(remoteClockTolerance).UnixMilli() {
+		report.futureSkipped++
 		return false, false
 	}
 	applied, identical := spec.apply(e, ctx, objectID, plaintext, report, firstUserID(userIDs))

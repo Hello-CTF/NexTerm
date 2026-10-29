@@ -21,6 +21,17 @@ export interface AppKeybindingHandlers {
   lockVault: () => Promise<void>;
   openCommandPalette: () => void;
   openQuickConnect: () => void;
+  openSettings: () => void;
+}
+
+// The AI panel may mount only after the dock opens, so retry for a few frames before giving up.
+function focusAiInput(attempt = 0): void {
+  const input = document.querySelector<HTMLTextAreaElement>("aside textarea.nx-textarea");
+  if (input) {
+    input.focus();
+    return;
+  }
+  if (attempt < 10) window.requestAnimationFrame(() => focusAiInput(attempt + 1));
 }
 
 // useAppKeybindings handles the app-level rebindable shortcuts on window keydown.
@@ -35,6 +46,7 @@ export function useAppKeybindings({
   lockVault,
   openCommandPalette,
   openQuickConnect,
+  openSettings,
 }: AppKeybindingHandlers): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -57,6 +69,15 @@ export function useAppKeybindings({
         case "quickConnect":
           e.preventDefault();
           openQuickConnect();
+          return;
+        case "openSettings":
+          e.preventDefault();
+          openSettings();
+          return;
+        case "focusAiInput":
+          e.preventDefault();
+          if (!rightDockOpen) setRightOpen(true);
+          focusAiInput();
           return;
         case "toggleSidebar":
           e.preventDefault();
@@ -149,5 +170,6 @@ export function useAppKeybindings({
     lockVault,
     openCommandPalette,
     openQuickConnect,
+    openSettings,
   ]);
 }

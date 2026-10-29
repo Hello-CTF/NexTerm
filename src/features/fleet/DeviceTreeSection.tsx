@@ -5,10 +5,11 @@
 // Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
 // cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter or the play button opens the device workspace).
-// Renders nothing and issues no requests when logged out. Revoked, offline, and agent-less devices remain visible
-// with a status badge; all are disabled for terminal access. Revocation requires two warning confirmations.
+// Renders nothing and issues no requests when logged out. Revoked devices are not listed at all (the device management view
+// reveals them on demand); offline and agent-less devices remain visible with a status badge, disabled for terminal access.
+// Revoking from the context menu removes the row immediately. Revocation requires two warning confirmations.
 // Convergence cadence matches the device management view: WEB polls every 60s / desktop every 30s as fallback (coming online/newly enrolled/
-// revoked elsewhere converge on refresh), WEB additionally subscribes to device://status for realtime online flips
+// revoked elsewhere disappear on refresh), WEB additionally subscribes to device://status for realtime online flips
 // (events win within the event threshold, otherwise heartbeat determination), and refetches immediately on event WS reconnect resync;
 // the desktop has no event channel and relies on polling alone.
 
@@ -120,20 +121,20 @@ export function DeviceTreeSection() {
 
   const revoke = async (device: FleetDevice) => {
     if (device.revoked_at !== 0 || busyId === device.id) return;
-    const first = await ask(`吊销设备「${device.name}」？\n\n吊销后设备凭证立即失效、控制通道断开。`, {
-      title: "吊销设备",
+    const first = await ask(`确定要撤销设备「${device.name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开。`, {
+      title: "撤销接入",
       kind: "warning",
     });
     if (!first) return;
     const second = await ask(
-      `再次确认吊销「${device.name}」？\n\n吊销后设备凭证立即失效，设备仍显示为已吊销但无法连接，凭证不可恢复。`,
-      { title: "确认吊销", kind: "warning" },
+      `再次确认：确定要撤销「${device.name}」的接入吗？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。`,
+      { title: "确认撤销", kind: "warning" },
     );
     if (!second) return;
     setBusyId(device.id);
     try {
       await fleetClient().revoke(device.id);
-      pushToast("success", `已吊销「${device.name}」`);
+      pushToast("success", `已撤销接入「${device.name}」`);
       markRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -162,18 +163,19 @@ export function DeviceTreeSection() {
       { kind: "separator" },
       {
         kind: "item",
-        label: "吊销",
+        label: "撤销接入…",
         icon: <IconTrash size={13} />,
         danger: true,
         disabled: busyId === device.id,
-        hint: "凭证立即失效",
+        hint: "登录凭据立即失效",
         onSelect: () => void revoke(device),
       },
     );
     return items;
   };
 
-  const devices = devicesQuery.data?.devices ?? [];
+  // Revoked devices are never listed in the asset tree; they stay reachable only from the device management view.
+  const devices = (devicesQuery.data?.devices ?? []).filter((device) => device.revoked_at === 0);
   const menuDevice = menu ? devices.find((device) => device.id === menu.device.id) : undefined;
   if (devices.length === 0) return null;
 
@@ -207,8 +209,8 @@ export function DeviceTreeSection() {
 }
 
 export function deviceOpenBlockReason(device: FleetDevice, online: boolean): string | null {
-  if (device.revoked_at !== 0) return "设备已吊销，无法打开工作区";
-  if (!device.agent) return "该设备尚未接入 Agent";
+  if (device.revoked_at !== 0) return "设备已撤销接入，无法打开工作区";
+  if (!device.agent) return "该设备未安装设备代理";
   if (!online) return "设备离线，无法打开工作区";
   if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
   return null;
@@ -228,7 +230,7 @@ function DeviceTreeRow({
   const agent = device.agent;
   const disabledReason = deviceOpenBlockReason(device, online);
   const connectable = disabledReason === null;
-  const status = device.revoked_at !== 0 ? "已吊销" : !agent ? "未接入 Agent" : !online ? "离线" : null;
+  const status = device.revoked_at !== 0 ? "已撤销接入" : !agent ? "未安装设备代理" : !online ? "离线" : null;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);

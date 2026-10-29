@@ -106,7 +106,7 @@ func TestConnectDeviceAuthorizeUserIDFromOptions(t *testing.T) {
 }
 
 func TestConnectDeviceDigestFailurePropagates(t *testing.T) {
-	digestErr := ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+	digestErr := ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已离线")
 	connector := &productionConnector{}
 	connector.device.Store(&DeviceConnectorConfig{
 		Dial:   func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("dial must not run") },

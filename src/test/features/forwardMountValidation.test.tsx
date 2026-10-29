@@ -119,7 +119,7 @@ describe("ForwardPanel inline validation on submit", () => {
     expect(listenPort.getAttribute("aria-invalid")).toBe("true");
     const error = fieldError(listenPort);
     expect(error?.getAttribute("role")).toBe("alert");
-    expect(error?.textContent).toBe("本地端口要填 1–65535 之间的整数");
+    expect(error?.textContent).toBe("本地端口须为 1-65535 之间的整数");
     expect(listenPort.parentElement?.contains(error)).toBe(true);
     expect(document.activeElement).toBe(listenPort);
     expect(mocks.forwardCreate).not.toHaveBeenCalled();
@@ -133,7 +133,7 @@ describe("ForwardPanel inline validation on submit", () => {
     setInputValue(listenPort, "abc");
     blur(listenPort);
     expect(listenPort.getAttribute("aria-invalid")).toBe("true");
-    expect(fieldError(listenPort)?.textContent).toBe("本地端口要填 1–65535 之间的整数");
+    expect(fieldError(listenPort)?.textContent).toBe("本地端口须为 1-65535 之间的整数");
   });
 
   it("target port validates automatically after ~500ms idle, no blur needed", async () => {
@@ -146,7 +146,7 @@ describe("ForwardPanel inline validation on submit", () => {
     expect(fieldError(targetPort)).toBeNull();
     await advance(1);
     expect(targetPort.getAttribute("aria-invalid")).toBe("true");
-    expect(fieldError(targetPort)?.textContent).toBe("目标端口要填 1–65535 之间的整数");
+    expect(fieldError(targetPort)?.textContent).toBe("目标端口须为 1-65535 之间的整数");
   });
 
   it("blur after fixing clears the error immediately", async () => {
@@ -170,10 +170,10 @@ describe("ForwardPanel inline validation on submit", () => {
     const listenPort = inputBy('input[placeholder="13306"]');
     setInputValue(listenPort, "70000");
     blur(listenPort);
-    expect(fieldError(listenPort)?.textContent).toBe("本地端口要填 1–65535 之间的整数");
+    expect(fieldError(listenPort)?.textContent).toBe("本地端口须为 1-65535 之间的整数");
     env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
     await flush();
-    expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
+    expect(fieldError(listenPort)?.textContent).toBe("监听端口须为 1-65535 之间的整数");
   });
 
   it("env switches within 500ms of input: the idle callback uses the switched label", async () => {
@@ -188,7 +188,7 @@ describe("ForwardPanel inline validation on submit", () => {
     expect(listenPort.getAttribute("aria-invalid")).toBeNull();
     await advance(500);
     expect(listenPort.getAttribute("aria-invalid")).toBe("true");
-    expect(fieldError(listenPort)?.textContent).toBe("监听端口要填 1–65535 之间的整数");
+    expect(fieldError(listenPort)?.textContent).toBe("监听端口须为 1-65535 之间的整数");
   });
 
   it("with multiple invalid fields focus lands on the first invalid field in order", async () => {
@@ -232,7 +232,7 @@ describe("ForwardPanel inline validation on submit", () => {
     setInputValue(listenPort, "99999");
     clickButton(mounted!.container, "创建");
     expect(listenPort.getAttribute("aria-invalid")).toBe("true");
-    expect(fieldError(listenPort)?.textContent).toBe("本地端口要填 1–65535 之间的整数");
+    expect(fieldError(listenPort)?.textContent).toBe("本地端口须为 1-65535 之间的整数");
     expect(document.activeElement).toBe(listenPort);
     expect(mocks.forwardCreateSocks).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalled();
@@ -336,7 +336,7 @@ describe("MountPanel inline validation on submit", () => {
       password: undefined,
     });
     expect(mounted!.container.querySelector('[role="alert"]')).toBeNull();
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已挂载 Z:");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已挂载 Z:。可在本机访问远端文件");
   });
 
   it("error text wraps without overflow at 320/390 narrow widths", async () => {
@@ -639,7 +639,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     mountForward();
     await flush();
     expect(actionButton("创建").disabled).toBe(true);
-    expect(mounted!.container.textContent).toContain("转发环境检查中");
+    expect(mounted!.container.textContent).toContain("正在检查转发环境");
     expect(mounted!.container.textContent).not.toContain("127.0.0.1:13306");
 
     env.resolve({ available: true, platform: "other", listenHost: "0.0.0.0" });
@@ -677,7 +677,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     mountForward();
     await flush();
     expect(actionButton("创建").disabled).toBe(true);
-    expect(mounted!.container.textContent).toContain("转发环境检查失败 · env probe failed");
+    expect(mounted!.container.textContent).toContain("未能检查转发环境：env probe failed");
 
     clickButton(mounted!.container, "重试");
     await flush();
@@ -710,7 +710,7 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     expect(mocks.forwardList).toHaveBeenCalledTimes(2);
     expect(client.getQueryState(["forwards"])?.status).toBe("error");
     expect(mounted!.container.textContent).toContain("10.0.0.8");
-    expect(mounted!.container.textContent).toContain("转发列表刷新失败 · temporarily offline");
+    expect(mounted!.container.textContent).toContain("未能刷新转发列表：temporarily offline");
     expect(mounted!.container.textContent).toContain("已保留上次成功结果");
     expect(actionButton("创建").disabled).toBe(false);
   });
@@ -736,17 +736,17 @@ describe("ForwardPanel env status, polling, and browser wording", () => {
     mountForward();
     await flush();
     clickButton(mounted!.container, "远程转发");
-    expect(mounted!.container.textContent).toContain("NexTerm 所在机器");
+    expect(mounted!.container.textContent).toContain("NexTerm 所在主机");
     expect(mounted!.container.textContent).not.toContain("你本机");
     expect(mounted!.container.textContent).not.toContain("本地服务");
-    expect(inputBy('input[aria-label="目标主机"]').placeholder).toContain("NexTerm 所在机器");
+    expect(inputBy('input[aria-label="目标主机"]').placeholder).toContain("NexTerm 所在主机");
 
     clickButton(mounted!.container, "静态转发");
     clickButton(mounted!.container, "创建");
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith(
       "success",
-      "转发已就绪 → 127.0.0.1:13306（仅NexTerm 所在机器可访问）",
+      "转发已就绪 → 127.0.0.1:13306（仅NexTerm 所在主机可访问）",
     );
   });
 });

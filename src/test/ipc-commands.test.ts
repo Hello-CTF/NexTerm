@@ -599,7 +599,7 @@ describe("desktop command envelopes", () => {
 
     await expect(systemApi.platform()).rejects.toEqual({
       code: "internal",
-      message: "Failed to fetch",
+      message: "网络请求失败，请检查网络连接后重试",
     });
   });
 
@@ -1101,7 +1101,7 @@ describe("web command behavior compatibility", () => {
 
     await expect(dbApi.query("c1", "UPDATE orders SET paid = true")).rejects.toEqual({
       code: "disconnected",
-      message: "Failed to fetch",
+      message: "网络请求失败，请检查网络连接后重试",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -1134,7 +1134,7 @@ describe("web command behavior compatibility", () => {
 
     await expect(dbApi.query("c1", "SELECT 1")).rejects.toEqual({
       code: "internal",
-      message: "Failed to fetch",
+      message: "网络请求失败，请检查网络连接后重试",
     });
   });
 
@@ -1158,7 +1158,7 @@ describe("web command behavior compatibility", () => {
     await expect(systemApi.platform()).rejects.toEqual(error);
     await expect(systemApi.platform()).rejects.toMatchObject({
       code: "internal",
-      message: expect.stringContaining("HTTP 502"),
+      message: "服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理",
     });
   });
 });

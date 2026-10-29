@@ -26,20 +26,24 @@ function layoutWith(tabs: AppTab[]) {
   } as Parameters<typeof serializeLayout>[0]);
 }
 
-describe("directory file browser tabs in the layout", () => {
-  it("keep their directory across a save and reload", () => {
+describe("legacy file browser tabs in a saved layout", () => {
+  it("are dropped quietly while file editor tabs survive", () => {
     const saved = layoutWith([
-      { id: "f1", kind: "files", title: "nginx", sessionId: "s1", directory: "/var/log/nginx", closable: true },
-      { id: "f2", kind: "files", title: "a.txt", sessionId: "s1", path: "/tmp/a.txt", directory: "/tmp", closable: true },
+      { id: "f1", kind: "files", title: "nginx", sessionId: "s1", closable: true },
+      { id: "f2", kind: "files", title: "a.txt", sessionId: "s1", path: "/tmp/a.txt", closable: true },
       { id: "f3", kind: "files", title: "文件", sessionId: "s1", closable: true },
     ]);
-    const reloaded = sanitizeLayout(JSON.parse(JSON.stringify(saved)));
-    const tabs = reloaded?.workspaces[0]?.panes[0]?.tabs ?? [];
-    expect(tabs.map((tab) => [tab.id, tab.path, tab.directory])).toEqual([
-      ["f1", undefined, "/var/log/nginx"],
-      // An editor tab is a file, never a directory browser.
-      ["f2", "/tmp/a.txt", undefined],
-      ["f3", undefined, undefined],
-    ]);
+    // An older build also saved a directory on browser tabs.
+    const raw = JSON.parse(JSON.stringify(saved));
+    raw.workspaces[0].panes[0].tabs[0].directory = "/var/log/nginx";
+    const reloaded = sanitizeLayout(raw);
+    const pane = reloaded?.workspaces[0]?.panes[0];
+    expect(pane?.tabs.map((tab) => [tab.id, tab.path])).toEqual([["f2", "/tmp/a.txt"]]);
+    expect(pane?.tabs.some((tab) => tab.id === pane.activeTabId)).toBe(true);
+  });
+
+  it("leave a workspace with only a browser tab loadable", () => {
+    const saved = layoutWith([{ id: "f1", kind: "files", title: "文件", sessionId: "s1", closable: true }]);
+    expect(() => sanitizeLayout(JSON.parse(JSON.stringify(saved)))).not.toThrow();
   });
 });

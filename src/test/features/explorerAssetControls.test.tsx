@@ -115,7 +115,33 @@ function mountWithClient(node: ReactNode): MountedView {
   return mount(createElement(QueryClientProvider, { client }, node));
 }
 
+// Actions that moved into the header or row menus are reached by opening the owning menu first.
+const MENU_ROUTES: Record<string, { opener: "group" | "asset" | "view"; item: string }> = {
+  重命名分组: { opener: "group", item: "重命名分组" },
+  删除分组: { opener: "group", item: "删除分组…" },
+  删除: { opener: "asset", item: "删除资产…" },
+  批量维护: { opener: "view", item: "批量维护" },
+  紧凑显示资产: { opener: "view", item: "紧凑显示" },
+  显示资产主机身份: { opener: "view", item: "显示主机地址" },
+};
+
 function buttonByTitle(container: ParentNode, title: string): HTMLButtonElement {
+  const route = MENU_ROUTES[title];
+  if (route) {
+    const opener =
+      route.opener === "view"
+        ? container.querySelector<HTMLButtonElement>('button[aria-label="视图"]')
+        : route.opener === "group"
+          ? container.querySelector<HTMLButtonElement>('[role="treeitem"][aria-expanded] button[aria-label^="更多操作 "]')
+          : container.querySelector<HTMLButtonElement>('[role="treeitem"]:not([aria-expanded]) button[aria-label^="更多操作 "]');
+    if (!opener) throw new Error(`Menu opener not found for: ${title}`);
+    click(opener);
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes(route.item),
+    );
+    if (!item) throw new Error(`Menu item not found: ${route.item}`);
+    return item;
+  }
   const button = [...container.querySelectorAll("button")].find(
     (candidate) => candidate.title === title,
   );
@@ -263,8 +289,8 @@ describe("asset group controls", () => {
       { ...GROUP, id: "b", parentId: "a", name: "循环 B" },
     ]);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("父分组不存在"));
-    expect(mounted.container.textContent).toContain("父子关系形成循环");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("上级分组已不存在"));
+    expect(mounted.container.textContent).toContain("上下级关系出现循环");
     expect(mounted.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(3);
     clickButton(mounted.container, "移到根目录");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledWith("orphan", undefined, null));
@@ -307,7 +333,7 @@ describe("asset group controls", () => {
     clickButton(mounted!.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("boom");
+    expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试");
     expect(mounted!.container.querySelector(".nx-modal input.nx-input")).not.toBeNull();
 
     clickButton(mounted!.container, "保存");
@@ -346,14 +372,14 @@ describe("asset group controls", () => {
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(1));
     await flush();
     expect(mounted!.container.textContent).toContain("删除失败：");
-    expect(mounted!.container.textContent).toContain("disk on fire");
+    expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试");
     expect(mocks.ask).toHaveBeenCalledTimes(1);
 
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mocks.groupDelete).toHaveBeenCalledTimes(2));
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     await flush();
-    expect(mounted!.container.textContent).not.toContain("disk on fire");
+    expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试");
   });
 
   it("moves an asset out of a group with a clear toast", async () => {
@@ -393,7 +419,7 @@ describe("asset group controls", () => {
       tree.dispatchEvent(drop);
     });
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ id: "a1", groupId: null }));
-    expect(mocks.toast).toHaveBeenCalledWith("info", "已移出分组");
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已将「web-1」移出分组");
   });
 
   const ASSET_IN_GROUP = {
@@ -420,7 +446,7 @@ describe("asset group controls", () => {
   it("shows an asset whose group is missing and lets the user restore it to the root", async () => {
     mocks.list.mockResolvedValue([{ ...ASSET_IN_GROUP, groupId: "missing" }]);
     mounted = mountWithClient(createElement(AssetTree));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("所属分组不存在"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("所属分组已不存在"));
     expect(mounted.container.textContent).toContain("web-1");
     clickButton(mounted.container, "移到根目录");
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ id: "a1", groupId: null }));
@@ -449,16 +475,16 @@ describe("asset group controls", () => {
     if (!tree) throw new Error("Tree not found");
     dropAsset(tree);
     await flush();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：disk on fire"));
-    expect(mounted!.container.textContent).toContain("仍在「生产」，目标「根目录」");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
+    expect(mounted!.container.textContent).toContain("仍在「生产」（目标：「根目录」）");
     expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).toContain("web-1");
-    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已移出分组");
+    expect(mocks.toast).not.toHaveBeenCalledWith("info", "已将「web-1」移出分组");
 
     clickButton(mounted!.container, "重试移动");
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(2));
     expect(mocks.update).toHaveBeenNthCalledWith(2, { id: "a1", groupId: null });
-    await waitFor(() => expect(mounted!.container.textContent).not.toContain("disk on fire"));
-    expect(mocks.toast).toHaveBeenCalledWith("info", "已移出分组");
+    await waitFor(() => expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", "已将「web-1」移出分组");
     await waitFor(() => expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.textContent).not.toContain("web-1"));
     expect(mounted!.container.textContent).toContain("web-1");
   });
@@ -473,12 +499,12 @@ describe("asset group controls", () => {
     if (!group) throw new Error("Group not found");
     dropAsset(group);
     await flush();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：group unavailable"));
-    expect(mounted!.container.textContent).toContain("仍在「根目录」，目标「生产」");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
+    expect(mounted!.container.textContent).toContain("仍在「根目录」（目标：「生产」）");
     expect(group.textContent).not.toContain("web-1");
     clickButton(mounted!.container, "取消移动");
     await flush();
-    expect(mounted!.container.textContent).not.toContain("group unavailable");
+    expect(mounted!.container.textContent).not.toContain("应用内部出现错误，请稍后重试");
     expect(mocks.update).toHaveBeenCalledTimes(1);
     expect(mounted!.container.textContent).toContain("web-1");
   });
@@ -495,7 +521,7 @@ describe("asset group controls", () => {
     dropAsset(tree);
     await waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
     await flush();
-    expect(mounted!.container.textContent).toContain("正在移至「根目录」");
+    expect(mounted!.container.textContent).toContain("正在移动到「根目录」");
     click(groupToggle(mounted!.container));
     await flush();
     expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.getAttribute("aria-expanded")).toBe("false");
@@ -504,8 +530,8 @@ describe("asset group controls", () => {
       pending.reject({ code: "internal", message: "network down" });
       await pending.promise.catch(() => undefined);
     });
-    await waitFor(() => expect(mounted!.container.textContent).toContain("移动失败：内部错误：network down"));
-    expect(mounted!.container.textContent).not.toContain("正在移至");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("原因：应用内部出现错误，请稍后重试"));
+    expect(mounted!.container.textContent).not.toContain("正在移动到");
     expect(mounted!.container.querySelector('[role="treeitem"][aria-expanded]')?.getAttribute("aria-expanded")).toBe("true");
   });
 
@@ -695,7 +721,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });
 
   it("does not imply that an unused password credential is already shared by multiple assets", async () => {
@@ -705,7 +731,7 @@ describe("asset editor shared credential hint", () => {
 
     setSelectValue(selectByOptionText("生产密码"), "c1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
@@ -717,12 +743,12 @@ describe("asset editor shared credential hint", () => {
     await flush();
     clickButton(mounted!.container, "存入凭据库");
     await flush();
-    setSelectValue(selectByOptionText("选已有私钥凭据"), "existing");
+    setSelectValue(selectByOptionText("选择已有私钥凭据"), "existing");
     await waitFor(() => expect(mounted!.container.textContent).toContain("部署密钥"));
 
     setSelectValue(selectByOptionText("部署密钥"), "k1");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 这条凭据可给多个资产共用；修改后，对所有使用它的资产生效。");
+    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });
 });
 
@@ -740,7 +766,7 @@ describe("snippets panel", () => {
   it("renders the empty state", async () => {
     mocks.snippetList.mockResolvedValue([]);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("把常用命令存成片段"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("可将常用命令保存为片段"));
   });
 
   it("surfaces a list failure with a retry that refetches", async () => {
@@ -748,8 +774,8 @@ describe("snippets panel", () => {
       .mockRejectedValueOnce({ code: "internal", message: "db locked" })
       .mockResolvedValueOnce(SNIPPETS.map((s) => ({ ...s })));
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("db locked"));
-    expect(mounted!.container.textContent).toContain("加载失败：");
+    await waitFor(() => expect(mounted!.container.textContent).toContain("应用内部出现错误，请稍后重试"));
+    expect(mounted!.container.textContent).toContain("未能加载片段");
     clickButton(mounted!.container, "重试");
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
     expect(mocks.snippetList).toHaveBeenCalledTimes(2);
@@ -1080,14 +1106,19 @@ describe("snippets panel", () => {
     expect(new TextDecoder().decode(bytes)).toBe("df -h ~ /中文");
   });
 
-  it("refuses to insert with a clear toast when no terminal is active", async () => {
+  it("disables insert and execute with the reason when no terminal is active", async () => {
     setTerminalWorkspace(null);
     mounted = mountWithClient(createElement(SnippetsPanel, { onClose: vi.fn() }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("看容器状态"));
 
-    click(buttonByTitle(mounted.container, "插入到当前终端"));
+    const insert = [...mounted.container.querySelectorAll("button")].find(
+      (b) => b.getAttribute("aria-label") === "插入片段「看容器状态」",
+    ) as HTMLButtonElement;
+    expect(insert.disabled).toBe(true);
+    expect(insert.title).toContain("终端");
+    expect(mounted.container.querySelector('[role="status"]')?.textContent).toContain("才能插入或执行片段");
+    click(insert);
     await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("终端"));
     expect(mocks.write).not.toHaveBeenCalled();
   });
 
@@ -1184,7 +1215,7 @@ describe("asset delete confirmation (R42 audit pin, real DialogHost)", () => {
     click(buttonByTitle(mounted!.container, "删除"));
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
-    expect(modal.textContent).toContain("关联的凭据会保留");
+    expect(modal.textContent).toContain("凭据库里的凭据会保留");
     await closeModal(modal, "取消");
     expect(mocks.assetDelete).not.toHaveBeenCalled();
 
@@ -1309,7 +1340,7 @@ describe("asset editor save across an account switch", () => {
     mocks.setCredential.mockResolvedValue({ id: "cred-a" });
     mocks.createAsset.mockResolvedValue({ id: "a-new" });
     await fillAndSave();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("保存中"));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("正在保存"));
 
     // Account switch while the vault status fetch is still in flight.
     act(() => {

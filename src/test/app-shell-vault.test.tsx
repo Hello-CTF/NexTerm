@@ -150,7 +150,7 @@ afterEach(() => {
 describe("status bar credential vault state", () => {
   it("bootstraps the server layout on startup and saves local changes back through layoutApi", async () => {
     const remoteLayout = {
-      v: 2,
+      v: 4,
       leftOpen: false,
       leftMode: "assets",
       rightOpen: true,
@@ -208,7 +208,7 @@ describe("status bar credential vault state", () => {
     const control = vaultStatusControl();
     expect(control?.tagName).toBe("BUTTON");
     expect(control?.textContent).toContain("凭据库未初始化");
-    expect(control?.textContent).toContain("去开启保护");
+    expect(control?.textContent).toContain("开启保护");
     expect(control?.getAttribute("title")).toContain("凭据保护");
   });
 
@@ -336,38 +336,39 @@ describe("status bar credential vault state", () => {
     expect(scroll).toHaveBeenCalledWith({ block: "start" });
   });
 
-  it("keeps the locked state as plain text without an enable-protection entry", async () => {
+  it("offers an unlock button when the vault is locked", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: false });
     mounted = mountApp();
-    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
     await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
-    expect(control?.tagName).toBe("SPAN");
-    expect(control?.textContent).toBe("凭据库已锁定");
-    expect(control?.textContent).not.toContain("去开启保护");
+    expect(control?.tagName).toBe("BUTTON");
+    expect(control?.textContent).toContain("凭据库已锁定");
+    expect(control?.textContent).toContain("解锁");
+    expect(control?.textContent).not.toContain("开启保护");
   });
 
-  it("keeps the unlocked state as plain text", async () => {
+  it("shows nothing for an unlocked vault", async () => {
     mocks.vaultStatus.mockResolvedValue({ initialized: true, unlocked: true });
     mounted = mountApp();
-    // The status bar shows the vault state once react-query delivers it; a single flush does not guarantee that.
+    await flushUntil(() => mocks.vaultStatus.mock.calls.length > 0);
+    await flushUntil(() => document.querySelector(".nx-statusbar-info") !== null);
+    await flush();
+
+    expect(vaultStatusControl()).toBeNull();
+  });
+
+  it("offers a retry button when the status request fails", async () => {
+    mocks.vaultStatus.mockRejectedValue(new Error("boom"));
+    mounted = mountApp();
     await flushUntil(() => vaultStatusControl() !== null);
 
     const control = vaultStatusControl();
-    expect(control?.tagName).toBe("SPAN");
-    expect(control?.textContent).toBe("凭据库已解锁");
-  });
-
-  it("shows unavailable without an enable-protection entry when the status request fails", async () => {
-    mocks.vaultStatus.mockRejectedValue(new Error("boom"));
-    mounted = mountApp();
-    // react-query settles its failure state via internal scheduling; a single flush does not guarantee the timing
-    await flushUntil(() => vaultStatusControl()?.textContent === "凭据库不可用");
-
-    const control = vaultStatusControl();
-    expect(control?.tagName).toBe("SPAN");
-    expect(control?.textContent).toBe("凭据库不可用");
+    expect(control?.tagName).toBe("BUTTON");
+    expect(control?.textContent).toContain("重试");
+    const calls = mocks.vaultStatus.mock.calls.length;
+    click(control as HTMLElement);
+    await flushUntil(() => mocks.vaultStatus.mock.calls.length > calls);
   });
 
   it("refreshes an open settings page through the shared vault-status query after initialization elsewhere", async () => {

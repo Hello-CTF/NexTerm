@@ -22,6 +22,9 @@ const (
 	helperEnsureTimeout = 30 * time.Second
 	retrySleep          = 2 * time.Second
 	channelMaxBackoff   = time.Minute
+	// The owner account being disabled can last hours, so the wait is longer and capped higher than a network blip.
+	ownerMinBackoff = 30 * time.Second
+	ownerMaxBackoff = 10 * time.Minute
 	// serviceRecheckCycles is how many reconcile cycles reuse a settled service status before the manager is asked again.
 	serviceRecheckCycles = 5
 	// reconnectJitter spreads reconnect delays by +-20% so a fleet that lost its server does not retry in lockstep.
@@ -55,6 +58,8 @@ type Options struct {
 	OnChannel func(connected bool)
 	Logger    *slog.Logger
 	Now       func() time.Time
+	// Sleep, when set, replaces the real wait between owner_unavailable retries (tests).
+	Sleep func(ctx context.Context, d time.Duration) bool
 }
 
 type Runtime struct {
@@ -64,15 +69,23 @@ type Runtime struct {
 	manager      ServiceManager
 	collector    Collector
 	ensureHelper func(ctx context.Context) error
-	bridge       BridgeSpawner
-	upgrader     *Upgrader
-	onChannel    func(connected bool)
-	stateDir     string
-	executable   string
-	logger       *slog.Logger
-	now          func() time.Time
+	// checkBuild replaces a helper of an older build that runs no session; nil when the helper is
+	// managed elsewhere (a desktop's local helper has its own lifecycle).
+	checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
+	bridge     BridgeSpawner
+	upgrader   *Upgrader
+	onChannel  func(connected bool)
+	stateDir   string
+	executable string
+	logger     *slog.Logger
+	now        func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
+	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
+	sleep func(ctx context.Context, d time.Duration) bool
+
+	// owner tracks the temporary owner_unavailable state; guarded by mu.
+	owner ownerWait
 
 	// The last settled service manager Status is reused so the manager (systemctl, schtasks) is not forked on every sync:
 	// it is re-read when the desired autostart flips or after serviceRecheck reconcile cycles (default serviceRecheckCycles),
@@ -139,8 +152,12 @@ func New(options Options) (*Runtime, error) {
 	if collector == nil {
 		collector = NewCollector(options.DataDir, now)
 	}
+	var checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
+		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
+			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
+		}
 		ensureHelper = func(ctx context.Context) error {
 			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
 			return err
@@ -163,6 +180,7 @@ func New(options Options) (*Runtime, error) {
 		manager:         options.Manager,
 		collector:       collector,
 		ensureHelper:    ensureHelper,
+		checkBuild:      checkBuild,
 		bridge:          bridge,
 		upgrader:        upgrader,
 		onChannel:       options.OnChannel,
@@ -170,6 +188,7 @@ func New(options Options) (*Runtime, error) {
 		executable:      executable,
 		logger:          logger,
 		now:             now,
+		sleep:           options.Sleep,
 		purposeHandlers: make(map[string]PurposeHandler),
 		revokeCh:        make(chan struct{}),
 		fatalCh:         make(chan error, 1),
@@ -214,6 +233,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	r.runCtx = runCtx
+	r.clearOwnerMarker()
+	defer r.clearOwnerMarker()
 
 	client, err := r.selectEndpoint(runCtx)
 	if err != nil {
@@ -224,7 +245,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.reconcileService(runCtx)
 	if r.desiredSnapshot().TerminalEnabled {
 		r.ensureHelperOnce(runCtx)
+		r.checkHelperBuild(runCtx)
 	}
+	r.loopWg.Add(1)
+	go func() {
+		defer r.loopWg.Done()
+		r.helperBuildLoop(runCtx)
+	}()
 
 	r.loopWg.Add(1)
 	go func() {
@@ -376,6 +403,9 @@ func (r *Runtime) selectEndpoint(ctx context.Context) (*EndpointClient, error) {
 }
 
 func (r *Runtime) syncOnce(ctx context.Context) {
+	if r.ownerWaiting() {
+		return
+	}
 	client := r.prober.Current()
 	if client == nil {
 		selected, err := r.prober.Select(ctx)
@@ -387,8 +417,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 	}
 	response, err := r.postSync(ctx, client)
 	if err != nil {
-		if isForbidden(err) {
-			r.revoke()
+		if r.handleDenied(err) {
 			return
 		}
 		r.logger.Warn("agent sync failed", "url", client.BaseURL(), "error", err)
@@ -403,8 +432,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 		}
 		response, err = r.postSync(ctx, selected)
 		if err != nil {
-			if isForbidden(err) {
-				r.revoke()
+			if r.handleDenied(err) {
 				return
 			}
 			r.logger.Warn("agent sync retry failed", "url", selected.BaseURL(), "error", err)
@@ -414,6 +442,7 @@ func (r *Runtime) syncOnce(ctx context.Context) {
 		client = selected
 	}
 	r.prober.ReportSuccess(client)
+	r.ownerRecovered()
 	r.notifyCurrentURL(ctx, client)
 	r.applyDesired(ConfigUpdate{
 		DesiredAutostart:  response.DesiredAutostart,
@@ -453,8 +482,7 @@ func (r *Runtime) notifyCurrentURL(ctx context.Context, client *EndpointClient) 
 	reportCtx, cancel := context.WithTimeout(ctx, syncTimeout)
 	defer cancel()
 	if err := client.ReportCurrentURL(reportCtx, r.deviceID, r.secret, base, reason); err != nil {
-		if isForbidden(err) {
-			r.revoke()
+		if r.handleDenied(err) {
 			return
 		}
 		r.logger.Warn("failover report failed", "url", base, "error", err)
@@ -528,6 +556,47 @@ func (r *Runtime) ensureHelperOnce(ctx context.Context) {
 	}
 }
 
+// helperBuildInterval is how often a stale helper that still runs terminals is re-checked, so it is
+// replaced once the last of them has ended.
+var helperBuildInterval = 5 * time.Minute
+
+func (r *Runtime) helperBuildLoop(ctx context.Context) {
+	if r.checkBuild == nil {
+		return
+	}
+	ticker := time.NewTicker(helperBuildInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if r.desiredSnapshot().TerminalEnabled {
+				r.checkHelperBuild(ctx)
+			}
+		}
+	}
+}
+
+// checkHelperBuild replaces a helper of an older build only while it runs no session. One that still
+// runs terminals is left alone and only reported; ending it needs the user's consent.
+func (r *Runtime) checkHelperBuild(ctx context.Context) {
+	if r.checkBuild == nil {
+		return
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*helperEnsureTimeout)
+	defer cancel()
+	build, err := r.checkBuild(checkCtx)
+	switch {
+	case err != nil:
+		r.logger.Warn("supervisor helper build check failed", "error", err)
+	case build.Replaced:
+		r.logger.Info("replaced the stale supervisor helper that ran no terminals", "reason", build.StaleReason, "to", build.Local.Version)
+	case build.Notice() != "":
+		r.logger.Warn(build.Notice())
+	}
+}
+
 func (r *Runtime) channelLoop(ctx context.Context) {
 	backoff := retrySleep
 	for {
@@ -540,6 +609,12 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		channel, err := DialChannel(ctx, client.WSURL(), r.hello("", ""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
+			if isOwnerUnavailable(err) {
+				if !r.waitOwner(ctx) {
+					return
+				}
+				continue
+			}
 			if isForbidden(err) {
 				r.revoke()
 				return
@@ -558,6 +633,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			continue
 		}
 		r.prober.ReportSuccess(client)
+		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
 		r.reportChannel(true)
@@ -574,6 +650,13 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		if errors.Is(err, ErrProtocolMismatch) {
 			r.selfUpgrade(ctx, mismatchServerVersion(err))
 			return
+		}
+		if isOwnerUnavailable(err) {
+			// The server kicked the channel because the owner account was disabled; wait for it to recover.
+			if !r.waitOwner(ctx) {
+				return
+			}
+			continue
 		}
 		r.logger.Warn("control channel lost; reconnecting", "error", err)
 		r.prober.ReportFailure(client)
@@ -601,7 +684,7 @@ func mismatchServerVersion(err error) string {
 // selfUpgrade tries to upgrade the local agent to the version reported by the server when the protocol mismatches.
 // Successful staging -> fatal(errUpgradeStaged) exits so the replacement script takes over; self-upgrade unavailable
 // (embedded distribution), or the server did not report a version (old server), or the target version already equals the current version
-// (a mismatch would persist after upgrading, and downloading would only form a replace-restart-mismatch loop), or retries exhausted ->
+// (a mismatch would persist after upgrading, and downloading would only form a replace-restart-mismatch loop), or the target is lower than the running version (no server-driven downgrade), or retries exhausted ->
 // fatal(ErrProtocolMismatch) stays in the pending-manual state; the log clearly distinguishes the two paths.
 // A ctx cancellation during download is an intentional user stop: return directly and take the clean stop path, not recorded as fatal.
 func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
@@ -617,6 +700,12 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	}
 	if serverVersion == version.Version {
 		r.logger.Error("control channel protocol mismatch but already at the server-reported version; refusing a replace-and-restart loop, manual intervention required", "target_version", serverVersion)
+		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	// The server-driven path never downgrades (only `update --force` may); non-semver dev builds are not compared.
+	if cmp, ok := compareReleaseVersions(version.Version, serverVersion); ok && cmp > 0 {
+		r.logger.Error("control channel protocol mismatch but the server-reported version is lower than the running version; refusing a server-driven downgrade, use 'nexterm-agent update --force' to downgrade manually", "current_version", version.Version, "target_version", serverVersion)
 		r.fatal(ErrProtocolMismatch)
 		return
 	}
@@ -720,8 +809,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 		}
 		conn, err := DialBridge(ctx, client.WSURL(), r.hello(bridgeID, purpose), client.Insecure())
 		if err != nil {
-			if isForbidden(err) {
-				r.revoke()
+			if r.handleDenied(err) {
 				return
 			}
 			r.logger.Warn("bridge dial failed", "bridge_id", bridgeID, "error", err)

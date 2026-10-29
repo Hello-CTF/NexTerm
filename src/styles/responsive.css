@@ -372,30 +372,33 @@
   }
 
   .nx-ai-composer-actions {
-    flex-wrap: nowrap;
-    overflow-x: auto;
+    --nx-cbar-h: 36px;
   }
 
-  .nx-ai-composer-actions .nx-icon-btn-sm,
   .nx-ai-composer-actions .nx-send-btn {
-    position: relative;
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
+    width: var(--nx-cbar-h);
+    height: var(--nx-cbar-h);
   }
 
+  .nx-ai-composer-actions .nx-cbar-icon,
+  .nx-ai-composer-actions .nx-cbar-btn,
+  .nx-ai-composer-actions .nx-send-btn,
   .nx-ai-composer-actions .nx-chip {
-    position: relative;
-    flex-shrink: 0;
-    min-height: 34px;
+    min-height: var(--nx-cbar-h);
   }
 
-  .nx-ai-composer-actions .nx-icon-btn-sm::after,
+  .nx-ai-composer-actions .nx-cbar-icon {
+    min-width: var(--nx-cbar-h);
+  }
+
+  /* Keep a 44px hit area around the 36px controls. */
+  .nx-ai-composer-actions .nx-cbar-icon::after,
+  .nx-ai-composer-actions .nx-cbar-btn::after,
   .nx-ai-composer-actions .nx-send-btn::after,
   .nx-ai-composer-actions .nx-chip::after {
     content: "";
     position: absolute;
-    inset: -5px;
+    inset: -4px;
   }
 
   .nx-settings-view .nx-btn,

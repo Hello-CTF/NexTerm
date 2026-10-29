@@ -84,7 +84,7 @@ async function waitForConsole(extraText?: string): Promise<void> {
   await flushUntil(() =>
     document.body.textContent?.includes("立即同步") === true &&
     document.body.textContent?.includes("已开启 2 / 10 项") === true &&
-    document.body.textContent?.includes("服务端 0 个对象") === true &&
+    document.body.textContent?.includes("服务端共 0 项数据") === true &&
     (!extraText || document.body.textContent.includes(extraText)),
   );
 }
@@ -147,7 +147,7 @@ describe("Desktop account sync console", () => {
       id: "asset-1", action: "restore-local", userId: "u-1", compareToken: "compare-1",
       remoteSeq: 7, remoteBlobHash: "blob-hash", localKind: "asset", localPayloadHash: "payload-hash",
     });
-    expect(mocks.toast).toHaveBeenCalledWith("success", "服务端对象已用本机副本修复");
+    expect(mocks.toast).toHaveBeenCalledWith("success", "服务端数据已用本机副本修复");
   });
 
   it("does not modify the cloud when the user cancels clearing a cloud-only object", async () => {
@@ -192,8 +192,8 @@ describe("Desktop account sync console", () => {
 
     const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
     expect(consoleCard?.querySelector(".nx-card-title")?.textContent).toBe("账号同步");
-    expect(consoleCard?.textContent).toContain("数据会自动在本机与服务端之间同步。");
-    expect(consoleCard?.textContent).toContain("服务端 0 个对象");
+    expect(consoleCard?.textContent).toContain("数据将在本机与服务端之间自动同步。");
+    expect(consoleCard?.textContent).toContain("服务端共 0 项数据");
 
     const knownHost = [...document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find(
       (c) => c.closest("label")?.textContent?.includes("同步已知主机"),
@@ -223,15 +223,44 @@ describe("Desktop account sync console", () => {
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: false });
   });
 
-  it("triggers sync_wake and shows a toast for immediate sync", async () => {
+  it("stays busy until the round completes, then reports the result", async () => {
     seedLoggedIn();
     mounted = withClient(createElement(SyncCard));
     await waitForConsole();
+    await flushUntil(() => mocks.roundCompleteHandlers.length === 1);
 
     const syncButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement;
     click(syncButton);
-    await flushUntil(() => mocks.wake.mock.calls.length === 1 && !syncButton.disabled);
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已触发一轮后台同步");
+    await flushUntil(() => mocks.wake.mock.calls.length === 1 && (document.body.textContent ?? "").includes("正在同步…"));
+    expect(syncButton.disabled).toBe(true);
+    expect(mocks.toast).not.toHaveBeenCalled();
+
+    seedLoggedIn({ seq: 8, head: "head-2", lastSuccessAt: "2026-01-02T04:05:00.000Z" });
+    fireRoundComplete();
+    await flushUntil(() => !syncButton.disabled);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已同步，所有设备的更改已合并。");
+    expect(document.body.textContent).not.toContain("触发");
+  });
+
+  it("reports an up-to-date round and a failed round in plain words", async () => {
+    seedLoggedIn();
+    mounted = withClient(createElement(SyncCard));
+    await waitForConsole();
+    await flushUntil(() => mocks.roundCompleteHandlers.length === 1);
+    const syncButton = () => [...document.querySelectorAll("button")].find((b) => /立即同步|正在同步/.test(b.textContent ?? "")) as HTMLButtonElement;
+
+    click(syncButton());
+    await flushUntil(() => mocks.wake.mock.calls.length === 1);
+    fireRoundComplete();
+    await flushUntil(() => !syncButton().disabled);
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已是最新，没有需要同步的更改。");
+
+    click(syncButton());
+    await flushUntil(() => mocks.wake.mock.calls.length === 2);
+    seedLoggedIn({ lastError: "connection refused", lastAttemptAt: new Date(Date.now() + 1000).toISOString() });
+    fireRoundComplete();
+    await flushUntil(() => !syncButton().disabled);
+    expect(mocks.toast).toHaveBeenCalledWith("error", "同步失败：connection refused。请选择「立即同步」重试。");
   });
 
   it("surfaces the previous sync failure from status.lastError", async () => {
@@ -272,7 +301,7 @@ describe("Desktop account sync console", () => {
 
     const syncButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("立即同步")) as HTMLButtonElement;
     click(syncButton);
-    await flushUntil(() => mocks.wake.mock.calls.length === 1 && !syncButton.disabled);
+    await flushUntil(() => mocks.wake.mock.calls.length === 1);
     const statusCalls = mocks.status.mock.calls.length;
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
@@ -292,7 +321,7 @@ describe("Desktop account sync console", () => {
     await waitForConsole();
 
     expect(document.body.textContent).toContain(
-      "关闭上方内容类型开关不会删除服务端已有副本；在「终端历史」关闭单条录像同步会删除其服务端副本，本机记录保留。",
+      "关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。",
     );
   });
 });

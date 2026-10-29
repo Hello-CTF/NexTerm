@@ -123,7 +123,7 @@ describe("asset link copying", () => {
 
     openRowMenu(mounted.container, "web-1");
     const item = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
-      b.textContent?.includes("复制链接"),
+      b.textContent?.includes("复制资产链接"),
     );
     expect(item).toBeTruthy();
     click(item!);

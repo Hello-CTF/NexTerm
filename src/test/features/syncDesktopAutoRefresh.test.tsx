@@ -114,7 +114,7 @@ describe("Desktop account sync card - automatic status refresh", () => {
     await flushUntil(() =>
       document.body.textContent?.includes("已登录 alice") === true &&
       document.body.textContent?.includes("已开启 0 / 10 项") === true &&
-      document.body.textContent?.includes("服务端 0 个对象") === true,
+      document.body.textContent?.includes("服务端共 0 项数据") === true,
     );
     expect(mocks.status.mock.calls.length).toBeGreaterThan(statusCalls);
   });
@@ -151,7 +151,7 @@ describe("Desktop login controls", () => {
     expect(mounted.container.querySelector("#sync-pass")).toBeNull();
     expect([...mounted.container.querySelectorAll("button")].some((button) => button.textContent?.trim() === "登录")).toBe(false);
     expect(mounted.container.textContent).toContain("上次同步失败");
-    expect(mounted.container.textContent).toContain("登出");
+    expect(mounted.container.textContent).toContain("退出登录");
   });
 
   it("keeps the account connected when logout confirmation is canceled", async () => {
@@ -159,9 +159,9 @@ describe("Desktop login controls", () => {
     mocks.ask.mockResolvedValue(false);
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
-    clickButton(mounted.container, "登出");
+    clickButton(mounted.container, "退出登录");
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
-    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("本机和服务端的数据都会保留"), expect.objectContaining({ kind: "warning" }));
+    expect(mocks.ask).toHaveBeenCalledWith(expect.stringContaining("本机和服务端的数据均会保留"), expect.objectContaining({ kind: "warning" }));
     expect(mocks.ask.mock.calls[0][0]).not.toContain("开放本机终端");
     expect(mocks.linkSet).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("已登录 alice");
@@ -173,7 +173,7 @@ describe("Desktop login controls", () => {
     mocks.getExposure.mockResolvedValue({ enabled: true, state: "online" });
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
-    clickButton(mounted.container, "登出");
+    clickButton(mounted.container, "退出登录");
     await flushUntil(() => mocks.ask.mock.calls.length > 0);
     expect(mocks.ask.mock.calls[0][0]).toContain("开放本机终端");
   });
@@ -191,7 +191,7 @@ describe("Desktop login controls", () => {
     const stale = deferred<ReturnType<typeof statusPayload>>();
     mocks.status.mockReturnValueOnce(stale.promise);
     fireSyncStatus();
-    clickButton(mounted.container, "登出");
+    clickButton(mounted.container, "退出登录");
     await flushUntil(() => mounted!.container.querySelector("#sync-pass") !== null);
     expect(mocks.linkSet).toHaveBeenCalledExactlyOnceWith({ username: "", password: "" });
     expect(mounted.container.querySelector<HTMLInputElement>("#sync-url")?.value).toBe(LINK.url);
@@ -206,7 +206,7 @@ describe("Desktop login controls", () => {
     mocks.ask.mockReturnValue(confirmation.promise);
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已登录 alice") === true);
-    clickButton(mounted.container, "登出");
+    clickButton(mounted.container, "退出登录");
     mocks.linkGet.mockResolvedValue({ ...LINK, username: "bob" });
     mocks.status.mockResolvedValue({ ...statusPayload(), username: "bob", userId: "u-2" });
     fireSyncStatus();

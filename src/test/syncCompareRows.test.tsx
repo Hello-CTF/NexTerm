@@ -27,9 +27,9 @@ function text(): string {
 
 describe("compareSummary summary statistics", () => {
   it("covers loading, empty, different, and fully synchronized states", () => {
-    expect(compareSummary(null)).toBe("读取中…");
-    expect(compareSummary([])).toBe("本机与服务端都还没有可同步的内容");
-    expect(compareSummary(ROWS)).toBe("资产 1 · 分组 1 · 凭据 1 · 无法识别的对象 1 — 差异 3 条");
+    expect(compareSummary(null)).toBe("正在读取…");
+    expect(compareSummary([])).toBe("本机与服务端均暂无可同步的内容");
+    expect(compareSummary(ROWS)).toBe("资产 1 · 分组 1 · 凭据 1 · 无法识别的数据 1 — 差异 3 条");
     expect(compareSummary([{ id: "x", kind: "asset", name: "a", state: "same" }])).toBe("资产 1 — 全部一致");
   });
 
@@ -59,7 +59,7 @@ describe("compareRowTitle", () => {
     expect(compareRowTitle({ id: "01M4ZHMP33G12RV4KW43GPZZA1", kind: "tombstone", name: "01M4ZHMP33G12RV4KW43GPZZA1", state: "remote-deleted" }))
       .toEqual({ title: "已删除的项目", secondary: "01M4ZHMP33G12RV4KW43GPZZA1" });
     expect(compareRowTitle({ id: "01ARZ3NDEKTSV4RRFFQ69G5FAV", kind: "", name: "01ARZ3NDEKTSV4RRFFQ69G5FAV", state: "remote-undecryptable" }))
-      .toEqual({ title: "无法识别的对象", secondary: "01ARZ3NDEKTSV4RRFFQ69G5FAV" });
+      .toEqual({ title: "无法识别的数据", secondary: "01ARZ3NDEKTSV4RRFFQ69G5FAV" });
     expect(compareRowTitle({ id: "k1", kind: "known_host", name: "103.164.32.105:10022", state: "local-only" }))
       .toEqual({ title: "103.164.32.105:10022" });
   });
@@ -125,7 +125,7 @@ describe("CompareDetails row rendering", () => {
 
   it("shows a loading placeholder for null rows and hides it on error", async () => {
     mounted = mount(createElement(CompareDetails, { rows: null }));
-    expect(text()).toContain("读取中…");
+    expect(text()).toContain("正在读取…");
     clickButton(mounted.container, "对比详情");
     await flush();
     expect(text()).toContain("正在读取本机与服务端数据…");
@@ -141,6 +141,6 @@ describe("CompareDetails row rendering", () => {
     mounted = mount(createElement(CompareDetails, { rows: [] }));
     clickButton(mounted.container, "对比详情");
     await flush();
-    expect(text()).toContain("本机与服务端都还没有可同步的内容。");
+    expect(text()).toContain("本机与服务端均暂无可同步的内容。");
   });
 });

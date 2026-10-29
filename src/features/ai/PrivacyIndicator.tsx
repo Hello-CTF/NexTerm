@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { onPrivacyStatus, privacyApi, privacyBroken, type PrivacyStatus } from "../../ipc/privacy";
 import { useUi } from "../../app/store";
+import { IconAlert, IconShieldCheck } from "../../ui/icons";
 import { showSettingsSection } from "../settings/settingsNavigation";
 
 export interface PrivacyGuardState { enabled: boolean; broken: boolean }
@@ -24,19 +25,21 @@ export function usePrivacyGuard(): PrivacyGuardState {
 export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
   if (!guard.enabled) return null;
   if (!guard.broken) {
-    return <span className="nx-chip text-[11px]" title="已开启 AI 信息脱敏，文本中的敏感片段在发送前替换为占位符；图片不会脱敏">脱敏已开启</span>;
+    return <span className="nx-chip nx-chip-status shrink-0" role="status" title="已开启 AI 信息脱敏，文本中的敏感片段在发送前替换为占位符；图片不会脱敏" aria-label="脱敏已开启"><IconShieldCheck size={12} /><span className="nx-chip-text">脱敏已开启</span></span>;
   }
   return (
     <button
       type="button"
-      className="nx-chip text-[11px] text-red-400 hover:text-red-300"
-      title="本地脱敏模型不可用，AI 请求会被阻止。点击前往设置"
+      className="nx-chip nx-chip-status is-error shrink-0"
+      aria-label="脱敏不可用"
+      title="本地脱敏模型不可用，AI 请求会被阻止。选择前往设置"
       onClick={() => {
         useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
         showSettingsSection("settings-ai-privacy");
       }}
     >
-      脱敏不可用
+      <IconAlert size={12} />
+      <span className="nx-chip-text">脱敏不可用</span>
     </button>
   );
 }

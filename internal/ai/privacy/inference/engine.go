@@ -92,9 +92,9 @@ func initializeRuntime(path string) error {
 	}
 	if err := loadRuntime(path); err != nil {
 		if message := strings.TrimSpace(err.Error()); message != "" {
-			return fmt.Errorf("%w: %s", ErrUnavailable, message)
+			return &RuntimeError{Path: path, Err: errors.New(message)}
 		}
-		return ErrUnavailable
+		return &RuntimeError{Path: path, Err: ErrUnavailable}
 	}
 	onnxRuntime.path = path
 	return nil
@@ -564,4 +564,21 @@ func (e *Engine) Close() error {
 	defer func() { e.gate <- struct{}{} }()
 	e.release()
 	return nil
+}
+
+// LoadRuntime loads the ONNX Runtime from runtimeDirectory and returns its
+// version. Packaged-artifact smoke checks use it to prove the shipped library
+// loads under the shipped signature without needing a model.
+func LoadRuntime(runtimeDirectory string) (string, error) {
+	if err := CheckPlatform(); err != nil {
+		return "", err
+	}
+	onnxPath, err := runtimePath(runtimeDirectory)
+	if err != nil {
+		return "", err
+	}
+	if err := initializeRuntime(onnxPath); err != nil {
+		return "", err
+	}
+	return runtimeVersion(), nil
 }

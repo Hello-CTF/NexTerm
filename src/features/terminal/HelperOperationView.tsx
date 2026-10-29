@@ -129,7 +129,7 @@ const STAGE_LABELS = new Map<string, string>([
   ["deferred", "当前有进程运行，更新已延后"],
   ["switch", "切换持久终端组件"],
   ["updated", "持久终端组件已更新"],
-  ["fallback", "正在使用普通终端"],
+  ["fallback", "正在使用临时终端"],
   ["failed", "持久终端组件操作失败"],
   ["update", "更新持久终端组件"],
   ["rollback", "回滚持久终端组件"],
@@ -232,7 +232,7 @@ function versionSummary(version: HelperVersionPresentation): string {
 // An older helper that was inspected is replaced in the app after explicit consent (the 旧版组件 section). Any other
 // incompatible helper reports no process or session count, so the only way past it is to stop it on the host.
 const INCOMPATIBLE_REMEDY =
-  "可以在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
+  "可在主机上手动结束旧的持久终端组件进程（其中运行的终端会话会随之结束），然后重新连接，NexTerm 会安装新组件。";
 const LEGACY_REMEDY = "可在下方「旧版组件」中查看其中的会话并确认升级。";
 
 function versionCompatibilityText(
@@ -648,19 +648,19 @@ export function HelperOperationView({
         <div className="flex flex-col gap-2 border-t border-neutral-800/60 pt-2">
           {onRetryPersistent && (
             <p id={retryNoteId} className="text-neutral-500">
-              可以重新尝试安装持久终端。
+              可重新尝试安装持久终端。
             </p>
           )}
           {onContinueOrdinary && (
             <p id={ordinaryWarningId} className="text-[var(--nx-fg-warning)]">
               {restoreFailure
-                ? "将打开一个新的普通终端；原会话不会被恢复。"
-                : "普通终端在断开连接后结束，无法转到后台。"}
+                ? "将打开一个新的临时终端；原会话不会被恢复。"
+                : "临时终端在断开连接后结束，无法转到后台。"}
             </p>
           )}
           {onCancel && (
             <p id={cancelNoteId} className="text-neutral-500">
-              停止本次安装，保留当前连接。
+              停止本次安装并保留当前连接。
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -685,7 +685,7 @@ export function HelperOperationView({
                 onClick={onContinueOrdinary}
                 onKeyDown={activateFromKeyboard}
               >
-                {restoreFailure ? "新建普通终端" : "继续使用普通终端"}
+                {restoreFailure ? "新建临时终端" : "继续使用临时终端"}
               </button>
             )}
             {onCancel && (

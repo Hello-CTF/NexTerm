@@ -127,7 +127,7 @@ function RedactHint() {
   return (
     <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
-      已根据变量名和连接字符串中的凭据自动遮蔽敏感值
+      已根据变量名和连接字符串中的凭据自动脱敏敏感值
     </span>
   );
 }
@@ -150,7 +150,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <RedactHint />
         <div className="nx-spacer" />
-        {q.isFetching && <span className="nx-hint">刷新中…</span>}
+        {q.isFetching && <span className="nx-hint">正在刷新…</span>}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void q.refetch()}>
           <IconRefresh size={12} />
           刷新
@@ -255,7 +255,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title="完整配置（已遮蔽）">
+      <Section title="完整配置（已脱敏）">
         <pre className="nx-pre m-3 whitespace-pre-wrap break-all">{vm.json}</pre>
       </Section>
     </div>
@@ -322,7 +322,7 @@ function StatsView({
         </span>
         {!containerRunning && <span className="nx-badge nx-badge-amber">当前容器已停止</span>}
         <div className="nx-spacer" />
-        {stats.isFetching && <span className="nx-hint">刷新中…</span>}
+        {stats.isFetching && <span className="nx-hint">正在刷新…</span>}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void stats.refetch()}>
           <IconRefresh size={12} />
           刷新
@@ -331,7 +331,7 @@ function StatsView({
 
       {rows.length === 0 ? (
         <div className="nx-empty">
-          {containerRunning ? "还没有统计输出（每 3 秒刷新）" : "当前容器已停止，只有运行中的容器才有统计"}
+          {containerRunning ? "暂无统计数据（每 3 秒刷新）" : "当前容器已停止，只有运行中的容器才有统计"}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
@@ -458,7 +458,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
               <button
                 className={`nx-path-crumb ${i === all.length - 1 ? "is-current" : ""}`}
                 onClick={() => setPath(c.path)}
-                title={c.sensitive ? "已遮蔽" : redactContainerPath(c.path)}
+                title={c.sensitive ? "已脱敏" : redactContainerPath(c.path)}
               >
                 {c.label}
               </button>
@@ -491,7 +491,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
             }
           />
         ) : sorted.length === 0 ? (
-          <div className="nx-empty">这个目录是空的</div>
+          <div className="nx-empty">该目录是空的</div>
         ) : (
           <table className="nx-table nx-table-fixed">
             <tbody>
@@ -504,7 +504,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                     className={isDir ? "cursor-pointer" : undefined}
                     title={
                       sensitive
-                        ? "已遮蔽"
+                        ? "已脱敏"
                         : isDir
                           ? redactContainerPath(joinContainerPath(path, name))
                           : `${redactContainerPath(joinContainerPath(path, name))}（仅列出目录内容，不读取文件）`
@@ -519,7 +519,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                       )}
                       {display}
                       {sensitive && (
-                        <span className="nx-badge nx-badge-amber ml-1.5" title="疑似敏感文件：名称已遮蔽，不提供内容读取">
+                        <span className="nx-badge nx-badge-amber ml-1.5" title="疑似敏感文件：名称已脱敏，不提供内容读取">
                           敏感
                         </span>
                       )}

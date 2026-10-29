@@ -25,7 +25,7 @@ function WindowControls() {
       </button>
       <button
         className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title="最大化 / 还原（双击空白处也可）"
+        title="最大化 / 还原（双击空白处亦可）"
         aria-label="最大化或还原窗口"
         onClick={() => void toggleMaximiseWindow()}
       >

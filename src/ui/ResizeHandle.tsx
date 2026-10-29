@@ -153,7 +153,7 @@ export function ResizeHandle({
       role="separator"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label={label ?? (side === "left" ? "调整左栏宽度" : "调整 AI 侧栏宽度")}
+      aria-label={label ?? (side === "left" ? "调整左侧栏宽度" : "调整 AI 侧栏宽度")}
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={Math.round(width)}

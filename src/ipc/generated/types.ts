@@ -779,7 +779,6 @@ export type DeviceGrant = {
   kinds: string[];
   permanent: boolean;
   updatedAt: number;
-  legacy?: boolean;
 };
 
 export type DiagnosticsArmRequest = {
@@ -1372,7 +1371,6 @@ export type GrantRule = {
   expiresAt?: number;
   createdAt: number;
   updatedAt: number;
-  legacy?: boolean;
 };
 
 export type HelperOfflineDTO = {

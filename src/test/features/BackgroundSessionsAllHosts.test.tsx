@@ -167,7 +167,7 @@ describe("BackgroundSessions across hosts", () => {
       await waitForRendered(() => expect(mocks.closeTab).toHaveBeenCalledWith("far-tab", "kill", "s-far"));
       expect(mocks.connectDevice).toHaveBeenCalledWith("far", "far box");
       expect(useUi.getState().activeWorkspaceId).toBe(before);
-      expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束进程");
+      expect(useUi.getState().toasts.map((toast) => toast.text)).toContain("已结束终端中的程序");
     } finally {
       view.unmount();
     }
@@ -207,7 +207,7 @@ describe("BackgroundSessions across hosts", () => {
         button(row(view, "near-tab"), "结束进程").click();
         await flush();
       });
-      await waitForRendered(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true));
+      await waitForRendered(() => expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端中的程序"))).toBe(true));
       expect(row(view, "near-tab")).toBeTruthy();
       expect(view.container.querySelectorAll('tr[data-background-row="near-tab"]')).toHaveLength(1);
       expect(aggregateRows(useSessionAggregate.getState()).some((entry) => entry.session.tabId === "near-tab")).toBe(true);
@@ -234,7 +234,7 @@ describe("BackgroundSessions across hosts", () => {
       });
       expect(mocks.connectDevice).not.toHaveBeenCalled();
       expect(mocks.closeTab).not.toHaveBeenCalled();
-      expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("结束进程失败"))).toBe(true);
+      expect(useUi.getState().toasts.some((toast) => toast.text.startsWith("无法结束终端中的程序"))).toBe(true);
       expect(row(view, "near-tab")).toBeTruthy();
     } finally {
       view.unmount();
@@ -265,7 +265,7 @@ describe("BackgroundSessions across hosts", () => {
     try {
       const end = button(row(view, "gone-tab"), "结束进程");
       expect(end.disabled).toBe(true);
-      expect(end.title).toContain("请先从资产树连接这台主机");
+      expect(end.title).toContain("请先从资产树连接该主机");
       expect(mocks.ask).not.toHaveBeenCalled();
     } finally {
       view.unmount();
@@ -305,7 +305,7 @@ describe("cross-host grouping and terminate paths", () => {
   });
 
   it("explains a host whose helper is not running", () => {
-    expect(unknownHostText({ status: "offline", errorCode: "helper_not_ready" })).toContain("在这台主机上打开一个终端");
+    expect(unknownHostText({ status: "offline", errorCode: "helper_not_ready" })).toContain("在该主机上打开终端");
     expect(unknownHostText({ status: "offline" })).toBe("未连接，会话状态未知");
     expect(unknownHostText({ status: "failed", error: "超时" })).toBe("无法读取，会话状态未知：超时");
   });

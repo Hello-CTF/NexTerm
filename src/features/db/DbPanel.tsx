@@ -564,7 +564,7 @@ function SqlView({
         </select>
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">
-          {dialect === "postgres" ? "个对象" : "张表"}
+          {dialect === "postgres" ? "张表和视图" : "张表"}
         </span>
         <div className="nx-spacer" />
         {(workspaceProblems?.length ?? 0) > 0 && (
@@ -591,7 +591,7 @@ function SqlView({
             setProblemsOpen(false);
             setHistoryOpen((open) => !open);
           }}
-          title="查看执行历史；点击记录只载入 SQL 草稿"
+          title="查看执行历史；选择记录仅载入 SQL 草稿"
         >
           <IconHistory size={12} />
           历史
@@ -603,7 +603,7 @@ function SqlView({
           title="运行整段 SQL，或只运行选中部分（一次只执行一条语句）"
         >
           {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
-          {running ? "运行中…" : "运行"}
+          {running ? "正在运行…" : "运行"}
           <span className="nx-kbd border-white/30 text-white/75">Ctrl ↵</span>
         </button>
       </div>
@@ -670,7 +670,7 @@ function SqlView({
           <button
             className={`nx-segment-item ${browse === "tables" ? "is-active" : ""}`}
             onClick={() => setBrowse("tables")}
-            title="点击表名，将 SELECT 查询填入编辑器"
+            title="选择表名，将 SELECT 查询填入编辑器"
           >
             <IconTable size={12} />
             表
@@ -678,7 +678,7 @@ function SqlView({
           <button
             className={`nx-segment-item ${browse === "columns" ? "is-active" : ""}`}
             onClick={() => setBrowse("columns")}
-            title="点击表名查看字段结构"
+            title="选择表名查看字段结构"
           >
             <IconList size={12} />
             结构
@@ -710,7 +710,7 @@ function SqlView({
           {schemasStatus === "error" ? (
             <>
               <span className="nx-hint shrink-0 text-red-300">
-                {dialect === "postgres" ? "schema 列表加载失败" : "数据库列表加载失败"} · {schemasError}
+                {dialect === "postgres" ? "未能加载 schema 列表" : "未能加载数据库列表"}：{schemasError}
               </span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -721,10 +721,10 @@ function SqlView({
               </button>
             </>
           ) : schemasStatus === "loading" || tablesStatus === "loading" ? (
-            <span className="nx-hint shrink-0">表列表加载中…</span>
+            <span className="nx-hint shrink-0">正在加载表列表…</span>
           ) : tablesStatus === "error" ? (
             <>
-              <span className="nx-hint shrink-0 text-red-300">表列表加载失败 · {tablesError}</span>
+              <span className="nx-hint shrink-0 text-red-300">未能加载表列表：{tablesError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                 onClick={() => void loadTables(schema)}
@@ -912,12 +912,21 @@ function SqlErrorView({
   onShowProblems: () => void;
 }) {
   const unknown = label === "结果未知";
+  const summary = unknown
+    ? "无法确认该 SQL 是否已生效。请先在数据库中确认结果，避免重复执行。"
+    : label === "连接错误"
+      ? "无法连接数据库，该 SQL 未执行。请检查连接后重新运行。"
+      : "该 SQL 执行失败。请根据详细信息修改后重新运行。";
   return (
-    <div className={`p-3 font-mono text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
+    <div className={`p-3 text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
       <div>
         <span className={`nx-badge ${unknown ? "" : "nx-badge-red"} mr-2`}>{label}</span>
-        {error}
+        {summary}
       </div>
+      <details className="mt-1.5 font-mono">
+        <summary className="cursor-pointer font-sans text-neutral-400">查看详细信息</summary>
+        <div className="mt-1 whitespace-pre-wrap break-words">{error}</div>
+      </details>
       <div className="mt-2 flex items-center gap-2 font-sans">
         <button type="button" className="nx-link" onClick={onCopy}>
           复制
@@ -954,7 +963,15 @@ function ResultTable({
     return (
       <div className="p-3 text-xs text-neutral-400">
         <span className="nx-badge nx-badge-green mr-2">运行成功</span>
-        {result.rowsAffected} 行受影响 · 耗时 {result.durationMs}ms
+        {result.rowsAffected} 行受影响，耗时 {result.durationMs}ms
+      </div>
+    );
+  }
+  if (result.rows.length === 0) {
+    return (
+      <div className="p-3 text-xs text-neutral-400">
+        <span className="nx-badge nx-badge-green mr-2">运行成功</span>
+        查询未返回数据（{result.columns.length} 列，0 行），耗时 {result.durationMs}ms
       </div>
     );
   }
@@ -990,9 +1007,9 @@ function ResultTable({
       </table>
       <div className="flex items-center gap-3 px-3 py-2 text-[11px] text-neutral-500">
         <span>
-          {result.rows.length} 行 · {result.durationMs}ms
+          {result.rows.length} 行，耗时 {result.durationMs}ms
         </span>
-        {result.truncated && <span className="text-amber-300">超过 5000 行，仅显示前 5000 行</span>}
+        {result.truncated && <span className="text-amber-300">结果超过 5000 行，仅显示前 5000 行。可添加 LIMIT 缩小范围</span>}
         <span className="nx-spacer" />
         <button className="nx-link" onClick={() => void copyCsv()}>
           复制 CSV
@@ -1179,10 +1196,10 @@ function RedisView({ connId }: { connId: string }) {
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
           {scanStatus === "loading" ? (
-            <div className="nx-hint p-3">键列表加载中…</div>
+            <div className="nx-hint p-3">正在加载键列表…</div>
           ) : scanStatus === "error" ? (
             <div className="p-3">
-              <div className="nx-hint text-red-300">键列表加载失败 · {scanError}</div>
+              <div className="nx-hint text-red-300">未能加载键列表：{scanError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void doScan(0)}
@@ -1210,7 +1227,7 @@ function RedisView({ connId }: { connId: string }) {
         {pageError && (
           <div className="flex shrink-0 items-center gap-1.5 border-t border-neutral-800/60 px-2.5 py-1.5">
             <span className="nx-hint min-w-0 flex-1 truncate text-red-300">
-              下一页加载失败 · {pageError}
+              未能加载下一页：{pageError}
             </span>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -1256,7 +1273,7 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-empty-icon">
                 <IconXCircle size={18} />
               </span>
-              <div className="text-[12.5px] text-red-300">键内容加载失败 · {viewError}</div>
+              <div className="text-[12.5px] text-red-300">未能加载键内容：{viewError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-sm"
                 onClick={() => void inspect(selected)}
@@ -1270,14 +1287,14 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-empty-icon">
                 <IconLoader size={18} className="animate-spin" />
               </span>
-              键内容加载中…
+              正在加载键内容…
             </div>
           ) : (
             <div className="nx-empty">
               <span className="nx-empty-icon">
                 <IconLayers size={18} />
               </span>
-              从左侧选一个键查看内容
+              请选择左侧的键以查看内容
             </div>
           )}
         </div>

@@ -100,7 +100,7 @@ export function ComposeEditor({
         setStream({ id, sessionId, title: `${stack.project} · up -d`, channel, sink });
       } catch (cause) {
         disposeChannel(channel);
-        setError(`文件已保存，但 redeploy 未能启动：${describeError(cause)}`);
+        setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
       }
     } catch (cause) {
       const challenge = getDockerConfirmationChallenge(cause);
@@ -150,7 +150,7 @@ export function ComposeEditor({
         >
           <div className="nx-modal-header">
             <span className="truncate">编辑并重新部署 · {stack.project}</span>
-            <span className="nx-badge">保存时先查看 diff</span>
+            <span className="nx-badge">保存前先查看差异</span>
             <div className="nx-spacer" />
             <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭 Compose 编辑器" onClick={onClose}>
               <IconClose size={12} />
@@ -252,7 +252,7 @@ function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
         <div className="nx-modal-footer">
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={onCancel}>取消</button>
           <button type="button" className="nx-btn nx-btn-danger" disabled={busy} onClick={onConfirm}>
-            {busy ? "预检中…" : "保存并 up -d"}
+            {busy ? "正在预检…" : "保存并 up -d"}
           </button>
         </div>
       </div>

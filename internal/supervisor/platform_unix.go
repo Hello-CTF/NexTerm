@@ -3,26 +3,30 @@
 package supervisor
 
 import (
-	"context"
+	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/usershell"
+	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 )
-
-// accountShell reports the account's login shell; a variable so tests can pin it.
-var accountShell = usershell.Lookup
 
 const utf8Locale = "C.UTF-8"
 
+// envResolveWait bounds how long creating a session waits for the first login-shell environment
+// resolution; after that the best known environment is used.
+const envResolveWait = 3 * time.Second
+
+// sessionEnv returns the environment of a new session: the process environment overlaid with the user's
+// resolved login-shell environment, then the caller's overrides. The helper is long-lived, so this is
+// evaluated on every create and never reuses the environment the helper was started with.
 func sessionEnv(overrides []string) []string {
-	environment := mergedEnv(overrides)
-	if environment == nil {
-		environment = os.Environ()
+	environment := shellenv.Default().Env(envResolveWait)
+	for _, entry := range overrides {
+		if key, value, found := strings.Cut(entry, "="); found {
+			environment = setEnvironment(environment, key, value)
+		}
 	}
 	if environmentValue(environment, "TERM") == "" {
 		environment = setEnvironment(environment, "TERM", "xterm-256color")
@@ -46,7 +50,7 @@ func localeMissing(environment []string) bool {
 }
 
 func setEnvironment(environment []string, key, value string) []string {
-	out := environment[:0]
+	out := make([]string, 0, len(environment)+1)
 	for _, entry := range environment {
 		if existing, _, found := strings.Cut(entry, "="); !found || existing != key {
 			out = append(out, entry)
@@ -55,23 +59,13 @@ func setEnvironment(environment []string, key, value string) []string {
 	return append(out, key+"="+value)
 }
 
-// defaultShell reports the shell to run and whether it takes login-shell flags: the /bin/sh
-// fallback may be dash, which rejects -l, while an explicit $SHELL keeps the login behavior.
+// defaultShell reports the shell to run and whether it takes login-shell flags. The order is a SHELL in the
+// session's own environment (the caller asked), the explicit NexTerm setting, the account's login shell,
+// the inherited $SHELL, then /bin/sh, which may be dash and therefore gets no -l.
 func defaultShell(environment []string) (shell string, login bool) {
-	shell = environmentValue(environment, "SHELL")
-	if shell == "" {
-		shell = strings.TrimSpace(os.Getenv("SHELL"))
-	}
-	if shell != "" {
-		return shell, true
-	}
-	// launchd and systemd --user services start without SHELL; the account's shell keeps
-	// rc files, PATH and prompt colors identical to a normal terminal (macOS /bin/sh is
-	// bash 3.2 and prints the zsh deprecation banner).
-	if shell = accountShell(); shell != "" {
-		return shell, true
-	}
-	return "/bin/sh", false
+	choice := shellenv.Default().Shell(environmentValue(environment, "SHELL"))
+	slog.Info("session shell chosen", "shell", choice.Path, "source", choice.Source, "note", choice.Note)
+	return choice.Path, choice.Login
 }
 
 func defaultShellCommand(environment []string) []string {
@@ -97,42 +91,3 @@ func execSignalName(state *os.ProcessState) string {
 	}
 	return status.Signal().String()
 }
-
-// resolveLoginPATH reports the user's login-shell PATH with a short timeout; empty means unresolved.
-// Service-installed agents (systemd --user, launchd) run with a minimal PATH where CLIs like docker do not
-// resolve, while interactive tabs get the full PATH through the login shell.
-func resolveLoginPATHImpl() string {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	command := append(defaultShellCommand(nil), "-c", `printf %s "$PATH"`)
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	// Without a delay Wait would block on an inherited stdout pipe if the login shell backgrounds a child.
-	cmd.WaitDelay = time.Second
-	out, err := cmd.Output()
-	text := string(out)
-	// A chatty rc file must not poison the overlay: a valid PATH is absolute and whitespace-free.
-	if err != nil || !strings.HasPrefix(text, "/") || strings.ContainsAny(text, " \t\n\r") {
-		return ""
-	}
-	return mergePATH(os.Getenv("PATH"), text)
-}
-
-// mergePATH returns base followed by the entries of extra that base lacks. Only absolute entries are kept,
-// duplicates are dropped and order is preserved. The service-installed PATH is the base, so the entries it
-// recorded stay first and the login shell only adds what it knows beyond them.
-func mergePATH(base, extra string) string {
-	seen := map[string]bool{}
-	var merged []string
-	for _, list := range []string{base, extra} {
-		for _, entry := range strings.Split(list, ":") {
-			if !strings.HasPrefix(entry, "/") || seen[entry] {
-				continue
-			}
-			seen[entry] = true
-			merged = append(merged, entry)
-		}
-	}
-	return strings.Join(merged, ":")
-}
-
-var loginPATH = sync.OnceValue(resolveLoginPATHImpl)

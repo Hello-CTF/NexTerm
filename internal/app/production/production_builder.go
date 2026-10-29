@@ -139,12 +139,6 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		connector = defaultConnector
 		hostKeys = defaultConnector.hostKeys
 		sshConnector = defaultConnector
-		report := hostKeys.migration
-		if report.Conflicts > 0 || report.Skipped > 0 {
-			config.Config.Logger.Warn("legacy SSH host key migration left entries unattended", "conflicts", report.Conflicts, "skipped", report.Skipped)
-		} else if report.BackupCreated || report.Copied > 0 {
-			config.Config.Logger.Info("migrated legacy SSH host keys", "backup_created", report.BackupCreated, "copied", report.Copied, "already_present", report.Existing)
-		}
 	}
 	dockerService := config.Docker
 	var forwardService *forward.Service
@@ -272,7 +266,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 						continue
 					}
 					if listed.Agent == nil || listed.Agent.StateDigest == "" {
-						return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已经离线")
+						return "", ipc.NewError(ipc.CodeDisconnected, "设备未返回终端状态，可能已离线")
 					}
 					return listed.Agent.StateDigest, nil
 				}

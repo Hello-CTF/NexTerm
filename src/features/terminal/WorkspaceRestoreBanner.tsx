@@ -47,8 +47,8 @@ function selectResultCandidates(state: UiSnapshot): WorkspaceRestoreCandidate[] 
 const RESTORED_LINGER_MS = 3000;
 
 function statusText(item: RestoreItem): string {
-  if (item.status === "waiting") return "等待重连";
-  if (item.status === "connecting") return "连接中…";
+  if (item.status === "waiting") return "等待重新连接";
+  if (item.status === "connecting") return "正在连接…";
   if (item.status === "success") return "已连接";
   if (item.status === "failed") return "连接失败";
   if (item.status === "canceled") return "已取消";
@@ -171,7 +171,7 @@ export function WorkspaceRestoreBanner() {
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            title="回到本设备原来的布局"
+            title="恢复为本设备原有的布局"
             disabled={running}
             onClick={undoLayoutRestore}
           >
@@ -183,7 +183,7 @@ export function WorkspaceRestoreBanner() {
   }
   const skippedNote = skippedCount > 0 ? `，${skippedCount} 个已跳过` : "";
   const summary = running
-    ? "正在重连工作区…"
+    ? "正在重新连接工作区…"
     : restored
       ? `已恢复 ${successCount} 个工作区${skippedNote}`
       : failedCount > 0
@@ -209,7 +209,7 @@ export function WorkspaceRestoreBanner() {
               disabled={running || eligibleIds.length === 0}
               onClick={() => void run()}
             >
-              {running ? "正在重连…" : "全部重连"}
+              {running ? "正在重新连接…" : "全部重新连接"}
             </button>
             <button
               type="button"
@@ -273,7 +273,7 @@ export function WorkspaceRestoreBanner() {
             disabled={running || selectedIds.length === 0}
             onClick={() => void run(selectedIds)}
           >
-            重连所选
+            重新连接所选
           </button>
         </div>
       )}

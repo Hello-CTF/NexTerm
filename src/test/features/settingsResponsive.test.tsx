@@ -220,7 +220,7 @@ describe("SettingsView responsive structure", () => {
   it("submits new rules on Enter but not during IME composition", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    clickButton(mounted.container, "添加一条规则");
+    clickButton(mounted.container, "添加规则");
     const input = mounted.container.querySelector<HTMLInputElement>(
       'input[placeholder*="Enter 保存"]',
     );
@@ -279,6 +279,7 @@ describe("SettingsView responsive structure", () => {
     const box = label!.querySelector<HTMLInputElement>('input[type="checkbox"]');
     expect(box).toBeTruthy();
     expect(box!.checked).toBe(false);
+    mocks.ask.mockResolvedValueOnce(true);
     click(box!);
     await flush();
     expect(useUi.getState().terminalOsc52).toBe(true);
@@ -290,9 +291,9 @@ describe("SettingsView responsive structure", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const terminal = document.getElementById("settings-terminal");
-    expect(terminal?.textContent).toContain("支持后台的交互终端");
-    expect(terminal?.textContent).toContain("本机后台终端仅在宿主应用运行期间保留");
-    expect(terminal?.textContent).toContain("不是 durable SSH");
+    expect(terminal?.textContent).toContain("支持后台运行的交互终端");
+    expect(terminal?.textContent).toContain("本机后台终端仅在应用运行期间保留");
+    expect(terminal?.textContent).toContain("不等同于持久 SSH 终端");
   });
 });
 

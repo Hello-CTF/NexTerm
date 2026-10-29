@@ -31,7 +31,7 @@ var durableUnrecoverableBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal 
 var durableHelperRestartedBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal ended: its helper restarted since the last attach\x1b[0m\r\n")
 var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 
-const sshFallbackNotice = "持久终端不可用，已切换为普通 SSH 终端；关闭或断开后无法恢复此终端"
+const sshFallbackNotice = "持久终端不可用，已切换为临时 SSH 终端；关闭或断开后无法恢复此终端"
 
 type subscriber struct {
 	client string
@@ -1951,7 +1951,12 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		session.mu.Unlock()
 	}
 	m.mu.Unlock()
-	_ = m.closeTabResources(tab, false)
+	// The tab is unregistered, so a failed channel close can never be
+	// retried: finish the teardown regardless (a durable process is already
+	// killed here) instead of leaking the pump and subscribers.
+	if err := m.closeTabResources(tab, true); err != nil {
+		m.logger.Warn("close terminal channel after removing the tab", "tab", id, "error", err)
+	}
 	return nil
 }
 

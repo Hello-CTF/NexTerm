@@ -50,9 +50,9 @@ export function sessionReconnectStatusText(
       ? Date.parse(session.nextRetryAt)
       : null;
   const next = retryAt !== null && Number.isFinite(retryAt) && retryAt > 0
-    ? `下次重连 ${formatTime(retryAt)}`
+    ? `下次重新连接 ${formatTime(retryAt)}`
     : null;
-  return [attempt > 0 ? `重连尝试 ${attempt} 次` : "准备第 1 次重连", next]
+  return [attempt > 0 ? `重新连接尝试 ${attempt} 次` : "准备第 1 次重新连接", next]
     .filter(Boolean)
     .join(" · ");
 }
@@ -101,7 +101,7 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
   abnormalDisconnectNotices.add(p.sessionId);
   const name = current?.name ?? p.sessionId;
   const message = retryableFailed
-    ? `会话「${name}」自动重连失败：${p.error ?? p.errorCode}`
+    ? `会话「${name}」自动重新连接失败：${p.error ?? p.errorCode}`
     : `会话「${name}」异常断开：${p.error ?? p.errorCode}`;
   state.pushToast("error", message, {
     label: "重新连接",
@@ -113,7 +113,7 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
   const state = useUi.getState();
   const session = state.sessions.find((item) => item.id === sessionId);
   if (!session) {
-    state.pushToast("error", "重连失败：会话已不存在，请刷新会话列表");
+    state.pushToast("error", "重新连接失败：会话已不存在，请刷新会话列表");
     return;
   }
   // Route through the target-aware workspace reconnect so the connection problem settles against
@@ -127,7 +127,7 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
     const latest = useUi.getState();
     latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
   } catch (error) {
-    useUi.getState().pushToast("error", `重连失败：${describeError(error)}`);
+    useUi.getState().pushToast("error", `重新连接失败：${describeError(error)}`);
   }
 }
 
@@ -139,7 +139,7 @@ export function isSessionSuspect(status: SessionInfo["status"] | undefined, live
 export function sessionStatusText(status: SessionInfo["status"] | undefined, liveness?: string | null): string {
   if (isSessionSuspect(status, liveness)) return "连接不稳定";
   if (status === "connected") return "已连接";
-  if (status === "reconnecting") return "重连中";
+  if (status === "reconnecting") return "重新连接中";
   if (status === "connecting") return "连接中";
   if (status === "failed") return "连接失败";
   return "已断开";

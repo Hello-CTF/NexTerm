@@ -185,14 +185,14 @@ describe("DiagnosticsCard", () => {
   it("explains the missing permission instead of leaving an empty section", async () => {
     mocks.status.mockRejectedValue({ code: "forbidden", message: "仅管理员可使用诊断功能" });
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => text().includes("仅管理员可以使用调试模式"));
+    await flushUntil(() => text().includes("仅管理员可使用调试模式"));
     expect(hasButton("开启下次启动的调试模式")).toBe(false);
   });
 
   it("surfaces status load failures", async () => {
     mocks.status.mockRejectedValue({ code: "internal", message: "boom" });
     mounted = mount(createElement(DiagnosticsCard));
-    await flushUntil(() => text().includes("boom"));
+    await flushUntil(() => text().includes("应用内部出现错误，请稍后重试"));
   });
 
   it("opens the capture root from the top-level button", async () => {

@@ -204,7 +204,7 @@ describe("SavedTargetSets", () => {
 
     rerenderSets(mounted, apiB);
     expect(mounted.container.textContent).not.toContain("web");
-    expect(mounted.container.textContent).toContain("加载中");
+    expect(mounted.container.textContent).toContain("正在加载");
 
     await act(async () => {
       listB.resolve([]);
@@ -296,7 +296,7 @@ describe("SavedTargetSets", () => {
       createA.resolve({ id: "a-new", name: "cache", sessionIds: ["s1"], createdAt: 2, updatedAt: 2 });
     });
     expect(mounted.container.textContent).toContain("owner-b-set");
-    expect(mounted.container.textContent).not.toContain("加载中");
+    expect(mounted.container.textContent).not.toContain("正在加载");
     expect(apiA.list).toHaveBeenCalledTimes(1);
   });
 
@@ -321,7 +321,7 @@ describe("SavedTargetSets", () => {
       listB.resolve([{ id: "b1", name: "owner-b-set", sessionIds: ["s1"], createdAt: 1, updatedAt: 1 }]);
     });
     expect(mounted.container.textContent).toContain("owner-b-set");
-    expect(mounted.container.textContent).not.toContain("加载中");
+    expect(mounted.container.textContent).not.toContain("正在加载");
     expect(apiA.list).toHaveBeenCalledTimes(1);
   });
 });

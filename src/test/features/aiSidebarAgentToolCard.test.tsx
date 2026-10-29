@@ -286,10 +286,10 @@ describe("AiSidebar agent tool card mounting", () => {
     const text = card.textContent ?? "";
     expect(text).toContain("ghost");
     expect(text).not.toContain("ghost@");
-    expect(text).toContain("无法验证");
+    expect(text).toContain("无法确认");
     // An empty list cannot evidence persistence: no claimed non-persistent
     // target, and automatic writes stay forbidden without evidence.
-    expect(text).not.toContain("非持久目标");
+    expect(text).not.toContain("非持久终端");
     expect(text).toContain("自动写入已禁止");
   });
 
@@ -310,8 +310,8 @@ describe("AiSidebar agent tool card mounting", () => {
     const text = card.textContent ?? "";
     expect(text).toContain("build");
     expect(text).not.toContain("build@");
-    expect(text).toContain("无法验证");
-    expect(text).not.toContain("非持久目标");
+    expect(text).toContain("无法确认");
+    expect(text).not.toContain("非持久终端");
     expect(text).toContain("自动写入已禁止");
     expect(mocks.call.mock.calls.filter((call) => call[0] === "ai_roster_list").length).toBeLessThanOrEqual(2);
   });
@@ -369,7 +369,7 @@ describe("AiSidebar agent tool card mounting", () => {
     const card = agentCard(view!, "call-1")!;
     expect(card.querySelector('[title^="请求 req-1"]')).not.toBeNull();
 
-    await clickButtonFlush(card, "批准一次");
+    await clickButtonFlush(card, "允许一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);
     expect(mocks.confirm).toHaveBeenCalledWith({
       jobId: "job-1",
@@ -377,7 +377,7 @@ describe("AiSidebar agent tool card mounting", () => {
       nonce: "n-1",
       decision: "allow",
     });
-    await flushUntil(() => agentCard(view!, "call-1")!.textContent?.includes("已批准一次") === true);
+    await flushUntil(() => agentCard(view!, "call-1")!.textContent?.includes("已允许一次") === true);
   });
 
   it("gates the card approval on the typed production environment names", async () => {
@@ -396,7 +396,7 @@ describe("AiSidebar agent tool card mounting", () => {
     await flushUntil(() => agentCard(view!, "call-1")?.textContent?.includes("等待你确认") === true);
 
     // The delegate refuses before the challenge is answered with typed names.
-    await clickButtonFlush(agentCard(view!, "call-1")!, "批准一次");
+    await clickButtonFlush(agentCard(view!, "call-1")!, "允许一次");
     await flushUntil(() =>
       mocks.toast.mock.calls.some(
         (call) => call[0] === "error" && String(call[1]).includes("生产环境挑战未完成"),
@@ -408,7 +408,7 @@ describe("AiSidebar agent tool card mounting", () => {
     if (!envInput) throw new Error("environment input not found");
     setInputValue(envInput, "production");
     await flush();
-    await clickButtonFlush(agentCard(view!, "call-1")!, "批准一次");
+    await clickButtonFlush(agentCard(view!, "call-1")!, "允许一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);
     expect(mocks.confirm).toHaveBeenCalledWith({
       jobId: "job-1",
@@ -500,14 +500,14 @@ describe("AiSidebar agent tool card mounting", () => {
     });
     await flush();
     expect(agentCard(view!, "call-a")!.textContent).toContain("build-a@web-a:/srv/a");
-    expect(agentCard(view!, "call-a")!.textContent).not.toContain("无法验证");
+    expect(agentCard(view!, "call-a")!.textContent).not.toContain("无法确认");
     // And back to B: B's identity is intact as well.
     act(() => {
       useUi.getState().setActiveAiTab(GLOBAL_AI_BOARD_KEY, "tab-b");
     });
     await flush();
     expect(agentCard(view!, "call-b")!.textContent).toContain("build-b@web-b:/srv/b");
-    expect(agentCard(view!, "call-b")!.textContent).not.toContain("无法验证");
+    expect(agentCard(view!, "call-b")!.textContent).not.toContain("无法确认");
   });
 
   it("joins the same handle across the cross-restart HITL resume", async () => {
@@ -590,7 +590,7 @@ describe("AiSidebar agent tool card mounting", () => {
     });
     await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("部署完成") === true);
 
-    await clickButtonFlush(agentCard(view!, "call-9")!, "批准一次");
+    await clickButtonFlush(agentCard(view!, "call-9")!, "允许一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);
     expect(mocks.confirm.mock.calls[0][0]).toEqual({
       jobId: "job-2",

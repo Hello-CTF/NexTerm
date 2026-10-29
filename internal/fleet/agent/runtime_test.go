@@ -31,7 +31,9 @@ type fakeFleetServer struct {
 	currentURLReports []currentURLRequest
 	syncResponse      SyncResponse
 	syncForbidden     bool
-	wsControl         func(conn *websocket.Conn, hello HelloMessage)
+	// syncOwnerUnavailable answers sync with 403 + owner_unavailable.
+	syncOwnerUnavailable bool
+	wsControl            func(conn *websocket.Conn, hello HelloMessage)
 }
 
 func newFakeFleetServer(t *testing.T) *fakeFleetServer {
@@ -74,8 +76,15 @@ func newFakeFleetServer(t *testing.T) *fakeFleetServer {
 		fake.mu.Lock()
 		fake.syncRequests = append(fake.syncRequests, request)
 		forbidden := fake.syncForbidden
+		ownerOff := fake.syncOwnerUnavailable
 		response := fake.syncResponse
 		fake.mu.Unlock()
+		if ownerOff {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"ok":false,"error":{"code":"owner_unavailable","message":"owner"}}`))
+			return
+		}
 		if forbidden {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
@@ -646,6 +655,33 @@ func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
 	}
 	if got := release.requestCount("/"); got != 0 {
 		t.Fatalf("same-version target must skip the download, got %d requests", got)
+	}
+}
+
+func TestRuntimeSelfUpgradeRefusesDowngrade(t *testing.T) {
+	previous := version.Version
+	version.Version = "1.2.0"
+	t.Cleanup(func() { version.Version = previous })
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("1.1.0"))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
+	}
+	if got := release.requestCount("/"); got != 0 {
+		t.Fatalf("server-driven downgrade must skip the download, got %d requests", got)
 	}
 }
 

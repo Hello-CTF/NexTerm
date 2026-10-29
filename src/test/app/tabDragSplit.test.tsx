@@ -470,6 +470,23 @@ describe("keyboard equivalents in the tab menu", () => {
     render(true);
     await flush();
     expect(menuItem("t1", "移到右侧新窗格")).toBeNull();
-    expect(menuItem("t1", "关闭标签")).not.toBeNull();
+    expect(menuItem("t1", "关闭标签页")).not.toBeNull();
+  });
+
+  it("closes a closable tab with the middle button and ignores other buttons", async () => {
+    setPanes([{ id: "p1", tabs: [terminal("t1"), terminal("t2")], activeTabId: "t1" }]);
+    render();
+    await flush();
+    const dispatch = (button: number) =>
+      act(async () => {
+        tabElement("t2").dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button }));
+      });
+    await dispatch(2);
+    await flush();
+    expect(tabsOf("p1")).toEqual(["t1", "t2"]);
+    await dispatch(1);
+    await flush();
+    await flush();
+    expect(tabsOf("p1")).toEqual(["t1"]);
   });
 });

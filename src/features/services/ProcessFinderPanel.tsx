@@ -113,7 +113,7 @@ export function ProcessFinderPanel({
     const session = sessions.find((candidate) => candidate.id === sessionId);
     const listener = match.listener;
     if (!session?.assetId) {
-      setRowError("临时 SSH 会话没有资产 ID，不能保存 P-35 转发规则");
+      setRowError("临时 SSH 会话没有资产 ID，不能保存转发规则");
       return;
     }
     if (!listener || listener.port < 1) {
@@ -156,7 +156,7 @@ export function ProcessFinderPanel({
       setForwardDraft(null);
       setMessage(`已保存转发规则 127.0.0.1:${rule.listenPort} → ${rule.targetHost}:${rule.targetPort}；未自动启动`);
     } catch (cause) {
-      setRowError(`保存转发规则失败：${describeError(cause)}`);
+      setRowError(`未能保存转发规则：${describeError(cause)}`);
     } finally {
       setForwardBusy(false);
     }
@@ -174,7 +174,7 @@ export function ProcessFinderPanel({
     setRowError(null);
     setMessage(null);
     const confirmed = await ask(
-      `确定向 ${host} 的 PID ${pid} 发送 SIGTERM？\n\n${matchCommand(match)}\n\n生产主机还会要求 P-31 二次确认；取消不会执行 kill。`,
+      `确定向 ${host} 的 PID ${pid} 发送 SIGTERM？\n\n${matchCommand(match)}\n\n生产主机还需二次确认；取消不会执行 kill。`,
       { title: "确认 kill 进程", kind: "warning" },
     );
     if (!confirmed) return;
@@ -238,7 +238,7 @@ export function ProcessFinderPanel({
           </button>
         </div>
         <div className="text-[11px] text-neutral-500">
-          每台主机执行 ss -ltnp（缺失时 netstat -ltnp）与 ps -eo pid,user,%cpu,%mem,etime,args；过滤在 Go 端完成，查询不会进入 shell。
+          每台主机执行 ss -ltnp（缺失时 netstat -ltnp）与 ps -eo pid,user,%cpu,%mem,etime,args；过滤在服务端完成，查询内容不会交给 Shell 解析。
         </div>
       </form>
 
@@ -258,7 +258,7 @@ export function ProcessFinderPanel({
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">本地监听端口
             <input className="nx-input nx-input-sm w-28 font-mono" value={forwardDraft.listenPort} aria-label="finder 本地监听端口" inputMode="numeric" onChange={(event) => setForwardDraft({ ...forwardDraft, listenPort: event.target.value })} />
           </label>
-          <button type="submit" className="nx-btn nx-btn-primary nx-btn-sm" disabled={forwardBusy}><IconNetwork size={12} />{forwardBusy ? "保存中…" : "保存规则"}</button>
+          <button type="submit" className="nx-btn nx-btn-primary nx-btn-sm" disabled={forwardBusy}><IconNetwork size={12} />{forwardBusy ? "正在保存…" : "保存规则"}</button>
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={forwardBusy} onClick={() => setForwardDraft(null)}>取消</button>
           <span className="pb-2 text-[10px] text-neutral-500">仅保存，不自动启动</span>
         </form>
@@ -266,7 +266,7 @@ export function ProcessFinderPanel({
 
       <div className="min-h-0 flex-1 overflow-auto">
         {!result ? (
-          <div className="px-3 py-8 text-center text-[11px] text-neutral-500">输入查询并选择目标；host × match 结果会保留工具缺失与 sudo 失败。</div>
+          <div className="px-3 py-8 text-center text-[11px] text-neutral-500">输入查询并选择目标；结果会按主机列出，并保留工具缺失与 sudo 失败的信息。</div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2 text-[11px]">

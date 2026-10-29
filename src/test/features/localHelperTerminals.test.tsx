@@ -79,7 +79,7 @@ describe("local terminals in the local helper", () => {
     const view = mount(createElement(LocalHelperSettings));
     try {
       await flush();
-      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "普通");
+      const regular = [...view.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "临时");
       await waitForRendered(() => expect(regular?.disabled).toBe(false));
       await act(async () => regular!.click());
       await flush();
@@ -99,7 +99,7 @@ describe("local terminals in the local helper", () => {
       await flush();
       await waitForRendered(() => expect(view.container.textContent).toContain("构建任务"));
       expect(mocks.listDurable).toHaveBeenCalledWith("local-1");
-      const kill = view.container.querySelector<HTMLButtonElement>('button[title="结束这个终端里运行的程序，无法恢复"]');
+      const kill = view.container.querySelector<HTMLButtonElement>('button[title="结束该终端里运行的程序，无法恢复"]');
       expect(kill).not.toBeNull();
       await act(async () => kill!.click());
       await flush();

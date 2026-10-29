@@ -4,7 +4,7 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
 
 async function flushUntil(predicate: () => boolean): Promise<void> {
   if (predicate()) {
@@ -48,7 +48,6 @@ import { MetricsPanel } from "../../features/fleet/MetricsPanel";
 import { metricsGapThreshold } from "../../features/fleet/MetricsTrend";
 import { formatBytes, formatTime } from "../../features/fleet/format";
 import { useAuth } from "../../features/auth/store";
-import { useUi } from "../../app/store";
 
 const NOW = Date.now();
 
@@ -324,9 +323,9 @@ describe("Device management view - role differences", () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: true, registration_open: false, auth: "on" } });
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("登录后才能查看") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("登录后方可查看") ?? false);
 
-    expect(document.body.textContent).toContain("登录入口在「设置 → 账号同步」里的「账号」卡");
+    expect(document.body.textContent).toContain("登录入口位于「设置 → 账号同步」的「账号」卡片");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
@@ -335,10 +334,10 @@ describe("Device management view - role differences", () => {
     const calls = route(fleetHandler());
     useAuth.setState({ user: null, gate: "ready", status: { initialized: false, registration_open: false, auth: "off" } });
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("关闭了账号功能") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("已关闭账号功能") ?? false);
 
-    expect(document.body.textContent).toContain("这台服务器关闭了账号功能，设备管理不可用。");
-    expect(document.body.textContent).not.toContain("登录入口在");
+    expect(document.body.textContent).toContain("该服务器已关闭账号功能，设备管理不可用。");
+    expect(document.body.textContent).not.toContain("登录入口位于");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
   });
@@ -582,7 +581,7 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => container.textContent?.includes(formatTime(latest.ts)) ?? false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("当前时间窗口没有采样点");
+    expect(container.textContent).toContain("所选时间范围内暂无数据");
     expect(container.textContent).not.toContain("采样点数");
   });
 
@@ -597,12 +596,12 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("趋势加载失败") || false);
+    await flushUntil(() => container.textContent?.includes("设备离线") || container.textContent?.includes("未能加载趋势") || false);
 
     expect(container.textContent).toContain("66.0%");
-    expect(container.textContent).toContain("趋势加载失败");
+    expect(container.textContent).toContain("未能加载趋势");
     expect(container.textContent).toContain("context deadline exceeded");
-    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+    expect(container.textContent).not.toContain("设备离线，暂无近期指标");
   });
 
   it("does not confuse a trend failure without latest with an empty device", async () => {
@@ -615,10 +614,10 @@ describe("Device management view - device list and metrics", () => {
       },
     }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("趋势加载失败") ?? false);
+    await flushUntil(() => container.textContent?.includes("未能加载趋势") ?? false);
 
     expect(container.textContent).toContain("database unavailable");
-    expect(container.textContent).not.toContain("设备离线，没有近期指标");
+    expect(container.textContent).not.toContain("设备离线，暂无近期指标");
   });
 
   it("uses the requested window for a single sample time axis", async () => {
@@ -697,7 +696,7 @@ describe("Device management view - device list and metrics", () => {
   it("does not infer latest samples or window metadata from a samples-only response", async () => {
     route(() => ({ payload: { samples: [metricAt(NOW - 60_000, 12.5)] } }));
     const container = mountMetrics();
-    await flushUntil(() => container.textContent?.includes("设备还没有上报指标") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备尚未上报指标") ?? false);
 
     expect(container.textContent).not.toContain("12.5%");
     expect(container.textContent).not.toContain("趋势窗口");
@@ -707,9 +706,9 @@ describe("Device management view - device list and metrics", () => {
   it("keeps the offline empty state distinct from a trend error", async () => {
     route(() => ({ payload: { samples: [], windowStart: NOW - 3600_000, windowEnd: NOW } }));
     const container = mountMetrics("d-1", false);
-    await flushUntil(() => container.textContent?.includes("设备离线，没有近期指标") ?? false);
+    await flushUntil(() => container.textContent?.includes("设备离线，暂无近期指标") ?? false);
 
-    expect(container.textContent).not.toContain("趋势加载失败");
+    expect(container.textContent).not.toContain("未能加载趋势");
   });
 
   it("filters the current list locally by search and all/online/offline/revoked status without new requests", async () => {
@@ -937,13 +936,13 @@ describe("Device management view - device list and metrics", () => {
 
       enrollPanelShown = true;
       click(enrollButton);
-      expect(document.body.textContent).toContain("生成接入码");
+      expect(document.getElementById("enroll-panel-title")?.textContent).toBe("接入新设备");
       expect(firstItem?.style.transform).toBe("translateY(-160px)");
 
       enrollPanelShown = false;
       click(enrollButton);
       await flush();
-      expect(document.body.textContent).not.toContain("生成接入码");
+      expect(document.getElementById("enroll-panel-title")).toBeNull();
       expect(firstItem?.style.transform).toBe("translateY(-40px)");
     } finally {
       rectSpy.mockRestore();
@@ -1007,16 +1006,12 @@ describe("Device management view - device list and metrics", () => {
       click(enrollButton);
       expect(firstItem?.style.transform).toBe("translateY(-160px)");
 
-      const issueButton = [...document.querySelectorAll("button")].find(
-        (button) => button.textContent?.trim() === "生成接入码",
-      );
-      if (!issueButton) throw new Error("Issue-code button not found");
+      // The code is issued automatically when the panel opens.
       issuedShown = true;
-      click(issueButton);
-      await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+      await flushUntil(() => document.body.textContent?.includes("等待设备接入") ?? false);
       expect(firstItem?.style.transform).toBe("translateY(-240px)");
 
-      const details = document.querySelector("details");
+      const details = [...document.querySelectorAll("details")].find((d) => d.querySelector("summary")?.textContent === "更多选项");
       const summary = details?.querySelector("summary");
       if (!details || !summary) throw new Error("Advanced details not found");
 
@@ -1049,7 +1044,7 @@ describe("Device management view - device list and metrics", () => {
     expect(buttonByText(card, "打开工作区")).toBeUndefined();
     expect(buttonByText(card, "离线原因")).toBeDefined();
     await expandDetails(card);
-    expect(card?.textContent).toContain("设备离线：修改只会保存为期望状态，上线后生效");
+    expect(card?.textContent).toContain("设备离线：设置已保存，设备上线后生效");
     expect(card?.textContent).toContain("未运行");
   });
 
@@ -1060,7 +1055,7 @@ describe("Device management view - device list and metrics", () => {
     await flushUntil(() => document.body.textContent?.includes("browser-01") ?? false);
 
     const browserCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("browser-01"));
-    expect(browserCard?.textContent).toContain("没有运行状态和指标");
+    expect(browserCard?.textContent).toContain("无运行状态和指标");
     expect([...(browserCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
 
     expect([...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"))).toBeUndefined();
@@ -1075,151 +1070,136 @@ describe("Device management view - device list and metrics", () => {
     route(fleetHandler({ devices: { devices: [] } }));
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("还没有接入设备") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("暂无已接入的设备") ?? false);
     mounted.unmount();
 
     route(() => ({ status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }));
     mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("设备列表加载失败") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("未能加载设备列表") ?? false);
     expect(document.body.textContent).toContain("数据库错误");
   });
 });
 
 describe("Device management view - enrollment code issuance", () => {
-  it("shows expiration and single-use guidance with the real agent enrollment commands after issuance", async () => {
-    const calls = route(fleetHandler());
-    seedUser(SUPERADMIN);
+  const openPanel = async () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("等待设备接入") ?? false);
+  };
+  const buttonTexts = () => [...document.querySelectorAll("button")].map((b) => b.textContent?.trim());
 
-    const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
-    click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
-    click(issueButton as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+  it("issues a code on open and, without a release version from /healthz, falls back to the manual commands with the usage guidance", async () => {
+    const calls = route(fleetHandler());
+    seedUser(SUPERADMIN);
+    await openPanel();
 
-    const enrollCall = calls.find((c) => c.url === "/device/enroll-codes");
-    expect(enrollCall?.method).toBe("POST");
-    expect(enrollCall?.body).toEqual({ ttl_ms: 900_000 });
+    const enrollCalls = calls.filter((c) => c.url === "/device/enroll-codes");
+    expect(enrollCalls).toHaveLength(1);
+    expect(enrollCalls[0].method).toBe("POST");
+    expect(enrollCalls[0].body).toEqual({ ttl_ms: 900_000 });
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("只能使用一次");
-    expect(text).toContain("完成后不再显示");
-    expect(text).toContain("设备凭证原文仅保存在设备本地，服务端只保存散列");
-    expect(text).toContain("高级说明：多地址、手动接入与服务管理");
-    expect(text).toContain("执行完成后刷新列表");
+    expect(text).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
+    expect(text).toContain("接入码 15 分钟后失效");
+    expect(text).toContain("无法读取服务器版本");
     expect(text).toContain("随用户登录自动启动");
-    expect(text).toContain("设备会出现在这里");
-    expect(text).not.toContain("第 1 步");
-    const dataDir = '"${NEXTERM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/NexTerm}"';
-    expect(text).toContain(
-      `nexterm-agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1' --data-dir ${dataDir}`,
-    );
-    expect(text).toContain(
-      `nexterm-agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure --data-dir ${dataDir}`,
-    );
-    expect(text).toContain(`nexterm-agent install --data-dir ${dataDir}`);
-    expect(text).toContain("不会执行安装");
-    expect(text).not.toContain("/var/lib");
+    expect(text).not.toContain("高级说明");
+    expect(text).not.toContain("散列");
+    const labels = buttonTexts();
+    expect(labels).toContain("关闭");
+    expect(labels).not.toContain("完成");
+    expect(labels).not.toContain("刷新设备列表");
 
-    // enroll and install use the same data directory; the directory is a double-quoted single argument, expansion priority
-    // NEXTERM_DATA_DIR > XDG_DATA_HOME > $HOME (matches the override promise in the copy).
-    const commandElements = [...document.querySelectorAll("code")];
-    const commands = commandElements.map((c) => c.textContent ?? "");
-    const details = document.querySelector<HTMLDetailsElement>("details");
-    expect(details).not.toBeNull();
-    expect(details?.open).toBe(false);
-    const enrollCommandElements = commandElements.filter((c) => c.textContent?.includes("agent enroll"));
-    expect(enrollCommandElements).toHaveLength(2);
-    expect(enrollCommandElements[0].closest("details")).toBeNull();
-    expect(enrollCommandElements[1].closest("details")).toBe(details);
-    const enrollDirs = enrollCommandElements.map((c) => (c.textContent ?? "").split("--data-dir ")[1]);
-    const installDirs = commands
-      .filter((c) => c.includes("agent install"))
-      .map((c) => c.split("--data-dir ")[1]);
-    expect(enrollDirs.length).toBeGreaterThan(0);
-    expect(installDirs).toEqual([dataDir]);
-    for (const dir of enrollDirs) {
-      expect(dir).toBe(dataDir);
-      expect(dir?.startsWith('"')).toBe(true);
-      expect(dir?.endsWith('"')).toBe(true);
-      expect(dir).not.toContain(" ");
-      const envOrder = [dir?.indexOf("NEXTERM_DATA_DIR"), dir?.indexOf("XDG_DATA_HOME"), dir?.indexOf("$HOME")];
-      expect(envOrder[0]).toBeGreaterThanOrEqual(0);
-      expect(envOrder[0]).toBeLessThan(envOrder[1] ?? Infinity);
-      expect(envOrder[1]).toBeLessThan(envOrder[2] ?? Infinity);
-    }
-
-    const doneButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成");
-    click(doneButton as HTMLButtonElement);
-    await waitForRendered(() => {
-      expect(document.body.textContent).not.toContain("fleet-code-1");
-    });
+    // The data directory is optional: the CLI resolves --data-dir > NEXTERM_DATA_DIR > default itself.
+    const codes = [...document.querySelectorAll("code")].map((c) => c.textContent ?? "");
+    expect(codes).toContain(
+      `nexterm-agent enroll --server 'https://nexterm.example.com' --code 'fleet-code-1'`,
+    );
+    expect(codes).toContain(`nexterm-agent install`);
+    // The fallback address lives inside the "更多选项" disclosure.
+    const more = [...document.querySelectorAll("details")].find((d) => d.querySelector("summary")?.textContent === "更多选项");
+    expect(more?.open).toBe(false);
+    expect(more?.textContent).toContain(
+      `nexterm-agent enroll --server 'http://10.0.0.8:8080' --code 'fleet-code-1' --insecure`,
+    );
   });
 
-  it("clears the enrollment code after Done across refresh, panel reopen, and view remount", async () => {
+  it("keeps the issued code valid when the panel is closed and reopened, and issues a new one after a view remount", async () => {
     const calls = route(fleetHandler());
     seedUser(SUPERADMIN);
-    mounted = mountWithClient(createElement(DevicesView));
-    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
-
+    await openPanel();
     const enrollToggle = () =>
-      [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement;
-    click(enrollToggle());
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+      [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备") && b.getAttribute("aria-expanded") !== null) as HTMLButtonElement;
+    const issueCount = () => calls.filter((c) => c.url === "/device/enroll-codes").length;
+    expect(issueCount()).toBe(1);
 
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "完成") as HTMLButtonElement);
-    await waitForRendered(() => {
-      expect(document.body.textContent).not.toContain("fleet-code-1");
-    });
-
-    const deviceRequests = calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length;
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "刷新") as HTMLButtonElement);
-    await flush();
-    expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThan(deviceRequests);
-    expect(document.body.textContent).not.toContain("fleet-code-1");
-
-    click(enrollToggle());
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "关闭") as HTMLButtonElement);
+    expect(document.getElementById("enroll-panel-title")).toBeNull();
     expect(enrollToggle().getAttribute("aria-expanded")).toBe("false");
+
     click(enrollToggle());
-    expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "生成接入码")).toBe(true);
-    expect(document.body.textContent).not.toContain("fleet-code-1");
+    expect(document.body.textContent).toContain("等待设备接入");
+    expect(issueCount()).toBe(1);
     await flush();
 
-    mounted.unmount();
+    mounted?.unmount();
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click(enrollToggle());
-    expect(enrollToggle().getAttribute("aria-expanded")).toBe("true");
-    expect([...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "生成接入码")).toBe(true);
-    expect(document.body.textContent).not.toContain("fleet-code-1");
-    await flush();
+    await flushUntil(() => issueCount() === 2);
   });
 
-  it("reports clear errors when copying the enrollment code or command while the clipboard is unavailable", async () => {
-    const toast = vi.fn();
-    useUi.setState({ pushToast: toast });
+  it("closes the panel on Escape", async () => {
     route(fleetHandler());
+    seedUser(SUPERADMIN);
+    await openPanel();
+    act(() => {
+      document.getElementById("enroll-panel-title")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.getElementById("enroll-panel-title")).toBeNull();
+  });
+
+  it("reports a plain-language error with a retry button when the code cannot be generated", async () => {
+    let fail = true;
+    const handler = fleetHandler();
+    route((url, method, body) =>
+      url === "/device/enroll-codes" && fail
+        ? { status: 500, payload: { error: { code: "internal", message: "数据库错误" } } }
+        : handler(url, method, body),
+    );
     seedUser(SUPERADMIN);
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("接入码生成失败") ?? false);
+    expect(document.body.textContent).toContain("请检查网络后重试");
+    fail = false;
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "重试" && b.closest("#enroll-panel-title, section[aria-labelledby]")) as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("等待设备接入") ?? false);
+  });
+
+  it("explains how to proceed when no base URL is configured and issues no code", async () => {
+    const calls = route(fleetHandler({ baseUrls: { base_urls: [] } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+    click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
+    await flushUntil(() => document.body.textContent?.includes("尚未配置接入地址") ?? false);
+    expect(buttonTexts()).toContain("配置接入地址");
+    expect(calls.some((c) => c.url === "/device/enroll-codes")).toBe(false);
+  });
+
+  it("reports a clear error when copying a manual command while the clipboard is unavailable", async () => {
+    route(fleetHandler());
+    seedUser(SUPERADMIN);
+    await openPanel();
 
     vi.stubGlobal("navigator", { clipboard: undefined });
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "复制接入码") as HTMLButtonElement);
-    const command = [...document.querySelectorAll("code")].find((c) => c.textContent?.includes("agent enroll"));
-    const copyCommand = command?.parentElement?.querySelector("button");
-    expect(copyCommand).toBeTruthy();
-    click(copyCommand as HTMLButtonElement);
+    click(document.querySelector<HTMLButtonElement>('button[aria-label="复制接入码"]') as HTMLButtonElement);
     await flush();
-
-    expect(toast).toHaveBeenCalledTimes(2);
-    expect(toast).toHaveBeenNthCalledWith(1, "error", "复制失败，请手动复制");
-    expect(toast).toHaveBeenNthCalledWith(2, "error", "复制失败，请手动复制");
+    expect(document.body.textContent).toContain("复制失败");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("手动复制");
   });
 
   it("gates issuance and overwrite saving on base URL loading, error, and ready states and allows retry after failure", async () => {
@@ -1251,10 +1231,9 @@ describe("Device management view - enrollment code issuance", () => {
     mounted = mountWithClient(createElement(DevicesView));
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement;
-    expect(issueButton.disabled).toBe(true);
+    expect(enrollCalls).toBe(0);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "展开编辑") as HTMLButtonElement);
-    await flushUntil(() => document.body.textContent?.includes("接入地址读取中") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("正在读取接入地址") ?? false);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("保存修改"))).toBe(false);
 
@@ -1262,9 +1241,9 @@ describe("Device management view - enrollment code issuance", () => {
       firstBaseUrls.reject(new Error("地址服务不可用"));
       await firstBaseUrls.promise.catch(() => {});
     });
-    await flushUntil(() => document.body.textContent?.includes("接入地址读取失败") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("无法读取接入地址") ?? false);
     expect(document.body.textContent).toContain("地址服务不可用");
-    expect(issueButton.disabled).toBe(true);
+    expect(enrollCalls).toBe(0);
     expect(document.querySelector('input[aria-label="新接入地址"]')).toBeNull();
 
     const baseCard = document.querySelector("#fleet-base-urls");
@@ -1272,11 +1251,10 @@ describe("Device management view - enrollment code issuance", () => {
     expect(retry).toBeTruthy();
     click(retry as HTMLButtonElement);
     await flushUntil(() => baseUrlCalls === 2 && document.querySelector('input[aria-label="新接入地址"]') !== null);
-    expect(issueButton.disabled).toBe(false);
     const save = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("保存修改"));
     expect(save).toBeTruthy();
 
-    click(issueButton);
+    // The code is issued automatically once the base URLs are ready.
     await flushUntil(() => enrollCalls === 1);
   });
 });
@@ -1295,7 +1273,7 @@ describe("Device management view - revocation and autostart", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("无法恢复");
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("重新接入");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("重新生成接入码");
     expect(calls.filter((c) => c.url === "/fleet/devices" && c.method === "GET").length).toBeGreaterThanOrEqual(2);
   });
 
@@ -1363,7 +1341,7 @@ describe("Device management view - revocation and autostart", () => {
 
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("离线");
-    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("期望状态");
+    expect(String(mocks.ask.mock.calls[0]?.[0])).toContain("设置已保存");
     const autostartCall = calls.find((c) => c.url === "/fleet/devices/d-2/autostart");
     expect(autostartCall?.body).toEqual({ desired: true });
   });
@@ -1443,13 +1421,14 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => cardWith("web-01")?.textContent?.includes("远程终端已关闭") ?? false);
   });
 
-  it("notes a differing agent version only when both are release versions and the device is online", async () => {
+  it("hints an outdated agent only when it is older than the server, both are release versions and the device is online", async () => {
     route(
       fleetHandler({
         devices: {
           server_version: "0.3.0",
           devices: [
             { ...AGENT_DEVICE, id: "d-old", name: "old-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.2.2" } },
+            { ...AGENT_DEVICE, id: "d-new", name: "new-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.10.0" } },
             { ...AGENT_DEVICE, id: "d-same", name: "same-01", agent: { ...AGENT_DEVICE.agent, app_version: "v0.3.0" } },
             { ...AGENT_DEVICE, id: "d-dev", name: "dev-01", agent: { ...AGENT_DEVICE.agent, app_version: "dev" } },
             { ...AGENT_DEVICE, id: "d-zero", name: "zero-01", agent: { ...AGENT_DEVICE.agent, app_version: "0.0.0" } },
@@ -1462,9 +1441,9 @@ describe("Device management view - remote terminal switch and version note", () 
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("old-01") ?? false);
 
-    expect(cardWith("old-01")?.textContent).toContain("代理版本 0.2.2，服务端 0.3.0");
-    expect(cardWith("old-01")?.textContent).toContain("仅当控制通道协议不兼容时");
-    for (const name of ["same-01", "dev-01", "zero-01", "db-02"]) {
+    expect(cardWith("old-01")?.textContent).toContain("设备代理版本过旧（设备 0.2.2，服务端 0.3.0）");
+    expect(cardWith("old-01")?.textContent).toContain("nexterm-agent update");
+    for (const name of ["new-01", "same-01", "dev-01", "zero-01", "db-02"]) {
       expect(cardWith(name)?.textContent).not.toContain("服务端 0.3.0");
     }
   });
@@ -1515,7 +1494,7 @@ describe("Device management view - autostart drift from installed/enabled", () =
     await flushUntil(() => document.body.textContent?.includes("drift-01") ?? false);
 
     const card = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("drift-01"));
-    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前没有生效");
+    expect(card?.querySelector('[role="status"]')?.textContent).toContain("已设置随用户登录自动启动，但当前未生效");
     await expandDetails(card);
     expect(card?.textContent).toContain("当前未生效");
     expect(card?.textContent).toContain("运行中");
@@ -1599,8 +1578,6 @@ describe("Device management view - enrollment command shell quoting", () => {
 
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
     click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
-    click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("fleet-code-1") ?? false);
 
     expect(document.body.textContent).toContain(
@@ -1638,8 +1615,6 @@ describe("Device management view - account switching isolation", () => {
     await flushUntil(() => document.body.textContent?.includes("2 个地址") ?? false);
     const openButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备"));
     click(openButton as HTMLButtonElement);
-    const issueButton = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码");
-    click(issueButton as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("old-admin-code") ?? false);
 
     // Simulate the AuthGate scenario: the super-admin session expires and a regular user logs in, the pane is not remounted.
@@ -1698,7 +1673,6 @@ describe("Device management view - account isolation during issuance", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => issueCalls === 1);
 
     // Switching to a regular user while issuance is in flight: the render-time reset has already cleared the enrollment panel and issuing.
@@ -1719,11 +1693,10 @@ describe("Device management view - account isolation during issuance", () => {
     await flush();
     await flush();
     expect(document.body.textContent).not.toContain("old-admin-code");
-    expect(document.body.textContent).not.toContain("生成中");
+    expect(document.body.textContent).not.toContain("正在生成");
 
     // The new account can reopen the enrollment panel and issue normally; issuing is not stuck by the old finally.
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("接入新设备")) as HTMLButtonElement);
-    click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "生成接入码") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("new-user-code") ?? false);
     expect(document.body.textContent).not.toContain("old-admin-code");
   });

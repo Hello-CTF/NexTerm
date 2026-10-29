@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The hardened runtime enables library validation, which rejects a
+         bundled dylib (the ONNX Runtime) unless it is Apple-signed or carries
+         the same Team ID. A self-signed build has no shared Team ID, so
+         dlopen would otherwise fail. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

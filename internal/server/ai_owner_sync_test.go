@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
@@ -165,7 +167,7 @@ func TestDesktopAndOpenAIOwnerAccess(t *testing.T) {
 			}
 			apply := syncservice.ApplyObjectsRequest{Objects: []syncservice.ApplyObject{{
 				ID: "global", Kind: syncservice.KindAIPermission,
-				Payload: json.RawMessage(`{"id":"global","mode":"read_write","dangerRules":[],"updatedAt":9000000000000}`),
+				Payload: json.RawMessage(fmt.Sprintf(`{"id":"global","mode":"read_write","dangerRules":[],"updatedAt":%d}`, fixtureFuture)),
 			}}}
 			applied, err := syncService.ApplyObjects(test.ctx, apply)
 			if err != nil || applied.Applied != 1 {
@@ -173,7 +175,7 @@ func TestDesktopAndOpenAIOwnerAccess(t *testing.T) {
 			}
 			remove := syncservice.ApplyObjectsRequest{Objects: []syncservice.ApplyObject{{
 				ID: "global", Kind: syncservice.KindTombstone,
-				Payload: json.RawMessage(`{"targetKind":"ai_permission","deletedAt":9000000000001}`),
+				Payload: json.RawMessage(fmt.Sprintf(`{"targetKind":"ai_permission","deletedAt":%d}`, fixtureFuture+1)),
 			}}}
 			removed, err := syncService.ApplyObjects(test.ctx, remove)
 			if err != nil || removed.Applied != 1 {
@@ -295,7 +297,7 @@ func TestSyncAIOwnerTwoAccountsOverRPC(t *testing.T) {
 		userID  string
 		mode    string
 		at      int64
-	}{{aliceSession, alice.ID, "read_write", 9000000000000}, {bobSession, bob.ID, "silent", 9000000000001}} {
+	}{{aliceSession, alice.ID, "read_write", fixtureFuture}, {bobSession, bob.ID, "silent", fixtureFuture + 1}} {
 		args := map[string]any{"args": map[string]any{"objects": []map[string]any{{
 			"id": "global", "kind": "ai_permission",
 			"payload": map[string]any{"id": "global", "mode": test.mode, "dangerRules": []string{}, "updatedAt": test.at},
@@ -315,3 +317,6 @@ func TestSyncAIOwnerTwoAccountsOverRPC(t *testing.T) {
 		}
 	}
 }
+
+// fixtureFuture is newer than any value the fixtures stored earlier but inside the accepted clock tolerance.
+var fixtureFuture = time.Now().Add(time.Hour).UnixMilli()

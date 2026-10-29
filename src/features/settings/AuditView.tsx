@@ -36,9 +36,9 @@ const KIND_LABELS: Record<string, string> = {
   device_online: "设备上线",
   device_offline: "设备离线",
   device_revoke: "设备吊销",
-  device_autostart: "设备自启动",
+  device_autostart: "设备开机自启",
   device_terminal_toggle: "设备远程终端开关",
-  device_failover: "设备切换接入",
+  device_failover: "设备切换连接",
   device_terminal: "设备终端",
 };
 
@@ -226,13 +226,13 @@ export function AuditView() {
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
-            ? "审计记录加载失败"
+            ? "未能加载审计记录"
             : knownTotal !== null
               ? `共 ${knownTotal} 条`
               : `已加载 ${entries.length} 条`}
         </span>
         {error && entries.length > 0 && (
-          <span className="nx-hint text-red-300">刷新失败 · {error}</span>
+          <span className="nx-hint text-red-300">刷新失败：{error}</span>
         )}
         <div className="nx-spacer" />
         {devices !== null && devices.length > 0 && (
@@ -258,7 +258,7 @@ export function AuditView() {
               className={`nx-segment-item ${source === f.value ? "is-active" : ""}`}
               onClick={() => setSource(f.value)}
               disabled={deviceId !== ""}
-              title={deviceId !== "" ? "按设备过滤时已覆盖来源筛选" : undefined}
+              title={deviceId !== "" ? "按设备过滤时将忽略来源筛选" : undefined}
             >
               {f.label}
             </button>
@@ -299,10 +299,10 @@ export function AuditView() {
               </div>
             </li>
           ))}
-          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">加载中…</li>}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">正在加载…</li>}
           {entries.length === 0 && !loading && error && (
             <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
-              <span className="min-w-0 break-words text-red-300">审计记录加载失败 · {error}</span>
+              <span className="min-w-0 break-words text-red-300">未能加载审计记录：{error}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(source, deviceId)} disabled={loading}>
                 <IconRefresh size={12} />
                 重试
@@ -310,7 +310,7 @@ export function AuditView() {
             </li>
           )}
           {entries.length === 0 && !loading && !error && (
-            <li className="nx-hint px-3 py-4 text-center">暂无记录：连接主机、执行命令或运行 AI 操作后，记录会显示在这里。</li>
+            <li className="nx-hint px-3 py-4 text-center">暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。</li>
           )}
         </ul>
         ) : (
@@ -319,7 +319,7 @@ export function AuditView() {
             <tr>
               <th style={{ width: 168 }}>时间</th>
               <th style={{ width: 72 }}>来源</th>
-              <th style={{ width: 140 }}>动作</th>
+              <th style={{ width: 140 }}>操作</th>
               <th>详情</th>
               <th style={{ width: 84 }} className="nx-right">
                 退出码
@@ -367,7 +367,7 @@ export function AuditView() {
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">审计记录加载失败 · {error}</span>
+                  <span className="text-red-300">未能加载审计记录：{error}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void loadFirstPage(source, deviceId)}
@@ -381,7 +381,7 @@ export function AuditView() {
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  暂无记录：连接主机、执行命令或运行 AI 操作后，记录会显示在这里。
+                  暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。
                 </td>
               </tr>
             ) : null}
@@ -398,7 +398,7 @@ export function AuditView() {
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">加载更多失败 · {moreError}</span>
+              <span className="min-w-0 break-words text-red-300">未能加载更多：{moreError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}
@@ -424,7 +424,7 @@ export function AuditView() {
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>会话命令、AI 操作、文件写入和设备上下线都会记录并标注来源；退出码和耗时随记录显示。</span>
+        <span>会话命令、AI 操作、文件写入和设备上线与离线均会记录并标注来源；退出码和耗时随记录显示。</span>
       </div>
     </div>
   );

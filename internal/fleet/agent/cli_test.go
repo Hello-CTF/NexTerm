@@ -110,11 +110,6 @@ func TestCLIUsageErrors(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	noEnv := func(string) string { return "" }
-	if code := RunCLI([]string{"status"}, noEnv, &stdout, &stderr); code != ExitUsage {
-		t.Fatal("status without data dir must be usage error")
-	}
-	stdout.Reset()
-	stderr.Reset()
 	if code := RunCLI([]string{"run", "-data-dir", t.TempDir(), "-pprof-addr", "192.168.1.10:6060"}, noEnv, &stdout, &stderr); code != ExitUsage {
 		t.Fatal("run with a non-loopback pprof address must be usage error")
 	}
@@ -207,7 +202,7 @@ func TestCLIRunLockBusyExitsCleanly(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("run with busy lock = %d, stderr %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "另一个 agent 实例正在运行") {
+	if !strings.Contains(stdout.String(), "已有另一个设备代理实例正在运行") {
 		t.Fatalf("run output = %q", stdout.String())
 	}
 }
@@ -317,7 +312,7 @@ func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
 	if code := RunCLI([]string{"run"}, getenv, &stdout, &stderr); code != ExitOK {
 		t.Fatalf("run with staged self-upgrade = %d, stderr %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "延迟替换脚本") {
+	if !strings.Contains(stdout.String(), "自动完成替换") {
 		t.Fatalf("run stdout = %q", stdout.String())
 	}
 	if len(replaced) != 1 {

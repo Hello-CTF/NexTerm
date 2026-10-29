@@ -100,7 +100,7 @@ func openPreferenceNoBackslashStore(t *testing.T, fixture *dbtest.Fixture) *stor
 
 // A synced device grant persists the guard's explicit permanence marker and a generation on every
 // supported backend, and a re-grant after a revocation tombstone is permanent again. Whole-row rewrites
-// keep a rejected pre-1.3.0 bystander verbatim (never migrated, never effective) and keep a current
+// drop an old-format bystander (never effective) and keep a current
 // bystander's explicit false marker.
 func TestApplyAIGrantDevicePermanenceDatabase(t *testing.T) {
 	fixture := dbtest.NewFixture(t)
@@ -122,8 +122,8 @@ func TestApplyAIGrantDevicePermanenceDatabase(t *testing.T) {
 		if err := json.Unmarshal([]byte(value), &records); err != nil {
 			t.Fatal(err)
 		}
-		if string(records["dev-legacy"]) != legacyRecord {
-			t.Fatalf("legacy bystander rewritten: %s", records["dev-legacy"])
+		if _, ok := records["dev-legacy"]; ok {
+			t.Fatalf("old-format bystander kept: %s", records["dev-legacy"])
 		}
 		requireGrantRecordPermanence(t, value, map[string]bool{"dev-explicit-false": false})
 		grants, err := guard.NewGrants(ctx, db, nil)

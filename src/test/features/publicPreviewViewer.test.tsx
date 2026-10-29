@@ -254,7 +254,7 @@ describe("PublicPreviewApp", () => {
     socket.emitText({ type: "control", state: "owner", lease_until: 1790000060000 });
     await flush();
     expect(badgeText(view)).toBe("分享者控制中");
-    expect(view.container.textContent).toContain("分享者正在控制终端，控制权归还前你只能观看");
+    expect(view.container.textContent).toContain("分享者正在控制终端，控制权归还前仅可观看");
     lastTerminal().dataCallbacks.forEach((callback) => callback("ls\r"));
     await flush();
     expect(socket.sent).toHaveLength(1);
@@ -266,7 +266,7 @@ describe("PublicPreviewApp", () => {
     socket.emitText({ type: "control", state: "busy" });
     await flush();
     expect(badgeText(view)).toBe("另一访客控制中");
-    expect(view.container.textContent).toContain("另一位访客正在控制终端，控制权归还前你只能观看");
+    expect(view.container.textContent).toContain("另一位访客正在控制终端，控制权归还前仅可观看");
     lastTerminal().dataCallbacks.forEach((callback) => callback("ls\r"));
     await flush();
     expect(socket.sent).toHaveLength(1);

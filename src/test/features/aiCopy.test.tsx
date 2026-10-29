@@ -178,7 +178,7 @@ describe("M134 AI copy", () => {
     expect(label?.textContent).toBe("当前");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
-    expect(text).toContain("API Key 由当前 NexTerm 实例加密保存；模型请求仅发往你配置的端点。");
+    expect(text).toContain("API 密钥由当前 NexTerm 实例加密保存；模型请求仅发送到所填写的接口地址。");
     expect(text).not.toContain("明文存进本机 sqlite");
     expect(text).not.toContain("同一约定");
     manager.unmount();
@@ -201,8 +201,8 @@ describe("M134 AI copy", () => {
     click(selector.container.querySelector("button.nx-chip")!);
     await flush();
 
-    expect(selector.container.textContent).toContain("模型档案读取失败 · 档案服务不可用");
-    expect(selector.container.textContent).not.toContain("还没有模型档案");
+    expect(selector.container.textContent).toContain("未能读取模型档案：档案服务不可用");
+    expect(selector.container.textContent).not.toContain("尚无模型档案");
 
     mocks.overview.mockResolvedValue({
       profiles: [{ id: "p1", name: "公司 DeepSeek", model: "deepseek-chat" }],

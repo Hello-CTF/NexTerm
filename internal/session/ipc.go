@@ -110,11 +110,11 @@ func userMessage(err error) string {
 		return "主机上仍在运行旧版持久终端组件，当前版本无法接入其中的持久终端。它们会继续在旧版组件中运行，不会被自动结束或迁移；" +
 			"可在持久终端组件窗口查看其中的会话数并确认升级，升级会结束这些会话"
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):
-		return "主机上的 helper 或 nexterm-agent 版本过旧，需要升级后才能使用持久终端；其中已有的会话不会被结束"
+		return "主机上的持久终端组件或设备代理版本过旧，升级后才能使用持久终端；已有会话不会被结束"
 	case errors.Is(err, supervisor.ErrClientUpgradeRequired):
-		return "主机上的 helper 比当前客户端新，请先升级客户端"
+		return "主机上的持久终端组件版本高于当前客户端，请先升级客户端"
 	case errors.Is(err, ErrDurableDisabled):
-		return "该 SSH 资产已设置为普通终端，不能新建持久终端；已有持久终端可从后台会话恢复"
+		return "该 SSH 资产已设置为临时终端，不能新建持久终端；已有持久终端可从后台会话恢复"
 	case errors.Is(err, durable.ErrLimit):
 		return "持久终端组件已达到会话数量或创建频率上限，已拒绝新建终端；请结束不用的后台会话后重试（" + err.Error() + "）"
 	case errors.Is(err, ErrAmbiguousDurable):
@@ -122,7 +122,7 @@ func userMessage(err error) string {
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return "当前会话不支持此操作"
 	case errors.Is(err, durable.ErrUnavailable):
-		message := "持久终端组件暂时无法访问：主机连接可能已断开或不可达，或 helper 暂时不可用；请重新连接后重试"
+		message := "持久终端组件暂时无法访问：主机连接可能已断开，或组件暂不可用。请重新连接后重试"
 		if detail := err.Error(); detail != durable.ErrUnavailable.Error() {
 			message += "（" + detail + "）"
 		}
@@ -140,11 +140,11 @@ func userMessage(err error) string {
 	case errors.Is(err, ErrAssetSessionConflict):
 		return "该资产已有活动会话，请先断开现有会话"
 	case errors.Is(err, ErrRecoveryOverrun):
-		return "终端输出积压过长，早期输出已无法恢复"
+		return "终端输出积压过多，早期输出无法恢复"
 	case errors.Is(err, ErrDurableUnrecoverable):
 		return "该持久终端没有记录会话标识，无法恢复；请关闭后新建终端"
 	case errors.Is(err, durable.ErrGenerationMismatch):
-		return "主机上的 helper 已重启，该持久终端的进程已结束；请关闭后新建终端"
+		return "主机上的持久终端组件已重启，该持久终端的进程已结束，请关闭后新建终端"
 	case errors.Is(err, durable.ErrNotFound):
 		return "资源不存在或已删除"
 	case errors.Is(err, context.DeadlineExceeded):

@@ -79,8 +79,8 @@ describe("session reconnect status", () => {
       attempt: 2,
       nextRetryAt: "2026-10-19T12:00:00Z",
     });
-    expect(sessionReconnectStatusText(useUi.getState().sessions[0])).toContain("重连尝试 2 次");
-    expect(sessionReconnectStatusText(useUi.getState().sessions[0])).toContain("下次重连");
+    expect(sessionReconnectStatusText(useUi.getState().sessions[0])).toContain("重新连接尝试 2 次");
+    expect(sessionReconnectStatusText(useUi.getState().sessions[0])).toContain("下次重新连接");
     expect(useUi.getState().toasts).toEqual([]);
   });
 
@@ -157,7 +157,7 @@ describe("session reconnect status", () => {
       applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 1 });
       fail(2);
       const firstToast = useUi.getState().toasts[0];
-      expect(firstToast.text).toContain("自动重连失败");
+      expect(firstToast.text).toContain("自动重新连接失败");
       expect(firstToast.action?.label).toBe("重新连接");
 
       fail(3);

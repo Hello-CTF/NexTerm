@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../ipc/commands", () => ({
   call: (command: string) => {
+    if (command === "ai_roster_list") return Promise.resolve([]);
     if (command !== "ai_privacy_status" || !mocks.privacyEnabled) return Promise.reject(new Error("unavailable"));
     return Promise.resolve({
       config: { enabled: true, precision: "int8", revision: "a".repeat(40), version: "v0.1.3" },
@@ -289,7 +290,7 @@ describe("AiSidebar image paste and attachment", () => {
     await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
     dispatchPaste(view!, pasteDataTransfer([imageItem(png("ack.png"))], []));
     await flushUntil(() => view!.container.textContent?.includes(PRIVACY_IMAGE_NOTICE) ?? false);
-    const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "知道了")!;
+    const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "确定")!;
     click(ack);
     await flush();
     expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
@@ -301,13 +302,13 @@ describe("AiSidebar image paste and attachment", () => {
     await flush();
     const placeholder = () =>
       view!.container.querySelector("textarea")?.getAttribute("placeholder") ?? "";
-    expect(placeholder()).toContain("可直接粘贴图片");
+    expect(placeholder()).toContain("可粘贴图片");
 
     view?.unmount();
     mocks.desktop = true;
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
-    expect(placeholder()).not.toContain("可直接粘贴图片");
+    expect(placeholder()).not.toContain("可粘贴图片");
     expect(placeholder()).toContain("向 NexTerm 提问");
   });
 });

@@ -22,7 +22,7 @@ type Draft =
   | { kind: "edit-loading"; entry: SkillEntry }
   | { kind: "edit"; entry: SkillEntry; description: string; body: string; disabled: boolean };
 
-const BODY_PLACEHOLDER = "用 Markdown 写步骤和注意事项，例如：\n1. 先运行 nginx -t 检查配置\n2. 检查通过后再执行 systemctl reload nginx\n3. 失败时贴出报错，不要强行重启";
+const BODY_PLACEHOLDER = "使用 Markdown 编写步骤和注意事项，例如：\n1. 先运行 nginx -t 检查配置\n2. 检查通过后再执行 systemctl reload nginx\n3. 失败时提供报错信息，不要强制重启";
 
 export function SkillsCard({ api }: { api: SkillsApi }) {
   const pushToast = useUi((s) => s.pushToast);
@@ -148,17 +148,17 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     if (draft.kind === "create") {
       const name = draft.name.trim();
       if (!isValidSkillName(name)) {
-        setFormError("名称只能用小写字母、数字和中划线，最多 64 个字符，例如 nginx-check");
+        setFormError("名称仅支持小写字母、数字和连字符，最多 64 个字符，例如 nginx-check");
         return;
       }
       if (!draft.description.trim() || !draft.body.trim()) {
-        setFormError("「什么时候用」和「内容」都要填写");
+        setFormError("请填写「适用场景」和「内容」");
         return;
       }
       input = { name, description: draft.description.trim(), body: draft.body };
     } else {
       if (!draft.description.trim() || !draft.body.trim()) {
-        setFormError("「什么时候用」和「内容」都要填写");
+        setFormError("请填写「适用场景」和「内容」");
         return;
       }
       input = { name: draft.entry.name, description: draft.description.trim(), body: draft.body, disabled: draft.disabled };
@@ -212,7 +212,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           disabled: true,
         });
         if (epoch !== epochRef.current || apiRef.current !== api) return;
-        pushToast("success", `已停用技能 ${entry.name}，AI 不会再使用它`);
+        pushToast("success", `已停用技能 ${entry.name}，AI 将不再使用`);
       }
       await reload();
     } catch (e) {
@@ -228,8 +228,8 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     const epoch = epochRef.current;
     const builtin = entry.source === "embedded";
     const ok = builtin
-      ? await ask(`恢复内置技能 ${entry.name} 的默认内容？\n\n你对它的修改和停用设置会被丢弃，技能恢复为内置版本并重新启用。内置技能本身不会被删除。`, { title: "恢复默认", kind: "warning" })
-      : await ask(`删除技能 ${entry.name}？\n\n删除后 AI 不能再使用它，且无法恢复。`, { title: "删除技能", kind: "warning" });
+      ? await ask(`确定要恢复内置技能 ${entry.name} 的默认内容吗？\n\n对它的修改和停用设置将被丢弃，技能将恢复为内置版本并重新启用。内置技能本身不会被删除。`, { title: "恢复默认", kind: "warning" })
+      : await ask(`确定要删除技能 ${entry.name} 吗？\n\n删除后，AI 将无法使用该技能，且无法恢复。`, { title: "删除技能", kind: "warning" });
     if (!ok || epoch !== epochRef.current || apiRef.current !== api) return;
     setBusyName(entry.name);
     try {
@@ -258,7 +258,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        技能是你写给 AI 的操作手册。AI 会根据「什么时候用」自动判断要不要使用；在 AI 对话框输入 <code>/</code> 也可以直接选一个技能。
+        技能是提供给 AI 的操作手册。AI 将根据「适用场景」自动判断是否使用，也可以在 AI 对话框中输入 <code>/</code> 直接选择技能。
       </p>
 
       {draft === null ? (
@@ -270,7 +270,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
         </div>
       ) : draft.kind === "edit-loading" ? (
         <div className="mb-3 flex items-center gap-2 border-b border-neutral-800/60 pb-3" aria-busy="true">
-          <span className="text-[12.5px] text-neutral-200">读取技能内容…</span>
+          <span className="text-[12.5px] text-neutral-200">正在读取技能内容…</span>
           <IconRefresh size={11} className="animate-spin text-neutral-500" />
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={closeDraft}>
@@ -292,19 +292,19 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
-              <span className="nx-hint text-[11px]">小写字母、数字和中划线；在对话里输入 /{draft.name.trim() || "名称"} 就能直接使用</span>
+              <span className="nx-hint text-[11px]">小写字母、数字和连字符；在对话中输入 /{draft.name.trim() || "名称"} 即可使用</span>
             </label>
           )}
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
-            什么时候用
+            适用场景
             <input
               className="nx-input nx-input-sm"
               placeholder="例如：检查 nginx 配置并安全地重载"
-              aria-label="什么时候用"
+              aria-label="适用场景"
               value={draft.description}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
             />
-            <span className="nx-hint text-[11px]">AI 靠这一句判断要不要使用这个技能，写清楚适用的场景</span>
+            <span className="nx-hint text-[11px]">AI 据此判断是否使用该技能，请写明适用场景</span>
           </label>
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
             内容
@@ -328,7 +328,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               取消
             </button>
             <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={saving} onClick={() => void saveDraft()}>
-              {saving ? "保存中…" : "保存"}
+              {saving ? "正在保存…" : "保存"}
             </button>
           </div>
         </div>
@@ -348,11 +348,11 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           </div>
         ) : (
           <div className="nx-hint py-2 text-[12px]" aria-busy="true">
-            读取中…
+            正在读取…
           </div>
         )
       ) : visibleEntries.length === 0 ? (
-        draft === null && <div className="nx-hint py-2 text-[12px]">还没有技能。把你常用的排查或运维步骤写成技能，AI 遇到类似任务时会照着做。</div>
+        draft === null && <div className="nx-hint py-2 text-[12px]">暂无技能。可将常用的排查或运维步骤写成技能，AI 遇到类似任务时将按其执行。</div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {visibleEntries.map((entry) => (
@@ -377,7 +377,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               </div>
               <button
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                title="编辑这个技能"
+                title="编辑该技能"
                 aria-label={`编辑技能 ${entry.name}`}
                 onClick={() => void openEdit(entry)}
               >
@@ -398,7 +398,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               ) : (
                 <button
                   className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
-                  title="删除这个技能"
+                  title="删除该技能"
                   aria-label={`删除技能 ${entry.name}`}
                   disabled={busyName !== null}
                   onClick={() => void remove(entry)}

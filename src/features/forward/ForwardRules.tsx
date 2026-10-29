@@ -6,6 +6,7 @@ import { ask } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useCompactWidth } from "../docker/useCompactWidth";
 import { describeError } from "../../ui/errorText";
+import { describeForwardError } from "./forwardErrors";
 import {
   IconChevronDown,
   IconChevronRight,
@@ -75,9 +76,9 @@ export function ForwardRules({
       await forwardRuleApi.save(input);
       setEditing(null);
       refreshRules();
-      pushToast("success", input.id ? "规则已保存，运行配置未自动更改" : "规则已保存，点击启动后才会监听");
+      pushToast("success", input.id ? "规则已保存，运行配置未自动更改" : "规则已保存，启动后才会开始监听");
     } catch (error) {
-      pushToast("error", `保存规则失败：${describeError(error)}`);
+      pushToast("error", `未能保存规则：${describeError(error)}`);
     } finally {
       setBusy(null);
     }
@@ -146,7 +147,7 @@ export function ForwardRules({
       pushToast("success", `规则已启动 → 127.0.0.1:${rule.listenPort}`);
     } catch (error) {
       refreshAll();
-      pushToast("error", `启动规则失败：${describeError(error)}`);
+      pushToast("error", `无法启动规则：${describeForwardError(error, rule.listenPort)}`);
     } finally {
       setBusy(null);
     }
@@ -177,7 +178,7 @@ export function ForwardRules({
     if (
       !(await ask(
         running
-          ? `删除规则「${rule.name}」？\n\n会先停止运行时并断开连接；停止失败时规则定义会保留。`
+          ? `删除规则「${rule.name}」？\n\n将先停止运行并断开连接；若停止失败，规则定义将保留。`
           : `确定删除已保存的规则「${rule.name}」？`,
         { kind: "warning" },
       ))
@@ -225,21 +226,21 @@ export function ForwardRules({
             </button>
           </div>
           {rules.isPending ? (
-            <div className="py-3 text-[11px] text-neutral-500">规则加载中…</div>
+            <div className="py-3 text-[11px] text-neutral-500">正在加载规则…</div>
           ) : rules.isError && !rules.data ? (
             <div className="flex flex-wrap items-center gap-2 py-2 text-[11px] text-red-300" role="alert">
-              <span>规则加载失败 · {describeError(rules.error)}</span>
+              <span>未能加载规则：{describeError(rules.error)}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void rules.refetch()}>重试</button>
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {rules.isError && (
                 <div className="text-[11px] text-amber-300" role="status">
-                  规则刷新失败 · {describeError(rules.error)}；已保留上次结果。
+                  未能刷新规则：{describeError(rules.error)}；已保留上次结果。
                 </div>
               )}
               {(rules.data ?? []).length === 0 ? (
-                <div className="py-2 text-[11px] text-neutral-500">还没有保存的转发规则</div>
+                <div className="py-2 text-[11px] text-neutral-500">暂无保存的转发规则</div>
               ) : (
                 (rules.data ?? []).map((rule) => (
                   <div key={rule.id} className="flex items-center gap-2 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">

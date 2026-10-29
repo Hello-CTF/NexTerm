@@ -39,8 +39,8 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "tray", "snippet", "持久", "剪贴板", "托盘", "后台", "快捷命令"],
   },
   "settings-state-rules": {
-    description: "按屏幕内容纠正会话状态（需要我、运行中、空闲）的规则",
-    keywords: ["state", "rule", "needs me", "attention", "badge", "regex", "pattern", "状态", "规则", "需要我", "徽章", "误报", "正则", "标记", "test", "测试"],
+    description: "按屏幕内容纠正会话状态（需要处理、运行中、空闲）的规则",
+    keywords: ["state", "rule", "needs attention", "attention", "badge", "regex", "pattern", "状态", "规则", "需要处理", "徽章", "误报", "正则", "标记", "test", "测试"],
   },
   "settings-shortcuts": {
     description: "自定义快捷键与选中复制",
@@ -51,7 +51,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["update", "upgrade", "version", "download", "更新", "升级", "版本"],
   },
   "settings-diagnostics": {
-    description: "调试日志与抓取文件",
+    description: "调试日志与抓包文件",
     keywords: ["diagnostics", "debug", "log", "capture", "trace", "诊断", "调试", "日志", "抓包"],
   },
   "settings-ai-model": {
@@ -63,7 +63,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", "脱敏", "隐私", "敏感", "还原", "模型下载", "删除模型", "磁盘占用"],
   },
   "settings-ai-rules": {
-    description: "AI 命中后需要确认或拒绝的危险规则",
+    description: "AI 操作命中后需确认或拒绝的危险命令规则",
     keywords: ["rule", "danger", "block", "permission", "rm", "拦截", "规则", "危险", "权限", "确认"],
   },
   "settings-ai-skills": {
@@ -95,7 +95,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     keywords: ["bundle", "import", "export", "backup", "file", "资产", "导入", "导出", "备份"],
   },
   "settings-share": {
-    description: "分享主机与会话给他人",
+    description: "向他人分享主机与会话",
     keywords: ["share", "link", "invite", "分享", "链接", "邀请"],
   },
 };
@@ -120,18 +120,19 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-contrast", section: "settings-appearance", label: "终端对比度", keywords: ["contrast", "对比度"], panel: "appearance-advanced" },
   { id: "terminal-font-size", section: "settings-appearance", label: "终端字号", keywords: ["font size", "字体", "字号"], panel: "appearance-advanced" },
   { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"], panel: "appearance-advanced" },
-  { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或普通终端", keywords: ["durable", "persistent", "detach", "持久", "local", "本机", "本地终端", "持久组件"] },
+  { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或临时终端", keywords: ["durable", "persistent", "detach", "持久", "local", "本机", "本地终端", "持久组件"] },
   { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
-  { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
+  { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签页时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"] },
-  { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在这台设备上保留的滚动历史行数，不随账号同步", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"] },
-  { id: "terminal-durable-history", section: "settings-terminal", label: "持久终端历史上限", description: "主机为每个新开的持久终端保留的输出量，随账号同步", keywords: ["history", "durable", "limit", "quota", "scrollback", "历史", "持久", "上限", "配额"] },
-  { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中一键发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
+  { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在本机保留的滚动历史行数，不随账号同步", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"] },
+  { id: "terminal-durable-history", section: "settings-terminal", label: "持久终端历史上限", description: "每个新建的持久终端在主机上保留的输出量，随账号同步", keywords: ["history", "durable", "limit", "quota", "scrollback", "历史", "持久", "上限", "配额"] },
+  { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
+  { id: "close-to-tray", section: "settings-terminal", label: "关闭时保留后台运行", description: "关闭窗口后最小化到系统托盘（仅 Windows 桌面版）", keywords: ["tray", "minimize", "background", "托盘", "最小化", "后台运行", "退出"] },
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
-  { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "程序未开启括号粘贴时、每次或从不在粘贴多行文本前确认，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
-  { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要你或长命令结束时在此设备弹出系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
+  { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "粘贴多行文本前的确认方式：仅程序未开启括号粘贴时、每次或从不，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
+  { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要处理或长时间命令结束时，在本机显示系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
   { id: "state-rules-import", section: "settings-state-rules", label: "导入或导出状态规则", keywords: ["import", "export", "json", "导入", "导出"] },
-  { id: "state-rules-status", section: "settings-state-rules", label: "状态规则下发状态", description: "各主机的持久终端组件是否已使用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件"] },
+  { id: "state-rules-status", section: "settings-state-rules", label: "各主机的规则状态", description: "各主机的持久终端是否已应用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件", "生效"] },
   { id: "copy-on-select", section: "settings-shortcuts", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"], panel: "shortcuts-advanced" },
   { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
   { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },

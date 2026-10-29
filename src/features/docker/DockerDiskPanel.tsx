@@ -118,10 +118,10 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
           <IconRefresh size={12} />刷新
         </button>
       </div>
-      {query.isPending && <div className="nx-hint py-8 text-center">正在读取 docker system df -v…</div>}
+      {query.isPending && <div className="nx-hint py-8 text-center">正在读取 Docker 磁盘占用…</div>}
       {query.isError && !data && (
         <div role="alert" className="rounded border border-red-900/60 bg-red-950/20 px-3 py-3 text-xs text-red-300">
-          磁盘信息加载失败：{describeDockerError(query.error)}
+          未能加载磁盘信息：{describeDockerError(query.error)}
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void query.refetch()}>重试</button>
         </div>
       )}
@@ -213,7 +213,7 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
               <div className="nx-spacer" />
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => setPreview(null)}>取消</button>
               <button type="button" className="nx-btn nx-btn-danger nx-btn-sm" disabled={busy !== null || preview.items.length === 0} onClick={() => void execute(preview)}>
-                {busy === "prune" ? "执行中…" : "确认删除预览项"}
+                {busy === "prune" ? "正在执行…" : "确认删除预览项"}
               </button>
             </div>
             {preview.items.length === 0 ? (

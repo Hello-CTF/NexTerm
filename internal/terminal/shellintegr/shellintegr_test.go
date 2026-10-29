@@ -53,7 +53,11 @@ func TestWrapBash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := string(body)
+	hooks, err := os.ReadFile(filepath.Join(filepath.Dir(launch.Args[1]), BashIntegrationFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(body) + string(hooks)
 	for _, want := range []string{"source $HOME/.bashrc", "PROMPT_COMMAND", "cygpath --mixed", "]7;file://"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("bash wrapper missing %q:\n%s", want, content)
@@ -72,8 +76,8 @@ func TestBashWrapperPromptCommandBranches(t *testing.T) {
 		`PROMPT_COMMAND=(__nexterm_precmd ${PROMPT_COMMAND+"${PROMPT_COMMAND[@]}"} __nexterm_arm)`,
 		`PROMPT_COMMAND="__nexterm_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND};__nexterm_arm"`,
 	} {
-		if !strings.Contains(bashWrapper, want) {
-			t.Errorf("bash wrapper missing branch line %q:\n%s", want, bashWrapper)
+		if !strings.Contains(bashIntegration, want) {
+			t.Errorf("bash wrapper missing branch line %q:\n%s", want, bashIntegration)
 		}
 	}
 }

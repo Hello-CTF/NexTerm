@@ -17,7 +17,7 @@ const MAX_TITLE_BYTES = 1024;
 const HEURISTIC_TEXT_CHARS = 120;
 // Rows of the screen bottom the AI draft is built from; mirrors stateRuleDraftRows in the backend.
 export const STATE_RULE_DRAFT_ROWS = 30;
-export const STATE_RULE_REDACTED_NOTE = "已隐去疑似密钥/密码";
+export const STATE_RULE_REDACTED_NOTE = "已对疑似密钥或密码脱敏";
 
 export const STATE_RULE_EXPORT_FORMAT = "nexterm.state-rules";
 export const STATE_RULE_EXPORT_VERSION = 1;
@@ -25,7 +25,7 @@ export const STATE_RULE_EXPORT_VERSION = 1;
 export type StateRuleTarget = "needs_me" | "running" | "idle" | "just_finished";
 
 export const STATE_RULE_TARGETS: readonly { value: StateRuleTarget; label: string }[] = [
-  { value: "needs_me", label: "需要我" },
+  { value: "needs_me", label: "需要处理" },
   { value: "running", label: "运行中" },
   { value: "idle", label: "空闲" },
   { value: "just_finished", label: "刚结束" },

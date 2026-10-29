@@ -16,7 +16,12 @@
 // Failures use the ipc.Response failure shape {"ok":false,"error":{"code","message"}}.
 // Control channel messages are text JSON envelopes; bridge connections carry
 // raw supervisor protocol bytes as binary frames after the hello.
-// 403/forbidden means revocation and stops the agent.
+// 403/forbidden means revocation and stops the agent, with one exception: the
+// additive owner_unavailable signal (HTTP 403 with error code owner_unavailable,
+// or a forbidden/revoke control frame carrying reason owner_unavailable) means
+// the owner account is disabled or must reset its password. New agents treat it
+// as temporary (keep running, capped exponential backoff, reconnect once the
+// account is usable); old agents only see 403/forbidden and keep stopping.
 // A version_mismatch error frame carries the server version in server_version;
 // the standalone agent answers it with a self-upgrade from the fixed official
 // release source (ReleaseBaseURL) instead of a plain fatal exit.
@@ -41,7 +46,11 @@ const (
 
 	// ConfigVersion is the version of the device config an enrollment writes.
 	ConfigVersion = 1
-	configVersion = ConfigVersion
+
+	// ErrorCodeOwnerUnavailable is the wire code (and control-frame reason) for a device whose owner account
+	// is disabled or reset-required. It is always paired with HTTP 403 / a forbidden frame so old agents stop.
+	ErrorCodeOwnerUnavailable = "owner_unavailable"
+	configVersion             = ConfigVersion
 
 	PathHealth     = "/healthz"
 	PathEnroll     = "/device/enroll"

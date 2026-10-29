@@ -124,7 +124,7 @@ describe("asset tree loading skeleton", () => {
     const status = mounted.container.querySelector('[role="status"][aria-label="正在加载资产"]');
     expect(status).not.toBeNull();
     expect(status!.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
-    expect(mounted.container.textContent).not.toContain("还没有资产");
+    expect(mounted.container.textContent).not.toContain("暂无资产");
 
     pending.resolve([{ ...WEB }]);
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("web-1"));
@@ -139,7 +139,7 @@ describe("asset tree loading skeleton", () => {
     expect(mounted.container.querySelector('[role="status"]')).not.toBeNull();
 
     pending.resolve([]);
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("还没有资产"));
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("暂无资产"));
     expect(mounted.container.querySelector('[role="status"]')).toBeNull();
   });
 
@@ -195,7 +195,7 @@ describe("asset tree loading skeleton", () => {
       }
 
       pending.resolve([]);
-      await waitForRendered(() => expect(mounted!.container.textContent).toContain("还没有资产"));
+      await waitForRendered(() => expect(mounted!.container.textContent).toContain("暂无资产"));
       mounted!.unmount();
       mounted = undefined;
     }

@@ -108,7 +108,7 @@ describe("MemoryCard", () => {
     const slow = deferred<MemoryTopicIndex[]>();
     mocks.index.mockReturnValue(slow.promise);
     mounted = mount(createElement(MemoryCard));
-    expect(mounted.container.textContent).toContain("读取中…");
+    expect(mounted.container.textContent).toContain("正在读取…");
 
     slow.resolve(INDEX_ONE);
     await flush();
@@ -126,7 +126,7 @@ describe("MemoryCard", () => {
     mocks.index.mockResolvedValue([]);
     mounted = mount(createElement(MemoryCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -146,10 +146,10 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    click(inputByLabel(mounted.container, "在 AI 运行时注入记忆"));
+    click(inputByLabel(mounted.container, "在 AI 运行时使用记忆"));
     await flush();
     expect(mocks.setSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
-    expect((inputByLabel(mounted.container, "在 AI 运行时注入记忆") as HTMLInputElement).checked).toBe(true);
+    expect((inputByLabel(mounted.container, "在 AI 运行时使用记忆") as HTMLInputElement).checked).toBe(true);
   });
 
   it("reloads and says so when the settings toggle hits a version conflict", async () => {
@@ -165,7 +165,7 @@ describe("MemoryCard", () => {
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
-      expect.stringContaining("已被其他地方修改"),
+      expect.stringContaining("已在其他位置被修改"),
     );
     expect(mocks.settings).toHaveBeenCalledTimes(2);
   });
@@ -175,7 +175,7 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    clickButton(mounted.container, "新建一条记忆");
+    clickButton(mounted.container, "新建记忆");
     const topic = inputByLabel(mounted.container, "记忆主题");
     const content = mounted.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="记忆内容"]',
@@ -191,7 +191,7 @@ describe("MemoryCard", () => {
     expect(mocks.index).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the form and shows the kernel message when a secret-like write is rejected", async () => {
+  it("keeps the form and shows the plain-language rejection when a secret-like write is rejected", async () => {
     mocks.create.mockRejectedValue({
       code: "bad_param",
       message: "semantic memory contains a possible secret",
@@ -199,7 +199,7 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    clickButton(mounted.container, "新建一条记忆");
+    clickButton(mounted.container, "新建记忆");
     setInputValue(inputByLabel(mounted.container, "记忆主题"), "ops");
     setInputValue(
       mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="记忆内容"]')!,
@@ -209,7 +209,7 @@ describe("MemoryCard", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("possible secret");
+    expect(text).toContain("输入内容不正确，请检查后重试");
     expect(inputByLabel(mounted.container, "记忆主题").value).toBe("ops");
     expect(mocks.index).toHaveBeenCalledTimes(1);
     expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
@@ -259,7 +259,7 @@ describe("MemoryCard", () => {
     await flush();
 
     const text = mounted.container.textContent ?? "";
-    expect(text).toContain("已被其他地方修改");
+    expect(text).toContain("已在其他位置被修改");
     expect(text).toContain("2 → 5");
     expect(mocks.index).toHaveBeenCalledTimes(2);
     expect(mocks.edit).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ describe("MemoryCard", () => {
     expect(mocks.delete).toHaveBeenCalledWith("m-1", 2);
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已删除"));
     expect(mocks.index).toHaveBeenCalledTimes(2);
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
   });
 
   it("keeps the entry and reports when the delete itself fails", async () => {
@@ -333,14 +333,14 @@ describe("MemoryCard", () => {
 
     click(iconButton(mounted.container, "编辑记忆 m-1"));
     await flush();
-    expect(mounted.container.textContent).toContain("读取记忆正文…");
+    expect(mounted.container.textContent).toContain("正在读取记忆正文…");
     expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.edit).not.toHaveBeenCalled();
 
     clickButton(mounted.container, "取消");
     await flush();
-    clickButton(mounted.container, "新建一条记忆");
+    clickButton(mounted.container, "新建记忆");
     setInputValue(inputByLabel(mounted.container, "记忆主题"), "draft-topic");
     slow.resolve(ENTRY_FULL);
     await flush();
@@ -362,20 +362,20 @@ describe("MemoryCard", () => {
       expect.stringContaining("读取记忆正文失败"),
     );
     expect(mounted.container.querySelector('textarea[aria-label="记忆内容"]')).toBeNull();
-    expect(mounted.container.textContent).toContain("新建一条记忆");
+    expect(mounted.container.textContent).toContain("新建记忆");
   });
 
   it("shows the refresh failure instead of the empty state when a reload fails after an empty list", async () => {
     mocks.index.mockResolvedValueOnce([]).mockRejectedValueOnce(new Error("disk failure"));
     mounted = mount(createElement(MemoryCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有记忆");
+    expect(mounted.container.textContent).toContain("暂无记忆");
 
     clickButton(mounted.container, "刷新");
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("disk failure");
-    expect(text).not.toContain("还没有记忆");
+    expect(text).not.toContain("暂无记忆");
 
     clickButton(mounted.container, "重试");
     await flush();
@@ -415,7 +415,7 @@ describe("MemoryCard", () => {
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("浏览器账号模式按账号隔离");
-    expect(text).toContain("桌面和开放部署使用共享记忆");
+    expect(text).toContain("桌面版和开放部署共用同一份记忆");
     expect(text).not.toContain("旧全局记忆在升级时");
     expect(text).not.toContain("其他属主无法读取或修改");
     expect(text).not.toContain("开启了的运行");

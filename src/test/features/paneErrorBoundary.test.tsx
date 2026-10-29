@@ -140,7 +140,7 @@ describe("panel-level error boundary", () => {
     expect(tablist?.textContent).toContain("Audit");
 
     const close = panel?.querySelector<HTMLButtonElement>('[role="alert"] button:last-child');
-    expect(close?.textContent).toBe("关闭标签");
+    expect(close?.textContent).toBe("关闭标签页");
     if (!close) throw new Error("close button missing");
     click(close);
     await waitForRendered(() =>
@@ -154,7 +154,8 @@ describe("panel-level error boundary", () => {
 
 describe("shell-level error boundary", () => {
   it("falls back to a retry-only shell when chrome outside any panel crashes", async () => {
-    useUi.setState({ leftOpen: true });
+    // A host workspace shows its file tree; the asset tree is a temporary override.
+    useUi.setState({ leftOpen: true, leftOverride: "assets" });
     mounted = mountApp();
     await flush();
 

@@ -122,6 +122,6 @@ describe("Both consoles share unified copy constants", () => {
     expect(SYNC_CONSOLE_TITLE).toBe("账号同步");
     expect(SYNC_AUTO_BADGE).toBe("自动同步");
     expect(SYNC_INTERVAL_LABEL).toBe("每 60 秒");
-    expect(SYNC_MERGE_GUIDE).toBe("数据会自动在本机与服务端之间同步。");
+    expect(SYNC_MERGE_GUIDE).toBe("数据将在本机与服务端之间自动同步。");
   });
 });

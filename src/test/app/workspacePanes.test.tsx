@@ -147,9 +147,9 @@ describe("PaneForTab", () => {
     expect((await panel("forward")).dataset.sessionid).toBe("s2");
   });
 
-  it("opens the file browser without a path and the editor with one, which closes its tab", async () => {
+  it("opens the editor for a files tab with a path, which closes its tab; a legacy pathless tab is empty", async () => {
     render(tab({ kind: "files", sessionId: "s1" }));
-    expect((await panel("browser")).dataset.sessionid).toBe("s1");
+    expect(isEmpty()).toBe(true);
 
     const onClose = vi.fn().mockResolvedValue(undefined);
     remount(tab({ kind: "files", id: "f1", sessionId: "s1", path: "/etc/hosts" }), { onClose });
@@ -291,27 +291,30 @@ describe("PaneForTab", () => {
     it("uses the plain message for restored non-durable terminals and file tabs", () => {
       useUi.setState({ workspaces: [workspace({ assetKind: "local" })] });
       render(tab({ kind: "terminal", restorePending: true }));
-      expect(view!.container.textContent).toContain("原终端进程已结束");
+      expect(view!.container.textContent).toContain("原终端已结束");
       remount(tab({ kind: "files", sessionId: "s1", restorePending: true }));
-      expect(view!.container.textContent).toContain("连接后重新打开此标签");
+      expect(view!.container.textContent).toContain("连接主机后才能打开此标签页");
       expect(button("连接并打开")).toBeDefined();
     });
 
     it("opens the background sessions tab after reconnecting a durable host", async () => {
       useUi.setState({ workspaces: [workspace({ sessionId: "live" })] });
       render(tab({ kind: "terminal", restorePending: true }));
-      click(button("查看后台会话"));
-      await flushUntil(() => mocks.reconnectWorkspace.mock.calls.length === 1);
-      await flushUntil(() =>
+      await act(async () => {
+        click(button("查看后台会话"));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(mocks.reconnectWorkspace).toHaveBeenCalledTimes(1);
+      expect(
         useUi.getState().workspaces.some((w) => w.panes.some((p) => p.tabs.some((t) => t.id === "background-ws"))),
-      );
+      ).toBe(true);
     });
 
     it("tells container terminals to be reopened from the container list and closes the tab", () => {
       const onClose = vi.fn().mockResolvedValue(undefined);
       render(tab({ kind: "terminal", id: "ct", containerId: "c1", restorePending: true }), { onClose });
-      expect(view!.container.textContent).toContain("容器终端不会自动重新执行");
-      click(button("关闭标签"));
+      expect(view!.container.textContent).toContain("容器终端不会自动重新打开");
+      click(button("关闭标签页"));
       expect(onClose).toHaveBeenCalledWith("ct");
     });
   });

@@ -121,13 +121,11 @@ function SessionAttentionBadge({ terminalId }: { terminalId: string | null }) {
 export function JumpPalette({
   onClose,
   scope: initialScope = "all",
-  onOpenFiles,
   onEditAsset,
   attentionOf,
 }: {
   onClose: () => void;
   scope?: JumpScope;
-  onOpenFiles?: () => void;
   onEditAsset?: (asset: Asset) => void;
   // attentionOf ranks sessions by attention state once the session awareness store provides it.
   attentionOf?: (session: JumpSessionEntry) => JumpAttention | undefined;
@@ -197,7 +195,7 @@ export function JumpPalette({
     setQuery("");
     setCursor(0);
   }, [changeScope]);
-  const commands = useJumpCommands({ assets, snippets, onOpenFiles, onEditAsset, onShowHosts: showHosts });
+  const commands = useJumpCommands({ assets, snippets, onEditAsset, onShowHosts: showHosts });
 
   const hostAssets = useMemo(
     () =>
@@ -759,18 +757,18 @@ export function JumpPalette({
             <div className="nx-command-empty px-4 py-8 text-center text-xs">
               <div role="status">
                 {firstConnect
-                  ? "还没有远程资产，选择一种方式开始"
+                  ? "暂无远程资产，请选择一种方式开始"
                   : databaseOnly
                     ? query.trim()
                       ? "没有匹配的数据库资产"
                       : hiddenDatabaseCount > 0 && !showHidden
                         ? "数据库资产已隐藏"
-                        : "还没有数据库资产，请先在资产树中新建一个"
+                        : "暂无数据库资产，请先在资产树中新建一个"
                   : showAll
                     ? "没有匹配的会话、主机或命令"
                   : query.trim()
                     ? "没有匹配的资产"
-                    : "还没有可连接的资产"}
+                    : "暂无可连接的资产"}
               </div>
               {databaseOnly && hiddenDatabaseCount > 0 && (
                 <button

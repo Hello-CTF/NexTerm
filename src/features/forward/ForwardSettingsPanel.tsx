@@ -145,9 +145,9 @@ export function ForwardSettingsPanel() {
           仅本地固定端口转发，只监听 127.0.0.1，不会对外暴露；SOCKS5、远程转发和公共监听不支持自动启动。
         </div>
         {rules === null ? (
-          <div role="status" className="text-[11px] text-neutral-500">加载中…</div>
+          <div role="status" className="text-[11px] text-neutral-500">正在加载…</div>
         ) : rules.length === 0 ? (
-          <div className="text-[11px] text-neutral-500">还没有保存的转发规则</div>
+          <div className="text-[11px] text-neutral-500">暂无保存的转发规则</div>
         ) : (
           <div className="flex flex-col gap-1.5">
             {rules.map((rule) => (

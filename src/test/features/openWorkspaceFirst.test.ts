@@ -225,7 +225,7 @@ describe("explicitly opening a terminal", () => {
     await openTerminalTab(SSH_SESSION);
 
     const [tab] = terminalTabs();
-    expect(tab && tabTooltip(tab, false)).toBe("终端 1（普通终端：持久组件准备中）");
+    expect(tab && tabTooltip(tab, false)).toBe("终端 1（临时终端：持久组件准备中）");
   });
 
   it("does not wait longer than the readiness timeout and opens a regular terminal meanwhile", async () => {

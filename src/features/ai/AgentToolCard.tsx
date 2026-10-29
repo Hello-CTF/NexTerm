@@ -26,9 +26,9 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
 };
 
 const APPROVAL_LABEL: Record<AgentApprovalDecision, string> = {
-  approve_once: "已批准一次",
-  approve_session: "已本会话批准",
-  approve_persistent: "已永久批准",
+  approve_once: "已允许一次",
+  approve_session: "已在本会话允许",
+  approve_persistent: "已永久允许",
   deny: "已拒绝",
 };
 
@@ -91,13 +91,13 @@ export function AgentToolCard({
           {run && (
             <span
               className={TONE_BADGE[run.tone]}
-              title={run.evidence ? formatEvidence(run.evidence) : "无证据"}
+              title={run.evidence ? formatEvidence(run.evidence) : "暂无依据"}
             >
               {run.label}
             </span>
           )}
           {call.presence !== "attached" && (
-            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : "无证据"}>
+            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : "暂无依据"}>
               {presence.label}
             </span>
           )}
@@ -107,7 +107,7 @@ export function AgentToolCard({
               所有者：{call.ownerName}
             </span>
           )}
-          {call.persistent === false && <span className="nx-count">非持久目标</span>}
+          {call.persistent === false && <span className="nx-count">非持久终端</span>}
           {!autoWriteAllowed(call.presence) && (
             <span className="text-[var(--nx-fg-warning)]">自动写入已禁止</span>
           )}
@@ -116,7 +116,7 @@ export function AgentToolCard({
 
       {run?.evidence && (
         <div className="mt-1 text-[10.5px] text-neutral-500">
-          证据：{formatEvidence(run.evidence)}
+          依据：{formatEvidence(run.evidence)}
         </div>
       )}
 
@@ -131,19 +131,19 @@ export function AgentToolCard({
             <button
               className="nx-btn nx-btn-outline nx-btn-xs"
               disabled={approvalBusy || !call.isMine}
-              title={call.isMine ? "仅批准这一次调用" : "仅所有者可审批"}
+              title={call.isMine ? "仅允许这一次调用" : "仅所有者可审批"}
               onClick={() => onApproval?.(approval.requestId, "approve_once")}
             >
-              批准一次
+              允许一次
             </button>
             {approval.sessionScope && (
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 disabled={approvalBusy || !call.isMine}
-                title={call.isMine ? `本次对话中不再询问：${approval.sessionScope}` : "仅所有者可审批"}
+                title={call.isMine ? `本次对话内不再询问：${approval.sessionScope}` : "仅所有者可审批"}
                 onClick={() => onApproval?.(approval.requestId, "approve_session")}
               >
-                本会话批准
+                本会话允许
               </button>
             )}
             <button

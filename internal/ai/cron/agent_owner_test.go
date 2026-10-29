@@ -78,7 +78,7 @@ func TestAgentExecutorRejectsOwnerlessTrigger(t *testing.T) {
 	executor := &AgentExecutor{Runner: runner}
 	trigger := testTrigger()
 	trigger.OwnerKind = ""
-	if err := executor.Execute(context.Background(), trigger); !errors.Is(err, ErrOwnerless) {
+	if err := executor.Execute(context.Background(), trigger); !errors.Is(err, ErrInvalidOwner) {
 		t.Fatalf("ownerless execution error = %v", err)
 	}
 	if len(runner.args) != 0 {

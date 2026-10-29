@@ -611,7 +611,7 @@ describe("connectAsset unlocks the credential vault before connecting", () => {
     expect(mocks.vaultUnlock).toHaveBeenCalledWith("wrong-password");
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
     expect(mocks.dbConnect).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误：Incorrect master password");
+    expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码不正确，请重新输入");
   });
 
   it("continues connecting after a successful unlock", async () => {

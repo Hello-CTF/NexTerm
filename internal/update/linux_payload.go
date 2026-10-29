@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// errPayloadMissingRuntime reports an update archive that lacks the AI runtime directory.
+var errPayloadMissingRuntime = errors.New("更新包缺少 AI 运行时目录 ai-runtime")
+
 // errPayloadMissingExecutable lets callers name the archive that lacked the executable.
 var errPayloadMissingExecutable = errors.New("更新包中没有 nexterm-desktop")
 
@@ -100,7 +103,13 @@ func installLinuxPayload(ctx context.Context, reader *tar.Reader, executable str
 	if !found {
 		return errPayloadMissingExecutable
 	}
-	if hasRuntime && !runtimeUnavailable(runtimeStage) {
+	// Every release deb ships ai-runtime (a real library, or a manifest declaring
+	// it unavailable). A payload without it would leave the new executable next
+	// to a stale or missing runtime, so it is rejected before anything is replaced.
+	if !hasRuntime {
+		return errPayloadMissingRuntime
+	}
+	if !runtimeUnavailable(runtimeStage) {
 		const name = "libonnxruntime.so"
 		if info, err := os.Stat(filepath.Join(runtimeStage, name)); err != nil || !info.Mode().IsRegular() {
 			return fmt.Errorf("更新包缺少 AI 运行时 %s", name)

@@ -10,6 +10,7 @@ import { formatBytes } from "../../ui/format";
 import { IconRefresh, IconShield } from "../../ui/icons";
 import { useAuth } from "../auth/store";
 import { SummaryDialog } from "./SummaryDialog";
+import { modelDisplayName } from "./privacyModel";
 
 const precisionNames: Record<PrivacyPrecision, string> = {
   int8: "INT8",
@@ -82,7 +83,7 @@ function PrivacyCardBody() {
     if (mounted.current) setStatus(next);
   };
   const remove = async (item: PrivacyInstallation) => {
-    if (!(await confirmDialog(`删除模型 ${item.version} ${item.precision.toUpperCase()}（${formatBytes(installationSize(item))}）？`))) return;
+    if (!(await confirmDialog(`确定要删除模型 ${modelDisplayName(item)} ${item.version} ${item.precision.toUpperCase()}（${formatBytes(installationSize(item))}）吗？`))) return;
     await run(async () => { const next = await privacyApi.remove(item.revision, item.precision); if (mounted.current) setStatus(next); });
   };
 
@@ -106,7 +107,7 @@ function PrivacyCardBody() {
     }
     if (!completed || !completedKey || notifiedCompletion.current === completedKey) return;
     notifiedCompletion.current = completedKey;
-    pushToast("success", `模型 ${completed.version} ${status.download.precision.toUpperCase()} 下载完成`);
+    pushToast("success", `模型 ${modelDisplayName(completed)} ${completed.version} ${status.download.precision.toUpperCase()} 下载完成`);
   }, [completed, completedKey, pushToast, status]);
 
   return (
@@ -119,7 +120,7 @@ function PrivacyCardBody() {
       <p className="nx-hint mb-1">
         发送给 AI 前，在{WEB ? "当前 NexTerm 服务端" : "本机"}将敏感文本替换为占位符。
       </p>
-      <p className="nx-hint mb-3">仅处理文本，图片不会脱敏，会原样发送。</p>
+      <p className="nx-hint mb-3">仅处理文本；图片不会脱敏，将原样发送。</p>
       {error && <div role="alert" className="nx-alert nx-alert-danger mb-3 text-[12px]">{error}</div>}
       {!status || !config ? (
         <button type="button" className="nx-btn nx-btn-outline" onClick={() => void refresh()}>加载隐私设置</button>
@@ -130,7 +131,7 @@ function PrivacyCardBody() {
               {supported
                 ? `已启用脱敏，但所选模型不可用：${status.selection?.error ?? "未知原因"}。`
                 : `${WEB ? "服务端" : "本机"}的脱敏运行时不可用：${status.runtime.reason ?? "未知原因"}。`}
-              在恢复或关闭前，所有 AI 请求都会被阻止。{supported && !status.canManage ? "请联系管理员下载模型。" : ""}
+              在恢复或关闭脱敏前，所有 AI 请求都将被阻止。{supported && !status.canManage ? "请联系管理员下载模型。" : ""}
             </div>
           ) : !supported && (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">本地脱敏当前不可用：{status.runtime.reason}。</div>
@@ -152,12 +153,12 @@ function PrivacyCardBody() {
               manageable={status.canManage || status.installed.length > 0}
               buttonLabel={status.installed.length === 0 ? "下载模型" : "管理"}
               title="管理本地脱敏模型"
-              description="选择、下载和删除本地隐私模型。下载后不会自动启用脱敏。"
+              description="选择、下载和删除本地隐私模型。"
               summary={
                 <>
                   <span className="block truncate">
                     {currentInstallation
-                      ? `${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
+                      ? `${modelDisplayName(currentInstallation)} · ${currentInstallation.precision.toUpperCase()} · ${currentInstallation.version} · ${formatBytes(installationSize(currentInstallation))}`
                       : noModelHint}
                     {status.installed.length > 0 ? ` · 已下载 ${status.installed.length} 个` : ""}
                   </span>
@@ -171,10 +172,10 @@ function PrivacyCardBody() {
                     当前模型
                     <Select ariaLabel="使用的本地隐私模型" value={selected} disabled={busy}
                       options={[
-                        ...(missingSelection ? [{ value: selected, label: `${config.version || config.revision.slice(0, 7)} · ${config.precision.toUpperCase()}（文件缺失）`, disabled: true }] : []),
+                        ...(missingSelection ? [{ value: selected, label: `${modelDisplayName(config)} · ${config.precision.toUpperCase()} · ${config.version || config.revision.slice(0, 7)}（文件缺失）`, disabled: true }] : []),
                         ...status.installed.map((item) => ({
                           value: keyOf(item),
-                          label: `${item.precision.toUpperCase()} · ${item.version}`,
+                          label: `${modelDisplayName(item)} · ${item.precision.toUpperCase()} · ${item.version}`,
                           description: formatBytes(installationSize(item)),
                         })),
                       ]}
@@ -215,7 +216,7 @@ function PrivacyCardBody() {
                     <div className="text-xs text-neutral-400">已下载 · 共占用 {formatBytes(status.diskUsage)}</div>
                     {status.installed.map((item) => (
                       <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
-                        <span>{item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
+                        <span>{modelDisplayName(item)} · {item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? " · 当前" : ""}</span>
                         {status.canManage && (
                           <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy || status.download.running || (config.enabled && keyOf(item) === selected)}
                             title={config.enabled && keyOf(item) === selected ? "正在使用，请先关闭脱敏或切换到其他模型" : undefined}
@@ -225,15 +226,6 @@ function PrivacyCardBody() {
                     ))}
                   </div>
                 )}
-                <div className="flex flex-col gap-1.5 border-t border-neutral-800/60 pt-2">
-                  <div className="text-xs text-neutral-400">模型与隐私说明</div>
-                  <p className="nx-hint text-[11px]">
-                    适用于{WEB ? "当前账号" : "这台设备"}的对话、定时任务、上下文压缩、子代理和工具输出。{WEB ? "设置不参与同步；模型由管理员在服务端下载，所有账号共用。" : "设置和模型仅保存在本机，不参与同步。"}
-                  </p>
-                  <p className="nx-hint text-[11px]">
-                    模型来自 Hugging Face / QuantumNous/astrlink-guard，不包含在安装包中。INT8 适合日常使用；FP16 兼顾体积与精度；FP32 更侧重代码和凭证检测。模型可能漏检或误报。
-                  </p>
-                </div>
               </div>
             </SummaryDialog>
           </div>
@@ -249,7 +241,7 @@ function PrivacyCardBody() {
           )}
           {!status.download.running && completed && selected !== completedKey && (
             <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-green-300">
-              <span>已下载 {completed.version} {status.download.precision.toUpperCase()}</span>
+              <span>已下载 {modelDisplayName(completed)} {completed.version} {status.download.precision.toUpperCase()}</span>
               <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy}
                 onClick={() => void run(() => configure({ ...config, ...completed, precision: status.download.precision }))}>使用此模型</button>
             </div>
@@ -263,6 +255,8 @@ function PrivacyCardBody() {
               {status.download.detail && <div className="mt-0.5 break-words font-mono text-[11px] opacity-70">{status.download.detail}</div>}
             </div>
           )}
+          <p className="nx-hint text-[11px]">模型从官方渠道下载，不随安装包分发。</p>
+          <p className="nx-hint text-[11px]">脱敏可能漏检或误报，请勿将其作为唯一的保护措施。</p>
         </div>
       )}
     </section>

@@ -316,7 +316,7 @@ describe("packUploadAndExtract (device flow, in-place extraction)", () => {
         files: files(),
         onProgress: () => {},
       }),
-    ).rejects.toThrow("chunk boom");
+    ).rejects.toThrow("输入内容不正确，请检查后重试");
     expect(h.calls).toContain("abort");
     expect(h.calls).not.toContain("commit");
     expect(h.calls.some((call) => call.startsWith("extract:"))).toBe(false);

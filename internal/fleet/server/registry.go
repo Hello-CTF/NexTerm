@@ -19,7 +19,7 @@ const bridgeWaitTimeout = 60 * time.Second
 var (
 	errDeviceOffline      = errors.New("设备不在线")
 	errBridgeNotPending   = errors.New("桥接请求不存在或已超时")
-	errPurposeUnsupported = errors.New("该设备代理版本过旧，不支持此通道，请在设备上升级 NexTerm agent 后重试")
+	errPurposeUnsupported = errors.New("该设备代理版本过旧，不支持此通道，请在设备上升级设备代理后重试")
 )
 
 type controlChannel struct {
@@ -151,6 +151,12 @@ func (r *Registry) PushControl(deviceID string, message controlMessage) bool {
 // KickDevice is the revocation closed loop: the control channel closes after receiving the revoke frame, and all of the device's bridges close with it.
 // After the revoke frame is written, the teardown also uses CloseNow, without waiting for the peer's close handshake.
 func (r *Registry) KickDevice(deviceID string) {
+	r.kickDevice(deviceID, "")
+}
+
+// kickDevice is KickDevice with an optional reason on the revoke frame; owner_unavailable tells new agents
+// the block is temporary while old agents still read a plain revoke.
+func (r *Registry) kickDevice(deviceID, reason string) {
 	r.mu.Lock()
 	control := r.controls[deviceID]
 	delete(r.controls, deviceID)
@@ -161,10 +167,17 @@ func (r *Registry) KickDevice(deviceID string) {
 			delete(r.bridges, bridgeID)
 		}
 	}
+	// Fail pending bridge requests of the device now instead of leaving the waiters to time out.
+	for _, request := range r.pending {
+		if request.deviceID == deviceID && !request.delivered && !request.abandoned {
+			request.abandoned = true
+			request.result <- bridgeResult{err: errDeviceOffline}
+		}
+	}
 	r.mu.Unlock()
 	if control != nil {
 		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = writeControlJSON(writeCtx, control.conn, controlMessage{Type: "revoke"})
+		_ = writeControlJSON(writeCtx, control.conn, controlMessage{Type: "revoke", Reason: reason})
 		cancel()
 		control.conn.CloseNow()
 	}
@@ -242,7 +255,7 @@ func purposeUnsupportedMessage(purpose string) string {
 	if purpose == "" {
 		purpose = agent.PurposeTerminal
 	}
-	return "该设备代理版本过旧，不支持「" + purpose + "」通道，请在设备上升级 NexTerm agent 后重试"
+	return "该设备代理版本过旧，不支持「" + purpose + "」通道，请在设备上升级设备代理后重试"
 }
 
 // servesPurpose reports whether an agent advertised the requested bridge purpose.

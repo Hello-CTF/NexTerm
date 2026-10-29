@@ -223,7 +223,7 @@ describe("terminal overlay accessibility", () => {
     });
 
     expect(alert()?.textContent).toContain("终端进程已结束");
-    const close = alertButton("关闭标签");
+    const close = alertButton("关闭标签页");
     expect(close).toBeDefined();
     expect(document.activeElement).toBe(close);
   });
@@ -258,10 +258,10 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(alertButton("关闭标签")).toBeDefined();
+    expect(alertButton("关闭标签页")).toBeDefined();
     harness.listLive.mockResolvedValue([currentLiveTab(true)]);
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", undefined, "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
@@ -285,11 +285,11 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(alertButton("关闭标签")).toBeDefined();
+    expect(alertButton("关闭标签页")).toBeDefined();
     harness.listLive.mockResolvedValue([currentLiveTab(false)]);
     act(() => useUi.getState().updateTab("t1", { retainable: true }));
 
-    clickButton(mounted.container, "关闭标签");
+    clickButton(mounted.container, "关闭标签页");
 
     await waitForRendered(() => expect(harness.closeTab).toHaveBeenCalledWith("kernel-1", "detach", "s1"));
     expect(harness.closeTab).not.toHaveBeenCalledWith("kernel-1", "kill", "s1");
@@ -324,8 +324,8 @@ describe("terminal overlay accessibility", () => {
       await flush();
     });
 
-    expect(alert()?.textContent).toContain("这个终端已失效");
-    const reconnect = alertButton("重新连接这台主机");
+    expect(alert()?.textContent).toContain("该终端已失效");
+    const reconnect = alertButton("重新连接");
     expect(reconnect).toBeDefined();
     expect(document.activeElement).toBe(reconnect);
   });
@@ -386,7 +386,7 @@ describe("terminal overlay accessibility", () => {
       await flush();
     });
 
-    expect(alert()?.textContent).toContain("这个终端已失效");
+    expect(alert()?.textContent).toContain("该终端已失效");
     expect(document.activeElement).toBe(input);
   });
 
@@ -415,7 +415,7 @@ describe("terminal overlay accessibility", () => {
     });
 
     expect(alert()?.textContent).toContain("终端进程已结束");
-    expect(document.activeElement).not.toBe(alertButton("关闭标签"));
+    expect(document.activeElement).not.toBe(alertButton("关闭标签页"));
 
     act(() => {
       mounted!.root.render(
@@ -428,7 +428,7 @@ describe("terminal overlay accessibility", () => {
       );
     });
 
-    expect(document.activeElement).toBe(alertButton("关闭标签"));
+    expect(document.activeElement).toBe(alertButton("关闭标签页"));
   });
 
   it("does not re-steal focus on repeated control renders", async () => {
@@ -447,7 +447,7 @@ describe("terminal overlay accessibility", () => {
       rows: 24,
       gridRevision: 0,
     });
-    expect(document.activeElement).toBe(alertButton("关闭标签"));
+    expect(document.activeElement).toBe(alertButton("关闭标签页"));
 
     const input = document.createElement("input");
     document.body.append(input);
@@ -494,12 +494,12 @@ describe("terminal overlay accessibility", () => {
           }),
         );
       });
-      expect(status("正在切换终端窗口…")).not.toBeNull();
+      expect(status("正在切换终端…")).not.toBeNull();
 
       act(() => {
         vi.advanceTimersByTime(650);
       });
-      expect(status("正在切换终端窗口…")).toBeNull();
+      expect(status("正在切换终端…")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -530,6 +530,6 @@ describe("terminal overlay accessibility", () => {
       );
     });
 
-    expect(status("正在切换终端窗口…")).toBeNull();
+    expect(status("正在切换终端…")).toBeNull();
   });
 });

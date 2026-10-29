@@ -224,12 +224,12 @@ export function TranscriptReplayView({
         {loadError && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-neutral-900/80 text-[12px] text-red-300">
             <IconAlert size={13} />
-            加载回放数据失败：{loadError}
+            未能加载回放数据：{loadError}
           </div>
         )}
         {chunks && chunks.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">
-            {contentOmitted ? "仅保留元数据" : "这条记录没有任何可回放的内容"}
+            {contentOmitted ? "仅保留元数据" : "该记录没有任何可回放的内容"}
           </div>
         )}
       </div>

@@ -127,7 +127,7 @@ describe("AgentRosterPanel", () => {
     await mountPanel([entry({ presence: "gone", evidence: null })]);
     const row = rowFor("build");
     expect(row.textContent).toContain("未知");
-    expect(row.textContent).not.toContain("已消失");
+    expect(row.textContent).not.toContain("已不存在");
   });
 
   it("open and attach call the api and report the opened tab", async () => {
@@ -151,7 +151,7 @@ describe("AgentRosterPanel", () => {
     const row = rowFor("build");
     expect(buttonIn(row, "打开").disabled).toBe(true);
     expect(buttonIn(row, "附加").disabled).toBe(true);
-    expect(row.textContent).toContain("已消失");
+    expect(row.textContent).toContain("已不存在");
     expect(api.open).not.toHaveBeenCalled();
   });
 
@@ -180,13 +180,13 @@ describe("AgentRosterPanel", () => {
     clickButton(row, "保存");
     await flush();
     expect(api.rename).not.toHaveBeenCalled();
-    expect(row.textContent).toContain("别名不能为空");
+    expect(row.textContent).toContain("请输入别名");
 
     setInputValue(input, "x".repeat(192));
     clickButton(row, "保存");
     await flush();
     expect(api.rename).not.toHaveBeenCalled();
-    expect(row.textContent).toContain("别名不能超过 191 字");
+    expect(row.textContent).toContain("别名最多 191 个字");
   });
 
   it("renders the alias chip only when the alias differs from the handle", async () => {
@@ -213,7 +213,7 @@ describe("AgentRosterPanel", () => {
     expect(mocks.ask).toHaveBeenCalledOnce();
     expect(api.release).toHaveBeenCalledWith("build");
     expect(rowFor("build").textContent).toContain("释放待确认");
-    expect(rowFor("build").textContent).not.toContain("已消失");
+    expect(rowFor("build").textContent).not.toContain("已不存在");
     expect(buttonIn(rowFor("build"), "释放").disabled).toBe(true);
   });
 
@@ -251,7 +251,7 @@ describe("AgentRosterPanel", () => {
   it("unverifiable rows surface the automatic-write ban", async () => {
     await mountPanel([entry({ presence: "unverifiable", evidence: null })]);
     const row = rowFor("build");
-    expect(row.textContent).toContain("无法验证");
+    expect(row.textContent).toContain("无法确认");
     expect(row.textContent).toContain("自动写入已禁止");
   });
 
@@ -260,11 +260,11 @@ describe("AgentRosterPanel", () => {
     api.list.mockRejectedValueOnce(new Error("roster offline"));
     view = mount(createElement(AgentRosterPanel, { api }));
     await flush();
-    expect(view.container.textContent).toContain("加载失败");
+    expect(view.container.textContent).toContain("未能加载子代理列表");
     clickButton(view.container, "重试");
     await flush();
     expect(api.list).toHaveBeenCalledTimes(2);
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("尚无子代理");
   });
 
   describe("evidence-less terminal presence", () => {
@@ -281,10 +281,10 @@ describe("AgentRosterPanel", () => {
         expect(attach.disabled).toBe(true);
         expect(open.title).toContain("未知");
         expect(attach.title).toContain("未知");
-        expect(open.title).not.toContain("已消失");
+        expect(open.title).not.toContain("已不存在");
         expect(open.title).not.toContain("已被替换");
         expect(open.title).not.toContain("已退出");
-        expect(attach.title).not.toContain("已消失");
+        expect(attach.title).not.toContain("已不存在");
         expect(attach.title).not.toContain("已被替换");
         expect(attach.title).not.toContain("已退出");
       });
@@ -311,15 +311,15 @@ describe("AgentRosterPanel", () => {
     view = mount(createElement(AgentRosterPanel, { api }));
     await flush();
     const refresh = view.container.querySelector(
-      'button[aria-label="刷新句柄列表"]',
+      'button[aria-label="刷新子代理列表"]',
     ) as HTMLButtonElement;
     click(refresh);
     await flush();
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("尚无子代理");
     stale.resolve([entry()]);
     await flush();
     expect(view.container.querySelector('[data-handle="build"]')).toBeNull();
-    expect(view.container.textContent).toContain("暂无句柄");
+    expect(view.container.textContent).toContain("尚无子代理");
   });
 
   it("an older list response cannot clear a submitted release-pending state", async () => {
@@ -329,7 +329,7 @@ describe("AgentRosterPanel", () => {
     await flush();
     api.list.mockReturnValueOnce(stale.promise);
     const refresh = view.container.querySelector(
-      'button[aria-label="刷新句柄列表"]',
+      'button[aria-label="刷新子代理列表"]',
     ) as HTMLButtonElement;
     click(refresh);
     clickButton(rowFor("build"), "释放");

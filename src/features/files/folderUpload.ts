@@ -99,7 +99,7 @@ async function pendingFoldersFromDrop(
         if (skipped.length > 3) shown.push(`等 ${skipped.length} 个`);
         useUi.getState().pushToast(
           "info",
-          `已跳过 ${skipped.length} 个无法识别的条目（${shown.join("、")}）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮`,
+          `已跳过 ${skipped.length} 个无法识别的条目（${shown.join("、")}）：当前平台不支持拖拽文件夹，请使用「上传文件夹」`,
         );
         return { folders: [], looseFiles: files.filter((file) => file.size > 0 || file.type !== "") };
       }
@@ -191,7 +191,7 @@ async function materializeFolder(pending: PendingFolder): Promise<FolderSelectio
       }
     } catch (e) {
       for (const s of staged) await dropStaged(s.localPath).catch(() => undefined);
-      pushToast("error", `读取文件夹内容失败：${describeError(e)}`);
+      pushToast("error", `未能读取文件夹内容：${describeError(e)}`);
       return null;
     }
     return { folderName: pending.folderName, files: staged, emptyDirs };
@@ -340,7 +340,7 @@ export async function dropNativeFolderUpload(
   try {
     listing = await localFileApi.listFolder(folderPath);
   } catch (e) {
-    useUi.getState().pushToast("error", `读取本地文件夹失败：${describeError(e)}`);
+    useUi.getState().pushToast("error", `未能读取本地文件夹：${describeError(e)}`);
     return;
   }
   const selection: FolderSelection = {

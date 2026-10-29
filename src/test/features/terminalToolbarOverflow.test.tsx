@@ -226,9 +226,9 @@ describe("terminal toolbar overflow", () => {
 
     expect(menuLabels()).toEqual([
       "搜索终端内容",
-      "定位到上一条命令",
-      "定位到下一条命令",
-      "命令块",
+      "上一条命令",
+      "下一条命令",
+      "命令列表",
       "广播到当前分屏",
       "广播到全部终端",
       "选择广播目标…",
@@ -254,7 +254,7 @@ describe("terminal toolbar overflow", () => {
     const search = toolbar.querySelector<HTMLButtonElement>('button[title^="搜索终端内容"]');
     expect(search?.className).toContain("@max-[560px]:hidden");
     const blocks = [...toolbar.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
-      b.textContent?.includes("命令块"),
+      b.textContent?.includes("命令列表"),
     );
     expect(blocks?.className).toContain("@max-[560px]:hidden");
     expect(overflowButton().className).not.toContain("hidden");
@@ -314,7 +314,7 @@ describe("terminal toolbar overflow", () => {
 
     keyDown(document.activeElement as Element, "ArrowDown");
     await flush();
-    expect(document.activeElement?.textContent).toContain("命令块");
+    expect(document.activeElement?.textContent).toContain("命令列表");
 
     keyDown(document.activeElement as Element, "ArrowUp");
     await flush();
@@ -334,9 +334,9 @@ describe("terminal toolbar overflow", () => {
     if (!toolbar) throw new Error("toolbar not found");
     const collapsible = [
       toolbar.querySelector('button[title^="搜索终端内容"]'),
-      toolbar.querySelector('button[title="定位到上一条命令"]'),
-      toolbar.querySelector('button[title="定位到下一条命令"]'),
-      [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("命令块")),
+      toolbar.querySelector('button[title="上一条命令"]'),
+      toolbar.querySelector('button[title="下一条命令"]'),
+      [...toolbar.querySelectorAll("button")].find((b) => b.textContent?.includes("命令列表")),
       toolbar.querySelector(".nx-divider-v"),
     ];
     for (const el of collapsible) {

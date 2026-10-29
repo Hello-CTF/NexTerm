@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy/inference"
@@ -227,10 +228,19 @@ func RuntimeUnavailableMessage() string {
 	return message
 }
 
+// UnavailableMessage explains an inference.ErrUnavailable failure, naming a
+// missing file or a system load refusal when the error carries that cause.
+func UnavailableMessage(err error) string { return safeMessage(err, RuntimeUnavailableMessage()) }
+
 func safeMessage(err error, fallback string) string {
 	var safe *UserError
 	var platform *inference.PlatformError
+	var runtimeErr *inference.RuntimeError
 	switch {
+	case errors.As(err, &runtimeErr) && runtimeErr.Missing:
+		return "本地推理运行时文件不存在: " + runtimeErr.Path + "。" + RuntimeUnavailableMessage()
+	case errors.As(err, &runtimeErr):
+		return "系统拒绝加载本地推理运行时（可能是签名、权限或隔离属性限制）: " + runtimeErr.Error()
 	case errors.As(err, &safe):
 		return safe.Message
 	case errors.As(err, &platform):
@@ -395,6 +405,9 @@ func (m *Manager) Configure(ctx context.Context, enabled bool, precision Precisi
 		if err := m.runtimeError(); err != nil {
 			return Status{}, err
 		}
+		if err := m.preverify(ctx, next); err != nil {
+			return Status{}, err
+		}
 		if err := m.validateEngine(ctx, next); err != nil {
 			return Status{}, err
 		}
@@ -505,13 +518,57 @@ func (d managedDetector) Detect(ctx context.Context, text string) ([]Span, error
 	if err != nil {
 		return nil, modelFailure(ctx, err)
 	}
-	spans, err := engine.Detect(ctx, text)
+	spans, err := detectChunked(ctx, engine.Detect, text)
 	if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, inference.ErrTokenLimit) {
 		// The native engine may be in an undefined state; the next request reloads it.
 		_ = m.dropEngine(m.modelDir(d.config))
 		return nil, modelError{err}
 	}
 	return spans, err
+}
+
+// detectChunked runs detect and, when the text exceeds the engine's token
+// limit, splits it near the middle (preferring a line or word boundary) and
+// detects the halves separately, so one oversized tool result cannot make
+// every later turn of a conversation fail closed. Offsets are rebased to text.
+func detectChunked(ctx context.Context, detect func(context.Context, string) ([]Span, error), text string) ([]Span, error) {
+	spans, err := detect(ctx, text)
+	if !errors.Is(err, inference.ErrTokenLimit) || len(text) < 2 {
+		return spans, err
+	}
+	cut := splitPoint(text)
+	left, err := detectChunked(ctx, detect, text[:cut])
+	if err != nil {
+		return nil, err
+	}
+	right, err := detectChunked(ctx, detect, text[cut:])
+	if err != nil {
+		return nil, err
+	}
+	for i := range right {
+		right[i].Start += cut
+		right[i].End += cut
+	}
+	return append(left, right...), nil
+}
+
+// splitPoint returns a rune-aligned index in (0, len(text)) near the middle,
+// moved to just after the closest newline or space within a quarter of the
+// text when one exists.
+func splitPoint(text string) int {
+	mid := len(text) / 2
+	window := len(text) / 4
+	for d := 0; d <= window; d++ {
+		for _, i := range [2]int{mid - d, mid + d} {
+			if i > 0 && i < len(text) && (text[i-1] == '\n' || text[i-1] == ' ') {
+				return i
+			}
+		}
+	}
+	for mid > 1 && !utf8.RuneStart(text[mid]) {
+		mid--
+	}
+	return max(mid, 1)
 }
 
 // modelError marks a failure of the local model or its runtime, as opposed to
@@ -623,6 +680,28 @@ func (m *Manager) setFailure(directory, message string) {
 	} else {
 		m.failures[directory] = message
 	}
+}
+
+// preverify hashes config's model files before the engine slot is taken, so a
+// slow full verification (for example by a non-admin Configure) never blocks
+// detection requests. loadEngine then finds the matching fingerprint and skips
+// hashing; any rewrite in between changes the fingerprint and is re-verified
+// under the slot. Failures are left for loadEngine to report.
+func (m *Manager) preverify(ctx context.Context, config Config) error {
+	directory := m.modelDir(config)
+	installation, err := ReadInstallation(directory)
+	if err != nil || installation.Revision != config.Revision || installation.Precision != config.Precision {
+		return nil
+	}
+	fingerprint, err := installationFingerprint(directory, installation)
+	if err != nil || fingerprint == m.verifiedFingerprint(directory) {
+		return nil
+	}
+	if err := VerifyInstallation(ctx, directory, installation); err != nil {
+		return ctx.Err()
+	}
+	m.setVerified(directory, fingerprint)
+	return nil
 }
 
 func (m *Manager) validateEngine(ctx context.Context, config Config) error {

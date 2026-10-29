@@ -3,6 +3,7 @@ import { useChatPanelState } from "./useChatPanelState";
 import { useChatRunRecovery } from "./useChatRunRecovery";
 import { useChatActions } from "./useChatActions";
 import { useChatAgentsAndHistory } from "./useChatAgentsAndHistory";
+import { useBackgroundTasks } from "./useBackgroundTasks";
 import { AiChatTopBar } from "./AiChatTopBar";
 import { AiChatPanels } from "./AiChatPanels";
 import { AiChatMessageStream } from "./AiChatMessageStream";
@@ -18,7 +19,8 @@ export function AiChatTab(props: AiChatTabProps) {
   const useChatRunRecoveryOut = useChatRunRecovery({ ...base, ...useChatRunSessionOut, ...useChatPanelStateOut });
   const useChatActionsOut = useChatActions({ ...base, ...useChatRunSessionOut, ...useChatPanelStateOut, ...useChatRunRecoveryOut });
   const useChatAgentsAndHistoryOut = useChatAgentsAndHistory({ ...base, ...useChatRunSessionOut, ...useChatPanelStateOut, ...useChatRunRecoveryOut, ...useChatActionsOut });
-  const ctx: AiChatCtx = { ...base, ...useChatRunSessionOut, ...useChatPanelStateOut, ...useChatRunRecoveryOut, ...useChatActionsOut, ...useChatAgentsAndHistoryOut };
+  const useBackgroundTasksOut = useBackgroundTasks({ ...base, ...useChatRunSessionOut, ...useChatActionsOut });
+  const ctx: AiChatCtx = { ...base, ...useChatRunSessionOut, ...useChatPanelStateOut, ...useChatRunRecoveryOut, ...useChatActionsOut, ...useChatAgentsAndHistoryOut, ...useBackgroundTasksOut };
   if (!ctx.rightOpen || !ctx.active) return null;
   return (
     <>

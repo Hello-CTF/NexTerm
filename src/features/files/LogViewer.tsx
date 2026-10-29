@@ -332,10 +332,10 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
               <span className="nx-skeleton min-w-0 flex-1" />
             </div>
           ))}
-          <span className="nx-sr-only">加载中…</span>
+          <span className="nx-sr-only">正在加载…</span>
         </div>
       ) : chunk && chunk.size === 0 ? (
-        <div className="nx-empty">这个文件是空的</div>
+        <div className="nx-empty">该文件是空的</div>
       ) : chunk ? (
         <div
           role="log"

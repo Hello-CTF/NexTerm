@@ -156,14 +156,14 @@ describe("GrantPanel lists only what matters", () => {
     mocks.grantList.mockResolvedValue(null);
     mocks.ruleList.mockResolvedValue(null);
     await mountPanel("asset-1");
-    expect(text()).toContain("这台主机");
+    expect(text()).toContain("当前主机");
     expect(text()).not.toContain("读取授权失败");
   });
 
   it("shows the current host and authorized hosts, never every asset", async () => {
     mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], updatedAt: 1 }]);
     await mountPanel("asset-1");
-    expect(text()).toContain("这台主机");
+    expect(text()).toContain("当前主机");
     expect(text()).toContain("生产 Web");
     expect(text()).toContain("dev-m4");
     expect(text()).toContain("执行命令");
@@ -173,7 +173,7 @@ describe("GrantPanel lists only what matters", () => {
 
   it("finds another host through search and grants it", async () => {
     await mountPanel();
-    expect(text()).toContain("没有其他主机开启免确认授权");
+    expect(text()).toContain("暂无其他主机开启免确认授权");
     const search = view!.container.querySelector<HTMLInputElement>('input[aria-label="搜索要授权的主机"]')!;
     setInputValue(search, "oirush");
     await flush();
@@ -212,7 +212,7 @@ describe("GrantPanel switches", () => {
     mocks.ask.mockResolvedValueOnce(false);
     await mountPanel("asset-1");
     await toggle("生产 Web：执行命令免确认");
-    expect(mocks.ask.mock.calls[0][0]).toContain("即使在只读模式下也会放行");
+    expect(mocks.ask.mock.calls[0][0]).toContain("只读模式下同样生效");
     expect(mocks.grantSet).not.toHaveBeenCalled();
   });
 
@@ -301,7 +301,7 @@ describe("GrantPanel rules", () => {
     await mountPanel("asset-1");
     clickButton(view!.container, "添加路径规则");
     await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则动作"]')!, "exec_commands");
+    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则操作"]')!, "exec_commands");
     await flush();
     expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).toBeNull();
     click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);
@@ -333,7 +333,7 @@ describe("GrantPanel rules", () => {
 describe("GrantPanel scope and loading", () => {
   it("states the instance-wide scope without an account and the account scope with one", async () => {
     await mountPanel();
-    expect(text()).toContain("对这个 NexTerm 实例的所有会话生效");
+    expect(text()).toContain("对当前 NexTerm 实例的所有会话生效");
     view!.unmount();
     useAuth.setState({ user: accountOf("user") });
     await mountPanel();
@@ -343,7 +343,7 @@ describe("GrantPanel scope and loading", () => {
   it("shows load errors and retries", async () => {
     mocks.grantList.mockRejectedValueOnce(new Error("network down"));
     await mountPanel();
-    expect(text()).toContain("授权加载失败：network down");
+    expect(text()).toContain("未能读取授权：network down");
     clickButton(view!.container, "重试");
     await flushUntil(() => text().includes("已授权主机"));
   });
@@ -356,44 +356,16 @@ describe("GrantPanel scope and loading", () => {
   });
 });
 
-describe("GrantPanel legacy records", () => {
-  it("keeps pre-1.3.0 records out of the effective view and clears them explicitly", async () => {
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-4", kinds: ["session_exec"], permanent: false, updatedAt: 1, legacy: true }]);
-    mocks.ruleList.mockResolvedValue([
-      { id: "rule-old", deviceId: "asset-4", action: "exec_commands", createdAt: 1, updatedAt: 1, legacy: true },
-    ]);
-    await mountPanel("asset-4");
-    expect(text()).toContain("1.3.0 之前的旧格式");
-    expect(text()).toContain("在这台设备上不生效");
-    expect(text()).toContain("其他设备上的同一授权可能仍然有效");
-    expect(checkbox("dev-m4：执行命令免确认").checked).toBe(false);
-    expect(text()).toContain("没有其他主机开启免确认授权");
-    const alert = view!.container.querySelector<HTMLElement>('[aria-label="旧格式授权"]')!;
-    mocks.ask.mockResolvedValueOnce(false);
-    clickButton(alert, "清除");
-    await flush();
-    await flush();
-    expect(mocks.ask.mock.calls[0][0]).toContain("所有已同步的设备");
-    expect(mocks.grantRevoke).not.toHaveBeenCalled();
-    clickButton(alert, "清除");
-    await flush();
-    await flush();
-    expect(mocks.grantRevoke).toHaveBeenCalledWith("asset-4");
-    clickButton(alert, "清除");
-    await flush();
-    await flush();
-    expect(mocks.ruleRevoke).toHaveBeenCalledWith("rule-old");
-    expect(text()).not.toContain("1.3.0 之前的旧格式");
-  });
-
-  it("explains that re-granting replaces the whole legacy record", async () => {
-    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["session_exec", "terminal_write"], permanent: false, updatedAt: 1, legacy: true }]);
+describe("GrantPanel records", () => {
+  it("lists only current grants and offers no legacy section or clear action", async () => {
+    mocks.grantList.mockResolvedValue([{ deviceId: "asset-1", kinds: ["session_exec"], permanent: true, updatedAt: 1 }]);
     await mountPanel("asset-1");
-    expect(text()).toContain("1.3.0 之前的旧格式");
-    await toggle("生产 Web：执行命令免确认");
-    // The confirmation states that the whole legacy record is replaced and its other kinds are not carried over.
-    expect(mocks.ask.mock.calls[0][0]).toContain("替换该主机 1.3.0 之前的旧格式授权（执行命令、终端输入）");
-    expect(mocks.grantSet).toHaveBeenCalledWith("asset-1", ["session_exec"]);
-    expect(text()).not.toContain("1.3.0 之前的旧格式");
+    expect(checkbox("生产 Web：执行命令免确认").checked).toBe(true);
+    expect(text()).not.toContain("旧格式");
+    expect(text()).not.toContain("1.3.0");
+    expect(view!.container.querySelector('[aria-label="旧格式授权"]')).toBeNull();
+    expect(Array.from(view!.container.querySelectorAll("button")).some((b) => b.textContent === "清除")).toBe(false);
+    await toggle("生产 Web：终端输入免确认");
+    expect(mocks.ask.mock.calls[0][0]).not.toContain("替换");
   });
 });

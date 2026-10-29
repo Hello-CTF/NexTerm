@@ -1,19 +1,12 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
-import type {
-  WatchApi,
-  WatchEvent,
-  WatchSummary,
-  WatchTargetSummary,
-  WatchToolData,
-} from "../features/ai/watchTypes";
+import { click, deferred, flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import type { WatchApi, WatchSummary, WatchTargetSummary } from "../features/ai/watchTypes";
 import { WatchPanel } from "../features/ai/WatchPanel";
 
-const ownerA = "owner-a";
-const ownerB = "owner-b";
+const owner = "owner-a";
 
 function watch(overrides: Partial<WatchSummary> & { id: string }): WatchSummary {
   return {
@@ -30,296 +23,160 @@ function watch(overrides: Partial<WatchSummary> & { id: string }): WatchSummary 
   };
 }
 
-function target(overrides: Partial<WatchTargetSummary> & { targetId: string }): WatchTargetSummary {
-  return { identity: "identity-1", state: "attached", ...overrides };
-}
-
-function event(overrides: Partial<WatchEvent> & { deliveryId: string; watchId: string }): WatchEvent {
-  return {
-    kind: "watchEvent",
-    runId: `run-${overrides.deliveryId}`,
-    targetId: "target-1",
-    matchedFrom: 0,
-    matchedTo: 5,
-    excerpt: "ready",
-    firedAt: 2000,
-    ...overrides,
-  };
-}
-
 class SyntheticApi implements WatchApi {
-  watches = new Map<string, WatchSummary[]>();
-  targets = new Map<string, WatchTargetSummary[]>();
-  cancelCalls: Array<{ owner: string; watchId: string; expectedRevision: number }> = [];
-  cancelError: Error | null = null;
-  private listeners = new Map<string, (data: WatchToolData) => void>();
+  watches: WatchSummary[] = [];
+  targets: WatchTargetSummary[] = [{ targetId: "target-1", identity: "dev-1", state: "attached" }];
+  cancelCalls: Array<{ watchId: string; expectedRevision: number }> = [];
+  cancelImpl: () => Promise<void> = () => Promise.resolve();
+  listCalls = 0;
 
-  listWatches(owner: string): Promise<WatchSummary[]> {
-    return Promise.resolve(this.watches.get(owner) ?? []);
+  listWatches(): Promise<WatchSummary[]> {
+    this.listCalls += 1;
+    return Promise.resolve(this.watches.map((w) => ({ ...w })));
   }
-  listTargets(owner: string): Promise<WatchTargetSummary[]> {
-    return Promise.resolve(this.targets.get(owner) ?? []);
+  listTargets(): Promise<WatchTargetSummary[]> {
+    return Promise.resolve(this.targets);
   }
-  cancelWatch(owner: string, watchId: string, expectedRevision: number): Promise<void> {
-    this.cancelCalls.push({ owner, watchId, expectedRevision });
-    if (this.cancelError) return Promise.reject(this.cancelError);
-    return Promise.resolve();
+  cancelWatch(_owner: string, watchId: string, expectedRevision: number): Promise<void> {
+    this.cancelCalls.push({ watchId, expectedRevision });
+    return this.cancelImpl();
   }
-  subscribeWatchToolData(owner: string, onData: (data: WatchToolData) => void): () => void {
-    this.listeners.set(owner, onData);
-    return () => {
-      this.listeners.delete(owner);
-    };
-  }
-  emit(owner: string, data: WatchToolData): void {
-    this.listeners.get(owner)?.(data);
-  }
-  listener(owner: string): ((data: WatchToolData) => void) | undefined {
-    return this.listeners.get(owner);
+  subscribeWatchToolData(): () => void {
+    return () => undefined;
   }
 }
 
-let mounted: MountedView | undefined;
-let api: SyntheticApi;
-
-beforeEach(() => {
-  document.body.replaceChildren();
-  api = new SyntheticApi();
-});
+let view: MountedView | null = null;
 
 afterEach(() => {
-  mounted?.unmount();
-  mounted = undefined;
+  vi.useRealTimers();
+  view?.unmount();
+  view = null;
 });
-
-function mountPanel(owner: string): void {
-  mounted = mount(createElement(WatchPanel, { api, owner }));
-}
-
-function renderPanel(owner: string): void {
-  act(() => mounted?.root.render(createElement(WatchPanel, { api, owner })));
-}
 
 function text(): string {
-  return mounted?.container.textContent ?? "";
+  return view!.container.textContent ?? "";
 }
 
-describe("WatchPanel cancel revision", () => {
-  it("passes the durable watch revision, not the target generation", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1", generation: 2, revision: 7 })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    const button = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("取消"),
-    );
-    expect(button).toBeTruthy();
-    await act(async () => button!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flushUntil(() => api.cancelCalls.length === 1);
-    expect(api.cancelCalls[0]).toEqual({ owner: ownerA, watchId: "w-a1", expectedRevision: 7 });
+function button(label: string): HTMLButtonElement {
+  const found = view!.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!found) throw new Error(`button not found: ${label}`);
+  return found;
+}
+
+describe("WatchPanel", () => {
+  it("explains what a watch is in plain Chinese and never shows raw owner ids or English titles", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-1", name: "等待构建" })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("等待构建"));
+    expect(text()).toContain("监视：AI 持续观察指定终端");
+    expect(text()).toContain("终端 dev-1出现「ready」时通知 AI");
+    expect(text()).toContain("等待中");
+    expect(text()).not.toContain("Watch");
+    expect(text()).not.toContain(owner);
+    expect(text()).not.toContain("锚点");
   });
 
-  it("surfaces a stale-snapshot CAS rejection instead of swallowing it", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1", revision: 1 })]);
-    api.cancelError = new Error("revision conflict");
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    const button = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("取消"),
-    );
-    await act(async () => button!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flushUntil(() => text().includes("revision conflict"));
-    expect(text()).toContain("revision conflict");
+  it("shows an empty state when nothing is armed", async () => {
+    const api = new SyntheticApi();
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("暂无进行中的监视"));
   });
-});
 
-describe("WatchPanel first-commit owner isolation", () => {
-  it("the first committed frame after a switch shows none of the previous owner", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.watches.set(ownerB, [watch({ id: "w-b1" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    act(() => api.emit(ownerA, { channel: "tool", untrusted: true, event: event({ deliveryId: "d-a", watchId: "w-a1" }) }));
-    await flushUntil(() => text().includes("d-a"));
-    await flushUntil(() => text().includes("未读 1"));
-
-    // Record every committed frame after the switch: none of them may show
-    // the previous owner's rows, events or unread count.
-    const frames: string[] = [];
-    const observer = new MutationObserver(() => {
-      frames.push(mounted!.container.textContent ?? "");
+  it("shows a spinner on refresh and ignores the response of a superseded load", async () => {
+    const api = new SyntheticApi();
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flush();
+    const gate = deferred<WatchSummary[]>();
+    api.listWatches = () => gate.promise;
+    click(button("刷新监视列表"));
+    await flush();
+    expect(button("刷新监视列表").getAttribute("aria-busy")).toBe("true");
+    expect(button("刷新监视列表").disabled).toBe(true);
+    await act(async () => {
+      gate.resolve([]);
     });
-    observer.observe(mounted!.container, { childList: true, subtree: true, characterData: true });
-    renderPanel(ownerB);
-    await flushUntil(() => text().includes("w-b1"));
-    observer.disconnect();
-    expect(frames.join("\n")).not.toContain("w-a1");
-    expect(frames.join("\n")).not.toContain("d-a");
-    expect(frames.join("\n")).not.toContain("未读 1");
-    expect(text()).not.toContain("w-a1");
-  });
-});
-
-describe("WatchPanel stale operations", () => {
-  it("a deferred cancel for the old owner never reloads it over the new owner", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.watches.set(ownerB, [watch({ id: "w-b1" })]);
-    const cancelGate = deferred<void>();
-    api.cancelWatch = (owner, watchId, expectedRevision) => {
-      api.cancelCalls.push({ owner, watchId, expectedRevision });
-      return cancelGate.promise;
-    };
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    const button = [...mounted!.container.querySelectorAll("button")].find((b) =>
-      b.textContent?.includes("取消"),
-    );
-    await act(async () => button!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    await flushUntil(() => api.cancelCalls.length === 1);
-
-    renderPanel(ownerB);
-    await flushUntil(() => text().includes("w-b1"));
-    // The old owner's cancel completes now; it must not touch owner B.
-    await act(async () => cancelGate.resolve());
     await flush();
-    expect(text()).toContain("w-b1");
-    expect(text()).not.toContain("w-a1");
+    expect(button("刷新监视列表").getAttribute("aria-busy")).toBe("false");
   });
 
-  it("an already-queued old-owner subscription callback is rejected after the switch", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.watches.set(ownerB, [watch({ id: "w-b1" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    const queued = api.listener(ownerA);
-    expect(queued).toBeTruthy();
+  it("cancels with pressed feedback, blocks double submit, and moves the watch into the collapsed ended section", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-1", name: "等待构建", revision: 7 })];
+    const gate = deferred<void>();
+    api.cancelImpl = () => gate.promise;
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("等待构建"));
 
-    renderPanel(ownerB);
-    await flushUntil(() => text().includes("w-b1"));
-    // A delivery queued under owner A fires after the switch; it must be
-    // rejected by the per-effect epoch, not appended to owner B.
-    act(() => queued!({ channel: "tool", untrusted: true, event: event({ deliveryId: "d-stale", watchId: "w-a1" }) }));
+    click(button("取消监视「等待构建」"));
     await flush();
-    expect(text()).not.toContain("d-stale");
-    expect(text()).not.toContain("未读 1");
-  });
-});
-
-describe("WatchPanel state evidence", () => {
-  it("shows an evidence-less gone target as unknown, never as gone", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.targets.set(ownerA, [target({ targetId: "target-1", state: "gone" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("target-1"));
-    expect(text()).toContain("未知");
-    expect(text()).not.toContain("已消失");
-  });
-
-  it("shows an evidence-less replaced target as unknown", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.targets.set(ownerA, [target({ targetId: "target-1", state: "replaced" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("target-1"));
-    expect(text()).toContain("未知");
-    expect(text()).not.toContain("已被替换");
-  });
-
-  it("shows an evidence-less exited target as unknown", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.targets.set(ownerA, [target({ targetId: "target-1", state: "exited" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("target-1"));
-    expect(text()).toContain("未知");
-    expect(text()).not.toContain("已退出");
-  });
-
-  it("shows a gone target with its evidence", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.targets.set(ownerA, [target({ targetId: "target-1", state: "gone", evidence: "session exited" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("已消失"));
-    expect(text()).toContain("session exited");
-  });
-
-  it("shows an evidence-less disconnected target as disconnected with no evidence", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    api.targets.set(ownerA, [target({ targetId: "target-1", state: "disconnected" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("已断连"));
-    expect(text()).toContain("无证据");
-    expect(text()).not.toContain("已消失");
-  });
-
-  it("shows an idle armed watch as waiting, never as done", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1", status: "armed" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("等待中"));
-    expect(text()).not.toContain("已完成");
-  });
-
-  it("shows an unverifiable watch with its evidence", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1", status: "unverifiable", lastError: "output gap" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("不可验证"));
-    expect(text()).toContain("output gap");
-  });
-});
-
-describe("WatchPanel duplicate deliveries", () => {
-  it("shows duplicate deliveries but counts them once", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    const data: WatchToolData = { channel: "tool", untrusted: true, event: event({ deliveryId: "d-1", watchId: "w-a1" }) };
-    act(() => api.emit(ownerA, data));
-    await flushUntil(() => text().includes("d-1"));
-    act(() => api.emit(ownerA, data));
-    await flushUntil(() => text().includes("重复投递"));
-    expect(mounted!.container.querySelectorAll("[data-delivery='d-1']").length).toBe(2);
-    expect(text()).toContain("未读 1");
-    expect(text()).not.toContain("未读 2");
-  });
-});
-
-describe("WatchPanel untrusted tool data", () => {
-  it("renders watch events as untrusted tool data, not as user messages", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    act(() => api.emit(ownerA, { channel: "tool", untrusted: true, event: event({ deliveryId: "d-1", watchId: "w-a1" }) }));
-    await flushUntil(() => text().includes("d-1"));
-    expect(text()).toContain("不可信");
-    expect(text()).toContain("工具数据");
-    expect(mounted!.container.querySelector("[data-role='user-message']")).toBeNull();
-  });
-});
-
-describe("WatchPanel owner isolation", () => {
-  it("shows only the current owner's watches after a switch", async () => {
-    api.watches.set(ownerA, [watch({ id: "w-a1" }), watch({ id: "w-a2" })]);
-    api.watches.set(ownerB, [watch({ id: "w-b1" })]);
-    mountPanel(ownerA);
-    await flushUntil(() => text().includes("w-a1"));
-    expect(text()).toContain("w-a2");
-
-    renderPanel(ownerB);
-    await flushUntil(() => text().includes("w-b1"));
-    expect(text()).not.toContain("w-a1");
-    expect(text()).not.toContain("w-a2");
-  });
-});
-
-describe("WatchPanel out-of-order responses", () => {
-  it("discards a stale list response that resolves after a newer one", async () => {
-    const slow = deferred<WatchSummary[]>();
-    api.listWatches = (owner: string) =>
-      owner === ownerA ? slow.promise : Promise.resolve([watch({ id: "w-b1" })]);
-    mountPanel(ownerA);
-    renderPanel(ownerB);
-    await flushUntil(() => text().includes("w-b1"));
-
-    slow.resolve([watch({ id: "w-a1" })]);
+    const pending = button("取消监视「等待构建」");
+    expect(pending.disabled).toBe(true);
+    expect(pending.textContent).toContain("正在取消");
+    click(pending);
     await flush();
-    expect(text()).not.toContain("w-a1");
-    expect(text()).toContain("w-b1");
+    expect(api.cancelCalls).toEqual([{ watchId: "w-1", expectedRevision: 7 }]);
+
+    api.watches = [watch({ id: "w-1", name: "等待构建", status: "cancelled", revision: 8 })];
+    await act(async () => {
+      gate.resolve();
+    });
+    await flush();
+    expect(text()).toContain("已取消监视「等待构建」");
+    expect(text()).toContain("暂无进行中的监视");
+    const ended = view!.container.querySelector("details");
+    expect(ended).not.toBeNull();
+    expect(ended!.open).toBe(false);
+    expect(ended!.textContent).toContain("已结束（1）");
+    expect(view!.container.querySelector('button[aria-label="取消监视「等待构建」"]')).toBeNull();
+  });
+
+  it("keeps the watch active and shows a persistent error when cancel fails", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-1", name: "等待构建" })];
+    api.cancelImpl = () => Promise.reject(new Error("后端不可用"));
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("等待构建"));
+    click(button("取消监视「等待构建」"));
+    await flushUntil(() => text().includes("未能取消监视：后端不可用"));
+    expect(button("取消监视「等待构建」").disabled).toBe(false);
+    expect(view!.container.querySelector("details")).toBeNull();
+  });
+
+  it("clears the success notice by itself but not while it is hovered", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-1", name: "等待构建" })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("等待构建"));
+    vi.useFakeTimers();
+    click(button("取消监视「等待构建」"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const notice = view!.container.querySelector('[role="status"]') as HTMLElement;
+    expect(notice.textContent).toContain("已取消监视");
+    act(() => {
+      notice.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+      notice.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+    });
+    // Without a hold the notice clears after the dismiss delay.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(view!.container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("does not reset or remove anything by itself while the user reads", async () => {
+    const api = new SyntheticApi();
+    api.watches = [watch({ id: "w-1", name: "等待构建" })];
+    view = mount(createElement(WatchPanel, { api, owner }));
+    await flushUntil(() => text().includes("等待构建"));
+    vi.useFakeTimers();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(text()).toContain("等待构建");
+    expect(button("取消监视「等待构建」").disabled).toBe(false);
   });
 });

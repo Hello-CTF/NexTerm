@@ -57,10 +57,10 @@ const (
 	maxSystemNotificationID = 128
 )
 
-var errSystemNotificationsUnsupported = ipc.NewError(ipc.CodeUnsupported, "此端不支持系统通知")
+var errSystemNotificationsUnsupported = ipc.NewError(ipc.CodeUnsupported, "当前客户端不支持系统通知")
 
 func registerSystemNotificationCommands(dispatcher *ipc.Dispatcher, notifier SystemNotifier) error {
-	unavailable := SystemNotificationStatus{Reason: "此端不支持系统通知"}
+	unavailable := SystemNotificationStatus{Reason: "当前客户端不支持系统通知"}
 	registrations := []func() error{
 		func() error {
 			return ipc.Register(dispatcher, "system_notification_status", func(ctx context.Context, _ *ipc.Call, _ struct{}) (SystemNotificationStatus, error) {

@@ -120,7 +120,7 @@ describe("disconnect toast reconnect", () => {
     expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1");
     expect(workspaceProblems()).toHaveLength(0);
     expect(useUi.getState().connectionProblems).toEqual({});
-    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连失败"))).toBe(false);
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重新连接失败"))).toBe(false);
   });
 
   it("records the target problem and keeps the failure visible when the reconnect fails", async () => {
@@ -130,7 +130,7 @@ describe("disconnect toast reconnect", () => {
 
     disconnectToast().action?.onSelect();
 
-    await vi.waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连失败"))).toBe(true));
+    await vi.waitFor(() => expect(useUi.getState().toasts.some((toast) => toast.text.includes("重新连接失败"))).toBe(true));
     const problems = workspaceProblems();
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ summary: "认证失败", source: "connect" });
@@ -155,12 +155,12 @@ describe("disconnect toast reconnect", () => {
     });
 
     await vi.waitFor(() =>
-      expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连失败：认证失败"))).toBe(true),
+      expect(useUi.getState().toasts.some((toast) => toast.text.includes("重新连接失败：认证失败"))).toBe(true),
     );
     const problems = workspaceProblems();
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatchObject({ summary: "认证失败", source: "connect" });
-    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连超时"))).toBe(false);
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重新连接超时"))).toBe(false);
   });
 
   it("adds no problem, no failure toast, and no stale session when the reconnect is canceled by an account switch", async () => {
@@ -178,7 +178,7 @@ describe("disconnect toast reconnect", () => {
     expect(useUi.getState().connectionProblems).toEqual({});
     expect(useUi.getState().workspaceRuntime).toEqual({});
     expect(useUi.getState().sessions).toEqual([]);
-    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重连失败"))).toBe(false);
+    expect(useUi.getState().toasts.some((toast) => toast.text.includes("重新连接失败"))).toBe(false);
   });
 
   it("joins the in-flight reconnect instead of starting a duplicate", async () => {

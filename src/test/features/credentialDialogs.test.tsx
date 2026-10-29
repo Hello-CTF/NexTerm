@@ -204,7 +204,7 @@ describe("Unlock and empty-reference copy", () => {
 
     clickButton(mounted!.container, "解锁");
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码错误：Incorrect master password"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "解锁失败：保护密码不正确，请重新输入"),
     );
   });
 
@@ -231,7 +231,7 @@ describe("Unlock and empty-reference copy", () => {
     mounted = mountPanel();
     await waitFor(() => expect(mounted!.container.textContent).toContain("使用它的资产"));
 
-    expect(mounted!.container.textContent).toContain("没有资产在用它。");
+    expect(mounted!.container.textContent).toContain("暂无资产使用该凭据。");
     expect(mounted!.container.textContent).not.toContain("改完值可以在这里确认");
   });
 });

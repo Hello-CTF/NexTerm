@@ -28,7 +28,7 @@ type EditorStep = RunbookStep & { description: string };
 
 const RUN_STATUS_LABELS: Record<string, string> = {
   awaiting_render: "等待填写变量",
-  awaiting_confirmation: "等待你确认",
+  awaiting_confirmation: "等待确认",
   running: "执行中",
   awaiting_production_confirmation: "等待生产确认",
   success: "成功",
@@ -418,7 +418,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
       const result = await runbookApi.historyGet(runId);
       if (isActiveEpoch(epoch) && runRef.current?.runId === runId) setHistory(result);
     } catch (cause) {
-      if (isActiveEpoch(epoch)) setHistoryError(`历史读取失败：${describeError(cause)}`);
+      if (isActiveEpoch(epoch)) setHistoryError(`未能读取历史：${describeError(cause)}`);
     } finally {
       if (isActiveEpoch(epoch)) setHistoryLoading(false);
     }
@@ -504,7 +504,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                 </button>
               </div>
               <div className="mb-3 flex flex-col gap-2" aria-label="流程步骤">
-                {steps.length === 0 && <div className="rounded border border-dashed border-neutral-800 p-6 text-center text-[11.5px] text-neutral-500">还没有步骤。从上面选一个命令片段，或添加一条空白命令。</div>}
+                {steps.length === 0 && <div className="rounded border border-dashed border-neutral-800 p-6 text-center text-[11.5px] text-neutral-500">暂无步骤。请从上方选择命令片段，或添加空白命令。</div>}
                 {steps.map((step, index) => (
                   <div key={step.id} className="rounded border border-neutral-800 p-2.5" data-testid={`runbook-editor-step-${index + 1}`}>
                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -528,7 +528,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                 maxTargets={MAX_TARGETS}
                 legend="在哪些主机上执行"
                 searchAriaLabel="搜索执行目标"
-                metadataError={assetsQuery.isError ? `资产详情加载失败：${describeError(assetsQuery.error)}` : null}
+                metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
               />
               <div className="mt-3 flex flex-col gap-2 text-[11px] text-neutral-400">
                 <label className="flex flex-col gap-1">
@@ -563,7 +563,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                     {step.step.description && <p className="mt-1 text-[11px] text-neutral-500">{step.step.description}</p>}
                     {step.number === run.currentStep && step.status === "awaiting_confirmation" && (
                       <div className="mt-2" data-testid="runbook-step-confirmation">
-                        <div className="mb-1 text-[11px] text-amber-300">确认下面要执行的命令，执行完这一步才会进入下一步。</div>
+                        <div className="mb-1 text-[11px] text-amber-300">请确认下列命令；该步骤执行完成后才会进入下一步。</div>
                         {(step.renderedCommands ?? []).map((rendered) => (
                           <div key={rendered.sessionId} className="mb-1">
                             <div className="text-[10.5px] text-neutral-500" title={rendered.sessionId}>{targets.find((target) => target.id === rendered.sessionId)?.label ?? rendered.sessionId}</div>
@@ -587,7 +587,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
               {run.status === "running" && <div role="status" className="mt-3 text-[11px] text-blue-300" title={run.activeBatchId ? `批次 ${run.activeBatchId}` : undefined}>正在执行第 {run.currentStep} 步…</div>}
               {terminalRun(run.status) && run.steps.some((step) => step.batchIds.length > 0) && (
                 <button type="button" className="nx-btn mt-3" disabled={historyLoading} onClick={() => void loadHistory()}>
-                  {historyLoading ? "读取历史中…" : "查看本次运行历史"}
+                  {historyLoading ? "正在读取历史…" : "查看本次运行历史"}
                 </button>
               )}
               {historyError && <div role="alert" className="mt-2 text-[11px] text-red-300">{historyError}</div>}
@@ -598,7 +598,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
         <div className="nx-modal-footer shrink-0">
           <span className="nx-hint mr-auto">取消会停止当前步骤和后续步骤，不会关闭终端。</span>
           {run && terminalRun(run.status) && <button type="button" className="nx-btn" onClick={() => { runRef.current = null; setRun(null); setHistory(null); setError(null); }}>返回编辑</button>}
-          {active && <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancelRun()}><IconStop size={12} />{canceling ? "取消中…" : "取消执行"}</button>}
+          {active && <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancelRun()}><IconStop size={12} />{canceling ? "正在取消…" : "取消执行"}</button>}
           {!run && <button type="button" className="nx-btn nx-btn-primary" disabled={busy || targets.length === 0} onClick={start}><IconPlay size={13} />开始运行</button>}
           <button type="button" className="nx-btn nx-btn-ghost" onClick={closePanel}>关闭</button>
         </div>

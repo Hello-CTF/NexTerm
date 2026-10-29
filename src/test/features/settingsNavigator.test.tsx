@@ -80,8 +80,8 @@ function tocToggle(): HTMLButtonElement {
   return el;
 }
 
-const GROUP_LABELS = ["通用", "AI", "安全", "账号与同步"];
-const GENERAL_TOC = ["通用", "外观", "终端", "状态规则", "快捷键", "诊断与调试", "AI", "安全", "账号与同步"];
+const GROUP_LABELS = ["界面与终端", "AI", "安全", "账号与数据", "更新与诊断"];
+const GENERAL_TOC = ["界面与终端", "外观", "终端", "状态规则", "快捷键", "AI", "安全", "账号与数据", "更新与诊断"];
 
 function groupShown(id: string): boolean {
   return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;
@@ -149,7 +149,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("security")).toBe(true);
     expect(groupShown("general")).toBe(false);
     expect(localStorage.getItem("nexterm.settingsGroup.v1")).toBe("security");
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与同步"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["界面与终端", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与数据", "更新与诊断"]);
 
     mounted.unmount();
     mounted = withClient(createElement(SettingsView));
@@ -183,13 +183,13 @@ describe("Settings section navigation", () => {
     expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
     const icons = tocButtons();
     expect(icons.map((b) => b.getAttribute("aria-label"))).toEqual(GROUP_LABELS);
-    expect(icons.find((b) => b.getAttribute("aria-current") === "true")?.getAttribute("aria-label")).toBe("通用");
+    expect(icons.find((b) => b.getAttribute("aria-current") === "true")?.getAttribute("aria-label")).toBe("界面与终端");
     click(icons.find((b) => b.getAttribute("aria-label") === "AI")!);
     await flush();
     expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["通用", "AI", "模型", "信息脱敏", "拦截规则", "技能", "记忆", "安全", "账号与同步"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["界面与终端", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "技能", "记忆", "安全", "账号与数据", "更新与诊断"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {
@@ -226,7 +226,7 @@ describe("Settings section navigation", () => {
       scrollContainer!.dispatchEvent(new Event("scroll"));
     });
     const current = tocButtons().find((c) => c.getAttribute("aria-current") === "true");
-    expect(current?.textContent?.trim()).toBe("拦截规则");
+    expect(current?.textContent?.trim()).toBe("AI 拦截规则");
   });
 });
 
@@ -237,7 +237,7 @@ describe("AI interception rule copy", () => {
     const text = document.getElementById("settings-ai-rules")?.textContent ?? "";
     expect(text).toContain("读写和自动执行模式要求确认");
     expect(text).toContain("只读和无人值守模式直接拒绝");
-    expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）会直接拒绝");
+    expect(text).toContain("不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝");
     expect(text).not.toContain("规则命中 → 读写/完全静默先确认");
     expect(text).not.toContain("命中即拦截");
   });
@@ -285,7 +285,7 @@ describe("Unified login entry (Web logged out)", () => {
     expect(text).not.toContain("去登录");
     // The share card keeps its description but has no buttons
     const share = document.getElementById("settings-share")!;
-    expect(share.textContent).toContain("登录后可以把你接入的设备分享给其他注册用户");
+    expect(share.textContent).toContain("登录后可将已接入的受管设备分享给其他注册用户");
     expect(share.querySelectorAll("button").length).toBe(0);
     // The single login button opens the account gate
     click(loginButtons[0]);

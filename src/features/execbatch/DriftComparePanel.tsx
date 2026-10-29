@@ -44,7 +44,7 @@ function GroupHosts({ group, onPin }: { group: DriftGroup; onPin: (sessionId: st
       </div>
       {group.results.filter((result) => result.stderr).map((result) => (
         <details key={result.sessionId} className="mt-1 text-[11px]">
-          <summary className="cursor-pointer text-neutral-500">{resultName(result)} 的 stderr</summary>
+          <summary className="cursor-pointer text-neutral-500">{resultName(result)} 的错误输出</summary>
           <pre className="nx-pre mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{result.stderr}</pre>
         </details>
       ))}
@@ -234,7 +234,7 @@ export function DriftComparePanel({
           )}
         </div>
         <div className="text-[11px] text-neutral-500">
-          文件通过 cat 只读读取；命令请输入只读操作。按 stdout 内容哈希分组，stderr 与失败目标单独展示。
+          文件内容以只读方式读取；请仅输入不会修改主机的命令。输出相同的主机会归为一组，错误输出和失败的主机单独显示。
         </div>
         {error && <div role="alert" className="text-[11px] text-red-300">{error}</div>}
         {running && <div role="status" className="text-[11px] text-blue-300">正在读取并分组实时输出…</div>}
@@ -275,7 +275,7 @@ export function DriftComparePanel({
                   <span className="font-medium text-neutral-200">组 {index + 1} · {group.results.length} 台</span>
                   <span className="nx-mono text-[10px] text-neutral-500" title={group.hash}>SHA-256 {group.hash.slice(0, 12)}…</span>
                   {group.truncated && <span className="nx-badge nx-badge-amber">输出截断，仅返回部分可比较</span>}
-                  {group.binary && <span className="nx-badge nx-badge-amber">二进制，不做文本 diff</span>}
+                  {group.binary && <span className="nx-badge nx-badge-amber">二进制，不做文本差异</span>}
                   <span className="nx-spacer" />
                   <button
                     type="button"
@@ -320,12 +320,12 @@ export function DriftComparePanel({
           {baselineGroup && compareGroup && (
             <div className="mt-4 border-t border-neutral-800/70 pt-3" data-testid="drift-diff">
               <div className="mb-2 text-[11px] font-medium text-neutral-300">
-                组间 diff：{baselineResult ? resultName(baselineResult) : "基准组"} → 对比组
+                组间差异：{baselineResult ? resultName(baselineResult) : "基准组"} → 对比组
               </div>
               {baselineGroup.truncated || compareGroup.truncated ? (
                 <div className="text-[11px] text-amber-300">至少一组输出被截断，不能据此判断完整内容差异。</div>
               ) : baselineGroup.binary || compareGroup.binary ? (
-                <div className="text-[11px] text-amber-300">二进制输出不支持行级 diff。</div>
+                <div className="text-[11px] text-amber-300">二进制输出不支持逐行差异对比。</div>
               ) : (
                 <>
                   <div className="nx-pre max-h-96 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px]" aria-label="组间行级差异">
@@ -336,7 +336,7 @@ export function DriftComparePanel({
                     ))}
                   </div>
                   {diff.length > MAX_DIFF_LINES && (
-                    <div className="mt-1 text-[10px] text-neutral-500">仅显示前 {MAX_DIFF_LINES} 行 diff，共 {diff.length} 行。</div>
+                    <div className="mt-1 text-[10px] text-neutral-500">仅显示前 {MAX_DIFF_LINES} 行差异，共 {diff.length} 行。</div>
                   )}
                 </>
               )}

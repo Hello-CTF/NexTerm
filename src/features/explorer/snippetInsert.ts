@@ -20,7 +20,7 @@ const ACTION_LABEL: Record<SnippetAction, string> = {
 
 type TerminalTarget = { tabId: string } | { blocked: string };
 
-function terminalTarget(): TerminalTarget {
+export function terminalTarget(): TerminalTarget {
   const st = useUi.getState();
   const ws =
     st.workspaces.find((w) => w.id === st.activeWorkspaceId) ??
@@ -29,10 +29,10 @@ function terminalTarget(): TerminalTarget {
   const pane = ws?.panes.find((p) => p.id === ws.activePaneId) ?? ws?.panes[0] ?? null;
   const tab = pane?.tabs.find((t) => t.id === pane.activeTabId) ?? null;
   if (!tab || tab.kind !== "terminal" || !tab.tabId) {
-    return { blocked: "请先在当前工作区打开一个终端" };
+    return { blocked: "请先打开一个终端" };
   }
   if (tab.dead || tab.exited) {
-    return { blocked: "当前终端已失效或已结束" };
+    return { blocked: "当前终端已断开或已结束" };
   }
   return { tabId: tab.tabId };
 }
@@ -73,7 +73,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
   const label = ACTION_LABEL[action];
   const target = terminalTarget();
   if ("blocked" in target) {
-    pushToast("info", `${target.blocked}，无法${label}片段`);
+    pushToast("info", `${target.blocked}，才能${label}片段`);
     return false;
   }
   const risk = insertRisk(s.body);

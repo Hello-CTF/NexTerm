@@ -63,8 +63,8 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       pushToast(
         "error",
         error === undefined
-          ? "停止未确认：等待任务结束超时，可重试或查看任务"
-          : `停止未确认：${describeError(error)}`,
+          ? "未能确认任务已停止，请重试"
+          : `未能确认任务已停止：${describeError(error)}。请重试`,
       );
     }
   }, [activeRunRef, setActiveRun, cancelWaitersRef, pushToast]);
@@ -128,7 +128,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
           stream.resolveSteer(operation.generation, item.id, "dropped");
         }
       }
-      pushToast("info", current.kind === "takeover" ? "已请求停止接管，等待终端退出" : "已请求停止，等待任务结束");
+      pushToast("info", current.kind === "takeover" ? "正在停止接管，等待终端退出…" : "正在停止…");
     }
     if (!isLifecycleActive()) {
       const deadline = Date.now() + 4500;
@@ -169,7 +169,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
           if (isCurrentAiRun(latest, generation) && latest.cancellation !== "idle") {
             setActiveRun(markAiRunCancellationUnconfirmed(latest));
           }
-          pushToast("error", "停止未确认：等待任务结束超时，可重试或查看任务");
+          pushToast("error", "未能确认任务已停止，请重试");
           resolve(false);
         }, 5000),
       };
@@ -342,7 +342,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       if (!isLifecycleActive() || !isCurrentAiRun(activeRunRef.current, generation)) return;
       terminalPollFailuresRef.current += 1;
       if (terminalPollFailuresRef.current === 3) {
-        pushToast("error", "AI 任务状态检查失败，正在重试；可刷新会话确认结果");
+        pushToast("error", "暂时无法获取 AI 任务状态，正在重试。也可以重新打开会话确认结果");
       }
     }
   };

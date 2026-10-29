@@ -247,7 +247,7 @@ describe("desktop native folder picker", () => {
     h.listError = { code: "internal", message: "permission denied" };
     await pickFolderUpload({ sessionId: "s1", dir: "/data", knownSiblings: [] });
     expect(h.toasts).toEqual([
-      { level: "error", text: expect.stringContaining("permission denied") },
+      { level: "error", text: expect.stringContaining("应用内部出现错误，请稍后重试") },
     ]);
     expect(h.calls).toEqual(["listFolder:/local/pics"]);
   });
@@ -490,7 +490,7 @@ describe("drag-drop on platforms without webkitGetAsEntry", () => {
     expect(h.toasts).toEqual([
       {
         level: "info",
-        text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+        text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用「上传文件夹」",
       },
     ]);
     expect(h.calls).toEqual([]);
@@ -508,7 +508,7 @@ describe("drag-drop on platforms without webkitGetAsEntry", () => {
     await waitForSettled();
     expect(h.toasts).toContainEqual({
       level: "info",
-      text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+      text: "已跳过 1 个无法识别的条目（pics）：当前平台不支持拖拽文件夹，请使用「上传文件夹」",
     });
     expect(h.toasts.some((t) => t.level === "error")).toBe(false);
     expect(h.calls).toContain(`write:/data/real.txt:${b64("R")}`);
@@ -522,7 +522,7 @@ describe("drag-drop on platforms without webkitGetAsEntry", () => {
     expect(h.toasts).toEqual([
       {
         level: "info",
-        text: "已跳过 5 个无法识别的条目（a、b、c、等 5 个）：当前平台不支持拖拽文件夹，请使用上传文件夹按钮",
+        text: "已跳过 5 个无法识别的条目（a、b、c、等 5 个）：当前平台不支持拖拽文件夹，请使用「上传文件夹」",
       },
     ]);
     expect(h.calls).toEqual([]);

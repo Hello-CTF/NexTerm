@@ -25,6 +25,8 @@ export type KeybindingActionId =
   | "restoreClosedTab"
   | "terminalSearch"
   | "reclaimTakeover"
+  | "openSettings"
+  | "focusAiInput"
   | "lockVault";
 
 export interface KeybindingAction {
@@ -40,27 +42,30 @@ export interface KeybindingAction {
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "commandPalette", label: "跳转面板", defaultBinding: "Mod+Shift+p" },
   { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
-  { id: "newTerminal", label: "新建终端标签", defaultBinding: "Mod+t" },
+  { id: "newTerminal", label: "新建终端标签页", defaultBinding: "Mod+t" },
   { id: "nextWorkspace", label: "下一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
   { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
-  { id: "nextTab", label: "下一个标签", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
-  { id: "previousTab", label: "上一个标签", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
+  { id: "nextTab", label: "下一个标签页", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
+  { id: "previousTab", label: "上一个标签页", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
   { id: "focusPaneLeft", label: "聚焦左侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowLeft" : "Mod+Shift+Alt+ArrowLeft" },
   { id: "focusPaneRight", label: "聚焦右侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
   { id: "focusPaneUp", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
   { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
-  { id: "toggleSidebar", label: "收起 / 展开左栏", defaultBinding: "Mod+b" },
+  { id: "toggleSidebar", label: "收起 / 展开左侧栏", defaultBinding: "Mod+b" },
   { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
-  { id: "closeTab", label: "关闭当前标签", defaultBinding: "Mod+w" },
+  { id: "closeTab", label: "关闭当前标签页", defaultBinding: "Mod+w" },
   { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
   { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
   // Browsers reserve Ctrl+Shift+W for closing the window, so the web build uses Ctrl+Alt+W.
   { id: "closePane", label: "关闭当前窗格（保留标签页）", defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
-  { id: "switchTab", label: "跳到第 1-9 个标签", defaultBinding: "Mod+1-9" },
-  { id: "restoreClosedTab", label: "恢复关闭的标签", defaultBinding: "Mod+Shift+t" },
+  { id: "switchTab", label: "跳转到第 1-9 个标签页", defaultBinding: "Mod+1-9" },
+  { id: "restoreClosedTab", label: "恢复关闭的标签页", defaultBinding: "Mod+Shift+t" },
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
-  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Escape" },
+  // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
+  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Mod+Shift+e" },
+  { id: "openSettings", label: "打开设置", defaultBinding: "Mod+," },
+  { id: "focusAiInput", label: "聚焦 AI 输入框", defaultBinding: "Mod+Shift+a" },
   { id: "lockVault", label: "锁定凭据库", defaultBinding: "Mod+Shift+l" },
 ];
 
@@ -84,6 +89,8 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "closePane",
   "switchTab",
   "restoreClosedTab",
+  "openSettings",
+  "focusAiInput",
   "lockVault",
 ];
 
@@ -327,7 +334,7 @@ export function captureBindingForAction(
   if (result.kind !== "binding" || id !== "switchTab") return result;
   const parsed = parseBinding(result.binding);
   if (!parsed || !/^[0-9]$/.test(parsed.key)) {
-    return { kind: "invalid", reason: "标签跳转只支持数字键（保持修饰键，1-9 通用）" };
+    return { kind: "invalid", reason: "标签页跳转只支持数字键（保持修饰键，1-9 通用）" };
   }
   const parts = result.binding.split("+");
   parts[parts.length - 1] = "1-9";

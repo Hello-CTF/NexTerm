@@ -63,7 +63,7 @@ describe("AuthCard signed-out account card", () => {
     seed({ initialized: false, auth: "off" });
     mounted = mountCard();
     await flush();
-    expect(mounted.container.textContent).toContain("这台服务器关闭了账号功能");
+    expect(mounted.container.textContent).toContain("此服务器已关闭账号功能");
     const buttons = [...mounted.container.querySelectorAll("button")];
     expect(buttons.some((b) => b.textContent?.includes("初始化账号"))).toBe(false);
     expect(buttons.some((b) => b.textContent?.includes("登录"))).toBe(false);
@@ -74,7 +74,7 @@ describe("AuthCard signed-out account card", () => {
     seed({ initialized: false, auth: "loopback" });
     mounted = mountCard();
     await flush();
-    expect(mounted.container.textContent).toContain("这台服务器还没有任何账号");
+    expect(mounted.container.textContent).toContain("此服务器尚未创建任何账号");
     expect(mounted.container.textContent).toContain("当前允许匿名使用");
     clickButton(mounted.container, "初始化账号");
     expect(useAuth.getState().gate).toBe("setup");
@@ -84,7 +84,7 @@ describe("AuthCard signed-out account card", () => {
     seed({ initialized: false, auth: "on" });
     mounted = mountCard();
     await flush();
-    expect(mounted.container.textContent).toContain("这台服务器还没有任何账号");
+    expect(mounted.container.textContent).toContain("此服务器尚未创建任何账号");
     expect(mounted.container.textContent).not.toContain("当前允许匿名使用");
     clickButton(mounted.container, "初始化账号");
     expect(useAuth.getState().gate).toBe("setup");
@@ -106,7 +106,7 @@ describe("AuthCard signed-out account card", () => {
     await flush();
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("账号当前未登录");
-    expect(text).toContain("登录后，数据会自动在本机与服务端之间同步；不登录也能继续本地使用");
+    expect(text).toContain("登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用");
     expect(text).not.toContain("读取服务端副本进行对比，不会自动推送或应用，需手动触发");
   });
 });

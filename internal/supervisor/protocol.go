@@ -132,6 +132,9 @@ type helloMsg struct {
 	// Runtime is absent only when the helper could not hash its executable.
 	Runtime  *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity *ActivitySnapshot `json:"activity,omitempty"`
+	// StartEnv is the SHELL and PATH digest the helper inherited when it started. It is additive: an
+	// older helper omits it and a client ignores an absent or unknown field.
+	StartEnv *StartEnv `json:"start_env,omitempty"`
 	// ReplaceLegacy is sent by a client only: the consent token of a
 	// legacy_helper_running rejection the user approved. A bridge that stands
 	// in for that older helper replaces it; a current helper ignores it.

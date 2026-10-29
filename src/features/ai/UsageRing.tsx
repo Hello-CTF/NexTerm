@@ -130,6 +130,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
   const [summaryRows, setSummaryRows] = useState<AiUsageSummaryRow[] | null>(null);
   const [summaryFailed, setSummaryFailed] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const detailsAvailable = runs !== undefined || loadSummary !== undefined;
 
   const prompt = usage?.promptTokens ?? 0;
@@ -159,8 +160,18 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
     const onPointerDown = (event: PointerEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) setDetailsOpen(false);
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setDetailsOpen(false);
+      triggerRef.current?.focus();
+    };
     document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [detailsOpen]);
 
   const loadSummaryRows = useCallback(() => {
@@ -233,11 +244,12 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
     >
       {detailsAvailable ? (
         <button
+          ref={triggerRef}
           type="button"
           aria-expanded={detailsOpen}
           title="查看用量明细"
           onClick={toggleDetails}
-          className="pointer-coarse:min-h-6 pointer-coarse:min-w-6 inline-flex items-center justify-center"
+          className={`nx-cbar-icon pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${detailsOpen ? "is-open" : ""}`}
         >
           <span role="img" aria-label={label} className="inline-flex items-center">
             {ring}
@@ -273,12 +285,12 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
               ) : null}
               {hasMainTokens ? (
                 <span className="block">
-                  主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+                  对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
                 </span>
               ) : null}
               {hasSummary ? (
                 <span className="block">
-                  摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+                  上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
                 </span>
               ) : null}
             </>
@@ -318,21 +330,21 @@ function UsageDetails({
   const hasMainTokens = prompt > 0 || completion > 0;
   const hasSummary = summaryPrompt > 0 || summaryCompletion > 0;
   return (
-    <span className="absolute top-full right-0 z-20 mt-1.5 block w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
+    <span className="absolute bottom-full right-0 z-20 mb-1.5 block w-72 max-w-[calc(100vw-1.5rem)] max-h-[min(320px,60dvh)] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
       <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
       {hasMainTokens ? (
         <span className="block text-neutral-300">
-          主调用 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
+          对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
         </span>
       ) : null}
       {hasSummary ? (
         <span className="block text-neutral-300">
-          摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
+          上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
         </span>
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          本会话 {errorStats.runs} 轮 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
+          本会话 {errorStats.runs} 次回答 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
           · 失败 {errorStats.failures}（{percentText(errorStats.failureRate)}）
         </span>
       ) : null}
@@ -362,7 +374,7 @@ function UsageDetails({
       ) : null}
       {summaryFailed ? (
         <span className="flex items-center gap-1.5">
-          <span className="text-red-300">用量汇总加载失败</span>
+          <span className="text-red-300">未能加载用量汇总</span>
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={onRetrySummary}>
             重试
           </button>

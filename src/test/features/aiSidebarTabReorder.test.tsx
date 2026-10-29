@@ -64,7 +64,7 @@ const DRAG_AI_TAB = "application/x-nexterm-ai-tab";
 
 function stripTabs(view: MountedView): HTMLElement[] {
   return [
-    ...view.container.querySelectorAll<HTMLElement>('[aria-label="AI 任务标签"] [role="tab"]'),
+    ...view.container.querySelectorAll<HTMLElement>('[aria-label="会话标签页"] [role="tab"]'),
   ];
 }
 
@@ -206,10 +206,10 @@ describe("AiSidebar tab reordering", () => {
   it("moves tabs left and right from the context menu, disables boundary items, and preserves activeTabId", async () => {
     await flush();
     openTabMenu(view!, 0);
-    expect(menuItem(view!, "左移标签").disabled).toBe(true);
-    expect(menuItem(view!, "右移标签").disabled).toBe(false);
+    expect(menuItem(view!, "左移标签页").disabled).toBe(true);
+    expect(menuItem(view!, "右移标签页").disabled).toBe(false);
 
-    click(menuItem(view!, "右移标签"));
+    click(menuItem(view!, "右移标签页"));
     await flush();
     expect(storeTabIds()).toEqual(["tab-b", "tab-a", "tab-c"]);
     expect(activeStoreTabId()).toBe("tab-b");
@@ -220,10 +220,10 @@ describe("AiSidebar tab reordering", () => {
     ]);
 
     openTabMenu(view!, 2);
-    expect(menuItem(view!, "右移标签").disabled).toBe(true);
-    expect(menuItem(view!, "左移标签").disabled).toBe(false);
+    expect(menuItem(view!, "右移标签页").disabled).toBe(true);
+    expect(menuItem(view!, "左移标签页").disabled).toBe(false);
 
-    click(menuItem(view!, "左移标签"));
+    click(menuItem(view!, "左移标签页"));
     await flush();
     expect(storeTabIds()).toEqual(["tab-b", "tab-c", "tab-a"]);
     expect(activeStoreTabId()).toBe("tab-b");

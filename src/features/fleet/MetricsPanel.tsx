@@ -94,7 +94,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   if (loadingView && !latest) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="nx-hint py-1">指标加载中…</span>
+        <span className="nx-hint py-1">正在加载指标…</span>
         {refreshButton}
       </div>
     );
@@ -102,7 +102,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   if (error) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="text-red-300">指标加载失败 · {error}</span>
+        <span className="text-red-300">未能加载指标：{error}</span>
         {refreshButton}
       </div>
     );
@@ -111,9 +111,9 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
         {data?.seriesError ? (
-          <span className="text-red-300">趋势加载失败 · {data.seriesError}</span>
+          <span className="text-red-300">未能加载趋势：{data.seriesError}</span>
         ) : (
-          <span className="nx-hint py-1">{online ? "设备还没有上报指标（默认每 60 秒一次）。" : "设备离线，没有近期指标。"}</span>
+          <span className="nx-hint py-1">{online ? "设备尚未上报指标（默认每 60 秒一次）。" : "设备离线，暂无近期指标。"}</span>
         )}
         {refreshButton}
       </div>
@@ -147,9 +147,9 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
         ))}
       </div>
       {data?.seriesError ? (
-        <div className="text-[11.5px] text-red-300">趋势加载失败 · {data.seriesError}</div>
+        <div className="text-[11.5px] text-red-300">未能加载趋势：{data.seriesError}</div>
       ) : !hasTrend ? (
-        <div className="nx-hint text-[11.5px]">当前时间窗口没有采样点。</div>
+        <div className="nx-hint text-[11.5px]">所选时间范围内暂无数据。</div>
       ) : null}
       <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] sm:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading}>
         {metricBlocks.map((m) => (

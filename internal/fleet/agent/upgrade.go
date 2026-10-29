@@ -35,6 +35,9 @@ const (
 	replaceScriptDelaySeconds = 3
 )
 
+// maxUpgradeDownloadBytes caps one release download (archive or checksum list) so a misbehaving host cannot fill the disk; it is a var for tests.
+var maxUpgradeDownloadBytes int64 = 512 << 20
+
 // errUpgradeStaged means the new binary has been downloaded, verified, and a deferred replacement scheduled: after the process exits,
 // the replacement script completes the binary switch and restarts the service, and the cli layer ends this process with ExitOK accordingly.
 var errUpgradeStaged = errors.New("agent self-upgrade staged")
@@ -178,9 +181,13 @@ func (u *Upgrader) download(ctx context.Context, ref, dest string) error {
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(out, response.Body)
+	written, copyErr := io.Copy(out, io.LimitReader(response.Body, maxUpgradeDownloadBytes+1))
+	if copyErr == nil && written > maxUpgradeDownloadBytes {
+		copyErr = fmt.Errorf("response exceeds %d bytes", maxUpgradeDownloadBytes)
+	}
 	closeErr := out.Close()
 	if copyErr != nil {
+		_ = os.Remove(dest)
 		return fmt.Errorf("write %s: %w", dest, copyErr)
 	}
 	return closeErr
@@ -366,8 +373,7 @@ func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, resta
 }
 
 // renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
-// powershell deferred replacement, rolling back to the old binary on failure; after a successful replacement, if the NexTermAgent service
-// exists it is started via sc.exe start (service missing or start failure are both silent, forming no loop).
+// powershell deferred replacement, rolling back to the old binary on failure.
 func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) string {
 	var b strings.Builder
 	b.WriteString("Start-Sleep -Seconds " + strconv.Itoa(delaySeconds) + "\n")
@@ -378,8 +384,6 @@ func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) st
 	b.WriteString("try {\n")
 	b.WriteString("  Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force -ErrorAction Stop\n")
 	b.WriteString("  Remove-Item -LiteralPath $nxBak -Force -ErrorAction SilentlyContinue\n")
-	b.WriteString("  & sc.exe query NexTermAgent *>$null\n")
-	b.WriteString("  if ($LASTEXITCODE -eq 0) { & sc.exe start NexTermAgent *>$null }\n")
 	b.WriteString("} catch {\n")
 	b.WriteString("  try { Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force -ErrorAction Stop } catch {}\n")
 	b.WriteString("}\n")

@@ -219,14 +219,14 @@ describe("BackgroundSessions table", () => {
     seedHost({ ...s1, kind: "local", assetId: null }, "local");
     const states: [SessionAttentionState, string][] = [
       ["running", "运行中"],
-      ["needs_me", "需要我"],
+      ["needs_me", "需要处理"],
       ["just_finished", "刚完成"],
       ["idle", "空闲"],
       ["exited", "已退出"],
     ];
     mocks.listLive.mockResolvedValue([
       ...states.map(([state]) => liveTab({ tabId: state, title: state, durable: true, state })),
-      liveTab({ tabId: "regular", title: "普通" }),
+      liveTab({ tabId: "regular", title: "临时" }),
       liveTab({ tabId: "future", title: "新状态", durable: true, state: "thinking" as SessionAttentionState }),
     ]);
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(7));
@@ -239,7 +239,7 @@ describe("BackgroundSessions table", () => {
       }
       const regular = cell(row(view, "regular"), "background-status");
       expect(regular.textContent).toBe("—");
-      expect(regular.title).toContain("普通终端不会报告状态");
+      expect(regular.title).toContain("临时终端不会报告状态");
       const future = cell(row(view, "future"), "background-status");
       expect(future.textContent).toBe("—");
       expect(future.title).toBe("未知状态");
@@ -289,7 +289,7 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(3));
     try {
       const current = row(view, "current");
-      expect(cell(current, "background-status-label").textContent).toBe("需要我");
+      expect(cell(current, "background-status-label").textContent).toBe("需要处理");
       expect(cell(current, "background-size").textContent).toBe("120×40");
       expect(cell(current, "background-output").textContent).toBe("5 分钟前有输出");
       expect(cell(current, "background-detached").textContent).toBe("30 分钟前转入后台");
@@ -297,7 +297,7 @@ describe("BackgroundSessions table", () => {
 
       const silent = row(view, "silent");
       expect(cell(silent, "background-output").textContent).toBe("暂无输出");
-      expect(cell(silent, "background-detached").textContent).toBe("仍有设备连接着");
+      expect(cell(silent, "background-detached").textContent).toBe("仍有设备已连接");
 
       const old = row(view, "old");
       expect(cell(old, "background-status").textContent).toBe("—");
@@ -306,7 +306,7 @@ describe("BackgroundSessions table", () => {
       expect(cell(old, "background-detached").textContent).toBe("—");
       expect(cell(old, "background-time").title).toContain("创建（主机时间）：2026-10-27 11:00:00");
       expect(view.container.textContent).not.toContain("在主机上运行");
-      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要我」表示程序在等你回应");
+      expect(cell(view.container, "background-needs-me-note").textContent).toContain("「需要处理」表示程序正在等待回应");
     } finally {
       view.unmount();
     }
@@ -460,8 +460,8 @@ describe("BackgroundSessions table", () => {
     const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(2));
     try {
       for (const current of rows(view)) {
-        expect(button(current, "接管").title).toBe("回到这个终端，并补上离开期间的输出");
-        expect(button(current, "结束进程").title).toBe("结束这个终端里运行的程序，无法恢复");
+        expect(button(current, "接管").title).toBe("回到该终端，并补上离开期间的输出");
+        expect(button(current, "结束进程").title).toBe("结束该终端里运行的程序，无法恢复");
       }
       await act(async () => {
         button(row(view, "kill"), "结束进程").click();

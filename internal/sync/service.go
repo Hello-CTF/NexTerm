@@ -518,16 +518,10 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 		return LinkResult{}, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，无法安全保存同步链接设置；请先完成凭据保护初始化")
 	}
 	secret := linkSecret{}
-	// Envelope values are merged field by field. A pre-1.3.0 plaintext value is never read: it can only be
-	// replaced by a patch that supplies the credentials (username and password), which the user re-enters
-	// after seeing errLegacyPlaintextLink; a partial patch is rejected instead of silently dropping fields.
+	// Envelope values are merged field by field; a stored value that is not an envelope is replaced.
 	if value, found, err := s.store.SettingGet(ctx, settingLink); err != nil {
 		return LinkResult{}, err
-	} else if found && strings.TrimSpace(value) != "" && !strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
-		if patch.Username == nil || patch.Password == nil {
-			return LinkResult{}, errLegacyPlaintextLink
-		}
-	} else if found && strings.TrimSpace(value) != "" {
+	} else if found && strings.HasPrefix(strings.TrimSpace(value), store.SecretEnvelopePrefix) {
 		plaintext, err := s.revealSettingSecret(ctx, value)
 		if err != nil {
 			return LinkResult{}, err

@@ -179,13 +179,13 @@ describe("DockerPanel copy", () => {
 
     click(mounted.container.querySelector('button[title="重启"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("success", "已重启 web"),
+      expect(mocks.toast).toHaveBeenCalledWith("success", "已重启容器 web"),
     );
 
     mocks.action.mockRejectedValueOnce(new Error("daemon unavailable"));
     click(mounted.container.querySelector('button[title="停止"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "停止 web 失败：daemon unavailable"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "停止容器 web 失败：daemon unavailable。请刷新列表后重试。"),
     );
   });
 
@@ -212,7 +212,7 @@ describe("DockerPanel copy", () => {
       b.textContent?.includes("镜像"),
     );
     click(segment!);
-    await flushUntil(() => text().includes("这台主机上还没有镜像"));
+    await flushUntil(() => text().includes("该主机上暂无镜像"));
     expect(text()).not.toContain("本机没有镜像");
   });
 
@@ -242,7 +242,7 @@ describe("DockerPanel copy", () => {
     await flushUntil(() => text().includes("web"));
     click(mounted.container.querySelector('button[title="查看日志"]')!);
     await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("error", "读取日志失败：daemon unavailable"),
+      expect(mocks.toast).toHaveBeenCalledWith("error", "未能读取日志：daemon unavailable"),
     );
   });
 });
@@ -265,7 +265,7 @@ describe("DbPanel copy", () => {
 
   it("describes actual Redis console behavior without internal section references", async () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "redis" }));
-    await flushUntil(() => !text().includes("键列表加载中…"));
+    await flushUntil(() => !text().includes("正在加载键列表…"));
     const bar = [...mounted.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("控制台"),
     );
@@ -329,7 +329,7 @@ describe("AuditView copy", () => {
     ]);
     mounted = mount(createElement(AuditView));
     await flushUntil(() => text().includes("✓ 0"));
-    expect(text()).toContain("会话命令、AI 操作、文件写入和设备上下线都会记录并标注来源；退出码和耗时随记录显示。");
+    expect(text()).toContain("会话命令、AI 操作、文件写入和设备上线与离线均会记录并标注来源；退出码和耗时随记录显示。");
     expect(text()).not.toContain("齐全");
     expect(text()).not.toContain("可导出");
     expect(text()).not.toContain("§");

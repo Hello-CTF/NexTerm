@@ -199,7 +199,7 @@ describe("asset row actions on fine pointers", () => {
     const labels = [...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map(
       (b) => b.getAttribute("aria-label"),
     );
-    expect(labels).toEqual(["连接 web-1", "编辑 web-1", "删除 web-1", "更多操作 web-1"]);
+    expect(labels).toEqual(["连接 web-1", "更多操作 web-1"]);
     expect(row.querySelector(".nx-row-more")).toBeNull();
     expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
     expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
@@ -218,7 +218,7 @@ describe("asset row actions on fine pointers", () => {
     if (!more) throw new Error("more button not found");
     click(more);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"]);
   });
 
   it("uses the full overflow menu when the sidebar becomes too narrow for the action strip", async () => {
@@ -232,12 +232,12 @@ describe("asset row actions on fine pointers", () => {
     expect(row.querySelectorAll(".nx-row-actions button")).toHaveLength(1);
     openOverflow(row);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"]);
 
     act(() => useUi.setState({ leftWidth: 248 }));
     setRowWidths(row, 260, 75);
     expect([...row.querySelectorAll<HTMLButtonElement>(".nx-row-actions button")].map((button) => button.getAttribute("aria-label"))).toEqual([
-      "连接 web-1", "编辑 web-1", "删除 web-1", "更多操作 web-1",
+      "连接 web-1", "更多操作 web-1",
     ]);
   });
 });
@@ -258,10 +258,10 @@ describe("asset name priority in narrow sidebars", () => {
     expect([...root.querySelectorAll(".nx-row-actions button")].map((button) => button.getAttribute("title")))
       .toEqual(["连接", "更多操作"]);
     expect([...grouped.querySelectorAll(".nx-row-actions button")].map((button) => button.getAttribute("title")))
-      .toEqual(["连接", "编辑", "删除", "更多操作"]);
+      .toEqual(["连接", "更多操作"]);
     click(root.querySelector<HTMLButtonElement>('button[title="更多操作"]')!);
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"]);
   });
 
   it("updates root and grouped asset identities as available row width changes", async () => {
@@ -314,14 +314,20 @@ describe("asset name priority in narrow sidebars", () => {
     expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
     setRowWidths(row, 260, 36);
     expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
-    const compact = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="紧凑显示资产"]');
-    if (!compact) throw new Error("Compact display button not found");
+    click(mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="视图"]')!);
+    const compact = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes("紧凑显示"),
+    );
+    if (!compact) throw new Error("Compact display item not found");
     click(compact);
     expect(row.querySelector(".nx-asset-row-name")?.textContent).toBe("web-1");
     expect(row.querySelector(".nx-asset-row-identity")).toBeNull();
 
-    const detailed = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="显示资产主机身份"]');
-    if (!detailed) throw new Error("Detailed display button not found");
+    click(mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="视图"]')!);
+    const detailed = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+      b.textContent?.includes("显示主机地址"),
+    );
+    if (!detailed) throw new Error("Detailed display item not found");
     click(detailed);
     setRowWidths(row, 260, 36);
     expect(row.querySelector(".nx-asset-row-identity")?.textContent).toBe("root@10.0.0.8:22");
@@ -375,7 +381,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "web-1"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"]);
     await waitForRendered(() => expect(document.activeElement?.textContent).toContain("连接"));
   });
 
@@ -409,7 +415,7 @@ describe("asset row actions on coarse pointers", () => {
     await flush();
     mocks.ask.mockResolvedValueOnce(false);
     const deleteItem = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
-      b.querySelector(".nx-menu-label")?.textContent === "删除",
+      b.querySelector(".nx-menu-label")?.textContent === "删除资产…",
     );
     if (!deleteItem) throw new Error("delete item not found");
     click(deleteItem);
@@ -425,7 +431,7 @@ describe("asset row actions on coarse pointers", () => {
 
     openOverflow(rowByName(mounted!.container, "local terminal"));
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制链接", "隐藏"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制资产链接", "在列表中隐藏"]);
   });
 
   it("closes the menu with Escape", async () => {
@@ -456,7 +462,7 @@ describe("asset row actions on coarse pointers", () => {
       );
     });
     await flush();
-    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"]);
+    expect(menuLabels()).toEqual(["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"]);
   });
 
   it("collapses group row actions into an overflow menu as well", async () => {
@@ -471,7 +477,7 @@ describe("asset row actions on coarse pointers", () => {
     expect(groupRow.querySelector(".nx-row-actions")).toBeNull();
     openOverflow(groupRow);
     await flush();
-    expect(menuLabels()).toEqual(["在分组内新建资产", "新建子分组", "重命名分组", "删除分组"]);
+    expect(menuLabels()).toEqual(["在此分组内新建资产", "新建子分组", "重命名分组", "删除分组…"]);
 
     const rename = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
       b.textContent?.includes("重命名分组"),
@@ -510,9 +516,9 @@ describe("one menu for right-click, overflow button and keyboard", () => {
     await flush();
     const viaContext = menuSnapshot();
     expect(viaContext.map((item) => item.label)).toEqual(
-      ["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制链接", "隐藏", "删除"],
+      ["连接", "主机详情", "编辑", "克隆", "复制 SSH 命令", "复制资产链接", "在列表中隐藏", "删除资产…"],
     );
-    expect(viaContext.find((item) => item.label === "隐藏")?.hint).not.toBe("");
+    expect(viaContext.find((item) => item.label === "在列表中隐藏")?.hint).not.toBe("");
     await closeMenu();
 
     const more = row.querySelector<HTMLButtonElement>('button[aria-label="更多操作 web-1"]');

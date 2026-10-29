@@ -596,14 +596,14 @@ describe("close button tooltip follows preference", () => {
   it("shows tooltip text for ask, kill, and detach preferences", () => {
     const tab = terminal();
     expect(closeActionHint(tab)).toBe("转入后台运行或结束进程");
-    expect(closeTabHint(tab)).toBe("关闭标签（转入后台运行或结束进程）");
+    expect(closeTabHint(tab)).toBe("关闭标签页（转入后台运行或结束进程）");
 
     setTerminalCloseAction("kill");
     expect(closeActionHint(tab)).toBe("结束进程");
-    expect(closeTabHint(tab)).toBe("关闭标签（结束进程）");
+    expect(closeTabHint(tab)).toBe("关闭标签页（结束进程）");
 
     setTerminalCloseAction("detach");
     expect(closeActionHint(tab)).toBe("转入后台运行");
-    expect(closeTabHint(tab)).toBe("关闭标签（转入后台运行）");
+    expect(closeTabHint(tab)).toBe("关闭标签页（转入后台运行）");
   });
 });

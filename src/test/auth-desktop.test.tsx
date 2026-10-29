@@ -383,7 +383,7 @@ describe("desktop account card superadmin", () => {
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("root");
     expect(text).toContain("（我）");
-    expect(text).toContain("开放注册与两步验证（MFA）策略在服务端 Web 界面管理");
+    expect(text).toContain("开放注册与两步验证策略在服务端 Web 界面管理");
     expect(mounted!.container.querySelector('input[type="checkbox"]')).toBeNull();
     const labels = [...rowOf(mounted!.container, "alice").querySelectorAll("button")].map((b) => b.textContent?.trim());
     expect(labels).toEqual(["禁用", "重置"]);

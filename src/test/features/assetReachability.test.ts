@@ -132,7 +132,7 @@ describe("assetReachability overlapping batches", () => {
 
     expect(entryOf("a")).toBeUndefined();
     expect(entryOf("b")).toBeUndefined();
-    expect(useAssetReachability.getState().batchError).toContain("batch down");
+    expect(useAssetReachability.getState().batchError).toContain("读写文件失败");
 
     const p2 = probe(["a"]);
     calls[1].resolve({ results: [result("a", true)] });

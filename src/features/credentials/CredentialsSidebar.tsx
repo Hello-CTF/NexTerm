@@ -8,8 +8,8 @@ import { NewCredentialModal } from "./NewCredentialModal";
 import { KIND_META, KIND_ORDER, kindMeta } from "./meta";
 import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import { useVaultInitGate } from "./useVaultInitGate";
-import { describeError } from "../../ui/errorText";
-import { IconLock, IconPlus, IconRefresh, IconSearch } from "../../ui/icons";
+import { LoadError } from "../../ui/LoadError";
+import { IconLock, IconPlus, IconSearch } from "../../ui/icons";
 
 function closeOverlayDockAfterNav() {
   if (isWidthOverlayViewport()) {
@@ -29,6 +29,7 @@ export function CredentialsSidebar() {
   const [page, setPage] = useState(0);
   const pageSize = 30;
   const [creating, setCreating] = useState(false);
+  const pushToast = useUi((s) => s.pushToast);
 
   const startCreate = () =>
     void ensureVaultInit().then((ok) => {
@@ -51,8 +52,11 @@ export function CredentialsSidebar() {
   const all = credentials.data ?? [];
 
   const q = search.trim().toLowerCase();
+  const counts: Record<string, number> = {};
+  for (const c of all) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
+  const activeKind = kindFilter && counts[kindFilter] ? kindFilter : null;
   const list = all.filter((c) => {
-    if (kindFilter && c.kind !== kindFilter) return false;
+    if (activeKind && c.kind !== activeKind) return false;
     if (!q) return true;
     return c.name.toLowerCase().includes(q) || kindMeta(c.kind).label.toLowerCase().includes(q);
   });
@@ -60,9 +64,8 @@ export function CredentialsSidebar() {
   const currentPage = Math.min(page, pageCount - 1);
   const pageList = list.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
-  const counts: Record<string, number> = {};
-  for (const c of all) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
 
+  // A kind filter whose last credential was removed would show an empty list with no active chip.
   const unused = all.filter((c) => c.usedBy.length === 0).length;
 
   return (
@@ -77,12 +80,13 @@ export function CredentialsSidebar() {
         {protectionOn && !locked && (
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title="立即锁定（锁定后需输入密码才能使用凭据）"
+            title="立即锁定凭据库（之后需输入保护密码才能使用凭据）"
+            aria-label="锁定凭据库"
             onClick={() =>
               void vaultApi
                 .lock()
                 .then(refresh)
-                .catch(() => undefined)
+                .catch(() => pushToast("error", "无法锁定凭据库。请重试。"))
             }
           >
             <IconLock size={14} />
@@ -91,6 +95,7 @@ export function CredentialsSidebar() {
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="新建凭据"
+          aria-label="新建凭据"
           onClick={startCreate}
         >
           <IconPlus size={14} />
@@ -100,7 +105,7 @@ export function CredentialsSidebar() {
       {locked && (
         <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
           <IconLock size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">已锁定 · 解锁后可查看</span>
+          <span className="min-w-0 flex-1 truncate">凭据库已锁定，解锁后才能查看</span>
           <button className="nx-btn nx-btn-xs nx-btn-outline" onClick={() => void unlock()}>
             解锁
           </button>
@@ -128,15 +133,18 @@ export function CredentialsSidebar() {
       {all.length > 0 && (
         <div className="flex shrink-0 flex-wrap gap-1 px-2.5 pb-2">
           <FilterChip
-            active={kindFilter === null}
+            active={activeKind === null}
             label="全部"
             count={all.length}
-            onClick={() => setKindFilter(null)}
+            onClick={() => {
+              setKindFilter(null);
+              setPage(0);
+            }}
           />
           {KIND_ORDER.filter((k) => counts[k]).map((k) => (
             <FilterChip
               key={k}
-              active={kindFilter === k}
+              active={activeKind === k}
               label={KIND_META[k].label}
               count={counts[k]}
               onClick={() => {
@@ -151,30 +159,23 @@ export function CredentialsSidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center" role="status">
-            加载中…
+            正在加载…
           </div>
         ) : credentials.isError && !credentials.data ? (
-          <div className="px-2 py-6 text-center">
-            <div className="nx-hint">
-              凭据列表加载失败
-              <br />
-              {describeError(credentials.error)}
-            </div>
-            <button
-              className="nx-btn nx-btn-ghost nx-btn-sm mt-2"
-              onClick={() => void credentials.refetch()}
-            >
-              <IconRefresh size={12} />
-              重试
-            </button>
-          </div>
+          <LoadError title="未能加载凭据列表" error={credentials.error} onRetry={() => void credentials.refetch()} />
         ) : list.length === 0 ? (
           <div className="nx-hint px-2 py-8 text-center">
             {all.length === 0 ? (
               <>
-                还没有任何凭据
+                暂无任何凭据
                 <br />
-                新建资产时填的密码会自动存进来
+                新建资产时填写的密码会自动保存到凭据库，
+                也可以直接新建。
+                <br />
+                <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-3" onClick={startCreate}>
+                  <IconPlus size={12} />
+                  新建凭据
+                </button>
               </>
             ) : (
               "没有匹配的凭据"
@@ -205,7 +206,7 @@ export function CredentialsSidebar() {
                     {meta.label}
                     {" · "}
                     {c.usedBy.length > 0 ? (
-                      `被 ${c.usedBy.length} 个资产使用`
+                      `${c.usedBy.length} 个资产在用`
                     ) : (
                       <span className="text-[var(--nx-fg-warning)]">未使用</span>
                     )}
@@ -220,9 +221,8 @@ export function CredentialsSidebar() {
       <div className="shrink-0 border-t border-neutral-800/60 px-2.5 py-2">
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
-            <span className="whitespace-nowrap">{all.length} 条凭据</span>
             {unused > 0 && (
-              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} 条未被使用</span>
+              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} 条未被资产使用</span>
             )}
             <div className="nx-spacer" />
             <span className="truncate">
@@ -231,9 +231,9 @@ export function CredentialsSidebar() {
                   ? "已锁定"
                   : "已解锁"
                 : st?.mode === "not_init"
-                  ? "未初始化"
+                  ? "凭据库尚未设置"
                   : st?.mode === "master"
-                    ? "已启用 · 未设密码"
+                    ? "已启用，未设保护密码"
                     : "未启用密码保护"}
             </span>
           </div>

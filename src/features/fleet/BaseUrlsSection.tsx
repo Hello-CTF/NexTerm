@@ -101,9 +101,9 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
         <span className="nx-card-title">接入地址</span>
         <span className="nx-hint min-w-0 flex-1 truncate">
           {status === "loading"
-            ? "读取中…"
+            ? "正在读取…"
             : status === "error"
-              ? "读取失败"
+              ? "未能读取"
               : draft.length === 0
                 ? isAdmin
                   ? "未配置：新设备无法接入，展开以添加"
@@ -128,11 +128,11 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
         </button>
       </div>
 
-      {open && status === "loading" && <div className="nx-hint py-2 text-[12px]">接入地址读取中…</div>}
+      {open && status === "loading" && <div className="nx-hint py-2 text-[12px]">正在读取接入地址…</div>}
       {open && status === "error" && (
         <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">接入地址读取失败 · {loadError}</span>
+          <span className="min-w-0 flex-1 break-words">未能读取接入地址：{loadError}</span>
         </div>
       )}
       {open && status === "ready" && (
@@ -144,7 +144,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
 
           {draft.length === 0 && (
             <div className="nx-hint py-1 text-[12px]">
-              {isAdmin ? "还没有配置接入地址：新设备无法接入。请在下方添加设备能访问到的服务器地址。" : "还没有配置接入地址：新设备无法接入，请联系超级管理员配置。"}
+              {isAdmin ? "尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务器地址。" : "尚未配置接入地址，新设备无法接入。请联系超级管理员配置。"}
             </div>
           )}
 
@@ -255,7 +255,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
               {saveError && (
                 <div className="nx-alert nx-alert-danger flex items-start gap-2">
                   <IconXCircle size={13} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">保存失败 · {saveError}</span>
+                  <span className="min-w-0 flex-1 break-words">未能保存接入地址：{saveError}</span>
                 </div>
               )}
               <div className="flex items-center gap-2">
@@ -266,7 +266,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                   onClick={() => void save()}
                 >
                   <IconSave size={12} />
-                  {saving ? "保存中…" : "保存修改"}
+                  {saving ? "正在保存…" : "保存修改"}
                 </button>
                 {!saving && dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>}
               </div>

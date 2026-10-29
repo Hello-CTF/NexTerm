@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { stateRuleApi, type StateRuleScreenDTO, type StateRuleValidateResult } from "../../ipc/stateRuleApi";
+import { resolveHostLabel } from "../hosts/hostLabel";
 import { describeError } from "../../ui/errorText";
 import {
   STATE_RULE_MAX_LINES,
@@ -56,6 +57,8 @@ interface StateRuleFormProps {
   form: StateRuleDraftForm;
   onChange: (form: StateRuleDraftForm) => void;
   hosts: readonly HostOption[];
+  // Names a host id that is not in `hosts` (managed device, deleted asset, ...).
+  hostLabel?: (id: string) => string;
   validation: RuleValidation;
   // A save the backend rejected; shown with the field errors.
   saveError?: string | null;
@@ -72,7 +75,9 @@ function FieldError({ id, message }: { id: string; message: string | null }) {
   );
 }
 
-export function StateRuleForm({ form, onChange, hosts, validation, saveError, targets }: StateRuleFormProps) {
+const fallbackHostLabel = (id: string) => resolveHostLabel(id, { assets: undefined, devices: undefined, loading: false });
+
+export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, saveError, targets }: StateRuleFormProps) {
   const id = useId();
   const result = validation.result;
   const invalid = result && !result.valid ? result : null;
@@ -187,7 +192,7 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             <option value="global">所有主机</option>
             {form.scope === "host" && !form.assetId && <option value="host:">选择主机…</option>}
             {form.scope === "host" && form.assetId && !hosts.some((host) => host.id === form.assetId) && (
-              <option value={form.assetId}>未知主机</option>
+              <option value={form.assetId}>{hostLabel?.(form.assetId) || fallbackHostLabel(form.assetId)}</option>
             )}
             {hosts.map((host) => (
               <option key={host.id} value={host.id}>
@@ -227,7 +232,7 @@ export function StateRuleForm({ form, onChange, hosts, validation, saveError, ta
             value={form.keys}
             onChange={(event) => set({ keys: event.target.value })}
           />
-          <p id={`${id}-keys-hint`} className="nx-hint mt-1">需要我时作为按钮提供，只在点击后发送。</p>
+          <p id={`${id}-keys-hint`} className="nx-hint mt-1">状态为「需要处理」时显示为按钮，仅在单击后发送。</p>
           <FieldError id={`${id}-keys-error`} message={keysError} />
         </div>
       )}
@@ -283,7 +288,7 @@ function RuleCheckStatus({
           )}
         </div>
       )}
-      {validation.pending && <div className="nx-hint text-[11.5px]">检查中…</div>}
+      {validation.pending && <div className="nx-hint text-[11.5px]">正在检查…</div>}
     </div>
   );
 }

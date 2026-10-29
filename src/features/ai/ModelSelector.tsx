@@ -35,7 +35,10 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        chipRef.current?.focus();
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -74,11 +77,13 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
   const active = view?.profiles.find((p) => p.id === view.activeId) ?? null;
 
   return (
-    <div className="relative min-w-0" ref={boxRef}>
+    <div className="relative flex min-w-0 max-w-[220px]" ref={boxRef}>
       <button
         ref={chipRef}
-        className="nx-chip pointer-coarse:min-h-6 max-w-[180px] min-w-0"
+        className="nx-chip pointer-coarse:min-h-6 max-w-full min-w-0"
         title="模型配置（可保存多份模型档案）"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={toggle}
       >
         {busy ? (
@@ -89,7 +94,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           <IconPlus size={11} />
         )}
         <span className="min-w-0 truncate">
-          {active?.name || (loadError ? "模型档案读取失败" : "添加模型")}
+          {active?.name || (loadError ? "未能读取模型档案" : "添加模型")}
         </span>
         <IconChevronUp size={10} className="shrink-0 opacity-60" />
       </button>
@@ -102,7 +107,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           <div className="nx-menu-title">选择模型档案</div>
           {loadError ? (
             <div className="px-2 py-2 text-center">
-              <div className="nx-hint text-red-300">模型档案读取失败 · {loadError}</div>
+              <div className="nx-hint text-red-300">未能读取模型档案：{loadError}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void refresh()}>
                 重试
               </button>
@@ -127,7 +132,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
               </button>
             ))
           ) : (
-            <div className="nx-hint px-2 py-2 text-[11px]">还没有模型档案</div>
+            <div className="nx-hint px-2 py-2 text-[11px]">暂无模型档案</div>
           )}
           <div className="nx-menu-sep" />
           <button

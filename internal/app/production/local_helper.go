@@ -212,6 +212,6 @@ func localHelperIPCError(err error) error {
 	case errors.Is(err, localhelper.ErrNotSupported), errors.Is(err, localhelper.ErrServiceClosed):
 		return ipc.WrapError(ipc.CodeUnsupported, "本机持久组件不可用", err)
 	default:
-		return ipc.WrapError(ipc.Code("local_helper_restart_failed"), "重启本机持久组件失败："+err.Error(), err)
+		return ipc.WrapError(ipc.Code("local_helper_restart_failed"), "重启本机持久终端组件失败："+err.Error(), err)
 	}
 }

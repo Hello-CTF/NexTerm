@@ -439,14 +439,14 @@ func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID strin
 	dialer, err := s.validateSession(ctx, requestedSessionID)
 	if err != nil {
 		if oldSpec.Status != StatusActive && requestedSessionID == oldSpec.SessionID {
-			s.setFailed(previous, "转发重连失败: "+err.Error())
+			s.setFailed(previous, "转发重新连接失败: "+err.Error())
 		}
 		return Spec{}, err
 	}
 	hostID, err := s.hostFor(ctx, requestedSessionID)
 	if err != nil {
 		if oldSpec.Status != StatusActive && requestedSessionID == oldSpec.SessionID {
-			s.setFailed(previous, "转发重连失败: "+err.Error())
+			s.setFailed(previous, "转发重新连接失败: "+err.Error())
 		}
 		return Spec{}, err
 	}
@@ -493,13 +493,13 @@ func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID strin
 		s.mu.Unlock()
 		replacement.wg.Done()
 		replacement.initiateStop()
-		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重连期间会话已断开或转发已移除")
+		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重新连接期间会话已断开或转发已移除")
 	}
 	s.forwards[id] = replacement
 	s.mu.Unlock()
 	go replacement.acceptLoop()
 	if _, err := s.validateSession(ctx, requestedSessionID); err != nil {
-		s.setFailed(replacement, "会话已断开，转发重连未完成: "+err.Error())
+		s.setFailed(replacement, "会话已断开，转发重新连接未完成: "+err.Error())
 		if closeErr := replacement.stopAndWait(); closeErr != nil {
 			s.report(fmt.Errorf("转发 %s 监听关闭失败: %w", id, closeErr))
 		}
@@ -509,7 +509,7 @@ func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID strin
 	active := s.forwards[id] == replacement && replacement.spec.Status == StatusActive
 	s.mu.Unlock()
 	if !active {
-		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重连期间会话已断开或监听失败")
+		return Spec{}, ipc.NewError(ipc.CodeIO, "转发重新连接期间会话已断开或监听失败")
 	}
 	return spec, nil
 }
@@ -553,7 +553,7 @@ func (s *Service) RestoreRemote(ctx context.Context, sessionID string) {
 	s.mu.Unlock()
 	for _, id := range ids {
 		if _, err := s.retry(ctx, "", id, sessionID); err != nil {
-			s.report(fmt.Errorf("远程转发 %s 自动重连失败: %w", id, err))
+			s.report(fmt.Errorf("远程转发 %s 自动重新连接失败: %w", id, err))
 		}
 	}
 }

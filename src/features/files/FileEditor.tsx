@@ -227,7 +227,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (cancelled) return;
         let largeEditConfirmed = false;
         if (probedSize !== null && probedSize > 5 * 1024 * 1024) {
-          const choice = await askChoice("文件超过 5MB，整文件编辑可能卡顿。请选择打开方式。", {
+          const choice = await askChoice("文件超过 5MB，整文件编辑可能响应缓慢。请选择打开方式。", {
             title: "大文件",
             level: "info",
             choices: [
@@ -348,7 +348,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         setSaving(true);
         try {
           const choice = await askChoice(
-            `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前标签路径：${initialLocator.path}`,
+            `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前标签页路径：${initialLocator.path}`,
             {
               title: "确认文件位置",
               level: "warning",
@@ -361,7 +361,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 {
                   key: "renamed",
                   label: "重命名已发生",
-                  hint: "确认服务端已完成重命名，迁移匹配的标签和草稿，不重复执行重命名",
+                  hint: "确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名",
                 },
               ],
             },
@@ -376,7 +376,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 state.setActiveTab(target.id);
                 pushToast(
                   "error",
-                  `无法确认重命名已发生：目标 ${target.path} 已有打开的编辑器，请先处理该标签，未迁移或合并草稿。`,
+                  `无法确认重命名已发生：目标 ${target.path} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。`,
                 );
                 return;
               }
@@ -603,7 +603,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
         <button
           className="nx-btn nx-btn-ghost nx-btn-xs font-mono"
-          title={`当前换行符 ${eol}，点击转换`}
+          title={`当前换行符 ${eol}，单击可转换`}
           onClick={toggleEol}
         >
           {eol}
@@ -678,7 +678,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           title="保存（远端自动留一份 .nexterm-bak 备份）"
         >
           <IconSave size={13} />
-          {saving ? "保存中…" : "保存"}
+          {saving ? "正在保存…" : "保存"}
           <span className={`nx-kbd max-[560px]:hidden ${dirty ? "border-white/25 text-white" : ""}`}>{modHint()} S</span>
         </button>
         {onClose && (

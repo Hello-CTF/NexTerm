@@ -267,7 +267,7 @@ describe("KnownHostsCard", () => {
     const slow = deferred<KnownHostDto[]>();
     mocks.knownHostList.mockReturnValue(slow.promise);
     mounted = mount(createElement(KnownHostsCard));
-    expect(mounted.container.textContent).toContain("读取中…");
+    expect(mounted.container.textContent).toContain("正在读取…");
 
     slow.resolve([KH1, KH2]);
     await flush();
@@ -310,7 +310,7 @@ describe("KnownHostsCard", () => {
     mocks.knownHostList.mockResolvedValue([]);
     mounted = mount(createElement(KnownHostsCard));
     await flush();
-    expect(mounted.container.textContent).toContain("还没有信任过任何主机");
+    expect(mounted.container.textContent).toContain("尚未信任任何主机");
   });
 
   it("surfaces a list failure with a working retry", async () => {
@@ -758,7 +758,7 @@ describe("SyncCard (web account sync)", () => {
 
     mounted = mountSyncCard();
     clickButton(mounted.container, "对比详情");
-    await flushUntil(() => mounted!.container.textContent?.includes("服务端对象在读取期间发生变化") ?? false);
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端数据在读取期间发生变化") ?? false);
     clickButton(mounted.container, "刷新对比");
     await flushUntil(() => mounted!.container.textContent?.includes("服务端较新"));
     // Cloud is newer, the winner set is empty, no push should happen
@@ -864,10 +864,10 @@ describe("SyncCard (web account sync)", () => {
     });
 
     mounted = mountSyncCard();
-    await flushUntil(() => mounted!.container.textContent?.includes("分页游标未推进"));
+    await flushUntil(() => mounted!.container.textContent?.includes("读取未能继续"));
     expect(mocks.syncPush).not.toHaveBeenCalled();
 
-    await expect(runAutoSync()).rejects.toThrow("分页游标未推进");
+    await expect(runAutoSync()).rejects.toThrow("读取未能继续");
     expect(mocks.transcriptRead).toHaveBeenCalledWith("t1", 0);
     expect(mocks.syncPush).not.toHaveBeenCalled();
   });

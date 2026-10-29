@@ -21,7 +21,7 @@ function sinceLabel(since: string | undefined, now: number): string {
   return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
 }
 
-function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOpen: () => void }) {
+function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: number; onOpen: () => void; onMarked: () => void }) {
   const [marking, setMarking] = useState(false);
   const [opening, setOpening] = useState(false);
   const open = () => {
@@ -34,15 +34,16 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
     setOpening(true);
     void openAggregateEntry(entry)
       .then((problem) => {
-        if (problem) useUi.getState().pushToast("error", `无法打开终端：${problem}`);
+        if (problem) useUi.getState().pushToast("error", `未能打开终端：${problem}`);
         else onOpen();
       })
-      .catch((error: unknown) => useUi.getState().pushToast("error", `无法打开终端：${describeError(error)}`))
+      .catch((error: unknown) => useUi.getState().pushToast("error", `未能打开终端：${describeError(error)}`))
       .finally(() => setOpening(false));
   };
   const markSeen = () => {
     setMarking(true);
     markInboxEntrySeen(entry)
+      .then(onMarked)
       .catch((error: unknown) => useUi.getState().pushToast("error", `标记已读失败：${describeError(error)}`))
       .finally(() => setMarking(false));
   };
@@ -58,7 +59,7 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
           className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
           style={wailsNoDragRegionStyle}
           disabled={!reachable || opening}
-          title={shown ? "转到该终端" : reachable ? `在此端打开（${entry.place}）` : "此端没有打开这个终端"}
+          title={shown ? "转到该终端" : reachable ? `在当前客户端打开（${entry.place}）` : "当前客户端未打开该终端"}
           onClick={open}
         >
           <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
@@ -78,7 +79,7 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
           className="nx-icon-btn shrink-0"
           style={wailsNoDragRegionStyle}
           aria-label={`标记 ${entry.title} 为已读`}
-          title={markable ? "标记为已读（所有设备）" : "打开这个终端后才能标记为已读"}
+          title={markable ? "标记为已读（所有设备）" : "打开该终端后方可标记为已读"}
           disabled={marking || !markable}
           onClick={markSeen}
         >
@@ -87,8 +88,8 @@ function InboxRow({ entry, now, onOpen }: { entry: InboxEntry; now: number; onOp
       </div>
       {(!reachable || !markable) && (
         <div className="pl-[18px] pt-0.5 text-[11px] text-[var(--nx-fg-soft)]" data-inbox-reason="">
-          {!reachable && <p>此端没有打开这个终端，无法转到它。</p>}
-          {!markable && <p>打开这个终端后才能标记为已读。</p>}
+          {!reachable && <p>当前客户端未打开该终端，无法跳转。</p>}
+          {!markable && <p>打开该终端后方可标记为已读。</p>}
         </div>
       )}
     </li>
@@ -178,7 +179,29 @@ export function InboxButton() {
     };
   }, [open]);
 
-  const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：没有需要关注的会话";
+  // A marked row leaves the list and takes the focused button with it; focus stays in the panel so Escape and Tab keep working.
+  const keepFocusInPanel = () => {
+    const panel = panelRef.current;
+    if (!panel || panel.contains(document.activeElement)) return;
+    (panel.querySelector<HTMLElement>("[data-inbox-tab] button:not([disabled])") ?? panel).focus();
+  };
+  const markable = entries.filter((entry) => entry.uiTabId !== undefined || !entry.listedOnly);
+  const [markingAll, setMarkingAll] = useState(false);
+  const markAll = () => {
+    setMarkingAll(true);
+    void Promise.allSettled(markable.map((entry) => markInboxEntrySeen(entry)))
+      .then((results) => {
+        const failed = results.filter((result) => result.status === "rejected");
+        if (failed.length > 0) {
+          const reason = (failed[0] as PromiseRejectedResult).reason;
+          useUi.getState().pushToast("error", `${failed.length} 个会话未能标记为已读：${describeError(reason)}`);
+        }
+        keepFocusInPanel();
+      })
+      .finally(() => setMarkingAll(false));
+  };
+
+  const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：暂无需要关注的会话";
   return (
     <div
       className="relative"
@@ -222,7 +245,7 @@ export function InboxButton() {
             ? "pointer-events-none absolute right-0 top-[30px] z-40 whitespace-nowrap rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11.5px] text-neutral-300 shadow-lg"
             : "sr-only"
         } data-inbox-cue={cue && !open ? "" : undefined}>
-        {cue && !open ? "新：有会话需要关注，点铃铛查看" : ""}
+        {cue && !open ? "有会话需要关注，选择铃铛图标查看" : ""}
       </span>
       {open && (
         <div
@@ -235,13 +258,26 @@ export function InboxButton() {
           className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
           {!guidanceDismissed && <InboxGuidance onNavigate={() => setOpen(false)} />}
-          <div className="px-2 pb-1 pt-0.5 text-[11.5px] font-semibold text-neutral-400">需要关注的会话</div>
+          <div className="flex items-center gap-2 px-2 pb-1 pt-0.5">
+            <span className="min-w-0 flex-1 text-[11.5px] font-semibold text-neutral-400">需要关注的会话</span>
+            {markable.length > 1 && (
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
+                disabled={markingAll}
+                title="将列表中的会话全部标记为已读（所有设备）"
+                onClick={markAll}
+              >
+                全部标记已读
+              </button>
+            )}
+          </div>
           {count === 0 ? (
-            <p className="px-2 py-3 text-[12px] text-neutral-500">没有需要你处理或刚结束的会话。</p>
+            <p className="px-2 py-3 text-[12px] text-neutral-500">暂无需要处理或刚结束的会话。</p>
           ) : (
             <ul className="flex flex-col">
               {entries.map((entry) => (
-                <InboxRow key={entry.tabId} entry={entry} now={now} onOpen={() => setOpen(false)} />
+                <InboxRow key={entry.tabId} entry={entry} now={now} onOpen={() => setOpen(false)} onMarked={keepFocusInPanel} />
               ))}
             </ul>
           )}

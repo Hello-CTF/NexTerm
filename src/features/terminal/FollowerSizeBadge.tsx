@@ -48,7 +48,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: Follo
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto pointer-coarse:min-h-8 px-1.5 py-0 text-[11px]"
             aria-pressed={zoom === "height"}
-            title={zoom === "height" ? "再按一次显示整个终端" : "放大文字，左右滑动查看"}
+            title={zoom === "height" ? "再按一次显示完整终端" : "放大文字，左右滑动查看"}
             data-follower-zoom-toggle=""
             onClick={() => onZoom(zoom === "height" ? "fit" : "height")}
           >
@@ -67,7 +67,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: Follo
       )}
       {small && (
         <span className="rounded bg-neutral-900/85 px-2 py-0.5 text-[11px] text-amber-300" data-follower-small="">
-          {scale?.panY ? "文字已缩到最小，终端仍显示不全：上下滑动查看" : touch ? "文字较小：双指张开或点「放大文字」" : "文字较小：点「放大文字」"}
+          {scale?.panY ? "文字已缩到最小，终端仍显示不全：上下滑动查看" : touch ? "文字较小：双指张开或选择「放大文字」" : "文字较小：选择「放大文字」"}
         </span>
       )}
     </div>

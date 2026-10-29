@@ -98,37 +98,37 @@ function clause(text: string): string {
   return text.replace(/[。.]+$/, "");
 }
 
-const REGULAR_TAIL = "本标签是普通终端，断开后进程会结束。";
+const REGULAR_TAIL = "本标签页是临时终端，断开后进程会结束。";
 
 // persistenceHintNote names the state in a few words for the tab tooltip.
 export function persistenceHintNote(hint: PersistenceHint): string {
   switch (hint.kind) {
     case "ready":
-      return "普通终端：持久终端已就绪，新建的终端将是持久终端";
+      return "临时终端：持久终端已就绪，新建的终端将是持久终端";
     case "preparing":
-      return "普通终端：持久组件准备中";
+      return "临时终端：持久组件准备中";
     case "attention":
-      return hint.message ? `普通终端：持久终端暂时不可用：${clause(hint.message)}` : "普通终端：持久终端暂时不可用";
+      return hint.message ? `临时终端：持久终端暂时不可用：${clause(hint.message)}` : "临时终端：持久终端暂时不可用";
     case "restore":
       return hint.message ? `原持久终端恢复失败：${clause(hint.message)}` : "原持久终端恢复失败";
     default:
-      return `普通终端：${clause(hint.reason)}`;
+      return `临时终端：${clause(hint.reason)}`;
   }
 }
 
 export function persistenceHintMessage(hint: PersistenceHint, local: boolean): string {
   switch (hint.kind) {
     case "ready":
-      return `${local ? "本机" : "这台主机"}的持久终端已就绪。${REGULAR_TAIL}`;
+      return `${local ? "本机" : "该主机"}的持久终端已就绪。${REGULAR_TAIL}`;
     case "preparing":
       return `持久组件准备中。${REGULAR_TAIL}`;
     case "attention":
       return hint.message ? `持久终端暂时不可用：${clause(hint.message)}。${REGULAR_TAIL}` : `持久终端暂时不可用。${REGULAR_TAIL}`;
     case "restore":
       return hint.message
-        ? `原持久终端恢复失败：${clause(hint.message)}。可以重试恢复，或改用新的普通终端。`
-        : "原持久终端恢复失败。可以重试恢复，或改用新的普通终端。";
+        ? `原持久终端恢复失败：${clause(hint.message)}。可重试恢复，或改用新的临时终端。`
+        : "原持久终端恢复失败。可重试恢复，或改用新的临时终端。";
     default:
-      return `本标签是普通终端（${clause(hint.reason)}），断开后进程会结束。`;
+      return `本标签页是临时终端（${clause(hint.reason)}），断开后进程会结束。`;
   }
 }

@@ -30,7 +30,19 @@ interface AwarenessStoreState {
 // A store of its own: attention changes arrive often and must not re-render the UI store's subscribers.
 export const useAwarenessStore = create<AwarenessStoreState>(() => ({ byTabId: new Map() }));
 
+// Only an explicit signal (bell, a program notification) or a user state rule asks for the user. A helper started
+// before screen-shape guessing was removed can still report a guessed needs_me (reason "prompt", confidence
+// "heuristic"); it is shown as running, here at the single point where every client path ingests a state.
+function isGuessedAttention(event: TerminalAttentionEvent): boolean {
+  if (event.state !== "needs_me" && event.state !== "just_finished") return false;
+  if (event.reason === "prompt") return true;
+  return event.confidence !== undefined && event.confidence !== "" && event.confidence !== "signal" && event.confidence !== "rule";
+}
+
 export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
+  if (isGuessedAttention(event)) {
+    return { state: "running", source: event.source, since: event.since, seen: true, notable: false, version: event.version };
+  }
   return {
     // A state this client does not know is shown as unknown rather than guessed.
     state: STATES.has(event.state) ? (event.state as AwarenessState) : "unknown",
@@ -113,7 +125,7 @@ export function awarenessBadge(awareness: SessionAwareness | undefined): Awarene
   switch (awareness.state) {
     case "needs_me":
       if (awareness.seen) return null;
-      return { kind: "needs_me", label: "需要你处理" };
+      return { kind: "needs_me", label: "需要处理" };
     case "just_finished": {
       if (awareness.seen) return null;
       const code = awareness.exitCode;

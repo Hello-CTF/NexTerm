@@ -134,7 +134,7 @@ function deliver(tabId: string): void {
   // The title leads with the workspace the user named; text a remote program controls (its notification, the tab
   // title it set) stays in the body.
   const place = workspace?.title ?? "终端";
-  const title = `${place} · ${awareness.state === "needs_me" ? "需要你处理" : "命令已结束"}`;
+  const title = `${place} · ${awareness.state === "needs_me" ? "需要处理" : "命令已结束"}`;
   const detail = attentionDetail(awareness);
   const active = deps;
   const fallbackToast = () => active.toast(`${title}：${detail}`, { label: "查看", onSelect: () => openInboxTab(tabId) });
