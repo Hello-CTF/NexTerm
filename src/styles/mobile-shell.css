@@ -127,6 +127,18 @@
   }
 }
 
+/* The rail already shows the logo, so on small windows and phones the app name gives its room to the workspace
+   switcher and the breadcrumb. */
+@media (max-width: 720px) {
+  .nx-app-header .nx-app-name {
+    display: none;
+  }
+
+  .nx-app-header .nx-ws-switch {
+    max-width: min(260px, 52vw);
+  }
+}
+
 /* Short visible areas (landscape phone, or any phone with the keyboard open) drop secondary chrome. */
 html[data-nx-keyboard="open"] .nx-banner,
 html[data-nx-keyboard="open"] section[aria-label="工作区恢复"],

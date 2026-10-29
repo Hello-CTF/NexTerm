@@ -84,13 +84,13 @@ export function AppHeader({
   return (
     <header
       className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
-        TRANSPORT === "desktop" && isMac() ? "pl-[32px]" : "pl-3.5"
+        TRANSPORT === "desktop" && isMac() ? "pl-[22px]" : "pl-2.5"
       }`}
       data-wails-drag-region style={wailsDragRegionStyle}
     >
       {leading}
       <span
-        className="text-[12.5px] font-semibold tracking-tight text-neutral-100"
+        className="nx-app-name text-[12.5px] font-semibold tracking-tight text-neutral-100"
         data-wails-drag-region style={wailsDragRegionStyle}
       >
         NexTerm
