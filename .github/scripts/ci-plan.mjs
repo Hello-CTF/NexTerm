@@ -55,7 +55,8 @@ export function planCI({ isPR, files = [], labels = [] }) {
     group.representative ||= target.representative === true;
   }
   const shardCount = scope.race ? RACE_UNIT_SHARDS : PLAIN_UNIT_SHARDS;
-  const unitMatrix = { include: Array.from({ length: shardCount }, (_, shard) => ({ shard, count: shardCount })) };
+  // number is the 1-based shard shown in the job name: workflow expressions cannot do arithmetic.
+  const unitMatrix = { include: Array.from({ length: shardCount }, (_, shard) => ({ shard, number: shard + 1, count: shardCount })) };
   return { scope, matrix: { include: [...groups.values()] }, unitMatrix };
 }
 

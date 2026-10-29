@@ -247,7 +247,7 @@ jobs:
   unit:
     # The packages are split across runners by measured test time (.github/go-test-weights.json), so the job takes
     # about as long as its slowest package instead of the sum of all of them.
-    name: Go tests (${{ matrix.shard + 1 }}/${{ matrix.count }})
+    name: Go tests (${{ matrix.number }}/${{ matrix.count }})
     needs: version
     if: fromJSON(needs.version.outputs.scope).unit
     runs-on: ubuntu-latest
