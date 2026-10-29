@@ -22,6 +22,9 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 ## Working Rules
 
 - Read relevant code before editing. Keep changes focused and prefer the smallest implementation that satisfies the current requirement.
+- Product terms are 持久终端, 临时终端 and 持久终端组件. A rename sweeps the UI, Go messages, README, website and the tests that assert the wording, and checks Chinese strings used as keys in `internal/ai/provider/model_text_catalog.go`.
+- A backend check that mirrors a frontend asset setting reads the stored asset options, not the snapshot a connected session carries, so an edit applies without reconnecting.
+- Frontend session counts derive from the open workspaces: `state.sessions` keeps disconnected entries until the next resync, so its length is not the number of live sessions.
 - Before starting, list unmerged work with `git branch --no-merged master` and `git worktree list`. Build on the branch that already holds related work instead of starting a parallel line, and never drop it silently.
 - Keep user-facing claims in `README.md`, `README_EN.md`, and `website` consistent with the shipped behavior. Do not claim a platform, database, or feature is supported unless a build or test path verifies it.
 - Use English comments only where they explain necessary intent. Preserve build tags, embed directives, shebangs, packaging directives, and test environment pragmas. Never treat string literals or heredocs as comments to clean up.
@@ -39,6 +42,9 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 - A test must not read a variable that a callback or goroutine it started writes after sending its event; hand results over a channel, an atomic or a lock. A new or changed concurrency test must pass `go test -race -count=100` for its package locally.
 - `task check` is the regular quality entry point: lockfile integrity, formatting, vet, Go tests, frontend checks/tests, generated IPC contract, Wails bindings and GORM queries, reproducible frontend assets, and build/release script checks. Use `task gorm:gen` for intentional query regeneration and `task gorm:check` for drift and orphan detection.
 - `task verify` includes `check`, race and production-tagged Go tests, and a reproducible host desktop production build. Run it once on the final integrated tree before committing, do not edit files while it runs, and iterate with focused tests; running `check` immediately beforehand duplicates work.
+- Read a background `task verify` from its log (exit code and `FAIL` lines): a missing `task`, or any failing command, still lets the background job report completed.
+- Vitest fails a run on an unhandled error even when every test passes. Tests locate controls with specific selectors and never click every collapsed toggle, which also opens controls the test did not mock.
+- Reproduce a failure seen only on CI before fixing it: run the compiled test binary in a matching container (`docker run ubuntu:26.04`, non-root user, the same packages) instead of guessing.
 - A local pass skips the tests whose tool is absent (zsh, fish, docker); list them in the verification report. Tests that start a system shell must not depend on the host's startup files (for zsh set `skip_global_compinit=1`).
 - Local environment: `/tmp` can be a small tmpfs, so point `TMPDIR` and `GOTMPDIR` at a directory under `.tmp/`; `task` may live in `~/go/bin`; give Node `NODE_OPTIONS=--max-old-space-size=6144` for eslint.
 - Database integration tests must run against real supported servers; a skipped integration test is not verification. `task test:database` discovers tests by dbtest fixture use; use `task test:database:sqlite` for the no-service leg and the PostgreSQL/MySQL/MariaDB variants with `deploy/dev/compose.yml` for real backends.
@@ -59,6 +65,7 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 
 - Preserve supported inputs, defaults, fallbacks, and existing data behavior unless the PR explicitly changes them. Identify consumers and replacement behavior when removing a path or changing a contract, including AI prompts and tool descriptions.
 - Report findings with evidence, location, impact, and a concrete fix. If the cause is unknown, say "cause not identified". Skipped operations and ignored inputs must remain visible to users.
+- When the environment blocks an action (opening a PR, pushing a tag, deleting a remote branch), give the user the exact command to run with `!` and the prepared body file; do not retry or work around it.
 - Use Conventional Commits for commits and PR titles. PR descriptions explain the problem, resulting behavior, and verification, including intentional compatibility changes and checks that could not run.
 - When work is delegated, use non-overlapping file ownership and keep implementation and review separate. Do not launch child AI processes through shell commands, and do not verify while delegated work is still editing the tree.
 - Integrate against the latest `master`, resolve changes as one coherent batch, and validate the final tree before merging. Inspect `git status` and `git diff --staged --stat` before committing.
