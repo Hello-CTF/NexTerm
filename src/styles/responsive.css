@@ -260,8 +260,12 @@
     inset: -4px -2px;
   }
 
+  /* One-line tree rows (assets, groups, devices, hosts, files) share one height on touch. It came from the content
+     before: asset rows hold their 36px action buttons in the row and grew to about 38px, while device and group
+     rows position the buttons absolutely and stayed at the text height, about 22px. */
   .nx-row-oneline {
     padding-block: 1px;
+    min-height: 40px;
   }
 
   .nx-row-reserve-actions .nx-row-actions {
