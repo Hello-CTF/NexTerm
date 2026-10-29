@@ -1,11 +1,18 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/pprof"
 	"sync"
+	"time"
 )
+
+// slowShutdownThreshold is how long one component may take to stop before it is logged as slow.
+const slowShutdownThreshold = time.Second
 
 type Component interface {
 	Start(context.Context) error
@@ -111,9 +118,47 @@ func (l *Lifecycle) Shutdown(ctx context.Context) error {
 
 	var errs []error
 	for index := len(components) - 1; index >= 0; index-- {
-		if err := components[index].component.Shutdown(ctx); err != nil {
+		if err := shutdownComponent(ctx, components[index]); err != nil {
 			errs = append(errs, fmt.Errorf("shutdown component %s: %w", components[index].name, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+var errShutdownTimeout = errors.New("did not stop before the shutdown deadline")
+
+// shutdownComponent stops one component without letting it hold the caller past ctx. A desktop shutdown runs on the
+// main UI thread, so a component that ignores its context would freeze the whole app: it is abandoned at the
+// deadline, its name and the goroutine stacks are logged, and shutdown moves on to the next component.
+func shutdownComponent(ctx context.Context, component namedComponent) error {
+	started := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- component.component.Shutdown(ctx) }()
+	slow := time.NewTimer(slowShutdownThreshold)
+	defer slow.Stop()
+	for {
+		select {
+		case err := <-done:
+			if elapsed := time.Since(started); elapsed >= slowShutdownThreshold {
+				slog.Warn("component shutdown was slow", "component", component.name, "elapsed", elapsed.String())
+			}
+			return err
+		case <-slow.C:
+			slog.Warn("component shutdown is taking long", "component", component.name)
+		case <-ctx.Done():
+			// The component may have finished at the same moment.
+			select {
+			case err := <-done:
+				return err
+			default:
+			}
+			var stacks bytes.Buffer
+			if profile := pprof.Lookup("goroutine"); profile != nil {
+				_ = profile.WriteTo(&stacks, 2)
+			}
+			slog.Error("component shutdown abandoned at the deadline", "component", component.name,
+				"elapsed", time.Since(started).String(), "goroutines", stacks.String())
+			return errShutdownTimeout
+		}
+	}
 }

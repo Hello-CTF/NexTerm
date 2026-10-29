@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
@@ -24,10 +25,22 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 	return s.app.Start(ctx)
 }
 
+// serviceShutdownTimeout bounds the whole shutdown: Wails runs ServiceShutdown on the main UI thread, so every second
+// spent here is a frozen window.
+const serviceShutdownTimeout = 5 * time.Second
+
 func (s *Service) ServiceShutdown() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), serviceShutdownTimeout)
 	defer cancel()
-	return errors.Join(s.app.Shutdown(ctx), s.streams.Close())
+	appErr := s.app.Shutdown(ctx)
+	closed := make(chan error, 1)
+	go func() { closed <- s.streams.Close() }()
+	select {
+	case streamsErr := <-closed:
+		return errors.Join(appErr, streamsErr)
+	case <-ctx.Done():
+		return errors.Join(appErr, fmt.Errorf("close streams: %w", ctx.Err()))
+	}
 }
 
 func (s *Service) Call(ctx context.Context, request ipc.Request) ipc.Response {
