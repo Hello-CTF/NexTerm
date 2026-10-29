@@ -10,7 +10,7 @@ import {
   flushUntil,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -396,15 +396,15 @@ describe("LogViewer", () => {
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("�"));
 
-    const select = mounted!.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="日志编码"]',
+    const select = mounted!.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="日志编码"]',
     );
     if (!select) throw new Error("encoding select not found");
-    expect(select.value).toBe("utf-8");
+    expect(select.textContent).toBe("UTF-8");
 
-    setSelectValue(select, "gbk");
+    chooseSelectOption(mounted!.container, "日志编码", "GBK");
     await waitForText(mounted, "ERROR 中文");
-    expect(select.value).toBe("gbk");
+    expect(select.textContent).toBe("GBK");
   });
 
   it("uses the asset terminal encoding setting by default when decoding logs", async () => {
@@ -426,10 +426,10 @@ describe("LogViewer", () => {
     mounted = mountWithClient(createElement(LogViewer, { sessionId: SESSION, path: LOG_PATH }));
     await waitForText(mounted, "ERROR 中文");
 
-    const select = mounted!.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="日志编码"]',
+    const select = mounted!.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="日志编码"]',
     );
-    expect(select?.value).toBe("gbk");
+    expect(select?.textContent).toBe("GBK");
   });
 
   it("does not let an older page response replace the latest page", async () => {
@@ -476,11 +476,7 @@ describe("LogViewer", () => {
 
     click(toolbarButton(mounted.container, "重新读取当前分块（日志文件可能已增长）"));
     await flushUntil(() => mocks.readRange.mock.calls.length === 2);
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="日志编码"]',
-    );
-    if (!select) throw new Error("encoding select not found");
-    setSelectValue(select, "gbk");
+    chooseSelectOption(mounted.container, "日志编码", "GBK");
     await flushUntil(() => mocks.readRange.mock.calls.length === 3);
 
     current.resolve(gbkRangeResult());

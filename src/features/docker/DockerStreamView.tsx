@@ -19,12 +19,12 @@ export function DockerStreamView({ stream, onClose }: { stream: DockerOutputStre
   }, [stream]);
 
   return (
-    <div className="flex h-[320px] min-h-0 flex-col border-t border-neutral-800/70 bg-term">
+    <div className="flex h-[min(320px,60dvh)] min-h-0 flex-col border-t border-neutral-800/70 bg-term">
       <div className="nx-toolbar">
-        <span className="nx-toolbar-title">{stream.title}</span>
-        <span className="nx-badge">流式输出</span>
+        <span className="nx-toolbar-title min-w-0 truncate" title={stream.title}>{stream.title}</span>
+        <span className="nx-badge shrink-0 max-[420px]:hidden">流式输出</span>
         <div className="nx-spacer" />
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm" title="停止并关闭输出" onClick={onClose}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm shrink-0 pointer-coarse:h-9 pointer-coarse:w-9" aria-label="停止并关闭输出" title="停止并关闭输出" onClick={onClose}>
           <IconClose size={12} />
         </button>
       </div>

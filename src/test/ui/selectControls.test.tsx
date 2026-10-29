@@ -51,6 +51,36 @@ describe("select controls", () => {
     expect(above.style.top).toBe("");
   });
 
+  it("does not reopen when it sits inside a label and an option is clicked", () => {
+    const onChange = vi.fn();
+    mounted = mount(createElement("label", null,
+      createElement("span", null, "来源"),
+      createElement(Select, {
+        ariaLabel: "来源", value: "a", onChange,
+        options: [{ value: "a", label: "A" }, { value: "b", label: "B" }],
+      })));
+    const trigger = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="来源"]')!;
+    click(trigger);
+    const option = [...mounted.container.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("B"))!;
+    // A real click is cancelable; the shared click() helper is not, and a label only skips a canceled click.
+    act(() => { option.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
+    expect(onChange).toHaveBeenCalledWith("b");
+    // A label would forward the click to its control and open the list again.
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(mounted.container.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it("passes the validation state to the control", () => {
+    mounted = mount(createElement("div", null,
+      createElement(Select, {
+        ariaLabel: "规则", value: "a", onChange: vi.fn(), ariaInvalid: true, ariaDescribedBy: "rule-hint",
+        options: [{ value: "a", label: "A" }],
+      })));
+    const trigger = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="规则"]')!;
+    expect(trigger.getAttribute("aria-invalid")).toBe("true");
+    expect(trigger.getAttribute("aria-describedby")).toBe("rule-hint");
+  });
+
   it("closes when the page scrolls outside the list", () => {
     mounted = mount(createElement(Select, {
       ariaLabel: "滚动", value: "a", onChange: vi.fn(),

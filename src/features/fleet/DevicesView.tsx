@@ -23,6 +23,7 @@ import { copyText as copyToClipboard } from "../../ui/clipboard";
 import { EVENTS, listenEvent, type DeviceStatusEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
+import { Select } from "../../ui/Select";
 import {
   IconCheckCircle,
   IconChevronDown,
@@ -882,18 +883,18 @@ export function DevicesView() {
               placeholder="按名称、平台或地址搜索"
               onChange={(e) => setDeviceQuery(e.target.value)}
             />
-            <select
-              className="nx-select shrink-0"
-              style={{ width: 112 }}
+            <Select
+              className="w-[132px] shrink-0"
               value={deviceFilter}
-              aria-label="设备状态过滤"
-              onChange={(e) => setDeviceFilter(e.target.value as typeof deviceFilter)}
-            >
-              <option value="all">全部</option>
-              <option value="online">在线</option>
-              <option value="offline">离线</option>
-              <option value="revoked">已撤销接入</option>
-            </select>
+              ariaLabel="设备状态过滤"
+              onChange={(value) => setDeviceFilter(value as typeof deviceFilter)}
+              options={[
+                { value: "all", label: "全部" },
+                { value: "online", label: "在线" },
+                { value: "offline", label: "离线" },
+                { value: "revoked", label: "已撤销接入" },
+              ]}
+            />
             {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
               <span className="nx-hint text-[11px]">
                 显示 {visibleDevices?.length ?? 0} / {devices.length} 台

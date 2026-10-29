@@ -30,6 +30,7 @@ import { useFleetAccount } from "../fleet/useFleetAccount";
 import { HostShareTerminalApp } from "../sharing/HostShareTerminalApp";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { formatTime } from "../../ui/format";
 import {
   IconGlobe,
@@ -320,19 +321,13 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       {createOpen && (
         <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="nx-select min-w-0 flex-1 basis-40"
+            <Select
+              className="min-w-0 flex-1 basis-40"
+              ariaLabel="分享主机"
               value={deviceId}
-              aria-label="分享主机"
-              onChange={(e) => setDeviceId(e.target.value)}
-            >
-              <option value="">选择主机</option>
-              {shareableDevices.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+              onChange={setDeviceId}
+              options={[{ value: "", label: "选择主机" }, ...shareableDevices.map((d) => ({ value: d.id, label: d.name }))]}
+            />
             <input
               className="nx-input min-w-0 flex-1 basis-40"
               placeholder="接收者的用户名"
@@ -342,19 +337,13 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
             />
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="nx-select shrink-0"
-              style={{ width: 120 }}
-              value={ttlMs}
-              aria-label="分享有效期"
-              onChange={(e) => setTtlMs(Number(e.target.value))}
-            >
-              {SHARE_TTL_OPTIONS.map((o) => (
-                <option key={o.ms} value={o.ms}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              className="w-[120px] shrink-0"
+              ariaLabel="分享有效期"
+              value={String(ttlMs)}
+              onChange={(value) => setTtlMs(Number(value))}
+              options={SHARE_TTL_OPTIONS.map((o) => ({ value: String(o.ms), label: o.label }))}
+            />
             <label className="flex items-center gap-1.5 text-[12px] text-neutral-300">
               <input type="checkbox" className="h-4 w-4" checked={write} onChange={(e) => setWrite(e.target.checked)} />
               允许读写

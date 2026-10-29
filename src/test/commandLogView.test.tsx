@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { clickButton, flush, flushUntil as flushUntilBase, mount, setInputValue, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, flush, flushUntil as flushUntilBase, mount, chooseSelectOption, setInputValue, type MountedView } from "./features/reactTestUtils";
 
 async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
   await flush();
@@ -173,9 +173,7 @@ describe("AuditView command view", () => {
     clickButton(mounted.container, "命令");
     await flushUntil(() => mounted!.container.querySelectorAll("tbody tr").length === 3);
 
-    const deviceSelect = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
-    if (!deviceSelect) throw new Error("Device filter select did not appear");
-    setSelectValue(deviceSelect, "a-1");
+    chooseSelectOption(mounted.container, "按设备过滤", "web-01");
     await flushUntil(() => mocks.commandQuery.mock.calls.length >= 2);
     expect(mocks.commandQuery).toHaveBeenLastCalledWith({ assetId: "a-1", userId: undefined, sessionId: undefined, limit: 100, offset: 0 });
     expect(mocks.commandCount).toHaveBeenLastCalledWith({ assetId: "a-1", userId: undefined, sessionId: undefined });

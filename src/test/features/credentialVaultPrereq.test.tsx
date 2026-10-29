@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   vaultStatus: vi.fn(),
@@ -427,11 +427,7 @@ describe("Vault-not-initialized gate (asset flows)", () => {
     );
     await flushUntil(() => !!assetEditorModal());
     const editor = assetEditorModal()!;
-    const authSelect = [...editor.querySelectorAll("select")].find(
-      (s) => s.value === "password",
-    );
-    if (!authSelect) throw new Error("auth select not found");
-    setSelectValue(authSelect as HTMLSelectElement, "key");
+    chooseSelectOption(editor, "认证方式", "私钥文件");
     await flush();
     clickButton(editor, "存入凭据库");
     await flushUntil(() => !!initModal());

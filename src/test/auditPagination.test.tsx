@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { clickButton, deferred, flush, flushUntil as flushUntilBase, mount, setSelectValue, type MountedView } from "./features/reactTestUtils";
+import { clickButton, deferred, flush, flushUntil as flushUntilBase, chooseSelectOption, mount, type MountedView } from "./features/reactTestUtils";
 
 async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
   await flush();
@@ -412,13 +412,11 @@ describe("AuditView device timeline", () => {
     seedAdmin();
     mounted = mount(createElement(AuditView));
 
-    await flushUntil(() => mounted!.container.querySelector('select[aria-label="按设备过滤"]') !== null);
-    const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="按设备过滤"]');
-    if (!select) throw new Error("Device filter select did not appear");
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="按设备过滤"]') !== null);
     // With no device selected, the source filter is kept.
     expect(mocks.auditQuery).toHaveBeenCalledWith({ source: undefined, limit: 100, offset: 0 });
 
-    setSelectValue(select, "d-1");
+    chooseSelectOption(mounted!.container, "按设备过滤", "web-01");
     await flushUntil(() => {
       const body = text(mounted!.container);
       const refresh = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(

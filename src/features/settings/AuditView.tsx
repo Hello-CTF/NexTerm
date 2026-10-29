@@ -5,6 +5,7 @@ import { fleetApi, type FleetDevice } from "../../ipc/fleetApi";
 import { useAuth } from "../auth/store";
 import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconHistory, IconRefresh } from "../../ui/icons";
 import { CommandLogView } from "./CommandLogView";
 import { useCompactWidth } from "./useCompactWidth";
@@ -236,20 +237,13 @@ export function AuditView() {
         )}
         <div className="nx-spacer" />
         {devices !== null && devices.length > 0 && (
-          <select
-            className="nx-select shrink-0"
-            style={{ width: 140 }}
-            aria-label="按设备过滤"
+          <Select
+            className="w-[140px] shrink-0"
+            ariaLabel="按设备过滤"
             value={deviceId}
-            onChange={(e) => setDeviceId(e.target.value)}
-          >
-            <option value="">全部设备</option>
-            {devices.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            onChange={setDeviceId}
+            options={[{ value: "", label: "全部设备" }, ...devices.map((d) => ({ value: d.id, label: d.name }))]}
+          />
         )}
         <div className="nx-segment">
           {FILTERS.map((f) => (

@@ -10,7 +10,7 @@ import {
   click,
   flush,
   mount,
-  setSelectValue,
+  chooseSelectOption,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -72,10 +72,14 @@ function editor(): EditorView {
   return view;
 }
 
-function languageSelect(): HTMLSelectElement {
-  const select = mounted?.container.querySelector<HTMLSelectElement>('select[aria-label="语法高亮"]');
+function languageSelect(): HTMLButtonElement {
+  const select = mounted?.container.querySelector<HTMLButtonElement>('button[aria-label="语法高亮"]');
   if (!select) throw new Error("Language selector not found");
   return select;
+}
+
+function chooseLanguage(optionText: string): void {
+  chooseSelectOption(mounted!.container, "语法高亮", optionText);
 }
 
 function highlightedSpan(text: string): HTMLSpanElement | null {
@@ -117,8 +121,7 @@ afterEach(() => {
 describe("FileEditor language selection and highlighting", () => {
   it("auto-detects case-insensitively and renders real CodeMirror highlighting", async () => {
     await mountEditor("/tmp/EXAMPLE.JS");
-    expect(languageSelect().value).toBe("auto");
-    expect(languageSelect().querySelector('option[value="auto"]')?.textContent).toContain("JavaScript");
+    expect(languageSelect().textContent).toContain("自动（JavaScript）");
     await expectHighlight("const");
     expect(mocks.read).toHaveBeenCalledOnce();
   });
@@ -139,16 +142,16 @@ describe("FileEditor language selection and highlighting", () => {
     const edited = view.state.doc.toString();
     const cursor = view.state.selection.main.anchor;
     view.scrollDOM.scrollTop = 20;
-    const encoding = mounted!.container.querySelector<HTMLSelectElement>("label select");
+    const encoding = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="解码方式"]');
     const eol = mounted!.container.querySelector<HTMLButtonElement>('button[title^="当前换行符"]');
     if (!encoding || !eol) throw new Error("Encoding or EOL control not found");
-    const encodingLabel = encoding.closest("label")?.textContent;
-    expect(encoding.value).toBe("auto");
+    const encodingLabel = encoding.textContent;
+    // Auto detection shows the detected encoding on the trigger.
     expect(encodingLabel).toContain("UTF-8");
     expect(eol.textContent).toBe("LF");
     expect(mounted!.container.textContent).toContain("未保存");
 
-    setSelectValue(languageSelect(), "javascript");
+    chooseLanguage("JavaScript");
     await expectHighlight("const");
 
     expect(editor()).toBe(view);
@@ -157,8 +160,7 @@ describe("FileEditor language selection and highlighting", () => {
     expect(view.state.selection.main.anchor).toBe(cursor);
     expect(view.scrollDOM.scrollTop).toBe(20);
     expect(mounted!.container.textContent).toContain("未保存");
-    expect(encoding.value).toBe("auto");
-    expect(encoding.closest("label")?.textContent).toBe(encodingLabel);
+    expect(encoding.textContent).toBe(encodingLabel);
     expect(eol.textContent).toBe("LF");
     expect(mocks.read).toHaveBeenCalledOnce();
 
@@ -172,7 +174,7 @@ describe("FileEditor language selection and highlighting", () => {
     expect(view.state.doc.toString()).toBe(edited);
     expect(mounted!.container.textContent).toContain("未保存");
 
-    setSelectValue(languageSelect(), "plain");
+    chooseLanguage("纯文本");
     await waitFor(() => expect(mounted!.container.querySelector(".cm-line span")).toBeNull());
     expect(view.state.doc.toString()).toBe(edited);
     expect(mounted!.container.textContent).toContain("未保存");
@@ -191,25 +193,24 @@ describe("FileEditor language selection and highlighting", () => {
   it("resets a manual override on path changes and does not carry it into a new editor", async () => {
     await mountEditor("/tmp/example.txt");
     const view = editor();
-    setSelectValue(languageSelect(), "python");
-    expect(languageSelect().value).toBe("python");
+    chooseLanguage("Python");
+    expect(languageSelect().textContent).toBe("Python");
 
     act(() => {
       mounted!.root.render(tree("/tmp/example.JS"));
     });
     await expectHighlight("const");
-    expect(languageSelect().value).toBe("auto");
-    expect(languageSelect().querySelector('option[value="auto"]')?.textContent).toContain("JavaScript");
+    expect(languageSelect().textContent).toContain("自动（JavaScript）");
     expect(editor()).toBe(view);
     expect(view.state.doc.toString()).toBe("const answer = 1;");
     expect(mocks.read).toHaveBeenCalledOnce();
 
-    setSelectValue(languageSelect(), "plain");
-    expect(languageSelect().value).toBe("plain");
+    chooseLanguage("纯文本");
+    expect(languageSelect().textContent).toBe("纯文本");
     mounted!.unmount();
     mounted = undefined;
     await mountEditor("/tmp/example.JS");
-    expect(languageSelect().value).toBe("auto");
+    expect(languageSelect().textContent).toContain("自动（JavaScript）");
     await expectHighlight("const");
   });
 });

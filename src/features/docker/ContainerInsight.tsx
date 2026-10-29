@@ -39,11 +39,11 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
   return (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onClose}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9" onClick={onClose}>
           <IconArrowLeft size={13} />
           返回
         </button>
-        <span className="nx-toolbar-title">{container.name}</span>
+        <span className="nx-toolbar-title min-w-0 max-w-full truncate" title={container.name}>{container.name}</span>
         <span className={`nx-badge ${running ? "nx-badge-green" : "nx-badge-red"}`}>
           <span className="nx-dot" />
           {running ? "运行中" : container.state === "exited" ? "已停止" : container.state}
@@ -180,10 +180,10 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
             <tbody>
               {vm.env.map((row) => (
                 <tr key={row.key}>
-                  <td className="nx-mono truncate text-neutral-200" title={row.key}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal text-neutral-200" title={row.key}>
                     {row.key}
                   </td>
-                  <td className="nx-mono truncate text-neutral-400" title={row.value}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal text-neutral-400" title={row.value}>
                     {row.value || "—"}
                   </td>
                 </tr>
@@ -207,10 +207,10 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
             <tbody>
               {vm.labels.map((row) => (
                 <tr key={row.key}>
-                  <td className="nx-mono truncate text-neutral-200" title={row.key}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal text-neutral-200" title={row.key}>
                     {row.key}
                   </td>
-                  <td className="nx-mono truncate text-neutral-400" title={row.value}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal text-neutral-400" title={row.value}>
                     {row.value || "—"}
                   </td>
                 </tr>
@@ -238,13 +238,13 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
               {vm.mounts.map((m, i) => (
                 <tr key={`${m.source}-${m.destination}-${i}`}>
                   <td>{m.type || "—"}</td>
-                  <td className="nx-mono truncate" title={m.name}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal" title={m.name}>
                     {m.name || "—"}
                   </td>
-                  <td className="nx-mono truncate" title={m.source}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal" title={m.source}>
                     {m.source || "—"}
                   </td>
-                  <td className="nx-mono truncate" title={m.destination}>
+                  <td className="nx-mono truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal" title={m.destination}>
                     {m.destination || "—"}
                   </td>
                   <td>{m.rw ? "RW" : "RO"}</td>
@@ -266,7 +266,7 @@ function Field({ label, value, mono }: { label: string; value: string; mono?: bo
   return (
     <div className="flex min-w-0 items-baseline gap-2">
       <span className="shrink-0 text-[11px] text-neutral-500">{label}</span>
-      <span className={`truncate text-[12px] text-neutral-200 ${mono ? "nx-mono" : ""}`} title={value}>
+      <span className={`truncate max-[560px]:overflow-visible max-[560px]:break-all max-[560px]:whitespace-normal text-[12px] text-neutral-200 ${mono ? "nx-mono" : ""}`} title={value}>
         {value || "—"}
       </span>
     </div>

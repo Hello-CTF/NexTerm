@@ -9,10 +9,11 @@ import {
   flushUntil,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
+import { chosenOptionLabels, optionLabels, selectedLabel } from "./selectProbe";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   transcriptSyncOptIn: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
+  copyText: vi.fn(),
   updateTab: vi.fn(),
   uiState: {
     pushToast: null as unknown,
@@ -47,6 +49,7 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: {},
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../app/store", () => {
   mocks.uiState.pushToast = mocks.toast;
   mocks.uiState.updateTab = mocks.updateTab;
@@ -62,6 +65,11 @@ import {
   formatTranscriptBytes,
   stripAnsi,
 } from "../../features/terminal/transcriptText";
+
+// hostCount is the number of hosts the picker offers; its placeholder is not an option.
+const hostCount = (): number => {
+  return document.querySelector('button[aria-label="选择主机"]') ? optionLabels(document.body, "选择主机").length : -1;
+};
 
 const ASSET = {
   id: "01J0NEXTERMLOCALDEVICE0001",
@@ -126,6 +134,7 @@ beforeEach(() => {
   mocks.transcriptRead.mockResolvedValue(readResult([]));
   mocks.transcriptSearch.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
+  mocks.copyText.mockResolvedValue(undefined);
   mocks.uiState.workspaces = [];
   mocks.uiState.activeWorkspaceId = null;
 });
@@ -144,9 +153,8 @@ describe("TranscriptHistoryPanel", () => {
     mounted = mount(createElement(TranscriptHistoryPanel, { workspaceId: "ws-1" }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("请选择主机查看终端历史"));
     expect(mocks.transcriptList).not.toHaveBeenCalled();
-    const hostSelect = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
-    expect(hostSelect.value).toBe("");
-    setSelectValue(hostSelect, other.id);
+    expect(selectedLabel(mounted.container, "选择主机")).toBe("请选择主机");
+    chooseSelectOption(mounted.container, "选择主机", "other-host");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"));
     expect(mocks.transcriptList).toHaveBeenCalledWith(other.id);
     expect(mocks.transcriptList).not.toHaveBeenCalledWith(ASSET.id);
@@ -157,7 +165,7 @@ describe("TranscriptHistoryPanel", () => {
       createElement(TranscriptHistoryPanel, { workspaceId: "ws-1", assetId: ASSET.id, fixedHost: true }),
     );
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"));
-    expect(mounted.container.querySelector('select[aria-label="选择主机"]')).toBeNull();
+    expect(mounted.container.querySelector('button[aria-label="选择主机"]')).toBeNull();
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
     expect(mocks.assetList).not.toHaveBeenCalled();
   });
@@ -172,7 +180,7 @@ describe("TranscriptHistoryPanel", () => {
     );
     await flushUntil(
       () =>
-        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 3 &&
+        hostCount() === 2 &&
         (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"),
     );
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
@@ -188,11 +196,9 @@ describe("TranscriptHistoryPanel", () => {
     mounted = mount(
       createElement(TranscriptHistoryPanel, { workspaceId: "ws-tools", assetId: hostA.id, visible: false }),
     );
-    const hostSelect = () =>
-      mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')!;
     await flushUntil(
       () =>
-        hostSelect().options.length === 4 &&
+        hostCount() === 3 &&
         (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"),
     );
     expect(mocks.transcriptList).toHaveBeenLastCalledWith(hostA.id);
@@ -204,7 +210,7 @@ describe("TranscriptHistoryPanel", () => {
         );
       });
 
-    setSelectValue(hostSelect(), hostB.id);
+    chooseSelectOption(mounted.container, "选择主机", "host-b");
     await flushUntil(
       () =>
         mocks.transcriptList.mock.calls.some((call) => call[0] === hostB.id) &&
@@ -217,24 +223,24 @@ describe("TranscriptHistoryPanel", () => {
     rerender(false, hostB.id);
     rerender(true, hostB.id);
     await flush();
-    expect(hostSelect().value).toBe(hostB.id);
+    expect(chosenOptionLabels(mounted.container, "选择主机")).toEqual(["host-b"]);
     expect(mocks.transcriptList.mock.calls.filter((call) => call[0] === hostA.id)).toHaveLength(hostACalls);
 
     rerender(true, ASSET.id);
     await flushUntil(
       () =>
-        hostSelect().value === ASSET.id &&
+        chosenOptionLabels(mounted!.container, "选择主机").join() === ASSET.name &&
         mocks.transcriptList.mock.calls.some((call) => call[0] === ASSET.id) &&
         (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"),
     );
-    expect(hostSelect().value).toBe(ASSET.id);
+    expect(chosenOptionLabels(mounted.container, "选择主机")).toEqual([ASSET.name]);
   });
 
   it("shows empty state when the host has no transcripts", async () => {
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(
       () =>
-        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2 &&
+        hostCount() === 1 &&
         (mounted!.container.textContent ?? "").includes("该主机暂无终端历史"),
     );
     expect(mounted.container.textContent).toContain("该主机暂无终端历史");
@@ -325,7 +331,7 @@ describe("TranscriptHistoryPanel", () => {
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(
       () =>
-        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2 &&
+        hostCount() === 1 &&
         (mounted!.container.textContent ?? "").includes("已结束"),
     );
     click(mounted.container.querySelector("tbody tr")!);
@@ -470,9 +476,8 @@ describe("TranscriptHistoryPanel", () => {
     mocks.transcriptList.mockResolvedValue([summary({ assetDeleted: true })]);
     mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("主机已删除"));
-    const select = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]');
-    expect(select?.value).toBe(ASSET.id);
-    const options = [...(select?.options ?? [])].map((option) => option.textContent);
+    expect(chosenOptionLabels(mounted.container, "选择主机")).toEqual([`${ASSET.name}（已删除）`]);
+    const options = optionLabels(mounted.container, "选择主机");
     expect(options.some((text) => text?.includes("当前设备") && text?.includes("已删除"))).toBe(true);
     expect(mocks.transcriptList).toHaveBeenCalledWith(ASSET.id);
   });
@@ -577,7 +582,7 @@ describe("TranscriptHistoryPanel", () => {
     await flushUntil(
       () =>
         mocks.transcriptList.mock.calls.length === 1 &&
-        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择主机"]')?.options.length === 2,
+        hostCount() === 1,
     );
     const refresh = [...mounted.container.querySelectorAll("button")].find(
       (button) => button.textContent?.trim() === "刷新",
@@ -710,6 +715,65 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptRead).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("仅保留记录信息，没有输出内容");
     expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
+  });
+});
+
+describe("TranscriptHistoryPanel on narrow screens", () => {
+  async function openFirstRecord() {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mocks.transcriptRead.mockResolvedValue(
+      readResult([{ seq: 0, dataBase64: b64("line one\r\n") }, { seq: 1, dataBase64: b64("line two\r\n") }]),
+    );
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await waitFor(() => expect(mocks.transcriptRead).toHaveBeenCalled());
+    await waitFor(() => expect(mounted!.container.querySelector("pre")?.textContent).toContain("line two"));
+  }
+
+  it("shows the record list first and hides the detail pane below the md breakpoint", async () => {
+    mocks.transcriptList.mockResolvedValue([summary()]);
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    const detail = mounted.container.querySelector('[data-testid="transcript-detail"]')!;
+    expect(detail.classList.contains("max-md:hidden")).toBe(true);
+    const list = mounted.container.querySelector("table")!.parentElement!.parentElement!;
+    expect(list.classList.contains("max-md:hidden")).toBe(false);
+  });
+
+  it("drills into the detail pane and returns to the list with the back button", async () => {
+    await openFirstRecord();
+    const detail = mounted!.container.querySelector('[data-testid="transcript-detail"]')!;
+    const list = mounted!.container.querySelector("table")!.parentElement!.parentElement!;
+    expect(detail.classList.contains("max-md:hidden")).toBe(false);
+    expect(list.classList.contains("max-md:hidden")).toBe(true);
+    const back = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="返回记录列表"]')!;
+    expect(back.parentElement!.classList.contains("md:hidden")).toBe(true);
+    click(back);
+    await flush();
+    expect(detail.classList.contains("max-md:hidden")).toBe(true);
+    expect(list.classList.contains("max-md:hidden")).toBe(false);
+  });
+
+  it("copies the loaded output", async () => {
+    await openFirstRecord();
+    click(mounted!.container.querySelector('button[aria-label="复制已加载的输出"]')!);
+    await waitFor(() => expect(mocks.copyText).toHaveBeenCalledWith("line one\nline two\n"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", "已复制输出");
+  });
+
+  it("reports a failed copy", async () => {
+    mocks.copyText.mockRejectedValue(new Error("denied"));
+    await openFirstRecord();
+    click(mounted!.container.querySelector('button[aria-label="复制已加载的输出"]')!);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("复制失败")));
+  });
+
+  it("configures the search box for a soft keyboard", async () => {
+    await openFirstRecord();
+    const input = mounted!.container.querySelector<HTMLInputElement>('input[aria-label="搜索终端记录"]')!;
+    expect(input.getAttribute("enterkeyhint")).toBe("search");
+    expect(input.getAttribute("autocapitalize")).toBe("off");
   });
 });
 

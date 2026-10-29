@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { click, clickButton, flush, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, chooseSelectOption, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 import type { StateRuleSaveRequest, StateRuleScreenDTO } from "../../ipc/stateRuleApi";
 
 const mocks = vi.hoisted(() => ({
@@ -198,8 +198,7 @@ describe("state marking dialog", () => {
   it("keeps the chosen scope and typed keys when the AI drafts", async () => {
     mocks.draft.mockResolvedValue({ name: "n", region: "bottom", lines: 3, pattern: "Overwrite", state: "needs_me" });
     await open();
-    const select = [...mounted!.container.querySelectorAll("select")].find((item) => item.textContent?.includes("所有主机"))!;
-    setSelectValue(select, "global");
+    chooseSelectOption(mounted!.container, "适用范围", "所有主机");
     const keys = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="例如 y"]')!;
     setInputValue(keys, "y");
     clickButton(mounted!.container, "AI 起草");

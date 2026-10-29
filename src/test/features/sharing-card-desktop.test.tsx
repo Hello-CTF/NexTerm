@@ -3,7 +3,7 @@
 // (remote_share_* / remote_fleet_devices), the view is isomorphic with WEB; the role is probed via adminUsers.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, flushUntil, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, chooseSelectOption, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -176,9 +176,11 @@ describe("Share card - desktop logged in", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    const deviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]') as HTMLSelectElement;
-    expect([...deviceSelect.options].map((o) => o.textContent)).toEqual(["选择主机", "web-01"]);
-    setSelectValue(deviceSelect, "d-1");
+    const deviceTrigger = document.querySelector<HTMLElement>('button[aria-label="分享主机"]') as HTMLElement;
+    click(deviceTrigger);
+    expect([...document.querySelectorAll('[role="listbox"][aria-label="分享主机"] [role="option"]')].map((o) => o.textContent?.trim())).toEqual(["选择主机", "web-01"]);
+    click(deviceTrigger);
+    chooseSelectOption(document, "分享主机", "web-01");
     const recipient = [...document.querySelectorAll<HTMLInputElement>("input:not([type=checkbox])")].find((i) =>
       i.placeholder?.includes("接收者的用户名"),
     ) as HTMLInputElement;

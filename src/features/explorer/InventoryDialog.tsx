@@ -16,6 +16,7 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import { IconAlert, IconLoader, IconServer, IconXCircle } from "../../ui/icons";
 import { inventoryExecTarget, inventorySourceLabel, inventoryTargetText } from "./inventory";
 import { InventoryTargetActions, targetExecutable, type InventoryTargetSession } from "./InventoryTargetActions";
+import { Select } from "../../ui/Select";
 
 const SOURCE_ORDER: InventorySource[] = ["ssh-config", "docker-context", "kubernetes"];
 const SOURCE_LABEL: Record<InventorySource, string> = {
@@ -226,10 +227,17 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
 
           <div className="nx-form-row">
             <label className="nx-label" htmlFor="inventory-group">同步到分组</label>
-            <select id="inventory-group" className="nx-select" value={groupId} disabled={busy !== null || (source === "ssh-config" && watching)} onChange={(event) => setGroupId(event.target.value)}>
-              <option value="">新建或沿用「{DEFAULT_GROUP[source]}」分组</option>
-              {(groups.data ?? []).map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
-            </select>
+            <Select
+              id="inventory-group"
+              ariaLabel="同步到分组"
+              value={groupId}
+              disabled={busy !== null || (source === "ssh-config" && watching)}
+              options={[
+                { value: "", label: `新建或沿用「${DEFAULT_GROUP[source]}」分组` },
+                ...(groups.data ?? []).map((group) => ({ value: group.id, label: group.name })),
+              ]}
+              onChange={setGroupId}
+            />
           </div>
 
           {source === "ssh-config" && (

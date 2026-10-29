@@ -17,6 +17,7 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import { IconAlert, IconKey, IconServer, IconXCircle } from "../../ui/icons";
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { normalizeAssetTags } from "./assetSearch";
+import { Select } from "../../ui/Select";
 
 type Phase = "form" | "loading" | "preview" | "applying" | "done";
 
@@ -304,17 +305,16 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
 
                 <div className="nx-form-row">
                   <label className="nx-label" htmlFor="ssh-import-group">导入到分组</label>
-                  <select
+                  <Select
                     id="ssh-import-group"
-                    className="nx-select"
+                    ariaLabel="导入到分组"
                     value={groupId}
-                    onChange={(e) => setGroupId(e.target.value)}
-                  >
-                    <option value="">不指定（新资产不分组，覆盖保留原分组）</option>
-                    {(groups.data ?? []).map((group) => (
-                      <option key={group.id} value={group.id}>{group.name}</option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: "", label: "不指定（新资产不分组，覆盖保留原分组）" },
+                      ...(groups.data ?? []).map((group) => ({ value: group.id, label: group.name })),
+                    ]}
+                    onChange={setGroupId}
+                  />
                 </div>
                 <div className="nx-form-row">
                   <label className="nx-label" htmlFor="ssh-import-tags">统一标签</label>
@@ -574,15 +574,17 @@ function StrategySelect({
   label: string;
 }) {
   return (
-    <select
-      className="nx-input nx-input-sm shrink-0 font-mono text-[11.5px]"
-      aria-label={label}
+    <Select
+      className="shrink-0"
+      triggerClassName="nx-input nx-input-sm nx-select-trigger font-mono text-[11.5px]"
+      ariaLabel={label}
       value={action}
-      onChange={(e) => onAction(e.target.value as SshImportItemAction)}
-    >
-      <option value="skip">跳过</option>
-      <option value="overwrite">覆盖同名项</option>
-    </select>
+      options={[
+        { value: "skip", label: "跳过" },
+        { value: "overwrite", label: "覆盖同名项" },
+      ]}
+      onChange={(value) => onAction(value as SshImportItemAction)}
+    />
   );
 }
 

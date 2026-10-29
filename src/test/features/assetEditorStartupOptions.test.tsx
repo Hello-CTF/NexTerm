@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -72,15 +72,6 @@ function mountEditor(initial?: Asset) {
   const onSaved = vi.fn();
   mounted = withClient(createElement(AssetEditor, { kind: "asset", initial, onClose, onSaved }));
   return { onClose, onSaved };
-}
-
-function findSelect(optionText: string): HTMLSelectElement {
-  const selects = [...mounted!.container.querySelectorAll("select")];
-  const select = selects.find((candidate) =>
-    [...candidate.options].some((option) => option.textContent?.includes(optionText)),
-  );
-  if (!select) throw new Error(`select containing option ${optionText} not found`);
-  return select;
 }
 
 function findInput(placeholder: string): HTMLInputElement {
@@ -158,7 +149,7 @@ describe("AssetEditor SSH startup options", () => {
     await flush();
     expandAdvanced();
     setInputValue(findInput("连接成功后在该终端自动执行"), "echo hello && cd /var/log");
-    setSelectValue(findSelect("gb18030"), "gbk");
+    chooseSelectOption(mounted!.container, "终端编码", "gbk");
     setInputValue(envTextarea(), "LANG=en_US.UTF-8\nNEXTERM_TEST=1");
     fillName("startup-01");
     fillHost("10.0.0.8");
@@ -210,7 +201,7 @@ describe("AssetEditor SSH startup options", () => {
     expandAdvanced();
     await flush();
     expect(findInput("连接成功后在该终端自动执行").value).toBe("echo hi");
-    expect(findSelect("gb18030").value).toBe("gbk");
+    expect(mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="终端编码"][aria-haspopup="listbox"]')?.textContent).toContain("gbk");
     expect(envTextarea().value).toBe("A=1");
   });
 

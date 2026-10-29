@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -113,22 +113,31 @@ function mountEditor(initial?: Asset) {
   );
 }
 
-function findSelect(optionText: string): HTMLSelectElement {
-  const select = [...mounted!.container.querySelectorAll("select")].find((candidate) =>
-    [...candidate.options].some((option) => option.textContent?.includes(optionText)),
-  );
-  if (!select) throw new Error(`select containing option ${optionText} not found`);
-  return select;
+function queryViaSelect(): HTMLButtonElement | null {
+  return mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="通过 SSH 资产连接"][aria-haspopup="listbox"]');
 }
 
-function viaSelect(): HTMLSelectElement {
-  const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
+function viaSelect(): HTMLButtonElement {
+  const select = queryViaSelect();
   if (!select) throw new Error("via asset select not found");
   return select;
 }
 
-function queryViaSelect(): HTMLSelectElement | null {
-  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="通过 SSH 资产连接"]');
+// viaOptions opens the SSH asset select, reads its option labels and closes it again.
+function viaOptions(): string[] {
+  const trigger = viaSelect();
+  click(trigger);
+  const texts = [...mounted!.container.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent ?? "");
+  click(trigger);
+  return texts;
+}
+
+function chooseKind(label: string): void {
+  chooseSelectOption(mounted!.container, "类型", label);
+}
+
+function chooseVia(label: string): void {
+  chooseSelectOption(mounted!.container, "通过 SSH 资产连接", label);
 }
 
 function fillRequiredFields(name = "orders-db"): void {
@@ -154,9 +163,9 @@ function updatedPayload(): Record<string, unknown> {
 describe("AssetEditor database SSH tunnel", () => {
   it("defaults to direct connection and omits viaAssetId when creating", async () => {
     mountEditor();
-    setSelectValue(findSelect("PostgreSQL"), "postgres");
+    chooseKind("PostgreSQL");
     await flush();
-    expect(viaSelect().value).toBe("");
+    expect(viaSelect().textContent).toContain("直连");
 
     fillRequiredFields();
     await save();
@@ -173,13 +182,17 @@ describe("AssetEditor database SSH tunnel", () => {
       makeAsset({ id: "local-1", kind: "local", name: "local", host: null, port: null }),
     ]);
     mountEditor();
-    setSelectValue(findSelect("PostgreSQL"), "postgres");
-    await flushUntil(() => viaSelect().options.length === 3);
+    chooseKind("PostgreSQL");
+    await flushUntil(() => viaOptions().length === 3);
 
     expect(mocks.listAssets).toHaveBeenCalled();
-    expect([...viaSelect().options].map((option) => option.value)).toEqual(["", "ssh-a", "ssh-b"]);
+    const labels = viaOptions();
+    expect(labels).toHaveLength(3);
+    expect(labels[0]).toContain("直连");
+    expect(labels[1]).toContain("gateway-a");
+    expect(labels[2]).toContain("gateway-b");
     expect(mounted!.container.textContent).toContain("保存时会检查所选资产是否可用");
-    setSelectValue(viaSelect(), "ssh-b");
+    chooseVia("gateway-b");
     fillRequiredFields();
     await save();
     expect(createdPayload().options).toEqual({ viaAssetId: "ssh-b" });
@@ -194,10 +207,10 @@ describe("AssetEditor database SSH tunnel", () => {
     };
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a"), sshAsset("ssh-b", "gateway-b")]);
     mountEditor(makeAsset({ options }));
-    await flushUntil(() => viaSelect().options.length === 3);
-    expect(viaSelect().value).toBe("ssh-a");
+    await flushUntil(() => viaOptions().length === 3);
+    expect(viaSelect().textContent).toContain("gateway-a");
 
-    setSelectValue(viaSelect(), "ssh-b");
+    chooseVia("gateway-b");
     await save();
     expect(updatedPayload()).toMatchObject({
       id: "db-1",
@@ -209,10 +222,10 @@ describe("AssetEditor database SSH tunnel", () => {
   it("clears viaAssetId without removing unknown options", async () => {
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor(makeAsset({ options: { viaAssetId: "ssh-a", futureOption: "keep" } }));
-    await flushUntil(() => viaSelect().options.length === 2);
-    expect(viaSelect().value).toBe("ssh-a");
+    await flushUntil(() => viaSelect().textContent?.includes("gateway-a") === true);
+    expect(viaSelect().textContent).toContain("gateway-a");
 
-    setSelectValue(viaSelect(), "");
+    chooseVia("直连");
     await save();
     expect(updatedPayload().options).toEqual({ futureOption: "keep" });
   });
@@ -220,10 +233,9 @@ describe("AssetEditor database SSH tunnel", () => {
   it("keeps an existing reference that is absent from the current owner-scoped choices", async () => {
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor(makeAsset({ options: { viaAssetId: "missing-ssh", futureOption: "keep" } }));
-    await flushUntil(() => viaSelect().options.length === 3);
+    await flushUntil(() => viaOptions().length === 3);
 
-    expect(viaSelect().value).toBe("missing-ssh");
-    expect(viaSelect().selectedOptions[0]?.textContent).toContain("不在可选列表");
+    expect(viaSelect().textContent).toContain("不在可选列表");
     await save();
     expect(updatedPayload().options).toEqual({ viaAssetId: "missing-ssh", futureOption: "keep" });
   });
@@ -232,10 +244,10 @@ describe("AssetEditor database SSH tunnel", () => {
     it(`offers and saves an SSH tunnel when creating ${kind}`, async () => {
       mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
       mountEditor();
-      setSelectValue(findSelect(kind === "mysql" ? "MySQL / MariaDB" : "Redis"), kind);
-      await flushUntil(() => viaSelect().options.length === 2);
+      chooseKind(kind === "mysql" ? "MySQL / MariaDB" : "Redis");
+      await flushUntil(() => viaOptions().length === 2);
 
-      setSelectValue(viaSelect(), "ssh-a");
+      chooseVia("gateway-a");
       fillRequiredFields();
       await save();
       expect(createdPayload()).toMatchObject({ kind, options: { viaAssetId: "ssh-a" } });
@@ -249,11 +261,11 @@ describe("AssetEditor database SSH tunnel", () => {
       port: 3306,
       options: { viaAssetId: "ssh-a", futureOption: "keep" },
     }));
-    await flushUntil(() => viaSelect().options.length === 2);
-    expect(viaSelect().value).toBe("ssh-a");
+    await flushUntil(() => viaSelect().textContent?.includes("gateway-a") === true);
+    expect(viaSelect().textContent).toContain("gateway-a");
 
-    setSelectValue(findSelect("MySQL / MariaDB"), "postgres");
-    expect(viaSelect().value).toBe("ssh-a");
+    chooseKind("PostgreSQL");
+    expect(viaSelect().textContent).toContain("gateway-a");
     await save();
     expect(updatedPayload()).toMatchObject({
       kind: "postgres",
@@ -264,9 +276,9 @@ describe("AssetEditor database SSH tunnel", () => {
   it("removes viaAssetId after switching to a non-database asset", async () => {
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor(makeAsset({ options: { viaAssetId: "ssh-a", futureOption: "keep" } }));
-    await flushUntil(() => viaSelect().options.length === 2);
+    await flushUntil(() => viaOptions().length === 2);
 
-    setSelectValue(findSelect("PostgreSQL"), "ssh");
+    chooseKind("SSH");
     expect(queryViaSelect()).toBeNull();
     await save();
     expect(updatedPayload()).toMatchObject({ kind: "ssh" });

@@ -310,7 +310,7 @@ describe("touch More buttons reuse the same action menus", () => {
     for (const cell of headerCells) {
       expect(cell.className).toContain("max-[560px]:hidden");
     }
-    for (const label of ["上传", "下载", "新建", "删除"]) {
+    for (const label of ["上传", "新建"]) {
       const button = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button")].find(
         (b) => b.textContent?.trim() === label,
       );

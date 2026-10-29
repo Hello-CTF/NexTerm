@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, mount, mountWithClient, setInputValue, setSelectValue, waitFor, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, mount, mountWithClient, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   discover: vi.fn(),
@@ -96,7 +96,7 @@ afterEach(() => {
 describe("dynamic inventory dialog", () => {
   it("discovers read-only candidates and syncs only selected Docker keys", async () => {
     clickButton(mounted!.container, "Docker contexts");
-    setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!, "g1");
+    chooseSelectOption(mounted!.container, "同步到分组", "fleet");
     clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("docker-context", undefined));
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(2));
@@ -175,7 +175,7 @@ describe("dynamic inventory dialog", () => {
 
   it("starts SSH watching with the selected path and group", async () => {
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!, "/tmp/config");
-    setSelectValue(mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!, "g1");
+    chooseSelectOption(mounted!.container, "同步到分组", "fleet");
     clickButton(mounted!.container, "立即同步并开启自动同步");
     await waitFor(() => expect(mocks.setWatch).toHaveBeenCalledWith({ enabled: true, path: "/tmp/config", groupId: "g1" }));
     expect(mounted!.container.textContent).toContain("关闭自动同步");
@@ -247,12 +247,12 @@ describe("dynamic inventory dialog", () => {
     mocks.discover.mockResolvedValue({ source: "ssh-config", items: [], warnings: [] });
     mounted = mountWithClient(createElement(InventoryDialog, { onClose: () => undefined }));
     const path = mounted!.container.querySelector<HTMLInputElement>('input[placeholder="~/.ssh/config"]')!;
-    const group = mounted!.container.querySelector<HTMLSelectElement>("#inventory-group")!;
+    const group = mounted!.container.querySelector<HTMLButtonElement>("#inventory-group")!;
     await waitFor(() => expect(mocks.watchStatus).toHaveBeenCalled());
     await waitFor(() => expect(mounted!.container.textContent).toContain("关闭自动同步"));
     await waitFor(() => {
       expect(path.value).toBe("/custom/ssh-config");
-      expect(group.value).toBe("g1");
+      expect(group.textContent).toBe("fleet");
     });
     clickButton(mounted!.container, "预览");
     await waitFor(() => expect(mocks.discover).toHaveBeenCalledWith("ssh-config", "/custom/ssh-config"));
@@ -284,7 +284,7 @@ describe("dynamic inventory dialog", () => {
     // managed session for docker-context exec.
     setInputValue(mounted!.container.querySelector('input[aria-label="命令"]')!, "uname -a");
     setInputValue(mounted!.container.querySelector('input[aria-label="容器"]')!, "web");
-    setSelectValue(mounted!.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    chooseSelectOption(mounted!.container, "受管会话", "prod-host");
     mocks.call.mockResolvedValue({ output: "Linux\n", exitCode: 0 });
     clickButton(mounted!.container, "执行");
     await flush();
@@ -316,10 +316,12 @@ describe("dynamic inventory dialog", () => {
     expect(disclosures.length).toBe(1);
     clickButton(mounted!.container, "执行命令");
     expect(mounted!.container.textContent).toContain("ops/api-0");
-    const select = mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="容器"]')!;
-    expect([...select.options].map((option) => option.value)).toEqual(["app", "sidecar"]);
+    const select = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="容器"]')!;
+    click(select);
+    expect([...mounted!.container.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent)).toEqual(["app", "sidecar"]);
+    click(select);
     // Kubernetes pod exec runs through the server-side gate, no managed session.
-    expect(mounted!.container.querySelector('select[aria-label="受管会话"]')).toBeNull();
+    expect(mounted!.container.querySelector('button[aria-label="受管会话"]')).toBeNull();
   });
 
   it("keeps an in-flight exec bound to its launching account across an account switch", async () => {
@@ -335,7 +337,7 @@ describe("dynamic inventory dialog", () => {
     clickButton(mounted!.container, "执行命令");
     setInputValue(mounted!.container.querySelector('input[aria-label="命令"]')!, "true");
     setInputValue(mounted!.container.querySelector('input[aria-label="容器"]')!, "web");
-    setSelectValue(mounted!.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    chooseSelectOption(mounted!.container, "受管会话", "prod-host");
     let resolveExec!: (value: { output: string; exitCode: number }) => void;
     mocks.call.mockImplementation(() => new Promise<{ output: string; exitCode: number }>((resolve) => { resolveExec = resolve; }));
     clickButton(mounted!.container, "执行");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceList, type Workspace } from "../../app/store";
 import { assetApi, type Asset, type SessionInfo } from "../../ipc/commands";
@@ -13,9 +13,11 @@ import {
   type LogTailSourceStatus,
 } from "../../ipc/logTailApi";
 import { saveBrowserBlob } from "../../ipc/webFiles";
+import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { pickSavePath } from "../../ui/dialogs";
-import { IconChevronDown, IconDownload, IconInfo, IconPlay, IconServer, IconSettings, IconStop, IconTrash } from "../../ui/icons";
+import { IconChevronDown, IconCopy, IconDownload, IconInfo, IconPlay, IconServer, IconSettings, IconStop, IconTrash } from "../../ui/icons";
 import { LogPopover } from "./LogPopover";
 import { assetTagValues } from "../explorer/assetSearch";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
@@ -132,6 +134,12 @@ function collectTargets(
     });
 }
 
+function isNarrowViewport(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 560px)").matches;
+}
+
+const FOLLOW_SLACK_PX = 24;
+
 function statusTone(status: SourceViewStatus["status"]): string {
   if (status === "running") return "text-green-300";
   if (status === "failed") return "text-red-300";
@@ -172,6 +180,10 @@ export function MultiHostLogTail({
   const [capacity, setCapacity] = useState(5000);
   const [hostsOpen, setHostsOpen] = useState(() => (initialSelected?.length ?? 0) === 0);
   const [moreOpen, setMoreOpen] = useState(false);
+  // Narrow screens start with wrapped lines so a log line is readable without sideways scrolling.
+  const [wrap, setWrap] = useState(isNarrowViewport);
+  const [follow, setFollow] = useState(true);
+  const logRef = useRef<HTMLDivElement | null>(null);
 
   const bufferRef = useRef(new MergedLogBuffer(5000));
   const activeRef = useRef<ActiveRun | null>(null);
@@ -418,6 +430,23 @@ export function MultiHostLogTail({
     }
   };
 
+  // Keep the newest line in view while following; scrolling up by hand turns following off until the user returns.
+  useLayoutEffect(() => {
+    const el = logRef.current;
+    if (follow && el) el.scrollTop = el.scrollHeight;
+  });
+
+  const copyVisible = async () => {
+    const content = exportMergedLines(visibleLines);
+    if (!content) return;
+    try {
+      await copyText(content);
+      setSaveMessage(`已复制 ${visibleLines.length} 行日志`);
+    } catch (cause) {
+      setRunError(`复制失败：${describeError(cause)}`);
+    }
+  };
+
   const retained = bufferRef.current.retainedLines().length;
   const failedSources = runSources.filter((source) => statuses[source.sourceId]?.status === "failed").length;
   const hostsSummary = selectedIds.length === 0 ? "选择主机" : `${selectedIds.length} 台主机`;
@@ -434,11 +463,11 @@ export function MultiHostLogTail({
 
   return (
     <section className="nx-pane" aria-label="多主机日志合并" data-testid="multi-host-log-tail">
-      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-neutral-800/70 px-2.5 py-1.5">
+      <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-neutral-800/70 px-2.5 py-1.5" data-testid="log-toolbar">
         <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title">多主机日志</h2>
+        <h2 className="nx-toolbar-title min-w-0 truncate">多主机日志</h2>
         <span
-          className="inline-flex text-neutral-500"
+          className="inline-flex items-center justify-center text-neutral-500 pointer-coarse:min-h-10 pointer-coarse:min-w-10"
           role="img"
           tabIndex={0}
           title={INFO_TEXT}
@@ -482,22 +511,20 @@ export function MultiHostLogTail({
                       <span className={`w-24 shrink-0 truncate text-[11px] ${hostColor(sessionId)}`} title={target?.label}>
                         {target?.label ?? sessionId}
                       </span>
-                      <select
-                        className="nx-input nx-input-sm w-28 shrink-0"
+                      <Select
+                        className="w-28 shrink-0"
+                        triggerClassName="nx-input nx-input-sm nx-select-trigger"
                         value={draft.kind}
                         disabled={running}
-                        aria-label={`来源类型 ${target?.label ?? sessionId}`}
-                        onChange={(event) =>
+                        ariaLabel={`来源类型 ${target?.label ?? sessionId}`}
+                        onChange={(value) =>
                           setDrafts((current) => ({
                             ...current,
-                            [sessionId]: { ...draft, kind: event.target.value as LogTailSourceKind },
+                            [sessionId]: { ...draft, kind: value as LogTailSourceKind },
                           }))
                         }
-                      >
-                        {Object.entries(SOURCE_KIND_LABELS).map(([kind, label]) => (
-                          <option key={kind} value={kind}>{label}</option>
-                        ))}
-                      </select>
+                        options={Object.entries(SOURCE_KIND_LABELS).map(([kind, label]) => ({ value: kind, label }))}
+                      />
                       <input
                         className="nx-input nx-input-sm min-w-[8rem] flex-1 basis-full font-mono sm:basis-0"
                         value={draft.value}
@@ -519,13 +546,13 @@ export function MultiHostLogTail({
           </div>
         </LogPopover>
         <input
-          className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:max-w-xs"
+          className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono max-[560px]:order-last max-[560px]:basis-full sm:max-w-xs"
           value={include}
           placeholder="只显示匹配的行（正则表达式），例如 ERROR|WARN"
           aria-label="包含正则"
           onChange={(event) => setInclude(event.target.value)}
         />
-        <span className="nx-spacer" />
+        <span className="nx-spacer max-[560px]:hidden" />
         {running ? (
           <button type="button" className="nx-btn nx-btn-danger nx-btn-sm" disabled={stopping} onClick={() => void stop()}>
             <IconStop size={13} />
@@ -612,7 +639,20 @@ export function MultiHostLogTail({
                 />
               </label>
             </div>
-            <div className="flex gap-2">
+            <label className="flex items-center gap-2 text-[12px] text-neutral-300 pointer-coarse:min-h-11">
+              <input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} />
+              自动换行
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="nx-btn nx-btn-ghost nx-btn-sm"
+                disabled={visibleLines.length === 0}
+                onClick={() => void copyVisible()}
+              >
+                <IconCopy size={13} />
+                复制日志
+              </button>
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -650,36 +690,60 @@ export function MultiHostLogTail({
         </div>
       )}
 
-      <div
-        role="log"
-        aria-label="多主机合并日志内容"
-        className="min-h-0 flex-1 overflow-auto bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]"
-      >
-        {visibleLines.length === 0 ? (
-          <div className="px-2 py-4 text-center text-[11px] text-neutral-500">{emptyMessage}</div>
-        ) : (
-          visibleLines.map((line) => (
-            <div key={line.sequence} className="flex min-w-max gap-2 rounded px-1 hover:bg-neutral-800/30">
-              <span className={`shrink-0 select-none ${hostColor(line.sessionId)}`} title={line.sessionId}>
-                [{line.host}]
-              </span>
-              <span className={`whitespace-pre ${line.stderr ? "text-rose-300" : "text-neutral-300"}`}>
-                {highlightSegments(line.text, filters.highlight).map((segment, index) =>
-                  segment.matched ? (
-                    <mark key={index} className="rounded-[2px] bg-amber-300/40 px-0 text-inherit">{segment.text}</mark>
-                  ) : (
-                    <span key={index}>{segment.text}</span>
-                  ),
-                )}
-              </span>
-            </div>
-          ))
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={logRef}
+          role="log"
+          aria-label="多主机合并日志内容"
+          data-wrap={wrap ? "true" : "false"}
+          className="min-h-0 flex-1 overflow-auto overscroll-contain bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]"
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK_PX;
+            setFollow((current) => (current === atBottom ? current : atBottom));
+          }}
+        >
+          {visibleLines.length === 0 ? (
+            <div className="px-2 py-4 text-center text-[11px] text-neutral-500">{emptyMessage}</div>
+          ) : (
+            visibleLines.map((line) => (
+              <div
+                key={line.sequence}
+                className={`flex gap-2 rounded px-1 hover:bg-neutral-800/30 ${wrap ? "min-w-0" : "min-w-max"}`}
+              >
+                <span className={`shrink-0 select-none ${hostColor(line.sessionId)}`} title={line.sessionId}>
+                  [{line.host}]
+                </span>
+                <span
+                  className={`select-text ${wrap ? "min-w-0 whitespace-pre-wrap break-all" : "whitespace-pre"} ${line.stderr ? "text-rose-300" : "text-neutral-300"}`}
+                >
+                  {highlightSegments(line.text, filters.highlight).map((segment, index) =>
+                    segment.matched ? (
+                      <mark key={index} className="rounded-[2px] bg-amber-300/40 px-0 text-inherit">{segment.text}</mark>
+                    ) : (
+                      <span key={index}>{segment.text}</span>
+                    ),
+                  )}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+        {!follow && visibleLines.length > 0 && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-primary nx-btn-sm absolute right-3 bottom-3 min-h-9 shadow-lg"
+            onClick={() => setFollow(true)}
+          >
+            <IconChevronDown size={13} />
+            跳到最新
+          </button>
         )}
       </div>
 
       {runSources.length > 0 && (
         <details className="shrink-0 border-t border-neutral-800/70 px-3 py-1" open={failedSources > 0}>
-          <summary className="cursor-pointer select-none text-[11px] text-neutral-400">
+          <summary className="flex cursor-pointer select-none items-center text-[11px] text-neutral-400 pointer-coarse:min-h-10">
             来源状态（{runSources.length}{failedSources > 0 ? `，${failedSources} 个失败` : ""}）
           </summary>
           <div className="mt-1 grid max-h-32 grid-cols-1 gap-1 overflow-y-auto xl:grid-cols-2">

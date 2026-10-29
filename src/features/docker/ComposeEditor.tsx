@@ -137,7 +137,7 @@ export function ComposeEditor({
       <div className="nx-overlay" onClick={onClose}>
         <div
           ref={modalRef}
-          className="nx-modal flex h-[86vh] w-[94vw] max-w-[1200px] flex-col"
+          className="nx-modal flex h-[86dvh] w-[94vw] max-w-[1200px] flex-col"
           role="dialog"
           aria-modal="true"
           aria-label={`编辑并重新部署 ${stack.project}`}
@@ -149,10 +149,10 @@ export function ComposeEditor({
           }}
         >
           <div className="nx-modal-header">
-            <span className="truncate">编辑并重新部署 · {stack.project}</span>
-            <span className="nx-badge">保存前先查看差异</span>
+            <span className="min-w-0 truncate" title={stack.project}>编辑并重新部署 · {stack.project}</span>
+            <span className="nx-badge shrink-0 max-[560px]:hidden">保存前先查看差异</span>
             <div className="nx-spacer" />
-            <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭 Compose 编辑器" onClick={onClose}>
+            <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label="关闭 Compose 编辑器" onClick={onClose}>
               <IconClose size={12} />
             </button>
           </div>
@@ -226,7 +226,7 @@ function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
     <div className="nx-overlay" onClick={onCancel}>
       <div
         ref={ref}
-        className="nx-modal flex max-h-[80vh] w-[720px] max-w-[92vw] flex-col"
+        className="nx-modal flex max-h-[80dvh] w-[720px] max-w-[92vw] flex-col"
         role="dialog"
         aria-modal="true"
         aria-label="确认 Compose 变更"
@@ -249,7 +249,7 @@ function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
             ))}</pre>
           )}
         </div>
-        <div className="nx-modal-footer">
+        <div className="nx-modal-footer [padding-bottom:calc(0.75rem+var(--nx-safe-bottom,0px))]">
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={onCancel}>取消</button>
           <button type="button" className="nx-btn nx-btn-danger" disabled={busy} onClick={onConfirm}>
             {busy ? "正在预检…" : "保存并 up -d"}

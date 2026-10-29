@@ -4,6 +4,7 @@ import { cronApi, cronTimeoutMs, type CronJob } from "../../ipc/cron";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { profileKeyUnavailable as profileKeyMasked } from "./modelLifecycle";
 import { clipText } from "../../ui/textClip";
 import {
@@ -481,25 +482,24 @@ export function CronPanel({
             <label className="nx-hint text-[11px]" htmlFor="cron-register-model-profile">
               模型档案
             </label>
-            <select
+            <Select
               id="cron-register-model-profile"
-              className="nx-select nx-input-sm min-w-0 flex-1"
-              aria-label="模型档案"
+              className="min-w-0 flex-1"
+              triggerClassName="nx-input nx-input-sm nx-select-trigger"
+              ariaLabel="模型档案"
               value={draft.modelProfileId}
-              onChange={(e) => setDraft({ ...draft, modelProfileId: e.target.value })}
-            >
-              <option value="">{followActiveLabel()}</option>
-              {draft.modelProfileId && !profileById(draft.modelProfileId) && (
-                <option value={draft.modelProfileId}>
-                  {unresolvedProfileLabel(draft.modelProfileId)}
-                </option>
-              )}
-              {(profilesView?.profiles ?? []).map((p) => (
-                <option key={p.id} value={p.id}>
-                  {`${p.name} · ${p.model}${profileKeyMasked(p) ? "（密钥已保存）" : ""}`}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setDraft({ ...draft, modelProfileId: value })}
+              options={[
+                { value: "", label: followActiveLabel() },
+                ...(draft.modelProfileId && !profileById(draft.modelProfileId)
+                  ? [{ value: draft.modelProfileId, label: unresolvedProfileLabel(draft.modelProfileId) }]
+                  : []),
+                ...(profilesView?.profiles ?? []).map((p) => ({
+                  value: p.id,
+                  label: `${p.name} · ${p.model}${profileKeyMasked(p) ? "（密钥已保存）" : ""}`,
+                })),
+              ]}
+            />
           </div>
           {profilesError && (
             <div className="nx-hint text-[11px] text-red-300" role="alert">

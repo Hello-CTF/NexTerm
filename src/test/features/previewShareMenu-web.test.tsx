@@ -67,7 +67,7 @@ describe("PreviewShareMenu WEB dispatch", () => {
       open.click();
       await flush();
     });
-    expect(container.querySelector("select")).not.toBeNull();
+    expect(container.querySelector('button[aria-label="预览链接有效期"]')).not.toBeNull();
     clickButton(container, "创建链接");
     await flushUntil(
       () => container.textContent?.includes(`${window.location.origin}/share/preview/tok-web`) === true,
@@ -86,7 +86,7 @@ describe("PreviewShareMenu WEB dispatch", () => {
       open.click();
       await flush();
     });
-    await flushUntil(() => container.querySelector("select") !== null);
+    await flushUntil(() => container.querySelector('button[aria-label="预览链接有效期"]') !== null);
     const checkbox = [...container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((candidate) =>
       candidate.closest("label")?.textContent?.includes("允许控制"),
     );

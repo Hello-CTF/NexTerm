@@ -7,6 +7,7 @@ import {
   topLevelProjects,
 } from "../../app/projectFocus";
 import type { AssetGroup } from "../../ipc/commands";
+import { Select } from "../../ui/Select";
 
 export function ProjectSelector({ groups }: { groups: readonly AssetGroup[] }) {
   const activeProject = useUi((state) => state.activeProject);
@@ -17,20 +18,20 @@ export function ProjectSelector({ groups }: { groups: readonly AssetGroup[] }) {
 
   return (
     <div className="flex min-w-0 items-center px-2 pb-2">
-      <select
-        className="nx-select h-[30px] min-w-0 flex-1 text-xs"
-        aria-label="项目筛选"
+      <Select
+        className="min-w-0 flex-1"
+        triggerClassName="nx-input nx-select-trigger h-[30px] text-xs"
+        ariaLabel="项目筛选"
         title="仅过滤当前设备的显示，不会断开其他项目"
         value={activeProject}
-        onChange={(event) => setActiveProject(event.target.value as typeof activeProject)}
-      >
-        <option value={ALL_PROJECTS}>全部</option>
-        <option value={UNGROUPED_PROJECT}>未分组</option>
-        {projects.map((group) => (
-          <option key={group.id} value={projectFocusForGroup(group.id)}>{group.name}</option>
-        ))}
-        {selectedMissing && <option value={activeProject}>当前项目（不可用）</option>}
-      </select>
+        options={[
+          { value: ALL_PROJECTS, label: "全部" },
+          { value: UNGROUPED_PROJECT, label: "未分组" },
+          ...projects.map((group) => ({ value: projectFocusForGroup(group.id), label: group.name })),
+          ...(selectedMissing ? [{ value: activeProject, label: "当前项目（不可用）" }] : []),
+        ]}
+        onChange={(value) => setActiveProject(value as typeof activeProject)}
+      />
     </div>
   );
 }

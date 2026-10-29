@@ -8,6 +8,7 @@ import {
   type ServiceOperationBatch,
 } from "../../ipc/servicesApi";
 import { IconPlay, IconRefresh, IconServer } from "../../ui/icons";
+import { Select } from "../../ui/Select";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import { OperationFeedback, OperationProductionDialog } from "./OperationFeedback";
 import { ServiceJournal } from "./ServiceJournal";
@@ -115,15 +116,13 @@ export function ServicesPanel({
               }}
             />
           </label>
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
+          <div className="flex flex-col gap-1 text-[11px] text-neutral-500">
             操作
-            <select className="nx-select w-28" value={bulkAction} disabled={operation.running} aria-label="批量服务操作" onChange={(event) => {
-              setBulkAction(event.target.value);
+            <Select className="w-28" value={bulkAction} disabled={operation.running} ariaLabel="批量服务操作" onChange={(value) => {
+              setBulkAction(value);
               operation.clearProduction();
-            }}>
-              {Object.entries(SERVICE_ACTION_LABELS).map(([action, label]) => <option key={action} value={action}>{label}</option>)}
-            </select>
-          </label>
+            }} options={Object.entries(SERVICE_ACTION_LABELS).map(([action, label]) => ({ value: action, label }))} />
+          </div>
           <label className="flex cursor-pointer items-center gap-2 pb-2 text-[11px] text-neutral-400">
             <input type="checkbox" className="accent-blue-500" checked={sudo} disabled={operation.running} onChange={(event) => {
               setSudo(event.target.checked);
@@ -158,9 +157,10 @@ export function ServicesPanel({
         <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
           <IconServer size={13} className="text-neutral-500" />
           <input className="nx-input nx-input-sm w-full sm:w-64" value={filter} placeholder="过滤 unit / 描述 / 状态" aria-label="过滤服务" onChange={(event) => setFilter(event.target.value)} />
-          <select className="nx-select nx-select-sm w-32" value={stateFilter} aria-label="服务状态过滤" onChange={(event) => setStateFilter(event.target.value as ServiceStateFilter)}>
-            <option value="all">全部状态</option><option value="running">运行中</option><option value="failed">失败</option><option value="inactive">未运行</option><option value="other">其他</option>
-          </select>
+          <Select className="w-32" value={stateFilter} ariaLabel="服务状态过滤" onChange={(value) => setStateFilter(value as ServiceStateFilter)} options={[
+            { value: "all", label: "全部状态" }, { value: "running", label: "运行中" }, { value: "failed", label: "失败" },
+            { value: "inactive", label: "未运行" }, { value: "other", label: "其他" },
+          ]} />
           <span className="nx-hint">批次 {listBatch.batchId}</span>
         </div>
       )}

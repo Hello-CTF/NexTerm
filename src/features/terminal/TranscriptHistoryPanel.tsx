@@ -9,10 +9,14 @@ import {
 import { useUi } from "../../app/store";
 import { startPolling } from "../../app/usePolling";
 import { ask } from "../../ui/dialogs";
+import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import {
   IconAlert,
+  IconArrowLeft,
   IconClock,
+  IconCopy,
   IconHistory,
   IconRefresh,
   IconSearch,
@@ -365,6 +369,15 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const copyLoaded = async () => {
+    try {
+      await copyText(chunks.map((chunk) => chunk.text).join(""));
+      pushToast("success", done ? "已复制输出" : "已复制已加载的输出（尚未加载全部）");
+    } catch (error) {
+      pushToast("error", `复制失败：${describeError(error)}`);
+    }
+  };
+
   const refresh = () => {
     void loadSessions();
     if (selectedId && !selected?.contentOmitted) void reloadReader(selectedId);
@@ -413,13 +426,15 @@ export function TranscriptHistoryPanel({
       <div className="nx-toolbar nx-wrap-toolbar">
         <IconHistory size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">终端历史</span>
-        {!fixedHost && <select
-          className="nx-select max-w-[280px] max-[640px]:order-9 max-[640px]:max-w-none max-[640px]:basis-full"
-          aria-label="选择主机"
+        {!fixedHost && <Select
+          className="w-[280px] max-w-full max-[640px]:order-9 max-[640px]:w-auto max-[640px]:basis-full"
+          ariaLabel="选择主机"
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
-          onChange={(event) => {
-            const nextAssetId = event.target.value || null;
+          placeholder={hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
+          options={hostOptions.map((host) => ({ value: host.assetId, label: hostLabel(host) }))}
+          onChange={(value) => {
+            const nextAssetId = value || null;
             appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
             sessionsGenerationRef.current += 1;
             readerGenerationRef.current += 1;
@@ -429,16 +444,7 @@ export function TranscriptHistoryPanel({
             setSessions(null);
             useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
           }}
-        >
-          <option value="" disabled>
-            {hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
-          </option>
-          {hostOptions.map((host) => (
-            <option key={host.assetId} value={host.assetId}>
-              {hostLabel(host)}
-            </option>
-          ))}
-        </select>}
+        />}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-ghost"
@@ -472,7 +478,9 @@ export function TranscriptHistoryPanel({
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div
-          className="flex max-h-[38%] min-h-0 flex-col border-b border-neutral-800/60 md:max-h-none md:w-[var(--nx-transcript-list-w)] md:shrink-0 md:border-b-0 md:border-r"
+          className={`flex min-h-0 flex-col border-b border-neutral-800/60 max-md:max-h-none max-md:flex-1 md:max-h-none md:w-[var(--nx-transcript-list-w)] md:shrink-0 md:border-b-0 md:border-r ${
+            selectedId ? "max-h-[38%] max-md:hidden" : "max-h-[38%]"
+          }`}
           style={{ "--nx-transcript-list-w": `${listWidth}px` } as CSSProperties}
         >
           <div className="min-h-0 flex-1 overflow-auto">
@@ -487,7 +495,7 @@ export function TranscriptHistoryPanel({
                 {sessionList.map((summary) => (
                   <tr
                     key={summary.id}
-                    className={`cursor-pointer ${summary.id === selectedId ? "bg-neutral-800/60" : ""}`}
+                    className={`cursor-pointer pointer-coarse:min-h-11 ${summary.id === selectedId ? "bg-neutral-800/60" : ""}`}
                     onClick={() => setSelectedId(summary.id)}
                   >
                     <td>
@@ -605,16 +613,39 @@ export function TranscriptHistoryPanel({
           />
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
+          className={`min-h-0 min-w-0 flex-1 flex-col ${selectedId ? "flex" : "flex max-md:hidden"}`}
+          data-testid="transcript-detail"
+        >
+          <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 md:hidden">
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
+              aria-label="返回记录列表"
+              onClick={() => setSelectedId(null)}
+            >
+              <IconArrowLeft size={13} />
+              记录列表
+            </button>
+            {selected && (
+              <span className="min-w-0 flex-1 truncate text-right text-[11px] text-neutral-500">
+                {formatTranscriptTime(selected.startedAt)}
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
             {viewMode === "text" ? (
               <>
                 <div className="relative min-w-[160px] flex-1">
                   <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
                   <input
-                    className="nx-input nx-input-sm w-full pl-7"
+                    className="nx-input nx-input-sm w-full pl-7 pointer-coarse:min-h-11 pointer-coarse:text-[16px]"
                     placeholder="在选中的记录里搜索…"
                     aria-label="搜索终端记录"
+                    enterKeyHint="search"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest" })}
                     value={query}
                     disabled={!selected || selected.contentOmitted}
                     onChange={(event) => setQuery(event.target.value)}
@@ -627,7 +658,7 @@ export function TranscriptHistoryPanel({
                   />
                 </div>
                 <button
-                  className="nx-btn nx-btn-ghost nx-btn-sm"
+                  className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
                   disabled={!selected || selected.contentOmitted || searching}
                   onClick={() => void runSearch()}
                 >
@@ -646,7 +677,7 @@ export function TranscriptHistoryPanel({
                   key={mode}
                   role="tab"
                   aria-selected={viewMode === mode}
-                  className={`px-2 py-1 text-[11px] pointer-coarse:min-h-9 pointer-coarse:px-3 ${
+                  className={`px-2 py-1 text-[11px] pointer-coarse:min-h-11 pointer-coarse:px-4 ${
                     viewMode === mode
                       ? "bg-neutral-700/70 text-neutral-100"
                       : "text-neutral-400 hover:bg-neutral-800/60"
@@ -668,7 +699,7 @@ export function TranscriptHistoryPanel({
             <>
 
           {(matches !== null || searchError) && (
-            <div className="max-h-[140px] shrink-0 overflow-auto border-b border-neutral-800/60">
+            <div className="max-h-[140px] shrink-0 overflow-auto overscroll-contain border-b max-[560px]:max-h-[35%] border-neutral-800/60">
               {searchError && (
                 <div className="px-3 py-2 text-[12px] text-red-300">搜索失败：{searchError}</div>
               )}
@@ -680,7 +711,7 @@ export function TranscriptHistoryPanel({
                 matches.map((match, index) => (
                   <button
                     key={`${match.seq}-${index}`}
-                    className="block w-full truncate px-3 py-1.5 text-left text-[12px] text-neutral-300 hover:bg-neutral-800/60"
+                    className="block w-full truncate px-3 py-1.5 text-left text-[12px] text-neutral-300 hover:bg-neutral-800/60 pointer-coarse:min-h-11 pointer-coarse:py-2.5 max-[560px]:line-clamp-2 max-[560px]:whitespace-normal max-[560px]:break-all"
                     title={stripAnsi(match.preview)}
                     onClick={() => void jumpToMatch(match)}
                   >
@@ -691,7 +722,7 @@ export function TranscriptHistoryPanel({
             </div>
           )}
 
-          <div ref={readerRef} className="min-h-0 flex-1 overflow-auto px-3 py-2">
+          <div ref={readerRef} className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 py-2">
             {!selected && !readerLoading && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
                 选择左侧的终端记录查看输出
@@ -714,7 +745,7 @@ export function TranscriptHistoryPanel({
               </div>
             )}
             {selected && !selected.contentOmitted && !readerLoading && !readerError && (
-              <pre className="font-mono whitespace-pre-wrap break-all text-[12px] leading-relaxed text-neutral-300">
+              <pre className="font-mono whitespace-pre-wrap break-all text-[12px] leading-relaxed text-neutral-300 max-[560px]:text-[11.5px]">
                 {chunks.map((chunk) => (
                   <span key={chunk.seq} data-chunk-seq={chunk.seq}>
                     {chunk.text}
@@ -727,7 +758,7 @@ export function TranscriptHistoryPanel({
             </>
           )}
 
-          <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 px-3 py-2 text-[11px] text-neutral-500">
+          <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-neutral-800/60 px-3 py-2 pb-[max(0.5rem,var(--nx-safe-bottom,0px))] text-[11px] text-neutral-500">
             <IconClock size={11} />
             {selected ? (
               <>
@@ -739,6 +770,16 @@ export function TranscriptHistoryPanel({
               "终端会话会自动记录（含键盘输入），按会话留存"
             )}
             <div className="nx-spacer" />
+            {selected && !selected.contentOmitted && viewMode === "text" && chunks.length > 0 && (
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-11"
+                aria-label="复制已加载的输出"
+                onClick={() => void copyLoaded()}
+              >
+                <IconCopy size={11} />
+                复制
+              </button>
+            )}
             {selected && !done && viewMode === "text" && (
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"

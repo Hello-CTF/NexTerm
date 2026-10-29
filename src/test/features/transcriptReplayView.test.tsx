@@ -1,8 +1,8 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
-import { flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { flush, flushUntil, mount, setInputValue, chooseSelectOption, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ transcriptRead: vi.fn() }));
 
@@ -173,7 +173,7 @@ describe("TranscriptReplayView", () => {
     );
     expect(playButton).toBeDefined();
 
-    setSelectValue(mounted.container.querySelector("select[aria-label='回放倍速']") as HTMLSelectElement, "5");
+    chooseSelectOption(mounted.container, "回放倍速", "5x");
     act(() => {
       playButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -301,5 +301,32 @@ describe("TranscriptReplayView", () => {
     expect(
       mounted.container.querySelector<HTMLButtonElement>('button[aria-label="开始回放"]')?.disabled,
     ).toBe(true);
+  });
+
+  it("gives the seek slider a pan-y touch policy and its own row on phones", async () => {
+    mounted = mount(createElement(TranscriptReplayView, { transcriptId: "t1" }));
+    await flush();
+    const slider = mounted.container.querySelector<HTMLInputElement>('[data-testid="replay-seek"]')!;
+    expect(slider.classList.contains("touch-pan-y")).toBe(true);
+    expect(slider.classList.contains("max-[560px]:basis-full")).toBe(true);
+    expect(slider.parentElement!.classList.contains("flex-wrap")).toBe(true);
+    const clock = mounted.container.querySelector('[data-testid="replay-clock"]')!;
+    expect(clock.classList.contains("whitespace-nowrap")).toBe(true);
+  });
+
+  it("uses a smaller terminal font on phone-width viewports and keeps 12 otherwise", async () => {
+    mounted = mount(createElement(TranscriptReplayView, { transcriptId: "t1" }));
+    await flush();
+    expect((terminalMocks.instances[0].options as { fontSize: number }).fontSize).toBe(12);
+    mounted.unmount();
+    const original = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      mounted = mount(createElement(TranscriptReplayView, { transcriptId: "t1" }));
+      await flush();
+      expect((terminalMocks.instances[1].options as { fontSize: number }).fontSize).toBe(11);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
+    }
   });
 });

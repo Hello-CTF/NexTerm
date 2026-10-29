@@ -13,7 +13,7 @@ import {
   flushUntil,
   mountWithClient,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -168,9 +168,9 @@ function targetCheckbox(id: string): HTMLInputElement {
 }
 
 function addSnippet(id: string): void {
-  const select = panel().container.querySelector<HTMLSelectElement>('select[aria-label="选择要添加的片段"]');
-  if (!select) throw new Error("snippet picker not found");
-  setSelectValue(select, id);
+  const snippet = snippets.find((item) => item.id === id);
+  if (!snippet) throw new Error(`snippet ${id} not found`);
+  chooseSelectOption(panel().container, "选择要添加的片段", snippet.name);
   clickButton(panel().container, "添加片段步骤");
 }
 
@@ -305,7 +305,7 @@ describe("RunbookPanel", () => {
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
     addSnippet("snippet-one");
-    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
+    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
     await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
@@ -351,7 +351,7 @@ describe("RunbookPanel", () => {
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
     addSnippet("snippet-one");
-    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
+    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
     await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
@@ -462,7 +462,7 @@ describe("RunbookPanel", () => {
     });
     mocks.cancel.mockResolvedValue(undefined);
     addSnippet("snippet-two");
-    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
+    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
     startRun();
     await flushUntil(() => mocks.start.mock.calls.length === 1);
     const runId = mocks.start.mock.calls[0][0].runId as string;
@@ -486,7 +486,7 @@ describe("RunbookPanel", () => {
     const pendingPrepare = deferred<RunbookRunState>();
     mocks.prepare.mockReturnValue(pendingPrepare.promise);
     addSnippet("snippet-two");
-    setSelectValue(panel().container.querySelector('select[aria-label="执行前确认"]')!, "production_only");
+    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
     startRun();
     await flushUntil(() => mocks.prepare.mock.calls.length === 1);
     if (!currentState) throw new Error("run not started");

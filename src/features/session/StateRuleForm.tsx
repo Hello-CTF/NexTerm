@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import { stateRuleApi, type StateRuleScreenDTO, type StateRuleValidateResult } from "../../ipc/stateRuleApi";
 import { resolveHostLabel } from "../hosts/hostLabel";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import {
   STATE_RULE_MAX_LINES,
   STATE_RULE_TARGETS,
@@ -126,17 +127,19 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
             匹配区域
           </label>
           <div className="flex gap-2">
-            <select
+            <Select
               id={`${id}-region`}
-              className="nx-select min-w-0 flex-1"
-              aria-invalid={linesError ? true : undefined}
-              aria-describedby={describedBy(linesError, `${id}-lines-error`)}
+              className="min-w-0 flex-1"
+              ariaLabel="匹配区域"
+              ariaInvalid={Boolean(linesError)}
+              ariaDescribedBy={describedBy(linesError, `${id}-lines-error`)}
               value={form.region}
-              onChange={(event) => set({ region: event.target.value === "title" ? "title" : "bottom" })}
-            >
-              <option value="bottom">屏幕底部</option>
-              <option value="title">窗口标题</option>
-            </select>
+              onChange={(value) => set({ region: value === "title" ? "title" : "bottom" })}
+              options={[
+                { value: "bottom", label: "屏幕底部" },
+                { value: "title", label: "窗口标题" },
+              ]}
+            />
             {form.region === "bottom" && (
               <input
                 className="nx-input w-20"
@@ -157,49 +160,42 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-state`}>
             匹配时视为
           </label>
-          <select
+          <Select
             id={`${id}-state`}
-            className="nx-select w-full"
-            aria-invalid={stateError ? true : undefined}
-            aria-describedby={describedBy(stateError, `${id}-state-error`)}
+            className="w-full"
+            ariaLabel="匹配时视为"
+            ariaInvalid={Boolean(stateError)}
+            ariaDescribedBy={describedBy(stateError, `${id}-state-error`)}
             value={form.state}
-            onChange={(event) => set({ state: event.target.value as StateRuleTarget })}
-          >
-            {offered.map((target) => (
-              <option key={target.value} value={target.value}>
-                {target.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => set({ state: value as StateRuleTarget })}
+            options={offered.map((target) => ({ value: target.value, label: target.label }))}
+          />
           <FieldError id={`${id}-state-error`} message={stateError} />
         </div>
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-scope`}>
             适用范围
           </label>
-          <select
+          <Select
             id={`${id}-scope`}
-            className="nx-select w-full"
-            aria-invalid={scopeError ? true : undefined}
-            aria-describedby={describedBy(scopeError, `${id}-scope-error`)}
+            className="w-full"
+            ariaLabel="适用范围"
+            ariaInvalid={Boolean(scopeError)}
+            ariaDescribedBy={describedBy(scopeError, `${id}-scope-error`)}
             value={form.scope === "host" ? form.assetId || "host:" : "global"}
-            onChange={(event) => {
-              const value = event.target.value;
+            onChange={(value) => {
               if (value === "global") set({ scope: "global", assetId: "" });
               else set({ scope: "host", assetId: value === "host:" ? "" : value });
             }}
-          >
-            <option value="global">所有主机</option>
-            {form.scope === "host" && !form.assetId && <option value="host:">选择主机…</option>}
-            {form.scope === "host" && form.assetId && !hosts.some((host) => host.id === form.assetId) && (
-              <option value={form.assetId}>{hostLabel?.(form.assetId) || fallbackHostLabel(form.assetId)}</option>
-            )}
-            {hosts.map((host) => (
-              <option key={host.id} value={host.id}>
-                仅 {host.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "global", label: "所有主机" },
+              ...(form.scope === "host" && !form.assetId ? [{ value: "host:", label: "选择主机…" }] : []),
+              ...(form.scope === "host" && form.assetId && !hosts.some((host) => host.id === form.assetId)
+                ? [{ value: form.assetId, label: hostLabel?.(form.assetId) || fallbackHostLabel(form.assetId) }]
+                : []),
+              ...hosts.map((host) => ({ value: host.id, label: `仅 ${host.name}` })),
+            ]}
+          />
           <FieldError id={`${id}-scope-error`} message={scopeError} />
         </div>
         <div>

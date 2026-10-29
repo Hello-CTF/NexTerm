@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
+import { click, clickButton, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   forwardEnv: vi.fn(),
@@ -76,5 +76,41 @@ describe("ForwardPanel on a phone-width pane", () => {
     width = 390;
     expect(mounted!.container.querySelector("table")).not.toBeNull();
     expect(Array.from(mounted!.container.querySelectorAll("button")).some((b) => b.textContent === "+ 新建转发")).toBe(false);
+  });
+});
+
+describe("ForwardPanel phone form and rows", () => {
+  it("lays the create form out as a two-column grid with a full-width submit and visible labels", async () => {
+    mountForward();
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("db.internal:3306"));
+    clickButton(mounted!.container, "+ 新建转发");
+    const grid = mounted!.container.querySelector("input[aria-label='目标主机']")!.closest(".grid");
+    expect(grid).not.toBeNull();
+    expect(grid!.className).toContain("grid-cols-2");
+    const submit = Array.from(mounted!.container.querySelectorAll("button")).find((b) => b.textContent?.trim() === "创建");
+    expect(submit!.className).toContain("col-span-2");
+    expect(mounted!.container.textContent).toContain("目标主机");
+    expect(mounted!.container.textContent).toContain("目标端口");
+  });
+
+  it("keeps the form clear of the soft keyboard and the home indicator", async () => {
+    mountForward();
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("db.internal:3306"));
+    clickButton(mounted!.container, "+ 新建转发");
+    const form = mounted!.container.querySelector("input[aria-label='目标主机']")!.closest(".overflow-auto")!;
+    expect(form.className).toContain("var(--nx-kb-inset");
+    expect(form.className).toContain("var(--nx-safe-bottom");
+  });
+
+  it("expands a truncated row on tap so the full target is readable", async () => {
+    mountForward();
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("db.internal:3306"));
+    const info = mounted!.container.querySelector("[aria-label$='详情']") as HTMLElement;
+    expect(info.getAttribute("aria-expanded")).toBe("false");
+    expect(info.querySelector(".truncate")).not.toBeNull();
+    click(info);
+    await flushUntil(() => info.getAttribute("aria-expanded") === "true");
+    expect(info.querySelector(".truncate")).toBeNull();
+    expect(info.querySelector(".break-all")).not.toBeNull();
   });
 });

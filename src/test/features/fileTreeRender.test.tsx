@@ -27,6 +27,7 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 import { FileTree } from "../../features/files/FileTree";
 import { resetCwdFollowForTest } from "../../features/files/cwdFollow";
 import { useUi, type AppTab } from "../../app/store";
+import { useTransferStore } from "../../features/files/transferStore";
 import type { FileEntryDto } from "../../ipc/types";
 
 const SID = "s1";
@@ -185,5 +186,32 @@ describe("FileTree large directory rendering", () => {
     });
     expect(mocks.list).toHaveBeenCalledTimes(reads);
     expect(mocks.roots).toHaveBeenCalledTimes(rootReads);
+  });
+});
+
+describe("FileTree transfer queue", () => {
+  it("shows the transfer panel so downloads started from the sidebar report progress", async () => {
+    mounted = mountTree();
+    await waitForRendered(() => expect(renderedPaths().length).toBeGreaterThan(0));
+    expect(mounted.container.querySelector('[data-testid="transfer-panel"]')).toBeNull();
+    act(() =>
+      useTransferStore.setState({
+        tasks: [
+          {
+            id: "t1",
+            batchId: "b1",
+            sessionId: SID,
+            direction: "download",
+            remotePath: "~/file1",
+            localPath: "/tmp/file1",
+            status: "running",
+            transferred: 5,
+            total: 10,
+          } as never,
+        ],
+      }),
+    );
+    expect(mounted.container.querySelector('[data-testid="transfer-panel"]')).not.toBeNull();
+    act(() => useTransferStore.setState({ tasks: [] }));
   });
 });

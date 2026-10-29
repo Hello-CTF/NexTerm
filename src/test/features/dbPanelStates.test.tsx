@@ -10,7 +10,7 @@ import {
   flush,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -287,10 +287,7 @@ describe("DbPanel SQL regressions", () => {
     );
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => text().includes("orders"));
-    setSelectValue(
-      mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "Sales DB",
-    );
+    chooseSelectOption(mounted.container, "选择数据库", "Sales DB");
     await flushUntil(() => text().includes("Order `select"));
 
     clickButton(mounted.container, "Order `select");
@@ -323,10 +320,7 @@ describe("DbPanel SQL regressions", () => {
     mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
     await flushUntil(() => mocks.tables.mock.calls.length === 1);
 
-    setSelectValue(
-      mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "second",
-    );
+    chooseSelectOption(mounted.container, "选择数据库", "second");
     await flushUntil(() => mocks.tables.mock.calls.length === 2);
     second.resolve(["new_table"]);
     await flushUntil(() => text().includes("new_table"));
@@ -464,10 +458,7 @@ describe("DbPanel SQL drafts", () => {
     await flushUntil(() => text().includes("此数据库中没有表"));
     const sql = "SELECT 1;\nSELECT 2;";
     setSql(sql);
-    setSelectValue(
-      mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "other",
-    );
+    chooseSelectOption(mounted!.container, "选择数据库", "other");
     act(() => {
       editor().dispatch({ selection: { anchor: 10, head: 19 } });
     });
@@ -493,8 +484,8 @@ describe("DbPanel SQL drafts", () => {
     expect(editor().state.selection.main.to).toBe(19);
     await flushUntil(
       () =>
-        mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')
-          ?.value === "other",
+        mounted!.container.querySelector<HTMLElement>('button[aria-label="选择数据库"]')
+          ?.textContent?.includes("other") === true,
     );
     expect(mocks.tables).toHaveBeenLastCalledWith("c1", "other");
 
@@ -511,10 +502,7 @@ describe("DbPanel SQL drafts", () => {
     mountDraft();
     await flushUntil(() => text().includes("此数据库中没有表"));
     setSql("SELECT * FROM orders;");
-    setSelectValue(
-      mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "other",
-    );
+    chooseSelectOption(mounted!.container, "选择数据库", "other");
     await flushUntil(
       () => useUi.getState().getWorkspaceRuntime("ws")?.sqlDraft?.schema === "other",
     );
@@ -809,10 +797,7 @@ describe("DbPanel SQL execution history", () => {
     mocks.schemas.mockResolvedValue(["mydb", "other"]);
     mountHistory();
     await ready();
-    setSelectValue(
-      mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "other",
-    );
+    chooseSelectOption(mounted!.container, "选择数据库", "other");
     await flushUntil(() => mocks.tables.mock.calls.at(-1)?.[1] === "other");
     setSql("SELECT 1;\nSELECT 2;");
     act(() => {
@@ -1441,10 +1426,7 @@ describe("DbPanel SQL execution locking", () => {
     act(() => pressSql({ ctrlKey: true }));
     expect(mocks.query).toHaveBeenCalledTimes(1);
 
-    setSelectValue(
-      mounted.container.querySelector<HTMLSelectElement>('select[aria-label="选择数据库"]')!,
-      "other",
-    );
+    chooseSelectOption(mounted.container, "选择数据库", "other");
     await flushUntil(() => mocks.tables.mock.calls.length === 2);
     act(() => pressSql({ metaKey: true }));
 

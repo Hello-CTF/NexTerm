@@ -23,6 +23,9 @@ interface SelectProps {
   // triggerClassName replaces the look of the trigger (default: an input), for a select that sits in a toolbar as a
   // small button. The open list is unaffected.
   triggerClassName?: string;
+  // The validation state and the hint that explains it, for a select inside a form field.
+  ariaInvalid?: boolean;
+  ariaDescribedBy?: string;
 }
 
 // popupPlacement puts the list under the trigger, or above it when there is little room below. The list is
@@ -42,7 +45,7 @@ function popupPlacement(trigger: HTMLElement): CSSProperties {
   };
 }
 
-export function Select({ id, ariaLabel, value, options, onChange, disabled, className = "", placeholder = "请选择", title, triggerClassName }: SelectProps) {
+export function Select({ id, ariaLabel, value, options, onChange, disabled, className = "", placeholder = "请选择", title, triggerClassName, ariaInvalid, ariaDescribedBy }: SelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -130,7 +133,7 @@ export function Select({ id, ariaLabel, value, options, onChange, disabled, clas
 
   if (isTouchShell()) {
     return (
-      <select id={id} className={`nx-select ${className}`} aria-label={ariaLabel} title={title} value={value} disabled={disabled}
+      <select id={id} className={`nx-select ${className}`} aria-label={ariaLabel} aria-invalid={ariaInvalid || undefined} aria-describedby={ariaDescribedBy} title={title} value={value} disabled={disabled}
         onChange={(event) => onChange(event.target.value)}>
         {!selected && <option value="" disabled>{placeholder}</option>}
         {options.map((option) => (
@@ -145,7 +148,7 @@ export function Select({ id, ariaLabel, value, options, onChange, disabled, clas
   return (
     <div ref={rootRef} className={`nx-select-root ${className}`}>
       <button ref={triggerRef} id={id} type="button" className={triggerClassName ?? "nx-input nx-select-trigger"} title={title}
-        aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined}
+        aria-label={ariaLabel} aria-invalid={ariaInvalid || undefined} aria-describedby={ariaDescribedBy} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined}
         aria-activedescendant={open && options[active] ? `${listId}-${active}` : undefined}
         disabled={disabled} onClick={() => {
           if (!open) setActive(Math.max(0, selectedIndex));
@@ -160,7 +163,10 @@ export function Select({ id, ariaLabel, value, options, onChange, disabled, clas
             <li key={option.value} id={`${listId}-${index}`} role="option" aria-selected={option.value === value}
               aria-disabled={option.disabled || undefined}
               className={`nx-select-option ${index === active ? "is-active" : ""} ${option.disabled ? "is-disabled" : ""}`}
-              onMouseEnter={() => setActive(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
+              onMouseEnter={() => setActive(index)} onMouseDown={(event) => event.preventDefault()}
+              // The list sits inside the control's own element, which may be a <label>: without this the label
+              // would activate its trigger again and reopen the list.
+              onClick={(event) => { event.preventDefault(); choose(index); }}>
               <span className="nx-select-check">{option.value === value && <IconCheck size={12} />}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{option.label}</span>

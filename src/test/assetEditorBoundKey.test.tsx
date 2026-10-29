@@ -66,9 +66,7 @@ describe("editing an asset bound to a vault private key", () => {
     );
     await flush();
     await flush();
-    const select = Array.from(mounted.container.querySelectorAll("select")).find((element) =>
-      Array.from(element.options).some((option) => option.value === "cred-1"),
-    );
-    expect(select?.value).toBe("cred-1");
+    const select = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="选择私钥凭据"]');
+    expect(select?.textContent).toContain("prod-key");
   });
 });

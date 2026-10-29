@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { mount, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 import { ALL_PROJECTS, projectFocusForGroup } from "../../app/projectFocus";
 import { useUi } from "../../app/store";
 import type { Asset, AssetGroup } from "../../ipc/commands";
@@ -134,17 +134,19 @@ describe("AssetTree project focus", () => {
   it("filters assets, search results, group nodes, and devices with all and ungrouped options", async () => {
     mounted = mountTree();
     await waitForRendered(() => expect(assetNames(mounted!.container)).toHaveLength(4));
-    const selector = mounted.container.querySelector<HTMLSelectElement>('select[aria-label="项目筛选"]');
+    const selector = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="项目筛选"]');
     if (!selector) throw new Error("Project selector not found");
-    expect([...selector.options].map((option) => option.textContent)).toEqual([
+    click(selector);
+    expect([...mounted.container.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent)).toEqual([
       "全部",
       "未分组",
       "group-p1",
       "group-p2",
     ]);
+    click(selector);
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("设备区");
 
-    setSelectValue(selector, projectOne);
+    chooseSelectOption(mounted.container, "项目筛选", "group-p1");
     await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("group-child");
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("group-p2");
@@ -158,12 +160,12 @@ describe("AssetTree project focus", () => {
     await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["root-asset", "child-asset"]));
     setInputValue(search, "");
 
-    setSelectValue(selector, "ungrouped");
+    chooseSelectOption(mounted.container, "项目筛选", "未分组");
     await waitForRendered(() => expect(assetNames(mounted!.container)).toEqual(["free-asset"]));
     expect(mounted.container.querySelector("[role='tree']")?.textContent).not.toContain("group-p1");
     expect(mounted.container.querySelector("[role='tree']")?.textContent).toContain("设备区");
 
-    setSelectValue(selector, "all");
+    chooseSelectOption(mounted.container, "项目筛选", "全部");
     await waitForRendered(() => expect(assetNames(mounted!.container)).toHaveLength(4));
     expect(assetNames(mounted.container)).toEqual(["free-asset", "root-asset", "child-asset", "other-asset"]);
   });

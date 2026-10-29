@@ -18,6 +18,7 @@ import { copyAssetDeepLink } from "../../app/deepLink";
 import { isMobileShell, useCoarsePointer } from "../../app/shell";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
+import { Select } from "../../ui/Select";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { LoadError } from "../../ui/LoadError";
@@ -1922,10 +1923,12 @@ function GroupRenameDialog({
           </div>
           <div className="nx-form-row">
             <label className="nx-label">父分组</label>
-            <select className="nx-select" value={parentId ?? ""} onChange={(e) => setParentId(e.target.value || null)}>
-              <option value="">（根目录）</option>
-              {parentOptions.map((option) => <option key={option.id} value={option.id}>{option.path}</option>)}
-            </select>
+            <Select
+              ariaLabel="父分组"
+              value={parentId ?? ""}
+              onChange={(value) => setParentId(value || null)}
+              options={[{ value: "", label: "（根目录）" }, ...parentOptions.map((option) => ({ value: option.id, label: option.path }))]}
+            />
           </div>
           {error && (
             <div className="mb-2 flex items-center gap-1.5 text-[12px] text-red-400">
@@ -2591,12 +2594,15 @@ export function AssetEditor({
           {kind === "asset" && (
             <div className="nx-form-row">
               <label className="nx-label">类型</label>
-              <select
-                className="nx-select"
+              <Select
+                ariaLabel="类型"
                 value={groupKind}
                 disabled={initial?.builtin || managed !== null}
-                onChange={(e) => {
-                  const v = e.target.value as typeof groupKind;
+                options={Object.entries(KIND_LABEL)
+                  .filter(([k]) => (k !== "local" || !isMobileShell() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
+                  .map(([k, label]) => ({ value: k, label }))}
+                onChange={(value) => {
+                  const v = value as typeof groupKind;
                   setGroupKind(v);
                   setHostError(null);
                   setPortError(null);
@@ -2606,15 +2612,7 @@ export function AssetEditor({
                   else if (v === "redis") setPort(6379);
                   else setPort(22);
                 }}
-              >
-                {Object.entries(KIND_LABEL)
-                  .filter(([k]) => (k !== "local" || !isMobileShell() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
-                  .map(([k, label]) => (
-                    <option key={k} value={k}>
-                      {label}
-                    </option>
-                  ))}
-              </select>
+              />
               {initial?.builtin && (
                 <div className="nx-hint mt-1">
                   ↳ 内置的「当前设备」，始终指向本机，类型不可更改，名称可以修改
@@ -2627,24 +2625,17 @@ export function AssetEditor({
             <div className="nx-form-row">
               <label className="nx-label">模板</label>
               <div className="flex min-w-0 items-center gap-2">
-                <select
-                  className="nx-select"
+                <Select
+                  className="min-w-0 flex-1"
+                  ariaLabel="从模板创建"
                   value={templateId}
-                  aria-label="从模板创建"
-                  onChange={(e) => {
-                    const id = e.target.value;
+                  options={[{ value: "", label: "从模板创建…" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]}
+                  onChange={(id) => {
                     setTemplateId(id);
                     const t = templates.find((x) => x.id === id);
                     if (t) applyTemplate(t);
                   }}
-                >
-                  <option value="">从模板创建…</option>
-                  {templates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+                />
                 {templateId && (
                   <button
                     type="button"
@@ -2734,19 +2725,17 @@ export function AssetEditor({
             <div className="nx-form-row">
               <label className="nx-label">{kind === "group" ? "父分组" : "分组"}</label>
               <div className="flex min-w-0 items-center gap-2">
-                <select
-                  className="nx-select"
+                <Select
+                  className="min-w-0 flex-1"
+                  ariaLabel={kind === "group" ? "父分组" : "分组"}
                   value={groupId ?? ""}
                   disabled={managed !== null}
-                  onChange={(e) => setGroupId(e.target.value || null)}
-                >
-                  <option value="">{kind === "group" ? "（根目录）" : "（不分组）"}</option>
-                  {groupOptions.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.path}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(value) => setGroupId(value || null)}
+                  options={[
+                    { value: "", label: kind === "group" ? "（根目录）" : "（不分组）" },
+                    ...groupOptions.map((g) => ({ value: g.id, label: g.path })),
+                  ]}
+                />
                 {kind === "asset" && !managed && <button
                   type="button"
                   className="nx-btn nx-btn-outline shrink-0"
@@ -2874,38 +2863,35 @@ export function AssetEditor({
               {!isDb && (
                 <div className="nx-form-row">
                   <label className="nx-label">认证方式</label>
-                  <select
-                    className="nx-select"
+                  <Select
+                    ariaLabel="认证方式"
                     value={authKind}
-                    onChange={(e) => setAuthKind(e.target.value)}
-                  >
-                    <option value="password">密码</option>
-                    <option value="keyboard-interactive">键盘交互（密码）</option>
-                    <option value="key">私钥文件</option>
-                    <option value="agent">SSH Agent</option>
-                  </select>
+                    onChange={setAuthKind}
+                    options={[
+                      { value: "password", label: "密码" },
+                      { value: "keyboard-interactive", label: "键盘交互（密码）" },
+                      { value: "key", label: "私钥文件" },
+                      { value: "agent", label: "SSH Agent" },
+                    ]}
+                  />
                 </div>
               )}
 
               {isDb && (
                 <div className="nx-form-row">
                   <label className="nx-label">通过 SSH 资产连接</label>
-                  <select
-                    className="nx-select"
-                    aria-label="通过 SSH 资产连接"
+                  <Select
+                    ariaLabel="通过 SSH 资产连接"
                     value={viaAssetId}
-                    onChange={(e) => setViaAssetId(e.target.value)}
-                  >
-                    <option value="">（直连，不通过SSH）</option>
-                    {viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId) && (
-                      <option value={viaAssetId}>当前配置的 SSH 资产（不在可选列表）</option>
-                    )}
-                    {viaCandidates.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}（{a.host}:{a.port}）
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setViaAssetId}
+                    options={[
+                      { value: "", label: "（直连，不通过SSH）" },
+                      ...(viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId)
+                        ? [{ value: viaAssetId, label: "当前配置的 SSH 资产（不在可选列表）" }]
+                        : []),
+                      ...viaCandidates.map((a) => ({ value: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
+                    ]}
+                  />
                   <div className="nx-hint mt-1.5">
                     ↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。
                   </div>
@@ -2966,14 +2952,15 @@ export function AssetEditor({
                     </>
                   ) : (
                     <>
-                      <select
-                        className="nx-select"
+                      <Select
+                        ariaLabel="私钥凭据来源"
                         value={vaultMode}
-                        onChange={(e) => setVaultMode(e.target.value as "new" | "existing")}
-                      >
-                        <option value="new">新建凭据</option>
-                        <option value="existing">选择已有私钥凭据</option>
-                      </select>
+                        onChange={(value) => setVaultMode(value as "new" | "existing")}
+                        options={[
+                          { value: "new", label: "新建凭据" },
+                          { value: "existing", label: "选择已有私钥凭据" },
+                        ]}
+                      />
 
                       {vaultMode === "new" ? (
                         <>
@@ -3035,22 +3022,21 @@ export function AssetEditor({
                         </>
                       ) : (
                         <>
-                          <select
-                            className="nx-select mt-2"
+                          <Select
+                            className="mt-2"
+                            ariaLabel="选择私钥凭据"
                             value={vaultCredId}
-                            onChange={(e) => setVaultCredId(e.target.value)}
-                          >
-                            <option value="">选择私钥凭据…</option>
-                            {privateKeys.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                                {c.source === "file" ? "（引用文件）" : "（已入库）"}
-                                {c.usedBy.length > 0
-                                  ? ` · 被 ${c.usedBy.length} 个资产使用`
-                                  : " · 未使用"}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setVaultCredId}
+                            options={[
+                              { value: "", label: "选择私钥凭据…" },
+                              ...privateKeys.map((c) => ({
+                                value: c.id,
+                                label: `${c.name}${c.source === "file" ? "（引用文件）" : "（已入库）"}${
+                                  c.usedBy.length > 0 ? ` · 被 ${c.usedBy.length} 个资产使用` : " · 未使用"
+                                }`,
+                              })),
+                            ]}
+                          />
                           {privateKeys.length === 0 && (
                             <div className="nx-hint mt-1.5">
                               ↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左侧栏「凭据」中新建。
@@ -3092,20 +3078,21 @@ export function AssetEditor({
               {usesCred && (
                 <div className="nx-form-row">
                   <label className="nx-label">密码</label>
-                  <select
-                    className="nx-select"
+                  <Select
+                    ariaLabel="密码"
                     value={credChoice}
-                    onChange={(e) => setCredChoice(e.target.value)}
-                  >
-                    <option value="new">新建凭据</option>
-                    {(credentials.data ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}（{CRED_KIND_LABEL[c.kind] ?? c.kind} ·{" "}
-                        {c.usedBy.length > 0 ? `被 ${c.usedBy.length} 个资产使用` : "未使用"}）
-                      </option>
-                    ))}
-                    <option value="none">（不使用凭据）</option>
-                  </select>
+                    onChange={setCredChoice}
+                    options={[
+                      { value: "new", label: "新建凭据" },
+                      ...(credentials.data ?? []).map((c) => ({
+                        value: c.id,
+                        label: `${c.name}（${CRED_KIND_LABEL[c.kind] ?? c.kind} · ${
+                          c.usedBy.length > 0 ? `被 ${c.usedBy.length} 个资产使用` : "未使用"
+                        }）`,
+                      })),
+                      { value: "none", label: "（不使用凭据）" },
+                    ]}
+                  />
                   {credChoice === "new" ? (
                     <>
                       <input
@@ -3158,16 +3145,17 @@ export function AssetEditor({
                       {groupKind === "ssh" && (
                         <div className="nx-form-row">
                           <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
-                          <select
+                          <Select
                             id={terminalModeId}
-                            className="nx-select"
+                            ariaLabel="终端模式"
                             value={terminalMode}
-                            onChange={(e) => setTerminalMode(e.target.value as "auto" | "durable" | "regular")}
-                          >
-                            <option value="auto">默认（使用全局设置）</option>
-                            <option value="durable">持久终端（断开后可在后台接管）</option>
-                            <option value="regular">临时终端（随连接断开结束）</option>
-                          </select>
+                            onChange={(value) => setTerminalMode(value as "auto" | "durable" | "regular")}
+                            options={[
+                              { value: "auto", label: "默认（使用全局设置）" },
+                              { value: "durable", label: "持久终端（断开后可在后台接管）" },
+                              { value: "regular", label: "临时终端（随连接断开结束）" },
+                            ]}
+                          />
                           <div className="nx-hint mt-1.5">
                             首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签页生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
                           </div>
@@ -3175,19 +3163,16 @@ export function AssetEditor({
                       )}
                       <div className="nx-form-row">
                         <label className="nx-label">跳板机</label>
-                        <select
-                          className="nx-select"
+                        <Select
+                          ariaLabel="跳板机"
                           value={jumpAssetId}
                           disabled={managed !== null}
-                          onChange={(e) => setJumpAssetId(e.target.value)}
-                        >
-                          <option value="">（不使用跳板机）</option>
-                          {jumpCandidates.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}（{a.host}:{a.port}）
-                            </option>
-                          ))}
-                        </select>
+                          onChange={setJumpAssetId}
+                          options={[
+                            { value: "", label: "（不使用跳板机）" },
+                            ...jumpCandidates.map((a) => ({ value: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
+                          ]}
+                        />
                         <div className="nx-hint mt-1.5">
                           ↳ 先登录跳板机，再连接目标资产；两者分别验证凭据。
                         </div>
@@ -3264,17 +3249,12 @@ export function AssetEditor({
 
                         <div className="nx-form-row">
                           <label className="nx-label">终端编码</label>
-                          <select
-                            className="nx-select"
+                          <Select
+                            ariaLabel="终端编码"
                             value={encoding}
-                            onChange={(e) => setEncoding(e.target.value)}
-                          >
-                            {TERMINAL_ENCODINGS.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
+                            onChange={setEncoding}
+                            options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
+                          />
                           <div className="nx-hint mt-1.5">
                             ↳ 该资产终端的默认字符编码，连接成功后自动应用；也可在终端「更多终端操作」菜单里临时切换。
                           </div>

@@ -4,6 +4,7 @@ import { assetApi, fsApi, toAppError } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import "../../ui/skeleton.css";
+import { Select } from "../../ui/Select";
 import { fileVisual, formatSize } from "./fileTypes";
 import { bytesFromBase64 } from "./fileCodec";
 import {
@@ -198,24 +199,15 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <span className="nx-dot" />
           只读日志
         </span>
-        <label
-          className="nx-btn nx-btn-ghost nx-btn-sm relative shrink-0 font-mono max-[560px]:hidden"
+        <Select
+          className="shrink-0 max-[560px]:hidden"
+          triggerClassName="nx-btn nx-btn-ghost nx-btn-sm font-mono"
+          ariaLabel="日志编码"
           title={`日志编码：${LOG_ENCODING_LABEL[enc]}（默认跟随资产的终端编码设置）`}
-        >
-          {LOG_ENCODING_LABEL[enc]}
-          <select
-            className="absolute h-0 w-0 opacity-0"
-            value={enc}
-            aria-label="日志编码"
-            onChange={(e) => changeEncoding(e.target.value)}
-          >
-            {LOG_ENCODINGS.map((k) => (
-              <option key={k} value={k}>
-                {LOG_ENCODING_LABEL[k]}
-              </option>
-            ))}
-          </select>
-        </label>
+          value={enc}
+          options={LOG_ENCODINGS.map((k) => ({ value: k, label: LOG_ENCODING_LABEL[k] }))}
+          onChange={changeEncoding}
+        />
         <div className="nx-field w-44 max-w-none shrink-0 max-[560px]:hidden">
           <span className="nx-field-icon">
             <IconSearch size={12} />

@@ -21,6 +21,7 @@ import { assetTagValues } from "./assetSearch";
 import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
 import { analyzeSnippetTemplate, renderSnippetForTargets } from "./snippetVariables";
 import type { Snippet } from "./snippetInsert";
+import { Select } from "../../ui/Select";
 
 const MAX_TARGETS = 64;
 
@@ -491,13 +492,18 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                 <input id="runbook-name" className="nx-input" value={name} onChange={(event) => setName(event.target.value)} />
               </div>
               <div className="mb-3 flex flex-wrap items-end gap-2">
-                <label className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-                  从命令片段添加
-                  <select className="nx-select" aria-label="选择要添加的片段" value={snippetId} onChange={(event) => setSnippetId(event.target.value)}>
-                    <option value="">选择片段</option>
-                    {snippets.map((snippet) => <option key={snippet.id} value={snippet.id}>{snippet.name}</option>)}
-                  </select>
-                </label>
+                <div className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
+                  <span>从命令片段添加</span>
+                  <Select
+                    ariaLabel="选择要添加的片段"
+                    value={snippetId}
+                    options={[
+                      { value: "", label: "选择片段" },
+                      ...snippets.map((snippet) => ({ value: snippet.id, label: snippet.name })),
+                    ]}
+                    onChange={setSnippetId}
+                  />
+                </div>
                 <button type="button" className="nx-btn" disabled={!snippetId} onClick={addSnippet}><IconPlus size={12} />添加片段步骤</button>
                 <button type="button" className="nx-btn" onClick={() => setSteps((current) => [...current, { id: createRunbookId(), name: `步骤 ${current.length + 1}`, description: "", command: "" }])}>
                   <IconPlus size={12} />添加命令步骤
@@ -531,13 +537,18 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                 metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
               />
               <div className="mt-3 flex flex-col gap-2 text-[11px] text-neutral-400">
-                <label className="flex flex-col gap-1">
-                  执行前确认
-                  <select className="nx-select" aria-label="执行前确认" value={policy} onChange={(event) => setPolicy(event.target.value as RunbookConfirmationPolicy)}>
-                    <option value="every_step">每一步都先确认（默认）</option>
-                    <option value="production_only">只有生产环境主机先确认</option>
-                  </select>
-                </label>
+                <div className="flex flex-col gap-1">
+                  <span>执行前确认</span>
+                  <Select
+                    ariaLabel="执行前确认"
+                    value={policy}
+                    options={[
+                      { value: "every_step", label: "每一步都先确认（默认）" },
+                      { value: "production_only", label: "只有生产环境主机先确认" },
+                    ]}
+                    onChange={(value) => setPolicy(value as RunbookConfirmationPolicy)}
+                  />
+                </div>
                 <label className="flex items-center gap-1.5">
                   <input type="checkbox" className="accent-blue-500" checked={stopOnFailure} onChange={(event) => setStopOnFailure(event.target.checked)} />
                   有主机失败就停止后续步骤（默认）

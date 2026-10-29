@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi, useSessionList } from "../../app/store";
 import { forwardRuleApi, type ForwardRule, type ForwardRuleInput } from "../../ipc/forwardRuleApi";
@@ -48,6 +48,19 @@ export function ForwardRules({
   const panelId = useId();
   const [rootRef, compact] = useCompactWidth(760);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [openRules, setOpenRules] = useState<ReadonlySet<string>>(() => new Set());
+  const editFormRef = useRef<HTMLDivElement>(null);
+  const toggleRule = (id: string) =>
+    setOpenRules((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  useEffect(() => {
+    // On a phone the edit form sits below the list; bring it into view when editing starts.
+    const el = editFormRef.current;
+    if (editing && el && typeof el.scrollIntoView === "function") el.scrollIntoView({ block: "nearest" });
+  }, [editing]);
 
   const rules = useQuery({
     queryKey: ["forwardRules"],
@@ -212,7 +225,7 @@ export function ForwardRules({
         已保存规则
       </button>
       {expanded && (
-        <div id={panelId} className="max-h-72 overflow-auto border-t border-neutral-800/60 px-3 py-2">
+        <div id={panelId} className={`overflow-auto overscroll-contain border-t border-neutral-800/60 px-3 py-2 ${compact ? "max-h-[min(60dvh,32rem)] [padding-bottom:calc(0.5rem+var(--nx-kb-inset,0px)+var(--nx-safe-bottom,0px))]" : "max-h-72"}`}>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-neutral-500">仅 local 固定端口；只监听 127.0.0.1，不自动启动。</span>
             <div className="nx-spacer" />
@@ -243,10 +256,28 @@ export function ForwardRules({
                 <div className="py-2 text-[11px] text-neutral-500">暂无保存的转发规则</div>
               ) : (
                 (rules.data ?? []).map((rule) => (
-                  <div key={rule.id} className="flex items-center gap-2 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium text-neutral-200" title={rule.name}>{rule.name}</div>
-                      <div className="nx-mono truncate text-neutral-500" title={`${rule.listenHost}:${rule.listenPort} → ${rule.targetHost}:${rule.targetPort}`}>
+                  <div key={rule.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">
+                    <div
+                      className={`min-w-0 flex-1 basis-44 ${compact ? "cursor-pointer" : ""}`}
+                      {...(compact
+                        ? {
+                            role: "button",
+                            tabIndex: 0,
+                            "aria-expanded": openRules.has(rule.id),
+                            "aria-label": `${rule.name} 详情`,
+                            onClick: () => toggleRule(rule.id),
+                            onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
+                              if (e.target !== e.currentTarget) return;
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggleRule(rule.id);
+                              }
+                            },
+                          }
+                        : {})}
+                    >
+                      <div className={`${compact && openRules.has(rule.id) ? "break-all" : "truncate"} font-medium text-neutral-200`} title={rule.name}>{rule.name}</div>
+                      <div className={`nx-mono ${compact && openRules.has(rule.id) ? "break-all" : "truncate"} text-neutral-500`} title={`${rule.listenHost}:${rule.listenPort} → ${rule.targetHost}:${rule.targetPort}`}>
                         {rule.listenHost}:{rule.listenPort} → {rule.targetHost}:{rule.targetPort}
                       </div>
                       <div className={rule.status === "failed" ? "text-red-300" : rule.status === "active" ? "text-green-300" : "text-neutral-500"}>
@@ -257,18 +288,18 @@ export function ForwardRules({
                     {compact ? (
                       <div className="flex shrink-0 items-center gap-1">
                         {rule.status === "stopped" || rule.status === "failed" ? (
-                          <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busy !== null} onClick={() => void start(rule)}>
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
                             <IconPlay size={11} />
                             启动
                           </button>
                         ) : (
-                          <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busy !== null} onClick={() => void stop(rule)}>
+                          <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
                             <IconStop size={11} />
                             停止
                           </button>
                         )}
                         <button
-                          className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9 pointer-coarse:w-9"
+                          className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:w-11"
                           aria-label={`${rule.name} 更多操作`}
                           aria-haspopup="menu"
                           disabled={busy !== null}
@@ -292,7 +323,7 @@ export function ForwardRules({
                         </button>
                       </div>
                     ) : (
-                      <div className="flex shrink-0 items-center gap-1">
+                      <div className="flex shrink-0 flex-wrap items-center gap-1">
                         {rule.status === "stopped" || rule.status === "failed" ? (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
                             <IconPlay size={11} />
@@ -330,14 +361,23 @@ export function ForwardRules({
             </div>
           )}
           {editing && (
-            <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-2">
-              <input className="nx-input nx-input-sm min-w-36 flex-1" value={name} onChange={(event) => setName(event.target.value)} aria-label="规则名称" placeholder="规则名称（可选）" />
-              <input className="nx-input nx-input-sm w-24 font-mono" value={listenPort} onChange={(event) => setListenPort(event.target.value)} aria-label="规则监听端口" inputMode="numeric" />
-              <span className="text-neutral-500">→</span>
-              <input className="nx-input nx-input-sm min-w-40 flex-1 font-mono" value={targetHost} onChange={(event) => setTargetHost(event.target.value)} aria-label="规则目标主机" />
-              <input className="nx-input nx-input-sm w-24 font-mono" value={targetPort} onChange={(event) => setTargetPort(event.target.value)} aria-label="规则目标端口" inputMode="numeric" />
-              <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={busy !== null} onClick={() => void saveEdit()}>保存编辑</button>
-              <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => setEditing(null)}>取消</button>
+            <div
+              ref={editFormRef}
+              className={compact ? "mt-2 grid grid-cols-2 gap-2 border-t border-neutral-800/60 pt-2" : "mt-2 flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-2"}
+              onFocus={compact ? (event) => {
+                const target = event.target;
+                if (target instanceof HTMLInputElement && typeof target.scrollIntoView === "function") {
+                  window.setTimeout(() => target.scrollIntoView({ block: "center", behavior: "smooth" }), 250);
+                }
+              } : undefined}
+            >
+              <input className={`nx-input nx-input-sm min-w-36 flex-1 ${compact ? "col-span-2" : ""}`} value={name} onChange={(event) => setName(event.target.value)} aria-label="规则名称" placeholder="规则名称（可选）" />
+              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={listenPort} onChange={(event) => setListenPort(event.target.value)} aria-label="规则监听端口" inputMode="numeric" />
+              <span className={compact ? "hidden" : "text-neutral-500"}>→</span>
+              <input className={`nx-input nx-input-sm min-w-40 flex-1 font-mono ${compact ? "order-last col-span-2" : ""}`} value={targetHost} onChange={(event) => setTargetHost(event.target.value)} aria-label="规则目标主机" />
+              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={targetPort} onChange={(event) => setTargetPort(event.target.value)} aria-label="规则目标端口" inputMode="numeric" />
+              <button className={`nx-btn nx-btn-primary nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => void saveEdit()}>保存编辑</button>
+              <button className={`nx-btn nx-btn-ghost nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => setEditing(null)}>取消</button>
             </div>
           )}
         </div>

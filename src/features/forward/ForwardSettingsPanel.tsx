@@ -158,7 +158,7 @@ export function ForwardSettingsPanel() {
                 <span className="min-w-0 flex-1 truncate font-medium text-neutral-200" title={rule.name}>
                   {rule.name}
                 </span>
-                <span className="nx-mono text-neutral-500">
+                <span className="nx-mono min-w-0 max-w-full break-all text-neutral-500">
                   {rule.listenHost}:{rule.listenPort} → {rule.targetHost}:{rule.targetPort}
                 </span>
                 {isAutoStartEligible(rule) ? (

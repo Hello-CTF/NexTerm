@@ -90,7 +90,7 @@ function mountMenu(): HTMLDivElement {
 describe("PreviewShareMenu desktop dispatch", () => {
   it("creates through the preview_share_create relay and displays the backend-assembled URL", async () => {
     const container = mountMenu();
-    await flushUntil(() => container.querySelector("select") !== null);
+    await flushUntil(() => container.querySelector('button[aria-label="预览链接有效期"]') !== null);
     clickButton(container, "创建链接");
     await flushUntil(() => container.textContent?.includes("https://sync.example.com/share/preview/tok-1") === true);
     expect(mocks.create).toHaveBeenCalledWith("tab-1", 3_600_000);

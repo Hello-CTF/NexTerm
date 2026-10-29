@@ -203,11 +203,9 @@ describe("DockerPanel copy", () => {
     mounted = withClient(createElement(DockerPanel, { sessionId: "s1", visible: true }));
     await flushUntil(() => text().includes("自动刷新"));
     expect(text()).not.toContain("容器 5s · 镜像与主机概览 30s 自动刷新");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="自动刷新间隔"]',
-    );
+    const select = mounted.container.querySelector<HTMLElement>('button[aria-label="自动刷新间隔"]');
     expect(select).not.toBeNull();
-    expect(select!.value).toBe("30000");
+    expect(select!.textContent).toContain("30 秒");
     const segment = [...mounted.container.querySelectorAll(".nx-segment-item")].find((b) =>
       b.textContent?.includes("镜像"),
     );

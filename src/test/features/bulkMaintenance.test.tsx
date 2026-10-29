@@ -10,7 +10,7 @@ import {
   flushUntil,
   mountWithClient,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -141,7 +141,16 @@ function answerTestLogin(table: Record<string, Record<string, unknown>>) {
   }));
 }
 
-function inputByLabel<T extends HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(label: string): T {
+// selectOptionTexts opens the shared Select named by label, reads its options and closes it again.
+function selectOptionTexts(label: string): string[] {
+  const trigger = inputByLabel<HTMLButtonElement>(label);
+  click(trigger);
+  const texts = [...mounted!.container.querySelectorAll(`[role="listbox"][aria-label="${label}"] [role="option"]`)].map((option) => option.textContent?.trim() ?? "");
+  click(trigger);
+  return texts;
+}
+
+function inputByLabel<T extends HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>(label: string): T {
   const input = mounted?.container.querySelector<T>(`[aria-label="${label}"]`);
   if (!input) throw new Error(`input ${label} not found`);
   return input;
@@ -187,11 +196,10 @@ describe("BulkMaintenancePanel", () => {
     await mountPanel();
     click(target("a"));
     click(target("b"));
-    await flushUntil(() => inputByLabel<HTMLSelectElement>("批量编辑分组").options.length > 2
-      && inputByLabel<HTMLSelectElement>("批量编辑凭据").options.length > 2);
-    setSelectValue(inputByLabel("批量编辑分组"), "id:g1");
-    setSelectValue(inputByLabel("批量编辑跳板机"), "clear");
-    setSelectValue(inputByLabel("批量编辑凭据"), "id:cred-1");
+    await flushUntil(() => selectOptionTexts("批量编辑分组").length > 2 && selectOptionTexts("批量编辑凭据").length > 2);
+    chooseSelectOption(mounted!.container, "批量编辑分组", "fleet");
+    chooseSelectOption(mounted!.container, "批量编辑跳板机", "不使用跳板机");
+    chooseSelectOption(mounted!.container, "批量编辑凭据", "deploy-credential");
     click(inputByLabel("修改标签"));
     setInputValue(inputByLabel("批量编辑标签"), "web, env:prod");
     click(inputByLabel("修改端口"));

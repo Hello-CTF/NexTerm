@@ -9,7 +9,7 @@ import {
   flushUntil,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 
@@ -139,8 +139,8 @@ function portInput(): HTMLInputElement {
   return input;
 }
 
-function templateSelect(): HTMLSelectElement | null {
-  return mounted!.container.querySelector<HTMLSelectElement>('select[aria-label="从模板创建"]');
+function templateSelect(): HTMLButtonElement | null {
+  return mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="从模板创建"][aria-haspopup="listbox"]');
 }
 
 function fillHost(host: string) {
@@ -231,9 +231,8 @@ describe("AssetEditor creation from templates", () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     mountEditor();
     await flush();
-    const select = templateSelect();
-    if (!select) throw new Error("template select not found");
-    setSelectValue(select, "t-1");
+    if (!templateSelect()) throw new Error("template select not found");
+    chooseSelectOption(mounted!.container, "从模板创建", TEMPLATE.name);
     await flush();
 
     expect(portInput().value).toBe("2222");
@@ -252,9 +251,8 @@ describe("AssetEditor creation from templates", () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     const { onSaved } = mountEditor();
     await flush();
-    const select = templateSelect();
-    if (!select) throw new Error("template select not found");
-    setSelectValue(select, "t-1");
+    if (!templateSelect()) throw new Error("template select not found");
+    chooseSelectOption(mounted!.container, "从模板创建", TEMPLATE.name);
     await flush();
     setInputValue(inputOf("名称"), "web-01");
     fillHost("10.0.0.8");
@@ -279,9 +277,8 @@ describe("AssetEditor creation from templates", () => {
     useConnectTemplates.setState({ templates: [{ ...TEMPLATE }] });
     mountEditor();
     await flush();
-    const select = templateSelect();
-    if (!select) throw new Error("template select not found");
-    setSelectValue(select, "t-1");
+    if (!templateSelect()) throw new Error("template select not found");
+    chooseSelectOption(mounted!.container, "从模板创建", TEMPLATE.name);
     await flush();
 
     clickButton(mounted!.container, "删除模板");

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
-import { clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, flushUntil, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -137,11 +137,13 @@ describe("inventory target actions", () => {
     mocks.call.mockResolvedValue({ output: "ok\n", exitCode: 0 });
     const m = (mounted = render({ kind: "kubernetes", target: podTarget }));
     expect(m.container.textContent).toContain("ops/api-0");
-    const select = m.container.querySelector<HTMLSelectElement>('select[aria-label="容器"]')!;
-    expect([...select.options].map((option) => option.value)).toEqual(["app", "sidecar"]);
+    const select = m.container.querySelector<HTMLButtonElement>('button[aria-label="容器"]')!;
+    click(select);
+    expect([...m.container.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent)).toEqual(["app", "sidecar"]);
+    click(select);
 
     setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
-    setSelectValue(select, "sidecar");
+    chooseSelectOption(m.container, "容器", "sidecar");
     clickButton(m.container, "执行");
     await flush();
 
@@ -171,7 +173,7 @@ describe("inventory target actions", () => {
     expect(m.container.textContent).toContain("请选择受管会话");
 
     mocks.call.mockResolvedValue({ output: "ok\n", exitCode: 0 });
-    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    chooseSelectOption(m.container, "受管会话", "prod-host");
     clickButton(m.container, "执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(1);
@@ -475,11 +477,11 @@ describe("inventory target actions", () => {
     }));
     setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
-    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    chooseSelectOption(m.container, "受管会话", "prod-host");
     clickButton(m.container, "执行");
     await flush();
 
-    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-2");
+    chooseSelectOption(m.container, "受管会话", "other-host");
     clickButton(m.container, "取消执行");
     await flush();
     expect(mocks.call).toHaveBeenCalledTimes(2);
@@ -773,7 +775,7 @@ describe("inventory target actions", () => {
     }));
     setInputValue(m.container.querySelector('input[aria-label="命令"]')!, "true");
     setInputValue(m.container.querySelector('input[aria-label="容器"]')!, "web");
-    setSelectValue(m.container.querySelector('select[aria-label="受管会话"]')!, "sess-1");
+    chooseSelectOption(m.container, "受管会话", "prod-host");
     clickButton(m.container, "执行");
     await flush();
     expect(m.container.textContent).toContain("正在执行");
@@ -793,7 +795,7 @@ describe("inventory target actions", () => {
     expect(m.container.textContent).not.toContain("stale prod output");
     expect(m.container.querySelector('[role="status"]')).toBeNull();
     expect(m.container.querySelector<HTMLInputElement>('input[aria-label="容器"]')?.value).toBe("");
-    expect(m.container.querySelector<HTMLSelectElement>('select[aria-label="受管会话"]')?.value).toBe("");
+    expect(m.container.querySelector<HTMLButtonElement>('button[aria-label="受管会话"]')?.textContent).toBe("选择会话");
   });
 
   it("discards a stale response after the owner switches", async () => {

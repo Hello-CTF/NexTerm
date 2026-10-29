@@ -308,7 +308,7 @@ describe("small-screen responsive structure contract", () => {
     const hiddenHints = [...mounted.container.querySelectorAll(".nx-toolbar .nx-hint")].filter(
       (el) => el.className.includes("hidden"),
     );
-    expect(hiddenHints.length).toBeGreaterThanOrEqual(2);
+    expect(hiddenHints.length).toBeGreaterThanOrEqual(1);
   });
 
   it("keeps the delete action column sticky-right in the Docker images table", async () => {

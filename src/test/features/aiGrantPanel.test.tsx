@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import type { Asset } from "../../ipc/commands";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, flushUntil, mount, setInputValue, chooseSelectOption, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   web: false,
@@ -301,7 +301,7 @@ describe("GrantPanel rules", () => {
     await mountPanel("asset-1");
     clickButton(view!.container, "添加路径规则");
     await flush();
-    setSelectValue(view!.container.querySelector<HTMLSelectElement>('select[aria-label="规则操作"]')!, "exec_commands");
+    chooseSelectOption(view!.container, "规则操作", "执行命令");
     await flush();
     expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).toBeNull();
     click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);

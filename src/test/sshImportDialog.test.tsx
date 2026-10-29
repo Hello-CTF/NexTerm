@@ -9,7 +9,7 @@ import {
   flush,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   waitFor,
   type MountedView,
 } from "./features/reactTestUtils";
@@ -202,8 +202,9 @@ describe("SSH import dialog", () => {
 
   it("passes the selected group and normalized common tags to apply", async () => {
     mounted = mountDialog();
-    await waitFor(() => expect(mounted!.container.querySelector("#ssh-import-group")?.querySelectorAll("option").length).toBe(2));
-    setSelectValue(mounted.container.querySelector<HTMLSelectElement>("#ssh-import-group")!, "g1");
+    await waitFor(() => expect(mocks.groupList).toHaveBeenCalled());
+    await flush();
+    chooseSelectOption(mounted.container, "导入到分组", "生产");
     setInputValue(mounted.container.querySelector<HTMLInputElement>("#ssh-import-tags")!, " prod, PROD, 欧洲 ");
     clickButton(mounted.container, "预览");
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
@@ -272,11 +273,11 @@ describe("SSH import dialog", () => {
     await waitFor(() => expect(mocks.preview).toHaveBeenCalled());
     await flush();
 
-    const strategy = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="主机 nat-01 的冲突处理"]',
+    const strategy = mounted.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="主机 nat-01 的冲突处理"]',
     )!;
-    expect(strategy.value).toBe("skip");
-    setSelectValue(strategy, "overwrite");
+    expect(strategy.textContent).toBe("跳过");
+    chooseSelectOption(mounted.container, "主机 nat-01 的冲突处理", "覆盖同名项");
 
     clickButton(mounted.container, "导入选中项");
     await waitFor(() => expect(mocks.apply).toHaveBeenCalled());
@@ -372,10 +373,7 @@ describe("quick import from the SSH ~/.ssh directory", () => {
     click(bastionBox);
     click(edBox);
     await flush();
-    const strategy = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="主机 nat-01 的冲突处理"]',
-    )!;
-    setSelectValue(strategy, "overwrite");
+    chooseSelectOption(mounted.container, "主机 nat-01 的冲突处理", "覆盖同名项");
     await flush();
 
     mocks.apply.mockResolvedValue({

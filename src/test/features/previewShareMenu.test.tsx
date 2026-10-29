@@ -92,7 +92,7 @@ describe("PreviewShareMenu", () => {
   it("closes on outside pointer down but not on inside pointer down", async () => {
     queueResponses({ links: [] });
     const view = await mountMenu();
-    const select = view.container.querySelector("select");
+    const select = view.container.querySelector('button[aria-label="预览链接有效期"]');
     expect(select).not.toBeNull();
     act(() => {
       select?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));

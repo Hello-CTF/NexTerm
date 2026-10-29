@@ -9,7 +9,7 @@ import {
   deferred,
   flush,
   mount,
-  setSelectValue,
+  chooseSelectOption,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -733,7 +733,7 @@ describe("R2 rename editor locator migration", () => {
   }
 
   function saveButton(): HTMLButtonElement {
-    return mounted!.container.querySelector<HTMLButtonElement>('button[title^="保存（"]')!;
+    return mounted!.container.querySelector<HTMLButtonElement>('button[title="保存"]')!;
   }
 
   it("blocks saving during rename, then keeps the same document and saves only to the new locator", async () => {
@@ -772,8 +772,8 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.py", expect.any(String), true);
-    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.py", expect.any(String));
+    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
   });
 
   it("migrates a clean editor without rereading, then saves later edits to the new locator", async () => {
@@ -795,7 +795,7 @@ describe("R2 rename editor locator migration", () => {
     });
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String), true);
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String));
   });
 
   it("rejects rename while a save is in flight and allows it after that save settles", async () => {
@@ -810,7 +810,7 @@ describe("R2 rename editor locator migration", () => {
     const pending = deferred<void>();
     mocks.write.mockReturnValueOnce(pending.promise);
     click(saveButton());
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true));
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String)));
 
     await triggerRename("c.txt");
     expect(mocks.rename).not.toHaveBeenCalled();
@@ -1035,7 +1035,7 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
   });
 
   it("keeps the original locator and blocks old-path saves when the rename outcome is unknown", async () => {
@@ -1126,8 +1126,8 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String), true);
-    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String), true);
+    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String));
+    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
     setFileEditorDirty(SID, "~/c.txt", false);
   });
 
@@ -1145,7 +1145,7 @@ describe("R2 rename editor locator migration", () => {
     expect(storedTab(tab.id).path).toBe("/a/file.txt");
 
     click(saveButton());
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/a/file.txt", expect.any(String), true));
+    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/a/file.txt", expect.any(String)));
     await triggerRename("c", "/a");
     expect(mocks.rename).toHaveBeenCalledTimes(2);
     expect(mocks.rename).toHaveBeenLastCalledWith(SID, "/a", "/c");
@@ -1714,13 +1714,10 @@ describe("FileBrowser selected-item action validation", () => {
 
   it("keeps buttons, titles, and edit entry points consistent for directories and non-text files", () => {
     click(rowByPath(mounted!.container, "~/sub"));
-    expect(actionButton("下载").disabled).toBe(true);
-    expect(actionButton("下载").title).toContain("目录");
     expect(actionButton("日志").disabled).toBe(true);
     expect(actionButton("日志").title).toContain("目录");
 
     click(rowByPath(mounted!.container, "~/image.png"));
-    expect(actionButton("下载").disabled).toBe(false);
     expect(actionButton("日志").disabled).toBe(true);
     expect(actionButton("日志").title).toContain("非文本文件");
     expect(rowByPath(mounted!.container, "~/image.png").title).toContain("不能在线编辑");
@@ -1729,19 +1726,16 @@ describe("FileBrowser selected-item action validation", () => {
     expect(menuItem(mounted!.container, "在下方编辑").textContent).toContain("非文本文件");
 
     click(rowByPath(mounted!.container, "~/a.txt"));
-    expect(actionButton("下载").disabled).toBe(false);
     expect(actionButton("日志").disabled).toBe(false);
   });
 
-  it("stale selection cannot trigger download or log actions after a list refresh", async () => {
+  it("stale selection cannot trigger the log action after a list refresh", async () => {
     click(rowByPath(mounted!.container, "~/a.txt"));
-    expect(actionButton("下载").disabled).toBe(false);
+    expect(actionButton("日志").disabled).toBe(false);
     mocks.list.mockResolvedValue([entry("sub", "dir")]);
     click(mounted!.container.querySelector<HTMLButtonElement>('button[title="刷新"]')!);
     await waitFor(() => expect(mounted!.container.textContent).not.toContain("a.txt"));
 
-    expect(actionButton("下载").disabled).toBe(true);
-    expect(actionButton("下载").title).toContain("请先选择");
     expect(actionButton("日志").disabled).toBe(true);
     expect(actionButton("日志").title).toContain("请先选择");
     expect(mocks.pickSavePath).not.toHaveBeenCalled();
@@ -2278,16 +2272,19 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     });
     await flush();
 
-    const select = mounted.container.querySelector<HTMLSelectElement>("select");
-    if (!select) throw new Error("Encoding select not found");
-    setSelectValue(select, "gbk");
+    chooseSelectOption(mounted.container, "解码方式", "GBK");
     const modal = await openModal();
     expect(modal.getAttribute("role")).toBe("alertdialog");
     expect(modal.textContent).toContain("未保存的改动会丢失");
     await closeModal(modal, "取消");
     expect(mocks.read).toHaveBeenCalledTimes(1);
 
-    setSelectValue(select, "utf-8");
+    // The auto entry also reads UTF-8 once detected, so pick the explicit one, which is listed after it.
+    click(mounted.container.querySelector<HTMLElement>('button[aria-label="解码方式"]')!);
+    const explicit = [...mounted.container.querySelectorAll<HTMLElement>('[role="option"]')]
+      .filter((o) => o.textContent?.includes("UTF-8"))
+      .at(-1);
+    click(explicit!);
     const modal2 = await openModal();
     await closeModal(modal2, "确定");
     await flush();

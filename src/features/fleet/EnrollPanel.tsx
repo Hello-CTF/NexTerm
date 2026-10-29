@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { FleetBaseURLEntry, FleetDevice } from "../../ipc/fleetApi";
 import { isWindows } from "../../app/platform";
 import { copyText as copyToClipboard } from "../../ui/clipboard";
+import { Select } from "../../ui/Select";
 import { IconCheckCircle, IconCopy, IconPlus, IconRefresh, IconTerminal, IconXCircle } from "../../ui/icons";
 import { oneLineInstallCommand, oneLineInstallCommandWindows } from "./installCommand";
 
@@ -389,19 +390,13 @@ export function EnrollPanel(props: EnrollPanelProps) {
           <div className="mt-2 flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-neutral-400">
               <span>新接入码有效期</span>
-              <select
-                className="nx-select shrink-0"
-                style={{ width: 120 }}
-                value={ttlMs}
-                aria-label="接入码有效期"
-                onChange={(e) => onTtlChange(Number(e.target.value))}
-              >
-                {ENROLL_TTL_OPTIONS.map((o) => (
-                  <option key={o.ms} value={o.ms}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              <Select
+                className="w-[120px] shrink-0"
+                value={String(ttlMs)}
+                ariaLabel="接入码有效期"
+                onChange={(value) => onTtlChange(Number(value))}
+                options={ENROLL_TTL_OPTIONS.map((o) => ({ value: String(o.ms), label: o.label }))}
+              />
               <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={issuing} onClick={onIssue}>
                 重新生成
               </button>

@@ -14,6 +14,7 @@ import {
 } from "../../ipc/servicesApi";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconNetwork, IconSearch, IconTerminal, IconTrash } from "../../ui/icons";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import { OperationFeedback, OperationProductionDialog } from "./OperationFeedback";
@@ -206,17 +207,17 @@ export function ProcessFinderPanel({
           searchAriaLabel="搜索端口进程目标"
         />
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
+          <div className="flex flex-col gap-1 text-[11px] text-neutral-500">
             查询类型
-            <select className="nx-select w-32" value={queryKind} disabled={busy} aria-label="进程查询类型" onChange={(event) => {
-              const kind = event.target.value as QueryKind;
+            <Select className="w-32" value={queryKind} disabled={busy} ariaLabel="进程查询类型" onChange={(value) => {
+              const kind = value as QueryKind;
               setQueryKind(kind);
               setQueryValue(kind === "port" ? "8080" : kind === "regex" ? "nginx|postgres" : "nginx");
               finder.clearProduction();
-            }}>
-              <option value="port">端口</option><option value="process">进程名</option><option value="regex">正则（RE2）</option>
-            </select>
-          </label>
+            }} options={[
+              { value: "port", label: "端口" }, { value: "process", label: "进程名" }, { value: "regex", label: "正则（RE2）" },
+            ]} />
+          </div>
           <label className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
             查询
             <input className="nx-input font-mono text-xs" value={queryValue} disabled={busy} aria-label="端口进程查询" onChange={(event) => {

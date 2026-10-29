@@ -8,6 +8,7 @@ import type { InventoryTargetExecRequest } from "../../ipc/generated/types";
 import type { LiveOperation } from "./inventoryLiveOperationStore";
 import { liveOperationStore } from "./inventoryLiveOperationStore";
 import { formatInventoryCommand, parseInventoryCommand } from "./inventoryCommand";
+import { Select } from "../../ui/Select";
 
 export interface InventoryTargetSession {
   id: string;
@@ -373,19 +374,16 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           </label>
           <div className="text-[11px] text-neutral-500">支持引号与转义；管道或重定向请使用 sh -c '…'。</div>
           {isPod && containers.length > 0 && (
-            <label className="flex items-center gap-2 text-[11px] text-neutral-400">
-              容器
-              <select
-                aria-label="容器"
-                className="nx-input flex-1"
+            <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+              <span>容器</span>
+              <Select
+                ariaLabel="容器"
+                className="flex-1"
                 value={container}
-                onChange={(event) => setContainer(event.target.value)}
-              >
-                {containers.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </label>
+                options={containers.map((name) => ({ value: name, label: name }))}
+                onChange={setContainer}
+              />
+            </div>
           )}
           {kind === "docker-context" && (
             <label className="flex items-center gap-2 text-[11px] text-neutral-400">
@@ -400,20 +398,19 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
             </label>
           )}
           {requireSession && (
-            <label className="flex items-center gap-2 text-[11px] text-neutral-400">
-              受管会话
-              <select
-                aria-label="受管会话"
-                className="nx-input flex-1"
+            <div className="flex items-center gap-2 text-[11px] text-neutral-400">
+              <span>受管会话</span>
+              <Select
+                ariaLabel="受管会话"
+                className="flex-1"
                 value={sessionId}
-                onChange={(event) => setSessionId(event.target.value)}
-              >
-                <option value="">选择会话</option>
-                {sessions.map((session) => (
-                  <option key={session.id} value={session.id}>{session.name}</option>
-                ))}
-              </select>
-            </label>
+                options={[
+                  { value: "", label: "选择会话" },
+                  ...sessions.map((session) => ({ value: session.id, label: session.name })),
+                ]}
+                onChange={setSessionId}
+              />
+            </div>
           )}
           <div className="flex gap-2">
             <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={liveOp !== null || ignoredDone} onClick={() => void run()}>

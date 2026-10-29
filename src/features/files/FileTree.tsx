@@ -40,6 +40,7 @@ import {
   normalizeTypedPath,
   parentOf,
 } from "./pathUtils";
+import { TransferPanel } from "./TransferPanel";
 import { useFileOps } from "./useFileOps";
 import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
@@ -1626,6 +1627,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           </>
         )}
       </div>
+
+      <TransferPanel key={sessionId} sessionId={sessionId} />
 
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
     </aside>

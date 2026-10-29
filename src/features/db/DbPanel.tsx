@@ -20,6 +20,7 @@ import {
 } from "../../app/store";
 import { WorkspaceProblems } from "../problems/WorkspaceProblems";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { copyText } from "../../ui/clipboard";
 import {
   IconChevronUp,
@@ -550,18 +551,13 @@ function SqlView({
       <div className="nx-toolbar">
         <IconDatabase size={14} className="text-neutral-500" />
         <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL / MariaDB"}</span>
-        <select
-          className="nx-select nx-input-sm w-[168px]"
+        <Select
+          className="w-[168px]"
+          ariaLabel={dialect === "postgres" ? "选择 schema" : "选择数据库"}
           value={schema}
-          aria-label={dialect === "postgres" ? "选择 schema" : "选择数据库"}
-          onChange={(e) => void loadTables(e.target.value)}
-        >
-          {schemas.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => void loadTables(value)}
+          options={schemas.map((s) => ({ value: s, label: s }))}
+        />
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">
           {dialect === "postgres" ? "张表和视图" : "张表"}

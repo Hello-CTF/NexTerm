@@ -4,7 +4,7 @@
 // device://status online/offline events flip the online state in real time.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil as flushUntilRaw, mountWithClient, setInputValue, chooseSelectOption, type MountedView } from "./reactTestUtils";
 
 async function flushUntil(predicate: () => boolean): Promise<void> {
   if (predicate()) {
@@ -720,7 +720,7 @@ describe("Device management view - device list and metrics", () => {
     const cardOf = (name: string) => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
     const requestCount = calls.length;
     const search = document.querySelector<HTMLInputElement>('input[aria-label="搜索设备"]');
-    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]');
+    const filter = document.querySelector<HTMLButtonElement>('button[aria-label="设备状态过滤"]');
     expect(search).not.toBeNull();
     expect(filter).not.toBeNull();
 
@@ -731,25 +731,25 @@ describe("Device management view - device list and metrics", () => {
     expect(cardOf("old-laptop")).toBeFalsy();
 
     setInputValue(search as HTMLInputElement, "");
-    setSelectValue(filter as HTMLSelectElement, "online");
+    chooseSelectOption(document.body, "设备状态过滤", "在线");
     expect(cardOf("web-01")).toBeTruthy();
     expect(cardOf("db-02")).toBeFalsy();
     expect(cardOf("browser-01")).toBeFalsy();
     expect(cardOf("old-laptop")).toBeFalsy();
 
-    setSelectValue(filter as HTMLSelectElement, "offline");
+    chooseSelectOption(document.body, "设备状态过滤", "离线");
     expect(cardOf("db-02")).toBeTruthy();
     expect(cardOf("browser-01")).toBeTruthy();
     expect(cardOf("web-01")).toBeFalsy();
     expect(cardOf("old-laptop")).toBeFalsy();
 
-    setSelectValue(filter as HTMLSelectElement, "revoked");
+    chooseSelectOption(document.body, "设备状态过滤", "已撤销接入");
     expect(cardOf("old-laptop")).toBeTruthy();
     expect(cardOf("web-01")).toBeFalsy();
     expect(cardOf("db-02")).toBeFalsy();
     expect(cardOf("browser-01")).toBeFalsy();
 
-    setSelectValue(filter as HTMLSelectElement, "all");
+    chooseSelectOption(document.body, "设备状态过滤", "全部");
     expect(cardOf("web-01")).toBeTruthy();
     expect(cardOf("db-02")).toBeTruthy();
     expect(cardOf("browser-01")).toBeTruthy();
@@ -1059,8 +1059,7 @@ describe("Device management view - device list and metrics", () => {
     expect([...(browserCard?.querySelectorAll("button") ?? [])].some((b) => b.textContent?.trim() === "指标")).toBe(false);
 
     expect([...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"))).toBeUndefined();
-    const filter = document.querySelector<HTMLSelectElement>('select[aria-label="设备状态过滤"]') as HTMLSelectElement;
-    setSelectValue(filter, "revoked");
+    chooseSelectOption(document.body, "设备状态过滤", "已撤销接入");
     const revokedCard = [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes("old-laptop"));
     expect(revokedCard?.textContent).toContain("已撤销接入");
     expect(revokedCard?.querySelectorAll("button")).toHaveLength(0);

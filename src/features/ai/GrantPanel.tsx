@@ -12,6 +12,7 @@ import type { FleetDevice } from "../../ipc/fleetApi";
 import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { useAuth } from "../auth/store";
 import { IconChevronRight, IconClose, IconLoader, IconPlus, IconSearch } from "../../ui/icons";
 
@@ -447,18 +448,14 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
           ))}
           {formOpen ? (
             <div className="flex flex-wrap items-center gap-1">
-              <select
-                className="nx-input py-0.5 text-[11px]"
-                aria-label="规则操作"
+              <Select
+                className="w-32 shrink-0"
+                triggerClassName="nx-input nx-select-trigger py-0.5 text-[11px]"
+                ariaLabel="规则操作"
                 value={action}
-                onChange={(event) => setAction(event.target.value as AiGrantRuleAction)}
-              >
-                {RULE_ACTION_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => setAction(value as AiGrantRuleAction)}
+                options={RULE_ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+              />
               {needsPath && (
                 <input
                   className="nx-input min-w-28 flex-1 py-0.5 font-mono text-[11px]"
@@ -468,18 +465,14 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
                   onChange={(event) => setPath(event.target.value)}
                 />
               )}
-              <select
-                className="nx-input py-0.5 text-[11px]"
-                aria-label="规则有效期"
+              <Select
+                className="w-28 shrink-0"
+                triggerClassName="nx-input nx-select-trigger py-0.5 text-[11px]"
+                ariaLabel="规则有效期"
                 value={expiry}
-                onChange={(event) => setExpiry(event.target.value)}
-              >
-                {RULE_EXPIRY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setExpiry}
+                options={RULE_EXPIRY_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+              />
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 disabled={busy || (needsPath && path.trim() === "")}

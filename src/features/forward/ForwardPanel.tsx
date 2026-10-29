@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type FocusEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { isImeKeyEvent } from "../../ui/DialogHost";
@@ -90,6 +90,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const [showAll, setShowAll] = useState(false);
   const [paneRef, compact] = useCompactWidth(760);
   const [formOpen, setFormOpen] = useState(false);
+  const [expandedCards, setExpandedCards] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleCard = (id: string) =>
+    setExpandedCards((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const listenPortId = useId();
   const bindHostId = useId();
 
@@ -372,6 +379,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const envRefreshFailed = env.isError && env.data !== undefined;
 
   const showForm = !compact || formOpen;
+  // The soft keyboard resizes the viewport after focus; bring the field (and the submit button below it) into view.
+  const keepFocusedFieldVisible = (event: FocusEvent<HTMLElement>) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || typeof target.scrollIntoView !== "function") return;
+    window.setTimeout(() => target.scrollIntoView({ block: "center", behavior: "smooth" }), 250);
+  };
 
   const typeBadge = (f: ForwardSpec) => {
     const isSocks = f.kind === "socks";
@@ -410,27 +423,44 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     const host = f.listenHost ?? listenHost;
     const label = `${host || "未知"}:${f.listenPort}`;
     const target = isSocks ? "由客户端指定" : `${isRemote ? `${remoteTarget} ` : ""}${f.targetHost}:${f.targetPort}`;
+    const open = expandedCards.has(f.id);
+    // Truncated text has no hover title on touch screens, so tapping the info block reveals it in full.
+    const clip = open ? "break-all" : "truncate";
     return (
-      <div key={f.id} className="flex items-center gap-2 border-b border-neutral-800/45 px-2.5 py-1.5">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
+      <div key={f.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-neutral-800/45 px-2.5 py-1.5">
+        <div
+          className="min-w-0 flex-1 basis-48 cursor-pointer"
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          aria-label={`${label} 详情`}
+          onClick={() => toggleCard(f.id)}
+          onKeyDown={(e) => {
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggleCard(f.id);
+            }
+          }}
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             {typeBadge(f)}
-            <span className="nx-mono truncate text-[12px] font-semibold text-neutral-100" title={label}>{label}</span>
+            <span className={`nx-mono min-w-0 text-[12px] font-semibold text-neutral-100 ${clip}`} title={label}>{label}</span>
             <span className="text-[11px]">{statusText(f)}</span>
           </div>
-          <div className="nx-mono mt-0.5 truncate text-[11px] text-neutral-400" title={`→ ${target}`}>→ {target}</div>
-          <div className="truncate text-[10.5px] text-neutral-500" title={f.sessionId}>{sessionName(f.sessionId)}</div>
+          <div className={`nx-mono mt-0.5 text-[11px] text-neutral-400 ${clip}`} title={`→ ${target}`}>→ {target}</div>
+          <div className={`text-[10.5px] text-neutral-500 ${clip}`} title={f.sessionId}>{sessionName(f.sessionId)}</div>
           {f.error && <div className="break-words text-[11px] text-red-300" role="alert">{f.error}</div>}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 max-[430px]:ml-auto">
           {f.status && f.status !== "active" && (
-            <button className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-9" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
+            <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
               <IconRefresh size={11} />
               重试
             </button>
           )}
           <button
-            className="nx-btn nx-btn-danger nx-btn-xs pointer-coarse:h-9"
+            className="nx-btn nx-btn-danger nx-btn-xs"
             disabled={busyForwardId === f.id}
             onClick={() => void remove(f, label)}
           >
@@ -624,7 +654,10 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           </button>
         </div>
       )}
-      <div className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${showForm || unavailable ? "" : "hidden"}`}>
+      <div
+        className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${compact ? "overscroll-contain [padding-bottom:calc(0.75rem+var(--nx-kb-inset,0px)+var(--nx-safe-bottom,0px))]" : ""} ${showForm || unavailable ? "" : "hidden"}`}
+        onFocus={compact ? keepFocusedFieldVisible : undefined}
+      >
         {unavailable ? (
           <div className="nx-alert nx-alert-info flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
@@ -655,7 +688,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 </button>
               </div>
             )}
-            <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+            <div className={compact ? "mb-2.5 grid grid-cols-3 gap-1.5" : "mb-2.5 flex flex-wrap items-center gap-1.5"}>
               <button
                 className={`nx-btn nx-btn-sm ${kind === "local" ? "nx-btn-primary" : "nx-btn-ghost"}`}
                 onClick={() => switchKind("local")}
@@ -677,7 +710,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 <IconGlobe size={13} />
                 SOCKS5 代理
               </button>
-              <span className="ml-1 text-[11px] text-neutral-500">
+              <span className={compact ? "col-span-3 text-[11px] text-neutral-500" : "ml-1 text-[11px] text-neutral-500"}>
                 {kind === "local"
                   ? exposed
                     ? "把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）"
@@ -690,13 +723,14 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               </span>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className={compact ? "grid grid-cols-2 items-start gap-x-2 gap-y-2" : "flex flex-wrap items-center gap-2"}>
               {kind === "remote" && (
                 <>
+                  <div className={compact ? "order-none col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
                   <label className="text-[11.5px] text-neutral-400" htmlFor={bindHostId}>
                     远端监听
                   </label>
-                  <div className="w-[150px] shrink-0">
+                  <div className={compact ? "min-w-0" : "w-[150px] shrink-0"}>
                     <input
                       id={bindHostId}
                       ref={bindHostRef}
@@ -716,13 +750,15 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       </p>
                     )}
                   </div>
-                  <span className="text-neutral-600">:</span>
+                  </div>
+                  <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
                 </>
               )}
+              <div className={compact ? "order-1 flex min-w-0 flex-col gap-1" : "contents"}>
               <label className="text-[11.5px] text-neutral-400" htmlFor={listenPortId}>
                 {listenPortLabel}
               </label>
-              <div className="w-[92px] shrink-0">
+              <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
                 <input
                   id={listenPortId}
                   ref={listenPortRef}
@@ -742,10 +778,13 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   </p>
                 )}
               </div>
+              </div>
               {kind !== "socks" && (
                 <>
                   <span className={compact ? "hidden" : "text-neutral-600"}>→</span>
-                  <div className={compact ? "min-w-0 basis-full" : "min-w-[200px] flex-1"}>
+                  <div className={compact ? "order-3 col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
+                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">目标主机</span>}
+                  <div className={compact ? "min-w-0" : "min-w-[200px] flex-1"}>
                     <input
                       ref={targetHostRef}
                       className="nx-input nx-input-sm font-mono"
@@ -770,9 +809,11 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       </p>
                     )}
                   </div>
+                  </div>
                   <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
+                  <div className={compact ? "order-2 flex min-w-0 flex-col gap-1" : "contents"}>
                   {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">目标端口</span>}
-                  <div className="w-[92px] shrink-0">
+                  <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
                     <input
                       ref={targetPortRef}
                       className="nx-input nx-input-sm font-mono"
@@ -796,10 +837,11 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       </p>
                     )}
                   </div>
+                  </div>
                 </>
               )}
               <button
-                className="nx-btn nx-btn-primary nx-btn-sm"
+                className={`nx-btn nx-btn-primary nx-btn-sm ${compact ? "order-4 col-span-2 w-full justify-center" : ""}`}
                 disabled={busy || !sessionId || localSession || !env.data}
                 title={!env.data ? "等待转发环境检查成功" : undefined}
                 onClick={() => void create()}

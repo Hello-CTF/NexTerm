@@ -406,7 +406,16 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     mocks.download.mockReturnValueOnce(new Promise<number>((r) => (resolveDownload = r)));
 
     click(rowByPath(mounted!.container, "~/a.txt"));
-    click(buttonByTitle(mounted!.container, "下载"));
+    act(() => {
+      rowByPath(mounted!.container, "~/a.txt").dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }),
+      );
+    });
+    click(
+      [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((b) =>
+        b.textContent?.includes("下载当前文件"),
+      )!,
+    );
     await waitFor(() =>
       expect(mocks.download).toHaveBeenCalledWith(SID, "~/a.txt", LOCAL_SAVE, false, expect.any(String), expect.any(String)),
     );
@@ -761,7 +770,7 @@ describe("drag-and-drop upload (FileTree)", () => {
     await waitFor(() =>
       expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false, expect.any(String), expect.any(String)),
     );
-    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).toBeNull();
+    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).not.toBeNull();
     expect(
       useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt"),
     ).toBe(true);

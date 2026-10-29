@@ -85,6 +85,16 @@ import {
   IconUpload,
 } from "../../ui/icons";
 
+interface SelectionState {
+  primary: string | null;
+  anchor: string | null;
+  paths: ReadonlySet<string>;
+}
+
+const EMPTY_SELECTION: SelectionState = { primary: null, anchor: null, paths: new Set() };
+const LONG_PRESS_MS = 500;
+const LONG_PRESS_SLOP = 10;
+
 function browserRowKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
   const tree = event.currentTarget.closest("[role='tree']");
@@ -113,7 +123,18 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
   const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [pathChoice, setPath] = useState<string | null>(initialPath ?? null);
   const [draft, setDraft] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [sel, setSel] = useState<SelectionState>(EMPTY_SELECTION);
+  const [multiMode, setMultiMode] = useState(false);
+  const selected = sel.primary;
+  const setSelected = useCallback((next: string | null) => {
+    setSel(
+      next === null ? EMPTY_SELECTION : { primary: next, anchor: next, paths: new Set([next]) },
+    );
+  }, []);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const batchBusy = useRef(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const fileOps = useFileOps(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -140,6 +161,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
     (next) => {
       setPath(next);
       setSelected(null);
+      setMultiMode(false);
     },
     undefined,
     initialPath !== undefined,
@@ -167,6 +189,38 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         symlinkTarget: null,
       }))
     : (entries.data ?? []);
+  const pickedEntries = computer ? [] : list.filter((e) => sel.paths.has(e.path));
+  const pickedKey = pickedEntries.map((e) => e.path).join("\u0000");
+  const pickedHasDir = pickedEntries.some((e) => e.kind === "dir");
+  const listSettled = environmentSettled && !entries.isLoading && !entries.isError;
+  useEffect(() => {
+    if (!listSettled) return;
+    setSel((cur) => {
+      if (cur.paths.size === 0) return cur;
+      const live = new Set(list.map((e) => e.path));
+      const kept = [...cur.paths].filter((p) => live.has(p));
+      if (kept.length === cur.paths.size) return cur;
+      if (kept.length === 0) return EMPTY_SELECTION;
+      return {
+        primary: cur.primary !== null && live.has(cur.primary) ? cur.primary : kept[kept.length - 1],
+        anchor: cur.anchor !== null && live.has(cur.anchor) ? cur.anchor : kept[0],
+        paths: new Set(kept),
+      };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listSettled, entries.data, rootsData]);
+  useEffect(() => {
+    if (multiMode && pickedEntries.length === 0) setMultiMode(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multiMode, pickedKey]);
+
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) clearTimeout(longPressTimer.current);
+    longPressTimer.current = null;
+    longPressStart.current = null;
+  };
+  useEffect(() => cancelLongPress, []);
+
   const virtualizer = useVirtualizer({
     count: list.length,
     getScrollElement: () => parentRef.current,
@@ -205,6 +259,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
     if (next === path) return;
     setPath(next);
     setSelected(null);
+    setMultiMode(false);
     setMenu(null);
   };
 
@@ -332,11 +387,34 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
     }
   };
 
-  const downloadToLocal = async (remotePath: string) => {
+  const downloadToLocal = async (remotePath: string, quiet = false): Promise<boolean> => {
     const target = await pickSavePath(baseName(remotePath));
-    if (!target) return;
-    pushToast("info", "开始下载…");
+    if (!target) return false;
+    if (!quiet) pushToast("info", "开始下载…");
     enqueueDownload(sessionId, { remotePath, localPath: target });
+    return true;
+  };
+
+  const batchDownload = async (files: FileEntryDto[]) => {
+    if (batchBusy.current || files.some((f) => f.kind === "dir")) return;
+    batchBusy.current = true;
+    try {
+      let queued = 0;
+      for (const file of files) {
+        if (await downloadToLocal(file.path, true)) queued += 1;
+      }
+      const skipped = files.length - queued;
+      if (queued === 0) pushToast("info", "没有加入任何下载任务");
+      else
+        pushToast(
+          "success",
+          skipped > 0
+            ? `已加入 ${queued} 个下载任务，${skipped} 个已取消`
+            : `已加入 ${queued} 个下载任务`,
+        );
+    } finally {
+      batchBusy.current = false;
+    }
   };
 
   const uploadFolderTo = async (dir: string) => {
@@ -367,16 +445,61 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
     });
   };
 
+  const dropFromSelection = (gone: string[]) => {
+    if (gone.length === 0) return;
+    const drop = new Set(gone);
+    setSel((cur) => {
+      const kept = [...cur.paths].filter((p) => !drop.has(p));
+      if (kept.length === cur.paths.size) return cur;
+      if (kept.length === 0) return EMPTY_SELECTION;
+      return {
+        primary: cur.primary !== null && !drop.has(cur.primary) ? cur.primary : kept[kept.length - 1],
+        anchor: cur.anchor !== null && !drop.has(cur.anchor) ? cur.anchor : kept[0],
+        paths: new Set(kept),
+      };
+    });
+  };
+
   const removePath = async (remotePath: string, isDir: boolean) => {
     const tip = isDir ? "\n\n目录会被递归删除，不可恢复。" : "";
     if (!(await ask(`删除 ${remotePath}？${tip}`, { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, remotePath, isDir);
-      if (selected === remotePath) setSelected(null);
+      dropFromSelection([remotePath]);
       refresh();
       pushToast("success", "已删除");
     } catch (e) {
       pushToast("error", `删除失败：${describeError(e)}`);
+    }
+  };
+
+  const batchDelete = async (items: FileEntryDto[]) => {
+    if (batchBusy.current || items.length === 0) return;
+    const hasDir = items.some((x) => x.kind === "dir");
+    const tip = hasDir ? "\n\n其中包含目录，目录会被递归删除，不可恢复。" : "";
+    if (!(await ask(`删除选中的 ${items.length} 项？${tip}`, { kind: "warning" }))) return;
+    batchBusy.current = true;
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const item of items) {
+        try {
+          await fsApi.delete(sessionId, item.path, item.kind === "dir");
+          deleted.push(item.path);
+        } catch (e) {
+          failed.push(`${item.name}（${describeError(e)}）`);
+        }
+      }
+      dropFromSelection(deleted);
+      refresh();
+      if (failed.length === 0) pushToast("success", `已删除 ${deleted.length} 项`);
+      else
+        pushToast(
+          "error",
+          `已删除 ${deleted.length} 项，${failed.length} 项失败：${failed.join("；")}`,
+        );
+    } finally {
+      batchBusy.current = false;
     }
   };
 
@@ -566,7 +689,90 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
       .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
   };
 
+  const toggleSelect = (entry: FileEntryDto) => {
+    setSel((cur) => {
+      const paths = new Set(cur.paths);
+      if (paths.has(entry.path)) {
+        paths.delete(entry.path);
+        const primary =
+          cur.primary === entry.path ? ([...paths][paths.size - 1] ?? null) : cur.primary;
+        return paths.size === 0
+          ? EMPTY_SELECTION
+          : { primary, anchor: entry.path, paths };
+      }
+      paths.add(entry.path);
+      return { primary: entry.path, anchor: entry.path, paths };
+    });
+  };
+
+  const rangeSelect = (entry: FileEntryDto) => {
+    setSel((cur) => {
+      const to = list.findIndex((x) => x.path === entry.path);
+      const fromPath = cur.anchor ?? cur.primary;
+      const from = fromPath === null ? -1 : list.findIndex((x) => x.path === fromPath);
+      if (to < 0 || from < 0) {
+        return { primary: entry.path, anchor: entry.path, paths: new Set([entry.path]) };
+      }
+      const [lo, hi] = from <= to ? [from, to] : [to, from];
+      return {
+        primary: entry.path,
+        anchor: list[from].path,
+        paths: new Set(list.slice(lo, hi + 1).map((x) => x.path)),
+      };
+    });
+  };
+
+  const selectAll = () => {
+    if (computer || list.length === 0) return;
+    setSel({
+      primary: selected !== null && list.some((x) => x.path === selected) ? selected : list[0].path,
+      anchor: list[0].path,
+      paths: new Set(list.map((x) => x.path)),
+    });
+  };
+
+  const clearSelection = () => {
+    setSelected(null);
+    setMultiMode(false);
+  };
+
+  const openBatchMenuAt = (x: number, y: number, items: FileEntryDto[]) => {
+    const hasDir = items.some((item) => item.kind === "dir");
+    setMenu({
+      x,
+      y,
+      title: `已选 ${items.length} 项`,
+      items: [
+        { kind: "group", label: `已选 ${items.length} 项` },
+        {
+          kind: "item",
+          label: `下载 ${items.length} 个文件`,
+          icon: <IconDownload size={13} />,
+          hint: hasDir ? "目录请单独打包下载" : undefined,
+          disabled: hasDir || sessionGone,
+          onSelect: () => void batchDownload(items),
+        },
+        { kind: "separator" },
+        { kind: "group", label: "危险操作" },
+        {
+          kind: "item",
+          label: `删除 ${items.length} 项…`,
+          icon: <IconTrash size={13} />,
+          danger: true,
+          disabled: sessionGone,
+          onSelect: () => void batchDelete(items),
+        },
+        { kind: "separator" },
+        { kind: "item", label: "取消选择", onSelect: clearSelection },
+      ],
+    });
+  };
+
   const openRowMenuAt = (entry: FileEntryDto, x: number, y: number) => {
+    if (!computer && pickedEntries.length > 1 && sel.paths.has(entry.path)) {
+      openBatchMenuAt(x, y, pickedEntries);
+      return;
+    }
     setSelected(entry.path);
     if (computer) {
       setMenu({
@@ -680,7 +886,15 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         disabled: fileOps.busy !== null,
         onSelect: () =>
           void fileOps.renameEntry(entry, list, path ?? HOME, (from, to) =>
-            setSelected((cur) => (cur === from ? to : cur)),
+            setSel((cur) => {
+              if (!cur.paths.has(from)) return cur;
+              const paths = new Set([...cur.paths].map((p) => (p === from ? to : p)));
+              return {
+                primary: cur.primary === from ? to : cur.primary,
+                anchor: cur.anchor === from ? to : cur.anchor,
+                paths,
+              };
+            }),
           ),
       },
       {
@@ -719,6 +933,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
   const openRowMenu = (ev: ReactMouseEvent<HTMLDivElement>, entry: FileEntryDto) => {
     ev.preventDefault();
     ev.stopPropagation();
+    if (coarse) return;
     openRowMenuAt(entry, ev.clientX, ev.clientY);
   };
 
@@ -821,11 +1036,6 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
   const selectedFile = selectedEntry?.kind === "dir" ? undefined : selectedEntry;
   const selectedEditableFile =
     selectedFile && isEditableFile(selectedFile.name) ? selectedFile : undefined;
-  const downloadTitle = !selectedEntry
-    ? "请先选择要下载的文件"
-    : selectedEntry.kind === "dir"
-      ? "目录不能直接下载，请使用打包下载"
-      : "下载选中的文件";
   const logTitle = !selectedEntry
     ? "请先选择要查看日志的文本文件"
     : selectedEntry.kind === "dir"
@@ -927,15 +1137,6 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         </button>
         <button
           className="nx-btn nx-btn-sm max-[560px]:hidden"
-          disabled={!selectedFile}
-          onClick={() => selectedFile && void downloadToLocal(selectedFile.path)}
-          title={downloadTitle}
-        >
-          <IconDownload size={13} />
-          下载
-        </button>
-        <button
-          className="nx-btn nx-btn-sm max-[560px]:hidden"
           disabled={!selectedEditableFile}
           onClick={() => selectedEditableFile && openLogTab(sessionId, selectedEditableFile.path)}
           title={logTitle}
@@ -953,19 +1154,8 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
           新建
         </button>
         <button
-          className="nx-btn nx-btn-danger nx-btn-sm max-[560px]:hidden"
-          disabled={!selectedEntry}
-          onClick={() =>
-            selectedEntry && void removePath(selectedEntry.path, selectedEntry.kind === "dir")
-          }
-          title="删除选中项"
-        >
-          <IconTrash size={13} />
-          删除
-        </button>
-        <button
           className="nx-icon-btn"
-          title="更多操作（打包下载 / 上传 / 上传文件夹 / 新建目录 / 新建空白文件 / 刷新）"
+          title="更多操作（打包下载当前目录 / 上传 / 上传文件夹 / 新建目录 / 新建空白文件 / 刷新）。下载与删除请右键或长按文件"
           aria-label="更多操作"
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
@@ -993,6 +1183,41 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
         <span className="w-24 text-right max-[560px]:hidden">大小</span>
         <span className="w-40 text-right max-[560px]:hidden">修改时间</span>
       </div>
+
+      {multiMode && (
+        <div
+          className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-blue-500/[0.08] px-3 py-1.5 text-[12px]"
+          role="toolbar"
+          aria-label="多选操作"
+        >
+          <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+          <span className="flex-1" />
+          <button className="nx-btn nx-btn-sm" onClick={selectAll}>
+            全选
+          </button>
+          <button
+            className="nx-btn nx-btn-sm"
+            disabled={pickedHasDir || sessionGone || pickedEntries.length === 0}
+            title={pickedHasDir ? "目录请单独打包下载" : "下载选中的文件"}
+            onClick={() => void batchDownload(pickedEntries)}
+          >
+            <IconDownload size={13} />
+            下载
+          </button>
+          <button
+            className="nx-btn nx-btn-danger nx-btn-sm"
+            disabled={sessionGone || pickedEntries.length === 0}
+            title="删除选中项"
+            onClick={() => void batchDelete(pickedEntries)}
+          >
+            <IconTrash size={13} />
+            删除
+          </button>
+          <button className="nx-btn nx-btn-sm" onClick={clearSelection}>
+            取消
+          </button>
+        </div>
+      )}
 
       <div
         ref={parentRef}
@@ -1083,7 +1308,7 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
             {virtualizer.getVirtualItems().map((vi) => {
               const e = list[vi.index];
               const isDir = e.kind === "dir";
-              const isSel = selected === e.path;
+              const isSel = sel.paths.has(e.path);
               const { Icon, tone } = fileVisual(e.name, e.kind);
               return (
                 <div
@@ -1097,8 +1322,57 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     isSel ? "bg-blue-500/[0.14]" : "hover:bg-neutral-800/50"
                   }`}
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, position: "absolute", top: 0, left: 0, right: 0 }}
-                  onClick={() => setSelected(e.path)}
-                  onDoubleClick={() => openEntry(e)}
+                  onClick={(ev) => {
+                    if (suppressClick.current) {
+                      suppressClick.current = false;
+                      return;
+                    }
+                    if (computer) setSelected(e.path);
+                    else if (multiMode) toggleSelect(e);
+                    else if (ev.ctrlKey || ev.metaKey) toggleSelect(e);
+                    else if (ev.shiftKey) rangeSelect(e);
+                    else setSelected(e.path);
+                  }}
+                  onDoubleClick={() => {
+                    if (!multiMode) openEntry(e);
+                  }}
+                  onPointerDown={(ev) => {
+                    suppressClick.current = false;
+                    if (
+                      !coarse ||
+                      computer ||
+                      (ev.pointerType !== "touch" && ev.pointerType !== "pen") ||
+                      (ev.target as HTMLElement).closest("button")
+                    ) {
+                      return;
+                    }
+                    cancelLongPress();
+                    longPressStart.current = { x: ev.clientX, y: ev.clientY };
+                    longPressTimer.current = setTimeout(() => {
+                      longPressTimer.current = null;
+                      longPressStart.current = null;
+                      suppressClick.current = true;
+                      setMultiMode(true);
+                      setSel((cur) => {
+                        const paths = new Set(cur.paths);
+                        paths.add(e.path);
+                        return { primary: e.path, anchor: e.path, paths };
+                      });
+                    }, LONG_PRESS_MS);
+                  }}
+                  onPointerMove={(ev) => {
+                    const start = longPressStart.current;
+                    if (
+                      start &&
+                      (Math.abs(ev.clientX - start.x) > LONG_PRESS_SLOP ||
+                        Math.abs(ev.clientY - start.y) > LONG_PRESS_SLOP)
+                    ) {
+                      cancelLongPress();
+                    }
+                  }}
+                  onPointerUp={cancelLongPress}
+                  onPointerCancel={cancelLongPress}
+                  onPointerLeave={cancelLongPress}
                   onKeyDown={(ev) => {
                     if (ev.target !== ev.currentTarget) return;
                     if (ev.key === "Enter") {
@@ -1110,7 +1384,20 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     if (ev.key === " ") {
                       ev.preventDefault();
                       ev.stopPropagation();
-                      setSelected(e.path);
+                      if (!computer && (multiMode || ev.ctrlKey || ev.metaKey)) toggleSelect(e);
+                      else setSelected(e.path);
+                      return;
+                    }
+                    if (!computer && (ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "a") {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      selectAll();
+                      return;
+                    }
+                    if (ev.key === "Escape" && (sel.paths.size > 1 || multiMode)) {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      clearSelection();
                       return;
                     }
                     if ((ev.key === "F10" && ev.shiftKey) || ev.key === "ContextMenu") {
@@ -1123,6 +1410,10 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     if (!computer && (ev.key === "Delete" || ev.key === "Backspace")) {
                       ev.preventDefault();
                       ev.stopPropagation();
+                      if (pickedEntries.length > 1 && sel.paths.has(e.path)) {
+                        void batchDelete(pickedEntries);
+                        return;
+                      }
                       void removePath(e.path, isDir);
                       return;
                     }
@@ -1137,6 +1428,16 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                         : `${e.path} · 非文本文件，不能在线编辑`
                   }
                 >
+                  {multiMode && (
+                    <input
+                      type="checkbox"
+                      className="shrink-0"
+                      checked={isSel}
+                      tabIndex={-1}
+                      aria-label={`选择 ${e.name}`}
+                      onChange={() => {}}
+                    />
+                  )}
                   {computer ? (
                     <IconDrive size={14} className={`shrink-0 ${tone}`} />
                   ) : (
@@ -1152,19 +1453,21 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
                     {e.mtime ? new Date(e.mtime).toLocaleString() : "—"}
                   </span>
                   {coarse ? (
-                    <button
-                      className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-                      title={`更多操作 ${e.name}`}
-                      aria-label={`更多操作 ${e.name}`}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        const r = ev.currentTarget.getBoundingClientRect();
-                        openRowMenuAt(e, r.left, r.bottom);
-                      }}
-                      onDoubleClick={(ev) => ev.stopPropagation()}
-                    >
-                      ⋯
-                    </button>
+                    multiMode ? null : (
+                      <button
+                        className="nx-icon-btn nx-icon-btn-sm nx-row-more"
+                        title={`更多操作 ${e.name}`}
+                        aria-label={`更多操作 ${e.name}`}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          const r = ev.currentTarget.getBoundingClientRect();
+                          openRowMenuAt(e, r.left, r.bottom);
+                        }}
+                        onDoubleClick={(ev) => ev.stopPropagation()}
+                      >
+                        ⋯
+                      </button>
+                    )
                   ) : (
                     <span className="nx-row-actions">
                       <button
@@ -1192,7 +1495,13 @@ function FileBrowserInner({ sessionId, initialPath }: { sessionId: string; initi
 
       <div className="flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span className="shrink-0 whitespace-nowrap">{list.length} 项</span>
-        {selectedEntry && (
+        {pickedEntries.length > 1 && (
+          <>
+            <span className="text-neutral-700">|</span>
+            <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+          </>
+        )}
+        {pickedEntries.length <= 1 && selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>
             <span className="min-w-0 truncate font-mono">{selectedEntry.path}</span>

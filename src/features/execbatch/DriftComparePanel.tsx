@@ -7,6 +7,7 @@ import {
 } from "../../ipc/execBatchApi";
 import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconPlay, IconStop } from "../../ui/icons";
 import { ProductionConfirmationDialog } from "./ProductionConfirmationDialog";
 import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
@@ -188,24 +189,25 @@ export function DriftComparePanel({
           metadataError={metadataError}
         />
         <div className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
+          <div className="flex flex-col gap-1 text-[11px] text-neutral-500">
             对比来源
-            <select
-              className="nx-select w-32"
-              aria-label="漂移来源"
+            <Select
+              className="w-32"
+              ariaLabel="漂移来源"
               value={sourceKind}
               disabled={running}
-              onChange={(event) => {
-                const kind = event.target.value as "file" | "command";
+              onChange={(value) => {
+                const kind = value as "file" | "command";
                 setSourceKind(kind);
                 setSource(kind === "file" ? "/etc/hostname" : "uname -a");
                 setProduction(null);
               }}
-            >
-              <option value="file">文件路径</option>
-              <option value="command">只读命令</option>
-            </select>
-          </label>
+              options={[
+                { value: "file", label: "文件路径" },
+                { value: "command", label: "只读命令" },
+              ]}
+            />
+          </div>
           <label className="flex min-w-56 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
             {sourceKind === "file" ? "远端文件路径" : "远端只读命令"}
             <input

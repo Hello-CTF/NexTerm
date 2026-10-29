@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { act, createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { click, clickButton, flush, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, flush, mountWithClient, chooseSelectOption, setInputValue, type MountedView } from "./reactTestUtils";
 import type { StateRuleDTO, StateRuleSaveRequest, StateRuleScreenDTO } from "../../ipc/stateRuleApi";
 
 const mocks = vi.hoisted(() => {
@@ -210,7 +210,7 @@ describe("state rules settings card", () => {
     click(button("编辑 review"));
     await flush();
     const editor = mounted!.container.querySelector("[data-rule-editor]")!;
-    setSelectValue(editor.querySelector<HTMLSelectElement>('select[aria-label="选择要测试的终端"]')!, "t1");
+    chooseSelectOption(editor, "选择要测试的终端", "agent");
     clickButton(editor, "读取屏幕并测试");
     await flush();
     expect(mocks.snapshot).toHaveBeenCalledWith("backend-1");

@@ -4,6 +4,7 @@ import type { CommandEntryDto } from "../../ipc/types";
 import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconRefresh, IconTerminal } from "../../ui/icons";
 import { useCompactWidth } from "./useCompactWidth";
 
@@ -219,20 +220,13 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
           <span className="nx-hint text-red-300">刷新失败：{error}</span>
         )}
         <div className="nx-spacer" />
-        <select
-          className="nx-select shrink-0"
-          style={{ width: 140 }}
-          aria-label="按设备过滤"
+        <Select
+          className="w-[140px] shrink-0"
+          ariaLabel="按设备过滤"
           value={assetId}
-          onChange={(e) => setAssetId(e.target.value)}
-        >
-          <option value="">全部设备</option>
-          {(assets ?? []).map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
-        </select>
+          onChange={setAssetId}
+          options={[{ value: "", label: "全部设备" }, ...(assets ?? []).map((a) => ({ value: a.id, label: a.name }))]}
+        />
         {!userFilterLocked && (
           <input
             className="nx-input shrink-0"

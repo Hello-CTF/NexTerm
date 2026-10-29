@@ -20,6 +20,7 @@ import { WEB } from "../../ipc/env";
 import { remotePreviewApi, remoteSharingApi } from "../../ipc/remoteApi";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
+import { Select } from "../../ui/Select";
 import { IconGlobe } from "../../ui/icons";
 
 // All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
@@ -215,17 +216,13 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
             为「{sessionName || "当前终端"}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <select
-              className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs max-sm:min-h-10 text-neutral-200"
-              value={ttlMs}
-              onChange={(event) => setTtlMs(Number(event.target.value))}
-            >
-              {PREVIEW_TTL_OPTIONS.map((option) => (
-                <option key={option.ms} value={option.ms}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              className="w-32 shrink-0"
+              ariaLabel="预览链接有效期"
+              value={String(ttlMs)}
+              onChange={(value) => setTtlMs(Number(value))}
+              options={PREVIEW_TTL_OPTIONS.map((option) => ({ value: String(option.ms), label: option.label }))}
+            />
             <button
               type="button"
               className="rounded-md bg-indigo-600 px-3 py-1 text-xs max-sm:min-h-10 text-white hover:bg-indigo-500 disabled:opacity-50"

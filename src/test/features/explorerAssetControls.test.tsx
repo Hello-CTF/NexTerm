@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  chooseSelectOption,
   click,
   clickButton,
   deferred,
   flush,
   mount,
   setInputValue,
-  setSelectValue,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -260,7 +260,7 @@ describe("asset group controls", () => {
     const modal = mounted.container.querySelector(".nx-modal")!;
     const name = modal.querySelector<HTMLInputElement>('input[placeholder="生产环境"]')!;
     setInputValue(name, "应用");
-    expect(modal.querySelector<HTMLSelectElement>("select.nx-select")?.value).toBe("g1");
+    expect(modal.querySelector<HTMLButtonElement>('button[aria-label="父分组"][aria-haspopup="listbox"]')?.textContent).toContain("生产");
     clickButton(modal, "保存");
     await waitFor(() => expect(mocks.groupCreate).toHaveBeenCalledWith("应用", "g1"));
   });
@@ -274,10 +274,15 @@ describe("asset group controls", () => {
     mounted = mountWithClient(createElement(AssetTree));
     await waitFor(() => expect(mounted!.container.querySelectorAll('[role="treeitem"][aria-expanded]').length).toBe(3));
     click(buttonByTitle(mounted.container, "重命名分组"));
-    const select = mounted.container.querySelector<HTMLSelectElement>(".nx-modal select.nx-select")!;
-    expect([...select.options].map((option) => option.textContent)).toContain("生产");
-    expect([...select.options].some((option) => option.value === "g2")).toBe(false);
-    setSelectValue(select, "g3");
+    const modal = mounted.container.querySelector<HTMLElement>(".nx-modal")!;
+    const parent = modal.querySelector<HTMLButtonElement>('button[aria-label="父分组"][aria-haspopup="listbox"]')!;
+    click(parent);
+    const labels = [...modal.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent ?? "");
+    click(parent);
+    expect(labels.some((label) => label.includes("生产"))).toBe(true);
+    // The group's own descendant is not offered as its parent.
+    expect(labels.some((label) => label.includes("应用"))).toBe(false);
+    chooseSelectOption(modal, "父分组", "生产");
     clickButton(mounted.container, "保存");
     await waitFor(() => expect(mocks.groupUpdate).toHaveBeenCalledWith("g1", undefined, "g3"));
   });
@@ -706,20 +711,24 @@ describe("asset editor shared credential hint", () => {
     hasPassphrase: false,
   };
 
-  function selectByOptionText(text: string): HTMLSelectElement {
-    const select = [...mounted!.container.querySelectorAll("select")].find((s) =>
-      [...s.options].some((o) => o.textContent?.includes(text)),
-    );
-    if (!select) throw new Error(`Select not found by option text: ${text}`);
-    return select;
+  // selectOffers opens the select named by its aria-label, reports whether an option contains text, and closes it.
+  function selectOffers(label: string, text: string): boolean {
+    const trigger = mounted!.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"][aria-haspopup="listbox"]`);
+    if (!trigger) return false;
+    click(trigger);
+    const offered = [...mounted!.container.querySelectorAll('[role="listbox"] [role="option"]')].some((option) => option.textContent?.includes(text));
+    click(trigger);
+    return offered;
   }
 
   it("warns about shared effects when selecting an existing password credential", async () => {
     mocks.listCredentials.mockResolvedValue([PASSWORD_CRED]);
     await mountEditor();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
+    await waitFor(() => expect(mocks.listCredentials).toHaveBeenCalled());
+    await flush();
+    expect(selectOffers("密码", "生产密码")).toBe(true);
 
-    setSelectValue(selectByOptionText("生产密码"), "c1");
+    chooseSelectOption(mounted!.container, "密码", "生产密码");
     await flush();
     expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });
@@ -727,9 +736,11 @@ describe("asset editor shared credential hint", () => {
   it("does not imply that an unused password credential is already shared by multiple assets", async () => {
     mocks.listCredentials.mockResolvedValue([{ ...PASSWORD_CRED, usedBy: [] }]);
     await mountEditor();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("生产密码"));
+    await waitFor(() => expect(mocks.listCredentials).toHaveBeenCalled());
+    await flush();
+    expect(selectOffers("密码", "生产密码")).toBe(true);
 
-    setSelectValue(selectByOptionText("生产密码"), "c1");
+    chooseSelectOption(mounted!.container, "密码", "生产密码");
     await flush();
     expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
@@ -739,14 +750,16 @@ describe("asset editor shared credential hint", () => {
     mocks.listCredentials.mockResolvedValue([KEY_CRED]);
     await mountEditor();
 
-    setSelectValue(selectByOptionText("私钥文件"), "key");
+    chooseSelectOption(mounted!.container, "认证方式", "私钥文件");
     await flush();
     clickButton(mounted!.container, "存入凭据库");
     await flush();
-    setSelectValue(selectByOptionText("选择已有私钥凭据"), "existing");
-    await waitFor(() => expect(mounted!.container.textContent).toContain("部署密钥"));
+    chooseSelectOption(mounted!.container, "私钥凭据来源", "选择已有私钥凭据");
+    await waitFor(() => expect(mocks.listCredentials).toHaveBeenCalled());
+    await flush();
+    expect(selectOffers("选择私钥凭据", "部署密钥")).toBe(true);
 
-    setSelectValue(selectByOptionText("部署密钥"), "k1");
+    chooseSelectOption(mounted!.container, "选择私钥凭据", "部署密钥");
     await flush();
     expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
   });

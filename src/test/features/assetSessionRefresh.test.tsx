@@ -3,7 +3,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, Fragment } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, clickButton, deferred, flush, flushUntil, mount, setInputValue, chooseSelectOption, type MountedView } from "./reactTestUtils";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import type { SshImportPreviewDto } from "../../ipc/types";
 
@@ -445,9 +445,7 @@ describe("persistent asset session refresh", () => {
       await flush();
       clickButton(document.body, "预览");
       await flushUntil(() => document.body.textContent?.includes("导入选中项") ?? false);
-      const strategy = document.querySelector<HTMLSelectElement>('select[aria-label="主机 web-01 的冲突处理"]');
-      expect(strategy).not.toBeNull();
-      setSelectValue(strategy!, "overwrite");
+      chooseSelectOption(document.body, "主机 web-01 的冲突处理", "覆盖同名项");
       await flush();
 
       const before = mocks.sessionList.mock.calls.length;

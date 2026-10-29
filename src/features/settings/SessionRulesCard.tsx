@@ -14,6 +14,7 @@ import { useUi, useWorkspaceList } from "../../app/store";
 import { getTerminalTabTitle } from "../../app/terminalViewStore";
 import { ask, pickLocalFile, pickSavePath } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import {
   IconArrowDown,
   IconArrowUp,
@@ -104,22 +105,19 @@ function RuleScreenPicker({ onScreen }: { onScreen: (screen: StateRuleScreenDTO 
     <div className="flex flex-col gap-1.5">
       <div className="nx-setting-label">在终端屏幕上测试</div>
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          className="nx-select min-w-0 flex-1"
-          aria-label="选择要测试的终端"
+        <Select
+          className="min-w-0 flex-1"
+          ariaLabel="选择要测试的终端"
           value={selected}
-          onChange={(event) => {
-            setSelected(event.target.value);
+          onChange={(value) => {
+            setSelected(value);
             onScreen(null);
           }}
-        >
-          <option value="">{choices.length === 0 ? "暂无已打开的终端" : "选择终端…"}</option>
-          {choices.map((choice) => (
-            <option key={choice.appTabId} value={choice.appTabId}>
-              {choice.label}
-            </option>
-          ))}
-        </select>
+          options={[
+            { value: "", label: choices.length === 0 ? "暂无已打开的终端" : "选择终端…" },
+            ...choices.map((choice) => ({ value: choice.appTabId, label: choice.label })),
+          ]}
+        />
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={!chosen || busy} onClick={() => void read()}>
           {busy ? <IconRefresh size={11} className="animate-spin" /> : <IconRefresh size={11} />}
           读取屏幕并测试

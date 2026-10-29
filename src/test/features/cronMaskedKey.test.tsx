@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { clickButton, flush, mount, type MountedView } from "./reactTestUtils";
+import { optionLabels } from "./selectProbe";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -129,10 +130,7 @@ describe("CronPanel masked key presentation", () => {
     mounted = mount(createElement(CronPanel, { conversationId: "c-1", onClose: mocks.onClose }));
     await flush();
     clickButton(mounted.container, "新建定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    const labels = [...select.options].map((o) => o.textContent ?? "");
+    const labels = optionLabels(mounted.container, "模型档案");
     const maskedOption = labels.find((l) => l.includes("Masked profile · example-model"));
     expect(maskedOption).toContain("Masked profile · example-model（密钥已保存）");
     expect(maskedOption).not.toContain("密钥不可用");

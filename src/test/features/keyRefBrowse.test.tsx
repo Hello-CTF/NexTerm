@@ -10,7 +10,7 @@ import {
   flush,
   flushUntil,
   mount,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
 import type { Asset, Credential } from "../../ipc/commands";
@@ -77,11 +77,9 @@ function mountKeyForm(kind: FormKind, initial?: Asset): MountedView {
   if (kind === "credential") {
     clickButton(mounted.container, "私钥");
   } else {
-    const auth = [...mounted.container.querySelectorAll("select")].find((select) =>
-      [...select.options].some((option) => option.value === "key"),
-    );
+    const auth = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="认证方式"][aria-haspopup="listbox"]');
     if (!auth) throw new Error("Auth select not found");
-    if (auth.value !== "key") setSelectValue(auth, "key");
+    if (!auth.textContent?.includes("私钥文件")) chooseSelectOption(mounted.container, "认证方式", "私钥文件");
   }
   return mounted;
 }

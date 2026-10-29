@@ -4,6 +4,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { transcriptApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconAlert, IconPlay } from "../../ui/icons";
 import {
   formatReplayClock,
@@ -17,6 +18,9 @@ const TICK_MS = 50;
 // Small pages keep each JSON parse short; a 4 MiB page is a 5+ MB payload that blocks the UI thread for a noticeable time.
 const READ_PAGE_BYTES = 1024 * 1024;
 const SPEEDS = [1, 2, 5, 10];
+
+// Phone-width viewports (<= 560px) use a smaller font so a recorded 80-column screen needs less horizontal scrolling.
+const NARROW_VIEWPORT_PX = 560;
 
 const REPLAY_THEME = {
   background: "#101217",
@@ -75,7 +79,7 @@ export function TranscriptReplayView({
     const terminal = new Terminal({
       disableStdin: true,
       scrollback: 5000,
-      fontSize: 12,
+      fontSize: window.innerWidth <= NARROW_VIEWPORT_PX ? 11 : 12,
       theme: REPLAY_THEME,
     });
     terminal.open(container);
@@ -173,9 +177,9 @@ export function TranscriptReplayView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="transcript-replay">
-      <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-neutral-800/60 px-3 py-2">
         <button
-          className="nx-btn nx-btn-ghost nx-btn-sm"
+          className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11 pointer-coarse:px-4"
           disabled={!chunks || loadError !== null || duration <= 0}
           onClick={togglePlay}
           aria-label={playing ? "暂停回放" : "开始回放"}
@@ -183,22 +187,20 @@ export function TranscriptReplayView({
           {playing ? null : <IconPlay size={12} />}
           {playing ? "暂停" : "播放"}
         </button>
-        <select
-          className="nx-select nx-select-ghost"
-          aria-label="回放倍速"
-          value={speed}
+        <Select
+          className="w-[76px] shrink-0"
+          triggerClassName="nx-input nx-select-trigger nx-select-ghost"
+          ariaLabel="回放倍速"
+          value={String(speed)}
           disabled={!chunks || loadError !== null}
-          onChange={(event) => changeSpeed(Number(event.target.value))}
-        >
-          {SPEEDS.map((value) => (
-            <option key={value} value={value}>
-              {value}x
-            </option>
-          ))}
-        </select>
+          onChange={(value) => changeSpeed(Number(value))}
+          options={SPEEDS.map((value) => ({ value: String(value), label: `${value}x` }))}
+        />
         <input
           type="range"
-          className="flex-1"
+          // The thumb owns horizontal drags; vertical pans still scroll the page. On phones the slider gets its own full-width row.
+          className="h-6 min-w-[120px] flex-1 touch-pan-y pointer-coarse:h-11 max-[560px]:order-last max-[560px]:basis-full"
+          data-testid="replay-seek"
           aria-label="回放进度"
           min={0}
           max={Math.max(1, duration)}
@@ -207,15 +209,15 @@ export function TranscriptReplayView({
           disabled={!chunks || loadError !== null || duration <= 0}
           onChange={(event) => seekTo(Number(event.target.value))}
         />
-        <span className="font-mono text-[11px] text-neutral-500" data-testid="replay-clock">
+        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] tabular-nums text-neutral-500 max-[560px]:ml-auto" data-testid="replay-clock">
           {formatReplayClock(position)} / {formatReplayClock(duration)}
         </span>
       </div>
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
+        className="relative min-h-0 flex-1 overflow-auto overscroll-contain"
         style={{ background: REPLAY_THEME.background }}
       >
-        <div ref={containerRef} className="h-full w-full px-2 py-1" />
+        <div ref={containerRef} className="h-full w-max min-w-full px-2 py-1" />
         {!chunks && !loadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">
             加载回放数据…

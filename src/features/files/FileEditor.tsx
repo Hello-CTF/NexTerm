@@ -47,6 +47,7 @@ import {
   type FileLanguageChoice,
 } from "./fileLanguages";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 
 export interface FileEditorSaveChange {
   sessionId: string;
@@ -608,49 +609,44 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         >
           {eol}
         </button>
-        <label
-          className="nx-btn nx-btn-ghost nx-btn-xs relative font-mono"
+        <Select
+          className="shrink-0"
+          triggerClassName="nx-btn nx-btn-ghost nx-btn-xs font-mono"
+          ariaLabel="解码方式"
           title={`解码方式：${ENC_LABEL[enc]}${
             meta && enc === "auto" ? `（检测为 ${meta.encoding.toUpperCase()}）` : ""
           }`}
-        >
-          {enc === "auto" && meta ? meta.encoding.toUpperCase() : ENC_LABEL[enc]}
-          <select
-            className="absolute h-0 w-0 opacity-0"
-            value={enc}
-            disabled={saving}
-            onChange={(e) => void switchEnc(e.target.value as EncChoice)}
-          >
-            {(Object.keys(ENC_LABEL) as EncChoice[]).map((k) => (
-              <option key={k} value={k}>
-                {ENC_LABEL[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <select
-          className="nx-select nx-select-sm w-[124px] shrink-0"
-          value={languageChoice}
-          aria-label="语法高亮"
+          value={enc}
+          disabled={saving}
+          options={(Object.keys(ENC_LABEL) as EncChoice[]).map((k) =>
+            k === "auto"
+              ? {
+                  value: k,
+                  label: enc === "auto" && meta ? meta.encoding.toUpperCase() : ENC_LABEL[k],
+                  description: "自动检测",
+                }
+              : { value: k, label: ENC_LABEL[k] },
+          )}
+          onChange={(value) => void switchEnc(value as EncChoice)}
+        />
+        <Select
+          className="w-[124px] shrink-0"
+          ariaLabel="语法高亮"
           title="语法高亮（手动选择仅用于当前打开的文件）"
-          onChange={(event) =>
+          value={languageChoice}
+          options={[
+            { value: "auto", label: autoLanguage ? `自动（${fileLanguageLabel(autoLanguage)}）` : "自动" },
+            { value: "plain", label: "纯文本" },
+            ...FILE_LANGUAGE_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
+          ]}
+          onChange={(value) =>
             setLanguageSelection({
               sessionId,
               path,
-              choice: event.target.value as FileLanguageChoice,
+              choice: value as FileLanguageChoice,
             })
           }
-        >
-          <option value="auto">
-            {autoLanguage ? `自动（${fileLanguageLabel(autoLanguage)}）` : "自动"}
-          </option>
-          <option value="plain">纯文本</option>
-          {FILE_LANGUAGE_OPTIONS.map((option) => (
-            <option key={option.id} value={option.id}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title="重新读取（丢弃未保存改动）"

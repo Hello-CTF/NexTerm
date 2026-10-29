@@ -8,9 +8,10 @@ import {
   flush,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   type MountedView,
 } from "./reactTestUtils";
+import { optionLabels, selectedLabel, selectTrigger } from "./selectProbe";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -461,11 +462,8 @@ describe("CronPanel", () => {
     mounted = mountPanel();
     await flush();
     clickButton(mounted.container, "新建定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select.value).toBe("");
-    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(selectedLabel(mounted.container, "模型档案")).toContain("跟随当前档案「生产档案」");
+    const labels = optionLabels(mounted.container, "模型档案");
     expect(labels[0]).toContain("跟随当前档案「生产档案」");
     expect(labels.some((l) => l.includes("生产档案 · example-model"))).toBe(true);
     expect(labels.some((l) => l.includes("备用档案 · backup-model"))).toBe(true);
@@ -480,10 +478,7 @@ describe("CronPanel", () => {
     await flush();
 
     clickButton(mounted.container, "新建定时任务");
-    setSelectValue(
-      mounted.container.querySelector<HTMLSelectElement>('select[aria-label="模型档案"]')!,
-      "p-other",
-    );
+    chooseSelectOption(mounted.container, "模型档案", "备用档案");
     setInputValue(
       mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
       "truncate old logs",
@@ -527,11 +522,8 @@ describe("CronPanel", () => {
     expect(text).toContain("编辑定时任务");
     expect(text).toContain("原来的执行记录不会保留");
 
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select.value).toBe("p-other");
-    setSelectValue(select, "p-active");
+    expect(selectedLabel(mounted.container, "模型档案")).toContain("备用档案 · backup-model");
+    chooseSelectOption(mounted.container, "模型档案", "生产档案 · example-model");
     clickButton(mounted.container, "保存");
     await flush();
 
@@ -799,11 +791,8 @@ describe("CronPanel", () => {
 
     clickRowButton(mounted.container, "磁盘巡检", "编辑");
     expect(mounted.container.textContent).toContain("该任务所用的模型已被删除");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select.value).toBe("p-ghost");
-    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(selectedLabel(mounted.container, "模型档案")).toContain("p-ghost");
+    const labels = optionLabels(mounted.container, "模型档案");
     expect(labels.some((l) => l.includes("未知档案（可能已删除）") && l.includes("p-ghost"))).toBe(
       true,
     );
@@ -829,12 +818,7 @@ describe("CronPanel", () => {
 
     clickButton(mounted.container, "新建定时任务");
     expect(mounted.container.textContent).toContain("未能读取模型列表：档案服务不可用");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect([...select.options].map((o) => o.textContent?.trim())).toEqual([
-      "跟随当前档案（未能读取）",
-    ]);
+    expect(optionLabels(mounted.container, "模型档案")).toEqual(["跟随当前档案（未能读取）"]);
 
     setInputValue(
       mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务提示词"]')!,
@@ -872,11 +856,8 @@ describe("CronPanel", () => {
     expect(text).toContain("无法确认该任务所用的模型");
     expect(text).not.toContain("可能已删除");
     expect(text).not.toContain("已不存在");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select.value).toBe("p-other");
-    const labels = [...select.options].map((o) => o.textContent ?? "");
+    expect(selectedLabel(mounted.container, "模型档案")).toContain("p-other");
+    const labels = optionLabels(mounted.container, "模型档案");
     expect(labels[0]).toContain("跟随当前档案（未能读取）");
     expect(
       labels.some((l) => l.includes("已存档案（未能读取）") && l.includes("p-other")),
@@ -890,14 +871,11 @@ describe("CronPanel", () => {
     await flush();
 
     clickButton(mounted.container, "新建定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect([...select.options][0]?.textContent).toContain("跟随当前档案（正在读取…）");
+    expect(optionLabels(mounted.container, "模型档案")[0]).toContain("跟随当前档案（正在读取…）");
 
     slow.resolve(OVERVIEW);
     await flush();
-    expect([...select.options][0]?.textContent).toContain("跟随当前档案「生产档案」");
+    expect(optionLabels(mounted.container, "模型档案")[0]).toContain("跟随当前档案「生产档案」");
   });
 
   it("rejects creation and reports it when the selected profile is found to be deleted before submission", async () => {
@@ -905,10 +883,7 @@ describe("CronPanel", () => {
     await flush();
 
     clickButton(mounted.container, "新建定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    setSelectValue(select, "p-other");
+    chooseSelectOption(mounted.container, "模型档案", "备用档案");
     mocks.modelOverview.mockResolvedValue({ profiles: [PROFILE_ACTIVE], activeId: "p-active" });
     act(() => useUi.getState().bumpModelProfilesRevision());
     await flush();
@@ -958,15 +933,13 @@ describe("CronPanel", () => {
     expect(nameSpan!.className).toContain("break-words");
 
     clickButton(mounted.container, "新建定时任务");
-    const select = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="模型档案"]',
-    )!;
-    expect(select).toBeTruthy();
-    const row = select.closest("div")!;
+    const root = selectTrigger(mounted.container, "模型档案").closest(".nx-select-root") as HTMLElement;
+    expect(root).toBeTruthy();
+    const row = root.parentElement!;
     expect(row.className).toContain("flex-wrap");
-    expect(select.className).toContain("min-w-0");
-    expect(select.className).toContain("flex-1");
-    expect(select.value).toBe("");
+    expect(root.className).toContain("min-w-0");
+    expect(root.className).toContain("flex-1");
+    expect(selectedLabel(mounted.container, "模型档案")).toContain("跟随当前档案");
   });
 
   it("uses the latest of schedule, retry, and circuit-breaker times for next execution and prioritizes disabled state without showing pending execution", async () => {

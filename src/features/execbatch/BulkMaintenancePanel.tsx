@@ -11,6 +11,7 @@ import { getProductionChallenge, type ExecBatchProductionChallenge } from "../pr
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
+import { Select } from "../../ui/Select";
 import { IconClose, IconEdit, IconKey, IconPlay, IconPlug, IconServer } from "../../ui/icons";
 import { assetTagValues } from "../explorer/assetSearch";
 import { ProductionConfirmationDialog } from "./ProductionConfirmationDialog";
@@ -600,28 +601,28 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         <details className="mb-2 rounded border border-neutral-800/70 p-2.5" open>
           <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconEdit size={12} className="mr-1 inline" />批量编辑</summary>
           <div className="mt-3 grid gap-2 md:grid-cols-2">
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">分组
-              <select className="nx-select" aria-label="批量编辑分组" value={groupChoice} onChange={(event) => setGroupChoice(event.target.value)}>
-                <option value="keep">不修改</option><option value="clear">移到未分组</option>
-                {(groupsQuery.data ?? []).map((group) => <option key={group.id} value={`id:${group.id}`}>{group.name}</option>)}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">跳板机
-              <select className="nx-select" aria-label="批量编辑跳板机" value={jumpChoice} onChange={(event) => setJumpChoice(event.target.value)}>
-                <option value="keep">不修改</option><option value="clear">不使用跳板机</option>
-                {assets.filter((asset) => asset.kind === "ssh" || asset.kind === "docker").map((asset) => (
-                  <option key={asset.id} value={`id:${asset.id}`}>{asset.name}（{asset.host ?? asset.id}）</option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">凭据标识（不展示明文）
-              <select className="nx-select" aria-label="批量编辑凭据" value={credentialChoice} onChange={(event) => setCredentialChoice(event.target.value)}>
-                <option value="keep">不修改</option><option value="clear">清除凭据绑定</option>
-                {(credentialsQuery.data ?? []).map((credential) => (
-                  <option key={credential.id} value={`id:${credential.id}`}>{credential.name}（{credential.kind} · {credential.id}）</option>
-                ))}
-              </select>
-            </label>
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">分组
+              <Select ariaLabel="批量编辑分组" value={groupChoice} onChange={setGroupChoice} options={[
+                { value: "keep", label: "不修改" }, { value: "clear", label: "移到未分组" },
+                ...(groupsQuery.data ?? []).map((group) => ({ value: `id:${group.id}`, label: group.name })),
+              ]} />
+            </div>
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">跳板机
+              <Select ariaLabel="批量编辑跳板机" value={jumpChoice} onChange={setJumpChoice} options={[
+                { value: "keep", label: "不修改" }, { value: "clear", label: "不使用跳板机" },
+                ...assets.filter((asset) => asset.kind === "ssh" || asset.kind === "docker").map((asset) => ({
+                  value: `id:${asset.id}`, label: `${asset.name}（${asset.host ?? asset.id}）`,
+                })),
+              ]} />
+            </div>
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">凭据标识（不展示明文）
+              <Select ariaLabel="批量编辑凭据" value={credentialChoice} onChange={setCredentialChoice} options={[
+                { value: "keep", label: "不修改" }, { value: "clear", label: "清除凭据绑定" },
+                ...(credentialsQuery.data ?? []).map((credential) => ({
+                  value: `id:${credential.id}`, label: `${credential.name}（${credential.kind} · ${credential.id}）`,
+                })),
+              ]} />
+            </div>
             <label className="flex flex-col gap-1 text-[11px] text-neutral-500">端口
               <span className="flex items-center gap-2">
                 <input type="checkbox" aria-label="修改端口" checked={portEnabled} onChange={(event) => setPortEnabled(event.target.checked)} />

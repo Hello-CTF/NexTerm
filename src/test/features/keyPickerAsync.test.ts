@@ -9,7 +9,7 @@ import {
   flush,
   mount,
   setInputValue,
-  setSelectValue,
+  chooseSelectOption,
   waitForRendered,
   type MountedView,
 } from "./reactTestUtils";
@@ -75,11 +75,7 @@ async function mountInlineForm(kind: FormKind): Promise<MountedView> {
   if (kind === "credential") {
     clickButton(mounted.container, "私钥");
   } else {
-    const auth = [...mounted.container.querySelectorAll("select")].find(
-      (select) => select.value === "password",
-    );
-    if (!auth) throw new Error("Auth select not found");
-    setSelectValue(auth, "key");
+    chooseSelectOption(mounted.container, "认证方式", "私钥文件");
   }
   clickButton(mounted.container, "存入凭据库");
   return mounted;

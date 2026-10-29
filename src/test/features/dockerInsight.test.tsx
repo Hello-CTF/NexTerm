@@ -9,7 +9,7 @@ import {
   deferred,
   flush,
   mount,
-  setSelectValue,
+  chooseSelectOption,
   waitFor,
   type MountedView,
 } from "./reactTestUtils";
@@ -180,27 +180,23 @@ describe("Docker insight controls (M61)", () => {
   it("refresh interval select defaults to 30s and persists changes to localStorage", async () => {
     const m = (mounted = mountPanel());
     await waitFor(() =>
-      expect(m.container.querySelector('select[aria-label="自动刷新间隔"]')).not.toBeNull(),
+      expect(m.container.querySelector('button[aria-label="自动刷新间隔"]')).not.toBeNull(),
     );
-    const select = m.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="自动刷新间隔"]',
-    )!;
-    expect(select.value).toBe("30000");
+    const select = () => m.container.querySelector<HTMLElement>('button[aria-label="自动刷新间隔"]')!;
+    expect(select().textContent).toContain("30 秒");
 
-    setSelectValue(select, "10000");
-    expect(select.value).toBe("10000");
+    chooseSelectOption(m.container, "自动刷新间隔", "10 秒");
+    expect(select().textContent).toContain("10 秒");
     expect(window.localStorage.getItem("nexterm.dockerRefreshMs.v1")).toBe("10000");
 
-    setSelectValue(select, "0");
-    expect(select.selectedOptions[0].textContent).toBe("关闭");
+    chooseSelectOption(m.container, "自动刷新间隔", "关闭");
+    expect(select().textContent).toContain("关闭");
     expect(window.localStorage.getItem("nexterm.dockerRefreshMs.v1")).toBe("0");
 
     m.unmount();
     mounted = mountPanel();
-    const persisted = mounted.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="自动刷新间隔"]',
-    )!;
-    expect(persisted.value).toBe("0");
+    const persisted = mounted.container.querySelector<HTMLElement>('button[aria-label="自动刷新间隔"]')!;
+    expect(persisted.textContent).toContain("关闭");
   });
 
   it("auto refreshes only the current tab and keeps manual refresh available when disabled", async () => {
@@ -227,10 +223,7 @@ describe("Docker insight controls (M61)", () => {
     await waitFor(() => expect(mocks.images).toHaveBeenCalledTimes(2));
     expect(mocks.ps).toHaveBeenCalledTimes(1);
 
-    const select = m.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="自动刷新间隔"]',
-    )!;
-    setSelectValue(select, "0");
+    chooseSelectOption(m.container, "自动刷新间隔", "关闭");
     await act(() => vi.advanceTimersByTimeAsync(60_000));
     expect(mocks.images).toHaveBeenCalledTimes(2);
     expect(mocks.ps).toHaveBeenCalledTimes(1);

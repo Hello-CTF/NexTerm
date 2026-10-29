@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { click, clickButton, flush, flushUntil, mount, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "desktop";
@@ -77,13 +77,19 @@ function mountEditor(initial?: Asset) {
   return { onClose, onSaved };
 }
 
-function findSelect(optionText: string): HTMLSelectElement {
-  const selects = [...mounted!.container.querySelectorAll("select")];
-  const select = selects.find((candidate) =>
-    [...candidate.options].some((option) => option.textContent?.includes(optionText)),
-  );
-  if (!select) throw new Error(`select containing option ${optionText} not found`);
-  return select;
+function selectTrigger(label: string): HTMLButtonElement {
+  const trigger = mounted!.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"][aria-haspopup="listbox"]`);
+  if (!trigger) throw new Error(`select ${label} not found`);
+  return trigger;
+}
+
+// selectOptionTexts opens the select, reads its option labels and closes it again.
+function selectOptionTexts(label: string): string[] {
+  const trigger = selectTrigger(label);
+  click(trigger);
+  const texts = [...mounted!.container.querySelectorAll('[role="listbox"] [role="option"]')].map((option) => option.textContent ?? "");
+  click(trigger);
+  return texts;
 }
 
 function findInput(placeholder: string): HTMLInputElement {
@@ -137,7 +143,7 @@ describe("AssetEditor SSH connectivity", () => {
   it("saves authKind and password credentials for keyboard-interactive authentication", async () => {
     mountEditor();
     await flush();
-    setSelectValue(findSelect("密码"), "keyboard-interactive");
+    chooseSelectOption(mounted!.container, "认证方式", "键盘交互");
     await flush();
     fillName("interactive-01");
     fillHost("10.0.0.8");
@@ -161,13 +167,12 @@ describe("AssetEditor SSH connectivity", () => {
     ]);
     mountEditor();
     expandAdvanced();
-    await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
-    const jumpSelect = findSelect("不使用跳板机");
-    const labels = [...jumpSelect.options].map((option) => option.textContent);
-    expect(labels.some((label) => label?.includes("jump-host"))).toBe(true);
-    expect(labels.some((label) => label?.includes("docker-host"))).toBe(true);
-    expect(labels.some((label) => label?.includes("local-machine"))).toBe(false);
-    setSelectValue(jumpSelect, "j1");
+    await flushUntil(() => selectOptionTexts("跳板机").length > 1);
+    const labels = selectOptionTexts("跳板机");
+    expect(labels.some((label) => label.includes("jump-host"))).toBe(true);
+    expect(labels.some((label) => label.includes("docker-host"))).toBe(true);
+    expect(labels.some((label) => label.includes("local-machine"))).toBe(false);
+    chooseSelectOption(mounted!.container, "跳板机", "jump-host");
     fillName("via-jump");
     fillHost("10.0.0.8");
     click(saveButton());
@@ -202,12 +207,11 @@ describe("AssetEditor SSH connectivity", () => {
     ]);
     mountEditor(initial);
     expandAdvanced();
-    await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
-    const jumpSelect = findSelect("不使用跳板机");
-    expect(jumpSelect.value).toBe("j1");
-    const labels = [...jumpSelect.options].map((option) => option.textContent);
-    expect(labels.some((label) => label?.includes("web-01"))).toBe(false);
-    setSelectValue(jumpSelect, "");
+    await flushUntil(() => selectOptionTexts("跳板机").length > 1);
+    expect(selectTrigger("跳板机").textContent).toContain("jump-host");
+    const labels = selectOptionTexts("跳板机");
+    expect(labels.some((label) => label.includes("web-01"))).toBe(false);
+    chooseSelectOption(mounted!.container, "跳板机", "不使用跳板机");
     click(saveButton());
     await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
@@ -239,7 +243,7 @@ describe("AssetEditor SSH connectivity", () => {
   it("saves the certificate path for private key authentication", async () => {
     mountEditor();
     await flush();
-    setSelectValue(findSelect("密码"), "key");
+    chooseSelectOption(mounted!.container, "认证方式", "私钥文件");
     await flush();
     clickButton(mounted!.container, "引用文件路径");
     expandAdvanced();
@@ -291,9 +295,8 @@ describe("AssetEditor SSH connectivity", () => {
   it("saves ordinary terminal mode for one SSH asset", async () => {
     mountEditor();
     click(advancedToggle());
-    const mode = findSelect("默认（使用全局设置）");
-    expect(mode.value).toBe("auto");
-    setSelectValue(mode, "regular");
+    expect(selectTrigger("终端模式").textContent).toContain("默认");
+    chooseSelectOption(mounted!.container, "终端模式", "临时终端");
     expect(mounted?.container.textContent).toContain("只影响新开的终端");
     fillName("ordinary-ssh");
     fillHost("10.0.0.8");
@@ -307,9 +310,8 @@ describe("AssetEditor SSH connectivity", () => {
     expect(advancedToggle().getAttribute("aria-expanded")).toBe("false");
     expect(mounted?.container.textContent).not.toContain("终端模式");
     click(advancedToggle());
-    const mode = findSelect("默认（使用全局设置）");
-    expect([...mode.options].map((option) => option.value)).toEqual(["auto", "durable", "regular"]);
-    setSelectValue(mode, "durable");
+    expect(selectOptionTexts("终端模式").map((text) => text.replace(/（.*$/, ""))).toEqual(["默认", "持久终端", "临时终端"]);
+    chooseSelectOption(mounted!.container, "终端模式", "持久终端");
     fillName("durable-ssh");
     fillHost("10.0.0.8");
     click(saveButton());
@@ -339,9 +341,8 @@ describe("AssetEditor SSH connectivity", () => {
       builtin: false,
     } as Asset;
     mountEditor(initial);
-    const mode = findSelect("默认（使用全局设置）");
-    expect(mode.value).toBe(initialMode);
-    setSelectValue(mode, "auto");
+    expect(selectTrigger("终端模式").textContent).toContain(initialMode === "regular" ? "临时终端" : "持久终端");
+    chooseSelectOption(mounted!.container, "终端模式", "默认");
     click(saveButton());
     await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
     expect(updatedPayload().options).toEqual({});
@@ -376,10 +377,7 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     const toggle = advancedToggle();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeNull();
-    const hasJumpSelect = [...mounted!.container.querySelectorAll("select")].some((s) =>
-      [...s.options].some((o) => o.textContent?.includes("不使用跳板机")),
-    );
-    expect(hasJumpSelect).toBe(false);
+    expect(mounted!.container.querySelector('button[aria-label="跳板机"]')).toBeNull();
   });
 
   it("collapses jump host options when editing until they are expanded manually", async () => {
@@ -394,8 +392,8 @@ describe("AssetEditor SSH advanced options collapsing", () => {
     expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toBeNull();
 
     expandAdvanced();
-    await flushUntil(() => findSelect("不使用跳板机").options.length > 1);
-    expect(findSelect("不使用跳板机").value).toBe("j1");
+    await flushUntil(() => selectOptionTexts("跳板机").length > 1);
+    expect(selectTrigger("跳板机").textContent).toContain("jump-host");
   });
 
   it("collapses Agent forwarding options when editing until they are expanded manually", async () => {

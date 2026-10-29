@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, mountWithClient, setSelectValue, waitForRendered, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, mountWithClient, chooseSelectOption, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
@@ -140,7 +140,7 @@ function editDocument(text: string): void {
 async function startSave(container: HTMLElement) {
   editDocument("changed");
   await flush();
-  const save = container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
+  const save = container.querySelector<HTMLButtonElement>('button[title="保存"]');
   if (!save) throw new Error("Save button not found");
   click(save);
   await waitForRendered(() => expect(mocks.write).toHaveBeenCalledOnce());
@@ -195,14 +195,13 @@ describe("FileEditor in-flight save safeguards", () => {
     mocks.write.mockReturnValue(write.promise);
     mounted = await mountEditor();
     await startSave(mounted.container);
-    const select = mounted.container.querySelector<HTMLSelectElement>("select");
-    if (!select) throw new Error("Encoding select not found");
-    expect(select.disabled).toBe(true);
-    select.disabled = false;
-    setSelectValue(select, "gbk");
+    const trigger = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="解码方式"]');
+    if (!trigger) throw new Error("Encoding select not found");
+    expect(trigger.disabled).toBe(true);
+    click(trigger);
+    expect(mounted.container.querySelector('[role="listbox"]')).toBeNull();
     expect(mocks.read).toHaveBeenCalledOnce();
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringMatching(/保存进行中/));
     expect(mounted.container.textContent).toContain("未保存");
 
     await resolveInAct(write, undefined);
@@ -217,9 +216,7 @@ describe("FileEditor in-flight save safeguards", () => {
     mounted = await mountEditor();
     editDocument("changed");
     await flush();
-    const select = mounted.container.querySelector<HTMLSelectElement>("select");
-    if (!select) throw new Error("Encoding select not found");
-    setSelectValue(select, "gbk");
+    chooseSelectOption(mounted.container, "解码方式", "GBK");
     await waitForRendered(() => expect(mocks.ask).toHaveBeenCalledOnce());
 
     await startSave(mounted.container);
@@ -262,7 +259,7 @@ describe("FileEditor read and save error messages", () => {
     mounted = await mountEditor();
     editDocument("changed");
     await flush();
-    const save = mounted.container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
+    const save = mounted.container.querySelector<HTMLButtonElement>('button[title="保存"]');
     if (!save) throw new Error("Save button not found");
     click(save);
     await waitForRendered(() => expect(mocks.toast).toHaveBeenCalledWith("error", "保存失败：disk full"));

@@ -5,7 +5,7 @@
 // and account-switch isolation (late responses never write into the new account).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, deferred, flush, flushUntil, mountWithClient, setInputValue, setSelectValue, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushUntil, chooseSelectOption, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -172,6 +172,16 @@ function shareHandler(overrides?: {
   };
 }
 
+// selectOptionLabels opens the shared Select named by label, reads its option labels and closes it again.
+function selectOptionLabels(label: string): string[] {
+  const trigger = document.querySelector<HTMLElement>(`button[aria-label="${label}"]`);
+  if (!trigger) throw new Error(`Select not found: ${label}`);
+  click(trigger);
+  const labels = [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] [role="option"]`)].map((option) => option.textContent?.trim() ?? "");
+  click(trigger);
+  return labels;
+}
+
 let mounted: MountedView | undefined;
 
 function seedUser(user: typeof SUPERADMIN | typeof ALICE | null, auth: "on" | "off" | "loopback" = "on") {
@@ -232,10 +242,9 @@ describe("ShareCard creation entry and roles", () => {
     expect(document.body.textContent).toContain("新建主机分享");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
 
-    const deviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]');
-    expect(deviceSelect).not.toBeNull();
+    expect(document.querySelector('button[aria-label="分享主机"]')).not.toBeNull();
     // Only enrolled devices (device agent installed, terminal enabled, not revoked) can be shared
-    expect([...(deviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-01", "web-02"]);
+    expect(selectOptionLabels("分享主机")).toEqual(["选择主机", "web-01", "web-02"]);
     expect(recipientInput()).toBeDefined();
     expect(calls.some((c) => c.url === "/admin/users")).toBe(false);
     mounted.unmount();
@@ -247,8 +256,7 @@ describe("ShareCard creation entry and roles", () => {
     await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
     expect(document.body.textContent).toContain("新建主机分享");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    const plainDeviceSelect = document.querySelector<HTMLSelectElement>('select[aria-label="分享主机"]');
-    expect([...(plainDeviceSelect?.options ?? [])].map((o) => o.textContent)).toEqual(["选择主机", "web-02"]);
+    expect(selectOptionLabels("分享主机")).toEqual(["选择主机", "web-02"]);
     expect(plainCalls.some((c) => c.url === "/admin/users")).toBe(false);
   });
 
@@ -380,23 +388,18 @@ describe("ShareCard host-share creation", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "  alice  ");
-    const ttlSelect = document.querySelector('select[aria-label="分享有效期"]') as HTMLSelectElement;
-    expect(ttlSelect.value).toBe(String(24 * 60 * 60_000));
-    // All TTL options fall within the server-side 1 minute - 30 day bounds
-    for (const option of [...ttlSelect.options]) {
-      const ms = Number(option.value);
-      expect(ms).toBeGreaterThanOrEqual(60_000);
-      expect(ms).toBeLessThanOrEqual(30 * 24 * 60 * 60_000);
-    }
+    // The default lifetime is 24 hours, and every offered lifetime is within the server-side 1 minute - 30 day bounds.
+    expect(document.querySelector('button[aria-label="分享有效期"]')?.textContent).toContain("24 小时");
+    expect(selectOptionLabels("分享有效期")).toEqual(["1 小时", "6 小时", "24 小时", "7 天", "30 天"]);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares" && c.method === "POST"));
 
     const create = calls.find((c) => c.url === "/share/host-shares" && c.method === "POST");
     expect(create?.body).toEqual({ device_id: "d-1", recipient_username: "alice", write: false, ttl_ms: 86_400_000 });
     await flushUntil(() => calls.filter((c) => c.url === "/share/host-shares" && c.method === "GET").length >= 2);
-    expect(document.querySelector('select[aria-label="分享主机"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="分享主机"]')).toBeNull();
   });
 
   it("creates a share as a regular user with recipient_username under the same contract as a superadmin", async () => {
@@ -406,7 +409,7 @@ describe("ShareCard host-share creation", () => {
     await flushUntil(() => document.body.textContent?.includes("web-02") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-2");
+    chooseSelectOption(document, "分享主机", "web-02");
     setInputValue(recipientInput(), "root");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => calls.some((c) => c.url === "/share/host-shares" && c.method === "POST"));
@@ -424,9 +427,9 @@ describe("ShareCard host-share creation", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "alice");
-    setSelectValue(document.querySelector('select[aria-label="分享有效期"]') as HTMLSelectElement, String(7 * 24 * 60 * 60_000));
+    chooseSelectOption(document, "分享有效期", "7 天");
     const checkbox = [...document.querySelectorAll('input[type="checkbox"]')].find((i) =>
       i.closest("label")?.textContent?.includes("允许读写"),
     ) as HTMLInputElement;
@@ -449,7 +452,7 @@ describe("ShareCard host-share creation", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "no-such-user");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("not found: user") ?? false);
@@ -461,7 +464,7 @@ describe("ShareCard host-share creation", () => {
     mounted = mountWithClient(createElement(ShareCard));
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "bob");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("recipient account is unavailable") ?? false);
@@ -477,7 +480,7 @@ describe("ShareCard host-share creation", () => {
     await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => document.body.textContent?.includes("device agent offline") ?? false);
@@ -649,7 +652,7 @@ describe("ShareCard account-switch isolation", () => {
     await flushUntil(() => document.body.textContent?.includes("暂无主机分享") ?? false);
 
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() => createCalls === 1);
@@ -676,15 +679,15 @@ describe("ShareCard account-switch isolation", () => {
     });
     await flushUntil(() => document.body.textContent?.includes("新建主机分享") === true && shareRefreshEnabled());
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.includes("新建主机分享")) as HTMLButtonElement);
-    // Wait for the device list to be ready before selecting, so empty options do not swallow setSelectValue.
+    // Wait for the device list to be ready before selecting, so an empty list does not swallow the choice.
     await flushUntil(
-      () => document.querySelector('select[aria-label="分享主机"] option[value="d-1"]') !== null,
+      () => document.querySelector('button[aria-label="分享主机"]') !== null && selectOptionLabels("分享主机").includes("web-01"),
     );
-    setSelectValue(document.querySelector('select[aria-label="分享主机"]') as HTMLSelectElement, "d-1");
+    chooseSelectOption(document, "分享主机", "web-01");
     setInputValue(recipientInput(), "alice");
     click([...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "创建分享") as HTMLButtonElement);
     await flushUntil(() =>
-      createCalls === 2 && document.querySelector('select[aria-label="分享主机"]') === null && shareRefreshEnabled(),
+      createCalls === 2 && document.querySelector('button[aria-label="分享主机"]') === null && shareRefreshEnabled(),
     );
     expect(createCalls).toBe(2);
   });
