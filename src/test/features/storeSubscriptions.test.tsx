@@ -174,7 +174,36 @@ describe("render counts for session-bound views", () => {
 
     patchSession("s-7", { status: "disconnected" });
     expect(probe.commits()).toBe(1);
-    expect(mounted.container.textContent).toContain(`${SESSIONS - 1} 已连接`);
+    expect(mounted.container.textContent).toContain(`${WORKSPACES} 个会话`);
+    expect(mounted.container.textContent).toContain(`${WORKSPACES - 1} 已连接`);
+  });
+
+  it("counts the sessions of the open workspaces and lists the rest apart", () => {
+    const probe = profiled(createElement(StatusBar, {
+      vaultStatus: { attention: null, uninitialized: false, passwordless: false, text: "凭据库已解锁" },
+      sync: { text: "同步：本地模式", title: undefined, className: "", warnings: [], showWarnings: false, failed: false },
+      onOpenVaultProtection: () => {},
+      onOpenSyncSettings: () => {},
+    }));
+    mounted = probe.view;
+    const text = () => mounted!.container.textContent ?? "";
+    // Sessions without a workspace but with a terminal are background connections.
+    expect(text()).toContain(`${WORKSPACES} 个会话`);
+    expect(text()).toContain(`${WORKSPACES} 已连接`);
+    expect(text()).toContain(`另有 ${SESSIONS - WORKSPACES} 个后台`);
+    expect(text()).not.toContain("空闲");
+
+    // A connected session that lost its terminals and has no workspace is idle; a failed one is not listed.
+    patchSession("s-30", { tabs: [] });
+    patchSession("s-31", { status: "failed" });
+    expect(text()).toContain(`另有 1 个空闲、${SESSIONS - WORKSPACES - 2} 个后台`);
+    expect(text()).toContain(`${WORKSPACES} 个会话`);
+
+    // Closing a workspace moves its session out of the total.
+    act(() => useUi.setState({ workspaces: workspaces.slice(1) }));
+    expect(text()).toContain(`${WORKSPACES - 1} 个会话`);
+    expect(text()).toContain(`${WORKSPACES - 1} 已连接`);
+    expect(text()).toContain(`${SESSIONS - WORKSPACES - 1} 个后台`);
   });
 
   it("the header follows only the active workspace session", () => {

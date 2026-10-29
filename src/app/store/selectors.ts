@@ -65,22 +65,40 @@ export function useHasSessions(): boolean {
 }
 
 export interface SessionSummary {
+  // total and connected count the sessions the open workspaces use.
   total: number;
   connected: number;
+  // idle counts connected sessions no open workspace uses and that hold no terminal: what is left of a closed
+  // workspace until the idle sweep disconnects it. background counts the other connected sessions outside the open
+  // workspaces, such as the connection of a terminal moved to the background.
   idle: number;
+  background: number;
 }
 
 // useSessionSummary is the status bar's view of the session list: it re-renders only when a count changes.
 export function useSessionSummary(): SessionSummary {
   return useUi(useShallow((state) => {
+    const used = new Set<string>();
+    for (const workspace of state.workspaces) {
+      if (workspace.sessionId) used.add(workspace.sessionId);
+      for (const pane of workspace.panes) {
+        for (const tab of pane.tabs) if (tab.sessionId) used.add(tab.sessionId);
+      }
+    }
+    let total = 0;
     let connected = 0;
     let idle = 0;
+    let background = 0;
     for (const session of state.sessions) {
-      if (session.status !== "connected") continue;
-      connected += 1;
-      if (session.kind !== "remote" && (session.tabs?.length ?? 0) === 0) idle += 1;
+      if (used.has(session.id)) {
+        total += 1;
+        if (session.status === "connected") connected += 1;
+      } else if (session.status === "connected") {
+        if (session.kind !== "remote" && (session.tabs?.length ?? 0) === 0) idle += 1;
+        else background += 1;
+      }
     }
-    return { total: state.sessions.length, connected, idle };
+    return { total, connected, idle, background };
   }));
 }
 
