@@ -115,7 +115,6 @@ import type { FileEntryDto } from "../../ipc/types";
 import { PromptModal } from "../../ui/PromptModal";
 import { FileEditor } from "../../features/files/FileEditor";
 import { FileTree } from "../../features/files/FileTree";
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { MountPanel } from "../../features/files/MountPanel";
 
 const SID = "s1";
@@ -282,18 +281,14 @@ describe("FileTree tilde handling", () => {
   });
 });
 
-describe("FileBrowser toolbar", () => {
+describe("FileTree toolbar", () => {
   it("no longer carries redundant download or delete buttons", async () => {
     useUi.setState({ sessions: [session(SID, "ssh")] });
     mocks.list.mockResolvedValue([entry("a.txt", "file")]);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: SID }));
+    mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
     expect(mounted!.container.querySelector('button[title="删除选中项"]')).toBeNull();
-    const labels = [...mounted!.container.querySelectorAll(".nx-toolbar button")].map((b) =>
-      b.textContent?.trim(),
-    );
-    expect(labels).not.toContain("下载");
-    expect(labels).not.toContain("删除");
+    expect(mounted!.container.querySelector('button[title="下载选中项"]')).toBeNull();
   });
 });
 

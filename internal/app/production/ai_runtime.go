@@ -821,6 +821,9 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 
 	toolsDeps := tools.WithSession(tools.Dependencies{LocalHistory: services.desktop}, services.Sessions)
 	toolsDeps = tools.WithStore(toolsDeps, services.Store, services.Database)
+	toolsDeps.BackupBeforeOverwrite = func(ctx context.Context, scope tools.Scope) bool {
+		return sessionAssetBackupBeforeOverwrite(ctx, services.Sessions, services.Store, scope.SessionID)
+	}
 	toolsDeps.ResolveAssetSession = func(ctx context.Context, assetID string) (string, error) {
 		return resolveProductionAssetSession(ctx, services, assetID)
 	}

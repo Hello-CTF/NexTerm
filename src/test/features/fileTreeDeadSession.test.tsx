@@ -116,6 +116,7 @@ const CHANGED_HOST_KEY = {
     port: 22,
     keyType: "ssh-ed25519",
     fingerprint: "SHA256:new",
+    key: "ZmFrZS1ob3N0LWtleQ==",
     changed: true,
     known: [{ keyType: "ssh-ed25519", fingerprint: "SHA256:old" }],
   },
@@ -321,6 +322,44 @@ describe("FileTree deleted session", () => {
     expect(st.sessions).toHaveLength(1);
     expect(toastTexts()).toContain("已重新连接");
     expect(toolbarButton("上传到当前目录")?.disabled).toBe(false);
+  });
+
+  it("accepting a host-key change records it, reconnects automatically, and reloads the tree for the new session", async () => {
+    seedWorkspace({ assetId: "asset-1" });
+    mocks.connect.mockRejectedValueOnce(CHANGED_HOST_KEY);
+    mocks.ask.mockResolvedValue(true);
+    mocks.list.mockImplementation((sid: string) =>
+      sid === SID ? Promise.reject(NOT_FOUND) : Promise.resolve(ENTRIES.map((e) => ({ ...e }))),
+    );
+    mounted = mountTree();
+
+    await waitForRendered(() => expect(mounted!.container.textContent).toContain("a.txt"));
+    expect(mocks.knownHostAccept).toHaveBeenCalledWith("127.0.0.1", 22, "ssh-ed25519", "SHA256:new", "ZmFrZS1ob3N0LWtleQ==");
+    expect(mocks.connect).toHaveBeenCalledTimes(2);
+    expect(workspaceSessionId()).toBe("s2");
+    expect(useUi.getState().workspaces).toHaveLength(1);
+  });
+
+  it("synchronizes only workspaces tracking the old session when updateTab retargets a session", () => {
+    const tab: AppTab = { id: "t1", kind: "files", title: "Files", sessionId: SID, closable: true };
+    useUi.setState({
+      workspaces: [
+        {
+          id: "ws1",
+          kind: "session",
+          title: "web-01",
+          sessionId: "other",
+          panes: [{ id: "p1", tabs: [tab], activeTabId: tab.id }],
+          activePaneId: "p1",
+          closable: true,
+        },
+      ],
+      sessions: [],
+      toasts: [],
+    });
+    useUi.getState().updateTab("t1", { sessionId: "s2" });
+    expect(useUi.getState().workspaces[0]?.sessionId).toBe("other");
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs[0]?.sessionId).toBe("s2");
   });
 
   it("reconnects only once more when the new session is also deleted, then stops without looping", async () => {

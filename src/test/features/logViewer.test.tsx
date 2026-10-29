@@ -64,7 +64,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 });
 
 import { LogViewer } from "../../features/files/LogViewer";
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
@@ -518,50 +517,5 @@ describe("Log viewer entries", () => {
     const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
     const logTab = tabs.find((t) => t.kind === "log");
     expect(logTab).toMatchObject({ sessionId: SESSION, path: "~/app.log" });
-  });
-
-  it("FileBrowser toolbar opens the log viewer for the selected file", async () => {
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
-
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
-      r.textContent?.includes("app.log"),
-    );
-    if (!row) throw new Error("browser row not found");
-    click(row);
-
-    const button = [...mounted!.container.querySelectorAll<HTMLButtonElement>("button")].find(
-      (b) => b.textContent?.trim() === "日志",
-    );
-    if (!button) throw new Error("toolbar log button not found");
-    expect(button.disabled).toBe(false);
-    click(button);
-    await flush();
-
-    const tabs = useUi.getState().workspaces[0]?.panes[0]?.tabs ?? [];
-    expect(tabs.find((t) => t.kind === "log")).toMatchObject({
-      sessionId: SESSION,
-      path: "~/app.log",
-    });
-  });
-
-  it("FileBrowser context menu offers the log viewer for files", async () => {
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: SESSION }));
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("app.log"));
-
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
-      r.textContent?.includes("app.log"),
-    );
-    if (!row) throw new Error("browser row not found");
-    act(() => {
-      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-    });
-    await flush();
-
-    const labels = [...document.querySelectorAll('[role="menuitem"]')].map(
-      (b) => b.querySelector(".nx-menu-label")?.textContent ?? b.textContent ?? "",
-    );
-    expect(labels).toContain("查看日志");
-    expect(labels).toContain("在下方编辑");
   });
 });

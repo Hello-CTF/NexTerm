@@ -95,7 +95,6 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { MountPanel } from "../../features/files/MountPanel";
 import { AssetTree } from "../../features/explorer/AssetTree";
@@ -263,81 +262,9 @@ describe("touch More buttons reuse the same action menus", () => {
     await waitFor(() => expect(mocks.promptText).toHaveBeenCalled());
   });
 
-  it("FileBrowser row and toolbar ⋯ buttons open their respective menus", async () => {
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const rowMore = mounted!.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="更多操作 notes.txt"]',
-    );
-    if (!rowMore) throw new Error("row ⋯ button not found");
-    click(rowMore);
-    await waitFor(() =>
-      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
-    );
-    const rowLabels = menuLabels(mounted!.container);
-    expect(rowLabels.some((l) => l.includes("在下方编辑"))).toBe(true);
-    expect(rowLabels.some((l) => l.includes("重命名"))).toBe(true);
-    expect(rowLabels.some((l) => l.includes("校验值…"))).toBe(true);
-
-    keyDown(document.body, "Escape");
-    await waitFor(() =>
-      expect(mounted!.container.querySelector('[role="menu"]')).toBeNull(),
-    );
-
-    const toolbarMore = mounted!.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="更多操作"]',
-    );
-    if (!toolbarMore) throw new Error("toolbar ⋯ button not found");
-    click(toolbarMore);
-    await waitFor(() =>
-      expect(mounted!.container.querySelector('[role="menu"]')).not.toBeNull(),
-    );
-    const blankLabels = menuLabels(mounted!.container);
-    expect(blankLabels.some((l) => l.includes("上传到当前目录"))).toBe(true);
-    expect(blankLabels.some((l) => l.includes("新建目录"))).toBe(true);
-    expect(blankLabels.some((l) => l.includes("刷新"))).toBe(true);
-  });
-
-  it("FileBrowser size and modified-time columns plus low-frequency toolbar buttons have narrow-screen hiding classes", async () => {
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const headerCells = [...mounted!.container.querySelectorAll("span")].filter((s) =>
-      ["大小", "修改时间"].includes(s.textContent?.trim() ?? ""),
-    );
-    expect(headerCells.length).toBe(2);
-    for (const cell of headerCells) {
-      expect(cell.className).toContain("max-[560px]:hidden");
-    }
-    for (const label of ["上传", "新建"]) {
-      const button = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-toolbar button")].find(
-        (b) => b.textContent?.trim() === label,
-      );
-      expect(button?.className ?? "").toContain("max-[560px]:hidden");
-    }
-  });
 });
 
 describe("IME guards for single-line Enter-to-submit forms", () => {
-  it("FileBrowser path input: Enter during IME composition does not navigate; regular Enter navigates", async () => {
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-    const input = mounted!.container.querySelector<HTMLInputElement>(".nx-toolbar input");
-    if (!input) throw new Error("path input not found");
-
-    setInputValue(input, "/etc");
-    const callsBefore = mocks.fsList.mock.calls.length;
-    keyDown(input, "Enter", { isComposing: true });
-    await flush();
-    expect(mocks.fsList.mock.calls.length).toBe(callsBefore);
-
-    keyDown(input, "Enter");
-    await waitFor(() =>
-      expect(mocks.fsList).toHaveBeenCalledWith("s1", "/etc"),
-    );
-  });
-
   it("FileTree path editing: Enter during IME composition does not submit; regular Enter submits", async () => {
     mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
     await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
@@ -562,13 +489,4 @@ describe("device session panels render directly", () => {
     expect(mounted!.container.textContent).not.toContain("设备会话不支持");
   });
 
-  it("FileBrowser renders a normal nx-pane panel for device sessions", async () => {
-    useUi.setState({ sessions: DEVICE_SESSIONS as never });
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s-dev" }));
-    await waitFor(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const root = mounted!.container.firstElementChild as HTMLElement;
-    expect(root.className).toContain("nx-pane");
-    expect(mounted!.container.textContent).not.toContain("设备会话不支持");
-  });
 });

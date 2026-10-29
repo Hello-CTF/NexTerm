@@ -5,6 +5,7 @@ import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import "../../ui/skeleton.css";
 import { Select } from "../../ui/Select";
+import { copyText } from "../../ui/clipboard";
 import { fileVisual, formatSize } from "./fileTypes";
 import { bytesFromBase64 } from "./fileCodec";
 import {
@@ -18,6 +19,12 @@ import {
 } from "../../ui/icons";
 
 const CHUNK_SIZE = 256 * 1024;
+
+const NARROW_QUERY = "(max-width: 560px)";
+
+function matchesNarrow(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches;
+}
 
 const LOG_ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
 
@@ -81,6 +88,11 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
   const offsetRef = useRef(offset);
   offsetRef.current = offset;
   const requestGenerationRef = useRef(0);
+  // Narrow screens wrap long lines by default and move paging to a bottom row so nothing overflows.
+  const [narrow, setNarrow] = useState(matchesNarrow);
+  const [wrap, setWrap] = useState(matchesNarrow);
+  const [notice, setNotice] = useState<string | null>(null);
+  const scrollToEndRef = useRef(false);
   const assetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId ?? null);
 
   const load = useCallback(
@@ -148,6 +160,14 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
     };
   }, [assetId, load]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(NARROW_QUERY);
+    const onChange = () => setNarrow(mql.matches);
+    mql.addEventListener?.("change", onChange);
+    return () => mql.removeEventListener?.("change", onChange);
+  }, []);
+
   const pages = chunk ? Math.max(1, Math.ceil(chunk.size / CHUNK_SIZE)) : 1;
   const page = Math.floor(offset / CHUNK_SIZE) + 1;
 
@@ -183,12 +203,105 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
     estimateSize: () => 18.6,
     overscan: 20,
   });
+  useEffect(() => {
+    if (!scrollToEndRef.current || !chunk || loading) return;
+    scrollToEndRef.current = false;
+    if (rowItems.length > 0) virtualizer.scrollToIndex(rowItems.length - 1, { align: "end" });
+  }, [chunk, loading, rowItems.length, virtualizer]);
+
+  const jumpToLatest = () => {
+    if (page < pages) {
+      scrollToEndRef.current = true;
+      gotoPage(pages);
+    } else if (rowItems.length > 0) {
+      virtualizer.scrollToIndex(rowItems.length - 1, { align: "end" });
+    }
+  };
+
+  const copyVisible = async () => {
+    if (rowItems.length === 0) return;
+    try {
+      await copyText(rowItems.map((r) => r.text).join("\n"));
+      setNotice(`已复制 ${rowItems.length} 行日志`);
+    } catch (e) {
+      setNotice(`复制失败：${describeError(toAppError(e).message)}`);
+    }
+  };
+
   const virtualItems = virtualizer.getVirtualItems();
   const windowTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const lastItem = virtualItems[virtualItems.length - 1];
   const windowBottom = Math.max(0, virtualizer.getTotalSize() - (lastItem ? lastItem.start + lastItem.size : 0));
 
   const { Icon, tone } = fileVisual(path, "file");
+
+  const pagerBar = (
+    <div
+      className={
+        narrow
+          ? "flex shrink-0 items-center justify-center gap-1 border-t border-neutral-800/60 px-2 py-1 [padding-bottom:calc(0.25rem+max(var(--nx-kb-inset,0px),var(--nx-safe-bottom,0px)))]"
+          : "flex shrink-0 items-center gap-0.5"
+      }
+      role="group"
+      aria-label="分页"
+      data-testid="log-pager"
+    >
+      <button
+        className="nx-btn nx-btn-ghost nx-btn-sm"
+        disabled={loading || page <= 1}
+        onClick={() => gotoPage(1)}
+        title="第一页"
+      >
+        首页
+      </button>
+      <button
+        className="nx-icon-btn"
+        disabled={loading || page <= 1}
+        onClick={() => gotoPage(page - 1)}
+        title="上一页"
+        aria-label="上一页"
+      >
+        <IconChevronLeft size={13} />
+      </button>
+      <form
+        className="flex items-center gap-1"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const next = Number.parseInt(pageDraft, 10);
+          if (Number.isFinite(next)) gotoPage(next);
+          else setPageDraft(String(page));
+        }}
+      >
+        <input
+          className="nx-input nx-input-sm w-14 text-center font-mono"
+          value={pageDraft}
+          inputMode="numeric"
+          aria-label="页码"
+          title="输入页码后回车跳转"
+          onChange={(e) => setPageDraft(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+        />
+      </form>
+      <span className="shrink-0 text-[11px] text-neutral-500">/ {pages} 页</span>
+      <button
+        className="nx-icon-btn"
+        disabled={loading || page >= pages}
+        onClick={() => gotoPage(page + 1)}
+        title="下一页"
+        aria-label="下一页"
+      >
+        <IconChevronRight size={13} />
+      </button>
+      <button
+        className="nx-btn nx-btn-ghost nx-btn-sm"
+        disabled={loading || page >= pages}
+        onClick={() => gotoPage(pages)}
+        title="最后一页（日志末尾）"
+      >
+        末页
+      </button>
+    </div>
+  );
 
   return (
     <div className="nx-pane bg-term">
@@ -199,8 +312,29 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <span className="nx-dot" />
           只读日志
         </span>
+        <div className="nx-spacer" />
+        <button
+          className="nx-icon-btn"
+          title="重新读取当前分块（日志文件可能已增长）"
+          disabled={loading}
+          onClick={() => void load(offset)}
+        >
+          <IconRefresh size={13} />
+        </button>
+        {!narrow && pagerBar}
+        {onClose && (
+          <button className="nx-icon-btn" onClick={onClose} title="关闭日志查看器">
+            <IconClose size={14} />
+          </button>
+        )}
+      </div>
+
+      <div
+        className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-neutral-800/60 px-2.5 py-1"
+        data-testid="log-subbar"
+      >
         <Select
-          className="shrink-0 max-[560px]:hidden"
+          className="shrink-0"
           triggerClassName="nx-btn nx-btn-ghost nx-btn-sm font-mono"
           ariaLabel="日志编码"
           title={`日志编码：${LOG_ENCODING_LABEL[enc]}（默认跟随资产的终端编码设置）`}
@@ -208,7 +342,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           options={LOG_ENCODINGS.map((k) => ({ value: k, label: LOG_ENCODING_LABEL[k] }))}
           onChange={changeEncoding}
         />
-        <div className="nx-field w-44 max-w-none shrink-0 max-[560px]:hidden">
+        <div className="nx-field min-w-[8rem] max-w-none flex-1 basis-40 sm:flex-none sm:basis-auto sm:w-44">
           <span className="nx-field-icon">
             <IconSearch size={12} />
           </span>
@@ -226,75 +360,30 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
             {filtered.length} 行匹配
           </span>
         )}
-        <div className="nx-spacer" />
+        <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[12px] text-neutral-300 pointer-coarse:min-h-11">
+          <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
+          自动换行
+        </label>
         <button
-          className="nx-icon-btn"
-          title="重新读取当前分块（日志文件可能已增长）"
-          disabled={loading}
-          onClick={() => void load(offset)}
+          className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+          disabled={loading || rowItems.length === 0}
+          onClick={() => void copyVisible()}
+          title="复制当前分块中显示的日志行"
         >
-          <IconRefresh size={13} />
+          复制日志
         </button>
-        <span className="nx-divider-v" />
-        <div className="flex shrink-0 items-center gap-0.5" role="group" aria-label="分页">
-          <button
-            className="nx-btn nx-btn-ghost nx-btn-sm"
-            disabled={loading || page <= 1}
-            onClick={() => gotoPage(1)}
-            title="第一页"
-          >
-            首页
-          </button>
-          <button
-            className="nx-icon-btn"
-            disabled={loading || page <= 1}
-            onClick={() => gotoPage(page - 1)}
-            title="上一页"
-            aria-label="上一页"
-          >
-            <IconChevronLeft size={13} />
-          </button>
-          <form
-            className="flex items-center gap-1"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const next = Number.parseInt(pageDraft, 10);
-              if (Number.isFinite(next)) gotoPage(next);
-              else setPageDraft(String(page));
-            }}
-          >
-            <input
-              className="nx-input nx-input-sm w-14 text-center font-mono"
-              value={pageDraft}
-              aria-label="页码"
-              title="输入页码后回车跳转"
-              onChange={(e) => setPageDraft(e.target.value)}
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          </form>
-          <span className="shrink-0 text-[11px] text-neutral-500">/ {pages} 页</span>
-          <button
-            className="nx-icon-btn"
-            disabled={loading || page >= pages}
-            onClick={() => gotoPage(page + 1)}
-            title="下一页"
-            aria-label="下一页"
-          >
-            <IconChevronRight size={13} />
-          </button>
-          <button
-            className="nx-btn nx-btn-ghost nx-btn-sm"
-            disabled={loading || page >= pages}
-            onClick={() => gotoPage(pages)}
-            title="最后一页（日志末尾）"
-          >
-            末页
-          </button>
-        </div>
-        {onClose && (
-          <button className="nx-icon-btn" onClick={onClose} title="关闭日志查看器">
-            <IconClose size={14} />
-          </button>
+        <button
+          className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
+          disabled={loading || !chunk}
+          onClick={jumpToLatest}
+          title="跳到日志末尾（最后一页的最后一行）"
+        >
+          跳到最新
+        </button>
+        {notice && (
+          <span className="shrink-0 text-[11px] text-neutral-500" role="status">
+            {notice}
+          </span>
         )}
       </div>
 
@@ -333,7 +422,8 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           role="log"
           aria-label={`日志内容 ${path}`}
           ref={scrollRef}
-          className="min-h-0 flex-1 overflow-auto px-1 py-1 font-mono text-[12px] leading-[1.55]"
+          data-wrap={wrap ? "true" : "false"}
+          className="min-h-0 flex-1 overflow-auto overscroll-contain px-1 py-1 font-mono text-[12px] leading-[1.55]"
         >
           {/* Keep virtual padding inside the viewport so it cannot enlarge the flex item. */}
           <div style={{ paddingTop: windowTop, paddingBottom: windowBottom }}>
@@ -342,12 +432,14 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
               return (
                 <div
                   key={vi.key}
-                  className="flex gap-3 rounded px-2 hover:bg-neutral-800/30"
+                  data-index={vi.index}
+                  ref={wrap ? virtualizer.measureElement : undefined}
+                  className="flex gap-3 rounded px-2 hover:bg-neutral-800/30 max-[560px]:gap-2"
                 >
-                  <span className="w-12 shrink-0 select-none text-right text-neutral-600">
+                  <span className="w-12 shrink-0 max-[560px]:w-9 select-none text-right text-neutral-500">
                     {index + 1}
                   </span>
-                  <span className="whitespace-pre">{highlight(text, query)}</span>
+                  <span className={wrap ? "min-w-0 whitespace-pre-wrap break-all" : "whitespace-pre"}>{highlight(text, query)}</span>
                 </div>
               );
             })}
@@ -359,7 +451,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
       ) : null}
 
       {chunk && !error && (
-        <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
+        <div className="flex min-h-[24px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
           <IconEye size={11} />
           <span>只读，不修改远端文件</span>
           <span className="text-neutral-700">|</span>
@@ -378,6 +470,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <span className="max-[560px]:hidden">搜索仅过滤当前已加载分块</span>
         </div>
       )}
+      {narrow && pagerBar}
     </div>
   );
 }

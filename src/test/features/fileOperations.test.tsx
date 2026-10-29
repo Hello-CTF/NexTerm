@@ -249,7 +249,6 @@ import {
   parseOctalMode,
   validateEntryName,
 } from "../../features/files/fileOps";
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { FileEditor } from "../../features/files/FileEditor";
 import { LogViewer } from "../../features/files/LogViewer";
@@ -330,12 +329,7 @@ function StoreFileEditor({ tabId }: { tabId: string }) {
   return createElement(FileEditor, { sessionId: tab.sessionId, path: tab.path });
 }
 
-function mountBrowser(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return mount(createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })));
-}
-
-function mountBrowserWithEditor(tabId: string): MountedView {
+function mountTreeWithEditor(tabId: string): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(
     createElement(
@@ -344,7 +338,7 @@ function mountBrowserWithEditor(tabId: string): MountedView {
       createElement(
         "div",
         null,
-        createElement(FileBrowser, { sessionId: SID }),
+        createElement(FileTree, { sessionId: SID }),
         createElement(StoreFileEditor, { tabId }),
       ),
     ),
@@ -365,7 +359,7 @@ function StoreLogViewer({ tabId }: { tabId: string }) {
   return createElement(LogViewer, { sessionId: tab.sessionId, path: tab.path });
 }
 
-function mountBrowserWithLog(tabId: string): MountedView {
+function mountTreeWithLog(tabId: string): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return mount(
     createElement(
@@ -374,7 +368,7 @@ function mountBrowserWithLog(tabId: string): MountedView {
       createElement(
         "div",
         null,
-        createElement(FileBrowser, { sessionId: SID }),
+        createElement(FileTree, { sessionId: SID }),
         createElement(StoreLogViewer, { tabId }),
       ),
     ),
@@ -422,8 +416,9 @@ beforeEach(() => {
   mocks.ask.mockResolvedValue(true);
   mocks.promptText.mockResolvedValue(null);
   mocks.askChoice.mockResolvedValue(null);
+  // WinRM trees start at "/" instead of "~", so both roots list the same entries.
   mocks.list.mockImplementation((_s: string, p: string) =>
-    Promise.resolve(p === "~" ? entries.map((e) => ({ ...e })) : []),
+    Promise.resolve(p === "~" || p === "/" ? entries.map((e) => ({ ...e })) : []),
   );
   mocks.readRange.mockRejectedValue({ code: "unsupported", message: "unsupported" });
   mocks.write.mockResolvedValue(undefined);
@@ -482,16 +477,17 @@ describe("fileOps preflight checks (pure functions)", () => {
   });
 });
 
-describe("rename (FileBrowser)", () => {
+describe("rename (FileTree)", () => {
   async function triggerRename(name: string | null): Promise<void> {
     mocks.promptText.mockResolvedValue(name);
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     openRowMenu(mounted!.container, "~/a.txt");
     clickMenuItem(mounted!.container, "重命名");
     await flush();
   }
 
   beforeEach(async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -739,7 +735,7 @@ describe("R2 rename editor locator migration", () => {
   it("blocks saving during rename, then keeps the same document and saves only to the new locator", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "stable-editor" };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
     act(() => {
@@ -779,7 +775,7 @@ describe("R2 rename editor locator migration", () => {
   it("migrates a clean editor without rereading, then saves later edits to the new locator", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "clean-editor" };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
 
@@ -801,7 +797,7 @@ describe("R2 rename editor locator migration", () => {
   it("rejects rename while a save is in flight and allows it after that save settles", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "saving-editor" };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
     act(() => {
@@ -829,7 +825,7 @@ describe("R2 rename editor locator migration", () => {
     seedEditor(tab);
     const pending = deferred<{ path: string; offset: number; size: number; contentBase64: string; truncated: boolean }>();
     mocks.readRange.mockReturnValueOnce(pending.promise);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     await triggerRename("c.txt");
@@ -860,7 +856,7 @@ describe("R2 rename editor locator migration", () => {
         closable: true,
       },
     ]);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     await triggerRename("b.txt");
@@ -877,7 +873,7 @@ describe("R2 rename editor locator migration", () => {
     const tab = { ...editorTab("~/a.txt"), id: "overwrite-source" };
     seedEditor(tab);
     setFileEditorDirty(SID, "~/a.txt", true);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.ask.mockResolvedValueOnce(false);
 
@@ -989,7 +985,7 @@ describe("R2 rename editor locator migration", () => {
         closable: true,
       },
     ]);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/link")).toBeTruthy());
 
     await triggerRename("link2", "~/link");
@@ -1001,7 +997,7 @@ describe("R2 rename editor locator migration", () => {
   it("commits locator migration when the remote rename settles after unmount", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "unmounted-editor" };
     seedEditor(tab);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     const pending = deferred<void>();
     mocks.rename.mockReturnValueOnce(pending.promise);
@@ -1019,7 +1015,7 @@ describe("R2 rename editor locator migration", () => {
   it("keeps the original locator and document after a definite remote rejection", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "rejected-editor" };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
     act(() => {
@@ -1041,7 +1037,7 @@ describe("R2 rename editor locator migration", () => {
   it("keeps the original locator and blocks old-path saves when the rename outcome is unknown", async () => {
     const tab = { ...editorTab("~/a.txt"), id: "unknown-editor" };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
     act(() => {
@@ -1077,7 +1073,7 @@ describe("R2 rename editor locator migration", () => {
   async function mountDirtyEditor(id: string, path = "~/a.txt") {
     const tab = { ...editorTab(path), id };
     seedEditor(tab);
-    mounted = mountBrowserWithEditor(tab.id);
+    mounted = mountTreeWithEditor(tab.id);
     await waitFor(() => expect(editors.views).toHaveLength(1));
     const view = editors.views[0];
     act(() => {
@@ -1192,7 +1188,7 @@ describe("R2 rename editor locator migration", () => {
   });
 
   it("offers location confirmation without an editor and refreshes after not-renamed", async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
     mocks.askChoice.mockResolvedValueOnce(null);
@@ -1215,7 +1211,7 @@ describe("R2 rename editor locator migration", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     mounted = mount(
-      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+      createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })),
     );
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     const pending = deferred<void>();
@@ -1242,7 +1238,7 @@ describe("R2 rename editor locator migration", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     mounted = mount(
-      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+      createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })),
     );
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
@@ -1270,7 +1266,7 @@ describe("R2 rename editor locator migration", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidate = vi.spyOn(client, "invalidateQueries");
     mounted = mount(
-      createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
+      createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })),
     );
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.rename.mockRejectedValueOnce({ code: "disconnected", message: "connection lost" });
@@ -1300,7 +1296,7 @@ describe("R2 rename editor locator migration", () => {
       ],
     });
     mocks.list.mockResolvedValue([entry("a.txt", "file"), entry("A.TXT", "file")]);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.ask.mockResolvedValueOnce(false);
 
@@ -1325,7 +1321,7 @@ describe("R2 rename editor locator migration", () => {
         { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
       ],
     });
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     await triggerRename("A.TXT");
@@ -1341,7 +1337,7 @@ describe("R2 rename editor locator migration", () => {
         { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
       ],
     });
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     await triggerRename("A.TXT");
@@ -1358,7 +1354,7 @@ describe("R2 rename editor locator migration", () => {
         { id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 },
       ],
     });
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     await triggerRename("b.txt");
@@ -1379,7 +1375,7 @@ describe("R2 rename editor locator migration", () => {
         closable: true,
       },
     ]);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     const pending = deferred<void>();
     mocks.rename.mockReturnValueOnce(pending.promise);
@@ -1436,7 +1432,7 @@ describe("R2 rename editor locator migration", () => {
       contentBase64: btoa("original"),
       truncated: false,
     });
-    mounted = mountBrowserWithLog(log.id);
+    mounted = mountTreeWithLog(log.id);
     await waitFor(() => expect(mocks.readRange).toHaveBeenCalledWith(SID, "~/a.txt", 0, expect.any(Number)));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
@@ -1446,7 +1442,7 @@ describe("R2 rename editor locator migration", () => {
   });
 });
 
-describe("chmod permission changes (FileBrowser)", () => {
+describe("chmod permission changes (FileTree)", () => {
   async function triggerChmod(path: string, mode: string | null): Promise<void> {
     mocks.promptText.mockResolvedValue(mode);
     openRowMenu(mounted!.container, path);
@@ -1455,7 +1451,7 @@ describe("chmod permission changes (FileBrowser)", () => {
   }
 
   beforeEach(async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -1498,9 +1494,9 @@ describe("chmod permission changes (FileBrowser)", () => {
   });
 });
 
-describe("checksum (FileBrowser)", () => {
+describe("checksum (FileTree)", () => {
   beforeEach(async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -1586,21 +1582,6 @@ describe("name preflight checks for new files and folders", () => {
       expect(mocks.toast).toHaveBeenCalledTimes(invalidNames.length);
     });
   }
-
-  it("FileBrowser rejects dangerous names for new directories", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
-    const button = [...mounted.container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === "新建",
-    )!;
-    for (const name of invalidNames) {
-      mocks.promptText.mockResolvedValueOnce(name);
-      click(button);
-      await flush();
-    }
-    expect(mocks.mkdir).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledTimes(invalidNames.length);
-  });
 
   it("creates valid names in the current directory", async () => {
     mounted = mountTree();
@@ -1693,51 +1674,37 @@ describe("selection and expansion state after FileTree navigation", () => {
   });
 });
 
-describe("FileBrowser selected-item action validation", () => {
+describe("FileTree selected-item action validation", () => {
   beforeEach(async () => {
     mocks.list.mockResolvedValue([
       entry("a.txt", "file"),
       entry("image.png", "file"),
       entry("sub", "dir"),
     ]);
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  function actionButton(label: string): HTMLButtonElement {
-    const button = [...mounted!.container.querySelectorAll("button")].find(
-      (candidate) => candidate.textContent?.trim() === label,
-    );
-    if (!button) throw new Error(`Action button not found: ${label}`);
-    return button as HTMLButtonElement;
-  }
+  it("keeps menu items consistent for directories and non-text files", () => {
+    openRowMenu(mounted!.container, "~/sub");
+    expect([...document.querySelectorAll('[role="menuitem"]')].some((b) => b.textContent?.includes("查看日志"))).toBe(false);
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
 
-  it("keeps buttons, titles, and edit entry points consistent for directories and non-text files", () => {
-    click(rowByPath(mounted!.container, "~/sub"));
-    expect(actionButton("日志").disabled).toBe(true);
-    expect(actionButton("日志").title).toContain("目录");
-
-    click(rowByPath(mounted!.container, "~/image.png"));
-    expect(actionButton("日志").disabled).toBe(true);
-    expect(actionButton("日志").title).toContain("非文本文件");
-    expect(rowByPath(mounted!.container, "~/image.png").title).toContain("不能在线编辑");
     openRowMenu(mounted!.container, "~/image.png");
+    expect(menuItem(mounted!.container, "查看日志").disabled).toBe(true);
     expect(menuItem(mounted!.container, "在下方编辑").disabled).toBe(true);
-    expect(menuItem(mounted!.container, "在下方编辑").textContent).toContain("非文本文件");
-
-    click(rowByPath(mounted!.container, "~/a.txt"));
-    expect(actionButton("日志").disabled).toBe(false);
   });
 
-  it("stale selection cannot trigger the log action after a list refresh", async () => {
+  it("a selection that disappears from a refreshed listing is cleared and triggers no action", async () => {
     click(rowByPath(mounted!.container, "~/a.txt"));
-    expect(actionButton("日志").disabled).toBe(false);
+    expect(rowByPath(mounted!.container, "~/a.txt").getAttribute("aria-selected")).toBe("true");
     mocks.list.mockResolvedValue([entry("sub", "dir")]);
-    click(mounted!.container.querySelector<HTMLButtonElement>('button[title="刷新"]')!);
+    click(mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="刷新文件列表"]')!);
     await waitFor(() => expect(mounted!.container.textContent).not.toContain("a.txt"));
 
-    expect(actionButton("日志").disabled).toBe(true);
-    expect(actionButton("日志").title).toContain("请先选择");
+    expect(mounted!.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     expect(mocks.pickSavePath).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces).toHaveLength(0);
   });
@@ -1754,31 +1721,12 @@ describe("disconnected-session feedback for terminal entry points", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", "当前会话已断开，无法打开终端");
   });
 
-  it("FileBrowser: opening in a new terminal reports a clear error when the session is disconnected", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
-
-    openRowMenu(mounted!.container, "~/sub");
-    clickMenuItem(mounted!.container, "在新终端打开");
-    await flush();
-    expect(mocks.toast).toHaveBeenCalledWith("error", "当前会话已断开，无法打开终端");
-  });
 });
 
 describe("operations preserve existing state", () => {
-  it("preserves transfer progress and unrelated dirty editors after an operation", async () => {
-    let progressHandler: ((e: unknown) => void) | undefined;
-    mocks.listenEvent.mockImplementation((t: string, cb: (e: unknown) => void) => {
-      if (t === "fs://progress") progressHandler = cb;
-      return Promise.resolve(() => {});
-    });
-    mounted = mountBrowser();
+  it("preserves unrelated dirty editors after an operation", async () => {
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
-
-    act(() => {
-      progressHandler?.({ taskId: "t1", transferred: 5, total: 100, done: false });
-    });
-    expect(mounted.container.querySelector('[data-task-id="t1"]')).not.toBeNull();
 
     setFileEditorDirty(SID, "~/other.txt", true);
     mocks.promptText.mockResolvedValue("600");
@@ -1788,7 +1736,6 @@ describe("operations preserve existing state", () => {
       expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新")),
     );
 
-    expect(mounted.container.querySelector('[data-task-id="t1"]')).not.toBeNull();
     expect(
       isDirtyFileEditor({
         id: "x",
@@ -1804,7 +1751,7 @@ describe("operations preserve existing state", () => {
 });
 
 describe("operations under React StrictMode (review P1 regression)", () => {
-  function mountBrowserStrict(): MountedView {
+  function mountTreeStrict(): MountedView {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return mount(
       createElement(
@@ -1813,14 +1760,14 @@ describe("operations under React StrictMode (review P1 regression)", () => {
         createElement(
           QueryClientProvider,
           { client },
-          createElement(FileBrowser, { sessionId: SID }),
+          createElement(FileTree, { sessionId: SID }),
         ),
       ),
     );
   }
 
   beforeEach(async () => {
-    mounted = mountBrowserStrict();
+    mounted = mountTreeStrict();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -2034,14 +1981,6 @@ describe("real backend path shapes (~ list keys + absolute entry.path, R1 review
   const listCalls = (key: string): number =>
     mocks.list.mock.calls.filter((c) => c[1] === key).length;
 
-  const dblclickRow = (container: HTMLElement, path: string): void => {
-    act(() => {
-      rowByPath(container, path).dispatchEvent(
-        new MouseEvent("dblclick", { bubbles: true, cancelable: true }),
-      );
-    });
-  };
-
   beforeEach(async () => {
     renamedRoot = false;
     renamedSub = false;
@@ -2127,62 +2066,6 @@ describe("real backend path shapes (~ list keys + absolute entry.path, R1 review
     await waitFor(() => expect(listCalls(`${HOME_ABS}/sub`)).toBeGreaterThan(beforeChmod));
   });
 
-  it("FileBrowser root: actually refreshes the `~`-keyed list after rename", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
-    const before = listCalls("~");
-
-    mocks.promptText.mockResolvedValue("c.txt");
-    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
-    clickMenuItem(mounted!.container, "重命名");
-    await flush();
-    await waitFor(() => expect(listCalls("~")).toBeGreaterThan(before));
-    await waitFor(() =>
-      expect(rowByPath(mounted!.container, `${HOME_ABS}/c.txt`)).toBeTruthy(),
-    );
-  });
-
-  it("FileBrowser subdirectory: refreshes the `~/sub`-keyed list after rename/chmod", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/sub`)).toBeTruthy());
-    dblclickRow(mounted!.container, `${HOME_ABS}/sub`);
-    await waitFor(() =>
-      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/a.txt`)).toBeTruthy(),
-    );
-
-    mocks.promptText.mockResolvedValue("c.txt");
-    openRowMenu(mounted!.container, `${HOME_ABS}/sub/a.txt`);
-    clickMenuItem(mounted!.container, "重命名");
-    await flush();
-    await waitFor(() =>
-      expect(rowByPath(mounted!.container, `${HOME_ABS}/sub/c.txt`)).toBeTruthy(),
-    );
-
-    const beforeChmod = listCalls("~/sub");
-    mocks.promptText.mockResolvedValue("600");
-    openRowMenu(mounted!.container, `${HOME_ABS}/sub/b.txt`);
-    clickMenuItem(mounted!.container, "权限…");
-    await waitFor(() =>
-      expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("权限已更新")),
-    );
-    await waitFor(() => expect(listCalls("~/sub")).toBeGreaterThan(beforeChmod));
-  });
-
-  it("FileBrowser root: shows the usual overwrite confirmation with absolute entry.path values", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, `${HOME_ABS}/a.txt`)).toBeTruthy());
-
-    mocks.promptText.mockResolvedValue("b.txt");
-    mocks.ask.mockResolvedValueOnce(false);
-    openRowMenu(mounted!.container, `${HOME_ABS}/a.txt`);
-    clickMenuItem(mounted!.container, "重命名");
-    await flush();
-    expect(mocks.ask).toHaveBeenCalledWith(
-      expect.stringContaining("已存在"),
-      expect.objectContaining({ kind: "warning" }),
-    );
-    expect(mocks.rename).not.toHaveBeenCalled();
-  });
 });
 
 describe("delete and discard confirmations (R42 destructive dialogs)", () => {
@@ -2223,8 +2106,8 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
     );
   }
 
-  it("FileBrowser file deletion: shows a warning dialog (alertdialog) and aborts on cancel", async () => {
-    mounted = mountWithDialogHost(createElement(FileBrowser, { sessionId: SID }));
+  it("FileTree file deletion: shows a warning dialog (alertdialog) and aborts on cancel", async () => {
+    mounted = mountWithDialogHost(createElement(FileTree, { sessionId: SID }));
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     openRowMenu(mounted!.container, "~/a.txt");
@@ -2397,14 +2280,6 @@ describe("delete and discard confirmations (R42 destructive dialogs)", () => {
 });
 
 describe("context menus: blank-area entries and wiring", () => {
-  function openBrowserBlankMenu(): void {
-    const scroller = mounted!.container.querySelector('[role="tree"]')?.parentElement;
-    if (!scroller) throw new Error("scroller not found");
-    act(() => {
-      scroller.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-    });
-  }
-
   function openTreeBlankMenu(): void {
     const tree = mounted!.container.querySelector('[role="tree"]');
     if (!tree) throw new Error("tree not found");
@@ -2432,39 +2307,17 @@ describe("context menus: blank-area entries and wiring", () => {
     mocks.dropFolderUpload.mockResolvedValue(undefined);
   });
 
-  it("FileBrowser blank-area menu includes all current-directory actions; new blank file writes to the current directory and refreshes", async () => {
-    mounted = mountBrowser();
-    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
-    openBrowserBlankMenu();
-    const labels = menuLabels();
-    for (const label of [
-      "打包下载当前目录",
-      "上传到当前目录",
-      "上传文件夹到当前目录",
-      "新建目录",
-      "新建空白文件",
-      "刷新",
-    ]) {
-      expect(labels.some((t) => t.includes(label)), label).toBe(true);
-    }
-    mocks.promptText.mockResolvedValue("blank.txt");
-    clickMenuItem(mounted!.container, "新建空白文件");
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/blank.txt", "", false));
-    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));
-  });
-
-  it("FileBrowser blank-area upload and refresh use the same flows as the toolbar", async () => {
-    mounted = mountBrowser();
+  it("FileTree blank-area upload and refresh flows", async () => {
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
 
     mocks.pickLocalFile.mockResolvedValue(null);
-    openBrowserBlankMenu();
+    openTreeBlankMenu();
     clickMenuItem(mounted!.container, "上传到当前目录");
     await flush();
     expect(mocks.pickLocalFile).toHaveBeenCalledTimes(1);
 
-    openBrowserBlankMenu();
+    openTreeBlankMenu();
     clickMenuItem(mounted!.container, "上传文件夹到当前目录");
     await flush();
     expect(mocks.pickFolderUpload).toHaveBeenCalledWith(
@@ -2472,13 +2325,13 @@ describe("context menus: blank-area entries and wiring", () => {
     );
 
     const before = mocks.list.mock.calls.length;
-    openBrowserBlankMenu();
+    openTreeBlankMenu();
     clickMenuItem(mounted!.container, "刷新");
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(before));
   });
 
   it("directory row menu pack download follows the pickSavePath -> packDownload -> finishSave flow", async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     mocks.pickSavePath.mockResolvedValue("/local/sub.tar.gz");
     mocks.packDownload.mockResolvedValue(1234);
@@ -2497,18 +2350,18 @@ describe("context menus: blank-area entries and wiring", () => {
 
   it("hides pack download for winrm sessions and keeps it for ssh sessions", async () => {
     seedSessionKind("winrm");
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     openRowMenu(mounted!.container, "~/sub");
     expect(menuLabels().some((t) => t.includes("打包下载"))).toBe(false);
-    openBrowserBlankMenu();
+    openTreeBlankMenu();
     const labels = menuLabels();
     expect(labels.some((t) => t.includes("打包下载"))).toBe(false);
     expect(labels.some((t) => t.includes("新建空白文件"))).toBe(true);
     mounted.unmount();
 
     seedSessionKind("ssh");
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     openRowMenu(mounted!.container, "~/sub");
     expect(menuLabels().some((t) => t.includes("打包下载当前目录"))).toBe(true);
@@ -2542,6 +2395,8 @@ describe("context menus: blank-area entries and wiring", () => {
     mocks.promptText.mockResolvedValue("blank.txt");
     clickMenuItem(mounted!.container, "新建空白文件");
     await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/blank.txt", "", false));
+    await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));
 
     openTreeBlankMenu();
     clickMenuItem(mounted!.container, "上传文件夹到当前目录");

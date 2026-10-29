@@ -94,7 +94,6 @@ vi.mock("../features/terminal/BackgroundSessions", () => ({
 vi.mock("../features/terminal/TranscriptHistoryPanel", () => ({
   TranscriptHistoryPanel: () => null,
 }));
-vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
 vi.mock("../features/files/MountPanel", () => ({ MountPanel: () => null }));
 vi.mock("../features/files/FileEditor", () => ({ FileEditor: () => null }));

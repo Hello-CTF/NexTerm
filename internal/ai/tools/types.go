@@ -638,6 +638,9 @@ type Dependencies struct {
 	Reminders                   ReminderScheduler
 	Notify                      func(context.Context, string) error
 	Grants                      *guard.Grants
+	// BackupBeforeOverwrite reports whether the session's asset currently enables the .nexterm-bak copy when an
+	// existing file is overwritten. It reads the stored asset options on every call; nil means off.
+	BackupBeforeOverwrite func(context.Context, Scope) bool
 	// Skills is the optional owner-scoped skills backend. When configured,
 	// the registry exposes the read-only load_skill tool backed by it; nil
 	// keeps the tool unavailable.
@@ -666,6 +669,8 @@ type preparedChange struct {
 	after        string
 	replacements int
 	create       bool
+	// backup records whether the overwrite asked the host for a .nexterm-bak copy.
+	backup bool
 }
 
 type fileState struct {

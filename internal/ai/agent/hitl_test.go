@@ -70,7 +70,9 @@ func TestEinoExistingOverwriteAfterConfirmationIsNonCAS(t *testing.T) {
 		toolCallMessage(namedToolCall("write", "write_file", `{"path":`+string(encodedPath)+`,"content":"approved"}`)),
 		schema.AssistantMessage("done", nil),
 	)
-	runner, _ := testRunner(t, chat, localDeps(transport), 0)
+	deps := localDeps(transport)
+	deps.BackupBeforeOverwrite = func(context.Context, tools.Scope) bool { return true }
+	runner, _ := testRunner(t, chat, deps, 0)
 	stream := &SliceStream{}
 	response := startTestJob(t, runner, stream, "go")
 	confirmation := waitEvent(t, stream, "confirmRequired")
@@ -88,7 +90,7 @@ func TestEinoExistingOverwriteAfterConfirmationIsNonCAS(t *testing.T) {
 			break
 		}
 	}
-	if !result.OK || !strings.Contains(result.Text, "非事务覆盖") {
+	if !result.OK || !strings.Contains(result.Text, "非事务覆盖") || !strings.Contains(result.Text, "已备份原文件") {
 		t.Fatalf("result=%+v", result)
 	}
 	if done, failed := terminalCounts(events); done != 1 || failed != 0 {

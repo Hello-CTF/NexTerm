@@ -77,14 +77,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
     EVENTS: { fsProgress: "fs://progress" },
   };
 });
-vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, i) => ({ index: i, start: i * 30, size: 30, key: i })),
-    getTotalSize: () => count * 30,
-  }),
-}));
-
 vi.mock("../../features/files/transferStore", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../features/files/transferStore")>();
   return { ...actual, enqueueDownload: mocks.enqueueDownload };
@@ -92,7 +84,7 @@ vi.mock("../../features/files/transferStore", async (importOriginal) => {
 
 import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
-import { FileBrowser } from "../../features/files/FileBrowser";
+import { FileTree } from "../../features/files/FileTree";
 
 const SID = "s1";
 
@@ -129,9 +121,9 @@ function stubPointer(coarse: boolean): void {
   );
 }
 
-function mountBrowser(): MountedView {
+function mountTree(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return mount(createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })));
+  return mount(createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })));
 }
 
 function row(name: string): HTMLElement {
@@ -189,7 +181,7 @@ function menuItem(label: string): HTMLButtonElement {
 let mounted: MountedView | undefined;
 
 async function mountReady(): Promise<void> {
-  mounted = mountBrowser();
+  mounted = mountTree();
   await waitForRendered(() => expect(row("a.txt")).toBeTruthy());
 }
 
@@ -221,12 +213,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("FileBrowser desktop multi-select", () => {
+describe("FileTree desktop multi-select", () => {
   it("has no toolbar download or delete buttons", async () => {
     await mountReady();
-    const labels = [...mounted!.container.querySelectorAll(".nx-toolbar button")].map((b) => b.textContent?.trim());
-    expect(labels).not.toContain("下载");
-    expect(labels).not.toContain("删除");
+    const labels = [...mounted!.container.querySelectorAll(".nx-files-bar button")].map((b) => b.getAttribute("aria-label"));
+    expect(labels.length).toBeGreaterThan(0);
+    expect(labels).not.toContain("下载选中项");
+    expect(labels).not.toContain("删除选中项");
   });
 
   it("supports ctrl toggle, shift range and plain click reset", async () => {
@@ -244,6 +237,15 @@ describe("FileBrowser desktop multi-select", () => {
     expect(selectedNames()).toEqual(["b.txt", "c.txt"]);
     click(row("sub"));
     expect(selectedNames()).toEqual(["sub"]);
+    expect(mocks.list).toHaveBeenCalledWith(SID, "~/sub");
+  });
+
+  it("does not expand a directory on modifier clicks", async () => {
+    await mountReady();
+    click(row("a.txt"));
+    clickWith(row("sub"), { ctrlKey: true });
+    expect(selectedNames()).toEqual(["sub", "a.txt"]);
+    expect(mocks.list).not.toHaveBeenCalledWith(SID, "~/sub");
   });
 
   it("selects everything with Ctrl+A and clears with Escape", async () => {
@@ -284,23 +286,36 @@ describe("FileBrowser desktop multi-select", () => {
       p === "~/b.txt" ? Promise.reject(new Error("permission denied")) : Promise.resolve(undefined),
     );
     await mountReady();
-    click(row("a.txt"));
-    clickWith(row("sub"), { shiftKey: true });
+    click(row("sub"));
+    clickWith(row("c.txt"), { shiftKey: true });
     keyDown(row("a.txt"), "Delete");
     await flush();
     expect(mocks.ask).toHaveBeenCalledTimes(1);
     expect(mocks.ask.mock.calls[0][0]).toContain("4 项");
     expect(mocks.ask.mock.calls[0][0]).toContain("递归删除");
     expect(mocks.remove.mock.calls.map((c) => [c[1], c[2]])).toEqual([
+      ["~/sub", true],
       ["~/a.txt", false],
       ["~/b.txt", false],
       ["~/c.txt", false],
-      ["~/sub", true],
     ]);
     const toast = mocks.toast.mock.calls.find((c) => c[0] === "error");
     expect(toast?.[1]).toContain("已删除 3 项");
     expect(toast?.[1]).toContain("b.txt");
     expect(toast?.[1]).toContain("permission denied");
+    expect(selectedNames()).toEqual(["b.txt"]);
+  });
+
+  it("forgets selected rows that are gone after a refresh", async () => {
+    await mountReady();
+    click(row("a.txt"));
+    clickWith(row("b.txt"), { ctrlKey: true });
+    expect(selectedNames()).toEqual(["a.txt", "b.txt"]);
+    mocks.list.mockImplementation((_s: string, p: string) =>
+      Promise.resolve(p === "~" ? ENTRIES.filter((e) => e.name !== "a.txt").map((e) => ({ ...e })) : []),
+    );
+    click(mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="刷新文件列表"]')!);
+    await waitForRendered(() => expect(mounted!.container.textContent).not.toContain("a.txt"));
     expect(selectedNames()).toEqual(["b.txt"]);
   });
 
@@ -331,7 +346,7 @@ describe("FileBrowser desktop multi-select", () => {
   });
 });
 
-describe("FileBrowser touch multi-select", () => {
+describe("FileTree touch multi-select", () => {
   it("enters multi-select on long press, toggles rows with checkboxes and exits on cancel", async () => {
     stubPointer(true);
     await mountReady();
@@ -351,7 +366,7 @@ describe("FileBrowser touch multi-select", () => {
     expect(mounted!.container.textContent).toContain("已选 2 项");
     click(row("sub"));
     expect(mocks.list).not.toHaveBeenCalledWith(SID, "~/sub");
-    expect(selectedNames()).toEqual(["a.txt", "b.txt", "sub"]);
+    expect(selectedNames()).toEqual(["sub", "a.txt", "b.txt"]);
 
     const bar = mounted!.container.querySelector('[aria-label="多选操作"]')!;
     const barBtn = (t: string) =>

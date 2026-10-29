@@ -87,7 +87,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 import { openFileTab, useUi, type AppTab } from "../../app/store";
 import { setWindowsPlatform } from "../../app/platform";
 import type { FileEntryDto } from "../../ipc/types";
-import { FileBrowser } from "../../features/files/FileBrowser";
+import { FileTree } from "../../features/files/FileTree";
 
 const SID = "s1";
 
@@ -112,9 +112,9 @@ const HOME_ENTRIES: FileEntryDto[] = [
   entry("link", "symlink", { symlinkTarget: "~/a.txt" }),
 ];
 
-function mountBrowser(): MountedView {
+function mountTree(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return mount(createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })));
+  return mount(createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })));
 }
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
@@ -182,9 +182,9 @@ afterEach(() => {
   mounted = undefined;
 });
 
-describe("FileBrowser keyboard accessibility", () => {
+describe("FileTree keyboard accessibility", () => {
   beforeEach(async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitForRendered(() => expect(itemByName(mounted!.container, "a.txt")).toBeTruthy());
   });
 
@@ -197,7 +197,7 @@ describe("FileBrowser keyboard accessibility", () => {
       expect(row.getAttribute("aria-level")).toBe("1");
       expect(row.getAttribute("aria-selected")).toBe("false");
       expect(row.tabIndex).toBe(0);
-      const more = row.querySelector("button");
+      const more = row.querySelector('button[aria-label^="更多操作"]');
       expect(more?.getAttribute("aria-label") ?? "").toContain("更多操作");
     }
   });
@@ -296,15 +296,19 @@ describe("FileBrowser keyboard accessibility", () => {
   });
 
   it("moves focus between rows with ArrowDown/ArrowUp", () => {
+    // Directories sort first: sub, a.txt, link.
     const a = itemByName(mounted!.container, "a.txt");
     const sub = itemByName(mounted!.container, "sub");
+    const link = itemByName(mounted!.container, "link");
     act(() => a.focus());
     keyDown(a, "ArrowDown");
-    expect(document.activeElement).toBe(sub);
-    keyDown(sub, "ArrowUp");
+    expect(document.activeElement).toBe(link);
+    keyDown(link, "ArrowUp");
     expect(document.activeElement).toBe(a);
     keyDown(a, "ArrowUp");
-    expect(document.activeElement).toBe(a);
+    expect(document.activeElement).toBe(sub);
+    keyDown(sub, "ArrowUp");
+    expect(document.activeElement).toBe(sub);
   });
 
   it("uses the existing warning confirmation for Delete: cancel keeps the file and confirm deletes it", async () => {
@@ -388,12 +392,12 @@ describe("FileBrowser keyboard accessibility", () => {
       expect(a.getAttribute("aria-selected")).toBe("true");
 
       keyDown(a, "ArrowDown");
-      expect(document.activeElement).toBe(itemByName(mounted!.container, "sub"));
+      expect(document.activeElement).toBe(itemByName(mounted!.container, "link"));
 
       keyDown(document.activeElement as HTMLElement, "Delete");
       await flush();
       expect(mocks.ask).toHaveBeenCalledWith(
-        expect.stringContaining("删除 ~/sub"),
+        expect.stringContaining("删除 ~/link"),
         expect.objectContaining({ kind: "warning" }),
       );
       expect(globalHits).toEqual([]);
@@ -408,7 +412,7 @@ describe("FileBrowser keyboard accessibility", () => {
 
 describe("useFileOps dialog copy (plain text)", () => {
   beforeEach(async () => {
-    mounted = mountBrowser();
+    mounted = mountTree();
     await waitForRendered(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 

@@ -30,7 +30,7 @@ import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
-import { PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
+import { BACKUP_BEFORE_OVERWRITE_KEY, PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -2023,6 +2023,7 @@ export function AssetEditor({
     typeof initial?.options?.[PASTE_TERMINAL_DIR_KEY] === "string" ? (initial.options[PASTE_TERMINAL_DIR_KEY] as string) : "",
   );
   const [pasteNoRandomDir, setPasteNoRandomDir] = useState(initial?.options?.[PASTE_NO_RANDOM_DIR_KEY] === true);
+  const [backupBeforeOverwrite, setBackupBeforeOverwrite] = useState(initial?.options?.[BACKUP_BEFORE_OVERWRITE_KEY] === true);
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2306,6 +2307,8 @@ export function AssetEditor({
     }
     if (groupKind === "ssh" && pasteNoRandomDir) options[PASTE_NO_RANDOM_DIR_KEY] = true;
     else delete options[PASTE_NO_RANDOM_DIR_KEY];
+    if ((groupKind === "ssh" || groupKind === "docker") && backupBeforeOverwrite) options[BACKUP_BEFORE_OVERWRITE_KEY] = true;
+    else delete options[BACKUP_BEFORE_OVERWRITE_KEY];
     return options;
   };
 
@@ -3272,6 +3275,24 @@ export function AssetEditor({
                           <div className="nx-hint mt-1.5">
                             ↳ 选填。连接时通过 SSH 请求设置这些环境变量；需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。
                           </div>
+                        </div>
+
+                        <div className="nx-form-row">
+                          <label className="flex cursor-pointer items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[12.5px] text-neutral-200">覆盖文件前在主机上保留 .nexterm-bak 备份</div>
+                              <p className="nx-hint mt-0.5">
+                                默认关闭。开启后，AI 写文件/编辑文件覆盖已有文件、容器 Compose 重新部署覆盖 compose 文件时，会在主机上同目录保留 .nexterm-bak 备份；无需重新连接即可生效。
+                              </p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-4 w-4 shrink-0"
+                              aria-label="覆盖文件前保留 .nexterm-bak 备份"
+                              checked={backupBeforeOverwrite}
+                              onChange={(e) => setBackupBeforeOverwrite(e.target.checked)}
+                            />
+                          </label>
                         </div>
                       </div>
 

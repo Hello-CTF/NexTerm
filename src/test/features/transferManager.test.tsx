@@ -99,7 +99,6 @@ vi.mock("@tanstack/react-virtual", () => ({
 import { useUi } from "../../app/store";
 import type { SessionInfo } from "../../ipc/commands";
 import type { FileEntryDto } from "../../ipc/types";
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { resetNativeDropDedupeForTest } from "../../features/files/nativeDrop";
 import {
@@ -279,11 +278,6 @@ function transferTask(
 
 let mounted: MountedView | undefined;
 
-function remountBrowser(): void {
-  mounted?.unmount();
-  mounted = mountWithClient(createElement(FileBrowser, { sessionId: SID }));
-}
-
 function remountTree(): void {
   mounted?.unmount();
   mounted = mountWithClient(createElement(FileTree, { sessionId: SID }));
@@ -339,9 +333,9 @@ afterEach(async () => {
   await flush();
 });
 
-describe("unified transfer queue panel (FileBrowser)", () => {
+describe("unified transfer queue panel (FileTree)", () => {
   beforeEach(async () => {
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -350,7 +344,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledWith(SID, LOCAL_FILE, "~/nginx-access.log", false, expect.any(String), expect.any(String)));
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
@@ -374,7 +368,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalled());
 
     emitProgress({ taskId: useTransferStore.getState().tasks[0].id, transferred: 50, total: 100, done: false });
@@ -388,7 +382,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   it("shows task errors in the panel and includes the path and reason in the toast without exposing the internal taskId", async () => {
     mocks.upload.mockRejectedValueOnce(new Error("connection reset"));
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("失败"));
 
     const row = panelRows(mounted!.container)[0];
@@ -442,11 +436,11 @@ describe("unified transfer queue panel (FileBrowser)", () => {
       .mockReturnValueOnce(new Promise<number>((r) => (resolveFirst = r)))
       .mockResolvedValueOnce(100);
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
 
     mocks.pickLocalFile.mockResolvedValueOnce("/local/second.txt");
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(panelRows(mounted!.container).length).toBe(2));
     expect(panelRows(mounted!.container)[1]?.textContent).toContain("排队中");
 
@@ -470,11 +464,11 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     let resolveFirst!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveFirst = r)));
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
 
     mocks.pickLocalFile.mockResolvedValueOnce("/local/staged-second.txt");
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(panelRows(mounted!.container).length).toBe(2));
 
     const cancelButton = [...panelRows(mounted!.container)[1].querySelectorAll("button")].find((b) =>
@@ -499,7 +493,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
     let resolveUpload!: (v: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((r) => (resolveUpload = r)));
 
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalled());
 
     const bar = mounted!.container.querySelector('[role="progressbar"]');
@@ -519,7 +513,7 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 
   it("collapses the panel after clearing finished tasks", async () => {
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
 
     click(buttonByTitle(mounted!.container, "清除已结束"));
@@ -583,11 +577,11 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   it("account reset hides old paths, discards queued staging, and ignores late completion", async () => {
     let resolveUpload!: (bytes: number) => void;
     mocks.upload.mockReturnValueOnce(new Promise<number>((resolve) => (resolveUpload = resolve)));
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
 
     mocks.pickLocalFile.mockResolvedValueOnce("/local/queued.txt");
-    click(buttonByTitle(mounted!.container, "上传"));
+    click(buttonByTitle(mounted!.container, "上传到当前目录"));
     await waitFor(() => expect(panelRows(mounted!.container)).toHaveLength(2));
 
     act(() => resetTransferQueue());
@@ -626,9 +620,9 @@ describe("unified transfer queue panel (FileBrowser)", () => {
   });
 });
 
-describe("drag-and-drop upload (FileBrowser)", () => {
+describe("drag-and-drop upload (FileTree)", () => {
   beforeEach(async () => {
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
@@ -653,7 +647,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
 
   it("renames automatically and uploads after choosing keep both for a conflict", async () => {
     mockHomeEntries([["a.txt", "file"], ["d.txt", "file"]]);
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/d.txt")).toBeTruthy());
 
     mocks.askChoice.mockResolvedValueOnce("keepBoth");
@@ -676,7 +670,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
       ["d.txt", "file"],
       ["e.txt", "file"],
     ]);
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/e.txt")).toBeTruthy());
 
     mocks.askChoice.mockResolvedValueOnce("overwrite").mockResolvedValueOnce("keepBoth");
@@ -691,12 +685,14 @@ describe("drag-and-drop upload (FileBrowser)", () => {
 
   it("automatically keeps both case-variant names in one winrm batch without a conflict prompt or error", async () => {
     act(() => useUi.setState({ sessions: [sessionOfKind("winrm")] }));
+    // WinRM trees start at "/" instead of "~".
+    await waitFor(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
     const list = mounted!.container.querySelector("[role='tree']")!;
     dropOn(list, [new File(["1"], "x.txt"), new File(["2"], "X.TXT")]);
 
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "~/x.txt", false, expect.any(String), expect.any(String));
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "~/X (1).TXT", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, expect.anything(), "/x.txt", false, expect.any(String), expect.any(String));
+    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, expect.anything(), "/X (1).TXT", false, expect.any(String), expect.any(String));
     expect(mocks.askChoice).not.toHaveBeenCalled();
     expect(mocks.toast).not.toHaveBeenCalledWith("error", expect.anything());
   });
@@ -719,7 +715,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
       ["d.txt", "file"],
       ["e.txt", "file"],
     ]);
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/e.txt")).toBeTruthy());
 
     mocks.askChoice.mockResolvedValueOnce("skip-all");
@@ -739,7 +735,7 @@ describe("drag-and-drop upload (FileBrowser)", () => {
 
   it("cancels the entire batch without uploading when the conflict dialog is cancelled and leaves the remote unchanged", async () => {
     mockHomeEntries([["a.txt", "file"], ["d.txt", "file"]]);
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/d.txt")).toBeTruthy());
 
     mocks.askChoice.mockResolvedValueOnce(null);
@@ -757,34 +753,14 @@ describe("drag-and-drop upload (FileBrowser)", () => {
   });
 });
 
-describe("drag-and-drop upload (FileTree)", () => {
+describe("folder upload (FileTree)", () => {
   beforeEach(async () => {
     remountTree();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
-  });
-
-  it("uploads dropped files to the current directory and queues them", async () => {
-    const tree = mounted!.container.querySelector("[role='tree']")!;
-    dropOn(tree, [new File(["x"], "d.txt")]);
-
-    await waitFor(() =>
-      expect(mocks.upload).toHaveBeenCalledWith(SID, expect.anything(), "~/d.txt", false, expect.any(String), expect.any(String)),
-    );
-    expect(mounted!.container.querySelector('[data-testid="transfer-panel"]')).not.toBeNull();
-    expect(
-      useTransferStore.getState().tasks.some((t) => t.remotePath === "~/d.txt"),
-    ).toBe(true);
-  });
-});
-
-describe("folder upload (FileBrowser)", () => {
-  beforeEach(async () => {
-    remountBrowser();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
   it("provides a folder upload entry in the toolbar", () => {
-    expect(buttonByTitle(mounted!.container, "上传本地文件夹到当前目录")).toBeTruthy();
+    expect(buttonByTitle(mounted!.container, "上传文件夹到当前目录")).toBeTruthy();
   });
 
   it("per-file upload (default): traverses the folder and queues relative paths with matching WEB staging paths", async () => {
@@ -921,7 +897,7 @@ describe("folder upload (FileBrowser)", () => {
         return Promise.resolve([{ ...entry("a.jpg", "file"), path: "~/pics/a.jpg" }]);
       return Promise.resolve([]);
     });
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/pics")).toBeTruthy());
 
     mocks.askChoice.mockResolvedValueOnce("perFile").mockResolvedValueOnce("skip");
@@ -945,34 +921,13 @@ describe("folder upload (FileBrowser)", () => {
   });
 });
 
-describe("folder upload (FileTree)", () => {
-  beforeEach(async () => {
-    remountTree();
-    await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));
-  });
-
-  it("provides a folder upload entry in the toolbar", () => {
-    expect(buttonByTitle(mounted!.container, "上传文件夹到当前目录")).toBeTruthy();
-  });
-
-  it("traverses a dropped folder and uploads its relative paths to the current directory", async () => {
-    mocks.askChoice.mockResolvedValueOnce("perFile");
-    const tree = mounted!.container.querySelector("[role='tree']")!;
-    dropFoldersOn(tree, [fakeDir("pics", [fakeFile("a.jpg"), fakeDir("sub", [fakeFile("b.jpg")])])]);
-
-    await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
-    expect(mocks.upload).toHaveBeenNthCalledWith(1, SID, "/staged/a.jpg", "~/pics/a.jpg", false, expect.any(String), expect.any(String));
-    expect(mocks.upload).toHaveBeenNthCalledWith(2, SID, "/staged/b.jpg", "~/pics/sub/b.jpg", false, expect.any(String), expect.any(String));
-  });
-});
-
 describe("native drag-and-drop upload (wails native drop)", () => {
   beforeEach(async () => {
-    remountBrowser();
+    remountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
   });
 
-  it("marks both FileBrowser and FileTree drop surfaces with data-file-drop-target", async () => {
+  it("marks both FileTree drop surface with data-file-drop-target", async () => {
     expect(mounted!.container.querySelector("[data-file-drop-target]")).not.toBeNull();
     remountTree();
     await waitFor(() => expect(mounted!.container.textContent).toContain("a.txt"));

@@ -234,7 +234,6 @@ vi.mock("../../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () 
 vi.mock("../../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
 vi.mock("../../features/terminal/WorkspaceRestoreBanner", () => ({ WorkspaceRestoreBanner: () => null }));
 vi.mock("../../features/terminal/TranscriptHistoryPanel", () => ({ TranscriptHistoryPanel: () => null }));
-vi.mock("../../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../../features/files/FileTree", () => ({ FileTree: () => null }));
 vi.mock("../../features/files/MountPanel", () => ({ MountPanel: () => null }));
 vi.mock("../../features/forward/ForwardPanel", () => ({ ForwardPanel: () => null }));

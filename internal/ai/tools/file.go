@@ -143,7 +143,8 @@ func (r *Registry) writePrepared(ctx context.Context, jobID string, scope Scope,
 		if err := ctx.Err(); err != nil {
 			return Fail(err)
 		}
-		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), true)
+		change.backup = r.deps.BackupBeforeOverwrite != nil && r.deps.BackupBeforeOverwrite(ctx, scope)
+		writeErr = files.WriteFile(ctx, change.path, []byte(change.after), change.backup)
 	}
 	if writeErr != nil {
 		if errors.Is(writeErr, conditional.ErrVersionMismatch) {
@@ -178,17 +179,24 @@ func (r *Registry) completeWrite(ctx context.Context, jobID string, scope Scope,
 	semantics := writeSemanticsForChange(change)
 	r.state(jobID).rememberRead(change.key, versionOf([]byte(change.after)))
 	var result Output
+	backupNote := "未备份原文件（资产未开启覆盖前备份）"
+	if change.backup {
+		backupNote = "已备份原文件为 .nexterm-bak"
+	}
 	if change.create {
 		result = OK(fmt.Sprintf("已创建 %s（%d 字节，原子写入）", change.path, len(change.after)))
 	} else if call.Name == "edit_file" {
-		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, change.replacements))
+		result = OK(fmt.Sprintf("已编辑 %s（替换 %d 处，%s；非事务覆盖，可能覆盖确认后的外部修改）", change.path, change.replacements, backupNote))
 	} else {
-		result = OK(fmt.Sprintf("已写入 %s（%d 字节，已备份原文件；非事务覆盖，可能覆盖确认后的外部修改）", change.path, len(change.after)))
+		result = OK(fmt.Sprintf("已写入 %s（%d 字节，%s；非事务覆盖，可能覆盖确认后的外部修改）", change.path, len(change.after), backupNote))
 	}
 	if outcome == "indeterminate_content_confirmed" {
 		result.Text += "（原始写入结果不确定，未重试）"
 	}
 	payload := map[string]any{"path": change.path, "writeSemantics": semantics, "outcome": outcome}
+	if !change.create {
+		payload["backup"] = change.backup
+	}
 	if call.Name == "edit_file" {
 		payload["replacements"] = change.replacements
 	} else {

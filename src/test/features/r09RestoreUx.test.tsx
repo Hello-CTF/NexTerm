@@ -155,7 +155,7 @@ vi.mock("../../app/DekUnlockBanner", () => ({
   DekUnlockBanner: () => (mocks.banners.dek ? <div data-testid="dek-banner" /> : null),
 }));
 
-// The real FileBrowser/FileEditor/LogViewer mount in these tests; only their
+// The real FileEditor/LogViewer mount in these tests; only their
 // measurement/editor primitives and the clipboard are stubbed, while every fs/session
 // call goes through the spies in the ipc/commands mock above.
 vi.mock("@tanstack/react-virtual", () => ({
@@ -297,7 +297,6 @@ function restoreMenuItem(): HTMLButtonElement | undefined {
 // no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
 beforeAll(async () => {
   await Promise.all([
-    import("../../features/files/FileBrowser"),
     import("../../features/files/FileEditor"),
     import("../../features/files/LogViewer"),
   ]);

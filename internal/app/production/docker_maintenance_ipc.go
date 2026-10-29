@@ -250,7 +250,7 @@ func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input
 	if err := s.guardDockerMutation(ctx, connected, operation, input.ProductionConfirmation); err != nil {
 		return dockerComposeRedeployPrepareResult{}, dockerMutationIPCError(err)
 	}
-	if err := filesystem.WriteFile(ctx, input.Path, content, true); err != nil {
+	if err := filesystem.WriteFile(ctx, input.Path, content, sessionAssetBackupBeforeOverwrite(ctx, s.sessions, s.database, input.SessionID)); err != nil {
 		return dockerComposeRedeployPrepareResult{}, fsIPCError(transport.Kind(), err)
 	}
 	ticket, err := issueDockerRedeployTicket(input.SessionID, input.Project, input.Path, operation)

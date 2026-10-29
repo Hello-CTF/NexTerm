@@ -43,7 +43,6 @@ vi.mock("../../app/lazyPanels", async () => {
     DbPanel: stub("db", ["connId", "kind", "workspaceId"]),
     DockerPanel: stub("docker", ["sessionId", "visible"]),
     ExecBatchPanel: stub("execBatch"),
-    FileBrowser: stub("browser", ["sessionId"]),
     FileEditor: stub("editor", ["sessionId", "path"]),
     FleetHealthPanel: stub("fleetHealth", ["visible"]),
     ForwardPanel: stub("forward", ["sessionId"]),

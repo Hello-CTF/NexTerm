@@ -49,6 +49,9 @@ func TestAssetPasteOptionsValidatedOnWrite(t *testing.T) {
 		`{"pasteTerminalDir":"/tmp"}`,
 		`{"pasteNoRandomDir":"yes"}`,
 		`{"pasteNoRandomDir":1}`,
+		`{"backupBeforeOverwrite":"yes"}`,
+		`{"backupBeforeOverwrite":1}`,
+		`{"backupBeforeOverwrite":{}}`,
 	} {
 		_, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "bad", Host: ptr("10.0.0.3"), OptionsJSON: options})
 		requireCode(t, err, ipc.CodeBadParam)
@@ -63,5 +66,33 @@ func TestAssetPasteOptionsValidatedOnWrite(t *testing.T) {
 	cleared := `{"pasteUploadDir":""}`
 	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &cleared}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAssetBackupBeforeOverwriteOption(t *testing.T) {
+	cases := map[string]bool{
+		``:                                     false,
+		`{}`:                                   false,
+		`not json`:                             false,
+		`{"backupBeforeOverwrite":null}`:       false,
+		`{"backupBeforeOverwrite":false}`:      false,
+		`{"backupBeforeOverwrite":"true"}`:     false,
+		`{"backupBeforeOverwrite":true}`:       true,
+		`{"pasteNoRandomDir":true}`:            false,
+		`{"a":1,"backupBeforeOverwrite":true}`: true,
+	}
+	for raw, want := range cases {
+		if got := AssetBackupBeforeOverwrite(raw); got != want {
+			t.Fatalf("AssetBackupBeforeOverwrite(%q) = %v, want %v", raw, got, want)
+		}
+	}
+	ctx := context.Background()
+	db := testStore(t)
+	row, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "bak", Host: ptr("10.0.0.4"), OptionsJSON: `{"backupBeforeOverwrite":true}`})
+	if err != nil {
+		t.Fatalf("a boolean backupBeforeOverwrite must be accepted: %v", err)
+	}
+	if !AssetBackupBeforeOverwrite(row.OptionsJSON) {
+		t.Fatalf("stored options lost the flag: %s", row.OptionsJSON)
 	}
 }

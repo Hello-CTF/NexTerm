@@ -85,7 +85,6 @@ vi.mock("../ipc/remoteApi", async (importOriginal) => {
   };
 });
 vi.mock("../features/terminal/BackgroundSessions", () => ({ BackgroundSessions: () => null }));
-vi.mock("../features/files/FileBrowser", () => ({ FileBrowser: () => null }));
 vi.mock("../features/files/FileTree", () => ({ FileTree: () => null }));
 vi.mock("../features/files/MountPanel", () => ({ MountPanel: () => null }));
 vi.mock("../features/files/FileEditor", () => ({ FileEditor: () => null }));

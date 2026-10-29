@@ -73,7 +73,6 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-import { FileBrowser } from "../features/files/FileBrowser";
 import { FileTree } from "../features/files/FileTree";
 import { DockerPanel } from "../features/docker/DockerPanel";
 import { BackgroundSessions } from "../features/terminal/BackgroundSessions";
@@ -162,61 +161,6 @@ afterEach(() => {
   setViewportWidth(1024);
 });
 
-describe("FileBrowser skeleton", () => {
-  it("shows skeleton rows while pending and replaces them immediately without flashing an empty state", async () => {
-    const d = deferred<FileEntryDto[]>();
-    mocks.fsList.mockReturnValue(d.promise);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-
-    await flushUntil(() => mounted!.container.querySelectorAll(".nx-skeleton-row").length > 0);
-    expect(mounted!.container.querySelectorAll(".nx-skeleton-row").length).toBeGreaterThan(0);
-    expect(mounted!.container.textContent).not.toContain("该目录是空的");
-    const status = mounted!.container.querySelector('[role="status"]');
-    expect(status?.querySelector(".nx-sr-only")?.textContent).toContain("正在加载");
-
-    d.resolve(HOME_ENTRIES.map((e) => ({ ...e })));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-    expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
-    expect(mounted!.container.textContent).not.toContain("该目录是空的");
-  });
-
-  it("shows the empty state instead of skeleton rows after a genuinely empty directory arrives", async () => {
-    mocks.fsList.mockResolvedValue([]);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitForRendered(() =>
-      expect(mounted!.container.textContent).toContain("该目录是空的"),
-    );
-    expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
-  });
-
-  it("hides low-priority columns and makes name bars responsive at 320 and 390 widths", async () => {
-    for (const width of [320, 390]) {
-      setViewportWidth(width);
-      const d = deferred<FileEntryDto[]>();
-      mocks.fsList.mockReturnValue(d.promise);
-      mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-      await flushUntil(() => mounted!.container.querySelectorAll(".nx-skeleton-row").length > 0);
-
-      const firstRow = mounted!.container.querySelector(".nx-skeleton-row");
-      const bars = firstRow?.querySelectorAll(".nx-skeleton");
-      expect(bars?.length).toBeGreaterThan(0);
-      expect(bars![0].className).toContain("nx-skeleton-icon");
-      expect(bars![1].className).toContain("flex-1");
-      expect(bars![1].className).toContain("min-w-0");
-      expect(bars![2].className).toContain("max-[560px]:hidden");
-      expect(bars![3].className).toContain("max-[560px]:hidden");
-      expect(bars![2].className).not.toMatch(/min-w-\[/);
-
-      d.resolve([]);
-      await waitForRendered(() =>
-        expect(mounted!.container.textContent).toContain("该目录是空的"),
-      );
-      mounted.unmount();
-      mounted = undefined;
-    }
-  });
-});
-
 describe("FileTree skeleton", () => {
   it("shows skeleton rows without an empty state while pending and replaces them when data arrives", async () => {
     const d = deferred<FileEntryDto[]>();
@@ -231,6 +175,15 @@ describe("FileTree skeleton", () => {
     await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
     expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
     expect(mounted!.container.textContent).not.toContain("该目录是空的");
+  });
+
+  it("shows the empty state instead of skeleton rows after a genuinely empty directory arrives", async () => {
+    mocks.fsList.mockResolvedValue([]);
+    mounted = mountWithClient(createElement(FileTree, { sessionId: "s1" }));
+    await waitForRendered(() =>
+      expect(mounted!.container.textContent).toContain("该目录是空的"),
+    );
+    expect(mounted!.container.querySelector(".nx-skeleton-row")).toBeNull();
   });
 
   it("makes skeleton name bars responsive at 320 and 390 widths", async () => {

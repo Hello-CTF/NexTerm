@@ -6,6 +6,10 @@ export const PASTE_TERMINAL_DIR_KEY = "pasteTerminalDir";
 // PASTE_NO_RANDOM_DIR_KEY uploads files straight into the upload directory instead of a per-paste private directory.
 export const PASTE_NO_RANDOM_DIR_KEY = "pasteNoRandomDir";
 
+// BACKUP_BEFORE_OVERWRITE_KEY keeps a .nexterm-bak copy on the host when AI file tools or a Compose redeploy overwrite
+// an existing file (validated as a boolean by internal/store; off by default).
+export const BACKUP_BEFORE_OVERWRITE_KEY = "backupBeforeOverwrite";
+
 // DEFAULT_PASTE_DIR is used when the asset configures no upload directory.
 export const DEFAULT_PASTE_DIR = "/tmp";
 

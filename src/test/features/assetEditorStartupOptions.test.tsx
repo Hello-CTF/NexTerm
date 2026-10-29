@@ -283,6 +283,34 @@ describe("AssetEditor SSH startup options", () => {
     expect(updatedPayload().options).toEqual({ pasteUploadDir: "/", pasteTerminalDir: "/tmp" });
   });
 
+  it("keeps the overwrite backup off by default and saves it only when ticked", async () => {
+    mountEditor();
+    await flush();
+    expandAdvanced();
+    const box = () => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="覆盖文件前保留 .nexterm-bak 备份"]')!;
+    expect(box().checked).toBe(false);
+    expect(mounted!.container.textContent).toContain("覆盖文件前在主机上保留 .nexterm-bak 备份");
+    fillName("bak-01");
+    fillHost("10.0.0.9");
+    click(box());
+    expect(box().checked).toBe(true);
+    click(saveButton());
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
+    expect(createdPayload().options).toEqual({ backupBeforeOverwrite: true });
+  });
+
+  it("loads the overwrite backup on edit and removes it when cleared", async () => {
+    mountEditor({ ...baseAsset, options: { backupBeforeOverwrite: true } } as unknown as Asset);
+    await flush();
+    expandAdvanced();
+    const box = mounted!.container.querySelector<HTMLInputElement>('input[aria-label="覆盖文件前保留 .nexterm-bak 备份"]')!;
+    expect(box.checked).toBe(true);
+    click(box);
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
+    expect(updatedPayload().options).toEqual({});
+  });
+
   it("removes paste directories after clearing the upload directory", async () => {
     mountEditor({ ...baseAsset, options: { pasteUploadDir: "/upload" } } as unknown as Asset);
     await flush();

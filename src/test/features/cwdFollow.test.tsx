@@ -31,7 +31,6 @@ vi.mock("../../ipc/events", async (importOriginal) => {
 });
 
 import { FileTree } from "../../features/files/FileTree";
-import { FileBrowser } from "../../features/files/FileBrowser";
 import {
   cwdFollowMapSizeForTest,
   focusedTerminalCwd,
@@ -99,15 +98,6 @@ function mountTree(): MountedView {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = mount(
     createElement(QueryClientProvider, { client }, createElement(FileTree, { sessionId: SID })),
-  );
-  mounted = view;
-  return view;
-}
-
-function mountBrowser(): MountedView {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = mount(
-    createElement(QueryClientProvider, { client }, createElement(FileBrowser, { sessionId: SID })),
   );
   mounted = view;
   return view;
@@ -280,47 +270,6 @@ describe("FileTree terminal-directory follow", () => {
     mountTree();
     await flush();
     expect(followButton()).toBeUndefined();
-  });
-});
-
-describe("FileBrowser terminal-directory follow", () => {
-  it("the file list jumps to the terminal directory on cwd events", async () => {
-    seedWorkspace();
-    mountBrowser();
-    await flush();
-    expect(followButton()?.getAttribute("aria-pressed")).toBe("true");
-
-    emitControl({ tabId: "k1", version: 1, cwd: "/srv/www" });
-
-    await waitFor(() => expect(listCalls()).toContain("/srv/www"));
-    const input = mounted!.container.querySelector("input");
-    expect(input?.value).toBe("/srv/www");
-  });
-
-  it("an explicit initial path (a terminal file link) wins over the current cwd until it changes", async () => {
-    seedWorkspace();
-    // The tree registers the cwd listener and learns the terminal's cwd first.
-    mountTree();
-    await flush();
-    emitControl({ tabId: "k1", version: 1, cwd: "/srv/www" });
-    mounted?.unmount();
-    mocks.list.mockClear();
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mounted = mount(
-      createElement(
-        QueryClientProvider,
-        { client },
-        createElement(FileBrowser, { sessionId: SID, initialPath: "/var/log/nginx" }),
-      ),
-    );
-    await flush();
-    await waitFor(() => expect(listCalls()).toContain("/var/log/nginx"));
-    expect(mounted.container.querySelector("input")?.value).toBe("/var/log/nginx");
-    expect(listCalls()).not.toContain("/srv/www");
-
-    emitControl({ tabId: "k1", version: 2, cwd: "/tmp" });
-    await waitFor(() => expect(listCalls()).toContain("/tmp"));
-    await waitFor(() => expect(mounted!.container.querySelector("input")?.value).toBe("/tmp"));
   });
 });
 

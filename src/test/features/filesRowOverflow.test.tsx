@@ -58,7 +58,6 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
@@ -229,54 +228,5 @@ describe("FileTree row actions", () => {
     expect(labels).toContain("删除");
     expect(labels).not.toContain("下载当前文件");
     expect(labels).not.toContain("校验值…");
-  });
-});
-
-describe("FileBrowser row actions", () => {
-  it("keeps the hover overflow button and truncatable columns on fine pointers", async () => {
-    stubPointer(false);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
-      r.textContent?.includes("notes.txt"),
-    );
-    if (!row) throw new Error("browser row not found");
-    expect(row.querySelector(".nx-row-actions button")?.getAttribute("aria-label")).toBe(
-      "更多操作 notes.txt",
-    );
-    expect(row.querySelector(".nx-row-more")).toBeNull();
-    const name = row.querySelector(".nx-row-name");
-    expect(name?.textContent).toBe("notes.txt");
-    expect(name?.className).toContain("flex-auto");
-    const cells = [...row.querySelectorAll<HTMLElement>("span")].filter((s) =>
-      s.className.includes("text-right"),
-    );
-    expect(cells.length).toBeGreaterThanOrEqual(2);
-    for (const cell of cells) {
-      expect(cell.className).toContain("truncate");
-      expect(cell.className).toContain("shrink");
-    }
-  });
-
-  it("shows a persistent overflow button on coarse pointers", async () => {
-    stubPointer(true);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>(".cursor-pointer")].find((r) =>
-      r.textContent?.includes("notes.txt"),
-    );
-    if (!row) throw new Error("browser row not found");
-    expect(row.querySelector(".nx-row-actions")).toBeNull();
-    const more = row.querySelector<HTMLButtonElement>(".nx-row-more");
-    expect(more?.getAttribute("aria-label")).toBe("更多操作 notes.txt");
-
-    click(more as HTMLButtonElement);
-    await flush();
-    const labels = menuLabels();
-    for (const label of ["在下方编辑", "下载当前文件", "复制路径", "重命名", "权限…", "校验值…", "删除"]) {
-      expect(labels).toContain(label);
-    }
   });
 });

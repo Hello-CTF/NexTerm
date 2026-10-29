@@ -15,7 +15,20 @@ const (
 	// AssetOptionPasteNoRandomDir uploads pasted files straight into the upload directory instead of a
 	// per-paste private directory.
 	AssetOptionPasteNoRandomDir = "pasteNoRandomDir"
+	// AssetOptionBackupBeforeOverwrite keeps a .nexterm-bak copy on the host when an AI file tool or a Compose
+	// redeploy overwrites an existing file. Off unless the asset enables it.
+	AssetOptionBackupBeforeOverwrite = "backupBeforeOverwrite"
 )
+
+// AssetBackupBeforeOverwrite reports whether stored asset options enable the pre-overwrite backup. Anything other
+// than a literal true (missing, null, wrong type, invalid JSON) means off.
+func AssetBackupBeforeOverwrite(optionsJSON string) bool {
+	var options map[string]json.RawMessage
+	if json.Unmarshal([]byte(optionsJSON), &options) != nil {
+		return false
+	}
+	return string(options[AssetOptionBackupBeforeOverwrite]) == "true"
+}
 
 // normalizePasteDir validates an absolute POSIX directory and returns it without
 // duplicate or trailing slashes and "." segments. Empty input means "not configured".
@@ -52,10 +65,12 @@ func validateAssetPasteOptions(raw string) error {
 	if err := json.Unmarshal([]byte(raw), &options); err != nil {
 		return nil
 	}
-	if encoded, exists := options[AssetOptionPasteNoRandomDir]; exists && string(encoded) != "null" {
-		var flag bool
-		if err := json.Unmarshal(encoded, &flag); err != nil {
-			return badParam(errString(AssetOptionPasteNoRandomDir + " 必须是布尔值"))
+	for _, key := range []string{AssetOptionPasteNoRandomDir, AssetOptionBackupBeforeOverwrite} {
+		if encoded, exists := options[key]; exists && string(encoded) != "null" {
+			var flag bool
+			if err := json.Unmarshal(encoded, &flag); err != nil {
+				return badParam(errString(key + " 必须是布尔值"))
+			}
 		}
 	}
 	values := map[string]string{}

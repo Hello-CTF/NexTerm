@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult } from "@tanstack/react-query";
 import type { FileEntryDto } from "../../ipc/types";
@@ -42,6 +42,7 @@ import {
 } from "./pathUtils";
 import { TransferPanel } from "./TransferPanel";
 import { useFileOps } from "./useFileOps";
+import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
@@ -134,6 +135,15 @@ const TREE_VIRTUALIZE_THRESHOLD = 60;
 type TreeRowActions = {
   toggle: (path: string) => void;
   select: (path: string) => void;
+  toggleSelect: (path: string) => void;
+  rangeSelect: (path: string) => void;
+  pressStart: (event: ReactPointerEvent<HTMLElement>, path: string, rootEntry?: boolean) => void;
+  pressMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  pressEnd: () => void;
+  consumeClick: () => boolean;
+  selectAll: () => void;
+  clearSelection: () => boolean;
+  deleteFrom: (path: string) => void;
   enterDir: (path: string) => void;
   openFile: (entry: FileEntryDto) => void;
   openRowMenuAt: (entry: FileEntryDto, listKey: string, x: number, y: number, rootEntry?: boolean) => void;
@@ -154,6 +164,7 @@ type TreeRowProps = {
   rootEntry?: boolean;
   open: boolean;
   isSel: boolean;
+  multiMode: boolean;
   coarse: boolean;
   reconnecting: boolean;
   setSize: number;
@@ -170,6 +181,7 @@ const TreeRow = memo(function TreeRow({
   rootEntry,
   open,
   isSel,
+  multiMode,
   coarse,
   reconnecting,
   setSize,
@@ -225,38 +237,82 @@ const TreeRow = memo(function TreeRow({
       data-drop-path={isDir ? entry.path : undefined}
       className={`nx-row nx-row-oneline nx-row-reserve-actions nx-ftree-row ${isSel ? "is-selected" : ""}`}
       style={{ paddingLeft: 2 + depth * 12 }}
-      onClick={() => {
+      onClick={(e) => {
+        if (actions.consumeClick()) return;
+        if (!rootEntry && (multiMode || e.ctrlKey || e.metaKey)) {
+          actions.toggleSelect(entry.path);
+          return;
+        }
+        if (!rootEntry && e.shiftKey) {
+          actions.rangeSelect(entry.path);
+          return;
+        }
         actions.select(entry.path);
         if (isDir) actions.toggle(entry.path);
       }}
-      onDoubleClick={() => (isDir ? actions.enterDir(entry.path) : actions.openFile(entry))}
+      onDoubleClick={() => {
+        if (multiMode) return;
+        if (isDir) actions.enterDir(entry.path);
+        else actions.openFile(entry);
+      }}
+      onPointerDown={(e) => actions.pressStart(e, entry.path, rootEntry)}
+      onPointerMove={actions.pressMove}
+      onPointerUp={actions.pressEnd}
+      onPointerCancel={actions.pressEnd}
+      onPointerLeave={actions.pressEnd}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
+        if (!rootEntry && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+          e.preventDefault();
+          e.stopPropagation();
+          actions.selectAll();
+          return;
+        }
+        if (e.key === "Escape" && actions.clearSelection()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (!rootEntry && (e.key === "Delete" || e.key === "Backspace")) {
+          e.preventDefault();
+          e.stopPropagation();
+          actions.deleteFrom(entry.path);
+          return;
+        }
         if (e.key === "Enter") {
           e.preventDefault();
+          e.stopPropagation();
           if (isDir) actions.enterDir(entry.path);
           else actions.openFile(entry);
           return;
         }
         if (e.key === " ") {
           e.preventDefault();
+          e.stopPropagation();
+          if (!rootEntry && (multiMode || e.ctrlKey || e.metaKey)) {
+            actions.toggleSelect(entry.path);
+            return;
+          }
           actions.select(entry.path);
           if (isDir) actions.toggle(entry.path);
           return;
         }
         if ((e.key === "F10" && e.shiftKey) || e.key === "ContextMenu") {
           e.preventDefault();
+          e.stopPropagation();
           const r = e.currentTarget.getBoundingClientRect();
           actions.openRowMenuAt(entry, dir, r.left, r.bottom, rootEntry);
           return;
         }
         if (e.key === "ArrowRight" && isDir && !open) {
           e.preventDefault();
+          e.stopPropagation();
           actions.toggle(entry.path);
           return;
         }
         if (e.key === "ArrowLeft" && isDir && open) {
           e.preventDefault();
+          e.stopPropagation();
           actions.toggle(entry.path);
           return;
         }
@@ -266,6 +322,16 @@ const TreeRow = memo(function TreeRow({
       onContextMenu={(e) => actions.openRowMenu(e, entry, dir, rootEntry)}
       title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
     >
+      {multiMode && !rootEntry && (
+        <input
+          type="checkbox"
+          className="shrink-0"
+          checked={isSel}
+          tabIndex={-1}
+          aria-label={`选择 ${entry.name}`}
+          onChange={() => {}}
+        />
+      )}
       {isDir ? (
         <button
           className="nx-tree-caret"
@@ -289,7 +355,7 @@ const TreeRow = memo(function TreeRow({
       )}
       <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
       {coarse ? (
-        <button
+        multiMode ? null : <button
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
           title={`更多操作 ${entry.name}`}
           aria-label={`更多操作 ${entry.name}`}
@@ -370,7 +436,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const [initialView] = useState(() => treeViews(qc).get(sessionId));
   const [rootChoice, setRoot] = useState<string | null>(initialView?.root ?? null);
   const [expanded, setExpanded] = useState<string[]>(initialView?.expanded ?? []);
-  const [selected, setSelected] = useState<string | null>(initialView?.selected ?? null);
+  const multi = useMultiSelect(initialView?.selected ?? null);
+  const { sel, multiMode, setSelected } = multi;
+  const selected = sel.primary;
+  const batchBusy = useRef(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
@@ -419,7 +488,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     setExpanded([]);
     setSelected(null);
     setRoot("/");
-  }, [sessionKind, root, windowsComputer]);
+  }, [sessionKind, root, windowsComputer, setSelected]);
 
   useEffect(
     () =>
@@ -601,6 +670,28 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     return out;
   }, [computer, dirMap, root, expanded, dirErrors, rootsData]);
 
+  // Selected rows that left the visible listing (deleted elsewhere, collapsed, refreshed away) are forgotten once listings settle.
+  const listingsSettled =
+    environmentSettled && dirErrors.size === 0 && !results.some((result) => result.isLoading);
+  const { prune } = multi;
+  useEffect(() => {
+    if (!listingsSettled || computer) return;
+    const live = new Set<string>();
+    for (const list of dirMap.values()) for (const entry of list) live.add(entry.path);
+    prune(live);
+  }, [listingsSettled, computer, dirMap, prune]);
+
+  // Visible entries in row order: the order Shift ranges and Select all follow.
+  const orderedPaths = useMemo(
+    () => rows.flatMap((r) => (r.entry && !r.rootEntry ? [r.entry.path] : [])),
+    [rows],
+  );
+  const pickedEntries = useMemo(
+    () => rows.flatMap((r) => (r.entry && !r.rootEntry && sel.paths.has(r.entry.path) ? [r.entry] : [])),
+    [rows, sel.paths],
+  );
+  const pickedHasDir = pickedEntries.some((e) => e.kind === "dir");
+
   const retryDir = (dir: string) => {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
   };
@@ -768,12 +859,62 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     if (!(await ask(`删除 ${path}？${tip}`, { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, path, isDir);
-      setSelected(null);
+      multi.drop([path]);
       setExpanded((prev) => prev.filter((p) => p !== path));
       refresh();
       pushToast("success", "已删除");
     } catch (e) {
       pushToast("error", `删除失败：${describeError(e)}`);
+    }
+  };
+
+  const batchDownload = async (files: FileEntryDto[]) => {
+    if (batchBusy.current || files.some((f) => f.kind === "dir")) return;
+    batchBusy.current = true;
+    try {
+      let queued = 0;
+      for (const file of files) {
+        const target = await pickSavePath(baseName(file.path));
+        if (!target) continue;
+        enqueueDownload(sessionId, { remotePath: file.path, localPath: target });
+        queued += 1;
+      }
+      const skipped = files.length - queued;
+      if (queued === 0) pushToast("info", "没有加入任何下载任务");
+      else
+        pushToast(
+          "success",
+          skipped > 0 ? `已加入 ${queued} 个下载任务，${skipped} 个已取消` : `已加入 ${queued} 个下载任务`,
+        );
+    } finally {
+      batchBusy.current = false;
+    }
+  };
+
+  const batchDelete = async (items: FileEntryDto[]) => {
+    if (batchBusy.current || items.length === 0) return;
+    const hasDir = items.some((x) => x.kind === "dir");
+    const tip = hasDir ? "\n\n其中包含目录，目录会被递归删除，不可恢复。" : "";
+    if (!(await ask(`删除选中的 ${items.length} 项？${tip}`, { kind: "warning" }))) return;
+    batchBusy.current = true;
+    const deleted: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const item of items) {
+        try {
+          await fsApi.delete(sessionId, item.path, item.kind === "dir");
+          deleted.push(item.path);
+        } catch (e) {
+          failed.push(`${item.name}（${describeError(e)}）`);
+        }
+      }
+      multi.drop(deleted);
+      setExpanded((prev) => prev.filter((p) => !deleted.includes(p)));
+      refresh();
+      if (failed.length === 0) pushToast("success", `已删除 ${deleted.length} 项`);
+      else pushToast("error", `已删除 ${deleted.length} 项，${failed.length} 项失败：${failed.join("；")}`);
+    } finally {
+      batchBusy.current = false;
     }
   };
 
@@ -942,7 +1083,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       if (pn.startsWith(`${fromN}/`)) return styled(`${toN}${pn.slice(fromN.length)}`, p);
       return p;
     };
-    setSelected((cur) => (cur ? remap(cur) : cur));
+    multi.remap(remap);
     setExpanded((prev) => prev.map(remap));
     if (root && (norm(root) === fromN || norm(root).startsWith(`${fromN}/`))) {
       setRoot(remap(root));
@@ -951,6 +1092,38 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
+  const openBatchMenuAt = (x: number, y: number, items: FileEntryDto[]) => {
+    const hasDir = items.some((item) => item.kind === "dir");
+    setMenu({
+      x,
+      y,
+      title: `已选 ${items.length} 项`,
+      items: [
+        { kind: "group", label: `已选 ${items.length} 项` },
+        {
+          kind: "item",
+          label: `下载 ${items.length} 个文件`,
+          icon: <IconDownload size={13} />,
+          hint: hasDir ? "目录请单独打包下载" : undefined,
+          disabled: hasDir || sessionGone,
+          onSelect: () => void batchDownload(items),
+        },
+        { kind: "separator" },
+        { kind: "group", label: "危险操作" },
+        {
+          kind: "item",
+          label: `删除 ${items.length} 项…`,
+          icon: <IconTrash size={13} />,
+          danger: true,
+          disabled: sessionGone,
+          onSelect: () => void batchDelete(items),
+        },
+        { kind: "separator" },
+        { kind: "item", label: "取消选择", onSelect: multi.clear },
+      ],
+    });
+  };
+
   const openRowMenuAt = (
     entry: FileEntryDto,
     listKey: string,
@@ -958,6 +1131,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     y: number,
     rootEntry = false,
   ) => {
+    if (!rootEntry && pickedEntries.length > 1 && sel.paths.has(entry.path)) {
+      openBatchMenuAt(x, y, pickedEntries);
+      return;
+    }
     setSelected(entry.path);
     if (rootEntry) {
       setMenu({
@@ -1084,6 +1261,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   ) => {
     e.preventDefault();
     e.stopPropagation();
+    // Touch opens the menu from the row's ⋯ button; the long-press contextmenu would fight the multi-select gesture.
+    if (coarse) return;
     openRowMenuAt(entry, listKey, e.clientX, e.clientY, rootEntry);
   };
 
@@ -1257,6 +1436,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     }
     if (to < 0) return;
     event.preventDefault();
+    event.stopPropagation();
     if (to === from) return;
     const targetPath = list[to].entry!.path;
     pendingFocusRef.current = { path: targetPath, at: Date.now() };
@@ -1264,10 +1444,31 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     focusPendingRow();
   };
 
+  const longPress = useLongPress((path) => multi.enterMulti(path));
   const actionsRef = useRef<TreeRowActions | null>(null);
   actionsRef.current = {
     toggle,
     select: setSelected,
+    toggleSelect: multi.toggle,
+    rangeSelect: (path) => multi.range(path, orderedPaths),
+    pressStart: (event, path, rootEntry) => {
+      if (coarse && !computer && !rootEntry) longPress.start(event, path);
+    },
+    pressMove: longPress.move,
+    pressEnd: longPress.cancel,
+    consumeClick: longPress.consumeClick,
+    selectAll: () => {
+      if (!computer) multi.selectAll(orderedPaths);
+    },
+    clearSelection: () => {
+      if (sel.paths.size <= 1 && !multiMode) return false;
+      multi.clear();
+      return true;
+    },
+    deleteFrom: (path) => {
+      if (pickedEntries.length > 1 && sel.paths.has(path)) void batchDelete(pickedEntries);
+      else void remove(path);
+    },
     enterDir,
     openFile,
     openRowMenuAt,
@@ -1289,6 +1490,15 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     return {
       toggle: call("toggle"),
       select: call("select"),
+      toggleSelect: call("toggleSelect"),
+      rangeSelect: call("rangeSelect"),
+      pressStart: call("pressStart"),
+      pressMove: call("pressMove"),
+      pressEnd: call("pressEnd"),
+      consumeClick: call("consumeClick"),
+      selectAll: call("selectAll"),
+      clearSelection: call("clearSelection"),
+      deleteFrom: call("deleteFrom"),
       enterDir: call("enterDir"),
       openFile: call("openFile"),
       openRowMenuAt: call("openRowMenuAt"),
@@ -1313,7 +1523,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         dir={r.dir}
         rootEntry={r.rootEntry}
         open={r.entry ? expandedSet.has(r.entry.path) : false}
-        isSel={r.entry ? selected === r.entry.path : false}
+        isSel={r.entry ? sel.paths.has(r.entry.path) : false}
+        multiMode={multiMode}
         coarse={coarse}
         reconnecting={reconnecting}
         setSize={r.setSize}
@@ -1414,24 +1625,6 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         >
           <IconFolderPlus size={14} />
         </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm"
-          title="下载选中项"
-          aria-label="下载选中项"
-          disabled={!selectedEntry || selectedEntry.kind === "dir"}
-          onClick={() => selectedEntry && void download(selectedEntry.path)}
-        >
-          <IconDownload size={14} />
-        </button>
-        <button
-          className="nx-icon-btn nx-icon-btn-sm is-danger"
-          title="删除选中项"
-          aria-label="删除选中项"
-          disabled={!selectedEntry}
-          onClick={() => selectedEntry && void remove(selectedEntry.path)}
-        >
-          <IconTrash size={14} />
-        </button>
       </div>
 
       <div className="nx-pathbar">
@@ -1529,6 +1722,41 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
       </div>
 
+      {multiMode && (
+        <div
+          className="flex shrink-0 flex-wrap items-center gap-1 border-b border-neutral-800/60 bg-blue-500/[0.08] px-2 py-1 text-[12px]"
+          role="toolbar"
+          aria-label="多选操作"
+        >
+          <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+          <span className="flex-1" />
+          <button className="nx-btn nx-btn-sm" onClick={() => multi.selectAll(orderedPaths)}>
+            全选
+          </button>
+          <button
+            className="nx-btn nx-btn-sm"
+            disabled={pickedHasDir || sessionGone || pickedEntries.length === 0}
+            title={pickedHasDir ? "目录请单独打包下载" : "下载选中的文件"}
+            onClick={() => void batchDownload(pickedEntries)}
+          >
+            <IconDownload size={13} />
+            下载
+          </button>
+          <button
+            className="nx-btn nx-btn-danger nx-btn-sm"
+            disabled={sessionGone || pickedEntries.length === 0}
+            title="删除选中项"
+            onClick={() => void batchDelete(pickedEntries)}
+          >
+            <IconTrash size={13} />
+            删除
+          </button>
+          <button className="nx-btn nx-btn-sm" onClick={multi.clear}>
+            取消
+          </button>
+        </div>
+      )}
+
       <div
         role="tree"
         aria-label="文件"
@@ -1618,7 +1846,13 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
         <span>{entryCount} 项</span>
-        {selectedEntry && (
+        {pickedEntries.length > 1 && (
+          <>
+            <span className="text-neutral-700">|</span>
+            <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+          </>
+        )}
+        {pickedEntries.length <= 1 && selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>
             <span className="min-w-0 flex-1 truncate" title={selectedEntry.path}>

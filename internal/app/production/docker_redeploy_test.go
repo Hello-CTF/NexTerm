@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -227,5 +228,66 @@ func TestDockerConfirmationAuditOmitsPruneCapabilities(t *testing.T) {
 	}
 	if !strings.Contains(text, challenge.commandHash) || !strings.Contains(text, "prune") {
 		t.Fatalf("audit lost operation hashes: %s", text)
+	}
+}
+
+func (f *redeployIPCFixture) setBackupOption(t *testing.T, enabled bool) {
+	t.Helper()
+	options := `{"backupBeforeOverwrite":` + strconv.FormatBool(enabled) + `}`
+	if _, err := f.service.database.AssetUpdate(f.ctx, f.connected.Asset().ID, store.AssetPatch{OptionsJSON: &options}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (f *redeployIPCFixture) confirmedPrepare(t *testing.T, request dockerComposeRedeployIPCRequest) {
+	t.Helper()
+	response := dispatchExecBatchTest(f.dispatcher, f.ctx, "docker_compose_redeploy_prepare", request)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("expected a confirmation challenge: %+v", response)
+	}
+	var challenge dockerConfirmationRequiredDetail
+	encoded, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &challenge); err != nil {
+		t.Fatal(err)
+	}
+	request.ProductionConfirmation = &dockerProductionConfirmation{
+		Confirmed: true, TargetSetHash: challenge.TargetSetHash, CommandHash: challenge.CommandHash,
+		EnvironmentNames: challenge.RequiredEnvironmentNames,
+	}
+	if response = dispatchExecBatchTest(f.dispatcher, f.ctx, "docker_compose_redeploy_prepare", request); !response.OK {
+		t.Fatalf("confirmed prepare = %+v", response)
+	}
+}
+
+func TestComposeRedeployBackupFollowsStoredAssetOption(t *testing.T) {
+	fixture := newRedeployIPCFixture(t)
+	backupPath := fixture.path + ".nexterm-bak"
+	readBackup := func() (string, bool) {
+		data, err := os.ReadFile(backupPath)
+		return string(data), err == nil
+	}
+
+	// Default: the asset has no option, so no backup is requested.
+	fixture.write(t, "v1\n")
+	fixture.confirmedPrepare(t, fixture.request("v1\n", "v2\n"))
+	if _, ok := readBackup(); ok || fixture.content(t) != "v2\n" {
+		t.Fatalf("default overwrite produced a backup or lost the write: content=%q", fixture.content(t))
+	}
+
+	// Enabling the option after the session connected applies without reconnecting.
+	fixture.setBackupOption(t, true)
+	fixture.confirmedPrepare(t, fixture.request("v2\n", "v3\n"))
+	if got, ok := readBackup(); !ok || got != "v2\n" || fixture.content(t) != "v3\n" {
+		t.Fatalf("enabled overwrite: backup=%q ok=%v content=%q", got, ok, fixture.content(t))
+	}
+
+	// Disabling again stops further backups: the stale backup is not refreshed.
+	fixture.setBackupOption(t, false)
+	fixture.confirmedPrepare(t, fixture.request("v3\n", "v4\n"))
+	if got, _ := readBackup(); got != "v2\n" || fixture.content(t) != "v4\n" {
+		t.Fatalf("disabled overwrite: backup=%q content=%q", got, fixture.content(t))
 	}
 }

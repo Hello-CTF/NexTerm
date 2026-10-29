@@ -90,7 +90,6 @@ vi.mock("@tanstack/react-virtual", () => ({
   }),
 }));
 
-import { FileBrowser } from "../../features/files/FileBrowser";
 import { FileTree } from "../../features/files/FileTree";
 import { AssetTree } from "../../features/explorer/AssetTree";
 import { SnippetsPanel } from "../../features/explorer/SnippetsPanel";
@@ -213,19 +212,6 @@ describe("persistent row action bar DOM contract", () => {
     if (!row) throw new Error("row not found: notes.txt");
     expect(row.className).toContain("nx-row-reserve-actions");
     expect(actionLabels(row)).toEqual(["下载 notes.txt", "删除 notes.txt", "更多操作 notes.txt"]);
-  });
-
-  it("gives FileBrowser rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
-    stubPointer(false);
-    mounted = mountWithClient(createElement(FileBrowser, { sessionId: "s1" }));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("notes.txt"));
-
-    const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]')].find(
-      (r) => r.textContent?.includes("notes.txt"),
-    );
-    if (!row) throw new Error("browser row not found: notes.txt");
-    expect(row.className).toContain("nx-row-reserve-actions");
-    expect(actionLabels(row)).toEqual(["更多操作 notes.txt"]);
   });
 
   it("gives asset rows nx-row-reserve-actions and keeps action buttons in the DOM", async () => {
