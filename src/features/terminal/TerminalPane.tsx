@@ -513,7 +513,10 @@ export function TerminalPane({
   // control event announcing that can be lost (a sleeping window, a reconnect), which would leave this pane
   // shrunken until a manual resize. One re-read of the control state after the hold catches up.
   const followerRecheckTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followerRecheckAt = useRef(0);
   const FOLLOWER_RECHECK_MS = 1700;
+  // A follower that keeps typing without being handed the size must not poll: re-read at most this often.
+  const FOLLOWER_RECHECK_GAP_MS = 5000;
   useEffect(
     () => () => {
       if (followerRecheckTimer.current !== null) clearTimeout(followerRecheckTimer.current);
@@ -606,9 +609,15 @@ export function TerminalPane({
         return "failed";
       }
       if (!kernelTabId) return "failed";
-      if (controlSupported && !canResize && followerRecheckTimer.current === null) {
+      if (
+        controlSupported &&
+        !canResize &&
+        followerRecheckTimer.current === null &&
+        Date.now() - followerRecheckAt.current >= FOLLOWER_RECHECK_GAP_MS
+      ) {
         followerRecheckTimer.current = setTimeout(() => {
           followerRecheckTimer.current = null;
+          followerRecheckAt.current = Date.now();
           void refreshControl();
         }, FOLLOWER_RECHECK_MS);
       }
