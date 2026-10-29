@@ -64,6 +64,7 @@ import {
   MAX_PASTE_FILE_BYTES,
   markdownFileLink,
   pasteFileExtension,
+  randomizedPasteFileName,
   splitOversizedFiles,
   TERMINAL_CONTROL,
   uniquePasteFileNames,
@@ -271,6 +272,11 @@ export function usePreviewShareEnabled(): boolean {
 interface PasteUploadRun {
   cancelled: boolean;
   transfer: { taskId: string; attemptId: string } | null;
+}
+
+// randomPasteToken is the unguessable suffix of a file uploaded without a private directory.
+function randomPasteToken(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 class PasteUploadCancelled extends Error {
@@ -1545,11 +1551,17 @@ export function TerminalPane({
         `正在上传 ${accepted.length} 个文件到该主机的 ${pasteDirs.terminalDir}…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
       setImagePaste({ phase: "uploading", message: uploadingMessage(0), cancellable: true });
       // An unguessable, exclusively created 0700 directory: nobody else on the host can pre-create, link or read it.
-      const dir = joinPastePath(pasteDirs.uploadDir, `nexterm-paste-${crypto.randomUUID()}`);
+      // With the asset option that skips it, files go straight into the upload directory under names with a random
+      // suffix, and only those files are cleaned up on failure.
+      const flat = pasteDirs.flat;
+      const dir = flat ? pasteDirs.uploadDir : joinPastePath(pasteDirs.uploadDir, `nexterm-paste-${crypto.randomUUID()}`);
       let dirCreated = false;
+      const uploadedPaths: string[] = [];
       try {
-        await fsApi.mkdirPrivate(sessionId, dir);
-        dirCreated = true;
+        if (!flat) {
+          await fsApi.mkdirPrivate(sessionId, dir);
+          dirCreated = true;
+        }
         const names = uniquePasteFileNames(
           accepted.map((file) => {
             if (file.name) return file.name;
@@ -1560,8 +1572,9 @@ export function TerminalPane({
         let doneBytes = 0;
         for (const [index, file] of accepted.entries()) {
           if (run.cancelled) throw new PasteUploadCancelled();
-          const name = names[index];
-          const path = `${dir}/${name}`;
+          const name = flat ? randomizedPasteFileName(names[index], randomPasteToken()) : names[index];
+          const path = joinPastePath(dir, name);
+          if (flat) uploadedPaths.push(path);
           const transfer = { taskId: createTransferTaskId(), attemptId: createTransferTaskId() };
           run.transfer = transfer;
           if (file.size <= UPLOAD_CHUNK_SIZE) {
@@ -1607,6 +1620,16 @@ export function TerminalPane({
             cleanupNote = `；未能清理 ${dir}，请手动删除`;
           }
         }
+        const leftover: string[] = [];
+        for (const path of uploadedPaths) {
+          try {
+            await fsApi.delete(sessionId, path, false);
+          } catch (cleanupError) {
+            // A file that was never created is already gone; anything else stays and is named.
+            if ((cleanupError as { code?: unknown } | null)?.code !== "not_found") leftover.push(path);
+          }
+        }
+        if (leftover.length > 0) cleanupNote = `；未能清理 ${leftover.join("、")}，请手动删除`;
         const message =
           e instanceof PasteUploadCancelled || run.cancelled
             ? `已取消上传${cleanupNote}`

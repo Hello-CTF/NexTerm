@@ -145,6 +145,13 @@ export function uniquePasteFileNames(names: string[]): string[] {
   });
 }
 
+// randomizedPasteFileName appends a random token before the extension, for uploads that share a directory with other
+// files and must not overwrite or predict a name.
+export function randomizedPasteFileName(name: string, token: string): string {
+  const { stem, ext } = splitExtension(sanitizePasteFileName(name));
+  return fitName(stem, `-${token}`, ext);
+}
+
 // displayFileName renders an untrusted name for status messages without control or format characters.
 export function displayFileName(name: string): string {
   return name.replace(UNSAFE_TEXT, "") || "未命名";

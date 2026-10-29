@@ -29,7 +29,7 @@ import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
-import { PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
+import { PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -2019,6 +2019,7 @@ export function AssetEditor({
   const [pasteTerminalDir, setPasteTerminalDir] = useState(
     typeof initial?.options?.[PASTE_TERMINAL_DIR_KEY] === "string" ? (initial.options[PASTE_TERMINAL_DIR_KEY] as string) : "",
   );
+  const [pasteNoRandomDir, setPasteNoRandomDir] = useState(initial?.options?.[PASTE_NO_RANDOM_DIR_KEY] === true);
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2300,6 +2301,8 @@ export function AssetEditor({
       delete options[PASTE_UPLOAD_DIR_KEY];
       delete options[PASTE_TERMINAL_DIR_KEY];
     }
+    if (groupKind === "ssh" && pasteNoRandomDir) options[PASTE_NO_RANDOM_DIR_KEY] = true;
+    else delete options[PASTE_NO_RANDOM_DIR_KEY];
     return options;
   };
 
@@ -3321,6 +3324,23 @@ export function AssetEditor({
                               ↳ 选填。粘贴或拖入终端的文件经 SFTP 上传到该目录，插入终端的链接改用对应路径；适用于 chroot 的
                               SFTP 账号（如上传目录填 /，终端中的对应路径填 /tmp）。填写对应路径时必须同时填写上传目录。
                             </div>
+                          </div>
+                          <div className="nx-form-row">
+                            <label className="flex cursor-pointer items-start gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="text-[12.5px] text-neutral-200">不使用随机目录</div>
+                                <p className="nx-hint mt-0.5">
+                                  默认关闭：每次粘贴先在上传目录下创建仅当前用户可访问的随机目录。开启后文件直接放在上传目录中，文件名附带随机后缀；能列出该目录的其他用户可以读取这些文件。
+                                </p>
+                              </div>
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 shrink-0"
+                                aria-label="不使用随机目录"
+                                checked={pasteNoRandomDir}
+                                onChange={(e) => setPasteNoRandomDir(e.target.checked)}
+                              />
+                            </label>
                           </div>
                         </div>
                       )}

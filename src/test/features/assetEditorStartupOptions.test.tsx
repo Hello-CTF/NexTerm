@@ -265,6 +265,33 @@ describe("AssetEditor SSH startup options", () => {
     expect(updatedPayload().options).toEqual({ pasteUploadDir: "/upload" });
   });
 
+  it("keeps the random paste directory by default and saves the opt-out only when it is ticked", async () => {
+    mountEditor();
+    await flush();
+    expandAdvanced();
+    const box = () => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="不使用随机目录"]')!;
+    expect(box().checked).toBe(false);
+    fillName("flat-01");
+    fillHost("10.0.0.9");
+    click(box());
+    expect(box().checked).toBe(true);
+    click(saveButton());
+    await flushUntil(() => mocks.create.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
+    expect(createdPayload().options).toEqual({ pasteNoRandomDir: true });
+  });
+
+  it("loads the opt-out on edit and removes it when cleared", async () => {
+    mountEditor({ ...baseAsset, options: { pasteUploadDir: "/", pasteTerminalDir: "/tmp", pasteNoRandomDir: true } } as unknown as Asset);
+    await flush();
+    expandAdvanced();
+    const box = mounted!.container.querySelector<HTMLInputElement>('input[aria-label="不使用随机目录"]')!;
+    expect(box.checked).toBe(true);
+    click(box);
+    click(saveButton());
+    await flushUntil(() => mocks.update.mock.calls.length > 0 && !mounted!.container.textContent?.includes("正在保存…"));
+    expect(updatedPayload().options).toEqual({ pasteUploadDir: "/", pasteTerminalDir: "/tmp" });
+  });
+
   it("removes paste directories after clearing the upload directory", async () => {
     mountEditor({ ...baseAsset, options: { pasteUploadDir: "/upload" } } as unknown as Asset);
     await flush();
