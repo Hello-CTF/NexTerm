@@ -987,7 +987,7 @@ export const fsApi = {
     sessionId: string,
     path: string,
     contentBase64: string,
-    backup = true,
+    backup = false,
     taskId?: string,
     attemptId?: string,
   ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,

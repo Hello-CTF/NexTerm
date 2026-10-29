@@ -177,11 +177,14 @@ describe("FileEditor language selection and highlighting", () => {
     expect(view.state.doc.toString()).toBe(edited);
     expect(mounted!.container.textContent).toContain("未保存");
 
-    const save = mounted!.container.querySelector<HTMLButtonElement>('button[title^="保存（远端"]');
+    const save = mounted!.container.querySelector<HTMLButtonElement>('button[title="保存"]');
     if (!save) throw new Error("Save button not found");
     expect(save.disabled).toBe(false);
     click(save);
     await waitFor(() => expect(mocks.write).toHaveBeenCalledOnce());
+    // The editor no longer asks the host to keep a .nexterm-bak copy: the backup flag is not passed (default off).
+    expect(mocks.write.mock.calls[0]?.[3]).toBeUndefined();
+    expect(mounted!.container.textContent).not.toContain("nexterm-bak");
     expect(mocks.read).toHaveBeenCalledOnce();
   });
 

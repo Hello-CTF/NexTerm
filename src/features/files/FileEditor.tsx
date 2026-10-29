@@ -425,7 +425,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         });
         if (!(await saveFile(change))) return;
       } else {
-        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, true);
+        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64);
       }
       originalRef.current = text;
       if (mountedRef.current) {
@@ -440,7 +440,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           setDirty(false);
         }
       }
-      pushToast("success", `已保存 ${writeLocator.path}（远端已备份 .nexterm-bak）`);
+      pushToast("success", `已保存 ${writeLocator.path}`);
     } catch (e) {
       pushToast("error", `保存失败：${describeError(e)}`);
     } finally {
@@ -675,7 +675,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           className={`nx-btn nx-btn-sm max-[560px]:order-first ${dirty ? "nx-btn-primary" : "nx-btn-ghost"}`}
           disabled={!dirty || saving}
           onClick={() => void save()}
-          title="保存（远端自动留一份 .nexterm-bak 备份）"
+          title="保存"
         >
           <IconSave size={13} />
           {saving ? "正在保存…" : "保存"}
@@ -697,8 +697,6 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           <span>{meta.encoding.toUpperCase()}</span>
           <span className="text-neutral-700">|</span>
           <span>{eol}</span>
-          <div className="nx-spacer" />
-          <span className="max-[560px]:hidden">保存前自动备份为 .nexterm-bak</span>
         </div>
       )}
 

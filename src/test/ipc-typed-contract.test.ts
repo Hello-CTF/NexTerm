@@ -628,7 +628,7 @@ void call("fs_read", { sessionId: "session-1" });
 void call("fs_read", { sessionId: "session-1", path: "/remote/a.bin", maxBytes: "8MiB" });
 // @ts-expect-error nested writes reject flat input
 void call("fs_write", { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==", backup: true });
-// @ts-expect-error the facade's backup=true default does not make the wire field optional
+// @ts-expect-error the facade's backup=false default does not make the wire field optional
 void call("fs_write", { args: { sessionId: "session-1", path: "/remote/a.bin", contentBase64: "AAEC/w==" } });
 // @ts-expect-error native and staged local paths remain strings
 void call("fs_upload", { sessionId: "session-1", localPath: 42, remotePath: "/remote/a.bin" });

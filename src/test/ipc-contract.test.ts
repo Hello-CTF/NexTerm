@@ -656,7 +656,7 @@ describe("fs, desktop local-file and mount facade IPC contracts", () => {
     expectManifestEnvelope(calls[2], "fs_upload", { sessionId: "session-1", localPath: "C:\\local\\a.bin", remotePath: "/remote/a.bin" });
     expectManifestEnvelope(calls[3], "fs_download", { sessionId: "session-1", remotePath: "/remote/a.bin", localPath: "C:\\local\\a.bin" });
     expectManifestEnvelope(calls[4], "fs_pack_download", { sessionId: "session-1", remotePath: "/remote/dir", localPath: "C:\\local\\dir.tar.gz" });
-    expectManifestEnvelope(calls[5], "fs_write", { sessionId: "session-1", path: "/remote/empty", contentBase64: "", backup: true });
+    expectManifestEnvelope(calls[5], "fs_write", { sessionId: "session-1", path: "/remote/empty", contentBase64: "", backup: false });
     expectManifestEnvelope(calls[6], "fs_cancel", { taskId: "task-1" });
     expectManifestEnvelope(calls[7], "local_file_read", { path: "C:\\local\\a.bin" });
     expectManifestEnvelope(calls[8], "local_file_read_range", { path: "C:\\local\\a.bin", offset: 0 });
