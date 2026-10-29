@@ -86,6 +86,14 @@ export function setThemePreferenceLayers(defaultValue: unknown, accountValue: un
   if (nextDefault === defaultMode && nextAccount === accountMode) return;
   defaultMode = nextDefault;
   accountMode = nextAccount;
+  // A synced account value overwrites this device's value, so the next launch paints it before the account view loads.
+  if (nextAccount && nextAccount !== localMode) {
+    localMode = nextAccount;
+    try {
+      localStorage.setItem(STORAGE_KEY, nextAccount);
+    } catch {
+    }
+  }
   apply();
   emit();
 }

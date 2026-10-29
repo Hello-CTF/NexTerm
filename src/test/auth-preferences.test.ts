@@ -505,16 +505,16 @@ describe("terminal link activation preference", () => {
 });
 
 describe("account theme preferences", () => {
-  it("applies account overrides without changing the device value and restores the device theme after unregistering", async () => {
+  it("overwrites the device value with the synced account theme and keeps it after unregistering", async () => {
     const theme = await import("../app/theme");
     theme.setThemeMode("system");
     const store = memoryStore({ "appearance.themeMode": "light" });
     registerAccountPreferenceStore(store);
     await vi.waitFor(() => expect(theme.getThemeMode()).toBe("light"));
-    expect(window.localStorage.getItem("nexterm.theme.v1")).toBe("system");
+    expect(window.localStorage.getItem("nexterm.theme.v1")).toBe("light");
 
     registerAccountPreferenceStore(null);
-    expect(theme.getThemeMode()).toBe("system");
+    expect(theme.getThemeMode()).toBe("light");
   });
 
   it("writes local theme changes back to the account", async () => {

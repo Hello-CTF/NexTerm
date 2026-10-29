@@ -358,7 +358,8 @@ describe("account preference re-registration", () => {
     expect(seen).toEqual([]);
     expect(document.documentElement.dataset.nxTheme).toBe("light");
 
+    // The synced value was mirrored to this device, so logging out keeps it.
     prefs.registerAccountPreferenceStore(null);
-    expect(document.documentElement.dataset.nxTheme).toBe("dark");
+    expect(document.documentElement.dataset.nxTheme).toBe("light");
   });
 });

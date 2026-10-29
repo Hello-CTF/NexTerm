@@ -110,6 +110,7 @@ function applyAccountView(view: AccountPreferenceView): void {
   accountViewLoaded = true;
   syncThemePreferenceLayers();
   rebuildSnapshots();
+  mirrorAppearanceOverrides();
   for (const listener of accountListeners) listener();
 }
 
@@ -677,6 +678,25 @@ export function getResolvedTerminalTheme(): ResolvedTerminalTheme {
 
 export function uiTextFactor(prefs: AppearancePrefs = appearance): number {
   return (prefs.uiFontScale * prefs.uiFontPreset) / 13;
+}
+
+// mirrorAppearanceOverrides overwrites this device's appearance values with the synced account overrides: the device
+// cache is the only layer index.html and the first render can read before the account view loads. Server defaults are
+// not mirrored, so a later change of a default still applies.
+function mirrorAppearanceOverrides(): void {
+  try {
+    const raw = localStorage.getItem(APPEARANCE_KEY);
+    const local = (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
+    let changed = false;
+    for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
+      if (appearanceKey(field) in accountOverrides && local[field] !== appearance[field]) {
+        local[field] = appearance[field];
+        changed = true;
+      }
+    }
+    if (changed) localStorage.setItem(APPEARANCE_KEY, JSON.stringify(local));
+  } catch {
+  }
 }
 
 function applyAppearance(): void {
