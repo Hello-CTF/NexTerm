@@ -8,8 +8,7 @@ import {
   type Workspace,
 } from "../store";
 import { type SessionInfo } from "../../ipc/commands";
-import { TRANSPORT } from "../../ipc/env";
-import { isMac, wailsDragRegionStyle, wailsNoDragRegionStyle } from "../platform";
+import { wailsDragRegionStyle, wailsNoDragRegionStyle } from "../platform";
 import { InboxButton } from "../../features/inbox/InboxButton";
 import {
   IconCheckCircle,
@@ -83,9 +82,7 @@ export function AppHeader({
   const wsLiveness = useSessionLiveness(ws?.sessionId);
   return (
     <header
-      className={`nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pr-2.5 ${
-        TRANSPORT === "desktop" && isMac() ? "pl-[22px]" : "pl-2.5"
-      }`}
+      className="nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pl-2.5 pr-2.5"
       data-wails-drag-region style={wailsDragRegionStyle}
     >
       {leading}

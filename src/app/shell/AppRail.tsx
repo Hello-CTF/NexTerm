@@ -1,8 +1,6 @@
 import { useUi, isHostWorkspace, showLeftPanel, type Workspace } from "../store";
 import { resolveLeftView } from "./leftView";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
-import { TRANSPORT } from "../../ipc/env";
-import { isMac } from "../platform";
 import { mountUnavailableReason } from "../capabilities";
 import {
   IconActivity,
@@ -166,10 +164,7 @@ export function AppRail({
   ];
 
   return (
-    <nav
-      className={`nx-rail ${TRANSPORT === "desktop" && isMac() ? "pt-[28px]" : ""}`}
-      aria-label="主导航"
-    >
+    <nav className="nx-rail" aria-label="主导航">
       <div className="mb-2 flex items-center justify-center nx-rail-btn" data-tip="NexTerm">
         <Logo size={26} />
       </div>
