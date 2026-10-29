@@ -109,6 +109,22 @@ export function setInputValue(input: HTMLInputElement | HTMLTextAreaElement, val
   });
 }
 
+/**
+ * chooseSelectOption picks an option of the shared Select (ui/Select) the way a user does: open the trigger named by
+ * its aria-label, then click the option whose text contains optionText. The list stays inside the container, so a
+ * scope narrower than the document works too.
+ */
+export function chooseSelectOption(scope: ParentNode, ariaLabel: string, optionText: string): void {
+  const trigger = scope.querySelector<HTMLElement>(`button[aria-label="${ariaLabel}"][aria-haspopup="listbox"]`);
+  if (!trigger) throw new Error(`Select trigger not found: ${ariaLabel}`);
+  click(trigger);
+  const option = [...scope.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')].find((item) =>
+    item.textContent?.includes(optionText),
+  );
+  if (!option) throw new Error(`Select option not found: ${optionText}`);
+  click(option);
+}
+
 export function setSelectValue(select: HTMLSelectElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
   if (!setter) throw new Error("Native select value setter unavailable");
