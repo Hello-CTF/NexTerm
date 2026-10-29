@@ -221,13 +221,9 @@ func (m *Manager) reconnectDelay(attempt int) time.Duration {
 
 // waitReconnectBackoff sleeps for the backoff unless the context ends or, when
 // wakeable, a foreground probe wakes the loop; woken reports the latter. A
-// wake that arrived while the previous attempt was still dialing is
-// discarded: that attempt already answered it.
+// wake already pending counts: the caller discards the ones a previous attempt
+// answered before waiting again.
 func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}, wakeable bool) (woken bool, err error) {
-	select {
-	case <-wake:
-	default:
-	}
 	if delay <= 0 {
 		return false, ctx.Err()
 	}
@@ -264,6 +260,15 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 	// turn the backoff into a redial loop.
 	wakeable := true
 	for attempt := 0; attempt < m.reconnectMax; attempt++ {
+		if attempt > 0 {
+			// A wake that arrived while the previous attempt was still dialing was answered by that attempt. The
+			// first wait has no such attempt: a probe that lands as the reconnecting status is published must
+			// still cut the first backoff short.
+			select {
+			case <-wake:
+			default:
+			}
+		}
 		woken, err := waitReconnectBackoff(ctx, delay, wake, wakeable)
 		if err != nil {
 			lastErr = err
