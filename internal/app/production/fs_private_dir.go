@@ -2,13 +2,16 @@ package production
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -19,22 +22,52 @@ var privateDirParent = "/tmp"
 // privateDirPrefix is the only name prefix fs_mkdir_private accepts, so the command cannot create arbitrary paths.
 const privateDirPrefix = "nexterm-paste-"
 
-// validPrivateDir accepts only a canonical direct child of the temp root named nexterm-paste-<suffix>.
-func validPrivateDir(dir string) bool {
+// privateDirParentFor is the directory fs_mkdir_private may create in for a session: the paste upload directory
+// configured on its asset, which is how the file channel sees the host (a chrooted SFTP account may expose the shell's
+// /tmp as /), or the host temp root when none is configured.
+func privateDirParentFor(assetOptions any) string {
+	raw, err := json.Marshal(assetOptions)
+	if err != nil {
+		return privateDirParent
+	}
+	var options map[string]any
+	if json.Unmarshal(raw, &options) != nil {
+		return privateDirParent
+	}
+	configured, _ := options[store.AssetOptionPasteUploadDir].(string)
+	configured = strings.TrimSpace(configured)
+	if configured == "" || !path.IsAbs(configured) {
+		return privateDirParent
+	}
+	for _, r := range configured {
+		if unicode.IsControl(r) {
+			return privateDirParent
+		}
+	}
+	for _, segment := range strings.Split(configured, "/") {
+		if segment == ".." {
+			return privateDirParent
+		}
+	}
+	return path.Clean(configured)
+}
+
+// validPrivateDir accepts only a canonical direct child of parent named nexterm-paste-<suffix>.
+func validPrivateDir(dir, parent string) bool {
 	if dir == "" || !path.IsAbs(dir) || path.Clean(dir) != dir {
 		return false
 	}
 	name := path.Base(dir)
-	return path.Dir(dir) == privateDirParent && strings.HasPrefix(name, privateDirPrefix) && len(name) > len(privateDirPrefix)
+	return path.Dir(dir) == parent && strings.HasPrefix(name, privateDirPrefix) && len(name) > len(privateDirPrefix)
 }
 
 // mkdirPrivate creates dir exclusively with owner-only permissions. Backends that implement base.PrivateDirCreator
 // guarantee exclusivity atomically. Other backends (the device bridge) get a refuse-if-present check, a single-level
 // Mkdir, a real-directory check before Chmod 0700 and a mode verification through the parent listing; callers pass an
 // unguessable name, so the window between the presence check and Mkdir cannot be targeted.
-func mkdirPrivate(ctx context.Context, filesystem base.FileSystem, dir string) error {
-	if !validPrivateDir(dir) {
-		return ipc.BadParam(fmt.Errorf("私有目录必须是 %s 下以 %s 开头的直接子目录: %q", privateDirParent, privateDirPrefix, dir))
+func mkdirPrivate(ctx context.Context, filesystem base.FileSystem, dir, parent string) error {
+	if !validPrivateDir(dir, parent) {
+		return ipc.BadParam(fmt.Errorf("私有目录必须是 %s 下以 %s 开头的直接子目录: %q", parent, privateDirPrefix, dir))
 	}
 	if creator, ok := filesystem.(base.PrivateDirCreator); ok {
 		return creator.MkdirPrivate(ctx, dir)

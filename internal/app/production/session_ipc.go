@@ -1179,7 +1179,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	if err := s.registerSSHDiagnostics(dispatcher); err != nil {
 		return err
 	}
-	if err := registerFSCommands(dispatcher, s.sessions, s.stagedBlobs, s.fsUploads); err != nil {
+	assetOptions := func(ctx context.Context, assetID string) (any, bool) {
+		row, err := s.database.AssetGetLive(ctx, assetID)
+		if err != nil || strings.TrimSpace(row.OptionsJSON) == "" {
+			return nil, false
+		}
+		return json.RawMessage(row.OptionsJSON), true
+	}
+	if err := registerFSCommandsWithAssets(dispatcher, s.sessions, s.stagedBlobs, assetOptions, s.fsUploads); err != nil {
 		return err
 	}
 	if !s.desktop {
