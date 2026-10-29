@@ -249,6 +249,10 @@ describe("AiSidebar agent tool card mounting", () => {
       exitCode: 0,
       handle: "build",
     });
+    // The output stays closed until the card is opened.
+    await flushUntil(() => agentCard(view!, "call-1")!.textContent?.includes("展开输出") === true);
+    expect(agentCard(view!, "call-1")!.textContent).not.toContain("完整输出");
+    click(agentCard(view!, "call-1")!.querySelector<HTMLButtonElement>("button[aria-expanded]")!);
     await flushUntil(() => agentCard(view!, "call-1")!.textContent?.includes("部署完成") === true);
     expect(agentCard(view!, "call-1")!.textContent).toContain("0");
   });
@@ -331,6 +335,9 @@ describe("AiSidebar agent tool card mounting", () => {
     await emit({ type: "toolResult", id: "c1", ok: true, summary: "第二轮输出", text: "第二轮输出", exitCode: 0 });
     await flush();
     expect(view!.container.querySelectorAll('[data-call-id="c1"]')).toHaveLength(1);
+    expect(view!.container.textContent).not.toContain("第二轮输出");
+    for (const toggle of view!.container.querySelectorAll<HTMLButtonElement>('button[title="展开输入和输出"]')) click(toggle);
+    await flush();
     expect(view!.container.textContent).toContain("第二轮输出");
 
     // A second run with its own verified handle renders its own card; the
@@ -588,7 +595,7 @@ describe("AiSidebar agent tool card mounting", () => {
       exitCode: 0,
       handle: "build",
     });
-    await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("部署完成") === true);
+    await flushUntil(() => agentCard(view!, "call-9")!.textContent?.includes("展开输出") === true);
 
     await clickButtonFlush(agentCard(view!, "call-9")!, "允许一次");
     await flushUntil(() => mocks.confirm.mock.calls.length > 0);

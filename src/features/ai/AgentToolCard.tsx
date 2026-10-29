@@ -45,8 +45,9 @@ export function AgentToolCard({
   const running = call.state === "running";
   const presence = presenceView(call.presence, null);
   const run = call.run ? runStateView(call.run.state, call.run.evidence) : null;
-  const expandable = call.output.length > call.summary.length;
-  const body = open ? call.output : call.summary;
+  // The output stays closed until asked for; a failure keeps its first line visible so it is never hidden.
+  const detail = call.output || call.summary;
+  const headline = !open && call.state === "error" ? (detail.trim().split(/\r?\n/, 1)[0] ?? "") : "";
   const approval = call.approval;
 
   return (
@@ -162,23 +163,24 @@ export function AgentToolCard({
           </div>
         ))}
 
-      {body && (
-        <pre
-          className={`mt-1.5 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] ${
-            open ? "max-h-[26rem] text-neutral-300" : "max-h-32 text-neutral-500"
-          }`}
-        >
-          {body}
+      {headline && (
+        <p className="mt-1 truncate text-[10.5px] text-neutral-500" title={headline}>
+          {headline}
+        </p>
+      )}
+      {open && detail && (
+        <pre className="mt-1.5 max-h-[26rem] overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-300">
+          {detail}
         </pre>
       )}
-      {expandable && (
+      {detail && (
         <button
           className="mt-1.5 flex items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
-          {open ? "收起" : `展开完整输出（${call.output.length} 字）`}
+          {open ? "收起" : `展开输出（${detail.length} 字）`}
         </button>
       )}
     </div>

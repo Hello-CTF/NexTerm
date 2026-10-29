@@ -166,13 +166,21 @@ describe("AgentToolCard", () => {
     expect(text).not.toContain("工具执行失败");
   });
 
-  it("long output expands and collapses", () => {
+  it("keeps the output closed until it is opened and closes it again", () => {
     mountCard(toolCall());
-    const expand = button("展开完整输出（14 字）");
-    clickButton(view!.container, "展开完整输出（14 字）");
+    expect(view!.container.textContent).not.toContain("完整输出……");
+    const expand = button("展开输出（14 字）");
+    clickButton(view!.container, "展开输出（14 字）");
     expect(expand.getAttribute("aria-expanded")).toBe("true");
     expect(view!.container.textContent).toContain("完整输出……");
     clickButton(view!.container, "收起");
-    expect(view!.container.textContent).toContain("展开完整输出");
+    expect(view!.container.textContent).not.toContain("完整输出……");
+    expect(view!.container.textContent).toContain("展开输出");
+  });
+
+  it("keeps the first line of a failed call visible while closed", () => {
+    mountCard(toolCall({ state: "error", output: "permission denied\nsecond line", summary: "permission denied" }));
+    expect(view!.container.textContent).toContain("permission denied");
+    expect(view!.container.textContent).not.toContain("second line");
   });
 });

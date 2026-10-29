@@ -229,7 +229,8 @@ describe("AiSidebar edit and resend", () => {
   it("UI after truncating old messages: keeps the anchor text and removes its following answers, tools, and messages", async () => {
     const text = () => view!.container.textContent ?? "";
     await flushUntil(() => text().includes("第二答"));
-    expect(text()).toContain("输出摘要");
+    // The tool call is listed with its outcome; its output stays closed.
+    expect(text()).toContain("工具执行成功");
 
     click(editButtonFor(view!, "第一问"));
     await flush();
@@ -240,7 +241,7 @@ describe("AiSidebar edit and resend", () => {
 
     expect(text()).toContain("第一问");
     expect(text()).not.toContain("第一答");
-    expect(text()).not.toContain("输出摘要");
+    expect(text()).not.toContain("工具执行成功");
     expect(text()).not.toContain("第二问");
     expect(text()).not.toContain("第二答");
   });
@@ -337,7 +338,7 @@ describe("AiSidebar edit and resend", () => {
     );
     expect(mocks.chat).not.toHaveBeenCalled();
     expect(text()).toContain("第一答");
-    expect(text()).toContain("输出摘要");
+    expect(text()).toContain("工具执行成功");
     expect(text()).toContain("编辑并重新发送将删除此消息后的消息和运行记录");
     expect(composerOf(view!).value).toBe("第一问（改）");
   });

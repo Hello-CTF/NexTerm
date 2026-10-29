@@ -189,24 +189,38 @@ function blockedOutcome(text: string): { by: "policy" | "user"; reason: string }
   return null;
 }
 
+function firstLine(text: string): string {
+  return text.trim().split(/\r?\n/, 1)[0] ?? "";
+}
+
+// The bubble is one line until opened: the tool, its input, the outcome. Opening it shows the whole input and
+// output. A failure or refusal keeps its first line visible while closed, so a collapsed card never hides an error.
 function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const [open, setOpen] = useState(false);
   const running = item.summary === undefined;
   const full = item.text ?? "";
   const preview = item.summary ?? "";
-  const blocked = !running && !item.ok && !item.panic ? blockedOutcome(full || preview) : null;
-  const expandable = !blocked && full.length > preview.length;
-  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "已拒绝本次操作，未执行。") : open ? full : preview;
+  const output = full || preview;
+  const blocked = !running && !item.ok && !item.panic ? blockedOutcome(output) : null;
+  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "已拒绝本次操作，未执行。") : output;
+  const headline = !running && !item.ok ? firstLine(body) : "";
   return (
     <div
       className="rounded-lg border border-neutral-800 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]"
       aria-busy={running}
     >
       <div className="flex items-center gap-1.5">
-        <span className="nx-badge nx-badge-purple" title={item.name}>{toolLabel(item.name)}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.display}>
-          {item.display}
-        </span>
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          aria-expanded={open}
+          title={open ? "收起输入和输出" : "展开输入和输出"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <IconChevronRight size={10} className={`shrink-0 text-neutral-500 ${open ? "rotate-90" : ""}`} />
+          <span className="nx-badge nx-badge-purple shrink-0" title={item.name}>{toolLabel(item.name)}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-neutral-400">{item.display}</span>
+        </button>
         <span className="sr-only">
           {running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : blocked ? (blocked.by === "policy" ? "已被权限策略拦截" : "你已拒绝") : "工具执行失败"}
         </span>
@@ -227,25 +241,31 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           <span className="font-mono text-[10px] text-neutral-500">{item.exitCode}</span>
         )}
       </div>
-      {item.subagent ? <SubagentTimelineView timeline={item.subagent} /> : null}
-      {body && (
-        <pre
-          className={`mt-1.5 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] ${
-            open ? "max-h-[26rem] text-neutral-300" : "max-h-32 text-neutral-500"
-          }`}
-        >
-          {body}
-        </pre>
+      {!open && headline && (
+        <p className="mt-1 truncate pl-4 text-[10.5px] text-neutral-500" title={headline}>
+          {headline}
+        </p>
       )}
-      {expandable && (
-        <button
-          className="mt-1.5 flex items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
-          {open ? "收起" : `展开完整输出（${full.length} 字）`}
-        </button>
+      {item.subagent ? <SubagentTimelineView timeline={item.subagent} /> : null}
+      {open && (item.display || body) && (
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          {item.display && (
+            <div>
+              <div className="text-[10px] text-neutral-500">输入</div>
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[10.5px] text-neutral-300">
+                {item.display}
+              </pre>
+            </div>
+          )}
+          {body && (
+            <div>
+              <div className="text-[10px] text-neutral-500">{blocked ? "结果" : `输出（${output.length} 字）`}</div>
+              <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-300">
+                {body}
+              </pre>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
