@@ -1,4 +1,4 @@
-import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconShield, IconMonitor } from "../../../ui/icons";
+import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconKey, IconMonitor } from "../../../ui/icons";
 import { ProductionWriteRiskNotice } from "../../production/ProductionWarning";
 import { DESKTOP } from "../../../ipc/env";
 import { isImeKeyEvent } from "../../../ui/DialogHost";
@@ -312,7 +312,6 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             >
               <IconImage size={14} />
             </button>
-            <PrivacyIndicator guard={privacyGuard} />
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <button
@@ -323,9 +322,10 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               aria-expanded={permOpen}
               onClick={() => setPermOpen((v) => !v)}
             >
-              {permError ? <IconAlert size={13} /> : <IconShield size={13} />}
+              {permError ? <IconAlert size={13} /> : <IconKey size={13} />}
               <span className="nx-cbar-label">{permError ? "权限异常" : perm ? MODE_LABEL[perm.mode] : "权限"}</span>
             </button>
+            <PrivacyIndicator guard={privacyGuard} />
             <UsageRing
               usage={conv.usage}
               runs={conversationRuns}

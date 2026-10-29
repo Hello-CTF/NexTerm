@@ -22,24 +22,33 @@ export function usePrivacyGuard(): PrivacyGuardState {
   return state;
 }
 
+// The guard shows as a lone shield next to the usage ring; its wording lives in the tooltip and the accessible name.
 export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
   if (!guard.enabled) return null;
   if (!guard.broken) {
-    return <span className="nx-chip nx-chip-status shrink-0" role="status" title="已开启 AI 信息脱敏，文本中的敏感片段在发送前替换为占位符；图片不会脱敏" aria-label="脱敏已开启"><IconShieldCheck size={12} /><span className="nx-chip-text">脱敏已开启</span></span>;
+    return (
+      <span
+        className="nx-cbar-icon nx-privacy-icon is-on"
+        role="status"
+        title="脱敏已开启：文本中的敏感片段在发送前替换为占位符；图片不会脱敏"
+        aria-label="脱敏已开启"
+      >
+        <IconShieldCheck size={14} />
+      </span>
+    );
   }
   return (
     <button
       type="button"
-      className="nx-chip nx-chip-status is-error shrink-0"
+      className="nx-cbar-icon nx-privacy-icon is-error"
       aria-label="脱敏不可用"
-      title="本地脱敏模型不可用，AI 请求会被阻止。选择前往设置"
+      title="脱敏不可用：本地脱敏模型不可用，AI 请求会被阻止。点击前往设置"
       onClick={() => {
         useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
         showSettingsSection("settings-ai-privacy");
       }}
     >
-      <IconAlert size={12} />
-      <span className="nx-chip-text">脱敏不可用</span>
+      <IconAlert size={14} />
     </button>
   );
 }

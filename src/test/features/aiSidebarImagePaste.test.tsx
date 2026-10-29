@@ -257,10 +257,19 @@ describe("AiSidebar image paste and attachment", () => {
     view?.unmount();
     mocks.privacyEnabled = true;
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    await flushUntil(() => view!.container.querySelector('[aria-label="脱敏已开启"]') !== null);
     const button = view!.container.querySelector<HTMLButtonElement>('button[aria-label="添加图片"]')!;
     expect(button.disabled).toBe(false);
     expect(button.title).toContain("图片不会脱敏");
+    // The guard is a lone shield beside the usage ring, in the same group as the permission button; the permission
+    // button no longer borrows the shield.
+    const shield = view!.container.querySelector<HTMLElement>('[aria-label="脱敏已开启"]')!;
+    const permission = view!.container.querySelector<HTMLElement>("button.nx-cbar-btn[aria-expanded]")!;
+    expect(shield.parentElement).toBe(permission.parentElement);
+    expect(shield.parentElement).not.toBe(button.parentElement);
+    expect(shield.nextElementSibling?.querySelector("svg")).not.toBeNull();
+    expect(permission.innerHTML).not.toBe(shield.innerHTML);
+    expect(permission.querySelector("svg path[d]")?.getAttribute("d")).not.toBe(shield.querySelector("svg path[d]")?.getAttribute("d"));
     expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
 
     const event = dispatchPaste(view!, pasteDataTransfer([imageItem(png("guarded.png"))], []));
@@ -277,7 +286,7 @@ describe("AiSidebar image paste and attachment", () => {
     view?.unmount();
     resetPrivacyImageNoticeForTest();
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    await flushUntil(() => view!.container.querySelector('[aria-label="脱敏已开启"]') !== null);
     dispatchPaste(view!, pasteDataTransfer([imageItem(png("again.png"))], []));
     await flushUntil(() => view!.container.querySelectorAll(".nx-attach").length === 1);
     expect(view!.container.textContent).not.toContain(PRIVACY_IMAGE_NOTICE);
@@ -287,7 +296,7 @@ describe("AiSidebar image paste and attachment", () => {
     view?.unmount();
     mocks.privacyEnabled = true;
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
-    await flushUntil(() => view!.container.textContent?.includes("脱敏已开启") ?? false);
+    await flushUntil(() => view!.container.querySelector('[aria-label="脱敏已开启"]') !== null);
     dispatchPaste(view!, pasteDataTransfer([imageItem(png("ack.png"))], []));
     await flushUntil(() => view!.container.textContent?.includes(PRIVACY_IMAGE_NOTICE) ?? false);
     const ack = [...view!.container.querySelectorAll("button")].find((item) => item.textContent === "确定")!;

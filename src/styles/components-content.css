@@ -254,6 +254,17 @@
   .nx-chip-status {
     cursor: default;
   }
+  /* The redaction guard is a lone shield beside the usage ring; its wording is the tooltip. */
+  .nx-privacy-icon {
+    cursor: default;
+  }
+  .nx-privacy-icon.is-on {
+    color: var(--color-green-400);
+  }
+  .nx-privacy-icon.is-error {
+    cursor: pointer;
+    color: var(--color-red-400);
+  }
   button.nx-chip-status {
     cursor: pointer;
   }

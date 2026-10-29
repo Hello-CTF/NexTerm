@@ -37,14 +37,20 @@ describe("AI chat privacy indicator", () => {
   it("shows the guard is active", async () => {
     mocks.status.mockResolvedValue(status({}));
     mounted = mount(createElement(Probe));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("脱敏已开启"));
+    await waitForRendered(() => expect(mounted!.container.querySelector('[aria-label="脱敏已开启"]')).not.toBeNull());
+    // A lone shield: the wording is the tooltip, not text on the toolbar.
+    const shield = mounted.container.querySelector<HTMLElement>('[aria-label="脱敏已开启"]')!;
+    expect(shield.textContent).toBe("");
+    expect(shield.title).toContain("脱敏已开启");
+    expect(shield.querySelector("svg")).not.toBeNull();
   });
 
   it("links a broken guard to the privacy settings", async () => {
     mocks.status.mockResolvedValue(status({ selection: { available: false, error: "本地隐私模型文件缺失" } }));
     mounted = mount(createElement(Probe));
-    await waitForRendered(() => expect(mounted!.container.textContent).toContain("脱敏不可用"));
-    const link = [...mounted.container.querySelectorAll("button")].find((item) => item.textContent === "脱敏不可用")!;
+    await waitForRendered(() => expect(mounted!.container.querySelector('button[aria-label="脱敏不可用"]')).not.toBeNull());
+    const link = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="脱敏不可用"]')!;
+    expect(link.textContent).toBe("");
     click(link);
     expect(mocks.addTab).toHaveBeenCalledWith(expect.objectContaining({ kind: "settings" }));
     expect(mocks.show).toHaveBeenCalledWith("settings-ai-privacy");
@@ -54,6 +60,6 @@ describe("AI chat privacy indicator", () => {
     mocks.status.mockRejectedValue(new Error("forbidden"));
     mounted = mount(createElement(Probe));
     await waitForRendered(() => expect(mocks.status).toHaveBeenCalled());
-    expect(mounted.container.textContent).not.toContain("脱敏");
+    expect(mounted.container.querySelector('[aria-label^="脱敏"]')).toBeNull();
   });
 });
