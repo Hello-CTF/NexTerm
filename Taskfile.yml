@@ -150,13 +150,14 @@ tasks:
       - task: frontend
 
   check:scripts:
-    summary: Check database fixture discovery and version placeholders
+    summary: Check database fixture discovery, version placeholders and the Go test shard split
     env:
       GOFLAGS: '{{.GOFLAGS}}'
       SOURCE_DATE_EPOCH: '1'
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
+      - node --test .github/scripts/go-shards.test.mjs
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates

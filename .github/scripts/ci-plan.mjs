@@ -4,6 +4,11 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { selectNativeMatrix } from "./helper-matrix.mjs";
 
+// The Go tests are split into this many shards, each on its own runner. The race run costs about 3.5 times the plain
+// run, so it gets more shards; see .github/go-test-weights.json and .github/scripts/go-shards.mjs.
+export const PLAIN_UNIT_SHARDS = 3;
+export const RACE_UNIT_SHARDS = 5;
+
 export function planCI({ isPR, files = [], labels = [] }) {
   const full = isPR && labels.includes("full-ci");
   let go = full;
@@ -49,7 +54,9 @@ export function planCI({ isPR, files = [], labels = [] }) {
     group.kinds.push(target.kind);
     group.representative ||= target.representative === true;
   }
-  return { scope, matrix: { include: [...groups.values()] } };
+  const shardCount = scope.race ? RACE_UNIT_SHARDS : PLAIN_UNIT_SHARDS;
+  const unitMatrix = { include: Array.from({ length: shardCount }, (_, shard) => ({ shard, count: shardCount })) };
+  return { scope, matrix: { include: [...groups.values()] }, unitMatrix };
 }
 
 function main() {

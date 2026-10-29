@@ -53,6 +53,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       ort-version: ${{ steps.toolchain.outputs.ort_version }}
       native-matrix: ${{ steps.plan.outputs.matrix }}
+      unit-matrix: ${{ steps.plan.outputs.unitMatrix }}
       scope: ${{ steps.plan.outputs.scope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,12 +112,6 @@ jobs:
           cache: pnpm
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
-      - name: Frontend lint
-        if: fromJSON(needs.version.outputs.scope).frontendTests
-        run: pnpm lint
-      - name: Frontend unit tests and coverage
-        if: fromJSON(needs.version.outputs.scope).frontendTests
-        run: pnpm test:coverage
       - name: Reproducible real frontend
         run: node scripts/build.mjs frontend --repro-check
       - name: Upload the verified frontend dist and manifest
@@ -129,6 +124,91 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           overwrite: true
+
+  # Lint and the unit tests used to run inside the frontend job, so every native build waited for them although it only
+  # needs the built dist. They run beside it now; ci-ok still requires all of them.
+  frontend-lint:
+    name: Frontend lint
+    needs: version
+    if: fromJSON(needs.version.outputs.scope).frontendTests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Frontend lint
+        run: pnpm lint
+
+  # The unit tests run in shards. The coverage gate is per file, so a shard sees only part of each file's coverage:
+  # shards write blob reports with the thresholds off, and frontend-coverage merges them and enforces the gate.
+  frontend-test:
+    name: Frontend tests (${{ matrix.shard }}/4)
+    needs: version
+    if: fromJSON(needs.version.outputs.scope).frontendTests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run this shard of the frontend unit tests
+        run: >-
+          pnpm exec vitest run --coverage --shard=${{ matrix.shard }}/4 --reporter=blob
+          --coverage.thresholds.perFile=false --coverage.thresholds.lines=0 --coverage.thresholds.functions=0
+          --coverage.thresholds.branches=0 --coverage.thresholds.statements=0
+      - name: Upload this shard's report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-blob-${{ matrix.shard }}
+          path: .vitest/blob/
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
+  frontend-coverage:
+    name: Frontend coverage gate
+    needs: [version, frontend-test]
+    if: fromJSON(needs.version.outputs.scope).frontendTests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+          cache: pnpm
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download the shard reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: vitest-blob-*
+          merge-multiple: true
+          path: .vitest/blob
+      - name: Merge the shard reports and enforce the coverage gate
+        run: pnpm exec vitest run --merge-reports --coverage
 
   quality:
     name: Go/Wails quality gates
@@ -165,13 +245,19 @@ jobs:
         run: go vet ./...
 
   unit:
-    name: Go tests
+    # The packages are split across runners by measured test time (.github/go-test-weights.json), so the job takes
+    # about as long as its slowest package instead of the sum of all of them.
+    name: Go tests (${{ matrix.shard + 1 }}/${{ matrix.count }})
     needs: version
     if: fromJSON(needs.version.outputs.scope).unit
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.version.outputs.unit-matrix) }}
     env:
       RACE_PACKAGE_PARALLELISM: "4"
+      RACE: ${{ fromJSON(needs.version.outputs.scope).race }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -183,16 +269,39 @@ jobs:
       - uses: ./.github/actions/go-toolchain
         with:
           build-cache: ${{ fromJSON(needs.version.outputs.scope).race && 'test-race' || 'test' }}
-      - name: Run all Go tests
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Pick the packages of this shard
+        id: shard
+        run: |
+          flags=(--shard "${{ matrix.shard }}" --count "${{ matrix.count }}")
+          if [ "$RACE" = "true" ]; then flags+=(--race); fi
+          node .github/scripts/go-shards.mjs "${flags[@]}" >> "$GITHUB_OUTPUT"
+      - name: Run this shard's Go tests
         if: ${{ !fromJSON(needs.version.outputs.scope).race }}
-        run: go test -count=1 ./...
-      - name: Run all Go tests with the race detector (full-ci)
+        env:
+          PACKAGES: ${{ steps.shard.outputs.plain }}
+        run: go test -count=1 $PACKAGES
+      - name: Run this shard's Go tests with the race detector (full-ci)
         if: fromJSON(needs.version.outputs.scope).race
+        env:
+          RACE_PACKAGES: ${{ steps.shard.outputs.race }}
+          PLAIN_PACKAGES: ${{ steps.shard.outputs.plain }}
         # Keep in sync with the Taskfile test:race task: checkptr is skipped
         # only in the transpiled SQLite driver; race instrumentation stays on.
-        run: go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} ./...
+        # Build and release tooling is tested without the race detector (see go-shards.mjs).
+        run: |
+          status=0
+          if [ -n "$RACE_PACKAGES" ]; then
+            go test -race -count=1 -timeout=25m '-gcflags=modernc.org/...=-d=checkptr=0' -p=${RACE_PACKAGE_PARALLELISM} $RACE_PACKAGES || status=$?
+          fi
+          if [ -n "$PLAIN_PACKAGES" ]; then
+            go test -count=1 $PLAIN_PACKAGES || status=$?
+          fi
+          exit $status
       - name: Run terminal workloads that intentionally skip race instrumentation
-        if: fromJSON(needs.version.outputs.scope).race
+        if: ${{ fromJSON(needs.version.outputs.scope).race && matrix.shard == 0 }}
         run: go test -count=1 ./internal/terminal -run '^(TestThroughputAcceptanceWorkload|TestHighVolumeFeedMemoryBounded)$'
 
   database:
@@ -751,6 +860,9 @@ jobs:
     needs:
       - version
       - frontend
+      - frontend-lint
+      - frontend-test
+      - frontend-coverage
       - quality
       - unit
       - database
@@ -780,6 +892,9 @@ jobs:
               unit: !scope.unit,
               database: !scope.database,
               frontend: !scope.frontend,
+              "frontend-lint": !scope.frontendTests,
+              "frontend-test": !scope.frontendTests,
+              "frontend-coverage": !scope.frontendTests,
               native: !scope.native,
               "mobile-compile": !scope.mobile,
               mobile: event === "pull_request",
