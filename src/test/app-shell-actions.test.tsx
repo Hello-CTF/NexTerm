@@ -1289,6 +1289,33 @@ describe("App shell notification layout", () => {
     expectShellOrder(["header", "workspace-body"]);
   });
 
+  it("paints its own window buttons at the top left on macOS, where the frameless window hides the native ones", async () => {
+    envState.transport = "desktop";
+    setMacPlatform(true);
+    try {
+      mounted = mountApp();
+      await flush();
+
+      const controls = mounted.container.querySelector<HTMLElement>(".nx-mac-controls");
+      expect(controls).not.toBeNull();
+      // The header keeps its right side free: the three buttons are not repeated there.
+      expect(mounted.container.querySelector(".nx-app-header")?.querySelector('button[aria-label="关闭窗口"]')).toBeNull();
+      for (const [label, action] of [
+        ["关闭窗口", mocks.closeWindow],
+        ["最小化窗口", mocks.minimiseWindow],
+        ["最大化或还原窗口", mocks.toggleMaximiseWindow],
+      ] as const) {
+        const button = controls?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+        if (!button) throw new Error(`Window control not found: ${label}`);
+        expect(button.style.getPropertyValue("--wails-draggable")).toBe("no-drag");
+        click(button);
+        expect(action).toHaveBeenCalledTimes(1);
+      }
+    } finally {
+      setMacPlatform(false);
+    }
+  });
+
   it("keeps desktop window controls interactive and outside notification hit regions", async () => {
     envState.transport = "desktop";
     Object.assign(mocks.banners, { takeover: true, update: true, dek: true });
