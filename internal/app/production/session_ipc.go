@@ -1208,13 +1208,16 @@ func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.
 		return s.sessions.BackgroundTab(ctx, input.TabID, call.ClientID)
 	}
 	if input.Mode == "kill" {
-		return s.sessions.CloseTabFor(ctx, input.TabID)
+		return s.sessions.KillTabFor(ctx, input.TabID)
 	}
 	tab, err := s.sessions.TabFor(ctx, input.TabID)
 	if err != nil {
 		return err
 	}
 	if tab.Info().Exited {
+		// CloseTabFor only ends the host process when the host reported the
+		// exit; a tab left exited by a lost connection is released and its
+		// process keeps running.
 		return s.sessions.CloseTabFor(ctx, input.TabID)
 	}
 	connected, err := s.sessions.SessionFor(ctx, tab.SessionID)

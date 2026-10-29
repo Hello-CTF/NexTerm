@@ -82,6 +82,9 @@ type Manager struct {
 	sweepInterval    time.Duration
 	reconnectMax     int
 	reconnectBackoff []time.Duration
+	// failedRetryMax caps the delay between background retries of a Failed
+	// session that still holds durable terminals.
+	failedRetryMax time.Duration
 	// jitter returns a uniform sample in [0, 1) for reconnect backoff.
 	jitter            func() float64
 	livenessPolicy    LivenessPolicy
@@ -163,6 +166,9 @@ func NewManager(config Config) *Manager {
 	}
 	if len(manager.reconnectBackoff) == 0 {
 		manager.reconnectBackoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second}
+	}
+	if manager.failedRetryMax <= 0 {
+		manager.failedRetryMax = 5 * time.Minute
 	}
 	if manager.defaultReplay <= 0 {
 		manager.defaultReplay = 4 << 20

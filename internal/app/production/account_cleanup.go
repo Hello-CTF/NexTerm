@@ -463,7 +463,7 @@ func (p *Production) cleanupAccountDeviceSnapshot(ctx context.Context, ownerID s
 	ownerCtx := ipc.WithUserID(ctx, ownerID)
 	for _, info := range snapshot {
 		for _, tabID := range info.Tabs {
-			err := p.Services.Sessions.CloseTabFor(ownerCtx, tabID)
+			err := p.Services.Sessions.KillTabFor(ownerCtx, tabID)
 			if err != nil && !errors.Is(err, session.ErrTabNotFound) && !errors.Is(err, session.ErrSessionNotFound) {
 				slog.Warn("close account device terminal", "session", info.ID, "tab", tabID, "error", err)
 			}

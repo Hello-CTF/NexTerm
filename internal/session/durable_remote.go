@@ -666,6 +666,7 @@ func (m *Manager) RecoverRemoteDurable(ctx context.Context, tabID string, option
 // RecoverRemoteDurableInSessions restricts discovery to session IDs already
 // authorized by the caller. A nil list searches all manager sessions.
 func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID string, options OpenTabOptions, sessionIDs []string) (TabInfo, error) {
+	m.reclaimStaleLocalTab(ctx, tabID)
 	infos := m.ListSessions()
 	if options.SessionID != "" {
 		if sessionIDs != nil {
@@ -715,8 +716,15 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		descriptor base.DurableDescriptor
 	}
 	var matches []match
+	// skipped hosts could not be searched; they only matter when nothing was
+	// found, because "not found" would then be an unreliable answer.
+	var skipped []error
 	for _, info := range infos {
-		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) {
+			continue
+		}
+		if info.Status != StatusConnected {
+			skipped = append(skipped, ErrDisconnected)
 			continue
 		}
 		session, err := m.Session(info.ID)
@@ -756,8 +764,8 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		return TabInfo{}, errors.Join(searchErrs...)
 	}
 	if len(matches) == 0 {
-		if len(searchErrs) > 0 {
-			return TabInfo{}, errors.Join(searchErrs...)
+		if len(searchErrs)+len(skipped) > 0 {
+			return TabInfo{}, errors.Join(append(searchErrs, skipped...)...)
 		}
 		return TabInfo{}, ErrTabNotFound
 	}
@@ -779,7 +787,7 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 // The caller must supply session IDs authorized for the requesting user.
 func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, sessionIDs []string) ([]string, error) {
 	owners := make([]string, 0)
-	var searchErrs []error
+	var searchErrs, skipped []error
 	for _, id := range sessionIDs {
 		session, err := m.SessionFor(ctx, id)
 		if err != nil {
@@ -787,7 +795,11 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 			continue
 		}
 		info := session.Info()
-		if !m.durableHostKind(info.Kind) || info.Status != StatusConnected {
+		if !m.durableHostKind(info.Kind) {
+			continue
+		}
+		if info.Status != StatusConnected {
+			skipped = append(skipped, ErrDisconnected)
 			continue
 		}
 		if _, err := m.terminalModeFor(ctx, session); err != nil {
@@ -817,6 +829,9 @@ func (m *Manager) RemoteDurableOwners(ctx context.Context, tabID string, session
 	}
 	if len(searchErrs) > 0 && (len(owners) == 0 || !onlyHelperUnavailable(searchErrs)) {
 		return nil, errors.Join(searchErrs...)
+	}
+	if len(owners) == 0 && len(skipped) > 0 {
+		return nil, errors.Join(append(searchErrs, skipped...)...)
 	}
 	return owners, nil
 }
@@ -1079,4 +1094,30 @@ func (t *Tab) addDurableFed(count int64) {
 		t.durableFed += count
 	}
 	t.mu.Unlock()
+}
+
+// reclaimStaleLocalTab releases a leftover local record of a durable tab that
+// nobody watches and that cannot serve its terminal any more (exited without
+// a host-confirmed exit, or bound to a session that failed or disconnected).
+// Its host process may still run, and a record under the same ID would make
+// recovering it fail with ErrTabExists. Tabs of a connected or reconnecting
+// session, or with subscribers, are left alone.
+func (m *Manager) reclaimStaleLocalTab(ctx context.Context, tabID string) {
+	m.mu.Lock()
+	tab := m.tabs[tabID]
+	m.mu.Unlock()
+	if tab == nil {
+		return
+	}
+	tab.session.mu.Lock()
+	status := tab.session.status
+	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx)) || m.requestOpenAccess(ctx)
+	tab.session.mu.Unlock()
+	tab.mu.Lock()
+	stale := tab.durable != nil && len(tab.subscribers) == 0 && !tab.closed && !tab.destroying &&
+		(tab.exited && !tab.exitConfirmed || status == StatusFailed || status == StatusDisconnected)
+	tab.mu.Unlock()
+	if stale && allowed {
+		_ = m.closeTab(tab, false)
+	}
 }

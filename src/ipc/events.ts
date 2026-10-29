@@ -1,5 +1,6 @@
 import { noteEvent } from "./probeHooks";
 import { WEB } from "./env";
+import { reportInputFailure } from "./inputFailure";
 import {
   newBinaryChannel,
   onChannelReopen as onWsChannelReopen,
@@ -74,6 +75,10 @@ export interface TerminalControlEvent {
   subscribers: number;
   viewers: number;
   exited: boolean;
+  // Proof of an ended process (exit status) or of a lost durable terminal; an exit without either is unconfirmed.
+  exitCode?: number | null;
+  exitConfirmed?: boolean;
+  durableLost?: boolean;
   cols: number;
   rows: number;
   gridRevision: number;
@@ -361,7 +366,7 @@ export function sendChannelInput(
     return;
   }
   if (id === undefined) {
-    void http(data).catch(() => undefined);
+    void http(data).catch((error) => reportInputFailure(tabId, error));
     return;
   }
   sendWsChannelInput(id, tabId, data, http);
@@ -391,7 +396,7 @@ function sendDesktopInput(tabId: string, data: Uint8Array, http: (data: Uint8Arr
   void (async () => {
     let next: Uint8Array | null = data;
     while (next) {
-      await http(next).catch(() => undefined);
+      await http(next).catch((error) => reportInputFailure(tabId, error));
       next = chunks.length > 0 ? mergeInput(chunks.splice(0)) : null;
     }
     desktopInput.delete(tabId);

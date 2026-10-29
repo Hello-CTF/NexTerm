@@ -5,6 +5,7 @@ import { dirtyFileEditors } from "../../features/files/editorGuards";
 import { runningAiTabs as getRunningAiTabs, type AiCloseTab } from "../../features/ai/runOwnership";
 import { getTerminalPrefs, setTerminalCloseAction, type TerminalCloseAction } from "../preferences";
 import { GLOBAL_AI_BOARD_KEY } from "./model";
+import { isUnconfirmedDurableExit } from "./durableExit";
 import { findTab } from "./tabActions";
 import type { AppTab, CloseTabReport, SqlDraft, WorkspaceKind } from "./types";
 import { useUi } from "./useUi";
@@ -80,6 +81,8 @@ export interface WorkspaceCloseSummary extends ClosePreferencePlan {
   blocked: AppTab[];
   blockedKinds: string;
   cleanup: AppTab[];
+  // Exited durable terminals with no proof the process ended: they may still run on the host, so they are detached.
+  unconfirmed: AppTab[];
   dbConnIds: string[];
   hasSqlDraft: boolean;
   sqlDraft?: SqlDraft;
@@ -151,7 +154,8 @@ export function collectWorkspaceClose(
     confirmBlocked: false,
     blocked,
     blockedKinds,
-    cleanup: tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited),
+    cleanup: tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited && !isUnconfirmedDurableExit(t)),
+    unconfirmed: tabs.filter((t) => Boolean(t.tabId) && isUnconfirmedDurableExit(t)),
     dbConnIds: [
       ...new Set(tabs.filter((t) => t.kind === "db" && t.connId).map((t) => t.connId as string)),
     ],
@@ -175,7 +179,8 @@ export async function confirmWorkspaceClose(
     summary.confirmBlocked = false;
   } else if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
-  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0) return true;
+  const unconfirmed = summary.unconfirmed.length;
+  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0 && unconfirmed === 0) return true;
   const lines: string[] = [];
   if (summary.dirty.length > 0) {
     lines.push(
@@ -197,6 +202,9 @@ export async function confirmWorkspaceClose(
   if (summary.detachable.length > 0) {
     lines.push(`· ${summary.detachable.length} 个运行中的终端将转入后台`);
   }
+  if (unconfirmed > 0) {
+    lines.push(`· ${unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台会话`);
+  }
   const { ask } = await import("../../ui/dialogs");
   return ask(`${lines.join("\n")}\n仍要继续？`, { title: `关闭「${title}」`, kind: "warning" });
 }
@@ -204,6 +212,7 @@ export async function confirmWorkspaceClose(
 export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<WorkspaceCloseOutcome> {
   const operations: { tab: AppTab; mode?: "kill" | "detach" }[] = [
     ...summary.detachable.map((tab) => ({ tab, mode: "detach" as const })),
+    ...summary.unconfirmed.map((tab) => ({ tab, mode: "detach" as const })),
     ...summary.preferredKills.map((tab) => ({ tab, mode: "kill" as const })),
     ...summary.blocked.map((tab) => ({ tab, mode: "kill" as const })),
     ...summary.cleanup.map((tab) => ({ tab, mode: undefined })),
@@ -221,7 +230,7 @@ export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Pro
     : [];
   void useUi.getState().resyncSessions({ silent: true });
   const dbFailed = dbResults.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-  const killStart = summary.detachable.length;
+  const killStart = summary.detachable.length + summary.unconfirmed.length;
   const killEnd = killStart + summary.preferredKills.length + summary.blocked.length;
   return {
     detached: results.filter((r, i) => r.ok && i < killStart).length,
@@ -275,6 +284,7 @@ export function closeActionHint(t: AppTab): string | undefined {
 
 export function closeTabHint(t: AppTab): string {
   if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签页";
+  if (isUnconfirmedDurableExit(t)) return "关闭标签页（转入后台会话）";
   if (t.exited) return "关闭标签页（进程已结束）";
   const action = closeActionHint(t);
   return action ? `关闭标签页（${action}）` : "关闭标签页";
@@ -380,7 +390,7 @@ export async function reconcileTerminalCloseState(ids: string[]): Promise<void> 
   const remoteSessions = [...new Set(candidates.filter((tab) => {
     const kind = useUi.getState().sessions.find((session) => session.id === tab.sessionId)?.kind
       ?? findTab(tab.id)?.ws.assetKind;
-    return !byId.has(tab.tabId as string) && !tab.containerId && kind === "ssh" && tab.sessionId;
+    return !byId.has(tab.tabId as string) && !tab.containerId && (kind === "ssh" || kind === "device") && tab.sessionId;
   }).map((tab) => tab.sessionId as string))];
   const results = await Promise.allSettled(remoteSessions.map((id) => terminalApi.listDurable(id)));
   const remote = new Map(remoteSessions.map((id, index) => {
@@ -397,19 +407,18 @@ export async function reconcileTerminalCloseState(ids: string[]): Promise<void> 
     const found = findTab(candidate.id);
     const kind = useUi.getState().sessions.find((session) => session.id === candidate.sessionId)?.kind
       ?? found?.ws.assetKind;
-    if (!candidate.containerId && kind === "device") {
-      useUi.getState().updateTab(candidate.id, { exited: undefined });
-      continue;
-    }
-    if (!candidate.containerId && kind === "ssh") {
+    if (!candidate.containerId && (kind === "ssh" || kind === "device")) {
       const descriptors = remote.get(candidate.sessionId as string);
       if (!descriptors) {
-        useUi.getState().updateTab(candidate.id, { exited: undefined });
+        // The host cannot be checked (not connected or the listing failed): a device tab keeps its state, and an
+        // exited durable one is closed by detaching, never by killing.
+        if (kind !== "device") useUi.getState().updateTab(candidate.id, { exited: undefined });
         continue;
       }
       const descriptor = descriptors.get(candidate.tabId as string);
       if (descriptor) {
-        useUi.getState().updateTab(candidate.id, { exited: descriptor.dead });
+        // A dead helper descriptor is proof the process ended.
+        useUi.getState().updateTab(candidate.id, { exited: descriptor.dead, ...(descriptor.dead ? { durableLost: true } : {}) });
         continue;
       }
     }

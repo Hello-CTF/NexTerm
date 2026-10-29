@@ -51,7 +51,8 @@ import type { BroadcastEnvironmentConfirmation, BroadcastProductionChallenge } f
 import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type TerminalThrottledEvent } from "../../ipc/events";
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { reattachLostTabs } from "./backgroundSessionsAccess";
+import { openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, findTab, isUnconfirmedDurableExit, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -378,6 +379,34 @@ export function TerminalPane({
   const paneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
+  const exitedMayRun = useUi((s) => {
+    for (const w of s.workspaces) for (const p of w.panes) {
+      const t = p.tabs.find((x) => x.id === storeTabId);
+      if (t) return isUnconfirmedDurableExit(t) && !t.containerId;
+    }
+    return false;
+  });
+  const [reattaching, setReattaching] = useState(false);
+  const reattachExited = useCallback(async () => {
+    setReattaching(true);
+    try {
+      const outcome = await reattachLostTabs([storeTabId]);
+      if (outcome.failed > 0) useUi.getState().pushToast("error", `未能重新接管：${outcome.error ?? "未知错误"}`);
+    } finally {
+      setReattaching(false);
+    }
+  }, [storeTabId]);
+  const openBackgroundSessions = useCallback(() => {
+    if (!sessionId) return;
+    const found = findTab(storeTabId);
+    useUi.getState().addTab({
+      id: `background-${found?.ws.id ?? sessionId}`,
+      kind: "background",
+      title: "后台会话",
+      sessionId,
+      closable: true,
+    });
+  }, [sessionId, storeTabId]);
   const reconnectBtnRef = useRef<HTMLButtonElement>(null);
   const reconnectBusyRef = useRef(false);
   const switchingTimerRef = useRef<number | null>(null);
@@ -792,7 +821,12 @@ export function TerminalPane({
       viewers: p.viewers,
       exited: p.exited,
     });
-    useUi.getState().updateTab(storeTabId, { exited: p.exited });
+    useUi.getState().updateTab(storeTabId, {
+      exited: p.exited,
+      ...(p.exitCode !== undefined ? { exitCode: p.exitCode } : {}),
+      ...(p.exitConfirmed !== undefined ? { exitConfirmed: p.exitConfirmed } : {}),
+      ...(p.durableLost !== undefined ? { durableLost: p.durableLost } : {}),
+    });
     if (p.gridRevision > 0) {
       setRemoteGrid({ cols: p.cols, rows: p.rows, revision: p.gridRevision });
     }
@@ -2542,19 +2576,38 @@ export function TerminalPane({
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconEye size={15} className="nx-term-overlay-warn text-amber-300" />
-                终端进程已结束
+                {exitedMayRun ? "终端连接已中断" : "终端进程已结束"}
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
-                只能查看最后的终端输出。请新建终端继续操作
+                {exitedMayRun
+                  ? "主机上的进程可能仍在运行。可重新接管该终端，或在后台会话中查看"
+                  : "只能查看最后的终端输出。请新建终端继续操作"}
               </span>
-              <button
-                ref={exitedCloseBtnRef}
-                className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
-                onClick={() => void requestCloseTab(storeTabId)}
-              >
-                <IconClose size={13} />
-                关闭标签页
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                {exitedMayRun && (
+                  <>
+                    <button
+                      className="nx-btn nx-btn-primary nx-btn-sm pointer-events-auto"
+                      disabled={reattaching}
+                      onClick={() => void reattachExited()}
+                    >
+                      <IconRefresh size={13} className={reattaching ? "animate-spin" : undefined} />
+                      重新接管
+                    </button>
+                    <button className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto" onClick={openBackgroundSessions}>
+                      在后台会话中查看
+                    </button>
+                  </>
+                )}
+                <button
+                  ref={exitedCloseBtnRef}
+                  className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto"
+                  onClick={() => void requestCloseTab(storeTabId)}
+                >
+                  <IconClose size={13} />
+                  关闭标签页
+                </button>
+              </div>
             </div>
           )}
 

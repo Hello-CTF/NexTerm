@@ -5,6 +5,7 @@ import {
   fileEditorCaseInsensitive,
   unknownFileEditorRename,
 } from "../../features/files/editorGuards";
+import { isUnconfirmedDurableExit } from "./durableExit";
 import { moveItem } from "../tabReorder";
 import { clearTabUnread } from "../unreadStore";
 import { closedTabEntryFromTab, useClosedTabs } from "../closedTabs";
@@ -170,7 +171,7 @@ export function createTabSlice(set: UiSet, get: UiGet) {
           remote = !target.containerId && (kind === "ssh" || kind === "device");
           // A regular remote PTY ends with its connection and can never run in the background, whatever was asked.
           regularRemote = remote && (target.durable === false || (target.durable === undefined && target.retainable === false));
-          closeMode = regularRemote && target.exited !== true ? "kill" : (mode ?? (remote && target.exited !== true ? "detach" : undefined));
+          closeMode = regularRemote && target.exited !== true ? "kill" : (mode ?? (remote && (target.exited !== true || isUnconfirmedDurableExit(target)) ? "detach" : undefined));
           if (remote) {
             try {
               await terminalApi.closeTab(tabId, closeMode, target.sessionId);

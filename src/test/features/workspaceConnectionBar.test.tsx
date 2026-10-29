@@ -8,7 +8,13 @@ const mocks = vi.hoisted(() => ({
   reconnect: vi.fn(async (_id: string) => true),
   probe: vi.fn(async (_id: string) => undefined),
   confirm: vi.fn(async (_message: string) => true),
+  reattach: vi.fn(async (_ids: string[]) => ({ taken: 1, failed: 0 })),
 }));
+
+vi.mock("../../features/terminal/backgroundSessionsAccess", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../features/terminal/backgroundSessionsAccess")>();
+  return { ...original, reattachLostTabs: mocks.reattach };
+});
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../ipc/commands")>();
@@ -82,6 +88,42 @@ describe("WorkspaceConnectionBar", () => {
     mounted?.unmount();
     renderBar(workspace([filesTab]), filesTab);
     expect(bar()).not.toBeNull();
+  });
+
+  describe("durable terminals that lost their attachment", () => {
+    const lostTab = (id: string, extra: Partial<AppTab> = {}) =>
+      ({ ...termTab, id, tabId: `k-${id}`, durable: true, exited: true, ...extra }) as AppTab;
+
+    it("counts exited durable terminals without proof and offers to take them over or list them", async () => {
+      useUi.setState({ sessions: [session("connected")] });
+      const tabs = [lostTab("a"), lostTab("b", { durableLost: true, exited: undefined }), lostTab("c", { exitCode: 0 }), filesTab];
+      renderBar(workspace(tabs), filesTab);
+      expect(bar()?.getAttribute("data-state")).toBe("terminals-lost");
+      expect(bar()?.textContent).toContain("2 个终端连接丢失");
+      clickButton(mounted!.container, "重新接管");
+      await flush();
+      expect(mocks.reattach).toHaveBeenCalledWith(["a", "b"]);
+    });
+
+    it("opens the background sessions page from the banner", () => {
+      useUi.setState({ sessions: [session("connected")] });
+      const ws = workspace([lostTab("a"), lostTab("b"), filesTab]);
+      useUi.setState({ workspaces: [ws], activeWorkspaceId: ws.id });
+      renderBar(ws, filesTab);
+      clickButton(mounted!.container, "在后台会话中查看");
+      const opened = useUi.getState().workspaces[0].panes.flatMap((pane) => pane.tabs).find((tab) => tab.kind === "background");
+      expect(opened?.sessionId).toBe("s1");
+    });
+
+    it("stays out of the way when the only lost terminal is the active tab (its pane has the actions) or none are lost", () => {
+      useUi.setState({ sessions: [session("connected")] });
+      const only = lostTab("a");
+      renderBar(workspace([only]), only);
+      expect(bar()).toBeNull();
+      mounted?.unmount();
+      renderBar(workspace([lostTab("c", { exitCode: 1 }), filesTab]), filesTab);
+      expect(bar()).toBeNull();
+    });
   });
 
   it("is absent while connected", () => {

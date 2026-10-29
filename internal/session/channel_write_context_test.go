@@ -97,9 +97,9 @@ func TestManagerWriteWithoutContextCapabilityKeepsBlockingBehavior(t *testing.T)
 }
 
 // Channel write failures are converted to session sentinels: a
-// disconnected channel surfaces as ErrDisconnected and a remotely closed
-// durable stream as ErrTabClosed, while caller cancellation passes through
-// with its cause.
+// disconnected or closed channel surfaces as ErrDisconnected (our own pump
+// closes the stream on reconnect, so a closed stream is recoverable) and a
+// process the host reported as exited as ErrTabClosed.
 func TestManagerWriteConvertsChannelErrors(t *testing.T) {
 	cases := []struct {
 		name string
@@ -107,7 +107,8 @@ func TestManagerWriteConvertsChannelErrors(t *testing.T) {
 		want error
 	}{
 		{"disconnected", base.ErrDisconnected, ErrDisconnected},
-		{"stream closed", supervisor.ErrClosed, ErrTabClosed},
+		{"stream closed", supervisor.ErrClosed, ErrDisconnected},
+		{"process exited", supervisor.ErrExited, ErrTabClosed},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

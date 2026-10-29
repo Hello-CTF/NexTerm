@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -36,19 +38,31 @@ func writeChannelContext(ctx context.Context, channel *channelHandle, data []byt
 		}
 		return nil
 	}
-	return writeAll(channel, data)
+	if err := writeAll(channel, data); err != nil {
+		return convertChannelWriteError(err)
+	}
+	return nil
 }
 
 // convertChannelWriteError maps channel write failures onto session
-// sentinels: a disconnected channel surfaces as ErrDisconnected and a
-// remotely closed durable stream as ErrTabClosed; caller cancellation and
-// every other failure pass through with their evidence intact.
+// sentinels. A write that fails because the stream or connection is closed,
+// cancelled or cut mid-frame is a transport failure the tab recovers from by
+// reattaching, so it surfaces as ErrDisconnected: our own pump closes the
+// stream when it hands over to a reconnect, which is indistinguishable from a
+// remote close here. Only a process the host reports as exited is a finished
+// terminal (ErrTabClosed); callers that destroyed the tab report ErrTabClosed
+// before they write.
 func convertChannelWriteError(err error) error {
 	switch {
 	case errors.Is(err, base.ErrDisconnected):
 		return ErrDisconnected
-	case errors.Is(err, durable.ErrClosed), errors.Is(err, supervisor.ErrClosed):
+	case errors.Is(err, durable.ErrExited), errors.Is(err, supervisor.ErrExited):
 		return ErrTabClosed
+	case errors.Is(err, durable.ErrClosed), errors.Is(err, supervisor.ErrClosed),
+		errors.Is(err, base.ErrClosed), errors.Is(err, net.ErrClosed), errors.Is(err, io.ErrClosedPipe),
+		errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF),
+		errors.Is(err, context.Canceled):
+		return fmt.Errorf("%w: %w", ErrDisconnected, err)
 	}
 	return err
 }

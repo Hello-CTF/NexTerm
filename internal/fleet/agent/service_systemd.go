@@ -130,6 +130,8 @@ func renderSystemdUnit(executable, dataDir string, commandPrefix ...string) stri
 		"ExecStart=" + command + "\n" +
 		"Restart=on-failure\n" +
 		"RestartSec=5\n" +
+		// Stop and restart must not take the setsid helpers (durable terminals) down with the agent.
+		"KillMode=process\n" +
 		"RestartPreventExitStatus=" + fmt.Sprintf("%d %d", ExitRevoked, ExitProtocol) + "\n" +
 		"\n" +
 		"[Install]\n" +

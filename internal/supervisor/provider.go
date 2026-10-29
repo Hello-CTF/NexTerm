@@ -17,6 +17,9 @@ func translateError(err error) error {
 		return err
 	}
 	switch {
+	case errors.Is(err, base.ErrDisconnected):
+		// A transport failure outranks any sentinel it was joined with.
+		return err
 	case errors.Is(err, ErrNotFound):
 		return durable.ErrNotFound
 	case errors.Is(err, ErrAlreadyExists):

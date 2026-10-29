@@ -14,6 +14,7 @@ package device
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync/atomic"
 	"time"
@@ -39,6 +40,12 @@ type Transport struct {
 	generation uint64
 	platform   string
 	closed     atomic.Bool
+	// lost is set once a heartbeat failed definitively (the bridge cannot be
+	// dialed or answered with an error rather than timing out); IsAlive then
+	// reports false so the session reconnects.
+	lost atomic.Bool
+	// inbound counts bytes read from every bridge this transport dialed.
+	inbound atomic.Uint64
 }
 
 // New builds the device transport; platform is the agent's GOOS when known ("windows" selects the
@@ -54,7 +61,7 @@ func New(deviceID, digest string, dial DialFunc, generation uint64, platform ...
 func (t *Transport) DeviceID() string   { return t.deviceID }
 func (t *Transport) Kind() string       { return "device" }
 func (t *Transport) Generation() uint64 { return t.generation }
-func (t *Transport) IsAlive() bool      { return !t.closed.Load() }
+func (t *Transport) IsAlive() bool      { return !t.closed.Load() && !t.lost.Load() }
 
 // Platform returns the agent's GOOS when known (empty means unknown, POSIX default).
 func (t *Transport) Platform() string { return t.platform }
@@ -101,6 +108,64 @@ func (t *Transport) Ping(ctx context.Context) (time.Duration, error) {
 	return time.Since(start), nil
 }
 
+// heartbeatTimeout bounds one heartbeat when the caller's context has no
+// shorter deadline.
+const heartbeatTimeout = 10 * time.Second
+
+// Heartbeat checks that the device still answers with one supervisor list
+// round-trip over a fresh terminal bridge. A reply that does not arrive in
+// time is returned as context.DeadlineExceeded (a missed beat, not a verdict);
+// any other failure means the bridge is unreachable and marks the transport
+// not alive.
+func (t *Transport) Heartbeat(ctx context.Context) error {
+	if t.closed.Load() {
+		return base.ErrDisconnected
+	}
+	ctx, cancel := context.WithTimeout(ctx, heartbeatTimeout)
+	defer cancel()
+	// A stalled bridge can block a frame write that ignores ctx, so the
+	// connection is closed when the heartbeat's deadline passes.
+	client := supervisor.NewRemoteClient(func(dialCtx context.Context) (net.Conn, error) {
+		conn, err := t.dial(dialCtx, deviceproto.PurposeTerminal)
+		if err != nil {
+			return nil, err
+		}
+		context.AfterFunc(ctx, func() { _ = conn.Close() })
+		return countingConn{Conn: conn, counter: &t.inbound}, nil
+	}, t.digest)
+	_, err := client.List(ctx)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
+	t.lost.Store(true)
+	if errors.Is(err, base.ErrDisconnected) {
+		return err
+	}
+	return fmt.Errorf("%w: %v", base.ErrDisconnected, err)
+}
+
+// InboundBytes is the running count of bytes received from the device.
+func (t *Transport) InboundBytes() uint64 { return t.inbound.Load() }
+
+type countingConn struct {
+	net.Conn
+	counter *atomic.Uint64
+}
+
+func (c countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if n > 0 {
+		c.counter.Add(uint64(n))
+	}
+	return n, err
+}
+
 func (t *Transport) Close() error {
 	t.closed.Store(true)
 	return nil
@@ -114,12 +179,17 @@ func (t *Transport) Provider() *supervisor.RemoteProvider {
 
 func (t *Transport) client() *supervisor.Client {
 	return supervisor.NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
-		return t.dial(ctx, deviceproto.PurposeTerminal)
+		conn, err := t.dial(ctx, deviceproto.PurposeTerminal)
+		if err != nil {
+			return nil, err
+		}
+		return countingConn{Conn: conn, counter: &t.inbound}, nil
 	}, t.digest)
 }
 
 var (
 	_ base.Transport     = (*Transport)(nil)
+	_ base.Heartbeater   = (*Transport)(nil)
 	_ base.FileTransport = (*Transport)(nil)
 	_ base.Dialer        = (*Transport)(nil)
 )

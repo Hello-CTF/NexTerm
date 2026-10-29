@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -55,6 +57,8 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.CodeNotFound, userMessage(err), err)
 	case errors.Is(err, ErrDisconnected), errors.Is(err, base.ErrDisconnected), errors.Is(err, ErrSessionClosed), errors.Is(err, ErrTabClosed):
 		return ipc.WrapError(ipc.CodeDisconnected, userMessage(err), err)
+	case errors.Is(err, base.ErrClosed), errors.Is(err, net.ErrClosed), errors.Is(err, io.ErrClosedPipe), errors.Is(err, io.ErrUnexpectedEOF):
+		return ipc.WrapError(ipc.CodeDisconnected, "会话已断开，请重新连接", err)
 	case errors.Is(err, ErrDurableDisabled):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
 	case errors.Is(err, supervisor.ErrHelperUpgradeRequired):

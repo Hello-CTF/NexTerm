@@ -88,7 +88,7 @@ func TestSystemdManagerInstallStatusUninstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"ExecStart=\"/opt/nexterm/nexterm-desktop\" run --data-dir \"/var/lib/nexterm\"", "Restart=on-failure", "WantedBy=default.target", "RestartPreventExitStatus=3 4"} {
+	for _, expected := range []string{"ExecStart=\"/opt/nexterm/nexterm-desktop\" run --data-dir \"/var/lib/nexterm\"", "Restart=on-failure", "KillMode=process", "WantedBy=default.target", "RestartPreventExitStatus=3 4"} {
 		if !strings.Contains(string(unit), expected) {
 			t.Fatalf("unit missing %q:\n%s", expected, unit)
 		}

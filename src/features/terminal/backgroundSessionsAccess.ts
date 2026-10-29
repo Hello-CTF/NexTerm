@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import { sessionApi, terminalApi, type LiveTabInfo, type SessionAttentionState, type SessionInfo } from "../../ipc/commands";
 import type { AggregateHost, AggregateHostStatus, AttentionEvent } from "../../ipc/generated/types";
 import { toAwareness } from "../../app/sessionAwarenessStore";
-import { connectDevice, deviceAssetId, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
+import { connectDevice, deviceAssetId, findTab, nextTabId, useUi, type ConnectAssetOptions, type Workspace } from "../../app/store";
 import type { AggregateRow } from "../../app/sessionAggregate";
 import { hideMobileHome } from "../../app/shell/mobileHome";
 import { describeError } from "../../ui/errorText";
@@ -382,6 +382,75 @@ export async function takeOverBackgroundTab(
     if (!current()) return { ok: false, canceled: true };
     return { ok: false, error: describeError(e) };
   }
+}
+
+export interface ReattachOutcome {
+  taken: number;
+  failed: number;
+  // The first failure reason, for a toast.
+  error?: string;
+}
+
+// reattachLostTabs takes the open durable tabs that lost their attachment (tab ids of the store) back over: the
+// host's durable listing confirms each process still runs, the stale tab is closed by detaching (never killing),
+// and the same terminal is opened again through the background-session takeover. A terminal the host no longer
+// lists is marked lost and left alone.
+export async function reattachLostTabs(storeTabIds: string[]): Promise<ReattachOutcome> {
+  const outcome: ReattachOutcome = { taken: 0, failed: 0 };
+  const fail = (message: string) => {
+    outcome.failed += 1;
+    outcome.error ??= message;
+  };
+  const targets = storeTabIds
+    .map((id) => findTab(id)?.tab)
+    .filter((tab): tab is NonNullable<typeof tab> => Boolean(tab?.tabId && tab.sessionId));
+  const listings = new Map<string, Awaited<ReturnType<typeof terminalApi.listDurable>> | Error>();
+  for (const sessionId of new Set(targets.map((tab) => tab.sessionId as string))) {
+    const session = useUi.getState().sessions.find((item) => item.id === sessionId);
+    if (!session || session.status !== "connected") {
+      listings.set(sessionId, new Error("主机未连接，请先重新连接再接管"));
+      continue;
+    }
+    try {
+      listings.set(sessionId, await terminalApi.listDurable(sessionId));
+    } catch (e) {
+      listings.set(sessionId, new Error(describeError(e)));
+    }
+  }
+  for (const tab of targets) {
+    const listing = listings.get(tab.sessionId as string);
+    if (!listing || listing instanceof Error) {
+      fail(listing?.message ?? "主机未连接，请先重新连接再接管");
+      continue;
+    }
+    const descriptor = listing.find((item) => item.id === tab.tabId);
+    if (!descriptor || descriptor.dead) {
+      useUi.getState().updateTab(tab.id, { durableLost: true });
+      fail("主机上已找不到该终端，进程可能已结束");
+      continue;
+    }
+    const session = useUi.getState().sessions.find((item) => item.id === tab.sessionId);
+    if (!(await useUi.getState().closeTab(tab.id, "detach", true))) {
+      fail("无法关闭旧的终端标签页");
+      continue;
+    }
+    const result = await takeOverBackgroundTab({
+      tabId: tab.tabId as string,
+      sessionId: tab.sessionId as string,
+      sessionName: session?.name ?? "",
+      sessionKind: session?.kind ?? "",
+      cols: descriptor.cols,
+      rows: descriptor.rows,
+      sizeOwner: null,
+      subscribers: 0,
+      viewers: 0,
+      exited: false,
+      title: tab.title,
+    });
+    if (result.ok) outcome.taken += 1;
+    else fail("canceled" in result ? "已取消接管" : result.error);
+  }
+  return outcome;
 }
 
 // aggregateHostSession finds this client's connected session to a host from the cross-host listing: the session the

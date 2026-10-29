@@ -863,8 +863,11 @@ func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte
 	if !connected {
 		return ErrDisconnected
 	}
-	if exited || channel == nil {
+	if exited {
 		return ErrTabClosed
+	}
+	if channel == nil {
+		return ErrDisconnected
 	}
 	if err := ctx.Err(); err != nil {
 		return err

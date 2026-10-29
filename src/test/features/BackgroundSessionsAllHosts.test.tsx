@@ -273,6 +273,42 @@ describe("BackgroundSessions across hosts", () => {
   });
 });
 
+describe("BackgroundSessions with no connected host", () => {
+  it("asks to connect the sessions instead of claiming there is nothing to recover", async () => {
+    vi.resetAllMocks();
+    window.localStorage.clear();
+    useAuth.setState({ user: null });
+    resetSessionAggregateForTest();
+    mocks.listLive.mockResolvedValue([]);
+    mocks.listDurable.mockResolvedValue([]);
+    mocks.listSessions.mockResolvedValue([]);
+    mocks.resyncSessions.mockResolvedValue(undefined);
+    mocks.helperStatus.mockResolvedValue({ state: "disabled" });
+    setLocalHelperStatusForTest(null);
+    useUi.setState({
+      workspaces: [
+        { id: "tools", kind: "tools", title: "工具", panes: [{ id: "p", tabs: [], activeTabId: null }], activePaneId: "p", closable: true },
+      ],
+      activeWorkspaceId: "tools",
+      sessions: [
+        { ...ssh, id: "s-h1", assetId: "asset-1", status: "disconnected" },
+        { ...ssh, id: "s-h2", assetId: "asset-2", status: "failed" },
+      ],
+      toasts: [],
+      resyncSessions: mocks.resyncSessions,
+    });
+    const view = mount(createElement(BackgroundSessions, {}));
+    try {
+      await flush();
+      await waitForRendered(() => expect(view.container.textContent).toContain("有 2 台主机未连接，连接后才能查看"));
+      expect(view.container.textContent).not.toContain("没有可恢复的后台终端");
+      expect(button(view.container, "连接并查找")).toBeTruthy();
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
 describe("cross-host grouping and terminate paths", () => {
   it("orders groups as the listing does and keeps unnamed hosts after them", () => {
     const hosts = new Map([

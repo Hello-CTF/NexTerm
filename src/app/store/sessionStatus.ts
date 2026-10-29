@@ -2,6 +2,7 @@ import { sessionApi, type SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
+import { confirmSuspectReconnect, reconnectWorkspaceConnection, workspaceConnectionState } from "./workspaceReconnect";
 import { reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
 import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence, UiState } from "./types";
 import { useUi } from "./useUi";
@@ -161,7 +162,8 @@ export function connectProgressText(progress: ConnectProgressEvent): string {
 
 // foregroundProbeTargets lists the sessions shown in the active workspace (its own session and the
 // session of each pane's visible tab) that a foreground probe can act on: connected sessions are
-// checked, reconnecting ones retry now. Failed and disconnected sessions keep their manual retry.
+// checked, reconnecting ones retry now. Failed and disconnected sessions are reconnected by
+// reconnectDroppedWorkspaces instead.
 export function foregroundProbeTargets(
   state: Pick<UiState, "workspaces" | "activeWorkspaceId" | "sessions">,
 ): string[] {
@@ -177,6 +179,51 @@ export function foregroundProbeTargets(
     const status = state.sessions.find((session) => session.id === id)?.status;
     return status === "connected" || status === "reconnecting";
   });
+}
+
+// Automatic reconnect of a dropped host session on foreground resume. Each session is tried at most once per
+// interval, the interval doubles after every failure, and after MAX failures the automatic attempts stop (a
+// credential problem should not be retried forever) until a reconnect succeeds or the session reads connected.
+export const AUTO_RECONNECT_MIN_INTERVAL_MS = 15_000;
+export const AUTO_RECONNECT_MAX_INTERVAL_MS = 5 * 60_000;
+export const AUTO_RECONNECT_MAX_FAILURES = 4;
+const autoReconnects = new Map<string, { lastAt: number; failures: number }>();
+
+export function resetAutoReconnectState(): void {
+  autoReconnects.clear();
+}
+
+// reconnectDroppedWorkspaces reconnects the active workspace's host session when it is failed or disconnected.
+// Only ssh and device sessions are reconnected. Durable-only workspaces reconnect silently; with ordinary
+// terminals the usual confirmation applies. Returns whether an attempt was started.
+export async function reconnectDroppedWorkspaces(): Promise<boolean> {
+  const state = useUi.getState();
+  const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId);
+  const sessionId = workspace?.sessionId;
+  if (!workspace || !sessionId || workspace.deletedTarget) return false;
+  const status = workspaceConnectionState(workspace, state.sessions);
+  if (status === "connected") {
+    autoReconnects.delete(sessionId);
+    return false;
+  }
+  if (status !== "disconnected" && status !== "failed") return false;
+  const kind = state.sessions.find((item) => item.id === sessionId)?.kind ?? workspace.assetKind;
+  if (kind !== "ssh" && kind !== "device") return false;
+  const now = Date.now();
+  const entry = autoReconnects.get(sessionId) ?? { lastAt: Number.NEGATIVE_INFINITY, failures: 0 };
+  if (entry.failures >= AUTO_RECONNECT_MAX_FAILURES) return false;
+  const interval = Math.min(AUTO_RECONNECT_MIN_INTERVAL_MS * 2 ** entry.failures, AUTO_RECONNECT_MAX_INTERVAL_MS);
+  if (now - entry.lastAt < interval) return false;
+  autoReconnects.set(sessionId, { lastAt: now, failures: entry.failures });
+  let ok = false;
+  try {
+    ok = (await confirmSuspectReconnect(workspace.id)) && (await reconnectWorkspaceConnection(workspace.id));
+  } catch {
+    ok = false;
+  }
+  const latest = autoReconnects.get(sessionId) ?? entry;
+  autoReconnects.set(sessionId, { lastAt: latest.lastAt, failures: ok ? 0 : latest.failures + 1 });
+  return true;
 }
 
 // probeForegroundSessions asks the backend to check the visible sessions now. Results arrive as
@@ -196,6 +243,7 @@ export function probeForegroundSessions(): Promise<void> {
     do {
       foregroundProbeAgain = false;
       const targets = foregroundProbeTargets(useUi.getState());
+      void reconnectDroppedWorkspaces();
       await Promise.all(targets.map((sessionId) => sessionApi.probeLiveness(sessionId).catch(() => undefined)));
     } while (foregroundProbeAgain);
   })().finally(() => {

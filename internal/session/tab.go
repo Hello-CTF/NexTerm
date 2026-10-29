@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
@@ -175,6 +176,11 @@ type Tab struct {
 	// not resume. It stays exited: a later reconnect must not replace it with
 	// a plain PTY, because durable tabs never fall back to volatile shells.
 	durableLost bool
+	// exitConfirmed marks an exit the host reported (exit status, exited
+	// result, clean end of the stream), as opposed to a tab left exited by
+	// mere local evidence. Only a confirmed exit may kill the host process
+	// when the tab is closed without an explicit mode.
+	exitConfirmed bool
 	// runtimeEpisode uniquely identifies the tab's current runtime episode
 	// for roster evidence: minted once at registration for tabs with no
 	// durable daemon identity and never reused, so remove/recreate and
@@ -310,7 +316,7 @@ func (t *Tab) controlEventLocked() ControlEvent {
 	event := ControlEvent{
 		TabID: t.ID, Cols: info.Cols, Rows: info.Rows, GridRevision: info.GridRevision,
 		SizeOwner: info.SizeOwner, GuestControl: info.GuestControl, Subscribers: info.Subscribers,
-		Viewers: info.Viewers, Exited: info.Exited, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
+		Viewers: info.Viewers, Exited: info.Exited, ExitConfirmed: t.exitConfirmed, DurableLost: t.durableLost, Version: t.eventVersion, Cwd: t.cwd, Durable: info.Durable,
 		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt,
 		HistoryFrom: t.historyFrom, HistoryBase: t.historyBase, HistoryTruncated: t.historyTruncated,
 	}
@@ -1708,8 +1714,13 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		finish(accepted, ErrDisconnected)
 		return
 	}
-	if exited || channel == nil {
+	if exited {
 		finish(accepted, ErrTabClosed)
+		return
+	}
+	if channel == nil {
+		// The tab is still current; its channel is being re-established.
+		finish(accepted, ErrDisconnected)
 		return
 	}
 	if err := ctx.Err(); err != nil {
@@ -1809,8 +1820,11 @@ func (m *Manager) Resize(ctx context.Context, tabID, client string, cols, rows u
 	if !connected {
 		return ErrDisconnected
 	}
-	if ptyBacked(tab.session.asset.Kind) && (exited || channel == nil) {
+	if ptyBacked(tab.session.asset.Kind) && exited {
 		return ErrTabClosed
+	}
+	if ptyBacked(tab.session.asset.Kind) && channel == nil {
+		return ErrDisconnected
 	}
 	if grid == nil {
 		return ErrUnsupported
@@ -1894,7 +1908,27 @@ func (m *Manager) ExecLine(ctx context.Context, tabID, client, command string) (
 	return result, execErr
 }
 
+// CloseTab closes a tab. A durable tab ends its host process too, except one
+// left exited without any exit evidence from the host: its process may well
+// still run, so it is only released (detached) and a later session recovers
+// it. KillTab always ends the host process.
 func (m *Manager) CloseTab(id string) error {
+	m.mu.Lock()
+	tab := m.tabs[id]
+	m.mu.Unlock()
+	if tab != nil {
+		tab.mu.Lock()
+		unconfirmed := tab.durable != nil && tab.exited && !tab.exitConfirmed && !tab.durableLost
+		tab.mu.Unlock()
+		if unconfirmed {
+			return m.closeTab(tab, false)
+		}
+	}
+	return m.closeTab(tab, true)
+}
+
+// KillTab closes a tab and ends its durable host process.
+func (m *Manager) KillTab(id string) error {
 	m.mu.Lock()
 	tab := m.tabs[id]
 	m.mu.Unlock()
@@ -2416,11 +2450,43 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	}
 
 	transportFailure := errors.Is(readErr, base.ErrDisconnected) || errors.Is(waitErr, base.ErrDisconnected)
+	tab.mu.Lock()
+	durableTab := tab.durable != nil
+	tab.mu.Unlock()
+	// A durable terminal's process lives on the host and outlasts any
+	// connection, so only positive evidence that it ended (an exit status, an
+	// exited result from the helper, or a clean end of both the output and the
+	// wait) marks the tab exited. Every other read or wait failure (a context
+	// that ended, a reset, an unexpected EOF) is the transport failing.
+	durableFault := false
+	if durableTab && !hasExitCode {
+		exitedEvidence := errors.Is(readErr, durable.ErrExited) || errors.Is(waitErr, durable.ErrExited) ||
+			errors.Is(readErr, supervisor.ErrExited) || errors.Is(waitErr, supervisor.ErrExited)
+		cleanEnd := (readErr == nil || errors.Is(readErr, io.EOF)) && waitErr == nil
+		durableFault = !exitedEvidence && !cleanEnd
+	}
 	tab.session.mu.Lock()
 	transport := tab.session.transport
+	kind := tab.session.asset.Kind
+	tab.session.mu.Unlock()
+	// A PTY channel can end without an exit status because the connection
+	// died; the channel's EOF may arrive before the transport reports itself
+	// dead, so ask the connection once before calling it an exit.
+	if !durableTab && !transportFailure && !hasExitCode && errors.Is(waitErr, base.ErrExitStatusMissing) &&
+		reconnectable(kind) && transport != nil && ctx.Err() == nil {
+		pingCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, pingErr := transport.Ping(pingCtx)
+		cancel()
+		if pingErr != nil && ctx.Err() == nil {
+			transportFailure = true
+		}
+	}
+	tab.session.mu.Lock()
+	transport = tab.session.transport
 	sessionClosed := tab.session.closed
 	transportFailure = transportFailure || transport != nil && !transport.IsAlive()
-	shouldReconnect := tab.session.status == StatusConnected && tab.session.generation == generation && reconnectable(tab.session.asset.Kind) && transportFailure && !hasExitCode
+	current := tab.session.status == StatusConnected && tab.session.generation == generation && reconnectable(tab.session.asset.Kind)
+	shouldReconnect := current && (transportFailure && !hasExitCode || durableFault)
 	tab.session.mu.Unlock()
 	// A reaped session's transport close wakes the tab's pump before the
 	// teardown marks the tab destroying; such an exit is part of the
@@ -2430,13 +2496,29 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	}
 
 	tab.mu.Lock()
-	current := !tab.closed && !tab.destroying && tab.generation == generation
+	currentTab := !tab.closed && !tab.destroying && tab.generation == generation
 	tab.mu.Unlock()
-	if !current {
+	if !currentTab {
 		return
 	}
 	if shouldReconnect {
-		_ = m.startReconnect(tab.session.ID, generation)
+		if durableFault {
+			if err := m.startReconnectImmediate(tab.session.ID, generation); err != nil &&
+				!errors.Is(err, ErrStaleGeneration) && !errors.Is(err, ErrSessionClosed) {
+				m.logger.Warn("durable terminal stream failed and reconnect could not start; closing the transport",
+					"session", tab.session.ID, "tab", tab.ID, "error", err)
+				if transport != nil {
+					_ = transport.Close()
+				}
+			}
+		} else {
+			_ = m.startReconnect(tab.session.ID, generation)
+		}
+		return
+	}
+	if durableFault && reconnectable(kind) {
+		// The session is already reconnecting or failed: it re-attaches the
+		// live terminal, so the tab is neither exited nor released here.
 		return
 	}
 
@@ -2450,6 +2532,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	var control ControlEvent
 	if current {
 		tab.exited = true
+		tab.exitConfirmed = hasExitCode || durableTab && !durableFault
 		if tab.channel == channel {
 			tab.channel = nil
 		}
@@ -2559,6 +2642,13 @@ func (m *Manager) ExecLineFor(ctx context.Context, tabID, client, command string
 		return base.ExecResult{}, err
 	}
 	return m.ExecLine(ctx, tabID, client, command)
+}
+
+func (m *Manager) KillTabFor(ctx context.Context, id string) error {
+	if _, err := m.TabFor(ctx, id); err != nil {
+		return err
+	}
+	return m.KillTab(id)
 }
 
 func (m *Manager) CloseTabFor(ctx context.Context, id string) error {

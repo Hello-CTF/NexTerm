@@ -27,6 +27,7 @@ import type { AggregateHostStatus } from "../../ipc/generated/types";
 import type { SessionInfo } from "../../ipc/commands";
 import {
   reconnectDeadHost,
+  reconnectLiveSession,
   reconnectWorkspaceSession,
   sanitizeRemoteTabTitle,
   useSessionList,
@@ -717,6 +718,28 @@ export function BackgroundSessions({
     { hostSessionId, showAll, blocked: hostIdentityMismatch || (remoteOwner && needsReconnect) },
   );
   const count = list.length;
+  // In the all-hosts view, sessions that are not connected list nothing. When none is connected the empty list is
+  // not "no background terminals", so the page says how many hosts must connect first and offers to connect them.
+  const unconnectedSessions = showAll
+    ? sessions.filter((item) => (item.kind === "ssh" || item.kind === "device") && item.status !== "connected")
+    : [];
+  const noHostConnected =
+    showAll && unconnectedSessions.length > 0 && !sessions.some((item) => item.status === "connected");
+  const connectAll = async () => {
+    for (const item of unconnectedSessions) {
+      const owner = useUi.getState().workspaces.find((workspace) => workspace.sessionId === item.id && workspaceHostKey(workspace));
+      if (owner) {
+        await reconnectHost(owner.id);
+        continue;
+      }
+      try {
+        const result = await reconnectLiveSession(item.id);
+        if (result.kind === "canceled") pushToast("info", "已取消重新连接");
+      } catch (cause) {
+        pushToast("error", `重新连接失败：${describeError(cause)}`);
+      }
+    }
+  };
   const hostLabel = showAll ? "全部主机" : (hostName ?? "当前主机");
   const now = Date.now();
   const hostScope = showAll ? "all" : hostSession?.kind === "local" || (!remoteOwner && ownerWorkspace?.assetKind === "local") ? "local" : "remote";
@@ -899,6 +922,8 @@ export function BackgroundSessions({
                 <td colSpan={COLUMN_COUNT} className="nx-table-empty text-[var(--nx-fg-soft)]">
                   {needsReconnect
                     ? "主机未连接，连接后才能查看后台终端"
+                    : noHostConnected
+                      ? `有 ${unconnectedSessions.length} 台主机未连接，连接后才能查看`
                     : showAll
                       ? "没有可恢复的后台终端"
                       : hostScope === "local"
@@ -907,6 +932,8 @@ export function BackgroundSessions({
                   <div className="mt-1.5 text-[11px] text-[var(--nx-fg-soft)]">
                     {needsReconnect
                       ? "终端可能仍在主机上运行，连接成功后列表会自动更新"
+                      : noHostConnected
+                        ? "终端可能仍在这些主机上运行，连接成功后列表会自动更新"
                       : showAll
                         ? "请先从资产树打开目标主机，才能查看它上面的后台终端"
                         : hostScope === "local"
@@ -915,6 +942,11 @@ export function BackgroundSessions({
                             ? "持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
                             : "关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}
                   </div>
+                  {noHostConnected && !needsReconnect && (
+                    <button className="nx-btn nx-btn-primary nx-btn-sm mt-2" disabled={desktopChecking || reconnecting} onClick={() => void connectAll()}>
+                      {reconnecting ? "正在连接…" : "连接并查找"}
+                    </button>
+                  )}
                 </td>
               </tr>
             )}

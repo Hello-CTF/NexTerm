@@ -22,6 +22,9 @@ import { getTerminalPrefs, setTerminalCloseAction } from "../../app/preferences"
 import {
   closeActionHint,
   closeTabHint,
+  collectWorkspaceClose,
+  confirmWorkspaceClose,
+  executeWorkspaceClose,
   requestCloseTab,
   requestCloseTabs,
   useUi,
@@ -327,7 +330,8 @@ describe("terminal close preference dispatch", () => {
 
     await requestCloseTab(tab.id);
 
-    expect(mocks.listDurable).not.toHaveBeenCalled();
+    // Devices are now checked against the host's durable listing like SSH hosts.
+    expect(mocks.listDurable).toHaveBeenCalledWith("s");
     expect(mocks.askChoiceRemember).toHaveBeenCalledTimes(1);
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
   });
@@ -345,7 +349,7 @@ describe("terminal close preference dispatch", () => {
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-t2", "detach", "s");
   });
 
-  it("uses default close for a currently exited backend tab without a process choice", async () => {
+  it("detaches a durable tab that reads as exited without proof the process ended", async () => {
     const tab = terminal();
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     const live = backendLiveTabs()[0] as LiveTabInfo;
@@ -356,9 +360,47 @@ describe("terminal close preference dispatch", () => {
 
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
     expect(mocks.ask).not.toHaveBeenCalled();
-    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill", "s");
     expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("uses default close for an exited tab that carries an exit status", async () => {
+    const tab = { ...terminal(), exitCode: 0 };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    const live = backendLiveTabs()[0] as LiveTabInfo;
+    mocks.listLive.mockResolvedValueOnce([{ ...live, exited: true }]);
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+    expect(tabsRemaining()).toEqual([]);
+  });
+
+  it("detaches an exited device tab and keeps its state when the host cannot be listed", async () => {
+    const tab = { ...terminal(), durable: true, exited: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "device");
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.listDurable.mockRejectedValueOnce(new Error("device offline"));
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.listDurable).toHaveBeenCalledWith("s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", undefined, "s");
+  });
+
+  it("checks a device tab against the host's durable listing", async () => {
+    const tab = { ...terminal(), durable: true, exited: true };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "device");
+    mocks.listLive.mockResolvedValueOnce([]);
+    mocks.listDurable.mockResolvedValueOnce([{ id: "kernel-terminal", dead: false }]);
+    setTerminalCloseAction("detach");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.listDurable).toHaveBeenCalledWith("s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "detach", "s");
   });
 
   it("detaches a stale exited layout flag when the current backend tab is live", async () => {
@@ -563,8 +605,8 @@ describe("consolidated batch close dialog", () => {
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
   });
 
-  it("uses default cleanup for a currently exited tab in a batch", async () => {
-    seed([{ id: "p", tabs: [{ ...terminal("x1"), exited: true }], activeTabId: "x1" }]);
+  it("uses default cleanup for a currently exited tab with an exit status in a batch", async () => {
+    seed([{ id: "p", tabs: [{ ...terminal("x1"), exited: true, exitCode: 1 }], activeTabId: "x1" }]);
     mocks.listLive.mockResolvedValueOnce(backendLiveTabs());
     setTerminalCloseAction("detach");
 
@@ -572,6 +614,18 @@ describe("consolidated batch close dialog", () => {
 
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", undefined, "s");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", "kill", "s");
+  });
+
+  it("detaches an exited durable tab without exit proof in a batch", async () => {
+    seed([{ id: "p", tabs: [{ ...terminal("x1"), exited: true }], activeTabId: "x1" }]);
+    mocks.listLive.mockResolvedValueOnce(backendLiveTabs());
+    mocks.ask.mockResolvedValue(true);
+    setTerminalCloseAction("detach");
+
+    await requestCloseTabs(["x1"]);
+
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-x1", "detach", "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-x1", undefined, "s");
   });
 
   it("keeps an explicit batch kill choice after current liveness is confirmed", async () => {
@@ -605,5 +659,32 @@ describe("close button tooltip follows preference", () => {
     setTerminalCloseAction("detach");
     expect(closeActionHint(tab)).toBe("转入后台运行");
     expect(closeTabHint(tab)).toBe("关闭标签页（转入后台运行）");
+  });
+});
+
+describe("workspace close with unconfirmed durable terminals", () => {
+  beforeEach(() => {
+    mocks.ask.mockResolvedValue(true);
+    mocks.closeTab.mockResolvedValue(undefined);
+    setTerminalCloseAction("detach");
+  });
+
+  it("detaches an exited durable tab without exit proof, warns, and cleans up one with an exit status", async () => {
+    const lost = { ...terminal("lost"), exited: true };
+    const finished = { ...terminal("done"), exited: true, exitCode: 0 };
+    seed([{ id: "p", tabs: [lost, finished], activeTabId: "lost" }]);
+
+    const summary = collectWorkspaceClose([lost, finished], "ssh", "session", "ws");
+    expect(summary.unconfirmed.map((tab) => tab.id)).toEqual(["lost"]);
+    expect(summary.cleanup.map((tab) => tab.id)).toEqual(["done"]);
+
+    expect(await confirmWorkspaceClose(summary, "workspace")).toBe(true);
+    expect(mocks.ask.mock.calls[0]?.[0]).toContain("主机上可能仍在运行，将转入后台会话");
+
+    const outcome = await executeWorkspaceClose(summary);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-lost", "detach", "s");
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-done", undefined, "s");
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-lost", undefined, "s");
+    expect(outcome.detached).toBe(1);
   });
 });

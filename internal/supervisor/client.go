@@ -1693,6 +1693,13 @@ func (s *Stream) readLoop() {
 }
 
 func (s *Stream) fail(err error) {
+	// A context ending (write timeout, caller cancel) tears the connection
+	// down, so the stream's own error must read as a transport failure while
+	// still matching the original context error.
+	if err != nil && !errors.Is(err, base.ErrDisconnected) &&
+		(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		err = fmt.Errorf("%w: %w", base.ErrDisconnected, err)
+	}
 	s.mu.Lock()
 	if s.readErr == nil {
 		s.readErr = err

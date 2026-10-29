@@ -284,15 +284,19 @@ type ExitEvent struct {
 }
 
 type ControlEvent struct {
-	TabID          string `json:"tabId"`
-	Cols           uint32 `json:"cols"`
-	Rows           uint32 `json:"rows"`
-	GridRevision   uint64 `json:"gridRevision"`
-	SizeOwner      string `json:"sizeOwner,omitempty"`
-	GuestControl   string `json:"guestControl,omitempty"`
-	Subscribers    int    `json:"subscribers"`
-	Viewers        int    `json:"viewers"`
-	Exited         bool   `json:"exited"`
+	TabID        string `json:"tabId"`
+	Cols         uint32 `json:"cols"`
+	Rows         uint32 `json:"rows"`
+	GridRevision uint64 `json:"gridRevision"`
+	SizeOwner    string `json:"sizeOwner,omitempty"`
+	GuestControl string `json:"guestControl,omitempty"`
+	Subscribers  int    `json:"subscribers"`
+	Viewers      int    `json:"viewers"`
+	Exited       bool   `json:"exited"`
+	// ExitConfirmed reports that the host proved the shell ended (exit status or a clean durable exit); DurableLost
+	// that the host no longer has the durable terminal. An exited tab with neither may still run on its host.
+	ExitConfirmed  bool   `json:"exitConfirmed,omitempty"`
+	DurableLost    bool   `json:"durableLost,omitempty"`
 	Version        uint64 `json:"version"`
 	Cwd            string `json:"cwd,omitempty"`
 	Durable        bool   `json:"durable,omitempty"`
@@ -368,7 +372,10 @@ type Session struct {
 	reconnecting        bool
 	reconnectCompletion *reconnectCompletion
 	reconnectAttempt    int
-	reconnectNextRetry  time.Time
+	// failedRetries counts the background retries of a Failed session since
+	// it last connected; it drives the retry backoff.
+	failedRetries      int
+	reconnectNextRetry time.Time
 	// reconnectWake cuts the current reconnect backoff short (foreground
 	// probe); it belongs to the running reconnect loop.
 	reconnectWake chan struct{}

@@ -84,7 +84,7 @@ describe("session liveness", () => {
         workspace("w2", "s5", []),
       ],
     };
-    // s4 sits behind another tab, s3 failed (manual retry), s5 belongs to a hidden workspace.
+    // s4 sits behind another tab, s3 failed (a tab session, not the workspace host), s5 belongs to a hidden workspace.
     expect(foregroundProbeTargets(state).sort()).toEqual(["s1", "s2"]);
     expect(foregroundProbeTargets({ ...state, activeWorkspaceId: null })).toEqual([]);
   });

@@ -228,6 +228,23 @@ describe("terminal overlay accessibility", () => {
     expect(document.activeElement).toBe(close);
   });
 
+  it("offers to take over a durable terminal whose exit is unconfirmed, and says ended when proven", async () => {
+    mounted = mountPane();
+    await act(async () => {
+      await flush();
+    });
+    const control = { tabId: "kernel-1", sizeOwner: "me", subscribers: 1, viewers: 1, exited: true, durable: true, cols: 80, rows: 24, gridRevision: 0 };
+    deliverControl({ ...control, version: 1 });
+    expect(alert()?.textContent).toContain("终端连接已中断");
+    expect(alertButton("重新接管")).toBeDefined();
+    expect(alertButton("在后台会话中查看")).toBeDefined();
+    expect(alertButton("关闭标签页")).toBeDefined();
+
+    deliverControl({ ...control, version: 2, exitCode: 0 });
+    expect(alert()?.textContent).toContain("终端进程已结束");
+    expect(alertButton("重新接管")).toBeUndefined();
+  });
+
   const currentLiveTab = (exited: boolean) => ({
     tabId: "kernel-1",
     sessionId: "s1",

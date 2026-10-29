@@ -8,6 +8,8 @@ import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type A
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
 import { WEB } from "./ipc/env";
+import { setInputFailureHandler } from "./ipc/inputFailure";
+import { describeError } from "./ui/errorText";
 import { consumeDeepLinks } from "./ipc/wails";
 import { openDeepLink } from "./app/deepLink";
 import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
@@ -64,6 +66,8 @@ function wireDesktopShell(): void {
 
   void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
     if (!eventVersions.accept(p.tabId, p.version)) return;
+    // The store keeps the tab: a durable terminal's exit without a status may be a dropped stream while the
+    // process still runs on the host, so the tab (and its reattach actions) stays until the user closes it.
     const { pushToast } = useUi.getState();
     if (p.exitCode !== null && p.exitCode !== 0) {
       pushToast("info", `终端进程退出（exit ${p.exitCode}）`);
@@ -89,6 +93,18 @@ function wireDesktopShell(): void {
   // Returning to the foreground (tab shown, app resumed, machine woke, network back) checks the visible
   // sessions at once instead of waiting for the next heartbeat or reconnect backoff.
   installForegroundResume(() => void probeForegroundSessions());
+
+  // A failed keystroke is never silent. A link or tab that is gone also triggers a reconnect probe right away,
+  // so the user is not left typing into a dead terminal until the next foreground event.
+  setInputFailureHandler(({ error, connectionLost }) => {
+    const { pushToast } = useUi.getState();
+    if (connectionLost) {
+      pushToast("error", "连接已断开，正在重连");
+      void probeForegroundSessions();
+      return;
+    }
+    pushToast("error", `终端输入失败：${describeError(error)}`);
+  });
 
   onEventsResync(() => {
     void useUi.getState().resyncSessions();

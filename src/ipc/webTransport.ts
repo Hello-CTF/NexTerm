@@ -1,5 +1,6 @@
 
 import { clientId, wsUrl } from "./env";
+import { reportInputFailure } from "./inputFailure";
 
 type ChannelMessage = unknown;
 
@@ -199,7 +200,7 @@ export function sendChannelInput(
 ): void {
   const entry = channels.get(channelId);
   if (!entry || entry.disposed) {
-    void http(data).catch(() => undefined);
+    void http(data).catch((error) => reportInputFailure(tabId, error));
     return;
   }
   const input = entry.input;
@@ -291,7 +292,7 @@ function flushInput(entry: ChannelEntry) {
     input.httpInFlight = true;
     void batch
       .http(data)
-      .catch(() => undefined)
+      .catch((error) => reportInputFailure(batch.tabId, error))
       .finally(() => {
         input.httpInFlight = false;
         flushInput(entry);

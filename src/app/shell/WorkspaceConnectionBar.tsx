@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   confirmSuspectReconnect,
+  isConnectionLostTab,
   isSessionSuspect,
   reconnectWorkspaceConnection,
   useSessionById,
@@ -11,6 +12,7 @@ import {
   type Workspace,
 } from "../store";
 import { sessionApi } from "../../ipc/commands";
+import { reattachLostTabs } from "../../features/terminal/backgroundSessionsAccess";
 import { IconRefresh } from "../../ui/icons";
 
 function retryDeadline(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined): number | null {
@@ -57,7 +59,55 @@ export function WorkspaceConnectionBar({
   }, [reconnecting]);
 
   if (!ws || ws.deletedTarget) return null;
-  if (state !== "disconnected" && state !== "failed" && state !== "reconnecting" && !suspect) return null;
+  const reattach = async (tabIds: string[]) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const outcome = await reattachLostTabs(tabIds);
+      const { pushToast } = useUi.getState();
+      if (outcome.failed > 0) pushToast("error", `${outcome.failed} 个终端未能重新接管：${outcome.error ?? "未知错误"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const openBackground = () => {
+    if (!ws.sessionId) return;
+    useUi.getState().addTab({ id: `background-${ws.id}`, kind: "background", title: "后台会话", sessionId: ws.sessionId, closable: true });
+  };
+  if (state !== "disconnected" && state !== "failed" && state !== "reconnecting" && !suspect) {
+    // The host session is up, but durable terminals may have lost their attachment (the stream stopped without proof
+    // the process ended). They stay recoverable from the host, so say so and offer to take them back.
+    const lost = ws.panes.flatMap((pane) => pane.tabs).filter(isConnectionLostTab);
+    if (state !== "connected" || lost.length === 0) return null;
+    if (lost.length === 1 && activeTab?.id === lost[0].id) return null;
+    return (
+      <div
+        role="status"
+        data-testid="workspace-connection-bar"
+        data-state="terminals-lost"
+        className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--nx-border)] bg-[color-mix(in_srgb,var(--nx-bg-raised)_55%,var(--nx-bg-pane))] py-1 pr-1 pl-2.5 text-xs text-[var(--nx-fg)] pointer-coarse:py-1.5"
+      >
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
+        <span className="min-w-[min(12rem,70%)] flex-1 break-words">{lost.length} 个终端连接丢失，主机上的进程可能仍在运行</span>
+        <button
+          type="button"
+          className="nx-btn nx-btn-primary nx-btn-sm shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-4"
+          disabled={busy}
+          onClick={() => void reattach(lost.map((tab) => tab.id))}
+        >
+          <IconRefresh size={13} className={busy ? "animate-spin" : undefined} />
+          重新接管
+        </button>
+        <button
+          type="button"
+          className="nx-btn nx-btn-ghost nx-btn-sm shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-4"
+          onClick={openBackground}
+        >
+          在后台会话中查看
+        </button>
+      </div>
+    );
+  }
   if (activeTab?.kind === "terminal" && activeTab.dead === true) return null;
 
   const reason = session?.error?.trim();

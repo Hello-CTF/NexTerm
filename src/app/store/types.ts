@@ -51,6 +51,13 @@ export interface AppTab {
   closable: boolean;
   dead?: boolean;
   exited?: boolean;
+  // exitCode is the process exit status once the backend has proof the shell ended; an exited tab without it
+  // (and without durableLost) only means the stream stopped, not that the host process is gone.
+  exitCode?: number | null;
+  // exitConfirmed is set when the backend proved the exit without a numeric status (a clean durable exit).
+  exitConfirmed?: boolean;
+  // durableLost is set when the backend confirmed the durable terminal no longer exists on its host.
+  durableLost?: boolean;
   retainable?: boolean;
   // durable is reported by the backend once the terminal attaches; SSH tabs
   // can only move to the background when they run on the durable helper.

@@ -125,7 +125,7 @@ describe("close = detach (M111)", () => {
   });
 
   it("uses default cleanup for a currently exited terminal without a dialog", async () => {
-    const tab = { ...terminal(), exited: true };
+    const tab = { ...terminal(), exited: true, exitCode: 0 };
     seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
     mocks.listLive.mockResolvedValueOnce([liveTab("kernel-terminal", true)]);
 
@@ -235,7 +235,7 @@ describe("close = detach (M111)", () => {
       { id: "p1", tabs: [terminal("keep")], activeTabId: "keep" },
       {
         id: "p2",
-        tabs: [terminal("gone"), execTerminal("e1"), { ...terminal("x1"), exited: true }],
+        tabs: [terminal("gone"), execTerminal("e1"), { ...terminal("x1"), exited: true, exitCode: 0 }],
         activeTabId: "e1",
       },
     ];
@@ -258,7 +258,7 @@ describe("close = detach (M111)", () => {
   });
 
   it("workspace close uses default cleanup for a currently exited backend tab", async () => {
-    const tabs = [terminal("t1"), { ...terminal("x1"), exited: true }];
+    const tabs = [terminal("t1"), { ...terminal("x1"), exited: true, exitCode: 0 }];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
     mocks.listLive.mockResolvedValueOnce([liveTab("kernel-t1"), liveTab("kernel-x1", true)]);
 
@@ -272,7 +272,7 @@ describe("close = detach (M111)", () => {
   });
 
   it("workspace close with only currently exited tabs asks nothing and uses default cleanup", async () => {
-    const tabs = [{ ...terminal("x1"), exited: true }, { ...terminal("x2"), exited: true }];
+    const tabs = [{ ...terminal("x1"), exited: true, exitCode: 0 }, { ...terminal("x2"), exited: true, exitCode: 0 }];
     seed([{ id: "p", tabs, activeTabId: "x1" }]);
     mocks.listLive.mockResolvedValueOnce([liveTab("kernel-x1", true), liveTab("kernel-x2", true)]);
 
@@ -287,7 +287,7 @@ describe("close = detach (M111)", () => {
   });
 
   it("workspace close separates detach, confirmed blocked kill, and default exited cleanup", async () => {
-    const tabs = [terminal("t1"), execTerminal("e1"), { ...terminal("x1"), exited: true }];
+    const tabs = [terminal("t1"), execTerminal("e1"), { ...terminal("x1"), exited: true, exitCode: 0 }];
     seed([{ id: "p", tabs, activeTabId: "t1" }]);
     mocks.listLive.mockResolvedValueOnce([liveTab("kernel-t1"), liveTab("kernel-x1", true)]);
 
@@ -581,7 +581,8 @@ describe("winrm ephemeral line tabs share the no-detach path", () => {
     expect(closeTabHint(terminal())).toBe("关闭标签页（转入后台运行）");
     expect(closeActionHint(terminal())).toBe("转入后台运行");
     expect(closeActionHint({ ...terminal(), exited: true })).toBeUndefined();
-    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签页（进程已结束）");
+    expect(closeTabHint({ ...terminal(), exited: true, exitCode: 0 })).toBe("关闭标签页（进程已结束）");
+    expect(closeTabHint({ ...terminal(), exited: true })).toBe("关闭标签页（转入后台会话）");
     expect(closeTabHint({ id: "x", kind: "files", title: "x", closable: true })).toBe("关闭标签页");
   });
 });

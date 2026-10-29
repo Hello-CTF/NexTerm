@@ -668,6 +668,7 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	}
 	session.transport = transport
 	session.status = StatusConnected
+	session.failedRetries = 0
 	if len(session.tabs) == 0 {
 		session.idleSince = m.now()
 	}
@@ -757,11 +758,78 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 		delete(m.byAsset, session.assetOwnerKey())
 	}
 	finishedEvent := session.statusEventLocked(status, reconnectErr)
+	failedCtx := session.ctx
+	retryDelay := m.failedRetryDelay(session.failedRetries)
 	session.mu.Unlock()
 	m.mu.Unlock()
+	if status == StatusFailed && !isNonRetryableReconnectError(reconnectErr) && sessionHoldsDurable(session) {
+		m.scheduleFailedRetry(failedCtx, session, generation, retryDelay)
+	}
 	if status == StatusFailed && !errors.Is(reconnectErr, context.Canceled) {
 		m.logger.Warn("session reconnect failed", "session", session.ID, "error", reconnectErr)
 	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
 	return reconnectErr
+}
+
+// failedRetryDelay is the wait before the n-th background retry of a Failed
+// session: the last reconnect backoff step doubled per retry, capped.
+func (m *Manager) failedRetryDelay(retries int) time.Duration {
+	step := m.reconnectBackoff[len(m.reconnectBackoff)-1]
+	if step <= 0 {
+		step = time.Second
+	}
+	delay := step << uint(min(retries+1, 16))
+	if delay <= 0 || delay > m.failedRetryMax {
+		delay = m.failedRetryMax
+	}
+	return delay
+}
+
+// sessionHoldsDurable reports whether the session still has a live durable
+// terminal, which Failed must not strand: its host process keeps running.
+func sessionHoldsDurable(session *Session) bool {
+	session.mu.Lock()
+	tabs := make([]*Tab, 0, len(session.tabs))
+	for _, tab := range session.tabs {
+		tabs = append(tabs, tab)
+	}
+	session.mu.Unlock()
+	for _, tab := range tabs {
+		tab.mu.Lock()
+		held := tab.durable != nil && !tab.closed && !tab.destroying && !tab.durableLost
+		tab.mu.Unlock()
+		if held {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduleFailedRetry makes Failed a pause instead of an end for sessions
+// holding durable terminals: after an exponentially growing delay (capped at
+// failedRetryMax) it starts another reconnect round, until the session
+// connects, is closed or is reconnected by other means (which replaces ctx).
+// One timer goroutine exists per Failed episode.
+func (m *Manager) scheduleFailedRetry(ctx context.Context, session *Session, generation uint64, delay time.Duration) {
+	m.startGoroutine(func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-m.ctx.Done():
+			return
+		case <-timer.C:
+		}
+		session.mu.Lock()
+		current := !session.closed && session.status == StatusFailed && session.generation == generation && !session.reconnecting
+		if current {
+			session.failedRetries++
+		}
+		session.mu.Unlock()
+		if current {
+			_ = m.startReconnectImmediate(session.ID, 0)
+		}
+	})
 }

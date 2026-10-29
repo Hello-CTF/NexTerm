@@ -79,6 +79,10 @@ export {
   foregroundProbeTargets,
   isSessionSuspect,
   probeForegroundSessions,
+  reconnectDroppedWorkspaces,
+  resetAutoReconnectState,
+  AUTO_RECONNECT_MAX_FAILURES,
+  AUTO_RECONNECT_MIN_INTERVAL_MS,
   sessionReconnectStatusText,
   sessionStatusEvidence,
   sessionStatusText,
@@ -112,8 +116,12 @@ export {
   DURABLE_UNAVAILABLE_PREFIX,
   useKnownDurableReadiness,
 } from "./store/durableReadiness";
+export { hasExitEvidence, isConnectionLostTab, isDurableTab, isUnconfirmedDurableExit } from "./store/durableExit";
 export {
   closeActionHint,
+  collectWorkspaceClose,
+  confirmWorkspaceClose,
+  executeWorkspaceClose,
   closeTabHint,
   countBlockedTerminals,
   requestCloseTab,
