@@ -1,53 +1,16 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
-import { IconHome } from "../../ui/icons";
-import { Lazy } from "../../ui/LazyBoundary";
-import { StatusWall } from "../lazyPanels";
-import { wailsNoDragRegionStyle } from "../platform";
-import { useUi } from "../store";
-import { hideMobileHome, showMobileHome, showMobileHomeOnLaunch, useMobileHome } from "./mobileHome";
+import { useLayoutEffect } from "react";
 import { ShellFrame, type ShellParts } from "./ShellFrame";
+import { showMobileHomeOnLaunch } from "./mobileHome";
+import { useStatusHome } from "./useStatusHome";
 import { useMobileTerminalDockCollapse } from "./useOverlayDocks";
-
-// useLeaveHomeOnConnectFocus closes the home when a connect the user started takes the focus. Other ways to a session
-// (a new terminal, the palette, the inbox, the workspace switcher, a takeover, the wall's own cards) close it where
-// the user asks for them; restoring the saved workspaces at startup does neither, so the home stays.
-function useLeaveHomeOnConnectFocus(): void {
-  const focusRevision = useUi((state) => state.connectFocusRevision);
-  const lastRevision = useRef(focusRevision);
-  useEffect(() => {
-    if (focusRevision === lastRevision.current) return;
-    lastRevision.current = focusRevision;
-    hideMobileHome();
-  }, [focusRevision]);
-}
 
 // MobileShell serves phones and tablets (the "mobile" mode). It hosts the shared layout with the overlay sidebars and
 // the bottom terminal key bar, without window chrome, with an overlay sidebar that steps aside while a terminal tab
 // is active, and with the status wall as its home: shown at launch in the workspace area, until the user opens a
-// session or goes to one. The docks stay usable beside or over it, and the header's home button toggles it.
+// session or goes to one. The docks stay usable beside or over it, and the rail's overview button toggles it.
 export function MobileShell(parts: ShellParts) {
   useMobileTerminalDockCollapse(parts.body.docks, parts.layout.overlaySidebars, parts.activeTabKind);
   useLayoutEffect(() => showMobileHomeOnLaunch(), []);
-  useLeaveHomeOnConnectFocus();
-  const homeOpen = useMobileHome((state) => state.open);
-  const { setLeftOpen } = parts.body.docks;
-  const homeButton = (
-    <button
-      type="button"
-      className={`nx-icon-btn ${homeOpen ? "is-active" : ""}`}
-      style={wailsNoDragRegionStyle}
-      aria-label="会话状态首页"
-      aria-pressed={homeOpen}
-      title="会话状态首页"
-      onClick={() => (homeOpen ? hideMobileHome() : showMobileHome())}
-    >
-      <IconHome size={15} />
-    </button>
-  );
-  const home = homeOpen ? (
-    <Lazy>
-      <StatusWall onOpened={hideMobileHome} onOpenAssets={() => setLeftOpen(true)} />
-    </Lazy>
-  ) : null;
-  return <ShellFrame {...parts} header={{ ...parts.header, leading: homeButton }} body={{ ...parts.body, home }} />;
+  const home = useStatusHome(parts.body.docks);
+  return <ShellFrame {...parts} body={{ ...parts.body, home }} />;
 }

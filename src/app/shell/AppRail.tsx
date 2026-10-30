@@ -1,11 +1,14 @@
 import { useUi, isHostWorkspace, showLeftPanel, type Workspace } from "../store";
 import { resolveLeftView } from "./leftView";
+import { useAwarenessStore } from "../sessionAwarenessStore";
+import { hideMobileHome, showMobileHome, useMobileHome } from "./mobileHome";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { mountUnavailableReason } from "../capabilities";
 import {
   IconActivity,
   IconBox,
   IconClock,
+  IconDashboard,
   IconDatabase,
   IconDrive,
   IconHistory,
@@ -44,6 +47,13 @@ export function AppRail({
   actions,
 }: AppRailProps) {
   const backgroundCount = useBackgroundSessionCount(workspace, backgroundAvailable);
+  const homeOpen = useMobileHome((s) => s.open);
+  // Sessions waiting on the user, counted from this client's own awareness so the badge works without the listing.
+  const needsMe = useAwarenessStore((s) => {
+    let count = 0;
+    for (const awareness of s.byTabId.values()) if (awareness.state === "needs_me") count += 1;
+    return count;
+  });
   const leftMode = useUi((s) => s.leftMode);
   const leftOverride = useUi((s) => s.leftOverride);
   // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
@@ -181,6 +191,24 @@ export function AppRail({
           <it.icon size={17} />
         </button>
       ))}
+      <button
+        className={`nx-rail-btn ${homeOpen ? "is-active" : ""}`}
+        data-tip={needsMe > 0 ? `会话总览：${needsMe} 个会话需要处理；所有终端的状态一览，点击卡片直达` : "会话总览：所有终端的状态一览（需要处理、运行中、已结束），点击卡片直达；再次单击返回"}
+        aria-label="会话总览"
+        aria-pressed={homeOpen}
+        onClick={() => {
+          if (homeOpen) {
+            hideMobileHome();
+            return;
+          }
+          // An overlay drawer would otherwise stay on top of the wall it was asked to show.
+          if (overlaySidebars) setOverlayDock(null);
+          showMobileHome();
+        }}
+      >
+        <IconDashboard size={17} />
+        {needsMe > 0 ? <span className="nx-rail-count is-attention" aria-hidden>{needsMe > 99 ? "99+" : needsMe}</span> : null}
+      </button>
       <div className="nx-rail-sep" />
       {railItems.map((it) => (
         <button

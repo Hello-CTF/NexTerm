@@ -24,7 +24,7 @@
   height: auto;
   min-height: 36px;
   padding-top: var(--nx-safe-top);
-  padding-right: var(--nx-safe-right);
+  padding-right: calc(10px + var(--nx-safe-right));
 }
 
 .nx-rail {

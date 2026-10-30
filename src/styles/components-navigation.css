@@ -57,6 +57,9 @@
     border-radius: 0 3px 3px 0;
     background: var(--color-accent);
   }
+  .nx-rail-count.is-attention {
+    background: var(--color-amber-600);
+  }
   .nx-rail-count {
     position: absolute;
     top: 1px;

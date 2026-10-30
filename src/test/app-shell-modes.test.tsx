@@ -292,14 +292,14 @@ describe("app shell modes", () => {
     expect([...document.querySelectorAll("button")].some((b) => b.textContent?.includes("打开本地终端"))).toBe(false);
   });
 
-  it("mobile: launches on the status wall in the workspace area; the docks stay usable and the home button toggles it", async () => {
+  it("mobile: launches on the status wall in the workspace area; the docks stay usable and the rail overview button toggles it", async () => {
     stubDevice(PHONE);
     mounted = mountApp();
     await flush();
 
     const wall = () => document.querySelector("[data-status-wall]");
     const area = () => document.querySelector("[data-workspace-area]");
-    const home = () => button("会话状态首页");
+    const home = () => button("会话总览");
     expect(wall()).not.toBeNull();
     expect(area()?.classList.contains("hidden")).toBe(true);
     expect(home()?.getAttribute("aria-pressed")).toBe("true");
@@ -363,12 +363,18 @@ describe("app shell modes", () => {
     expect(visible("T1")).toBe("true");
   });
 
-  it("desktop and compact windows have no status wall", async () => {
+  it("desktop and compact windows open the status wall from the rail on demand, never at launch", async () => {
     stubDevice(NARROW_WINDOW);
     mounted = mountApp();
     await flush();
-    expect(document.querySelector("[data-status-wall]")).toBeNull();
-    expect(button("会话状态首页")).toBeNull();
+    const wall = () => document.querySelector("[data-status-wall]");
+    expect(wall()).toBeNull();
+    expect(button("会话总览")?.getAttribute("aria-pressed")).toBe("false");
+    act(() => button("会话总览")?.click());
+    expect(wall()).not.toBeNull();
+    expect(button("会话总览")?.getAttribute("aria-pressed")).toBe("true");
+    act(() => button("会话总览")?.click());
+    expect(wall()).toBeNull();
   });
 
   it("mobile on a wide tablet keeps docked sidebars and still hides the desktop window chrome", async () => {

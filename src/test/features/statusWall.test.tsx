@@ -153,6 +153,25 @@ describe("StatusWall", () => {
     }
   });
 
+  it("summarises the groups in the toolbar and closes on Escape from inside the wall", () => {
+    applyAggregateList(listing([host("device:box", { name: "build box", deviceId: "box" })], [
+      item("device:box", "busy", "running", 1),
+      item("device:box", "ask", "needs_me", 4),
+    ]));
+    const onClose = vi.fn();
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn(), onClose }));
+    try {
+      expect(view.container.querySelector('[data-testid="wall-summary"]')?.textContent).toBe("需要处理 1 · 运行中 1");
+      const card = view.container.querySelector<HTMLElement>('[data-wall-card="ask"] button')!;
+      act(() => {
+        card.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("asks for the listing when none is known yet and shows sessions as hosts answer", async () => {
     let answer: (list: AggregateList) => void = () => {};
     mocks.sessionsAggregate.mockReturnValueOnce(new Promise<AggregateList>((resolve) => { answer = resolve; }));

@@ -17,6 +17,8 @@ const CLOCK_MS = 30_000;
 export interface StatusWallProps {
   // Called once a card's session is open, so the shell can show it.
   onOpened: () => void;
+  // Called on Escape while focus is inside the wall.
+  onClose?: () => void;
   // Opens the asset drawer, for the empty wall.
   onOpenAssets?: () => void;
 }
@@ -77,11 +79,13 @@ function WallCardView({
     </>
   );
   return (
-    <li className="nx-wall-card rounded-md border border-[var(--nx-border-strong)]" data-wall-card={card.tabId} data-state={card.state}>
+    <li
+      className={`nx-wall-card rounded-md border transition-colors ${card.group === "needs_me" ? "border-[var(--color-accent)]" : "border-[var(--nx-border-strong)]"} ${reachable ? "hover:bg-neutral-800/50" : ""}`}
+      data-wall-card={card.tabId} data-state={card.state}>
       {reachable ? (
         <button
           type="button"
-          className="flex w-full min-w-0 items-start gap-2.5 px-3 py-2.5 text-left disabled:cursor-default"
+          className="flex h-full w-full min-w-0 items-start gap-2.5 rounded-md px-3 py-2.5 text-left disabled:cursor-default"
           disabled={opening}
           aria-labelledby={`${id}-title ${id}-host ${id}-state`}
           aria-describedby={described || undefined}
@@ -99,11 +103,11 @@ function WallCardView({
 }
 
 
-// StatusWall is the mobile home: sessions grouped by needs me, running, finished and unknown. It renders at once from
+// StatusWall is the home of both shells: sessions grouped by needs me, running, finished and unknown. It renders at once from
 // what is already known (this client's tabs and the last cross-host listing) and fills in as hosts answer. Cards keep
 // their place while the wall is shown; a refresh or a return to the app re-sorts them. A card that changes state
 // moves to its new group at once.
-export function StatusWall({ onOpened, onOpenAssets }: StatusWallProps) {
+export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps) {
   const byTabId = useAwarenessStore((state) => state.byTabId);
   const workspaces = useWorkspaceList();
   const hosts = useSessionAggregate((state) => state.hosts);
@@ -224,13 +228,25 @@ export function StatusWall({ onOpened, onOpenAssets }: StatusWallProps) {
   const unreachable = model.hosts.filter((host) => host.status !== "pending");
 
   return (
-    <section className="nx-status-wall flex min-h-0 flex-1 flex-col bg-neutral-900" aria-labelledby="nx-wall-heading" data-status-wall="">
+    <section
+      className="nx-status-wall flex min-h-0 flex-1 flex-col bg-neutral-900"
+      aria-labelledby="nx-wall-heading"
+      data-status-wall=""
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && onClose && !event.defaultPrevented) onClose();
+      }}
+    >
       <div className="nx-toolbar">
         <h2 id="nx-wall-heading" className="nx-toolbar-title">会话状态</h2>
         <span className="nx-hint" role="status" aria-live="polite" data-testid="wall-progress">
           {refreshing ? "正在刷新…" : loadError && !loaded ? "未能读取" : pending.length > 0 ? `正在查询 ${pending.length} 台主机…` : !loaded ? "正在读取各主机的会话…" : ""}
         </span>
         <div className="nx-spacer" />
+        {total > 0 && (
+          <span className="nx-hint hidden sm:inline" data-testid="wall-summary">
+            {WALL_GROUPS.filter((group) => shown[group].length > 0).map((group) => `${WALL_GROUP_LABELS[group]} ${shown[group].length}`).join(" · ")}
+          </span>
+        )}
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={refreshing} onClick={() => void refresh()}>
           <IconRefresh size={13} className={refreshing ? "animate-spin" : ""} />
           刷新
@@ -252,10 +268,10 @@ export function StatusWall({ onOpened, onOpenAssets }: StatusWallProps) {
         )}
         {WALL_GROUPS.map((group) => shown[group].length > 0 && (
           <div key={group} className="pt-3" data-wall-group={group}>
-            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">
+            <h3 className={`mb-1.5 text-[12px] font-semibold ${group === "needs_me" ? "text-[var(--nx-fg-strong)]" : "text-[var(--nx-fg-soft)]"}`}>
               {WALL_GROUP_LABELS[group]} <span className="font-normal">{shown[group].length}</span>
             </h3>
-            <ul className="flex flex-col gap-2">
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-2">
               {shown[group].map((entry) => (
                 <WallCardView
                   key={entry.tabId}

@@ -137,6 +137,15 @@ export const IconHome = (p: IconProps) => (
   </Svg>
 );
 
+export const IconDashboard = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="7" height="7" rx="1.5" />
+    <rect x="13" y="4" width="7" height="7" rx="1.5" />
+    <rect x="4" y="13" width="7" height="7" rx="1.5" />
+    <rect x="13" y="13" width="7" height="7" rx="1.5" />
+  </Svg>
+);
+
 export const IconFoldAll = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 4.5h16" />

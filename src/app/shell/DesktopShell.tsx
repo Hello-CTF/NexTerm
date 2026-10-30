@@ -4,6 +4,7 @@ import { closeWindow, minimiseWindow, toggleMaximiseWindow } from "../../ipc/wai
 import { isMac, isWailsDragRegionTarget, wailsNoDragRegionStyle } from "../platform";
 import { IconClose, IconMaximize, IconMinus } from "../../ui/icons";
 import { ShellFrame, type ShellParts } from "./ShellFrame";
+import { useStatusHome } from "./useStatusHome";
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   if (TRANSPORT !== "desktop") return;
@@ -45,13 +46,15 @@ function WindowControls() {
 
 // DesktopShell serves the "desktop" and "compact" modes: a window with its own title bar. Compact windows get
 // overlay sidebars from the shared layout; the window chrome (custom controls off macOS, double-click to maximise on
-// the drag region) stays. macOS shows no window buttons: Wails hides the native ones on a frameless window.
+// the drag region) stays. The status wall opens from the rail's overview button on demand, never at launch. macOS shows no window buttons: Wails hides the native ones on a frameless window.
 export function DesktopShell(parts: ShellParts) {
   const windowControls = TRANSPORT === "desktop" && !isMac() ? <WindowControls /> : null;
+  const home = useStatusHome(parts.body.docks);
   return (
     <ShellFrame
       {...parts}
       header={{ ...parts.header, windowControls }}
+      body={{ ...parts.body, home }}
       onDoubleClick={onDragRegionDoubleClick}
     />
   );

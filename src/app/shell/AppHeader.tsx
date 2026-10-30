@@ -62,8 +62,6 @@ export interface AppHeaderProps {
   onOpenPalette: () => void;
   // windowControls is the desktop shell's minimise/maximise/close group; the mobile shell has none.
   windowControls?: ReactNode;
-  // leading sits before the app name; the mobile shell puts its home button there.
-  leading?: ReactNode;
 }
 
 export function AppHeader({
@@ -75,7 +73,6 @@ export function AppHeader({
   onToggleRight,
   onOpenPalette,
   windowControls,
-  leading,
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
@@ -85,7 +82,6 @@ export function AppHeader({
       className="nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pl-2.5 pr-2.5"
       data-wails-drag-region style={wailsDragRegionStyle}
     >
-      {leading}
       <span
         className="nx-app-name text-[12.5px] font-semibold tracking-tight text-neutral-100"
         data-wails-drag-region style={wailsDragRegionStyle}

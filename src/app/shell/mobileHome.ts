@@ -1,7 +1,8 @@
 import { create } from "zustand";
 
-// The mobile shell's home: the status wall covers the workspaces while open. The workspaces stay mounted underneath,
-// so terminals keep their connections and scrollback. Only the mobile shell ever opens it.
+// The shell's home: the status wall covers the workspaces while open. The workspaces stay mounted underneath, so
+// terminals keep their connections and scrollback. The rail's overview button toggles it in both shells; only the
+// mobile shell opens it at launch.
 interface MobileHomeState {
   open: boolean;
 }
