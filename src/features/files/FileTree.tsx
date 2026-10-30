@@ -6,7 +6,6 @@ import { fsApi, sessionApi, terminalApi } from "../../ipc/commands";
 import {
   ask,
   discardStaged,
-  finishSave,
   pickLocalFile,
   pickSavePath,
   promptText,
@@ -48,8 +47,7 @@ import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
-import { enqueueDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
-import { createTransferTaskId } from "./transferTaskId";
+import { enqueueDownload, enqueuePackDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
 import {
   IconArchive,
   IconArrowUp,
@@ -929,17 +927,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const packDownload = async (dir: string) => {
     const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
     if (!target) return;
-    pushToast("info", "正在远端打包…");
-    try {
-      const bytes = await fsApi.packDownload(sessionId, dir, target, createTransferTaskId());
-      const where = await finishSave(target, `${baseName(dir)}.tar.gz`);
-      pushToast(
-        where ? "success" : "info",
-        where ? `已打包下载到 ${where}（${bytes} 字节）` : "已取消保存",
-      );
-    } catch (e) {
-      pushToast("error", `打包下载失败：${describeError(e)}`);
-    }
+    pushToast("info", "开始远端打包下载…");
+    enqueuePackDownload(sessionId, { remotePath: dir, localPath: target });
   };
 
   const extractHere = async (archive: string) => {

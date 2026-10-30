@@ -249,6 +249,7 @@ import {
   parseOctalMode,
   validateEntryName,
 } from "../../features/files/fileOps";
+import { useTransferStore } from "../../features/files/transferStore";
 import { FileTree } from "../../features/files/FileTree";
 import { FileEditor } from "../../features/files/FileEditor";
 import { LogViewer } from "../../features/files/LogViewer";
@@ -2336,16 +2337,28 @@ describe("context menus: blank-area entries and wiring", () => {
     mocks.pickSavePath.mockResolvedValue("/local/sub.tar.gz");
     mocks.packDownload.mockResolvedValue(1234);
     mocks.finishSave.mockResolvedValue("/local/sub.tar.gz");
+    mocks.discardStaged.mockResolvedValue(undefined);
     openRowMenu(mounted!.container, "~/sub");
     clickMenuItem(mounted!.container, "打包下载当前目录");
     await waitFor(() =>
-      expect(mocks.packDownload).toHaveBeenCalledWith(SID, "~/sub", "/local/sub.tar.gz", expect.any(String)),
+      expect(mocks.packDownload).toHaveBeenCalledWith(
+        SID,
+        "~/sub",
+        "/local/sub.tar.gz",
+        expect.any(String),
+        expect.any(String),
+      ),
     );
     expect(mocks.pickSavePath).toHaveBeenCalledWith("sub.tar.gz");
     await waitFor(() =>
       expect(mocks.finishSave).toHaveBeenCalledWith("/local/sub.tar.gz", "sub.tar.gz"),
     );
-    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已打包下载"));
+    // The pack runs as a queued transfer task, so the transfer panel shows its progress.
+    await waitFor(() =>
+      expect(
+        useTransferStore.getState().tasks.find((t) => t.pack && t.status === "done"),
+      ).toMatchObject({ remotePath: "~/sub", resultText: "已下载到 /local/sub.tar.gz" }),
+    );
   });
 
   it("hides pack download for winrm sessions and keeps it for ssh sessions", async () => {

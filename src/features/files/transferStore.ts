@@ -34,6 +34,8 @@ export interface UploadItem {
 export interface DownloadItem {
   remotePath: string;
   localPath: string;
+  // pack downloads the directory at remotePath as a remote-built tar.gz.
+  pack?: boolean;
 }
 
 interface TransferStoreState {
@@ -121,6 +123,7 @@ function newTask(
     remotePath: item.remotePath,
     localPath: item.localPath,
     file: "file" in item ? item.file : undefined,
+    pack: "pack" in item ? item.pack : undefined,
     status,
     transferred: 0,
     total: 0,
@@ -185,6 +188,10 @@ export function enqueueUploadBatch(
 
 export function enqueueDownload(sessionId: string, item: DownloadItem): string {
   return enqueueBatch(sessionId, "download", [item], []);
+}
+
+export function enqueuePackDownload(sessionId: string, item: Omit<DownloadItem, "pack">): string {
+  return enqueueBatch(sessionId, "download", [{ ...item, pack: true }], []);
 }
 
 function transferHostKey(task: ScopedTransferTask): string {
@@ -296,6 +303,7 @@ export function canResumeTransfer(task: ScopedTransferTask): boolean {
     !task.restartPreparing &&
     !task.resumeIssue &&
     (task.direction === "download" || task.resume === true) &&
+    !task.pack &&
     hasPartial(task) &&
     hasValidLocalPath(task) &&
     !(task.direction === "upload" && task.file)
@@ -542,9 +550,13 @@ async function execute(id: string, epoch: number): Promise<void> {
       }
       resultText = `已上传到 ${task.remotePath}`;
     } else {
-      await fsApi.download(task.sessionId, task.remotePath, task.localPath, task.resume === true, id, attemptId);
+      if (task.pack) {
+        await fsApi.packDownload(task.sessionId, task.remotePath, task.localPath, id, attemptId);
+      } else {
+        await fsApi.download(task.sessionId, task.remotePath, task.localPath, task.resume === true, id, attemptId);
+      }
       if (!active()) return;
-      const where = await finishSave(task.localPath, baseName(task.remotePath));
+      const where = await finishSave(task.localPath, task.pack ? `${baseName(task.remotePath)}.tar.gz` : baseName(task.remotePath));
       if (where) {
         resultText = `已下载到 ${where}`;
       } else {

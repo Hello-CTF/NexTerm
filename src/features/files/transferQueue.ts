@@ -17,6 +17,8 @@ export interface TransferTask {
   // file carries the upload content when no OS path is available (desktop drops); the task
   // streams bounded chunks instead of using a path-based fs_upload.
   file?: File;
+  // pack marks a directory downloaded as a remote-built tar.gz; it cannot resume.
+  pack?: boolean;
   status: TransferStatus;
   transferred: number;
   total: number;
