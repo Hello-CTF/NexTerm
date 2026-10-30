@@ -16,6 +16,7 @@ import {
   type SkillsApi,
   type SkillOverrideInput,
 } from "./skillsApi";
+import { skillSummary } from "./skillText";
 
 type Draft =
   | { kind: "create"; name: string; description: string; body: string }
@@ -373,7 +374,12 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
                 >
                   {entry.name}
                 </div>
-                <div className={`break-words text-[12px] ${entry.disabled ? "text-neutral-500" : "text-neutral-400"}`}>{entry.description}</div>
+                <div
+                  className={`break-words text-[12px] ${entry.disabled ? "text-neutral-500" : "text-neutral-400"}`}
+                  title={skillSummary(entry) === entry.description ? undefined : `AI 读取的描述：${entry.description}`}
+                >
+                  {skillSummary(entry)}
+                </div>
               </div>
               <button
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
