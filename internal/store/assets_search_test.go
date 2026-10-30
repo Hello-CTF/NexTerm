@@ -145,3 +145,34 @@ func TestAssetSearchUnicodeCodePointsAndCaseFold(t *testing.T) {
 		t.Fatalf("Unicode case-fold tag search = %+v, err=%v", rows, err)
 	}
 }
+
+func TestAssetSearchSkipsDeviceGroupRows(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	group, err := db.GroupCreate(ctx, GroupInput{Name: "生产"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AssetCreate(ctx, AssetInput{
+		GroupID: &group.ID, Kind: AssetKindDevice, Name: "edge-01", OptionsJSON: `{"deviceId":"d-1"}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "edge-02", Host: ptr("10.0.0.3"), OptionsJSON: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	found, err := db.AssetSearch(ctx, "edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || found[0].Name != "edge-02" {
+		t.Fatalf("search = %+v, want only the ssh asset", found)
+	}
+	listed, err := db.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("AssetList keeps device rows for sync and the tree, got %d rows", len(listed))
+	}
+}

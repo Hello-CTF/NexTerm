@@ -22,8 +22,11 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 		if err != nil {
 			return nil, err
 		}
-		assets := make([]Asset, len(rows))
-		for i, row := range rows {
+		assets := make([]Asset, 0, len(rows))
+		for _, row := range rows {
+			if row.Kind == store.AssetKindDevice {
+				continue
+			}
 			asset := Asset{ID: row.ID, Name: row.Name, Kind: row.Kind, Tags: row.Tags}
 			if row.Host != nil {
 				asset.Host = *row.Host
@@ -34,7 +37,7 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 			if row.Username != nil {
 				asset.Username = *row.Username
 			}
-			assets[i] = asset
+			assets = append(assets, asset)
 		}
 		return assets, nil
 	}

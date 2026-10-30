@@ -101,6 +101,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       // the mocked callDesktop transport (see the ../../ipc/wails mock).
       update: actual.assetApi.update,
       list: mocks.assetList,
+      deviceRefs: async () => [],
       search: vi.fn(),
       searchMeta: vi.fn(),
       groupList: mocks.groupList,
@@ -251,7 +252,10 @@ vi.mock("../../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
 vi.mock("../../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
-vi.mock("../../features/fleet/DeviceTreeSection", () => ({ DeviceTreeSection: () => null }));
+vi.mock("../../features/fleet/DeviceTreeSection", () => ({
+  useDeviceTree: () => ({ devices: [], onlineOf: () => false, busyId: null, openMenu: () => undefined, menuElement: null }),
+  DeviceTreeRow: () => null,
+}));
 vi.mock("../../features/explorer/SnippetsPanel", () => ({ SnippetsPanel: () => null }));
 
 import App from "../../app/App";

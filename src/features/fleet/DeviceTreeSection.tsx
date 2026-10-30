@@ -2,8 +2,8 @@
 // no header row, no count, no refresh button, and no placeholder hints. While the device list is loading, when it failed to load,
 // when no devices are enrolled, the component renders null. Offline and agent-less enrolled devices remain visible but disabled;
 // management (enrollment, manual refresh, error details) lives in the device management view.
-// Devices are not asset table records: they are excluded from asset search/CRUD/sync, cannot be edited or deleted,
-// cannot be dragged into groups, and there is no cross-device drag; row visuals and keyboard/click behavior match regular assets
+// Devices are not asset table records: they are excluded from asset search/CRUD/sync and cannot be edited or deleted.
+// Which group a device sits in is recorded by a kind=device asset row (see AssetTree); row visuals and keyboard/click behavior match regular assets
 // (role=treeitem, single/double click/Enter or the play button opens the device workspace).
 // Renders nothing and issues no requests when logged out. Revoked devices are not listed at all (the device management view
 // reveals them on demand); offline and agent-less devices remain visible with a status badge, disabled for terminal access.
@@ -45,7 +45,17 @@ function openDevicesTab(): void {
   useUi.getState().addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true });
 }
 
-export function DeviceTreeSection() {
+export interface DeviceTree {
+  devices: FleetDevice[];
+  onlineOf: (device: FleetDevice) => boolean;
+  busyId: string | null;
+  openMenu: (device: FleetDevice, x: number, y: number) => void;
+  menuElement: React.ReactNode;
+}
+
+// Shared state of the device rows: the polled device list, realtime presence, the row context menu and revocation.
+// The asset tree owns one instance and places the rows into groups; the standalone section renders them flat.
+export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem[]): DeviceTree {
   const qc = useQueryClient();
   const pushToast = useUi((s) => s.pushToast);
   const account = useFleetAccount();
@@ -103,8 +113,6 @@ export function DeviceTreeSection() {
     });
   }, [qc, userId]);
 
-  if (!userId) return null;
-
   // Effective online = realtime event first (within the heartbeat threshold), otherwise fall back to the heartbeat determination; non-agent devices are always offline.
   const onlineOf = (d: FleetDevice): boolean => {
     if (d.revoked_at !== 0 || !d.agent) return false;
@@ -159,6 +167,8 @@ export function DeviceTreeSection() {
       { kind: "item", label: "主机详情", icon: <IconInfo size={13} />, hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) },
       { kind: "item", label: "设备管理", icon: <IconMonitor size={13} />, hint: "接入、自动启动与撤销", onSelect: openDevicesTab },
     );
+    const extra = extraMenuItems?.(device) ?? [];
+    if (extra.length > 0) items.push({ kind: "separator" }, ...extra);
     if (device.revoked_at === 0) items.push(
       { kind: "separator" },
       {
@@ -177,8 +187,35 @@ export function DeviceTreeSection() {
   // Revoked devices are never listed in the asset tree; they stay reachable only from the device management view.
   const devices = (devicesQuery.data?.devices ?? []).filter((device) => device.revoked_at === 0);
   const menuDevice = menu ? devices.find((device) => device.id === menu.device.id) : undefined;
-  if (devices.length === 0) return null;
 
+  const menuElement = (
+    <ContextMenu
+      state={
+        menu && menuDevice
+          ? {
+              x: menu.x,
+              y: menu.y,
+              title: menuDevice.name,
+              items: buildMenu(menuDevice, deviceOpenBlockReason(menuDevice, onlineOf(menuDevice))),
+            }
+          : null
+      }
+      onClose={() => setMenu(null)}
+    />
+  );
+
+  return {
+    devices: userId ? devices : [],
+    onlineOf,
+    busyId,
+    openMenu: (device, x, y) => setMenu({ x, y, device }),
+    menuElement,
+  };
+}
+
+export function DeviceTreeSection() {
+  const { devices, onlineOf, busyId, openMenu, menuElement } = useDeviceTree();
+  if (devices.length === 0) return null;
   return (
     <>
       {devices.map((device) => (
@@ -187,23 +224,10 @@ export function DeviceTreeSection() {
           device={device}
           online={onlineOf(device)}
           busy={busyId === device.id}
-          onMenu={(x, y) => setMenu({ x, y, device })}
+          onMenu={(x, y) => openMenu(device, x, y)}
         />
       ))}
-
-      <ContextMenu
-        state={
-          menu && menuDevice
-            ? {
-                x: menu.x,
-                y: menu.y,
-                title: menuDevice.name,
-                items: buildMenu(menuDevice, deviceOpenBlockReason(menuDevice, onlineOf(menuDevice))),
-              }
-            : null
-        }
-        onClose={() => setMenu(null)}
-      />
+      {menuElement}
     </>
   );
 }
@@ -216,16 +240,21 @@ export function deviceOpenBlockReason(device: FleetDevice, online: boolean): str
   return null;
 }
 
-function DeviceTreeRow({
+export function DeviceTreeRow({
   device,
   online,
   busy,
   onMenu,
+  level = 1,
+  onDragStart,
 }: {
   device: FleetDevice;
   online: boolean;
   busy: boolean;
   onMenu: (x: number, y: number) => void;
+  level?: number;
+  // Present when the row can be dragged into an asset group.
+  onDragStart?: (event: React.DragEvent<HTMLElement>) => void;
 }) {
   const agent = device.agent;
   const disabledReason = deviceOpenBlockReason(device, online);
@@ -260,9 +289,11 @@ function DeviceTreeRow({
     <>
       <div
         role="treeitem"
-        aria-level={1}
+        aria-level={level}
         aria-disabled={!connectable}
         tabIndex={0}
+        draggable={onDragStart !== undefined}
+        onDragStart={onDragStart}
         className={`nx-row nx-row-oneline nx-row-reserve-actions ${connectable ? "" : "cursor-not-allowed opacity-55"}`}
         onClick={(e) => {
           if (suppressClick.current) {

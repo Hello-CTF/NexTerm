@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => {
     fetch: vi.fn(),
     ask: vi.fn(),
     assetList: vi.fn(),
+    deviceRefs: vi.fn(),
+    assetCreate: vi.fn(),
+    assetUpdate: vi.fn(),
     groupList: vi.fn(),
     snippetList: vi.fn(),
     sessionConnectDevice: vi.fn(),
@@ -39,8 +42,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     assetApi: {
       list: mocks.assetList,
+      deviceRefs: mocks.deviceRefs,
+      create: mocks.assetCreate,
       search: vi.fn(),
-      update: vi.fn(),
+      update: mocks.assetUpdate,
       delete: vi.fn(),
       groupList: mocks.groupList,
       groupCreate: vi.fn(),
@@ -273,9 +278,16 @@ function deviceRow(name: string): HTMLElement {
   return row;
 }
 
+// A device inside a group is nested in the group's own treeitem, so the menu targets the innermost matching row.
+function leafRow(name: string): HTMLElement {
+  const row = [...tree().querySelectorAll<HTMLElement>('[role="treeitem"]')].reverse().find((r) => r.textContent?.includes(name));
+  if (!row) throw new Error(`设备行未找到: ${name}`);
+  return row;
+}
+
 function openDeviceMenu(name: string): void {
   act(() => {
-    deviceRow(name).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
+    leafRow(name).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 40, clientY: 40 }));
   });
 }
 
@@ -309,6 +321,9 @@ beforeEach(() => {
   useUi.setState({ rightOpen: false });
   stubFinePointer();
   mocks.assetList.mockResolvedValue([LOCAL_ASSET, WEB_ASSET]);
+  mocks.deviceRefs.mockResolvedValue([]);
+  mocks.assetCreate.mockResolvedValue({});
+  mocks.assetUpdate.mockResolvedValue({});
   mocks.groupList.mockResolvedValue([GROUP]);
   mocks.snippetList.mockResolvedValue([]);
   mocks.sessionConnectDevice.mockResolvedValue({
@@ -809,5 +824,66 @@ describe("DevicesView MetricsPanel reuse regression", () => {
     expect(card?.textContent).toContain("12.5%");
     expect(card?.textContent).not.toContain("趋势窗口");
     expect(card?.textContent).not.toContain("采样点");
+  });
+});
+
+const DEVICE_REF = { ...LOCAL_ASSET, id: "ref-1", groupId: "g1", kind: "device", name: "web-01", builtin: false, options: { deviceId: "d-1" } };
+
+function dropOn(target: HTMLElement, assetId: string): void {
+  const event = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", {
+    value: { types: ["application/x-nexterm-asset"], getData: () => assetId, setData: () => {}, effectAllowed: "" },
+  });
+  act(() => {
+    target.dispatchEvent(event);
+  });
+}
+
+describe("Asset tree device rows - groups", () => {
+  it("places a device inside the group its kind=device row records", async () => {
+    mocks.deviceRefs.mockResolvedValue([DEVICE_REF]);
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    expect([...tree().children].some((el) => el.getAttribute("role") === "treeitem" && el.textContent === "web-01")).toBe(false);
+    const group = deviceRow("Production");
+    expect(group.textContent).toContain("web-01");
+  });
+
+  it("creates the kind=device row the first time a device is dropped on a group", async () => {
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    dropOn(deviceRow("Production"), "device/d-1");
+    await flushUntil(() => mocks.assetCreate.mock.calls.length > 0);
+
+    expect(mocks.assetCreate).toHaveBeenCalledWith({
+      kind: "device",
+      name: "web-01",
+      groupId: "g1",
+      options: { deviceId: "d-1" },
+    });
+    expect(mocks.assetUpdate).not.toHaveBeenCalled();
+    await flush();
+  });
+
+  it("moves a grouped device back to the root by updating its existing row", async () => {
+    mocks.deviceRefs.mockResolvedValue([DEVICE_REF]);
+    route({ devices: [ONLINE_DEVICE] });
+    seedUser(SUPERADMIN);
+    mountTree();
+    await flushUntil(() => document.body.textContent?.includes("web-01") ?? false);
+
+    openDeviceMenu("web-01");
+    clickDeviceMenuItem("移出分组");
+    await flushUntil(() => mocks.assetUpdate.mock.calls.length > 0);
+
+    expect(mocks.assetUpdate).toHaveBeenCalledWith({ id: "ref-1", groupId: null });
+    expect(mocks.assetCreate).not.toHaveBeenCalled();
+    await flush();
   });
 });

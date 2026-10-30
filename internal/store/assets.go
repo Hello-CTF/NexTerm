@@ -12,6 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
+// AssetKindDevice marks an asset row that only records which group a fleet device sits in. The device itself lives in
+// the fleet service, so these rows are never connectable hosts and stay out of search and host listings.
+const AssetKindDevice = "device"
+
 func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow, error) {
 	asset := query.Use(s.db).AssetRow
 	q := asset.WithContext(ctx).Where(ownerConditions(ctx, asset.TableName())...)
@@ -363,6 +367,7 @@ func (s *Store) assetSearchSnapshot(ctx context.Context) (assets []AssetRow, gro
 		asset := query.Use(tx).AssetRow
 		if err := asset.WithContext(ctx).
 			Where(asset.DeletedAt.IsNull()).
+			Where(asset.Kind.Neq(AssetKindDevice)).
 			Where(ownerConditions(ctx, asset.TableName())...).
 			Order(asset.Sort, asset.Name).
 			Scan(&assets); err != nil {

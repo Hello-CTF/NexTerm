@@ -45,6 +45,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     assetApi: {
       ...actual.assetApi,
       list: mocks.assetList,
+      deviceRefs: async () => [],
       search: mocks.assetSearch,
       groupList: mocks.groupList,
       snippetList: mocks.snippetList,

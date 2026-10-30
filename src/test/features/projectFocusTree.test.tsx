@@ -15,8 +15,19 @@ const mocks = vi.hoisted(() => ({
   snippetList: vi.fn(),
 }));
 
+const deviceTreeState = vi.hoisted(() => ({
+  value: {
+    devices: [{ id: "dev-1", name: "设备区" }],
+    onlineOf: () => true,
+    busyId: null,
+    openMenu: () => undefined,
+    menuElement: null,
+  },
+}));
+
 vi.mock("../../features/fleet/DeviceTreeSection", () => ({
-  DeviceTreeSection: () => <div>设备区</div>,
+  useDeviceTree: () => deviceTreeState.value,
+  DeviceTreeRow: ({ device }: { device: { name: string } }) => <div>{device.name}</div>,
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -25,6 +36,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     ...actual,
     assetApi: {
       list: mocks.assetList,
+      deviceRefs: async () => [],
       search: mocks.assetSearch,
       searchMeta: async (query: string) => {
         const assets = await mocks.assetSearch(query);

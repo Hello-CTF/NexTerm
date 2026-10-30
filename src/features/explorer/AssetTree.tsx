@@ -10,6 +10,7 @@ import {
   assetConnectionProblemKey,
   connectAsset,
   connectQuickTarget,
+  deviceAssetId,
   useConnectionProblem,
   useSessionList,
   useUi,
@@ -60,7 +61,7 @@ import {
 import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
 import { InventoryDialog } from "./InventoryDialog";
-import { DeviceTreeSection } from "../fleet/DeviceTreeSection";
+import { DeviceTreeRow, useDeviceTree } from "../fleet/DeviceTreeSection";
 import { hostDetailLabel, openHostDetail } from "../hosts/hostDetail";
 import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
 import { ProjectSelector } from "./ProjectSelector";
@@ -68,7 +69,6 @@ import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isIn
 import { EVENTS, listenEvent } from "../../ipc/events";
 import {
   ALL_PROJECTS,
-  UNGROUPED_PROJECT,
   filterAssetsForProject,
   filterGroupsForProject,
 } from "../../app/projectFocus";
@@ -215,7 +215,6 @@ function AssetTreeSkeleton() {
 
 type AssetTreeItem =
   | { key: string; kind: "asset"; asset: Asset; orphaned?: boolean }
-  | { key: string; kind: "devices" }
   | { key: string; kind: "group"; node: GroupTreeNode };
 
 interface GroupTreeNode {
@@ -353,6 +352,22 @@ export function AssetTree() {
     queryFn: () => assetApi.list(),
     refetchOnWindowFocus: false,
   });
+  // kind=device rows record which group a fleet device sits in; the devices themselves come from the fleet service.
+  const deviceRefs = useQuery({
+    queryKey: ["device-refs"],
+    queryFn: () => assetApi.deviceRefs(),
+    refetchOnWindowFocus: false,
+  });
+  // The menu builder runs while the device tree renders, before the group map below exists, so it reads the latest through a ref.
+  const deviceGroupIdsRef = useRef(new Map<string, string>());
+  const deviceTree = useDeviceTree((device) =>
+    deviceGroupIdsRef.current.has(device.id) ? [{
+      kind: "item",
+      label: "移出分组",
+      icon: <IconFolder size={13} />,
+      onSelect: () => void moveAsset(deviceAssetId(device.id), null),
+    }] : [],
+  );
   const groups = useQuery({
     queryKey: ["groups"],
     queryFn: () => assetApi.groupList(),
@@ -372,6 +387,7 @@ export function AssetTree() {
   useEffect(() => {
     const refresh = () => {
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["device-refs"] });
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
     };
@@ -389,9 +405,50 @@ export function AssetTree() {
     };
   }, [qc]);
 
+  // Each fleet device appears as a pseudo asset so groups, counts, collapse and drag-and-drop treat it like any host.
+  // Its id is the stable device pseudo id; the kind=device row (when the device was ever grouped) only supplies the group.
+  const deviceRefByDevice = useMemo(() => {
+    const refs = new Map<string, Asset>();
+    for (const ref of [...(deviceRefs.data ?? [])].sort((a, b) => a.createdAt - b.createdAt)) {
+      const deviceId = ref.options?.deviceId;
+      if (typeof deviceId === "string" && !refs.has(deviceId)) refs.set(deviceId, ref);
+    }
+    return refs;
+  }, [deviceRefs.data]);
+  const deviceGroupIds = useMemo(() => {
+    const groupIds = new Map<string, string>();
+    for (const [deviceId, ref] of deviceRefByDevice) if (ref.groupId) groupIds.set(deviceId, ref.groupId);
+    return groupIds;
+  }, [deviceRefByDevice]);
+  deviceGroupIdsRef.current = deviceGroupIds;
+  const deviceAssets = useMemo<Asset[]>(
+    () => deviceTree.devices.map((device) => ({
+      id: deviceAssetId(device.id),
+      groupId: deviceRefByDevice.get(device.id)?.groupId ?? null,
+      kind: "device",
+      name: device.name,
+      host: null,
+      port: null,
+      username: null,
+      authKind: null,
+      keyPath: null,
+      credId: null,
+      options: { deviceId: device.id },
+      tags: "",
+      note: "",
+      sort: deviceRefByDevice.get(device.id)?.sort ?? 0,
+      createdAt: 0,
+      updatedAt: 0,
+      deletedAt: null,
+      builtin: false,
+    })),
+    [deviceTree.devices, deviceRefByDevice],
+  );
+  const deviceById = useMemo(() => new Map(deviceTree.devices.map((device) => [device.id, device])), [deviceTree.devices]);
+  // Devices are not part of asset search, so they only list while browsing.
   const filtered = useMemo(
-    () => query.trim() ? (results.data?.assets ?? []) : (assets.data ?? []),
-    [query, results.data?.assets, assets.data],
+    () => query.trim() ? (results.data?.assets ?? []) : [...(assets.data ?? []), ...deviceAssets],
+    [query, results.data?.assets, assets.data, deviceAssets],
   );
   const projectFiltered = useMemo(
     () => filterAssetsForProject(filtered, activeProject, groups.data ?? []),
@@ -471,17 +528,16 @@ export function AssetTree() {
     const ungrouped = [...(byGroup.get(null) ?? []), ...orphaned];
     const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
     const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
-    const restAssets = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
+    const afterHead = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
+    // Ungrouped devices sit right after the local terminal, ahead of other assets.
+    const restAssets = [...afterHead.filter((a) => a.kind === "device"), ...afterHead.filter((a) => a.kind !== "device")];
     for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
-    if (!query.trim() && (activeProject === ALL_PROJECTS || activeProject === UNGROUPED_PROJECT)) {
-      items.push({ key: "devices", kind: "devices" });
-    }
     for (const asset of restAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
     for (const node of groupRoots) {
       items.push({ key: `group:${node.group.id}`, kind: "group", node });
     }
     return items;
-  }, [activeProject, byGroup, groupRoots, groupPaths, groups.data, query, visible]);
+  }, [byGroup, groupRoots, groupPaths, groups.data, visible]);
   const treeWindowCount = treeItems.reduce(
     (count, item) => count + (item.kind === "group" ? 1 + item.node.totalAssets + item.node.children.length : 1),
     0,
@@ -493,7 +549,7 @@ export function AssetTree() {
     estimateSize: (index) => {
       const item = treeItems[index];
       if (item.kind === "group") return groupRowEstimate(item.node);
-      return item.kind === "devices" ? 160 : item.kind === "asset" && item.orphaned ? 58 : 30;
+      return item.kind === "asset" && item.orphaned ? 58 : 30;
     },
     overscan: 6,
     rangeExtractor: (range) => {
@@ -648,9 +704,20 @@ export function AssetTree() {
     if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
+  // A device is grouped by its kind=device row: update it, or create it the first time the device enters a group.
+  const moveDevice = async (asset: Asset, groupId: string | null) => {
+    const deviceId = String(asset.options?.deviceId ?? "");
+    const ref = deviceRefByDevice.get(deviceId);
+    if (ref) {
+      await assetApi.update({ id: ref.id, groupId });
+    } else if (groupId !== null) {
+      await assetApi.create({ kind: "device", name: asset.name, groupId, options: { deviceId } });
+    }
+  };
+
   const moveAsset = async (assetId: string, groupId: string | null) => {
     if (pendingMovesRef.current.has(assetId)) return;
-    const asset = (assets.data ?? []).find((item) => item.id === assetId) ?? filtered.find((item) => item.id === assetId);
+    const asset = [...(assets.data ?? []), ...deviceAssets].find((item) => item.id === assetId) ?? filtered.find((item) => item.id === assetId);
     if (!asset) {
       pushToast("error", "无法移动：资产已不在列表中，请刷新后重试");
       return;
@@ -665,6 +732,12 @@ export function AssetTree() {
       return next;
     });
     try {
+      if (asset.kind === "device") {
+        await moveDevice(asset, groupId);
+        void qc.invalidateQueries({ queryKey: ["device-refs"] });
+        pushToast("info", groupId ? `已将「${asset.name}」移入分组` : `已将「${asset.name}」移出分组`);
+        return;
+      }
       await assetApi.update({ id: assetId, groupId });
       const updateCachedGroup = (rows: Asset[] | undefined) =>
         rows?.map((row) => row.id === assetId ? { ...row, groupId } : row);
@@ -899,7 +972,26 @@ export function AssetTree() {
   const onAssetFocus = (asset: Asset) => {
     focusedAssetIdRef.current = asset.id;
   };
-  const renderAssetRow = (asset: Asset, level: number) => (
+  const renderDeviceRow = (asset: Asset, level: number) => {
+    const deviceId = typeof asset.options?.deviceId === "string" ? asset.options.deviceId : "";
+    const device = deviceById.get(deviceId);
+    if (!device) return null;
+    return (
+      <DeviceTreeRow
+        key={asset.id}
+        device={device}
+        level={level}
+        online={deviceTree.onlineOf(device)}
+        busy={deviceTree.busyId === device.id}
+        onMenu={(x, y) => deviceTree.openMenu(device, x, y)}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DRAG_ASSET, asset.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+      />
+    );
+  };
+  const renderAssetRow = (asset: Asset, level: number) => asset.kind === "device" ? renderDeviceRow(asset, level) : (
     <AssetRow
       asset={asset}
       level={level}
@@ -946,6 +1038,7 @@ export function AssetTree() {
         duplicateNames={duplicateNames}
         detailedIdentity={detailedIdentity}
         onMore={(asset, x, y) => setRowMenu({ x, y, asset })}
+        renderDeviceRow={renderDeviceRow}
         onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
         onCreateIn={() => {
           setPresetGroup(group.id);
@@ -986,7 +1079,6 @@ export function AssetTree() {
         </div>
       </div>
     ) : renderAssetRow(item.asset, 1);
-    if (item.kind === "devices") return <DeviceTreeSection />;
     return renderGroupNode(item.node, 1);
   };
 
@@ -1185,6 +1277,7 @@ export function AssetTree() {
         }
         onClose={() => setRowMenu(null)}
       />
+      {deviceTree.menuElement}
       <ContextMenu
         state={headerMenu ? { x: headerMenu.x, y: headerMenu.y, items: headerMenuItems(headerMenu.kind) } : null}
         onClose={() => setHeaderMenu(null)}
@@ -1509,6 +1602,7 @@ function GroupNode({
   movingTargets,
   onRetryMove,
   onCancelMove,
+  renderDeviceRow,
 }: {
   group: AssetGroup;
   path: string;
@@ -1548,6 +1642,7 @@ function GroupNode({
   movingTargets: Record<string, string>;
   onRetryMove: (a: Asset) => void;
   onCancelMove: (a: Asset) => void;
+  renderDeviceRow: (asset: Asset, level: number) => React.ReactNode;
 }) {
   const collapsed = useGroupCollapse((s) => s.collapsedIds.includes(group.id));
   const toggleCollapsed = useGroupCollapse((s) => s.toggle);
@@ -1591,7 +1686,7 @@ function GroupNode({
   }, [open, assets, assetVirtualizer, virtualizeAssets]);
   const isAssetDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes(DRAG_ASSET);
-  const renderGroupAsset = (a: Asset) => (
+  const renderGroupAsset = (a: Asset) => a.kind === "device" ? renderDeviceRow(a, level + 1) : (
     <AssetRow
       key={a.id}
       asset={a}

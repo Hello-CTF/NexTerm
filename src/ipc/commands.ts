@@ -857,7 +857,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis";
+  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "device";
   name: string;
   host: string | null;
   port: number | null;
@@ -897,7 +897,9 @@ async function assetWrite<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 export const assetApi = {
-  list: () => call("asset_list") as Promise<Asset[]>,
+  // Device rows only record which group a fleet device sits in; they are not hosts, so the plain list leaves them out.
+  list: async () => (((await call("asset_list")) as Asset[] | null) ?? []).filter((asset) => asset.kind !== "device"),
+  deviceRefs: async () => (((await call("asset_list")) as Asset[] | null) ?? []).filter((asset) => asset.kind === "device"),
   get: (id: string) => call("asset_get", { id }) as Promise<Asset>,
   create: (args: Partial<Asset> & { kind: string; name: string }) =>
     assetWrite(() => call("asset_create", { args }) as Promise<Asset>),

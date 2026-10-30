@@ -6,7 +6,7 @@ const KEY = "nexterm.connectTemplates.v1";
 export interface ConnectTemplate {
   id: string;
   name: string;
-  kind: Asset["kind"];
+  kind: Exclude<Asset["kind"], "device">;
   port: number;
   username: string;
   authKind: string;
@@ -41,7 +41,7 @@ function load(): ConnectTemplate[] {
       templates.push({
         id: t.id,
         name: t.name,
-        kind: t.kind as Asset["kind"],
+        kind: t.kind as Exclude<Asset["kind"], "device">,
         port: typeof t.port === "number" ? t.port : 22,
         username: typeof t.username === "string" ? t.username : "",
         authKind: typeof t.authKind === "string" ? t.authKind : "password",
