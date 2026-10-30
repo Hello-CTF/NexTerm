@@ -15,7 +15,8 @@ export const BackgroundSessions = lazy(() =>
 export const TranscriptHistoryPanel = lazy(() =>
   import("../features/terminal/TranscriptHistoryPanel").then((m) => ({ default: m.TranscriptHistoryPanel })),
 );
-export const FileTree = lazy(() => import("../features/files/FileTree").then((m) => ({ default: m.FileTree })));
+const loadFileTree = () => import("../features/files/FileTree");
+export const FileTree = lazy(() => loadFileTree().then((m) => ({ default: m.FileTree })));
 export const MountPanel = lazy(() => import("../features/files/MountPanel").then((m) => ({ default: m.MountPanel })));
 export const FileEditor = lazy(() => import("../features/files/FileEditor").then((m) => ({ default: m.FileEditor })));
 export const LogViewer = lazy(() => import("../features/files/LogViewer").then((m) => ({ default: m.LogViewer })));
@@ -43,9 +44,8 @@ export const AuditView = lazy(() => import("../features/settings/AuditView").the
 export const CredentialsPanel = lazy(() =>
   import("../features/credentials/CredentialsPanel").then((m) => ({ default: m.CredentialsPanel })),
 );
-export const CredentialsSidebar = lazy(() =>
-  import("../features/credentials/CredentialsSidebar").then((m) => ({ default: m.CredentialsSidebar })),
-);
+const loadCredentialsSidebar = () => import("../features/credentials/CredentialsSidebar");
+export const CredentialsSidebar = lazy(() => loadCredentialsSidebar().then((m) => ({ default: m.CredentialsSidebar })));
 const loadJumpPalette = () => import("./JumpPalette");
 export const JumpPalette = lazy(() => loadJumpPalette().then((m) => ({ default: m.JumpPalette })));
 export const StatusWall = lazy(() =>
@@ -68,14 +68,17 @@ export function shouldPrefetch(connection: NetworkInformationLike | undefined): 
   return connection.effectiveType !== "slow-2g" && connection.effectiveType !== "2g";
 }
 
-// Keyboard-opened overlays (Ctrl+Shift+O, Alt+Q) must not lose keystrokes to a chunk download:
-// fetch them once the browser is idle after first paint, unless the user asked to save data.
+// Keyboard-opened overlays (Ctrl+Shift+O, Alt+Q) must not lose keystrokes to a chunk download, and the left dock panels
+// switch from the rail without a loading step: fetch them once the browser is idle after first paint, unless the user
+// asked to save data.
 export function prefetchOverlaysWhenIdle(): void {
   if (typeof window === "undefined") return;
   const connection = (navigator as Navigator & { connection?: NetworkInformationLike }).connection;
   if (!shouldPrefetch(connection)) return;
   const run = () => {
     void loadJumpPalette().catch(() => undefined);
+    void loadCredentialsSidebar().catch(() => undefined);
+    void loadFileTree().catch(() => undefined);
   };
   const schedule = () => {
     if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(run, { timeout: 5000 });

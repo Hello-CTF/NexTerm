@@ -10,6 +10,7 @@ import {
 } from "../store";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { Lazy } from "../../ui/LazyBoundary";
+import { PanelFallback } from "../../ui/PanelFallback";
 import { AiSidebar, AssetTree, CredentialsSidebar, FileTree } from "../lazyPanels";
 import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneGroup";
 import { SplitView } from "../workspace/SplitView";
@@ -88,6 +89,13 @@ export function WorkspaceBody({
   const setActivePane = useUi((s) => s.setActivePane);
   const setSplitRatio = useUi((s) => s.setSplitRatio);
   const { leftDockOpen, rightDockOpen, setLeftOpen, setOverlayDock } = docks;
+  // Switching the left panel to one whose chunk is still loading suspends. The placeholder keeps the dock's width and
+  // look, so the dock does not collapse and reopen, which would resize the terminals twice.
+  const dockFallback = (
+    <div className="h-full shrink-0 border-r border-neutral-800/60 bg-neutral-950" style={{ width: leftWidth }}>
+      <PanelFallback />
+    </div>
+  );
 
   return (
     <div className="nx-workspace-body flex min-h-0 flex-1 bg-neutral-900">
@@ -102,13 +110,13 @@ export function WorkspaceBody({
       {leftDockOpen && (
         <div className="nx-left-dock" role="navigation" aria-label="左侧栏">
           {leftView === "credentials" ? (
-            <Lazy><CredentialsSidebar /></Lazy>
+            <Lazy fallback={dockFallback}><CredentialsSidebar /></Lazy>
           ) : leftView === "files" && ws?.sessionId ? (
-            <Lazy><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
+            <Lazy fallback={dockFallback}><FileTree key={ws.sessionId} sessionId={ws.sessionId} /></Lazy>
           ) : (
             // Keyed by account epoch: on account switch the tree remounts so template, runbook,
             // inventory discovery/watch, and bulk panels never show the previous account's state.
-            <Lazy><AssetTree key={accountEpoch} /></Lazy>
+            <Lazy fallback={dockFallback}><AssetTree key={accountEpoch} /></Lazy>
           )}
           <ResizeHandle
             side="left"

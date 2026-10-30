@@ -80,7 +80,8 @@ export class ChunkLoadBoundary extends Component<ChunkBoundaryProps, ChunkBounda
   }
 }
 
-// Lazy wraps lazily loaded UI: "panel" shows the delayed skeleton, "none" renders nothing while loading.
+// Lazy wraps lazily loaded UI: "panel" shows the delayed skeleton, "none" renders nothing while loading, and an element
+// replaces the placeholder where it must keep the slot's size (a dock whose width would otherwise collapse).
 export function Lazy({
   children,
   fallback = "panel",
@@ -88,13 +89,14 @@ export function Lazy({
   overlay = false,
 }: {
   children: ReactNode;
-  fallback?: "panel" | "none";
+  fallback?: "panel" | "none" | ReactNode;
   silent?: boolean;
   overlay?: boolean;
 }) {
+  const placeholder = fallback === "panel" ? <PanelFallback /> : fallback === "none" ? null : fallback;
   return (
     <ChunkLoadBoundary silent={silent} overlay={overlay} resetKey={childIdentity(children)}>
-      <Suspense fallback={fallback === "panel" ? <PanelFallback /> : null}>{children}</Suspense>
+      <Suspense fallback={placeholder}>{children}</Suspense>
     </ChunkLoadBoundary>
   );
 }
