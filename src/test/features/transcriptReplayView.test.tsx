@@ -32,9 +32,13 @@ vi.mock("@xterm/xterm", () => ({
     private callbacks: (() => void)[] = [];
     constructor(options?: unknown) {
       this.options = options;
-      terminalMocks.instances.push(this as unknown as FakeTerminal);
+      // The offscreen terminal that builds the seek index is not the view's terminal.
+      if (!(options as { allowProposedApi?: boolean } | undefined)?.allowProposedApi) {
+        terminalMocks.instances.push(this as unknown as FakeTerminal);
+      }
     }
     open() {}
+    loadAddon() {}
     write(data: Uint8Array, callback?: () => void) {
       this.writes.push(data);
       this.content += new TextDecoder().decode(data);
@@ -59,6 +63,14 @@ vi.mock("@xterm/xterm", () => ({
     }
     dispose() {
       this.disposed = true;
+    }
+  },
+}));
+
+vi.mock("@xterm/addon-serialize", () => ({
+  SerializeAddon: class {
+    serialize() {
+      return "";
     }
   },
 }));
@@ -235,6 +247,11 @@ describe("TranscriptReplayView", () => {
     const resetsBefore = terminal.resets;
     const range = mounted.container.querySelector("input[aria-label='回放进度']") as HTMLInputElement;
     for (let i = 1; i <= 20; i += 1) setInputValue(range, String(i * 50));
+    expect(terminal.resets).toBe(resetsBefore);
+    // Outside the indexed range the seek waits for the drag to pause, then starts exactly one replay.
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 350));
+    });
     expect(terminal.resets).toBe(resetsBefore);
 
     await act(async () => {
