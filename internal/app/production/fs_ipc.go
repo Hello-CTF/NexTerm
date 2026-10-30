@@ -14,6 +14,7 @@ import (
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -37,6 +38,12 @@ type StagedBlobResolver interface {
 // server file read/write channel; resolution failures are treated as nonexistent, never falling back to CWD-relative paths.
 func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path string) (string, error) {
 	if staged == nil {
+		if resolved, ok, err := platform.MobileDownloadPath(path); ok {
+			if err != nil {
+				return "", ipc.NewError(ipc.CodeInternal, "无法创建应用下载目录: "+err.Error())
+			}
+			return resolved, nil
+		}
 		return path, nil
 	}
 	if filepath.IsAbs(path) {

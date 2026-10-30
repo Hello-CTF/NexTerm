@@ -17,6 +17,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
     promptText: vi.fn(),
     pickLocalFile: vi.fn(),
     pickSavePath: vi.fn(),
+    pickDownloadTarget: vi.fn(),
     finishSave: vi.fn(),
     discardStaged: vi.fn(),
   };

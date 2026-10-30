@@ -7,7 +7,7 @@ import {
   ask,
   discardStaged,
   pickLocalFile,
-  pickSavePath,
+  pickDownloadTarget,
   promptText,
 } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -366,7 +366,7 @@ const TreeRow = memo(function TreeRow({
         >
           ⋯
         </button>
-      ) : (
+      ) : multiMode ? null : (
         <span className="nx-row-actions">
           {!isDir && (
             <button
@@ -824,8 +824,18 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     });
   };
 
+  // The native mobile shells have no save dialog; surface that instead of failing silently.
+  const pickTarget = async (name: string): Promise<string | null> => {
+    try {
+      return await pickDownloadTarget(name);
+    } catch (e) {
+      pushToast("error", `无法选择保存位置：${describeError(e)}`);
+      return null;
+    }
+  };
+
   const download = async (path: string) => {
-    const target = await pickSavePath(baseName(path));
+    const target = await pickTarget(baseName(path));
     if (!target) return;
     pushToast("info", "开始下载…");
     enqueueDownload(sessionId, { remotePath: path, localPath: target });
@@ -872,7 +882,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     try {
       let queued = 0;
       for (const file of files) {
-        const target = await pickSavePath(baseName(file.path));
+        const target = await pickTarget(baseName(file.path));
         if (!target) continue;
         enqueueDownload(sessionId, { remotePath: file.path, localPath: target });
         queued += 1;
@@ -925,7 +935,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const packDownload = async (dir: string) => {
-    const target = await pickSavePath(`${baseName(dir)}.tar.gz`);
+    const target = await pickTarget(`${baseName(dir)}.tar.gz`);
     if (!target) return;
     pushToast("info", "开始远端打包下载…");
     enqueuePackDownload(sessionId, { remotePath: dir, localPath: target });

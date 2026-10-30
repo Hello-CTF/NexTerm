@@ -52,6 +52,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
     promptText: mocks.promptText,
     pickLocalFile: mocks.pickLocalFile,
     pickSavePath: mocks.pickSavePath,
+    pickDownloadTarget: mocks.pickSavePath,
     finishSave: mocks.finishSave,
     discardStaged: mocks.discardStaged,
   };
@@ -2331,7 +2332,7 @@ describe("context menus: blank-area entries and wiring", () => {
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(before));
   });
 
-  it("directory row menu pack download follows the pickSavePath -> packDownload -> finishSave flow", async () => {
+  it("directory row menu pack download follows the pickDownloadTarget -> packDownload -> finishSave flow", async () => {
     mounted = mountTree();
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
     mocks.pickSavePath.mockResolvedValue("/local/sub.tar.gz");

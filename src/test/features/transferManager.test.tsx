@@ -39,6 +39,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
     promptText: mocks.promptText,
     pickLocalFile: mocks.pickLocalFile,
     pickSavePath: mocks.pickSavePath,
+    pickDownloadTarget: mocks.pickSavePath,
     finishSave: mocks.finishSave,
     discardStaged: mocks.discardStaged,
   };
@@ -137,6 +138,10 @@ function buttonByTitle(container: ParentNode, title: string): HTMLButtonElement 
   );
   if (!button) throw new Error(`Button not found: ${title}`);
   return button as HTMLButtonElement;
+}
+
+function panelTitles(panel: Element): string {
+  return [...panel.querySelectorAll("[title]")].map((el) => el.getAttribute("title")).join("\n");
 }
 
 function rowByPath(container: HTMLElement, path: string): HTMLElement {
@@ -349,13 +354,12 @@ describe("unified transfer queue panel (FileTree)", () => {
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
     expect(panel).not.toBeNull();
-    expect(panel!.textContent).toContain("~/nginx-access.log");
-    expect(panel!.textContent).toContain(LOCAL_FILE);
-    expect(panel!.textContent).toContain("目标：Alpha · 会话 s1");
-    expect((panel!.textContent ?? "").indexOf(LOCAL_FILE)).toBeLessThan(
-      (panel!.textContent ?? "").indexOf("~/nginx-access.log"),
-    );
-    expect(panel!.textContent).toContain("1 个未结束");
+    expect(panel!.textContent).toContain("nginx-access.log");
+    const pathTitle = panelTitles(panel!);
+    expect(pathTitle).toContain(LOCAL_FILE);
+    expect(pathTitle).toContain("~/nginx-access.log");
+    expect(pathTitle.indexOf(LOCAL_FILE)).toBeLessThan(pathTitle.indexOf("~/nginx-access.log"));
+    expect(panel!.textContent).toContain("1 进行中");
 
     resolveUpload(42_118);
     await waitFor(() => expect(panelRows(mounted!.container)[0]?.textContent).toContain("已完成"));
@@ -415,12 +419,11 @@ describe("unified transfer queue panel (FileTree)", () => {
     );
 
     const panel = mounted!.container.querySelector('[data-testid="transfer-panel"]');
-    expect(panel!.textContent).toContain("~/a.txt");
-    expect(panel!.textContent).toContain(LOCAL_SAVE);
-    expect((panel!.textContent ?? "").indexOf("~/a.txt")).toBeLessThan(
-      (panel!.textContent ?? "").indexOf(LOCAL_SAVE),
-    );
-    expect(panel!.textContent).toContain("1 个未结束");
+    expect(panel!.textContent).toContain("a.txt");
+    const pathTitle = panelTitles(panel!);
+    expect(pathTitle).toContain(LOCAL_SAVE);
+    expect(pathTitle.indexOf("~/a.txt")).toBeLessThan(pathTitle.indexOf(LOCAL_SAVE));
+    expect(panel!.textContent).toContain("1 进行中");
 
     resolveDownload(10);
     await waitFor(() =>
@@ -538,17 +541,16 @@ describe("unified transfer queue panel (FileTree)", () => {
       "current",
       "previous",
     ]);
-    expect(mounted!.container.textContent).toContain("目标：Alpha · 会话 s1");
     expect(mounted!.container.textContent).not.toContain("Beta");
 
     click(buttonByTitle(mounted!.container, "清除已结束"));
     expect(useTransferStore.getState().tasks.map((task) => task.id)).toEqual(["other"]);
     expect(panelRows(mounted!.container)).toHaveLength(0);
-    expect(mounted!.container.textContent).toContain("当前主机没有传输任务");
+    expect(mounted!.container.textContent).toContain("没有传输任务");
 
-    click(buttonByTitle(mounted!.container, "当前主机"));
+    click(buttonByTitle(mounted!.container, "本机"));
     expect(panelRows(mounted!.container).map((row) => row.dataset.taskKey)).toEqual(["other"]);
-    expect(mounted!.container.textContent).toContain("目标：Beta · 会话 s-other");
+    expect(mounted!.container.textContent).toContain("Beta");
   });
 
   it("global view cancels only the selected queued task and clears finished tasks in that view", async () => {
@@ -562,7 +564,7 @@ describe("unified transfer queue panel (FileTree)", () => {
         ],
       });
     });
-    click(buttonByTitle(mounted!.container, "当前主机"));
+    click(buttonByTitle(mounted!.container, "本机"));
     expect(panelRows(mounted!.container)).toHaveLength(3);
     const otherRow = mounted!.container.querySelector<HTMLElement>('[data-task-key="other"]');
     expect(otherRow).not.toBeNull();

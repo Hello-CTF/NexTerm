@@ -183,7 +183,23 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
   return saveWailsFile(defaultName);
 }
 
+// The Wails mobile shells have no save dialog; the backend maps this marker to the app download directory.
+const MOBILE_DOWNLOAD_PREFIX = "nexterm-mobile-download:";
+
+function isNativeMobileShell(): boolean {
+  if (TRANSPORT === "web" || typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+// pickDownloadTarget is pickSavePath for remote file downloads, whose local path the backend resolves itself.
+export async function pickDownloadTarget(defaultName: string): Promise<string | null> {
+  if (isNativeMobileShell()) return `${MOBILE_DOWNLOAD_PREFIX}${defaultName}`;
+  return pickSavePath(defaultName);
+}
+
 export async function finishSave(target: string, name: string): Promise<string | null> {
+  if (target.startsWith(MOBILE_DOWNLOAD_PREFIX)) return `应用下载目录/${name}`;
   if (TRANSPORT !== "web") return target;
   const outcome = await deliverStaged(target, name);
   if (outcome === "cancelled") return null;
@@ -194,6 +210,7 @@ export async function finishSave(target: string, name: string): Promise<string |
 }
 
 export function describeTarget(path: string, name: string): string {
+  if (path.startsWith(MOBILE_DOWNLOAD_PREFIX)) return `应用下载目录/${name}`;
   return TRANSPORT === "web" && isStagedPath(path) ? name : path;
 }
 
