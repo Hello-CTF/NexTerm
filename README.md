@@ -60,13 +60,13 @@ NexTerm 把远程运维放进一个窗口：通过 SSH、WinRM 或设备代理�
 
 | 平台 | 安装包 |
 | --- | --- |
-| Windows 10/11（amd64 / arm64） | `nexterm-desktop_windows_<架构>_x.y.z.exe` |
-| macOS（arm64 / amd64） | `nexterm-desktop_macos_<架构>_x.y.z.dmg` |
-| Linux 桌面（amd64 / arm64） | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装；需要 GTK 4.14+ 与 WebKitGTK 6.0；`.deb` 按构建出的二进制声明所需的最低 glibc，系统不满足时 apt 会拒绝安装 |
+| Windows | `nexterm-desktop_windows_<架构>_x.y.z.exe` |
+| macOS | `nexterm-desktop_macos_<架构>_x.y.z.dmg` |
+| Linux 桌面 | `nexterm-desktop_linux_<架构>_x.y.z.deb`，用 `apt install ./<包名>.deb` 安装；需要 GTK 4.14+ 与 WebKitGTK 6.0；`.deb` 按构建出的二进制声明所需的最低 glibc，系统不满足时 apt 会拒绝安装 |
 | Linux 服务器 | 见[部署服务端](#部署服务端) |
-| Android（预览，arm64） | `nexterm-desktop_android_arm64_x.y.z.apk` |
-| iOS / iPadOS（预览） | [加入 TestFlight 测试](https://testflight.apple.com/join/ds62pzPz)，Release 不提供 IPA |
-| 懒猫微服（amd64） | 应用中心 |
+| Android | `nexterm-desktop_android_arm64_x.y.z.apk` |
+| iOS / iPadOS | [加入 TestFlight 测试](https://testflight.apple.com/join/ds62pzPz)，Release 不提供 IPA |
+| 懒猫微服 | 应用中心 |
 
 移动端为预览版，完成真机签名验收前不作为正式支持平台。桌面版会自动检查更新，安装前按 `SHA256SUMS` 校验。
 
