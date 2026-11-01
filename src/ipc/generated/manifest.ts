@@ -1845,6 +1845,62 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
+    "remotedesktop_certificate": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateRequest", ts: "RemoteDesktopCertificateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateStatus", ts: "RemoteDesktopCertificateStatus" },
+    },
+    "remotedesktop_close": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCloseRequest", ts: "RemoteDesktopCloseRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "remotedesktop_list": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopConnectionInfo", ts: "RemoteDesktopConnectionInfo[]" },
+    },
+    "remotedesktop_prepare": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopPrepareRequest", ts: "RemoteDesktopPrepareRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopPrepareResult", ts: "RemoteDesktopPrepareResult" },
+    },
+    "remotedesktop_release_secret": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopReleaseSecretRequest", ts: "RemoteDesktopReleaseSecretRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopSecretResult", ts: "RemoteDesktopSecretResult" },
+    },
+    "remotedesktop_set_password": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopSetPasswordRequest", ts: "RemoteDesktopSetPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "remotedesktop_trust_certificate": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopTrustCertificateRequest", ts: "RemoteDesktopTrustCertificateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateStatus", ts: "RemoteDesktopCertificateStatus" },
+    },
     "runbook_run_advance": {
       scope: "runbook",
       nested: false,
@@ -3910,6 +3966,34 @@ export interface IPCCommandTypeMap {
   "remote_share_preview_revoke": {
     input: contractTypes.RemoteIDRequest;
     output: contractTypes.RemoteOK;
+  };
+  "remotedesktop_certificate": {
+    input: contractTypes.RemoteDesktopCertificateRequest;
+    output: contractTypes.RemoteDesktopCertificateStatus;
+  };
+  "remotedesktop_close": {
+    input: contractTypes.RemoteDesktopCloseRequest;
+    output: unknown;
+  };
+  "remotedesktop_list": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteDesktopConnectionInfo[];
+  };
+  "remotedesktop_prepare": {
+    input: contractTypes.RemoteDesktopPrepareRequest;
+    output: contractTypes.RemoteDesktopPrepareResult;
+  };
+  "remotedesktop_release_secret": {
+    input: contractTypes.RemoteDesktopReleaseSecretRequest;
+    output: contractTypes.RemoteDesktopSecretResult;
+  };
+  "remotedesktop_set_password": {
+    input: contractTypes.RemoteDesktopSetPasswordRequest;
+    output: unknown;
+  };
+  "remotedesktop_trust_certificate": {
+    input: contractTypes.RemoteDesktopTrustCertificateRequest;
+    output: contractTypes.RemoteDesktopCertificateStatus;
   };
   "runbook_run_advance": {
     input: contractTypes.AdvanceRequest;

@@ -84,10 +84,12 @@ type Config struct {
 	// are mounted under the account routes, and the public data plane is GET /share/preview/{token}. If Spectator also
 	// implements RemoteSessionRegistry (the *session.Manager injected in production does), the
 	// /share/remote-sessions remote session shell management surface is additionally mounted.
-	Previews              *sharing.Service
-	Spectator             PreviewSpectator
-	DB                    DBHealthSource
-	AccountConnections    AccountConnectionCloser
+	Previews           *sharing.Service
+	Spectator          PreviewSpectator
+	DB                 DBHealthSource
+	AccountConnections AccountConnectionCloser
+	// RemoteDesktop mounts GET /ws/remotedesktop when set.
+	RemoteDesktop         RemoteDesktopServer
 	AccountCleanup        AccountCleanupFunc
 	AccountCleanupPrepare AccountCleanupPrepareFunc
 	Version               string
@@ -132,6 +134,7 @@ type Server struct {
 	previewRevalidateInterval time.Duration
 	db                        DBHealthSource
 	accountConnections        AccountConnectionCloser
+	remoteDesktop             RemoteDesktopServer
 	accountCleanup            AccountCleanupFunc
 	accountCleanupPrepare     AccountCleanupPrepareFunc
 	accountRevocationMu       *sync.Mutex
@@ -289,6 +292,7 @@ func New(config Config) (*Server, error) {
 		previewRevalidateInterval: defaultPreviewRevalidateInterval,
 		db:                        config.DB,
 		accountConnections:        config.AccountConnections,
+		remoteDesktop:             config.RemoteDesktop,
 		accountCleanup:            config.AccountCleanup,
 		accountCleanupPrepare:     config.AccountCleanupPrepare,
 	}
@@ -366,6 +370,9 @@ func (s *Server) routes(config Config) http.Handler {
 	mux.Handle("POST /rpc", compressResponses(false, s.requireAuth(rpcHandler)))
 	mux.HandleFunc("GET /ws/events", s.serveEvents)
 	mux.HandleFunc("GET /ws/channel/{id}", s.serveChannel)
+	if s.remoteDesktop != nil {
+		mux.HandleFunc("GET /ws/remotedesktop", s.serveRemoteDesktop)
+	}
 
 	blobs := config.Blobs
 	if blobs == nil && s.options.DataDir != "" {

@@ -289,6 +289,9 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 	case session.KindWinRM:
 		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
+	case session.KindRDP, session.KindVNC:
+		portOnly = true
+		err = s.probeReachability(ctx, target, timeout)
 	default:
 		result.Kind = "unsupported"
 		result.Error = "这类资产暂不支持连接测试"

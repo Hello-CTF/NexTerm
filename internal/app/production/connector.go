@@ -116,6 +116,8 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		transport, err = c.connectWinRM(ctx, options)
 	case session.KindDevice:
 		transport, err = c.connectDevice(ctx, options, generation)
+	case session.KindRDP, session.KindVNC:
+		err = ipc.NewError(ipc.CodeUnsupported, "RDP/VNC 资产不支持终端连接，请使用远程桌面打开")
 	default:
 		err = fmt.Errorf("%w: %s transport", session.ErrUnsupported, asset.Kind)
 	}

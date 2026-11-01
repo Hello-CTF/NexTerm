@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
@@ -213,7 +216,9 @@ type assetProbeTarget struct {
 	assetID string
 	kind    string
 	options productionAssetOptions
-	failure *assetProbeResultDTO
+	// viaAssetID routes rdp and vnc probes through a live jump session, as a real connection would.
+	viaAssetID string
+	failure    *assetProbeResultDTO
 }
 
 func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, assetID string) assetProbeTarget {
@@ -230,7 +235,45 @@ func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, as
 		return target
 	}
 	target.options = options
+	if row.Kind == session.KindRDP || row.Kind == session.KindVNC {
+		if parsed, err := remotedesktop.ParseOptions(row.OptionsJSON); err == nil {
+			target.viaAssetID = parsed.ViaAssetID
+		}
+	}
 	return target
+}
+
+// probeViaJump checks that the target port accepts a TCP connection through the jump session.
+func (s *terminalCommandService) probeViaJump(ctx context.Context, target assetProbeTarget, timeout time.Duration) error {
+	if s.sessions == nil {
+		return ipc.NewError(ipc.CodeUnsupported, "跳板会话未配置")
+	}
+	dial, err := newSessionAssetDialer(s.database, s.sessions, true)(ctx, target.viaAssetID)
+	if err != nil {
+		return err
+	}
+	port := target.options.Port
+	if port == 0 {
+		port = remotedesktop.DefaultRDPPort
+		if target.kind == session.KindVNC {
+			port = remotedesktop.DefaultVNCPort
+		}
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, err := dial(dialCtx, "tcp", net.JoinHostPort(target.options.Host, strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+// probeReachability dials directly, or through the jump session when the asset names one.
+func (s *terminalCommandService) probeReachability(ctx context.Context, target assetProbeTarget, timeout time.Duration) error {
+	if target.viaAssetID != "" {
+		return s.probeViaJump(ctx, target, timeout)
+	}
+	return s.probeSSHReachability(ctx, target, timeout)
 }
 
 func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target assetProbeTarget, timeout time.Duration) (result assetProbeResultDTO) {
@@ -245,7 +288,7 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 		return result
 	}
 	switch target.kind {
-	case session.KindSSH, session.KindDocker, session.KindWinRM, "mysql", "postgres", "redis":
+	case session.KindSSH, session.KindDocker, session.KindWinRM, session.KindRDP, session.KindVNC, "mysql", "postgres", "redis":
 	default:
 		result.Kind = "unsupported"
 		result.Error = fmt.Sprintf("asset kind %s cannot be probed", target.kind)
@@ -256,7 +299,7 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 		result.Error = "asset host is required"
 		return result
 	}
-	err := s.probeSSHReachability(ctx, target, timeout)
+	err := s.probeReachability(ctx, target, timeout)
 	if err == nil {
 		result.Reachable = true
 		return result
@@ -311,6 +354,10 @@ func (s *terminalCommandService) probeSSHReachability(ctx context.Context, targe
 		switch target.kind {
 		case session.KindWinRM:
 			port = 5985
+		case session.KindRDP:
+			port = 3389
+		case session.KindVNC:
+			port = 5900
 		case "mysql":
 			port = 3306
 		case "postgres":

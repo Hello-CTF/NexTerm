@@ -102,6 +102,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if sessionManager != nil {
 			_ = sessionManager.Close()
 		}
+		if services.RemoteDesktop != nil {
+			services.RemoteDesktop.Close()
+		}
 		if services.Database != nil {
 			_ = services.Database.Close()
 		}
@@ -371,7 +374,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		stateRules:    stateRules,
 		deviceInstall: deviceInstall,
 		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager, Privacy: privacyManager,
-		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
+		Database:      newProductionDatabaseService(database, credentialVault, sessionManager),
+		RemoteDesktop: newProductionRemoteDesktopService(database, credentialVault, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {

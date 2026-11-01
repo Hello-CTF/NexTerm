@@ -46,6 +46,7 @@ var contractScopes = []scopeSpec{
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "production", prefixes: []string{"production_"}},
 	{name: "remote", prefixes: []string{"remote_"}},
+	{name: "remotedesktop", prefixes: []string{"remotedesktop_"}},
 	{name: "preview-share", prefixes: []string{"preview_share_"}},
 	{name: "sync", commands: []string{
 		"sync_apply_objects",

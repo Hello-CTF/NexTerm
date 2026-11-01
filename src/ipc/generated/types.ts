@@ -2078,6 +2078,74 @@ export type RemoteChangePasswordRequest = {
   newPassword: string;
 };
 
+export type RemoteDesktopCertificateRequest = {
+  assetId: string;
+};
+
+export type RemoteDesktopCertificateStatus = {
+  assetId: string;
+  protocol: string;
+  host: string;
+  port: number;
+  status: string;
+  fingerprint: string;
+  previousFingerprint?: string;
+  subject?: string;
+  notAfterMs?: number;
+  observedAtMs: number;
+};
+
+export type RemoteDesktopCloseRequest = {
+  connId: string;
+};
+
+export type RemoteDesktopConnectionInfo = {
+  id: string;
+  assetId: string;
+  protocol: string;
+  startedAtMs: number;
+};
+
+export type RemoteDesktopPrepareRequest = {
+  assetId: string;
+};
+
+export type RemoteDesktopPrepareResult = {
+  ticket: string;
+  protocol: string;
+  assetId: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  domain: string;
+  promptPassword: boolean;
+  hasPassword: boolean;
+  width?: number;
+  height?: number;
+  expiresAtMs: number;
+};
+
+export type RemoteDesktopReleaseSecretRequest = {
+  ticket: string;
+};
+
+export type RemoteDesktopSecretResult = {
+  username: string;
+  domain: string;
+  password: string;
+};
+
+export type RemoteDesktopSetPasswordRequest = {
+  ticket: string;
+  password: string;
+};
+
+export type RemoteDesktopTrustCertificateRequest = {
+  assetId: string;
+  fingerprint: string;
+};
+
 export type RemoteDeviceRequest = {
   deviceId: string;
 };

@@ -20,6 +20,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
+	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
@@ -56,6 +57,7 @@ type ProductionServices struct {
 	Profiles      *profiles.Manager
 	Privacy       *privacy.Manager
 	Database      *db.Service
+	RemoteDesktop *remotedesktop.Service
 	Mount         *mount.Service
 	Sessions      *session.Manager
 	ExecBatches   *execbatch.Service
@@ -271,6 +273,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Database != nil {
 		modules = append(modules, Module{Name: "database", RegisterCommands: services.Database.RegisterCommands, Component: services.Database})
+	}
+	if services.RemoteDesktop != nil {
+		modules = append(modules, Module{Name: "remotedesktop", RegisterCommands: services.RemoteDesktop.RegisterCommands, Component: services.RemoteDesktop})
 	}
 	if services.Mount != nil {
 		modules = append(modules, Module{Name: "mount", RegisterCommands: services.Mount.RegisterCommands, Component: services.Mount})

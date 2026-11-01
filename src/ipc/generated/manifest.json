@@ -1446,6 +1446,48 @@
       "channel": false,
       "stream": "none"
     },
+    "remotedesktop_certificate": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_close": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_list": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_prepare": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_release_secret": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_set_password": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_trust_certificate": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "runbook_run_advance": {
       "scope": "runbook",
       "nested": false,
