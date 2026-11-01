@@ -231,7 +231,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       }
       return;
     }
-    if (ws?.assetId && ws.kind !== "db") {
+    if (ws?.assetId && ws.kind !== "db" && ws.kind !== "remote") {
       try {
         const fresh = await reconnectDeadHost(ws, { isCurrent });
         if (!isCurrent()) return;

@@ -67,6 +67,9 @@ export function UpdateCard() {
       <p className="nx-hint mb-3">
         当前版本 {status?.currentVersion ? `v${status.currentVersion}` : "…"}
         {verdict === "uptodate" ? " · 已是最新版本" : ""}
+      
+        {" · "}
+        <a href="/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noreferrer" className="underline">第三方许可</a>
       </p>
 
       {verdict === "available" && status && (

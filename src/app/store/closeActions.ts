@@ -7,6 +7,7 @@ import { getTerminalPrefs, setTerminalCloseAction, type TerminalCloseAction } fr
 import { GLOBAL_AI_BOARD_KEY } from "./model";
 import { isUnconfirmedDurableExit } from "./durableExit";
 import { findTab } from "./tabActions";
+import { useRemoteStatus } from "../../features/remote/remoteStatus";
 import type { AppTab, CloseTabReport, SqlDraft, WorkspaceKind } from "./types";
 import { useUi } from "./useUi";
 
@@ -23,6 +24,11 @@ export async function confirmDirtyEditors(tabs: AppTab[], title: string): Promis
 
 function isTerminalCloseCandidate(t: AppTab): boolean {
   return t.kind === "terminal" && Boolean(t.tabId) && !t.dead;
+}
+
+// A connected remote desktop ends when its tab closes; there is no background to move it to.
+export function isLiveRemoteTab(t: AppTab): boolean {
+  return t.kind === "remote" && useRemoteStatus.getState().entries[t.id]?.status === "connected";
 }
 
 function isRunningTerminal(t: AppTab): boolean {
@@ -84,6 +90,7 @@ export interface WorkspaceCloseSummary extends ClosePreferencePlan {
   // Exited durable terminals with no proof the process ended: they may still run on the host, so they are detached.
   unconfirmed: AppTab[];
   dbConnIds: string[];
+  liveRemote: AppTab[];
   hasSqlDraft: boolean;
   sqlDraft?: SqlDraft;
   runningAiTabs: AiCloseTab[];
@@ -159,6 +166,7 @@ export function collectWorkspaceClose(
     dbConnIds: [
       ...new Set(tabs.filter((t) => t.kind === "db" && t.connId).map((t) => t.connId as string)),
     ],
+    liveRemote: tabs.filter(isLiveRemoteTab),
     hasSqlDraft: Boolean(workspaceRuntime[workspaceId]?.sqlDraft?.text.trim()),
     sqlDraft: workspaceRuntime[workspaceId]?.sqlDraft,
     runningAiTabs,
@@ -180,7 +188,7 @@ export async function confirmWorkspaceClose(
   } else if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
   const unconfirmed = summary.unconfirmed.length;
-  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0 && unconfirmed === 0) return true;
+  if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0 && unconfirmed === 0 && summary.liveRemote.length === 0) return true;
   const lines: string[] = [];
   if (summary.dirty.length > 0) {
     lines.push(
@@ -189,6 +197,9 @@ export async function confirmWorkspaceClose(
   }
   if (summary.hasSqlDraft) {
     lines.push("· 此工作区仍有未保存的 SQL 草稿，关闭后将丢失");
+  }
+  if (summary.liveRemote.length > 0) {
+    lines.push(`· ${summary.liveRemote.length} 个远程桌面仍在连接，断开后会话结束`);
   }
   if (summary.runningAiTabs.length > 0) {
     lines.push(`· ${summary.runningAiTabs.length} 个 AI 标签页仍在运行：${summary.runningAiTabs.map((tab) => tab.title).join("、")}`);
@@ -283,6 +294,7 @@ export function closeActionHint(t: AppTab): string | undefined {
 }
 
 export function closeTabHint(t: AppTab): string {
+  if (t.kind === "remote") return "关闭标签页（断开后会话结束）";
   if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签页";
   if (isUnconfirmedDurableExit(t)) return "关闭标签页（转入后台会话）";
   if (t.exited) return "关闭标签页（进程已结束）";
@@ -305,6 +317,14 @@ async function requestCloseTabWithAction(
   if (!found) return;
   const { tab: target, ws } = found;
   if (!(await confirmDirtyEditors([target], `关闭「${target.title}」`))) return;
+  if (isLiveRemoteTab(target)) {
+    const { ask } = await import("../../ui/dialogs");
+    const ok = await ask(`「${ws.title}」的远程桌面仍在连接。\n断开后会话结束，仍要关闭？`, {
+      title: `关闭「${ws.title}」`,
+      kind: "warning",
+    });
+    if (!ok) return;
+  }
   if (target.kind !== "terminal" || !target.tabId || target.dead) {
     await st.closeTab(id);
     return;

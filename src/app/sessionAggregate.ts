@@ -4,6 +4,9 @@ import { EVENTS, listenEvent, type TerminalSessionsEvent } from "../ipc/events";
 import type { AggregateHostStatus, AggregateList, AggregateSession } from "../ipc/generated/types";
 import { onEventsResync } from "../ipc/webTransport";
 import { startPolling } from "./usePolling";
+import type { Workspace } from "./store";
+import type { RemoteEntry } from "../features/remote/remoteStatus";
+import type { RemoteStatus } from "../features/remote/remoteTypes";
 
 // The durable sessions of every host this client can reach, as the backend aggregates them: connected SSH and device
 // sessions, the local helper, and the account's devices through the server even when no workspace here holds them.
@@ -197,4 +200,41 @@ export function resetSessionAggregate(): void {
 
 export function resetSessionAggregateForTest(): void {
   resetState();
+}
+
+// A remote desktop is a session of this client's own workspaces: no host lists it, so it joins the overview from the
+// open workspaces instead of the cross-host listing.
+export interface RemoteOverviewRow {
+  // The UI tab id.
+  tabId: string;
+  title: string;
+  hostName: string;
+  protocol: "rdp" | "vnc";
+  status: RemoteStatus;
+  thumb?: string;
+}
+
+export function remoteOverviewRows(
+  workspaces: readonly Workspace[],
+  entries: Readonly<Record<string, RemoteEntry>>,
+): RemoteOverviewRow[] {
+  const rows: RemoteOverviewRow[] = [];
+  for (const workspace of workspaces) {
+    if (workspace.kind !== "remote") continue;
+    for (const pane of workspace.panes) {
+      for (const tab of pane.tabs) {
+        if (tab.kind !== "remote") continue;
+        const entry = entries[tab.id];
+        rows.push({
+          tabId: tab.id,
+          title: tab.title,
+          hostName: workspace.title,
+          protocol: workspace.assetKind === "vnc" ? "vnc" : "rdp",
+          status: entry?.status ?? "disconnected",
+          thumb: entry?.thumb,
+        });
+      }
+    }
+  }
+  return rows;
 }

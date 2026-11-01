@@ -63,6 +63,15 @@ export const IconMonitor = (p: IconProps) => (
   </Svg>
 );
 
+// A desktop with a window on it, distinct from IconMonitor (this device, managed devices).
+export const IconDesktop = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="2.5" y="3.5" width="19" height="13" rx="2" />
+    <rect x="6" y="6.5" width="7" height="5" rx="1" />
+    <path d="M8.5 20.5h7M12 16.5v4" />
+  </Svg>
+);
+
 export const IconGrid = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="3" width="7.5" height="7.5" rx="1.8" />
@@ -631,6 +640,8 @@ export const KIND_ICON_MAP = {
   mysql: IconDatabase,
   postgres: IconDatabase,
   redis: IconLayers,
+  rdp: IconDesktop,
+  vnc: IconDesktop,
 } as const;
 
 export type AssetKind = keyof typeof KIND_ICON_MAP;

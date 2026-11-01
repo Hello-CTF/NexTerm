@@ -330,6 +330,10 @@ async function runConnectAsset(
   if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
 
+  // A remote desktop is not a session of the terminal system: it opens its own workspace, and a second connection to
+  // the same asset is a second workspace.
+  if (asset.kind === "rdp" || asset.kind === "vnc") return openRemoteDesktopWorkspace(asset, epoch);
+
   const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
   if (existing?.restorePending) {
     const outcome = await reconnectRestoredWorkspace(existing.id);
@@ -450,6 +454,21 @@ async function runConnectAsset(
     if (!options?.silent) pushToast("error", message);
     return { ok: false, error: message };
   }
+}
+
+async function openRemoteDesktopWorkspace(asset: ConnectAssetInput, epoch: number): Promise<ConnectOutcome> {
+  if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+  const state = useUi.getState();
+  const sameAsset = state.workspaces.filter((workspace) => workspace.kind === "remote" && workspace.assetId === asset.id).length;
+  const title = sameAsset > 0 ? `${asset.name}（${sameAsset + 1}）` : asset.name;
+  const workspaceId = state.ensureWorkspace({ kind: "remote", title, assetId: asset.id, assetKind: asset.kind });
+  const paneId = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceId)?.panes[0]?.id;
+  state.addTab(
+    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: "远程桌面", assetId: asset.id, closable: true },
+    paneId,
+  );
+  useConnectHistory.getState().record(asset.id);
+  return { ok: true };
 }
 
 // deviceAssetId is the pseudo asset id of a device session in the session system (matching the

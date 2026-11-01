@@ -207,6 +207,20 @@ describe("GrantPanel lists only what matters", () => {
   });
 });
 
+describe("GrantPanel remote desktops", () => {
+  it("does not offer rdp or vnc assets as grant targets", async () => {
+    mocks.assetList.mockResolvedValue([asset("a1", "web-1"), asset("r1", "win-desktop", "rdp"), asset("v1", "vnc-box", "vnc")]);
+    await mountPanel("a1");
+    const search = view!.container.querySelector<HTMLInputElement>('input[aria-label="搜索要授权的主机"]')!;
+    setInputValue(search, "win");
+    await flush();
+    expect(text()).not.toContain("win-desktop");
+    setInputValue(search, "vnc");
+    await flush();
+    expect(text()).not.toContain("vnc-box");
+  });
+});
+
 describe("GrantPanel switches", () => {
   it("asks before enabling and does nothing when canceled", async () => {
     mocks.ask.mockResolvedValueOnce(false);

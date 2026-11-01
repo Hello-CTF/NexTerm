@@ -9,6 +9,7 @@ import {
 } from "../store";
 import { keybindingRepeats, matchAppKeybinding } from "../keybindings";
 import { hideMobileHome } from "./mobileHome";
+import { isKeyboardCaptured } from "../inputCapture";
 
 export interface AppKeybindingHandlers {
   leftDockOpen: boolean;
@@ -50,6 +51,8 @@ export function useAppKeybindings({
 }: AppKeybindingHandlers): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // A focused remote desktop owns every key; its release chord is handled by the pane, not here.
+      if (isKeyboardCaptured()) return;
       const hit = matchAppKeybinding(e);
       if (!hit) return;
       // Only navigation repeats while held; the same rule applies when a terminal has focus (terminalInput).

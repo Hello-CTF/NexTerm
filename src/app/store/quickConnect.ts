@@ -123,6 +123,31 @@ async function runSaveQuickConnectAsset(
     outcome,
     ...(created ? { asset: created } : {}),
   });
+  if (target.protocol) {
+    // A remote desktop asks for its password at connect time, so the saved asset holds no credential.
+    try {
+      created = await assetApi.create({
+        kind: target.protocol,
+        name: display,
+        host: target.host,
+        port: target.port,
+        username: target.username ?? "",
+        authKind: "password",
+        keyPath: null,
+        credId: null,
+        options: { promptPassword: true },
+      });
+      if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
+      useUi.getState().clearConnectionProblem(quickConnectionProblemKey(target));
+      return finish(await connectAsset(created, options));
+    } catch (e) {
+      if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
+      const err = e as { message?: string };
+      const message = err.message || describeError(e);
+      if (!options?.silent) pushToast("error", message);
+      return finish({ ok: false, error: message });
+    }
+  }
   const password = await promptQuickConnectPassword(display);
   if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
   if (password === null) return finish({ ok: false, canceled: true });

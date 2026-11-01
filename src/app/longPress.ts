@@ -24,7 +24,8 @@ export function installLongPressContextMenu(): void {
       }
       const el = event.target instanceof Element ? event.target : null;
       // Long-press inside xterm is its own text selection; do not intercept
-      if (!el || el.closest(".xterm")) return;
+      // The remote desktop surface turns a long press into a right click on the remote screen itself.
+      if (!el || el.closest(".xterm, [data-remote-surface]")) return;
       const touch = event.touches[0];
       startX = touch.clientX;
       startY = touch.clientY;

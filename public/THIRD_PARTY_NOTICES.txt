@@ -1,0 +1,13 @@
+NexTerm third-party notices (remote desktop)
+
+noVNC 1.7.0
+  License: MPL-2.0 (Mozilla Public License 2.0)
+  Source:  https://github.com/novnc/noVNC (npm: @novnc/novnc 1.7.0)
+  NexTerm ships the noVNC library unmodified. Its complete source is available at the address above, under the
+  terms of the MPL-2.0: https://www.mozilla.org/MPL/2.0/
+
+IronRDP (iron-remote-desktop 0.11.0, iron-remote-desktop-rdp 0.7.0)
+  License: MIT OR Apache-2.0
+  Source:  https://github.com/Devolutions/IronRDP
+  Copyright (c) Devolutions Inc. and contributors. Licensed under the MIT license or the Apache License 2.0, at
+  your option: https://opensource.org/licenses/MIT and https://www.apache.org/licenses/LICENSE-2.0

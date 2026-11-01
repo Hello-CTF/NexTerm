@@ -65,6 +65,17 @@ import { DeviceTreeRow, useDeviceTree } from "../fleet/DeviceTreeSection";
 import { hostDetailLabel, openHostDetail } from "../hosts/hostDetail";
 import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
 import { ProjectSelector } from "./ProjectSelector";
+import {
+  assetKindFields,
+  isRemoteDesktopKind,
+  readRemoteDesktopOptions,
+  validateResolution,
+  writeRemoteDesktopOptions,
+  type AssetFormKind,
+  type RemoteDesktopOptions,
+} from "./assetKindFields";
+import { fleetClient } from "../fleet/clients";
+import { RemoteDesktopFields } from "./RemoteDesktopFields";
 import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
 import { EVENTS, listenEvent } from "../../ipc/events";
 import {
@@ -129,9 +140,10 @@ const KIND_LABEL: Record<string, string> = {
   mysql: "MySQL / MariaDB",
   postgres: "PostgreSQL",
   redis: "Redis",
+  rdp: "远程桌面（RDP）",
+  vnc: "远程桌面（VNC）",
 };
 
-const DATABASE_ASSET_KINDS = new Set<string>(["mysql", "postgres", "redis"]);
 
 const DRAG_ASSET = "application/x-nexterm-asset";
 
@@ -2071,15 +2083,14 @@ export function AssetEditor({
 }) {
   const managed = assetInventoryMetadata(initial);
   const [name, setName] = useState(initial?.name ?? "");
-  const [groupKind, setGroupKind] = useState<
-    "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis"
-  >((initial?.kind as "ssh") ?? "ssh");
+  const [groupKind, setGroupKind] = useState<AssetFormKind>((initial?.kind as AssetFormKind) ?? "ssh");
+  const kindFields = assetKindFields(groupKind);
   const inventoryOnly = isInventoryOnlyKind(groupKind);
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
   const [host, setHost] = useState(initial?.host ?? "");
-  const [port, setPort] = useState(initial?.port ?? 22);
+  const [port, setPort] = useState(initial?.port ?? assetKindFields(initial?.kind ?? "ssh").defaultPort);
   const [username, setUsername] = useState(initial?.username ?? "root");
   const [authKind, setAuthKind] = useState(initial?.authKind ?? "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
@@ -2094,10 +2105,15 @@ export function AssetEditor({
     typeof initial?.options?.jumpAssetId === "string" ? (initial.options.jumpAssetId as string) : "",
   );
   const [viaAssetId, setViaAssetId] = useState(
-    DATABASE_ASSET_KINDS.has(initial?.kind ?? "") && typeof initial?.options?.viaAssetId === "string"
+    assetKindFields(initial?.kind ?? "").via !== null && typeof initial?.options?.viaAssetId === "string"
       ? (initial?.options?.viaAssetId as string)
       : "",
   );
+  const [remoteOptions, setRemoteOptions] = useState<RemoteDesktopOptions>(() =>
+    readRemoteDesktopOptions(initial?.kind ?? "", initial?.options),
+  );
+  const patchRemote = (patch: Partial<RemoteDesktopOptions>) => setRemoteOptions((current) => ({ ...current, ...patch }));
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
   const [proxyCommand, setProxyCommand] = useState(
     typeof initial?.options?.proxyCommand === "string" ? (initial.options.proxyCommand as string) : "",
   );
@@ -2259,9 +2275,23 @@ export function AssetEditor({
   const jumpCandidates = (assets.data ?? []).filter(
     (a) => (a.kind === "ssh" || a.kind === "docker") && a.id !== initial?.id,
   );
-  const viaCandidates = (assets.data ?? []).filter(
-    (a) => a.kind === "ssh" && a.id !== initial?.id,
-  );
+  // The asset list holds no devices (a device row only records a group), so fleet devices come from the fleet itself.
+  const fleetDevices = useQuery({
+    queryKey: ["fleet-devices-via"],
+    queryFn: () => fleetClient().devices().then((result) => result.devices ?? [], () => []),
+    enabled: kindFields.via === "ssh-or-device",
+    refetchOnWindowFocus: false,
+  });
+  const viaCandidates = [
+    ...(assets.data ?? [])
+      .filter((a) => a.kind === "ssh" && a.id !== initial?.id)
+      .map((a) => ({ id: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
+    ...(kindFields.via === "ssh-or-device"
+      ? (fleetDevices.data ?? [])
+          .filter((device) => device.revoked_at === 0)
+          .map((device) => ({ id: deviceAssetId(device.id), label: `${device.name}（受管设备）` }))
+      : []),
+  ];
 
   const createGroupInline = async () => {
     const name = (await promptText("新建分组", ""))?.trim();
@@ -2312,9 +2342,10 @@ export function AssetEditor({
     if (!keyPath && boundCred?.refPath) setKeyPath(boundCred.refPath);
   }, [boundIsRefKey, boundCred?.refPath, keyPath]);
 
-  const isDb = DATABASE_ASSET_KINDS.has(groupKind);
-  const keyAuth = authKind === "key";
-  const usesCred = isDb || authKind === "password" || authKind === "keyboard-interactive";
+  const keyAuth = authKind === "key" && kindFields.authMethod;
+  const usesCred = kindFields.password
+    ? !(kindFields.remote && remoteOptions.promptPassword)
+    : authKind === "password" || authKind === "keyboard-interactive";
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
@@ -2420,6 +2451,11 @@ export function AssetEditor({
       setHostError(nextHostError);
       setPortError(nextPortError);
       if (nextHostError || nextPortError) return;
+    }
+    if (kind === "asset" && groupKind === "rdp" && remoteOptions.resolution === "fixed") {
+      const problem = validateResolution(remoteOptions.width, remoteOptions.height);
+      setResolutionError(problem);
+      if (problem) return;
     }
     if (kind === "asset" && (groupKind === "ssh" || groupKind === "docker")) {
       const parsedEnv = parseEnvText(envText);
@@ -2537,18 +2573,20 @@ export function AssetEditor({
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
             : { ...(initial?.options ?? {}) };
-      if (isDb && viaAssetId) baseOptions.viaAssetId = viaAssetId;
+      if (kindFields.via && viaAssetId) baseOptions.viaAssetId = viaAssetId;
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
       else delete baseOptions.icon;
-      const options = baseOptions;
+      const options = isRemoteDesktopKind(groupKind)
+        ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteOptions)
+        : baseOptions;
       const fields = {
         kind: managed ? initial?.kind ?? groupKind : groupKind,
         name: managed ? initial?.name ?? name : name,
         groupId: managed ? initial?.groupId ?? null : groupId,
         host: managed ? initial?.host ?? null : groupKind === "local" ? null : host,
         port: managed ? initial?.port ?? null : groupKind === "local" ? null : Number(port),
-        username: managed ? initial?.username ?? null : groupKind === "local" ? null : username,
+        username: managed ? initial?.username ?? null : groupKind === "local" ? null : kindFields.username ? username : "",
         authKind: managed ? initial?.authKind ?? null : groupKind === "local" ? "none" : authKind,
         keyPath: managed ? initial?.keyPath ?? null : keyAuth ? finalKeyPath : null,
         credId,
@@ -2704,11 +2742,10 @@ export function AssetEditor({
                   setGroupKind(v);
                   setHostError(null);
                   setPortError(null);
-                  if (v === "winrm") setPort(5985);
-                  else if (v === "mysql") setPort(3306);
-                  else if (v === "postgres") setPort(5432);
-                  else if (v === "redis") setPort(6379);
-                  else setPort(22);
+                  setPort(assetKindFields(v).defaultPort);
+                  if (assetKindFields(v).via === null) setViaAssetId("");
+                  // The SSH default user would be wrong for a Windows desktop.
+                  if (v === "rdp" && username === "root") setUsername("");
                 }}
               />
               {initial?.builtin && (
@@ -2949,16 +2986,19 @@ export function AssetEditor({
                 <span className="nx-hint ml-auto">只探测端口，不带凭据</span>
               </div>
 
+              {kindFields.username && (
               <div className="nx-form-row">
                 <label className="nx-label">用户名</label>
                 <input
                   className="nx-input"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  placeholder={groupKind === "rdp" ? "Administrator" : undefined}
                 />
               </div>
+              )}
 
-              {!isDb && (
+              {kindFields.authMethod && (
                 <div className="nx-form-row">
                   <label className="nx-label">认证方式</label>
                   <Select
@@ -2975,11 +3015,11 @@ export function AssetEditor({
                 </div>
               )}
 
-              {isDb && (
+              {kindFields.via && (
                 <div className="nx-form-row">
-                  <label className="nx-label">通过 SSH 资产连接</label>
+                  <label className="nx-label">{kindFields.via === "ssh" ? "通过 SSH 资产连接" : "通过跳板连接"}</label>
                   <Select
-                    ariaLabel="通过 SSH 资产连接"
+                    ariaLabel={kindFields.via === "ssh" ? "通过 SSH 资产连接" : "通过跳板连接"}
                     value={viaAssetId}
                     onChange={setViaAssetId}
                     options={[
@@ -2987,16 +3027,27 @@ export function AssetEditor({
                       ...(viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId)
                         ? [{ value: viaAssetId, label: "当前配置的 SSH 资产（不在可选列表）" }]
                         : []),
-                      ...viaCandidates.map((a) => ({ value: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
+                      ...viaCandidates.map((a) => ({ value: a.id, label: a.label })),
                     ]}
                   />
                   <div className="nx-hint mt-1.5">
-                    ↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。
+                    {kindFields.via === "ssh"
+                      ? "↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。"
+                      : "↳ 默认直连；选择 SSH 资产或受管设备后，经它转发到目标主机。"}
                   </div>
                 </div>
               )}
 
-              {keyAuth && !isDb && (
+              {kindFields.remote && (
+                <RemoteDesktopFields
+                  protocol={kindFields.remote}
+                  values={remoteOptions}
+                  onChange={patchRemote}
+                  resolutionError={resolutionError}
+                />
+              )}
+
+              {keyAuth && (
                 <div className="nx-form-row">
                   <label className="nx-label">私钥来源</label>
                   <div className="nx-segment mb-2">

@@ -6,7 +6,7 @@ import {
   type AwarenessState,
   type SessionAwareness,
 } from "../../app/sessionAwarenessStore";
-import type { AggregateRow } from "../../app/sessionAggregate";
+import type { AggregateRow, RemoteOverviewRow } from "../../app/sessionAggregate";
 import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
 import { attentionDetail } from "../inbox/inbox";
 
@@ -51,6 +51,8 @@ export interface WallCard {
   host?: AggregateHost;
   // The host's listing is older than the backend's cache allows, so the state may have moved on.
   stale: boolean;
+  // A remote desktop tab of this client: it is connected or not, and may carry a picture of its screen.
+  remote?: { protocol: "rdp" | "vnc"; thumb?: string };
 }
 
 export interface WallHostNote {
@@ -142,6 +144,7 @@ export function buildStatusWall(
   workspaces: readonly Workspace[],
   aggregate: readonly AggregateRow[],
   hosts: ReadonlyMap<string, AggregateHostStatus>,
+  remote: readonly RemoteOverviewRow[] = [],
 ): StatusWallModel {
   const listed = new Map<string, AggregateRow>();
   for (const row of aggregate) listed.set(row.session.tabId, row);
@@ -188,6 +191,25 @@ export function buildStatusWall(
       host,
       stale: host.stale === true,
     }));
+  }
+
+  // A remote desktop never asks for the user the way a terminal does, so it is running or finished, nothing else.
+  for (const row of remote) {
+    const connected = row.status !== "disconnected";
+    const state: AwarenessState = connected ? "running" : "exited";
+    cards.push({
+      tabId: `remote:${row.tabId}`,
+      uiTabId: row.tabId,
+      title: row.title,
+      hostName: row.hostName,
+      state,
+      group: wallGroupOf(state),
+      stateLabel: row.status === "connected" ? "已连接" : row.status === "connecting" ? "连接中" : "已断开",
+      badge: null,
+      at: 0,
+      stale: false,
+      remote: { protocol: row.protocol, thumb: row.thumb },
+    });
   }
 
   const groups: Record<WallGroup, WallCard[]> = { needs_me: [], running: [], finished: [], unknown: [] };

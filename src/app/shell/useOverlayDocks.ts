@@ -45,8 +45,14 @@ export function useOverlayDocks(overlaySidebars: boolean): OverlayDocks {
     setOverlayDock(null);
   }, [connectFocusRevision, overlaySidebars]);
 
+  const remoteActive = useUi((s) => {
+    const workspace = s.workspaces.find((item) => item.id === s.activeWorkspaceId);
+    const pane = workspace?.panes.find((item) => item.id === workspace.activePaneId);
+    return pane?.tabs.find((tab) => tab.id === pane.activeTabId)?.kind === "remote";
+  });
   useEdgeGestures({
     overlayDock,
+    openDisabled: remoteActive,
     openLeft: () => setLeftOpen(true),
     openRight: () => setRightOpen(true),
     closeOverlay: () => setOverlayDock(null),
@@ -75,7 +81,7 @@ export function useMobileTerminalDockCollapse(
   const prevActiveKind = useRef<string | null>(null);
   const connectFocusRevision = useUi((s) => s.connectFocusRevision);
   const prevConnectFocusRevision = useRef(connectFocusRevision);
-  const isTerminalPaneKind = activeTabKind === "terminal";
+  const isTerminalPaneKind = activeTabKind === "terminal" || activeTabKind === "remote";
   useEffect(() => {
     if (!overlaySidebars) return;
     const prev = prevActiveKind.current;

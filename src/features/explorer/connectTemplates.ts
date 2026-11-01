@@ -25,7 +25,7 @@ export interface ConnectTemplate {
 
 export type ConnectTemplateInput = Omit<ConnectTemplate, "id">;
 
-const KINDS = new Set(["ssh", "winrm", "local", "docker", "mysql", "postgres", "redis"]);
+const KINDS = new Set(["ssh", "winrm", "local", "docker", "mysql", "postgres", "redis", "rdp", "vnc"]);
 
 function load(): ConnectTemplate[] {
   try {

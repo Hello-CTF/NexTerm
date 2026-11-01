@@ -24,7 +24,8 @@ export type PaneKind =
   | "history"
   | "hostHistory"
   | "execBatch"
-  | "host";
+  | "host"
+  | "remote";
 
 // LeftMode is the user's explicit left dock choice, used in the tools area. A host workspace shows its file tree by
 // default (see leftView.ts); a stored legacy "files" mode reads as "assets".
@@ -77,7 +78,7 @@ export interface AppTab {
   restorePending?: boolean;
 }
 
-export type WorkspaceKind = "session" | "db" | "tools";
+export type WorkspaceKind = "session" | "db" | "tools" | "remote";
 
 // Where a split puts the new pane relative to the pane being split.
 export type SplitDirection = "right" | "down";

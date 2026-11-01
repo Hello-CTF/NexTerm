@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { useUi, useWorkspaceList } from "../../app/store";
 import { useAwarenessStore } from "../../app/sessionAwarenessStore";
-import { aggregateRows, reloadSessionAggregate, useSessionAggregate } from "../../app/sessionAggregate";
+import { aggregateRows, reloadSessionAggregate, remoteOverviewRows, useSessionAggregate } from "../../app/sessionAggregate";
+import { acquireThumbnailDemand, useRemoteStatus } from "../remote/remoteStatus";
+import { hideMobileHome } from "../../app/shell/mobileHome";
 import { freezeOrder } from "../../app/jump/jumpRanking";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
@@ -76,6 +78,9 @@ function WallCardView({
         {card.stale && <span id={`${id}-stale`} className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-stale">该主机的会话列表可能已过时</span>}
         {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">当前客户端无法打开该终端</span>}
       </span>
+      {card.remote?.thumb && (
+        <img src={card.remote.thumb} alt="" className="h-11 w-[78px] shrink-0 rounded-sm border border-[var(--nx-border-strong)] object-cover" data-testid="wall-thumb" />
+      )}
     </>
   );
   return (
@@ -126,10 +131,13 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
   // While a finger or button is down the cards hold still, so a state change cannot move another card under it.
   const [held, setHeld] = useState<Record<WallGroup, WallCard[]> | null>(null);
 
+  const remoteEntries = useRemoteStatus((state) => state.entries);
   const model = useMemo(
-    () => buildStatusWall(byTabId, workspaces, aggregateRows({ hosts, sessionsByHost }), hosts),
-    [byTabId, workspaces, hosts, sessionsByHost],
+    () => buildStatusWall(byTabId, workspaces, aggregateRows({ hosts, sessionsByHost }), hosts, remoteOverviewRows(workspaces, remoteEntries)),
+    [byTabId, workspaces, hosts, sessionsByHost, remoteEntries],
   );
+  // Remote desktops capture a picture for their card only while this view is on screen.
+  useEffect(() => acquireThumbnailDemand(), []);
   const groups = useMemo(() => {
     const previous = orderRef.current?.token === orderToken ? orderRef.current.keys : null;
     const out = {} as Record<WallGroup, WallCard[]>;
@@ -175,6 +183,12 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
   }, []);
 
   const open = (card: WallCard) => {
+    if (card.remote && card.uiTabId) {
+      hideMobileHome();
+      useUi.getState().setActiveTab(card.uiTabId);
+      onOpened();
+      return;
+    }
     if (openInboxTab(card.tabId)) {
       onOpened();
       return;

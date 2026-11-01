@@ -857,7 +857,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "device";
+  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "rdp" | "vnc" | "device";
   name: string;
   host: string | null;
   port: number | null;
@@ -1340,6 +1340,16 @@ export interface TableDescribe {
   columns: TableColumn[];
   indexes: TableIndex[];
 }
+
+export const remoteDesktopApi = {
+  prepare: (assetId: string) => call("remotedesktop_prepare", { assetId }),
+  releaseSecret: (ticket: string) => call("remotedesktop_release_secret", { ticket }),
+  setPassword: (ticket: string, password: string) => call("remotedesktop_set_password", { ticket, password }),
+  certificate: (assetId: string) => call("remotedesktop_certificate", { assetId }),
+  trustCertificate: (assetId: string, fingerprint: string) => call("remotedesktop_trust_certificate", { assetId, fingerprint }),
+  list: () => call("remotedesktop_list"),
+  close: (connId: string) => call("remotedesktop_close", { connId }),
+};
 
 export const dbApi = {
   connect: (assetId: string) => call("db_connect", { args: { assetId } }),

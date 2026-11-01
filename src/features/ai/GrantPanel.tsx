@@ -156,7 +156,8 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   // targets; rules that still reference them render by their id.
   const targets: GrantTarget[] = useMemo(
     () => [
-      ...(assets ?? []),
+      // Remote desktops are not terminals or databases: there is nothing an AI grant could run on them.
+      ...(assets ?? []).filter((asset) => asset.kind !== "rdp" && asset.kind !== "vnc"),
       ...devices.filter((d) => d.revoked_at === 0).map((d) => ({ id: `device/${d.id}`, name: d.name, kind: "device" })),
     ],
     [assets, devices],

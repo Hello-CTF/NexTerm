@@ -302,7 +302,8 @@ export function JumpPalette({
     if (quickTarget) {
       const label = formatQuickConnectTarget(quickTarget);
       // The server assembly disabled session_connect_quick (prevent pivoting through the server); web mode only offers "save as asset".
-      if (!WEB) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
+      // A remote desktop has no temporary form: its ticket belongs to a saved asset.
+      if (!WEB && !quickTarget.protocol) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
       list.push({ kind: "quick", mode: "save", target: quickTarget, label });
     }
     list.push(...ranked);

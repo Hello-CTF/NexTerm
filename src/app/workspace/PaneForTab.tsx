@@ -24,6 +24,7 @@ import {
   LogViewer,
   MountPanel,
   MultiHostLogTail,
+  RemoteDesktopPane,
   SettingsView,
   TerminalPane,
   TranscriptHistoryPanel,
@@ -123,7 +124,9 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
       <span>
         {workspace.deletedTarget
           ? `「${workspace.title}」的资产已删除，无法重新连接。`
-          : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "，原有持久终端可在「后台会话」中接管" : ""}。`}
+          : workspace.kind === "remote"
+            ? `「${workspace.title}」的远程桌面已断开。应用重新加载后不会自动连接，需要时请手动重新连接。`
+            : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "，原有持久终端可在「后台会话」中接管" : ""}。`}
       </span>
       {!workspace.deletedTarget && (
         <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>
@@ -224,6 +227,14 @@ export const PaneForTab = memo(function PaneForTab({
       return tab.sessionId ? <Lazy><DockerPanel sessionId={tab.sessionId} visible={active} /></Lazy> : <EmptyState />;
     case "db":
       return tab.connId ? <DbTab connId={tab.connId} kind={tab.dbKind ?? "mysql"} workspaceId={workspaceId} /> : <EmptyState />;
+    case "remote":
+      return tab.assetId ? (
+        <Lazy>
+          <RemoteDesktopPane tabId={tab.id} assetId={tab.assetId} visible={active} />
+        </Lazy>
+      ) : (
+        <EmptyState />
+      );
     case "execBatch":
       return <ExecBatchTab />;
     case "settings":
