@@ -3178,6 +3178,14 @@ export type TranscriptSyncOptInRequest = {
   optIn: boolean;
 };
 
+export type UpdateChannelRequest = {
+  channel: string;
+};
+
+export type UpdateChannelResponse = {
+  channel: string;
+};
+
 export type UpdateResult = {
   installed: boolean;
   restarted: boolean;
@@ -3196,6 +3204,8 @@ export type UpdateStatus = {
   canInstall: boolean;
   unavailableReason: string;
   channel: string;
+  releaseChannel: string;
+  runningPrerelease: boolean;
 };
 
 export type VaultAutoLockRequest = {

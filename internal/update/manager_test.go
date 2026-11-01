@@ -392,3 +392,94 @@ func TestInstallTargetFor(t *testing.T) {
 		})
 	}
 }
+
+func rcFixture(t *testing.T, version string) *releaseFixture {
+	t.Helper()
+	fixture := linuxFixture(t, version, false)
+	fixture.releases[0].Prerelease = true
+	return fixture
+}
+
+func TestCheckFollowsChannelProviderAtCallTime(t *testing.T) {
+	fixture := rcFixture(t, "1.4.0-rc.1")
+	server := fixture.server(t)
+	channel := ChannelStable
+	manager := &Manager{
+		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases",
+		ChannelProvider: func(context.Context) ReleaseChannel { return channel },
+	}
+	status := manager.Check(context.Background())
+	if status.Available || status.ReleaseChannel != ChannelStable || status.RunningPrerelease {
+		t.Fatalf("stable channel must hide rc: %+v", status)
+	}
+	channel = ChannelRC
+	status = manager.Check(context.Background())
+	if !status.Available || status.Version != "1.4.0-rc.1" || !status.Prerelease || status.ReleaseChannel != ChannelRC {
+		t.Fatalf("channel change must apply at once: %+v", status)
+	}
+	channel = "garbage"
+	status = manager.Check(context.Background())
+	if status.Available || status.ReleaseChannel != ChannelStable {
+		t.Fatalf("invalid provider value must mean stable: %+v", status)
+	}
+}
+
+func TestCheckReportsRunningPrerelease(t *testing.T) {
+	fixture := linuxFixture(t, "1.4.0", false)
+	server := fixture.server(t)
+	manager := &Manager{CurrentVersion: "1.4.0-rc.2", GOOS: "linux", GOARCH: "amd64", APIURL: server.URL + "/releases"}
+	status := manager.Check(context.Background())
+	if !status.RunningPrerelease || !status.Available || status.Version != "1.4.0" || status.Prerelease {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestInstallCannotBypassStableChannel(t *testing.T) {
+	fixture := rcFixture(t, "1.4.0-rc.1")
+	server := fixture.server(t)
+	manager := &Manager{CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases"}
+	result, err := manager.Install(context.Background(), "1.4.0-rc.1")
+	if err != nil || result.Installed || result.UnavailableReason == "" {
+		t.Fatalf("Install on stable must not install an rc: %+v, %v", result, err)
+	}
+	if _, _, err := manager.resolveAsset(context.Background(), "1.4.0-rc.1", ChannelStable); err == nil {
+		t.Fatal("resolveAsset must refuse an rc on the stable channel")
+	}
+	if _, _, err := manager.resolveAsset(context.Background(), "1.4.0-rc.1", ChannelRC); err != nil {
+		t.Fatalf("resolveAsset must allow an rc on the rc channel: %v", err)
+	}
+}
+
+func TestInstallRefusesRCWhenProviderFlipsBackToStable(t *testing.T) {
+	fixture := rcFixture(t, "1.4.0-rc.1")
+	server := fixture.server(t)
+	channel := ChannelRC
+	manager := &Manager{
+		CurrentVersion: "1.3.6", GOOS: "linux", GOARCH: "amd64", CanInstall: true, APIURL: server.URL + "/releases",
+		ChannelProvider: func(context.Context) ReleaseChannel { return channel },
+	}
+	if status := manager.Check(context.Background()); !status.Available {
+		t.Fatalf("rc must be offered first: %+v", status)
+	}
+	channel = ChannelStable
+	result, err := manager.Install(context.Background(), "1.4.0-rc.1")
+	if err != nil || result.Installed {
+		t.Fatalf("Install must follow the new channel: %+v, %v", result, err)
+	}
+}
+
+func TestFetchReleasesRequestsLargePage(t *testing.T) {
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		query = request.URL.RawQuery
+		_, _ = response.Write([]byte("[]"))
+	}))
+	t.Cleanup(server.Close)
+	manager := &Manager{APIURL: server.URL + "/releases?x=1"}
+	if _, err := manager.fetchReleases(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(query, "per_page=100") || !strings.Contains(query, "x=1") {
+		t.Fatalf("query = %q", query)
+	}
+}

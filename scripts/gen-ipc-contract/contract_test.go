@@ -152,6 +152,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
 		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
 		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
+		{name: "app_update_channel_get", scope: "update", input: "Record<string, never>", output: "UpdateChannelResponse"},
+		{name: "app_update_channel_set", scope: "update", input: "UpdateChannelRequest", output: "UpdateChannelResponse"},
 		{name: "biometric_status", scope: "biometric", input: "Record<string, never>", output: "BiometricStatus"},
 		{name: "biometric_unlock", scope: "biometric", input: "Record<string, never>", output: "BiometricUnlockResult"},
 		{name: "biometric_enable", scope: "biometric", input: "BiometricEnableRequest", output: "unknown"},
@@ -188,8 +190,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 15 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 15", len(selected))
+	if len(selected) != 17 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 17", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
@@ -219,7 +221,7 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "DesktopTrayDTO", want: []string{"enabled: boolean;"}},
 		{name: "DesktopTraySetRequest", want: []string{"enabled: boolean;"}},
 		{name: "ScreenInsets", want: []string{"top: number;", "right: number;", "bottom: number;", "left: number;"}},
-		{name: "UpdateStatus", want: []string{"available: boolean;", "currentVersion: string;", "version: string;", "canInstall: boolean;", "unavailableReason: string;"}},
+		{name: "UpdateStatus", want: []string{"available: boolean;", "currentVersion: string;", "version: string;", "canInstall: boolean;", "unavailableReason: string;", "releaseChannel: string;", "runningPrerelease: boolean;"}},
 		{name: "UpdateResult", want: []string{"installed: boolean;", "restarted: boolean;", "version: string;", "unavailableReason: string;"}},
 		{name: "BiometricStatus", want: []string{"available: boolean;", "canEvaluate: boolean;", "hasMaterial: boolean;"}, absent: []string{"\n  password:", "\n  secret:"}},
 		{name: "BiometricUnlockResult", want: []string{"ok: boolean;", "password?: string;", "message?: string;"}},

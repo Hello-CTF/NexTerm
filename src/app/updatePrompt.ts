@@ -23,7 +23,7 @@ export async function promptUpdateIfNeeded(): Promise<void> {
   // Record before prompting: re-entry during await will not prompt twice for the same version; only one prompt per launch.
   useUpdateStore.setState({ remindedVersion: status.version });
   const choice = await askChoice(
-    `发现新版本 v${status.version}（当前 v${status.currentVersion}）`,
+    `发现新版本 v${status.version}${status.prerelease ? "（RC 候选版本）" : ""}（当前 v${status.currentVersion}）`,
     {
       title: "软件更新",
       level: "info",

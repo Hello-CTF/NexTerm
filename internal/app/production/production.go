@@ -94,14 +94,16 @@ type ProductionServices struct {
 	stagedBlobs         StagedBlobResolver
 	dataDir             string
 	desktop             bool
-	hostKeysShared      bool
-	aiRelease           func()
-	cron                *cronRuntime
-	watches             *watchService
-	Transcripts         *transcriptWriter
-	aiRetention         *aiRetentionComponent
-	inventory           *inventoryService
-	sessionAggregate    *sessionAggregateService
+	// updateChannels stores the per-machine release channel; set on the desktop only.
+	updateChannels   update.ChannelStore
+	hostKeysShared   bool
+	aiRelease        func()
+	cron             *cronRuntime
+	watches          *watchService
+	Transcripts      *transcriptWriter
+	aiRetention      *aiRetentionComponent
+	inventory        *inventoryService
+	sessionAggregate *sessionAggregateService
 
 	retryDeferredUpgrade func(context.Context)
 }
@@ -431,7 +433,13 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Update != nil {
 		modules = append(modules, Module{Name: "update", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-			return registerUpdateCommands(dispatcher, services.Update)
+			if err := registerUpdateCommands(dispatcher, services.Update); err != nil {
+				return err
+			}
+			if services.updateChannels != nil {
+				return registerUpdateChannelCommands(dispatcher, services.updateChannels)
+			}
+			return nil
 		}})
 	}
 	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {

@@ -275,7 +275,12 @@ export type GeneratedKeyDto = import("./generated/types").GeneratedKeyDTO;
 
 export type UpdateStatusDto = { available: boolean, currentVersion: string, version: string,
 notes: string, prerelease: boolean, assetName: string, assetSize: number, canInstall: boolean,
-unavailableReason: string, channel?: string, };
+unavailableReason: string, channel?: string, releaseChannel?: string,
+runningPrerelease?: boolean, };
+
+export type UpdateReleaseChannel = "stable" | "rc";
+
+export type UpdateChannelDto = { channel: string, };
 
 export type UpdateResultDto = { installed: boolean, restarted: boolean, version: string,
 unavailableReason: string, };

@@ -379,6 +379,18 @@
       "channel": false,
       "stream": "none"
     },
+    "app_update_channel_get": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_update_channel_set": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "app_update_check": {
       "scope": "update",
       "nested": false,

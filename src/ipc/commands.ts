@@ -313,13 +313,17 @@ export const biometricApi = {
   disable: (): Promise<void> => call("biometric_disable") as Promise<void>,
 };
 
-import type { UpdateResultDto, UpdateStatusDto } from "./types";
+import type { UpdateChannelDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
   check: (): Promise<UpdateStatusDto> => call("app_update_check"),
   install: (version?: string): Promise<UpdateResultDto> =>
     call("app_update_install", { version: version ?? null }),
   restart: (): Promise<UpdateResultDto> => call("app_restart"),
+  // The release channel is stored on this machine only (never synced); desktop builds only.
+  getChannel: (): Promise<UpdateChannelDto> => call("app_update_channel_get"),
+  setChannel: (channel: UpdateReleaseChannel): Promise<UpdateChannelDto> =>
+    call("app_update_channel_set", { channel }),
 };
 
 export interface SessionInfo {

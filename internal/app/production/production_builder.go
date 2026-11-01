@@ -412,6 +412,12 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 				_ = ipc.Emit(ctx, config.Config.Events, ipc.TopicUpdateProgress, progress)
 			},
 		}
+		if config.Desktop {
+			// The channel is read from this machine's own database even when the desktop is connected to a
+			// remote server, and it is never synced.
+			services.updateChannels = database
+			services.Update.ChannelProvider = update.ChannelProviderFor(database)
+		}
 	}
 	// The skills manager is built before the AI runtime so composeAIRuntime
 	// can hand the very same instance to the tools registry (load_skill) that

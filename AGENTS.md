@@ -58,6 +58,7 @@ Toolchain: Go 1.27, Node 24+, pnpm; the Linux server is a `CGO_ENABLED=0` glibc-
 ## Branches and Releases
 
 - Branch from the latest `master` and merge back through a reviewed PR with passing gates. No force pushes or unreviewed pushes to `master`.
+- Prereleases use only `v<x.y.z>-rc.N` tags (N >= 1); they are GitHub prereleases and never Latest. Stable is the default update channel everywhere, RC is an opt-in per-machine setting that never syncs.
 - Release `v*` tags come from `master`. Keep `wails.json`, `package.json`, and `lazycat/package.yml` at `0.0.0`; release builds derive the version from the tag through `NEXTERM_RELEASE_VERSION`.
 - Reused CI evidence must match the intended commit and ref. Versioned frontend, native, and mobile release artifacts must be built for that release; do not publish placeholder-version artifacts from master builds.
 - Release notes are generated from Conventional Commits plus `.github/release-template.md`. Do not add per-release notes commits or standing gap lists. Record verification limits in the change's PR or review report.

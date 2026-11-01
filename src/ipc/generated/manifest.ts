@@ -428,6 +428,22 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
+    "app_update_channel_get": {
+      scope: "update",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelResponse", ts: "UpdateChannelResponse" },
+    },
+    "app_update_channel_set": {
+      scope: "update",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelRequest", ts: "UpdateChannelRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelResponse", ts: "UpdateChannelResponse" },
+    },
     "app_update_check": {
       scope: "update",
       nested: false,
@@ -3165,6 +3181,14 @@ export interface IPCCommandTypeMap {
   "app_restart": {
     input: Record<string, never>;
     output: contractTypes.UpdateResult;
+  };
+  "app_update_channel_get": {
+    input: Record<string, never>;
+    output: contractTypes.UpdateChannelResponse;
+  };
+  "app_update_channel_set": {
+    input: contractTypes.UpdateChannelRequest;
+    output: contractTypes.UpdateChannelResponse;
   };
   "app_update_check": {
     input: Record<string, never>;
