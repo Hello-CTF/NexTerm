@@ -4,6 +4,7 @@ import type {
   ExecBatchRunHistory,
   PrepareRequest,
   RenderedCommand,
+  RespondRequest,
   RunRequest,
   RunState,
   StartRequest,
@@ -16,6 +17,7 @@ export type {
   ExecBatchRunHistory,
   PrepareRequest,
   RenderedCommand,
+  RespondRequest,
   RunRequest,
   RunState,
   StartRequest,
@@ -40,6 +42,7 @@ export const runbookApi = {
   get: (runId: string) => call("runbook_run_get", { runId }),
   prepare: (request: PrepareRequest) => call("runbook_run_prepare", request),
   advance: (request: AdvanceRequest) => call("runbook_run_advance", request),
+  respond: (request: RespondRequest) => call("runbook_run_respond", request),
   cancel: (runId: string) => call("runbook_run_cancel", { runId }),
   historyGet: (runId: string) => call("runbook_run_history_get", { runId }),
 };

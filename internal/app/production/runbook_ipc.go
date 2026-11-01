@@ -138,6 +138,15 @@ func (s *runbookIPCService) register(dispatcher *ipc.Dispatcher) error {
 	}); err != nil {
 		return err
 	}
+	if err := ipc.Register(dispatcher, "runbook_run_respond", func(ctx context.Context, _ *ipc.Call, input runbook.RespondRequest) (runbook.RunState, error) {
+		state, err := s.Respond(ctx, ipc.OwnerID(ctx), input)
+		if err != nil {
+			return runbook.RunState{}, runbookIPCError(err)
+		}
+		return state, nil
+	}); err != nil {
+		return err
+	}
 	if err := ipc.Register(dispatcher, "runbook_run_cancel", func(ctx context.Context, _ *ipc.Call, input runbook.RunRequest) (runbook.RunState, error) {
 		state, err := s.Cancel(ctx, ipc.OwnerID(ctx), input.RunID)
 		if err != nil {
@@ -267,6 +276,13 @@ func (s *runbookIPCService) Prepare(ctx context.Context, ownerID string, input r
 func (s *runbookIPCService) Advance(ctx context.Context, ownerID string, input runbook.AdvanceRequest) (runbook.RunState, error) {
 	return s.withRun(ctx, ownerID, input.RunID, func(ctx context.Context, runs *runbook.Service) (runbook.RunState, error) {
 		return runs.Advance(ctx, ownerID, input)
+	})
+}
+
+// Respond answers a prompt a script of the caller's own run is waiting on.
+func (s *runbookIPCService) Respond(ctx context.Context, ownerID string, input runbook.RespondRequest) (runbook.RunState, error) {
+	return s.withRun(ctx, ownerID, input.RunID, func(ctx context.Context, runs *runbook.Service) (runbook.RunState, error) {
+		return runs.Respond(ctx, ownerID, input)
 	})
 }
 

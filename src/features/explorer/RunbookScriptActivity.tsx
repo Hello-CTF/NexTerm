@@ -1,0 +1,193 @@
+import { useState } from "react";
+import type { AnswerNote, HostLive, Prompt } from "../../ipc/generated/types";
+
+// Everything in a prompt, message or step title is text printed by a remote
+// script. It is only ever rendered as React text children (never as HTML,
+// markdown or a link), inside a frame that names the script and the host, so a
+// hostile host cannot pose as NexTerm's own interface.
+
+const LEVEL_CLASS: Record<string, string> = {
+  info: "text-neutral-300",
+  warn: "text-amber-300",
+  error: "text-red-300",
+};
+const LEVEL_LABEL: Record<string, string> = { info: "信息", warn: "警告", error: "错误" };
+
+export function ScriptActivity({ live, answers }: { live: readonly HostLive[]; answers: readonly AnswerNote[] }) {
+  if (live.length === 0 && answers.length === 0) return null;
+  return (
+    <div className="mt-3 rounded border border-neutral-800 p-2.5" data-testid="runbook-script-activity">
+      <div className="mb-2 text-[11px] font-medium text-neutral-400">脚本上报的进度（内容由远端脚本提供）</div>
+      {live.map((host) => (
+        <div key={host.sessionId} className="mb-2 last:mb-0" data-testid={`runbook-script-host-${host.sessionId}`}>
+          <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
+            <span className="text-neutral-300" title={host.sessionId}>主机 {host.hostName}</span>
+            {host.subStep && <span className="text-neutral-400">· 脚本步骤：{host.subStep}</span>}
+          </div>
+          {host.progress >= 0 && (
+            <div className="mt-1 flex items-center gap-2">
+              <div
+                role="progressbar"
+                aria-label={`主机 ${host.hostName} 的脚本进度`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={host.progress}
+                className="h-1.5 flex-1 overflow-hidden rounded bg-neutral-800"
+              >
+                <div className="h-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, host.progress))}%` }} />
+              </div>
+              <span className="nx-mono text-[10.5px] text-neutral-400">{host.progress}%</span>
+            </div>
+          )}
+          {(host.messages ?? []).map((message, index) => (
+            <div key={index} className={`mt-1 whitespace-pre-wrap break-all text-[11px] ${LEVEL_CLASS[message.level] ?? "text-neutral-300"}`}>
+              [{LEVEL_LABEL[message.level] ?? message.level}] {message.text}
+            </div>
+          ))}
+        </div>
+      ))}
+      {answers.length > 0 && (
+        <div className="mt-2 border-t border-neutral-800 pt-2" data-testid="runbook-script-answers">
+          <div className="mb-1 text-[11px] text-neutral-500">已提供的输入（不含保密输入）</div>
+          {answers.map((answer, index) => (
+            <div key={index} className="whitespace-pre-wrap break-all text-[11px] text-neutral-400">
+              主机 {answer.hostName} · {answer.variable || (answer.kind === "confirm" ? "确认" : "输入")} = {answer.value}
+              {answer.auto ? "（沿用应用到全部）" : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ScriptPrompts({
+  prompts,
+  disabled,
+  onRespond,
+}: {
+  prompts: readonly Prompt[];
+  disabled: boolean;
+  onRespond: (prompt: Prompt, value: string, applyAll: boolean) => Promise<void>;
+}) {
+  if (prompts.length === 0) return null;
+  return (
+    <div className="mt-3 flex flex-col gap-2" data-testid="runbook-script-prompts">
+      {prompts.map((prompt) => (
+        <ScriptPromptCard
+          key={prompt.id}
+          prompt={prompt}
+          disabled={disabled}
+          shared={prompts.filter((other) => other.id !== prompt.id && other.kind === prompt.kind && other.variable === prompt.variable && other.text === prompt.text).length}
+          onRespond={onRespond}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ScriptPromptCard({
+  prompt,
+  disabled,
+  shared,
+  onRespond,
+}: {
+  prompt: Prompt;
+  disabled: boolean;
+  shared: number;
+  onRespond: (prompt: Prompt, value: string, applyAll: boolean) => Promise<void>;
+}) {
+  const secret = prompt.kind === "secret";
+  const confirm = prompt.kind === "confirm";
+  const [value, setValue] = useState(secret ? "" : (prompt.default ?? ""));
+  const [applyAll, setApplyAll] = useState(false);
+  const [sending, setSending] = useState(false);
+  const invalid = /[\r\n\0]/.test(value);
+
+  const submit = async (answer: string) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      await onRespond(prompt, answer, applyAll && prompt.canApplyAll);
+    } finally {
+      // A secret never outlives its submission in component state.
+      if (secret) setValue("");
+      setSending(false);
+    }
+  };
+
+  return (
+    <section
+      className="rounded border border-amber-700/60 bg-amber-950/20 p-2.5"
+      aria-label={`来自主机 ${prompt.hostName} 上脚本的${confirm ? "确认" : "输入"}请求`}
+      data-testid={`runbook-script-prompt-${prompt.id}`}
+    >
+      <div className="mb-1 text-[10.5px] text-amber-300">
+        以下内容由主机「{prompt.hostName}」上运行的脚本提供，不是 NexTerm 的系统提示
+        {secret ? " · 保密输入：不会被保存或记录" : ""}
+      </div>
+      <div className="whitespace-pre-wrap break-all text-[12px] text-neutral-100" data-testid="runbook-script-prompt-text">{prompt.text}</div>
+      <div className="mt-0.5 text-[10.5px] text-neutral-500">
+        {prompt.variable ? `变量 ${prompt.variable} · ` : ""}将在 {new Date(prompt.expiresAt).toLocaleTimeString()} 超时并使该主机的执行失败
+      </div>
+      {confirm ? (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={disabled || sending} onClick={() => void submit("yes")}>是</button>
+          <button type="button" className="nx-btn nx-btn-sm" disabled={disabled || sending} onClick={() => void submit("no")}>否</button>
+        </div>
+      ) : (
+        <form
+          className="mt-2 flex flex-wrap items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!invalid) void submit(value);
+          }}
+        >
+          <input
+            className="nx-input min-w-48 flex-1"
+            type={secret ? "password" : "text"}
+            autoComplete={secret ? "new-password" : "off"}
+            spellCheck={false}
+            maxLength={1024}
+            aria-label={`主机 ${prompt.hostName} 的${secret ? "保密" : ""}输入`}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+          <button type="submit" className="nx-btn nx-btn-primary nx-btn-sm" disabled={disabled || sending || invalid}>提交</button>
+        </form>
+      )}
+      {prompt.canApplyAll && shared > 0 && (
+        <label className="mt-2 flex items-center gap-1.5 text-[11px] text-neutral-400">
+          <input type="checkbox" className="accent-blue-500" checked={applyAll} onChange={(event) => setApplyAll(event.target.checked)} />
+          应用到全部（同一步骤中提示相同的其他主机沿用此答案）
+        </label>
+      )}
+    </section>
+  );
+}
+
+const HELP_EXAMPLE = `sh -c 'printf "@NEXTERM:STEP 准备环境\\n@NEXTERM:PROGRESS 10\\n"; printf "@NEXTERM:INPUT port 监听端口\\t8080\\n"; read port; printf "@NEXTERM:SECRET token 访问令牌\\n"; read token; printf "@NEXTERM:CONFIRM 现在重启服务？\\n"; read answer; [ "$answer" = yes ] || exit 0; printf "@NEXTERM:MESSAGE warn 即将重启\\n@NEXTERM:PROGRESS 100\\n"; echo "port=$port"'`;
+
+export function ScriptDirectiveHelp() {
+  return (
+    <details className="mb-3 rounded border border-neutral-800 p-2 text-[11px] text-neutral-400" data-testid="runbook-directive-help">
+      <summary className="cursor-pointer text-neutral-300">脚本交互指令说明</summary>
+      <div className="mt-2 flex flex-col gap-1.5">
+        <p>脚本向标准输出打印以 <code className="nx-mono">@NEXTERM:</code> 开头的单独一行，即可在运行界面显示进度、提问或提示。指令行不会出现在普通输出中。</p>
+        <ul className="list-disc pl-4">
+          <li><code className="nx-mono">@NEXTERM:STEP 标题</code>：标记当前子步骤</li>
+          <li><code className="nx-mono">@NEXTERM:PROGRESS 0-100</code>：更新进度</li>
+          <li><code className="nx-mono">@NEXTERM:INPUT 变量名 提示语[Tab 默认值]</code>：暂停并向操作员询问一个值，答案作为一行写入脚本的标准输入</li>
+          <li><code className="nx-mono">@NEXTERM:SECRET 变量名 提示语</code>：同上，但使用遮蔽输入框，答案不会被保存或记录</li>
+          <li><code className="nx-mono">@NEXTERM:CONFIRM 提示语</code>：询问是或否，标准输入收到 <code className="nx-mono">yes</code> 或 <code className="nx-mono">no</code></li>
+          <li><code className="nx-mono">@NEXTERM:MESSAGE info|warn|error 文本</code>：显示一条消息</li>
+        </ul>
+        <p>执行流程的命令是单行的，多条语句可用 <code className="nx-mono">sh -c '...'</code> 包装；下面的示例用 <code className="nx-mono">printf</code> 打印指令，Tab 写作 <code className="nx-mono">{"\\t"}</code>。</p>
+        <p>变量名只能包含字母、数字和下划线，且不以数字开头。指令行最长 1024 字节，提示语、标题和消息最长 200 个字符，不能包含控制字符。格式错误的指令会作为普通输出显示并给出警告，不会中断运行。</p>
+        <p>需要提问的命令文本中必须直接包含 <code className="nx-mono">@NEXTERM:INPUT</code>、<code className="nx-mono">@NEXTERM:SECRET</code> 或 <code className="nx-mono">@NEXTERM:CONFIRM</code>，否则标准输入仍会立即关闭。只有 SSH 连接支持提问；受管设备及其他连接类型仍支持 STEP、PROGRESS 和 MESSAGE，提问会显示警告并被忽略。每台主机分别提问、分别回答，等待回答期间不计入命令超时，但超过 5 分钟没有回答会使该主机失败。</p>
+        <p>脚本的输出和提问内容来自远端主机，界面只会以纯文本显示并标明来源主机。保密输入不会回显；请不要在脚本中把它打印出来。</p>
+        <pre className="nx-pre whitespace-pre-wrap break-all text-[11px]">{HELP_EXAMPLE}</pre>
+      </div>
+    </details>
+  );
+}

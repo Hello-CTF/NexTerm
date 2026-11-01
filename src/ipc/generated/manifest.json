@@ -1530,6 +1530,12 @@
       "channel": false,
       "stream": "none"
     },
+    "runbook_run_respond": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "runbook_run_start": {
       "scope": "runbook",
       "nested": false,

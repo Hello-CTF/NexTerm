@@ -248,6 +248,8 @@ func (s *Service) Execute(ctx context.Context, ownerID string, request Request) 
 					defer active.executions.Done()
 					result, err := ExecuteTargetStreamCaptured(runCtx, tracker, target, request.Command, TargetStreamOptions{
 						Timeout: timeout, Now: s.now, OutputLimit: s.outputLimit,
+						Interactor: request.Interactor,
+						OnAnswered: func(record AnswerRecord) { s.auditInput(ctx, ownerID, request, record) },
 					})
 					if err != nil {
 						result = streamFailureResult(target, s.now(), err)
@@ -725,6 +727,35 @@ func (s *Service) audit(ctx context.Context, ownerID string, request Request, re
 	if err != nil {
 		s.onError(fmt.Errorf("record exec batch %s target %s: %w", request.BatchID, result.SessionID, err))
 	}
+}
+
+// auditInput records that a script prompt was answered. The payload carries the
+// variable name and kind only: an answer value, secret or not, is never audited.
+func (s *Service) auditInput(ctx context.Context, ownerID string, request Request, record AnswerRecord) {
+	if s.auditor == nil {
+		return
+	}
+	payload := inputAuditPayload{
+		OwnerID: ownerID, BatchID: request.BatchID, Variable: record.Variable,
+		PromptKind: string(record.Kind), Secret: record.Secret,
+	}
+	auditCtx, cancel := context.WithTimeout(execAuditContext(ctx, ownerID), 5*time.Second)
+	defer cancel()
+	err := s.auditor.AuditInsert(auditCtx, store.AuditInput{
+		SessionID: stringPointer(record.SessionID), Source: "user", Kind: "exec_batch_input", Payload: payload,
+	})
+	if err != nil {
+		s.onError(fmt.Errorf("record exec batch %s input %s: %w", request.BatchID, record.SessionID, err))
+	}
+}
+
+type inputAuditPayload struct {
+	OwnerID  string `json:"ownerId"`
+	BatchID  string `json:"batchId"`
+	Variable string `json:"variable"`
+	// PromptKind is input, secret or confirm; the prompt text and the answer are never audited.
+	PromptKind string `json:"promptKind"`
+	Secret     bool   `json:"secret"`
 }
 
 func (s *Service) finishedBatch(request Request, started time.Time, results []Result) Batch {

@@ -15,6 +15,8 @@ import {
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconPlay, IconPlus, IconStop, IconTrash, IconXCircle } from "../../ui/icons";
+import type { Prompt } from "../../ipc/generated/types";
+import { ScriptActivity, ScriptDirectiveHelp, ScriptPrompts } from "./RunbookScriptActivity";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import { assetTagValues } from "./assetSearch";
@@ -399,6 +401,44 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     }
   };
 
+  const runId = run?.runId;
+  const polling = run?.status === "running";
+  useEffect(() => {
+    if (!runId || !polling) return undefined;
+    // The advance call blocks while scripts run, so the live state (prompts,
+    // sub-steps, progress) is read separately. Only running snapshots are applied:
+    // the advance response stays the single source of every state transition.
+    const epoch = lifecycleEpochRef.current;
+    let inFlight = false;
+    const timer = window.setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
+      void Promise.resolve(runbookApi.get(runId))
+        .then((next) => {
+          const current = runRef.current;
+          if (!next || next.status !== "running" || !current || current.runId !== runId || current.status !== "running") return;
+          applyRun(next, epoch);
+        })
+        .catch(() => undefined)
+        .finally(() => { inFlight = false; });
+    }, 700);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runId, polling]);
+
+  const respondToPrompt = async (prompt: Prompt, value: string, applyAll: boolean) => {
+    const current = runRef.current;
+    if (!current) return;
+    const epoch = lifecycleEpochRef.current;
+    setError(null);
+    try {
+      const next = await runbookApi.respond({ runId: current.runId, promptId: prompt.id, value, ...(applyAll ? { applyAll: true } : {}) });
+      if (next && next.status === "running" && runRef.current?.status === "running") applyRun(next, epoch);
+    } catch (cause) {
+      if (isActiveEpoch(epoch)) setError(`提交回答失败：${describeError(cause)}`);
+    }
+  };
+
   const closePanel = () => {
     invalidateAndCancel();
     onClose();
@@ -491,6 +531,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                 <label className="nx-label" htmlFor="runbook-name">流程名称</label>
                 <input id="runbook-name" className="nx-input" value={name} onChange={(event) => setName(event.target.value)} />
               </div>
+              <ScriptDirectiveHelp />
               <div className="mb-3 flex flex-wrap items-end gap-2">
                 <div className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
                   <span>从命令片段添加</span>
@@ -587,6 +628,8 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                   </section>
                 ))}
               </div>
+              <ScriptPrompts prompts={run.prompts ?? []} disabled={canceling || terminalRun(run.status)} onRespond={respondToPrompt} />
+              <ScriptActivity live={run.live ?? []} answers={run.answers ?? []} />
               {run.status === "awaiting_render" && !busy && (
                 <button type="button" className="nx-btn mt-3" onClick={retryPrepare}>重新填写当前步骤</button>
               )}

@@ -58,6 +58,16 @@ export type AggregateSession = {
   attached?: boolean;
 };
 
+export type AnswerNote = {
+  stepNumber: number;
+  sessionId: string;
+  hostName: string;
+  kind: string;
+  variable?: string;
+  value: string;
+  auto?: boolean;
+};
+
 export type ApplyObject = {
   id: string;
   kind: string;
@@ -1467,6 +1477,19 @@ export type HelperVersionDTO = {
   sha256?: string;
 };
 
+export type HostLive = {
+  sessionId: string;
+  hostName: string;
+  subStep?: string;
+  progress: number;
+  messages?: HostMessage[];
+};
+
+export type HostMessage = {
+  level: string;
+  text: string;
+};
+
 export type HostShareInputRequest = {
   streamId: string;
   data: string | number[];
@@ -1976,6 +1999,19 @@ export type ProductionSettingsUpdateRequest = {
   aiTerminalConnectProductionOptIn?: boolean | null;
 };
 
+export type Prompt = {
+  id: string;
+  stepNumber: number;
+  sessionId: string;
+  hostName: string;
+  kind: string;
+  variable?: string;
+  text: string;
+  default?: string;
+  canApplyAll: boolean;
+  expiresAt: number;
+};
+
 export type PruneItem = {
   kind: string;
   id: string;
@@ -2370,6 +2406,13 @@ export type RepairUndecryptableResult = {
   repaired: boolean;
 };
 
+export type RespondRequest = {
+  runId: string;
+  promptId: string;
+  value: string;
+  applyAll?: boolean;
+};
+
 export type RetryRequest = {
   id: string;
   sessionId?: string;
@@ -2467,6 +2510,9 @@ export type RunState = {
   productionChallenge?: ConfirmationRequiredDetail | null;
   productionCommand?: string;
   error?: string;
+  prompts?: Prompt[];
+  live?: HostLive[];
+  answers?: AnswerNote[];
 };
 
 export type RunbookMetadata = {

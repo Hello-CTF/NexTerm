@@ -1957,6 +1957,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.PrepareRequest", ts: "PrepareRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
     },
+    "runbook_run_respond": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RespondRequest", ts: "RespondRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
+    },
     "runbook_run_start": {
       scope: "runbook",
       nested: false,
@@ -4045,6 +4053,10 @@ export interface IPCCommandTypeMap {
   };
   "runbook_run_prepare": {
     input: contractTypes.PrepareRequest;
+    output: contractTypes.RunState;
+  };
+  "runbook_run_respond": {
+    input: contractTypes.RespondRequest;
     output: contractTypes.RunState;
   };
   "runbook_run_start": {
