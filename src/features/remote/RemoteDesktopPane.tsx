@@ -8,6 +8,7 @@ import { RemoteKeysBar } from "./RemoteKeysBar";
 import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
+import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
 import type { Failure } from "./connectFlow";
 import type { ModifierKey, ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
@@ -40,14 +41,20 @@ function DisconnectOverlay({
   attempt,
   onReconnect,
   onClose,
+  onWake,
 }: {
   failure: Failure;
   retryIn: number | null;
   attempt: number;
   onReconnect: () => void;
   onClose: () => void;
+  // Present when the asset has a Wake-on-LAN MAC.
+  onWake?: () => Promise<boolean>;
 }) {
   const never = failure.kind === "auth" || failure.kind === "certificate" || failure.kind === "permission";
+  const [waking, setWaking] = useState(false);
+  // Authentication, certificate and permission failures prove the host answered, so waking it would not help.
+  const showWake = onWake !== undefined && !never;
   return (
     <div
       role="alertdialog"
@@ -70,10 +77,24 @@ function DisconnectOverlay({
         <button type="button" className="nx-btn nx-btn-primary" onClick={onReconnect}>
           重新连接
         </button>
+        {showWake && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-outline"
+            disabled={waking}
+            onClick={() => {
+              setWaking(true);
+              void onWake().finally(() => setWaking(false));
+            }}
+          >
+            唤醒
+          </button>
+        )}
         <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>
           关闭
         </button>
       </div>
+      {showWake && <div className="max-w-md text-[11.5px] text-neutral-400">{WAKE_DISCLAIMER}</div>}
     </div>
   );
 }
@@ -462,7 +483,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           </div>
         )}
         {session.status === "disconnected" && session.failure && (
-          <DisconnectOverlay failure={session.failure} retryIn={session.retryIn} attempt={session.attempt} onReconnect={session.connect} onClose={closeTab} />
+          <DisconnectOverlay failure={session.failure} retryIn={session.retryIn} attempt={session.attempt} onReconnect={session.connect} onClose={closeTab} onWake={session.wake.available ? () => wakeAsset(assetId, session.wake.name) : undefined} />
         )}
       </div>
       {touch && connected && !effectiveViewOnly && (

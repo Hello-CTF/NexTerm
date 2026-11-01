@@ -31,6 +31,8 @@ export interface AssetKindFields {
   sshAdvanced: boolean;
   // Protocol-specific option groups.
   remote: "rdp" | "vnc" | null;
+  // The optional Wake-on-LAN MAC and broadcast options.
+  wake: boolean;
 }
 
 const NONE: AssetKindFields = {
@@ -42,22 +44,23 @@ const NONE: AssetKindFields = {
   via: null,
   sshAdvanced: false,
   remote: null,
+  wake: false,
 };
 
 const DATABASE: AssetKindFields = { ...NONE, authMethod: false, password: true, via: "ssh" };
 
 export const ASSET_KIND_FIELDS: Record<AssetFormKind, AssetKindFields> = {
-  ssh: { ...NONE, sshAdvanced: true },
-  winrm: { ...NONE, defaultPort: 5985 },
+  ssh: { ...NONE, sshAdvanced: true, wake: true },
+  winrm: { ...NONE, defaultPort: 5985, wake: true },
   local: { ...NONE, network: false, username: false, authMethod: false },
-  docker: { ...NONE, sshAdvanced: true },
+  docker: { ...NONE, sshAdvanced: true, wake: true },
   "docker-context": NONE,
   kubernetes: NONE,
   mysql: { ...DATABASE, defaultPort: 3306 },
   postgres: { ...DATABASE, defaultPort: 5432 },
   redis: { ...DATABASE, defaultPort: 6379 },
-  rdp: { ...DATABASE, defaultPort: 3389, via: "ssh-or-device", remote: "rdp" },
-  vnc: { ...DATABASE, defaultPort: 5900, username: false, via: "ssh-or-device", remote: "vnc" },
+  rdp: { ...DATABASE, defaultPort: 3389, via: "ssh-or-device", remote: "rdp", wake: true },
+  vnc: { ...DATABASE, defaultPort: 5900, username: false, via: "ssh-or-device", remote: "vnc", wake: true },
 };
 
 export function assetKindFields(kind: string): AssetKindFields {

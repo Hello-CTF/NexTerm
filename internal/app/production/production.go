@@ -26,6 +26,7 @@ import (
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/wol"
 )
 
 type Application = core.Application
@@ -58,6 +59,7 @@ type ProductionServices struct {
 	Privacy       *privacy.Manager
 	Database      *db.Service
 	RemoteDesktop *remotedesktop.Service
+	Wake          *wol.Service
 	Mount         *mount.Service
 	Sessions      *session.Manager
 	ExecBatches   *execbatch.Service
@@ -276,6 +278,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.RemoteDesktop != nil {
 		modules = append(modules, Module{Name: "remotedesktop", RegisterCommands: services.RemoteDesktop.RegisterCommands, Component: services.RemoteDesktop})
+	}
+	if services.Wake != nil {
+		modules = append(modules, Module{Name: "wake", RegisterCommands: services.Wake.RegisterCommands})
 	}
 	if services.Mount != nil {
 		modules = append(modules, Module{Name: "mount", RegisterCommands: services.Mount.RegisterCommands, Component: services.Mount})

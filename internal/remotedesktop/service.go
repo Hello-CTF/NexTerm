@@ -73,11 +73,12 @@ type Service struct {
 	recheck          time.Duration
 	handshakeTimeout time.Duration
 
-	mu      sync.Mutex
-	conns   map[string]*liveConnection
-	pending map[string]*pendingCert
-	revoked map[string]time.Time
-	closed  bool
+	mu              sync.Mutex
+	conns           map[string]*liveConnection
+	pending         map[string]*pendingCert
+	revoked         map[string]time.Time
+	userRevocations ipc.UserRevocations
+	closed          bool
 }
 
 func NewService(resolver AssetResolver, options ...Option) *Service {
@@ -155,9 +156,10 @@ func (s *Service) CloseAccountUser(userID, exceptSession string) {
 	}
 	s.tickets.dropUser(userID, exceptSession)
 	s.mu.Lock()
+	s.userRevocations.Revoke(userID, exceptSession)
 	var victims []*liveConnection
 	for _, c := range s.conns {
-		if c.owner == userID && c.loginSession != exceptSession {
+		if c.owner == userID && ipc.MatchesRevoked(c.loginSession, exceptSession) {
 			victims = append(victims, c)
 		}
 	}
@@ -504,6 +506,7 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 			return errTicketInvalid()
 		}
 	}
+	userEpoch := s.userRevocations.Epoch(ident.UserID)
 	t, err := s.tickets.consume(token, ident.UserID, ident.LoginSessionID)
 	if err != nil {
 		if first != nil {
@@ -525,7 +528,7 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 	s.mu.Lock()
 	s.pruneRevokedLocked()
 	_, revoked := s.revoked[t.loginSession]
-	if s.closed || (t.loginSession != "" && revoked) {
+	if s.closed || (t.loginSession != "" && revoked) || s.userRevocations.Stale(t.userID, userEpoch, t.loginSession) {
 		s.mu.Unlock()
 		return ipc.NewError(ipc.CodeForbidden, "登录会话已失效")
 	}

@@ -98,6 +98,9 @@ func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) 
 	if err := validateAssetPasteOptions(input.OptionsJSON); err != nil {
 		return AssetRow{}, err
 	}
+	if err := validateAssetWakeOptions(input.OptionsJSON, ""); err != nil {
+		return AssetRow{}, err
+	}
 	if strings.TrimSpace(input.Name) == "" {
 		return AssetRow{}, badParam(errString("资产名称不能为空"))
 	}
@@ -206,6 +209,9 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
+			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
 		}
 		values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(current.UpdatedAt))
 		if err != nil {
@@ -253,6 +259,9 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 		}
 		if patch.OptionsJSON != nil {
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
+			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
 		}

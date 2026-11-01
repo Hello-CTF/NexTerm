@@ -2269,6 +2269,12 @@
       "nested": false,
       "channel": false,
       "stream": "none"
+    },
+    "wake_asset": {
+      "scope": "wake",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
     }
   },
   "legacyCommands": [

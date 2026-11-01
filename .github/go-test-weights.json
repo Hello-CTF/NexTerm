@@ -81,6 +81,8 @@
   "internal/upgrade": [2, 9],
   "internal/usershell": [1, 1],
   "internal/vault": [5, 18],
+  "internal/wol": [1, 2],
+  "internal/wol/netrule": [1, 1],
   "internal/wscompress": [1, 2],
   "scripts/gen-gorm": [1, 1],
   "scripts/gen-ipc-contract": [61, 187],

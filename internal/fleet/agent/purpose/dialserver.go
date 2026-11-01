@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
+	"github.com/Hello-CTF/NexTerm/internal/wol/netrule"
 )
 
 const defaultDialTimeout = 15 * time.Second
@@ -19,10 +21,12 @@ const defaultDialTimeout = 15 * time.Second
 type DialServer struct {
 	bridge  BridgeDialer
 	timeout time.Duration
+	// udpAllowed vets udp4 targets; tests replace it to reach a loopback listener.
+	udpAllowed func(address string) error
 }
 
 func NewDialServer(bridge BridgeDialer) *DialServer {
-	return &DialServer{bridge: bridge, timeout: defaultDialTimeout}
+	return &DialServer{bridge: bridge, timeout: defaultDialTimeout, udpAllowed: checkUDPTarget}
 }
 
 // Serve claims the bridge and serves its connection; it matches the agent
@@ -55,6 +59,11 @@ func (s *DialServer) ServeConn(ctx context.Context, conn net.Conn) error {
 	}
 	switch msg.Network {
 	case "tcp", "tcp4", "tcp6", "unix", "npipe":
+	case "udp4":
+		// Datagram forwarding exists for Wake-on-LAN magic packets only; it is limited to routable IPv4 literals.
+		if err := s.udpAllowed(msg.Address); err != nil {
+			return deviceproto.WriteError(conn, err)
+		}
 	default:
 		return deviceproto.WriteError(conn, fmt.Errorf("%w: unsupported dial network %q", deviceproto.ErrInvalid, msg.Network))
 	}
@@ -66,7 +75,43 @@ func (s *DialServer) ServeConn(ctx context.Context, conn net.Conn) error {
 	if err := deviceproto.WriteFrame(conn, deviceproto.FrameDialed, nil); err != nil {
 		return err
 	}
+	if msg.Network == "udp4" {
+		return serveWakeDatagram(conn, target)
+	}
 	pumpBridge(ctx, conn, target)
+	return nil
+}
+
+const wakeFirstFrameTimeout = 10 * time.Second
+
+// serveWakeDatagram is the whole udp4 conversation: exactly one data frame holding exactly one magic packet is
+// written to the target as one datagram, then the agent reports the end of the stream and closes the socket. Nothing
+// the target sends is read or relayed, and anything else from the client is refused.
+func serveWakeDatagram(bridge, target net.Conn) error {
+	_ = bridge.SetReadDeadline(time.Now().Add(wakeFirstFrameTimeout))
+	kind, payload, err := deviceproto.ReadFrame(bridge)
+	if err != nil {
+		return err
+	}
+	if kind != deviceproto.FrameDialData || !netrule.IsMagicPacket(payload) {
+		return deviceproto.WriteError(bridge, fmt.Errorf("%w: udp payload must be exactly one magic packet", deviceproto.ErrInvalid))
+	}
+	if _, err := target.Write(payload); err != nil {
+		return deviceproto.WriteError(bridge, err)
+	}
+	return deviceproto.WriteFrame(bridge, deviceproto.FrameDialEOF, nil)
+}
+
+// checkUDPTarget accepts an IPv4 literal with a port that is not on the always-deny list, so the agent cannot be
+// aimed at its own services or a metadata endpoint with datagrams.
+func checkUDPTarget(address string) error {
+	target, err := netip.ParseAddrPort(address)
+	if err != nil || !target.Addr().Is4() || target.Port() == 0 {
+		return fmt.Errorf("%w: udp target must be an IPv4 address and port", deviceproto.ErrInvalid)
+	}
+	if reason := netrule.Denied(target.Addr()); reason != "" {
+		return fmt.Errorf("%w: udp target refused (%s)", deviceproto.ErrInvalid, reason)
+	}
 	return nil
 }
 

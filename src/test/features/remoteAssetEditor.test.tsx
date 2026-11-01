@@ -260,3 +260,59 @@ describe("AssetEditor remote desktop kinds", () => {
     expect(createdPayload().credId).toBeNull();
   });
 });
+
+describe("AssetEditor wake-on-LAN options", () => {
+  it("saves the MAC, broadcast and port on an RDP asset", async () => {
+    mountEditor();
+    chooseKind("远程桌面（RDP）");
+    await flush();
+    fillRequiredFields("win-01");
+    setInputValue(field("唤醒 MAC 地址"), "AA-BB-CC-DD-EE-01");
+    await flush();
+    setInputValue(field("唤醒广播地址"), "192.168.1.255");
+    setInputValue(field("唤醒端口"), "7");
+    await save();
+    expect(createdPayload()).toMatchObject({
+      kind: "rdp",
+      options: { wakeMac: "AA-BB-CC-DD-EE-01", wakeBroadcast: "192.168.1.255", wakePort: 7 },
+    });
+  });
+
+  it("refuses to save a malformed MAC or broadcast address", async () => {
+    mountEditor();
+    chooseKind("远程桌面（VNC）");
+    await flush();
+    fillRequiredFields("box");
+    setInputValue(field("唤醒 MAC 地址"), "AABBCCDDEE01");
+    clickButton(mounted!.container, "保存");
+    await flush();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mounted!.container.textContent).toContain("MAC 地址格式无效");
+
+    setInputValue(field("唤醒 MAC 地址"), "AA:BB:CC:DD:EE:01");
+    await flush();
+    setInputValue(field("唤醒广播地址"), "localhost");
+    clickButton(mounted!.container, "保存");
+    await flush();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mounted!.container.textContent).toContain("广播地址必须是 IPv4 地址");
+  });
+
+  it("removes the wake options when the MAC is cleared and keeps other options", async () => {
+    mountEditor(makeAsset({ kind: "rdp", port: 3389, username: "admin", options: { wakeMac: "AA:BB:CC:DD:EE:01", wakePort: 7, futureOption: "keep" } }));
+    await flush();
+    expect(field("唤醒 MAC 地址").value).toBe("AA:BB:CC:DD:EE:01");
+    setInputValue(field("唤醒 MAC 地址"), "");
+    await save();
+    const options = updatedPayload().options as Record<string, unknown>;
+    expect(options.futureOption).toBe("keep");
+    expect(options).not.toHaveProperty("wakeMac");
+    expect(options).not.toHaveProperty("wakePort");
+  });
+
+  it("is not offered for database kinds", async () => {
+    mountEditor(makeAsset());
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="唤醒 MAC 地址"]')).toBeNull();
+  });
+});

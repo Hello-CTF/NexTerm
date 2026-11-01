@@ -16,7 +16,7 @@ import { PaneGroup, PaneTabPanel, type PaneMoveTarget } from "../workspace/PaneG
 import { SplitView } from "../workspace/SplitView";
 import { workspaceLayoutTree } from "../paneLayout";
 import { focusNeighbor, paneIdsInOrder, type FocusDirection } from "../splitTree";
-import { EmptyState, WorkspaceEmpty } from "../workspace/EmptyStates";
+import { WelcomePage, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
 import { WorkspaceConnectionBar } from "./WorkspaceConnectionBar";
 import { useLeftView } from "./leftView";
@@ -34,6 +34,7 @@ export interface WorkspaceBodyProps {
   onNewTerminal: () => void;
   onLocalTerminal: () => void;
   onOpenPalette: () => void;
+  onQuickConnect?: () => void;
   // home covers the workspace area (the mobile status wall) while it is not null; the docks stay usable beside or
   // over it. A shell with a home always passes it, null while closed, so the workspaces stay mounted underneath. While
   // covered, their terminals count as hidden: no backend output, no blinking cursor, and a refit when shown again.
@@ -54,6 +55,7 @@ export function WorkspaceBody({
   onNewTerminal,
   onLocalTerminal,
   onOpenPalette,
+  onQuickConnect,
   home,
 }: WorkspaceBodyProps) {
   const covered = home !== undefined && home !== null;
@@ -136,7 +138,7 @@ export function WorkspaceBody({
           hasSessions ? (
             <WorkspaceEmpty onNew={onNewTerminal} />
           ) : (
-            <EmptyState onLocal={onLocalTerminal} onPalette={onOpenPalette} />
+            <WelcomePage onLocal={onLocalTerminal} onQuickConnect={onQuickConnect} onPalette={onOpenPalette} />
           )
         ) : (
           <>

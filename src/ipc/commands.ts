@@ -1351,6 +1351,10 @@ export const remoteDesktopApi = {
   close: (connId: string) => call("remotedesktop_close", { connId }),
 };
 
+export const wakeApi = {
+  wake: (assetId: string) => call("wake_asset", { assetId }),
+};
+
 export const dbApi = {
   connect: (assetId: string) => call("db_connect", { args: { assetId } }),
   disconnect: (connId: string) => call("db_disconnect", { connId }) as Promise<void>,

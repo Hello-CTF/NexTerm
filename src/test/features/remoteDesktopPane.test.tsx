@@ -15,12 +15,15 @@ const mocks = vi.hoisted(() => ({
   prompt: vi.fn(),
   ask: vi.fn(),
   touch: vi.fn(() => false),
+  wake: vi.fn(),
+  toast: vi.fn(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     assetApi: { get: mocks.assetGet },
+    wakeApi: { wake: mocks.wake },
     remoteDesktopApi: {
       prepare: mocks.prepare,
       releaseSecret: mocks.releaseSecret,
@@ -31,7 +34,10 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   });
 });
 vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createVncClient }));
-vi.mock("../../app/store", () => ({ requestCloseTab: mocks.closeTab }));
+vi.mock("../../app/store", () => ({
+  requestCloseTab: mocks.closeTab,
+  useUi: { getState: () => ({ pushToast: mocks.toast }) },
+}));
 vi.mock("../../app/shell/shellMode", () => ({ isTouchShell: () => mocks.touch() }));
 vi.mock("../../ui/dialogs", () => ({ promptText: mocks.prompt, ask: mocks.ask }));
 
@@ -110,6 +116,11 @@ async function mountPane(): Promise<MountedView> {
   await flush();
   await flush();
   return view;
+}
+
+function unmountPane(): void {
+  view?.unmount();
+  view = undefined;
 }
 
 function pane(): HTMLElement {
@@ -224,6 +235,49 @@ describe("RemoteDesktopPane", () => {
     await flush();
     expect(mocks.prepare).toHaveBeenCalledTimes(2);
     expect(pane().dataset.status).toBe("connected");
+  });
+
+  it("offers wake on a failed connect only when the asset has a wake MAC, and says a sent packet is not a woken host", async () => {
+    mocks.createVncClient.mockImplementation(async () => {
+      throw new RemoteEngineError({ protocol: "vnc", stage: "connect", message: "无法连接到主机" });
+    });
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
+    mocks.wake.mockResolvedValue({ assetId: "asset-1", route: "local", target: "255.255.255.255:9", mac: "AA:BB:CC:DD:EE:01", bytes: 102, sentAtMs: 1 });
+    await mountPane();
+    const overlay = document.querySelector("[data-testid='remote-disconnect-overlay']")!;
+    expect(overlay.textContent).toContain("不代表主机已经唤醒");
+    const wake = [...overlay.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "唤醒")!;
+    await act(async () => wake.click());
+    await flush();
+    expect(mocks.wake).toHaveBeenCalledWith("asset-1");
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("不代表主机已经唤醒"));
+  });
+
+  it("shows a failed wake as an error and hides wake without a MAC or after an auth failure", async () => {
+    mocks.createVncClient.mockImplementation(async () => {
+      throw new RemoteEngineError({ protocol: "vnc", stage: "connect", message: "无法连接到主机" });
+    });
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
+    mocks.wake.mockRejectedValue({ code: "unsupported", message: "该设备的 Agent 版本过旧" });
+    await mountPane();
+    const wake = [...document.querySelectorAll<HTMLButtonElement>("[data-testid='remote-disconnect-overlay'] button")].find((b) => b.textContent === "唤醒")!;
+    await act(async () => wake.click());
+    await flush();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("Agent 版本过旧"));
+    unmountPane();
+
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: {} });
+    await mountPane();
+    expect([...document.querySelectorAll("[data-testid='remote-disconnect-overlay'] button")].some((b) => b.textContent === "唤醒")).toBe(false);
+    unmountPane();
+
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
+    mocks.createVncClient.mockImplementation(async () => {
+      throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败" });
+    });
+    mocks.certificate.mockResolvedValue({ status: "pinned", fingerprint: "x" });
+    await mountPane();
+    expect([...document.querySelectorAll("[data-testid='remote-disconnect-overlay'] button")].some((b) => b.textContent === "唤醒")).toBe(false);
   });
 
   it("closes the tab from the overlay", async () => {

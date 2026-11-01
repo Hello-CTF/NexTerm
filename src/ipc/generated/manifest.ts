@@ -2909,6 +2909,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
       output: { go: "any", ts: "unknown" },
     },
+    "wake_asset": {
+      scope: "wake",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/wol.WakeAssetRequest", ts: "WakeAssetRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/wol.WakeAssetResult", ts: "WakeAssetResult" },
+    },
   },
   legacyCommands: [
     "ai_answer",
@@ -4444,6 +4452,10 @@ export interface IPCCommandTypeMap {
   "vault_unlock": {
     input: contractTypes.VaultPasswordRequest;
     output: unknown;
+  };
+  "wake_asset": {
+    input: contractTypes.WakeAssetRequest;
+    output: contractTypes.WakeAssetResult;
   };
 }
 

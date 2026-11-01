@@ -170,7 +170,7 @@ func (s *ticketStore) dropUser(userID, exceptLoginSession string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key, t := range s.tickets {
-		if t.userID == userID && t.loginSession != exceptLoginSession {
+		if t.userID == userID && ipc.MatchesRevoked(t.loginSession, exceptLoginSession) {
 			delete(s.tickets, key)
 		}
 	}

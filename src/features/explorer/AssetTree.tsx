@@ -76,6 +76,9 @@ import {
 } from "./assetKindFields";
 import { fleetClient } from "../fleet/clients";
 import { RemoteDesktopFields } from "./RemoteDesktopFields";
+import { WakeFields } from "./WakeFields";
+import { canWake, hasWakeErrors, readWakeOptions, validateWakeOptions, writeWakeOptions, type WakeOptions } from "./wakeOptions";
+import { wakeAsset } from "./wakeAction";
 import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
 import { EVENTS, listenEvent } from "../../ipc/events";
 import {
@@ -916,6 +919,15 @@ export function AssetTree() {
         : []),
       ...(detailLabel
         ? [{ kind: "item" as const, label: detailLabel, icon: <IconServer size={13} />, onSelect: () => openHostDetail(asset.id) }]
+        : []),
+      ...(canWake(asset.options)
+        ? [{
+            kind: "item" as const,
+            label: "唤醒",
+            icon: <IconPlug size={13} />,
+            hint: "发送 Wake-on-LAN 唤醒包；发出不代表主机已开机",
+            onSelect: () => void wakeAsset(asset.id, asset.name),
+          }]
         : []),
       { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
     ];
@@ -2114,6 +2126,10 @@ export function AssetEditor({
   );
   const patchRemote = (patch: Partial<RemoteDesktopOptions>) => setRemoteOptions((current) => ({ ...current, ...patch }));
   const [resolutionError, setResolutionError] = useState<string | null>(null);
+  const [wakeOptions, setWakeOptions] = useState<WakeOptions>(() => readWakeOptions(initial?.options));
+  const [wakeShowErrors, setWakeShowErrors] = useState(false);
+  const wakeErrors = validateWakeOptions(wakeOptions);
+  const patchWake = (patch: Partial<WakeOptions>) => setWakeOptions((current) => ({ ...current, ...patch }));
   const [proxyCommand, setProxyCommand] = useState(
     typeof initial?.options?.proxyCommand === "string" ? (initial.options.proxyCommand as string) : "",
   );
@@ -2452,6 +2468,10 @@ export function AssetEditor({
       setPortError(nextPortError);
       if (nextHostError || nextPortError) return;
     }
+    if (kind === "asset" && kindFields.wake && hasWakeErrors(wakeErrors)) {
+      setWakeShowErrors(true);
+      return;
+    }
     if (kind === "asset" && groupKind === "rdp" && remoteOptions.resolution === "fixed") {
       const problem = validateResolution(remoteOptions.width, remoteOptions.height);
       setResolutionError(problem);
@@ -2577,9 +2597,10 @@ export function AssetEditor({
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
       else delete baseOptions.icon;
-      const options = isRemoteDesktopKind(groupKind)
+      const remoteWritten = isRemoteDesktopKind(groupKind)
         ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteOptions)
         : baseOptions;
+      const options = kindFields.wake ? writeWakeOptions(remoteWritten, wakeOptions) : remoteWritten;
       const fields = {
         kind: managed ? initial?.kind ?? groupKind : groupKind,
         name: managed ? initial?.name ?? name : name,
@@ -3044,6 +3065,14 @@ export function AssetEditor({
                   values={remoteOptions}
                   onChange={patchRemote}
                   resolutionError={resolutionError}
+                />
+              )}
+
+              {kindFields.wake && (
+                <WakeFields
+                  values={wakeOptions}
+                  errors={wakeShowErrors ? wakeErrors : { mac: wakeErrors.mac && wakeOptions.mac.trim() ? wakeErrors.mac : null, broadcast: null, port: null }}
+                  onChange={patchWake}
                 />
               )}
 

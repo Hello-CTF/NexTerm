@@ -1131,3 +1131,33 @@ func TestVNCPinnedHostRefusesPlainSecurity(t *testing.T) {
 		t.Fatal("credentials were sent to a pinned host that stopped offering TLS")
 	}
 }
+
+func TestCloseAccountUserWithNothingSparedClosesConnectionsWithoutLoginSession(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp")
+	host, port := rdpServer(t, func() tls.Certificate { return cert }, protoTLS, nil)
+	f.resolver.set(Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+	prepared, err := f.svc.Prepare(userCtx("u1", ""), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := newMemPair(8)
+	done := make(chan error, 1)
+	go func() { done <- f.svc.Serve(background(), server, Identity{UserID: "u1"}, "") }()
+	_ = client.WriteFrame(rdpClientRequest(prepared.Ticket, ""))
+	if _, err := client.ReadFrame(); err != nil {
+		t.Fatal(err)
+	}
+	leftover, _ := f.svc.Prepare(userCtx("u1", ""), "r1")
+	f.svc.CloseAccountUser("u1", "")
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection without a login session survived a full revocation")
+	}
+	if _, err := f.svc.tickets.consume(leftover.Ticket, "u1", ""); err == nil {
+		t.Fatal("ticket without a login session survived a full revocation")
+	}
+	client.Close()
+}

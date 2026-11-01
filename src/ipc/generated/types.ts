@@ -3131,6 +3131,21 @@ export type VolumeUsage = {
   containers: ContainerUse[];
 };
 
+export type WakeAssetRequest = {
+  assetId: string;
+};
+
+export type WakeAssetResult = {
+  assetId: string;
+  route: string;
+  viaId?: string;
+  target: string;
+  mac: string;
+  bytes: number;
+  sentAtMs: number;
+  note?: string;
+};
+
 export type WatchConditionDTO = {
   type: string;
   pattern: string;

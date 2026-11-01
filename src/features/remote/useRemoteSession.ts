@@ -14,6 +14,7 @@ import {
   type FlowUi,
 } from "./connectFlow";
 import { clearRemoteStatus, setRemoteStatus, setRemoteThumbnail, THUMBNAIL_INTERVAL_MS, THUMBNAIL_WIDTH, thumbnailsWanted } from "./remoteStatus";
+import { canWake } from "../explorer/wakeOptions";
 import { readRemoteDesktopOptions, type RemoteDesktopOptions } from "../explorer/assetKindFields";
 import { RemoteEngineError, type ClientCallbacks, type ClientFactory, type EngineFailure, type RemoteClient, type RemoteProtocol, type RemoteStatus } from "./remoteTypes";
 
@@ -49,6 +50,8 @@ export interface RemoteSession {
   attempt: number;
   protocol: RemoteProtocol;
   options: RemoteDesktopOptions;
+  // The asset has a Wake-on-LAN MAC, so a failed connect can offer to wake the host; name is for messages.
+  wake: { available: boolean; name: string };
   clientRef: RefObject<RemoteClient | null>;
   connect: () => void;
   disconnect: () => void;
@@ -66,6 +69,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   const [attempt, setAttempt] = useState(0);
   const [protocol, setProtocol] = useState<RemoteProtocol>("rdp");
   const [options, setOptions] = useState<RemoteDesktopOptions>(DEFAULT_OPTIONS);
+  const [wake, setWake] = useState({ available: false, name: "" });
   const clientRef = useRef<RemoteClient | null>(null);
   const holderRef = useRef<HTMLElement | null>(null);
   const generation = useRef(0);
@@ -152,6 +156,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
       if (gen !== generation.current) return;
       const parsed = readRemoteDesktopOptions(asset.kind, asset.options);
       setOptions(parsed);
+      setWake({ available: canWake(asset.options), name: asset.name });
       const kind: RemoteProtocol = asset.kind === "vnc" ? "vnc" : "rdp";
       setProtocol(kind);
       const callbacks: ClientCallbacks = {
@@ -257,5 +262,5 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     return () => window.clearInterval(timer);
   }, [status, tabId]);
 
-  return { status, failure, retryIn, attempt, protocol, options, clientRef, connect: manualConnect, disconnect };
+  return { status, failure, retryIn, attempt, protocol, options, wake, clientRef, connect: manualConnect, disconnect };
 }

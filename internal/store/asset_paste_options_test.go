@@ -96,3 +96,48 @@ func TestAssetBackupBeforeOverwriteOption(t *testing.T) {
 		t.Fatalf("stored options lost the flag: %s", row.OptionsJSON)
 	}
 }
+
+func TestAssetWakeOptionsValidatedOnWrite(t *testing.T) {
+	db := testStore(t)
+	ctx := t.Context()
+	row, err := db.AssetCreate(ctx, AssetInput{Kind: "rdp", Name: "wake", Host: ptr("10.0.0.5"),
+		OptionsJSON: `{"wakeMac":"AA:BB:CC:DD:EE:01","wakeBroadcast":"10.0.0.255","wakePort":7}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, options := range []string{`{"wakeMac":"AABBCCDDEE01"}`, `{"wakeMac":"AA:BB:CC:DD:EE:01","wakeBroadcast":"localhost"}`, `{"wakePort":99999}`} {
+		if _, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "bad", Host: ptr("10.0.0.6"), OptionsJSON: options}); err == nil {
+			t.Fatalf("create accepted %s", options)
+		}
+		value := options
+		if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &value}); err == nil {
+			t.Fatalf("update accepted %s", options)
+		}
+	}
+}
+
+func TestAssetEditKeepsUnchangedStoredWakeAndViaValues(t *testing.T) {
+	db := testStore(t)
+	ctx := t.Context()
+	row, err := db.AssetCreate(ctx, AssetInput{Kind: "ssh", Name: "old", Host: ptr("10.0.0.7"), OptionsJSON: `{}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A row that arrived by sync or from an older build may hold values the user-write rules would refuse.
+	stored := `{"wakeMac":"not-a-mac","wakePort":"x","viaAssetId":5,"futureOption":1}`
+	if err := db.db.Exec("UPDATE asset SET options_json = ? WHERE id = ?", stored, row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	renamed := stored
+	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &renamed}); err != nil {
+		t.Fatalf("saving unchanged wake values was blocked: %v", err)
+	}
+	changed := `{"wakeMac":"still-bad","wakePort":"x","viaAssetId":5}`
+	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &changed}); err == nil {
+		t.Fatal("a changed invalid wake value was accepted")
+	}
+	fixed := `{"wakeMac":"AA:BB:CC:DD:EE:01","viaAssetId":5}`
+	if _, err := db.AssetUpdate(ctx, row.ID, AssetPatch{OptionsJSON: &fixed}); err != nil {
+		t.Fatalf("a valid wake value with an odd viaAssetId was blocked: %v", err)
+	}
+}
