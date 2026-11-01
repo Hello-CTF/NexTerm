@@ -1187,6 +1187,26 @@ func waitFor(t *testing.T, condition func() bool) {
 	t.Fatal("condition did not become true")
 }
 
+func waitForSessionStatus(t *testing.T, manager *Manager, id string, status Status) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		for _, info := range manager.ListSessions() {
+			if info.ID == id && info.Status == status {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never reached status %s", id, status)
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+		case <-manager.ctx.Done():
+			t.Fatal("manager closed while waiting for the session status")
+		}
+	}
+}
+
 func TestConcurrentClientsCanWriteIndependentTabs(t *testing.T) {
 	manager, _, _, session := openTestSession(t, KindSSH)
 	const tabs = 8
