@@ -56,7 +56,7 @@ export interface WallCard {
 export interface WallHostNote {
   key: string;
   name: string;
-  status: "offline" | "failed" | "pending";
+  status: "failed" | "pending";
   error?: string;
   errorCode?: string;
 }
@@ -196,7 +196,8 @@ export function buildStatusWall(
 
   const notes: WallHostNote[] = [];
   for (const host of hosts.values()) {
-    if (host.status === "offline" || host.status === "failed" || host.status === "pending") {
+    // An offline host is the normal state of a host the user has not connected; it is not worth a line here.
+    if (host.status === "failed" || host.status === "pending") {
       notes.push({ key: host.key, name: host.name, status: host.status, error: host.error, errorCode: host.errorCode });
     }
   }

@@ -127,7 +127,8 @@ describe("status wall model", () => {
     expect(far.host?.deviceId).toBe("box");
     // A seen finished command keeps its badge on the wall, with its outcome.
     expect(model.groups.finished[0].badge).toMatchObject({ kind: "just_finished", outcome: "failed" });
-    expect(model.hosts).toEqual([{ key: "device:off", name: "laptop", status: "offline", error: undefined }]);
+    // An offline host is expected and is not listed.
+    expect(model.hosts).toEqual([]);
   });
 });
 
@@ -148,6 +149,18 @@ describe("StatusWall", () => {
       expect(card.querySelector('[data-testid="wall-time"]')?.textContent).toBe("4 分钟前");
       expect(card.querySelector('[data-attention="needs_me"]')).not.toBeNull();
       expect(mocks.sessionsAggregate).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("closes from the toolbar button", () => {
+    applyAggregateList(listing([host("device:box", { name: "build box" })], [item("device:box", "ask", "needs_me", 1)]));
+    const onClose = vi.fn();
+    const view = mount(createElement(StatusWall, { onOpened: vi.fn(), onClose }));
+    try {
+      act(() => view.container.querySelector<HTMLButtonElement>('button[aria-label="关闭总览"]')!.click());
+      expect(onClose).toHaveBeenCalledTimes(1);
     } finally {
       view.unmount();
     }
@@ -246,18 +259,20 @@ describe("StatusWall", () => {
     }
   });
 
-  it("names hosts whose sessions are unknown", () => {
+  it("lists failed hosts but not offline ones", () => {
     applyAggregateList(listing([
       host("device:box", { name: "build box" }),
       host("device:off", { name: "laptop", status: "offline", fetchedAt: undefined }),
       host("asset:db", { kind: "ssh", name: "db-02", sessionId: "s9", status: "offline", errorCode: "helper_not_ready", fetchedAt: undefined }),
+      host("device:bad", { name: "devices", status: "failed", error: "bad response", fetchedAt: undefined }),
     ], [item("device:box", "ask", "needs_me", 1)]));
     const view = mount(createElement(StatusWall, { onOpened: vi.fn() }));
     try {
-      const offline = view.container.querySelector('[data-wall-host="device:off"]');
-      expect(offline?.textContent).toContain("laptop");
-      expect(offline?.textContent).toContain("会话状态未知");
-      expect(view.container.querySelector('[data-wall-host="asset:db"]')?.textContent).toContain("在该主机上打开终端");
+      expect(view.container.querySelector('[data-wall-host="device:off"]')).toBeNull();
+      expect(view.container.querySelector('[data-wall-host="asset:db"]')).toBeNull();
+      const failed = view.container.querySelector('[data-wall-host="device:bad"]');
+      expect(failed?.textContent).toContain("devices");
+      expect(failed?.textContent).toContain("bad response");
     } finally {
       view.unmount();
     }

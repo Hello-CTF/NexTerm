@@ -193,7 +193,7 @@ export function AppRail({
       ))}
       <button
         className={`nx-rail-btn ${homeOpen ? "is-active" : ""}`}
-        data-tip={needsMe > 0 ? `会话总览：${needsMe} 个会话需要处理；所有终端的状态一览，点击卡片直达` : "会话总览：所有终端的状态一览（需要处理、运行中、已结束），点击卡片直达；再次单击返回"}
+        data-tip={needsMe > 0 ? `会话总览：${needsMe} 个会话需要处理；所有终端的状态一览，点击卡片直达` : "会话总览：所有终端的状态一览（需要处理、运行中、已结束），点击卡片直达；再次单击或点击右上角关闭按钮返回"}
         aria-label="会话总览"
         aria-pressed={homeOpen}
         onClick={() => {

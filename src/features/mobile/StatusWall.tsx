@@ -5,7 +5,7 @@ import { aggregateRows, reloadSessionAggregate, useSessionAggregate } from "../.
 import { freezeOrder } from "../../app/jump/jumpRanking";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
-import { IconRefresh, IconServer } from "../../ui/icons";
+import { IconClose, IconRefresh, IconServer } from "../../ui/icons";
 import { openInboxTab } from "../inbox/inbox";
 import { takeOverAggregateSession, unknownHostText } from "../terminal/backgroundSessionsAccess";
 import { buildStatusWall, WALL_GROUP_LABELS, WALL_GROUPS, type WallCard, type WallGroup } from "./statusWallModel";
@@ -251,6 +251,11 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
           <IconRefresh size={13} className={refreshing ? "animate-spin" : ""} />
           刷新
         </button>
+        {onClose && (
+          <button type="button" className="nx-icon-btn" title="关闭总览" aria-label="关闭总览" onClick={onClose}>
+            <IconClose size={14} />
+          </button>
+        )}
       </div>
       <div
         ref={scrollRef}
@@ -286,7 +291,7 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
         ))}
         {unreachable.length > 0 && (
           <div className="pt-3" data-wall-group="hosts">
-            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">无法查看的主机</h3>
+            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">读取失败的主机</h3>
             <ul className="flex flex-col gap-1">
               {unreachable.map((host) => (
                 <li key={host.key} className="flex items-baseline gap-2 text-[12px]" data-wall-host={host.key} data-host-status={host.status}>

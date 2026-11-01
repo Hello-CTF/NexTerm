@@ -14,6 +14,7 @@ import { aiToastPlacement, useAiToastInset, useKeysToolbarHeight } from "./shell
 import { DesktopShell } from "./shell/DesktopShell";
 import { useKeyboardInset } from "./shell/keyboardInset";
 import { MobileShell } from "./shell/MobileShell";
+import { hideMobileHome } from "./shell/mobileHome";
 import { type ShellParts } from "./shell/ShellFrame";
 import { useAppKeybindings } from "./shell/useAppKeybindings";
 import { useOverlayDocks } from "./shell/useOverlayDocks";
@@ -167,7 +168,10 @@ function AppShell() {
       activeProject,
       projectInventory,
       groups: groupsQuery.data ?? [],
-      onSelect: setActiveWorkspace,
+      onSelect: (id: string) => {
+        hideMobileHome();
+        setActiveWorkspace(id);
+      },
       onReorder: (dragId, overId, before) => {
         const current = useUi.getState();
         const from = current.workspaces.findIndex((workspace) => workspace.id === dragId);
