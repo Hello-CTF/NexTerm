@@ -247,9 +247,6 @@ func TestReconnectMixedTabsIsolatesUnrecoverableDurableTab(t *testing.T) {
 	if got := tab.Info(); !got.Exited || got.Durable {
 		t.Fatalf("lost durable tab after second reconnect = %+v; want exited, not durable", got)
 	}
-	if got := tabRawCount(t, manager, legacy.ID, string(reconnectBanner)); got != 0 {
-		t.Fatalf("lost durable tab received %d reconnect banners; want none", got)
-	}
 	if infoExited(manager, checked.ID) || infoExited(manager, plain.ID) {
 		t.Fatal("second reconnect left a recoverable tab exited")
 	}

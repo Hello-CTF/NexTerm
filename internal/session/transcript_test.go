@@ -239,8 +239,8 @@ func TestTranscriptReconnectStartsNewConnectionPeriod(t *testing.T) {
 		t.Fatalf("reconnect must start a new transcript period: %+v", started)
 	}
 	combined := recorder.outputBytes()
-	if !bytes.Contains(combined, []byte("reconnected")) {
-		t.Fatalf("reconnect banner must be recorded: %q", combined)
+	if bytes.Contains(combined, []byte("[NexTerm] reconnected")) {
+		t.Fatalf("reconnect notice must stay out of the transcript: %q", combined)
 	}
 
 	if err := connector.transport(1).channel(0).emit([]byte("after-reconnect\r\n")); err != nil {
