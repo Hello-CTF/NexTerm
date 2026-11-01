@@ -31,6 +31,9 @@ type Service struct {
 	runs     map[string]*run
 	// inputTimeout overrides DefaultInputTimeout for script prompts (tests).
 	inputTimeout time.Duration
+	// onPromptsChanged is wired into each run's interaction (tests).
+	onPromptsChanged func()
+	promptSignal     <-chan struct{}
 }
 
 type run struct {
@@ -86,6 +89,7 @@ func (s *Service) Start(_ context.Context, ownerID string, input StartRequest) (
 			StepCount: int32(len(steps)), Steps: steps,
 		},
 	}
+	r.interact.onPromptsChanged = s.onPromptsChanged
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.runs[input.RunID]; exists {

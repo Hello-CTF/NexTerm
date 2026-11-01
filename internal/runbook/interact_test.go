@@ -84,6 +84,14 @@ func startPrompting(t *testing.T, executor *promptingExecutor, timeout time.Dura
 	t.Helper()
 	service := New(executor)
 	service.inputTimeout = timeout
+	signal := make(chan struct{}, 1)
+	service.promptSignal = signal
+	service.onPromptsChanged = func() {
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
+	}
 	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run", Interactive: true}}, sessions, ConfirmProductionOnly, nil)
 	commands := make([]RenderedCommand, len(sessions))
 	for index, sessionID := range sessions {
@@ -107,7 +115,7 @@ func startPrompting(t *testing.T, executor *promptingExecutor, timeout time.Dura
 
 func waitPrompts(t *testing.T, service *Service, count int) []Prompt {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	timeout := time.After(5 * time.Second)
 	for {
 		state, err := service.Get(context.Background(), "owner-a", "run-1")
 		if err != nil {
@@ -116,10 +124,11 @@ func waitPrompts(t *testing.T, service *Service, count int) []Prompt {
 		if len(state.Prompts) == count {
 			return state.Prompts
 		}
-		if time.Now().After(deadline) {
+		select {
+		case <-service.promptSignal:
+		case <-timeout:
 			t.Fatalf("prompts = %+v, want %d", state.Prompts, count)
 		}
-		time.Sleep(2 * time.Millisecond)
 	}
 }
 

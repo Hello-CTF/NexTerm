@@ -124,6 +124,15 @@ type interaction struct {
 	applyAll  map[applyKey]string
 	abort     chan struct{}
 	abortOnce sync.Once
+	// onPromptsChanged, when set, is called under the run lock after the
+	// pending prompt set changes; it must not block (tests wait on it).
+	onPromptsChanged func()
+}
+
+func (i *interaction) promptsChanged() {
+	if i.onPromptsChanged != nil {
+		i.onPromptsChanged()
+	}
 }
 
 func newInteraction(timeout time.Duration) *interaction {
@@ -227,6 +236,7 @@ func (r *run) Ask(ctx context.Context, question execbatch.Question) (execbatch.A
 		pending.prompt.Default = question.Default
 	}
 	r.interact.prompts[id] = pending
+	r.interact.promptsChanged()
 	abort := r.interact.abort
 	r.mu.Unlock()
 
@@ -248,6 +258,7 @@ func (r *run) Ask(ctx context.Context, question execbatch.Question) (execbatch.A
 	// means the script receives it.
 	r.mu.Lock()
 	delete(r.interact.prompts, id)
+	r.interact.promptsChanged()
 	select {
 	case reply := <-pending.reply:
 		r.mu.Unlock()
@@ -261,6 +272,7 @@ func (r *run) Ask(ctx context.Context, question execbatch.Question) (execbatch.A
 func (r *run) takeReply(step int32, question execbatch.Question, kind PromptKind, id string, reply promptReply) execbatch.Answer {
 	r.mu.Lock()
 	delete(r.interact.prompts, id)
+	r.interact.promptsChanged()
 	r.recordAnswerLocked(step, question, kind, reply.value, reply.auto)
 	r.mu.Unlock()
 	return execbatch.Answer{Value: reply.value}
@@ -313,6 +325,7 @@ func (s *Service) Respond(_ context.Context, ownerID string, input RespondReques
 		return RunState{}, fmt.Errorf("%w: a secret answer cannot be applied to all hosts", ErrInvalid)
 	}
 	delete(r.interact.prompts, input.PromptID)
+	r.interact.promptsChanged()
 	pending.reply <- promptReply{value: input.Value}
 	if input.ApplyAll {
 		key := applyKey{step: pending.prompt.StepNumber, kind: pending.prompt.Kind, variable: pending.prompt.Variable, text: pending.prompt.Text}
@@ -321,6 +334,8 @@ func (s *Service) Respond(_ context.Context, ownerID string, input RespondReques
 			otherKey := applyKey{step: other.prompt.StepNumber, kind: other.prompt.Kind, variable: other.prompt.Variable, text: other.prompt.Text}
 			if otherKey == key {
 				delete(r.interact.prompts, id)
+				r.interact.promptsChanged()
+				r.interact.promptsChanged()
 				other.reply <- promptReply{value: input.Value, auto: true}
 			}
 		}
