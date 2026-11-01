@@ -122,10 +122,7 @@ func (e *Engine) collectGroupObjects(ctx context.Context, c *localCollection) er
 		return err
 	}
 	for _, group := range groups {
-		payload, err := marshalObject(groupObject{
-			ID: group.ID, ParentID: group.ParentID, Name: group.Name, Sort: group.Sort,
-			CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt,
-		})
+		payload, err := marshalObject(groupObjectFromRow(group))
 		if err != nil {
 			return err
 		}
@@ -478,6 +475,7 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
+	payload = normalizeGroupDefaults(payload)
 	parentID := payload.ParentID
 	unresolvedParent := false
 	if parentID != nil {
@@ -501,31 +499,70 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 			return false, false
 		}
 	}
+	// A default credential that has not synced yet is cleared like an asset's, and restored once it arrives.
+	unresolvedCred := false
+	if payload.DefaultCredID != nil {
+		if _, err := e.store.CredentialGetRow(ctx, *payload.DefaultCredID); isNotFound(err) {
+			unresolvedCred = true
+			report.warnf("分组 %s 的默认凭据 %s 尚未同步到本机，已暂时清除该引用，凭据同步后自动恢复", payload.ID, *payload.DefaultCredID)
+		} else if err != nil {
+			report.warnf("无法检查分组 %s 的默认凭据: %v", payload.ID, err)
+			return false, false
+		}
+	}
 	if exists {
-		localPayload, err := marshalObject(groupObject{
-			ID: local.ID, ParentID: local.ParentID, Name: local.Name, Sort: local.Sort,
-			CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
-		})
+		localPayload, err := marshalObject(groupObjectFromRow(local))
 		if err != nil {
 			report.warnf("分组 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
 		}
 		if bytes.Equal(plaintext, localPayload) {
-			if unresolvedParent {
+			if unresolvedParent || unresolvedCred {
 				report.markUnresolvedRef(payload.ID)
 			}
 			return false, true
 		}
-		degraded := payload
-		degraded.ParentID = nil
-		degradedPayload, err := marshalObject(degraded)
-		if err != nil {
-			report.warnf("分组 %s 的兼容格式编码失败：%v", payload.ID, err)
+		// Peers that predate group defaults drop the fields when they re-publish a group they only received, at the
+		// same revision. That echo must not erase the defaults here; a genuinely newer edit still wins.
+		if payload.UpdatedAt == local.UpdatedAt && !payload.hasDefaults() && groupObjectFromRow(local).hasDefaults() {
+			stripped := groupObjectFromRow(local)
+			stripped.DefaultUsername, stripped.DefaultAuthKind, stripped.DefaultKeyPath = nil, nil, nil
+			stripped.DefaultCredID, stripped.DefaultJumpAssetID = nil, nil
+			if strippedPayload, err := marshalObject(stripped); err == nil && bytes.Equal(strippedPayload, plaintext) {
+				return false, true
+			}
+		}
+		// The local row may be the reference-degraded form of the remote payload (parent or credential not yet
+		// present when it was applied). The degraded form is not a user edit and bypasses the revision contest.
+		degradedLocal := false
+		for _, dropParent := range []bool{true, false} {
+			for _, dropCred := range []bool{true, false} {
+				if !dropParent && !dropCred {
+					continue
+				}
+				degraded := payload
+				if dropParent {
+					degraded.ParentID = nil
+				}
+				if dropCred {
+					degraded.DefaultCredID = nil
+				}
+				degradedPayload, err := marshalObject(degraded)
+				if err != nil {
+					report.warnf("分组 %s 的兼容格式编码失败：%v", payload.ID, err)
+					return false, false
+				}
+				if bytes.Equal(degradedPayload, localPayload) {
+					degradedLocal = true
+				}
+			}
+		}
+		if !degradedLocal && !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
 			return false, false
 		}
-		if !bytes.Equal(degradedPayload, localPayload) && !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
-			return false, false
-		}
+	}
+	if unresolvedCred {
+		payload.DefaultCredID = nil
 	}
 	if parentID != nil {
 		parents, err := e.groupParents(ctx)
@@ -550,10 +587,20 @@ func (e *Engine) applyGroupObject(ctx context.Context, plaintext []byte, report 
 		report.warnf("分组 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
-	if unresolvedParent {
+	if unresolvedParent || unresolvedCred {
 		report.markUnresolvedRef(payload.ID)
 	}
 	return true, false
+}
+
+// normalizeGroupDefaults turns blank default fields into absent ones.
+func normalizeGroupDefaults(payload groupObject) groupObject {
+	for _, field := range []**string{&payload.DefaultUsername, &payload.DefaultAuthKind, &payload.DefaultKeyPath, &payload.DefaultCredID, &payload.DefaultJumpAssetID} {
+		if *field != nil && strings.TrimSpace(**field) == "" {
+			*field = nil
+		}
+	}
+	return payload
 }
 
 // groupUpsert mirrors store.GroupUpsert semantics and clears the same-ID deletion tombstone in the same transaction:
@@ -577,13 +624,13 @@ func (e *Engine) groupUpsert(ctx context.Context, payload groupObject, parentID 
 // round). The explicit bundle import passes the pre-import snapshot, and its second
 // topology pass passes the first pass's written content.
 func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload groupObject, parentID *string, snapshot *store.AssetGroupRow) error {
-	row := &store.AssetGroupRow{ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx)}
+	row := groupRowFromObject(ctx, payload, parentID)
 	if snapshot == nil {
-		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, 0); err != nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, row, groupWriteColumns, 0); err != nil {
 			return err
 		}
 	} else {
-		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, []string{"parent_id", "name", "sort", "updated_at"}, snapshot); err != nil {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, row, groupWriteColumns, snapshot); err != nil {
 			return err
 		}
 	}
@@ -595,6 +642,21 @@ func (e *Engine) groupUpsertTxBound(ctx context.Context, tx *gorm.DB, payload gr
 		return ipc.WrapError(ipc.CodeDB, "数据库错误: "+err.Error(), err)
 	}
 	return nil
+}
+
+var groupWriteColumns = []string{
+	"parent_id", "name", "sort", "updated_at",
+	"default_username", "default_auth_kind", "default_key_path", "default_cred_id", "default_jump_asset_id",
+}
+
+func groupRowFromObject(ctx context.Context, payload groupObject, parentID *string) *store.AssetGroupRow {
+	payload = normalizeGroupDefaults(payload)
+	return &store.AssetGroupRow{
+		ID: payload.ID, ParentID: parentID, Name: strings.TrimSpace(payload.Name), Sort: payload.Sort,
+		CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt, OwnerID: ipc.OwnerID(ctx),
+		DefaultUsername: payload.DefaultUsername, DefaultAuthKind: payload.DefaultAuthKind, DefaultKeyPath: payload.DefaultKeyPath,
+		DefaultCredID: payload.DefaultCredID, DefaultJumpAssetID: payload.DefaultJumpAssetID,
+	}
 }
 
 func (e *Engine) groupParents(ctx context.Context) (map[string]*string, error) {

@@ -45,6 +45,8 @@ type Asset struct {
 	Username    string
 	OptionsJSON string
 	HasPassword bool
+	// AuthNone is the asset's explicit "use no password" choice; no group default and no prompt applies.
+	AuthNone bool
 }
 
 // Options are the keys read from the asset OptionsJSON.
@@ -132,11 +134,13 @@ type RemoteDesktopPrepareResult struct {
 	Username string `json:"username"`
 	Domain   string `json:"domain"`
 	// PromptPassword is true when the frontend must ask the user; nothing is stored or released then.
-	PromptPassword bool  `json:"promptPassword"`
-	HasPassword    bool  `json:"hasPassword"`
-	Width          int   `json:"width,omitempty"`
-	Height         int   `json:"height,omitempty"`
-	ExpiresAtMs    int64 `json:"expiresAtMs"`
+	PromptPassword bool `json:"promptPassword"`
+	HasPassword    bool `json:"hasPassword"`
+	// NoPassword is true for an asset explicitly set to use no password: nothing is released and nothing is asked.
+	NoPassword  bool  `json:"noPassword,omitempty"`
+	Width       int   `json:"width,omitempty"`
+	Height      int   `json:"height,omitempty"`
+	ExpiresAtMs int64 `json:"expiresAtMs"`
 }
 
 // RemoteDesktopSecretResult is deliberately opaque to logging.

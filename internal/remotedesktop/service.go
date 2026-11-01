@@ -231,7 +231,8 @@ func (s *Service) Prepare(ctx context.Context, assetID string) (RemoteDesktopPre
 	return RemoteDesktopPrepareResult{
 		Ticket: t.token, Protocol: asset.Kind, AssetID: asset.ID, Name: asset.Name, Host: asset.Host, Port: asset.Port,
 		Username: asset.Username, Domain: options.Domain, PromptPassword: options.PromptPassword,
-		HasPassword: asset.HasPassword && !options.PromptPassword, Width: options.Width, Height: options.Height,
+		HasPassword: asset.HasPassword && !options.PromptPassword,
+		NoPassword:  asset.AuthNone && !asset.HasPassword && !options.PromptPassword, Width: options.Width, Height: options.Height,
 		ExpiresAtMs: t.expires.UnixMilli(),
 	}, nil
 }

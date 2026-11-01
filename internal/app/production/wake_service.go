@@ -30,12 +30,17 @@ func newProductionWakeService(database *store.Store, sessions dbTunnelSessionMan
 type wakeStoreResolver struct{ store *store.Store }
 
 func (r wakeStoreResolver) ResolveAsset(ctx context.Context, id string) (wol.Asset, error) {
-	row, err := r.store.AssetGet(ctx, id)
+	stored, err := r.store.AssetGet(ctx, id)
 	if err != nil {
 		return wol.Asset{}, err
 	}
-	if row.DeletedAt != nil {
+	if stored.DeletedAt != nil {
 		return wol.Asset{}, ipc.NewError(ipc.CodeNotFound, "资产已删除")
+	}
+	// A remote desktop asset's inherited jump is the route its wake packet takes too.
+	row, err := r.store.ResolveAsset(ctx, stored)
+	if err != nil {
+		return wol.Asset{}, err
 	}
 	return wol.Asset{ID: row.ID, OwnerID: row.OwnerID, Kind: row.Kind, Name: row.Name, OptionsJSON: row.OptionsJSON}, nil
 }

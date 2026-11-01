@@ -397,6 +397,12 @@
       "channel": false,
       "stream": "none"
     },
+    "asset_credential_required": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "asset_delete": {
       "scope": "asset",
       "nested": false,
@@ -404,6 +410,12 @@
       "stream": "none"
     },
     "asset_get": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_inheritance_preview": {
       "scope": "asset",
       "nested": false,
       "channel": false,

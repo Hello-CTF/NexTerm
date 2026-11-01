@@ -465,7 +465,7 @@ func TestPlainConnectKeepsStoredAutoAcceptBehavior(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset, err := productionSessionAsset(row, false, "")
+	asset, err := productionSessionAsset(store.ResolvedAsset{AssetRow: row}, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

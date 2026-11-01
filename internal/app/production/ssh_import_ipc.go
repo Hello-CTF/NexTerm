@@ -422,7 +422,10 @@ func (p *sshImportPlanner) loadExisting(ctx context.Context) (sshImportExisting,
 		return result, err
 	}
 	result.assetIDByName = map[string]string{}
-	for _, row := range rows {
+	// Duplicates are matched on the username a connection would use, so an asset inheriting its username from a
+	// group is not imported a second time.
+	for _, resolved := range p.database.ResolveAssets(ctx, rows) {
+		row := resolved.AssetRow
 		if row.Kind != session.KindSSH && row.Kind != session.KindDocker {
 			continue
 		}

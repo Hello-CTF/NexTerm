@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 // Sync object kinds. Tombstones share the object id of their target, overwrite it in storage, and are decided by client-side LWW.
@@ -110,6 +111,27 @@ type groupObject struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Connection defaults inherited by the group's assets. Absent fields keep the payload identical to the one
+	// older peers produce; those peers ignore the fields they do not know.
+	DefaultUsername    *string `json:"defaultUsername,omitempty"`
+	DefaultAuthKind    *string `json:"defaultAuthKind,omitempty"`
+	DefaultKeyPath     *string `json:"defaultKeyPath,omitempty"`
+	DefaultCredID      *string `json:"defaultCredId,omitempty"`
+	DefaultJumpAssetID *string `json:"defaultJumpAssetId,omitempty"`
+}
+
+// hasDefaults reports whether the payload carries any connection default.
+func (g groupObject) hasDefaults() bool {
+	return g.DefaultUsername != nil || g.DefaultAuthKind != nil || g.DefaultKeyPath != nil || g.DefaultCredID != nil || g.DefaultJumpAssetID != nil
+}
+
+func groupObjectFromRow(group store.AssetGroupRow) groupObject {
+	return groupObject{
+		ID: group.ID, ParentID: group.ParentID, Name: group.Name, Sort: group.Sort,
+		CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt,
+		DefaultUsername: group.DefaultUsername, DefaultAuthKind: group.DefaultAuthKind, DefaultKeyPath: group.DefaultKeyPath,
+		DefaultCredID: group.DefaultCredID, DefaultJumpAssetID: group.DefaultJumpAssetID,
+	}
 }
 
 type assetObject struct {

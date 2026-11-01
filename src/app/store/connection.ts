@@ -1,4 +1,4 @@
-import { dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
+import { assetApi, dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { connectWithHostKeyConfirm } from "../hostKeys";
@@ -62,8 +62,21 @@ export async function ensureVaultUnlocked(reason: string, epoch?: number): Promi
   }
 }
 
-export async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }, epoch?: number): Promise<boolean> {
-  if (!asset.credId) return true;
+export async function ensureVaultReadyFor(
+  asset: { id?: string; name: string; credId?: string | null; groupId?: string | null },
+  epoch?: number,
+): Promise<boolean> {
+  if (!asset.credId) {
+    // An asset in a group may inherit its credential; the backend says whether the effective asset needs one.
+    if (!asset.id || !asset.groupId) return true;
+    let required = false;
+    try {
+      required = await assetApi.credentialRequired(asset.id);
+    } catch {
+      required = false;
+    }
+    if (!required) return true;
+  }
   return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`, epoch);
 }
 

@@ -771,6 +771,8 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		{name: "asset_search", scope: "asset", output: "AssetDTO[]"},
 		{name: "asset_search_meta", scope: "asset", output: "AssetSearchDTO"},
 		{name: "asset_probe_batch", scope: "asset", nested: true, output: "AssetProbeBatchDTO"},
+		{name: "asset_inheritance_preview", scope: "asset", output: "AssetInheritanceDTO"},
+		{name: "asset_credential_required", scope: "asset", output: "AssetCredentialRequiredDTO"},
 		{name: "group_list", scope: "group", output: "AssetGroupDTO[]"},
 		{name: "group_create", scope: "group", output: "AssetGroupDTO"},
 		{name: "group_update", scope: "group", output: "AssetGroupDTO"},
@@ -809,8 +811,8 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 16 {
-		t.Fatalf("selected asset/group/known-host command count = %d, want 16", len(selected))
+	if len(selected) != 18 {
+		t.Fatalf("selected asset/group/known-host command count = %d, want 18", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "asset" || command.Scope == "group" || command.Scope == "known-host") && !selected[name] {
@@ -835,7 +837,7 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		{command: "asset_get", want: []string{"id?: string;", "q?: string;", "path?: string;"}},
 		{command: "asset_search_meta", output: true, want: []string{"assets: AssetDTO[];", "total: number;", "truncated: boolean;"}},
 		{command: "asset_probe_batch", want: []string{"assetIds: string[];", "timeoutMs?: number;", "maxConcurrent?: number;"}},
-		{command: "group_update", want: []string{"id: string;", "name?: string | null;", "parentId?: string | null;", "sort?: number | null;"}},
+		{command: "group_update", want: []string{"id: string;", "name?: string | null;", "parentId?: string | null;", "sort?: number | null;", "defaults?:"}},
 		{command: "known_host_accept", want: []string{"host: string;", "port: number;", "keyType: string;", "fingerprint: string;", "key?: string;"}},
 	}
 	for _, test := range declarationTests {

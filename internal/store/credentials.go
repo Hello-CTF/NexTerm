@@ -147,6 +147,9 @@ func (s *Store) CredentialDelete(ctx context.Context, id string) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
 		credential := queries.CredentialRow
+		if err := clearGroupCredentialDefaults(ctx, tx, id); err != nil {
+			return err
+		}
 		if _, err := credential.WithContext(ctx).
 			Where(credential.ID.Eq(id)).
 			Where(ownerConditions(ctx, credential.TableName())...).
@@ -167,12 +170,41 @@ func (s *Store) CredentialDelete(ctx context.Context, id string) error {
 	return nil
 }
 
+// clearGroupCredentialDefaults removes group default references to a credential that is being deleted, mirroring
+// the SET NULL the asset reference gets from its foreign key. The group's revision moves so the cleared default
+// syncs. An authentication unit that cannot work without the credential (password, keyboard-interactive, or a key
+// without a key path) is cleared whole; a key path with a passphrase credential keeps the path.
+func clearGroupCredentialDefaults(ctx context.Context, tx *gorm.DB, id string) error {
+	group := query.Use(tx).AssetGroupRow
+	revision := MaxExpression(tx, "", "updated_at", ids.NowMS())
+	if _, err := group.WithContext(ctx).
+		Where(group.DefaultCredID.Eq(id)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		Where(group.WithContext(ctx).Where(group.DefaultAuthKind.Neq("key")).Or(group.DefaultAuthKind.IsNull()).Or(group.DefaultKeyPath.IsNull()).Or(group.DefaultKeyPath.Eq(""))).
+		UpdateColumns(map[string]any{
+			"default_cred_id": nil, "default_auth_kind": nil, "default_key_path": nil, "updated_at": revision,
+		}); err != nil {
+		return err
+	}
+	_, err := group.WithContext(ctx).
+		Where(group.DefaultCredID.Eq(id)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		UpdateColumns(map[string]any{"default_cred_id": nil, "updated_at": revision})
+	return err
+}
+
 func (s *Store) CredentialDeleteRow(ctx context.Context, id string) error {
-	credential := query.Use(s.db).CredentialRow
-	_, err := credential.WithContext(ctx).
-		Where(credential.ID.Eq(id)).
-		Where(ownerConditions(ctx, credential.TableName())...).
-		Delete()
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := clearGroupCredentialDefaults(ctx, tx, id); err != nil {
+			return err
+		}
+		credential := query.Use(tx).CredentialRow
+		_, err := credential.WithContext(ctx).
+			Where(credential.ID.Eq(id)).
+			Where(ownerConditions(ctx, credential.TableName())...).
+			Delete()
+		return err
+	})
 	if err != nil {
 		return dbError(err)
 	}
@@ -185,7 +217,7 @@ func (s *Store) CredentialDeleteRow(ctx context.Context, id string) error {
 // binding the credential cannot be silently cleared by OnDelete:SET NULL.
 func (s *Store) CredentialDeleteIfUnreferenced(ctx context.Context, id string) (bool, error) {
 	result := s.db.WithContext(ctx).Exec(
-		"DELETE FROM credential WHERE id = ? AND owner_id = ? AND NOT EXISTS (SELECT 1 FROM asset WHERE asset.cred_id = credential.id)",
+		"DELETE FROM credential WHERE id = ? AND owner_id = ? AND NOT EXISTS (SELECT 1 FROM asset WHERE asset.cred_id = credential.id) AND NOT EXISTS (SELECT 1 FROM asset_group WHERE asset_group.default_cred_id = credential.id)",
 		id, ipc.OwnerID(ctx))
 	if result.Error != nil {
 		return false, dbError(result.Error)
@@ -205,5 +237,20 @@ func (s *Store) CredentialUsage(ctx context.Context, credID string) ([]AssetRef,
 	if err != nil {
 		return nil, dbError(err)
 	}
-	return result, nil
+	// Groups using the credential as their connection default are listed too, with kind "group".
+	group := query.Use(s.db).AssetGroupRow
+	groups := []AssetRef{}
+	err = group.WithContext(ctx).
+		Select(group.ID, group.Name).
+		Where(group.DefaultCredID.Eq(credID)).
+		Where(ownerConditions(ctx, group.TableName())...).
+		Order(group.Sort, group.Name).
+		Scan(&groups)
+	if err != nil {
+		return nil, dbError(err)
+	}
+	for index := range groups {
+		groups[index].Kind = "group"
+	}
+	return append(result, groups...), nil
 }

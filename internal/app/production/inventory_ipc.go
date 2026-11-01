@@ -583,10 +583,11 @@ func (s *inventoryService) execDockerTargetViaSession(ctx context.Context, input
 	if len(input.Command) == 0 {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, fleetinventory.ErrEmptyAction.Error())
 	}
-	assetRow, err := s.database.AssetGetLive(productionSessionRequestContext(ctx), connected.Info().AssetID)
+	resolvedRow, err := s.database.AssetGetLiveResolved(productionSessionRequestContext(ctx), connected.Info().AssetID)
 	if err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeForbidden, "受管会话资产不可用")
 	}
+	assetRow := resolvedRow.AssetRow
 	// The endpoint check must bind the actual connection target: when the
 	// live asset's config fingerprint diverges from the session snapshot,
 	// the session still points at the old host and must be reconnected.

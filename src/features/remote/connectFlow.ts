@@ -157,7 +157,7 @@ export async function runConnectFlow(
       }
       if (isCancelled()) return cancelledResult();
       const protocol = prepared.protocol === "vnc" ? "vnc" : "rdp";
-      const needPrompt = prepared.promptPassword || forcePrompt || kept !== null || (protocol === "rdp" && !prepared.hasPassword);
+      const needPrompt = prepared.promptPassword || forcePrompt || kept !== null || (protocol === "rdp" && !prepared.hasPassword && !prepared.noPassword);
       let typed: string | null = null;
       let secret: RemoteSecret | null = null;
       try {
@@ -239,7 +239,7 @@ export async function runConnectFlow(
           }
         }
         // A VNC server that wants a password the asset does not hold: ask once instead of failing.
-        if (failure.kind === "auth" && protocol === "vnc" && !prepared.hasPassword && !needPrompt) {
+        if (failure.kind === "auth" && protocol === "vnc" && !prepared.hasPassword && !prepared.noPassword && !needPrompt) {
           forcePrompt = true;
           continue;
         }

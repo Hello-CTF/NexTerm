@@ -94,7 +94,9 @@ var contractScopes = []scopeSpec{
 	{name: "asset", commands: []string{
 		"asset_create",
 		"asset_delete",
+		"asset_credential_required",
 		"asset_get",
+		"asset_inheritance_preview",
 		"asset_list",
 		"asset_probe_batch",
 		"asset_read_key_file",

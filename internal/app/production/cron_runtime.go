@@ -178,6 +178,13 @@ func (e cronConnectEvidence) asset(ctx context.Context, assetID string) (store.A
 	return e.services.Store.AssetGetLive(ctx, assetID)
 }
 
+func (e cronConnectEvidence) resolvedAsset(ctx context.Context, assetID string) (store.ResolvedAsset, error) {
+	if e.services.Store == nil {
+		return store.ResolvedAsset{}, ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
+	}
+	return e.services.Store.AssetGetLiveResolved(ctx, assetID)
+}
+
 func (e cronConnectEvidence) OwnerMatch(ctx context.Context, _ cron.Trigger, assetID string) (bool, error) {
 	if strings.HasPrefix(assetID, "device/") {
 		// Devices are connected through their agent and carry no host key, credential or environment, so
@@ -227,7 +234,8 @@ func (e cronConnectEvidence) HostKey(ctx context.Context, _ cron.Trigger, assetI
 }
 
 func (e cronConnectEvidence) VaultReady(ctx context.Context, _ cron.Trigger, assetID string) (bool, error) {
-	row, err := e.asset(ctx, assetID)
+	// The credential the connect will actually use, including one inherited from a group.
+	row, err := e.resolvedAsset(ctx, assetID)
 	if err != nil {
 		return false, err
 	}
@@ -279,7 +287,7 @@ func dialAssetStrict(ctx context.Context, services *ProductionServices, ownerID,
 	if services.Store == nil || services.Sessions == nil {
 		return "", ipc.NewError(ipc.CodeUnsupported, "终端会话服务未配置")
 	}
-	row, err := services.Store.AssetGetLive(ctx, assetID)
+	row, err := services.Store.AssetGetLiveResolved(ctx, assetID)
 	if err != nil {
 		return "", err
 	}

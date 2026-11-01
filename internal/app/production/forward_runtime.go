@@ -167,7 +167,7 @@ func (r *forwardRuntime) ConnectDeviceForRecovery(ctx context.Context, assetID s
 			if r.connect != nil {
 				return r.connect(connectCtx, assetID)
 			}
-			row, err := r.store.AssetGet(connectCtx, assetID)
+			row, err := r.store.AssetGetResolved(connectCtx, assetID)
 			if err != nil {
 				return "", err
 			}

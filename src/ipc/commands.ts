@@ -96,7 +96,7 @@ function scheduleSyncWake(cmd: string): void {
 // Pure reads whose answer depends only on cmd + args (no per-call identity, no side effects). While one is in flight,
 // an identical call joins it instead of sending another /rpc.
 const SHAREABLE_READS = new Set([
-  "asset_list", "asset_get", "group_list", "snippet_list", "layout_get",
+  "asset_list", "asset_get", "asset_inheritance_preview", "asset_credential_required", "group_list", "snippet_list", "layout_get",
   "terminal_list", "session_list", "ai_get_permission", "ai_model_profiles",
   "sync_status", "sync_link_get", "docker_ps", "docker_images", "docker_compose_stacks",
   "fs_list", "fs_roots", "production_settings_get", "vault_status", "app_platform",
@@ -882,7 +882,17 @@ export interface AssetGroup {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  // Connection defaults the group's assets inherit (references only, never a secret).
+  defaultUsername?: string | null;
+  defaultAuthKind?: string | null;
+  defaultKeyPath?: string | null;
+  defaultCredId?: string | null;
+  defaultJumpAssetId?: string | null;
 }
+
+export type GroupDefaults = import("./generated/types").GroupDefaultsRequest;
+export type AssetInheritance = import("./generated/types").AssetInheritanceDTO;
+export type AssetInheritanceRequest = import("./generated/types").AssetInheritanceRequest;
 
 export interface AssetSearchResponse {
   assets: Asset[];
@@ -912,10 +922,14 @@ export const assetApi = {
   search: (q: string) => call("asset_search", { q }) as Promise<Asset[]>,
   searchMeta: (q: string) => call("asset_search_meta", { q }) as Promise<AssetSearchResponse>,
   groupList: () => call("group_list") as Promise<AssetGroup[]>,
-  groupCreate: (name: string, parentId?: string) =>
-    assetWrite(() => call("group_create", { name, parentId }) as Promise<AssetGroup>),
-  groupUpdate: (id: string, name?: string, parentId?: string | null) =>
-    assetWrite(() => call("group_update", { id, name, parentId }) as Promise<AssetGroup>),
+  groupCreate: (name: string, parentId?: string, defaults?: GroupDefaults) =>
+    assetWrite(() => call("group_create", defaults ? { name, parentId, defaults } : { name, parentId }) as Promise<AssetGroup>),
+  groupUpdate: (id: string, name?: string, parentId?: string | null, defaults?: GroupDefaults) =>
+    assetWrite(() => call("group_update", defaults ? { id, name, parentId, defaults } : { id, name, parentId }) as Promise<AssetGroup>),
+  // Whether connecting uses a vault credential once group defaults are applied (the backend resolves it).
+  credentialRequired: async (id: string) => ((await call("asset_credential_required", { id })) as { required: boolean }).required,
+  // What the empty connection fields of an asset (saved or being edited) would inherit from its group, resolved by the backend.
+  inheritancePreview: (args: AssetInheritanceRequest) => call("asset_inheritance_preview", args) as Promise<AssetInheritance>,
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
   snippetList: (): Promise<import("./types").SnippetDto[]> => call("snippet_list"),
   snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>

@@ -452,6 +452,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInputRequest", ts: "AssetInputRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
+    "asset_credential_required": {
+      scope: "asset",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetCredentialRequiredDTO", ts: "AssetCredentialRequiredDTO" },
+    },
     "asset_delete": {
       scope: "asset",
       nested: false,
@@ -467,6 +475,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
+    },
+    "asset_inheritance_preview": {
+      scope: "asset",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInheritanceRequest", ts: "AssetInheritanceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInheritanceDTO", ts: "AssetInheritanceDTO" },
     },
     "asset_list": {
       scope: "asset",
@@ -3156,6 +3172,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.AssetInputRequest;
     output: contractTypes.AssetDTO;
   };
+  "asset_credential_required": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.AssetCredentialRequiredDTO;
+  };
   "asset_delete": {
     input: contractTypes.IDRequest;
     output: unknown;
@@ -3163,6 +3183,10 @@ export interface IPCCommandTypeMap {
   "asset_get": {
     input: contractTypes.IDRequest;
     output: contractTypes.AssetDTO;
+  };
+  "asset_inheritance_preview": {
+    input: contractTypes.AssetInheritanceRequest;
+    output: contractTypes.AssetInheritanceDTO;
   };
   "asset_list": {
     input: Record<string, never>;

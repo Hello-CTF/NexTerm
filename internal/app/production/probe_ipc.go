@@ -135,13 +135,13 @@ func (s *terminalCommandService) registerSSHDiagnostics(dispatcher *ipc.Dispatch
 	return nil
 }
 
-func (s *terminalCommandService) sshProbeAsset(ctx context.Context, assetID string) (store.AssetRow, string, error) {
+func (s *terminalCommandService) sshProbeAsset(ctx context.Context, assetID string) (store.ResolvedAsset, string, error) {
 	if assetID == "" {
-		return store.AssetRow{}, "", ipc.BadParam(fmt.Errorf("asset id is required"))
+		return store.ResolvedAsset{}, "", ipc.BadParam(fmt.Errorf("asset id is required"))
 	}
-	row, err := s.database.AssetGetLive(ctx, assetID)
+	row, err := s.database.AssetGetLiveResolved(ctx, assetID)
 	if err != nil {
-		return store.AssetRow{}, "", err
+		return store.ResolvedAsset{}, "", err
 	}
 	return row, row.Kind, nil
 }
@@ -223,9 +223,15 @@ type assetProbeTarget struct {
 
 func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, assetID string) assetProbeTarget {
 	target := assetProbeTarget{assetID: assetID}
-	row, err := s.database.AssetGetLive(ctx, assetID)
+	live, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
 		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "not_found", Error: "asset not found"}
+		return target
+	}
+	row, err := s.database.ResolveAsset(ctx, live)
+	if err != nil {
+		// The message names the group whose default is unusable.
+		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "config", Error: err.Error()}
 		return target
 	}
 	target.kind = row.Kind

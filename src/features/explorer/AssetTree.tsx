@@ -77,6 +77,16 @@ import {
 import { fleetClient } from "../fleet/clients";
 import { RemoteDesktopFields } from "./RemoteDesktopFields";
 import { WakeFields } from "./WakeFields";
+import {
+  GroupDefaultsFields,
+  groupDefaultsFrom,
+  groupDefaultsRequest,
+  inheritanceChangesOnMove,
+  inheritedPlaceholder,
+  InheritanceHint,
+  moveConfirmationText,
+  useAssetInheritance,
+} from "./groupInheritance";
 import { canWake, hasWakeErrors, readWakeOptions, validateWakeOptions, writeWakeOptions, type WakeOptions } from "./wakeOptions";
 import { wakeAsset } from "./wakeAction";
 import { assetInventoryMetadata, inventorySourceLabel, inventoryTargetText, isInventoryOnlyKind } from "./inventory";
@@ -342,6 +352,7 @@ export function AssetTree() {
   const [detailedIdentity, setDetailedIdentity] = useState(loadDetailedAssetIdentity);
   const [editing, setEditing] = useState<"none" | "asset" | "group">("none");
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
+  const [editingGroup, setEditingGroup] = useState<AssetGroup | null>(null);
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
@@ -688,6 +699,11 @@ export function AssetTree() {
     }
   };
 
+  // Groups that use this asset as their default jump host: deleting it makes their members' connections fail.
+  const jumpGroupNotice = (a: Asset) => {
+    const names = (groups.data ?? []).filter((group) => group.defaultJumpAssetId === a.id).map((group) => `「${group.name}」`);
+    return names.length === 0 ? "" : `\n\n分组 ${names.join("、")} 把它设为默认跳板机；删除后这些分组内的资产会连接失败，需要在分组的连接默认值中重新选择。`;
+  };
   const onDelete = async (a: Asset) => {
     const epoch = useUi.getState().accountEpoch;
     const state = useUi.getState();
@@ -699,7 +715,7 @@ export function AssetTree() {
       const workspaceNotice = workspaces.length > 0 ? `有 ${workspaces.length} 个工作区正在使用此资产。` : "";
       const sessionNotice = liveSessions.length > 0 ? `有 ${liveSessions.length} 个后台会话正在使用此资产。` : "";
       const action = await askChoice(
-        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。`,
+        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。${jumpGroupNotice(a)}`,
         {
           title: "删除资产",
           level: "warning",
@@ -715,7 +731,7 @@ export function AssetTree() {
       await runDeleteAsset(a, epoch, action);
       return;
     }
-    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。`, { kind: "warning" });
+    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。${jumpGroupNotice(a)}`, { kind: "warning" });
     if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
@@ -739,6 +755,13 @@ export function AssetTree() {
     }
     const groupName = (id: string | null) =>
       id === null ? "根目录" : groupPaths.get(id) ?? "未知分组";
+    if (asset.kind !== "device") {
+      // A move can change which credential, authentication or jump host the asset really uses; say so first.
+      const changes = await inheritanceChangesOnMove(asset, groupId);
+      if (changes.length > 0 && !(await ask(moveConfirmationText([{ name: asset.name, targetName: groupName(groupId), changes }]), { kind: "warning" }))) {
+        return;
+      }
+    }
     pendingMovesRef.current.add(assetId);
     setMovingTargets((prev) => ({ ...prev, [assetId]: groupName(groupId) }));
     setMoveErrors((prev) => {
@@ -815,7 +838,7 @@ export function AssetTree() {
   const deleteGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
     const epoch = useUi.getState().accountEpoch;
-    const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」；子分组会被一并删除。`, {
+    const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」，并不再继承该分组的连接默认值；子分组会被一并删除。`, {
       kind: "warning",
     });
     if (!ok || useUi.getState().accountEpoch !== epoch) return;
@@ -1076,6 +1099,7 @@ export function AssetTree() {
         error={groupError?.id === group.id ? groupError.message : null}
         errorAction={groupError?.id === group.id ? groupError.action : "删除"}
         onRename={() => setRenamingGroup(group)}
+        onEditDefaults={() => setEditingGroup(group)}
         onDeleteGroup={() => void deleteGroup(group)}
         onRepair={() => void repairGroup(group)}
         onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group, useUi.getState().accountEpoch))}
@@ -1269,6 +1293,20 @@ export function AssetTree() {
             void qc.invalidateQueries({ queryKey: ["assets"] });
             void qc.invalidateQueries({ queryKey: ["asset-search"] });
             void qc.invalidateQueries({ queryKey: ["credentials"] });
+          }}
+        />
+      )}
+      {editingGroup && (
+        <AssetEditor
+          kind="group"
+          initialGroup={editingGroup}
+          onClose={() => setEditingGroup(null)}
+          onSaved={() => {
+            setEditingGroup(null);
+            void qc.invalidateQueries({ queryKey: ["groups"] });
+            void qc.invalidateQueries({ queryKey: ["assets"] });
+            void qc.invalidateQueries({ queryKey: ["asset-search"] });
+            void qc.invalidateQueries({ queryKey: ["asset-inheritance"] });
           }}
         />
       )}
@@ -1615,6 +1653,7 @@ function GroupNode({
   error,
   errorAction,
   onRename,
+  onEditDefaults,
   onDeleteGroup,
   onRepair,
   onRetry,
@@ -1655,6 +1694,7 @@ function GroupNode({
   error: string | null;
   errorAction: "删除" | "修复";
   onRename: () => void;
+  onEditDefaults: () => void;
   onDeleteGroup: () => void;
   onRepair: () => void;
   onRetry: () => void;
@@ -1923,9 +1963,17 @@ function GroupNode({
                   },
                   {
                     kind: "item",
+                    label: "连接默认值…",
+                    icon: <IconPlug size={13} />,
+                    hint: "用户名、认证与跳板机，组内资产留空时继承",
+                    disabled: busy,
+                    onSelect: onEditDefaults,
+                  },
+                  {
+                    kind: "item",
                     label: "删除分组…",
                     icon: <IconTrash size={13} />,
-                    hint: "组内资产移到「未分组」",
+                    hint: "组内资产移到「未分组」，不再继承其连接默认值",
                     danger: true,
                     disabled: busy,
                     onSelect: onDeleteGroup,
@@ -2083,28 +2131,35 @@ const CRED_KIND_LABEL: Record<string, string> = {
 export function AssetEditor({
   kind,
   initial,
+  initialGroup,
   presetGroupId,
   onClose,
   onSaved,
 }: {
   kind: "asset" | "group";
   initial?: Asset;
+  // Editing an existing group: name, parent and connection defaults.
+  initialGroup?: AssetGroup;
   presetGroupId?: string | null;
   onClose: () => void;
   onSaved: (asset?: Asset) => void;
 }) {
   const managed = assetInventoryMetadata(initial);
-  const [name, setName] = useState(initial?.name ?? "");
+  const [name, setName] = useState(initial?.name ?? initialGroup?.name ?? "");
+  const [groupDefaults, setGroupDefaults] = useState(() => groupDefaultsFrom(initialGroup));
   const [groupKind, setGroupKind] = useState<AssetFormKind>((initial?.kind as AssetFormKind) ?? "ssh");
   const kindFields = assetKindFields(groupKind);
   const inventoryOnly = isInventoryOnlyKind(groupKind);
-  const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? presetGroupId ?? null);
+  const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? initialGroup?.parentId ?? presetGroupId ?? null);
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
   const [host, setHost] = useState(initial?.host ?? "");
   const [port, setPort] = useState(initial?.port ?? assetKindFields(initial?.kind ?? "ssh").defaultPort);
-  const [username, setUsername] = useState(initial?.username ?? "root");
-  const [authKind, setAuthKind] = useState(initial?.authKind ?? "password");
+  // A new asset starts with no username: the field shows what it would inherit or the protocol default, and a
+  // value is stored only when the user types one (or nothing is inherited, see save).
+  const [username, setUsername] = useState(initial?.username ?? "");
+  // An empty authentication method means "inherit the group's"; a new asset starts with its own password choice.
+  const [authKind, setAuthKind] = useState(initial ? (initial.authKind === "none" ? "password" : initial.authKind ?? "") : "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
   const [password, setPassword] = useState("");
   const [shell, setShell] = useState(
@@ -2268,7 +2323,9 @@ export function AssetEditor({
     }
   };
 
-  const [credChoice, setCredChoice] = useState<CredChoice>(initial?.credId ?? "new");
+  const [credChoice, setCredChoice] = useState<CredChoice>(
+    initial?.credId ?? ((initial?.kind === "rdp" || initial?.kind === "vnc" || initial?.kind === "winrm") && initial.authKind === "none" ? "none" : "new"),
+  );
   const [credName, setCredName] = useState(initial?.name ?? "");
   const credNameTouched = useRef(false);
   const credentials = useQuery({
@@ -2291,6 +2348,24 @@ export function AssetEditor({
   const jumpCandidates = (assets.data ?? []).filter(
     (a) => (a.kind === "ssh" || a.kind === "docker") && a.id !== initial?.id,
   );
+  const inheritance = useAssetInheritance({
+    assetId: initial?.id,
+    kind: groupKind,
+    groupId,
+    username,
+    authKind:
+      groupKind === "ssh" || groupKind === "docker"
+        ? authKind
+        : credChoice === "none" && (groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm")
+          ? "none"
+          : "",
+    promptPassword: kindFields.remote !== null && remoteOptions.promptPassword,
+    keyPath: authKind === "key" ? keyPath : "",
+    credId: credChoice !== "new" && credChoice !== "none" ? credChoice : "",
+    jumpAssetId: kindFields.via ? viaAssetId : jumpAssetId,
+    hasSecret: password.length > 0,
+    enabled: kind === "asset" && managed === null && !inventoryOnly,
+  });
   // The asset list holds no devices (a device row only records a group), so fleet devices come from the fleet itself.
   const fleetDevices = useQuery({
     queryKey: ["fleet-devices-via"],
@@ -2497,8 +2572,12 @@ export function AssetEditor({
     setSaveError(null);
     try {
       if (kind === "group") {
-        if (groupId) await assetApi.groupCreate(name, groupId);
-        else await assetApi.groupCreate(name);
+        const defaults = groupDefaultsRequest(groupDefaults);
+        // A new group with no defaults is created exactly as before; an edit always sends them so they can be cleared.
+        const hasDefaults = Object.values(defaults).some((value) => !!value);
+        if (initialGroup) await assetApi.groupUpdate(initialGroup.id, name, groupId, defaults);
+        else if (groupId) await (hasDefaults ? assetApi.groupCreate(name, groupId, defaults) : assetApi.groupCreate(name, groupId));
+        else await (hasDefaults ? assetApi.groupCreate(name, undefined, defaults) : assetApi.groupCreate(name));
         if (stale()) return;
         onSaved();
         return;
@@ -2512,6 +2591,7 @@ export function AssetEditor({
       if (stale()) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
+      let keepOwnAuth = false;
       const reuseCredId = boundIsVaultKey ? (initial?.credId ?? undefined) : undefined;
       const credLabel = credName.trim() || name.trim();
       if (managed) {
@@ -2571,6 +2651,18 @@ export function AssetEditor({
           credId = res.id;
           finalKeyPath = null;
         }
+      } else if (authKind === "" && (groupKind === "ssh" || groupKind === "docker")) {
+        if (initial && !initial.authKind && (initial.credId || initial.keyPath)) {
+          // An asset that already had a credential or key path without an authKind keeps them; an unrelated
+          // edit must not clear what it authenticates with.
+          keepOwnAuth = true;
+          finalKeyPath = initial.keyPath ?? null;
+          credId = initial.credId ?? null;
+        } else {
+          // Choosing to inherit: the asset keeps no authentication field of its own.
+          finalKeyPath = null;
+          credId = null;
+        }
       } else if (credChoice === "new") {
         if (usesCred && password) {
           const res = await vaultApi.setCredential(
@@ -2601,15 +2693,34 @@ export function AssetEditor({
         ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteOptions)
         : baseOptions;
       const options = kindFields.wake ? writeWakeOptions(remoteWritten, wakeOptions) : remoteWritten;
+      // The editor never invents a username: an empty field stays empty, so a group default (or the connector's
+      // own fallback for ssh, docker and winrm) decides. A field that was NULL and is still empty stays NULL, so an
+      // unrelated edit does not rewrite it.
+      const unchangedEmpty = (value: string, stored: string | null | undefined) =>
+        initial !== undefined && value === "" && (stored ?? "") === "";
+      const savedUsername = unchangedEmpty(username, initial?.username) ? initial?.username ?? null : username;
+      const passwordKind = groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm";
+      // 不使用密码 is an explicit stored choice that no group default overrides.
+      const savedAuthKind = groupKind === "local"
+        ? "none"
+        : passwordKind && credChoice === "none"
+          ? "none"
+          : unchangedEmpty(authKind, initial?.authKind) ? initial?.authKind ?? null : authKind;
       const fields = {
         kind: managed ? initial?.kind ?? groupKind : groupKind,
         name: managed ? initial?.name ?? name : name,
         groupId: managed ? initial?.groupId ?? null : groupId,
         host: managed ? initial?.host ?? null : groupKind === "local" ? null : host,
         port: managed ? initial?.port ?? null : groupKind === "local" ? null : Number(port),
-        username: managed ? initial?.username ?? null : groupKind === "local" ? null : kindFields.username ? username : "",
-        authKind: managed ? initial?.authKind ?? null : groupKind === "local" ? "none" : authKind,
-        keyPath: managed ? initial?.keyPath ?? null : keyAuth ? finalKeyPath : null,
+        username: managed
+          ? initial?.username ?? null
+          : groupKind === "local"
+            ? null
+            : kindFields.username
+              ? savedUsername
+              : "",
+        authKind: managed ? initial?.authKind ?? null : savedAuthKind,
+        keyPath: managed ? initial?.keyPath ?? null : keyAuth || keepOwnAuth ? finalKeyPath : null,
         credId,
         options,
         tags: normalizeAssetTags(tags),
@@ -2736,7 +2847,7 @@ export function AssetEditor({
       >
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-            {kind === "group" ? "新建分组" : initial ? "编辑资产" : "新建资产"}
+            {kind === "group" ? (initialGroup ? "编辑分组" : "新建分组") : initial ? "编辑资产" : "新建资产"}
           </span>
         </div>
         <div
@@ -2889,7 +3000,7 @@ export function AssetEditor({
                   onChange={(value) => setGroupId(value || null)}
                   options={[
                     { value: "", label: kind === "group" ? "（根目录）" : "（不分组）" },
-                    ...groupOptions.map((g) => ({ value: g.id, label: g.path })),
+                    ...groupOptions.filter((g) => g.id !== initialGroup?.id).map((g) => ({ value: g.id, label: g.path })),
                   ]}
                 />
                 {kind === "asset" && !managed && <button
@@ -2902,6 +3013,10 @@ export function AssetEditor({
                 </button>}
               </div>
             </div>
+          )}
+
+          {kind === "group" && (
+            <GroupDefaultsFields value={groupDefaults} onChange={(next) => { setGroupDefaults(next); setDirty(true); }} groupId={initialGroup?.id ?? null} />
           )}
 
           {kind === "asset" && inventoryOnly && (
@@ -3014,8 +3129,9 @@ export function AssetEditor({
                   className="nx-input"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder={groupKind === "rdp" ? "Administrator" : undefined}
+                  placeholder={inheritedPlaceholder(inheritance, "username", groupKind === "rdp" ? "Administrator" : "root")}
                 />
+                <InheritanceHint view={inheritance} field="username" empty={username.trim() === ""} />
               </div>
               )}
 
@@ -3027,12 +3143,18 @@ export function AssetEditor({
                     value={authKind}
                     onChange={setAuthKind}
                     options={[
+                      ...(groupKind === "ssh" || groupKind === "docker"
+                        ? [{ value: "", label: inheritedPlaceholder(inheritance, "auth", "（未设置）") ?? "（未设置）" }]
+                        : []),
                       { value: "password", label: "密码" },
                       { value: "keyboard-interactive", label: "键盘交互（密码）" },
                       { value: "key", label: "私钥文件" },
                       { value: "agent", label: "SSH Agent" },
                     ]}
                   />
+                  {(groupKind === "ssh" || groupKind === "docker") && (
+                    <InheritanceHint view={inheritance} field="auth" empty={authKind === ""} />
+                  )}
                 </div>
               )}
 
@@ -3056,6 +3178,7 @@ export function AssetEditor({
                       ? "↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。"
                       : "↳ 默认直连；选择 SSH 资产或受管设备后，经它转发到目标主机。"}
                   </div>
+                  <InheritanceHint view={inheritance} field="jump" empty={viaAssetId === ""} />
                 </div>
               )}
 
@@ -3268,7 +3391,10 @@ export function AssetEditor({
                           c.usedBy.length > 0 ? `被 ${c.usedBy.length} 个资产使用` : "未使用"
                         }）`,
                       })),
-                      { value: "none", label: "（不使用凭据）" },
+                      {
+                        value: "none",
+                        label: groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm" ? "不使用密码" : "（不使用凭据）",
+                      },
                     ]}
                   />
                   {credChoice === "new" ? (
@@ -3298,6 +3424,13 @@ export function AssetEditor({
                   ) : credChoice !== "none" ? (
                     <div className="nx-hint mt-1">↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。</div>
                   ) : null}
+                  {groupKind !== "ssh" && groupKind !== "docker" && (
+                    <InheritanceHint
+                      view={inheritance}
+                      field="auth"
+                      empty={(credChoice === "new" && password.length === 0) || credChoice === "none"}
+                    />
+                  )}
                 </div>
               )}
               </fieldset>
@@ -3354,6 +3487,7 @@ export function AssetEditor({
                         <div className="nx-hint mt-1.5">
                           ↳ 先登录跳板机，再连接目标资产；两者分别验证凭据。
                         </div>
+                        <InheritanceHint view={inheritance} field="jump" empty={jumpAssetId === ""} />
                       </div>
 
                       <div className="nx-form-row">

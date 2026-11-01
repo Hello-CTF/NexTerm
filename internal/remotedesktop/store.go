@@ -26,15 +26,22 @@ func (r *StoreResolver) ResolveAsset(ctx context.Context, id string) (Asset, err
 	if r == nil || r.store == nil {
 		return Asset{}, ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
 	}
-	row, err := r.store.AssetGet(ctx, id)
+	stored, err := r.store.AssetGet(ctx, id)
 	if err != nil {
 		return Asset{}, err
 	}
-	if row.DeletedAt != nil {
+	if stored.DeletedAt != nil {
 		return Asset{}, ipc.NewError(ipc.CodeNotFound, "资产已删除")
 	}
+	// Group defaults (username, password credential, jump route) are applied from the stored groups on every
+	// call, so a group edit reaches the next connection and the next secret release.
+	row, err := r.store.ResolveAsset(ctx, stored)
+	if err != nil {
+		return Asset{}, err
+	}
 	asset := Asset{ID: row.ID, OwnerID: row.OwnerID, Kind: row.Kind, Name: row.Name, OptionsJSON: row.OptionsJSON,
-		HasPassword: row.CredID != nil && *row.CredID != ""}
+		HasPassword: row.CredID != nil && *row.CredID != "",
+		AuthNone:    row.AuthKind != nil && *row.AuthKind == store.AuthKindNone}
 	if row.Host != nil {
 		asset.Host = *row.Host
 	}
@@ -51,7 +58,7 @@ func (r *StoreResolver) ResolvePassword(ctx context.Context, id string) (string,
 	if r == nil || r.store == nil {
 		return "", ipc.NewError(ipc.CodeUnsupported, "资产存储未配置")
 	}
-	row, err := r.store.AssetGet(ctx, id)
+	row, err := r.store.AssetGetResolved(ctx, id)
 	if err != nil {
 		return "", err
 	}

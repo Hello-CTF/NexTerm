@@ -477,7 +477,7 @@ describe("asset row actions on coarse pointers", () => {
     expect(groupRow.querySelector(".nx-row-actions")).toBeNull();
     openOverflow(groupRow);
     await flush();
-    expect(menuLabels()).toEqual(["在此分组内新建资产", "新建子分组", "重命名分组", "删除分组…"]);
+    expect(menuLabels()).toEqual(["在此分组内新建资产", "新建子分组", "重命名分组", "连接默认值…", "删除分组…"]);
 
     const rename = [...document.querySelectorAll('[role="menuitem"]')].find((b) =>
       b.textContent?.includes("重命名分组"),

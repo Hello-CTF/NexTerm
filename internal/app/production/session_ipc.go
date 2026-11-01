@@ -411,7 +411,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.RegisterNested(dispatcher, "session_connect", func(ctx context.Context, _ *ipc.Call, input sessionConnectRequest) (sessionInfoDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
-				row, err := s.database.AssetGetLive(ctx, input.AssetID)
+				row, err := s.database.AssetGetLiveResolved(ctx, input.AssetID)
 				if err != nil {
 					return sessionInfoDTO{}, err
 				}
@@ -523,7 +523,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				}
 				asset := connected.Asset()
 				if asset.StoreBacked {
-					row, loadErr := s.database.AssetGetLive(ctx, asset.ID)
+					row, loadErr := s.database.AssetGetLiveResolved(ctx, asset.ID)
 					if loadErr != nil {
 						return false, loadErr
 					}
@@ -1281,7 +1281,7 @@ func (s *terminalCommandService) connectLocal(ctx context.Context) (*session.Ses
 	if err != nil {
 		return nil, err
 	}
-	asset, err := productionSessionAsset(row, false)
+	asset, err := productionSessionAsset(store.ResolvedAsset{AssetRow: row}, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1306,8 +1306,11 @@ func productionSessionRequestContext(ctx context.Context) context.Context {
 	return session.WithOpenAccess(ctx)
 }
 
-func productionSessionAsset(row store.AssetRow, acceptHostKey bool, trustedOwner ...string) (session.Asset, error) {
-	options, err := productionAssetOptionMap(row)
+// productionSessionAsset converts a stored asset, with its group defaults already applied, to the session asset
+// the connector dials. The fingerprint covers the resolved values, so a group edit marks open sessions stale.
+func productionSessionAsset(resolved store.ResolvedAsset, acceptHostKey bool, trustedOwner ...string) (session.Asset, error) {
+	row := resolved.AssetRow
+	options, err := productionResolvedOptionMap(resolved)
 	if err != nil {
 		return session.Asset{}, ipc.BadParam(fmt.Errorf("资产选项不是有效的 JSON: %w", err))
 	}
@@ -1454,8 +1457,8 @@ func (s *terminalCommandService) refreshStaleConfigs(ctx context.Context, infos 
 		if info.StaleConfig || info.AssetConfigFingerprint == "" {
 			continue
 		}
-		row, err := s.database.AssetGetLive(ctx, info.AssetID)
-		if err != nil || productionAssetConfigFingerprint(row) == info.AssetConfigFingerprint {
+		row, err := s.database.AssetGetLiveResolved(ctx, info.AssetID)
+		if err != nil || productionAssetConfigFingerprint(row.AssetRow) == info.AssetConfigFingerprint {
 			continue
 		}
 		if err := s.sessions.MarkSessionConfigStaleFor(ctx, info.ID); err == nil {

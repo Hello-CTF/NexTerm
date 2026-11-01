@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -114,7 +115,7 @@ func TestAssetWriteRevisionsAreMonotonic(t *testing.T) {
 	}
 	previous := asset.UpdatedAt
 	for index := 0; index < 64; index++ {
-		updated, err := db.AssetUpdate(ctx, asset.ID, AssetPatch{Note: ptr("edit")})
+		updated, err := db.AssetUpdate(ctx, asset.ID, AssetPatch{Note: ptr(fmt.Sprintf("edit-%d", index))})
 		if err != nil {
 			t.Fatal(err)
 		}

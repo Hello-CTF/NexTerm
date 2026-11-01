@@ -107,6 +107,10 @@ export type AssetBulkEditTarget = {
   expectedUpdatedAt: number;
 };
 
+export type AssetCredentialRequiredDTO = {
+  required: boolean;
+};
+
 export type AssetDTO = {
   id: string;
   groupId: string | null;
@@ -135,12 +139,18 @@ export type AssetGroupDTO = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  defaultUsername: string | null;
+  defaultAuthKind: string | null;
+  defaultKeyPath: string | null;
+  defaultCredId: string | null;
+  defaultJumpAssetId: string | null;
 };
 
 export type AssetGroupInputRequest = {
   name: string;
   parentId?: string | null;
   sort?: number;
+  defaults?: GroupDefaultsRequest | null;
 };
 
 export type AssetGroupPatchRequest = {
@@ -148,6 +158,25 @@ export type AssetGroupPatchRequest = {
   name?: string | null;
   parentId?: string | null;
   sort?: number | null;
+  defaults?: GroupDefaultsRequest | null;
+};
+
+export type AssetInheritanceDTO = {
+  fields: InheritedValueDTO[];
+  error: string;
+};
+
+export type AssetInheritanceRequest = {
+  assetId?: string | null;
+  kind: string;
+  groupId?: string | null;
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  jumpAssetId?: string | null;
+  hasSecret?: boolean;
+  promptPassword?: boolean;
 };
 
 export type AssetInputRequest = {
@@ -1373,6 +1402,14 @@ export type GrantRule = {
   updatedAt: number;
 };
 
+export type GroupDefaultsRequest = {
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  jumpAssetId?: string | null;
+};
+
 export type HelperOfflineDTO = {
   fileName: string;
   sha256: string;
@@ -1488,6 +1525,15 @@ export type ImportReport = {
   conflictDetails?: SkippedNewerEntry[];
   refused: number;
   warnings: string[];
+};
+
+export type InheritedValueDTO = {
+  field: string;
+  applied: boolean;
+  value: string;
+  groupId: string;
+  groupName: string;
+  reason: string;
 };
 
 export type InventoryCandidateDTO = {
@@ -2121,6 +2167,7 @@ export type RemoteDesktopPrepareResult = {
   domain: string;
   promptPassword: boolean;
   hasPassword: boolean;
+  noPassword?: boolean;
   width?: number;
   height?: number;
   expiresAtMs: number;
@@ -2838,6 +2885,11 @@ export type SyncBundleGroup = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  defaultUsername?: string | null;
+  defaultAuthKind?: string | null;
+  defaultKeyPath?: string | null;
+  defaultCredId?: string | null;
+  defaultJumpAssetId?: string | null;
 };
 
 export type SyncBundleSnippet = {
