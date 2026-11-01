@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mount, type MountedView } from "./reactTestUtils";
 import { ProjectWorkspaceStrip } from "../../app/ProjectWorkspaceStrip";
 import {
   ALL_PROJECTS,
@@ -141,6 +141,83 @@ describe("ProjectWorkspaceStrip", () => {
     });
     expect(onSelect).toHaveBeenCalledWith("ws-child");
     expect(document.activeElement?.getAttribute("data-project-workspace-id")).toBe("ws-child");
+  });
+});
+
+describe("ProjectWorkspaceStrip close menu", () => {
+  function openMenu(workspaceId: string): void {
+    const tab = mounted?.container.querySelector(`[data-project-workspace-id="${workspaceId}"]`);
+    if (!tab) throw new Error(`Workspace tab not found: ${workspaceId}`);
+    act(() => {
+      tab.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 8 }));
+    });
+  }
+
+  function menuItem(label: string): HTMLButtonElement {
+    const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+      .find((candidate) => candidate.textContent?.trim() === label);
+    if (!item) throw new Error(`Menu item not found: ${label}`);
+    return item;
+  }
+
+  it.each([
+    [projectFocusForGroup("p1"), "ws-child"],
+    [UNGROUPED_PROJECT, "ws-quick"],
+  ] as const)("closes the current workspace in the selected strip", async (focus, workspaceId) => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
+    useUi.setState({ closeWorkspace });
+    renderStrip(focus);
+    openMenu(workspaceId);
+
+    expect(menuItem("关闭工作区").disabled).toBe(false);
+    click(menuItem("关闭工作区"));
+    await flush();
+
+    expect(closeWorkspace).toHaveBeenCalledExactlyOnceWith(workspaceId);
+  });
+
+  it("closes only visible workspaces on the requested side and disables empty sides", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
+    useUi.setState({ closeWorkspace });
+    renderStrip(projectFocusForGroup("p1"));
+
+    openMenu("ws-child");
+    expect(menuItem("关闭左侧全部工作区").disabled).toBe(false);
+    expect(menuItem("关闭右侧全部工作区").disabled).toBe(true);
+    click(menuItem("关闭左侧全部工作区"));
+    await flush();
+
+    openMenu("ws-root");
+    expect(menuItem("关闭左侧全部工作区").disabled).toBe(true);
+    expect(menuItem("关闭右侧全部工作区").disabled).toBe(false);
+    click(menuItem("关闭右侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls).toEqual([["ws-root"], ["ws-child"]]);
+  });
+
+  it("closes batches in order and stops when a workspace close is declined", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    useUi.setState({ closeWorkspace });
+    mounted = mount(createElement(ProjectWorkspaceStrip, {
+      workspaces: [
+        workspace("ws-current", "root-asset"),
+        workspace("ws-right-1", "root-asset"),
+        workspace("ws-right-2", "root-asset"),
+        workspace("ws-right-3", "root-asset"),
+        workspace("ws-other", "other-asset"),
+      ],
+      activeWorkspaceId: "ws-current",
+      activeProject: projectFocusForGroup("p1"),
+      projectInventory: inventory,
+      groups: inventory.groups,
+      onSelect: vi.fn(),
+    }));
+    openMenu("ws-current");
+    click(menuItem("关闭右侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"], ["ws-right-2"]]);
   });
 });
 
