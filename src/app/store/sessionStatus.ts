@@ -79,6 +79,9 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
         liveness: p.liveness ?? null,
       }
     : session));
+  if (p.status === "connected" && current?.status === "reconnecting") {
+    state.pushToast("success", `会话「${current.name}」已重新连接`);
+  }
   if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
     state.setConnectProgress(current.assetId, null);
   }
