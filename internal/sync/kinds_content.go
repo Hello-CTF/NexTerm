@@ -33,6 +33,7 @@ type runbookTemplateStepObject struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Command     string `json:"command"`
+	Interactive bool   `json:"interactive,omitempty"`
 }
 
 // runbookTemplateObject is a runbook template with its step command snapshots.
@@ -73,7 +74,7 @@ func runbookTemplatePayload(template store.RunbookTemplate) runbookTemplateObjec
 	steps := make([]runbookTemplateStepObject, len(template.Steps))
 	for i, step := range template.Steps {
 		steps[i] = runbookTemplateStepObject{
-			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command,
+			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
 		}
 	}
 	return runbookTemplateObject{
@@ -86,7 +87,7 @@ func runbookTemplateFromPayload(payload runbookTemplateObject) store.RunbookTemp
 	steps := make([]store.RunbookTemplateStep, len(payload.Steps))
 	for i, step := range payload.Steps {
 		steps[i] = store.RunbookTemplateStep{
-			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command,
+			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
 		}
 	}
 	return store.RunbookTemplate{

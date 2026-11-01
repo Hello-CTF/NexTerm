@@ -232,26 +232,38 @@ func (r *run) Ask(ctx context.Context, question execbatch.Question) (execbatch.A
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	defer func() {
-		r.mu.Lock()
-		delete(r.interact.prompts, id)
-		r.mu.Unlock()
-	}()
+	var failure error
 	select {
 	case reply := <-pending.reply:
-		if kind != PromptSecret {
-			r.mu.Lock()
-			r.recordAnswerLocked(step, question, kind, reply.value, reply.auto)
-			r.mu.Unlock()
-		}
-		return execbatch.Answer{Value: reply.value}, nil
+		return r.takeReply(step, question, kind, id, reply), nil
 	case <-ctx.Done():
-		return execbatch.Answer{}, ctx.Err()
+		failure = ctx.Err()
 	case <-abort:
-		return execbatch.Answer{}, context.Canceled
+		failure = context.Canceled
 	case <-timer.C:
-		return execbatch.Answer{}, execbatch.ErrInputTimeout
+		failure = execbatch.ErrInputTimeout
 	}
+	// Leave under the lock: once the prompt is gone Respond can no longer send, so
+	// an answer that won the race is still taken and a successful Respond always
+	// means the script receives it.
+	r.mu.Lock()
+	delete(r.interact.prompts, id)
+	select {
+	case reply := <-pending.reply:
+		r.mu.Unlock()
+		return r.takeReply(step, question, kind, id, reply), nil
+	default:
+	}
+	r.mu.Unlock()
+	return execbatch.Answer{}, failure
+}
+
+func (r *run) takeReply(step int32, question execbatch.Question, kind PromptKind, id string, reply promptReply) execbatch.Answer {
+	r.mu.Lock()
+	delete(r.interact.prompts, id)
+	r.recordAnswerLocked(step, question, kind, reply.value, reply.auto)
+	r.mu.Unlock()
+	return execbatch.Answer{Value: reply.value}
 }
 
 func (r *run) recordAnswerLocked(step int32, question execbatch.Question, kind PromptKind, value string, auto bool) {
@@ -275,6 +287,14 @@ func (s *Service) Respond(_ context.Context, ownerID string, input RespondReques
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	select {
+	case <-r.interact.abort:
+		return RunState{}, fmt.Errorf("%w: run %s was canceled", ErrConflict, input.RunID)
+	default:
+	}
+	if terminalRun(r.state.Status) || r.cancelRequested {
+		return RunState{}, fmt.Errorf("%w: run %s is not accepting answers", ErrConflict, input.RunID)
+	}
 	pending := r.interact.prompts[input.PromptID]
 	if pending == nil {
 		return RunState{}, fmt.Errorf("%w: prompt %s is not pending", ErrNotFound, input.PromptID)

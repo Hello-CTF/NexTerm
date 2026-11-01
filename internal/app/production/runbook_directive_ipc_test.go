@@ -104,7 +104,7 @@ func TestRunbookIPCScriptDirectivesEndToEnd(t *testing.T) {
 	command := `sh -c 'printf "@NEXTERM:INPUT region Region\n"; printf "@NEXTERM:SECRET token API token\n"'`
 	dispatchExecBatchTest(dispatcher, owner, "runbook_run_start", runbook.StartRequest{
 		RunID: "run-d", RunbookID: "rb", RunbookName: "Directives",
-		Steps:         []runbook.Step{{ID: "one", Name: "One", Command: command}},
+		Steps:         []runbook.Step{{ID: "one", Name: "One", Command: command, Interactive: true}},
 		SessionIDs:    []string{connected.ID},
 		StopOnFailure: nil, ConfirmationPolicy: runbook.ConfirmProductionOnly,
 	})

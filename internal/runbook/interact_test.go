@@ -84,7 +84,7 @@ func startPrompting(t *testing.T, executor *promptingExecutor, timeout time.Dura
 	t.Helper()
 	service := New(executor)
 	service.inputTimeout = timeout
-	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run"}}, sessions, ConfirmProductionOnly, nil)
+	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run", Interactive: true}}, sessions, ConfirmProductionOnly, nil)
 	commands := make([]RenderedCommand, len(sessions))
 	for index, sessionID := range sessions {
 		commands[index] = RenderedCommand{SessionID: sessionID, Command: "run"}
@@ -319,7 +319,7 @@ func TestRespondValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitAdvance(t, done)
-	if _, err := service.Respond(context.Background(), "owner-a", RespondRequest{RunID: "run-1", PromptID: prompt.ID, Value: "no"}); !errors.Is(err, ErrNotFound) {
+	if _, err := service.Respond(context.Background(), "owner-a", RespondRequest{RunID: "run-1", PromptID: prompt.ID, Value: "no"}); err == nil {
 		t.Fatalf("answered twice err = %v", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestCancelUnblocksPendingPrompts(t *testing.T) {
 func TestContextCancelUnblocksPrompt(t *testing.T) {
 	executor := newPromptingExecutor(execbatch.DirectiveInput, "h1")
 	service := New(executor)
-	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run"}}, []string{"h1"}, ConfirmProductionOnly, nil)
+	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run", Interactive: true}}, []string{"h1"}, ConfirmProductionOnly, nil)
 	prepareTestStep(t, service, 1, RenderedCommand{SessionID: "h1", Command: "run"})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan advanceResult, 1)
@@ -386,7 +386,7 @@ func TestContextCancelUnblocksPrompt(t *testing.T) {
 func TestExecutorRequestsCarryTheRunAsInteractor(t *testing.T) {
 	executor := &fakeExecutor{}
 	service := New(executor)
-	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run"}}, []string{"h1"}, ConfirmProductionOnly, nil)
+	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run", Interactive: true}}, []string{"h1"}, ConfirmProductionOnly, nil)
 	prepareTestStep(t, service, 1, RenderedCommand{SessionID: "h1", Command: "run"})
 	if _, err := service.Advance(context.Background(), "owner-a", AdvanceRequest{RunID: "run-1", StepNumber: 1, Confirmed: true}); err != nil {
 		t.Fatal(err)
@@ -401,9 +401,62 @@ func TestExecutorRequestsCarryTheRunAsInteractor(t *testing.T) {
 	}
 }
 
+func TestInteractorOnlyForOptedInSteps(t *testing.T) {
+	for _, interactive := range []bool{false, true} {
+		executor := &fakeExecutor{}
+		service := New(executor)
+		startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "cat f", Interactive: interactive}}, []string{"h1"}, ConfirmProductionOnly, nil)
+		prepareTestStep(t, service, 1, RenderedCommand{SessionID: "h1", Command: "cat f"})
+		if _, err := service.Advance(context.Background(), "owner-a", AdvanceRequest{RunID: "run-1", StepNumber: 1, Confirmed: true}); err != nil {
+			t.Fatal(err)
+		}
+		if got := executor.Requests()[0].Interactor != nil; got != interactive {
+			t.Fatalf("interactive=%v but request has interactor=%v", interactive, got)
+		}
+	}
+}
+
+func TestRespondAfterCancelIsRejected(t *testing.T) {
+	executor := newPromptingExecutor(execbatch.DirectiveInput, "h1")
+	service, done := startPrompting(t, executor, time.Hour, "h1")
+	prompt := waitPrompts(t, service, 1)[0]
+	if _, err := service.Cancel(context.Background(), "owner-a", "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Respond(context.Background(), "owner-a", RespondRequest{RunID: "run-1", PromptID: prompt.ID, Value: "late"}); err == nil {
+		t.Fatal("respond after cancel succeeded")
+	}
+	awaitAdvance(t, done)
+}
+
+func TestSuccessfulRespondIsAlwaysDeliveredEvenWhenTimeoutRaces(t *testing.T) {
+	for range 50 {
+		executor := newPromptingExecutor(execbatch.DirectiveInput, "h1")
+		service, done := startPrompting(t, executor, 5*time.Millisecond, "h1")
+		var delivered bool
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			state, _ := service.Get(context.Background(), "owner-a", "run-1")
+			if len(state.Prompts) == 1 {
+				_, err := service.Respond(context.Background(), "owner-a", RespondRequest{RunID: "run-1", PromptID: state.Prompts[0].ID, Value: "v"})
+				delivered = err == nil
+				break
+			}
+			if state.Status != RunRunning {
+				break
+			}
+		}
+		awaitAdvance(t, done)
+		outcome := executor.outcome("h1")
+		if delivered && (outcome.err != nil || outcome.answer.Value != "v") {
+			t.Fatalf("respond succeeded but script got %+v", outcome)
+		}
+	}
+}
+
 func TestLiveStateIsBoundedAgainstHostileEvents(t *testing.T) {
 	service := New(&fakeExecutor{})
-	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run"}}, []string{"h1"}, ConfirmProductionOnly, nil)
+	startTestRun(t, service, []Step{{ID: "s1", Name: "one", Command: "run", Interactive: true}}, []string{"h1"}, ConfirmProductionOnly, nil)
 	r, _ := service.ownerRun("owner-a", "run-1")
 	for index := range 5000 {
 		r.Notify(execbatch.Event{SessionID: "h1", SessionName: "web", Kind: execbatch.DirectiveMessage, Level: execbatch.LevelInfo, Text: fmt.Sprint("m", index)})

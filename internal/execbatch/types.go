@@ -60,8 +60,8 @@ type Request struct {
 	MaxConcurrent          int                     `json:"maxConcurrent,omitempty"`
 	ProductionConfirmation *ProductionConfirmation `json:"productionConfirmation,omitempty"`
 	Runbook                *RunbookMetadata        `json:"runbook,omitempty"`
-	// Interactor receives script directives and prompts. It is set only by trusted in-process callers
-	// (runbook runs); AI and plain batch requests leave it nil so their output is never interpreted.
+	// Interactor receives script directives and prompts. It is set only for a runbook step that opted in
+	// (Step.Interactive); every other request leaves it nil, so its output is never interpreted.
 	Interactor Interactor `json:"-"`
 }
 

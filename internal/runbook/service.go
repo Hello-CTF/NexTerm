@@ -124,9 +124,13 @@ func (s *Service) Prepare(_ context.Context, ownerID string, input PrepareReques
 	for index := range r.requests {
 		r.requests[index].TimeoutMS = r.timeoutMS
 		r.requests[index].MaxConcurrent = r.maxConcurrent
-		r.requests[index].Interactor = r
 		r.requests[index].Runbook.GroupNumber = int32(index + 1)
 		r.requests[index].Runbook.GroupCount = int32(len(r.requests))
+	}
+	if r.currentStepLocked().Step.Interactive {
+		for index := range r.requests {
+			r.requests[index].Interactor = r
+		}
 	}
 	r.nextRequest = 0
 	r.stepConfirmed = false

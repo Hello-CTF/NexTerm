@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -72,18 +71,6 @@ type AnswerRecord struct {
 	Kind      DirectiveKind
 	Variable  string
 	Secret    bool
-}
-
-// commandUsesInput reports whether a command mentions an input-style
-// directive. Only then is the exec stdin kept open for answers; every other
-// command still sees an immediate EOF on stdin, exactly as before.
-func commandUsesInput(command string) bool {
-	for _, name := range []string{"INPUT", "SECRET", "CONFIRM"} {
-		if strings.Contains(command, DirectivePrefix+name) {
-			return true
-		}
-	}
-	return false
 }
 
 // execStdinSupported reports whether the transport's exec channel accepts stdin.
@@ -158,6 +145,8 @@ type interactState struct {
 	lastRefill time.Time
 	rateWarned int
 	prompts    int
+	// pendingProgress holds the latest PROGRESS value a rate limit held back.
+	pendingProgress *int
 }
 
 func (s *interactState) event(kind DirectiveKind, level MessageLevel, text string) {
@@ -194,29 +183,59 @@ func (s *interactState) malformed(reason string) {
 	s.warn("脚本输出了格式错误的指令，已按普通输出显示：" + reason)
 }
 
-// handle processes one parsed directive. A returned error aborts the target.
-func (s *interactState) handle(d Directive) error {
-	if !s.allow() {
-		if s.rateWarned < maxRateWarnings {
-			s.rateWarned++
-			s.warn("脚本输出指令过于频繁，已忽略部分指令")
-		}
-		return nil
+// flushProgress delivers a PROGRESS value that the rate limit coalesced.
+func (s *interactState) flushProgress() {
+	if s.pendingProgress == nil {
+		return
 	}
+	value := *s.pendingProgress
+	s.pendingProgress = nil
+	s.interactor.Notify(Event{
+		SessionID: s.target.SessionID, SessionName: s.target.SessionName,
+		Kind: DirectiveProgress, Progress: value,
+	})
+}
+
+func (s *interactState) rateLimited() {
+	if s.rateWarned < maxRateWarnings {
+		s.rateWarned++
+		s.warn("脚本输出指令过于频繁，已忽略部分指令")
+	}
+}
+
+// handle processes one parsed directive. A returned error aborts the target.
+// STEP, PROGRESS and MESSAGE are rate limited (PROGRESS keeps its latest value);
+// prompts never are, because the script blocks on the answer, and are bounded by
+// maxPromptsPerTarget instead.
+func (s *interactState) handle(d Directive) error {
 	switch d.Kind {
 	case DirectiveStep, DirectiveProgress, DirectiveMessage:
+		if !s.allow() {
+			if d.Kind == DirectiveProgress {
+				value := d.Progress
+				s.pendingProgress = &value
+			}
+			s.rateLimited()
+			return nil
+		}
+		if d.Kind != DirectiveProgress {
+			s.flushProgress()
+		} else {
+			s.pendingProgress = nil
+		}
 		s.interactor.Notify(Event{
 			SessionID: s.target.SessionID, SessionName: s.target.SessionName,
 			Kind: d.Kind, Text: d.Text, Progress: d.Progress, Level: d.Level,
 		})
 		return nil
 	}
+	s.flushProgress()
 	if s.stdin == nil {
 		s.warn("无法向脚本传入交互输入（" + s.stdinWhy + "），已忽略输入请求，脚本将读到空输入")
 		return nil
 	}
 	if s.prompts >= maxPromptsPerTarget {
-		return fmt.Errorf("script raised more than %d prompts", maxPromptsPerTarget)
+		return fmt.Errorf("脚本请求输入的次数超过上限（%d 次），已终止该主机的执行", maxPromptsPerTarget)
 	}
 	s.prompts++
 	question := Question{
@@ -224,6 +243,7 @@ func (s *interactState) handle(d Directive) error {
 		Kind: d.Kind, Variable: d.Variable, Prompt: d.Text, Default: d.Default,
 	}
 	if s.askCtx.Err() != nil {
+		s.warn("脚本已结束或运行已取消，丢弃了一个输入请求")
 		return nil
 	}
 	if s.deadline != nil {
@@ -237,6 +257,7 @@ func (s *interactState) handle(d Directive) error {
 		if s.askCtx.Err() != nil {
 			// The script already ended or the run was canceled: the target outcome
 			// decides, and the rest of its output must still be forwarded.
+			s.warn("脚本已结束或运行已取消，丢弃了一个输入请求")
 			return nil
 		}
 		return err
@@ -256,13 +277,9 @@ func (s *interactState) handle(d Directive) error {
 	return nil
 }
 
-func stdinUnavailableReason(command string, transport base.Transport) string {
-	switch {
-	case !execStdinSupported(transport):
+func stdinUnavailableReason(transport base.Transport) string {
+	if !execStdinSupported(transport) {
 		return "连接类型 " + transport.Kind() + " 的执行通道没有标准输入，仅 SSH 支持"
-	case !commandUsesInput(command):
-		return "命令文本中没有直接包含 INPUT、SECRET 或 CONFIRM 指令，标准输入已关闭"
-	default:
-		return "标准输入不可用"
 	}
+	return "标准输入不可用"
 }

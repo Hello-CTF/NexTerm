@@ -229,7 +229,7 @@ func (s *runbookIPCService) resolveTemplate(ctx context.Context, input runbook.S
 	input.RunbookID, input.RunbookName, input.RunbookVersion = tpl.ID, tpl.Name, tpl.Version
 	input.Steps = make([]runbook.Step, len(tpl.Steps))
 	for i, step := range tpl.Steps {
-		input.Steps[i] = runbook.Step{ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command}
+		input.Steps[i] = runbook.Step{ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive}
 	}
 	return input, nil
 }

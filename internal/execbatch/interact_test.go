@@ -209,30 +209,6 @@ func TestInteractiveSecretIsNeverRecorded(t *testing.T) {
 	}
 }
 
-func TestInteractiveCommandWithoutInputMarkerKeepsStdinClosed(t *testing.T) {
-	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
-		fmt.Fprint(env.stdout, "@NEXTERM:INPUT name Your name\n")
-		_, err := env.stdin.ReadString('\n')
-		fmt.Fprintf(env.stdout, "stdin=%v\n", err)
-		return nil
-	})
-	interactor := &testInteractor{}
-	result, _ := runInteractive(context.Background(), t, transport, `./run.sh`, interactor, nil, 5*time.Second)
-	if result.Status != StatusSuccess || result.Stdout != "stdin=EOF\n" {
-		t.Fatalf("result = %+v", result)
-	}
-	if transport.channel.closeWrites.Load() != 1 || transport.channel.stdinWrites.Load() != 0 {
-		t.Fatalf("stdin must close immediately as before")
-	}
-	if len(interactor.asked) != 0 {
-		t.Fatalf("a prompt was raised without stdin")
-	}
-	events := interactor.snapshotEvents()
-	if len(events) != 1 || events[0].Level != LevelWarn || !strings.Contains(events[0].Text, "标准输入已关闭") {
-		t.Fatalf("events = %+v", events)
-	}
-}
-
 func TestNoInteractorLeavesOutputAndStdinUntouched(t *testing.T) {
 	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
 		fmt.Fprint(env.stdout, "@NEXTERM:INPUT name Your name\n")
@@ -249,6 +225,69 @@ func TestNoInteractorLeavesOutputAndStdinUntouched(t *testing.T) {
 	}
 	if transport.options.Timeout != 5*time.Second {
 		t.Fatalf("transport timeout = %v", transport.options.Timeout)
+	}
+}
+
+func TestNoInteractorOutputIsByteIdentical(t *testing.T) {
+	output := "plain\n@NEXTERM:STEP x\r\n@NEXTERM:PROGRESS 5\n@NEXTERM:bogus\n@NEXTERM:SECRET t T\n@NEXT\n" + strings.Repeat("@NEXTERM:", 500) + "\n@NEXTERM:CONFIRM no newline"
+	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
+		fmt.Fprint(env.stdout, output)
+		return nil
+	})
+	result, _ := runInteractive(context.Background(), t, transport, "cat file", nil, nil, 5*time.Second)
+	if result.Stdout != output {
+		t.Fatalf("output was altered: %q", result.Stdout)
+	}
+}
+
+func TestInteractivePromptSurvivesProgressFlood(t *testing.T) {
+	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
+		var flood strings.Builder
+		for index := range 3000 {
+			fmt.Fprintf(&flood, "@NEXTERM:PROGRESS %d\n", index%100)
+		}
+		flood.WriteString("@NEXTERM:INPUT v Value\n")
+		fmt.Fprint(env.stdout, flood.String())
+		line, _ := env.stdin.ReadString('\n')
+		fmt.Fprintf(env.stdout, "got %s", line)
+		return nil
+	})
+	interactor := &testInteractor{ask: func(context.Context, Question) (Answer, error) { return Answer{Value: "x"}, nil }}
+	result, _ := runInteractive(context.Background(), t, transport, "run", interactor, nil, 5*time.Second)
+	if result.Status != StatusSuccess || result.Stdout != "got x\n" || len(interactor.asked) != 1 {
+		t.Fatalf("result = %+v asked=%d", result, len(interactor.asked))
+	}
+	events := interactor.snapshotEvents()
+	last := Event{}
+	for _, event := range events {
+		if event.Kind == DirectiveProgress {
+			last = event
+		}
+	}
+	if last.Progress != 2999%100 {
+		t.Fatalf("latest progress was not coalesced through, got %d", last.Progress)
+	}
+}
+
+func TestInteractivePostExitPromptIsReported(t *testing.T) {
+	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
+		fmt.Fprint(env.stdout, "@NEXTERM:INPUT v Value\n")
+		return nil
+	})
+	interactor := &testInteractor{ask: func(ctx context.Context, _ Question) (Answer, error) {
+		<-ctx.Done()
+		return Answer{}, ctx.Err()
+	}}
+	result, _ := runInteractive(context.Background(), t, transport, "run", interactor, nil, 5*time.Second)
+	if result.Status != StatusSuccess {
+		t.Fatalf("result = %+v", result)
+	}
+	warned := false
+	for _, event := range interactor.snapshotEvents() {
+		warned = warned || (event.Level == LevelWarn && strings.Contains(event.Text, "丢弃"))
+	}
+	if !warned {
+		t.Fatal("dropped prompt was not reported")
 	}
 }
 
@@ -452,7 +491,7 @@ func TestInteractivePromptCountLimit(t *testing.T) {
 		return Answer{Value: "x"}, nil
 	}}
 	result, _ := runInteractive(context.Background(), t, transport, interactiveCommand, interactor, nil, 30*time.Second)
-	if result.Status != StatusTransportError || count.Load() != maxPromptsPerTarget {
+	if result.Status != StatusTransportError || !strings.Contains(result.Error, "上限") || count.Load() != maxPromptsPerTarget {
 		t.Fatalf("result = %+v asked=%d", result, count.Load())
 	}
 }

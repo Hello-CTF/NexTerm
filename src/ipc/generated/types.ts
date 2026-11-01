@@ -2550,6 +2550,7 @@ export type RunbookTemplateStep = {
   name: string;
   description?: string;
   command: string;
+  interactive?: boolean;
 };
 
 export type RunbookTemplateUpdateRequest = RunbookTemplateInput & {
@@ -2872,6 +2873,7 @@ export type Step = {
   name: string;
   description?: string;
   command: string;
+  interactive?: boolean;
 };
 
 export type StepState = {

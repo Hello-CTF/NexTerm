@@ -143,7 +143,7 @@ func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Ta
 		opCancel func()
 		deadline *pausableDeadline
 	)
-	if options.Interactor != nil && commandUsesInput(command) && execStdinSupported(target.Transport) {
+	if options.Interactor != nil && execStdinSupported(target.Transport) {
 		// The exec timeout stops running while the operator is asked, so a slow
 		// human is not reported as a command timeout.
 		cancelCause, cancel := context.WithCancelCause(ctx)
@@ -165,7 +165,7 @@ func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Ta
 		}
 		interact = &interactState{
 			interactor: options.Interactor, target: target, deadline: deadline,
-			answered: options.OnAnswered, now: now, stdinWhy: stdinUnavailableReason(command, target.Transport),
+			answered: options.OnAnswered, now: now, stdinWhy: stdinUnavailableReason(target.Transport),
 		}
 	}
 
@@ -232,7 +232,7 @@ func mapTargetStreamError(result *Result, err error) {
 // the command exits, forwarding every chunk into the tracker. Batch
 // commands carry no stdin input, so the write side closes immediately and
 // EOF-driven commands observe the same EOF as one-shot Exec. Only a command
-// that mentions an input directive and runs over a stdin-capable transport
+// that opted into directives (an Interactor is set) over a stdin-capable transport
 // (interact.deadline set) keeps stdin open for operator answers. On a normal
 // exit or a remote ExitError the copies drain to EOF before the channel is
 // closed; an early close is only used to unblock the copies after a
@@ -347,6 +347,7 @@ func forwardOneShotOutput(ctx context.Context, tracker *ProgressTracker, target 
 		}, interact.handle, interact.malformed)
 		_ = filter.Write([]byte(execResult.Stdout))
 		_ = filter.Close()
+		interact.flushProgress()
 	} else if execResult.Stdout != "" {
 		_ = tracker.WriteStdout(target.SessionID, []byte(execResult.Stdout))
 		if capture != nil {
@@ -393,7 +394,9 @@ func copyDirectiveStream(tracker *ProgressTracker, sessionID string, reader io.R
 			}
 		}
 		if err != nil {
-			if closeErr := filter.Close(); closeErr != nil {
+			closeErr := filter.Close()
+			interact.flushProgress()
+			if closeErr != nil {
 				return closeErr
 			}
 			if errors.Is(err, io.EOF) {

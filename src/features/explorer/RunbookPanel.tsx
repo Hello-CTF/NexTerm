@@ -401,6 +401,9 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     }
   };
 
+  // A poll that started before, or overlaps, a respond may still carry the prompt that was just answered.
+  const respondingRef = useRef(0);
+  const respondGenerationRef = useRef(0);
   const runId = run?.runId;
   const polling = run?.status === "running";
   useEffect(() => {
@@ -413,9 +416,11 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     const timer = window.setInterval(() => {
       if (inFlight) return;
       inFlight = true;
+      const generation = respondGenerationRef.current;
       void Promise.resolve(runbookApi.get(runId))
         .then((next) => {
           const current = runRef.current;
+          if (respondingRef.current > 0 || respondGenerationRef.current !== generation) return;
           if (!next || next.status !== "running" || !current || current.runId !== runId || current.status !== "running") return;
           applyRun(next, epoch);
         })
@@ -431,11 +436,15 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     if (!current) return;
     const epoch = lifecycleEpochRef.current;
     setError(null);
+    respondingRef.current += 1;
     try {
       const next = await runbookApi.respond({ runId: current.runId, promptId: prompt.id, value, ...(applyAll ? { applyAll: true } : {}) });
       if (next && next.status === "running" && runRef.current?.status === "running") applyRun(next, epoch);
     } catch (cause) {
       if (isActiveEpoch(epoch)) setError(`提交回答失败：${describeError(cause)}`);
+    } finally {
+      respondingRef.current -= 1;
+      respondGenerationRef.current += 1;
     }
   };
 
@@ -563,6 +572,10 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                     </div>
                     <input className="nx-input mb-2" aria-label={`步骤 ${index + 1} 说明`} placeholder="可选说明" value={step.description} onChange={(event) => updateStep(step.id, { description: event.target.value })} />
                     <textarea className="nx-textarea font-mono text-[11.5px]" rows={2} placeholder="单行命令，可使用 {{变量}}" aria-label={`步骤 ${index + 1} 命令`} value={step.command} onChange={(event) => updateStep(step.id, { command: event.target.value })} />
+                    <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-400">
+                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 启用脚本交互指令`} checked={step.interactive === true} onChange={(event) => updateStep(step.id, { interactive: event.target.checked })} />
+                      启用脚本交互指令（默认关闭；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）
+                    </label>
                   </div>
                 ))}
               </div>

@@ -46,6 +46,9 @@ type Step struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Command     string `json:"command"`
+	// Interactive opts the step into @NEXTERM: script directives. Off by default: the
+	// output is then passed through untouched and stdin closes immediately.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 type StartRequest struct {
