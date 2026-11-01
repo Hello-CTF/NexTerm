@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 import { ProjectWorkspaceStrip } from "../../app/ProjectWorkspaceStrip";
 import {
   ALL_PROJECTS,
@@ -12,7 +12,13 @@ import {
   type ProjectInventory,
 } from "../../app/projectFocus";
 import { useUi, type SessionRuntimeInfo, type Workspace } from "../../app/store";
+import { resetRemoteStatusForTest, setRemoteStatus } from "../../features/remote/remoteStatus";
 import type { Asset, AssetGroup } from "../../ipc/commands";
+
+const dialogMocks = vi.hoisted(() => ({ ask: vi.fn() }));
+vi.mock("../../ui/dialogs", async (importOriginal) => ({ ...(await importOriginal<typeof import("../../ui/dialogs")>()), ask: dialogMocks.ask }));
+
+const realCloseWorkspace = useUi.getState().closeWorkspace;
 
 function group(id: string, parentId: string | null = null): AssetGroup {
   return { id, parentId, name: `Project ${id}`, sort: 0, createdAt: 1, updatedAt: 1 };
@@ -99,10 +105,12 @@ function stripWorkspaceIds(): string[] {
 
 beforeEach(() => {
   document.body.replaceChildren();
-  useUi.setState({ sessions });
+  useUi.setState({ sessions, workspaces, closeWorkspace: realCloseWorkspace });
 });
 
 afterEach(() => {
+  resetRemoteStatusForTest();
+  dialogMocks.ask.mockReset();
   mounted?.unmount();
   mounted = undefined;
 });
@@ -160,6 +168,26 @@ describe("ProjectWorkspaceStrip close menu", () => {
     return item;
   }
 
+  const batch = [
+    workspace("ws-current", "root-asset"),
+    workspace("ws-right-1", "root-asset"),
+    workspace("ws-right-2", "root-asset"),
+    workspace("ws-right-3", "root-asset"),
+    workspace("ws-other", "other-asset"),
+  ];
+
+  function renderBatch(closeWorkspace: (id: string) => Promise<boolean>, list: Workspace[] = batch, activeId = "ws-current"): void {
+    useUi.setState({ closeWorkspace: closeWorkspace as typeof realCloseWorkspace, workspaces: list });
+    mounted = mount(createElement(ProjectWorkspaceStrip, {
+      workspaces: list,
+      activeWorkspaceId: activeId,
+      activeProject: projectFocusForGroup("p1"),
+      projectInventory: inventory,
+      groups: inventory.groups,
+      onSelect: vi.fn(),
+    }));
+  }
+
   it.each([
     [projectFocusForGroup("p1"), "ws-child"],
     [UNGROUPED_PROJECT, "ws-quick"],
@@ -198,26 +226,107 @@ describe("ProjectWorkspaceStrip close menu", () => {
 
   it("closes batches in order and stops when a workspace close is declined", async () => {
     const closeWorkspace = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    useUi.setState({ closeWorkspace });
-    mounted = mount(createElement(ProjectWorkspaceStrip, {
-      workspaces: [
-        workspace("ws-current", "root-asset"),
-        workspace("ws-right-1", "root-asset"),
-        workspace("ws-right-2", "root-asset"),
-        workspace("ws-right-3", "root-asset"),
-        workspace("ws-other", "other-asset"),
-      ],
-      activeWorkspaceId: "ws-current",
-      activeProject: projectFocusForGroup("p1"),
-      projectInventory: inventory,
-      groups: inventory.groups,
-      onSelect: vi.fn(),
-    }));
+    renderBatch(closeWorkspace);
     openMenu("ws-current");
     click(menuItem("关闭右侧全部工作区"));
     await flush();
 
     expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"], ["ws-right-2"]]);
+  });
+
+  it("skips workspaces that are not closable", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValue(true);
+    const pinned = { ...workspace("ws-pinned", "root-asset"), closable: false };
+    renderBatch(closeWorkspace, [workspace("ws-current", "root-asset"), pinned, workspace("ws-right-1", "root-asset")]);
+    openMenu("ws-current");
+    click(menuItem("关闭右侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls).toEqual([["ws-right-1"]]);
+  });
+
+  it("closes left workspaces in strip order and stops when one is declined", async () => {
+    const closeWorkspace = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    renderBatch(closeWorkspace, [
+      workspace("ws-left-1", "root-asset"),
+      workspace("ws-left-2", "root-asset"),
+      workspace("ws-left-3", "root-asset"),
+      workspace("ws-current", "root-asset"),
+    ], "ws-current");
+    openMenu("ws-current");
+    click(menuItem("关闭左侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls).toEqual([["ws-left-1"], ["ws-left-2"]]);
+  });
+
+  it("does not treat a target closed during the batch as a decline", async () => {
+    const closeWorkspace = vi.fn(async (id: string) => {
+      if (id === "ws-right-1") {
+        useUi.setState({ workspaces: useUi.getState().workspaces.filter((item) => item.id !== "ws-right-2") });
+      }
+      return true;
+    });
+    renderBatch(closeWorkspace);
+    openMenu("ws-current");
+    click(menuItem("关闭右侧全部工作区"));
+    await flush();
+
+    expect(closeWorkspace.mock.calls.map(([id]) => id)).toEqual(["ws-right-1", "ws-right-3"]);
+  });
+
+  it("keeps the reconnect item beside the close items", () => {
+    renderBatch(vi.fn().mockResolvedValue(true));
+    useUi.setState({ sessions: sessions.map((item) => ({ ...item, status: "disconnected" as const })) });
+    // The batch workspaces have no session records, so they read as disconnected.
+    openMenu("ws-current");
+
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((node) => node.textContent?.trim());
+    expect(labels).toEqual(expect.arrayContaining([expect.stringMatching(/^重新连接/), "关闭工作区", "关闭左侧全部工作区", "关闭右侧全部工作区"]));
+  });
+
+  describe("with the real close path", () => {
+    function remoteWorkspace(id: string): Workspace {
+      const tab = { id: `${id}-tab`, kind: "remote" as const, title: "远程桌面", closable: true, assetId: "root-asset" };
+      return {
+        id,
+        kind: "remote",
+        title: id,
+        assetId: "root-asset",
+        assetKind: "rdp",
+        panes: [{ id: `${id}-pane`, tabs: [tab], activeTabId: tab.id }],
+        activePaneId: `${id}-pane`,
+        closable: true,
+      };
+    }
+
+    it("confirms a connected remote desktop in the batch and closes it once accepted", async () => {
+      dialogMocks.ask.mockResolvedValue(true);
+      const remote = remoteWorkspace("ws-remote");
+      setRemoteStatus("ws-remote-tab", "connected");
+      renderBatch(realCloseWorkspace, [workspace("ws-current", "root-asset"), remote]);
+      openMenu("ws-current");
+      click(menuItem("关闭右侧全部工作区"));
+      await flushUntil(() => dialogMocks.ask.mock.calls.length > 0);
+      await flushUntil(() => useUi.getState().workspaces.length === 1);
+
+      expect(dialogMocks.ask).toHaveBeenCalledTimes(1);
+      expect(String(dialogMocks.ask.mock.calls[0][0])).toContain("断开后会话结束");
+      expect(useUi.getState().workspaces.map((item) => item.id)).toEqual(["ws-current"]);
+    });
+
+    it("keeps the remote desktop and stops the batch when the confirmation is declined", async () => {
+      dialogMocks.ask.mockResolvedValue(false);
+      setRemoteStatus("ws-remote-tab", "connected");
+      renderBatch(realCloseWorkspace, [workspace("ws-current", "root-asset"), remoteWorkspace("ws-remote"), remoteWorkspace("ws-remote-2")]);
+      openMenu("ws-current");
+      click(menuItem("关闭右侧全部工作区"));
+      await flushUntil(() => dialogMocks.ask.mock.calls.length > 0);
+      await flush();
+
+      expect(dialogMocks.ask).toHaveBeenCalledTimes(1);
+      expect(useUi.getState().workspaces.map((item) => item.id)).toEqual(["ws-current", "ws-remote", "ws-remote-2"]);
+    });
   });
 });
 

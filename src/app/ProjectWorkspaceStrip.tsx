@@ -30,6 +30,8 @@ function workspaceIcon(workspace: Workspace) {
 
 async function closeWorkspaces(targets: Workspace[]): Promise<void> {
   for (const target of targets) {
+    // A target closed by another path while an earlier dialog was open is not a decline.
+    if (!useUi.getState().workspaces.some((candidate) => candidate.id === target.id)) continue;
     if (!(await useUi.getState().closeWorkspace(target.id))) break;
   }
 }
