@@ -34,6 +34,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   });
 });
 vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createVncClient }));
+vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createVncClient }));
 vi.mock("../../app/store", () => ({
   requestCloseTab: mocks.closeTab,
   useUi: { getState: () => ({ pushToast: mocks.toast }) },
@@ -108,6 +109,7 @@ afterEach(() => {
   resetKeyboardCaptureForTest();
   resetRemoteStatusForTest();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -133,6 +135,68 @@ describe("RemoteDesktopPane", () => {
     expect(mocks.prepare).toHaveBeenCalledTimes(1);
     expect(pane().dataset.status).toBe("connected");
     expect(useRemoteStatus.getState().entries["tab-1"]?.status).toBe("connected");
+  });
+
+  it("reports an asset's fixed resolution that the server never confirms", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "rdp", name: "box", options: { width: 1280, height: 720 } });
+    const prepare = mocks.prepare.getMockImplementation()!;
+    mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
+    const resize = vi.fn(() => "pending");
+    mocks.releaseSecret.mockResolvedValue({ username: "alice", domain: "", password: "test-password" });
+    mocks.createVncClient.mockImplementation(async (_stage, options, callbacks) => ({
+      ...fakeClient(options, callbacks),
+      protocol: "rdp",
+      supportsResize: true,
+      resize,
+      desktopSize: () => ({ width: 1440, height: 900 }),
+    }));
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.useFakeTimers();
+    await mountPane();
+    expect(pane().dataset.status).toBe("connected");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6500);
+    });
+    expect(resize).toHaveBeenCalledWith(1280, 720);
+    expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("尚未生效");
+    expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("重新连接");
+  });
+
+  it("offers a reconnect when the server does not confirm a requested resolution", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "rdp", name: "box", options: { width: 1280, height: 720 } });
+    const prepare = mocks.prepare.getMockImplementation()!;
+    mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
+    const resize = vi.fn(() => "pending");
+    mocks.releaseSecret.mockResolvedValue({ username: "alice", domain: "", password: "test-password" });
+    mocks.createVncClient.mockImplementation(async (_stage, options, callbacks) => ({
+      ...fakeClient(options, callbacks),
+      protocol: "rdp",
+      supportsResize: true,
+      resize,
+      desktopSize: () => ({ width: 1280, height: 720 }),
+    }));
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      disconnect() {}
+    });
+    vi.useFakeTimers();
+    await mountPane();
+    expect(pane().dataset.status).toBe("connected");
+    await act(async () => {
+      [...pane().querySelectorAll("button")].find((button) => button.textContent === "分辨率")!.click();
+    });
+    await act(async () => {
+      [...pane().querySelectorAll<HTMLButtonElement>("button[role=menuitem]")].find((button) => button.textContent === "1366 x 768")!.click();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6500);
+    });
+    expect(resize).toHaveBeenCalledWith(1366, 768);
+    expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("尚未确认");
+    expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("重新连接");
   });
 
   it("forgets its status when it unmounts", async () => {

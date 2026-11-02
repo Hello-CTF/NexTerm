@@ -158,6 +158,8 @@ func (rdCleanPathEngine) Serve(ctx context.Context, session RDPSession) error {
 	var leaf *x509.Certificate
 	tlsConn := tls.Client(upstream, &tls.Config{
 		MinVersion: tls.VersionTLS12,
+		// Some Schannel RDP servers reject the first CredSSP message on TLS 1.3; TLS 1.2 keeps NLA encrypted.
+		MaxVersion: tls.VersionTLS12,
 		// Pinned by fingerprint (trust on first use); RDP servers normally present self-signed certificates.
 		InsecureSkipVerify: true,
 		ServerName:         sniName(hostOf(session.Addr)),

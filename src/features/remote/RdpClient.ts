@@ -75,8 +75,8 @@ export function engineFailureOf(error: unknown, secrets: readonly string[] = [])
   };
 }
 
-// What a resize request came to: "applied" went out; "pending" means the Display Control channel is not open yet
-// (retry shortly); "unavailable" means the server offers none; "failed" is any other refusal.
+// A resize is "applied" only when the canvas reaches the requested size. "pending" covers a channel that is not
+// ready and a request still awaiting server confirmation; "unavailable" means no channel; "failed" is another refusal.
 export type ResizeOutcome = "applied" | "pending" | "unavailable" | "failed";
 
 export function resizeOutcomeOf(text: string): ResizeOutcome {
@@ -95,6 +95,9 @@ export class RdpClient implements RemoteClient {
   private sizer: HTMLElement | null = null;
   private holder: HTMLElement | null = null;
   private observer: ResizeObserver | null = null;
+  private canvasObserver: MutationObserver | null = null;
+  private pendingResize: { width: number; height: number } | null = null;
+  private lastDesktopSize = { width: 0, height: 0 };
   private scale: ScaleMode = "fit";
   private connected = false;
   private closed = false;
@@ -162,10 +165,19 @@ export class RdpClient implements RemoteClient {
       this.redact = this.redact.slice(1);
       this.connected = true;
       this.guardFocus();
+      const canvas = this.canvas();
+      if (canvas) {
+        this.canvasObserver = new MutationObserver(() => {
+          this.layout();
+          this.reportDesktopSize();
+        });
+        this.canvasObserver.observe(canvas, { attributes: true, attributeFilter: ["width", "height"] });
+        const viewer = this.element?.shadowRoot?.querySelector(".screen-viewer");
+        if (viewer) this.canvasObserver.observe(viewer, { attributes: true, attributeFilter: ["style"] });
+      }
       this.layout();
       this.callbacks.onConnected();
-      const size = this.desktopSize();
-      this.callbacks.onDesktopSize?.(size.width, size.height);
+      this.reportDesktopSize();
       void session
         .run()
         .then((info) => {
@@ -242,16 +254,48 @@ export class RdpClient implements RemoteClient {
     };
   }
 
+  private reportDesktopSize(): void {
+    const size = this.desktopSize();
+    if (this.pendingResize?.width === size.width && this.pendingResize.height === size.height) this.pendingResize = null;
+    if (this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
+    this.lastDesktopSize = size;
+    this.callbacks.onDesktopSize?.(size.width, size.height);
+  }
+
   private layout(): void {
     const canvas = this.canvas();
     const sizer = this.sizer;
     const holder = this.holder;
     if (!canvas || !sizer || !holder || canvas.width < 2) return;
+    canvas.style.display = "block";
     const dw = canvas.width;
     const dh = canvas.height;
     const cw = this.stage.clientWidth;
     const ch = this.stage.clientHeight;
     if (cw < 2 || ch < 2) return;
+    const viewer = this.element?.shadowRoot?.querySelector<HTMLElement>(".screen-viewer");
+    if (viewer) {
+      const wrongSize =
+        viewer.style.width !== `${dw}px` ||
+        viewer.style.height !== `${dh}px` ||
+        viewer.style.minWidth !== "0px" ||
+        viewer.style.minHeight !== "0px" ||
+        viewer.style.maxWidth !== "none" ||
+        viewer.style.maxHeight !== "none";
+      if (wrongSize) {
+        viewer.style.width = `${dw}px`;
+        viewer.style.height = `${dh}px`;
+        viewer.style.minWidth = "0";
+        viewer.style.minHeight = "0";
+        viewer.style.maxWidth = "none";
+        viewer.style.maxHeight = "none";
+      }
+    }
+    if (this.element && (this.element.style.width !== `${dw}px` || this.element.style.height !== `${dh}px`)) {
+      this.element.style.width = `${dw}px`;
+      this.element.style.height = `${dh}px`;
+    }
+    this.stage.style.overflow = this.scale === "fit" ? "hidden" : "auto";
     const scale = this.scale === "fit" ? Math.min(cw / dw, ch / dh) : this.scale;
     const w = dw * scale;
     const h = dh * scale;
@@ -273,6 +317,9 @@ export class RdpClient implements RemoteClient {
   private teardown(): void {
     this.observer?.disconnect();
     this.observer = null;
+    this.canvasObserver?.disconnect();
+    this.canvasObserver = null;
+    this.pendingResize = null;
     try {
       this.ui?.shutdown();
     } catch {
@@ -297,13 +344,20 @@ export class RdpClient implements RemoteClient {
   }
 
   resize(width: number, height: number): ResizeOutcome {
-    if (!this.ui || !this.connected) return "pending";
     const w = Math.max(320, Math.min(8192, Math.floor(width) & ~1));
     const h = Math.max(240, Math.min(8192, Math.floor(height) & ~1));
+    const size = this.desktopSize();
+    if (size.width === w && size.height === h) {
+      this.pendingResize = null;
+      return "applied";
+    }
+    if (!this.ui || !this.connected) return "pending";
     this.lastWarning = "";
+    this.pendingResize = { width: w, height: h };
     try {
       this.ui.resize(w, h);
     } catch (error) {
+      this.pendingResize = null;
       const iron = error as Partial<IronError> | null;
       let text = error instanceof Error ? error.message : String(error ?? "");
       try {
@@ -314,7 +368,11 @@ export class RdpClient implements RemoteClient {
       return resizeOutcomeOf(text);
     }
     // The component may report a refused resize as a warning instead of throwing.
-    return this.lastWarning ? resizeOutcomeOf(this.lastWarning) : "applied";
+    if (this.lastWarning) {
+      this.pendingResize = null;
+      return resizeOutcomeOf(this.lastWarning);
+    }
+    return "pending";
   }
 
   focus(): void {

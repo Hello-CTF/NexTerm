@@ -377,7 +377,7 @@ func TestServeVNCCertificateTrustOnFirstUse(t *testing.T) {
 }
 
 // rdpServer is a fake RDP server: X.224 confirm selecting protocol, then TLS, then "pong:"+data.
-func rdpServer(t testing.TB, cert func() tls.Certificate, selected uint32, gotRequest chan<- []byte) (string, int) {
+func rdpServer(t testing.TB, cert func() tls.Certificate, selected uint32, gotRequest chan<- []byte, versions ...chan<- uint16) (string, int) {
 	return listen(t, func(conn net.Conn) {
 		head := mustRead(t, conn, 4)
 		rest := mustRead(t, conn, int(binary.BigEndian.Uint16(head[2:]))-4)
@@ -391,6 +391,9 @@ func rdpServer(t testing.TB, cert func() tls.Certificate, selected uint32, gotRe
 		tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: tls.VersionTLS12})
 		if err := tlsConn.Handshake(); err != nil {
 			return
+		}
+		if len(versions) > 0 {
+			versions[0] <- tlsConn.ConnectionState().Version
 		}
 		buf := make([]byte, 256)
 		for {
@@ -410,6 +413,41 @@ func rdpClientRequest(ticket, destination string) []byte {
 		Version: rdCleanPathVersion1, Destination: destination, HasDestination: true,
 		ProxyAuth: ticket, HasProxyAuth: true, X224: x224Request, HasX224: true,
 	}).marshal()
+}
+
+func TestServeRDPNegotiatesTLS12(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp-tls12")
+	versions := make(chan uint16, 1)
+	host, port := rdpServer(t, func() tls.Certificate { return cert }, protoHybridEx, nil, versions)
+	f.resolver.set(Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+
+	prepared, err := f.svc.Prepare(userCtx("u1", "s1"), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := newMemPair(8)
+	done := make(chan error, 1)
+	go func() { done <- f.svc.Serve(background(), server, Identity{UserID: "u1", LoginSessionID: "s1"}, "") }()
+	if err := client.WriteFrame(rdpClientRequest(prepared.Ticket, "example.com:3389")); err != nil {
+		t.Fatal(err)
+	}
+	responseFrame, err := client.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := parseRDCleanPath(responseFrame)
+	if err != nil || response.Error != nil {
+		t.Fatalf("response = %+v, %v", response, err)
+	}
+	if version := <-versions; version != tls.VersionTLS12 {
+		t.Fatalf("TLS version = 0x%x, want 0x%x", version, tls.VersionTLS12)
+	}
+	client.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("serve = %v", err)
+	}
 }
 
 func TestServeRDPRelaysWithServerCertificateAndIgnoresClientDestination(t *testing.T) {

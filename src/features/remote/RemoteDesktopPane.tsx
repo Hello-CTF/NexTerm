@@ -144,7 +144,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const [scale, setScale] = useState<ScaleMode>("fit");
   const [viewOnly, setViewOnly] = useState<boolean | null>(null);
   const [resolution, setResolution] = useState<ResolutionChoice | null>(null);
-  // A toolbar resolution the server could not apply while connected; offers a reconnect that starts at that size.
+  // A fixed resolution the server could not apply while connected; offers a reconnect that starts at that size.
   const [resolutionNotice, setResolutionNotice] = useState<string | null>(null);
   const [held, setHeld] = useState<ReadonlySet<ModifierKey>>(new Set());
   const [latched, setLatched] = useState<ReadonlySet<ModifierKey>>(new Set());
@@ -271,7 +271,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   useEffect(() => {
     if (!connected) setResolutionNotice(null);
   }, [connected]);
-  const resolutionPicked = resolution !== null;
+  const fixedResolution = effectiveResolution !== "follow";
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || protocol !== "rdp" || !connected) return;
@@ -304,8 +304,10 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
         if (retries < PENDING_RETRY_MAX) {
           retries += 1;
           retryTimer = window.setTimeout(apply, PENDING_RETRY_MS);
+        } else if (fixedResolution) {
+          setResolutionNotice("远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。可重新连接，按所选大小启动。");
         }
-      } else if (resolutionPicked) {
+      } else if (fixedResolution) {
         setResolutionNotice(
           outcome === "unavailable"
             ? "这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。可重新连接，按所选大小启动。"
@@ -325,7 +327,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       if (timer !== null) window.clearTimeout(timer);
       if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [protocol, connected, effectiveResolution, scale, clientRef, resolutionPicked]);
+  }, [protocol, connected, effectiveResolution, scale, clientRef, fixedResolution]);
 
   const chooseResolution = useCallback(
     (choice: ResolutionChoice) => {
