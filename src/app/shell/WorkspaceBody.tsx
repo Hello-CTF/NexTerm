@@ -199,6 +199,7 @@ export function WorkspaceBody({
                           onCyclePane={(step) => cyclePane(p.id, step)}
                           onActivate={() => setActivePane(p.id, w.id)}
                           onNewTerminal={onNewTerminal}
+                          workspaceId={w.id}
                           leftOpen={leftDockOpen}
                           onToggleLeft={() => setLeftOpen(!leftDockOpen)}
                         />

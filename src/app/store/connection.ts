@@ -484,6 +484,36 @@ async function openRemoteDesktopWorkspace(asset: ConnectAssetInput, epoch: numbe
   return { ok: true };
 }
 
+// Reopens the remote desktop of an existing remote workspace whose tab was closed, in the same workspace and pane.
+export async function reopenRemoteDesktopTab(workspaceId: string, paneId?: string): Promise<ConnectOutcome> {
+  const epoch = useUi.getState().workspaceRuntimeEpoch;
+  const workspace = useUi.getState().workspaces.find((item) => item.id === workspaceId);
+  if (!workspace || workspace.kind !== "remote" || !workspace.assetId) {
+    return { ok: false, error: "远程桌面目标已丢失，请从资产树重新连接" };
+  }
+  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  let asset: Awaited<ReturnType<typeof assetApi.get>>;
+  try {
+    asset = await assetApi.get(workspace.assetId);
+  } catch (e) {
+    return { ok: false, error: describeError(e) };
+  }
+  if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+  const current = useUi.getState().workspaces.find((item) => item.id === workspaceId);
+  if (!current || current.assetId !== workspace.assetId) return { ok: false, canceled: true };
+  // Another empty pane may have reopened the desktop while this call waited.
+  if (current.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote"))) return { ok: false, canceled: true };
+  if (asset.kind !== "rdp" && asset.kind !== "vnc") return { ok: false, error: "该资产不是远程桌面类型，请从资产树重新连接" };
+  const targetPane = current.panes.find((pane) => pane.id === paneId) ?? current.panes.find((pane) => pane.id === current.activePaneId) ?? current.panes[0];
+  useUi.getState().addTab(
+    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: "远程桌面", assetId: asset.id, closable: true },
+    targetPane?.id,
+  );
+  useUi.setState({ activeWorkspaceId: workspaceId });
+  useConnectHistory.getState().record(asset.id);
+  return { ok: true };
+}
+
 // deviceAssetId is the pseudo asset id of a device session in the session system (matching the
 // asset.ID of the backend session_connect_device); devices are not asset table records, so credential/host-key flows never apply.
 export function deviceAssetId(deviceId: string): string {

@@ -136,6 +136,7 @@ export {
   deviceAssetId,
   isAssetConnecting,
   reconnectDeadHost,
+  reopenRemoteDesktopTab,
   useConnectionProblem,
 } from "./store/connection";
 export {

@@ -100,6 +100,8 @@ interface PaneGroupProps {
   onCyclePane: (step: 1 | -1) => void;
   onActivate: () => void;
   onNewTerminal: () => void;
+  /** Owning workspace; its kind decides whether terminals can be created from this pane. */
+  workspaceId?: string;
   leftOpen: boolean;
   onToggleLeft: () => void;
 }
@@ -120,9 +122,12 @@ export function PaneGroup({
   onCyclePane,
   onActivate,
   onNewTerminal,
+  workspaceId,
   leftOpen,
   onToggleLeft,
 }: PaneGroupProps) {
+  const workspaceKind = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId)?.kind : undefined));
+  const canNewTerminal = workspaceKind === undefined || workspaceKind === "session";
   const setActiveTab = useUi((s) => s.setActiveTab);
   const moveTabToPane = useUi((s) => s.moveTabToPane);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
@@ -452,14 +457,16 @@ export function PaneGroup({
           })}
         </div>
         </div>
-        <button
-          className="nx-tab-new"
-          title={`新建终端标签页 (${kbLabel("newTerminal")})`}
-          aria-label="新建终端标签页"
-          onClick={onNewTerminal}
-        >
-          <IconPlus size={13} />
-        </button>
+        {canNewTerminal && (
+          <button
+            className="nx-tab-new"
+            title={`新建终端标签页 (${kbLabel("newTerminal")})`}
+            aria-label="新建终端标签页"
+            onClick={onNewTerminal}
+          >
+            <IconPlus size={13} />
+          </button>
+        )}
         <div className="nx-spacer" />
         {singlePane && paneCount > 1 && (
           <span className="flex items-center" role="group" aria-label="切换窗格">
@@ -531,7 +538,7 @@ export function PaneGroup({
       </div>
 
       <div className="min-h-0 flex-1">
-        {pane.tabs.length === 0 && <WorkspaceEmpty onNew={onNewTerminal} />}
+        {pane.tabs.length === 0 && <WorkspaceEmpty onNew={onNewTerminal} workspaceId={workspaceId} paneId={pane.id} />}
       </div>
 
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
