@@ -3,6 +3,7 @@ import type {
   RemoteDesktopPrepareResult,
   RemoteDesktopSecretResult,
 } from "../../ipc/generated/types";
+import { describeRdpFailure, describeVncFailure, IRON_ACCESS_DENIED, IRON_LOGON_FAILURE, IRON_NEGOTIATION, IRON_PROXY_CONNECT, IRON_RDCLEANPATH, IRON_WRONG_PASSWORD, isCredsspText } from "./rdpFailure";
 import { RemoteEngineError, type EngineFailure, type RemoteClient, type RemoteSecret } from "./remoteTypes";
 
 // retryable: a network drop worth reconnecting automatically; auth, certificate and permission failures never are,
@@ -11,7 +12,12 @@ export type FailureKind = "retryable" | "auth" | "certificate" | "permission" | 
 
 export interface Failure {
   kind: FailureKind;
+  // One actionable sentence; the pane shows it under the title.
   message: string;
+  // Replaces the generic title of the kind when the failure is recognised.
+  title?: string;
+  // Raw engine text for the collapsed details.
+  detail?: string;
   code?: string;
 }
 
@@ -19,13 +25,12 @@ const PERMISSION_CODES = new Set(["vault_locked", "unauthorized", "forbidden", "
 const AUTH_TEXT = /认证失败|密码|authentication|password|credential/i;
 const CERT_TEXT = /证书|指纹|certificate|fingerprint/i;
 
-// IronErrorKind values from @devolutions/iron-remote-desktop.
-const IRON_WRONG_PASSWORD = 1;
-const IRON_LOGON_FAILURE = 2;
-const IRON_ACCESS_DENIED = 3;
-const IRON_RDCLEANPATH = 4;
-const IRON_PROXY_CONNECT = 5;
-const IRON_NEGOTIATION = 6;
+// textOf is the user-facing wording of a failure: the title replaces the generic one for its kind, the advice is the
+// message, and the raw engine text sits in the collapsed details.
+function textOf(input: EngineFailure): Pick<Failure, "title" | "message" | "detail"> {
+  const text = input.protocol === "vnc" ? describeVncFailure(input) : describeRdpFailure(input);
+  return { title: text.title, message: text.advice, detail: text.detail || undefined };
+}
 
 export function classifyFailure(input: EngineFailure): Failure {
   const base = { message: input.message || "连接失败", code: input.code };
@@ -35,35 +40,42 @@ export function classifyFailure(input: EngineFailure): Failure {
     // An application error from prepare or the IPC layer: nothing a retry fixes.
     return { ...base, kind: "fatal" };
   }
-  if (input.protocol === "rdp" && input.rdpKind !== undefined) {
-    switch (input.rdpKind) {
-      case IRON_WRONG_PASSWORD:
-      case IRON_LOGON_FAILURE:
-        return { ...base, kind: "auth", message: "用户名或密码错误" };
-      case IRON_ACCESS_DENIED:
-        return { ...base, kind: "permission", message: "远程主机拒绝了访问" };
-      case IRON_RDCLEANPATH:
-        if (input.httpStatus === 403) return { ...base, kind: "certificate", message: "服务器证书需要确认" };
-        if (input.httpStatus === 401) return { ...base, kind: "retryable", message: "连接票据已失效" };
-        if (input.tlsAlert !== undefined) return { ...base, kind: "fatal", message: "与远程主机的 TLS 握手失败" };
-        return { ...base, kind: input.wasConnected ? "retryable" : "fatal" };
-      case IRON_PROXY_CONNECT:
-        return { ...base, kind: input.wasConnected ? "retryable" : "fatal" };
-      case IRON_NEGOTIATION:
-        return { ...base, kind: "fatal", message: "远程主机不支持所需的安全协议" };
-      default:
-        return { ...base, kind: input.wasConnected ? "retryable" : "fatal" };
+  if (input.protocol === "rdp") {
+    // A CredSSP failure is the server rejecting the login, whatever kind the engine gave it.
+    if (isCredsspText(input.detail ?? input.message)) return { ...base, ...textOf(input), kind: "auth" };
+    if (input.rdpKind !== undefined) {
+      const text = textOf(input);
+      switch (input.rdpKind) {
+        case IRON_WRONG_PASSWORD:
+        case IRON_LOGON_FAILURE:
+          return { ...base, ...text, kind: "auth" };
+        case IRON_ACCESS_DENIED:
+          return { ...base, ...text, kind: "permission" };
+        case IRON_RDCLEANPATH:
+          if (input.httpStatus === 403) return { ...base, ...text, kind: "certificate" };
+          if (input.httpStatus === 401) return { ...base, ...text, kind: "retryable" };
+          if (input.tlsAlert !== undefined) return { ...base, ...text, kind: "fatal" };
+          return { ...base, ...text, kind: input.wasConnected ? "retryable" : "fatal" };
+        case IRON_PROXY_CONNECT:
+          return { ...base, ...text, kind: input.wasConnected ? "retryable" : "fatal" };
+        case IRON_NEGOTIATION:
+          return { ...base, ...text, kind: "fatal" };
+        default:
+          return { ...base, ...text, kind: input.wasConnected ? "retryable" : "fatal" };
+      }
     }
   }
   if (input.stage === "security") {
-    if (CERT_TEXT.test(input.message)) return { ...base, kind: "certificate" };
-    if (AUTH_TEXT.test(input.message)) return { ...base, kind: "auth" };
-    return { ...base, kind: "fatal" };
+    const text = textOf(input);
+    if (CERT_TEXT.test(input.message)) return { ...base, ...text, kind: "certificate" };
+    if (AUTH_TEXT.test(input.message)) return { ...base, ...text, kind: "auth" };
+    return { ...base, ...text, kind: "fatal" };
   }
   if (input.stage === "closed") {
     if (input.clean) return { ...base, kind: "ended", message: input.message || "远程桌面已断开" };
-    return { ...base, kind: input.wasConnected ? "retryable" : "fatal" };
+    return { ...base, ...textOf(input), kind: input.wasConnected ? "retryable" : "fatal" };
   }
+  if (input.protocol === "rdp" || input.protocol === "vnc") return { ...base, ...textOf(input), kind: "fatal" };
   return { ...base, kind: "fatal" };
 }
 

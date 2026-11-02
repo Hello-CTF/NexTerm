@@ -302,22 +302,33 @@ describe("RemoteToolbar more menu", () => {
     expect(onDisconnect).toHaveBeenCalledTimes(2);
   });
 
-  it("offers RDP resolutions, marks the current one and selects presets", () => {
+  it("offers RDP resolutions on the toolbar itself, marks the current one and selects presets", () => {
     const onResolution = vi.fn();
-    render(props({ onResolution, resolution: { width: 1600, height: 900 } }));
-    click(button("更多"));
+    const onCustomResolution = vi.fn();
+    render(props({ onResolution, onCustomResolution, resolution: { width: 1600, height: 900 } }));
+    click(button("分辨率"));
     expect(menuItem("1600 x 900").textContent).toContain("当前");
     expect(menuItem("跟随窗口大小").textContent).not.toContain("当前");
+    expect(menuItem("3840 x 2160")).toBeTruthy();
+    expect(menuItem("1366 x 768")).toBeTruthy();
     click(menuItem("1920 x 1080"));
     expect(onResolution).toHaveBeenCalledWith({ width: 1920, height: 1080 });
-    click(button("更多"));
+    click(button("分辨率"));
     click(menuItem("跟随窗口大小"));
     expect(onResolution).toHaveBeenLastCalledWith("follow");
+    click(button("分辨率"));
+    click(menuItem("自定义…"));
+    expect(onCustomResolution).toHaveBeenCalledTimes(1);
   });
 
-  it("has no resolution choices for VNC", () => {
-    render(props({ protocol: "vnc" }));
-    click(button("更多"));
+  it("says plainly that VNC resolution is the server's, with no choice to pick", () => {
+    const onResolution = vi.fn();
+    render(props({ protocol: "vnc", onResolution, desktopSize: { width: 1024, height: 768 } }));
+    click(button("分辨率"));
+    const note = menuItem("VNC 的分辨率由服务器决定");
+    expect(note.textContent).toContain("1024 x 768");
+    click(note);
+    expect(onResolution).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("1920 x 1080");
   });
 

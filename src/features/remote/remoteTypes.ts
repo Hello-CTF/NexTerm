@@ -9,6 +9,16 @@ export type ScaleMode = "fit" | number;
 
 export const FIXED_SCALES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
+// Desktop sizes the asset form and the toolbar offer; any other size is a custom one.
+export const RESOLUTION_PRESETS = [
+  { width: 1280, height: 720 },
+  { width: 1366, height: 768 },
+  { width: 1600, height: 900 },
+  { width: 1920, height: 1080 },
+  { width: 2560, height: 1440 },
+  { width: 3840, height: 2160 },
+] as const;
+
 export type ResolutionMode = { kind: "follow" } | { kind: "fixed"; width: number; height: number };
 
 // A modifier the toolbar or the key bar can hold.
@@ -35,6 +45,10 @@ export interface EngineFailure {
   rdpKind?: number;
   httpStatus?: number;
   tlsAlert?: number;
+  // Winsock code from an RDCleanPath error the relay produced (connection refused, timed out, host not found).
+  wsaError?: number;
+  // The engine's full raw text, kept for the details fold; `message` is a single cleaned-up line.
+  detail?: string;
   // Application error code, when the failure came from an IPC call.
   code?: string;
 }
@@ -72,7 +86,8 @@ export interface RemoteClient {
   disconnect(): void;
   setScale(mode: ScaleMode): void;
   setViewOnly(viewOnly: boolean): void;
-  resize(width: number, height: number): void;
+  // Asks the server for a new desktop size and reports what came of it. VNC always answers "unavailable".
+  resize(width: number, height: number): "applied" | "pending" | "unavailable" | "failed";
   focus(): void;
   blur(): void;
   sendKey(code: string, down: boolean): void;

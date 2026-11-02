@@ -14,6 +14,8 @@ import {
   type FlowUi,
 } from "./connectFlow";
 import { clearRemoteStatus, setRemoteStatus, setRemoteThumbnail, THUMBNAIL_INTERVAL_MS, THUMBNAIL_WIDTH, thumbnailsWanted } from "./remoteStatus";
+import { followSize } from "./resolution";
+import type { ResolutionChoice } from "./RemoteToolbar";
 import { canWake } from "../explorer/wakeOptions";
 import { readRemoteDesktopOptions, type RemoteDesktopOptions } from "../explorer/assetKindFields";
 import { RemoteEngineError, type ClientCallbacks, type ClientFactory, type EngineFailure, type RemoteClient, type RemoteProtocol, type RemoteStatus } from "./remoteTypes";
@@ -55,6 +57,8 @@ export interface RemoteSession {
   clientRef: RefObject<RemoteClient | null>;
   connect: () => void;
   disconnect: () => void;
+  // Makes the next connect start with this desktop size instead of the asset's.
+  setResolution: (choice: ResolutionChoice | null) => void;
 }
 
 const DEFAULT_OPTIONS = readRemoteDesktopOptions("", undefined);
@@ -79,6 +83,8 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   // Whether the flow behind the live client asked the user for a password; such a session is not reconnected by
   // itself, because nobody is there to type it again.
   const promptedRef = useRef(false);
+  // A resolution picked on the toolbar. It outlives a reconnect of this tab, never the tab, and is not saved.
+  const resolutionRef = useRef<ResolutionChoice | null>(null);
 
   const clearTimers = useCallback(() => {
     if (timers.current.countdown !== null) window.clearInterval(timers.current.countdown);
@@ -182,8 +188,16 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
             clientRef.current = null;
             holder.replaceChildren();
             const create = await factoryFor(prepared.protocol === "vnc" ? "vnc" : "rdp");
-            const width = prepared.width && prepared.height ? prepared.width : Math.max(640, viewport.clientWidth);
-            const height = prepared.width && prepared.height ? (prepared.height ?? 0) : Math.max(480, viewport.clientHeight);
+            const picked = resolutionRef.current;
+            const asset = prepared.width && prepared.height ? { width: prepared.width, height: prepared.height } : null;
+            const size =
+              picked && picked !== "follow"
+                ? picked
+                : picked === "follow"
+                  ? followSize(viewport.clientWidth, viewport.clientHeight)
+                  : (asset ?? followSize(viewport.clientWidth, viewport.clientHeight));
+            const width = size.width;
+            const height = size.height;
             const client = await create(
               holder,
               {
@@ -230,6 +244,10 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     connect();
   }, [connect]);
 
+  const setResolution = useCallback((choice: ResolutionChoice | null) => {
+    resolutionRef.current = choice;
+  }, []);
+
   const disconnect = useCallback(() => {
     generation.current += 1;
     clearTimers();
@@ -262,5 +280,5 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     return () => window.clearInterval(timer);
   }, [status, tabId]);
 
-  return { status, failure, retryIn, attempt, protocol, options, wake, clientRef, connect: manualConnect, disconnect };
+  return { status, failure, retryIn, attempt, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
 }

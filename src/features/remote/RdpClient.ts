@@ -1,6 +1,7 @@
 import type { IronError, UserInteraction } from "@devolutions/iron-remote-desktop";
 import { prepareRdpTransport, remoteProxyAddress } from "./remoteSocket";
 import { RemoteEngineError, type ClientCallbacks, type ClientOptions, type EngineFailure, type RemoteClient, type RemoteSecret, type ScaleMode } from "./remoteTypes";
+import { stripBuildPaths } from "./rdpFailure";
 import { drawThumbnail } from "./thumbnail";
 
 type IronElement = HTMLElement & { module?: unknown };
@@ -34,23 +35,54 @@ function keyNameOf(code: string): string {
   return code;
 }
 
-function engineFailureOf(error: unknown): EngineFailure {
+// Replaces every non-empty secret with *** so a copied failure report never carries the login or the ticket.
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) if (secret) out = out.split(secret).join("***");
+  return out;
+}
+
+export function engineFailureOf(error: unknown, secrets: readonly string[] = []): EngineFailure {
   const iron = error as Partial<IronError> | null;
   let rdpKind: number | undefined;
   let httpStatus: number | undefined;
   let tlsAlert: number | undefined;
-  let message = "";
+  let wsaError: number | undefined;
+  let detail = "";
   try {
     rdpKind = typeof iron?.kind === "function" ? Number(iron.kind()) : undefined;
     const details = typeof iron?.rdcleanpathDetails === "function" ? iron.rdcleanpathDetails() : undefined;
     httpStatus = details?.httpStatusCode;
     tlsAlert = details?.tlsAlertCode;
-    message = typeof iron?.backtrace === "function" ? iron.backtrace().split("\n")[0].trim() : "";
+    wsaError = details?.wsaErrorCode;
+    detail = typeof iron?.backtrace === "function" ? iron.backtrace().trim() : "";
   } catch {
     // A malformed error object is reported as a plain failure.
   }
-  if (!message) message = error instanceof Error ? error.message : "RDP 连接失败";
-  return { protocol: "rdp", stage: "connect", message: message.slice(0, 200), rdpKind, httpStatus, tlsAlert };
+  if (!detail) detail = error instanceof Error ? error.message : "";
+  detail = redactSecrets(detail, secrets);
+  // The first line is the engine's own summary; it is cleaned up for the classifier, never shown as the headline.
+  const first = stripBuildPaths(detail.split("\n")[0] ?? "");
+  return {
+    protocol: "rdp",
+    stage: "connect",
+    message: (first || "RDP 连接失败").slice(0, 200),
+    detail: detail.slice(0, 2000),
+    rdpKind,
+    httpStatus,
+    tlsAlert,
+    wsaError,
+  };
+}
+
+// What a resize request came to: "applied" went out; "pending" means the Display Control channel is not open yet
+// (retry shortly); "unavailable" means the server offers none; "failed" is any other refusal.
+export type ResizeOutcome = "applied" | "pending" | "unavailable" | "failed";
+
+export function resizeOutcomeOf(text: string): ResizeOutcome {
+  if (/not yet connected/i.test(text)) return "pending";
+  if (/not available/i.test(text)) return "unavailable";
+  return "failed";
 }
 
 // RdpClient drives the IronRDP web component (WebAssembly, loaded on first use). Audio redirection is not part of the
@@ -70,6 +102,9 @@ export class RdpClient implements RemoteClient {
   // The login secret lives here only while connecting; it is dropped as soon as the handshake has used it.
   private secret: RemoteSecret | null;
   private focusAllowed = false;
+  private lastWarning = "";
+  // Values that must never appear in a failure report; kept after the login secret itself is dropped.
+  private redact: string[] = [];
   private readonly held = new Set<string>();
 
   private readonly options: ClientOptions;
@@ -99,9 +134,13 @@ export class RdpClient implements RemoteClient {
       ui.setScale(3);
       ui.setEnableClipboard(this.options.clipboard);
       ui.setEnableAutoClipboard(false);
-      ui.onWarningCallback((message) => console.warn("rdp:", message));
+      ui.onWarningCallback((message) => {
+        this.lastWarning = message;
+        console.warn("rdp:", message);
+      });
       const secret = this.secret;
       const prepared = this.options.prepared;
+      this.redact = [secret?.password ?? "", prepared.ticket];
       const builder = ui
         .configBuilder()
         .withUsername(secret?.username ?? prepared.username)
@@ -119,6 +158,8 @@ export class RdpClient implements RemoteClient {
         this.secret = null;
       }
       if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: "已取消" });
+      // The handshake is over: the password is no longer held; the ticket stays for later reports.
+      this.redact = this.redact.slice(1);
       this.connected = true;
       this.guardFocus();
       this.layout();
@@ -130,18 +171,18 @@ export class RdpClient implements RemoteClient {
         .then((info) => {
           if (this.closed) return;
           this.connected = false;
-          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: info.reason() || "远程桌面已断开" });
+          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: redactSecrets(info.reason(), this.redact) || "远程桌面已断开" });
         })
         .catch((error: unknown) => {
           if (this.closed) return;
           this.connected = false;
-          this.callbacks.onDisconnected({ ...engineFailureOf(error), stage: "closed", wasConnected: true });
+          this.callbacks.onDisconnected({ ...engineFailureOf(error, this.redact), stage: "closed", wasConnected: true });
         });
     } catch (error) {
       this.secret = null;
       this.teardown();
       if (error instanceof RemoteEngineError) throw error;
-      throw new RemoteEngineError(engineFailureOf(error));
+      throw new RemoteEngineError(engineFailureOf(error, this.redact));
     }
   }
 
@@ -255,15 +296,25 @@ export class RdpClient implements RemoteClient {
     if (viewOnly) this.releaseAllKeys();
   }
 
-  resize(width: number, height: number): void {
-    if (!this.ui || !this.connected) return;
+  resize(width: number, height: number): ResizeOutcome {
+    if (!this.ui || !this.connected) return "pending";
     const w = Math.max(320, Math.min(8192, Math.floor(width) & ~1));
     const h = Math.max(240, Math.min(8192, Math.floor(height) & ~1));
+    this.lastWarning = "";
     try {
       this.ui.resize(w, h);
-    } catch {
-      // The server may not allow a resize right now; the next layout pass tries again.
+    } catch (error) {
+      const iron = error as Partial<IronError> | null;
+      let text = error instanceof Error ? error.message : String(error ?? "");
+      try {
+        if (typeof iron?.backtrace === "function") text += ` ${iron.backtrace()}`;
+      } catch {
+        // Fall back to the message alone.
+      }
+      return resizeOutcomeOf(text);
     }
+    // The component may report a refused resize as a warning instead of throwing.
+    return this.lastWarning ? resizeOutcomeOf(this.lastWarning) : "applied";
   }
 
   focus(): void {

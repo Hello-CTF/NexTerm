@@ -217,9 +217,11 @@ describe("RdpClient connect", () => {
       protocol: "rdp",
       stage: "connect",
       message: "Negotiation failed",
+      detail: "Negotiation failed\nstack frame 1",
       rdpKind: 4,
       httpStatus: 403,
       tlsAlert: 48,
+      wsaError: undefined,
     });
     expect(classifyFailure(error.failure)).toBeDefined();
   });
@@ -365,6 +367,22 @@ describe("RdpClient resize", () => {
     });
     const { client } = await connected();
     expect(() => client.resize(800, 600)).not.toThrow();
+    expect(client.resize(800, 600)).toBe("failed");
+  });
+
+  it("reports whether the server took the resize", async () => {
+    const early = new RdpClient(stage, options(), callbacks());
+    expect(early.resize(800, 600)).toBe("pending");
+    const { client } = await connected();
+    expect(client.resize(800, 600)).toBe("applied");
+    scenario.ui.resize.mockImplementationOnce(() => {
+      throw new Error("Could not encode a resize: Display Control Virtual Channel is not yet connected");
+    });
+    expect(client.resize(800, 600)).toBe("pending");
+    scenario.ui.resize.mockImplementationOnce(() => {
+      throw { backtrace: () => "Could not encode a resize: Display Control Virtual Channel is not available" };
+    });
+    expect(client.resize(800, 600)).toBe("unavailable");
   });
 });
 
