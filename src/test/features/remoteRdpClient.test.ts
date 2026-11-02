@@ -79,7 +79,11 @@ if (!customElements.get("iron-remote-desktop")) {
     class extends HTMLElement {
       connectedCallback() {
         const root = this.attachShadow({ mode: "open" });
-        root.append(scenario.canvas);
+        const viewer = document.createElement("div");
+        viewer.className = "screen-viewer";
+        viewer.style.cssText = "width:333px;height:222px;min-width:333px;min-height:222px";
+        viewer.append(scenario.canvas);
+        root.append(viewer);
         if (!scenario.ready) return;
         const detail = { irgUserInteraction: scenario.ui };
         queueMicrotask(() => this.dispatchEvent(new CustomEvent("ready", { detail })));
@@ -128,12 +132,22 @@ class FakeObserver {
   }
 }
 
+class FakeMutationObserver extends FakeObserver {
+  static instances: FakeMutationObserver[] = [];
+  constructor(callback: () => void) {
+    super(callback);
+    FakeMutationObserver.instances.push(this);
+  }
+}
+
 beforeEach(() => {
   scenario = newScenario();
   stage = document.createElement("div");
   document.body.append(stage);
   FakeObserver.instances = [];
+  FakeMutationObserver.instances = [];
   vi.stubGlobal("ResizeObserver", FakeObserver);
+  vi.stubGlobal("MutationObserver", FakeMutationObserver);
   mocks.prepareRdpTransport.mockReset();
   mocks.init.mockReset();
   mocks.prepareRdpTransport.mockResolvedValue(undefined);
@@ -370,19 +384,26 @@ describe("RdpClient resize", () => {
     expect(client.resize(800, 600)).toBe("failed");
   });
 
-  it("reports whether the server took the resize", async () => {
+  it("waits for the actual canvas size before reporting a resize as applied", async () => {
     const early = new RdpClient(stage, options(), callbacks());
     expect(early.resize(800, 600)).toBe("pending");
     const { client } = await connected();
+    expect(client.resize(800, 600)).toBe("pending");
+    expect(client.resize(800, 600)).toBe("pending");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+    scenario.canvas.width = 800;
+    scenario.canvas.height = 600;
+    FakeMutationObserver.instances[0].callback();
     expect(client.resize(800, 600)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
     scenario.ui.resize.mockImplementationOnce(() => {
       throw new Error("Could not encode a resize: Display Control Virtual Channel is not yet connected");
     });
-    expect(client.resize(800, 600)).toBe("pending");
+    expect(client.resize(1024, 768)).toBe("pending");
     scenario.ui.resize.mockImplementationOnce(() => {
       throw { backtrace: () => "Could not encode a resize: Display Control Virtual Channel is not available" };
     });
-    expect(client.resize(800, 600)).toBe("unavailable");
+    expect(client.resize(1024, 768)).toBe("unavailable");
   });
 });
 
@@ -397,6 +418,11 @@ describe("RdpClient layout", () => {
     expect(sizer.style.top).toBe("125px");
     expect(holder.style.transform).toBe("scale(0.5)");
     expect(holder.style.width).toBe("1000px");
+    expect(stage.style.overflow).toBe("hidden");
+    const viewer = stage.querySelector("iron-remote-desktop")!.shadowRoot!.querySelector<HTMLElement>(".screen-viewer")!;
+    expect(viewer.style.width).toBe("1000px");
+    expect(viewer.style.height).toBe("500px");
+    expect(viewer.style.minWidth).toBe("0px");
     setStageSize(2000, 1000);
     FakeObserver.instances[0].callback();
     expect(holder.style.transform).toBe("scale(2)");
@@ -409,6 +435,34 @@ describe("RdpClient layout", () => {
     setStageSize(500, 500);
     client.setScale(1.5);
     expect(sizer.style.left).toBe("0px");
+  });
+
+  it("uses the actual canvas size after the server confirms a resize", async () => {
+    setStageSize(500, 500);
+    const { client, cb } = await connected();
+    const sizer = stage.firstElementChild as HTMLElement;
+    const holder = sizer.firstElementChild as HTMLElement;
+    const viewer = stage.querySelector("iron-remote-desktop")!.shadowRoot!.querySelector<HTMLElement>(".screen-viewer")!;
+    viewer.style.cssText = "width:1366px;height:768px;min-width:1366px;min-height:768px";
+    FakeMutationObserver.instances[0].callback();
+    expect(viewer.style.width).toBe("1000px");
+    expect(viewer.style.height).toBe("500px");
+    expect(cb.onDesktopSize).toHaveBeenCalledTimes(1);
+    scenario.canvas.width = 600;
+    scenario.canvas.height = 800;
+    FakeMutationObserver.instances[0].callback();
+    expect(holder.style.transform).toBe("scale(0.625)");
+    expect(sizer.style.width).toBe("375px");
+    expect(sizer.style.height).toBe("500px");
+    expect(sizer.style.left).toBe("62.5px");
+    expect(sizer.style.top).toBe("0px");
+    expect(viewer.style.width).toBe("600px");
+    expect(viewer.style.height).toBe("800px");
+    expect(cb.onDesktopSize).toHaveBeenLastCalledWith(600, 800);
+    expect(stage.style.overflow).toBe("hidden");
+    client.setScale(1);
+    expect(stage.style.overflow).toBe("auto");
+    expect(sizer.style.width).toBe("600px");
   });
 
   it("leaves the layout alone while the pane has no size yet", async () => {
