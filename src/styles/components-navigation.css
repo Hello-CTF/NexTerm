@@ -159,6 +159,19 @@
     font-size: calc(10.5px * var(--nx-ui-text-factor));
   }
 
+  /* ContextMenu only: a long hint is truncated before its label is. */
+  .nx-menu-label:has(+ .nx-menu-hint-fit) {
+    flex: 1 1 auto;
+  }
+
+  .nx-menu-hint.nx-menu-hint-fit {
+    flex: 0 100000 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .nx-menu-sep {
     height: 1px;
     margin: 4px 6px;

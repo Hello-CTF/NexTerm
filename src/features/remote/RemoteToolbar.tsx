@@ -214,7 +214,7 @@ export function RemoteToolbar(props: RemoteToolbarProps) {
       );
     }
     items.push(
-      { kind: "item", label: props.viewOnly ? "退出只读模式" : "只读模式", hint: "只读时不向远程发送键盘和鼠标输入", onSelect: () => props.onViewOnly(!props.viewOnly) },
+      { kind: "item", label: props.viewOnly ? "退出只读模式" : "只读模式", hint: props.viewOnly ? "当前不发送键盘和鼠标输入" : "开启后不发送键盘和鼠标输入", onSelect: () => props.onViewOnly(!props.viewOnly) },
       { kind: "item", label: "释放键盘", accel: RELEASE_CHORD_LABEL, disabled: !props.captured, onSelect: props.onReleaseKeyboard },
       { kind: "separator" },
       { kind: "item", label: "断开连接", hint: "断开后会话结束", danger: true, onSelect: props.onDisconnect },

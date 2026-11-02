@@ -333,7 +333,7 @@ function MenuList({
             >
               <span className="nx-menu-icon" aria-hidden="true">{item.icon}</span>
               <span className="nx-menu-label">{item.label}</span>
-              {item.hint && <span className="nx-menu-hint">{item.hint}</span>}
+              {item.hint && <span className="nx-menu-hint nx-menu-hint-fit" title={item.hint}>{item.hint}</span>}
               {item.accel && <span className="nx-menu-accel">{item.accel}</span>}
               {hasSubmenu && <span className="nx-menu-arrow" aria-hidden="true">›</span>}
             </button>
