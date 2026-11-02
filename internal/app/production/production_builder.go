@@ -61,7 +61,12 @@ type ProductionConfig struct {
 	// LocalHelper runs local terminals through a detached helper process so
 	// they survive the app; it applies to the desktop and to a single-account
 	// server. LocalHelperExecutable overrides the binary started as the helper.
-	LocalHelper           bool
+	LocalHelper bool
+	// SharedHelperStateDir, when set with LocalHelper, is the helper state
+	// directory shared with the NexTerm agent of the same OS user; the data
+	// directory's own durable/supervisor is then the previous directory the
+	// helper migrates from. Leave empty to keep an isolated helper.
+	SharedHelperStateDir  string
 	LocalHelperExecutable string
 }
 

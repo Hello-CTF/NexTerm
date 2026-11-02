@@ -58,10 +58,18 @@ type sessionAggregateService struct {
 	sessions   *session.Manager
 	connector  *productionConnector
 	aggregator *session.Aggregator
-	publish    func(owner string, update session.AggregateUpdate)
-	now        func() time.Time
+	// publish is the raw event sink; every emit goes through emit.
+	publish func(owner string, update session.AggregateUpdate)
+	now     func() time.Time
+	// localDigest returns the state digest of this process's own local
+	// helper, or "" when it runs none. It is read at listing time because
+	// the helper's state directory changes when it migrates.
+	localDigest func() string
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// localOK is whether the local host's latest listing answered; a device
+	// host that fronts the local helper is hidden only while it holds.
+	localOK bool
 	closed  bool
 	devices map[string]aggregateDeviceListing
 	remote  aggregateRemoteListing
@@ -110,7 +118,7 @@ func newSessionAggregateService(sessions *session.Manager, connector *production
 	}
 	service.aggregator = session.NewAggregator(session.AggregatorConfig{
 		Describe: describeAggregateError,
-		Publish:  func(owner string, update session.AggregateUpdate) { service.publish(owner, update) },
+		Publish:  service.emit,
 	})
 	return service
 }
@@ -162,7 +170,14 @@ func (s *sessionAggregateService) list(ctx context.Context, input sessionAggrega
 	if config != nil && config.RemoteSessions != nil {
 		result = mergeAggregateLists(result, s.remoteSessions(ctx, config, wait))
 	}
-	return result, nil
+	return s.filterShared(result), nil
+}
+
+func (s *sessionAggregateService) localHelperDigest() string {
+	if s.localDigest == nil {
+		return ""
+	}
+	return s.localDigest()
 }
 
 // DeviceSessions answers GET /fleet/sessions: the sessions on userID's
@@ -200,7 +215,7 @@ func (s *sessionAggregateService) deviceTargets(ctx context.Context, owner strin
 	for _, listed := range devices {
 		host := session.AggregateHost{
 			Key: session.AggregateKeyDevice + listed.ID, Kind: session.KindDevice, Name: listed.Name,
-			DeviceID: listed.ID, DeviceKind: listed.Kind,
+			DeviceID: listed.ID, DeviceKind: listed.Kind, StateDigest: listed.Digest,
 		}
 		if listed.ID == "" || have[host.Key] {
 			continue
@@ -356,8 +371,49 @@ func (s *sessionAggregateService) publishRemote(next session.AggregateList) {
 		if sessions == nil {
 			sessions = []session.AggregateSession{}
 		}
-		s.publish("", session.AggregateUpdate{Host: host, Sessions: sessions})
+		s.emit("", session.AggregateUpdate{Host: host, Sessions: sessions})
 	}
+}
+
+// noteLocalHost records the local host's latest listing status.
+func (s *sessionAggregateService) noteLocalHost(host session.AggregateHostStatus) {
+	if host.Key != session.AggregateKeyLocal {
+		return
+	}
+	s.mu.Lock()
+	s.localOK = host.Status == session.AggregateHostOK
+	s.mu.Unlock()
+}
+
+func (s *sessionAggregateService) localListed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.localOK
+}
+
+// filterShared is the one rule for a listing that may carry device hosts
+// fronting this process's own helper: they are left out while the local host
+// is listed, and helper digests never leave the service.
+func (s *sessionAggregateService) filterShared(list session.AggregateList) session.AggregateList {
+	for _, host := range list.Hosts {
+		s.noteLocalHost(host)
+	}
+	return clearHostDigests(withoutDigest(list, s.localHelperDigest(), s.localListed()))
+}
+
+// emit is the single choke point of every terminal://sessions event: it
+// drops an update of a device host that the local host lists already, and
+// clears the digest of the rest.
+func (s *sessionAggregateService) emit(owner string, update session.AggregateUpdate) {
+	s.noteLocalHost(update.Host)
+	filtered := s.filterShared(session.AggregateList{
+		Hosts: []session.AggregateHostStatus{update.Host}, Sessions: update.Sessions, Complete: true,
+	})
+	if len(filtered.Hosts) == 0 {
+		return
+	}
+	update.Host = filtered.Hosts[0]
+	s.publish(owner, update)
 }
 
 // markRemoteStale reports an earlier server answer as stale: its devices
@@ -477,4 +533,47 @@ func (s *sessionAggregateService) shutdown(context.Context) error {
 	// Background refreshes are bounded by their timeouts.
 	s.wg.Wait()
 	return nil
+}
+
+// withoutDigest leaves out the device hosts whose helper has the given state
+// digest, and their sessions: the same helper's sessions are listed by the
+// local host. A device host that is itself the local host, and an empty
+// digest, never match. Only a local host that is listed (localListed) makes a
+// device host redundant, so a helper not listed locally keeps its device route.
+func withoutDigest(list session.AggregateList, digest string, localListed bool) session.AggregateList {
+	if digest == "" || !localListed {
+		return list
+	}
+	drop := make(map[string]bool)
+	for _, host := range list.Hosts {
+		if host.Kind == session.KindDevice && host.StateDigest == digest {
+			drop[host.Key] = true
+		}
+	}
+	if len(drop) == 0 {
+		return list
+	}
+	result := session.AggregateList{Hosts: []session.AggregateHostStatus{}, Sessions: []session.AggregateSession{}, Complete: list.Complete}
+	for _, host := range list.Hosts {
+		if !drop[host.Key] {
+			result.Hosts = append(result.Hosts, host)
+		}
+	}
+	for _, item := range list.Sessions {
+		if !drop[item.HostKey] {
+			result.Sessions = append(result.Sessions, item)
+		}
+	}
+	return result
+}
+
+// clearHostDigests removes the helper digests before a listing reaches a UI.
+func clearHostDigests(list session.AggregateList) session.AggregateList {
+	hosts := make([]session.AggregateHostStatus, len(list.Hosts))
+	for index, host := range list.Hosts {
+		host.StateDigest = ""
+		hosts[index] = host
+	}
+	list.Hosts = hosts
+	return list
 }

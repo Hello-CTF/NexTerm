@@ -8,10 +8,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
@@ -44,12 +46,22 @@ type Options struct {
 	Prober  *Prober
 	Manager ServiceManager
 
-	Executable   string
-	StateDir     string
-	Collector    Collector
-	EnsureHelper func(ctx context.Context) error
-	Bridge       BridgeSpawner
-	Upgrader     *Upgrader
+	Executable string
+	// StateDir is the supervisor helper state directory and is authoritative
+	// when set. Left empty, a runtime on the default agent data directory
+	// shares one helper with the desktop app of the same OS user (see
+	// platform.SharedHelperStateDir) and migrates from <DataDir>/durable/supervisor
+	// once the helper there runs no session; any other DataDir (--data-dir,
+	// NEXTERM_DATA_DIR, tests) keeps <DataDir>/durable/supervisor.
+	StateDir string
+	// StateDirSource, when set, supplies the state directory for every use and
+	// moves with its owner (a desktop's local helper settles its own
+	// migration); it takes precedence over StateDir.
+	StateDirSource func() string
+	Collector      Collector
+	EnsureHelper   func(ctx context.Context) error
+	Bridge         BridgeSpawner
+	Upgrader       *Upgrader
 	// NoSelfUpgrade keeps a protocol mismatch fatal instead of replacing the
 	// executable: a desktop updates itself through its own updater.
 	NoSelfUpgrade bool
@@ -75,10 +87,26 @@ type Runtime struct {
 	bridge     BridgeSpawner
 	upgrader   *Upgrader
 	onChannel  func(connected bool)
-	stateDir   string
 	executable string
-	logger     *slog.Logger
-	now        func() time.Time
+
+	// stateDir is the helper directory in use (guarded by mu); stateSource
+	// replaces it when set. While sharedDir is set the runtime starts on
+	// legacyDir and moves to sharedDir once the helper there runs no session.
+	stateDir    string
+	stateSource func() string
+	sharedDir   string
+	legacyDir   string
+	settleSteps supervisor.StateDirSteps
+	settled     bool
+	settleMu    sync.Mutex
+	// beforeChannelRegister, set by tests, runs between dialling the control channel and registering its cancel.
+	beforeChannelRegister func()
+	// digestDir is the directory stateDigest was computed for.
+	digestDir string
+	// channelCancel ends the control channel so it re-announces a changed state digest.
+	channelCancel context.CancelFunc
+	logger        *slog.Logger
+	now           func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
@@ -145,21 +173,26 @@ func New(options Options) (*Runtime, error) {
 		executable = resolved
 	}
 	stateDir := options.StateDir
-	if stateDir == "" {
+	var sharedDir, legacyDir string
+	if stateDir == "" && options.StateDirSource == nil {
 		stateDir = filepath.Join(options.DataDir, "durable", "supervisor")
+		if shared, ok := sharedHelperDir(options.DataDir); ok {
+			sharedDir, legacyDir = shared, stateDir
+		}
 	}
 	collector := options.Collector
 	if collector == nil {
 		collector = NewCollector(options.DataDir, now)
 	}
+	runtimeState := &Runtime{}
 	var checkBuild func(ctx context.Context) (supervisor.HelperBuild, error)
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
 		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
-			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
+			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
 		}
 		ensureHelper = func(ctx context.Context) error {
-			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: stateDir, Executable: executable})
+			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
 			return err
 		}
 	}
@@ -173,7 +206,7 @@ func New(options Options) (*Runtime, error) {
 	if upgrader == nil && len(cliServicePrefix) == 0 && !options.NoSelfUpgrade {
 		upgrader = defaultUpgrader(executable)
 	}
-	return &Runtime{
+	*runtimeState = Runtime{
 		store:           options.Store,
 		dataDir:         options.DataDir,
 		prober:          options.Prober,
@@ -185,6 +218,9 @@ func New(options Options) (*Runtime, error) {
 		upgrader:        upgrader,
 		onChannel:       options.OnChannel,
 		stateDir:        stateDir,
+		stateSource:     options.StateDirSource,
+		sharedDir:       sharedDir,
+		legacyDir:       legacyDir,
 		executable:      executable,
 		logger:          logger,
 		now:             now,
@@ -193,7 +229,95 @@ func New(options Options) (*Runtime, error) {
 		revokeCh:        make(chan struct{}),
 		fatalCh:         make(chan error, 1),
 		reconfigCh:      make(chan struct{}, 1),
-	}, nil
+	}
+	return runtimeState, nil
+}
+
+// sharedHelperDir returns the helper directory shared with the desktop app when
+// dataDir is this user's default agent data directory.
+var sharedHelperDir = func(dataDir string) (string, bool) {
+	standard, err := DefaultDataDir(runtime.GOOS, os.Getenv, os.UserHomeDir)
+	if err != nil || filepath.Clean(dataDir) != filepath.Clean(standard) {
+		return "", false
+	}
+	shared, err := platform.DefaultSharedHelperStateDir()
+	return shared, err == nil
+}
+
+// currentStateDir is the helper state directory in use now.
+func (r *Runtime) currentStateDir() string {
+	if r.stateSource != nil {
+		return r.stateSource()
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stateDir
+}
+
+// settleStateDir moves a runtime that shares its helper with the desktop from
+// the previous directory to the shared one once the helper there runs no
+// session (an idle one is stopped). It keeps the previous directory while
+// sessions run, so no terminal ends.
+func (r *Runtime) settleStateDir(ctx context.Context) {
+	if r.sharedDir == "" {
+		return
+	}
+	// One settle at a time: a second concurrent stop would fail and must not move a settled runtime back.
+	r.settleMu.Lock()
+	defer r.settleMu.Unlock()
+	r.mu.Lock()
+	done := r.settled
+	r.mu.Unlock()
+	if done {
+		return
+	}
+	choice := supervisor.SettleStateDir(ctx, r.sharedDir, r.legacyDir, r.settleSteps)
+	if ctx.Err() != nil {
+		return
+	}
+	if choice.Legacy {
+		r.logger.Info("terminals keep running in the previous supervisor helper until they end",
+			"dir", choice.Dir, "sessions", choice.LegacySessions, "sessions_known", choice.LegacyKnown, "error", choice.Err)
+		r.useStateDir(choice.Dir, false)
+		return
+	}
+	r.logger.Info("supervisor helper moved to the directory shared with the desktop app", "dir", choice.Dir, "stopped_previous", choice.Stopped)
+	r.useStateDir(choice.Dir, true)
+}
+
+func (r *Runtime) useStateDir(dir string, settled bool) {
+	r.mu.Lock()
+	r.stateDir = dir
+	r.settled = r.settled || settled
+	r.mu.Unlock()
+	r.reconcileDigest()
+}
+
+// reconcileDigest recomputes the state digest when the directory in use (a settled migration, or the
+// owner's StateDirSource moving) is no longer the one it was computed for, and ends the control channel so
+// it re-announces the new digest. A channel dialled with an older hello is caught by channelLoop's re-check.
+func (r *Runtime) reconcileDigest() {
+	dir := r.currentStateDir()
+	r.mu.Lock()
+	current := r.digestDir == dir && r.stateDigest != ""
+	previous := r.stateDigest
+	r.mu.Unlock()
+	if current {
+		return
+	}
+	r.computeStateDigest()
+	r.mu.Lock()
+	cancel, changed := r.channelCancel, r.stateDigest != previous
+	r.mu.Unlock()
+	if previous != "" && changed && cancel != nil {
+		cancel()
+	}
+}
+
+func (r *Runtime) digestSnapshot() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stateDigest
 }
 
 // effectiveAppVersion reports the running build's version when it is a real release build, so a manually
@@ -228,6 +352,9 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	r.currentURL = config.CurrentURL
 	r.mu.Unlock()
+	if r.desiredSnapshot().TerminalEnabled {
+		r.settleStateDir(ctx)
+	}
 	r.computeStateDigest()
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -277,12 +404,16 @@ func (r *Runtime) Run(ctx context.Context) error {
 			r.loopWg.Wait()
 			return err
 		case <-r.reconfigCh:
+			if r.desiredSnapshot().TerminalEnabled {
+				r.settleStateDir(runCtx)
+			}
 			r.reconcileService(runCtx)
 			if updated := time.Duration(r.desiredSnapshot().MetricsIntervalMS) * time.Millisecond; updated != interval {
 				interval = updated
 				ticker.Reset(interval)
 			}
 		case <-ticker.C:
+			r.reconcileDigest()
 			r.reconcileService(runCtx)
 			r.syncOnce(runCtx)
 		}
@@ -290,6 +421,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 }
 
 func (r *Runtime) hello(bridgeID, purpose string) HelloMessage {
+	r.reconcileDigest()
 	return HelloMessage{
 		Type:         "hello",
 		Protocol:     ProtocolVersion,
@@ -299,7 +431,7 @@ func (r *Runtime) hello(bridgeID, purpose string) HelloMessage {
 		AppVersion:   r.appVersion,
 		BridgeID:     bridgeID,
 		Purpose:      purpose,
-		StateDigest:  r.stateDigest,
+		StateDigest:  r.digestSnapshot(),
 		Capabilities: r.capabilities(),
 	}
 }
@@ -324,7 +456,8 @@ func (r *Runtime) computeStateDigest() {
 		r.logger.Warn("resolve user identity failed; state digest unavailable", "error", err)
 		return
 	}
-	absolute, err := filepath.Abs(r.stateDir)
+	dir := r.currentStateDir()
+	absolute, err := filepath.Abs(dir)
 	if err != nil {
 		r.logger.Warn("resolve state dir failed; state digest unavailable", "error", err)
 		return
@@ -334,7 +467,10 @@ func (r *Runtime) computeStateDigest() {
 		r.logger.Warn("compute state digest failed; state digest unavailable", "error", err)
 		return
 	}
+	r.mu.Lock()
 	r.stateDigest = digest
+	r.digestDir = dir
+	r.mu.Unlock()
 }
 
 func (r *Runtime) desiredSnapshot() ConfigUpdate {
@@ -561,7 +697,7 @@ func (r *Runtime) ensureHelperOnce(ctx context.Context) {
 var helperBuildInterval = 5 * time.Minute
 
 func (r *Runtime) helperBuildLoop(ctx context.Context) {
-	if r.checkBuild == nil {
+	if r.checkBuild == nil && r.sharedDir == "" {
 		return
 	}
 	ticker := time.NewTicker(helperBuildInterval)
@@ -572,6 +708,7 @@ func (r *Runtime) helperBuildLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if r.desiredSnapshot().TerminalEnabled {
+				r.settleStateDir(ctx)
 				r.checkHelperBuild(ctx)
 			}
 		}
@@ -607,7 +744,8 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		channel, err := DialChannel(ctx, client.WSURL(), r.hello("", ""), client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
+		hello := r.hello("", "")
+		channel, err := DialChannel(ctx, client.WSURL(), hello, client.Insecure(), defaultWSKeepAlive, defaultWSPingTimeout)
 		if err != nil {
 			if isOwnerUnavailable(err) {
 				if !r.waitOwner(ctx) {
@@ -637,15 +775,33 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
 		r.reportChannel(true)
-		err = channel.Run(ctx, channelHandlers{
+		channelCtx, channelCancel := context.WithCancel(ctx)
+		if r.beforeChannelRegister != nil {
+			r.beforeChannelRegister()
+		}
+		r.mu.Lock()
+		r.channelCancel = channelCancel
+		announcedOld := r.stateDigest != hello.StateDigest
+		r.mu.Unlock()
+		if announcedOld {
+			// The digest changed between building the hello and registering the cancel.
+			channelCancel()
+		}
+		err = channel.Run(channelCtx, channelHandlers{
 			onConfig: r.applyDesired,
 			onBridge: r.handleBridge,
 			onRevoke: r.revoke,
 		})
+		moved := channelCtx.Err() != nil && ctx.Err() == nil
+		channelCancel()
 		_ = channel.Close()
 		r.reportChannel(false)
 		if ctx.Err() != nil || errors.Is(err, ErrRevoked) {
 			return
+		}
+		if moved {
+			// A state directory change ended the channel on purpose; dial again at once with the new digest.
+			continue
 		}
 		if errors.Is(err, ErrProtocolMismatch) {
 			r.selfUpgrade(ctx, mismatchServerVersion(err))
@@ -789,6 +945,8 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 	go func() {
 		defer r.loopWg.Done()
 		ctx := r.runCtx
+		// A terminal enabled after Run started must not spawn a helper in the previous directory.
+		r.settleStateDir(ctx)
 		ensureCtx, cancel := context.WithTimeout(ctx, helperEnsureTimeout)
 		err := r.ensureHelper(ensureCtx)
 		cancel()
@@ -816,7 +974,7 @@ func (r *Runtime) handleTerminalBridge(bridgeID, purpose string) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		_ = BridgePipe(ctx, conn, r.bridge, r.stateDir)
+		_ = BridgePipe(ctx, conn, r.bridge, r.currentStateDir())
 	}()
 }
 

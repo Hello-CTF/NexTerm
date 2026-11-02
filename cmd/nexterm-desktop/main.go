@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -114,10 +115,11 @@ func run(args []string) int {
 			Events:  events,
 			Streams: streams,
 		},
-		DataDir:         paths.DataDir,
-		Desktop:         true,
-		LocalHelper:     true,
-		ForwardPlatform: os.Getenv("NEXTERM_PLATFORM"),
+		DataDir:              paths.DataDir,
+		Desktop:              true,
+		LocalHelper:          true,
+		SharedHelperStateDir: sharedHelperStateDir(invocation.DataDir, logger.Logger),
+		ForwardPlatform:      os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
 			if err := update.StartDetached(target, args); err != nil {
 				return err
@@ -236,4 +238,21 @@ func run(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// sharedHelperStateDir returns the helper directory shared with the NexTerm
+// agent of this OS user, or "" when the data directory was chosen explicitly
+// (flag or NEXTERM_DATA_DIR), which keeps the helper isolated in that directory.
+func sharedHelperStateDir(dataDirOverride string, logger *slog.Logger) string {
+	if dataDirOverride != "" {
+		return ""
+	}
+	dir, err := platform.DefaultSharedHelperStateDir()
+	if err != nil {
+		if !errors.Is(err, platform.ErrNoSharedHelperDir) {
+			logger.Warn("shared helper directory unavailable; the local helper stays in the data directory", "error", err)
+		}
+		return ""
+	}
+	return dir
 }

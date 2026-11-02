@@ -413,7 +413,8 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	printServiceEnvironment(stdout, manager)
 	printRuntimeShell(stdout, dir, getenv, 8*time.Second)
-	stateDir := filepath.Join(dir, "durable", "supervisor")
+	stateDir, stateNote := statusStateDir(ctx, dir)
+	fmt.Fprintf(stdout, "持久终端组件目录：%s（%s）\n", stateDir, stateNote)
 	if endpoint, err := supervisor.HelperEndpoint(stateDir); err == nil {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 3*time.Second)
 		_, probeErr := supervisor.NewClient(endpoint, stateDir).List(probeCtx)
@@ -522,5 +523,29 @@ func printServiceEnvironment(stdout io.Writer, manager ServiceManager) {
 	}
 	for _, line := range env.describe() {
 		fmt.Fprintln(stdout, applog.RedactText(line))
+	}
+}
+
+// statusStateDir is the helper directory `status` inspects: the one the running agent would use, with why. It never
+// stops a helper, so an idle helper in the previous directory is reported where it runs.
+func statusStateDir(ctx context.Context, dataDir string) (string, string) {
+	own := filepath.Join(dataDir, "durable", "supervisor")
+	shared, ok := sharedHelperDir(dataDir)
+	if !ok {
+		return own, "独立目录：使用了自定义数据目录或此平台不共享，不与桌面应用共用"
+	}
+	readOnly := supervisor.StateDirSteps{Stop: func(context.Context, string, supervisor.RunningHelper) error {
+		return errors.New("status does not stop helpers")
+	}}
+	choice := supervisor.SettleStateDir(ctx, shared, own, readOnly)
+	switch {
+	case !choice.Legacy:
+		return choice.Dir, "与桌面应用共用"
+	case choice.Err != nil:
+		return choice.Dir, "上一版目录：其中的组件暂无法确认会话（" + applog.RedactText(choice.Err.Error()) + "），继续使用它"
+	case choice.LegacyKnown:
+		return choice.Dir, fmt.Sprintf("上一版目录：其中仍有 %d 个会话，结束后将自动切换到共享目录", choice.LegacySessions)
+	default:
+		return choice.Dir, "上一版目录：其中的会话数量未知，继续使用它"
 	}
 }

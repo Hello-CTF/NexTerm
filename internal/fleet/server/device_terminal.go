@@ -56,7 +56,8 @@ func (s *Service) TerminalDevices(ctx context.Context, userID string) ([]Termina
 	if err != nil {
 		return nil, err
 	}
-	result := make([]TerminalDevice, 0, len(devices))
+	live := make([]TerminalDevice, 0, len(devices))
+	created := make(map[string]int64, len(devices))
 	for _, device := range devices {
 		if device.RevokedAt != 0 || device.Agent == nil {
 			continue
@@ -68,9 +69,55 @@ func (s *Service) TerminalDevices(ctx context.Context, userID string) ([]Termina
 		if digest, ok := s.registry.StateDigest(device.ID); ok {
 			item.Digest = digest
 		}
-		result = append(result, item)
+		created[device.ID] = device.CreatedAt
+		live = append(live, item)
 	}
-	return result, nil
+	return dropSharedHelperDevices(live, created), nil
+}
+
+// dropSharedHelperDevices keeps one device per supervisor state digest. Two
+// devices of one account report the same digest when they front the same
+// helper (a desktop's local-helper exposure and an agent on that machine),
+// and listing both would show every durable session twice. The agent device
+// is the canonical route; a local-helper device is dropped when an agent
+// reports the same digest. A device with terminal access off cannot serve
+// sessions, so it never displaces one that can: terminal-enabled devices are
+// preferred, and a device is dropped only for a kept one that is enabled.
+// Ties break by creation time, then id. Only online
+// devices carry a digest, so when the canonical device is offline the other
+// stays listed. Devices without a digest are never merged, and the caller
+// passes one account's devices, so digests of different accounts never meet.
+func dropSharedHelperDevices(devices []TerminalDevice, created map[string]int64) []TerminalDevice {
+	best := make(map[string]int, len(devices))
+	for i, device := range devices {
+		if device.Digest == "" {
+			continue
+		}
+		if j, ok := best[device.Digest]; !ok || preferHelperRoute(device, devices[j], created) {
+			best[device.Digest] = i
+		}
+	}
+	result := make([]TerminalDevice, 0, len(devices))
+	for i, device := range devices {
+		if device.Digest != "" && best[device.Digest] != i && devices[best[device.Digest]].TerminalEnabled {
+			continue
+		}
+		result = append(result, device)
+	}
+	return result
+}
+
+func preferHelperRoute(a, b TerminalDevice, created map[string]int64) bool {
+	if a.TerminalEnabled != b.TerminalEnabled {
+		return a.TerminalEnabled
+	}
+	if aLocal, bLocal := a.Kind == agent.DeviceKindLocalHelper, b.Kind == agent.DeviceKindLocalHelper; aLocal != bLocal {
+		return !aLocal
+	}
+	if created[a.ID] != created[b.ID] {
+		return created[a.ID] < created[b.ID]
+	}
+	return a.ID < b.ID
 }
 
 // RequestDeviceBridge dials a bridge to the device supervisor helper for an authorized device session;

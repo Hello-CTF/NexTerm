@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // StaleAgainst reports whether the helper speaks this protocol but runs another build than local. Only a
@@ -12,7 +15,33 @@ import (
 // called stale.
 func (h RunningHelper) StaleAgainst(local RuntimeMetadata) bool {
 	return h.Protocol == ProtocolVersion && h.Runtime != nil &&
-		h.Runtime.SHA256 != "" && local.SHA256 != "" && h.Runtime.SHA256 != local.SHA256
+		h.Runtime.SHA256 != "" && local.SHA256 != "" && h.Runtime.SHA256 != local.SHA256 &&
+		!sameRelease(*h.Runtime, local)
+}
+
+// sameRelease reports two builds of one release (same valid release version and commit). The desktop and
+// the agent are different executables of one release and share a helper, so their digests differ without either
+// being older. A commit labelled dirty (`<commit>+dirty`) is not a reproducible release. Dev builds (no release version or commit) are told apart by digest only.
+func sameRelease(a, b RuntimeMetadata) bool {
+	return isReleaseBuild(a) && isReleaseBuild(b) &&
+		strings.TrimPrefix(a.Version, "v") == strings.TrimPrefix(b.Version, "v") && a.Commit == b.Commit
+}
+
+func isReleaseBuild(m RuntimeMetadata) bool {
+	version := strings.TrimPrefix(m.Version, "v")
+	return semver.IsValid("v"+version) && version != "0.0.0" && m.Commit != "" && m.Commit != "unknown" && !strings.Contains(m.Commit, "dirty")
+}
+
+// NewerThan reports whether the helper speaks this protocol but was released after local. Only two
+// semantic versions can be ordered; a dev build or an unreported version is never called newer, so
+// the usual stale handling applies to it. A client never replaces a newer helper: two apps sharing
+// one helper would otherwise downgrade and upgrade each other.
+func (h RunningHelper) NewerThan(local RuntimeMetadata) bool {
+	if h.Protocol != ProtocolVersion || h.Runtime == nil {
+		return false
+	}
+	helper, mine := "v"+strings.TrimPrefix(h.Runtime.Version, "v"), "v"+strings.TrimPrefix(local.Version, "v")
+	return semver.IsValid(helper) && semver.IsValid(mine) && semver.Compare(helper, mine) > 0
 }
 
 // HelperBuild is the result of comparing the helper that serves a state directory with this build.
@@ -22,6 +51,9 @@ type HelperBuild struct {
 	// Stale is set when the helper runs an older build of the same protocol, or was started in another
 	// SHELL or PATH than a helper started now would get.
 	Stale bool
+	// Newer is set when the helper runs a newer release than this build. It is never stale and is never
+	// replaced by this build.
+	Newer bool
 	// StaleReason is "build" or "env" while Stale, and empty otherwise.
 	StaleReason string
 	// StartShell is the SHELL the stale helper inherited; ExpectedShell is the one a new helper gets.
@@ -73,9 +105,17 @@ func inspectHelperBuild(ctx context.Context, stateDir string, local RuntimeMetad
 	if err != nil {
 		return HelperBuild{}, err
 	}
-	expected := expectedStartEnv()
+	return describeHelperBuild(running, local, expectedStartEnv()), nil
+}
+
+// describeHelperBuild compares an inspected helper with the running build.
+func describeHelperBuild(running RunningHelper, local RuntimeMetadata, expected StartEnv) HelperBuild {
 	reason := running.StaleReason(local, expected)
-	build := HelperBuild{Helper: running, Local: local, Stale: reason != "", StaleReason: reason}
+	newer := running.NewerThan(local)
+	if newer {
+		reason = ""
+	}
+	build := HelperBuild{Helper: running, Local: local, Stale: reason != "", StaleReason: reason, Newer: newer}
 	if reason == "env" {
 		build.StartShell, build.ExpectedShell = running.StartEnv.Shell, expected.Shell
 	}
@@ -86,7 +126,7 @@ func inspectHelperBuild(ctx context.Context, stateDir string, local RuntimeMetad
 	if build.Stale {
 		build.ConsentToken = HelperConsentToken(running)
 	}
-	return build, nil
+	return build
 }
 
 // EnsureHelperBuild replaces a helper of an older build when, and only when, it reports that it runs no
@@ -176,7 +216,9 @@ func replaceStaleHelper(ctx context.Context, config HelperConfig, token string, 
 			return restoreHelper(ctx, stateDir, executable, protocol)
 		},
 		sameProtocol: true,
-		stillOlder:   func(running RunningHelper) bool { return running.StaleReason(local, expectedStartEnv()) != "" },
+		stillOlder: func(running RunningHelper) bool {
+			return !running.NewerThan(local) && running.StaleReason(local, expectedStartEnv()) != ""
+		},
 	}
 	helper, result, _, err := steps.run(ctx, consent)
 	return helper, result, err

@@ -103,11 +103,13 @@ func newProductionLocalHelper(config ProductionConfig, singleAccount bool, logge
 		}
 		executable = resolved
 	}
+	stateDir, legacyStateDir := localHelperStateDirs(config)
 	return localhelper.New(localhelper.Config{
-		StateDir:   filepath.Join(config.DataDir, "durable", "supervisor"),
-		Executable: executable,
-		Logger:     logger,
-		StateRules: rules,
+		StateDir:       stateDir,
+		LegacyStateDir: legacyStateDir,
+		Executable:     executable,
+		Logger:         logger,
+		StateRules:     rules,
 		OnChange: func(status localhelper.Status) {
 			if status.State == localhelper.StateFailed || status.State == localhelper.StateOutdated {
 				logger.Warn("local helper needs attention", "state", status.State, "reason", status.Reason)
@@ -115,6 +117,20 @@ func newProductionLocalHelper(config ProductionConfig, singleAccount bool, logge
 			_ = ipc.Emit(context.Background(), events, ipc.TopicLocalHelperStatus, localHelperStatus(status))
 		},
 	})
+}
+
+// localHelperStateDirs returns the helper state directory and the previous
+// per-app one. A desktop with a default data directory shares one helper with
+// the NexTerm agent of the same OS user (ProductionConfig.SharedHelperStateDir)
+// and keeps using the old directory while its helper runs sessions. Without a
+// shared directory (explicit data directory, server, tests) the old directory
+// stays the only one.
+func localHelperStateDirs(config ProductionConfig) (stateDir, legacy string) {
+	own := filepath.Join(config.DataDir, "durable", "supervisor")
+	if config.SharedHelperStateDir == "" {
+		return own, ""
+	}
+	return config.SharedHelperStateDir, own
 }
 
 // LocalHelperEnv set to "off" (or 0, false, no) keeps local terminals in the

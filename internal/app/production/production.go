@@ -23,6 +23,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
@@ -157,6 +158,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	}
 	if services.sessionAggregate == nil && services.Sessions != nil {
 		services.sessionAggregate = newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
+		services.sessionAggregate.localDigest = localHelperDigest(services.LocalHelper)
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
@@ -482,4 +484,22 @@ func (c aiHooksComponent) Start(context.Context) error { return nil }
 func (c aiHooksComponent) Shutdown(context.Context) error {
 	c.release()
 	return nil
+}
+
+// localHelperDigest reports the state digest of the local helper in its
+// current state directory, empty while the helper is not running.
+func localHelperDigest(helper *localhelper.Service) func() string {
+	if helper == nil {
+		return nil
+	}
+	return func() string {
+		if state := helper.Status().State; state != localhelper.StateReady && state != localhelper.StateOutdated {
+			return ""
+		}
+		digest, err := supervisor.LocalStateDigest(helper.StateDir())
+		if err != nil {
+			return ""
+		}
+		return digest
+	}
 }

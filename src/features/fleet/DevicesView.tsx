@@ -37,6 +37,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { formatTime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./format";
+import { sharedHelperLabel, sharedHelperPeers } from "./sharedHelper";
 import { BaseUrlsSection } from "./BaseUrlsSection";
 import { MetricsPanel } from "./MetricsPanel";
 import { EnrollPanel, ENROLL_TTL_OPTIONS, type IssuedEnrollCode } from "./EnrollPanel";
@@ -147,9 +148,10 @@ interface DeviceCardProps {
   isAdmin: boolean;
   onPatch: (id: string, patch: Partial<FleetDevice>) => void;
   onRevoked: (id: string) => void;
+  sharedHelper?: string | null;
 }
 
-function DeviceCard({ device, serverVersion: listServerVersion, now, online, isAdmin, onPatch, onRevoked }: DeviceCardProps) {
+function DeviceCard({ device, serverVersion: listServerVersion, now, online, isAdmin, onPatch, onRevoked, sharedHelper }: DeviceCardProps) {
   const pushToast = useUi((s) => s.pushToast);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -336,6 +338,9 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             <span className={agent.terminal_enabled ? "" : "text-amber-300"}>
               · 远程终端{agent.terminal_enabled ? "已开启" : "已关闭"}
             </span>
+            {sharedHelper && (
+              <span title="两个设备连接同一个持久终端组件，会话只列出一份（经代理设备）；各自的设置仍然独立。">· {sharedHelper}</span>
+            )}
           </>
         ) : (
           <span>{device.kind === "browser" ? "浏览器设备" : device.kind === "local-helper" ? "桌面本机终端" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
@@ -828,9 +833,11 @@ export function DevicesView() {
     enrollButtonRef.current?.focus();
   };
   const hiddenRevokedCount = devices?.filter((d) => d.revoked_at !== 0).length ?? 0;
+  const helperPeers = sharedHelperPeers(devices);
   const renderDeviceCard = (d: FleetDevice) => (
     <DeviceCard
       key={d.id}
+      sharedHelper={sharedHelperLabel(helperPeers.get(d.id))}
       device={d}
       serverVersion={listServerVersion}
       now={now}

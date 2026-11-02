@@ -16,11 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 // State is the lifecycle state of the local helper.
@@ -98,6 +100,11 @@ func (e *UnavailableError) Starting() bool { return e.Status.State == StateStart
 type Config struct {
 	// StateDir is the helper state directory; it names the helper endpoint.
 	StateDir string
+	// LegacyStateDir, when set, is the previous per-app directory. While the
+	// helper there runs sessions the service keeps using it (live terminals
+	// cannot move between helpers) and switches to StateDir once it runs none;
+	// an idle helper there is then stopped. Its directory is never deleted.
+	LegacyStateDir string
 	// Executable is the binary started as the helper; empty means this one.
 	Executable string
 	Limits     supervisor.Limits
@@ -122,7 +129,10 @@ type Config struct {
 	inspect    func(context.Context, string) (supervisor.RunningHelper, error)
 	stop       func(context.Context, string, supervisor.RunningHelper) error
 	selfDigest func() (string, error)
-	now        func() time.Time
+	// selfVersion is this build's release; a helper of a newer release is never offered a replacement.
+	selfVersion func() string
+	selfCommit  func() string
+	now         func() time.Time
 }
 
 // helperHandle is the part of *supervisor.Helper the lifecycle uses.
@@ -145,6 +155,12 @@ func connectHelper(ctx context.Context, config supervisor.HelperConfig) (helperH
 // Service runs the local helper lifecycle in one goroutine.
 type Service struct {
 	config Config
+
+	// stateDir is the directory in use; it moves from the legacy to the
+	// shared directory once, and legacyNote tells the user what keeps it back.
+	stateDir   atomic.Pointer[string]
+	settled    atomic.Bool
+	legacyNote atomic.Pointer[string]
 
 	mu       sync.Mutex
 	status   Status
@@ -209,6 +225,12 @@ func New(config Config) *Service {
 	if config.selfDigest == nil {
 		config.selfDigest = selfDigest
 	}
+	if config.selfVersion == nil {
+		config.selfVersion = func() string { return version.Version }
+	}
+	if config.selfCommit == nil {
+		config.selfCommit = func() string { return version.Commit }
+	}
 	if config.now == nil {
 		config.now = time.Now
 	}
@@ -217,7 +239,7 @@ func New(config Config) *Service {
 	if !Supported || config.StateDir == "" {
 		initial = Status{State: StateDisabled, Reason: "此平台没有本机持久终端组件"}
 	}
-	return &Service{
+	service := &Service{
 		config:   config,
 		status:   initial,
 		changed:  make(chan struct{}),
@@ -228,6 +250,52 @@ func New(config Config) *Service {
 		cancel:   cancel,
 		done:     make(chan struct{}),
 	}
+	dir := config.StateDir
+	service.stateDir.Store(&dir)
+	service.settled.Store(config.LegacyStateDir == "")
+	return service
+}
+
+func (s *Service) dir() string { return *s.stateDir.Load() }
+
+// settle moves the service to the shared directory once the helper of the
+// legacy directory runs no session. inspect, when set, is an inspection of
+// the directory in use that the caller just made. It reports whether the
+// directory changed.
+func (s *Service) settle(inspect func(context.Context, string) (supervisor.RunningHelper, error)) bool {
+	if s.settled.Load() {
+		return false
+	}
+	steps := supervisor.StateDirSteps{Inspect: s.config.inspect, Stop: s.config.stop}
+	if inspect != nil {
+		steps.Inspect = inspect
+	}
+	choice := supervisor.SettleStateDir(s.ctx, s.config.StateDir, s.config.LegacyStateDir, steps)
+	if s.ctx.Err() != nil {
+		return false
+	}
+	if choice.Legacy {
+		legacyDir := choice.Dir
+		s.stateDir.Store(&legacyDir)
+		note := ""
+		switch {
+		case choice.Err != nil:
+			s.config.Logger.Warn("previous local helper cannot be settled", "dir", choice.Dir, "error", choice.Err)
+			note = "上一版本地持久终端组件暂无法确认其会话，继续使用它"
+		case choice.LegacyKnown:
+			note = fmt.Sprintf("上一版本地持久终端组件中仍有 %d 个会话，结束后将自动切换到共享组件", choice.LegacySessions)
+		default:
+			note = "上一版本地持久终端组件中的会话数量未知，继续使用它"
+		}
+		s.legacyNote.Store(&note)
+		return false
+	}
+	s.legacyNote.Store(nil)
+	s.settled.Store(true)
+	dir := choice.Dir
+	s.stateDir.Store(&dir)
+	s.config.Logger.Info("local helper moved to the shared state directory", "dir", dir, "stopped_previous", choice.Stopped)
+	return true
 }
 
 // selfDigest hashes this executable once; the app binary does not change while it runs.
@@ -270,7 +338,7 @@ func (s *Service) Close() {
 }
 
 // StateDir returns the helper state directory, which names its endpoint.
-func (s *Service) StateDir() string { return s.config.StateDir }
+func (s *Service) StateDir() string { return s.dir() }
 
 // Status returns the current status.
 func (s *Service) Status() Status {
@@ -471,10 +539,10 @@ func (s *Service) helperExecutable() (string, error) {
 		}
 		executable = resolved
 	}
-	if err := supervisor.PrepareStateDir(s.config.StateDir); err != nil {
+	if err := supervisor.PrepareStateDir(s.dir()); err != nil {
 		return "", err
 	}
-	staged, err := stageExecutable(s.config.StateDir, executable)
+	staged, err := stageExecutable(s.dir(), executable)
 	if err != nil {
 		return "", fmt.Errorf("stage the helper executable: %w", err)
 	}
@@ -482,7 +550,7 @@ func (s *Service) helperExecutable() (string, error) {
 }
 
 func (s *Service) logPath() string {
-	return filepath.Join(s.config.StateDir, "helper.log")
+	return filepath.Join(s.dir(), "helper.log")
 }
 
 // watchOutcome is how a watched helper stopped serving.
@@ -494,6 +562,9 @@ const (
 	watchExited
 	// watchRestarted: the user approved a restart and this service stopped it.
 	watchRestarted
+	// watchMigrated: the previous directory's helper ended idle and the
+	// service moved to the shared directory.
+	watchMigrated
 )
 
 // run is the single actor that inspects, spawns, watches and replaces the
@@ -505,7 +576,8 @@ func (s *Service) run() {
 	defer s.markChecked()
 	quickExits := 0
 	for s.ctx.Err() == nil {
-		running, inspectErr := s.config.inspect(s.ctx, s.config.StateDir)
+		s.settle(nil)
+		running, inspectErr := s.config.inspect(s.ctx, s.dir())
 		if s.ctx.Err() != nil {
 			return
 		}
@@ -513,7 +585,7 @@ func (s *Service) run() {
 			if running.ActivityKnown && running.Activity.Total() == 0 && s.isWanted() {
 				// Nothing runs in it, so replacing it ends no session.
 				s.config.Logger.Info("replacing an idle local helper of another protocol", "protocol", running.Protocol, "pid", running.PID)
-				if err := s.config.stop(s.ctx, s.config.StateDir, running); err != nil && s.ctx.Err() == nil {
+				if err := s.config.stop(s.ctx, s.dir(), running); err != nil && s.ctx.Err() == nil {
 					s.setStatus(Status{State: StateFailed, Reason: "无法替换旧版本地持久终端组件：" + err.Error()}, nil)
 					s.markChecked()
 					if !s.awaitRetry(nil) {
@@ -565,7 +637,7 @@ func (s *Service) run() {
 			// Without a durable terminal asking for one, this only attaches to
 			// the helper just inspected; it never spawns one.
 			helper, err = s.config.connect(s.ctx, supervisor.HelperConfig{
-				StateDir: s.config.StateDir, Executable: executable, Limits: s.config.Limits, NoSpawn: !s.isWanted(),
+				StateDir: s.dir(), Executable: executable, Limits: s.config.Limits, NoSpawn: !s.isWanted(),
 			})
 		}
 		if s.ctx.Err() != nil {
@@ -605,6 +677,10 @@ func (s *Service) run() {
 		switch outcome {
 		case watchClosed:
 			return
+		case watchMigrated:
+			// The previous helper ran nothing and was stopped; the shared one
+			// starts when a durable terminal needs it.
+			continue
 		case watchRestarted:
 			// The user restarted it onto this build: start the new one now.
 			s.setWanted(true)
@@ -642,7 +718,7 @@ func (s *Service) run() {
 // replacedBy reports whether another process now serves the endpoint the
 // exited helper served, which is not a crash of that helper.
 func (s *Service) replacedBy(helper helperHandle) bool {
-	running, err := s.config.inspect(s.ctx, s.config.StateDir)
+	running, err := s.config.inspect(s.ctx, s.dir())
 	return err == nil && running.PID != helper.PID()
 }
 
@@ -665,6 +741,9 @@ func (s *Service) legacyStatus(running supervisor.RunningHelper) Status {
 	} else if running.PTYListed {
 		sessions = fmt.Sprintf("至少 %d 个终端会话（后台命令数未知）", status.ActiveSessions)
 	}
+	if note := s.legacyNote.Load(); note != nil {
+		status.Warning = *note
+	}
 	status.Reason = fmt.Sprintf("本机持久终端组件为旧版本（协议 v%d），其中有%s在运行；新开的本机终端暂用临时终端。重启组件会结束这些会话", running.Protocol, sessions)
 	return status
 }
@@ -676,11 +755,26 @@ func (s *Service) readyStatus(helper helperHandle, running supervisor.RunningHel
 	if helper.JobBound() {
 		status.Warning = "本机持久终端组件无法脱离当前进程所在的 Windows 作业对象，退出 NexTerm 时可能被一并结束"
 	}
+	if note := s.legacyNote.Load(); note != nil {
+		if status.Warning != "" {
+			status.Warning += "；"
+		}
+		status.Warning += *note
+	}
 	if !inspected || running.Runtime == nil {
+		return status
+	}
+	if running.NewerThan(supervisor.RuntimeMetadata{Version: s.config.selfVersion()}) {
+		// A newer build's helper is never replaced by this older one.
 		return status
 	}
 	digest, err := s.config.selfDigest()
 	if err != nil || digest == running.Runtime.SHA256 {
+		return status
+	}
+	// The agent is another executable of the same release; sharing its helper is not an update.
+	local := supervisor.RuntimeMetadata{Version: s.config.selfVersion(), Commit: s.config.selfCommit(), SHA256: digest}
+	if !running.StaleAgainst(local) {
 		return status
 	}
 	status.UpdateAvailable = true
@@ -711,7 +805,7 @@ func (s *Service) restartWith(token string) (bool, error) {
 	if !ok {
 		return false, ErrStaleConsent
 	}
-	current, err := s.config.inspect(s.ctx, s.config.StateDir)
+	current, err := s.config.inspect(s.ctx, s.dir())
 	if err != nil {
 		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
 	}
@@ -719,7 +813,7 @@ func (s *Service) restartWith(token string) (bool, error) {
 		return false, ErrStaleConsent
 	}
 	s.config.Logger.Info("stopping a local helper with consent", "protocol", expected.Protocol, "pid", expected.PID, "sessions", expected.Activity.Total())
-	err = s.config.stop(s.ctx, s.config.StateDir, expected)
+	err = s.config.stop(s.ctx, s.dir(), expected)
 	if errors.Is(err, supervisor.ErrHelperChanged) {
 		return false, fmt.Errorf("%w: %v", ErrStaleConsent, err)
 	}
@@ -744,7 +838,7 @@ func (s *Service) awaitOutdated(running supervisor.RunningHelper, token string) 
 				return true
 			}
 		case <-ticker.C:
-			current, err := s.config.inspect(s.ctx, s.config.StateDir)
+			current, err := s.config.inspect(s.ctx, s.dir())
 			if err != nil || consentToken(current) != token {
 				return s.ctx.Err() == nil
 			}
@@ -844,7 +938,7 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 	if s.config.StateRules != nil {
 		provider = provider.WithStateRules(s.config.StateRules)
 	}
-	running, err := s.config.inspect(s.ctx, s.config.StateDir)
+	running, err := s.config.inspect(s.ctx, s.dir())
 	inspected := err == nil && running.Current()
 	status := s.readyStatus(helper, running, inspected && !helper.Spawned())
 	s.setStatus(status, provider)
@@ -873,9 +967,18 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 		case <-s.ensure:
 		case <-ticker.C:
 			if exited != nil {
+				// A helper this process spawned is watched through its
+				// process; only the move off the legacy directory is polled.
+				if !s.settled.Load() {
+					if s.settle(nil) {
+						return watchMigrated
+					}
+					status = s.readyStatus(helper, running, false)
+					s.setStatus(status, provider)
+				}
 				continue
 			}
-			current, err := s.config.inspect(s.ctx, s.config.StateDir)
+			current, err := s.config.inspect(s.ctx, s.dir())
 			if s.ctx.Err() != nil {
 				return watchClosed
 			}
@@ -891,6 +994,9 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 			// the run loop counts it only if this service spawned the helper.
 			if err != nil || !current.Current() || current.PID != running.PID && inspected {
 				return watchExited
+			}
+			if s.settle(func(context.Context, string) (supervisor.RunningHelper, error) { return current, nil }) {
+				return watchMigrated
 			}
 			running, inspected = current, true
 			status = s.readyStatus(helper, running, true)
@@ -909,7 +1015,7 @@ func (s *Service) watch(helper helperHandle) watchOutcome {
 				if stopped {
 					return watchRestarted
 				}
-				if current, err := s.config.inspect(s.ctx, s.config.StateDir); err == nil {
+				if current, err := s.config.inspect(s.ctx, s.dir()); err == nil {
 					running = current
 					status = s.readyStatus(helper, running, true)
 					s.setStatus(status, provider)

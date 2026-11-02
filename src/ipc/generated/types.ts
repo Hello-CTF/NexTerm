@@ -26,6 +26,7 @@ export type AggregateHost = {
   assetId?: string;
   deviceId?: string;
   deviceKind?: string;
+  stateDigest?: string;
 };
 
 export type AggregateHostStatus = AggregateHost & {
