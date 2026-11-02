@@ -28,6 +28,10 @@ type TargetStreamOptions struct {
 	Interactor Interactor
 	// OnAnswered observes each answered prompt; it never receives a secret value.
 	OnAnswered func(AnswerRecord)
+
+	// afterFunc replaces time.AfterFunc for the interactive exec deadline so
+	// tests can drive it without waiting in real time.
+	afterFunc func(time.Duration, func()) deadlineTimer
 }
 
 // targetStreamOutcome carries the execution side of a streamed target; the
@@ -148,7 +152,7 @@ func streamTargetResult(ctx context.Context, tracker *ProgressTracker, target Ta
 		// human is not reported as a command timeout.
 		cancelCause, cancel := context.WithCancelCause(ctx)
 		opCtx = cancelCause
-		deadline = newPausableDeadline(timeout, func() { cancel(context.DeadlineExceeded) })
+		deadline = newPausableDeadline(timeout, func() { cancel(context.DeadlineExceeded) }, options.afterFunc)
 		opCancel = func() { deadline.Stop(); cancel(context.Canceled) }
 	} else {
 		var cancel context.CancelFunc

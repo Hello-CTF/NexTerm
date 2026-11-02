@@ -774,24 +774,40 @@ func TestRelayBackpressureDeliversEverythingInOrder(t *testing.T) {
 	}
 	left, right := net.Pipe()
 	client, server := newMemPair(0) // unbuffered: every write waits for the reader
+	// Every upstream byte is read by the relay before Write returns, and the
+	// relay forwards frames in order, so closing after Write cannot cut data.
+	written := make(chan struct{})
 	go func() {
 		_, _ = right.Write(payload)
-		time.Sleep(10 * time.Millisecond)
+		close(written)
 		_ = right.Close()
 	}()
 	done := make(chan error, 1)
 	go func() { done <- relayFrames(server, left, nil) }()
 	var got []byte
 	for len(got) < len(payload) {
-		time.Sleep(time.Millisecond) // a slow consumer
 		frame, err := client.ReadFrame()
 		if err != nil {
 			t.Fatalf("read after %d bytes: %v", len(got), err)
 		}
 		got = append(got, frame...)
+		if len(got) == len(frame) {
+			// The consumer is blocked until now: the relay can hold at most one
+			// chunk in flight, so the upstream write cannot have completed.
+			select {
+			case <-written:
+				t.Fatal("upstream write finished while the consumer had read one chunk: no backpressure")
+			default:
+			}
+		}
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatal("relayed bytes differ: data was dropped or reordered under backpressure")
+	}
+	select {
+	case <-written:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upstream write never completed")
 	}
 	<-done
 }
@@ -1081,7 +1097,9 @@ func TestVNCPinnedHostRefusesPlainSecurity(t *testing.T) {
 	f := newFixture(t)
 	var mu sync.Mutex
 	credentialsRead := false
+	handlerDone := make(chan struct{}, 2)
 	host, port := listen(t, func(conn net.Conn) {
+		defer func() { handlerDone <- struct{}{} }()
 		_, _ = conn.Write([]byte("RFB 003.008\n"))
 		_, _ = io.ReadFull(conn, make([]byte, 12))
 		_, _ = conn.Write([]byte{1, rfbSecVNCAuth})
@@ -1118,13 +1136,24 @@ func TestVNCPinnedHostRefusesPlainSecurity(t *testing.T) {
 		t.Fatalf("unpinned host rejected: %q", reason)
 	}
 	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeVNC] = "SHA256:pinned"
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first upstream handler did not finish")
+	}
 	mu.Lock()
 	credentialsRead = false
 	mu.Unlock()
 	if reason := connect(); !strings.Contains(reason, "不再提供 TLS") {
 		t.Fatalf("pinned host reason = %q", reason)
 	}
-	time.Sleep(50 * time.Millisecond)
+	// The handler returns once the service drops the upstream connection, so
+	// by then it would already have read credentials if any had been sent.
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pinned upstream connection was not dropped")
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if credentialsRead {

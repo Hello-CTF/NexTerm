@@ -431,12 +431,22 @@ func TestOwnerCleanupGlobalCapEvictsOldestCommittedFirst(t *testing.T) {
 	clock := newCleanupTestClock()
 	service := New(Config{Resolver: &fakeResolver{targets: map[string]Target{}}, Now: clock.Now})
 	owners := maxAccountCleanupEvents / maxAccountCleanupEventsPerOwner
+	// Seed the committed state a full set of CancelOwner calls would leave:
+	// running each call re-sorts every committed event, which made this test
+	// quadratic and the slowest in the package. The cap is then exercised
+	// through the real CancelOwner and PrepareOwnerCleanup calls below.
+	service.mu.Lock()
 	for owner := 0; owner < owners; owner++ {
 		for index := 0; index < maxAccountCleanupEventsPerOwner; index++ {
 			clock.Advance(time.Millisecond)
-			service.CancelOwner(t.Context(), fmt.Sprintf("owner-%02d", owner), fmt.Sprintf("event-%02d", index), nil)
+			done := make(chan struct{})
+			close(done)
+			service.accountCleanups[accountCleanupKey{ownerID: fmt.Sprintf("owner-%02d", owner), eventID: fmt.Sprintf("event-%02d", index)}] = &accountCleanupEvent{
+				done: done, committed: true, committedAt: clock.Now(),
+			}
 		}
 	}
+	service.mu.Unlock()
 	clock.Advance(time.Millisecond)
 	service.CancelOwner(t.Context(), "owner-00", "event-global-overflow", nil)
 	// The overflow is committed after that event's own prepare; the next

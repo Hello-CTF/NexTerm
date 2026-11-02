@@ -86,16 +86,27 @@ func execStdinSupported(transport base.Transport) bool {
 // into a command timeout.
 type pausableDeadline struct {
 	mu        sync.Mutex
-	timer     *time.Timer
+	timer     deadlineTimer
 	remaining time.Duration
 	resumedAt time.Time
 	stopped   bool
 	fire      func()
 }
 
-func newPausableDeadline(total time.Duration, fire func()) *pausableDeadline {
+// deadlineTimer is the part of *time.Timer the deadline uses.
+type deadlineTimer interface {
+	Stop() bool
+	Reset(time.Duration) bool
+}
+
+// newPausableDeadline arms the deadline. A nil afterFunc uses time.AfterFunc;
+// tests inject a manually driven timer so no test has to wait in real time.
+func newPausableDeadline(total time.Duration, fire func(), afterFunc func(time.Duration, func()) deadlineTimer) *pausableDeadline {
+	if afterFunc == nil {
+		afterFunc = func(d time.Duration, f func()) deadlineTimer { return time.AfterFunc(d, f) }
+	}
 	d := &pausableDeadline{remaining: total, fire: fire, resumedAt: time.Now()}
-	d.timer = time.AfterFunc(total, fire)
+	d.timer = afterFunc(total, fire)
 	return d
 }
 

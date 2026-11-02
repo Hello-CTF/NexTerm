@@ -121,15 +121,25 @@ func TestRunbookIPCScriptDirectivesEndToEnd(t *testing.T) {
 
 	waitForPrompt := func(kind runbook.PromptKind) runbook.Prompt {
 		t.Helper()
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
+		// No event crosses the package boundary when a prompt is registered
+		// (runbook.Service.onPromptsChanged is unexported), so poll on a ticker
+		// until the deadline.
+		ticker := time.NewTicker(2 * time.Millisecond)
+		defer ticker.Stop()
+		timeout := time.After(5 * time.Second)
+		for {
 			state := decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, owner, "runbook_run_get", runbook.RunRequest{RunID: "run-d"}))
 			for _, prompt := range state.Prompts {
 				if prompt.Kind == kind {
 					return prompt
 				}
 			}
-			time.Sleep(5 * time.Millisecond)
+			select {
+			case <-ticker.C:
+				continue
+			case <-timeout:
+			}
+			break
 		}
 		t.Fatalf("no %s prompt appeared", kind)
 		return runbook.Prompt{}

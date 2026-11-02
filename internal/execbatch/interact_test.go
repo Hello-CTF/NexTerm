@@ -345,12 +345,14 @@ func TestInteractiveCancelWhilePromptPending(t *testing.T) {
 
 func TestInteractiveDisconnectWhilePromptPendingUnblocks(t *testing.T) {
 	// The remote side ends (connection lost) while the operator is still being asked.
+	asking := make(chan struct{})
 	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
 		fmt.Fprint(env.stdout, "@NEXTERM:INPUT name Your name\n")
-		time.Sleep(50 * time.Millisecond)
+		<-asking
 		return errors.New("connection lost")
 	})
 	interactor := &testInteractor{ask: func(ctx context.Context, _ Question) (Answer, error) {
+		close(asking)
 		<-ctx.Done()
 		return Answer{}, ctx.Err()
 	}}
@@ -369,6 +371,41 @@ func TestInteractiveDisconnectWhilePromptPendingUnblocks(t *testing.T) {
 	}
 }
 
+// manualTimer is a deadline timer driven by the test instead of the clock.
+type manualTimer struct {
+	mu    sync.Mutex
+	armed bool
+	fire  func()
+}
+
+func (m *manualTimer) Stop() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	was := m.armed
+	m.armed = false
+	return was
+}
+
+func (m *manualTimer) Reset(time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	was := m.armed
+	m.armed = true
+	return was
+}
+
+// expire models the full timeout elapsing: it fires only if the timer is armed.
+func (m *manualTimer) expire() {
+	m.mu.Lock()
+	fire := m.fire
+	armed := m.armed
+	m.armed = false
+	m.mu.Unlock()
+	if armed {
+		fire()
+	}
+}
+
 func TestInteractiveWaitingForOperatorDoesNotConsumeExecTimeout(t *testing.T) {
 	transport := newScriptTransport("ssh", func(ctx context.Context, env scriptEnv) error {
 		fmt.Fprint(env.stdout, "@NEXTERM:INPUT name Your name\n")
@@ -376,11 +413,29 @@ func TestInteractiveWaitingForOperatorDoesNotConsumeExecTimeout(t *testing.T) {
 		fmt.Fprint(env.stdout, "ok\n")
 		return nil
 	})
+	timer := &manualTimer{}
 	interactor := &testInteractor{ask: func(ctx context.Context, _ Question) (Answer, error) {
-		time.Sleep(300 * time.Millisecond)
+		// The exec timeout elapses in full while the operator thinks; it must not fire.
+		timer.expire()
+		if err := ctx.Err(); err != nil {
+			return Answer{}, err
+		}
 		return Answer{Value: "x"}, nil
 	}}
-	result, _ := runInteractive(context.Background(), t, transport, interactiveCommand, interactor, nil, 100*time.Millisecond)
+	tracker := NewProgressTracker("batch", []string{"host-1"})
+	target := Target{SessionID: "host-1", SessionName: "web-1", Transport: transport}
+	result, err := ExecuteTargetStreamCaptured(context.Background(), tracker, target, interactiveCommand, TargetStreamOptions{
+		Timeout: 100 * time.Millisecond, Interactor: interactor,
+		afterFunc: func(_ time.Duration, fire func()) deadlineTimer {
+			timer.mu.Lock()
+			defer timer.mu.Unlock()
+			timer.fire, timer.armed = fire, true
+			return timer
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != StatusSuccess || result.Stdout != "ok\n" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -481,7 +536,6 @@ func TestInteractivePromptCountLimit(t *testing.T) {
 			if _, err := env.stdin.ReadString('\n'); err != nil {
 				return err
 			}
-			time.Sleep(60 * time.Millisecond) // stay below the directive rate limit
 		}
 		return nil
 	})
