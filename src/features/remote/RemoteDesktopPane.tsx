@@ -21,6 +21,10 @@ const RESIZE_DEBOUNCE_MS = 300;
 const HINT_MS = 3500;
 const PENDING_RETRY_MS = 600;
 const PENDING_RETRY_MAX = 10;
+const NOTICE_RECONNECT = "可重新连接，按所选大小启动。";
+const NOTICE_UNCONFIRMED = `远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
+const NOTICE_UNSUPPORTED = `这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
+const NOTICE_REFUSED = `远程主机拒绝了这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
 
 function failureTitle(failure: Failure): string {
   switch (failure.kind) {
@@ -134,7 +138,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const viewportRef = useRef<HTMLDivElement>(null);
   const keyboardInputRef = useRef<HTMLInputElement>(null);
   const session = useRemoteSession(tabId, assetId, viewportRef);
-  const { clientRef, protocol, options, setResolution: setSessionResolution } = session;
+  const { clientRef, protocol, options, desktopSize, setResolution: setSessionResolution } = session;
   const touch = isTouchShell();
 
   const [captured, setCaptured] = useState(false);
@@ -272,6 +276,22 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     if (!connected) setResolutionNotice(null);
   }, [connected]);
   const fixedResolution = effectiveResolution !== "follow";
+  // A desktop size change that answers the outstanding fixed-size request (even late, or rounded) clears the notice;
+  // a server-initiated resize to some other size does not.
+  useEffect(() => {
+    if (!desktopSize || !resolutionNotice) return;
+    if (effectiveResolution === "follow") {
+      setResolutionNotice(null);
+      return;
+    }
+    if (desktopSize.width === effectiveResolution.width && desktopSize.height === effectiveResolution.height) {
+      setResolutionNotice(null);
+      return;
+    }
+    const outcome = clientRef.current?.resize(effectiveResolution.width, effectiveResolution.height);
+    if (outcome === "applied") setResolutionNotice(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to a new desktop size only
+  }, [desktopSize]);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || protocol !== "rdp" || !connected) return;
@@ -295,29 +315,32 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       } else {
         target = effectiveResolution;
         const now = client.desktopSize();
-        if (now.width === target.width && now.height === target.height) return;
+        if (now.width === target.width && now.height === target.height) {
+          setResolutionNotice(null);
+          return;
+        }
       }
       const outcome = client.resize(target.width, target.height);
       if (outcome === "applied") {
         setResolutionNotice(null);
-      } else if (outcome === "pending") {
+      } else if (outcome === "pending" || outcome === "awaiting") {
+        // "pending" re-sends the request on each retry; "awaiting" only looks again, the request is already in flight.
         if (retries < PENDING_RETRY_MAX) {
           retries += 1;
           retryTimer = window.setTimeout(apply, PENDING_RETRY_MS);
         } else if (fixedResolution) {
-          setResolutionNotice("远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。可重新连接，按所选大小启动。");
+          setResolutionNotice(NOTICE_UNCONFIRMED);
         }
       } else if (fixedResolution) {
-        setResolutionNotice(
-          outcome === "unavailable"
-            ? "这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。可重新连接，按所选大小启动。"
-            : "远程主机拒绝了这次分辨率调整，所选分辨率尚未生效。可重新连接，按所选大小启动。",
-        );
+        setResolutionNotice(outcome === "unavailable" ? NOTICE_UNSUPPORTED : NOTICE_REFUSED);
       }
     };
     const observer = new ResizeObserver(() => {
       if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(apply, RESIZE_DEBOUNCE_MS);
+      timer = window.setTimeout(() => {
+        retries = 0;
+        apply();
+      }, RESIZE_DEBOUNCE_MS);
     });
     observer.observe(viewport);
     apply();

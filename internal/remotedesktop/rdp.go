@@ -122,61 +122,20 @@ func (rdCleanPathEngine) Serve(ctx context.Context, session RDPSession) error {
 		return userErrWrap("RDP 代理请求无效", err)
 	}
 
-	upstream, err := session.Dial(ctx)
+	up, frame, tlsFailed, err := connectUpstream(ctx, session, request.X224, tls.VersionTLS12, true)
+	if err != nil && tlsFailed && ctx.Err() == nil {
+		// A server or middlebox that rejects or drops the TLS 1.2 hello may need TLS 1.3; the upstream connection is
+		// single-use, so start over.
+		up, frame, _, err = connectUpstream(ctx, session, request.X224, 0, false)
+	}
 	if err != nil {
-		_ = client.WriteFrame(newRDCleanPathWSAError(wsaCode(err)))
+		if frame != nil {
+			_ = client.WriteFrame(frame)
+		}
 		return err
 	}
-	defer upstream.Close()
-	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
-	defer stop()
-	if session.Dialed != nil {
-		session.Dialed()
-	}
-
-	_ = upstream.SetDeadline(time.Now().Add(30 * time.Second))
-	if _, err := upstream.Write(request.X224); err != nil {
-		_ = client.WriteFrame(newRDCleanPathWSAError(wsaCode(err)))
-		return userErrWrap("发送 RDP 连接请求失败", err)
-	}
-	confirm, err := readTPKT(upstream)
-	if err != nil {
-		_ = client.WriteFrame(newRDCleanPathGeneralError())
-		return err
-	}
-	protocol, failure, err := selectedProtocol(confirm)
-	if err != nil {
-		_ = client.WriteFrame(newRDCleanPathGeneralError())
-		return err
-	}
-	if failure || protocol&(protoTLS|protoHybrid|protoHybridEx) == 0 {
-		_ = client.WriteFrame(newRDCleanPathNegotiationError(confirm))
-		return userErr("RDP 服务器不支持 TLS/NLA 安全层（仅支持标准 RDP 安全），无法连接")
-	}
-
-	var chain [][]byte
-	var leaf *x509.Certificate
-	tlsConn := tls.Client(upstream, &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		// Some Schannel RDP servers reject the first CredSSP message on TLS 1.3; TLS 1.2 keeps NLA encrypted.
-		MaxVersion: tls.VersionTLS12,
-		// Pinned by fingerprint (trust on first use); RDP servers normally present self-signed certificates.
-		InsecureSkipVerify: true,
-		ServerName:         sniName(hostOf(session.Addr)),
-		VerifyConnection: func(state tls.ConnectionState) error {
-			for _, cert := range state.PeerCertificates {
-				chain = append(chain, cert.Raw)
-			}
-			if len(state.PeerCertificates) > 0 {
-				leaf = state.PeerCertificates[0]
-			}
-			return nil
-		},
-	})
-	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		_ = client.WriteFrame(newRDCleanPathGeneralError())
-		return userErrWrap("与 RDP 服务器的 TLS 握手失败", err)
-	}
+	defer up.close()
+	upstream, tlsConn, confirm, chain, leaf := up.conn, up.tls, up.confirm, up.chain, up.leaf
 	if len(chain) == 0 {
 		_ = client.WriteFrame(newRDCleanPathGeneralError())
 		return userErr("RDP 服务器没有提供证书")
@@ -207,3 +166,73 @@ func joinAddr(host string, port int) string {
 }
 
 var _ = fmt.Sprintf
+
+type rdpUpstream struct {
+	conn    net.Conn
+	tls     *tls.Conn
+	confirm []byte
+	chain   [][]byte
+	leaf    *x509.Certificate
+	close   func()
+}
+
+// connectUpstream dials the host, repeats the X.224 negotiation and completes the TLS handshake. maxVersion 0 allows
+// every supported version. On failure it returns the RDCleanPath frame to send to the client, if any, and whether\n// the failure happened in the TLS handshake.
+func connectUpstream(ctx context.Context, session RDPSession, x224 []byte, maxVersion uint16, first bool) (*rdpUpstream, []byte, bool, error) {
+	upstream, err := session.Dial(ctx)
+	if err != nil {
+		return nil, newRDCleanPathWSAError(wsaCode(err)), false, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = upstream.Close() })
+	closeAll := func() {
+		stop()
+		_ = upstream.Close()
+	}
+	if session.Dialed != nil && first {
+		session.Dialed()
+	}
+
+	_ = upstream.SetDeadline(time.Now().Add(30 * time.Second))
+	if _, err := upstream.Write(x224); err != nil {
+		closeAll()
+		return nil, newRDCleanPathWSAError(wsaCode(err)), false, userErrWrap("发送 RDP 连接请求失败", err)
+	}
+	confirm, err := readTPKT(upstream)
+	if err != nil {
+		closeAll()
+		return nil, newRDCleanPathGeneralError(), false, err
+	}
+	protocol, failure, err := selectedProtocol(confirm)
+	if err != nil {
+		closeAll()
+		return nil, newRDCleanPathGeneralError(), false, err
+	}
+	if failure || protocol&(protoTLS|protoHybrid|protoHybridEx) == 0 {
+		closeAll()
+		return nil, newRDCleanPathNegotiationError(confirm), false, userErr("RDP 服务器不支持 TLS/NLA 安全层（仅支持标准 RDP 安全），无法连接")
+	}
+
+	up := &rdpUpstream{conn: upstream, confirm: confirm, close: closeAll}
+	up.tls = tls.Client(upstream, &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		// Windows Schannel rejects CredSSP over TLS 1.3, so offer 1.2 first; the caller retries without the cap.
+		MaxVersion: maxVersion,
+		// Pinned by fingerprint (trust on first use); RDP servers normally present self-signed certificates.
+		InsecureSkipVerify: true,
+		ServerName:         sniName(hostOf(session.Addr)),
+		VerifyConnection: func(state tls.ConnectionState) error {
+			for _, cert := range state.PeerCertificates {
+				up.chain = append(up.chain, cert.Raw)
+			}
+			if len(state.PeerCertificates) > 0 {
+				up.leaf = state.PeerCertificates[0]
+			}
+			return nil
+		},
+	})
+	if err := up.tls.HandshakeContext(ctx); err != nil {
+		closeAll()
+		return nil, newRDCleanPathGeneralError(), true, userErrWrap("与 RDP 服务器的 TLS 握手失败", err)
+	}
+	return up, nil, false, nil
+}

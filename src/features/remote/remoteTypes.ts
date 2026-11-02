@@ -86,8 +86,10 @@ export interface RemoteClient {
   disconnect(): void;
   setScale(mode: ScaleMode): void;
   setViewOnly(viewOnly: boolean): void;
-  // Asks the server for a new desktop size and reports what came of it. VNC always answers "unavailable".
-  resize(width: number, height: number): "applied" | "pending" | "unavailable" | "failed";
+  // Asks the server for a new desktop size and reports what came of it. "pending" means the channel is not ready
+  // (asking again is right); "awaiting" means the request is in flight (asking again re-sends nothing).
+  // VNC always answers "unavailable".
+  resize(width: number, height: number): "applied" | "pending" | "awaiting" | "unavailable" | "failed";
   focus(): void;
   blur(): void;
   sendKey(code: string, down: boolean): void;

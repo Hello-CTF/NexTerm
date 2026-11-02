@@ -132,12 +132,15 @@ class FakeObserver {
   }
 }
 
-class FakeMutationObserver extends FakeObserver {
-  static instances: FakeMutationObserver[] = [];
-  constructor(callback: () => void) {
-    super(callback);
-    FakeMutationObserver.instances.push(this);
-  }
+// jsdom's real MutationObserver delivers its records as a microtask.
+async function flushMutations() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function setCanvasSize(width: number, height: number) {
+  scenario.canvas.width = width;
+  scenario.canvas.height = height;
 }
 
 beforeEach(() => {
@@ -145,9 +148,7 @@ beforeEach(() => {
   stage = document.createElement("div");
   document.body.append(stage);
   FakeObserver.instances = [];
-  FakeMutationObserver.instances = [];
   vi.stubGlobal("ResizeObserver", FakeObserver);
-  vi.stubGlobal("MutationObserver", FakeMutationObserver);
   mocks.prepareRdpTransport.mockReset();
   mocks.init.mockReset();
   mocks.prepareRdpTransport.mockResolvedValue(undefined);
@@ -349,11 +350,17 @@ describe("RdpClient session end", () => {
     scenario.ui.shutdown.mockImplementation(() => {
       throw new Error("gone");
     });
-    const { client } = await connected();
+    const disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
+    const { client, cb } = await connected();
     expect(stage.children).toHaveLength(1);
     expect(() => client.disconnect()).not.toThrow();
     expect(stage.children).toHaveLength(0);
     expect(FakeObserver.instances.every((observer) => observer.disconnected)).toBe(true);
+    expect(disconnect).toHaveBeenCalled();
+    const reports = (cb as { onDesktopSize: ReturnType<typeof vi.fn> }).onDesktopSize.mock.calls.length;
+    setCanvasSize(640, 480);
+    await flushMutations();
+    expect((cb as { onDesktopSize: ReturnType<typeof vi.fn> }).onDesktopSize.mock.calls).toHaveLength(reports);
     expect(client.inputElement()).toBeNull();
     expect(client.desktopSize()).toEqual({ width: 0, height: 0 });
   });
@@ -384,18 +391,63 @@ describe("RdpClient resize", () => {
     expect(client.resize(800, 600)).toBe("failed");
   });
 
+  it("does not send the same size again while it waits for the server", async () => {
+    const { client } = await connected();
+    expect(client.resize(1280, 720)).toBe("awaiting");
+    for (let i = 0; i < 20; i += 1) expect(client.resize(1280, 720)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts a rounded canvas size as the server's answer", async () => {
+    const { client } = await connected();
+    expect(client.resize(1366, 768)).toBe("awaiting");
+    setCanvasSize(1364, 768);
+    await flushMutations();
+    expect(client.resize(1366, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    // A later, different canvas size is not the answer to that request any more.
+    setCanvasSize(1000, 500);
+    await flushMutations();
+    expect(client.resize(1366, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let an earlier request's answer satisfy a newer one", async () => {
+    const { client } = await connected();
+    expect(client.resize(1280, 720)).toBe("awaiting");
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    setCanvasSize(1280, 720);
+    await flushMutations();
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+    setCanvasSize(1022, 768);
+    await flushMutations();
+    expect(client.resize(1024, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("recognises the answer even before the canvas observer has run", async () => {
+    const { client } = await connected();
+    client.resize(1366, 768);
+    setCanvasSize(1364, 768);
+    expect(client.resize(1366, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+  });
+
   it("waits for the actual canvas size before reporting a resize as applied", async () => {
     const early = new RdpClient(stage, options(), callbacks());
     expect(early.resize(800, 600)).toBe("pending");
     const { client } = await connected();
-    expect(client.resize(800, 600)).toBe("pending");
-    expect(client.resize(800, 600)).toBe("pending");
-    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+    expect(client.resize(800, 600)).toBe("awaiting");
+    expect(client.resize(800, 600)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
     scenario.canvas.width = 800;
     scenario.canvas.height = 600;
-    FakeMutationObserver.instances[0].callback();
+    await flushMutations();
     expect(client.resize(800, 600)).toBe("applied");
-    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
     scenario.ui.resize.mockImplementationOnce(() => {
       throw new Error("Could not encode a resize: Display Control Virtual Channel is not yet connected");
     });
@@ -444,13 +496,13 @@ describe("RdpClient layout", () => {
     const holder = sizer.firstElementChild as HTMLElement;
     const viewer = stage.querySelector("iron-remote-desktop")!.shadowRoot!.querySelector<HTMLElement>(".screen-viewer")!;
     viewer.style.cssText = "width:1366px;height:768px;min-width:1366px;min-height:768px";
-    FakeMutationObserver.instances[0].callback();
+    await flushMutations();
     expect(viewer.style.width).toBe("1000px");
     expect(viewer.style.height).toBe("500px");
     expect(cb.onDesktopSize).toHaveBeenCalledTimes(1);
     scenario.canvas.width = 600;
     scenario.canvas.height = 800;
-    FakeMutationObserver.instances[0].callback();
+    await flushMutations();
     expect(holder.style.transform).toBe("scale(0.625)");
     expect(sizer.style.width).toBe("375px");
     expect(sizer.style.height).toBe("500px");

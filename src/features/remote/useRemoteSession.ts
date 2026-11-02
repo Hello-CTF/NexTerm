@@ -50,6 +50,8 @@ export interface RemoteSession {
   // Seconds until the next automatic reconnect, or null when none is scheduled.
   retryIn: number | null;
   attempt: number;
+  // The last desktop size the client reported; a new object for every change.
+  desktopSize: { width: number; height: number } | null;
   protocol: RemoteProtocol;
   options: RemoteDesktopOptions;
   // The asset has a Wake-on-LAN MAC, so a failed connect can offer to wake the host; name is for messages.
@@ -72,6 +74,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   const [retryIn, setRetryIn] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [protocol, setProtocol] = useState<RemoteProtocol>("rdp");
+  const [desktopSize, setDesktopSize] = useState<{ width: number; height: number } | null>(null);
   const [options, setOptions] = useState<RemoteDesktopOptions>(DEFAULT_OPTIONS);
   const [wake, setWake] = useState({ available: false, name: "" });
   const clientRef = useRef<RemoteClient | null>(null);
@@ -171,6 +174,9 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
           attemptRef.current = 0;
           setAttempt(0);
           settle("connected");
+        },
+        onDesktopSize: (width, height) => {
+          if (gen === generation.current) setDesktopSize({ width, height });
         },
         onDisconnected: (raw: EngineFailure | null) => {
           if (gen !== generation.current) return;
@@ -280,5 +286,5 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     return () => window.clearInterval(timer);
   }, [status, tabId]);
 
-  return { status, failure, retryIn, attempt, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
+  return { status, failure, retryIn, attempt, desktopSize, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
 }

@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   certificate: vi.fn(),
   trustCertificate: vi.fn(),
   assetGet: vi.fn(),
-  createVncClient: vi.fn(),
+  createClient: vi.fn(),
   closeTab: vi.fn(),
   prompt: vi.fn(),
   ask: vi.fn(),
@@ -33,8 +33,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     },
   });
 });
-vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createVncClient }));
-vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createVncClient }));
+vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createClient }));
+vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createClient }));
 vi.mock("../../app/store", () => ({
   requestCloseTab: mocks.closeTab,
   useUi: { getState: () => ({ pushToast: mocks.toast }) },
@@ -98,7 +98,7 @@ beforeEach(() => {
     hasPassword: true,
     expiresAtMs: Date.now() + 60_000,
   }));
-  mocks.createVncClient.mockImplementation(async (_stage: HTMLElement, options: ClientOptions, callbacks: ClientCallbacks) => {
+  mocks.createClient.mockImplementation(async (_stage: HTMLElement, options: ClientOptions, callbacks: ClientCallbacks) => {
     return fakeClient(options, callbacks);
   });
 });
@@ -143,7 +143,7 @@ describe("RemoteDesktopPane", () => {
     mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
     const resize = vi.fn(() => "pending");
     mocks.releaseSecret.mockResolvedValue({ username: "alice", domain: "", password: "test-password" });
-    mocks.createVncClient.mockImplementation(async (_stage, options, callbacks) => ({
+    mocks.createClient.mockImplementation(async (_stage, options, callbacks) => ({
       ...fakeClient(options, callbacks),
       protocol: "rdp",
       supportsResize: true,
@@ -171,7 +171,7 @@ describe("RemoteDesktopPane", () => {
     mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
     const resize = vi.fn(() => "pending");
     mocks.releaseSecret.mockResolvedValue({ username: "alice", domain: "", password: "test-password" });
-    mocks.createVncClient.mockImplementation(async (_stage, options, callbacks) => ({
+    mocks.createClient.mockImplementation(async (_stage, options, callbacks) => ({
       ...fakeClient(options, callbacks),
       protocol: "rdp",
       supportsResize: true,
@@ -197,6 +197,103 @@ describe("RemoteDesktopPane", () => {
     expect(resize).toHaveBeenCalledWith(1366, 768);
     expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("尚未确认");
     expect(document.querySelector("[data-testid='remote-resolution-notice']")?.textContent).toContain("重新连接");
+  });
+
+  describe("RDP resolution requests", () => {
+    type Outcome = "applied" | "pending" | "awaiting";
+    let resizeCallbacks: Array<() => void>;
+    let reportSize: (width: number, height: number) => void;
+
+    async function mountRdp(options: Record<string, unknown>, resize: () => Outcome, size: () => { width: number; height: number }) {
+      mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "rdp", name: "box", options });
+      const prepare = mocks.prepare.getMockImplementation()!;
+      mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
+      mocks.releaseSecret.mockResolvedValue({ username: "alice", domain: "", password: "test-password" });
+      const resizeMock = vi.fn(resize);
+      mocks.createClient.mockImplementation(async (_stage, clientOptions, callbacks) => {
+        reportSize = (width, height) => callbacks.onDesktopSize?.(width, height);
+        return { ...fakeClient(clientOptions, callbacks), protocol: "rdp", supportsResize: true, resize: resizeMock, desktopSize: size };
+      });
+      resizeCallbacks = [];
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          constructor(callback: () => void) {
+            resizeCallbacks.push(callback);
+          }
+          observe() {}
+          disconnect() {}
+        },
+      );
+      vi.useFakeTimers();
+      await mountPane();
+      return resizeMock;
+    }
+
+    const notice = () => document.querySelector("[data-testid='remote-resolution-notice']");
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    it("clears the notice when the desktop reaches the fixed size late", async () => {
+      let current = { width: 1440, height: 900 };
+      await mountRdp({ width: 1280, height: 720 }, () => "awaiting", () => current);
+      await advance(6500);
+      expect(notice()?.textContent).toContain("尚未确认");
+      await advance(2000);
+      expect(notice()).not.toBeNull();
+      current = { width: 1280, height: 720 };
+      await act(async () => reportSize(1280, 720));
+      expect(notice()).toBeNull();
+    });
+
+    it("keeps the notice when the server resizes to some other size", async () => {
+      let current = { width: 1440, height: 900 };
+      await mountRdp({ width: 1280, height: 720 }, () => "awaiting", () => current);
+      await advance(6500);
+      expect(notice()).not.toBeNull();
+      current = { width: 1600, height: 900 };
+      await act(async () => reportSize(1600, 900));
+      expect(notice()).not.toBeNull();
+    });
+
+    it("counts a rounded size from the server as the answer and shows no notice", async () => {
+      let answered = false;
+      let current = { width: 1440, height: 900 };
+      const resize = await mountRdp({ width: 1280, height: 720 }, () => (answered ? "applied" : "awaiting"), () => current);
+      await advance(1500);
+      answered = true;
+      current = { width: 1278, height: 720 };
+      await act(async () => reportSize(1278, 720));
+      await advance(10000);
+      expect(resize).toHaveBeenCalled();
+      expect(notice()).toBeNull();
+    });
+
+    it("shows no notice while following the pane, however long the server is silent", async () => {
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+      const resize = await mountRdp({}, () => "awaiting", () => ({ width: 800, height: 600 }));
+      await advance(10000);
+      expect(resize).toHaveBeenCalledWith(1000, 600);
+      expect(notice()).toBeNull();
+    });
+
+    it("gives every new resize its own retry budget", async () => {
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+      vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+      const resize = await mountRdp({}, () => "pending", () => ({ width: 800, height: 600 }));
+      await advance(8000);
+      const firstChain = resize.mock.calls.length;
+      expect(firstChain).toBeGreaterThan(1);
+      for (let chain = 0; chain < 3; chain += 1) {
+        resize.mockClear();
+        await act(async () => resizeCallbacks.forEach((callback) => callback()));
+        await advance(8000);
+        expect(resize).toHaveBeenCalledTimes(firstChain);
+      }
+    });
   });
 
   it("forgets its status when it unmounts", async () => {
@@ -248,7 +345,7 @@ describe("RemoteDesktopPane", () => {
   it("counts down and reconnects with a new ticket after a network drop", async () => {
     vi.useFakeTimers();
     await mountPane();
-    const client = mocks.createVncClient.mock.results[0].value as Promise<FakeClient>;
+    const client = mocks.createClient.mock.results[0].value as Promise<FakeClient>;
     const first = await client;
     const drop: EngineFailure = { protocol: "vnc", stage: "closed", clean: false, wasConnected: true, message: "与远程桌面的连接已中断" };
     await act(async () => {
@@ -261,12 +358,12 @@ describe("RemoteDesktopPane", () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
     expect(mocks.prepare).toHaveBeenCalledTimes(2);
-    expect(mocks.createVncClient.mock.calls.map((call) => (call[1] as ClientOptions).prepared.ticket)).toEqual(["t-1", "t-2"]);
+    expect(mocks.createClient.mock.calls.map((call) => (call[1] as ClientOptions).prepared.ticket)).toEqual(["t-1", "t-2"]);
   });
 
   it("does not auto-reconnect after an auth failure and offers the two buttons", async () => {
     vi.useFakeTimers();
-    mocks.createVncClient.mockImplementationOnce(async () => {
+    mocks.createClient.mockImplementationOnce(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败: bad password" });
     });
     mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: {} });
@@ -289,7 +386,7 @@ describe("RemoteDesktopPane", () => {
   });
 
   it("reconnects by hand with the reconnect button using a fresh ticket", async () => {
-    mocks.createVncClient.mockImplementationOnce(async () => {
+    mocks.createClient.mockImplementationOnce(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败" });
     });
     mocks.certificate.mockResolvedValue({ status: "pinned", fingerprint: "x" });
@@ -302,7 +399,7 @@ describe("RemoteDesktopPane", () => {
   });
 
   it("offers wake on a failed connect only when the asset has a wake MAC, and says a sent packet is not a woken host", async () => {
-    mocks.createVncClient.mockImplementation(async () => {
+    mocks.createClient.mockImplementation(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "connect", message: "无法连接到主机" });
     });
     mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
@@ -318,7 +415,7 @@ describe("RemoteDesktopPane", () => {
   });
 
   it("shows a failed wake as an error and hides wake without a MAC or after an auth failure", async () => {
-    mocks.createVncClient.mockImplementation(async () => {
+    mocks.createClient.mockImplementation(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "connect", message: "无法连接到主机" });
     });
     mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
@@ -336,7 +433,7 @@ describe("RemoteDesktopPane", () => {
     unmountPane();
 
     mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { wakeMac: "AA:BB:CC:DD:EE:01" } });
-    mocks.createVncClient.mockImplementation(async () => {
+    mocks.createClient.mockImplementation(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败" });
     });
     mocks.certificate.mockResolvedValue({ status: "pinned", fingerprint: "x" });
@@ -345,7 +442,7 @@ describe("RemoteDesktopPane", () => {
   });
 
   it("closes the tab from the overlay", async () => {
-    mocks.createVncClient.mockImplementationOnce(async () => {
+    mocks.createClient.mockImplementationOnce(async () => {
       throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败" });
     });
     mocks.certificate.mockResolvedValue({ status: "pinned", fingerprint: "x" });
@@ -363,7 +460,7 @@ describe("RemoteDesktopPane", () => {
 
   it("releases keyboard capture when the connection drops, so the app shortcuts return", async () => {
     await mountPane();
-    const first = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+    const first = (await mocks.createClient.mock.results[0].value) as FakeClient;
     const canvas = document.createElement("canvas");
     canvas.tabIndex = 0;
     pane().querySelector("[data-captured] div > div")!.append(canvas);
@@ -385,7 +482,7 @@ describe("RemoteDesktopPane", () => {
     mocks.prompt.mockResolvedValue("typed");
     await mountPane();
     await flush();
-    const first = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+    const first = (await mocks.createClient.mock.results[0].value) as FakeClient;
     await act(async () => {
       first.callbacks.onDisconnected({ protocol: "vnc", stage: "closed", clean: false, wasConnected: true, message: "x" });
     });
@@ -403,7 +500,7 @@ describe("RemoteDesktopPane", () => {
       ticket: `t-${++ticketCounter}`, protocol: "vnc", assetId: "asset-1", name: "box", host: "h", port: 5900,
       username: "", domain: "", promptPassword: false, hasPassword: false, expiresAtMs: 1,
     }));
-    mocks.createVncClient.mockImplementationOnce(async (_s: HTMLElement, o: ClientOptions, cb: ClientCallbacks) => {
+    mocks.createClient.mockImplementationOnce(async (_s: HTMLElement, o: ClientOptions, cb: ClientCallbacks) => {
       const client = fakeClient(o, cb);
       client.connect = vi.fn(async () => {
         throw new RemoteEngineError({ protocol: "vnc", stage: "security", message: "VNC 认证失败: password required" });
@@ -414,7 +511,7 @@ describe("RemoteDesktopPane", () => {
     mocks.prompt.mockResolvedValue("typed");
     await mountPane();
     await flush();
-    const connected = (await mocks.createVncClient.mock.results[1].value) as FakeClient;
+    const connected = (await mocks.createClient.mock.results[1].value) as FakeClient;
     await act(async () => {
       connected.callbacks.onDisconnected({ protocol: "vnc", stage: "closed", clean: false, wasConnected: true, message: "x" });
     });
@@ -423,13 +520,13 @@ describe("RemoteDesktopPane", () => {
 
   it("closing the tab during connect cancels it: the client is closed and nothing more is requested", async () => {
     let finish!: () => void;
-    mocks.createVncClient.mockImplementationOnce(async (_s: HTMLElement, o: ClientOptions, cb: ClientCallbacks) => {
+    mocks.createClient.mockImplementationOnce(async (_s: HTMLElement, o: ClientOptions, cb: ClientCallbacks) => {
       const client = fakeClient(o, cb);
       client.connect = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
       return client;
     });
     const mounted = await mountPane();
-    const client = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+    const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
     expect(client.connect).toHaveBeenCalled();
     mounted.unmount();
     view = undefined;
@@ -454,7 +551,7 @@ describe("RemoteDesktopPane", () => {
     await flush();
     await flush();
     expect(mocks.setPassword).not.toHaveBeenCalled();
-    expect(mocks.createVncClient).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
   });
 
   describe("soft keyboard on touch screens", () => {
@@ -470,7 +567,7 @@ describe("RemoteDesktopPane", () => {
 
     it("sends Enter and Backspace from the hidden input as keys", async () => {
       await mountPane();
-      const client = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+      const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
       const input = document.querySelector<HTMLInputElement>("input[aria-label='远程键盘输入']")!;
       const enter = keyDown(input, "Enter");
       keyDown(input, "Backspace");
@@ -481,14 +578,14 @@ describe("RemoteDesktopPane", () => {
 
     it("leaves keys that an IME reports as Unidentified to the input event", async () => {
       await mountPane();
-      const client = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+      const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
       keyDown(document.querySelector<HTMLInputElement>("input[aria-label='远程键盘输入']")!, "Unidentified");
       expect(client.sendKey).not.toHaveBeenCalled();
     });
 
     it("turns a deleteContentBackward input event into Backspace", async () => {
       await mountPane();
-      const client = (await mocks.createVncClient.mock.results[0].value) as FakeClient;
+      const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
       const input = document.querySelector<HTMLInputElement>("input[aria-label='远程键盘输入']")!;
       act(() => {
         input.dispatchEvent(new InputEvent("input", { inputType: "deleteContentBackward", bubbles: true }));

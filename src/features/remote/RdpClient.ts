@@ -75,9 +75,11 @@ export function engineFailureOf(error: unknown, secrets: readonly string[] = [])
   };
 }
 
-// A resize is "applied" only when the canvas reaches the requested size. "pending" covers a channel that is not
-// ready and a request still awaiting server confirmation; "unavailable" means no channel; "failed" is another refusal.
-export type ResizeOutcome = "applied" | "pending" | "unavailable" | "failed";
+// "applied": the canvas reached the requested size, or changed in answer to it (a server may round the size).
+// "pending": the Display Control channel is not ready, so sending the request again is right.
+// "awaiting": the request was sent and the server has not answered yet; it must not be sent again.
+// "unavailable" means no channel; "failed" is another refusal.
+export type ResizeOutcome = "applied" | "pending" | "awaiting" | "unavailable" | "failed";
 
 export function resizeOutcomeOf(text: string): ResizeOutcome {
   if (/not yet connected/i.test(text)) return "pending";
@@ -96,7 +98,15 @@ export class RdpClient implements RemoteClient {
   private holder: HTMLElement | null = null;
   private observer: ResizeObserver | null = null;
   private canvasObserver: MutationObserver | null = null;
-  private pendingResize: { width: number; height: number } | null = null;
+  // The size in flight, the canvas size it was sent from, and the canvas size the server answered with (if any).
+  // `earlier` holds the sizes of requests this one replaced: their late answers must not satisfy this request.
+  private pendingResize: {
+    width: number;
+    height: number;
+    from: { width: number; height: number };
+    answer: { width: number; height: number } | null;
+    earlier: Array<{ width: number; height: number }>;
+  } | null = null;
   private lastDesktopSize = { width: 0, height: 0 };
   private scale: ScaleMode = "fit";
   private connected = false;
@@ -256,10 +266,16 @@ export class RdpClient implements RemoteClient {
 
   private reportDesktopSize(): void {
     const size = this.desktopSize();
-    if (this.pendingResize?.width === size.width && this.pendingResize.height === size.height) this.pendingResize = null;
+    const pending = this.pendingResize;
+    if (pending && !pending.answer && this.answersPending(pending, size)) pending.answer = size;
     if (this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
     this.lastDesktopSize = size;
     this.callbacks.onDesktopSize?.(size.width, size.height);
+  }
+
+  private answersPending(pending: NonNullable<RdpClient["pendingResize"]>, size: { width: number; height: number }): boolean {
+    if (size.width === pending.from.width && size.height === pending.from.height) return false;
+    return !pending.earlier.some((earlier) => earlier.width === size.width && earlier.height === size.height);
   }
 
   private layout(): void {
@@ -320,6 +336,7 @@ export class RdpClient implements RemoteClient {
     this.canvasObserver?.disconnect();
     this.canvasObserver = null;
     this.pendingResize = null;
+    this.lastDesktopSize = { width: 0, height: 0 };
     try {
       this.ui?.shutdown();
     } catch {
@@ -352,8 +369,19 @@ export class RdpClient implements RemoteClient {
       return "applied";
     }
     if (!this.ui || !this.connected) return "pending";
+    const inFlight = this.pendingResize;
+    if (inFlight && inFlight.width === w && inFlight.height === h) {
+      // A canvas change after the request is the server's answer, even when it rounded or clamped the size.
+      if (inFlight.answer && inFlight.answer.width === size.width && inFlight.answer.height === size.height) return "applied";
+      if (!inFlight.answer && this.answersPending(inFlight, size)) {
+        inFlight.answer = size;
+        return "applied";
+      }
+      if (!inFlight.answer) return "awaiting";
+    }
     this.lastWarning = "";
-    this.pendingResize = { width: w, height: h };
+    const earlier = inFlight ? [...inFlight.earlier, { width: inFlight.width, height: inFlight.height }] : [];
+    this.pendingResize = { width: w, height: h, from: size, answer: null, earlier };
     try {
       this.ui.resize(w, h);
     } catch (error) {
@@ -372,7 +400,7 @@ export class RdpClient implements RemoteClient {
       this.pendingResize = null;
       return resizeOutcomeOf(this.lastWarning);
     }
-    return "pending";
+    return "awaiting";
   }
 
   focus(): void {
