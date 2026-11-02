@@ -102,6 +102,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		if sessionManager != nil {
 			_ = sessionManager.Close()
 		}
+		if services.RemoteDesktop != nil {
+			services.RemoteDesktop.Close()
+		}
 		if services.Database != nil {
 			_ = services.Database.Close()
 		}
@@ -371,7 +374,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		stateRules:    stateRules,
 		deviceInstall: deviceInstall,
 		Store:         database, Vault: credentialVault, Sync: syncService, Profiles: profileManager, Privacy: privacyManager,
-		Database: newProductionDatabaseService(database, credentialVault, sessionManager),
+		Database:      newProductionDatabaseService(database, credentialVault, sessionManager),
+		RemoteDesktop: newProductionRemoteDesktopService(database, credentialVault, sessionManager),
+		Wake:          newProductionWakeService(database, sessionManager),
 		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {
@@ -406,6 +411,12 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 			Emit: func(ctx context.Context, progress update.Progress) {
 				_ = ipc.Emit(ctx, config.Config.Events, ipc.TopicUpdateProgress, progress)
 			},
+		}
+		if config.Desktop {
+			// The channel is read from this machine's own database even when the desktop is connected to a
+			// remote server, and it is never synced.
+			services.updateChannels = database
+			services.Update.ChannelProvider = update.ChannelProviderFor(database)
 		}
 	}
 	// The skills manager is built before the AI runtime so composeAIRuntime

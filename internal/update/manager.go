@@ -32,6 +32,10 @@ type Status struct {
 	// Channel names how this platform receives updates when the app cannot install them itself (see
 	// externalChannel). It is empty where in-app updates apply, and it is not a failure.
 	Channel string `json:"channel"`
+	// ReleaseChannel is the update channel in effect for this check (stable or rc); RunningPrerelease reports
+	// whether the running build is itself a prerelease so the UI can explain the no-downgrade rule.
+	ReleaseChannel    ReleaseChannel `json:"releaseChannel"`
+	RunningPrerelease bool           `json:"runningPrerelease"`
 }
 
 type Result struct {
@@ -57,6 +61,9 @@ type Manager struct {
 	RequireSignedChecksums bool
 	Emit                   func(context.Context, Progress)
 	RestartFunc            func(context.Context, string) error
+	// ChannelProvider supplies the release channel on every Check and Install, so a change applies at once.
+	// Nil means stable.
+	ChannelProvider func(context.Context) ReleaseChannel
 
 	restartTarget string
 	installing    atomic.Bool
@@ -82,8 +89,25 @@ func (m *Manager) emit(ctx context.Context, progress Progress) {
 	}
 }
 
+func (m *Manager) releaseChannel(ctx context.Context) ReleaseChannel {
+	if m.ChannelProvider == nil {
+		return ChannelStable
+	}
+	if channel, ok := ParseReleaseChannel(string(m.ChannelProvider(ctx))); ok {
+		return channel
+	}
+	return ChannelStable
+}
+
 func (m *Manager) Check(ctx context.Context) Status {
-	status := Status{CurrentVersion: m.CurrentVersion, CanInstall: m.CanInstall}
+	return m.check(ctx, m.releaseChannel(ctx))
+}
+
+func (m *Manager) check(ctx context.Context, channel ReleaseChannel) Status {
+	status := Status{
+		CurrentVersion: m.CurrentVersion, CanInstall: m.CanInstall,
+		ReleaseChannel: channel, RunningPrerelease: runningPrerelease(m.CurrentVersion),
+	}
 	fail := func(reason string) Status {
 		status.UnavailableReason = reason
 		return status
@@ -103,7 +127,7 @@ func (m *Manager) Check(ctx context.Context) Status {
 	if err != nil {
 		return fail("检查更新失败: " + err.Error())
 	}
-	release, ok := selectRelease(releases, m.CurrentVersion)
+	release, ok := selectRelease(releases, m.CurrentVersion, channel)
 	if !ok {
 		return status
 	}
@@ -135,7 +159,8 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 		return Result{}, userErrorf(UserErrorBadParam, "正在安装更新，请稍候")
 	}
 	defer m.installing.Store(false)
-	status := m.Check(ctx)
+	channel := m.releaseChannel(ctx)
+	status := m.check(ctx, channel)
 	if !status.Available {
 		reason := status.UnavailableReason
 		if reason == "" {
@@ -146,7 +171,7 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	if version != "" && version != status.Version {
 		return Result{}, userErrorf(UserErrorBadParam, "待安装版本 %s 与最新版本 %s 不一致", version, status.Version)
 	}
-	asset, sums, err := m.resolveAsset(ctx, status.Version)
+	asset, sums, err := m.resolveAsset(ctx, status.Version, channel)
 	if err != nil {
 		return Result{}, err
 	}
@@ -179,19 +204,15 @@ func (m *Manager) Install(ctx context.Context, version string) (Result, error) {
 	return result, nil
 }
 
-func (m *Manager) resolveAsset(ctx context.Context, version string) (Asset, map[string]string, error) {
+func (m *Manager) resolveAsset(ctx context.Context, version string, channel ReleaseChannel) (Asset, map[string]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
 	releases, err := m.fetchReleases(ctx)
 	if err != nil {
 		return Asset{}, nil, userErrorf(UserErrorIO, "检查更新失败: %w", err)
 	}
-	acceptPre := acceptsPrerelease(m.CurrentVersion)
 	for _, release := range releases {
-		if release.Draft || release.version() != version {
-			continue
-		}
-		if release.Prerelease && !acceptPre {
+		if release.version() != version || !releaseVisibleOn(release, channel) {
 			continue
 		}
 		asset, ok := matchAsset(release, m.GOOS, m.GOARCH)

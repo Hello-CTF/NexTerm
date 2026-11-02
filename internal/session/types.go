@@ -24,6 +24,9 @@ const (
 	KindDocker = "docker"
 	KindWinRM  = "winrm"
 	KindDevice = "device"
+	// KindRDP and KindVNC are remote desktop assets served by internal/remotedesktop, never by a terminal transport.
+	KindRDP = "rdp"
+	KindVNC = "vnc"
 
 	TopicSessionStatus     = "session://status"
 	TopicTerminalExit      = "terminal://exit"

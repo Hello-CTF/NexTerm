@@ -29,6 +29,15 @@ importers:
       '@codemirror/view':
         specifier: ^6.36.4
         version: 6.43.13
+      '@devolutions/iron-remote-desktop':
+        specifier: 0.11.0
+        version: 0.11.0
+      '@devolutions/iron-remote-desktop-rdp':
+        specifier: 0.7.0
+        version: 0.7.0
+      '@novnc/novnc':
+        specifier: 1.7.0
+        version: 1.7.0
       '@tanstack/react-query':
         specifier: ^5.104.1
         version: 5.104.1(react@19.3.0)
@@ -268,6 +277,12 @@ packages:
   '@csstools/css-tokenizer@4.0.2':
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
+
+  '@devolutions/iron-remote-desktop-rdp@0.7.0':
+    resolution: {integrity: sha512-CclAh4OS9aBoPJT0l7bih7ETOHPnB9KjT0drB0a6r5+Qh95pTEuQCx7uFN/XA2AlkFlrqx+DBAMDGYXmgsjHAQ==}
+
+  '@devolutions/iron-remote-desktop@0.11.0':
+    resolution: {integrity: sha512-ZH8xfabDA+6rAXkW2V3XgRdj0LHOsHoXAzars/H22DmKsHM39LdMfheKFUR3qLaFDM8mjf6DTFngzjgr+Byx0Q==}
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -520,6 +535,9 @@ packages:
 
   '@marijn/find-cluster-break@1.0.4':
     resolution: {integrity: sha512-Wy0V7+SGUjnF9/TkiM1hKVDPj7jKXduPNboMVtHTA8dySMURWqfg/JZ9E2Sq8JgSJmkl7k7Qe9FLeMSrSraWmQ==}
+
+  '@novnc/novnc@1.7.0':
+    resolution: {integrity: sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA==}
 
   '@oxc-project/types@0.152.0':
     resolution: {integrity: sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw==}
@@ -1940,6 +1958,10 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.2': {}
 
+  '@devolutions/iron-remote-desktop-rdp@0.7.0': {}
+
+  '@devolutions/iron-remote-desktop@0.11.0': {}
+
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
 
@@ -2104,6 +2126,8 @@ snapshots:
       '@lezer/common': 1.5.2
 
   '@marijn/find-cluster-break@1.0.4': {}
+
+  '@novnc/novnc@1.7.0': {}
 
   '@oxc-project/types@0.152.0': {}
 

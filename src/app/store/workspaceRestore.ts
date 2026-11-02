@@ -79,6 +79,26 @@ async function connectRestoredWorkspace(
   };
 
   try {
+    if (workspace.kind === "remote") {
+      // Nothing is dialed here: the pane connects when it mounts, which is the user's explicit reconnect.
+      if (!workspace.assetId) return { ok: false, error: "远程桌面目标已丢失，请从资产树重新连接" };
+      const asset = await assetApi.get(workspace.assetId);
+      if (!stillPending()) return { ok: false, canceled: true };
+      if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
+      if (!stillPending()) return { ok: false, canceled: true };
+      useUi.setState((current) => ({
+        ...(options?.preserveUserFocus ? {} : { activeWorkspaceId: workspaceId }),
+        workspaces: current.workspaces.map((item) => item.id === workspaceId ? {
+          ...item,
+          restorePending: undefined,
+          panes: item.panes.map((pane) => ({
+            ...pane,
+            tabs: pane.tabs.map((tab) => ({ ...tab, restorePending: undefined })),
+          })),
+        } : item),
+      }));
+      return { ok: true };
+    }
     if (workspace.kind === "db") {
       if (!workspace.assetId) return { ok: false, error: "数据库目标已丢失，请从资产树重新连接" };
       const asset = await assetApi.get(workspace.assetId);

@@ -428,6 +428,22 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
+    "app_update_channel_get": {
+      scope: "update",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelResponse", ts: "UpdateChannelResponse" },
+    },
+    "app_update_channel_set": {
+      scope: "update",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelRequest", ts: "UpdateChannelRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.updateChannelResponse", ts: "UpdateChannelResponse" },
+    },
     "app_update_check": {
       scope: "update",
       nested: false,
@@ -452,6 +468,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInputRequest", ts: "AssetInputRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
     },
+    "asset_credential_required": {
+      scope: "asset",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetCredentialRequiredDTO", ts: "AssetCredentialRequiredDTO" },
+    },
     "asset_delete": {
       scope: "asset",
       nested: false,
@@ -467,6 +491,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.idRequest", ts: "IDRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
+    },
+    "asset_inheritance_preview": {
+      scope: "asset",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInheritanceRequest", ts: "AssetInheritanceRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetInheritanceDTO", ts: "AssetInheritanceDTO" },
     },
     "asset_list": {
       scope: "asset",
@@ -1845,6 +1877,62 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteIDRequest", ts: "RemoteIDRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/sync.RemoteOK", ts: "RemoteOK" },
     },
+    "remotedesktop_certificate": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateRequest", ts: "RemoteDesktopCertificateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateStatus", ts: "RemoteDesktopCertificateStatus" },
+    },
+    "remotedesktop_close": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCloseRequest", ts: "RemoteDesktopCloseRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "remotedesktop_list": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopConnectionInfo", ts: "RemoteDesktopConnectionInfo[]" },
+    },
+    "remotedesktop_prepare": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopPrepareRequest", ts: "RemoteDesktopPrepareRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopPrepareResult", ts: "RemoteDesktopPrepareResult" },
+    },
+    "remotedesktop_release_secret": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopReleaseSecretRequest", ts: "RemoteDesktopReleaseSecretRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopSecretResult", ts: "RemoteDesktopSecretResult" },
+    },
+    "remotedesktop_set_password": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopSetPasswordRequest", ts: "RemoteDesktopSetPasswordRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
+    "remotedesktop_trust_certificate": {
+      scope: "remotedesktop",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopTrustCertificateRequest", ts: "RemoteDesktopTrustCertificateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/remotedesktop.RemoteDesktopCertificateStatus", ts: "RemoteDesktopCertificateStatus" },
+    },
     "runbook_run_advance": {
       scope: "runbook",
       nested: false,
@@ -1883,6 +1971,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.PrepareRequest", ts: "PrepareRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
+    },
+    "runbook_run_respond": {
+      scope: "runbook",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RespondRequest", ts: "RespondRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
     },
     "runbook_run_start": {
@@ -2853,6 +2949,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultPasswordRequest", ts: "VaultPasswordRequest" },
       output: { go: "any", ts: "unknown" },
     },
+    "wake_asset": {
+      scope: "wake",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/wol.WakeAssetRequest", ts: "WakeAssetRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/wol.WakeAssetResult", ts: "WakeAssetResult" },
+    },
   },
   legacyCommands: [
     "ai_answer",
@@ -3078,6 +3182,14 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.UpdateResult;
   };
+  "app_update_channel_get": {
+    input: Record<string, never>;
+    output: contractTypes.UpdateChannelResponse;
+  };
+  "app_update_channel_set": {
+    input: contractTypes.UpdateChannelRequest;
+    output: contractTypes.UpdateChannelResponse;
+  };
   "app_update_check": {
     input: Record<string, never>;
     output: contractTypes.UpdateStatus;
@@ -3092,6 +3204,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.AssetInputRequest;
     output: contractTypes.AssetDTO;
   };
+  "asset_credential_required": {
+    input: contractTypes.IDRequest;
+    output: contractTypes.AssetCredentialRequiredDTO;
+  };
   "asset_delete": {
     input: contractTypes.IDRequest;
     output: unknown;
@@ -3099,6 +3215,10 @@ export interface IPCCommandTypeMap {
   "asset_get": {
     input: contractTypes.IDRequest;
     output: contractTypes.AssetDTO;
+  };
+  "asset_inheritance_preview": {
+    input: contractTypes.AssetInheritanceRequest;
+    output: contractTypes.AssetInheritanceDTO;
   };
   "asset_list": {
     input: Record<string, never>;
@@ -3911,6 +4031,34 @@ export interface IPCCommandTypeMap {
     input: contractTypes.RemoteIDRequest;
     output: contractTypes.RemoteOK;
   };
+  "remotedesktop_certificate": {
+    input: contractTypes.RemoteDesktopCertificateRequest;
+    output: contractTypes.RemoteDesktopCertificateStatus;
+  };
+  "remotedesktop_close": {
+    input: contractTypes.RemoteDesktopCloseRequest;
+    output: unknown;
+  };
+  "remotedesktop_list": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteDesktopConnectionInfo[];
+  };
+  "remotedesktop_prepare": {
+    input: contractTypes.RemoteDesktopPrepareRequest;
+    output: contractTypes.RemoteDesktopPrepareResult;
+  };
+  "remotedesktop_release_secret": {
+    input: contractTypes.RemoteDesktopReleaseSecretRequest;
+    output: contractTypes.RemoteDesktopSecretResult;
+  };
+  "remotedesktop_set_password": {
+    input: contractTypes.RemoteDesktopSetPasswordRequest;
+    output: unknown;
+  };
+  "remotedesktop_trust_certificate": {
+    input: contractTypes.RemoteDesktopTrustCertificateRequest;
+    output: contractTypes.RemoteDesktopCertificateStatus;
+  };
   "runbook_run_advance": {
     input: contractTypes.AdvanceRequest;
     output: contractTypes.RunState;
@@ -3929,6 +4077,10 @@ export interface IPCCommandTypeMap {
   };
   "runbook_run_prepare": {
     input: contractTypes.PrepareRequest;
+    output: contractTypes.RunState;
+  };
+  "runbook_run_respond": {
+    input: contractTypes.RespondRequest;
     output: contractTypes.RunState;
   };
   "runbook_run_start": {
@@ -4360,6 +4512,10 @@ export interface IPCCommandTypeMap {
   "vault_unlock": {
     input: contractTypes.VaultPasswordRequest;
     output: unknown;
+  };
+  "wake_asset": {
+    input: contractTypes.WakeAssetRequest;
+    output: contractTypes.WakeAssetResult;
   };
 }
 

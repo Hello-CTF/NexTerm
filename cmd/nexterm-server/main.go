@@ -26,6 +26,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
+	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/server"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -375,7 +376,8 @@ func run(args []string) int {
 		Previews:              previewService,
 		Spectator:             application.Services.Sessions,
 		DB:                    healthDB,
-		AccountConnections:    application.Services.Database,
+		AccountConnections:    accountConnectionClosersFor(application.Services),
+		RemoteDesktop:         remoteDesktopServer(application.Services.RemoteDesktop),
 		AccountCleanup:        application.CleanupAccount,
 		AccountCleanupPrepare: application.PrepareAccountCleanup,
 		Settings:              settings,
@@ -724,4 +726,43 @@ func openInitAdminStore(ctx context.Context, options initAdminOptions, dataDir s
 		return store.OpenBackend(ctx, store.BackendConfig{Backend: backend, DSN: options.dbDSN, Password: dbPassword}, store.OpenOptions{})
 	}
 	return store.OpenWithOptions(ctx, filepath.Join(dataDir, "data.db"), store.OpenOptions{})
+}
+
+// accountConnectionClosers releases the per-login-session resources of every service that holds connections.
+type accountConnectionClosers []interface{ CloseAccountSession(string) error }
+
+func accountConnectionClosersFor(services production.ProductionServices) accountConnectionClosers {
+	var closers accountConnectionClosers
+	if services.Database != nil {
+		closers = append(closers, services.Database)
+	}
+	if services.RemoteDesktop != nil {
+		closers = append(closers, services.RemoteDesktop)
+	}
+	return closers
+}
+
+// CloseAccountUser fans out to the services that can end a user's connections without session ids.
+func (closers accountConnectionClosers) CloseAccountUser(userID, exceptSession string) {
+	for _, closer := range closers {
+		if user, ok := closer.(interface{ CloseAccountUser(string, string) }); ok {
+			user.CloseAccountUser(userID, exceptSession)
+		}
+	}
+}
+
+func (closers accountConnectionClosers) CloseAccountSession(sessionID string) error {
+	var errs []error
+	for _, closer := range closers {
+		errs = append(errs, closer.CloseAccountSession(sessionID))
+	}
+	return errors.Join(errs...)
+}
+
+// remoteDesktopServer avoids a typed-nil interface when the service is absent.
+func remoteDesktopServer(service *remotedesktop.Service) server.RemoteDesktopServer {
+	if service == nil {
+		return nil
+	}
+	return service
 }

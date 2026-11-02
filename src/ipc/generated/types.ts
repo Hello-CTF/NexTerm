@@ -58,6 +58,16 @@ export type AggregateSession = {
   attached?: boolean;
 };
 
+export type AnswerNote = {
+  stepNumber: number;
+  sessionId: string;
+  hostName: string;
+  kind: string;
+  variable?: string;
+  value: string;
+  auto?: boolean;
+};
+
 export type ApplyObject = {
   id: string;
   kind: string;
@@ -107,6 +117,10 @@ export type AssetBulkEditTarget = {
   expectedUpdatedAt: number;
 };
 
+export type AssetCredentialRequiredDTO = {
+  required: boolean;
+};
+
 export type AssetDTO = {
   id: string;
   groupId: string | null;
@@ -135,12 +149,18 @@ export type AssetGroupDTO = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  defaultUsername: string | null;
+  defaultAuthKind: string | null;
+  defaultKeyPath: string | null;
+  defaultCredId: string | null;
+  defaultJumpAssetId: string | null;
 };
 
 export type AssetGroupInputRequest = {
   name: string;
   parentId?: string | null;
   sort?: number;
+  defaults?: GroupDefaultsRequest | null;
 };
 
 export type AssetGroupPatchRequest = {
@@ -148,6 +168,25 @@ export type AssetGroupPatchRequest = {
   name?: string | null;
   parentId?: string | null;
   sort?: number | null;
+  defaults?: GroupDefaultsRequest | null;
+};
+
+export type AssetInheritanceDTO = {
+  fields: InheritedValueDTO[];
+  error: string;
+};
+
+export type AssetInheritanceRequest = {
+  assetId?: string | null;
+  kind: string;
+  groupId?: string | null;
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  jumpAssetId?: string | null;
+  hasSecret?: boolean;
+  promptPassword?: boolean;
 };
 
 export type AssetInputRequest = {
@@ -1373,6 +1412,14 @@ export type GrantRule = {
   updatedAt: number;
 };
 
+export type GroupDefaultsRequest = {
+  username?: string | null;
+  authKind?: string | null;
+  keyPath?: string | null;
+  credId?: string | null;
+  jumpAssetId?: string | null;
+};
+
 export type HelperOfflineDTO = {
   fileName: string;
   sha256: string;
@@ -1428,6 +1475,19 @@ export type HelperVersionDTO = {
   commit?: string;
   protocol?: number | null;
   sha256?: string;
+};
+
+export type HostLive = {
+  sessionId: string;
+  hostName: string;
+  subStep?: string;
+  progress: number;
+  messages?: HostMessage[];
+};
+
+export type HostMessage = {
+  level: string;
+  text: string;
 };
 
 export type HostShareInputRequest = {
@@ -1488,6 +1548,15 @@ export type ImportReport = {
   conflictDetails?: SkippedNewerEntry[];
   refused: number;
   warnings: string[];
+};
+
+export type InheritedValueDTO = {
+  field: string;
+  applied: boolean;
+  value: string;
+  groupId: string;
+  groupName: string;
+  reason: string;
 };
 
 export type InventoryCandidateDTO = {
@@ -1930,6 +1999,19 @@ export type ProductionSettingsUpdateRequest = {
   aiTerminalConnectProductionOptIn?: boolean | null;
 };
 
+export type Prompt = {
+  id: string;
+  stepNumber: number;
+  sessionId: string;
+  hostName: string;
+  kind: string;
+  variable?: string;
+  text: string;
+  default?: string;
+  canApplyAll: boolean;
+  expiresAt: number;
+};
+
 export type PruneItem = {
   kind: string;
   id: string;
@@ -2076,6 +2158,75 @@ export type RemoteBaseURLsPutRequest = {
 export type RemoteChangePasswordRequest = {
   oldPassword: string;
   newPassword: string;
+};
+
+export type RemoteDesktopCertificateRequest = {
+  assetId: string;
+};
+
+export type RemoteDesktopCertificateStatus = {
+  assetId: string;
+  protocol: string;
+  host: string;
+  port: number;
+  status: string;
+  fingerprint: string;
+  previousFingerprint?: string;
+  subject?: string;
+  notAfterMs?: number;
+  observedAtMs: number;
+};
+
+export type RemoteDesktopCloseRequest = {
+  connId: string;
+};
+
+export type RemoteDesktopConnectionInfo = {
+  id: string;
+  assetId: string;
+  protocol: string;
+  startedAtMs: number;
+};
+
+export type RemoteDesktopPrepareRequest = {
+  assetId: string;
+};
+
+export type RemoteDesktopPrepareResult = {
+  ticket: string;
+  protocol: string;
+  assetId: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  domain: string;
+  promptPassword: boolean;
+  hasPassword: boolean;
+  noPassword?: boolean;
+  width?: number;
+  height?: number;
+  expiresAtMs: number;
+};
+
+export type RemoteDesktopReleaseSecretRequest = {
+  ticket: string;
+};
+
+export type RemoteDesktopSecretResult = {
+  username: string;
+  domain: string;
+  password: string;
+};
+
+export type RemoteDesktopSetPasswordRequest = {
+  ticket: string;
+  password: string;
+};
+
+export type RemoteDesktopTrustCertificateRequest = {
+  assetId: string;
+  fingerprint: string;
 };
 
 export type RemoteDeviceRequest = {
@@ -2255,6 +2406,13 @@ export type RepairUndecryptableResult = {
   repaired: boolean;
 };
 
+export type RespondRequest = {
+  runId: string;
+  promptId: string;
+  value: string;
+  applyAll?: boolean;
+};
+
 export type RetryRequest = {
   id: string;
   sessionId?: string;
@@ -2352,6 +2510,9 @@ export type RunState = {
   productionChallenge?: ConfirmationRequiredDetail | null;
   productionCommand?: string;
   error?: string;
+  prompts?: Prompt[];
+  live?: HostLive[];
+  answers?: AnswerNote[];
 };
 
 export type RunbookMetadata = {
@@ -2389,6 +2550,7 @@ export type RunbookTemplateStep = {
   name: string;
   description?: string;
   command: string;
+  interactive?: boolean;
 };
 
 export type RunbookTemplateUpdateRequest = RunbookTemplateInput & {
@@ -2711,6 +2873,7 @@ export type Step = {
   name: string;
   description?: string;
   command: string;
+  interactive?: boolean;
 };
 
 export type StepState = {
@@ -2770,6 +2933,11 @@ export type SyncBundleGroup = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  defaultUsername?: string | null;
+  defaultAuthKind?: string | null;
+  defaultKeyPath?: string | null;
+  defaultCredId?: string | null;
+  defaultJumpAssetId?: string | null;
 };
 
 export type SyncBundleSnippet = {
@@ -3010,6 +3178,14 @@ export type TranscriptSyncOptInRequest = {
   optIn: boolean;
 };
 
+export type UpdateChannelRequest = {
+  channel: string;
+};
+
+export type UpdateChannelResponse = {
+  channel: string;
+};
+
 export type UpdateResult = {
   installed: boolean;
   restarted: boolean;
@@ -3028,6 +3204,8 @@ export type UpdateStatus = {
   canInstall: boolean;
   unavailableReason: string;
   channel: string;
+  releaseChannel: string;
+  runningPrerelease: boolean;
 };
 
 export type VaultAutoLockRequest = {
@@ -3061,6 +3239,21 @@ export type VolumeUsage = {
   links: number;
   sizeBytes: number;
   containers: ContainerUse[];
+};
+
+export type WakeAssetRequest = {
+  assetId: string;
+};
+
+export type WakeAssetResult = {
+  assetId: string;
+  route: string;
+  viaId?: string;
+  target: string;
+  mac: string;
+  bytes: number;
+  sentAtMs: number;
+  note?: string;
 };
 
 export type WatchConditionDTO = {

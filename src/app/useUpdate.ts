@@ -3,7 +3,7 @@ import { appUpdateApi } from "../ipc/commands";
 import { DESKTOP } from "../ipc/env";
 import { EVENTS, listenEvent, type UpdateProgressEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
-import type { UpdateStatusDto } from "../ipc/types";
+import type { UpdateReleaseChannel, UpdateStatusDto } from "../ipc/types";
 
 export type UpdateVerdict =
   | "idle"
@@ -33,10 +33,15 @@ export interface UpdateState {
   restartError: string | null;
   skippedVersion: string | null;
   remindedVersion: string | null;
+  // The channel chosen on this machine; null until a check or a change reports it (status.releaseChannel wins).
+  releaseChannel: UpdateReleaseChannel | null;
+  channelSaving: boolean;
+  channelError: string | null;
 }
 
 interface UpdateActions {
-  check: () => Promise<void>;
+  check: (force?: boolean) => Promise<void>;
+  setReleaseChannel: (channel: UpdateReleaseChannel) => Promise<boolean>;
   installUpdate: () => Promise<void>;
   restart: () => Promise<void>;
   skipVersion: (version: string) => void;
@@ -51,6 +56,8 @@ const idleInstall: UpdateInstallState = {
   error: null,
   taskId: null,
 };
+
+let checkSequence = 0;
 
 const SKIPPED_VERSION_KEY = "nexterm.update.v1";
 
@@ -72,16 +79,43 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
   restartError: null,
   skippedVersion: loadSkippedVersion(),
   remindedVersion: null,
+  releaseChannel: null,
+  channelSaving: false,
+  channelError: null,
 
-  check: async () => {
-    if (get().checking) return;
+  // A forced check (after a channel change) supersedes one still in flight: only the newest result is applied,
+  // so an answer computed for the old channel can never overwrite the new one.
+  check: async (force = false) => {
+    if (get().checking && !force) return;
+    const sequence = ++checkSequence;
     set({ checking: true, checkError: null });
     try {
       const status = await appUpdateApi.check();
+      if (sequence !== checkSequence) return;
       set({ status, checking: false });
     } catch (e) {
+      if (sequence !== checkSequence) return;
       set({ checking: false, checkError: describeError(e) });
     }
+  },
+
+  setReleaseChannel: async (channel) => {
+    if (get().channelSaving) return false;
+    set({ channelSaving: true, channelError: null });
+    try {
+      const saved = await appUpdateApi.setChannel(channel);
+      set({
+        channelSaving: false,
+        releaseChannel: saved.channel === "rc" ? "rc" : "stable",
+        status: null,
+        remindedVersion: null,
+      });
+    } catch (e) {
+      set({ channelSaving: false, channelError: describeError(e) });
+      return false;
+    }
+    await get().check(true);
+    return true;
   },
 
   installUpdate: async () => {
@@ -200,4 +234,12 @@ export function useUpdate(): UpdateState & UpdateActions {
 
 export function getUpdateState(): UpdateState & UpdateActions {
   return useUpdateStore.getState();
+}
+
+// effectiveReleaseChannel prefers what the last check reported, then what was just saved, then stable.
+export function effectiveReleaseChannel(
+  s: Pick<UpdateState, "status" | "releaseChannel">,
+): UpdateReleaseChannel {
+  const reported = s.status?.releaseChannel ?? s.releaseChannel;
+  return reported === "rc" ? "rc" : "stable";
 }

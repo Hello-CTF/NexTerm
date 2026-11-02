@@ -32,6 +32,8 @@ type RunbookTemplateStep struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Command     string `json:"command"`
+	// Interactive opts the step into script directives; absent in stored data means off.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 // RunbookTemplate carries a stable id and an updated-at so it can join sync later.

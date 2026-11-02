@@ -123,3 +123,27 @@ describe("formatQuickConnectTarget", () => {
     expect(parseQuickConnectTarget(formatQuickConnectTarget(withoutUsername))).toEqual(withoutUsername);
   });
 });
+
+describe("remote desktop quick connect targets", () => {
+  it("parses rdp:// with the default port", () => {
+    expect(parseQuickConnectTarget("rdp://win-01")).toEqual({ host: "win-01", port: 3389, username: null, protocol: "rdp" });
+  });
+
+  it("parses vnc:// with an explicit port", () => {
+    expect(parseQuickConnectTarget("vnc://10.0.0.5:5901")).toEqual({ host: "10.0.0.5", port: 5901, username: null, protocol: "vnc" });
+  });
+
+  it("keeps a user name on rdp and refuses one on vnc", () => {
+    expect(parseQuickConnectTarget("rdp://admin@win-01:3390")).toEqual({ host: "win-01", port: 3390, username: "admin", protocol: "rdp" });
+    expect(parseQuickConnectTarget("vnc://admin@host")).toBeNull();
+  });
+
+  it("does not guess a remote desktop protocol without a scheme", () => {
+    expect(parseQuickConnectTarget("win-01:3389")).toEqual({ host: "win-01", port: 3389, username: null });
+  });
+
+  it("formats a target back with its scheme and drops the default port", () => {
+    expect(formatQuickConnectTarget({ host: "win-01", port: 3389, username: null, protocol: "rdp" })).toBe("rdp://win-01");
+    expect(formatQuickConnectTarget({ host: "h", port: 5901, username: null, protocol: "vnc" })).toBe("vnc://h:5901");
+  });
+});

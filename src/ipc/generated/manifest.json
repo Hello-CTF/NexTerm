@@ -379,6 +379,18 @@
       "channel": false,
       "stream": "none"
     },
+    "app_update_channel_get": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_update_channel_set": {
+      "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "app_update_check": {
       "scope": "update",
       "nested": false,
@@ -397,6 +409,12 @@
       "channel": false,
       "stream": "none"
     },
+    "asset_credential_required": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "asset_delete": {
       "scope": "asset",
       "nested": false,
@@ -404,6 +422,12 @@
       "stream": "none"
     },
     "asset_get": {
+      "scope": "asset",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "asset_inheritance_preview": {
       "scope": "asset",
       "nested": false,
       "channel": false,
@@ -1446,6 +1470,48 @@
       "channel": false,
       "stream": "none"
     },
+    "remotedesktop_certificate": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_close": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_list": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_prepare": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_release_secret": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_set_password": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remotedesktop_trust_certificate": {
+      "scope": "remotedesktop",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "runbook_run_advance": {
       "scope": "runbook",
       "nested": false,
@@ -1471,6 +1537,12 @@
       "stream": "none"
     },
     "runbook_run_prepare": {
+      "scope": "runbook",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "runbook_run_respond": {
       "scope": "runbook",
       "nested": false,
       "channel": false,
@@ -2224,6 +2296,12 @@
     },
     "vault_unlock": {
       "scope": "vault",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "wake_asset": {
+      "scope": "wake",
       "nested": false,
       "channel": false,
       "stream": "none"

@@ -1,6 +1,7 @@
 package purpose
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha256"
@@ -13,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -654,5 +657,139 @@ func TestDialServerRejectsNonDialFirstFrame(t *testing.T) {
 	}
 	if !errors.Is(deviceproto.ReadError(payload), deviceproto.ErrProtocol) {
 		t.Fatalf("error = %v; want ErrProtocol", deviceproto.ReadError(payload))
+	}
+}
+
+func testMagicPacket() []byte {
+	packet := bytes.Repeat([]byte{0xFF}, 6)
+	for i := 0; i < 16; i++ {
+		packet = append(packet, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x01)
+	}
+	return packet
+}
+
+func udpWakeHarness(t *testing.T) (*deviceproto.Client, net.PacketConn, func()) {
+	t.Helper()
+	listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("udp loopback unavailable: %v", err)
+	}
+	server := NewDialServer(nil)
+	server.udpAllowed = func(string) error { return nil }
+	clientConn, serverConn := net.Pipe()
+	go func() { _ = server.ServeConn(context.Background(), serverConn) }()
+	return deviceproto.NewClient(clientConn), listener, func() { _ = clientConn.Close(); _ = listener.Close() }
+}
+
+func TestDialServerForwardsOneMagicPacketAndCloses(t *testing.T) {
+	client, listener, done := udpWakeHarness(t)
+	defer done()
+	received := make(chan []byte, 2)
+	go func() {
+		buffer := make([]byte, 512)
+		for {
+			n, _, err := listener.ReadFrom(buffer)
+			if err != nil {
+				return
+			}
+			received <- append([]byte(nil), buffer[:n]...)
+		}
+	}()
+	stream, err := client.Dial(context.Background(), "udp4", listener.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet := testMagicPacket()
+	if _, err := stream.Write(packet); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("agent did not close the stream after the single write: %v", err)
+	}
+	select {
+	case got := <-received:
+		if !bytes.Equal(got, packet) {
+			t.Fatalf("datagram = %x", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("datagram not delivered")
+	}
+	// A second write after the agent closed cannot reach the target.
+	_, _ = stream.Write(packet)
+	select {
+	case extra := <-received:
+		t.Fatalf("a second datagram was relayed: %x", extra)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestDialServerRefusesUDPPayloadsThatAreNotOneMagicPacket(t *testing.T) {
+	bad := map[string][]byte{
+		"text":      []byte("magic"),
+		"short":     testMagicPacket()[:101],
+		"long":      append(testMagicPacket(), 0),
+		"mixed mac": append(testMagicPacket()[:101], 0x02),
+		"bad head":  append([]byte{0}, testMagicPacket()[1:]...),
+	}
+	for name, payload := range bad {
+		client, listener, done := udpWakeHarness(t)
+		got := make(chan struct{}, 1)
+		go func() {
+			if _, _, err := listener.ReadFrom(make([]byte, 512)); err == nil {
+				got <- struct{}{}
+			}
+		}()
+		stream, err := client.Dial(context.Background(), "udp4", listener.LocalAddr().String())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		_, _ = stream.Write(payload)
+		if _, err := stream.Read(make([]byte, 1)); !errors.Is(err, deviceproto.ErrInvalid) {
+			t.Errorf("%s: read = %v; want ErrInvalid", name, err)
+		}
+		select {
+		case <-got:
+			t.Errorf("%s: payload reached the target", name)
+		case <-time.After(100 * time.Millisecond):
+		}
+		done()
+	}
+}
+
+func TestDialServerNeverRelaysUDPReplies(t *testing.T) {
+	client, listener, done := udpWakeHarness(t)
+	defer done()
+	go func() {
+		buffer := make([]byte, 512)
+		n, from, err := listener.ReadFrom(buffer)
+		if err == nil && n > 0 {
+			_, _ = listener.WriteTo([]byte("reply"), from)
+		}
+	}()
+	stream, err := client.Dial(context.Background(), "udp4", listener.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = stream.Write(testMagicPacket())
+	buffer := make([]byte, 16)
+	n, err := stream.Read(buffer)
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("read = %d %v; the stream must end without data", n, err)
+	}
+}
+
+func TestDialServerRefusesUnsafeUDPTargets(t *testing.T) {
+	for _, address := range []string{"127.0.0.1:9", "0.0.0.0:9", "224.0.0.1:9", "169.254.169.254:80", "100.64.0.1:9", "240.0.0.1:9", "[::1]:9", "host.example:9", "192.168.1.255:0"} {
+		client, done := dialHarness(t)
+		_, err := client.Dial(context.Background(), "udp4", address)
+		done()
+		if !errors.Is(err, deviceproto.ErrInvalid) || strings.Contains(err.Error(), "unsupported dial network") {
+			t.Errorf("udp4 %s = %v; want a refusal that is not the unsupported-network error", address, err)
+		}
+	}
+	for _, address := range []string{"255.255.255.255:9", "192.168.1.255:9", "10.0.0.7:7"} {
+		if err := checkUDPTarget(address); err != nil {
+			t.Errorf("%s refused: %v", address, err)
+		}
 	}
 }

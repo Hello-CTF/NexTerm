@@ -160,7 +160,8 @@ if (release) {
   const patched = await sendWithRetry(`${apiBase}/repos/${repository}/releases/${release.id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ body: notes }),
+    // A prerelease (-rc.N) is never GitHub Latest: keep the flag and make_latest explicit on a reused draft too.
+    body: JSON.stringify({ body: notes, prerelease, ...(prerelease ? { make_latest: "false" } : {}) }),
   });
   if (patched.response.status !== 200) {
     console.error(`release-upload: update notes for draft ${release.id}: HTTP ${patched.response.status}: ${(await patched.response.text()).slice(0, 300)}`);
@@ -178,6 +179,7 @@ if (release) {
       body: notes,
       draft: true,
       prerelease,
+      ...(prerelease ? { make_latest: "false" } : {}),
     }),
   });
   if (created.response.status !== 201) {

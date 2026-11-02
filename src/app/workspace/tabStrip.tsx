@@ -19,6 +19,7 @@ import {
   IconClock,
   IconCommand,
   IconDatabase,
+  IconDesktop,
   IconDrive,
   IconFolderOpen,
   IconHistory,
@@ -49,6 +50,7 @@ const TAB_ICON = {
   hostHistory: IconClock,
   execBatch: IconCommand,
   host: IconServer,
+  remote: IconDesktop,
 } as const;
 
 export function tabIcon(t: AppTab) {

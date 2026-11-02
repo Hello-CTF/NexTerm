@@ -16,9 +16,9 @@ import {
 } from "./store";
 import { useWorkspaceAttention } from "./sessionAwarenessStore";
 import { TabAttentionBadge } from "./workspace/tabStrip";
-import { ContextMenu, type ContextMenuState } from "../ui/ContextMenu";
+import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import type { AssetGroup } from "../ipc/commands";
-import { IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
+import { IconClose, IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
 
 const WORKSPACE_DRAG_MIME = "application/x-nexterm-workspace";
 
@@ -28,8 +28,17 @@ function workspaceIcon(workspace: Workspace) {
   return assetIcon(workspace.assetKind ?? "ssh");
 }
 
+async function closeWorkspaces(targets: Workspace[]): Promise<void> {
+  for (const target of targets) {
+    // A target closed by another path while an earlier dialog was open is not a decline.
+    if (!useUi.getState().workspaces.some((candidate) => candidate.id === target.id)) continue;
+    if (!(await useUi.getState().closeWorkspace(target.id))) break;
+  }
+}
+
 interface WorkspaceStripTabProps {
   workspace: Workspace;
+  visibleWorkspaces: Workspace[];
   selected: boolean;
   draggable: boolean;
   dropEdge: "before" | "after" | null;
@@ -45,6 +54,7 @@ interface WorkspaceStripTabProps {
 
 function WorkspaceStripTab({
   workspace,
+  visibleWorkspaces,
   selected,
   draggable,
   dropEdge,
@@ -60,20 +70,45 @@ function WorkspaceStripTab({
   const attention = useWorkspaceAttention(terminalTabIds);
   const statusLabel = status ? sessionStatusText(status) : null;
   const needsReconnect = workspaceNeedsReconnect(status);
+  const workspaceIndex = visibleWorkspaces.findIndex((candidate) => candidate.id === workspace.id);
+  const closableLeft = visibleWorkspaces.slice(0, Math.max(0, workspaceIndex)).filter((candidate) => candidate.closable);
+  const closableRight = workspaceIndex < 0 ? [] : visibleWorkspaces.slice(workspaceIndex + 1).filter((candidate) => candidate.closable);
   const onContextMenu = (event: MouseEvent<HTMLButtonElement>) => {
-    if (!needsReconnect) return;
     event.preventDefault();
-    setMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [{
+    const items: MenuItem[] = [];
+    if (needsReconnect) {
+      items.push({
         kind: "item",
         label: "重新连接",
         icon: <IconRefresh size={13} />,
         hint: statusLabel ?? undefined,
         onSelect: () => void reconnectWorkspaceConnection(workspace.id),
-      }],
-    });
+      }, { kind: "separator" });
+    }
+    items.push(
+      {
+        kind: "item",
+        label: "关闭工作区",
+        icon: <IconClose size={13} />,
+        disabled: !workspace.closable,
+        onSelect: () => void closeWorkspaces([workspace]),
+      },
+      {
+        kind: "item",
+        label: "关闭左侧全部工作区",
+        icon: <IconClose size={13} />,
+        disabled: closableLeft.length === 0,
+        onSelect: () => void closeWorkspaces(closableLeft),
+      },
+      {
+        kind: "item",
+        label: "关闭右侧全部工作区",
+        icon: <IconClose size={13} />,
+        disabled: closableRight.length === 0,
+        onSelect: () => void closeWorkspaces(closableRight),
+      },
+    );
+    setMenu({ x: event.clientX, y: event.clientY, items });
   };
   return (
     <>
@@ -205,6 +240,7 @@ export function ProjectWorkspaceStrip({
               <WorkspaceStripTab
                 key={workspace.id}
                 workspace={workspace}
+                visibleWorkspaces={visible}
                 selected={workspace.id === activeWorkspaceId}
                 draggable={Boolean(onReorder)}
                 dropEdge={dropHint?.id === workspace.id ? dropHint.edge : null}

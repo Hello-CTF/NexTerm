@@ -24,7 +24,7 @@ type scopeSpec struct {
 var contractScopes = []scopeSpec{
 	{name: "platform", commands: []string{"app_platform", "desktop_tray_get", "desktop_tray_set", "system_insets",
 		"system_notification_status", "system_notification_request", "system_notify", "system_notification_remove"}},
-	{name: "update", commands: []string{"app_update_check", "app_update_install", "app_restart"}},
+	{name: "update", commands: []string{"app_update_check", "app_update_install", "app_restart", "app_update_channel_get", "app_update_channel_set"}},
 	{name: "biometric", commands: []string{"biometric_status", "biometric_unlock", "biometric_enable", "biometric_disable"}},
 	{name: "host-share", prefixes: []string{"host_share_"}},
 	{name: "exec-batch", prefixes: []string{"exec_batch_"}},
@@ -46,6 +46,8 @@ var contractScopes = []scopeSpec{
 	{name: "inventory", prefixes: []string{"inventory_"}},
 	{name: "production", prefixes: []string{"production_"}},
 	{name: "remote", prefixes: []string{"remote_"}},
+	{name: "remotedesktop", prefixes: []string{"remotedesktop_"}},
+	{name: "wake", prefixes: []string{"wake_"}},
 	{name: "preview-share", prefixes: []string{"preview_share_"}},
 	{name: "sync", commands: []string{
 		"sync_apply_objects",
@@ -92,7 +94,9 @@ var contractScopes = []scopeSpec{
 	{name: "asset", commands: []string{
 		"asset_create",
 		"asset_delete",
+		"asset_credential_required",
 		"asset_get",
+		"asset_inheritance_preview",
 		"asset_list",
 		"asset_probe_batch",
 		"asset_read_key_file",

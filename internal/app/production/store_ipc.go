@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -126,12 +127,43 @@ type groupDTO struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Connection defaults the group's assets inherit; references only, never a secret.
+	DefaultUsername    *string `json:"defaultUsername"`
+	DefaultAuthKind    *string `json:"defaultAuthKind"`
+	DefaultKeyPath     *string `json:"defaultKeyPath"`
+	DefaultCredID      *string `json:"defaultCredId"`
+	DefaultJumpAssetID *string `json:"defaultJumpAssetId"`
+}
+
+// groupDefaultsRequest replaces all of a group's connection defaults; an absent or blank field clears it.
+type groupDefaultsRequest struct {
+	Username    *string `json:"username,omitempty"`
+	AuthKind    *string `json:"authKind,omitempty"`
+	KeyPath     *string `json:"keyPath,omitempty"`
+	CredID      *string `json:"credId,omitempty"`
+	JumpAssetID *string `json:"jumpAssetId,omitempty"`
+}
+
+func (r *groupDefaultsRequest) storeValue() *store.GroupDefaults {
+	if r == nil {
+		return nil
+	}
+	text := func(value *string) string {
+		if value == nil {
+			return ""
+		}
+		return strings.TrimSpace(*value)
+	}
+	return &store.GroupDefaults{
+		Username: text(r.Username), AuthKind: text(r.AuthKind), KeyPath: text(r.KeyPath), CredID: text(r.CredID), JumpAssetID: text(r.JumpAssetID),
+	}
 }
 
 type groupInputRequest struct {
-	Name     string  `json:"name"`
-	ParentID *string `json:"parentId"`
-	Sort     int64   `json:"sort"`
+	Name     string                `json:"name"`
+	ParentID *string               `json:"parentId"`
+	Sort     int64                 `json:"sort"`
+	Defaults *groupDefaultsRequest `json:"defaults,omitempty"`
 }
 
 type groupPatchRequest struct {
@@ -139,6 +171,42 @@ type groupPatchRequest struct {
 	Name     *string                  `json:"name"`
 	ParentID optionalIPCValue[string] `json:"parentId"`
 	Sort     *int64                   `json:"sort"`
+	Defaults *groupDefaultsRequest    `json:"defaults,omitempty"`
+}
+
+// assetInheritanceRequest describes an asset as the editor currently shows it, saved or not.
+type assetInheritanceRequest struct {
+	AssetID     *string `json:"assetId,omitempty"`
+	Kind        string  `json:"kind"`
+	GroupID     *string `json:"groupId,omitempty"`
+	Username    *string `json:"username,omitempty"`
+	AuthKind    *string `json:"authKind,omitempty"`
+	KeyPath     *string `json:"keyPath,omitempty"`
+	CredID      *string `json:"credId,omitempty"`
+	JumpAssetID *string `json:"jumpAssetId,omitempty"`
+	HasSecret   bool    `json:"hasSecret,omitempty"`
+	// PromptPassword marks an rdp or vnc asset that asks for its password at connect time.
+	PromptPassword bool `json:"promptPassword,omitempty"`
+}
+
+type assetCredentialRequiredDTO struct {
+	Required bool `json:"required"`
+}
+
+type inheritedValueDTO struct {
+	Field     string `json:"field"`
+	Applied   bool   `json:"applied"`
+	Value     string `json:"value"`
+	GroupID   string `json:"groupId"`
+	GroupName string `json:"groupName"`
+	Reason    string `json:"reason"`
+}
+
+// assetInheritanceDTO lists what the empty fields of the described asset would inherit. Error is set when a
+// group default cannot be used (for example it points at another owner's credential); it names the group.
+type assetInheritanceDTO struct {
+	Fields []inheritedValueDTO `json:"fields"`
+	Error  string              `json:"error"`
 }
 
 type snippetDTO struct {
@@ -286,6 +354,52 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 			})
 		},
 		func() error {
+			// Whether connecting uses a vault credential once group defaults are applied; the client asks this to
+			// decide on the unlock prompt instead of looking at the asset's own credential field.
+			return ipc.Register(dispatcher, "asset_credential_required", func(ctx context.Context, _ *ipc.Call, input idRequest) (assetCredentialRequiredDTO, error) {
+				required, err := database.AssetCredentialRequired(ctx, input.ID)
+				return assetCredentialRequiredDTO{Required: required}, err
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "asset_inheritance_preview", func(ctx context.Context, _ *ipc.Call, input assetInheritanceRequest) (assetInheritanceDTO, error) {
+				text := func(value *string) string {
+					if value == nil {
+						return ""
+					}
+					return strings.TrimSpace(*value)
+				}
+				draft := store.InheritanceDraft{
+					AssetID: text(input.AssetID), Kind: input.Kind, GroupID: input.GroupID, Username: text(input.Username),
+					AuthKind: text(input.AuthKind), KeyPath: text(input.KeyPath), CredID: text(input.CredID),
+					InlineSecret: input.HasSecret, PromptPassword: input.PromptPassword, JumpAssetID: text(input.JumpAssetID), OwnerID: ipc.OwnerID(ctx),
+				}
+				if input.GroupID != nil {
+					// A group the caller cannot see is not a source of defaults.
+					if _, err := database.GroupGet(ctx, *input.GroupID); err != nil {
+						return assetInheritanceDTO{Fields: []inheritedValueDTO{}}, nil
+					}
+				}
+				fields, err := database.InheritancePreview(ctx, draft)
+				result := assetInheritanceDTO{Fields: make([]inheritedValueDTO, 0, len(fields))}
+				if err != nil {
+					var appErr *ipc.Error
+					if errors.As(err, &appErr) && (appErr.Code == ipc.CodeBadParam || appErr.Code == ipc.CodeForbidden) {
+						result.Error = appErr.Message
+						return result, nil
+					}
+					return assetInheritanceDTO{}, err
+				}
+				for _, field := range fields {
+					result.Fields = append(result.Fields, inheritedValueDTO{
+						Field: field.Field, Applied: field.Applied, Value: field.Value,
+						GroupID: field.GroupID, GroupName: field.GroupName, Reason: field.Reason,
+					})
+				}
+				return result, nil
+			})
+		},
+		func() error {
 			return ipc.RegisterNested(dispatcher, "asset_create", func(ctx context.Context, _ *ipc.Call, input assetInputRequest) (assetDTO, error) {
 				row, err := database.AssetCreate(ctx, store.AssetInput{
 					GroupID: input.GroupID, Kind: input.Kind, Name: input.Name, Host: input.Host, Port: input.Port,
@@ -364,13 +478,13 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 		},
 		func() error {
 			return ipc.Register(dispatcher, "group_create", func(ctx context.Context, _ *ipc.Call, input groupInputRequest) (groupDTO, error) {
-				row, err := database.GroupCreate(ctx, store.GroupInput{ParentID: input.ParentID, Name: input.Name, Sort: input.Sort})
+				row, err := database.GroupCreate(ctx, store.GroupInput{ParentID: input.ParentID, Name: input.Name, Sort: input.Sort, Defaults: input.Defaults.storeValue()})
 				return productionGroupDTO(row), err
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "group_update", func(ctx context.Context, _ *ipc.Call, input groupPatchRequest) (groupDTO, error) {
-				row, err := database.GroupUpdate(ctx, input.ID, store.GroupPatch{Name: input.Name, ParentID: input.ParentID.storeValue(), Sort: input.Sort})
+				row, err := database.GroupUpdate(ctx, input.ID, store.GroupPatch{Name: input.Name, ParentID: input.ParentID.storeValue(), Sort: input.Sort, Defaults: input.Defaults.storeValue()})
 				return productionGroupDTO(row), err
 			})
 		},
@@ -525,7 +639,11 @@ func productionAssetDTO(row store.AssetRow) assetDTO {
 }
 
 func productionGroupDTO(row store.AssetGroupRow) groupDTO {
-	return groupDTO{ID: row.ID, ParentID: row.ParentID, Name: row.Name, Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return groupDTO{
+		ID: row.ID, ParentID: row.ParentID, Name: row.Name, Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		DefaultUsername: row.DefaultUsername, DefaultAuthKind: row.DefaultAuthKind, DefaultKeyPath: row.DefaultKeyPath,
+		DefaultCredID: row.DefaultCredID, DefaultJumpAssetID: row.DefaultJumpAssetID,
+	}
 }
 
 func productionSnippetDTO(row store.SnippetRow) snippetDTO {

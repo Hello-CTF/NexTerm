@@ -237,6 +237,20 @@ afterEach(() => {
 });
 
 describe("RunbookPanel", () => {
+  it("keeps script directives off unless a step opts in", async () => {
+    addSnippet("snippet-two");
+    addSnippet("snippet-two");
+    const boxes = panel().container.querySelectorAll<HTMLInputElement>('input[aria-label$="启用脚本交互指令"]');
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0].checked).toBe(false);
+    click(boxes[1]);
+    startRun();
+    await flushUntil(() => text().includes("请确认下列命令"));
+    const steps = mocks.start.mock.calls[0][0].steps;
+    expect(steps[0].interactive).toBeFalsy();
+    expect(steps[1].interactive).toBe(true);
+  });
+
   it("edits, reorders, and deletes steps", () => {
     addSnippet("snippet-one");
     addSnippet("snippet-two");

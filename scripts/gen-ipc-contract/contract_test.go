@@ -152,6 +152,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "app_update_check", scope: "update", input: "Record<string, never>", output: "UpdateStatus"},
 		{name: "app_update_install", scope: "update", input: updateInstallInput, output: "UpdateResult"},
 		{name: "app_restart", scope: "update", input: "Record<string, never>", output: "UpdateResult"},
+		{name: "app_update_channel_get", scope: "update", input: "Record<string, never>", output: "UpdateChannelResponse"},
+		{name: "app_update_channel_set", scope: "update", input: "UpdateChannelRequest", output: "UpdateChannelResponse"},
 		{name: "biometric_status", scope: "biometric", input: "Record<string, never>", output: "BiometricStatus"},
 		{name: "biometric_unlock", scope: "biometric", input: "Record<string, never>", output: "BiometricUnlockResult"},
 		{name: "biometric_enable", scope: "biometric", input: "BiometricEnableRequest", output: "unknown"},
@@ -188,8 +190,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 15 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 15", len(selected))
+	if len(selected) != 17 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 17", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
@@ -219,7 +221,7 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		{name: "DesktopTrayDTO", want: []string{"enabled: boolean;"}},
 		{name: "DesktopTraySetRequest", want: []string{"enabled: boolean;"}},
 		{name: "ScreenInsets", want: []string{"top: number;", "right: number;", "bottom: number;", "left: number;"}},
-		{name: "UpdateStatus", want: []string{"available: boolean;", "currentVersion: string;", "version: string;", "canInstall: boolean;", "unavailableReason: string;"}},
+		{name: "UpdateStatus", want: []string{"available: boolean;", "currentVersion: string;", "version: string;", "canInstall: boolean;", "unavailableReason: string;", "releaseChannel: string;", "runningPrerelease: boolean;"}},
 		{name: "UpdateResult", want: []string{"installed: boolean;", "restarted: boolean;", "version: string;", "unavailableReason: string;"}},
 		{name: "BiometricStatus", want: []string{"available: boolean;", "canEvaluate: boolean;", "hasMaterial: boolean;"}, absent: []string{"\n  password:", "\n  secret:"}},
 		{name: "BiometricUnlockResult", want: []string{"ok: boolean;", "password?: string;", "message?: string;"}},
@@ -771,6 +773,8 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		{name: "asset_search", scope: "asset", output: "AssetDTO[]"},
 		{name: "asset_search_meta", scope: "asset", output: "AssetSearchDTO"},
 		{name: "asset_probe_batch", scope: "asset", nested: true, output: "AssetProbeBatchDTO"},
+		{name: "asset_inheritance_preview", scope: "asset", output: "AssetInheritanceDTO"},
+		{name: "asset_credential_required", scope: "asset", output: "AssetCredentialRequiredDTO"},
 		{name: "group_list", scope: "group", output: "AssetGroupDTO[]"},
 		{name: "group_create", scope: "group", output: "AssetGroupDTO"},
 		{name: "group_update", scope: "group", output: "AssetGroupDTO"},
@@ -809,8 +813,8 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 16 {
-		t.Fatalf("selected asset/group/known-host command count = %d, want 16", len(selected))
+	if len(selected) != 18 {
+		t.Fatalf("selected asset/group/known-host command count = %d, want 18", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "asset" || command.Scope == "group" || command.Scope == "known-host") && !selected[name] {
@@ -835,7 +839,7 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		{command: "asset_get", want: []string{"id?: string;", "q?: string;", "path?: string;"}},
 		{command: "asset_search_meta", output: true, want: []string{"assets: AssetDTO[];", "total: number;", "truncated: boolean;"}},
 		{command: "asset_probe_batch", want: []string{"assetIds: string[];", "timeoutMs?: number;", "maxConcurrent?: number;"}},
-		{command: "group_update", want: []string{"id: string;", "name?: string | null;", "parentId?: string | null;", "sort?: number | null;"}},
+		{command: "group_update", want: []string{"id: string;", "name?: string | null;", "parentId?: string | null;", "sort?: number | null;", "defaults?:"}},
 		{command: "known_host_accept", want: []string{"host: string;", "port: number;", "keyType: string;", "fingerprint: string;", "key?: string;"}},
 	}
 	for _, test := range declarationTests {

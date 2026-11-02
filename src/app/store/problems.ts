@@ -235,6 +235,7 @@ export function quickConnectionProblemKey(target: QuickConnectTarget): string {
     host: target.host.trim().toLowerCase(),
     port: target.port,
     username: target.username?.trim() || null,
+    ...(target.protocol ? { protocol: target.protocol } : {}),
   };
   return `quick:${formatQuickConnectTarget(normalized)}`;
 }

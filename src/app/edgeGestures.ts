@@ -6,6 +6,8 @@ const SWIPE_MIN_PX = 32;
 
 interface EdgeGestureHandlers {
   overlayDock: "left" | "right" | null;
+  // Opening a drawer by edge swipe is off while a remote desktop is on screen: the edges belong to the remote screen.
+  openDisabled?: boolean;
   openLeft: () => void;
   openRight: () => void;
   closeOverlay: () => void;
@@ -30,7 +32,9 @@ export function useEdgeGestures(handlers: EdgeGestureHandlers): void {
       startY = t.clientY;
       startTarget = e.target;
       edge =
-        startX <= EDGE_PX ? "left" : startX >= window.innerWidth - EDGE_PX ? "right" : null;
+        ref.current.openDisabled
+          ? null
+          : startX <= EDGE_PX ? "left" : startX >= window.innerWidth - EDGE_PX ? "right" : null;
     };
     const onTouchMove = (e: TouchEvent) => {
       if (!edge) return;

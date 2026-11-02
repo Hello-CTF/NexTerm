@@ -72,6 +72,8 @@ function mergeValue<T>(base: T | undefined, local: T | undefined, remote: T | un
 
 export function workspaceLogicalKey(workspace: Workspace): string {
   if (workspace.kind === "tools") return "tools";
+  // Two connections to one asset are two workspaces, so the asset does not identify them.
+  if (workspace.kind === "remote") return `remote:id:${workspace.id}`;
   if (workspace.assetId) return `${workspace.kind}:asset:${workspace.assetId}`;
   if (workspace.quickTarget) {
     const target = workspace.quickTarget;
@@ -104,6 +106,7 @@ export function tabLogicalKey(tab: AppTab): string {
     return `${tab.kind}:path:${tab.path}`;
   }
   if (tab.kind === "db") return `db:${tab.dbKind ?? ""}`;
+  if (tab.kind === "remote") return `remote:${tab.id}`;
   return `${tab.kind}:${JSON.stringify([tab.path ?? null, tab.containerId ?? null, tab.credId ?? null])}`;
 }
 

@@ -14,6 +14,8 @@ import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { IconClose, IconEdit, IconKey, IconPlay, IconPlug, IconServer } from "../../ui/icons";
 import { assetTagValues } from "../explorer/assetSearch";
+import { ask } from "../../ui/dialogs";
+import { inheritanceChangesOnMove, moveConfirmationText } from "../explorer/groupInheritance";
 import { ProductionConfirmationDialog } from "./ProductionConfirmationDialog";
 import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
 import {
@@ -349,6 +351,8 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   }, [sessions]);
   const resultLabel = (assetId: string) => assets.find((asset) => asset.id === assetId)?.name ?? assetId;
 
+  const groupNames = useMemo(() => new Map((groupsQuery.data ?? []).map((group) => [group.id, group.name])), [groupsQuery.data]);
+
   const applyBulkEdit = async () => {
     if (busy) return;
     setError(null);
@@ -386,6 +390,17 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     }
     setBusy("edit");
     try {
+      if (groupId !== undefined) {
+        // Moving hosts into a group can change which credential, authentication or jump they use.
+        const target = groupId === "" ? null : groupId;
+        const moved = await Promise.all(selectedAssets.map(async (asset) => ({
+          name: asset.name,
+          targetName: target === null ? "根目录" : groupNames.get(target) ?? "目标分组",
+          changes: await inheritanceChangesOnMove(asset, target),
+        })));
+        const affected = moved.filter((line) => line.changes.length > 0);
+        if (affected.length > 0 && !(await ask(moveConfirmationText(affected), { kind: "warning" }))) return;
+      }
       const response = await maintenanceApi.bulkEdit(request);
       setEditResults(response.results.map((result) => ({
         assetId: result.assetId,

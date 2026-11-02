@@ -97,7 +97,8 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
     advanceAccountEpoch: () => set((state) => ({ accountEpoch: state.accountEpoch + 1 })),
     ensureWorkspace: (spec) => {
       const { workspaces, activeWorkspaceId } = get();
-      const exists = workspaces.find((w) => {
+      // Every remote desktop connection is its own workspace, even to an asset that is already open.
+      const exists = spec.kind === "remote" ? undefined : workspaces.find((w) => {
         if (spec.sessionId !== undefined) return w.sessionId === spec.sessionId;
         if (spec.connId !== undefined) return w.connId === spec.connId;
         return w.kind === spec.kind;

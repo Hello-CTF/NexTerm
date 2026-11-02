@@ -84,6 +84,21 @@ describe("session reconnect status", () => {
     expect(useUi.getState().toasts).toEqual([]);
   });
 
+  it("shows one success toast when a reconnect completes", () => {
+    applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 1 });
+    expect(useUi.getState().toasts).toEqual([]);
+
+    applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 2 });
+    applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 3 });
+    applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 4 });
+
+    expect(useUi.getState().toasts).toHaveLength(1);
+    expect(useUi.getState().toasts[0]).toMatchObject({
+      kind: "success",
+      text: "会话「web-01」已重新连接",
+    });
+  });
+
   it("keeps the typed failure code in both the session and polling error", async () => {
     applySessionStatusEvent({
       sessionId: "s1",

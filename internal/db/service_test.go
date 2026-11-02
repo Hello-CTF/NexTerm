@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -850,5 +851,131 @@ func TestServiceMetadataAndRedisErrorProjection(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assertDBErrorProjection(t, test.tool, test.trigger(), test.source, test.want, test.code)
 		})
+	}
+}
+
+func TestCloseAccountUserKeepsExceptedSessionAndOtherUsers(t *testing.T) {
+	service := NewService(nil)
+	var next int
+	service.newID = func() (string, error) { next++; return fmt.Sprintf("db-%d", next), nil }
+	var mu sync.Mutex
+	closed := map[string]bool{}
+	service.openRedis = func(_ context.Context, cfg RedisConfig) (*redisConnection, error) {
+		host := cfg.Host
+		return &redisConnection{closeFn: func() error { mu.Lock(); closed[host] = true; mu.Unlock(); return nil }}, nil
+	}
+	connect := func(user, session, host string) string {
+		ctx := ipc.WithAccountSessionID(ipc.WithUserID(t.Context(), user), session)
+		result, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: host}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result.ConnID
+	}
+	current := connect("a", "current", "keep")
+	other := connect("a", "other", "drop")
+	foreign := connect("b", "other", "foreign")
+	// A handle adopted by both sessions must survive for the current one only.
+	service.mu.Lock()
+	service.loginSessions[current]["other"] = struct{}{}
+	service.mu.Unlock()
+
+	service.CloseAccountUser("a", "current")
+
+	ctxA := ipc.WithAccountSessionID(ipc.WithUserID(t.Context(), "a"), "current")
+	if _, err := service.connOf(ctxA, current); err != nil {
+		t.Fatalf("current session lost its connection: %v", err)
+	}
+	if _, err := service.connOf(ipc.WithUserID(t.Context(), "a"), other); err == nil {
+		t.Fatal("other session's connection survived")
+	}
+	if _, err := service.connOf(ipc.WithUserID(t.Context(), "b"), foreign); err != nil {
+		t.Fatalf("another user's connection was closed: %v", err)
+	}
+	mu.Lock()
+	if !closed["drop"] || closed["keep"] || closed["foreign"] {
+		t.Fatalf("closed = %v", closed)
+	}
+	mu.Unlock()
+	service.mu.RLock()
+	_, stillShared := service.loginSessions[current]["other"]
+	service.mu.RUnlock()
+	if stillShared {
+		t.Fatal("revoked session still adopts the kept connection")
+	}
+
+	service.CloseAccountUser("a", "")
+	if _, err := service.connOf(ctxA, current); err == nil {
+		t.Fatal("full revocation left a connection open")
+	}
+}
+
+func TestConnectInFlightDuringUserRevocationDoesNotRegister(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "late", nil }
+	started := make(chan struct{})
+	release := make(chan struct{})
+	closed := make(chan struct{})
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		close(started)
+		<-release
+		return &redisConnection{closeFn: func() error { close(closed); return nil }}, nil
+	}
+	ctx := ipc.WithAccountSessionID(ipc.WithUserID(t.Context(), "a"), "other")
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
+		result <- err
+	}()
+	<-started
+	service.CloseAccountUser("a", "current")
+	close(release)
+	if err := <-result; err == nil {
+		t.Fatal("a connect that passed its checks before the revocation registered a handle")
+	}
+	<-closed
+	if _, err := service.connOf(ctx, "late"); err == nil {
+		t.Fatal("handle remained registered")
+	}
+}
+
+func TestConnectInFlightOfSparedSessionSurvivesUserRevocation(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "kept", nil }
+	started := make(chan struct{})
+	release := make(chan struct{})
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		close(started)
+		<-release
+		return &redisConnection{closeFn: func() error { return nil }}, nil
+	}
+	ctx := ipc.WithAccountSessionID(ipc.WithUserID(t.Context(), "a"), "current")
+	result := make(chan error, 1)
+	go func() {
+		_, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}})
+		result <- err
+	}()
+	<-started
+	service.CloseAccountUser("a", "current")
+	close(release)
+	if err := <-result; err != nil {
+		t.Fatalf("spared session's connect failed: %v", err)
+	}
+}
+
+func TestCloseAccountUserClosesHandlesWithoutLoginSessionWhenNothingIsSpared(t *testing.T) {
+	service := NewService(nil)
+	service.newID = func() (string, error) { return "bare", nil }
+	closed := false
+	service.openRedis = func(context.Context, RedisConfig) (*redisConnection, error) {
+		return &redisConnection{closeFn: func() error { closed = true; return nil }}, nil
+	}
+	ctx := ipc.WithUserID(t.Context(), "a")
+	if _, err := service.Connect(ctx, ConnectArgs{Inline: &InlineConnection{Kind: "redis", Host: "db.example"}}); err != nil {
+		t.Fatal(err)
+	}
+	service.CloseAccountUser("a", "")
+	if !closed {
+		t.Fatal("handle without a login session survived a full revocation")
 	}
 }

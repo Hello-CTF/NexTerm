@@ -289,6 +289,9 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 	case session.KindWinRM:
 		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
+	case session.KindRDP, session.KindVNC:
+		portOnly = true
+		err = s.probeReachability(ctx, target, timeout)
 	default:
 		result.Kind = "unsupported"
 		result.Error = "这类资产暂不支持连接测试"
@@ -346,6 +349,14 @@ func describeNonConnectLoginFailure(err error) (kind, message string) {
 	case "vault":
 		return "vault", "凭据库尚未解锁，或该资产绑定的凭据无法读取。请先解锁凭据库，再检查资产绑定的凭据"
 	case "config":
+		// An inherited default names its group so the user can find and fix it; the text carries no secret.
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && strings.Contains(appErr.Message, "继承自分组") {
+			return "config", appErr.Message
+		}
+		if errors.As(err, &appErr) && strings.HasPrefix(appErr.Message, "分组「") {
+			return "config", appErr.Message
+		}
 		return "config", "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
 	case "unsupported":
 		return "unsupported", "当前环境不支持连接测试"
@@ -362,7 +373,9 @@ func localizedProbeFailure(failure assetProbeResultDTO) assetProbeResultDTO {
 	case "not_found":
 		failure.Error = "资产不存在，可能已被删除，请刷新后重试"
 	case "config":
-		failure.Error = "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
+		if !strings.Contains(failure.Error, "分组「") {
+			failure.Error = "资产配置不完整或无效，请检查主机、端口、用户名和认证方式"
+		}
 	}
 	return failure
 }

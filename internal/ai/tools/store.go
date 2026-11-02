@@ -23,7 +23,9 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 			return nil, err
 		}
 		assets := make([]Asset, 0, len(rows))
-		for _, row := range rows {
+		// One group read serves the whole listing.
+		for _, resolved := range storage.ResolveAssets(ctx, rows) {
+			row := resolved.AssetRow
 			if row.Kind == store.AssetKindDevice {
 				continue
 			}
@@ -34,6 +36,8 @@ func WithStore(deps Dependencies, storage *store.Store, database Database) Depen
 			if row.Port != nil {
 				asset.Host = fmt.Sprintf("%s:%d", asset.Host, *row.Port)
 			}
+			// The username shown is the one a connection would use, including a group default; an unresolvable
+			// group leaves the asset's own value (informational listing, no credential).
 			if row.Username != nil {
 				asset.Username = *row.Username
 			}

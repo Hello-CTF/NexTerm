@@ -98,6 +98,9 @@ func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) 
 	if err := validateAssetPasteOptions(input.OptionsJSON); err != nil {
 		return AssetRow{}, err
 	}
+	if err := validateAssetWakeOptions(input.OptionsJSON, ""); err != nil {
+		return AssetRow{}, err
+	}
 	if strings.TrimSpace(input.Name) == "" {
 		return AssetRow{}, badParam(errString("资产名称不能为空"))
 	}
@@ -206,10 +209,18 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
+			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
 		}
 		values, err := s.assetUpdateValues(ctx, db, id, patch, nextWriteVersion(current.UpdatedAt))
 		if err != nil {
 			return AssetRow{}, err
+		}
+		// A save that changes nothing neither rewrites the row nor moves its revision, so an unrelated editor save
+		// cannot make sync see a new version.
+		if assetValuesUnchanged(current, values) {
+			return current, nil
 		}
 		asset := query.Use(db).AssetRow
 		statement := asset.WithContext(ctx).
@@ -253,6 +264,9 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 		}
 		if patch.OptionsJSON != nil {
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
+			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
 		}
@@ -827,4 +841,75 @@ func optionalInt64Equal(left, right *int64) bool {
 		return left == nil && right == nil
 	}
 	return *left == *right
+}
+
+// assetValuesUnchanged reports whether applying the column values would leave the row's content as it is.
+func assetValuesUnchanged(current AssetRow, values map[string]any) bool {
+	text := func(value any) (string, bool) {
+		switch typed := value.(type) {
+		case string:
+			return typed, true
+		case *string:
+			if typed == nil {
+				return "\x00null", true
+			}
+			return *typed, true
+		}
+		return "", false
+	}
+	stored := func(value *string) string {
+		if value == nil {
+			return "\x00null"
+		}
+		return *value
+	}
+	for column, value := range values {
+		var same bool
+		switch column {
+		case "updated_at":
+			continue
+		case "group_id", "host", "username", "auth_kind", "key_path", "cred_id":
+			var existing *string
+			switch column {
+			case "group_id":
+				existing = current.GroupID
+			case "host":
+				existing = current.Host
+			case "username":
+				existing = current.Username
+			case "auth_kind":
+				existing = current.AuthKind
+			case "key_path":
+				existing = current.KeyPath
+			case "cred_id":
+				existing = current.CredID
+			}
+			next, ok := text(value)
+			same = ok && next == stored(existing)
+		case "port":
+			next, ok := value.(*int32)
+			same = ok && ((next == nil && current.Port == nil) || (next != nil && current.Port != nil && *next == *current.Port))
+		case "name":
+			next, ok := value.(string)
+			same = ok && next == current.Name
+		case "options_json":
+			next, ok := value.(string)
+			same = ok && next == current.OptionsJSON
+		case "tags":
+			next, ok := value.(string)
+			same = ok && next == current.Tags
+		case "note":
+			next, ok := value.(string)
+			same = ok && next == current.Note
+		case "sort":
+			next, ok := value.(int64)
+			same = ok && next == current.Sort
+		default:
+			return false
+		}
+		if !same {
+			return false
+		}
+	}
+	return true
 }

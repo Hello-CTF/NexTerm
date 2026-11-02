@@ -58,6 +58,8 @@ type GroupInput struct {
 	ParentID *string
 	Name     string
 	Sort     int64
+	// Defaults are the connection defaults assets below the group inherit; nil leaves them empty.
+	Defaults *GroupDefaults
 }
 
 type AssetInput struct {
@@ -93,6 +95,8 @@ type GroupPatch struct {
 	Name     *string
 	ParentID Optional[string]
 	Sort     *int64
+	// Defaults replaces all connection defaults when set; nil leaves them untouched.
+	Defaults *GroupDefaults
 }
 
 type AssetPatch struct {

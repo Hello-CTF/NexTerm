@@ -37,15 +37,47 @@ func TestParseAndCompareVersions(t *testing.T) {
 	}
 }
 
-func TestAcceptsPrereleaseFollowsCurrentChannel(t *testing.T) {
-	if acceptsPrerelease("0.2.2") {
-		t.Fatal("stable current must not accept prerelease")
+func TestRCOrdering(t *testing.T) {
+	ordered := []string{"1.3.6", "1.4.0-rc.1", "1.4.0-rc.2", "1.4.0-rc.9", "1.4.0-rc.10", "1.4.0-rc.11", "1.4.0", "1.4.1-rc.1", "1.4.1"}
+	for index := 0; index < len(ordered)-1; index++ {
+		for next := index + 1; next < len(ordered); next++ {
+			left, _ := parseVersion(ordered[index])
+			right, _ := parseVersion(ordered[next])
+			if compareVersions(left, right) >= 0 || compareVersions(right, left) <= 0 {
+				t.Fatalf("%s must sort before %s", ordered[index], ordered[next])
+			}
+		}
 	}
-	if !acceptsPrerelease("0.2.2-rc.7") {
-		t.Fatal("rc current must accept prerelease")
+}
+
+func TestReleaseChannelParsing(t *testing.T) {
+	for _, value := range []string{"stable", "rc"} {
+		if channel, ok := ParseReleaseChannel(value); !ok || string(channel) != value {
+			t.Fatalf("ParseReleaseChannel(%q) = %q, %v", value, channel, ok)
+		}
 	}
-	if !acceptsPrerelease("dev") {
-		t.Fatal("dev current must accept prerelease")
+	for _, value := range []string{"", "beta", "RC", "Stable", " rc"} {
+		if _, ok := ParseReleaseChannel(value); ok {
+			t.Fatalf("ParseReleaseChannel(%q) must fail", value)
+		}
+		if NormalizeReleaseChannel(value) != ChannelStable {
+			t.Fatalf("NormalizeReleaseChannel(%q) must fall back to stable", value)
+		}
+	}
+	if NormalizeReleaseChannel("rc") != ChannelRC {
+		t.Fatal("rc must stay rc")
+	}
+}
+
+func TestIsRCPrerelease(t *testing.T) {
+	for pre, want := range map[string]bool{
+		"rc.1": true, "rc.10": true, "rc.0": true,
+		"rc": false, "rc.": false, "rc.01": false, "rc.1.1": false, "rc.a": false, "rc.1-x": false,
+		"beta.1": false, "alpha": false, "": false, "RC.1": false,
+	} {
+		if got := isRCPrerelease(pre); got != want {
+			t.Fatalf("isRCPrerelease(%q) = %v, want %v", pre, got, want)
+		}
 	}
 }
 

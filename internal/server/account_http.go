@@ -493,6 +493,9 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.accountThrottle.recovery.RecordSuccess(key)
+	if user, lookupErr := s.accounts.GetUserByUsername(r.Context(), request.Username); lookupErr == nil && user != nil {
+		s.closeUserConnections(user.ID, "")
+	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -669,6 +672,14 @@ func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID s
 	return s.accountCleanupPrepare(context.WithoutCancel(ctx), ownerID, cleanupID)
 }
 
+// closeUserConnections ends the live connections of a user's login sessions other than exceptSession, for
+// revocations that do not enumerate session ids. Only services that implement CloseAccountUser take part.
+func (s *Server) closeUserConnections(userID, exceptSession string) {
+	if closer, ok := s.accountConnections.(interface{ CloseAccountUser(string, string) }); ok {
+		closer.CloseAccountUser(userID, exceptSession)
+	}
+}
+
 func (s *Server) closeAccountConnections(sessionID string) {
 	if s.accountConnections == nil {
 		return
@@ -700,6 +711,7 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		writeAccountFailure(w, err)
 		return
 	}
+	s.closeUserConnections(identity.UserID, identity.SessionID)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -847,6 +859,7 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.closeUserConnections(target, "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -859,6 +872,7 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.closeUserConnections(r.PathValue("id"), "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

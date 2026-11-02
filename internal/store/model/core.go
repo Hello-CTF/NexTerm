@@ -1,14 +1,22 @@
 package model
 
 type AssetGroupRow struct {
-	ID        string         `gorm:"column:id;primaryKey" json:"id"`
-	ParentID  *string        `gorm:"column:parent_id;size:191" json:"parent_id"`
-	Name      string         `gorm:"column:name;not null" json:"name"`
-	Sort      int64          `gorm:"column:sort;not null" json:"sort"`
-	CreatedAt int64          `gorm:"column:created_at;not null" json:"created_at"`
-	UpdatedAt int64          `gorm:"column:updated_at;not null" json:"updated_at"`
-	OwnerID   string         `gorm:"size:191;column:owner_id;not null;default:'';index:idx_asset_group_owner" json:"owner_id"`
-	Parent    *AssetGroupRow `gorm:"foreignKey:ParentID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+	ID        string  `gorm:"column:id;primaryKey" json:"id"`
+	ParentID  *string `gorm:"column:parent_id;size:191" json:"parent_id"`
+	Name      string  `gorm:"column:name;not null" json:"name"`
+	Sort      int64   `gorm:"column:sort;not null" json:"sort"`
+	CreatedAt int64   `gorm:"column:created_at;not null" json:"created_at"`
+	UpdatedAt int64   `gorm:"column:updated_at;not null" json:"updated_at"`
+	OwnerID   string  `gorm:"size:191;column:owner_id;not null;default:'';index:idx_asset_group_owner" json:"owner_id"`
+	// Connection defaults inherited by the assets below this group. NULL means the group sets nothing.
+	// The credential and jump references carry no foreign key: the credential delete path clears them and
+	// resolution re-checks existence and ownership on every connect.
+	DefaultUsername    *string        `gorm:"column:default_username" json:"defaultUsername"`
+	DefaultAuthKind    *string        `gorm:"column:default_auth_kind" json:"defaultAuthKind"`
+	DefaultKeyPath     *string        `gorm:"column:default_key_path" json:"defaultKeyPath"`
+	DefaultCredID      *string        `gorm:"column:default_cred_id;size:191" json:"defaultCredId"`
+	DefaultJumpAssetID *string        `gorm:"column:default_jump_asset_id;size:191" json:"defaultJumpAssetId"`
+	Parent             *AssetGroupRow `gorm:"foreignKey:ParentID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (AssetGroupRow) TableName() string { return "asset_group" }

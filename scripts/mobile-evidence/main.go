@@ -659,21 +659,30 @@ func (c *checker) checkAndroidVersion() {
 	c.add("android-version", passFail(passed), fmt.Sprintf("versionName=%s, versionCode=%s; expected versionName=%s, versionCode=%d", actualName, actualCode, c.version, expectedCode))
 }
 
+// expectedAndroidVersionCode mirrors androidVersionCode in scripts/lib/semver.mjs:
+// major*100000000 + minor*100000 + patch*100 + (rc.N ? N : 99).
 func expectedAndroidVersionCode(value string) (int64, error) {
 	parsed := parseReleaseVersion(value)
 	if parsed == nil {
-		return 0, fmt.Errorf("NEXTERM_RELEASE_VERSION is not a non-placeholder semantic version: %s", value)
+		return 0, fmt.Errorf("NEXTERM_RELEASE_VERSION is not x.y.z or x.y.z-rc.N (non-placeholder): %s", value)
 	}
 	major, _ := strconv.ParseInt(parsed.major, 10, 64)
 	minor, _ := strconv.ParseInt(parsed.minor, 10, 64)
 	patch, _ := strconv.ParseInt(parsed.patch, 10, 64)
+	if major > 20 {
+		return 0, errors.New("Android versionCode requires a major version no greater than 20")
+	}
 	if minor > 999 || patch > 999 {
 		return 0, errors.New("Android versionCode requires minor and patch versions no greater than 999")
 	}
-	if major > androidVersionCodeLimit/1000000 {
-		return 0, fmt.Errorf("Android versionCode for major version %d is outside the supported range 1..%d", major, androidVersionCodeLimit)
+	suffix := int64(99)
+	if parsed.rc != "" {
+		suffix, _ = strconv.ParseInt(parsed.rc, 10, 64)
+		if suffix < 1 || suffix > 98 {
+			return 0, errors.New("Android versionCode requires a release candidate number between 1 and 98")
+		}
 	}
-	code := major*1000000 + minor*1000 + patch
+	code := major*100000000 + minor*100000 + patch*100 + suffix
 	if code < 1 || code > androidVersionCodeLimit {
 		return 0, fmt.Errorf("Android versionCode %d is outside the supported range 1..%d", code, androidVersionCodeLimit)
 	}
@@ -697,14 +706,24 @@ func validIOSBuildNumber(value string) bool {
 
 var semverPattern = regexp.MustCompile(`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
 
-type releaseVersion struct{ core, major, minor, patch string }
+type releaseVersion struct{ core, major, minor, patch, rc string }
 
-// parseReleaseVersion mirrors scripts/lib/semver.mjs: a SemVer 2.0 version
-// other than the 0.0.0 placeholder.
+var rcPrerelease = regexp.MustCompile(`^rc\.([1-9]\d*)$`)
+
+// parseReleaseVersion mirrors releaseVersionProblem in scripts/lib/semver.mjs: x.y.z or
+// x.y.z-rc.N other than the 0.0.0 placeholder.
 func parseReleaseVersion(value string) *releaseVersion {
 	match := semverPattern.FindStringSubmatch(value)
 	if match == nil || value == "0.0.0" {
 		return nil
 	}
-	return &releaseVersion{core: match[1] + "." + match[2] + "." + match[3], major: match[1], minor: match[2], patch: match[3]}
+	parsed := &releaseVersion{core: match[1] + "." + match[2] + "." + match[3], major: match[1], minor: match[2], patch: match[3]}
+	if match[4] != "" {
+		rc := rcPrerelease.FindStringSubmatch(match[4])
+		if rc == nil {
+			return nil
+		}
+		parsed.rc = rc[1]
+	}
+	return parsed
 }

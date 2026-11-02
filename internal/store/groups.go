@@ -51,6 +51,12 @@ func (s *Store) GroupCreate(ctx context.Context, input GroupInput) (AssetGroupRo
 	id := ids.New()
 	now := ids.NowMS()
 	row := AssetGroupRow{ID: id, ParentID: input.ParentID, Name: input.Name, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	if input.Defaults != nil {
+		if err := s.validateGroupDefaults(ctx, row.OwnerID, *input.Defaults); err != nil {
+			return AssetGroupRow{}, err
+		}
+		applyGroupDefaults(&row, *input.Defaults)
+	}
 	if err := query.Use(s.db).AssetGroupRow.WithContext(ctx).Create(&row); err != nil {
 		return AssetGroupRow{}, dbError(err)
 	}
@@ -62,6 +68,7 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 	if err != nil {
 		return AssetGroupRow{}, err
 	}
+	original := row
 	if patch.Name != nil {
 		row.Name = *patch.Name
 	}
@@ -70,6 +77,12 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 	}
 	if patch.Sort != nil {
 		row.Sort = *patch.Sort
+	}
+	if patch.Defaults != nil {
+		if err := s.validateGroupDefaults(ctx, row.OwnerID, *patch.Defaults); err != nil {
+			return AssetGroupRow{}, err
+		}
+		applyGroupDefaults(&row, *patch.Defaults)
 	}
 	if row.ParentID != nil && *row.ParentID == id {
 		return AssetGroupRow{}, badParam(errString("分组不能将自身设为父级"))
@@ -90,11 +103,42 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 			cursor = *parent.ParentID
 		}
 	}
-	group := query.Use(s.db).AssetGroupRow
-	_, err = group.WithContext(ctx).
-		Where(group.ID.Eq(id)).
-		Where(ownerConditions(ctx, group.TableName())...).
-		UpdateColumns(map[string]any{"name": row.Name, "parent_id": row.ParentID, "sort": row.Sort, "updated_at": ids.NowMS()})
+	values := map[string]any{"name": row.Name, "parent_id": row.ParentID, "sort": row.Sort, "updated_at": ids.NowMS()}
+	// Only the defaults that actually change are written, so an unrelated edit (or a stale read) cannot put back a
+	// reference that a credential delete cleared in the meantime.
+	if patch.Defaults != nil {
+		for column, change := range map[string][2]*string{
+			"default_username":      {original.DefaultUsername, row.DefaultUsername},
+			"default_auth_kind":     {original.DefaultAuthKind, row.DefaultAuthKind},
+			"default_key_path":      {original.DefaultKeyPath, row.DefaultKeyPath},
+			"default_cred_id":       {original.DefaultCredID, row.DefaultCredID},
+			"default_jump_asset_id": {original.DefaultJumpAssetID, row.DefaultJumpAssetID},
+		} {
+			if trimmed(change[0]) != trimmed(change[1]) {
+				values[column] = change[1]
+			}
+		}
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		group := query.Use(tx).AssetGroupRow
+		if _, err := group.WithContext(ctx).
+			Where(group.ID.Eq(id)).
+			Where(ownerConditions(ctx, group.TableName())...).
+			UpdateColumns(values); err != nil {
+			return err
+		}
+		if newCred, changed := values["default_cred_id"]; changed && newCred.(*string) != nil {
+			// The credential was validated before the write; confirm it still exists inside the transaction.
+			credential := query.Use(tx).CredentialRow
+			if _, err := credential.WithContext(ctx).Where(credential.ID.Eq(*newCred.(*string))).First(); err != nil {
+				if isNoRows(err) {
+					return badParam(errString("分组默认凭据不存在"))
+				}
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return AssetGroupRow{}, dbError(err)
 	}

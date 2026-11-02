@@ -1,5 +1,6 @@
 import { DESKTOP } from "../../ipc/env";
 import { WEB } from "../../ipc/env";
+import { confirmDialog } from "../../ui/dialogs";
 import { DownloadProgress } from "../../ui/DownloadProgress";
 import { formatBytes } from "../../ui/format";
 import {
@@ -10,7 +11,22 @@ import {
   IconRestart,
   IconXCircle,
 } from "../../ui/icons";
-import { updateInstallAllowed, updateVerdict, useUpdate, type UpdateVerdict } from "../../app/useUpdate";
+import type { UpdateReleaseChannel } from "../../ipc/types";
+import {
+  effectiveReleaseChannel,
+  updateInstallAllowed,
+  updateVerdict,
+  useUpdate,
+  type UpdateVerdict,
+} from "../../app/useUpdate";
+
+const CHANNEL_OPTIONS: ReadonlyArray<{ value: UpdateReleaseChannel; label: string }> = [
+  { value: "stable", label: "稳定版" },
+  { value: "rc", label: "RC" },
+];
+
+const RC_RISK_NOTE =
+  "RC 是正式发布前的候选版本，可能包含尚未发现的问题。此设置只对本机生效，不会同步到其他设备。切换回稳定版不会降级，会保持当前版本，直到有更新的稳定版发布。确定切换到 RC 通道吗？";
 
 function verdictBadge(verdict: UpdateVerdict): { text: string; tone: string } {
   switch (verdict) {
@@ -55,6 +71,16 @@ export function UpdateCard() {
   const showInstall =
     verdict === "available" && installAllowed && !install.active && !installedVersion;
   const failReason = checkError || status?.unavailableReason || "原因未知";
+  const channel = effectiveReleaseChannel(update);
+  // The channel only applies where the app installs updates itself: not in server mode, not on iOS or Android.
+  const showChannel = DESKTOP && verdict !== "external";
+  const runningRC = status?.runningPrerelease === true;
+
+  const chooseChannel = async (next: UpdateReleaseChannel) => {
+    if (next === channel || update.channelSaving) return;
+    if (next === "rc" && !(await confirmDialog(RC_RISK_NOTE))) return;
+    await update.setReleaseChannel(next);
+  };
 
   return (
     <section className="nx-card">
@@ -67,13 +93,51 @@ export function UpdateCard() {
       <p className="nx-hint mb-3">
         当前版本 {status?.currentVersion ? `v${status.currentVersion}` : "…"}
         {verdict === "uptodate" ? " · 已是最新版本" : ""}
+      
+        {" · "}
+        <a href="/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noreferrer" className="underline">第三方许可</a>
       </p>
+
+      {showChannel && (
+        <div className="mb-3" data-setting="update-channel">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="text-[12.5px] text-neutral-200">更新通道</span>
+            <div className="nx-segment" role="group" aria-label="更新通道">
+              {CHANNEL_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${channel === option.value ? "is-active" : ""}`}
+                  aria-pressed={channel === option.value}
+                  disabled={update.channelSaving}
+                  onClick={() => void chooseChannel(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="nx-hint">
+            {channel === "rc"
+              ? "RC 通道会收到正式发布前的候选版本，也会收到稳定版。仅对本机生效。"
+              : "稳定版通道只接收正式发布的版本。仅对本机生效。"}
+          </p>
+          {channel === "stable" && runningRC && (
+            <p className="nx-hint mt-1 text-amber-300">
+              当前运行的是 RC 版本。选择稳定版不会降级，将保持当前版本，直到有更新的稳定版发布。
+            </p>
+          )}
+          {update.channelError && (
+            <p className="mt-1 text-[12px] text-red-300">更新通道保存失败：{update.channelError}</p>
+          )}
+        </div>
+      )}
 
       {verdict === "available" && status && (
         <p className="mb-2 text-[12.5px] text-neutral-200">
           发现新版本 v{status.version}
           {status.assetSize > 0 ? ` · 安装包 ${formatBytes(status.assetSize)}` : ""}
-          {status.prerelease ? " · 预发布" : ""}
+          {status.prerelease ? " · RC 候选版本" : ""}
         </p>
       )}
       {verdict === "external" && (

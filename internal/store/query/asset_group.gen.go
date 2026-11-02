@@ -34,6 +34,11 @@ func newAssetGroupRow(db *gorm.DB, opts ...gen.DOOption) assetGroupRow {
 	_assetGroupRow.CreatedAt = field.NewInt64(tableName, "created_at")
 	_assetGroupRow.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_assetGroupRow.OwnerID = field.NewString(tableName, "owner_id")
+	_assetGroupRow.DefaultUsername = field.NewString(tableName, "default_username")
+	_assetGroupRow.DefaultAuthKind = field.NewString(tableName, "default_auth_kind")
+	_assetGroupRow.DefaultKeyPath = field.NewString(tableName, "default_key_path")
+	_assetGroupRow.DefaultCredID = field.NewString(tableName, "default_cred_id")
+	_assetGroupRow.DefaultJumpAssetID = field.NewString(tableName, "default_jump_asset_id")
 	_assetGroupRow.Parent = assetGroupRowBelongsToParent{
 		db: db.Session(&gorm.Session{}),
 
@@ -53,15 +58,20 @@ func newAssetGroupRow(db *gorm.DB, opts ...gen.DOOption) assetGroupRow {
 type assetGroupRow struct {
 	assetGroupRowDo assetGroupRowDo
 
-	ALL       field.Asterisk
-	ID        field.String
-	ParentID  field.String
-	Name      field.String
-	Sort      field.Int64
-	CreatedAt field.Int64
-	UpdatedAt field.Int64
-	OwnerID   field.String
-	Parent    assetGroupRowBelongsToParent
+	ALL                field.Asterisk
+	ID                 field.String
+	ParentID           field.String
+	Name               field.String
+	Sort               field.Int64
+	CreatedAt          field.Int64
+	UpdatedAt          field.Int64
+	OwnerID            field.String
+	DefaultUsername    field.String
+	DefaultAuthKind    field.String
+	DefaultKeyPath     field.String
+	DefaultCredID      field.String
+	DefaultJumpAssetID field.String
+	Parent             assetGroupRowBelongsToParent
 
 	fieldMap map[string]field.Expr
 }
@@ -85,6 +95,11 @@ func (a *assetGroupRow) updateTableName(table string) *assetGroupRow {
 	a.CreatedAt = field.NewInt64(table, "created_at")
 	a.UpdatedAt = field.NewInt64(table, "updated_at")
 	a.OwnerID = field.NewString(table, "owner_id")
+	a.DefaultUsername = field.NewString(table, "default_username")
+	a.DefaultAuthKind = field.NewString(table, "default_auth_kind")
+	a.DefaultKeyPath = field.NewString(table, "default_key_path")
+	a.DefaultCredID = field.NewString(table, "default_cred_id")
+	a.DefaultJumpAssetID = field.NewString(table, "default_jump_asset_id")
 
 	a.fillFieldMap()
 
@@ -113,7 +128,7 @@ func (a *assetGroupRow) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (a *assetGroupRow) fillFieldMap() {
-	a.fieldMap = make(map[string]field.Expr, 8)
+	a.fieldMap = make(map[string]field.Expr, 13)
 	a.fieldMap["id"] = a.ID
 	a.fieldMap["parent_id"] = a.ParentID
 	a.fieldMap["name"] = a.Name
@@ -121,6 +136,11 @@ func (a *assetGroupRow) fillFieldMap() {
 	a.fieldMap["created_at"] = a.CreatedAt
 	a.fieldMap["updated_at"] = a.UpdatedAt
 	a.fieldMap["owner_id"] = a.OwnerID
+	a.fieldMap["default_username"] = a.DefaultUsername
+	a.fieldMap["default_auth_kind"] = a.DefaultAuthKind
+	a.fieldMap["default_key_path"] = a.DefaultKeyPath
+	a.fieldMap["default_cred_id"] = a.DefaultCredID
+	a.fieldMap["default_jump_asset_id"] = a.DefaultJumpAssetID
 
 }
 

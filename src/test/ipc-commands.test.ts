@@ -771,6 +771,18 @@ describe("desktop database and Redis facade IPC contracts", () => {
 });
 
 describe("desktop platform, update and biometric facade IPC contracts", () => {
+  it("sends the update channel get and set envelopes", async () => {
+    runtime.Call.ByName.mockImplementation(async (_name, request) => ({
+      ok: true,
+      data: { channel: (request as { cmd: string }).cmd === "app_update_channel_set" ? "rc" : "stable" },
+    }));
+    const { appUpdateApi } = await import("../ipc/commands");
+    expect(await appUpdateApi.getChannel()).toEqual({ channel: "stable" });
+    expect(await appUpdateApi.setChannel("rc")).toEqual({ channel: "rc" });
+    expect(requestAt(0)).toEqual({ cmd: "app_update_channel_get", args: null });
+    expect(requestAt(1)).toMatchObject({ cmd: "app_update_channel_set", channel: "rc" });
+  });
+
   it("preserves all 11 flat envelopes, null arguments and facade void results", async () => {
     const installResult = { installed: false, restarted: false, version: "", unavailableReason: "install unavailable" };
     const restartResult = { installed: true, restarted: false, version: "1.2.3", unavailableReason: "restart unavailable" };

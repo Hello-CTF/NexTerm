@@ -46,6 +46,9 @@ type Step struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Command     string `json:"command"`
+	// Interactive opts the step into @NEXTERM: script directives. Off by default: the
+	// output is then passed through untouched and stdin closes immediately.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 type StartRequest struct {
@@ -112,4 +115,10 @@ type RunState struct {
 	ProductionChallenge *execbatch.ConfirmationRequiredDetail `json:"productionChallenge,omitempty"`
 	ProductionCommand   string                                `json:"productionCommand,omitempty"`
 	Error               string                                `json:"error,omitempty"`
+	// Prompts are the questions scripts of this run are waiting on, one per host at most.
+	Prompts []Prompt `json:"prompts,omitempty"`
+	// Live is the script-reported sub-step, progress and messages of each host in the current step.
+	Live []HostLive `json:"live,omitempty"`
+	// Answers lists the non-secret answers given during the run; secret answers are never recorded.
+	Answers []AnswerNote `json:"answers,omitempty"`
 }

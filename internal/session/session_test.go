@@ -257,7 +257,7 @@ func TestWinRMLineModeAndReconnect(t *testing.T) {
 		t.Fatalf("WinRM reconnect opened %d PTYs", got)
 	}
 	raw := terminals.terminal(tab.ID).bytes()
-	if !bytes.Contains(raw, []byte("ran:whoami")) || bytes.Count(raw, reconnectBanner) != 1 {
+	if !bytes.Contains(raw, []byte("ran:whoami")) || bytes.Contains(raw, []byte("[NexTerm] reconnected")) {
 		t.Fatalf("WinRM scrollback/reconnect mismatch: %q", raw)
 	}
 }
@@ -277,8 +277,8 @@ func TestDeadTransportTriggersAutomaticReconnect(t *testing.T) {
 	if got := connector.transport(1).channelCount(); got != 1 {
 		t.Fatalf("automatic reconnect opened %d PTYs", got)
 	}
-	if got := bytes.Count(terminals.terminal(tab.ID).bytes(), reconnectBanner); got != 1 {
-		t.Fatalf("automatic reconnect banner count = %d", got)
+	if raw := terminals.terminal(tab.ID).bytes(); bytes.Contains(raw, []byte("[NexTerm] reconnected")) {
+		t.Fatalf("automatic reconnect injected a terminal banner: %q", raw)
 	}
 }
 
@@ -1185,6 +1185,26 @@ func waitFor(t *testing.T, condition func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition did not become true")
+}
+
+func waitForSessionStatus(t *testing.T, manager *Manager, id string, status Status) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		for _, info := range manager.ListSessions() {
+			if info.ID == id && info.Status == status {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("session %s never reached status %s", id, status)
+		}
+		select {
+		case <-time.After(20 * time.Millisecond):
+		case <-manager.ctx.Done():
+			t.Fatal("manager closed while waiting for the session status")
+		}
+	}
 }
 
 func TestConcurrentClientsCanWriteIndependentTabs(t *testing.T) {

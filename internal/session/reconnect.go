@@ -557,7 +557,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		m.mu.Unlock()
 		return false, ErrStaleGeneration
 	}
-	start := make([]*Tab, 0, len(opened))
 	controls := make([]ControlEvent, 0, len(opened)+len(gone))
 	exits := make([]ExitEvent, 0, len(gone))
 	resizes := make([]reconnectResize, 0, len(opened))
@@ -609,7 +608,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			}
 			cols, rows := reconnectGeometryLocked(tab)
 			controls = append(controls, tab.controlEventLocked())
-			start = append(start, tab)
 			resizes = append(resizes, reconnectResize{tab: tab, cols: cols, rows: rows})
 			delete(opened, tab)
 		}
@@ -704,9 +702,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
 
-	for _, tab := range start {
-		_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
-	}
 	session.mu.Lock()
 	tabs := make([]*Tab, 0, len(session.tabs))
 	for _, tab := range session.tabs {
@@ -722,10 +717,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			if current {
 				m.startPump(tab, channel, generation)
 			}
-		}
-	} else {
-		for _, tab := range tabs {
-			_ = m.feed(reconnectCtx, tab, generation, reconnectBanner)
 		}
 	}
 	m.startLiveness(session, liveness)

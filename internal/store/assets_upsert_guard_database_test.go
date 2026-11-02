@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -152,7 +153,7 @@ func TestAssetRevisionMonotonicDatabase(t *testing.T) {
 	}
 	previous := asset.UpdatedAt
 	for index := 0; index < 64; index++ {
-		updated, err := db.AssetUpdate(ctx, asset.ID, store.AssetPatch{Note: stringPointer("edit")})
+		updated, err := db.AssetUpdate(ctx, asset.ID, store.AssetPatch{Note: stringPointer(fmt.Sprintf("edit-%d", index))})
 		if err != nil {
 			t.Fatal(err)
 		}

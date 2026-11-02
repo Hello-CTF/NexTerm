@@ -70,3 +70,31 @@ func registerUpdateCommands(dispatcher *ipc.Dispatcher, manager updateCommandMan
 	}
 	return nil
 }
+
+type updateChannelRequest struct {
+	Channel string `json:"channel"`
+}
+
+type updateChannelResponse struct {
+	Channel update.ReleaseChannel `json:"channel"`
+}
+
+// registerUpdateChannelCommands exposes the per-machine release channel. The value lives in the local Setting
+// table only; it is never part of the synced preferences.
+func registerUpdateChannelCommands(dispatcher *ipc.Dispatcher, store update.ChannelStore) error {
+	if err := ipc.Register(dispatcher, "app_update_channel_get", func(ctx context.Context, _ *ipc.Call, _ struct{}) (updateChannelResponse, error) {
+		return updateChannelResponse{Channel: update.StoredChannel(ctx, store)}, nil
+	}); err != nil {
+		return err
+	}
+	return ipc.Register(dispatcher, "app_update_channel_set", func(ctx context.Context, _ *ipc.Call, input updateChannelRequest) (updateChannelResponse, error) {
+		channel, ok := update.ParseReleaseChannel(input.Channel)
+		if !ok {
+			return updateChannelResponse{}, ipc.NewError(ipc.CodeBadParam, "更新通道只能是 stable 或 rc")
+		}
+		if err := update.StoreChannel(ctx, store, channel); err != nil {
+			return updateChannelResponse{}, ipc.WrapError(ipc.CodeDB, "保存更新通道失败: "+err.Error(), err)
+		}
+		return updateChannelResponse{Channel: channel}, nil
+	})
+}

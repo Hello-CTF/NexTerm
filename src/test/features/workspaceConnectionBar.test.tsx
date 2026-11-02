@@ -252,7 +252,7 @@ describe("workspace strip reconnect menu", () => {
     expect(mocks.reconnect).toHaveBeenCalledWith("ws1");
   });
 
-  it("offers nothing when connected", () => {
+  it("does not offer reconnect when connected", () => {
     openMenu("connected");
     expect(menuItem()).toBeUndefined();
   });

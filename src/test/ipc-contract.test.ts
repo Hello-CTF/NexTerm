@@ -497,6 +497,24 @@ describe("asset, group and known-host facade IPC contracts", () => {
   });
 });
 
+describe("group connection defaults IPC contract", () => {
+  it("sends defaults with group writes and resolves inheritance in the backend", async () => {
+    const preview = { fields: [], error: "" };
+    const calls = captureRpc({ asset_inheritance_preview: preview });
+    const { assetApi } = await import("../ipc/commands");
+    const defaults = { username: "deploy", authKind: "password", credId: "cred-1", jumpAssetId: "jump-1" };
+
+    await assetApi.groupCreate("Production", "group-parent", defaults);
+    await assetApi.groupUpdate("group-1", "Staging", null, defaults);
+    await expect(assetApi.inheritancePreview({ kind: "ssh", groupId: "group-1", username: "" })).resolves.toEqual(preview);
+
+    expect(calls).toHaveLength(3);
+    expectManifestEnvelope(calls[0], "group_create", { name: "Production", parentId: "group-parent", defaults });
+    expectManifestEnvelope(calls[1], "group_update", { id: "group-1", name: "Staging", parentId: null, defaults });
+    expectManifestEnvelope(calls[2], "asset_inheritance_preview", { kind: "ssh", groupId: "group-1", username: "" });
+  });
+});
+
 describe("vault and credential facade IPC contracts", () => {
   it("preserves the exact envelopes for all 13 commands, including explicit empty secrets", async () => {
     const calls = captureRpc();

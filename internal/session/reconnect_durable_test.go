@@ -12,9 +12,11 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
 	resolver := &countingResolver{provider: provider}
 	connector := newFakeConnector()
+	recorder := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector:        connector,
 		Terminals:        newFakeTerminalFactory(),
+		Transcripts:      recorder,
 		DurableResolver:  resolver,
 		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
 	})
@@ -79,6 +81,12 @@ func TestReconnectReattachesSSHDurableTab(t *testing.T) {
 	}
 	if count := strings.Count(string(raw), "daemon-replay-marker"); count != 1 {
 		t.Fatalf("replay marker appears %d times; want 1: %q", count, raw)
+	}
+	if strings.Contains(string(raw), "[NexTerm] reconnected") {
+		t.Fatalf("reconnect notice leaked into the ring: %q", raw)
+	}
+	if transcript := recorder.outputBytes(); strings.Contains(string(transcript), "[NexTerm] reconnected") {
+		t.Fatalf("reconnect notice leaked into the transcript: %q", transcript)
 	}
 
 	provider.mu.Lock()

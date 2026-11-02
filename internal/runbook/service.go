@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 )
@@ -28,6 +29,11 @@ type Service struct {
 	executor Executor
 	mu       sync.Mutex
 	runs     map[string]*run
+	// inputTimeout overrides DefaultInputTimeout for script prompts (tests).
+	inputTimeout time.Duration
+	// onPromptsChanged is wired into each run's interaction (tests).
+	onPromptsChanged func()
+	promptSignal     <-chan struct{}
 }
 
 type run struct {
@@ -35,6 +41,7 @@ type run struct {
 	executor      Executor
 	timeoutMS     int64
 	maxConcurrent int
+	interact      *interaction
 
 	mu              sync.Mutex
 	state           RunState
@@ -74,6 +81,7 @@ func (s *Service) Start(_ context.Context, ownerID string, input StartRequest) (
 	steps[0].Status = StepAwaitingRender
 	r := &run{
 		ownerID: ownerID, executor: s.executor, timeoutMS: input.TimeoutMS, maxConcurrent: input.MaxConcurrent,
+		interact: newInteraction(s.inputTimeout),
 		state: RunState{
 			RunID: input.RunID, RunbookID: input.RunbookID, RunbookVersion: input.RunbookVersion, RunbookName: input.RunbookName,
 			Status: RunAwaitingRender, ConfirmationPolicy: policy, StopOnFailure: stopOnFailure,
@@ -81,6 +89,7 @@ func (s *Service) Start(_ context.Context, ownerID string, input StartRequest) (
 			StepCount: int32(len(steps)), Steps: steps,
 		},
 	}
+	r.interact.onPromptsChanged = s.onPromptsChanged
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.runs[input.RunID]; exists {
@@ -122,9 +131,15 @@ func (s *Service) Prepare(_ context.Context, ownerID string, input PrepareReques
 		r.requests[index].Runbook.GroupNumber = int32(index + 1)
 		r.requests[index].Runbook.GroupCount = int32(len(r.requests))
 	}
+	if r.currentStepLocked().Step.Interactive {
+		for index := range r.requests {
+			r.requests[index].Interactor = r
+		}
+	}
 	r.nextRequest = 0
 	r.stepConfirmed = false
 	r.cancelRequested = false
+	r.resetLiveLocked()
 	r.state.Status = RunAwaitingConfirmation
 	step := r.currentStepLocked()
 	step.Status = StepAwaitingConfirmation
@@ -191,6 +206,7 @@ func (s *Service) Cancel(ctx context.Context, ownerID, runID string) (RunState, 
 		return state, nil
 	}
 	r.cancelRequested = true
+	r.abortPrompts()
 	batchID := r.state.ActiveBatchID
 	if !r.advancing || r.state.Status == RunAwaitingProductionConfirmation {
 		r.finishCanceledLocked()
@@ -397,6 +413,12 @@ func (r *run) snapshotLocked() RunState {
 		state.Steps[index].RenderedCommands = append([]RenderedCommand(nil), step.RenderedCommands...)
 		state.Steps[index].Results = append([]execbatch.Result(nil), step.Results...)
 		state.Steps[index].BatchIDs = append([]string(nil), step.BatchIDs...)
+	}
+	state.Prompts = r.promptsLocked()
+	state.Live = r.liveLocked()
+	state.Answers = append([]AnswerNote(nil), r.interact.answers...)
+	if len(state.Answers) == 0 {
+		state.Answers = nil
 	}
 	if r.state.ProductionChallenge != nil {
 		challenge := *r.state.ProductionChallenge

@@ -70,13 +70,11 @@ func TestWatchSourceSurvivesInPlaceReconnect(t *testing.T) {
 	}
 
 	// The bound source keeps consuming the same ring at continuous positions:
-	// no replacement error, no gap, no coordinate reset — the reconnect banner
-	// itself lands in the same ring between the pre- and post-reconnect bytes.
+	// no replacement error, no injected notice, no gap and no coordinate reset.
 	feedWatchReconnectTab(t, manager, tab.ID, []byte("post"))
 	chunk, next, err = source.Chunk(ctx, 4)
-	banner := string(reconnectBanner) + "post"
-	if err != nil || string(chunk) != banner || next != 4+int64(len(banner)) {
-		t.Fatalf("post-reconnect Chunk = %q, %d, %v; want the same ring continuing with %q", chunk, next, err, banner)
+	if err != nil || string(chunk) != "post" || next != 8 {
+		t.Fatalf("post-reconnect Chunk = %q, %d, %v; want the same ring continuing with post", chunk, next, err)
 	}
 	if err := source.Close(); err != nil {
 		t.Fatal(err)

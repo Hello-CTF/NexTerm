@@ -200,6 +200,7 @@ function AppShell() {
       onNewTerminal: () => void openNewTerminal(),
       onLocalTerminal: () => void openLocalTerminal(),
       onOpenPalette: openCommandPalette,
+      onQuickConnect: openQuickConnect,
     },
     statusBar: {
       vaultStatus,

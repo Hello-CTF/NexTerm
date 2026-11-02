@@ -45,6 +45,10 @@ func WithSession(deps Dependencies, manager *session.Manager, storage *store.Sto
 		if storage != nil {
 			row, err := storage.AssetGet(ctx, asset.ID)
 			if err == nil {
+				// Show the username a connection would use, including a group default; fall back to the asset's own.
+				if resolved, rerr := storage.ResolveAsset(ctx, row); rerr == nil {
+					row = resolved.AssetRow
+				}
 				if row.Host != nil {
 					brief.Host = *row.Host
 					if row.Port != nil {

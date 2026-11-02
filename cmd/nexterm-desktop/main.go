@@ -167,6 +167,9 @@ func run(args []string) int {
 	}
 	applyAppIcon(&appOptions, brandIcon)
 	wailsApp = application.New(appOptions)
+	if production.Services.RemoteDesktop != nil {
+		registerRemoteDesktopStream(wailsApp, production.Services.RemoteDesktop)
+	}
 	pprofServer, err := pprof.Start(logger.Logger, invocation.PprofAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))

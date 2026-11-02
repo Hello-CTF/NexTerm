@@ -8,9 +8,11 @@ import (
 	stdsync "sync"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/update"
 )
 
 func collectAssetIDs(assets []CollectAsset) []string {
@@ -441,5 +443,28 @@ func TestCollectCommandsOfflineAnonymous(t *testing.T) {
 	response = dispatch(CommandCollectAssets, `{"args":`)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 		t.Fatalf("malformed envelope = %+v, want bad_param", response)
+	}
+}
+
+func TestReleaseChannelSettingIsNotCollectedForSync(t *testing.T) {
+	instance := newTestInstance(t, true)
+	ctx := context.Background()
+	if err := instance.db.SettingSet(ctx, update.ReleaseChannelSettingKey, "rc"); err != nil {
+		t.Fatal(err)
+	}
+	if account.PreferenceKeyDeclared(update.ReleaseChannelSettingKey) {
+		t.Fatal("the release channel must not be a synced preference key")
+	}
+	if strings.HasPrefix(update.ReleaseChannelSettingKey, account.PreferenceUserKeyPrefix("anyone")) {
+		t.Fatal("the release channel key must sit outside the per-user preference prefix")
+	}
+	objects, err := instance.service.engine.collectLocalObjects(ctx, &SyncReport{}, allKindOptIn(), "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, object := range objects {
+		if strings.Contains(id, "releaseChannel") || strings.Contains(string(object.plaintext), "releaseChannel") {
+			t.Fatalf("release channel leaked into sync object %s: %s", id, object.plaintext)
+		}
 	}
 }

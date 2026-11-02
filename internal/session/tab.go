@@ -24,7 +24,6 @@ import (
 )
 
 var winRMBanner = []byte("[NexTerm] WinRM line mode; each command runs in a new shell.\r\nPS> ")
-var reconnectBanner = []byte("\r\n\x1b[33m[NexTerm] reconnected\x1b[0m\r\n")
 
 // durableUnrecoverableBanner tells the user why a durable tab ended at reconnect
 // instead of silently attaching to an unverified helper session.

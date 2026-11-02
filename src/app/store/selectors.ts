@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { sessionStatusText } from "./sessionStatus";
 import { useUi } from "./useUi";
+import { useRemoteStatus } from "../../features/remote/remoteStatus";
 
 // Selector conventions. A component re-renders whenever its selector result changes identity, and the
 // session list is rebuilt on every status event and resync. Components therefore subscribe to the
@@ -81,6 +82,8 @@ export interface SessionSummary {
 
 // useSessionSummary is the status bar's view of the session list: it re-renders only when a count changes.
 export function useSessionSummary(): SessionSummary {
+  // Remote desktops are counted from the open workspaces, like terminals' sessions: a closed tab is no session.
+  const remoteEntries = useRemoteStatus((state) => state.entries);
   return useUi(useShallow((state) => {
     const used = new Set<string>();
     for (const workspace of state.workspaces) {
@@ -108,6 +111,18 @@ export function useSessionSummary(): SessionSummary {
         } else {
           background += 1;
           backgroundNames.push(session.name);
+        }
+      }
+    }
+    for (const workspace of state.workspaces) {
+      if (workspace.kind !== "remote") continue;
+      for (const pane of workspace.panes) {
+        for (const tab of pane.tabs) {
+          if (tab.kind !== "remote") continue;
+          total += 1;
+          const status = remoteEntries[tab.id]?.status;
+          if (status === "connected") connected += 1;
+          inUse.push(status === "connected" ? workspace.title : `${workspace.title}（${status === "connecting" ? "连接中" : "未连接"}）`);
         }
       }
     }

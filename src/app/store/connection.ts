@@ -1,4 +1,4 @@
-import { dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
+import { assetApi, dbApi, sessionApi, vaultApi, type SessionInfo, type VaultStatus } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { connectWithHostKeyConfirm } from "../hostKeys";
@@ -62,8 +62,21 @@ export async function ensureVaultUnlocked(reason: string, epoch?: number): Promi
   }
 }
 
-export async function ensureVaultReadyFor(asset: { name: string; credId?: string | null }, epoch?: number): Promise<boolean> {
-  if (!asset.credId) return true;
+export async function ensureVaultReadyFor(
+  asset: { id?: string; name: string; credId?: string | null; groupId?: string | null },
+  epoch?: number,
+): Promise<boolean> {
+  if (!asset.credId) {
+    // An asset in a group may inherit its credential; the backend says whether the effective asset needs one.
+    if (!asset.id || !asset.groupId) return true;
+    let required = false;
+    try {
+      required = await assetApi.credentialRequired(asset.id);
+    } catch {
+      required = false;
+    }
+    if (!required) return true;
+  }
   return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`, epoch);
 }
 
@@ -330,6 +343,10 @@ async function runConnectAsset(
   if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
   const { pushToast } = useUi.getState();
 
+  // A remote desktop is not a session of the terminal system: it opens its own workspace, and a second connection to
+  // the same asset is a second workspace.
+  if (asset.kind === "rdp" || asset.kind === "vnc") return openRemoteDesktopWorkspace(asset, epoch);
+
   const existing = useUi.getState().workspaces.find((w) => w.assetId === asset.id);
   if (existing?.restorePending) {
     const outcome = await reconnectRestoredWorkspace(existing.id);
@@ -450,6 +467,21 @@ async function runConnectAsset(
     if (!options?.silent) pushToast("error", message);
     return { ok: false, error: message };
   }
+}
+
+async function openRemoteDesktopWorkspace(asset: ConnectAssetInput, epoch: number): Promise<ConnectOutcome> {
+  if (!(await ensureVaultReadyFor(asset, epoch)) || !currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
+  const state = useUi.getState();
+  const sameAsset = state.workspaces.filter((workspace) => workspace.kind === "remote" && workspace.assetId === asset.id).length;
+  const title = sameAsset > 0 ? `${asset.name}（${sameAsset + 1}）` : asset.name;
+  const workspaceId = state.ensureWorkspace({ kind: "remote", title, assetId: asset.id, assetKind: asset.kind });
+  const paneId = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceId)?.panes[0]?.id;
+  state.addTab(
+    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: "远程桌面", assetId: asset.id, closable: true },
+    paneId,
+  );
+  useConnectHistory.getState().record(asset.id);
+  return { ok: true };
 }
 
 // deviceAssetId is the pseudo asset id of a device session in the session system (matching the

@@ -43,6 +43,7 @@ import { ALL_PROJECTS } from "./projectFocus";
 import { noteNewerLayout } from "./newerLayoutNotice";
 import { useClosedTabs } from "./closedTabs";
 import { useGroupCollapse } from "../features/explorer/groupCollapse";
+import { useRemoteStatus } from "../features/remote/remoteStatus";
 import {
   hasPersistentLayoutChange,
   LAYOUT_VERSION,
@@ -82,6 +83,7 @@ const PANE_KINDS = new Set<PaneKind>([
   "hostHistory",
   "execBatch",
   "host",
+  "remote",
 ]);
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -171,7 +173,7 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
   if (!isObj(raw)) return null;
   const id = optStr(raw.id);
   const kind = raw.kind;
-  if (!id || (kind !== "session" && kind !== "db" && kind !== "tools")) return null;
+  if (!id || (kind !== "session" && kind !== "db" && kind !== "tools" && kind !== "remote")) return null;
   const parsed = uniquePanes(
     Array.isArray(raw.panes) ? raw.panes.map(sanitizePane).filter((p): p is Pane => p !== null) : [],
   );
@@ -535,6 +537,8 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
     rightWidth: s.rightWidth,
     workspaces: s.workspaces.map((workspace) => ({
       ...workspace,
+      // A remote desktop is always restored disconnected, so the waiting state is never part of what is stored.
+      ...(workspace.kind === "remote" ? { restorePending: undefined } : {}),
       // Every stored workspace carries its tree, so other devices never infer one from pane order.
       layoutTree: workspaceLayoutTree(workspace) ?? undefined,
       panes: workspace.panes.map((pane) => ({
@@ -542,7 +546,9 @@ export function serializeLayout(s: LayoutSource): PersistedLayout | null {
         tabs: pane.tabs.map((tab) =>
           tab.kind === "terminal" && tab.sessionId && !tab.tabId
             ? { ...tab, restorePending: true }
-            : tab,
+            : tab.kind === "remote"
+              ? { ...tab, restorePending: undefined }
+              : tab,
         ),
       })),
     })),
@@ -673,6 +679,7 @@ async function restoreSummary(layout: PersistedLayout): Promise<{ text: string; 
     else if (workspace.assetId && assets === null) status = "资产状态未核实";
     else if (workspace.assetId && !assets?.has(workspace.assetId)) status = "原资产已不存在，旧连接将跳过";
     else if (workspace.kind === "db") status = "数据库目标，连接状态需重新确认";
+    else if (workspace.kind === "remote") status = "远程桌面，恢复后需手动重新连接";
     else if (workspace.kind === "session") status = "资产目标，连接状态需重新确认";
     return `• ${workspace.title}：${status}`;
   });
@@ -1149,6 +1156,23 @@ function mergeRemoteLayout(remote: PersistedLayout): PersistedLayout {
   return restored;
 }
 
+// A remote desktop never connects because a layout arrived: after a reload, or on a device that did not open it, its
+// workspace waits for the user to reconnect it. A workspace whose pane is mounted here is live and stays so.
+export function holdRemoteDesktops(workspaces: Workspace[]): Workspace[] {
+  const entries = useRemoteStatus.getState().entries;
+  return workspaces.map((workspace) => {
+    if (workspace.kind !== "remote") return workspace;
+    const live = workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote" && entries[tab.id] !== undefined));
+    if (live) return workspace.restorePending ? { ...workspace, restorePending: undefined } : workspace;
+    if (workspace.restorePending) return workspace;
+    return {
+      ...workspace,
+      restorePending: true,
+      panes: workspace.panes.map((pane) => ({ ...pane, tabs: pane.tabs.map((tab) => (tab.kind === "remote" ? { ...tab, restorePending: true } : tab)) })),
+    };
+  });
+}
+
 function applyToStore(l: PersistedLayout) {
   applyingRemote = true;
   clearSaveTimer();
@@ -1166,10 +1190,11 @@ function applyToStore(l: PersistedLayout) {
       current,
       state.workspaceRuntime,
     );
+    const workspaces = holdRemoteDesktops(withRuntime.workspaces);
     useUi.setState({
-      workspaces: withRuntime.workspaces,
+      workspaces,
       ...(state.broadcast
-        ? { broadcast: pruneBroadcastToWorkspaces(state.broadcast, withRuntime.workspaces) }
+        ? { broadcast: pruneBroadcastToWorkspaces(state.broadcast, workspaces) }
         : {}),
       activeWorkspaceId: l.activeWorkspaceId,
       aiBoards: preserveAiDrafts(l.aiBoards, state.aiBoards),

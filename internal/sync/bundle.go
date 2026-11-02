@@ -49,6 +49,12 @@ type SyncBundleGroup struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Connection defaults; absent in bundles written by older versions, which import leaves local defaults alone.
+	DefaultUsername    *string `json:"defaultUsername,omitempty"`
+	DefaultAuthKind    *string `json:"defaultAuthKind,omitempty"`
+	DefaultKeyPath     *string `json:"defaultKeyPath,omitempty"`
+	DefaultCredID      *string `json:"defaultCredId,omitempty"`
+	DefaultJumpAssetID *string `json:"defaultJumpAssetId,omitempty"`
 }
 
 type SyncBundleAsset struct {
@@ -230,6 +236,8 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 			bundle.Groups = append(bundle.Groups, SyncBundleGroup{
 				ID: group.ID, ParentID: group.ParentID, Name: group.Name, Sort: group.Sort,
 				CreatedAt: group.CreatedAt, UpdatedAt: group.UpdatedAt,
+				DefaultUsername: group.DefaultUsername, DefaultAuthKind: group.DefaultAuthKind, DefaultKeyPath: group.DefaultKeyPath,
+				DefaultCredID: group.DefaultCredID, DefaultJumpAssetID: group.DefaultJumpAssetID,
 			})
 			includedGroups[group.ID] = true
 		}
@@ -256,6 +264,42 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 			}
 		}
 	}
+	snippets, err := s.store.SnippetList(ctx)
+	if err != nil {
+		return SyncBundle{}, err
+	}
+	for _, snippet := range snippets {
+		collectGroupAncestors(snippet.GroupID)
+		bundle.Snippets = append(bundle.Snippets, SyncBundleSnippet{
+			ID: snippet.ID, GroupID: snippet.GroupID, Name: snippet.Name, Body: snippet.Body,
+			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
+		})
+	}
+	// Group defaults travel with their group: the credential only when credentials are exported, the jump asset
+	// only when it is part of the bundle. Anything else is dropped visibly instead of leaving a dangling reference.
+	bundledAssets := map[string]bool{}
+	for _, asset := range bundle.Assets {
+		bundledAssets[asset.ID] = true
+	}
+	for index := range bundle.Groups {
+		group := &bundle.Groups[index]
+		if group.DefaultJumpAssetID != nil && !bundledAssets[*group.DefaultJumpAssetID] {
+			bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("分组「%s」的默认跳板机不在导出范围内，已省略该默认值", group.Name))
+			group.DefaultJumpAssetID = nil
+		}
+		if group.DefaultCredID == nil {
+			continue
+		}
+		if !request.WithCreds {
+			bundle.Warnings = append(bundle.Warnings, fmt.Sprintf("分组「%s」的默认凭据未随导出携带，已省略该默认值", group.Name))
+			group.DefaultCredID = nil
+			continue
+		}
+		if _, seen := credAssetRefs[*group.DefaultCredID]; !seen {
+			credAssetRefs[*group.DefaultCredID] = group.ID
+			credIDs = append(credIDs, *group.DefaultCredID)
+		}
+	}
 	if len(credIDs) > 0 {
 		if err := s.engine.requireVault(ctx); err != nil {
 			return SyncBundle{}, err
@@ -278,17 +322,6 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 				ID: credRow.ID, Name: credRow.Name, Kind: credRow.Kind, Secret: secret, UpdatedAt: credRow.UpdatedAt,
 			})
 		}
-	}
-	snippets, err := s.store.SnippetList(ctx)
-	if err != nil {
-		return SyncBundle{}, err
-	}
-	for _, snippet := range snippets {
-		collectGroupAncestors(snippet.GroupID)
-		bundle.Snippets = append(bundle.Snippets, SyncBundleSnippet{
-			ID: snippet.ID, GroupID: snippet.GroupID, Name: snippet.Name, Body: snippet.Body,
-			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
-		})
 	}
 	return bundle, nil
 }
@@ -414,28 +447,27 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 	if err := s.inImportTx(ctx, func(tx *gorm.DB) error {
 		written := map[string]*store.AssetGroupRow{}
 		for _, plan := range groupPlans {
-			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
-				ID: plan.id, Name: plan.name, Sort: plan.sort, CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, nil, plan.snapshot); err != nil {
+			first := plan.defaults
+			first.ID, first.Name, first.Sort, first.CreatedAt, first.UpdatedAt = plan.id, plan.name, plan.sort, plan.createdAt, plan.updatedAt
+			first.ParentID = nil
+			if err := s.engine.groupUpsertTxBound(ctx, tx, first, nil, plan.snapshot); err != nil {
 				return err
 			}
 			createdAt := plan.createdAt
 			if plan.snapshot != nil {
 				createdAt = plan.snapshot.CreatedAt
 			}
-			written[plan.id] = &store.AssetGroupRow{
-				ID: plan.id, Name: plan.name, Sort: plan.sort,
-				CreatedAt: createdAt, UpdatedAt: plan.updatedAt, OwnerID: ipc.OwnerID(ctx),
-			}
+			first.CreatedAt = createdAt
+			written[plan.id] = groupRowFromObject(ctx, first, nil)
 		}
 		for _, plan := range groupPlans {
 			if plan.parentID == nil {
 				continue
 			}
-			if err := s.engine.groupUpsertTxBound(ctx, tx, groupObject{
-				ID: plan.id, ParentID: plan.parentID, Name: plan.name, Sort: plan.sort,
-				CreatedAt: plan.createdAt, UpdatedAt: plan.updatedAt,
-			}, plan.parentID, written[plan.id]); err != nil {
+			second := plan.defaults
+			second.ID, second.ParentID, second.Name, second.Sort = plan.id, plan.parentID, plan.name, plan.sort
+			second.CreatedAt, second.UpdatedAt = plan.createdAt, plan.updatedAt
+			if err := s.engine.groupUpsertTxBound(ctx, tx, second, plan.parentID, written[plan.id]); err != nil {
 				return err
 			}
 		}
@@ -574,7 +606,10 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		if row.Kind == "" {
 			row.Kind = "ssh"
 		}
-		if row.AuthKind == nil || *row.AuthKind == "" {
+		// An empty authKind on a grouped asset of a kind that inherits group authentication means "inherit"; it must
+		// survive the import. Everything else keeps the password default.
+		inheritsAuth := store.KindInheritsAuth(row.Kind) && row.GroupID != nil && strings.TrimSpace(*row.GroupID) != ""
+		if (row.AuthKind == nil || *row.AuthKind == "") && !inheritsAuth {
 			password := "password"
 			row.AuthKind = &password
 		}
@@ -931,6 +966,21 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			warnf("凭据 %s 已不再被任何资产引用，已清理", id)
 		}
 	}
+	// Group default references are checked last, once the bundle's credentials and assets exist: a reference that
+	// still does not resolve is cleared with a warning instead of leaving a default that fails at connect time.
+	for _, plan := range groupPlans {
+		if !plan.importedDefaults {
+			continue
+		}
+		messages, err := s.store.GroupSanitizeDefaults(ctx, plan.id)
+		if err != nil {
+			warnf("检查分组 %s 的默认连接配置失败：%v", plan.id, err)
+			continue
+		}
+		for _, message := range messages {
+			warnf("%s", message)
+		}
+	}
 	return report, nil
 }
 
@@ -1111,6 +1161,10 @@ type bundleGroupPlan struct {
 	updatedAt int64
 	exists    bool
 	snapshot  *store.AssetGroupRow
+	// defaults carries the connection defaults to write: the bundle's when it has any, otherwise the local group's.
+	defaults groupObject
+	// importedDefaults marks plans whose defaults came from the bundle and need their references checked after the import.
+	importedDefaults bool
 }
 
 // planGroupImports validates group payloads and resolves parents: each non-empty ID after trim only processes the last in-bundle entry (last-index dedup);
@@ -1176,6 +1230,15 @@ func (s *Service) planGroupImports(ctx context.Context, payloads []SyncBundleGro
 		plan := bundleGroupPlan{
 			id: id, name: name, parentID: parentID, sort: payload.Sort,
 			createdAt: createdAt, updatedAt: updatedAt, exists: exists,
+		}
+		incoming := normalizeGroupDefaults(groupObject{
+			DefaultUsername: payload.DefaultUsername, DefaultAuthKind: payload.DefaultAuthKind, DefaultKeyPath: payload.DefaultKeyPath,
+			DefaultCredID: payload.DefaultCredID, DefaultJumpAssetID: payload.DefaultJumpAssetID,
+		})
+		if incoming.hasDefaults() {
+			plan.defaults, plan.importedDefaults = incoming, true
+		} else if exists {
+			plan.defaults = groupObjectFromRow(existing)
 		}
 		if exists {
 			plan.snapshot = &existing

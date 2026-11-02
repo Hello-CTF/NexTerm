@@ -59,7 +59,7 @@ func TestProductionAssetOptionMapKeepsStartupKeys(t *testing.T) {
 	if !ok || env["A"] != "1" {
 		t.Fatalf("options env = %+v", options["env"])
 	}
-	asset, err := productionSessionAsset(row, false)
+	asset, err := productionSessionAsset(store.ResolvedAsset{AssetRow: row}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

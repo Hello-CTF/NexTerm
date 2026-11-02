@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 )
 
@@ -440,5 +441,53 @@ func TestUpdateInstallIPCHidesUnknownErrors(t *testing.T) {
 	}
 	if output := logs.String(); !strings.Contains(output, "internal IPC error") || !strings.Contains(output, managerErr.Error()) {
 		t.Fatalf("log output = %q, want original internal error", output)
+	}
+}
+
+func TestUpdateChannelIPCStoresLocallyAndValidates(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := registerUpdateChannelCommands(dispatcher, database); err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		Channel string `json:"channel"`
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_get", `null`), &state)
+	if state.Channel != "stable" {
+		t.Fatalf("default channel = %q, want stable", state.Channel)
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_set", `{"channel":"rc"}`), &state)
+	if state.Channel != "rc" {
+		t.Fatalf("set response = %q", state.Channel)
+	}
+	if value, found, err := database.SettingGet(ctx, update.ReleaseChannelSettingKey); err != nil || !found || value != "rc" {
+		t.Fatalf("stored = %q, %v, %v", value, found, err)
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_get", `null`), &state)
+	if state.Channel != "rc" {
+		t.Fatalf("get after set = %q", state.Channel)
+	}
+	for _, body := range []string{`{"channel":"beta"}`, `{"channel":""}`, `{"channel":"RC"}`, `{}`} {
+		response := dispatchStoreTest(dispatcher, "app_update_channel_set", body)
+		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("%s must be rejected with bad param: %+v", body, response)
+		}
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_get", `null`), &state)
+	if state.Channel != "rc" {
+		t.Fatalf("rejected input changed the channel to %q", state.Channel)
+	}
+	if err := database.SettingSet(ctx, update.ReleaseChannelSettingKey, "nightly"); err != nil {
+		t.Fatal(err)
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_get", `null`), &state)
+	if state.Channel != "stable" {
+		t.Fatalf("invalid stored value must read as stable, got %q", state.Channel)
 	}
 }

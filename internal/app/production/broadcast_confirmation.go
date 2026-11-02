@@ -153,7 +153,7 @@ func (s *terminalCommandService) connectDroppedBroadcastSession(ctx context.Cont
 		}
 		return nil, nil
 	}
-	row, err := s.database.AssetGetLive(ctx, assetID)
+	row, err := s.database.AssetGetLiveResolved(ctx, assetID)
 	if err != nil {
 		return nil, err
 	}

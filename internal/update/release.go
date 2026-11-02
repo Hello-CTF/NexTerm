@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 )
 
 const DefaultReleasesAPI = "https://api.github.com/repos/Hello-CTF/NexTerm/releases"
+
+const releasesPageSize = 100
 
 const (
 	checksumsAssetName         = "SHA256SUMS"
@@ -45,7 +49,16 @@ func trimTagPrefix(tag string) string {
 }
 
 func (m *Manager) fetchReleases(ctx context.Context) ([]Release, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, m.releasesAPI(), nil)
+	endpoint, err := url.Parse(m.releasesAPI())
+	if err != nil {
+		return nil, err
+	}
+	// GitHub returns 30 releases per page by default; a run of release candidates must not push stable releases
+	// off the page, so ask for the maximum.
+	values := endpoint.Query()
+	values.Set("per_page", strconv.Itoa(releasesPageSize))
+	endpoint.RawQuery = values.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -161,17 +174,14 @@ func readReleaseAsset(reader io.Reader, name string, limit int64) ([]byte, error
 	return contents, nil
 }
 
-// selectRelease picks the latest non-draft release above the current version; whether
-// prereleases are accepted is decided by the current version channel (see acceptsPrerelease).
-func selectRelease(releases []Release, current string) (Release, bool) {
-	acceptPre := acceptsPrerelease(current)
+// selectRelease picks the latest release visible on the channel that is newer than the current version. The
+// running build never influences the channel: a stable channel on an RC build waits for a newer stable release
+// and never downgrades. A current version that cannot be parsed (dev builds) accepts any visible release.
+func selectRelease(releases []Release, current string, channel ReleaseChannel) (Release, bool) {
 	var best Release
 	found := false
 	for _, release := range releases {
-		if release.Draft {
-			continue
-		}
-		if release.Prerelease && !acceptPre {
+		if !releaseVisibleOn(release, channel) {
 			continue
 		}
 		if !isNewerVersion(release.version(), current) {

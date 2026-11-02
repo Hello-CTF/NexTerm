@@ -31,6 +31,9 @@ export const FleetHealthPanel = lazy(() =>
   import("../features/fleet/FleetHealthPanel").then((m) => ({ default: m.FleetHealthPanel })),
 );
 export const DockerPanel = lazy(() => import("../features/docker/DockerPanel").then((m) => ({ default: m.DockerPanel })));
+export const RemoteDesktopPane = lazy(() =>
+  import("../features/remote/RemoteDesktopPane").then((m) => ({ default: m.RemoteDesktopPane })),
+);
 export const DbPanel = lazy(() => import("../features/db/DbPanel").then((m) => ({ default: m.DbPanel })));
 export const ExecBatchPanel = lazy(() =>
   import("../features/execbatch/ExecBatchPanel").then((m) => ({ default: m.ExecBatchPanel })),

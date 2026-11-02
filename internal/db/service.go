@@ -29,6 +29,7 @@ type Service struct {
 	assetIDs             map[string]string
 	loginSessions        map[string]map[string]struct{}
 	revokedLoginSessions map[string]struct{}
+	userRevocations      ipc.UserRevocations
 	closed               bool
 
 	openMySQL    func(context.Context, MySQLConfig) (*mysqlConnection, error)
@@ -100,6 +101,7 @@ func (s *Service) Close() error {
 }
 
 func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult, error) {
+	userEpoch := s.userRevocations.Epoch(ipc.OwnerID(ctx))
 	connection, err := s.open(ctx, args)
 	if err != nil {
 		return ConnectResult{}, err
@@ -116,6 +118,10 @@ func (s *Service) Connect(ctx context.Context, args ConnectArgs) (ConnectResult,
 	s.mu.Lock()
 	loginSessionID := ipc.AccountSessionID(ctx)
 	if _, revoked := s.revokedLoginSessions[loginSessionID]; loginSessionID != "" && revoked {
+		s.mu.Unlock()
+		return ConnectResult{}, errors.Join(ipc.NewError(ipc.CodeForbidden, "登录会话已失效"), connection.Close())
+	}
+	if s.userRevocations.Stale(ipc.OwnerID(ctx), userEpoch, loginSessionID) {
 		s.mu.Unlock()
 		return ConnectResult{}, errors.Join(ipc.NewError(ipc.CodeForbidden, "登录会话已失效"), connection.Close())
 	}
@@ -279,6 +285,37 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// CloseAccountUser releases the database handles of a user's login sessions other than exceptSession, for
+// revocations that do not enumerate session ids (password change, recovery reset, disabling the account).
+// A handle that exceptSession also uses stays open and keeps only that session.
+func (s *Service) CloseAccountUser(userID, exceptSession string) {
+	if userID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.userRevocations.Revoke(userID, exceptSession)
+	var connections []managedConnection
+	for id, connection := range s.conns {
+		if s.owners[id] != userID {
+			continue
+		}
+		sessions := s.loginSessions[id]
+		if _, keep := sessions[exceptSession]; keep && exceptSession != "" {
+			s.loginSessions[id] = map[string]struct{}{exceptSession: {}}
+			continue
+		}
+		connections = append(connections, connection)
+		delete(s.conns, id)
+		delete(s.owners, id)
+		delete(s.assetIDs, id)
+		delete(s.loginSessions, id)
+	}
+	s.mu.Unlock()
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
 }
 
 func (s *Service) connectionArgs(ctx context.Context, args ConnectArgs) (InlineConnection, error) {

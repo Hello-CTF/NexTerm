@@ -34,7 +34,7 @@ func TestProductionHostKeyConnectorStoreBackedOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset, err := productionSessionAsset(row, false, "owner-a")
+	asset, err := productionSessionAsset(store.ResolvedAsset{AssetRow: row}, false, "owner-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestProductionHostKeyConnectorStoreBackedOwner(t *testing.T) {
 	if _, found, err := database.KnownHostGet(ownerB, host, port, publicKey.Type()); err != nil || found {
 		t.Fatalf("client-supplied userId changed trust ownership: found=%v err=%v", found, err)
 	}
-	anonymousAsset, err := productionSessionAsset(row, false)
+	anonymousAsset, err := productionSessionAsset(store.ResolvedAsset{AssetRow: row}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

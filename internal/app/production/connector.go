@@ -65,6 +65,48 @@ type productionAssetOptions struct {
 	Encoding           string `json:"encoding"`
 	DeviceID           string `json:"deviceId"`
 	UserID             string `json:"userId"`
+	// InheritedFrom maps an inherited field (store.InheritUsername, InheritAuth, InheritJump) to the name of the
+	// group that supplied it. It is set only by productionResolvedOptionMap, never read from stored options, so
+	// connection errors can name the group that owns the value.
+	InheritedFrom map[string]string `json:"inheritedFrom,omitempty"`
+}
+
+// annotateInheritedConnectError tells the user which groups supplied the connection settings of a failed SSH
+// connect, so a wrong inherited username, credential or jump host can be found. The structured error is kept.
+func annotateInheritedConnectError(options productionAssetOptions, err error) error {
+	var connectErr *ssh.ConnectError
+	if err == nil || len(options.InheritedFrom) == 0 || !errors.As(err, &connectErr) {
+		return err
+	}
+	var parts []string
+	for _, field := range []struct{ key, label string }{
+		{store.InheritUsername, "用户名"}, {store.InheritAuth, "认证方式"}, {store.InheritJump, "跳板机"},
+	} {
+		if group := options.InheritedFrom[field.key]; group != "" {
+			parts = append(parts, fmt.Sprintf("%s继承自分组「%s」", field.label, group))
+		}
+	}
+	note := "该资产的" + strings.Join(parts, "，") + "，请检查分组的连接默认值"
+	if connectErr.Hint != "" {
+		connectErr.Hint += "。" + note
+	} else {
+		connectErr.Hint = note
+	}
+	return err
+}
+
+// inheritedError names the group an inherited value came from, keeping the error code of the cause.
+func inheritedError(options productionAssetOptions, field, what string, err error) error {
+	group := options.InheritedFrom[field]
+	if err == nil || group == "" {
+		return err
+	}
+	message := fmt.Sprintf("%s继承自分组「%s」，请检查该分组的连接默认值: %s", what, group, err.Error())
+	var appErr *ipc.Error
+	if errors.As(err, &appErr) {
+		return ipc.WrapError(appErr.Code, message, err)
+	}
+	return ipc.WrapError(ipc.CodeBadParam, message, err)
 }
 
 func newProductionConnector(ctx context.Context, database *store.Store, credentialVault *vault.Vault, dataDir string, events ipc.Emitter, shared bool) (*productionConnector, error) {
@@ -112,10 +154,13 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		transport = local.NewWithConfig(local.Config{Shell: options.Shell, CWD: options.CWD, Env: options.Env})
 	case session.KindSSH, session.KindDocker:
 		transport, err = c.connectSSH(ctx, asset.ID, options, generation)
+		err = annotateInheritedConnectError(options, err)
 	case session.KindWinRM:
 		transport, err = c.connectWinRM(ctx, options)
 	case session.KindDevice:
 		transport, err = c.connectDevice(ctx, options, generation)
+	case session.KindRDP, session.KindVNC:
+		err = ipc.NewError(ipc.CodeUnsupported, "RDP/VNC 资产不支持终端连接，请使用远程桌面打开")
 	default:
 		err = fmt.Errorf("%w: %s transport", session.ErrUnsupported, asset.Kind)
 	}
@@ -213,19 +258,19 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 	case "password":
 		secret, err := c.passwordSecret(ctx, options)
 		if err != nil {
-			return ssh.Config{}, err
+			return ssh.Config{}, inheritedError(options, store.InheritAuth, "认证方式", err)
 		}
 		config.Auth = ssh.AuthConfig{Method: ssh.AuthPassword, Password: secret}
 	case "keyboard-interactive":
 		secret, _, err := c.secret(ctx, options.CredID)
 		if err != nil {
-			return ssh.Config{}, err
+			return ssh.Config{}, inheritedError(options, store.InheritAuth, "认证方式", err)
 		}
 		config.Auth = ssh.AuthConfig{Method: ssh.AuthKeyboardInteractive, Password: secret}
 	case "key":
 		auth, err := c.keyAuth(ctx, options)
 		if err != nil {
-			return ssh.Config{}, err
+			return ssh.Config{}, inheritedError(options, store.InheritAuth, "认证方式", err)
 		}
 		config.Auth = auth
 	case "agent":
@@ -237,7 +282,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 	if options.JumpAssetID != "" {
 		jump, err := c.jumpConfigHop(ctx, options.JumpAssetID, generation, chain, strict)
 		if err != nil {
-			return ssh.Config{}, err
+			return ssh.Config{}, inheritedError(options, store.InheritJump, "跳板机", err)
 		}
 		config.Jump = &jump
 	}
@@ -257,7 +302,7 @@ func (c *productionConnector) jumpConfigHop(ctx context.Context, jumpAssetID str
 	if len(chain) >= maxJumpAssetHops {
 		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump chain exceeds %d assets", maxJumpAssetHops))
 	}
-	row, err := c.database.AssetGet(ctx, jumpAssetID)
+	row, err := c.database.AssetGetResolved(ctx, jumpAssetID)
 	if err != nil {
 		var appErr *ipc.Error
 		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
@@ -276,6 +321,26 @@ func (c *productionConnector) jumpConfigHop(ctx context.Context, jumpAssetID str
 		return ssh.Config{}, err
 	}
 	return c.sshConfigHop(ctx, options, generation, append(chain, row.ID), strict)
+}
+
+// productionResolvedOptionMap is productionAssetOptionMap for a row with group defaults applied. It records which
+// group supplied each inherited field; a stored "inheritedFrom" option can never impersonate that.
+func productionResolvedOptionMap(resolved store.ResolvedAsset) (map[string]any, error) {
+	options, err := productionAssetOptionMap(resolved.AssetRow)
+	if err != nil {
+		return nil, err
+	}
+	delete(options, "inheritedFrom")
+	inherited := map[string]any{}
+	for _, item := range resolved.Inherited {
+		if item.Applied {
+			inherited[item.Field] = item.GroupName
+		}
+	}
+	if len(inherited) > 0 {
+		options["inheritedFrom"] = inherited
+	}
+	return options, nil
 }
 
 func productionAssetOptionMap(row store.AssetRow) (map[string]any, error) {
@@ -304,9 +369,9 @@ func productionAssetOptionMap(row store.AssetRow) (map[string]any, error) {
 	return options, nil
 }
 
-func productionAssetOptionsFromRow(row store.AssetRow) (productionAssetOptions, error) {
+func productionAssetOptionsFromRow(row store.ResolvedAsset) (productionAssetOptions, error) {
 	var options productionAssetOptions
-	merged, err := productionAssetOptionMap(row)
+	merged, err := productionResolvedOptionMap(row)
 	if err != nil {
 		return options, ipc.BadParam(err)
 	}
@@ -366,7 +431,7 @@ func (c *productionConnector) connectWinRM(ctx context.Context, options producti
 	}
 	secret, _, err := c.secret(ctx, options.CredID)
 	if err != nil {
-		return nil, err
+		return nil, inheritedError(options, store.InheritAuth, "认证方式", err)
 	}
 	transport, err := winrm.New(winrm.Config{
 		Host: options.Host, Port: options.Port, User: options.Username, Password: secret,

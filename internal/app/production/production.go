@@ -20,11 +20,13 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
+	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/update"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
+	"github.com/Hello-CTF/NexTerm/internal/wol"
 )
 
 type Application = core.Application
@@ -56,6 +58,8 @@ type ProductionServices struct {
 	Profiles      *profiles.Manager
 	Privacy       *privacy.Manager
 	Database      *db.Service
+	RemoteDesktop *remotedesktop.Service
+	Wake          *wol.Service
 	Mount         *mount.Service
 	Sessions      *session.Manager
 	ExecBatches   *execbatch.Service
@@ -90,14 +94,16 @@ type ProductionServices struct {
 	stagedBlobs         StagedBlobResolver
 	dataDir             string
 	desktop             bool
-	hostKeysShared      bool
-	aiRelease           func()
-	cron                *cronRuntime
-	watches             *watchService
-	Transcripts         *transcriptWriter
-	aiRetention         *aiRetentionComponent
-	inventory           *inventoryService
-	sessionAggregate    *sessionAggregateService
+	// updateChannels stores the per-machine release channel; set on the desktop only.
+	updateChannels   update.ChannelStore
+	hostKeysShared   bool
+	aiRelease        func()
+	cron             *cronRuntime
+	watches          *watchService
+	Transcripts      *transcriptWriter
+	aiRetention      *aiRetentionComponent
+	inventory        *inventoryService
+	sessionAggregate *sessionAggregateService
 
 	retryDeferredUpgrade func(context.Context)
 }
@@ -272,6 +278,12 @@ func productionModules(services ProductionServices) []Module {
 	if services.Database != nil {
 		modules = append(modules, Module{Name: "database", RegisterCommands: services.Database.RegisterCommands, Component: services.Database})
 	}
+	if services.RemoteDesktop != nil {
+		modules = append(modules, Module{Name: "remotedesktop", RegisterCommands: services.RemoteDesktop.RegisterCommands, Component: services.RemoteDesktop})
+	}
+	if services.Wake != nil {
+		modules = append(modules, Module{Name: "wake", RegisterCommands: services.Wake.RegisterCommands})
+	}
 	if services.Mount != nil {
 		modules = append(modules, Module{Name: "mount", RegisterCommands: services.Mount.RegisterCommands, Component: services.Mount})
 	}
@@ -421,7 +433,13 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Update != nil {
 		modules = append(modules, Module{Name: "update", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-			return registerUpdateCommands(dispatcher, services.Update)
+			if err := registerUpdateCommands(dispatcher, services.Update); err != nil {
+				return err
+			}
+			if services.updateChannels != nil {
+				return registerUpdateChannelCommands(dispatcher, services.updateChannels)
+			}
+			return nil
 		}})
 	}
 	modules = append(modules, Module{Name: "biometric", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
