@@ -879,7 +879,7 @@ func TestVaultCredentialVerticalContracts(t *testing.T) {
 		input  string
 		output string
 	}{
-		{name: "vault_status", scope: "vault", input: "Record<string, never>", output: "VaultStatus"},
+		{name: "vault_status", scope: "vault", input: "Record<string, never>", output: "VaultStatusDTO"},
 		{name: "vault_init_master", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
 		{name: "vault_init_dpapi", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
 		{name: "vault_unlock", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
