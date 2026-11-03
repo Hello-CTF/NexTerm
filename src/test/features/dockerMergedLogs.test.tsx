@@ -105,6 +105,21 @@ describe("createMergedLogBuffer", () => {
     expect(buffer.snapshot().map((line) => line.text)).toEqual(["a1", "continuation", "b2"]);
   });
 
+  it("places untimestamped lines of a source with no timestamp yet before everything of that source", () => {
+    const buffer = createMergedLogBuffer();
+    buffer.push(1, ["2026-11-03T07:00:05Z b5"]);
+    buffer.push(0, ["early one", "early two", "2026-11-03T07:00:01Z a1", "after"]);
+    const snap = buffer.snapshot();
+    expect(snap.map((line) => line.text)).toEqual(["early one", "early two", "a1", "after", "b5"]);
+    expect(snap[0].ts).toBe(-Infinity);
+  });
+
+  it("does not use the wall clock for untimestamped lines", () => {
+    const buffer = createMergedLogBuffer();
+    buffer.push(0, ["plain"]);
+    expect(buffer.snapshot()[0].ts).toBe(-Infinity);
+  });
+
   it("drops the oldest lines beyond the limit", () => {
     const buffer = createMergedLogBuffer();
     const lines = Array.from({ length: MERGED_LOG_LINE_LIMIT + 10 }, (_, i) =>
@@ -242,6 +257,41 @@ describe("DockerMergedLogs", () => {
     expect(text()).toContain("web");
     expect(text()).toContain("失败");
     expect(mocks.closeTab).not.toHaveBeenCalledWith("tab-c1", expect.anything(), expect.anything());
+  });
+
+  it("states the retained line limit", async () => {
+    mountLogs();
+    await flush();
+    expect(text()).toContain(`仅保留最近 ${MERGED_LOG_LINE_LIMIT} 行`);
+  });
+
+  it("keeps the stopped notice after reconnect and re-follows every container on demand", async () => {
+    const sessionState = (status: "connected" | "connecting") => ({
+      id: "s1", assetId: null, name: "h", kind: "ssh", status, tabs: [], createdAt: 0,
+    });
+    useUi.setState({ sessions: [sessionState("connected")] as never });
+    mountLogs();
+    await flush();
+    emit(0, T(1, "old-line"));
+    await waitForRendered(() => expect(text()).toContain("old-line"));
+    expect(text()).not.toContain("日志跟随已停止");
+
+    act(() => useUi.setState({ sessions: [sessionState("connecting")] as never }));
+    expect(text()).toContain("主机连接中断，日志跟随已停止");
+    act(() => useUi.setState({ sessions: [sessionState("connected")] as never }));
+    expect(text()).toContain("连接已恢复，日志跟随已停止");
+    const refollow = [...document.body.querySelectorAll("button")].find((b) => b.textContent?.includes("重新跟随"));
+    expect(refollow).toBeDefined();
+
+    click(refollow!);
+    await flush();
+    expect(mocks.closeTab).toHaveBeenCalledWith("tab-c1", "kill", "s1");
+    expect(mocks.closeTab).toHaveBeenCalledWith("tab-c2", "kill", "s1");
+    expect(mocks.disposeChannel).toHaveBeenCalledTimes(2);
+    expect(mocks.logsAttach).toHaveBeenCalledTimes(4);
+    await waitForRendered(() => expect(text()).not.toContain("old-line"));
+    expect(text()).not.toContain("日志跟随已停止");
+    expect([...document.body.querySelectorAll("button")].some((b) => b.textContent?.includes("重新跟随"))).toBe(false);
   });
 
   it("closes on Escape", async () => {

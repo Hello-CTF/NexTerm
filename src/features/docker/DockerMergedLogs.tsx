@@ -7,7 +7,7 @@ import { IconClose, IconPlay, IconSearch } from "../../ui/icons";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useUi } from "../../app/store";
 import { createLogLineDecoder } from "./DockerLogStream";
-import { createMergedLogBuffer, type MergedLogLine } from "./mergedLogs";
+import { MERGED_LOG_LINE_LIMIT, createMergedLogBuffer, type MergedLogLine } from "./mergedLogs";
 
 const PALETTE = [
   "text-sky-300",
@@ -54,6 +54,8 @@ export function DockerMergedLogs({
   onClose: () => void;
 }) {
   const buffer = useRef(createMergedLogBuffer());
+  const [generation, setGeneration] = useState(0);
+  const [wasDown, setWasDown] = useState(false);
   const [lines, setLines] = useState<MergedLogLine[]>([]);
   const [failed, setFailed] = useState<Record<number, string>>({});
   const [query, setQuery] = useState("");
@@ -69,6 +71,21 @@ export function DockerMergedLogs({
   const layer = useOverlayFocus(true, modalRef);
   const sessionStatus = useUi((state) => state.sessions.find((entry) => entry.id === sessionId)?.status);
   const key = containers.map((c) => c.id).join("\n");
+  const down = sessionStatus !== undefined && sessionStatus !== "connected";
+
+  useEffect(() => {
+    if (down) setWasDown(true);
+  }, [down]);
+
+  const refollow = () => {
+    buffer.current = createMergedLogBuffer();
+    setLines([]);
+    setFrozen(null);
+    setFailed({});
+    setNewOutput(false);
+    setWasDown(false);
+    setGeneration((value) => value + 1);
+  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -123,7 +140,7 @@ export function DockerMergedLogs({
       for (const handle of handles) release(handle.id, handle.channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, key]);
+  }, [sessionId, key, generation]);
 
   const needle = query.trim();
   const visible = useMemo(() => {
@@ -180,7 +197,7 @@ export function DockerMergedLogs({
         }}
       >
         <div className="nx-modal-header">
-          <span className="min-w-0 truncate">合并日志 · {containers.length} 个容器</span>
+          <span className="min-w-0 truncate">合并日志 · {containers.length} 个容器 · 仅保留最近 {MERGED_LOG_LINE_LIMIT} 行</span>
           <div className="nx-spacer" />
           <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label="关闭合并日志" onClick={onClose}>
             <IconClose size={12} />
@@ -193,9 +210,14 @@ export function DockerMergedLogs({
             </span>
           ))}
         </div>
-        {sessionStatus !== undefined && sessionStatus !== "connected" && (
-          <div role="alert" className="shrink-0 border-b border-amber-900/60 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-300">
-            主机连接中断，日志跟随已停止
+        {(down || wasDown) && (
+          <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-amber-900/60 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-300">
+            <span className="min-w-0 flex-1">{down ? "主机连接中断，日志跟随已停止" : "连接已恢复，日志跟随已停止"}</span>
+            {!down && (
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9" onClick={refollow}>
+                重新跟随
+              </button>
+            )}
           </div>
         )}
         <div className="nx-docker-log-bar flex shrink-0 flex-wrap items-center gap-1.5 border-b border-neutral-800/70 bg-neutral-950/60 px-2 py-1">
@@ -241,7 +263,7 @@ export function DockerMergedLogs({
               visible.map((line) => (
                 <div key={line.seq} className="whitespace-pre-wrap">
                   <span className={PALETTE[line.source % PALETTE.length]}>[{containers[line.source]?.name ?? line.source}]</span>{" "}
-                  {showTime && <span className="text-neutral-500">{clock(line.ts)} </span>}
+                  {showTime && Number.isFinite(line.ts) && <span className="text-neutral-500">{clock(line.ts)} </span>}
                   {highlight(line.text, needle)}
                 </div>
               ))

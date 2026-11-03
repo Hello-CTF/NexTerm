@@ -27,8 +27,8 @@ export interface MergedLogBuffer {
   readonly size: number;
 }
 
-// A line without a timestamp inherits the previous line of its source, then the
-// newest timestamp in the buffer, then the wall clock.
+// A line without a timestamp inherits the previous line of its source; before a
+// source has any timestamp such lines sort first (-Infinity, arrival order via seq).
 export function createMergedLogBuffer(limit = MERGED_LOG_LINE_LIMIT): MergedLogBuffer {
   const lines: MergedLogLine[] = [];
   const lastBySource = new Map<number, number>();
@@ -37,7 +37,7 @@ export function createMergedLogBuffer(limit = MERGED_LOG_LINE_LIMIT): MergedLogB
     push(source, batch) {
       for (const raw of batch) {
         const parsed = parseTimestampedLine(raw);
-        const ts = parsed.ts ?? lastBySource.get(source) ?? lines.at(-1)?.ts ?? Date.now();
+        const ts = parsed.ts ?? lastBySource.get(source) ?? -Infinity;
         lastBySource.set(source, ts);
         const entry: MergedLogLine = { source, ts, seq: seq++, text: parsed.text };
         // Upper bound: after every line with an equal or smaller timestamp.
