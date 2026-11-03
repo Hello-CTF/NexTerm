@@ -97,12 +97,12 @@ describe("buildTargetMenu", () => {
     expect(deps.toast).toHaveBeenCalledWith("error", expect.stringContaining("boom"));
   });
 
-  it("prefills a new SSH asset, using the target port when there is one", () => {
+  it("prefills a new SSH asset, always defaulting to the SSH port", () => {
     const deps = makeDeps();
     select(buildTargetMenu(ip("10.0.0.5"), deps), "新建 SSH 资产");
     expect(deps.openAssetDraft).toHaveBeenCalledWith({ kind: "ssh", name: "10.0.0.5", host: "10.0.0.5", port: 22 });
     select(buildTargetMenu(hostport("10.0.0.5", 2222), deps), "新建 SSH 资产");
-    expect(deps.openAssetDraft).toHaveBeenLastCalledWith({ kind: "ssh", name: "10.0.0.5", host: "10.0.0.5", port: 2222 });
+    expect(deps.openAssetDraft).toHaveBeenLastCalledWith({ kind: "ssh", name: "10.0.0.5", host: "10.0.0.5", port: 22 });
   });
 
   it("uses the registered local-forward integration", async () => {
