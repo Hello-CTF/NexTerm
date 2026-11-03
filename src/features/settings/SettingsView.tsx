@@ -738,7 +738,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               {terminalPrefs.linkActivation === "modifier"
                 ? "按住 Ctrl（macOS 为 Cmd）并单击链接可打开；触屏设备可长按。"
                 : "单击链接即打开。"}
-              终端程序捕获鼠标时需同时按住 Shift。
+              终端程序捕获鼠标时需同时按住 Shift。悬停链接会显示完整地址和打开方式；不方便按键或终端程序捕获鼠标时，可以右键选择「打开链接」；选「单击打开」后单击链接即直接打开。
             </p>
           </div>
           <div className="mt-3.5">

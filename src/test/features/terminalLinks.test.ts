@@ -351,28 +351,111 @@ describe("terminal links in a real xterm", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("shows the real target in a tooltip only while the modifier is held", async () => {
+  it("shows the real target in a tooltip on hover, arming the pointer only while the modifier is held", async () => {
     await write("\x1b]8;;https://example.com/real\x1b\\innocent text\x1b]8;;\x1b\\\r\n");
     const [link] = linksOnLine(term, 1);
     link.hover?.(mouse("mousemove"), link.text);
     expect(controller.hovered()).toBe("https://example.com/real");
-    expect(host.querySelector(".nx-term-link-tip")).toBeNull();
+    const plain = host.querySelector(".nx-term-link-tip");
+    expect(plain?.textContent).toContain("https://example.com/real");
+    expect(plain?.textContent).toContain("Ctrl+单击打开");
     expect(host.dataset.nxLinkArmed).toBe("false");
 
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
-    const tip = host.querySelector(".nx-term-link-tip");
-    expect(tip?.textContent).toContain("https://example.com/real");
-    expect(tip?.textContent).toContain("Ctrl+单击打开");
+    expect(host.querySelector(".nx-term-link-tip")?.textContent).toContain("https://example.com/real");
     expect(host.dataset.nxLinkArmed).toBe("true");
 
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Control", ctrlKey: false }));
-    expect(host.querySelector(".nx-term-link-tip")).toBeNull();
+    expect(host.dataset.nxLinkArmed).toBe("false");
 
-    link.hover?.(mouse("mousemove", { ctrlKey: true }), link.text);
-    expect(host.querySelector(".nx-term-link-tip")).not.toBeNull();
     link.leave?.(mouse("mousemove"), link.text);
     expect(host.querySelector(".nx-term-link-tip")).toBeNull();
     expect(controller.hovered()).toBeNull();
+  });
+
+  it("points at the context menu in the tooltip while the program tracks the mouse", () => {
+    const tracked = createTerminalLinkController({
+      tooltipHost: () => host,
+      cursorHost: host,
+      activation: () => "modifier",
+      mouseTracking: () => true,
+      open: () => undefined,
+      mac: false,
+    });
+    tracked.webLinkOptions.hover(mouse("mousemove"), "https://example.com/t");
+    expect(host.querySelector(".nx-term-link-tip")?.textContent).toContain("Ctrl+Shift+单击打开，或右键选择「打开链接」");
+    tracked.dispose();
+  });
+
+  it("tells the user once per ten seconds how to open a link after a click without the modifier", () => {
+    let clock = 1000;
+    const messages: string[] = [];
+    let selection = false;
+    const c = createTerminalLinkController({
+      tooltipHost: () => host,
+      cursorHost: host,
+      activation: () => "modifier",
+      open: (uri) => opened.push(uri),
+      mac: false,
+      onInactiveClick: (m) => messages.push(m),
+      hasSelection: () => selection,
+      now: () => clock,
+    });
+    c.webLinkHandler(mouse("mouseup"), "https://a.example/");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain("Ctrl");
+    expect(messages[0]).toContain("右键");
+    clock += 9000;
+    c.webLinkHandler(mouse("mouseup"), "https://a.example/");
+    expect(messages).toHaveLength(1);
+    clock += 1001;
+    selection = true;
+    c.webLinkHandler(mouse("mouseup"), "https://a.example/");
+    expect(messages).toHaveLength(1);
+    selection = false;
+    c.webLinkHandler(mouse("mouseup"), "https://a.example/");
+    expect(messages).toHaveLength(2);
+    c.webLinkHandler(mouse("mouseup", { ctrlKey: true }), "https://a.example/");
+    expect(opened).toEqual(["https://a.example/"]);
+    expect(messages).toHaveLength(2);
+    c.dispose();
+  });
+
+  it("explains mouse capture in the inactive-click message", () => {
+    const messages: string[] = [];
+    const c = createTerminalLinkController({
+      tooltipHost: () => host,
+      cursorHost: host,
+      activation: () => "modifier",
+      mouseTracking: () => true,
+      open: () => undefined,
+      mac: false,
+      onInactiveClick: (m) => messages.push(m),
+    });
+    c.webLinkHandler(mouse("mouseup", { ctrlKey: true }), "https://a.example/");
+    expect(messages[0]).toContain("捕获鼠标");
+    expect(messages[0]).toContain("Ctrl+Shift");
+    c.dispose();
+  });
+
+  it("tracks the hovered target and forgets it on clear", () => {
+    const c = createTerminalLinkController({
+      tooltipHost: () => host,
+      cursorHost: host,
+      activation: () => "modifier",
+      open: () => undefined,
+      mac: false,
+    });
+    const target = { kind: "ip" as const, text: "10.0.0.1", host: "10.0.0.1", segment: { row: 0, start: 0, end: 8 } };
+    expect(c.hoveredTarget()).toBeNull();
+    c.onTargetHover(target);
+    expect(c.hoveredTarget()).toEqual(target);
+    c.clear();
+    expect(c.hoveredTarget()).toBeNull();
+    c.onTargetHover(target);
+    c.onTargetHover(null);
+    expect(c.hoveredTarget()).toBeNull();
+    c.dispose();
   });
 
   it("shows the tooltip on plain hover in click mode, with sanitized text", async () => {
