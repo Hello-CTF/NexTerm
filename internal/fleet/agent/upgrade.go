@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
 
@@ -460,7 +461,7 @@ func shQuote(value string) string {
 }
 
 func psQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return psquote.Quote(value)
 }
 
 // unixRestartCommand is the command the script runs explicitly to restart the service after a successful replacement (darwin=launchctl

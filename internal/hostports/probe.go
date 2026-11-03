@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 )
 
 const maxURLLength = 2048
@@ -123,7 +125,7 @@ func quotePOSIX(value string) string {
 }
 
 func quotePowerShell(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return psquote.Quote(value)
 }
 
 // ProbeCommand builds the exact command run on the host. Every user value is a separate single-quoted argument.
