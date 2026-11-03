@@ -42,6 +42,9 @@ type desktopStreamFactory struct {
 	// closed is atomic so dispatch can fail fast without taking mu while a
 	// shutdown is in progress.
 	closed atomic.Bool
+	// closing is closed once by Close so senders already blocked in a window
+	// dispatch can return.
+	closing chan struct{}
 }
 
 type desktopStream struct {
@@ -55,7 +58,7 @@ type desktopStream struct {
 }
 
 func newDesktopStreamFactory() *desktopStreamFactory {
-	return &desktopStreamFactory{channels: make(map[string]*desktopStream)}
+	return &desktopStreamFactory{channels: make(map[string]*desktopStream), closing: make(chan struct{})}
 }
 
 func (f *desktopStreamFactory) SetWindow(window desktopStreamWindow) {
@@ -99,6 +102,7 @@ func (f *desktopStreamFactory) Close() error {
 	if !f.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	close(f.closing)
 	f.mu.Lock()
 	streams := make([]*desktopStream, 0, len(f.channels))
 	for _, stream := range f.channels {
@@ -129,8 +133,19 @@ func (f *desktopStreamFactory) dispatch(event *application.CustomEvent) error {
 	if window == nil {
 		return ipc.ErrStreamsUnavailable
 	}
-	window.DispatchWailsEvent(event)
-	return nil
+	// The window call runs in its own goroutine so that Close can release a sender
+	// that was already blocked inside it; an abandoned call lives until the window closes.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		window.DispatchWailsEvent(event)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-f.closing:
+		return errDesktopStreamClosed
+	}
 }
 
 func (s *desktopStream) SendBinary(ctx context.Context, data []byte) error {

@@ -27,6 +27,8 @@ func (s *Service) ServiceStartup(ctx context.Context, _ application.ServiceOptio
 // serviceShutdownTimeout is the component deadline, not a hard cap: components that ignore the context still get a
 // grace period after it. Wails runs ServiceShutdown on the main UI thread, so a stuck stream dispatch cannot be
 // waited out; streams are closed first so nothing else dispatches.
+// Remaining limits: a dispatch goroutine abandoned by Close lives until the window closes; a component that
+// ignores its context still waits for the deadline plus grace. The real fix is running Shutdown off the UI thread.
 const serviceShutdownTimeout = 5 * time.Second
 
 func (s *Service) ServiceShutdown() error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,8 +142,8 @@ func TestServiceShutdownFailsFastWhenStreamDispatchIsStuck(t *testing.T) {
 	go func() { result <- service.ServiceShutdown() }()
 	select {
 	case err := <-result:
-		if errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("shutdown error = %v", err)
+		if err != nil {
+			t.Fatal(err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ServiceShutdown did not return promptly")
@@ -157,5 +158,56 @@ func TestServiceShutdownFailsFastWhenStreamDispatchIsStuck(t *testing.T) {
 	}
 	if got := window.calls.Load(); got != 1 {
 		t.Fatalf("dispatch calls = %d, want only the stuck one", got)
+	}
+}
+
+func TestServiceShutdownReleasesSenderStuckInDispatchBeforeClose(t *testing.T) {
+	window := newGatedStreamWindow(t)
+	streams := newDesktopStreamFactory()
+	streams.SetWindow(window)
+	stuck, err := streams.OpenBinary(t.Context(), ipc.ChannelRef{ID: "stuck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderErr := make(chan error, 1)
+	var senders sync.WaitGroup
+	applicationCore, err := core.New(core.Config{
+		Streams: streams,
+		Modules: []core.Module{{
+			Name: "desktop-wait-sender-test",
+			Component: core.ComponentFuncs{
+				ShutdownFunc: func(context.Context) error {
+					senders.Wait()
+					return nil
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{app: applicationCore, streams: streams}
+	if err := service.ServiceStartup(t.Context(), application.ServiceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	senders.Add(1)
+	go func() {
+		defer senders.Done()
+		senderErr <- stuck.SendBinary(context.Background(), []byte{1})
+	}()
+	<-window.entered
+
+	result := make(chan error, 1)
+	go func() { result <- service.ServiceShutdown() }()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServiceShutdown waited on a sender stuck in dispatch")
+	}
+	if err := <-senderErr; !errors.Is(err, errDesktopStreamClosed) {
+		t.Fatalf("sender err = %v, want errDesktopStreamClosed", err)
 	}
 }
