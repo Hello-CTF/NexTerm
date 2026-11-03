@@ -300,10 +300,23 @@ function flushInput(entry: ChannelEntry) {
   }
 }
 
+let reconnectRandom: () => number = Math.random;
+
+/** Test hook: replaces the jitter source; null restores Math.random. */
+export function setReconnectRandomForTest(fn: (() => number) | null): void {
+  reconnectRandom = fn ?? Math.random;
+}
+
+// Jitter keeps clients from reconnecting in lockstep after a server restart: the delay lands in [base/2, base).
+function reconnectDelay(retry: number): number {
+  const base = Math.min(300 * 2 ** (retry - 1), 8000);
+  return base * (0.5 + reconnectRandom() / 2);
+}
+
 function scheduleReconnect(entry: ChannelEntry) {
   if (typeof WebSocket === "undefined") return;
   entry.retry = Math.min(entry.retry + 1, 6);
-  const delay = Math.min(300 * 2 ** (entry.retry - 1), 8000);
+  const delay = reconnectDelay(entry.retry);
   globalThis.setTimeout(() => connect(entry), delay);
 }
 
@@ -398,7 +411,7 @@ function connectEvents() {
 function scheduleEventsReconnect() {
   if (typeof WebSocket === "undefined") return;
   events.retry = Math.min(events.retry + 1, 6);
-  const delay = Math.min(300 * 2 ** (events.retry - 1), 8000);
+  const delay = reconnectDelay(events.retry);
   globalThis.setTimeout(connectEvents, delay);
 }
 
