@@ -68,10 +68,10 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 	}
 	prev := State{Status: StatusOK}
 	if old := states[stateKey{dev.ID, RuleOffline}]; old != nil {
-		prev = State{Status: old.Status, Since: old.Since, FiredAt: old.FiredAt, ResolvedAt: old.ResolvedAt}
+		prev = State{Status: old.Status, Since: old.Since, FiredAt: old.FiredAt, ResolvedAt: old.ResolvedAt, RecoveringSince: old.RecoveringSince}
 	}
 	next, emit := StepOffline(prev, OfflineInput{
-		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Started: e.started,
+		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Started: e.started, G: GapTolerance(e.interval).Milliseconds(),
 		Enabled: enabled, Muted: muted, S: suspectAfter, A: alertAfter,
 	})
 	if emit == nil && sameState(prev, next) {
@@ -79,7 +79,7 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 	}
 	c := change{state: model.DeviceAlertState{
 		DeviceID: dev.ID, RuleKey: string(RuleOffline), OwnerID: dev.UserID, Status: next.Status,
-		Since: next.Since, FiredAt: next.FiredAt, ResolvedAt: next.ResolvedAt, UpdatedAt: now,
+		Since: next.Since, FiredAt: next.FiredAt, ResolvedAt: next.ResolvedAt, RecoveringSince: next.RecoveringSince, UpdatedAt: now,
 	}}
 	if emit != nil {
 		c.event, c.audit = buildOfflineRecords(now, dev, emit)

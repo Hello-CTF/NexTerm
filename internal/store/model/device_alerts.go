@@ -25,16 +25,18 @@ func (DeviceAlertSettings) TableName() string { return "device_alert_settings" }
 
 // DeviceAlertState is the persisted per-device, per-rule state machine position.
 type DeviceAlertState struct {
-	DeviceID   string     `gorm:"size:191;column:device_id;primaryKey" json:"deviceId"`
-	RuleKey    string     `gorm:"size:32;column:rule_key;primaryKey" json:"ruleKey"`
-	OwnerID    string     `gorm:"size:191;column:owner_id;not null;index:idx_device_alert_state_owner" json:"ownerId"`
-	Status     string     `gorm:"column:status;not null" json:"status"`
-	Since      int64      `gorm:"column:since;not null;default:0" json:"since"`
-	FiredAt    int64      `gorm:"column:fired_at;not null;default:0" json:"firedAt"`
-	ResolvedAt int64      `gorm:"column:resolved_at;not null;default:0" json:"resolvedAt"`
-	LastValue  *float64   `gorm:"column:last_value" json:"lastValue"`
-	UpdatedAt  int64      `gorm:"column:updated_at;not null" json:"updatedAt"`
-	Device     UserDevice `gorm:"foreignKey:DeviceID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+	DeviceID   string `gorm:"size:191;column:device_id;primaryKey" json:"deviceId"`
+	RuleKey    string `gorm:"size:32;column:rule_key;primaryKey" json:"ruleKey"`
+	OwnerID    string `gorm:"size:191;column:owner_id;not null;index:idx_device_alert_state_owner" json:"ownerId"`
+	Status     string `gorm:"column:status;not null" json:"status"`
+	Since      int64  `gorm:"column:since;not null;default:0" json:"since"`
+	FiredAt    int64  `gorm:"column:fired_at;not null;default:0" json:"firedAt"`
+	ResolvedAt int64  `gorm:"column:resolved_at;not null;default:0" json:"resolvedAt"`
+	// RecoveringSince is when an offline alert's device was first heard again; 0 while not recovering.
+	RecoveringSince int64      `gorm:"column:recovering_since;not null;default:0" json:"recoveringSince"`
+	LastValue       *float64   `gorm:"column:last_value" json:"lastValue"`
+	UpdatedAt       int64      `gorm:"column:updated_at;not null" json:"updatedAt"`
+	Device          UserDevice `gorm:"foreignKey:DeviceID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 }
 
 func (DeviceAlertState) TableName() string { return "device_alert_state" }

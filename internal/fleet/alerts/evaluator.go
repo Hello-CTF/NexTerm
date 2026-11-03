@@ -215,7 +215,7 @@ func (e *Evaluator) thresholdChanges(ctx context.Context, now int64, dev *model.
 }
 
 func sameState(a, b State) bool {
-	if a.Status != b.Status || a.Since != b.Since || a.FiredAt != b.FiredAt || a.ResolvedAt != b.ResolvedAt {
+	if a.Status != b.Status || a.Since != b.Since || a.FiredAt != b.FiredAt || a.ResolvedAt != b.ResolvedAt || a.RecoveringSince != b.RecoveringSince {
 		return false
 	}
 	if (a.LastValue == nil) != (b.LastValue == nil) {

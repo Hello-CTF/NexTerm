@@ -75,7 +75,9 @@ type State struct {
 	Since      int64
 	FiredAt    int64
 	ResolvedAt int64
-	LastValue  *float64
+	// RecoveringSince is when an offline alert's device was first heard again (0 when not recovering).
+	RecoveringSince int64
+	LastValue       *float64
 }
 
 // StepInput feeds one evaluation into StepThreshold.

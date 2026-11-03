@@ -45,6 +45,8 @@ type OfflineInput struct {
 	Muted   bool
 	// S is the suspect threshold and A (>= S) the alert threshold.
 	S, A int64
+	// G is the gap tolerance: hearing a device within G keeps a recovery hold running.
+	G int64
 }
 
 // OfflineEmit describes the event an offline transition produces.
@@ -85,18 +87,20 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 			return fire(st, in)
 		}
 	case StatusMuted:
-		switch {
-		case heardAgo < in.S:
-			emit := &OfflineEmit{Kind: KindResolved, DurationMS: in.Now - st.Since, Muted: true}
-			return State{Status: StatusOK, ResolvedAt: st.ResolvedAt}, emit
-		case silence >= in.A && !in.Muted:
+		next, emit, done := recoverOffline(st, in, heardAgo)
+		if done {
+			return next, emit
+		}
+		st = next
+		if silence >= in.A && !in.Muted {
 			return fire(st, in)
 		}
 	case StatusFiring:
-		if heardAgo < in.S {
-			emit := &OfflineEmit{Kind: KindResolved, DurationMS: in.Now - st.Since}
-			return State{Status: StatusOK, ResolvedAt: in.Now}, emit
+		next, emit, done := recoverOffline(st, in, heardAgo)
+		if done {
+			return next, emit
 		}
+		st = next
 	default:
 		// A device with no live alert state that was already gone for longer than A before this
 		// evaluator started is a known-offline device, not a new outage.
@@ -108,6 +112,32 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 		}
 	}
 	return st, nil
+}
+
+// recoverOffline runs the recovery hold of a firing or muted alert: the device must stay heard for
+// RecoveryHold before the alert resolves, so a flapping device yields one fired and one resolved.
+// done is false when the normal table should continue (the hold is not running).
+func recoverOffline(st State, in OfflineInput, heardAgo int64) (State, *OfflineEmit, bool) {
+	if st.RecoveringSince == 0 {
+		if heardAgo < in.S {
+			st.RecoveringSince = in.Now
+			return st, nil, true
+		}
+		return st, nil, false
+	}
+	switch {
+	case heardAgo > in.G:
+		st.RecoveringSince = 0
+		return st, nil, false
+	case in.Now-st.RecoveringSince >= RecoveryHold.Milliseconds():
+		emit := &OfflineEmit{Kind: KindResolved, DurationMS: st.RecoveringSince - st.Since, Muted: st.Status == StatusMuted}
+		next := State{Status: StatusOK, ResolvedAt: st.ResolvedAt}
+		if st.Status == StatusFiring {
+			next.ResolvedAt = in.Now
+		}
+		return next, emit, true
+	}
+	return st, nil, true
 }
 
 func fire(st State, in OfflineInput) (State, *OfflineEmit) {

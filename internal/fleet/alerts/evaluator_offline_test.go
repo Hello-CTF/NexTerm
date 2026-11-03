@@ -204,6 +204,7 @@ func TestOfflineQuietHoursDatabase(t *testing.T) {
 		}
 		p.set(dev, true)
 		h.tick(e, baseTS+40*minMS)
+		h.tick(e, baseTS+45*minMS)
 		evs := h.events(dev)
 		if len(evs) != 1 || evs[0].Kind != KindResolved || !evs[0].Muted || evs[0].DurationMS != 30*minMS {
 			t.Fatalf("events = %+v", evs)
@@ -263,6 +264,7 @@ func TestOfflineExpectedOfflineDatabase(t *testing.T) {
 	}
 	p.set(dev, true)
 	h.tick(e, baseTS+26*minMS)
+	h.tick(e, baseTS+31*minMS)
 	if evs := h.events(dev); len(evs) != 1 || !evs[0].Muted || evs[0].Kind != KindResolved {
 		t.Fatalf("events = %+v", evs)
 	}
@@ -275,7 +277,11 @@ func TestOfflineRecoveryDatabase(t *testing.T) {
 		h.tick(e, baseTS+20*minMS)
 		p.set(dev, true)
 		h.tick(e, baseTS+25*minMS)
-		h.tick(e, baseTS+26*minMS)
+		h.tick(e, baseTS+29*minMS)
+		if len(h.events(dev)) != 1 || h.status(dev) != StatusFiring {
+			t.Fatalf("resolved before the hold: %q %+v", h.status(dev), h.events(dev))
+		}
+		h.tick(e, baseTS+30*minMS)
 		evs := h.events(dev)
 		if len(evs) != 2 || evs[1].Kind != KindResolved || evs[1].Muted || evs[1].DurationMS != 15*minMS || evs[1].OwnerID != owner {
 			t.Fatalf("events = %+v", evs)
@@ -300,8 +306,10 @@ func TestOfflineRecoveryDatabase(t *testing.T) {
 		h, e, _, _, dev := offlineSetup(t, "off-rec-seen")
 		h.tick(e, baseTS+15*minMS)
 		h.tick(e, baseTS+20*minMS)
-		h.heard(dev, baseTS+22*minMS)
-		h.tick(e, baseTS+23*minMS)
+		for m := int64(22); m <= 28; m++ {
+			h.heard(dev, baseTS+m*minMS)
+			h.tick(e, baseTS+m*minMS)
+		}
 		if evs := h.events(dev); len(evs) != 2 || evs[1].Kind != KindResolved {
 			t.Fatalf("events = %+v", evs)
 		}
@@ -362,7 +370,7 @@ func TestOfflineRestartDatabase(t *testing.T) {
 		}
 		p.set(dev, true)
 		h.tick(e, baseTS+4*minMS)
-		h.tick(e, baseTS+5*minMS)
+		h.tick(e, baseTS+9*minMS)
 		evs := h.events(dev)
 		if len(evs) != 1 || evs[0].Kind != KindResolved || evs[0].Muted || evs[0].DurationMS != 64*minMS {
 			t.Fatalf("events = %+v", evs)
@@ -501,4 +509,77 @@ func TestOfflineDormantDatabase(t *testing.T) {
 	if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
 		t.Fatalf("events = %+v", evs)
 	}
+}
+
+func TestOfflineRecoveryHoldDatabase(t *testing.T) {
+	t.Run("flapping device gets one fired and no resolved", func(t *testing.T) {
+		h, e, p, _, dev := offlineSetup(t, "off-flap")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+20*minMS)
+		at := baseTS + 21*minMS
+		for range 4 {
+			p.set(dev, true)
+			h.tick(e, at)
+			h.tick(e, at+minMS)
+			h.tick(e, at+2*minMS)
+			p.set(dev, false)
+			h.heard(dev, at+2*minMS)
+			h.tick(e, at+5*minMS) // 3 minutes of silence breaks the hold
+			at += 6 * minMS
+		}
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired || h.status(dev) != StatusFiring {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		p.set(dev, true)
+		for m := int64(0); m <= 5; m++ {
+			h.tick(e, at+m*minMS)
+		}
+		evs := h.events(dev)
+		if len(evs) != 2 || evs[1].Kind != KindResolved || h.status(dev) != StatusOK {
+			t.Fatalf("%q %+v", h.status(dev), evs)
+		}
+		// Duration is the outage up to the start of the stable period (since = last heard).
+		if want := at - (baseTS + 10*minMS); evs[1].DurationMS != want {
+			t.Fatalf("duration = %d, want %d", evs[1].DurationMS, want)
+		}
+	})
+	t.Run("muted device recovers with a single muted record", func(t *testing.T) {
+		h, e, p, owner, dev := offlineSetup(t, "off-mute-hold")
+		h.settings(owner, dev, func(s *Settings) { s.ExpectedOffline = true })
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+21*minMS)
+		if h.status(dev) != StatusMuted {
+			t.Fatalf("status = %q", h.status(dev))
+		}
+		p.set(dev, true)
+		for m := int64(30); m <= 36; m++ {
+			h.tick(e, baseTS+m*minMS)
+		}
+		evs := h.events(dev)
+		if len(evs) != 1 || evs[0].Kind != KindResolved || !evs[0].Muted {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("recovery hold survives a restart", func(t *testing.T) {
+		h, e, p, _, dev := offlineSetup(t, "off-hold-restart")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+20*minMS)
+		p.set(dev, true)
+		h.tick(e, baseTS+30*minMS)
+		if st := h.offlineState(dev); st.Status != StatusFiring || st.RecoveringSince != baseTS+30*minMS {
+			t.Fatalf("state = %+v", st)
+		}
+		restart := baseTS + 31*minMS
+		h.clock.Store(restart)
+		e2 := h.offlineEvaluator(p)
+		h.tick(e2, restart+2*minMS) // warm-up ends
+		h.tick(e2, restart+3*minMS)
+		if len(h.events(dev)) != 1 {
+			t.Fatalf("resolved too early: %+v", h.events(dev))
+		}
+		h.tick(e2, baseTS+36*minMS)
+		if evs := h.events(dev); len(evs) != 2 || evs[1].Kind != KindResolved {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
 }
