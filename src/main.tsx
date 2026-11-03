@@ -8,7 +8,7 @@ import "./styles.css";
 import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type HelperProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
 import { mountApi, systemApi } from "./ipc/commands";
-import { WEB } from "./ipc/env";
+import { DESKTOP, WEB } from "./ipc/env";
 import { setInputFailureHandler } from "./ipc/inputFailure";
 import { describeError } from "./ui/errorText";
 import { consumeDeepLinks } from "./ipc/wails";
@@ -16,7 +16,7 @@ import { openDeepLink } from "./app/deepLink";
 import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
 import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
-import { setMacPlatform, setWindowsPlatform } from "./app/platform";
+import { applyBackendPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { installInputCapitalization } from "./app/inputCapitalization";
 import { setMountUnavailableReason } from "./app/capabilities";
@@ -134,10 +134,7 @@ async function bootstrapApp(): Promise<void> {
       systemApi.platform(),
       mountApi.capability(),
     ]);
-    if (typeof os === "string" && os.length > 0) {
-      setMacPlatform(os === "macos" || os === "darwin");
-      setWindowsPlatform(os === "windows");
-    }
+    applyBackendPlatform(os, DESKTOP);
     setMountUnavailableReason(mountReason);
   } catch {
   }

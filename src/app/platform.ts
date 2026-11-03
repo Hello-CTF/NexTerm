@@ -72,6 +72,16 @@ export function modHint(): string {
   return macPlatform ? "⌘" : "Ctrl";
 }
 
+/**
+ * The backend OS describes the machine the UI runs on only for the desktop transport. In the browser the backend is a
+ * server, so the UA-based detection of the user's own machine stays.
+ */
+export function applyBackendPlatform(os: unknown, desktop: boolean): void {
+  if (!desktop || typeof os !== "string" || os.length === 0) return;
+  setMacPlatform(os === "macos" || os === "darwin");
+  setWindowsPlatform(os === "windows");
+}
+
 export function setMacPlatform(fromBackend: boolean): void {
   macPlatform = fromBackend;
 }
