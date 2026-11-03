@@ -8,12 +8,14 @@ import {
   alertEventText,
   alertEventTitle,
   alertsQueryKey,
+  bellAlertCount,
   mutedAlertEvents,
   useDeviceNames,
   useFleetAlerts,
   visibleAlertEvents,
 } from "../fleet/deviceAlerts";
 import { useFleetAccount } from "../fleet/useFleetAccount";
+import { useAlertFirstHint } from "./alertFirstHint";
 import { defaultDeviceAlertDeps, deviceAlertNotifier } from "./deviceAlertNotifications";
 import { formatTime } from "../fleet/format";
 
@@ -35,10 +37,10 @@ export function useDeviceAlertNotifications(): void {
   }, [userId, alerts.data]);
 }
 
-// useUnackedAlertCount: events that need the bell (muted records do not).
+// useUnackedAlertCount: alerts that have not recovered; resolved and muted records are listed but not counted.
 export function useUnackedAlertCount(): number {
   const alerts = useFleetAlerts();
-  return visibleAlertEvents(alerts.data).length;
+  return bellAlertCount(alerts.data);
 }
 
 export function useAckAlerts() {
@@ -91,6 +93,19 @@ function EventRow({ event, name, busy, onAck }: { event: FleetAlertEvent; name: 
   );
 }
 
+function FirstAlertHint() {
+  const { visible, dismiss } = useAlertFirstHint();
+  if (!visible) return null;
+  return (
+    <div className="mx-2 mb-1 flex items-start gap-2 rounded-md bg-neutral-800/60 px-2 py-1.5" role="note" data-testid="device-alert-hint">
+      <span className="min-w-0 flex-1 text-[11.5px] text-neutral-300">可在设备详情关闭规则，或在通知设置里关闭系统通知</span>
+      <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={dismiss}>
+        知道了
+      </button>
+    </div>
+  );
+}
+
 // DeviceAlertInbox lists the unacknowledged device alerts. Quiet-hours offline records sit in a collapsed section.
 export function DeviceAlertInbox() {
   const { userId } = useFleetAccount();
@@ -104,6 +119,7 @@ export function DeviceAlertInbox() {
   const nameOf = (event: FleetAlertEvent) => names(event.device_id) ?? "设备";
   return (
     <div className="mt-1" data-testid="device-alert-inbox">
+      <FirstAlertHint />
       {visible.length > 0 && (
         <>
           <div className="flex items-center gap-2 px-2 pb-1 pt-0.5">

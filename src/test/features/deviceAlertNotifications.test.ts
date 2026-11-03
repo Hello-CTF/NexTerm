@@ -101,4 +101,31 @@ describe("device alert notifications", () => {
     await settle();
     expect(show).toHaveBeenCalledTimes(1);
   });
+
+  it("merges several new events of one device into one notification", async () => {
+    const { deps, show, notifier } = setup();
+    notifier.consume("u1", alerts(), deps);
+    notifier.consume("u1", alerts(event("n1"), event("n2", { rule: "cpu", value: 95, threshold: 90 })), deps);
+    await settle();
+    expect(show).toHaveBeenCalledTimes(1);
+    const arg = (show.mock.calls[0] as unknown as [{ title: string; body: string }])[0];
+    expect(arg.title).toBe("web-01 · 2 条告警");
+    expect(arg.body).toContain("磁盘使用率");
+    expect(arg.body).toContain("CPU 使用率");
+    expect(arg.body).toContain("；");
+  });
+
+  it("keeps different devices apart and truncates long bodies", async () => {
+    const { deps, show, notifier } = setup();
+    notifier.consume("u1", alerts(), deps);
+    const many = Array.from({ length: 12 }, (_, i) => event(`x${i}`, { rule: "offline", duration_ms: 600_000 }));
+    notifier.consume("u1", alerts(event("a1", { device_id: "d2" }), ...many), deps);
+    await settle();
+    expect(show).toHaveBeenCalledTimes(2);
+    const titles = show.mock.calls.map((c) => (c as unknown as [{ title: string }])[0].title);
+    expect(titles).toContain("设备 · 磁盘告警");
+    expect(titles).toContain("web-01 · 12 条告警");
+    const merged = show.mock.calls.map((c) => (c as unknown as [{ title: string; body: string }])[0]).find((a) => a.title.includes("12"))!;
+    expect(merged.body.length).toBeLessThanOrEqual(200);
+  });
 });

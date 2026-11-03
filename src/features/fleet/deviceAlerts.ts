@@ -74,6 +74,23 @@ export function visibleAlertEvents(alerts: FleetAlerts | undefined): FleetAlertE
   return (alerts?.events ?? []).filter((event) => !event.muted);
 }
 
+// bellAlertCount: the server acknowledges a fired event when its rule resolves, so an unacknowledged unmuted
+// fired event is an alert that has not recovered. Resolved events stay listed but do not count.
+export function bellAlertCount(alerts: FleetAlerts | undefined): number {
+  return visibleAlertEvents(alerts).filter((event) => event.kind === "fired").length;
+}
+
+// clockSkewText: empty without a skew; positive skew means the device clock runs ahead of the server.
+export function clockSkewText(skewMs: number | undefined): string {
+  if (!skewMs) return "";
+  const abs = Math.abs(skewMs);
+  let amount: string;
+  if (abs < 60_000) amount = `${Math.max(1, Math.round(abs / 1000))} 秒`;
+  else if (abs < 3_600_000) amount = `${Math.round(abs / 60_000)} 分钟`;
+  else amount = `${Math.round(abs / 3_600_000)} 小时`;
+  return `设备时钟偏差约 ${amount}（${skewMs > 0 ? "快" : "慢"}），指标按服务器接收时间记录`;
+}
+
 export function mutedAlertEvents(alerts: FleetAlerts | undefined): FleetAlertEvent[] {
   return (alerts?.events ?? []).filter((event) => event.muted);
 }

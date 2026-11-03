@@ -21,6 +21,12 @@ export const defaultDeviceAlertDeps = (deviceName: (deviceId: string) => string 
   toast: (text) => useUi.getState().pushToast("info", text),
 });
 
+const MAX_BODY = 120;
+
+function truncate(text: string): string {
+  return text.length > MAX_BODY ? `${text.slice(0, MAX_BODY - 1)}…` : text;
+}
+
 async function systemUsable(notifier: SystemNotifier): Promise<boolean> {
   try {
     const status = await notifier.status();
@@ -60,13 +66,17 @@ export class DeviceAlertNotifier {
     for (const event of events) this.seen.add(event.id);
     const prefs = deps.prefs();
     if (!prefs.deviceAlerts) return;
-    for (const event of fresh) {
-      const title = alertEventTitle(deps.deviceName(event.device_id) ?? "设备", event);
-      const body = alertEventText(event);
+    const byDevice = new Map<string, typeof fresh>();
+    for (const event of fresh) byDevice.set(event.device_id, [...(byDevice.get(event.device_id) ?? []), event]);
+    for (const [deviceId, group] of byDevice) {
+      const name = deps.deviceName(deviceId) ?? "设备";
+      const first = group[0];
+      const title = group.length === 1 ? alertEventTitle(name, first) : `${name} · ${group.length} 条告警`;
+      const body = group.length === 1 ? alertEventText(first) : truncate(group.map(alertEventText).join("；"));
       void (async () => {
         if (prefs.system && !deps.appFocused() && (await systemUsable(deps.notifier))) {
           try {
-            await deps.notifier.show({ id: `device-alert:${event.id}`, title, body });
+            await deps.notifier.show({ id: `device-alert:${first.id}`, title, body });
             return;
           } catch {
             // Fall through to the in-app toast.

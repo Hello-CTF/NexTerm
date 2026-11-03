@@ -14,6 +14,7 @@ vi.mock("../../features/fleet/useFleetAccount", () => ({
   useFleetAccount: () => ({ loading: false, userId: "u1", isAdmin: false }),
 }));
 
+import { resetAlertHintForTest } from "../../features/inbox/alertFirstHint";
 import { DeviceAlertInbox } from "../../features/inbox/DeviceAlertInbox";
 import type { FleetAlertEvent } from "../../ipc/fleetAlertsApi";
 
@@ -37,6 +38,12 @@ const text = () => view!.container.textContent ?? "";
 const button = (name: string) => [...view!.container.querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? b.textContent) === name || b.textContent === name);
 
 beforeEach(() => {
+  resetAlertHintForTest();
+  try {
+    localStorage.clear();
+  } catch {
+    // ignore
+  }
   events = [event("a"), event("b", { rule: "offline", duration_ms: 600_000 }), event("m", { rule: "offline", kind: "resolved", muted: true, duration_ms: 1_200_000 })];
   mocks.list.mockImplementation(() => Promise.resolve({ active: [], events }));
   mocks.ack.mockImplementation((ids: string[]) => {
@@ -92,5 +99,26 @@ describe("DeviceAlertInbox", () => {
     events = [];
     await open();
     expect(view!.container.querySelector('[data-testid="device-alert-inbox"]')).toBeNull();
+  });
+
+  it("shows the first-alert hint once and not again after it is acknowledged", async () => {
+    await open();
+    expect(text()).toContain("可在设备详情关闭规则，或在通知设置里关闭系统通知");
+    click(button("知道了")!);
+    await flush();
+    expect(text()).not.toContain("可在设备详情关闭规则");
+    view!.unmount();
+    view = undefined;
+    await open();
+    expect(text()).not.toContain("可在设备详情关闭规则");
+  });
+
+  it("does not show the hint again after it was displayed once and the panel closed", async () => {
+    await open();
+    expect(text()).toContain("可在设备详情关闭规则");
+    view!.unmount();
+    view = undefined;
+    await open();
+    expect(text()).not.toContain("可在设备详情关闭规则");
   });
 });
