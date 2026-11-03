@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -246,6 +247,32 @@ func (s *Server) auditMFALockout(r *http.Request, userID string, fails int, unti
 	})
 }
 
+// mfaAttempt runs one second-factor verification under the per-user lock. It
+// reports locked without calling verify while the user is locked; a Forbidden
+// error counts as a wrong code, any other error releases the reservation.
+func (s *Server) mfaAttempt(r *http.Request, userID string, verify func() error) (locked bool, err error) {
+	if !s.mfaLock.begin(userID) {
+		return true, nil
+	}
+	err = verify()
+	switch {
+	case err == nil:
+		s.mfaLock.success(userID)
+	case isForbiddenError(err):
+		if fails, until, level, crossed := s.mfaLock.failure(userID); crossed {
+			s.auditMFALockout(r, userID, fails, until, level)
+		}
+	default:
+		s.mfaLock.release(userID)
+	}
+	return false, err
+}
+
+func isForbiddenError(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeForbidden
+}
+
 func writeMFALocked(w http.ResponseWriter) {
 	writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, mfaLockedMessage))
 }
@@ -369,7 +396,28 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	secret, uri, err := s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
+	var secret, uri string
+	var err error
+	// Only a rebind with a supplied credential verifies a second factor; that
+	// check shares the login lockout so it cannot be used to bypass it.
+	enabled, enabledErr := s.accounts.TOTPEnabled(r.Context(), identity.UserID)
+	if enabledErr != nil {
+		writeAccountFailure(w, enabledErr)
+		return
+	}
+	if enabled && request.Reverify != "" {
+		locked, attemptErr := s.mfaAttempt(r, identity.UserID, func() (verifyErr error) {
+			secret, uri, verifyErr = s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
+			return verifyErr
+		})
+		if locked {
+			writeMFALocked(w)
+			return
+		}
+		err = attemptErr
+	} else {
+		secret, uri, err = s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
+	}
 	if err != nil {
 		// A missing re-verification credential is a client flow problem and is not counted toward brute-force throttling; only wrong credentials count.
 		if request.Reverify != "" {
@@ -421,7 +469,15 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 		writeAccountFailure(w, err)
 		return
 	}
-	codes, err := s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)
+	var codes []string
+	locked, err := s.mfaAttempt(r, identity.UserID, func() (confirmErr error) {
+		codes, confirmErr = s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)
+		return confirmErr
+	})
+	if locked {
+		writeMFALocked(w)
+		return
+	}
 	if err != nil {
 		s.accountThrottle.mfa.RecordFailure(key)
 		writeAccountFailure(w, err)
@@ -447,7 +503,14 @@ func (s *Server) serveAccountTOTPDisable(w http.ResponseWriter, r *http.Request)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
-	if err := s.accounts.DisableTOTP(r.Context(), identity.UserID, request.Code); err != nil {
+	locked, err := s.mfaAttempt(r, identity.UserID, func() error {
+		return s.accounts.DisableTOTP(r.Context(), identity.UserID, request.Code)
+	})
+	if locked {
+		writeMFALocked(w)
+		return
+	}
+	if err != nil {
 		s.accountThrottle.mfa.RecordFailure(key)
 		writeAccountFailure(w, err)
 		return
