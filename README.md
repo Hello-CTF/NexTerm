@@ -94,7 +94,7 @@ curl -fsSL https://nexterm.work/install.sh | sudo bash
 
 - 服务默认只监听 `127.0.0.1:8080` 且要求登录，可执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。配置在 `/etc/nexterm/nexterm.env`，修改后执行 `systemctl restart nexterm-server`。
 - `--auth off` 会关闭账号、管理与设备路由，任何能连到监听地址的人都能操作服务端，不能用于公网。
-- 公网访问请前置带 TLS 的反向代理，代理覆盖设置 `X-Forwarded-Proto`，并把代理来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`。
+- 公网访问请前置带 TLS 的反向代理，代理覆盖设置 `X-Forwarded-Proto`，并把代理自身的来源 IP 段写入 `NEXTERM_TRUSTED_PROXY_CIDRS`（该项只用于信任 `X-Forwarded-Proto`；`ssh -L` 隧道进来的连接同样表现为 127.0.0.1，不要多填）。需要按真实客户端地址做登录限流和会话来源时，再设置 `NEXTERM_TRUST_FORWARDED_FOR=1`，前提是代理覆盖（而不是追加）客户端发来的 `X-Forwarded-For`，例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`；未开启时只用直连地址。
 - 默认使用 SQLite；用 `NEXTERM_DB=postgres|mysql|mariadb` 和 `NEXTERM_DB_DSN` 切换外部数据库，同一数据库只运行一个实例。
 - 备份 `/var/lib/nexterm`、`/etc/nexterm/master.key` 和外部数据库。完整说明见包内 `README.md` 和 `nexterm-server --help`。
 

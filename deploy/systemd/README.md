@@ -222,5 +222,11 @@ For a remote database, set all applicable values in the selected env file:
 Back up the external database as well as the local data directory and
 master key. Public deployments belong behind a TLS reverse proxy. Keep the
 listener on loopback, make the proxy overwrite `X-Forwarded-Proto`, and set
-`NEXTERM_TRUSTED_PROXY_CIDRS` to its source CIDRs so HTTPS session cookies
-are marked `Secure`.
+`NEXTERM_TRUSTED_PROXY_CIDRS` to the proxy's own addresses only (connections
+through an `ssh -L` tunnel also look like 127.0.0.1) so HTTPS session cookies
+are marked `Secure`. That setting only trusts `X-Forwarded-Proto`. To rate
+limit logins and record session origins by the real client address, also set
+`NEXTERM_TRUST_FORWARDED_FOR=1`, provided the proxy overwrites (not appends
+to) the client-supplied `X-Forwarded-For`, for example in nginx
+`proxy_set_header X-Forwarded-For $remote_addr;`. Without it only the direct
+peer address is used.

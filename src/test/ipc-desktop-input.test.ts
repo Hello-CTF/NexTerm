@@ -54,4 +54,43 @@ describe("desktop terminal input", () => {
     reject!(new Error("write failed"));
     await vi.waitFor(() => expect(calls).toEqual(["1", "2"]));
   });
+
+  it("reports dropped input when the backlog exceeds the cap and keeps the queued bytes", async () => {
+    const { sendChannelInput } = await import("../ipc/events");
+    const { setInputFailureHandler } = await import("../ipc/inputFailure");
+    const failures: Array<{ error: unknown; connectionLost: boolean }> = [];
+    setInputFailureHandler((failure) => failures.push(failure));
+    const calls: Uint8Array[] = [];
+    const pending: Array<() => void> = [];
+    const http = (data: Uint8Array) => {
+      calls.push(data);
+      return new Promise<void>((resolve) => pending.push(resolve));
+    };
+    const cap = 4 * 1024 * 1024;
+    const fill = (byte: number, size: number) => new Uint8Array(size).fill(byte);
+
+    try {
+      sendChannelInput(null, "tab-ovf", fill(1, 1), http);
+      sendChannelInput(null, "tab-ovf", fill(2, cap - 10), http);
+      sendChannelInput(null, "tab-ovf", fill(3, 100), http);
+      expect(failures).toHaveLength(1);
+      expect(failures[0].connectionLost).toBe(false);
+      expect(failures[0].error).toMatchObject({ code: "input_overflow" });
+
+      pending.shift()!();
+      await vi.waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls[1].length).toBe(cap - 10);
+      expect(calls[1].every((b) => b === 2)).toBe(true);
+
+      // Once the backlog drained the counter is clear, so a large write queues again.
+      sendChannelInput(null, "tab-ovf", fill(4, cap - 10), http);
+      expect(failures).toHaveLength(1);
+      pending.splice(0).forEach((resolve) => resolve());
+      await vi.waitFor(() => expect(calls).toHaveLength(3));
+      expect(calls[2].length).toBe(cap - 10);
+      pending.splice(0).forEach((resolve) => resolve());
+    } finally {
+      setInputFailureHandler(null);
+    }
+  });
 });

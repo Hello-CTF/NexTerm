@@ -16,6 +16,7 @@ import (
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
@@ -99,34 +100,34 @@ type Config struct {
 }
 
 type Server struct {
-	options           Options
-	trustedProxyCIDRs []netip.Prefix
-	dispatcher        *ipc.Dispatcher
-	peerDispatcher    *ipc.Dispatcher
-	environment       ipc.Environment
-	accounts          *account.Accounts
-	accountThrottle   accountThrottles
-	mfaTickets        *mfaTicketStore
-	gatewayAuthKey    string
-	authRequired      bool
-	events            *EventBroker
-	channels          ChannelBinder
-	channelStats      ChannelStatsFunc
-	version           string
-	vaultStatus       func(context.Context) (any, error)
-	retention         *RetentionConfig
-	handler           http.Handler
-	logger            *slog.Logger
-	sockets           socketTracker
-	closeOnce         sync.Once
-	closeErr          error
-	webSocket         WebSocketConfig
-	preferences       *account.Preferences
-	audit             AuditFunc
-	assetOwner        AssetOwnerFunc
-	fleet             *fleetserver.Service
-	previews          *sharing.Service
-	spectator         PreviewSpectator
+	options         Options
+	realIP          realip.Resolver
+	dispatcher      *ipc.Dispatcher
+	peerDispatcher  *ipc.Dispatcher
+	environment     ipc.Environment
+	accounts        *account.Accounts
+	accountThrottle accountThrottles
+	mfaTickets      *mfaTicketStore
+	gatewayAuthKey  string
+	authRequired    bool
+	events          *EventBroker
+	channels        ChannelBinder
+	channelStats    ChannelStatsFunc
+	version         string
+	vaultStatus     func(context.Context) (any, error)
+	retention       *RetentionConfig
+	handler         http.Handler
+	logger          *slog.Logger
+	sockets         socketTracker
+	closeOnce       sync.Once
+	closeErr        error
+	webSocket       WebSocketConfig
+	preferences     *account.Preferences
+	audit           AuditFunc
+	assetOwner      AssetOwnerFunc
+	fleet           *fleetserver.Service
+	previews        *sharing.Service
+	spectator       PreviewSpectator
 	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
@@ -274,7 +275,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, trustedProxyCIDRs: trustedProxyCIDRs, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
+		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs, config.Options.TrustForwardedFor), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
@@ -353,7 +354,7 @@ func (s *Server) routes(config Config) http.Handler {
 
 	staticHandler := config.Static
 	if staticHandler == nil && s.options.WebRoot != "" {
-		staticHandler = NewStaticHandler(s.options.WebRoot)
+		staticHandler = newStaticHandler(s.options.WebRoot, s.options.Auth != AuthPlatform)
 	}
 
 	if s.fleet != nil {

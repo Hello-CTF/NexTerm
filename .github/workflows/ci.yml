@@ -144,6 +144,10 @@ jobs:
           cache: pnpm
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check the lockfile resolves unchanged and keeps tarball integrity
+        run: |
+          pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
+          ! grep -n 'resolution: {tarball:' pnpm-lock.yaml
       - name: Frontend lint
         run: pnpm lint
 
@@ -614,6 +618,7 @@ jobs:
           go vet -tags ios,production ./cmd/... ./internal/...
 
   mobile:
+    environment: release
     name: ${{ matrix.platform }} mobile
     needs: [frontend, version]
     if: github.event_name != 'pull_request'
@@ -741,6 +746,7 @@ jobs:
         run: rm -f "$RUNNER_TEMP/nexterm-android-release.keystore"
 
   ios-dist:
+    environment: release
     name: iOS App Store signed IPA
     needs: [frontend, version]
     if: vars.NEXTERM_IOS_SIGNING == 'true' && inputs.release_version != ''

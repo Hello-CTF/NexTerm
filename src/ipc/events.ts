@@ -1,6 +1,6 @@
 import { noteEvent } from "./probeHooks";
 import { WEB } from "./env";
-import { reportInputFailure } from "./inputFailure";
+import { INPUT_MAX_PENDING_BYTES, reportInputFailure, reportInputOverflow } from "./inputFailure";
 import {
   newBinaryChannel,
   onChannelReopen as onWsChannelReopen,
@@ -372,8 +372,11 @@ export function sendChannelInput(
   sendWsChannelInput(id, tabId, data, http);
 }
 
-const DESKTOP_INPUT_MAX_PENDING = 4 * 1024 * 1024;
-const desktopInput = new Map<string, Uint8Array[]>();
+interface DesktopInputQueue {
+  chunks: Uint8Array[];
+  bytes: number;
+}
+const desktopInput = new Map<string, DesktopInputQueue>();
 
 /**
  * Desktop input keeps one write in flight per tab. Each write waits for the host to accept the bytes, so mouse
@@ -383,21 +386,22 @@ const desktopInput = new Map<string, Uint8Array[]>();
 function sendDesktopInput(tabId: string, data: Uint8Array, http: (data: Uint8Array) => Promise<unknown>): void {
   const queued = desktopInput.get(tabId);
   if (queued) {
-    const pending = queued.reduce((n, chunk) => n + chunk.length, 0);
-    if (pending + data.length > DESKTOP_INPUT_MAX_PENDING) {
-      console.warn(`terminal input dropped: ${data.length} bytes exceed the pending input cap`);
+    if (queued.bytes + data.length > INPUT_MAX_PENDING_BYTES) {
+      reportInputOverflow(tabId);
       return;
     }
-    queued.push(data);
+    queued.chunks.push(data);
+    queued.bytes += data.length;
     return;
   }
-  const chunks: Uint8Array[] = [];
-  desktopInput.set(tabId, chunks);
+  const queue: DesktopInputQueue = { chunks: [], bytes: 0 };
+  desktopInput.set(tabId, queue);
   void (async () => {
     let next: Uint8Array | null = data;
     while (next) {
       await http(next).catch((error) => reportInputFailure(tabId, error));
-      next = chunks.length > 0 ? mergeInput(chunks.splice(0)) : null;
+      next = queue.chunks.length > 0 ? mergeInput(queue.chunks.splice(0)) : null;
+      queue.bytes = 0;
     }
     desktopInput.delete(tabId);
   })();

@@ -32,6 +32,7 @@ type staticEntry struct {
 	once     sync.Once
 	ok       bool
 	raw      []byte // injected HTML only
+	csp      string // HTML only: policy allowing exactly the inline scripts in raw
 	etag     string
 	gzip     []byte
 	gzipETag string
@@ -68,6 +69,7 @@ func (c *staticCache) load(path string, info os.FileInfo, html bool) *staticEntr
 		if html {
 			data = []byte(InjectTransportMarker(string(data)))
 			entry.raw = data
+			entry.csp = contentSecurityPolicy(inlineScriptHashes(data))
 		}
 		sum := sha256.Sum256(data)
 		tag := hex.EncodeToString(sum[:16])

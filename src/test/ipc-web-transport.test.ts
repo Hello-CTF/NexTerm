@@ -60,6 +60,17 @@ class FakeWebSocket {
   }
 }
 
+// The transport module is re-imported per test (resetModules), so the injected source is applied on each import.
+let randomSource: (() => number) | null = null;
+function setRandom(fn: (() => number) | null) {
+  randomSource = fn;
+}
+async function importTransport() {
+  const mod = await import("../ipc/webTransport");
+  mod.setReconnectRandomForTest(randomSource);
+  return mod;
+}
+
 function installWebEnv() {
   const storage = new Map<string, string>();
   vi.stubGlobal("window", {
@@ -80,16 +91,19 @@ beforeEach(() => {
   FakeWebSocket.instances = [];
   installWebEnv();
   vi.useFakeTimers();
+  // random() is nominally below 1; 1 yields the full base delay so the exact timings below stay readable.
+  setRandom(() => 1);
 });
 
 afterEach(() => {
+  setRandom(null);
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
 describe("webTransport reconnection timing", () => {
   it("reconnects with the same channel ID after a drop and notifies reopen only for reconnections", async () => {
-    const { newBinaryChannel, onChannelReopen } = await import("../ipc/webTransport");
+    const { newBinaryChannel, onChannelReopen } = await importTransport();
     const channel = newBinaryChannel();
     const reopened = vi.fn();
     onChannelReopen(channel.id, reopened);
@@ -112,7 +126,7 @@ describe("webTransport reconnection timing", () => {
   });
 
   it("increases reconnect backoff exponentially from 300ms and resets it after open", async () => {
-    const { newBinaryChannel } = await import("../ipc/webTransport");
+    const { newBinaryChannel } = await importTransport();
     newBinaryChannel();
     const first = FakeWebSocket.instances[0];
     first.serverOpen();
@@ -135,8 +149,28 @@ describe("webTransport reconnection timing", () => {
     expect(FakeWebSocket.instances).toHaveLength(4);
   });
 
+  it("spreads channel reconnects over half to full backoff using the random source", async () => {
+    setRandom(() => 0);
+    const { newBinaryChannel } = await importTransport();
+    newBinaryChannel();
+    FakeWebSocket.instances[0].serverOpen();
+    FakeWebSocket.instances[0].serverDrop();
+    vi.advanceTimersByTime(149);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+
+    const mod = await import("../ipc/webTransport");
+    mod.setReconnectRandomForTest(() => 0.5);
+    FakeWebSocket.instances[1].serverDrop();
+    vi.advanceTimersByTime(449);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.instances).toHaveLength(3);
+  });
+
   it("does not reconnect or notify after dispose", async () => {
-    const { newBinaryChannel, onChannelReopen, disposeChannel } = await import("../ipc/webTransport");
+    const { newBinaryChannel, onChannelReopen, disposeChannel } = await importTransport();
     const channel = newBinaryChannel();
     const reopened = vi.fn();
     const off = onChannelReopen(channel.id, reopened);
@@ -153,7 +187,7 @@ describe("webTransport reconnection timing", () => {
   });
 
   it("continues decoding and delivering binary and JSON text frames in order after reconnecting", async () => {
-    const { newBinaryChannel } = await import("../ipc/webTransport");
+    const { newBinaryChannel } = await importTransport();
     const channel = newBinaryChannel();
     const received: unknown[] = [];
     channel.onmessage = (message) => received.push(message);
@@ -171,7 +205,7 @@ describe("webTransport reconnection timing", () => {
   });
 
   it("one reopen subscriber throwing does not affect other subscribers", async () => {
-    const { newBinaryChannel, onChannelReopen } = await import("../ipc/webTransport");
+    const { newBinaryChannel, onChannelReopen } = await importTransport();
     const channel = newBinaryChannel();
     const good = vi.fn();
     onChannelReopen(channel.id, () => {
@@ -190,6 +224,7 @@ describe("webTransport reconnection timing", () => {
 
   it("routes WEB channel reconnect notifications from events.ts to onChannelReopen (acceptance path)", async () => {
     const events = await import("../ipc/events");
+    await importTransport();
     const frames: number[][] = [];
     const channel = events.createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
     const reopened = vi.fn();
@@ -214,6 +249,7 @@ describe("webTransport reconnection timing", () => {
 
   it("does not apply desktop base64 decoding to WebSocket messages", async () => {
     const events = await import("../ipc/events");
+    await importTransport();
     const frames: number[][] = [];
     const channel = events.createBinaryChannel((bytes) => frames.push(Array.from(bytes)));
     const socket = FakeWebSocket.instances[0];
@@ -233,7 +269,7 @@ describe("webTransport reconnection timing", () => {
 
 describe("events reconnection recovery cursor", () => {
   it("advances the cursor from event IDs and resumes with since after reconnecting", async () => {
-    const { subscribeEvent } = await import("../ipc/webTransport");
+    const { subscribeEvent } = await importTransport();
     const seen: unknown[] = [];
     subscribeEvent("session://status", (payload) => seen.push(payload));
     const first = FakeWebSocket.instances[0];
@@ -250,8 +286,20 @@ describe("events reconnection recovery cursor", () => {
     expect(FakeWebSocket.instances[1].url).toContain("/ws/events?since=2");
   });
 
+  it("spreads events reconnects over half to full backoff using the random source", async () => {
+    setRandom(() => 0);
+    const { subscribeEvent } = await importTransport();
+    subscribeEvent("session://status", () => {});
+    FakeWebSocket.instances[0].serverOpen();
+    FakeWebSocket.instances[0].serverDrop();
+    vi.advanceTimersByTime(149);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
   it("updates the cursor and notifies subscribers on resync, then continues dispatching events", async () => {
-    const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
+    const { subscribeEvent, onEventsResync } = await importTransport();
     const seen: unknown[] = [];
     const resynced = vi.fn();
     subscribeEvent("session://status", (payload) => seen.push(payload));
@@ -272,7 +320,7 @@ describe("events reconnection recovery cursor", () => {
   });
 
   it("a resync subscriber throwing does not affect later event dispatch", async () => {
-    const { subscribeEvent, onEventsResync } = await import("../ipc/webTransport");
+    const { subscribeEvent, onEventsResync } = await importTransport();
     const seen: unknown[] = [];
     subscribeEvent("session://status", (payload) => seen.push(payload));
     const off = onEventsResync(() => {

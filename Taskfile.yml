@@ -159,13 +159,14 @@ tasks:
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
-      - node --test .github/scripts/go-shards.test.mjs scripts/check-semver.test.mjs
+      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs scripts/check-semver.test.mjs
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
+      - task: check:lockfile
       - task: fmt:check
       - go mod verify
       - go run ./scripts/verify-manifest-injects
@@ -180,7 +181,6 @@ tasks:
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - task: check:lockfile
       - task: check:ci-quality
       - task: test
       - task: check:frontend

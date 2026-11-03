@@ -14,6 +14,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 )
 
 const (
@@ -83,12 +84,7 @@ func (s *Server) requestTLS(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	for _, proxy := range s.trustedProxyCIDRs {
-		if proxy.Contains(addr) {
-			return true
-		}
-	}
-	return false
+	return s.realIP.Trusted(addr)
 }
 
 func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
@@ -117,11 +113,7 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 }
 
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return realip.FromRequest(r)
 }
 
 func sessionClientName(r *http.Request) string {

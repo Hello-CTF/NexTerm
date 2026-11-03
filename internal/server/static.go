@@ -15,10 +15,16 @@ const TransportMarker = `<script>window.__NEXTERM_TRANSPORT__="web";</script>`
 type staticFiles struct {
 	root  string
 	cache *staticCache
+	// csp adds a Content-Security-Policy to HTML responses.
+	csp bool
 }
 
 func NewStaticHandler(root string) http.Handler {
-	return &staticFiles{root: root, cache: newStaticCache()}
+	return newStaticHandler(root, true)
+}
+
+func newStaticHandler(root string, csp bool) http.Handler {
+	return &staticFiles{root: root, cache: newStaticCache(), csp: csp}
 }
 
 func (s *staticFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +77,9 @@ func (s *staticFiles) serveFile(w http.ResponseWriter, r *http.Request, path, re
 		}
 		s.serveOpened(w, r, path, info)
 		return
+	}
+	if isHTML && s.csp {
+		w.Header().Set("Content-Security-Policy", entry.csp)
 	}
 	if compressible {
 		addVary(w.Header(), "Accept-Encoding")
