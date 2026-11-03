@@ -1618,6 +1618,80 @@ func TestOperationsVerticalContracts(t *testing.T) {
 	}
 }
 
+type verticalWant struct {
+	name   string
+	input  string
+	output string
+}
+
+func checkVerticalScope(t *testing.T, scope string, tests []verticalWant, fields map[string][]string) {
+	t.Helper()
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != scope || command.Nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected %s metadata: %+v", scope, command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input || output.TS != test.output {
+				t.Fatalf("input/output = %q/%q, want %q/%q", input.TS, output.TS, test.input, test.output)
+			}
+		})
+	}
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	for name, want := range fields {
+		declaration := declarations[name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", name)
+			continue
+		}
+		for _, field := range want {
+			if !strings.Contains(declaration.Body, field) {
+				t.Errorf("%s declaration is missing %q:\n%s", name, field, declaration.Body)
+			}
+		}
+	}
+}
+
+func TestHostPortsVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-ports", []verticalWant{
+		{name: "host_ports_list", input: "HostPortsListArgs", output: "HostPortsListResult"},
+		{name: "host_connectivity_test", input: "HostProbeArgs", output: "HostProbeResult"},
+	}, map[string][]string{
+		"HostPortsListArgs":   {"sessionId: string;", "processes: boolean;", "quietMs?: number;"},
+		"HostPortListener":    {"proto: string;", "address: string;", "port: number;", "pid?: number;", "process?: string;"},
+		"HostPortsListResult": {"listeners: HostPortListener[];", "skipped?:", "truncated?:"},
+		"HostProbeArgs":       {"ProbeRequest &", "sessionId: string;", "dryRun?: boolean;"},
+		"ProbeRequest":        {"method: string;"},
+		"HostProbeResult":     {"command: string;", "script?: string;", "ran: boolean;", "ok: boolean;", "output: string;", "durationMs: number;"},
+	})
+}
+
+func TestPreviewVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "preview", []verticalWant{
+		{name: "preview_embed_check", input: "EmbedCheckArgs", output: "EmbedCheck"},
+	}, map[string][]string{
+		"EmbedCheckArgs": {"url: string;"},
+		"EmbedCheck":     {"status:", "reason?:"},
+	})
+}
+
 func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 	generated := generateForTest(t, nil)
 	want := []string{

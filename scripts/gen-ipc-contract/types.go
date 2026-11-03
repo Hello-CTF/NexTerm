@@ -27,6 +27,11 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
+	"github.com/Hello-CTF/NexTerm/internal/hostports.Listener":                       "HostPortListener",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ListArgs":                       "HostPortsListArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ListResult":                     "HostPortsListResult",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs":                      "HostProbeArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult":                    "HostProbeResult",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":           "FSCancelRequest",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO":     "FSChunkUploadBeginDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO":  "FSChunkUploadProgressDTO",
