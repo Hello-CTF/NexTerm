@@ -135,3 +135,31 @@ func TestHelperReportsItsStartEnvironment(t *testing.T) {
 		t.Fatalf("start env = %+v, want %+v", running.StartEnv, CurrentStartEnv())
 	}
 }
+
+func TestEnsureHelperBuildKeepsEnvStaleHelperOfSharedDirectory(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Cleanup(func() { killHelperProcesses(t, stateDir) })
+	ctx := context.Background()
+	config := HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second, KeepEnvStale: true}
+	helper, err := ConnectHelper(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := CurrentRuntimeMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(previous func() StartEnv) { expectedStartEnv = previous }(expectedStartEnv)
+	expectedStartEnv = func() StartEnv { return StartEnv{Shell: "/bin/zsh", PathHash: HashPath("/other")} }
+	build, err := ensureHelperBuild(ctx, config, local)
+	if err != nil || build.Replaced || !build.EnvKept || build.StaleReason != "env" || build.Notice() == "" {
+		t.Fatalf("shared idle helper: %+v, %v; want kept with a notice", build, err)
+	}
+	if running, err := InspectHelper(ctx, stateDir); err != nil || running.PID != helper.PID() {
+		t.Fatalf("the helper must stay: %+v, %v", running, err)
+	}
+	// A build-stale helper is still replaced when KeepEnvStale is set: only env staleness is kept.
+	if (HelperBuild{Stale: true, StaleReason: "build", SessionsKnown: true, Sessions: 1}).Notice() == "" {
+		t.Error("build-stale notice must be unchanged")
+	}
+}

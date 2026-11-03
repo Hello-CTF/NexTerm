@@ -191,7 +191,9 @@ func New(options Options) (*Runtime, error) {
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
 		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
-			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
+			config := runtimeState.helperConfig()
+			config.Executable = executable
+			return supervisor.EnsureHelperBuild(ctx, config)
 		}
 		ensureHelper = func(ctx context.Context) error {
 			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
@@ -254,6 +256,17 @@ func (r *Runtime) currentStateDir() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.stateDir
+}
+
+// helperConfig is the helper configuration for the directory in use, without the executable. Inside the
+// directory shared with the desktop app an env-stale helper is kept: the desktop started it and replacing it
+// from here would swap the environment of its users.
+func (r *Runtime) helperConfig() supervisor.HelperConfig {
+	dir := r.currentStateDir()
+	return supervisor.HelperConfig{
+		StateDir:     dir,
+		KeepEnvStale: r.sharedDir != "" && filepath.Clean(dir) == filepath.Clean(r.sharedDir),
+	}
 }
 
 // settleStateDir moves a runtime that shares its helper with the desktop from

@@ -36,6 +36,9 @@ type HelperConfig struct {
 	// NoSpawn attaches only: when no helper answers, ConnectHelper returns
 	// ErrHelperNotRunning instead of starting one.
 	NoSpawn bool
+	// KeepEnvStale makes EnsureHelperBuild report, but not replace, an idle helper that is stale only
+	// because it started with another SHELL or PATH. It is for a helper directory shared with the desktop.
+	KeepEnvStale bool
 }
 
 // StateDetectionEnv in the helper's environment overrides the

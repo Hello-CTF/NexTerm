@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -75,5 +76,24 @@ func TestRuntimeReconcileFollowsTheInstanceIDToANewDirectory(t *testing.T) {
 	two := agentRuntime.hello("", "").HelperInstanceID
 	if one == "" || two == "" || one == two {
 		t.Fatalf("instance ids %q then %q; want different non-empty ids for different directories", one, two)
+	}
+}
+
+func TestRuntimeHelperConfigKeepsEnvStaleOnlyInTheSharedDir(t *testing.T) {
+	dataDir, shared := filepath.Join(t.TempDir(), "agent"), filepath.Join(t.TempDir(), "shared")
+	shareHelperDir(t, dataDir, shared)
+	agentRuntime := newStateRuntime(t, Options{DataDir: dataDir})
+	if agentRuntime.helperConfig().KeepEnvStale {
+		t.Fatal("the previous directory is the agent's own; env-stale helpers there are replaced")
+	}
+	agentRuntime.settleSteps = idleLegacy(0, true)
+	agentRuntime.settleStateDir(context.Background())
+	config := agentRuntime.helperConfig()
+	if config.StateDir != shared || !config.KeepEnvStale {
+		t.Fatalf("config = %+v; want the shared dir with KeepEnvStale", config)
+	}
+	own := newStateRuntime(t, Options{DataDir: t.TempDir()})
+	if own.helperConfig().KeepEnvStale {
+		t.Fatal("a non-shared directory must not keep env-stale helpers")
 	}
 }

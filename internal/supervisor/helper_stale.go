@@ -66,11 +66,18 @@ type HelperBuild struct {
 	ConsentToken string
 	// Replaced is set by EnsureHelperBuild when it replaced a stale helper that ran no session.
 	Replaced bool
+	// EnvKept is set by EnsureHelperBuild when an env-stale helper was left alone because the
+	// directory is shared (HelperConfig.KeepEnvStale).
+	EnvKept bool
 }
 
 // Notice is the text shown while a helper of an older build still runs sessions; empty when there is
-// nothing to say. A helper that is stale only by environment is replaced silently, so it has no notice.
+// nothing to say. A helper that is stale only by environment is replaced silently, so it has no notice,
+// unless EnsureHelperBuild kept it because the directory is shared.
 func (b HelperBuild) Notice() string {
+	if b.EnvKept {
+		return "持久终端组件与桌面端共用，启动环境（SHELL 或 PATH）与本代理不同；代理不会自动替换它，新的持久终端沿用它的启动环境。"
+	}
 	if !b.Stale || b.StaleReason == "env" || !b.SessionsKnown || b.Sessions == 0 {
 		return ""
 	}
@@ -154,6 +161,12 @@ func ensureHelperBuild(ctx context.Context, config HelperConfig, local RuntimeMe
 	}
 	logHelperRequest(config.StateDir, "stale_detected", "reason", build.StaleReason, "pid", build.Helper.PID,
 		"sessions", build.Sessions, "sessions_known", build.SessionsKnown)
+	if build.StaleReason == "env" && config.KeepEnvStale {
+		logHelperRequest(config.StateDir, "stale_env_kept", "pid", build.Helper.PID,
+			"sessions", build.Sessions, "sessions_known", build.SessionsKnown)
+		build.EnvKept = true
+		return build, nil
+	}
 	if !build.SessionsKnown || build.Sessions != 0 {
 		logHelperRequest(config.StateDir, "stale_deferred", "reason", build.StaleReason, "pid", build.Helper.PID,
 			"sessions", build.Sessions, "sessions_known", build.SessionsKnown)

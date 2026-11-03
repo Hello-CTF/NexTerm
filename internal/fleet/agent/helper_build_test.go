@@ -84,3 +84,17 @@ func TestDescribeHelperBuildEnvStaleSaysNothing(t *testing.T) {
 		t.Fatalf("an environment-stale helper is replaced silently and prints nothing about shells:\n%s", text)
 	}
 }
+
+func TestDescribeHelperBuildEnvStaleInSharedDirTellsTheUser(t *testing.T) {
+	build := supervisor.HelperBuild{
+		Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7},
+		Stale:  true, StaleReason: "env",
+	}
+	notice := supervisor.HelperBuild{EnvKept: true}.Notice()
+	if text := strings.Join(describeHelperBuildIn(build, "", true), "\n"); !strings.Contains(text, "提示: "+notice) {
+		t.Fatalf("shared dir status lacks the notice:\n%s", text)
+	}
+	if text := strings.Join(describeHelperBuildIn(build, "", false), "\n"); strings.Contains(text, "提示") {
+		t.Fatalf("non-shared dir status must stay silent:\n%s", text)
+	}
+}
