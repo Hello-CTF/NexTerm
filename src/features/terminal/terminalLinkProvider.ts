@@ -155,6 +155,8 @@ interface ChainState {
   prevEndCol: number;
   /** The URL stitched so far contains a query. */
   hasQuery: boolean;
+  /** Last character stitched so far. */
+  lastChar: string;
   /** Text of the logical line after the candidate; undefined at the end of the rows. */
   following: string | undefined;
 }
@@ -170,7 +172,11 @@ function sameWidth(a: number, b: number): boolean {
   return a >= MIN_EQUAL_WIDTH && b >= MIN_EQUAL_WIDTH && Math.abs(a - b) <= 1;
 }
 
-const QUERY_EVIDENCE = /[=&%?#]/;
+const QUERY_EVIDENCE = /[=&%?#/]/;
+
+// The candidate looks like a tail but is too weak to join. When the previous
+// row was full, stopping here would leave a valid-looking prefix of a cut URL.
+const WEAK_TAIL = Symbol("weak tail");
 
 // Decides whether logical line `next` continues a URL that ended at `prev`
 // (see the rules in the module comment). Returns the accepted fragment piece
@@ -181,7 +187,7 @@ function continuationFragment(
   lineIndex: number,
   cols: number,
   state: ChainState,
-): { piece: Piece; more: boolean; endCol: number; borderCol: number } | null {
+): { piece: Piece; more: boolean; endCol: number; borderCol: number } | typeof WEAK_TAIL | null {
   const prefix = LEFT_PREFIX.exec(line.text);
   const from = prefix ? prefix[0].length : 0;
   const rest = line.text.slice(from);
@@ -219,8 +225,8 @@ function continuationFragment(
   }
   // A short tail is the weakest evidence: a lone number is not a URL tail, and
   // after a row that also holds prose it must look like a query string.
-  if (/^\d{1,3}$/.test(fragment)) return null;
-  if (!state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return null;
+  if (/^\d{1,3}$/.test(fragment) && !/[\d/=]/.test(state.lastChar)) return WEAK_TAIL;
+  if (!/^\d{1,3}$/.test(fragment) && !state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return WEAK_TAIL;
   return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
 }
 
@@ -270,6 +276,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         chained: false,
         prevEndCol: endCol,
         hasQuery: m[0].includes("?"),
+        lastChar: m[0].slice(-1),
         following: undefined,
       };
       // Whether the previous row of the chain is known to be a full row, and
@@ -277,12 +284,16 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       let prevFull = borderIdx >= 0 || endCol >= cols - 2;
       let prevPrevEnd = -1;
       const maxRows = maxContinuationRows(cols);
-      // A URL that would continue past a limit is dropped: a truncated address
+      // A URL that would continue past a limit, or into a tail too weak to join, is dropped: a truncated address
       // is worse than an unrecognised one.
       let overflow = false;
       for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && cur + 1 < lines.length; n++) {
         state.following = lines[cur + 2]?.text;
         const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
+        if (next === WEAK_TAIL) {
+          if (prevFull) overflow = true;
+          break;
+        }
         if (!next) break;
         // A row that is not full by width is still full when it is as wide as
         // its neighbours (the program wrapped at a different width).
@@ -301,6 +312,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         state.prevEndCol = next.endCol;
         state.prevBorderCol = next.borderCol;
         state.chained = true;
+        state.lastChar = lines[next.piece.line].text[next.piece.end - 1];
         state.hasQuery ||= lines[next.piece.line].text.slice(next.piece.start, next.piece.end).includes("?");
       }
       if (overflow) continue;

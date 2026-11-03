@@ -137,15 +137,32 @@ describe("link stitching rules", () => {
 
   it("does not join a lone token that follows a URL filling the row", () => {
     const full = "https://a.example/" + "a".repeat(22);
-    for (const token of ["[OK]", "200", "42"]) {
-      expect(urls(hard(full, token), 40), token).toEqual([full]);
-      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([full.slice(0, 34)]);
+    // A bracketed tag is never a continuation, so the first row stays a link.
+    expect(urls(hard(full, "[OK]"), 40)).toEqual([full]);
+    expect(urls(hard(`Docs: ${full.slice(0, 34)}`, "[OK]"), 40)).toEqual([full.slice(0, 34)]);
+    // A number after letters is no tail either, but the filled row may be cut:
+    // an address that could be a prefix is not offered.
+    for (const token of ["200", "42"]) {
+      expect(urls(hard(full, token), 40), token).toEqual([]);
+      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([]);
     }
-    // After a row that holds more than the URL, a bare path token is not evidence enough.
+    // A path tail with a slash is evidence enough even after a row that also holds prose.
     const head = "https://a.example/" + "a".repeat(10);
     const prose = `Docs: ${head}`;
-    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head]);
+    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head + "/api/v2/next"]);
     expect(urls(hard(prose, "/api/v2/next?x=1"), prose.length)).toEqual([head + "/api/v2/next?x=1"]);
+  });
+
+  it("never cuts a hard-wrapped URL down to a valid prefix", () => {
+    const a = "Created PR: https://github.com/acme/wi";
+    expect(urls(hard(a, "dget/pull/1234"), a.length)).toEqual(["https://github.com/acme/widget/pull/1234"]);
+    const b = "https://github.com/acme/widget/pull/12";
+    expect(urls(hard(b, "34"), b.length)).toEqual(["https://github.com/acme/widget/pull/1234"]);
+    // A number after a letter is not a tail; the filled row is dropped, not truncated.
+    const c = "See https://a.example/docs";
+    expect(urls(hard(c, "200"), c.length)).toEqual([]);
+    // Letters-only tokens keep the first-row link.
+    expect(urls(hard(c, "Done"), c.length)).toEqual(["https://a.example/docs"]);
   });
 
   it("joins a path tail after a row that holds only the URL (indistinguishable from a cut URL)", () => {
