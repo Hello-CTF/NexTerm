@@ -108,6 +108,7 @@ type Server struct {
 	accounts          *account.Accounts
 	accountThrottle   accountThrottles
 	mfaTickets        *mfaTicketStore
+	mfaLock           *mfaLockout
 	gatewayAuthKey    string
 	authRequired      bool
 	events            *EventBroker
@@ -285,6 +286,7 @@ func New(config Config) (*Server, error) {
 			mfa: account.NewLoginThrottle(),
 		},
 		mfaTickets:     newMFATicketStore(),
+		mfaLock:        newMFALockout(),
 		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,

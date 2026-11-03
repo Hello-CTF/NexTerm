@@ -400,7 +400,6 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.accountThrottle.login.RecordSuccess(key)
 	if accountLoginGate != nil {
 		accountLoginGate(r.Context(), user)
 	}
@@ -411,7 +410,8 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mfaEnabled {
-		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, epoch)
+		// The password-step throttle stays armed until the second factor passes.
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, key, epoch)
 		if ticket == "" {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
@@ -419,6 +419,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
+	s.accountThrottle.login.RecordSuccess(key)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 
