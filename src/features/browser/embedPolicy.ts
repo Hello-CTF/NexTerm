@@ -11,8 +11,13 @@ export type EmbedPlan =
   | { kind: "external"; url: string; reason: string }
   | { kind: "blocked"; reason: string };
 
-// Hosts that serve the Wails app assets (http(s)://wails.localhost on Windows/Android, wails://wails elsewhere).
-const WAILS_HOSTS = new Set(["wails.localhost", "wails"]);
+// Windows/Android serve app assets from http(s)://wails.localhost, and WebView2 intercepts by host prefix, so the
+// match is a lowercase, trailing-dot-trimmed prefix. Linux/macOS/iOS use wails://localhost, a scheme that is never
+// same-origin with http(s), so a plain http://localhost preview stays allowed.
+function isWailsAssetHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
+  return host.startsWith("wails.localhost") || host === "wails";
+}
 
 export const EMBED_SANDBOX = "allow-scripts allow-forms allow-same-origin";
 
@@ -32,7 +37,7 @@ export function planEmbed(rawUrl: string, env: EmbedEnv): EmbedPlan {
     return { kind: "blocked", reason: "只能打开 http 或 https 链接" };
   }
   if (parsed.origin === env.appOrigin) return { kind: "blocked", reason: "不能在应用内嵌入 NexTerm 自身的页面" };
-  if (WAILS_HOSTS.has(parsed.hostname.toLowerCase())) {
+  if (isWailsAssetHost(parsed.hostname)) {
     return { kind: "blocked", reason: "不能在应用内嵌入 NexTerm 自身的页面" };
   }
   if (env.mobile) return { kind: "external", url: plan.url, reason: "移动端不支持应用内打开" };

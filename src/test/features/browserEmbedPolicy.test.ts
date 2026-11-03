@@ -31,6 +31,16 @@ describe("planEmbed", () => {
     }
   });
 
+  it("refuses Wails asset hosts by prefix, ignoring case and a trailing dot", () => {
+    for (const url of ["http://wails.localhost./", "http://WAILS.localhost.evil.com/", "https://wails.localhostx:8080/"]) {
+      expect(planEmbed(url, desktop).kind, url).toBe("blocked");
+    }
+  });
+
+  it("still embeds a localhost http preview on desktop", () => {
+    expect(planEmbed("http://localhost:3000/", desktop)).toEqual({ kind: "embed", url: "http://localhost:3000/" });
+  });
+
   it("refuses non-web schemes", () => {
     for (const url of ["javascript:alert(1)", "data:text/html,<b>x</b>", "file:///etc/passwd", "mailto:a@b.c", "ssh://host", "not a url"]) {
       expect(planEmbed(url, desktop).kind, url).toBe("blocked");

@@ -8,11 +8,18 @@ const mocks = vi.hoisted(() => ({
   openExternalURL: vi.fn(),
   pushToast: vi.fn(),
   copyText: vi.fn(),
+  web: false,
 }));
 
 vi.mock("../../ipc/previewApi", () => ({ previewApi: { embedCheck: mocks.embedCheck } }));
 vi.mock("../../ipc/wails", () => ({ openExternalURL: mocks.openExternalURL }));
-vi.mock("../../ipc/env", () => ({ WEB: false, DESKTOP: true, TRANSPORT: "desktop" }));
+vi.mock("../../ipc/env", () => ({
+  get WEB() {
+    return mocks.web;
+  },
+  DESKTOP: true,
+  TRANSPORT: "desktop",
+}));
 vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../app/shell/shellMode", () => ({ isMobileShell: () => false }));
 vi.mock("../../app/store", () => ({
@@ -46,6 +53,7 @@ describe("BrowserPane", () => {
     mocks.openExternalURL.mockReset().mockResolvedValue(undefined);
     mocks.pushToast.mockReset();
     mocks.copyText.mockReset().mockResolvedValue(undefined);
+    mocks.web = false;
   });
   afterEach(() => {
     view?.unmount();
@@ -135,5 +143,28 @@ describe("BrowserPane", () => {
     await flush();
     expect(mocks.copyText).toHaveBeenCalledWith("https://example.com/");
     expect(mocks.pushToast).toHaveBeenCalledWith("success", expect.any(String));
+  });
+
+  it("warns in browser mode that a blank page may forbid embedding and offers the system browser", async () => {
+    mocks.web = true;
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    try {
+      const { container } = render("https://example.com/");
+      await flush();
+      fireLoad(container.querySelector("iframe")!);
+      expect(text()).toContain("若页面空白，该网站可能不允许嵌入");
+      const buttons = Array.from(container.querySelectorAll("button")).filter((b) => b.textContent === "在系统浏览器打开");
+      expect(buttons.length).toBeGreaterThanOrEqual(2);
+      act(() => buttons[buttons.length - 1].click());
+      expect(openSpy).toHaveBeenCalledWith("https://example.com/", "_blank", "noopener,noreferrer");
+    } finally {
+      openSpy.mockRestore();
+    }
+  });
+
+  it("does not show the blank-page warning on desktop", async () => {
+    render("https://example.com/");
+    await flush();
+    expect(text()).not.toContain("若页面空白");
   });
 });
