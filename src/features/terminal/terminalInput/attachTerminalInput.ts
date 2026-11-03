@@ -1,6 +1,7 @@
 import type { Terminal } from "@xterm/xterm";
 import { matchTerminalWithheldKeybinding } from "../../../app/keybindings";
-import { isMac } from "../../../app/platform";
+import { getCtrlVPaste } from "../../../app/preferences";
+import { isMac, isWindows } from "../../../app/platform";
 import { attachImeTextInput } from "../imeTextInput";
 import { kittyKeyboardActive } from "./kittyKeyboard";
 import { COMPOSITION_COMMIT_WINDOW_MS, resolveKey, type KeyResolution } from "./resolveKey";
@@ -71,6 +72,9 @@ export function attachTerminalInput(
           term.input(resolution.bytes, true);
         }
         return false;
+      case "native-paste":
+        // No preventDefault: the browser's default paste fires a paste event on xterm's textarea.
+        return false;
       case "pass":
         return true;
     }
@@ -83,6 +87,8 @@ export function attachTerminalInput(
       matchAppShortcut: matchTerminalWithheldKeybinding,
       commitEnterPending: pending,
       kittyKeyboard: kittyKeyboardActive(term, options.kittyKeyboard),
+      windows: isWindows(),
+      ctrlVPaste: getCtrlVPaste(),
     });
     if (event.type === "keydown") {
       const swallowed = pending && event.key === "Enter" && resolution.kind === "ime" && !resolution.toXterm;

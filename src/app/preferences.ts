@@ -901,3 +901,41 @@ export function subscribeSessionSidebar(listener: () => void): () => void {
 export function useSessionSidebarOpen(): boolean {
   return useSyncExternalStore(subscribeSessionSidebar, getSessionSidebarOpen, () => false);
 }
+
+// Whether Ctrl+V pastes in the terminal on Windows (Windows Terminal convention). Per-device: it depends on the
+// platform, so it is never written to the account store.
+export const CTRL_V_PASTE_STORAGE_KEY = "nexterm.terminal.ctrlVPaste.v1";
+const ctrlVPasteListeners = new Set<() => void>();
+let ctrlVPasteMemory = true;
+let ctrlVPasteMemoryValid = false;
+
+export function getCtrlVPaste(): boolean {
+  if (ctrlVPasteMemoryValid) return ctrlVPasteMemory;
+  try {
+    return localStorage.getItem(CTRL_V_PASTE_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function setCtrlVPaste(enabled: boolean): void {
+  try {
+    localStorage.setItem(CTRL_V_PASTE_STORAGE_KEY, enabled ? "1" : "0");
+    ctrlVPasteMemoryValid = false;
+  } catch {
+    ctrlVPasteMemory = enabled;
+    ctrlVPasteMemoryValid = true;
+  }
+  for (const listener of ctrlVPasteListeners) listener();
+}
+
+export function subscribeCtrlVPaste(listener: () => void): () => void {
+  ctrlVPasteListeners.add(listener);
+  return () => {
+    ctrlVPasteListeners.delete(listener);
+  };
+}
+
+export function useCtrlVPaste(): boolean {
+  return useSyncExternalStore(subscribeCtrlVPaste, getCtrlVPaste, () => true);
+}

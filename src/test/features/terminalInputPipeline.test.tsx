@@ -10,10 +10,13 @@ import { flushMacrotask } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
+  windows: false,
   attach: vi.fn(),
   detach: vi.fn(),
   setVisible: vi.fn(),
   write: vi.fn(),
+  emit: null as null | ((bytes: Uint8Array) => void),
+  ask: vi.fn(),
 }));
 
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
@@ -21,6 +24,7 @@ vi.mock("@xterm/addon-search", () => ({ SearchAddon: class { findNext() {} findP
 vi.mock("../../app/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../app/platform")>()),
   isMac: () => harness.mac,
+  isWindows: () => harness.windows,
 }));
 vi.mock("../../features/terminal/terminalGeometry", () => ({
   measureTerminalGeometry: () => ({
@@ -46,13 +50,18 @@ vi.mock("../../ipc/commands", () => ({
 }));
 vi.mock("../../ipc/events", () => ({
   channelIdOf: () => "channel-1",
-  createBinaryChannel: () => ({}),
+  createBinaryChannel: (cb: (bytes: Uint8Array) => void) => {
+    harness.emit = cb;
+    return {};
+  },
   disposeChannel: vi.fn(),
   onChannelReopen: () => vi.fn(),
   sendChannelInput: vi.fn(),
 }));
+vi.mock("../../ui/dialogs", () => ({ ask: harness.ask, promptText: vi.fn() }));
 vi.mock("../../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
+import { setTerminalConfirmMultilinePaste } from "../../app/preferences";
 import { XtermView } from "../../features/terminal/XtermView";
 import { resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import {
@@ -127,6 +136,8 @@ const settle = () =>
 beforeEach(() => {
   sent = [];
   harness.mac = false;
+  harness.windows = false;
+  localStorage.clear();
   harness.attach.mockReset().mockResolvedValue({
     tabId: "tab-1",
     sessionId: "session",
@@ -163,6 +174,81 @@ afterEach(() => {
   resetAllKeybindings();
   clearStickyModifiers();
   vi.unstubAllGlobals();
+});
+
+function pasteEvent(text: string): Event {
+  const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+  paste.clipboardData = { getData: (t: string) => (t === "text/plain" ? text : ""), files: [], items: [], types: ["text/plain"] };
+  return paste;
+}
+
+describe("XtermView Ctrl+V on Windows", () => {
+  it("also treats Ctrl+V on a non-Latin layout as a paste", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    const down = key(textarea, "keydown", { key: "м", code: "KeyV", keyCode: 86, ctrlKey: true });
+    expect(down.defaultPrevented).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("waits for the multi-line confirmation, then sends one bracketed paste", async () => {
+    harness.windows = true;
+    setTerminalConfirmMultilinePaste("always");
+    let confirm: (ok: boolean) => void = () => {};
+    harness.ask.mockReturnValue(new Promise<boolean>((resolve) => { confirm = resolve; }));
+    const textarea = await show();
+    await act(async () => {
+      harness.emit?.(new TextEncoder().encode("\x1b[?2004h"));
+      await flushMacrotask();
+    });
+    key(textarea, "keydown", { key: "v", code: "KeyV", keyCode: 86, ctrlKey: true });
+    textarea.dispatchEvent(pasteEvent("echo a\necho b"));
+    await settle();
+    expect(sent).toEqual([]);
+    await act(async () => {
+      confirm(true);
+      await flushMacrotask();
+    });
+    expect(sent).toEqual(["\x1b[200~echo a\necho b\x1b[201~"]);
+  });
+
+  const ctrlV = { key: "v", code: "KeyV", keyCode: 86, ctrlKey: true };
+
+  it("leaves Ctrl+V to the browser's default paste instead of sending ^V", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    const down = key(textarea, "keydown", ctrlV);
+    const press = key(textarea, "keypress", { ...ctrlV, charCode: 22 });
+    key(textarea, "keyup", ctrlV);
+    expect(down.defaultPrevented).toBe(false);
+    expect(press.defaultPrevented).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("sends ^V when the setting is off", async () => {
+    harness.windows = true;
+    localStorage.setItem("nexterm.terminal.ctrlVPaste.v1", "0");
+    const textarea = await show();
+    const down = key(textarea, "keydown", ctrlV);
+    expect(down.defaultPrevented).toBe(true);
+    expect(sent).toEqual(["\x16"]);
+  });
+
+  it("keeps ^V on Linux", async () => {
+    const textarea = await show();
+    key(textarea, "keydown", ctrlV);
+    expect(sent).toEqual(["\x16"]);
+  });
+
+  it("forwards pasted text once through the paste event", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    paste.clipboardData = { getData: (t: string) => (t === "text/plain" ? "hello" : ""), files: [], items: [], types: ["text/plain"] };
+    textarea.dispatchEvent(paste);
+    await settle();
+    expect(sent).toEqual(["hello"]);
+  });
 });
 
 describe("XtermView input pipeline bytes", () => {

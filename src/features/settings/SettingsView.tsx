@@ -17,6 +17,8 @@ import {
   DEFAULT_DURABLE_HISTORY_MIB,
   TERMINAL_SCROLLBACK_OPTIONS,
   useTerminalPrefs,
+  useCtrlVPaste,
+  setCtrlVPaste,
   type TerminalCloseAction,
   type TerminalDefaultMode,
   type TerminalGpuAcceleration,
@@ -217,6 +219,7 @@ function saveNavOpen(open: boolean): void {
 export function SettingsView({ active = true }: { active?: boolean }) {
   const pushToast = useUi((s) => s.pushToast);
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
+  const ctrlVPaste = useCtrlVPaste();
   const setTerminalOsc52 = useUi((s) => s.setTerminalOsc52);
   const terminalPrefs = useTerminalPrefs();
   const multilinePasteSelectId = useId();
@@ -642,6 +645,23 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               }}
             />
           </label>
+          {isWindows() && (
+            <label className="mt-3.5 flex cursor-pointer items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[12.5px] text-neutral-200" data-setting="ctrl-v-paste">Ctrl+V 粘贴</div>
+                <p className="nx-hint mt-0.5">
+                  关闭后 Ctrl+V 发送 ^V 给终端程序；Ctrl+Shift+V 始终可粘贴。仅保存在本机，不随账号同步。
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                aria-label="Ctrl+V 粘贴"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                checked={ctrlVPaste}
+                onChange={(e) => setCtrlVPaste(e.target.checked)}
+              />
+            </label>
+          )}
           <div className="mt-3.5">
             <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签页时</div>
             <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签页时">

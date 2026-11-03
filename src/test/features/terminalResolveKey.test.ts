@@ -43,6 +43,8 @@ function ctx(overrides: Partial<ResolveKeyContext> = {}): ResolveKeyContext {
     matchAppShortcut: matchTerminalWithheldKeybinding,
     commitEnterPending: false,
     kittyKeyboard: false,
+    windows: false,
+    ctrlVPaste: true,
     ...overrides,
   };
 }
@@ -168,5 +170,61 @@ describe("resolveKey precedence (desktop)", () => {
   it("resolves keyup and keypress of an app shortcut the same way, so they never reach the terminal either", () => {
     const up = ev("W", "KeyW", { ctrlKey: true, shiftKey: true }, { type: "keyup" });
     expect(resolveKey(up, ctx())).toEqual(app("closePane"));
+  });
+});
+
+describe("resolveKey Ctrl+V on Windows", () => {
+  const ctrlV = (mods: Mods = {}) => ev("v", "KeyV", { ctrlKey: true, ...mods });
+  const NATIVE: KeyResolution = { kind: "native-paste" };
+
+  it("leaves the paste to the browser on Windows when the setting is on", () => {
+    expect(resolveKey(ctrlV(), ctx({ windows: true }))).toEqual(NATIVE);
+    expect(resolveKey(ev("V", "KeyV", { ctrlKey: true }), ctx({ windows: true }))).toEqual(NATIVE);
+  });
+
+  it("sends the key to xterm (^V) when the setting is off", () => {
+    expect(resolveKey(ctrlV(), ctx({ windows: true, ctrlVPaste: false }))).toEqual(PASS);
+  });
+
+  it.each([false, true])("keeps xterm's handling off Windows (mac=%s)", (mac) => {
+    setMac(mac);
+    expect(resolveKey(ctrlV(), ctx({ windows: false }))).toEqual(PASS);
+  });
+
+  it("does not claim Ctrl+Shift+V, Ctrl+Alt+V, Ctrl+Meta+V or a plain v", () => {
+    const c = ctx({ windows: true });
+    expect(resolveKey(ctrlV({ shiftKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ctrlV({ altKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ctrlV({ metaKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ev("v", "KeyV"), c)).toEqual(PASS);
+  });
+
+  it("recognises the V key on a non-Latin layout but not another Latin letter on that key", () => {
+    const c = ctx({ windows: true });
+    expect(resolveKey(ev("м", "KeyV", { ctrlKey: true }), c)).toEqual(NATIVE);
+    expect(resolveKey(ev("м", "KeyM", { ctrlKey: true }, { keyCode: 86 }), c)).toEqual(NATIVE);
+    expect(resolveKey(ev("м", "KeyM", { ctrlKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ev("x", "KeyV", { ctrlKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ev("м", "KeyV", { ctrlKey: true, shiftKey: true }), c)).toEqual(PASS);
+  });
+
+  it("lets the IME win", () => {
+    expect(resolveKey(ctrlV({ isComposing: true }), ctx({ windows: true }))).toEqual({ kind: "ime", toXterm: false });
+  });
+
+  it("lets a user app shortcut on Ctrl+V win", () => {
+    setKeybinding("commandPalette", "Ctrl+v");
+    expect(resolveKey(ctrlV(), ctx({ windows: true }))).toEqual(app("commandPalette"));
+  });
+
+  it("pastes natively while the kitty keyboard protocol is active", () => {
+    expect(resolveKey(ctrlV(), ctx({ windows: true, kittyKeyboard: true }))).toEqual(NATIVE);
+  });
+
+  it("keeps native paste for keypress and keyup of the chord, and for auto-repeat", () => {
+    const c = ctx({ windows: true });
+    expect(resolveKey({ ...ctrlV(), type: "keypress" }, c)).toEqual(NATIVE);
+    expect(resolveKey({ ...ctrlV(), type: "keyup" }, c)).toEqual(NATIVE);
+    expect(resolveKey(ctrlV({ repeat: true }), c)).toEqual(NATIVE);
   });
 });

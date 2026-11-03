@@ -15,7 +15,7 @@ import { openHostDetail } from "../hosts/hostDetail";
 import { TerminalCommandBlocks } from "./TerminalCommandBlocks";
 import { SessionSidebar } from "./SessionSidebar";
 import { useSessionSidebarHost } from "./sessionSidebarHost";
-import { setSessionSidebarOpen, useSessionSidebarOpen } from "../../app/preferences";
+import { setSessionSidebarOpen, getCtrlVPaste, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -69,7 +69,7 @@ import { nextTabId, openTerminalTab, takePendingDirectory, sessionStatusText, is
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
-import { modHint } from "../../app/platform";
+import { pasteShortcutLabel } from "./pasteShortcut";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc52Handler } from "./oscHandlers";
 import {
@@ -1816,7 +1816,8 @@ export function TerminalPane({
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
-    const pasteHint = `请在终端内按 ${modHint()}+V 粘贴文件，或将文件拖入终端`;
+    const pasteKey = pasteShortcutLabel(getCtrlVPaste());
+    const pasteHint = `请在终端内按 ${pasteKey} 粘贴文件，或将文件拖入终端`;
     if (typeof navigator.clipboard?.read !== "function") {
       handleRef.current?.focus();
       pushToast("info", `当前环境不支持直接读取剪贴板图片；${pasteHint}`);
@@ -1842,7 +1843,7 @@ export function TerminalPane({
       return;
     }
     if (files.length === 0) {
-      pushToast("info", "剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 Ctrl+V 或拖入");
+      pushToast("info", `剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 ${pasteKey} 或拖入`);
       return;
     }
     await handlePasteFiles(files);
