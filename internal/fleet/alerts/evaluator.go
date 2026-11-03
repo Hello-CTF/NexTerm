@@ -111,12 +111,16 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	off, err := e.loadOffline(ctx)
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, dev := range devices {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := e.evaluateDevice(ctx, now, dev, settings[dev.ID], states); err != nil {
+		if err := e.evaluateDevice(ctx, now, dev, settings[dev.ID], states, off); err != nil {
 			errs = append(errs, fmt.Errorf("device %s: %w", dev.ID, err))
 		}
 	}
@@ -131,12 +135,12 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 }
 
 // evaluateDevice runs every rule for one device and commits their changes in a single transaction.
-func (e *Evaluator) evaluateDevice(ctx context.Context, now int64, dev *model.UserDevice, set *Settings, states map[stateKey]*model.DeviceAlertState) error {
+func (e *Evaluator) evaluateDevice(ctx context.Context, now int64, dev *model.UserDevice, set *Settings, states map[stateKey]*model.DeviceAlertState, off *offlineData) error {
 	changes, err := e.thresholdChanges(ctx, now, dev, set, states)
 	if err != nil {
 		return err
 	}
-	// Further rules (offline) append to changes here so one device commits atomically.
+	changes = append(changes, e.offlineChanges(now, dev, set, states, off)...)
 	if len(changes) == 0 {
 		return nil
 	}
