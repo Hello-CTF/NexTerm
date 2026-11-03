@@ -2165,7 +2165,7 @@ export function TerminalPane({
   };
 
   return (
-    <div ref={paneRef} className="nx-pane bg-term @container/term">
+    <div ref={paneRef} className={`nx-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
       <div className="nx-toolbar nx-term-toolbar">
         <span className="nx-toolbar-title" title={title}>{title}</span>
         <span
