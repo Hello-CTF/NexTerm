@@ -402,6 +402,20 @@ func run(args []string) int {
 			defer shutdownCancel()
 			_ = rollupRunner.Shutdown(shutdownCtx)
 		}()
+		alertEvaluator, err := fleetserver.NewAlertEvaluator(fleetService, logger.Logger)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+			return 1
+		}
+		if err := alertEvaluator.Start(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+			return 1
+		}
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			_ = alertEvaluator.Shutdown(shutdownCtx)
+		}()
 	}
 	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
