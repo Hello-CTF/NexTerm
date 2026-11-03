@@ -180,7 +180,7 @@ func WarnIfExposed(logger *slog.Logger, stderr io.Writer, address string, syncOn
 	case syncOnly && mode == AuthOff:
 		detail = "onlyServer 模式（--auth=off）：账号功能已关闭，同步端点拒绝所有请求，仅 /healthz 保持可用。请使用防火墙限制对端地址，或改用 --auth=on。"
 	case syncOnly:
-		detail = "onlyServer 模式：仅提供账号登录与同步端点；能连接此端口且持有账号会话的人可以同步资产库（端到端加密）。请使用防火墙限制对端地址。"
+		detail = "onlyServer 模式：仅提供账号登录与同步端点；能连接此端口且持有账号会话的人可以同步资产库（客户端加密，服务端只保存密文）。请使用防火墙限制对端地址。"
 	case mode == AuthPlatform:
 		detail = "平台托管访问控制（--auth=platform）：只有携带 NEXTERM_GATEWAY_AUTH 对应请求头（由前置网关注入）的请求被放行，其余一律拒绝；首个通过网关访问的用户将成为平台所有者，此模式不使用初始化码。请确保该监听端口只对前置网关可达。"
 	case mode == AuthOff:

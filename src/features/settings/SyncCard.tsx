@@ -767,7 +767,7 @@ function DesktopSyncConsole() {
     try {
       const { ask } = await import("../../ui/dialogs");
       const confirmed = action === "restore-local"
-        ? await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+        ? await ask(`确定要用本机「${row.name}」覆盖服务端上本机无法解密的数据吗？此操作将替换服务端的原有密文。`, {
           title: "用本机副本修复服务端数据", kind: "warning",
         })
         : await ask(`本次对比中没有可用的本机数据 ${id}。确定要清除这条无法解密且类型未知的服务端副本吗？`, {
@@ -1871,7 +1871,7 @@ function CompareConsole() {
       if (action === "restore-local") {
         if (!row.local) throw new Error("本机已没有同 ID 副本，请重试读取");
         const { ask } = await import("../../ui/dialogs");
-        if (!(await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+        if (!(await ask(`确定要用本机「${row.name}」覆盖服务端上本机无法解密的数据吗？此操作将替换服务端的原有密文。`, {
           title: "用本机副本修复服务端数据", kind: "warning",
         }))) return;
         if (!stillCurrent()) return;

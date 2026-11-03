@@ -615,7 +615,7 @@ export function TranscriptHistoryPanel({
                             title={
                               summary.syncOptIn
                                 ? "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留"
-                                : "通过账号将此记录同步到其他设备（端到端加密）"
+                                : "通过账号将此记录同步到其他设备（客户端加密，服务端只保存密文）"
                             }
                             aria-label={summary.syncOptIn ? "关闭该记录的同步" : "开启该记录的同步"}
                             onClick={(event) => {
