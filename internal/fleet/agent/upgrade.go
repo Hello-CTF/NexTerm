@@ -544,7 +544,7 @@ func windowsRestartBlock(taskName string) string {
 func renderReplaceScriptWindows(p windowsReplaceScript) string {
 	var b strings.Builder
 	b.WriteString("$nxLogPath = " + psQuote(p.LogPath) + "\n")
-	b.WriteString("function nxLog($m) { if ($nxLogPath) { try { Add-Content -LiteralPath $nxLogPath -Value ((Get-Date -Format o) + ' ' + $m) -ErrorAction Stop } catch {} } }\n")
+	b.WriteString("function nxLog($m) { if ($nxLogPath) { try { Add-Content -LiteralPath $nxLogPath -Encoding UTF8 -Value ((Get-Date -Format o) + ' ' + $m) -ErrorAction Stop } catch {} } }\n")
 	if p.WaitPID > 0 {
 		b.WriteString("try { Wait-Process -Id " + strconv.Itoa(p.WaitPID) + " -Timeout " + strconv.Itoa(p.WaitTimeoutSeconds) + " -ErrorAction SilentlyContinue } catch {}\n")
 	}
