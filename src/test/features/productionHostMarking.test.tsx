@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { mount, type MountedView } from "./reactTestUtils";
+import { mount, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({ production: new Set<string>() }));
 
@@ -35,7 +35,8 @@ function tab(over: Partial<AppTab>): AppTab {
 
 function header(activeTab: AppTab | null) {
   const ws = { id: "w1", title: "ws", sessionId: "s-prod", kind: "ssh", panes: [] } as unknown as Workspace;
-  view = mount(
+  // The header's inbox button reads the account identity through react-query.
+  view = mountWithClient(
     createElement(AppHeader, {
       ws,
       activeTab,
