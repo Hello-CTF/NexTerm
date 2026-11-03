@@ -232,6 +232,9 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 	hlog := newHelperLog(stateDir)
 	defer hlog.close()
 	hlog.logStart(stateDir)
+	if _, err := HelperInstanceID(stateDir); err != nil {
+		hlog.event("instance_id_failed", "error", err.Error())
+	}
 	// Resolve the login-shell environment now so the first terminal does not wait for it.
 	shellenv.Default().Start()
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {

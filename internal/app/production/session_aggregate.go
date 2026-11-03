@@ -37,10 +37,12 @@ type AggregateDevice struct {
 	Kind     string
 	Platform string
 	// Online reports a device connected to the server now; Digest is its
-	// supervisor state digest.
-	Online          bool
-	Digest          string
-	TerminalEnabled bool
+	// supervisor state digest, and HelperInstanceID the random id of its
+	// helper state directory ("" from an older agent or server).
+	Online           bool
+	Digest           string
+	HelperInstanceID string
+	TerminalEnabled  bool
 }
 
 type sessionAggregateRequest struct {
@@ -65,6 +67,10 @@ type sessionAggregateService struct {
 	// helper, or "" when it runs none. It is read at listing time because
 	// the helper's state directory changes when it migrates.
 	localDigest func() string
+	// localInstance returns the helper instance id of that same helper, or
+	// "" when it runs none. A digest alone does not identify a helper: another
+	// machine with the same uid and path has the same one.
+	localInstance func() string
 
 	mu sync.Mutex
 	// localOK is whether the local host's latest listing answered; a device
@@ -173,6 +179,13 @@ func (s *sessionAggregateService) list(ctx context.Context, input sessionAggrega
 	return s.filterShared(result), nil
 }
 
+func (s *sessionAggregateService) localHelperInstance() string {
+	if s.localInstance == nil {
+		return ""
+	}
+	return s.localInstance()
+}
+
 func (s *sessionAggregateService) localHelperDigest() string {
 	if s.localDigest == nil {
 		return ""
@@ -216,6 +229,7 @@ func (s *sessionAggregateService) deviceTargets(ctx context.Context, owner strin
 		host := session.AggregateHost{
 			Key: session.AggregateKeyDevice + listed.ID, Kind: session.KindDevice, Name: listed.Name,
 			DeviceID: listed.ID, DeviceKind: listed.Kind, StateDigest: listed.Digest,
+			HelperInstanceID: listed.HelperInstanceID,
 		}
 		if listed.ID == "" || have[host.Key] {
 			continue
@@ -393,17 +407,17 @@ func (s *sessionAggregateService) localListed() bool {
 
 // filterShared is the one rule for a listing that may carry device hosts
 // fronting this process's own helper: they are left out while the local host
-// is listed, and helper digests never leave the service.
+// is listed, and helper digests and instance ids never leave the service.
 func (s *sessionAggregateService) filterShared(list session.AggregateList) session.AggregateList {
 	for _, host := range list.Hosts {
 		s.noteLocalHost(host)
 	}
-	return clearHostDigests(withoutDigest(list, s.localHelperDigest(), s.localListed()))
+	return clearHostDigests(withoutLocalHelper(list, s.localHelperDigest(), s.localHelperInstance(), s.localListed()))
 }
 
 // emit is the single choke point of every terminal://sessions event: it
 // drops an update of a device host that the local host lists already, and
-// clears the digest of the rest.
+// clears the helper identity of the rest.
 func (s *sessionAggregateService) emit(owner string, update session.AggregateUpdate) {
 	s.noteLocalHost(update.Host)
 	filtered := s.filterShared(session.AggregateList{
@@ -535,18 +549,21 @@ func (s *sessionAggregateService) shutdown(context.Context) error {
 	return nil
 }
 
-// withoutDigest leaves out the device hosts whose helper has the given state
-// digest, and their sessions: the same helper's sessions are listed by the
-// local host. A device host that is itself the local host, and an empty
-// digest, never match. Only a local host that is listed (localListed) makes a
-// device host redundant, so a helper not listed locally keeps its device route.
-func withoutDigest(list session.AggregateList, digest string, localListed bool) session.AggregateList {
-	if digest == "" || !localListed {
+// withoutLocalHelper leaves out the device hosts that front the local helper,
+// and their sessions: the local host lists them. A device host is that helper
+// only when its state digest and helper instance id are both non-empty and
+// equal to the local ones; the digest alone is the same on another machine
+// with the same uid and path, and an older agent or server sends no id, so
+// either missing keeps the device route (at worst a helper is listed twice).
+// Only a local host that is listed (localListed) makes a device host
+// redundant, so a helper not listed locally keeps its device route.
+func withoutLocalHelper(list session.AggregateList, digest, instance string, localListed bool) session.AggregateList {
+	if digest == "" || instance == "" || !localListed {
 		return list
 	}
 	drop := make(map[string]bool)
 	for _, host := range list.Hosts {
-		if host.Kind == session.KindDevice && host.StateDigest == digest {
+		if host.Kind == session.KindDevice && host.StateDigest == digest && host.HelperInstanceID == instance {
 			drop[host.Key] = true
 		}
 	}
@@ -567,11 +584,12 @@ func withoutDigest(list session.AggregateList, digest string, localListed bool) 
 	return result
 }
 
-// clearHostDigests removes the helper digests before a listing reaches a UI.
+// clearHostDigests removes the helper digests and instance ids before a listing reaches a UI.
 func clearHostDigests(list session.AggregateList) session.AggregateList {
 	hosts := make([]session.AggregateHostStatus, len(list.Hosts))
 	for index, host := range list.Hosts {
 		host.StateDigest = ""
+		host.HelperInstanceID = ""
 		hosts[index] = host
 	}
 	list.Hosts = hosts

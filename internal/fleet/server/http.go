@@ -351,6 +351,9 @@ type agentView struct {
 	ServiceState     ServiceState `json:"service_state"`
 	LastSeenAt       int64        `json:"last_seen_at"`
 	StateDigest      string       `json:"state_digest,omitempty"`
+	// HelperInstanceID is the random id of the device's helper state directory (not a credential); empty when
+	// offline or reported by an older agent.
+	HelperInstanceID string `json:"helper_instance_id,omitempty"`
 }
 
 // deviceListView is the GET /fleet/devices body.
@@ -398,6 +401,9 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 		if view.Agent != nil {
 			if digest, ok := s.registry.StateDigest(device.ID); ok {
 				view.Agent.StateDigest = digest
+			}
+			if id, ok := s.registry.HelperInstanceID(device.ID); ok {
+				view.Agent.HelperInstanceID = id
 			}
 		}
 		views = append(views, view)

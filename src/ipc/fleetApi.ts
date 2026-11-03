@@ -28,6 +28,9 @@ export interface FleetAgentInfo {
   // Device-side supervisor state digest (reported over the control channel, no credential material), for remote terminal
   // hello negotiation only; must not be shown in the UI, logged, or persisted to web storage. Absent when the device is offline.
   state_digest?: string;
+  // Random id of the device helper's state directory, paired with state_digest to tell one helper from another machine with
+  // the same uid and path. Same handling as state_digest: not shown, not logged, not persisted. Absent from older agents/servers.
+  helper_instance_id?: string;
 }
 
 export interface FleetDevice {

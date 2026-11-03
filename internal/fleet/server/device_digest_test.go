@@ -20,8 +20,13 @@ func (f *serviceFixture) setDeviceKind(t *testing.T, deviceID, kind string) {
 
 func (f *serviceFixture) reportDigest(t *testing.T, deviceID, digest string) *websocket.Conn {
 	t.Helper()
+	return f.reportHelper(t, deviceID, digest, "")
+}
+
+func (f *serviceFixture) reportHelper(t *testing.T, deviceID, digest, instanceID string) *websocket.Conn {
+	t.Helper()
 	_, control := wsPair(t)
-	f.service.registry.RegisterControl(deviceID, control, digest, nil)
+	f.service.registry.RegisterControl(deviceID, control, digest, instanceID, nil)
 	return control
 }
 
@@ -50,13 +55,13 @@ func TestTerminalDevicesListsASharedHelperOnce(t *testing.T) {
 		t.Fatalf("offline devices = %v; want both", ids)
 	}
 	// Only the local-helper device is online: it is the only route.
-	f.reportDigest(t, desktop.DeviceID, "same")
+	f.reportHelper(t, desktop.DeviceID, "same", "inst")
 	ids := terminalDeviceIDs(t, f, alice.ID)
 	if len(ids) != 2 {
 		t.Fatalf("one online device = %v; want the online one plus the offline agent", ids)
 	}
 	// Both online with one digest: the agent device is the canonical route.
-	agentControl := f.reportDigest(t, machine.DeviceID, "same")
+	agentControl := f.reportHelper(t, machine.DeviceID, "same", "inst")
 	ids = terminalDeviceIDs(t, f, alice.ID)
 	if len(ids) != 1 || ids[0] != machine.DeviceID {
 		t.Fatalf("shared helper devices = %v; want only the agent %s", ids, machine.DeviceID)
@@ -76,8 +81,8 @@ func TestTerminalDevicesNeverMergeAcrossAccountsOrEmptyDigests(t *testing.T) {
 	a := f.enrollAgent(t, alice, "a")
 	a2 := f.enrollAgent(t, alice, "a2")
 	b := f.enrollAgent(t, bob, "b")
-	f.reportDigest(t, a.DeviceID, "same")
-	f.reportDigest(t, b.DeviceID, "same")
+	f.reportHelper(t, a.DeviceID, "same", "inst")
+	f.reportHelper(t, b.DeviceID, "same", "inst")
 	f.reportDigest(t, a2.DeviceID, "")
 	if ids := terminalDeviceIDs(t, f, alice.ID); len(ids) != 2 {
 		t.Fatalf("alice = %v; want both (other account's digest and an empty digest never merge)", ids)
@@ -89,9 +94,9 @@ func TestTerminalDevicesNeverMergeAcrossAccountsOrEmptyDigests(t *testing.T) {
 
 func TestDropSharedHelperDevicesTieBreaks(t *testing.T) {
 	devices := []TerminalDevice{
-		{ID: "b", Kind: "agent", Digest: "d", TerminalEnabled: true},
-		{ID: "a", Kind: "agent", Digest: "d", TerminalEnabled: true},
-		{ID: "l", Kind: agent.DeviceKindLocalHelper, Digest: "d", TerminalEnabled: true},
+		{ID: "b", Kind: "agent", Digest: "d", HelperInstanceID: "i", TerminalEnabled: true},
+		{ID: "a", Kind: "agent", Digest: "d", HelperInstanceID: "i", TerminalEnabled: true},
+		{ID: "l", Kind: agent.DeviceKindLocalHelper, Digest: "d", HelperInstanceID: "i", TerminalEnabled: true},
 		{ID: "x", Kind: "agent"}, {ID: "y", Kind: "agent"},
 	}
 	got := dropSharedHelperDevices(devices, map[string]int64{"a": 5, "b": 5, "l": 1})
@@ -115,8 +120,8 @@ func TestDropSharedHelperDevicesKeepsATerminalEnabledRoute(t *testing.T) {
 	}
 	// The agent has terminal access off: the usable local-helper device is the route.
 	got := dropSharedHelperDevices([]TerminalDevice{
-		{ID: "agent", Kind: "agent", Digest: "d"},
-		{ID: "desk", Kind: agent.DeviceKindLocalHelper, Digest: "d", TerminalEnabled: true},
+		{ID: "agent", Kind: "agent", Digest: "d", HelperInstanceID: "i"},
+		{ID: "desk", Kind: agent.DeviceKindLocalHelper, Digest: "d", HelperInstanceID: "i", TerminalEnabled: true},
 	}, nil)
 	if ids(got) != "desk," {
 		t.Fatalf("kept %s; want only the terminal-enabled desk", ids(got))
@@ -125,9 +130,43 @@ func TestDropSharedHelperDevicesKeepsATerminalEnabledRoute(t *testing.T) {
 
 func TestDropSharedHelperDevicesKeepsBothWhenNeitherCanServe(t *testing.T) {
 	got := dropSharedHelperDevices([]TerminalDevice{
-		{ID: "a", Kind: "agent", Digest: "d"}, {ID: "l", Kind: agent.DeviceKindLocalHelper, Digest: "d"},
+		{ID: "a", Kind: "agent", Digest: "d", HelperInstanceID: "i"}, {ID: "l", Kind: agent.DeviceKindLocalHelper, Digest: "d", HelperInstanceID: "i"},
 	}, nil)
 	if len(got) != 2 {
 		t.Fatalf("kept %+v; a device is dropped only for an enabled one", got)
+	}
+}
+
+func TestTerminalDevicesKeepsMachinesThatShareUIDAndPath(t *testing.T) {
+	f := newServiceFixture(t)
+	alice := f.createUser(t, "twin-alice")
+	one := f.enrollAgent(t, alice, "one")
+	two := f.enrollAgent(t, alice, "two")
+	f.reportHelper(t, one.DeviceID, "same", "instance-one")
+	f.reportHelper(t, two.DeviceID, "same", "instance-two")
+	if ids := terminalDeviceIDs(t, f, alice.ID); len(ids) != 2 {
+		t.Fatalf("devices = %v; want both machines listed", ids)
+	}
+}
+
+func TestDropSharedHelperDevicesNeedsBothDigestAndInstanceID(t *testing.T) {
+	agentDev := func(id, instance string) TerminalDevice {
+		return TerminalDevice{ID: id, Kind: "agent", Digest: "d", HelperInstanceID: instance, TerminalEnabled: true}
+	}
+	local := func(id, instance string) TerminalDevice {
+		return TerminalDevice{ID: id, Kind: agent.DeviceKindLocalHelper, Digest: "d", HelperInstanceID: instance, TerminalEnabled: true}
+	}
+	count := func(devices ...TerminalDevice) int { return len(dropSharedHelperDevices(devices, nil)) }
+	if n := count(agentDev("a", "i1"), agentDev("b", "i2")); n != 2 {
+		t.Errorf("different instance ids kept %d; want 2", n)
+	}
+	if n := count(agentDev("a", "i1"), local("l", "i1")); n != 1 {
+		t.Errorf("same helper kept %d; want 1", n)
+	}
+	if n := count(agentDev("a", "i1"), local("l", "")); n != 2 {
+		t.Errorf("one side without an id kept %d; want 2", n)
+	}
+	if n := count(agentDev("a", ""), local("l", "")); n != 2 {
+		t.Errorf("no ids kept %d; want 2", n)
 	}
 }
