@@ -346,7 +346,10 @@ func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
 	if !strings.Contains(stderr.String(), "install-device.sh") {
 		t.Fatalf("run stderr = %q, want manual reinstall guidance", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "原因") {
+	if !strings.Contains(stderr.String(), "原因") || !strings.Contains(stderr.String(), "self-upgrade to 9.9.9 failed") {
 		t.Fatalf("run stderr = %q, want the upgrade failure reason", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "control channel protocol version mismatch") {
+		t.Fatalf("run stderr = %q, reason must not repeat the sentinel text", stderr.String())
 	}
 }

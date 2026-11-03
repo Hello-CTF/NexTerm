@@ -1007,6 +1007,21 @@ func TestRuntimeSelfUpgradeRefusalKeepsReason(t *testing.T) {
 	}
 }
 
+func TestSelfUpgradeFailedErrorKeepsSentinelAndCause(t *testing.T) {
+	cause := errors.New("download exploded")
+	err := error(&selfUpgradeFailedError{cause: cause})
+	if !errors.Is(err, ErrProtocolMismatch) || !errors.Is(err, cause) {
+		t.Fatalf("%v must match both ErrProtocolMismatch and its cause", err)
+	}
+	var failed *selfUpgradeFailedError
+	if !errors.As(fmt.Errorf("wrapped: %w", err), &failed) || failed.cause != cause {
+		t.Fatalf("errors.As lost the cause: %+v", failed)
+	}
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Fatalf("Error() = %q lacks the cause", err.Error())
+	}
+}
+
 func TestRuntimeDefaultUpgraderLogsInDataDir(t *testing.T) {
 	dataDir := t.TempDir()
 	prober, err := NewProber([]BaseURLEntry{{URL: "http://127.0.0.1:1"}})
