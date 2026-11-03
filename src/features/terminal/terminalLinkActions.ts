@@ -2,7 +2,9 @@ import { openFileTab, useUi } from "../../app/store";
 import { fsApi, sessionApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { openExternalURL } from "../../ipc/wails";
-import { ask } from "../../ui/dialogs";
+import { getTerminalPrefs } from "../../app/preferences";
+import { ask, askChoice } from "../../ui/dialogs";
+import { terminalIntegrations } from "./terminalIntegrations";
 import { describeError } from "../../ui/errorText";
 import { isEditableFile } from "../files/fileTypes";
 import type { TerminalLinkDeps } from "./terminalLinks";
@@ -59,5 +61,20 @@ export function terminalLinkDeps(
     // Directories are browsed in the host workspace's file tree sidebar; there is no file browser tab to open.
     openDirectory: (_id, path) => useUi.getState().pushToast("info", `「${path}」是目录，可在左侧文件树中浏览`),
     describeError,
+    linkOpenMode: () => getTerminalPrefs().linkOpenMode,
+    // Present only while the in-app browser is registered (it is not on mobile).
+    get openInApp() {
+      return terminalIntegrations().openInApp;
+    },
+    chooseLinkTarget: async () => {
+      const key = await askChoice("要在哪里打开这个链接？", {
+        title: "打开链接",
+        choices: [
+          { key: "system", label: "系统浏览器", primary: true },
+          { key: "app", label: "在 NexTerm 中打开" },
+        ],
+      });
+      return key === "system" || key === "app" ? key : null;
+    },
   };
 }

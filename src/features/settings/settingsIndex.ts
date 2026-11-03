@@ -129,6 +129,8 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "quick-commands", section: "settings-terminal", label: "快捷命令", description: "在终端按键条中发送的常用命令，随账号同步", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
   { id: "close-to-tray", section: "settings-terminal", label: "关闭时保留后台运行", description: "关闭窗口后最小化到系统托盘（仅 Windows 桌面版）", keywords: ["tray", "minimize", "background", "托盘", "最小化", "后台运行", "退出"] },
   { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
+  { id: "terminal-link-open-mode", section: "settings-terminal", label: "链接打开位置", description: "http/https 链接在系统浏览器、NexTerm 内打开，或每次询问", keywords: ["link", "url", "browser", "preview", "iframe", "open", "链接", "浏览器", "预览", "内置", "打开位置"] },
+  { id: "terminal-port-discovery", section: "settings-terminal", label: "端口发现", description: "终端连接期间定期检测远端新监听的端口，并提示一键转发（默认关闭）", keywords: ["port", "discovery", "forward", "listen", "ss", "netstat", "端口", "发现", "转发", "监听"] },
   { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "粘贴多行文本前的确认方式：仅程序未开启括号粘贴时、每次或从不，随账号同步", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
   { id: "system-notifications", section: "settings-terminal", label: "系统通知", description: "会话需要处理或长时间命令结束时，在本机显示系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
   { id: "state-rules-import", section: "settings-state-rules", label: "导入或导出状态规则", keywords: ["import", "export", "json", "导入", "导出"] },

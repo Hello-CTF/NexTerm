@@ -29,6 +29,7 @@ import {
   TerminalPane,
   TranscriptHistoryPanel,
 } from "../lazyPanels";
+import { BrowserPane } from "../../features/browser/BrowserPane";
 import { EmptyState } from "./EmptyStates";
 
 // LazyDevicesView loads device management lazily: it reaches env through the auth store, and lazy loading keeps it out of the desktop test module graph.
@@ -243,6 +244,8 @@ export const PaneForTab = memo(function PaneForTab({
       return <Lazy><AuditView /></Lazy>;
     case "devices":
       return <LazyDevicesView />;
+    case "browser":
+      return tab.url ? <BrowserPane url={tab.url} /> : null;
     case "host":
       return <Lazy><HostDetailView assetId={tab.assetId} visible={active} /></Lazy>;
     case "background":

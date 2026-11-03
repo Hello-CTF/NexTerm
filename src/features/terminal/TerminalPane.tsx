@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Mo
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
-import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
+import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
 import type { DetectedTarget } from "./terminalLinkProvider";
 import { buildTargetMenu } from "./terminalTargetMenu";
 import { terminalIntegrations } from "./terminalIntegrations";
@@ -19,6 +19,7 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { PersistenceHintBar } from "./PersistenceHintBar";
+import { PortDiscoveryBanner } from "../preview/PortDiscoveryBanner";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
 import {
   dismissPersistenceHint,
@@ -1966,7 +1967,11 @@ export function TerminalPane({
 
   // Link actions for the terminal menu: right-click on a hovered link, or a
   // touch long-press on one (touch has no modifier for opening).
-  const buildLinkMenu = (uri: string): MenuItem[] => [
+  const buildLinkMenu = (uri: string): MenuItem[] => {
+    const inApp = terminalIntegrations().openInApp;
+    const plan = planTerminalLink(uri);
+    const webUrl = plan.kind === "external" && /^https?:/i.test(plan.url) ? plan.url : null;
+    return [
     { kind: "group", label: "链接" },
     {
       kind: "item",
@@ -1974,6 +1979,9 @@ export function TerminalPane({
       hint: "不受修饰键和鼠标捕获影响",
       onSelect: () => handleRef.current?.openLink(uri),
     },
+    ...(inApp && webUrl
+      ? [{ kind: "item" as const, label: "在 NexTerm 中打开", onSelect: () => inApp(webUrl) }]
+      : []),
     {
       kind: "item",
       label: "复制链接",
@@ -1984,7 +1992,8 @@ export function TerminalPane({
           (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
         ),
     },
-  ];
+    ];
+  };
 
   // Actions for an IP or host:port under the right-click.
   const buildAddressMenu = (target: DetectedTarget): MenuItem[] =>
@@ -2466,6 +2475,8 @@ export function TerminalPane({
           onDismiss={() => dismissPersistenceHint(storeTabId, hintKey)}
         />
       )}
+
+      {!containerId && <PortDiscoveryBanner sessionId={sessionId} />}
 
       <div className="nx-terminal-body relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>

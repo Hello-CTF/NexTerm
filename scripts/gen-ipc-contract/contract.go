@@ -49,6 +49,8 @@ var contractScopes = []scopeSpec{
 	{name: "remotedesktop", prefixes: []string{"remotedesktop_"}},
 	{name: "wake", prefixes: []string{"wake_"}},
 	{name: "preview-share", prefixes: []string{"preview_share_"}},
+	{name: "host-ports", commands: []string{"host_connectivity_test", "host_ports_list"}},
+	{name: "preview", commands: []string{"preview_embed_check"}},
 	{name: "sync", commands: []string{
 		"sync_apply_objects",
 		"sync_bundle_read",

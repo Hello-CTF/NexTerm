@@ -124,6 +124,9 @@ func (s *Service) CreateLocal(ctx context.Context, args CreateLocalArgs) (Spec, 
 	}
 	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
 	target := net.JoinHostPort(host, strconv.Itoa(int(args.TargetPort)))
+	if args.Temporary {
+		return s.createTemporary(ctx, args.SessionID, hostID, args.ListenPort, target, &host, &args.TargetPort)
+	}
 	return s.create(ctx, args.SessionID, hostID, KindLocal, args.ListenPort, target, &host, &args.TargetPort)
 }
 
@@ -271,11 +274,31 @@ func (s *Service) create(ctx context.Context, sessionID, hostID, kind string, li
 	return s.start(ctx, sessionID, hostID, kind, listener, s.env.ListenHost, target, targetHost, targetPort)
 }
 
+// createTemporary always binds loopback, even in server mode, and lets the system pick the port when none is given.
+func (s *Service) createTemporary(ctx context.Context, sessionID, hostID string, listenPort uint16, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return Spec{}, ErrClosed
+	}
+	const host = "127.0.0.1"
+	listener, err := s.listen("tcp", net.JoinHostPort(host, strconv.Itoa(int(listenPort))))
+	if err != nil {
+		return Spec{}, ipc.WrapError(ipc.CodeIO, "监听转发端口失败: "+err.Error(), err)
+	}
+	return s.startSpec(ctx, "", sessionID, hostID, KindLocal, listener, host, target, targetHost, targetPort, true)
+}
+
 func (s *Service) start(requestCtx context.Context, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
 	return s.startWithID(requestCtx, "", sessionID, hostID, kind, listener, listenHost, target, targetHost, targetPort)
 }
 
 func (s *Service) startWithID(requestCtx context.Context, id, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16) (Spec, error) {
+	return s.startSpec(requestCtx, id, sessionID, hostID, kind, listener, listenHost, target, targetHost, targetPort, false)
+}
+
+func (s *Service) startSpec(requestCtx context.Context, id, sessionID, hostID, kind string, listener net.Listener, listenHost, target string, targetHost *string, targetPort *uint16, temporary bool) (Spec, error) {
 	_, portText, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		_ = listener.Close()
@@ -302,6 +325,7 @@ func (s *Service) startWithID(requestCtx context.Context, id, sessionID, hostID,
 		TargetPort: targetPort,
 		Kind:       kind,
 		CreatedAt:  s.now().UnixMilli(),
+		Temporary:  temporary,
 	}
 	f := s.newForwarder(requestCtx, spec, ipc.OwnerID(requestCtx), target, listener)
 	f.ruleID = ruleID
@@ -424,6 +448,10 @@ func (s *Service) retry(ctx context.Context, owner, id, requestedSessionID strin
 		return Spec{}, session.IPCError(session.ErrForbidden)
 	}
 	oldSpec := previous.spec
+	if oldSpec.Temporary {
+		s.mu.Unlock()
+		return Spec{}, ipc.NewError(ipc.CodeUnsupported, "临时转发不支持重试，请重新创建")
+	}
 	if requestedSessionID == "" {
 		requestedSessionID = oldSpec.SessionID
 	}
@@ -561,8 +589,13 @@ func (s *Service) RestoreRemote(ctx context.Context, sessionID string) {
 func (s *Service) FailSession(sessionID, reason string) {
 	s.mu.Lock()
 	forwards := make([]*forwarder, 0)
-	for _, f := range s.forwards {
+	for id, f := range s.forwards {
 		if f.sessionID == sessionID {
+			if f.spec.Temporary {
+				delete(s.forwards, id)
+				forwards = append(forwards, f)
+				continue
+			}
 			f.spec.Status = StatusFailed
 			f.spec.Error = reason
 			forwards = append(forwards, f)

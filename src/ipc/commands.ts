@@ -1643,7 +1643,7 @@ export const sshImportApi = {
   }) => call("ssh_import_apply", { args }) as Promise<import("./types").SshImportApplyDto>,
 };
 
-export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };
+export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string; temporary?: boolean };
 
 export const forwardApi = {
   env: (): Promise<import("./types").ForwardEnvDto> => call("forward_env"),
@@ -1653,6 +1653,16 @@ export const forwardApi = {
       listenPort,
       targetHost,
       targetPort,
+    }) as Promise<ForwardSpec>,
+  // Listens on 127.0.0.1 with a system-assigned port and is removed when the session ends.
+  // `temporary` is not in the generated forward_create arguments until the contract is regenerated.
+  createTemporary: (sessionId: string, targetHost: string, targetPort: number) =>
+    (call as unknown as (cmd: string, args: Record<string, unknown>) => Promise<unknown>)("forward_create", {
+      sessionId,
+      listenPort: 0,
+      targetHost,
+      targetPort,
+      temporary: true,
     }) as Promise<ForwardSpec>,
   createSocks: (sessionId: string, listenPort: number, acknowledgeRisk = false) =>
     call("forward_create_socks", {

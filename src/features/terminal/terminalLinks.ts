@@ -194,6 +194,11 @@ export interface TerminalLinkDeps {
   openFile: (sessionId: string, path: string) => void;
   openDirectory: (sessionId: string, path: string) => void;
   describeError: (error: unknown) => string;
+  // Where http/https links open. Without these (or without openInApp) links always go to the system browser.
+  linkOpenMode?: () => "system" | "app" | "ask";
+  openInApp?: (url: string) => void;
+  // Resolves the user's choice for "ask", or null when cancelled.
+  chooseLinkTarget?: () => Promise<"system" | "app" | null>;
 }
 
 function parentDirectory(path: string): string | null {
@@ -244,13 +249,24 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
     case "blocked":
       deps.notify("error", `已阻止打开链接（${plan.reason}）：${shown}`);
       return;
-    case "external":
+    case "external": {
+      if (deps.openInApp && /^https?:/i.test(plan.url)) {
+        const mode = deps.linkOpenMode?.() ?? "system";
+        let target: "system" | "app" | null = mode === "app" ? "app" : "system";
+        if (mode === "ask") target = deps.chooseLinkTarget ? await deps.chooseLinkTarget() : "system";
+        if (target === null) return;
+        if (target === "app") {
+          deps.openInApp(plan.url);
+          return;
+        }
+      }
       try {
         await deps.openExternal(plan.url);
       } catch (error) {
         deps.notify("error", `无法打开链接 ${shown}：${deps.describeError(error)}`);
       }
       return;
+    }
     case "confirm": {
       const ok = await deps.confirm(
         `终端中的链接使用 ${plan.scheme}: 协议，将交给系统中注册的程序处理。请仅在信任来源时打开。\n\n${shown}`,
