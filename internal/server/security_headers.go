@@ -41,7 +41,7 @@ func contentSecurityPolicy(scriptHashes []string) string {
 
 // inlineScriptHashes returns the CSP hash sources of every inline (no src attribute) script element in html.
 func inlineScriptHashes(html []byte) []string {
-	lower := strings.ToLower(string(html))
+	lower := asciiLower(html)
 	var hashes []string
 	seen := map[string]bool{}
 	for pos := 0; ; {
@@ -76,6 +76,18 @@ func inlineScriptHashes(html []byte) []string {
 		}
 	}
 	return hashes
+}
+
+// asciiLower lowercases ASCII letters only, so indexes into the result match the original bytes.
+func asciiLower(b []byte) string {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return string(out)
 }
 
 // scanTag walks the attributes of a start tag from index i and returns the index after its closing '>' (-1 when

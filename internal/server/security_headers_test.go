@@ -176,6 +176,19 @@ func TestInlineScriptHashesScanner(t *testing.T) {
 	}
 }
 
+func TestInlineScriptHashesSurviveLengthChangingLowercase(t *testing.T) {
+	// U+212A (Kelvin sign) lowercases to a 1-byte "k", which would shift indexes taken on a lowered copy.
+	for _, prefix := range []string{"<title>\u212a\u212a</title>", "<p>\u4e2d\u6587</p>"} {
+		for _, body := range []string{"a()", `window.t="\u4e2d\u6587\u212a";`} {
+			html := prefix + "<script>" + body + "</script>"
+			got := inlineScriptHashes([]byte(html))
+			if len(got) != 1 || got[0] != scriptHash(body) {
+				t.Errorf("prefix %q body %q: hashes = %v", prefix, body, got)
+			}
+		}
+	}
+}
+
 func TestSharePreviewHTMLCarriesCSPAndFrameProtection(t *testing.T) {
 	root := t.TempDir()
 	writeIndex(t, root, `<html><head></head><body>app</body></html>`)
