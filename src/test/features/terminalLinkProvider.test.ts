@@ -113,6 +113,20 @@ describe("link stitching rules", () => {
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);
   });
 
+  it("does not stitch a short boxed URL to the next boxed row", () => {
+    const url = "https://a.com/docs";
+    for (const next of ["│ v1.2.3                      │", "│ /next                       │"]) {
+      expect(urls(hard("│ https://a.com/docs          │", next), 40), next).toEqual([url]);
+    }
+  });
+
+  it("stitches a boxed URL that reaches the border, with at most one blank cell", () => {
+    const a = "https://a.example/" + "a".repeat(10);
+    expect(urls(hard(`│ ${a} │`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(`│ ${a}│`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(`│ ${a}  │`, "│ b1/c2                │"), 40)).toEqual([a]);
+  });
+
   it("does not join a full URL row with a boxed short word", () => {
     const full = "https://a.example/" + "a".repeat(22);
     expect(urls(hard(full, "│ Done │"), 40)).toEqual([full]);

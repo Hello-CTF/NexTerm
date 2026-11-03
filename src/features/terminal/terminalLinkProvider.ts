@@ -48,7 +48,16 @@ const URL_CHARS = /^[^\s"'<>`│┃║]+/;
 const SCHEME_AT_START = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME = /https?:\/\//i;
 const ONLY_TRAILING_DECOR = /^[\s│┃║|]*$/;
-const RIGHT_BORDER_NEXT = /^\s*[│┃║|]/;
+const BORDER_GAP = /^(\s*)[│┃║|]/;
+
+/**
+ * Index (in `line.text`) of the right border that follows `end` after at most
+ * one blank cell, or -1 when the text does not reach a border.
+ */
+function borderIndexAfter(line: LogicalLine, end: number): number {
+  const m = BORDER_GAP.exec(line.text.slice(end));
+  return m !== null && m[1].length <= 1 ? end + m[1].length : -1;
+}
 const LEFT_PREFIX = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])+/;
 
 function charWidth(code: number): number {
@@ -138,8 +147,8 @@ function continuationFragment(
   line: LogicalLine,
   lineIndex: number,
   cols: number,
-  prevEndCol: number,
-): { piece: Piece; more: boolean; endCol: number } | null {
+  prevBorderCol: number,
+): { piece: Piece; more: boolean; endCol: number; borderCol: number } | null {
   const prefix = LEFT_PREFIX.exec(line.text);
   const from = prefix ? prefix[0].length : 0;
   const rest = line.text.slice(from);
@@ -152,18 +161,20 @@ function continuationFragment(
     // A second URL glued on: keep what precedes it and stop.
     fragment = fragment.slice(0, inner.index);
     if (!fragment) return null;
-    return { piece: { line: lineIndex, start: from, end: from + fragment.length }, more: false, endCol: 0 };
+    return { piece: { line: lineIndex, start: from, end: from + fragment.length }, more: false, endCol: 0, borderCol: -1 };
   }
   const end = from + fragment.length;
   if (!ONLY_TRAILING_DECOR.test(line.text.slice(end))) return null;
   const endCol = columnOf(rows, line, end - 1);
-  const hasBorder = RIGHT_BORDER_NEXT.test(line.text.slice(end));
-  // Inside a box a full row is as wide as the previous one; a short row
-  // followed by a border is just padding.
-  const full = endCol >= cols - 2 || (hasBorder && Math.abs(endCol - prevEndCol) <= 1);
-  if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol };
+  // Inside a box a row is full only when the text reaches the border of the
+  // same box as the previous row; a short row followed by a border is just
+  // padding.
+  const borderIdx = borderIndexAfter(line, end);
+  const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
+  const full = endCol >= cols - 2 || (borderCol >= 0 && prevBorderCol >= 0 && Math.abs(borderCol - prevBorderCol) <= 1);
+  if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol, borderCol };
   if (!/[^A-Za-z]/.test(fragment)) return null;
-  return { piece: { line: lineIndex, start: from, end }, more: false, endCol };
+  return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
 }
 
 function trimLength(url: string): number {
@@ -203,15 +214,17 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       let total = m[0].length;
       let cur = li;
       const urlEnd = m.index + m[0].length;
-      let endCol = columnOf(rows, line, urlEnd - 1);
+      const endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
-      const fullRow = RIGHT_BORDER_NEXT.test(tail) || endCol >= cols - 2;
+      const borderIdx = borderIndexAfter(line, urlEnd);
+      let borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
+      const fullRow = borderIdx >= 0 || endCol >= cols - 2;
       const maxRows = maxContinuationRows(cols);
       // A URL that would continue past a limit is dropped: a truncated address
       // is worse than an unrecognised one.
       let overflow = false;
       for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && cur + 1 < lines.length; n++) {
-        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, endCol);
+        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, borderCol);
         if (!next) break;
         const len = next.piece.end - next.piece.start;
         if (n >= maxRows || total + len > MAX_LINK_LENGTH) {
@@ -222,7 +235,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         total += len;
         cur++;
         if (!next.more) break;
-        endCol = next.endCol;
+        borderCol = next.borderCol;
       }
       if (overflow) continue;
       const built = finishLink(lines, pieces);
