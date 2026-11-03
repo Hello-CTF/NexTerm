@@ -93,6 +93,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
         label: r.label,
         path: r.path,
         sessionId: r.sessionId,
+        text: r.text,
       }));
       const res = await aiApi.chat({
         conversationId,

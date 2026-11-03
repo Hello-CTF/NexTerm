@@ -1467,7 +1467,7 @@ export const aiApi = {
       message: string;
       selection?: string;
       images?: string[];
-      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string }[];
+      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string; text?: string }[];
       planMode?: boolean;
       channel: unknown;
     },

@@ -7,12 +7,14 @@ import { formatBytes } from "../../../ui/format";
 
 export interface RefChip {
   id: string;
-  kind: "asset" | "tab" | "file";
+  kind: "asset" | "tab" | "file" | "text";
   label: string;
   detail: string;
   refId: string;
   path?: string;
   sessionId?: string;
+  // Inline content for kind "text"; sent as a data reference, never merged into the message.
+  text?: string;
 }
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
