@@ -96,6 +96,7 @@ export function PortsSection({
               </table>
             </div>
           )}
+          <SectionHint>非 root 用户执行时，lsof/ss 只能列出当前用户进程的端口，进程列可能为空。</SectionHint>
           {query.data?.truncated && <SectionHint>端口较多，仅显示一部分。</SectionHint>}
           <ConnectivityTest sessionId={sessionId} hostName={hostName} assetId={workspace?.assetId} />
         </>

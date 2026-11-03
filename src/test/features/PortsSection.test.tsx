@@ -52,6 +52,12 @@ describe("PortsSection", () => {
     expect(mocks.list).not.toHaveBeenCalled();
   });
 
+  it("explains that a non-root user only sees its own processes", () => {
+    const view = mountSection(workspace);
+    expect(view.container.textContent).toContain("非 root");
+    expect(view.container.textContent).toContain("进程列可能为空");
+  });
+
   it("does not read ports until refreshed, then lists them with processes", async () => {
     mocks.list.mockResolvedValue({
       listeners: [{ proto: "tcp", address: "0.0.0.0", port: 3000, pid: 42, process: "node" }],
