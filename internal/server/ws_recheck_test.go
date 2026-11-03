@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -179,4 +180,88 @@ func TestAccountSocketsOfOneSessionShareTheRecheck(t *testing.T) {
 		defer env.fixture.server.sessionRecheck.mu.Unlock()
 		return len(env.fixture.server.sessionRecheck.entries) == 0
 	})
+}
+
+// A caller whose own context is cancelled makes the shared lookup fail with a
+// context error. Other waiters must not treat that as a revoked session, and the
+// error must not be cached.
+func TestSessionRecheckerCancelledLeaderDoesNotInvalidateWaiters(t *testing.T) {
+	var c sessionRechecker
+	c.now = (&recheckClock{}).now
+	c.acquire("s1")
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	var lookups atomic.Int64
+	leaderLookup := func(ctx context.Context) (*account.Identity, error) {
+		lookups.Add(1)
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	leaderDone := make(chan error, 1)
+	go func() {
+		_, err := c.check(leaderCtx, "s1", time.Minute, leaderLookup)
+		leaderDone <- err
+	}()
+	<-started
+
+	// The waiter normally joins the in-flight call. If the leader finishes first it
+	// runs its own lookup instead; a transient error keeps that from being cached.
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, err := c.check(context.Background(), "s1", time.Minute, func(context.Context) (*account.Identity, error) {
+			return nil, errors.New("database busy")
+		})
+		waiterDone <- err
+	}()
+	// Let the waiter reach the shared call before the leader is cancelled.
+	runtime.Gosched()
+	cancelLeader()
+	if err := <-leaderDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader err=%v", err)
+	}
+	werr := <-waiterDone
+	if confirmedAccountSessionInvalid(werr) {
+		t.Fatalf("waiter saw the session as invalid: %v", werr)
+	}
+
+	// Not cached: the next call performs a fresh lookup and succeeds.
+	var fresh atomic.Bool
+	identity, err := c.check(context.Background(), "s1", time.Minute, func(context.Context) (*account.Identity, error) {
+		fresh.Store(true)
+		return &account.Identity{SessionID: "s1"}, nil
+	})
+	if err != nil || identity == nil || !fresh.Load() {
+		t.Fatalf("retry err=%v identity=%v fresh lookup=%v", err, identity, fresh.Load())
+	}
+}
+
+func TestAccountSocketKeepsConnectionWhenSharedLookupWasCancelled(t *testing.T) {
+	s := &Server{}
+	s.sessionRecheck.acquire("s1")
+	started := make(chan struct{})
+	s.sessionCheckFn = func(ctx context.Context, _ string) (*account.Identity, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	identity := &account.Identity{SessionID: "s1"}
+	done := make(chan bool, 1)
+	go func() { done <- s.accountSocketSessionInvalid(leaderCtx, time.Minute, "tok", identity) }()
+	<-started
+	cancelLeader()
+	if invalid := <-done; invalid {
+		t.Fatal("a cancelled lookup must not close the socket")
+	}
+	// The error was not cached: a healthy lookup runs again.
+	var again atomic.Int64
+	s.sessionCheckFn = func(context.Context, string) (*account.Identity, error) {
+		again.Add(1)
+		return identity, nil
+	}
+	if s.accountSocketSessionInvalid(context.Background(), time.Minute, "tok", identity) || again.Load() != 1 {
+		t.Fatalf("retry invalid or not re-looked-up, lookups=%d", again.Load())
+	}
 }
