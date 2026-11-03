@@ -124,6 +124,8 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
   const loadSeq = useRef(0);
+  // The request of the loaded first page; relative presets resolve Date.now() once so paging keeps one time window.
+  const pageRequest = useRef<Omit<AuditTimelineRequest, "limit" | "cursor">>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -171,8 +173,10 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
     setMoreError(null);
     setLoadingMore(false);
     setLoading(true);
+    const req = toRequest(f);
+    pageRequest.current = req;
     try {
-      const page = await auditTimelineApi.page({ ...toRequest(f), limit: PAGE_SIZE });
+      const page = await auditTimelineApi.page({ ...req, limit: PAGE_SIZE });
       if (seq !== loadSeq.current) return;
       setItems(mergeItems([], page.items));
       setCursor(page.nextCursor);
@@ -193,7 +197,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await auditTimelineApi.page({ ...toRequest(filters), limit: PAGE_SIZE, cursor });
+      const page = await auditTimelineApi.page({ ...pageRequest.current, limit: PAGE_SIZE, cursor });
       if (seq !== loadSeq.current) return;
       setItems((prev) => mergeItems(prev, page.items));
       setCursor(page.nextCursor);
@@ -209,6 +213,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
     setExporting(true);
     setExportNote(null);
     try {
+      // Export resolves the current filters afresh instead of reusing the paged window.
       const { items: all, truncated } = await collectTimelineExport(auditTimelineApi.page, toRequest(filters), TIMELINE_EXPORT_MAX);
       const name = `nexterm-audit-timeline-${timestampForFile()}.${format}`;
       const text = format === "csv" ? timelineToCsv(all, hostName) : `${timelineToJson(all)}\n`;
@@ -256,6 +261,8 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
     ) : (
       <span className="text-red-300" title="失败">✗ {e.exitCode}</span>
     );
+
+  const scopeText = !WEB ? "显示本机全部记录" : user ? "只显示你账户下的记录" : "显示本服务器的全部记录";
 
   const retry = (
     <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void loadFirstPage(filters)} disabled={loading}>

@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
 import { chooseSelectOption, clickButton, flush, flushUntil as flushUntilBase, mount, type MountedView } from "./features/reactTestUtils";
 import type { AuditTimelineItem, AuditTimelinePage } from "../ipc/auditTimelineApi";
 import { AuditView } from "../features/settings/AuditView";
+import { useAuth } from "../features/auth/store";
 
 async function flushUntil(predicate: () => boolean, maxTicks = 60): Promise<void> {
   await flush();
@@ -29,6 +30,10 @@ vi.mock("../ipc/commands", async (importOriginal) => {
     ...actual,
     assetApi: { auditQuery: mocks.auditQuery, auditCount: mocks.auditCount, list: mocks.assetList },
   };
+});
+vi.mock("../ipc/fleetApi", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../ipc/fleetApi")>();
+  return { ...actual, fleetApi: { ...actual.fleetApi, devices: vi.fn().mockResolvedValue({ devices: [] }) } };
 });
 vi.mock("../ipc/auditTimelineApi", () => ({ auditTimelineApi: { page: mocks.page } }));
 vi.mock("../ipc/webFiles", async (importOriginal) => {
@@ -77,6 +82,7 @@ beforeEach(() => {
   mocks.auditQuery.mockResolvedValue([]);
   mocks.assetList.mockResolvedValue([{ id: "a-1", name: "web-01" }]);
   mocks.page.mockResolvedValue(FIRST);
+  useAuth.setState({ user: null });
 });
 
 afterEach(async () => {
@@ -136,6 +142,26 @@ describe("AuditTimelineView", () => {
     expect(name).toMatch(/^nexterm-audit-timeline-.+\.csv$/);
     expect(blob.size).toBeGreaterThan(0);
     expect(text()).toContain("请缩小时间范围或筛选条件");
+  });
+
+  it("keeps the relative time window fixed while loading more pages", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    try {
+      await openTimeline();
+      clickButton(mounted!.container, "24 小时");
+      await flushUntil(() => mocks.page.mock.calls.some(([r]) => (r as { from?: number }).from !== undefined));
+      const first = mocks.page.mock.calls.at(-1)![0] as { from: number };
+      await flushUntil(() => rows().length > 0);
+      now.mockReturnValue(1_800_000_000_000 + 3_600_000);
+      mocks.page.mockResolvedValueOnce({ items: [item("command", 4)], nextCursor: null });
+      clickButton(mounted!.container, "加载更多");
+      await flushUntil(() => rows().length === 4);
+      const second = mocks.page.mock.calls.at(-1)![0] as { from: number; cursor?: unknown };
+      expect(second.from).toBe(first.from);
+      expect(second.cursor).toEqual(FIRST.nextCursor);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("keeps the audit tab working", async () => {
