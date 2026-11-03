@@ -56,6 +56,10 @@ type Step struct {
 type StartRequest struct {
 	RunID     string `json:"runId"`
 	RunbookID string `json:"runbookId"`
+	// SnippetID starts the run from a stored snippet: the server loads its steps (a single-step
+	// snippet is one step), confirmation flags included, and sets RunbookID and RunbookName from it.
+	// It excludes Steps, so a client cannot report its own confirmation flags.
+	SnippetID string `json:"snippetId,omitempty"`
 	// RunbookVersion is internal and always zero now that templates no longer exist.
 	RunbookVersion     int32              `json:"-"`
 	RunbookName        string             `json:"runbookName"`

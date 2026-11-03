@@ -27,6 +27,11 @@ type runbookHistoryReader interface {
 	ExecBatchRunHistoryGet(context.Context, string) (store.ExecBatchRunHistory, error)
 }
 
+// runbookSnippetReader loads the stored snippet a run starts from.
+type runbookSnippetReader interface {
+	SnippetGet(context.Context, string) (store.SnippetRow, error)
+}
+
 type runbookRunKey struct {
 	ownerID string
 	runID   string
@@ -44,6 +49,7 @@ type runbookRunEntry struct {
 type runbookIPCService struct {
 	executor runbook.Executor
 	history  runbookHistoryReader
+	snippets runbookSnippetReader
 	now      func() time.Time
 
 	maxActiveRunsPerOwner   int
@@ -59,8 +65,9 @@ func newRunbookIPCService(executor runbook.Executor, history ...runbookHistoryRe
 	if len(history) > 0 {
 		reader = history[0]
 	}
+	snippets, _ := reader.(runbookSnippetReader)
 	return &runbookIPCService{
-		executor: executor, history: reader, now: time.Now,
+		executor: executor, history: reader, snippets: snippets, now: time.Now,
 		maxActiveRunsPerOwner:   defaultRunbookMaxActiveRunsPerOwner,
 		maxRetainedRunsPerOwner: defaultRunbookMaxRetainedRunsPerOwner,
 		retainedRunTTL:          defaultRunbookRetainedRunTTL,
@@ -145,6 +152,11 @@ func (s *runbookIPCService) register(dispatcher *ipc.Dispatcher) error {
 
 func (s *runbookIPCService) Start(ctx context.Context, ownerID string, input runbook.StartRequest) (runbook.RunState, error) {
 	input.RunbookVersion = 0
+	if input.SnippetID != "" {
+		if err := s.fillFromSnippet(ctx, ownerID, &input); err != nil {
+			return runbook.RunState{}, err
+		}
+	}
 	key := runbookRunKey{ownerID: ownerID, runID: input.RunID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +176,45 @@ func (s *runbookIPCService) Start(ctx context.Context, ownerID string, input run
 	entry.terminal = runbookRunTerminal(state.Status)
 	s.runs[key] = entry
 	return state, nil
+}
+
+// fillFromSnippet replaces the run definition with the owner's stored snippet. Steps never come from the
+// client in this mode, so their confirmation flags are the stored ones.
+func (s *runbookIPCService) fillFromSnippet(ctx context.Context, ownerID string, input *runbook.StartRequest) error {
+	if len(input.Steps) > 0 {
+		return fmt.Errorf("%w: snippetId and steps are mutually exclusive", runbook.ErrInvalid)
+	}
+	if s.snippets == nil {
+		return fmt.Errorf("%w: snippets are unavailable", runbook.ErrInvalid)
+	}
+	lookup := ctx
+	if ownerID != "" {
+		lookup = ipc.WithUserID(ctx, ownerID)
+	}
+	row, err := s.snippets.SnippetGet(lookup, input.SnippetID)
+	if err != nil {
+		var appErr *ipc.Error
+		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
+			return fmt.Errorf("%w: snippet %s", runbook.ErrNotFound, input.SnippetID)
+		}
+		return err
+	}
+	stored, err := store.DecodeSnippetSteps(row.Steps)
+	if err != nil {
+		return err
+	}
+	steps := make([]runbook.Step, 0, max(len(stored), 1))
+	for _, step := range stored {
+		steps = append(steps, runbook.Step{
+			ID: step.ID, Name: step.Name, Description: step.Description, Command: step.Command,
+			Confirm: step.Confirm, Interactive: step.Interactive,
+		})
+	}
+	if len(steps) == 0 {
+		steps = append(steps, runbook.Step{ID: "1", Name: row.Name, Command: row.Body})
+	}
+	input.Steps, input.RunbookID, input.RunbookName = steps, row.ID, row.Name
+	return nil
 }
 
 func (s *runbookIPCService) Get(ctx context.Context, ownerID, runID string) (runbook.RunState, error) {

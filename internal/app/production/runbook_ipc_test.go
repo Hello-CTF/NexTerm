@@ -931,3 +931,77 @@ func TestRunbookIPCPrepareOwnerCleanupReleasesReservationPayload(t *testing.T) {
 	}
 	requireRunbookIPCNotFound(t, runbookIPCGetRun(t, dispatcher, ownerA, "run-payload"))
 }
+
+func runbookSnippetTestService(t *testing.T) (*ipc.Dispatcher, *store.Store) {
+	t.Helper()
+	database, err := store.OpenInMemory(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	service := newRunbookIPCService(newRunbookIPCExecutor(), database)
+	dispatcher := ipc.NewDispatcher()
+	if err := service.register(dispatcher); err != nil {
+		t.Fatal(err)
+	}
+	return dispatcher, database
+}
+
+// A run started from a snippet ID takes its steps, including their confirmation flags, from the stored snippet.
+func TestRunbookIPCStartFromSnippetUsesServerSideSteps(t *testing.T) {
+	dispatcher, database := runbookSnippetTestService(t)
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	ownerB := ipc.WithUserID(t.Context(), "owner-b")
+	multi, err := database.SnippetCreateContent(ownerA, "Deploy", store.SnippetContent{Steps: []store.SnippetStep{
+		{ID: "a", Name: "Build", Command: "make build"},
+		{ID: "b", Name: "Ship", Command: "make ship", Confirm: true, Interactive: true},
+	}}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := database.SnippetCreate(ownerA, "Uptime", "uptime", nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state := decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, ownerA, "runbook_run_start", runbook.StartRequest{
+		RunID: "from-multi", SnippetID: multi.ID, SessionIDs: []string{"session-1"},
+	}))
+	if state.RunbookID != multi.ID || state.RunbookName != "Deploy" || len(state.Steps) != 2 {
+		t.Fatalf("multi-step state = %+v", state)
+	}
+	first, second := state.Steps[0].Step, state.Steps[1].Step
+	if first.Command != "make build" || first.Confirm || second.Command != "make ship" || !second.Confirm || !second.Interactive || second.Name != "Ship" {
+		t.Fatalf("steps = %+v, %+v", first, second)
+	}
+
+	state = decodeExecBatchTest[runbook.RunState](t, dispatchExecBatchTest(dispatcher, ownerA, "runbook_run_start", runbook.StartRequest{
+		RunID: "from-single", SnippetID: single.ID, SessionIDs: []string{"session-1"},
+	}))
+	if state.RunbookID != single.ID || state.RunbookName != "Uptime" || len(state.Steps) != 1 || state.Steps[0].Step.Command != "uptime" || state.Steps[0].Step.ID != "1" {
+		t.Fatalf("single-step state = %+v", state)
+	}
+
+	// Steps the client reports next to a snippet ID are refused instead of overriding the stored ones.
+	forged := dispatchExecBatchTest(dispatcher, ownerA, "runbook_run_start", runbook.StartRequest{
+		RunID: "forged", SnippetID: multi.ID, SessionIDs: []string{"session-1"},
+		Steps: []runbook.Step{{ID: "a", Command: "rm -rf /", Confirm: false}},
+	})
+	if forged.OK || forged.Error == nil || forged.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("forged response = %+v", forged)
+	}
+
+	// Another owner's snippet does not exist for the caller.
+	foreign := dispatchExecBatchTest(dispatcher, ownerB, "runbook_run_start", runbook.StartRequest{
+		RunID: "foreign", SnippetID: multi.ID, SessionIDs: []string{"session-1"},
+	})
+	if foreign.OK || foreign.Error == nil || foreign.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("foreign response = %+v", foreign)
+	}
+	missing := dispatchExecBatchTest(dispatcher, ownerA, "runbook_run_start", runbook.StartRequest{
+		RunID: "missing", SnippetID: "01M6G627NENBMSX21C095HZQ6E", SessionIDs: []string{"session-1"},
+	})
+	if missing.OK || missing.Error == nil || missing.Error.Code != ipc.CodeNotFound {
+		t.Fatalf("missing response = %+v", missing)
+	}
+}
