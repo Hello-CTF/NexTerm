@@ -13,7 +13,15 @@ import { buildRows, type ProcessSort } from "./processTree";
 
 const AUTO_REFRESH_MS = 5000;
 const MAX_ROWS = 300;
-const COLUMN_LABELS: Record<string, string> = { cpu: "CPU", mem: "内存", user: "用户" };
+const COLUMN_LABELS: Record<string, string> = { cpu: "CPU", mem: "内存", user: "用户", elapsed: "运行时长" };
+const CPU_TITLE = "POSIX：相对单核的百分比，多线程进程可超过 100；Windows：占全部 CPU 的比例。";
+const WINDOWS_CRITICAL = new Set(["csrss", "wininit", "smss", "services", "lsass", "winlogon"]);
+
+function isCriticalWindows(p: HostProcess, platform: string | undefined): boolean {
+  if (platform !== "windows") return false;
+  if (p.pid === 4) return true;
+  return WINDOWS_CRITICAL.has(p.name.toLowerCase().replace(/\.exe$/, ""));
+}
 
 function formatElapsed(p: HostProcess): string {
   if (p.elapsedSec < 0) return p.elapsed || "-";
@@ -72,20 +80,29 @@ export function ProcessesSection({
   const [busyPid, setBusyPid] = useState<number | null>(null);
   const [killMessage, setKillMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const loading = useRef(false);
+  const pendingRefresh = useRef(false);
 
-  const refresh = useCallback(async () => {
-    if (loading.current || !sessionId) return;
+  // queueIfBusy: run one more refresh after the current one instead of dropping the request.
+  const refresh = useCallback(async (queueIfBusy = false) => {
+    if (!sessionId) return;
+    if (loading.current) {
+      if (queueIfBusy) pendingRefresh.current = true;
+      return;
+    }
     loading.current = true;
     try {
-      const ports = queryClient
-        .fetchQuery({
-          queryKey: portsKey,
-          queryFn: () => hostPortsApi.list({ sessionId, processes: true }),
-          staleTime: 0,
-        })
-        .then(() => setPortsError(false))
-        .catch(() => setPortsError(true));
-      await Promise.all([query.refetch(), ports]);
+      do {
+        pendingRefresh.current = false;
+        const ports = queryClient
+          .fetchQuery({
+            queryKey: portsKey,
+            queryFn: () => hostPortsApi.list({ sessionId, processes: true }),
+            staleTime: 0,
+          })
+          .then(() => setPortsError(false))
+          .catch(() => setPortsError(true));
+        await Promise.all([query.refetch(), ports]);
+      } while (pendingRefresh.current);
     } finally {
       loading.current = false;
     }
@@ -96,8 +113,17 @@ export function ProcessesSection({
   refreshRef.current = refresh;
   useEffect(() => {
     if (!autoRefresh || !active) return;
-    const id = setInterval(() => void refreshRef.current(), AUTO_REFRESH_MS);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (!document.hidden) void refreshRef.current();
+    }, AUTO_REFRESH_MS);
+    const onVisibility = () => {
+      if (!document.hidden) void refreshRef.current();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [autoRefresh, active]);
 
   const processes = query.data?.processes;
@@ -117,6 +143,8 @@ export function ProcessesSection({
     return map;
   }, [listeners]);
   const partial = new Set(query.data?.partial ?? []);
+  const skippedRows = query.data?.skippedRows ?? 0;
+  const platform = query.data?.platform;
   const missing = (col: string) => partial.has(col);
 
   const toggle = (pid: number) =>
@@ -131,7 +159,7 @@ export function ProcessesSection({
     setKillMessage(null);
     setBusyPid(p.pid);
     try {
-      const request = { sessionId, pid: p.pid, name: p.name, force };
+      const request = { sessionId, pid: p.pid, ppid: p.ppid, name: p.argName ?? p.name, started: p.started, force };
       const plan = await hostProcessesApi.kill({ ...request, dryRun: true });
       const warning = production ? "【生产主机】此命令将在生产环境的主机上执行，请确认目标无误。\n\n" : "";
       const note = force ? "\n\n强制结束会直接终止进程，进程不会有机会清理。" : "";
@@ -147,8 +175,7 @@ export function ProcessesSection({
             ? `已执行，但审计记录写入失败：${result.auditError}`
             : `已向进程 ${p.name}（PID ${p.pid}）发送 ${result.signal}。`,
         });
-        loading.current = false;
-        void refresh();
+        void refresh(true);
       } else {
         const detail = result.output || "命令未成功";
         setKillMessage({
@@ -237,6 +264,7 @@ export function ProcessesSection({
                   该主机未提供：{[...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、")}
                 </SectionHint>
               )}
+              {skippedRows > 0 && <SectionHint>有 {skippedRows} 行无法解析，已跳过。</SectionHint>}
               {rows.length === 0 ? (
                 <SectionHint>{queryText ? "没有匹配的进程。" : "未发现进程。"}</SectionHint>
               ) : (
@@ -247,7 +275,7 @@ export function ProcessesSection({
                         <th>PID</th>
                         <th>名称</th>
                         <th>用户</th>
-                        <th>CPU%</th>
+                        <th title={CPU_TITLE}>CPU%</th>
                         <th>内存</th>
                         <th>运行时长</th>
                         <th>状态</th>
@@ -285,7 +313,7 @@ export function ProcessesSection({
                             <td className="nx-mono">
                               {missing("mem") ? "-" : `${p.mem.toFixed(1)}% · ${formatRss(p.rssKiB)}`}
                             </td>
-                            <td>{formatElapsed(p)}</td>
+                            <td>{missing("elapsed") ? "-" : formatElapsed(p)}</td>
                             <td>{p.zombie ? "僵尸" : p.stat || "-"}</td>
                             <td>
                               {ports.length === 0
@@ -307,7 +335,7 @@ export function ProcessesSection({
                                   ))}
                             </td>
                             <td className="whitespace-nowrap">
-                              {p.pid > 1 && (
+                              {p.pid > 1 && !isCriticalWindows(p, platform) && (
                                 <>
                                   <button
                                     type="button"

@@ -11,7 +11,12 @@ export interface HostProcess {
   elapsedSec: number;
   elapsed?: string;
   stat?: string;
+  // Display name (comm on POSIX).
   name: string;
+  // POSIX only: basename of the first args token.
+  argName?: string;
+  // Opaque start-time identifier, echoed back on kill to guard against PID reuse.
+  started?: string;
   command: string;
   zombie?: boolean;
 }
@@ -23,12 +28,16 @@ export interface HostProcessesResult {
   truncated?: boolean;
   // Columns the host could not provide.
   partial?: string[];
+  skippedRows?: number;
 }
 
 export interface KillRequest {
   sessionId: string;
   pid: number;
+  ppid: number;
+  // POSIX: argName ?? name; Windows: name.
   name: string;
+  started?: string;
   force?: boolean;
   dryRun?: boolean;
 }

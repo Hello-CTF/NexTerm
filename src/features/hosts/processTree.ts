@@ -21,6 +21,7 @@ export function matchesQuery(p: HostProcess, query: string): boolean {
   if (!q) return true;
   return (
     p.name.toLowerCase().includes(q) ||
+    (p.argName ?? "").toLowerCase().includes(q) ||
     p.command.toLowerCase().includes(q) ||
     (p.user ?? "").toLowerCase().includes(q) ||
     String(p.pid).includes(q)

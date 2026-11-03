@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { click, deferred, flush, flushUntil, mount, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -209,6 +210,164 @@ describe("ProcessesSection", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(20000);
     });
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+  });
+});
+
+function setHidden(value: boolean) {
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => value });
+}
+
+const tick = async (ms: number) => {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+};
+
+describe("ProcessesSection review fixes", () => {
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).hidden;
+  });
+
+  it("sends argName, ppid and started on kill but shows the display name", async () => {
+    mocks.confirmDialog.mockResolvedValue(true);
+    mocks.list.mockResolvedValue({
+      processes: [proc(100, "nginx: master", { argName: "nginx", ppid: 7, started: "Mon Jan  1 00:00:00 2024" })],
+      platform: "posix",
+      format: "ps",
+    });
+    const view = mountSection();
+    await refreshed(view);
+    click(q(view, 'button[aria-label="结束进程 100"]')!);
+    await flushUntil(() => mocks.kill.mock.calls.length === 2);
+    for (const call of mocks.kill.mock.calls) {
+      expect(call[0]).toMatchObject({ pid: 100, name: "nginx", ppid: 7, started: "Mon Jan  1 00:00:00 2024" });
+    }
+    expect(mocks.confirmDialog.mock.calls[0][0]).toContain("nginx: master");
+  });
+
+  it("reports skipped rows", async () => {
+    mocks.list.mockResolvedValue({ processes: [proc(100, "nginx")], platform: "posix", format: "ps", skippedRows: 3 });
+    const view = mountSection();
+    await refreshed(view);
+    expect(view.container.textContent).toContain("有 3 行无法解析，已跳过");
+  });
+
+  it("shows a dash for elapsed time and names it as missing when partial has elapsed", async () => {
+    mocks.list.mockResolvedValue({ processes: [proc(100, "nginx")], platform: "posix", format: "ps-busybox-min", partial: ["elapsed"] });
+    const view = mountSection();
+    await refreshed(view);
+    expect(view.container.textContent).toContain("该主机未提供：运行时长");
+    expect(q(view, 'tr[data-pid="100"]')!.textContent).not.toContain("1分30秒");
+    expect(q(view, 'tr[data-pid="100"]')!.querySelectorAll("td")[5].textContent).toBe("-");
+  });
+
+  it("hides kill buttons for critical Windows processes only", async () => {
+    mocks.list.mockResolvedValue({
+      processes: [
+        proc(4, "System"),
+        proc(300, "LSASS.EXE"),
+        proc(310, "csrss"),
+        proc(400, "notepad.exe"),
+      ],
+      platform: "windows",
+      format: "powershell",
+    });
+    const view = mountSection();
+    await refreshed(view);
+    for (const pid of [4, 300, 310]) {
+      expect(q(view, `button[aria-label="结束进程 ${pid}"]`)).toBeNull();
+      expect(q(view, `button[aria-label="强制结束进程 ${pid}"]`)).toBeNull();
+    }
+    expect(q(view, 'button[aria-label="结束进程 400"]')).not.toBeNull();
+    expect(q(view, 'button[aria-label="强制结束进程 400"]')).not.toBeNull();
+  });
+
+  it("does not hide posix processes that share a Windows critical name", async () => {
+    mocks.list.mockResolvedValue({ processes: [proc(4, "smss"), proc(5, "lsass")], platform: "posix", format: "ps" });
+    const view = mountSection();
+    await refreshed(view);
+    expect(q(view, 'button[aria-label="结束进程 4"]')).not.toBeNull();
+    expect(q(view, 'button[aria-label="结束进程 5"]')).not.toBeNull();
+  });
+
+  it("explains the CPU column basis in a tooltip", async () => {
+    const view = mountSection();
+    await refreshed(view);
+    const th = Array.from(view.container.querySelectorAll("th")).find((h) => h.textContent === "CPU%")!;
+    expect(th.getAttribute("title")).toContain("100");
+    expect(th.getAttribute("title")).toContain("Windows");
+  });
+
+  it("shows the error text and does not refresh when kill rejects", async () => {
+    mocks.confirmDialog.mockResolvedValue(true);
+    mocks.kill.mockImplementation(async (a: { dryRun?: boolean }) => {
+      if (a.dryRun) return { command: "kill -TERM 100", signal: "TERM", ran: false, ok: false, output: "", durationMs: 0 };
+      throw new Error("boom-kill");
+    });
+    const view = mountSection();
+    await refreshed(view);
+    click(q(view, 'button[aria-label="结束进程 100"]')!);
+    await flushUntil(() => view.container.textContent!.includes("boom-kill"));
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues one refresh after a kill that lands during a running refresh", async () => {
+    mocks.confirmDialog.mockResolvedValue(true);
+    const view = mountSection();
+    await refreshed(view);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    const slow = deferred<unknown>();
+    mocks.list.mockImplementationOnce(() => slow.promise);
+    click(q(view, 'button[aria-label="刷新进程"]')!);
+    await flushUntil(() => mocks.list.mock.calls.length === 2);
+    click(q(view, 'button[aria-label="结束进程 100"]')!);
+    await flushUntil(() => mocks.kill.mock.calls.length === 2);
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+    slow.resolve({ processes: [proc(100, "nginx")], platform: "posix", format: "ps" });
+    await flushUntil(() => mocks.list.mock.calls.length === 3);
+    await flush();
+    expect(mocks.list).toHaveBeenCalledTimes(3);
+  });
+
+  it("pauses auto refresh while the document is hidden and resumes when visible", async () => {
+    vi.useFakeTimers();
+    const view = mountSection();
+    click(q(view, 'input[aria-label="自动刷新（5 秒）"]')!);
+    await tick(5000);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    setHidden(true);
+    await tick(20000);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    setHidden(false);
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await tick(5000);
+    expect(mocks.list.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("stops auto refresh when visible becomes false and on unmount", async () => {
+    vi.useFakeTimers();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const node = (visible: boolean) =>
+      createElement(QueryClientProvider, { client }, createElement(ProcessesSection, { workspace, visible, hostName: "web-01" }));
+    const view = mount(node(true));
+    mounted = view;
+    click(q(view, 'input[aria-label="自动刷新（5 秒）"]')!);
+    await tick(5000);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    act(() => view.root.render(node(false)));
+    await tick(20000);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    act(() => view.root.render(node(true)));
+    await tick(5000);
+    expect(mocks.list).toHaveBeenCalledTimes(2);
+    view.unmount();
+    mounted = undefined;
+    await tick(20000);
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 });

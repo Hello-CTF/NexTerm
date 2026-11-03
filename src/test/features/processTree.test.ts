@@ -33,6 +33,16 @@ describe("buildRows flat", () => {
   });
 });
 
+describe("argName", () => {
+  it("is searchable and does not change the display name or order", () => {
+    const list = [p(10, 1, { name: "nginx: master", argName: "nginx" }), p(20, 1)];
+    const rows = buildRows(list, { query: "NGINX", sort: "cpu", tree: false, collapsed: new Set() });
+    expect(rows.map((r) => r.process.pid)).toEqual([10]);
+    expect(rows[0].process.name).toBe("nginx: master");
+    expect(buildRows(list, { query: "", sort: "cpu", tree: false, collapsed: new Set() })).toHaveLength(2);
+  });
+});
+
 describe("buildRows tree", () => {
   const tree = { ...base, tree: true };
 
