@@ -25,7 +25,8 @@ export type PaneKind =
   | "hostHistory"
   | "execBatch"
   | "host"
-  | "remote";
+  | "remote"
+  | "browser";
 
 // LeftMode is the user's explicit left dock choice, used in the tools area. A host workspace shows its file tree by
 // default (see leftView.ts); a stored legacy "files" mode reads as "assets".
@@ -47,6 +48,8 @@ export interface AppTab {
   dbKind?: DbKind;
   credId?: string;
   path?: string;
+  // Address of a browser tab; never persisted (browser tabs are dropped when a layout is saved or restored).
+  url?: string;
   shell?: "powershell" | "cmd" | "posix" | "unknown";
   pendingDirectory?: string;
   closable: boolean;

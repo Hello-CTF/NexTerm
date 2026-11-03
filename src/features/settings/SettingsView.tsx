@@ -6,6 +6,7 @@ import {
   setTerminalDefaultMode,
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
+  setTerminalLinkOpenMode,
   setTerminalConfirmMultilinePaste,
   setTerminalDurableHistoryMiB,
   setTerminalScrollback,
@@ -19,6 +20,7 @@ import {
   type TerminalDefaultMode,
   type TerminalGpuAcceleration,
   type TerminalLinkActivation,
+  type TerminalLinkOpenMode,
   type TerminalMultilinePasteConfirm,
 } from "../../app/preferences";
 import { ask } from "../../ui/dialogs";
@@ -171,6 +173,12 @@ function formatScrollbackLines(lines: number): string {
 const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [
   { value: "modifier", label: "Ctrl/Cmd+单击" },
   { value: "click", label: "单击" },
+];
+
+const LINK_OPEN_MODE_OPTIONS: { value: TerminalLinkOpenMode; label: string }[] = [
+  { value: "system", label: "系统浏览器（默认）" },
+  { value: "app", label: "NexTerm 内" },
+  { value: "ask", label: "每次询问" },
 ];
 
 const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: string }[] = [
@@ -739,6 +747,25 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 ? "按住 Ctrl（macOS 为 Cmd）并单击链接可打开；触屏设备可长按。"
                 : "单击链接即打开。"}
               终端程序捕获鼠标时需同时按住 Shift。悬停链接会显示完整地址和打开方式；不方便按键或终端程序捕获鼠标时，可以右键选择「打开链接」；选「单击打开」后单击链接即直接打开。
+            </p>
+          </div>
+          <div className="mt-3.5">
+            <div className="nx-setting-label mb-1.5" data-setting="terminal-link-open-mode">链接打开位置</div>
+            <div className="nx-segment" role="group" aria-label="链接打开位置">
+              {LINK_OPEN_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`nx-segment-item ${terminalPrefs.linkOpenMode === option.value ? "is-active" : ""}`}
+                  aria-pressed={terminalPrefs.linkOpenMode === option.value}
+                  onClick={() => setTerminalLinkOpenMode(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="nx-hint mt-1.5">
+              只影响 http/https 链接；右键菜单和链接面板中的「在 NexTerm 中打开」不受此设置影响。NexTerm 内打开用于开发预览和文档页，不是通用浏览器：浏览器模式只能嵌入 https 页面，网站拒绝嵌入时会改用系统浏览器打开。移动端始终使用系统浏览器。
             </p>
           </div>
           <div className="mt-3.5">

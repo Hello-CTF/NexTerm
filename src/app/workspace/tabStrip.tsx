@@ -22,6 +22,7 @@ import {
   IconDesktop,
   IconDrive,
   IconFolderOpen,
+  IconGlobe,
   IconHistory,
   IconKey,
   IconList,
@@ -51,6 +52,7 @@ const TAB_ICON = {
   execBatch: IconCommand,
   host: IconServer,
   remote: IconDesktop,
+  browser: IconGlobe,
 } as const;
 
 export function tabIcon(t: AppTab) {

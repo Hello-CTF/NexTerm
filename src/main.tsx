@@ -3,6 +3,7 @@ import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app/App";
+import { registerPreviewIntegrations } from "./features/browser/registerPreviewIntegrations";
 import "./styles.css";
 import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type HelperProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
 import { onEventsResync } from "./ipc/webTransport";
@@ -125,6 +126,7 @@ function wireDesktopShell(): void {
 
 async function bootstrapApp(): Promise<void> {
   wireDesktopShell();
+  registerPreviewIntegrations();
   void wireMobileInsets();
   try {
     const [os, mountReason] = await Promise.all([
