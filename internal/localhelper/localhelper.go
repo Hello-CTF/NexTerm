@@ -433,7 +433,17 @@ func (s *Service) wait(ctx context.Context, limit time.Duration, wanted bool, pr
 			}
 		}
 		if !pending {
-			return provider()
+			p, err := provider()
+			if err != nil {
+				select {
+				case <-changed:
+					// The status moved on after the snapshot (a helper switch),
+					// so the error describes a state that no longer holds.
+					continue
+				default:
+				}
+			}
+			return p, err
 		}
 		select {
 		case <-changed:

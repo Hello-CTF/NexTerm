@@ -2,12 +2,14 @@ package localhelper
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 // migrationWorlds scripts two state directories: the shared one and the
@@ -168,5 +170,33 @@ func TestOutdatedPreviousHelperReportsItsDirectoryInTheWarning(t *testing.T) {
 	status := waitState(t, service, StateOutdated)
 	if !strings.Contains(status.Warning, "2 个会话") {
 		t.Fatalf("status = %+v, want the previous-directory notice in Warning", status)
+	}
+}
+
+type stubProvider struct{ base.DurableProvider }
+
+// A status change between wait's snapshot and the provider read must make
+// wait look again instead of returning the error of the stale state.
+func TestWaitRetriesWhenTheStatusChangesBeforeTheProviderRead(t *testing.T) {
+	service := New(Config{StateDir: filepath.Join(t.TempDir(), "state"), Logger: slog.New(slog.DiscardHandler)})
+	t.Cleanup(service.Close)
+	close(service.checked)
+	service.setStatus(Status{State: StateReady}, nil)
+	want := stubProvider{}
+	calls := 0
+	provider := func() (base.DurableProvider, error) {
+		calls++
+		if calls > 1 {
+			return want, nil
+		}
+		starting := Status{State: StateStarting, Reason: "switching"}
+		service.setStatus(starting, nil)
+		go service.setStatus(Status{State: StateReady}, nil)
+		return nil, &UnavailableError{Status: starting}
+	}
+	// Starts from Ready, so the first provider read races the switch.
+	got, err := service.wait(context.Background(), 10*time.Second, true, provider)
+	if err != nil || got != want {
+		t.Fatalf("wait = %v, %v; want the provider after the switch", got, err)
 	}
 }
