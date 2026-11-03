@@ -434,6 +434,7 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		{name: "transcript_search", input: "TranscriptSearchRequest", output: "TranscriptMatchDTO[]"},
 		{name: "transcript_search_host", input: "TranscriptHostSearchRequest", output: "TranscriptHostSearchResult"},
 		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
+		{name: "transcript_export_cast", input: "TranscriptExportCastRequest", output: "TranscriptExportCastResult"},
 		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
 	}
 	selected := make(map[string]bool, len(tests))
@@ -467,8 +468,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 7 {
-		t.Fatalf("selected transcript command count = %d, want 7", len(selected))
+	if len(selected) != 8 {
+		t.Fatalf("selected transcript command count = %d, want 8", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {
@@ -1527,6 +1528,7 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		output string
 	}{
 		{name: "snippet_list", scope: "snippet", input: "Record<string, never>", output: "SnippetDTO[]"},
+		{name: "snippet_migration_status", scope: "snippet", input: "Record<string, never>", output: "SnippetMigrationStatusDTO"},
 		{name: "snippet_create", scope: "snippet", input: "SnippetInputRequest", output: "Record<string, string>"},
 		{name: "snippet_update", scope: "snippet", input: "SnippetPatchRequest", output: "unknown"},
 		{name: "snippet_delete", scope: "snippet", input: structType("id: string;"), output: "unknown"},
@@ -1572,8 +1574,8 @@ func TestOperationsVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 14 {
-		t.Fatalf("selected operations command count = %d, want 14", len(selected))
+	if len(selected) != 15 {
+		t.Fatalf("selected operations command count = %d, want 15", len(selected))
 	}
 	for name, command := range commands {
 		switch command.Scope {

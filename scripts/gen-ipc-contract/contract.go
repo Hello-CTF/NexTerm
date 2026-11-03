@@ -85,6 +85,7 @@ var contractScopes = []scopeSpec{
 	}},
 	{name: "transcript", commands: []string{
 		"transcript_delete",
+		"transcript_export_cast",
 		"transcript_hosts",
 		"transcript_list",
 		"transcript_read",
@@ -109,7 +110,7 @@ var contractScopes = []scopeSpec{
 	}},
 	{name: "group", commands: []string{"group_create", "group_delete", "group_list", "group_update"}},
 	{name: "known-host", commands: []string{"known_host_accept", "known_host_list", "known_host_remove"}},
-	{name: "snippet", commands: []string{"snippet_create", "snippet_delete", "snippet_list", "snippet_update"}},
+	{name: "snippet", commands: []string{"snippet_create", "snippet_delete", "snippet_list", "snippet_migration_status", "snippet_update"}},
 	{name: "audit", commands: []string{"audit_count", "audit_query", "audit_timeline"}},
 	{name: "command-log", commands: []string{"command_count", "command_query", "command_search"}},
 	{name: "layout", commands: []string{"layout_get", "layout_put"}},
