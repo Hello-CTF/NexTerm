@@ -69,7 +69,7 @@ func makeDirPrivate(path string) error {
 			}
 		}
 		if !owned {
-			return &UntrustedEndpointError{Kind: EndpointDir, Path: path, OwnerUID: -1}
+			return &UntrustedEndpointError{Kind: EndpointStateDir, Path: path, OwnerUID: -1}
 		}
 	}
 	sid, err := currentUserSIDString()

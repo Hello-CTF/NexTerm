@@ -542,7 +542,7 @@ func TestServiceConnectsAsTheDesktopSpawner(t *testing.T) {
 }
 
 func TestServiceReportsUntrustedEndpointWithoutBusyRetry(t *testing.T) {
-	untrusted := &supervisor.UntrustedEndpointError{Kind: supervisor.EndpointDir, Path: "/srv/other-user/helper", OwnerUID: 4242}
+	untrusted := &supervisor.UntrustedEndpointError{Kind: supervisor.EndpointSocketDir, Path: "/srv/other-user/helper", OwnerUID: 4242}
 	for _, where := range []string{"connect", "inspect"} {
 		t.Run(where, func(t *testing.T) {
 			world := newFakeWorld()

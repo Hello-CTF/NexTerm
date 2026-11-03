@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 var (
@@ -51,8 +53,11 @@ var ErrUntrustedEndpoint = errors.New("supervisor helper endpoint is not trusted
 type EndpointKind int
 
 const (
-	// EndpointDir is the private directory holding the helper socket.
-	EndpointDir EndpointKind = iota
+	// EndpointStateDir is the helper state directory, which holds session data and must never be
+	// advised for deletion. It is the zero value so an unclassified directory error is the safe one.
+	EndpointStateDir EndpointKind = iota
+	// EndpointSocketDir is the directory that only holds the helper socket.
+	EndpointSocketDir
 	// EndpointSocket is a unix socket served by another user.
 	EndpointSocket
 	// EndpointPipe is a Windows named pipe served by another user.
@@ -74,29 +79,50 @@ type UntrustedEndpointError struct {
 }
 
 func (e *UntrustedEndpointError) Error() string {
-	switch e.Kind {
-	case EndpointSocket:
-		return fmt.Sprintf("持久终端组件端点 %s 由其他用户%s提供，已拒绝连接。请删除目录 '%s' 后重试（可能需要管理员权限）。", e.Path, e.owner(), filepath.Dir(e.Path))
-	case EndpointPipe:
-		return fmt.Sprintf("持久终端组件管道 %s 由其他用户提供，已拒绝连接。请注销或重启后重试。", e.Path)
-	case EndpointElevated:
-		return "持久终端组件以管理员权限运行，请以相同权限启动本程序，或重启持久终端组件。"
-	default:
-		return fmt.Sprintf("持久终端组件目录 %s 被其他用户%s占用，已拒绝使用。请确认没有其他账户在使用它，然后删除该目录后重试，例如：sudo rm -r '%s'", e.Path, e.owner(), e.Path)
-	}
-}
-
-func (e *UntrustedEndpointError) owner() string {
-	if e.OwnerUID < 0 {
-		return ""
-	}
-	return fmt.Sprintf("（uid %d）", e.OwnerUID)
+	return untrustedAdvice(runtime.GOOS, e.Kind, e.Path, e.OwnerUID)
 }
 
 func (e *UntrustedEndpointError) Unwrap() error { return ErrUntrustedEndpoint }
 
-// Is keeps the directory case an ErrInvalidInput for callers that already
+// Is keeps the directory cases an ErrInvalidInput for callers that already
 // handled the earlier owner check.
 func (e *UntrustedEndpointError) Is(target error) bool {
-	return e.Kind == EndpointDir && target == ErrInvalidInput
+	return (e.Kind == EndpointStateDir || e.Kind == EndpointSocketDir) && target == ErrInvalidInput
+}
+
+// untrustedAdvice is the user-facing text for a refused endpoint. goos only selects the advice, so
+// every platform's wording is testable anywhere.
+func untrustedAdvice(goos string, kind EndpointKind, path string, uid int) string {
+	owner := ""
+	if uid >= 0 {
+		owner = fmt.Sprintf("（uid %d）", uid)
+	}
+	windows := goos == "windows"
+	switch kind {
+	case EndpointSocket:
+		dir := filepath.Dir(path)
+		if windows {
+			return fmt.Sprintf("持久终端组件端点 %s 由其他用户提供，已拒绝连接。请以当前用户运行本程序，或注销或重启后重试。", path)
+		}
+		return fmt.Sprintf("持久终端组件端点 %s 由其他用户%s提供，已拒绝连接。该端点所在目录只存放连接端点，请删除后重试（可能需要管理员权限），例如：sudo rm -r %s", path, owner, shellQuote(dir))
+	case EndpointPipe:
+		return fmt.Sprintf("持久终端组件管道 %s 由其他用户提供，已拒绝连接。请注销或重启后重试。", path)
+	case EndpointElevated:
+		return "持久终端组件以管理员权限运行，请以相同权限启动本程序，或重启持久终端组件。"
+	case EndpointSocketDir:
+		if windows {
+			return fmt.Sprintf("持久终端组件端点目录 %s 属于其他 Windows 账户，已拒绝使用。该目录只存放连接端点，请以当前用户运行本程序，或在目录“属性 > 安全 > 高级”中把所有者改为当前用户。", path)
+		}
+		return fmt.Sprintf("持久终端组件端点目录 %s 被其他用户%s占用，已拒绝使用。该目录只存放连接端点，可以删除后重试，例如：sudo rm -r %s", path, owner, shellQuote(path))
+	default:
+		if windows {
+			return fmt.Sprintf("持久终端组件状态目录 %s 属于其他 Windows 账户，已拒绝使用。不要删除它，里面有持久终端数据。请以当前用户运行本程序，或在目录“属性 > 安全 > 高级”中把所有者改为当前用户。", path)
+		}
+		return fmt.Sprintf("持久终端组件状态目录 %s 属于其他用户%s，已拒绝使用。不要删除它，里面有持久终端的会话数据。如果曾以 sudo 或其他用户运行过本程序，请修正属主后重试，例如：sudo chown -R \"$(id -u):$(id -g)\" %s", path, owner, shellQuote(path))
+	}
+}
+
+// shellQuote wraps path in single quotes for a POSIX shell.
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
 }

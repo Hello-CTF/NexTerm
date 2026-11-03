@@ -76,6 +76,38 @@ func TestEnsurePrivateDirRejectsDirectoryOfAnotherUser(t *testing.T) {
 	}
 }
 
+func TestStateDirOfAnotherUserIsNeverAdvisedForDeletion(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func(previous func() int) { expectedPeerUID = previous }(expectedPeerUID)
+	expectedPeerUID = func() int { return os.Geteuid() + 1 }
+	_, idErr := HelperInstanceID(stateDir)
+	_, connectErr := ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, NoSpawn: true})
+	for name, err := range map[string]error{"ensurePrivateDir": ensurePrivateDir(stateDir), "HelperInstanceID": idErr, "ConnectHelper": connectErr} {
+		if !errors.Is(err, ErrUntrustedEndpoint) || !strings.Contains(err.Error(), stateDir) || !strings.Contains(err.Error(), "chown") || strings.Contains(err.Error(), "rm ") {
+			t.Errorf("%s: %v; want the state dir named, chown advised and no rm", name, err)
+		}
+	}
+}
+
+func TestSocketDirOfAnotherUserMayBeDeleted(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sock")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func(previous func() int) { expectedPeerUID = previous }(expectedPeerUID)
+	expectedPeerUID = func() int { return os.Geteuid() + 1 }
+	_, _, _, err := prepareEndpoint(filepath.Join(dir, "a.sock"))
+	if !errors.Is(err, ErrUntrustedEndpoint) || !strings.Contains(err.Error(), dir) || !strings.Contains(err.Error(), "rm ") {
+		t.Fatalf("prepareEndpoint: %v; want the directory named and rm advised", err)
+	}
+	if err := checkEndpointDirOwner(filepath.Join(dir, "a.sock")); !strings.Contains(err.Error(), "rm ") {
+		t.Fatalf("checkEndpointDirOwner: %v", err)
+	}
+}
+
 func TestConnectHelperRefusesUntrustedEndpointWithoutSpawning(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(stateDir, 0o700); err != nil {

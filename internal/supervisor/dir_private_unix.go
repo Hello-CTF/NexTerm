@@ -28,7 +28,7 @@ func ensurePrivateDir(path string) error {
 		return fmt.Errorf("%w: %s must not be accessible by group or other users", ErrInvalidInput, path)
 	}
 	if err := ownedByExpectedUser(info); err != nil {
-		return &UntrustedEndpointError{Kind: EndpointDir, Path: path, OwnerUID: fileOwnerUID(info)}
+		return &UntrustedEndpointError{Kind: EndpointStateDir, Path: path, OwnerUID: fileOwnerUID(info)}
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func checkEndpointDirOwner(endpoint string) error {
 		return nil
 	}
 	if ownedByExpectedUser(info) != nil {
-		return &UntrustedEndpointError{Kind: EndpointDir, Path: dir, OwnerUID: fileOwnerUID(info)}
+		return &UntrustedEndpointError{Kind: EndpointSocketDir, Path: dir, OwnerUID: fileOwnerUID(info)}
 	}
 	return nil
 }
