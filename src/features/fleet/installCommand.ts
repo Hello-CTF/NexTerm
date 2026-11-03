@@ -28,7 +28,7 @@ export { psQuote };
 // iwr ... | iex pipe cannot take arguments. No outer double-quoted string is used, so $( ) and backticks in values are never expanded. The ps1 is provided as a separate deliverable; only the URL and argument shape are agreed here.
 export function oneLineInstallCommandWindows(baseUrl: string, insecure: boolean, code: string, version: string): string {
   const scriptUrl = `${baseUrl}/install-device.ps1`;
-  return `& ([scriptblock]::Create((iwr -UseBasicParsing ${psQuote(scriptUrl)}).Content)) -Server ${psQuote(baseUrl)} -Code ${psQuote(code)} -Version ${psQuote(version)}${insecure ? " -Insecure" : ""}`;
+  return `& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((iwr -UseBasicParsing ${psQuote(scriptUrl)}).RawContentStream.ToArray()).TrimStart([char]0xFEFF))) -Server ${psQuote(baseUrl)} -Code ${psQuote(code)} -Version ${psQuote(version)}${insecure ? " -Insecure" : ""}`;
 }
 
 // releaseOrNull keeps only versions that can exist as a GitHub release (x.y.z with an optional pre-release suffix).

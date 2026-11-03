@@ -209,7 +209,7 @@ describe("oneLineInstallCommand construction", () => {
 describe("oneLineInstallCommandWindows construction", () => {
   it("downloads install-device.ps1 as a scriptblock and forwards the same values as PowerShell-native parameters", () => {
     expect(oneLineInstallCommandWindows("https://nexterm.example.com", false, "c-1", "0.2.2")).toBe(
-      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').Content)) " +
+      "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').RawContentStream.ToArray()).TrimStart([char]0xFEFF))) " +
         "-Server 'https://nexterm.example.com' -Code 'c-1' -Version '0.2.2'",
     );
   });
@@ -217,7 +217,7 @@ describe("oneLineInstallCommandWindows construction", () => {
   it("passes -Insecure through to the script arguments for an explicitly insecure base URL", () => {
     const command = oneLineInstallCommandWindows("https://10.0.0.8:8443", true, "c-1", "0.2.2");
     expect(command).toBe(
-      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1').Content)) " +
+      "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1').RawContentStream.ToArray()).TrimStart([char]0xFEFF))) " +
         "-Server 'https://10.0.0.8:8443' -Code 'c-1' -Version '0.2.2' -Insecure",
     );
   });
@@ -244,7 +244,9 @@ describe("oneLineInstallCommandWindows construction", () => {
     expect(command).not.toContain('"&');
     expect(command.startsWith("& ([scriptblock]::Create(")).toBe(true);
     expect(command).toContain("'https://h/$(calc)`whoami`\"x/install-device.ps1'");
-    expect(command.replace(/'[^']*(?:''[^']*)*'/g, "")).not.toMatch(/[$`"]/);
+    const outsideLiterals = command.replace(/'[^']*(?:''[^']*)*'/g, "");
+    expect(outsideLiterals).not.toMatch(/[`"]/);
+    expect(outsideLiterals).not.toContain("$(");
   });
 });
 
@@ -293,7 +295,7 @@ describe("Device management - guided enrollment", () => {
     await openIssuedPanel();
     click(buttonByText("Windows") as HTMLButtonElement);
     expect(mainCommand()).toBe(
-      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').Content)) " +
+      "& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').RawContentStream.ToArray()).TrimStart([char]0xFEFF))) " +
         "-Server 'https://nexterm.example.com' -Code 'fleet-code-1' -Version '0.2.2'",
     );
     expect(mainCommand()).not.toContain("install-device.sh");
