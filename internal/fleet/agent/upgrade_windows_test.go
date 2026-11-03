@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // exitedPID returns the PID of a process that has already exited, so Wait-Process returns at once.
@@ -32,13 +34,15 @@ func TestReplaceScriptWindowsExecutes(t *testing.T) {
 	logPath := filepath.Join(dir, "upgrade.log")
 	pid := exitedPID(t)
 
+	restartBlock := "Set-Content -LiteralPath " + psQuote(marker) + " -Value ok"
 	run := func(t *testing.T) string {
 		t.Helper()
 		_ = os.Remove(marker)
+		_ = os.Remove(logPath)
 		scriptPath := filepath.Join(dir, "replace.ps1")
 		body := renderReplaceScriptWindows(windowsReplaceScript{
 			NewPath: newPath, TargetPath: target, WaitPID: pid, WaitTimeoutSeconds: 5, LogPath: logPath,
-			RestartBlock: "Set-Content -LiteralPath " + psQuote(marker) + " -Value ok",
+			RestartBlock: restartBlock,
 		})
 		if err := os.WriteFile(scriptPath, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -85,6 +89,26 @@ func TestReplaceScriptWindowsExecutes(t *testing.T) {
 		}
 		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("rollback must not run the restart block")
+		}
+	})
+
+	t.Run("real restart block logs schtasks outcome", func(t *testing.T) {
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		restartBlock = windowsRestartBlock("NexTermNoSuchTask-" + strconv.FormatInt(time.Now().UnixNano(), 36))
+		t.Cleanup(func() { restartBlock = "Set-Content -LiteralPath " + psQuote(marker) + " -Value ok" })
+		run(t)
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "new-binary" {
+			t.Fatalf("target = %q, %v", content, err)
+		}
+		logged, err := os.ReadFile(logPath)
+		if err != nil || !strings.Contains(string(logged), "schtasks /Run exit code") {
+			t.Fatalf("log = %q, %v", logged, err)
 		}
 	})
 }
