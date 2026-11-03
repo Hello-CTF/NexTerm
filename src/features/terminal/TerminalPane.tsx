@@ -12,7 +12,7 @@ import type { ExtractedLink } from "./terminalLinkProvider";
 import { AssetEditor } from "../../app/lazyPanels";
 import { Lazy } from "../../ui/LazyBoundary";
 import { openHostDetail } from "../hosts/hostDetail";
-import { CommandBlockPanel } from "./CommandBlockPanel";
+import { TerminalCommandBlocks } from "./TerminalCommandBlocks";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -2776,7 +2776,9 @@ export function TerminalPane({
           )}
         </div>
         {blocksSupported && blocksOpen && (
-          <CommandBlockPanel
+          <TerminalCommandBlocks
+            kernelTabId={kernelTabId}
+            sourceLabel={title}
             blocks={blocks}
             getText={(i) => handleRef.current?.copyBlock(i) ?? ""}
             onLocate={(i) => handleRef.current?.scrollToBlock(i)}
