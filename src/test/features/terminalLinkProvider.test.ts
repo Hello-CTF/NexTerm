@@ -269,6 +269,16 @@ describe("long URLs on narrow terminals", () => {
   });
 });
 
+describe("extractTerminalLinks context", () => {
+  it("drops control and invisible characters from the source line summary", async () => {
+    const term = await makeTerm(100, "see\u202e\u200b txt https://example.com/a now\r\n");
+    const [link] = extractTerminalLinks(term);
+    expect(link.url).toBe("https://example.com/a");
+    expect(link.context).toContain("https://example.com/a");
+    expect(link.context).not.toMatch(/[\u202e\u200b\u0007]/);
+  });
+});
+
 describe("rows written for another width", () => {
   const fx = LINK_FIXTURES[0];
 

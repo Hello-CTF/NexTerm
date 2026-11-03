@@ -1,5 +1,5 @@
 import type { IBufferLine, IBufferRange, ILink, ILinkProvider, Terminal } from "@xterm/xterm";
-import { planTerminalLink } from "./terminalLinks";
+import { cleanTerminalLink, planTerminalLink } from "./terminalLinks";
 
 // Link detection across hard line breaks. xterm's own soft wrapping is joined
 // unconditionally; TUIs (Ink, gh, npm) that break a URL at their own width, or
@@ -553,7 +553,7 @@ export function extractTerminalLinks(term: Terminal, maxScrollbackRows = 2000): 
     if (seen.has(link.url)) continue;
     seen.add(link.url);
     const first = link.segments[0].row;
-    out.push({ url: link.url, context: rows[first].text.trim().slice(0, CONTEXT_LIMIT), row: start + first });
+    out.push({ url: link.url, context: cleanTerminalLink(rows[first].text).trim().slice(0, CONTEXT_LIMIT), row: start + first });
   }
   return out;
 }

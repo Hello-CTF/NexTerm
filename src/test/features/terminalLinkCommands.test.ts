@@ -25,6 +25,16 @@ describe("terminalLinkCommands", () => {
     expect(source.open).toHaveBeenCalledWith("https://a.example.com/x");
   });
 
+  it("hides control and invisible characters in the hint", () => {
+    const source = {
+      extract: () => [{ url: "https://a.example.com/x", context: "ok\u202e\u200b\u0007 line", row: 1 }],
+      open: vi.fn(),
+      openPanel: vi.fn(),
+    };
+    const link = terminalLinkCommands(source).find((c) => c.section === "当前终端链接");
+    expect(link?.hint).toBe("ok line");
+  });
+
   it("caps the URL commands at 50", () => {
     const many = Array.from({ length: 80 }, (_, i) => ({ url: `https://h.example.com/${i}`, context: "", row: i }));
     const commands = terminalLinkCommands({ extract: () => many, open: vi.fn(), openPanel: vi.fn() });

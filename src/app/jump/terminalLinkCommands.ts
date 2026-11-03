@@ -1,5 +1,5 @@
 import type { TerminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
-import { displayTerminalLink } from "../../features/terminal/terminalLinks";
+import { cleanTerminalLink, displayTerminalLink } from "../../features/terminal/terminalLinks";
 import { IconTerminal } from "../../ui/icons";
 import type { JumpCommand } from "./useJumpCommands";
 
@@ -20,7 +20,8 @@ export function terminalLinkCommands(source: TerminalLinkSource, bindingHint?: s
     },
   ];
   source.extract().slice(0, MAX_LINK_COMMANDS).forEach((link, index) => {
-    const context = link.context.length > HINT_LIMIT ? `${link.context.slice(0, HINT_LIMIT)}…` : link.context;
+    const clean = cleanTerminalLink(link.context);
+    const context = clean.length > HINT_LIMIT ? `${clean.slice(0, HINT_LIMIT)}…` : clean;
     commands.push({
       id: `terminal-link-${index}`,
       label: displayTerminalLink(link.url),

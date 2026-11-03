@@ -146,6 +146,12 @@ describe("TerminalLinkPanel", () => {
     expect(harness.toast).toHaveBeenCalledWith("info", expect.stringContaining("http/https"));
   });
 
+  it("shows the context without control or invisible characters", () => {
+    render({ links: [{ url: "https://a.example.com/", context: "ok\u202e\u200b\u0007 line", row: 1 }] });
+    const ctx = document.querySelector(".nx-term-link-context")?.textContent;
+    expect(ctx).toBe("ok line");
+  });
+
   it("explains an empty list", () => {
     render({ links: [] });
     expect(document.body.textContent).toContain("当前终端没有可识别的链接");

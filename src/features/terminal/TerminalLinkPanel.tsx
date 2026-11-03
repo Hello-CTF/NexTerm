@@ -82,7 +82,9 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
         {links.length === 0 ? (
           <div className="nx-term-link-empty">当前终端没有可识别的链接</div>
         ) : (
-          links.map((link, i) => (
+          links.map((link, i) => {
+            const context = cleanTerminalLink(link.context);
+            return (
             <div
               key={link.url}
               id={`nx-term-link-${i}`}
@@ -93,9 +95,10 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
               onClick={() => onOpen(link.url)}
             >
               <span className="nx-term-link-url">{displayTerminalLink(link.url)}</span>
-              {link.context && <span className="nx-term-link-context">{link.context}</span>}
+              {context && <span className="nx-term-link-context">{context}</span>}
             </div>
-          ))
+            );
+          })
         )}
       </div>
       <div className="nx-term-link-footer">
