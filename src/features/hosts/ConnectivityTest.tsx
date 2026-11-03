@@ -45,7 +45,8 @@ export function ConnectivityTest({
     try {
       const plan = await hostPortsApi.connectivityTest({ ...request, dryRun: true });
       const warning = production ? "【生产主机】此命令将在生产环境的主机上执行，请确认目标无误。\n\n" : "";
-      const ok = await confirmDialog(`${warning}将在 ${hostName} 上执行：\n${plan.command}`);
+      const script = plan.script ? `实际执行的脚本：\n${plan.script}\n\n原始命令：\n` : "";
+      const ok = await confirmDialog(`${warning}将在 ${hostName} 上执行：\n${script}${plan.command}`);
       if (!ok) return;
       setResult(await hostPortsApi.connectivityTest(request));
     } catch (e) {

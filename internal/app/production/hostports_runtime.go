@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"runtime"
 	"time"
 
@@ -70,6 +71,7 @@ type hostPortsAuditPayload struct {
 	Port       uint16 `json:"port,omitempty"`
 	URL        string `json:"url,omitempty"`
 	Command    string `json:"command"`
+	Script     string `json:"script,omitempty"`
 	OK         bool   `json:"ok"`
 	DurationMs int64  `json:"durationMs"`
 	Output     string `json:"output,omitempty"`
@@ -80,19 +82,23 @@ const maxHostPortsAuditOutput = 512
 
 // hostPortsAudit records each executed connectivity test with the executor (the owner carried by the
 // context), session, asset, target, exact command, outcome and duration. A failure to write is dropped
-// because the test has already run and its result must still reach the caller.
+// because the test has already run and its result must still reach the caller; it is logged instead.
 func hostPortsAudit(auditor hostPortsAuditor) hostports.AuditFunc {
+	return hostPortsAuditWithLogger(auditor, nil)
+}
+
+// hostPortsAuditWithLogger is hostPortsAudit that reports a failed write as a warning on logger (the default
+// logger when nil).
+func hostPortsAuditWithLogger(auditor hostPortsAuditor, logger *slog.Logger) hostports.AuditFunc {
 	return func(ctx context.Context, event hostports.AuditEvent) {
 		output := event.Result.Output
-		if len(output) > maxHostPortsAuditOutput {
-			output = output[:maxHostPortsAuditOutput]
-		}
+		output = hostports.TruncateOutput(output, maxHostPortsAuditOutput)
 		input := store.AuditInput{
 			SessionID: optionalString(event.Args.SessionID), AssetID: optionalString(event.AssetID),
 			Source: "user", Kind: "port_probe",
 			Payload: hostPortsAuditPayload{
 				Method: event.Args.Method, Host: event.Args.Host, Port: event.Args.Port, URL: event.Args.URL,
-				Command: event.Result.Command, OK: event.Result.OK, DurationMs: event.Result.DurationMs, Output: output,
+				Command: event.Result.Command, Script: event.Result.Script, OK: event.Result.OK, DurationMs: event.Result.DurationMs, Output: output,
 			},
 			DurationMS: &event.Result.DurationMs,
 		}
@@ -102,7 +108,12 @@ func hostPortsAudit(auditor hostPortsAuditor) hostports.AuditFunc {
 		}
 		auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), 5*time.Second)
 		defer cancel()
-		_ = auditor.AuditInsert(auditCtx, input)
+		if err := auditor.AuditInsert(auditCtx, input); err != nil {
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.Warn("host connectivity test audit failed", "session", event.Args.SessionID, "error", err)
+		}
 	}
 }
 

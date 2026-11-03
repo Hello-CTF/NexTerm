@@ -55,6 +55,21 @@ describe("ConnectivityTest", () => {
     expect(pre.querySelector("b")).toBeNull();
   });
 
+  it("shows the decoded script next to the command when the host wraps it", async () => {
+    mocks.confirmDialog.mockResolvedValue(false);
+    mocks.connectivityTest.mockResolvedValue({
+      command: "powershell -NoProfile -NonInteractive -EncodedCommand QUJD",
+      script: "Test-NetConnection db.internal",
+      ran: false, ok: false, output: "", durationMs: 0,
+    });
+    const root = mountTest();
+    click(testButton(root));
+    await flushUntil(() => mocks.confirmDialog.mock.calls.length > 0);
+    const text = mocks.confirmDialog.mock.calls[0][0] as string;
+    expect(text).toContain("实际执行的脚本：\nTest-NetConnection db.internal");
+    expect(text).toContain("-EncodedCommand QUJD");
+  });
+
   it("does not run when the confirmation is cancelled", async () => {
     mocks.confirmDialog.mockResolvedValue(false);
     const root = mountTest();

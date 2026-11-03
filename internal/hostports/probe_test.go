@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -240,5 +241,42 @@ func TestServiceProbeAuditsOnlyRealExecutions(t *testing.T) {
 	if got.Args.SessionID != "s" || got.AssetID != "asset-1" || got.Args.Method != "tcp" || got.Args.Host != "example.com" ||
 		got.Result.Command != res.Command || !got.Result.Ran || !got.Result.OK {
 		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestServiceProbeReportsDecodedScriptForCmdHosts(t *testing.T) {
+	zero := 0
+	runner := &fakeRunner{reply: func(string) (base.ExecResult, error) {
+		return base.ExecResult{ExitCode: &zero}, nil
+	}}
+	service := NewService(resolverFor(Target{Runner: runner, Shell: ShellUnknown}))
+	req := ProbeRequest{Method: "tcp", Host: "example.com", Port: 22}
+	want := powerShellProbe(req, "example.com")
+	for _, dry := range []bool{true, false} {
+		res, err := service.Probe(t.Context(), ProbeArgs{SessionID: "s", ProbeRequest: req, DryRun: dry})
+		if err != nil || res.Script != want {
+			t.Fatalf("dry=%v script=%q err=%v", dry, res.Script, err)
+		}
+		if !strings.Contains(res.Command, "-EncodedCommand") {
+			t.Fatalf("command = %q", res.Command)
+		}
+	}
+	posix := NewService(resolverFor(Target{Runner: runner, Shell: ShellPOSIX}))
+	res, err := posix.Probe(t.Context(), ProbeArgs{SessionID: "s", ProbeRequest: req, DryRun: true})
+	if err != nil || res.Script != "" {
+		t.Fatalf("posix script = %q err=%v", res.Script, err)
+	}
+}
+
+func TestTruncateOutputKeepsValidUTF8(t *testing.T) {
+	text := strings.Repeat("x", 5) + strings.Repeat("好", 10)
+	for max := 5; max < 20; max++ {
+		got := TruncateOutput(text, max)
+		if !utf8.ValidString(got) || len(got) > max {
+			t.Fatalf("max=%d got %q", max, got)
+		}
+	}
+	if TruncateOutput("short", 10) != "short" {
+		t.Fatal("short text changed")
 	}
 }
