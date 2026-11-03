@@ -164,6 +164,28 @@ describe("AuditTimelineView", () => {
     }
   });
 
+  it("explains that AI-initiated terminal commands show as user", async () => {
+    await openTimeline();
+    expect(text()).toContain("命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户");
+  });
+
+  it("warns that exports may contain sensitive command text", async () => {
+    await openTimeline();
+    expect(text()).toContain("导出文件可能包含命令行中的敏感内容");
+  });
+
+  it("describes the record scope by mode and login state", async () => {
+    await openTimeline();
+    expect(text()).toContain("显示本服务器的全部记录");
+    expect(text()).toContain("时间线合并审计、命令和设备上下线记录");
+    await act(async () => {
+      useAuth.setState({ user: { id: "u1", username: "alice" } as never });
+    });
+    await flush();
+    expect(text()).toContain("只显示你账户下的记录");
+    expect(text()).not.toContain("显示本服务器的全部记录");
+  });
+
   it("keeps the audit tab working", async () => {
     mounted = mount(createElement(AuditView));
     await flushUntil(() => mocks.auditQuery.mock.calls.length > 0);

@@ -293,7 +293,12 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
           onChange={(v) => patch({ assetId: v })}
           options={hostOptions}
         />
-        <div className="nx-segment" role="group" aria-label="来源过滤">
+        <div
+          className="nx-segment"
+          role="group"
+          aria-label="来源过滤"
+          title="命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户"
+        >
           {ORIGIN_FILTERS.map((f) => (
             <button
               key={f.value}
@@ -341,6 +346,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
           <IconDownload size={13} />
           导出 JSON
         </button>
+        <span className="nx-hint min-w-0 break-words">导出文件可能包含命令行中的敏感内容</span>
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
@@ -453,7 +459,9 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>时间线合并审计、命令和设备上下线记录，只显示你的操作（桌面端为本机全部记录）。</span>
+        <span className="min-w-0 break-words">
+          时间线合并审计、命令和设备上下线记录，{scopeText}。命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户。
+        </span>
       </div>
     </div>
   );
