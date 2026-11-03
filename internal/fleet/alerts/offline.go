@@ -41,8 +41,11 @@ type OfflineInput struct {
 	Effective int64
 	// Started is the evaluator start time.
 	Started int64
-	Enabled bool
-	Muted   bool
+	// QuietEnd is the latest quiet-hours end (0 when quiet hours are off): reaching A is timed from it
+	// so a device does not alert the moment quiet hours end.
+	QuietEnd int64
+	Enabled  bool
+	Muted    bool
 	// S is the suspect threshold and A (>= S) the alert threshold.
 	S, A int64
 	// G is the gap tolerance: hearing a device within G keeps a recovery hold running.
@@ -69,6 +72,7 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 		return st, nil
 	}
 	silence := in.Now - in.Effective
+	silenceA := in.Now - max(in.Effective, in.QuietEnd)
 	heardAgo := in.Now - in.LastHeard
 	switch st.Status {
 	case StatusDormant:
@@ -79,7 +83,7 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 		switch {
 		case silence < in.S:
 			return State{Status: StatusOK, ResolvedAt: st.ResolvedAt}, nil
-		case silence >= in.A:
+		case silenceA >= in.A:
 			if in.Muted {
 				st.Status = StatusMuted
 				return st, nil
@@ -92,7 +96,7 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 			return next, emit
 		}
 		st = next
-		if silence >= in.A && !in.Muted {
+		if silenceA >= in.A && !in.Muted {
 			return fire(st, in)
 		}
 	case StatusFiring:

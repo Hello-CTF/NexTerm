@@ -25,6 +25,26 @@ func InQuiet(t time.Time, start, end int64, loc *time.Location) bool {
 	return m >= start || m < end
 }
 
+// LastQuietEnd returns the most recent quiet-window end at or before t in ms, or 0 for an empty
+// window. The end is rebuilt from the local calendar date so DST shifts keep it at the wall-clock end.
+func LastQuietEnd(t time.Time, start, end int64, loc *time.Location) int64 {
+	if start == end {
+		return 0
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	local := t.In(loc)
+	endAt := func(day int) time.Time {
+		return time.Date(local.Year(), local.Month(), day, int(end/60), int(end%60), 0, 0, loc)
+	}
+	last := endAt(local.Day())
+	if last.After(t) {
+		last = endAt(local.Day() - 1)
+	}
+	return last.UnixMilli()
+}
+
 // ResolveLocation loads an IANA zone name; an empty or unloadable name gives time.Local.
 func ResolveLocation(tz string) *time.Location {
 	if tz == "" {

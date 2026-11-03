@@ -163,3 +163,37 @@ func TestStepOfflineRecoveryHold(t *testing.T) {
 		}
 	}
 }
+
+func TestStepOfflineQuietEnd(t *testing.T) {
+	const (
+		now = int64(10_000_000_000)
+		s   = 5 * minMS
+		a   = 10 * minMS
+	)
+	in := func(silenceMin, quietEndAgoMin int64) OfflineInput {
+		heard := now - silenceMin*minMS
+		return OfflineInput{Now: now, LastHeard: heard, Effective: heard, QuietEnd: now - quietEndAgoMin*minMS, Enabled: true, S: s, A: a, G: 150_000}
+	}
+	since := now - 10*minMS
+	cases := []struct {
+		name       string
+		st         State
+		in         OfflineInput
+		wantStatus string
+		wantEmit   bool
+	}{
+		{"muted waits A after the quiet end", State{Status: StatusMuted, Since: since}, in(30, 3), StatusMuted, false},
+		{"muted fires A after the quiet end", State{Status: StatusMuted, Since: since}, in(30, 10), StatusFiring, true},
+		{"suspect waits A after the quiet end", State{Status: StatusSuspect, Since: since}, in(7, 3), StatusSuspect, false},
+		{"suspect fires A after the quiet end", State{Status: StatusSuspect, Since: since}, in(12, 10), StatusFiring, true},
+		{"suspect is not reset by the quiet end", State{Status: StatusSuspect, Since: since}, in(7, 0), StatusSuspect, false},
+		{"ok enters suspect by S regardless of the quiet end", State{Status: StatusOK}, in(5, 0), StatusSuspect, false},
+		{"no quiet end keeps the old timing", State{Status: StatusSuspect, Since: since}, func() OfflineInput { i := in(10, 0); i.QuietEnd = 0; return i }(), StatusFiring, true},
+	}
+	for _, c := range cases {
+		got, emit := StepOffline(c.st, c.in)
+		if got.Status != c.wantStatus || (emit != nil) != c.wantEmit {
+			t.Errorf("%s: %+v %+v, want %s emit=%v", c.name, got, emit, c.wantStatus, c.wantEmit)
+		}
+	}
+}

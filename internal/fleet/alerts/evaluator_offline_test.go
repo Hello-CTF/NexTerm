@@ -233,6 +233,42 @@ func TestOfflineQuietHoursDatabase(t *testing.T) {
 			t.Fatalf("events = %+v", evs)
 		}
 	})
+	t.Run("shanghai quiet end restarts the alert timer", func(t *testing.T) {
+		// 19:00-09:00 in Shanghai is 11:00Z-01:00Z, i.e. baseTS+3h to baseTS+17h.
+		h, e, _, owner, dev := offlineSetup(t, "off-quiet-sh-end")
+		h.settings(owner, dev, quiet("Asia/Shanghai"))
+		h.heard(dev, baseTS+190*minMS) // 19:10 Shanghai
+		h.tick(e, baseTS+195*minMS)
+		h.tick(e, baseTS+200*minMS)
+		h.tick(e, baseTS+17*60*minMS-minMS)
+		if h.status(dev) != StatusMuted || len(h.events(dev)) != 0 {
+			t.Fatalf("quiet: %q %+v", h.status(dev), h.events(dev))
+		}
+		h.tick(e, baseTS+17*60*minMS) // 09:00 Shanghai
+		h.tick(e, baseTS+17*60*minMS+9*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("fired before A after the quiet end: %+v", h.events(dev))
+		}
+		h.tick(e, baseTS+17*60*minMS+10*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("device lost just before the quiet end alerts A after it", func(t *testing.T) {
+		h, e, _, owner, dev := offlineSetup(t, "off-quiet-sh-late")
+		h.settings(owner, dev, quiet("Asia/Shanghai"))
+		h.heard(dev, baseTS+17*60*minMS-3*minMS) // 08:57 Shanghai
+		h.tick(e, baseTS+17*60*minMS+2*minMS)
+		h.tick(e, baseTS+17*60*minMS+7*minMS) // would fire here without the quiet end
+		h.tick(e, baseTS+17*60*minMS+9*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("events = %+v", h.events(dev))
+		}
+		h.tick(e, baseTS+17*60*minMS+10*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
 	t.Run("quiet ends while still offline", func(t *testing.T) {
 		h, e, _, owner, dev := offlineSetup(t, "off-quiet-end")
 		h.settings(owner, dev, quiet("UTC"))
@@ -243,8 +279,13 @@ func TestOfflineQuietHoursDatabase(t *testing.T) {
 			t.Fatalf("events = %+v", h.events(dev))
 		}
 		h.tick(e, baseTS+60*minMS) // 09:00Z
+		h.tick(e, baseTS+69*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("fired before A after the quiet end: %+v", h.events(dev))
+		}
+		h.tick(e, baseTS+70*minMS) // 09:10Z
 		evs := h.events(dev)
-		if len(evs) != 1 || evs[0].Kind != KindFired || evs[0].DurationMS != 50*minMS {
+		if len(evs) != 1 || evs[0].Kind != KindFired || evs[0].DurationMS != 60*minMS {
 			t.Fatalf("events = %+v", evs)
 		}
 		h.tick(e, baseTS+61*minMS)

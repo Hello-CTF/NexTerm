@@ -62,16 +62,21 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 	suspectAfter := SuspectAfter(e.interval).Milliseconds()
 	alertAfter := max(minutes*60_000, suspectAfter)
 	muted := false
+	var quietEnd int64
 	if set != nil {
-		muted = set.ExpectedOffline ||
-			(set.QuietEnabled && InQuiet(e.now(), set.QuietStart, set.QuietEnd, ResolveLocation(set.QuietTZ)))
+		muted = set.ExpectedOffline
+		if set.QuietEnabled {
+			loc := ResolveLocation(set.QuietTZ)
+			muted = muted || InQuiet(e.now(), set.QuietStart, set.QuietEnd, loc)
+			quietEnd = LastQuietEnd(e.now(), set.QuietStart, set.QuietEnd, loc)
+		}
 	}
 	prev := State{Status: StatusOK}
 	if old := states[stateKey{dev.ID, RuleOffline}]; old != nil {
 		prev = State{Status: old.Status, Since: old.Since, FiredAt: old.FiredAt, ResolvedAt: old.ResolvedAt, RecoveringSince: old.RecoveringSince}
 	}
 	next, emit := StepOffline(prev, OfflineInput{
-		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Started: e.started, G: GapTolerance(e.interval).Milliseconds(),
+		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Started: e.started, QuietEnd: quietEnd, G: GapTolerance(e.interval).Milliseconds(),
 		Enabled: enabled, Muted: muted, S: suspectAfter, A: alertAfter,
 	})
 	if emit == nil && sameState(prev, next) {
