@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/coder/websocket"
 )
 
@@ -18,31 +19,6 @@ type testLifecycle struct {
 	started  int
 	shutdown int
 	ready    chan struct{}
-	stopped  chan struct{}
-	startErr error
-}
-
-func newTestLifecycle() *testLifecycle {
-	return &testLifecycle{ready: make(chan struct{}), stopped: make(chan struct{})}
-}
-
-func (l *testLifecycle) Start(context.Context) error {
-	if l.startErr != nil {
-		return l.startErr
-	}
-	l.mu.Lock()
-	l.started++
-	l.mu.Unlock()
-	close(l.ready)
-	return nil
-}
-
-func (l *testLifecycle) Shutdown(context.Context) error {
-	l.mu.Lock()
-	l.shutdown++
-	l.mu.Unlock()
-	close(l.stopped)
-	return nil
 }
 
 func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
@@ -57,14 +33,44 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 	credentialVault := &fakeVault{}
 	config.Vault = credentialVault
 	config.Options.MasterKey = "correct-password"
-	lifecycle := newTestLifecycle()
+	application, err := core.New(core.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle testLifecycle
+	lifecycle.ready = make(chan struct{})
+	if err := application.AddComponent("test", core.ComponentFuncs{
+		StartFunc: func(context.Context) error {
+			lifecycle.mu.Lock()
+			lifecycle.started++
+			lifecycle.mu.Unlock()
+			close(lifecycle.ready)
+			return nil
+		},
+		ShutdownFunc: func(context.Context) error {
+			lifecycle.mu.Lock()
+			lifecycle.shutdown++
+			lifecycle.mu.Unlock()
+			return nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := BootstrapVault(context.Background(), credentialVault, config.Options.MasterKey); err != nil {
+		t.Fatal(err)
+	}
+	httpServer, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer httpServer.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr bytes.Buffer
 	serveResult := make(chan error, 1)
 	go func() {
-		serveResult <- Serve(ctx, ServeConfig{
-			Server: config, Lifecycle: lifecycle,
-			Stderr: &stderr, Listener: listener, ShutdownTimeout: 2 * time.Second,
+		serveResult <- application.Serve(ctx, core.ServeConfig{
+			Listen: "127.0.0.1:0", Listener: listener, Transport: httpServer.Handler(),
+			CloseTransport: httpServer.CloseContext, Stderr: &stderr,
 		})
 	}()
 	select {
