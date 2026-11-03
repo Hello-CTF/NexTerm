@@ -11,9 +11,11 @@ export interface NotificationPrefs {
   finished: boolean;
   // ai: the AI assistant's notify tool.
   ai: boolean;
+  // deviceAlerts: a managed device crossed an alert rule or recovered.
+  deviceAlerts: boolean;
 }
 
-export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { system: true, needsMe: true, finished: true, ai: true };
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = { system: true, needsMe: true, finished: true, ai: true, deviceAlerts: true };
 
 const STORAGE_KEY = "nexterm.notifications.v1";
 
@@ -32,6 +34,7 @@ function read(): NotificationPrefs {
       needsMe: pick("needsMe"),
       finished: pick("finished"),
       ai: pick("ai"),
+      deviceAlerts: pick("deviceAlerts"),
     };
   } catch {
     return DEFAULT_NOTIFICATION_PREFS;

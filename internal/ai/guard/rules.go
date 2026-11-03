@@ -6,6 +6,8 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +26,8 @@ var (
 	ErrRulePathUnsupported   = errors.New("该动作的规则不支持路径范围")
 	ErrRuleExpiryInvalid     = errors.New("授权规则过期时间必须晚于当前时间")
 	ErrRuleIDRequired        = errors.New("授权规则缺少规则 ID")
+	ErrRuleScopeRequired     = errors.New("命令类授权规则必须限定操作种类，不能整机放行")
+	ErrRuleScopeUnsupported  = errors.New("路径类授权规则不支持操作种类范围")
 )
 
 func GrantRulesSettingKeyForUser(ctx context.Context) string {
@@ -54,13 +58,18 @@ func (r Resource) ProductionTarget() bool {
 // GrantRule is a persistent fine-grained allow rule: a limited scope for an action on a device.
 // An empty Path means the action is not path-limited (whole-device for that action); ExpiresAt 0 means permanent.
 type GrantRule struct {
-	ID         string `json:"id"`
-	DeviceID   string `json:"deviceId"`
-	Action     string `json:"action"`
-	Path       string `json:"path,omitempty"`
-	ExpiresAt  int64  `json:"expiresAt,omitempty"`
-	CreatedAt  int64  `json:"createdAt"`
-	UpdatedAt  int64  `json:"updatedAt"`
+	ID       string `json:"id"`
+	DeviceID string `json:"deviceId"`
+	Action   string `json:"action"`
+	Path     string `json:"path,omitempty"`
+	// Kinds and Programs bound a command rule to the approval kinds and
+	// programs it covers; Unattended lets scheduled runs use the rule.
+	Kinds      []Kind   `json:"kinds,omitempty"`
+	Programs   []string `json:"programs,omitempty"`
+	Unattended bool     `json:"unattended,omitempty"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	UpdatedAt  int64    `json:"updatedAt"`
 	generation string
 }
 
@@ -228,7 +237,111 @@ func (r GrantRule) Expired(now time.Time) bool {
 	return r.ExpiresAt != 0 && now.UnixMilli() >= r.ExpiresAt
 }
 
-// Covers reports whether the rule covers the given action and path (ignoring device ownership and expiry).
-func (r GrantRule) Covers(action, path string) bool {
-	return r.Action == action && MatchPath(r.Path, path)
+// RuleScope bounds what a command rule covers beyond its action and path.
+type RuleScope struct {
+	Kinds      []Kind
+	Programs   []string
+	Unattended bool
+}
+
+// normalized returns the scope with sorted, de-duplicated kinds and programs.
+func (s RuleScope) normalized() RuleScope {
+	kinds := append([]Kind(nil), s.Kinds...)
+	sort.Slice(kinds, func(i, j int) bool { return kinds[i] < kinds[j] })
+	s.Kinds = slices.Compact(kinds)
+	programs := append([]string(nil), s.Programs...)
+	sort.Strings(programs)
+	s.Programs = slices.Compact(programs)
+	if len(s.Kinds) == 0 {
+		s.Kinds = nil
+	}
+	if len(s.Programs) == 0 {
+		s.Programs = nil
+	}
+	return s
+}
+
+// ValidateRuleScope checks the action, path and scope combination of a rule.
+func ValidateRuleScope(action, path string, scope RuleScope) error {
+	if !RuleActionSupported(action) {
+		return ErrRuleActionUnsupported
+	}
+	path = strings.TrimSpace(path)
+	if RuleActionNeedsPath(action) {
+		if path == "" {
+			return ErrRulePathRequired
+		}
+		if len(scope.Kinds) != 0 || len(scope.Programs) != 0 {
+			return ErrRuleScopeUnsupported
+		}
+		return nil
+	}
+	if path != "" {
+		return ErrRulePathUnsupported
+	}
+	if !Rememberable(Ruling{Risk: NeedsConfirm, Kinds: scope.Kinds, Programs: scope.Programs}) {
+		return ErrRuleScopeRequired
+	}
+	if len(scope.Programs) != 0 && !slices.Contains(scope.Kinds, KindProgram) {
+		return ErrRuleScopeRequired
+	}
+	return nil
+}
+
+// Legacy reports an old whole-device command rule: it is kept and listed but
+// never authorizes anything automatically.
+func (r GrantRule) Legacy() bool {
+	return !RuleActionNeedsPath(r.Action) && len(r.Kinds) == 0
+}
+
+// Covers reports whether the rule covers the given action, path and ruling
+// (ignoring device ownership and expiry).
+func (r GrantRule) Covers(action, path string, ruling Ruling) bool {
+	if r.Action != action || !MatchPath(r.Path, path) || !Rememberable(ruling) {
+		return false
+	}
+	if RuleActionNeedsPath(r.Action) {
+		return true
+	}
+	if r.Legacy() {
+		return false
+	}
+	for _, kind := range ruling.ApprovalKinds() {
+		if !slices.Contains(r.Kinds, kind) {
+			return false
+		}
+	}
+	for _, program := range ruling.Programs {
+		if !slices.Contains(r.Programs, program) {
+			return false
+		}
+	}
+	return true
+}
+
+// PermanentScope describes what a permanent grant for the confirmed call would
+// cover; empty means a permanent grant is not offered.
+func PermanentScope(ruling Ruling, resource Resource) string {
+	if ruling.Risk != NeedsConfirm || !RuleActionSupported(resource.Action) {
+		return ""
+	}
+	if RuleActionNeedsPath(resource.Action) {
+		pattern := DirPattern(resource.Path)
+		if pattern == "" {
+			return ""
+		}
+		verb := "写入"
+		if resource.Action == "edit_file" {
+			verb = "修改"
+		}
+		if dir, ok := strings.CutSuffix(pattern, "/**"); ok {
+			return verb + " " + dir + " 下的文件"
+		}
+		return verb + " " + pattern
+	}
+	scope := SessionScope(ruling)
+	if scope == "" {
+		return ""
+	}
+	return "该设备上的" + scope
 }

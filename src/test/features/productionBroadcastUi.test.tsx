@@ -270,6 +270,8 @@ describe("terminal broadcast typed production confirmation", () => {
     await flush();
     sendInput("deploy --safe\n");
     await flushUntil(() => document.body.querySelector('[role="dialog"][aria-label="确认生产环境广播"]') !== null);
+    // The pane of a production host carries the marking class that draws the red ring.
+    expect(document.body.querySelector(".nx-pane-production")).not.toBeNull();
 
     const confirm = confirmBroadcastButton();
     expect(confirm.disabled).toBe(true);

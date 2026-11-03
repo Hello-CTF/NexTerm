@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { CommandBlock } from "./commandBlocks";
-import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconTrash } from "../../ui/icons";
+import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconPlay, IconSave, IconSparkles, IconTrash } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
 
@@ -10,7 +10,13 @@ export interface CommandBlockPanelProps {
   getText: (index: number) => string;
   onLocate: (index: number) => void;
   onClear: () => void;
+  // The three actions below are optional; a button is shown only when its handler is given.
+  onRerun?: (block: CommandBlock) => void;
+  onSaveAsSnippet?: (block: CommandBlock) => void;
+  onExplain?: (block: CommandBlock, text: string) => void;
   onToast: (kind: "info" | "success" | "error", text: string) => void;
+  // Fill a host container instead of acting as the fixed-width side panel.
+  embedded?: boolean;
 }
 
 const PREVIEW_LINES = 20;
@@ -33,8 +39,14 @@ export function CommandBlockPanel({
   getText,
   onLocate,
   onClear,
+  onRerun,
+  onSaveAsSnippet,
+  onExplain,
   onToast,
+  embedded = false,
 }: CommandBlockPanelProps) {
+  // Rerun types into the live prompt, which is unsafe while a command still owns the terminal.
+  const anyRunning = blocks.some((b) => b.endedAt === null);
   const [expanded, setExpanded] = useState<{ index: number; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -60,6 +72,15 @@ export function CommandBlockPanel({
     }
   };
 
+  const explain = (b: CommandBlock) => {
+    const text = getText(b.index);
+    if (!text) {
+      onToast("info", `块 #${b.index} 的输出已滚出缓冲，无法解释`);
+      return;
+    }
+    onExplain?.(b, text);
+  };
+
   const toggle = (index: number) => {
     if (expanded?.index === index) {
       setExpanded(null);
@@ -74,7 +95,7 @@ export function CommandBlockPanel({
   };
 
   return (
-    <div className="nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:absolute @max-[560px]:inset-x-0 @max-[560px]:bottom-0 @max-[560px]:z-10 @max-[560px]:h-[55%] @max-[560px]:w-auto @max-[560px]:border-t @max-[560px]:border-l-0 @max-[560px]:shadow-[0_-8px_24px_rgba(0,0,0,0.5)]">
+    <div data-layout={embedded ? "embedded" : "panel"} className={embedded ? "nx-command-blocks flex min-h-0 flex-1 flex-col bg-neutral-950" : "nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:absolute @max-[560px]:inset-x-0 @max-[560px]:bottom-0 @max-[560px]:z-10 @max-[560px]:h-[55%] @max-[560px]:w-auto @max-[560px]:border-t @max-[560px]:border-l-0 @max-[560px]:shadow-[0_-8px_24px_rgba(0,0,0,0.5)]"}>
       <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <IconList size={13} className="text-neutral-500" />
         <span className="text-[11.5px] font-semibold text-neutral-200">命令列表</span>
@@ -148,6 +169,37 @@ export function CommandBlockPanel({
                       </div>
                     </div>
                     <span className="mt-0.5 flex shrink-0 items-center gap-0.5">
+                      {onRerun && !running && b.command.trim() !== "" && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title={anyRunning ? "终端里还有命令在运行，结束后才能重新运行" : "重新运行"}
+                          aria-label="重新运行"
+                          disabled={anyRunning}
+                          onClick={() => onRerun(b)}
+                        >
+                          <IconPlay size={11} />
+                        </button>
+                      )}
+                      {onSaveAsSnippet && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title="保存为片段"
+                          aria-label="保存为片段"
+                          onClick={() => onSaveAsSnippet(b)}
+                        >
+                          <IconSave size={11} />
+                        </button>
+                      )}
+                      {onExplain && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title="让 AI 解释这段输出"
+                          aria-label="让 AI 解释这段输出"
+                          onClick={() => explain(b)}
+                        >
+                          <IconSparkles size={11} />
+                        </button>
+                      )}
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
                         title="定位到此命令"

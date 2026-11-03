@@ -16,6 +16,7 @@ func refSpecs(refs []RefArg) []aicontext.RefSpec {
 			Label:     ref.Label,
 			SessionID: ref.SessionID,
 			Path:      ref.Path,
+			Text:      ref.Text,
 		})
 	}
 	return specs

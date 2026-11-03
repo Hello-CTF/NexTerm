@@ -35,6 +35,8 @@ func newSnippetRow(db *gorm.DB, opts ...gen.DOOption) snippetRow {
 	_snippetRow.CreatedAt = field.NewInt64(tableName, "created_at")
 	_snippetRow.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_snippetRow.OwnerID = field.NewString(tableName, "owner_id")
+	_snippetRow.Description = field.NewString(tableName, "description")
+	_snippetRow.Steps = field.NewString(tableName, "steps")
 
 	_snippetRow.fillFieldMap()
 
@@ -44,15 +46,17 @@ func newSnippetRow(db *gorm.DB, opts ...gen.DOOption) snippetRow {
 type snippetRow struct {
 	snippetRowDo snippetRowDo
 
-	ALL       field.Asterisk
-	ID        field.String
-	GroupID   field.String
-	Name      field.String
-	Body      field.String
-	Sort      field.Int64
-	CreatedAt field.Int64
-	UpdatedAt field.Int64
-	OwnerID   field.String
+	ALL         field.Asterisk
+	ID          field.String
+	GroupID     field.String
+	Name        field.String
+	Body        field.String
+	Sort        field.Int64
+	CreatedAt   field.Int64
+	UpdatedAt   field.Int64
+	OwnerID     field.String
+	Description field.String
+	Steps       field.String
 
 	fieldMap map[string]field.Expr
 }
@@ -77,6 +81,8 @@ func (s *snippetRow) updateTableName(table string) *snippetRow {
 	s.CreatedAt = field.NewInt64(table, "created_at")
 	s.UpdatedAt = field.NewInt64(table, "updated_at")
 	s.OwnerID = field.NewString(table, "owner_id")
+	s.Description = field.NewString(table, "description")
+	s.Steps = field.NewString(table, "steps")
 
 	s.fillFieldMap()
 
@@ -103,7 +109,7 @@ func (s *snippetRow) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (s *snippetRow) fillFieldMap() {
-	s.fieldMap = make(map[string]field.Expr, 8)
+	s.fieldMap = make(map[string]field.Expr, 10)
 	s.fieldMap["id"] = s.ID
 	s.fieldMap["group_id"] = s.GroupID
 	s.fieldMap["name"] = s.Name
@@ -112,6 +118,8 @@ func (s *snippetRow) fillFieldMap() {
 	s.fieldMap["created_at"] = s.CreatedAt
 	s.fieldMap["updated_at"] = s.UpdatedAt
 	s.fieldMap["owner_id"] = s.OwnerID
+	s.fieldMap["description"] = s.Description
+	s.fieldMap["steps"] = s.Steps
 }
 
 func (s snippetRow) clone(db *gorm.DB) snippetRow {

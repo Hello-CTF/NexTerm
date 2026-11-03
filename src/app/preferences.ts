@@ -272,6 +272,10 @@ export type TerminalDefaultMode = "durable" | "regular";
 export type TerminalGpuAcceleration = "auto" | "on" | "off";
 // modifier opens terminal links with Ctrl+click (Cmd+click on macOS); click opens them with a plain click.
 export type TerminalLinkActivation = "modifier" | "click";
+// Where http/https terminal links open: the system browser, a NexTerm browser tab, or ask each time.
+export type TerminalLinkOpenMode = "system" | "app" | "ask";
+// on polls the host for listening ports while a terminal is open; it runs a command on the host, so it defaults to off.
+export type TerminalPortDiscovery = "off" | "on";
 // When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
 // bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
 // every multi-line paste; never does not ask.
@@ -287,6 +291,8 @@ export interface TerminalPrefs {
   defaultMode: TerminalDefaultMode;
   gpuAcceleration: TerminalGpuAcceleration;
   linkActivation: TerminalLinkActivation;
+  linkOpenMode: TerminalLinkOpenMode;
+  portDiscovery: TerminalPortDiscovery;
   confirmMultilinePaste: TerminalMultilinePasteConfirm;
   scrollback: TerminalScrollback;
   // MiB of output the host keeps per new durable terminal; null keeps the helper default.
@@ -298,6 +304,8 @@ const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
 const TERMINAL_DEFAULT_MODE_KEY = "terminal.defaultMode";
 const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
+const TERMINAL_LINK_OPEN_MODE_KEY = "terminal.linkOpenMode";
+const TERMINAL_PORT_DISCOVERY_KEY = "terminal.portDiscovery";
 const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
 const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
 // The helper's own history limit per durable terminal when the account sets none.
@@ -307,6 +315,8 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   defaultMode: "durable",
   gpuAcceleration: "auto",
   linkActivation: "modifier",
+  linkOpenMode: "system",
+  portDiscovery: "off",
   confirmMultilinePaste: "unbracketed",
   scrollback: 10_000,
   durableHistoryMiB: null,
@@ -345,6 +355,8 @@ function loadTerminal(): TerminalPrefs {
     : local.defaultMode;
   const gpu = preferenceValue<unknown>(TERMINAL_GPU_ACCELERATION_KEY, local.gpuAcceleration, TERMINAL_DEFAULTS.gpuAcceleration);
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
+  const openMode = preferenceValue<unknown>(TERMINAL_LINK_OPEN_MODE_KEY, local.linkOpenMode, TERMINAL_DEFAULTS.linkOpenMode);
+  const portDiscovery = preferenceValue<unknown>(TERMINAL_PORT_DISCOVERY_KEY, local.portDiscovery, TERMINAL_DEFAULTS.portDiscovery);
   // A signed-in account reads only its own layers (override, then server default) once they have loaded: a device
   // value saved by another account in this browser must not decide whether this account is asked before pasting.
   // Until then, including on desktop where the store is registered before it is known whether a sync account exists
@@ -361,6 +373,8 @@ function loadTerminal(): TerminalPrefs {
     defaultMode: defaultMode === "regular" ? "regular" : TERMINAL_DEFAULTS.defaultMode,
     gpuAcceleration: gpu === "on" || gpu === "off" ? gpu : TERMINAL_DEFAULTS.gpuAcceleration,
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
+    linkOpenMode: openMode === "app" || openMode === "ask" ? openMode : TERMINAL_DEFAULTS.linkOpenMode,
+    portDiscovery: portDiscovery === "on" ? "on" : TERMINAL_DEFAULTS.portDiscovery,
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
     scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
@@ -445,6 +459,38 @@ export function setTerminalLinkActivation(value: TerminalLinkActivation): void {
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_LINK_ACTIVATION_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_LINK_ACTIVATION_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalLinkOpenMode(value: TerminalLinkOpenMode): void {
+  if (terminalPrefs.linkOpenMode === value) return;
+  terminalPrefs = { ...terminalPrefs, linkOpenMode: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, linkOpenMode: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_LINK_OPEN_MODE_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_LINK_OPEN_MODE_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalPortDiscovery(value: TerminalPortDiscovery): void {
+  if (terminalPrefs.portDiscovery === value) return;
+  terminalPrefs = { ...terminalPrefs, portDiscovery: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, portDiscovery: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_PORT_DISCOVERY_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_PORT_DISCOVERY_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }
@@ -817,3 +863,79 @@ subscribeTheme(() => {
   applyAppearance();
   notifyAppearance();
 });
+
+// Session sidebar open state is a per-device preference: it is never written to the account store.
+export const SESSION_SIDEBAR_STORAGE_KEY = "nexterm.sessionSidebar.v1";
+const sessionSidebarListeners = new Set<() => void>();
+// Holds the value of a write that localStorage rejected, so the toggle still works for the current page.
+let sessionSidebarMemory = false;
+let sessionSidebarMemoryValid = false;
+
+export function getSessionSidebarOpen(): boolean {
+  if (sessionSidebarMemoryValid) return sessionSidebarMemory;
+  try {
+    return localStorage.getItem(SESSION_SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setSessionSidebarOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SESSION_SIDEBAR_STORAGE_KEY, open ? "1" : "0");
+    sessionSidebarMemoryValid = false;
+  } catch {
+    sessionSidebarMemory = open;
+    sessionSidebarMemoryValid = true;
+  }
+  for (const listener of sessionSidebarListeners) listener();
+}
+
+export function subscribeSessionSidebar(listener: () => void): () => void {
+  sessionSidebarListeners.add(listener);
+  return () => {
+    sessionSidebarListeners.delete(listener);
+  };
+}
+
+export function useSessionSidebarOpen(): boolean {
+  return useSyncExternalStore(subscribeSessionSidebar, getSessionSidebarOpen, () => false);
+}
+
+// Whether Ctrl+V pastes in the terminal on Windows (Windows Terminal convention). Per-device: it depends on the
+// platform, so it is never written to the account store.
+export const CTRL_V_PASTE_STORAGE_KEY = "nexterm.terminal.ctrlVPaste.v1";
+const ctrlVPasteListeners = new Set<() => void>();
+let ctrlVPasteMemory = true;
+let ctrlVPasteMemoryValid = false;
+
+export function getCtrlVPaste(): boolean {
+  if (ctrlVPasteMemoryValid) return ctrlVPasteMemory;
+  try {
+    return localStorage.getItem(CTRL_V_PASTE_STORAGE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function setCtrlVPaste(enabled: boolean): void {
+  try {
+    localStorage.setItem(CTRL_V_PASTE_STORAGE_KEY, enabled ? "1" : "0");
+    ctrlVPasteMemoryValid = false;
+  } catch {
+    ctrlVPasteMemory = enabled;
+    ctrlVPasteMemoryValid = true;
+  }
+  for (const listener of ctrlVPasteListeners) listener();
+}
+
+export function subscribeCtrlVPaste(listener: () => void): () => void {
+  ctrlVPasteListeners.add(listener);
+  return () => {
+    ctrlVPasteListeners.delete(listener);
+  };
+}
+
+export function useCtrlVPaste(): boolean {
+  return useSyncExternalStore(subscribeCtrlVPaste, getCtrlVPaste, () => true);
+}

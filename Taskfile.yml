@@ -130,7 +130,8 @@ tasks:
     cmds:
       - pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
       # pnpm 9 records no integrity for URL tarballs; the hash is added by hand and must survive re-resolution.
-      - "! grep -n 'resolution: {tarball:' pnpm-lock.yaml"
+      # Avoid "!" and "if": the shell embedded in "wails3 task" (used by CI) mis-evaluates both.
+      - "test -z \"$(grep -n 'resolution: {tarball:' pnpm-lock.yaml || true)\""
 
   check:go:
     summary: Run Go formatting, module, static, vet and test checks from fastest to slowest
@@ -159,13 +160,14 @@ tasks:
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
-      - node --test .github/scripts/go-shards.test.mjs scripts/check-semver.test.mjs
+      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs scripts/check-semver.test.mjs scripts/lib/release-signing.test.mjs
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
+      - task: check:lockfile
       - task: fmt:check
       - go mod verify
       - go run ./scripts/verify-manifest-injects
@@ -180,7 +182,6 @@ tasks:
     env:
       GOFLAGS: '{{.GOFLAGS}}'
     cmds:
-      - task: check:lockfile
       - task: check:ci-quality
       - task: test
       - task: check:frontend

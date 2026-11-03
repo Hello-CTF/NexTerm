@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
 import {
+  useUi,
   sessionStatusText,
   isSessionSuspect,
   useSessionLiveness,
@@ -9,6 +10,7 @@ import {
 } from "../store";
 import { type SessionInfo } from "../../ipc/commands";
 import { wailsDragRegionStyle, wailsNoDragRegionStyle } from "../platform";
+import { useAssetProductionClassification } from "../../features/production/productionSettings";
 import { InboxButton } from "../../features/inbox/InboxButton";
 import {
   IconCheckCircle,
@@ -48,6 +50,19 @@ function WorkspaceStatusGlyph({ status, liveness }: { status: SessionInfo["statu
       ) : (
         <IconLoader size={11} className="animate-spin" />
       )}
+    </span>
+  );
+}
+
+function HeaderProductionMarker({ tab }: { tab: AppTab | null }) {
+  const sessionId = tab?.kind === "terminal" ? tab.sessionId : undefined;
+  const assetId = useUi((s) => (sessionId ? s.sessions.find((x) => x.id === sessionId)?.assetId : undefined));
+  const classification = useAssetProductionClassification(assetId);
+  if (!classification?.production) return null;
+  const label = `生产环境：${classification.environment}`;
+  return (
+    <span className="nx-badge nx-badge-red shrink-0" title={label} aria-label={label} role="img">
+      生产环境
     </span>
   );
 }
@@ -117,6 +132,7 @@ export function AppHeader({
             >
               {activeTab?.title ?? "工作区"}
             </span>
+            <HeaderProductionMarker tab={activeTab} />
           </span>
         </>
       ) : (

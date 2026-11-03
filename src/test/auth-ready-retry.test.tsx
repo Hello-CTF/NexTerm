@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => {
     collectAssets: vi.fn(),
     collectTombstones: vi.fn(),
     collectCredentials: vi.fn(),
+    collectKindObjects: vi.fn(),
     kindOptInGet: vi.fn(),
     applyObjects: vi.fn(),
     syncIds: vi.fn(),
@@ -63,6 +64,7 @@ vi.mock("../ipc/commands", () => ({
     collectAssets: mocks.collectAssets,
     collectTombstones: mocks.collectTombstones,
     collectCredentials: mocks.collectCredentials,
+    collectKindObjects: mocks.collectKindObjects,
     kindOptInGet: mocks.kindOptInGet,
     applyObjects: mocks.applyObjects,
   },
@@ -252,6 +254,7 @@ beforeEach(() => {
   mocks.transcriptRead.mockResolvedValue({ chunks: [], nextSeq: 0, done: true, totalBytes: 0 });
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
+  mocks.collectKindObjects.mockResolvedValue({ objects: [], warnings: [] });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
   mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
   mocks.applyObjects.mockResolvedValue({ applied: 0, identical: 0, skipped: 0, objects: [] });

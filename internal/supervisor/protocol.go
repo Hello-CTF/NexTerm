@@ -135,6 +135,8 @@ type helloMsg struct {
 	// StartEnv is the SHELL and PATH digest the helper inherited when it started. It is additive: an
 	// older helper omits it and a client ignores an absent or unknown field.
 	StartEnv *StartEnv `json:"start_env,omitempty"`
+	// SpawnedBy records who started the helper; additive like StartEnv.
+	SpawnedBy string `json:"spawned_by,omitempty"`
 	// ReplaceLegacy is sent by a client only: the consent token of a
 	// legacy_helper_running rejection the user approved. A bridge that stands
 	// in for that older helper replaces it; a current helper ignores it.

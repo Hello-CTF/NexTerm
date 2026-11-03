@@ -161,7 +161,7 @@ func TestAutomaticAuthorizationRevokeDuringAuditBarrier(t *testing.T) {
 
 	t.Run("terminal rule", func(t *testing.T) {
 		grants, entered, release := newBlockingGrants(t, "use_rule")
-		rule, err := grants.AddRule(context.Background(), "asset-a", "send_keys", "", time.Time{})
+		rule, err := grants.AddRule(context.Background(), "asset-a", "send_keys", "", guard.RuleScope{Kinds: []guard.Kind{guard.KindProcess, guard.KindWriteFS}}, time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -738,7 +738,7 @@ func TestLegacyGrantRecordsAreNotMigratedDatabase(t *testing.T) {
 				}
 				key = guard.DeviceGrantsSettingKeyForUser(ctx)
 			case "rule":
-				if _, err := manager.AddRule(ctx, "asset-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+				if _, err := manager.AddRule(ctx, "asset-a", "write_file", "/var/log/**", guard.RuleScope{}, time.Time{}); err != nil {
 					t.Fatal(err)
 				}
 				key = guard.GrantRulesSettingKeyForUser(ctx)
@@ -852,7 +852,7 @@ func TestAuthorizationRevalidationReloadRevokeBeforeAdmission(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				rule, err := grants.AddRule(ctx, "asset-a", "send_keys", "", time.Time{})
+				rule, err := grants.AddRule(ctx, "asset-a", "send_keys", "", guard.RuleScope{Kinds: []guard.Kind{guard.KindProcess, guard.KindWriteFS}}, time.Time{})
 				if err != nil {
 					t.Fatal(err)
 				}

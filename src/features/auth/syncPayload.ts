@@ -50,6 +50,7 @@ export function collectAssetPayload(a: SyncCollectAsset): unknown {
 }
 
 // snippetPayload mirrors snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt.
+// Multi-step snippets carry their steps in the snippet_steps companion kind, which the server collects.
 export function snippetPayload(s: SnippetDto): unknown {
   const o: Record<string, unknown> = { id: s.id };
   if (s.groupId !== null) o.groupId = s.groupId;
@@ -80,7 +81,7 @@ export function knownHostPayload(k: SyncCollectKnownHost): unknown {
 
 // aiProfilePayload mirrors aiProfileObject: field order matches the Go struct; empty fallbackModel and maxTokens/
 // timeout pointers are omitted via omitempty, proxy/apiKey have no omitempty (default output null/empty string). apiKey is always plaintext
-// (the whole thing is end-to-end encrypted with the DEK), and the payload is only built when collect yields plaintext in revealed state.
+// (the whole thing is encrypted with the DEK), and the payload is only built when collect yields plaintext in revealed state.
 export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   const o: Record<string, unknown> = { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKey ?? "", model: p.model };
   if (p.fallbackModel) o.fallbackModel = p.fallbackModel;
@@ -103,6 +104,7 @@ export function aiPermissionPayload(p: SyncCollectAIPermission): unknown {
 }
 
 // aiGrant*Payload mirror aiGrantDeviceObject/aiGrantRuleObject/aiGrantModeObject: field order matches the Go structs;
+// rule ids arrive prefixed by the backend (scoped-rule/ for rules with kinds, programs or unattended, rule/ otherwise) and are used as-is;
 // rule path/expiresAt are omitted via omitempty when empty/zero, kinds has no omitempty (always an array).
 export function aiGrantDevicePayload(g: SyncCollectAIGrantDevice): unknown {
   return { id: g.id, deviceId: g.deviceId, kinds: g.kinds, updatedAt: g.updatedAt };
@@ -111,6 +113,9 @@ export function aiGrantDevicePayload(g: SyncCollectAIGrantDevice): unknown {
 export function aiGrantRulePayload(r: SyncCollectAIGrantRule): unknown {
   const o: Record<string, unknown> = { id: r.id, deviceId: r.deviceId, action: r.action };
   if (r.path) o.path = r.path;
+  if (r.kinds && r.kinds.length > 0) o.kinds = r.kinds;
+  if (r.programs && r.programs.length > 0) o.programs = r.programs;
+  if (r.unattended) o.unattended = true;
   if (r.expiresAt) o.expiresAt = r.expiresAt;
   o.createdAt = r.createdAt;
   o.updatedAt = r.updatedAt;

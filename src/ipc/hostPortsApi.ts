@@ -1,0 +1,50 @@
+import { call } from "./commands";
+
+export interface HostListener {
+  proto: "tcp" | "tcp6";
+  address: string;
+  port: number;
+  pid?: number;
+  process?: string;
+}
+
+export interface HostPortsResult {
+  listeners: HostListener[];
+  format: string;
+  platform: "posix" | "windows";
+  truncated?: boolean;
+  // Set when the terminal printed recently and the backend did not run the command.
+  skipped?: boolean;
+}
+
+export interface ConnectivityRequest {
+  sessionId: string;
+  method: "tcp" | "http";
+  host?: string;
+  port?: number;
+  url?: string;
+  dryRun?: boolean;
+}
+
+export interface ConnectivityResult {
+  command: string;
+  // PowerShell source behind an -EncodedCommand wrapper; absent when the command is sent as written.
+  script?: string;
+  ran: boolean;
+  ok: boolean;
+  exitCode?: number;
+  output: string;
+  durationMs: number;
+}
+
+export const hostPortsApi = {
+  list: (args: { sessionId: string; processes?: boolean; quietMs?: number }) =>
+    call("host_ports_list", { ...args, processes: args.processes ?? false }) as Promise<HostPortsResult>,
+  connectivityTest: (args: ConnectivityRequest) =>
+    call("host_connectivity_test", {
+      ...args,
+      host: args.host ?? "",
+      port: args.port ?? 0,
+      url: args.url ?? "",
+    }) as Promise<ConnectivityResult>,
+};

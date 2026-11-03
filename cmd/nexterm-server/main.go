@@ -312,7 +312,7 @@ func run(args []string) int {
 				for _, device := range devices {
 					result = append(result, production.AggregateDevice{
 						ID: device.ID, Name: device.Name, Kind: device.Kind, Platform: device.Platform,
-						Online: device.Digest != "", Digest: device.Digest, TerminalEnabled: device.TerminalEnabled,
+						Online: device.Digest != "", Digest: device.Digest, HelperInstanceID: device.HelperInstanceID, TerminalEnabled: device.TerminalEnabled,
 					})
 				}
 				return result, nil
@@ -359,6 +359,7 @@ func run(args []string) int {
 			Auth:              invocation.Auth,
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
+			TrustForwardedFor: os.Getenv("NEXTERM_TRUST_FORWARDED_FOR") == "1",
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,
@@ -401,14 +402,30 @@ func run(args []string) int {
 			defer shutdownCancel()
 			_ = rollupRunner.Shutdown(shutdownCtx)
 		}()
+		alertEvaluator, err := fleetserver.NewAlertEvaluator(fleetService, logger.Logger)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+			return 1
+		}
+		if err := alertEvaluator.Start(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+			return 1
+		}
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			_ = alertEvaluator.Shutdown(shutdownCtx)
+		}()
 	}
 	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
-			logger.Error("vault is required but unavailable", "error", err)
+			logger.Error("vault is required but unavailable", "error", err, "hint", vaultMasterKeyHint)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", vaultMasterKeyHint)
 			return 1
 		}
 	} else if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
-		logger.Error("vault bootstrap failed", "error", err)
+		logger.Error("vault bootstrap failed", "error", err, "hint", vaultMasterKeyHint)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", vaultMasterKeyHint)
 	}
 	if err := application.Serve(ctx, core.ServeConfig{
 		Listen:         invocation.Listen,
@@ -766,3 +783,6 @@ func remoteDesktopServer(service *remotedesktop.Service) server.RemoteDesktopSer
 	}
 	return service
 }
+
+// vaultMasterKeyHint tells the operator how to recover when the vault was initialized with another master key.
+const vaultMasterKeyHint = "the vault could not be unlocked; if it was initialized with a different master key, pass the original key file with --master-key-file (the key itself is never printed)"

@@ -392,6 +392,23 @@ func TestAttachLogsDistinguishesOmittedAndZeroTail(t *testing.T) {
 	}
 }
 
+func TestAttachLogsPassesTimestamps(t *testing.T) {
+	got := make(chan bool, 2)
+	backend := &stubBackend{openLogs: func(_ context.Context, options LogsOptions) (LogStream, error) {
+		got <- options.Timestamps
+		return LogStream{Reader: io.NopCloser(bytes.NewReader(nil)), TTY: true}, nil
+	}}
+	service := NewService(&stubProvider{sdk: backend})
+	for _, ts := range []bool{false, true} {
+		if _, err := service.AttachLogs(t.Context(), LogsAttachRequest{SessionID: "s1", Container: "c1", Timestamps: ts, Sink: newCollectSink()}); err != nil {
+			t.Fatal(err)
+		}
+		if v := <-got; v != ts {
+			t.Fatalf("timestamps = %v, want %v", v, ts)
+		}
+	}
+}
+
 func TestCloseSessionStopsOnlyItsDockerLogs(t *testing.T) {
 	firstReader, firstWriter := io.Pipe()
 	secondReader, secondWriter := io.Pipe()

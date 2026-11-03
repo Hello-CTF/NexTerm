@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ const (
 	aiGrantDevicePrefix = "device/"
 	aiGrantRulePrefix   = "rule/"
 	aiGrantModePrefix   = "mode/"
+	// aiGrantScopedRulePrefix is deliberately not prefixed by "rule/" (see guard.AIGrantSyncScopedRulePrefix).
+	aiGrantScopedRulePrefix = guard.AIGrantSyncScopedRulePrefix
 )
 
 func (e *Engine) collectAIPermission(ctx context.Context, objects map[string]localObject) error {
@@ -163,11 +166,8 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 			return ipc.WrapError(ipc.CodeBadParam, "AI 授权规则数据损坏", err)
 		}
 		for _, rule := range rules.Current {
-			id := aiGrantRulePrefix + rule.ID
-			payload, err := marshalObject(aiGrantRuleObject{
-				ID: id, DeviceID: rule.DeviceID, Action: rule.Action, Path: rule.Path,
-				ExpiresAt: rule.ExpiresAt, CreatedAt: rule.CreatedAt, UpdatedAt: rule.UpdatedAt,
-			})
+			id := guard.RuleSyncObjectID(rule)
+			payload, err := marshalObject(aiGrantRuleObjectFor(id, rule))
 			if err != nil {
 				return err
 			}
@@ -310,7 +310,7 @@ func (e *Engine) applyAIGrantObject(ctx context.Context, objectID string, plaint
 	switch {
 	case strings.HasPrefix(objectID, aiGrantDevicePrefix):
 		return e.applyAIGrantDevice(ctx, plaintext, report)
-	case strings.HasPrefix(objectID, aiGrantRulePrefix):
+	case strings.HasPrefix(objectID, aiGrantRulePrefix), strings.HasPrefix(objectID, aiGrantScopedRulePrefix):
 		return e.applyAIGrantRule(ctx, plaintext, report)
 	case strings.HasPrefix(objectID, aiGrantModePrefix):
 		return e.applyAIGrantMode(ctx, plaintext, report)
@@ -390,6 +390,21 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 	return true, false
 }
 
+func aiGrantRuleObjectFor(id string, rule guard.GrantRule) aiGrantRuleObject {
+	object := aiGrantRuleObject{
+		ID: id, DeviceID: rule.DeviceID, Action: rule.Action, Path: rule.Path,
+		Programs: append([]string(nil), rule.Programs...), Unattended: rule.Unattended,
+		ExpiresAt: rule.ExpiresAt, CreatedAt: rule.CreatedAt, UpdatedAt: rule.UpdatedAt,
+	}
+	for _, kind := range rule.Kinds {
+		object.Kinds = append(object.Kinds, string(kind))
+	}
+	if len(object.Programs) == 0 {
+		object.Programs = nil
+	}
+	return object
+}
+
 func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		report.warnf("AI 授权规则应用需要账号身份: %v", err)
@@ -400,12 +415,12 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		report.warnf("AI 授权规则数据已损坏：%v", err)
 		return false, false
 	}
-	ruleID := strings.TrimPrefix(payload.ID, aiGrantRulePrefix)
+	ruleID := ruleIDFromObjectID(payload.ID)
 	// DeviceID and Path are normalized exactly like guard.AddRule trims them locally; the object ID must match
 	// the normalized form, keeping LWW and tombstone identity (recorded by the guard trimmed) consistent.
 	payload.DeviceID = strings.TrimSpace(payload.DeviceID)
 	payload.Path = strings.TrimSpace(payload.Path)
-	if ruleID == "" || ruleID == payload.ID || payload.DeviceID == "" {
+	if ruleID == "" || payload.DeviceID == "" {
 		report.warnf("AI 授权规则对象 ID %s 不受支持", payload.ID)
 		return false, false
 	}
@@ -413,13 +428,28 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		report.warnf("AI 授权规则 %s 动作不受支持: %s", payload.ID, payload.Action)
 		return false, false
 	}
-	if guard.RuleActionNeedsPath(payload.Action) && payload.Path == "" {
-		report.warnf("AI 授权规则 %s 缺少路径范围", payload.ID)
-		return false, false
+	scope := guard.RuleScope{Kinds: make([]guard.Kind, 0, len(payload.Kinds)), Programs: append([]string(nil), payload.Programs...), Unattended: payload.Unattended}
+	for _, kind := range payload.Kinds {
+		scope.Kinds = append(scope.Kinds, guard.Kind(kind))
 	}
-	if !guard.RuleActionNeedsPath(payload.Action) && payload.Path != "" {
-		report.warnf("AI 授权规则 %s 的路径范围不受支持", payload.ID)
-		return false, false
+	slices.Sort(scope.Kinds)
+	scope.Kinds = slices.Compact(scope.Kinds)
+	slices.Sort(scope.Programs)
+	scope.Programs = slices.Compact(scope.Programs)
+	// An old whole-device command rule is still accepted: it is stored as a
+	// legacy rule that never authorizes anything.
+	legacyCommand := !guard.RuleActionNeedsPath(payload.Action) && len(scope.Kinds) == 0 && len(scope.Programs) == 0 && payload.Path == ""
+	if !legacyCommand {
+		if err := guard.ValidateRuleScope(payload.Action, payload.Path, scope); err != nil {
+			report.warnf("AI 授权规则 %s 不受支持: %v", payload.ID, err)
+			return false, false
+		}
+	}
+	if len(scope.Kinds) == 0 {
+		scope.Kinds = nil
+	}
+	if len(scope.Programs) == 0 {
+		scope.Programs = nil
 	}
 	if err := e.validateAIGrantTarget(ctx, payload.DeviceID); err != nil {
 		report.warnf("AI 授权目标校验失败: %v", err)
@@ -443,8 +473,15 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	}
 	applied := guard.GrantRule{
 		ID: ruleID, DeviceID: payload.DeviceID, Action: payload.Action, Path: payload.Path,
+		Kinds: scope.Kinds, Programs: scope.Programs, Unattended: payload.Unattended,
 		ExpiresAt: payload.ExpiresAt, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 	}.Renewed()
+	// The prefix follows the immutable scope fields: a scoped-rule/ object must carry a scope and match its own ID,
+	// and a rule/ object with a scope can only come from an unreleased build.
+	if guard.RuleSyncObjectID(applied) != payload.ID {
+		report.warnf("AI 授权规则对象 ID %s 与其范围字段不一致，已跳过", payload.ID)
+		return false, false
+	}
 	index := -1
 	for i, rule := range rules.Current {
 		if rule.ID == ruleID {
@@ -454,10 +491,12 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	}
 	if index >= 0 {
 		local := rules.Current[index]
-		localPlaintext, err := marshalObject(aiGrantRuleObject{
-			ID: payload.ID, DeviceID: local.DeviceID, Action: local.Action, Path: local.Path,
-			ExpiresAt: local.ExpiresAt, CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
-		})
+		if guard.RuleSyncObjectID(local) != payload.ID {
+			// An older client pushing a scope-stripped copy back, or a rule whose identity differs: never overwrite.
+			report.warnf("AI 授权规则 %s 与本地同 ID 规则的范围不一致，已跳过", payload.ID)
+			return false, false
+		}
+		localPlaintext, err := marshalObject(aiGrantRuleObjectFor(payload.ID, local))
 		if err != nil {
 			return false, false
 		}
@@ -569,7 +608,7 @@ func (e *Engine) applyAIGrantTombstone(ctx context.Context, objectID string, del
 	switch {
 	case strings.HasPrefix(objectID, aiGrantDevicePrefix):
 		return e.applyAIGrantDeviceTombstone(ctx, objectID, deletedAt, report)
-	case strings.HasPrefix(objectID, aiGrantRulePrefix):
+	case strings.HasPrefix(objectID, aiGrantRulePrefix), strings.HasPrefix(objectID, aiGrantScopedRulePrefix):
 		return e.applyAIGrantRuleTombstone(ctx, objectID, deletedAt, report)
 	case strings.HasPrefix(objectID, aiGrantModePrefix):
 		return e.applyAIGrantModeTombstone(ctx, objectID, deletedAt, report)
@@ -632,7 +671,7 @@ func (e *Engine) applyAIGrantRuleTombstone(ctx context.Context, objectID string,
 		report.warnf("AI 授权规则数据损坏: %v", err)
 		return false, false
 	}
-	ruleID := strings.TrimPrefix(objectID, aiGrantRulePrefix)
+	ruleID := ruleIDFromObjectID(objectID)
 	var local guard.GrantRule
 	index := -1
 	for i, rule := range rules.Current {
@@ -642,6 +681,10 @@ func (e *Engine) applyAIGrantRuleTombstone(ctx context.Context, objectID string,
 		}
 	}
 	exists := index >= 0
+	if exists && guard.RuleSyncObjectID(local) != objectID {
+		// rule/<id> never deletes a scoped rule and scoped-rule/<id> never deletes a plain one.
+		return false, false
+	}
 	if exists && local.UpdatedAt > deletedAt {
 		return false, false
 	}
@@ -950,13 +993,16 @@ type CollectAIGrantDevice struct {
 }
 
 type CollectAIGrantRule struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID         string   `json:"id"`
+	DeviceID   string   `json:"deviceId"`
+	Action     string   `json:"action"`
+	Path       string   `json:"path,omitempty"`
+	Kinds      []string `json:"kinds,omitempty"`
+	Programs   []string `json:"programs,omitempty"`
+	Unattended bool     `json:"unattended,omitempty"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	UpdatedAt  int64    `json:"updatedAt"`
 }
 
 type CollectAIGrantMode struct {
@@ -1010,13 +1056,14 @@ func (s *Service) CollectAIGrants(ctx context.Context) (CollectAIGrants, error) 
 				return CollectAIGrants{}, err
 			}
 			result.Grants = append(result.Grants, CollectAIGrantDevice{ID: payload.ID, DeviceID: payload.DeviceID, Kinds: payload.Kinds, UpdatedAt: payload.UpdatedAt})
-		case strings.HasPrefix(id, aiGrantRulePrefix):
+		case strings.HasPrefix(id, aiGrantRulePrefix), strings.HasPrefix(id, aiGrantScopedRulePrefix):
 			var payload aiGrantRuleObject
 			if err := json.Unmarshal(object.plaintext, &payload); err != nil {
 				return CollectAIGrants{}, err
 			}
 			result.Rules = append(result.Rules, CollectAIGrantRule{
 				ID: payload.ID, DeviceID: payload.DeviceID, Action: payload.Action, Path: payload.Path,
+				Kinds: payload.Kinds, Programs: payload.Programs, Unattended: payload.Unattended,
 				ExpiresAt: payload.ExpiresAt, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 			})
 		case strings.HasPrefix(id, aiGrantModePrefix):
@@ -1052,4 +1099,12 @@ func (s *Service) CollectPreferences(ctx context.Context) ([]CollectPreference, 
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// ruleIDFromObjectID strips whichever rule family prefix the object ID carries.
+func ruleIDFromObjectID(objectID string) string {
+	if strings.HasPrefix(objectID, aiGrantScopedRulePrefix) {
+		return strings.TrimPrefix(objectID, aiGrantScopedRulePrefix)
+	}
+	return strings.TrimPrefix(objectID, aiGrantRulePrefix)
 }

@@ -19,6 +19,8 @@ import { copyAssetDeepLink } from "../../app/deepLink";
 import { isMobileShell, useCoarsePointer } from "../../app/shell";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { ContextMenu, type MenuItem } from "../../ui/ContextMenu";
+import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
+import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
 import { Select } from "../../ui/Select";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
@@ -27,7 +29,7 @@ import { resolveInlineKeyContent, useInlineKeyPicker } from "../credentials/keyS
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { cloneAsset } from "./assetClone";
 import { useAssetVisibility } from "./assetVisibility";
-import { useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
+import { restrictTemplateForServer, useConnectTemplates, type ConnectTemplate } from "./connectTemplates";
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
@@ -2133,11 +2135,14 @@ export function AssetEditor({
   initial,
   initialGroup,
   presetGroupId,
+  draft,
   onClose,
   onSaved,
 }: {
   kind: "asset" | "group";
   initial?: Asset;
+  // Initial values for a new asset; ignored when editing an existing one.
+  draft?: Partial<Pick<Asset, "kind" | "name" | "host" | "port" | "username">>;
   // Editing an existing group: name, parent and connection defaults.
   initialGroup?: AssetGroup;
   presetGroupId?: string | null;
@@ -2145,19 +2150,19 @@ export function AssetEditor({
   onSaved: (asset?: Asset) => void;
 }) {
   const managed = assetInventoryMetadata(initial);
-  const [name, setName] = useState(initial?.name ?? initialGroup?.name ?? "");
+  const [name, setName] = useState(initial?.name ?? initialGroup?.name ?? draft?.name ?? "");
   const [groupDefaults, setGroupDefaults] = useState(() => groupDefaultsFrom(initialGroup));
-  const [groupKind, setGroupKind] = useState<AssetFormKind>((initial?.kind as AssetFormKind) ?? "ssh");
+  const [groupKind, setGroupKind] = useState<AssetFormKind>(((initial?.kind ?? draft?.kind) as AssetFormKind) ?? "ssh");
   const kindFields = assetKindFields(groupKind);
   const inventoryOnly = isInventoryOnlyKind(groupKind);
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? initialGroup?.parentId ?? presetGroupId ?? null);
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
-  const [host, setHost] = useState(initial?.host ?? "");
-  const [port, setPort] = useState(initial?.port ?? assetKindFields(initial?.kind ?? "ssh").defaultPort);
+  const [host, setHost] = useState(initial?.host ?? draft?.host ?? "");
+  const [port, setPort] = useState(initial?.port ?? draft?.port ?? assetKindFields(initial?.kind ?? draft?.kind ?? "ssh").defaultPort);
   // A new asset starts with no username: the field shows what it would inherit or the protocol default, and a
   // value is stored only when the user types one (or nothing is inherited, see save).
-  const [username, setUsername] = useState(initial?.username ?? "");
+  const [username, setUsername] = useState(initial?.username ?? draft?.username ?? "");
   // An empty authentication method means "inherit the group's"; a new asset starts with its own password choice.
   const [authKind, setAuthKind] = useState(initial ? (initial.authKind === "none" ? "password" : initial.authKind ?? "") : "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
@@ -2222,7 +2227,12 @@ export function AssetEditor({
   );
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   // A saved terminal mode override lives in the advanced section, so open it to keep the override visible.
-  const [advancedOpen, setAdvancedOpen] = useState(terminalMode !== "auto");
+  // A multi-user server rejects some SSH settings; they stay visible (disabled) so old values can be seen and cleared.
+  const { restricted: serverLimited, text: serverText } = useServerAccountRestrictions();
+  const [advancedOpen, setAdvancedOpen] = useState(
+    terminalMode !== "auto" ||
+      (serverLimited && (!!proxyCommand || forwardAgent || !!agentSocket || !!certPath)),
+  );
   const pushToast = useUi((s) => s.pushToast);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
@@ -2751,7 +2761,13 @@ export function AssetEditor({
   const templates = useConnectTemplates((s) => s.templates);
   const [templateId, setTemplateId] = useState("");
 
-  const applyTemplate = (t: ConnectTemplate) => {
+  const applyTemplate = (original: ConnectTemplate) => {
+    let t = original;
+    if (serverLimited) {
+      const restricted = restrictTemplateForServer(original);
+      t = restricted.template;
+      if (restricted.dropped.length > 0) pushToast("info", `多用户服务端不支持：${restricted.dropped.join("、")}，已忽略`);
+    }
     setGroupKind(t.kind);
     setHostError(null);
     setPortError(null);
@@ -2868,7 +2884,13 @@ export function AssetEditor({
                 disabled={initial?.builtin || managed !== null}
                 options={Object.entries(KIND_LABEL)
                   .filter(([k]) => (k !== "local" || !isMobileShell() || initial?.builtin === true) && (!isInventoryOnlyKind(k) || initial?.kind === k))
-                  .map(([k, label]) => ({ value: k, label }))}
+                  .map(([k, label]) => ({
+                    value: k,
+                    label,
+                    ...(k === "local" && serverLimited && initial?.kind !== "local"
+                      ? { disabled: true, description: "多用户服务端不可用" }
+                      : {}),
+                  }))}
                 onChange={(value) => {
                   const v = value as typeof groupKind;
                   setGroupKind(v);
@@ -2880,6 +2902,7 @@ export function AssetEditor({
                   if (v === "rdp" && username === "root") setUsername("");
                 }}
               />
+              {serverLimited && initial?.kind !== "local" && <ServerRestrictionNote text={serverText.local} />}
               {initial?.builtin && (
                 <div className="nx-hint mt-1">
                   ↳ 内置的「当前设备」，始终指向本机，类型不可更改，名称可以修改
@@ -3149,9 +3172,10 @@ export function AssetEditor({
                       { value: "password", label: "密码" },
                       { value: "keyboard-interactive", label: "键盘交互（密码）" },
                       { value: "key", label: "私钥文件" },
-                      { value: "agent", label: "SSH Agent" },
+                      { value: "agent", label: serverLimited ? "SSH Agent（多用户服务端不可用）" : "SSH Agent", disabled: serverLimited },
                     ]}
                   />
+                  {serverLimited && authKind === "agent" && <ServerRestrictionNote text={serverText.agentAuth} />}
                   {(groupKind === "ssh" || groupKind === "docker") && (
                     <InheritanceHint view={inheritance} field="auth" empty={authKind === ""} />
                   )}
@@ -3213,6 +3237,8 @@ export function AssetEditor({
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "ref" ? "is-active" : ""}`}
+                      disabled={serverLimited}
+                      title={serverLimited ? serverText.keyPath : undefined}
                       onClick={() => changeKeyOrigin("ref")}
                     >
                       引用文件路径
@@ -3225,10 +3251,11 @@ export function AssetEditor({
                         <input
                           className="nx-input font-mono text-[12px]"
                           value={keyPath}
+                          disabled={serverLimited}
                           onChange={(e) => setKeyPath(e.target.value)}
                           placeholder="选择或输入私钥路径"
                         />
-                        {!webFiles && (
+                        {!webFiles && !serverLimited && (
                           <button
                             type="button"
                             className="nx-btn nx-btn-outline shrink-0"
@@ -3245,6 +3272,12 @@ export function AssetEditor({
                           </button>
                         )}
                       </div>
+                      {serverLimited && (
+                        <ServerRestrictionNote
+                          text={boundIsRefKey ? serverText.fileCredential : serverText.keyPath}
+                          onClear={keyPath ? () => { setKeyPath(""); setDirty(true); } : undefined}
+                        />
+                      )}
                       <div className="nx-hint mt-1.5">
                         {webFiles
                           ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
@@ -3334,7 +3367,8 @@ export function AssetEditor({
                                 value: c.id,
                                 label: `${c.name}${c.source === "file" ? "（引用文件）" : "（已入库）"}${
                                   c.usedBy.length > 0 ? ` · 被 ${c.usedBy.length} 个资产使用` : " · 未使用"
-                                }`,
+                                }${serverLimited && c.source === "file" ? " · 多用户服务端不可用" : ""}`,
+                                disabled: serverLimited && c.source === "file",
                               })),
                             ]}
                           />
@@ -3495,9 +3529,17 @@ export function AssetEditor({
                         <input
                           className="nx-input font-mono text-[12px]"
                           value={proxyCommand}
+                          aria-label="ProxyCommand"
+                          disabled={serverLimited}
                           onChange={(e) => setProxyCommand(e.target.value)}
                           placeholder="nc %h %p"
                         />
+                        {serverLimited && (
+                          <ServerRestrictionNote
+                            text={serverText.proxyCommand}
+                            onClear={proxyCommand ? () => { setProxyCommand(""); setDirty(true); } : undefined}
+                          />
+                        )}
                         <div className="nx-hint mt-1.5">
                           ↳ 选填。使用外部命令建立连接；%h 为主机，%p 为端口，%% 为百分号。
                         </div>
@@ -3516,15 +3558,25 @@ export function AssetEditor({
                             className="mt-0.5 h-4 w-4 shrink-0"
                             aria-label="ssh-agent 转发"
                             checked={forwardAgent}
+                            disabled={serverLimited && !forwardAgent}
                             onChange={(e) => setForwardAgent(e.target.checked)}
                           />
                         </label>
+                        {serverLimited && <ServerRestrictionNote text={serverText.forwardAgent} />}
                         {forwardAgent && (
                           <input
                             className="nx-input font-mono text-[12px] mt-1.5"
                             value={agentSocket}
+                            aria-label="Agent socket"
+                            disabled={serverLimited}
                             onChange={(e) => setAgentSocket(e.target.value)}
                             placeholder="留空使用 $SSH_AUTH_SOCK"
+                          />
+                        )}
+                        {serverLimited && agentSocket && (
+                          <ServerRestrictionNote
+                            text={serverText.agentSocket}
+                            onClear={() => { setAgentSocket(""); setDirty(true); }}
                           />
                         )}
                       </div>
@@ -3535,9 +3587,17 @@ export function AssetEditor({
                           <input
                             className="nx-input font-mono text-[12px]"
                             value={certPath}
+                            aria-label="SSH 证书"
+                            disabled={serverLimited}
                             onChange={(e) => setCertPath(e.target.value)}
                             placeholder="id_ed25519-cert.pub（可选）"
                           />
+                          {serverLimited && (
+                            <ServerRestrictionNote
+                              text={serverText.certPath}
+                              onClear={certPath ? () => { setCertPath(""); setDirty(true); } : undefined}
+                            />
+                          )}
                           <div className="nx-hint mt-1.5">
                             ↳ 选填。与私钥配对的证书文件路径；不填则按普通私钥登录。
                           </div>

@@ -425,7 +425,22 @@ func TestSyncLinkChangeReconcilesExposureAndStartsTheDeviceListingOver(t *testin
 	onSyncLinkChanged(nil, nil)()
 }
 
+// testInstanceID is the helper instance id of every device host digestList
+// builds, and of the local helper in the tests that expect a match.
+const testInstanceID = "instA"
+
 func digestList(digests map[string]string, withLocal bool) session.AggregateList {
+	hosts := make([]session.AggregateHost, 0, len(digests))
+	for id, digest := range digests {
+		hosts = append(hosts, session.AggregateHost{
+			Key: session.AggregateKeyDevice + id, Kind: session.KindDevice, DeviceID: id,
+			StateDigest: digest, HelperInstanceID: testInstanceID,
+		})
+	}
+	return hostsList(hosts, withLocal)
+}
+
+func hostsList(devices []session.AggregateHost, withLocal bool) session.AggregateList {
 	list := session.AggregateList{Hosts: []session.AggregateHostStatus{}, Sessions: []session.AggregateSession{}, Complete: true}
 	if withLocal {
 		list.Hosts = append(list.Hosts, session.AggregateHostStatus{
@@ -434,13 +449,9 @@ func digestList(digests map[string]string, withLocal bool) session.AggregateList
 		})
 		list.Sessions = append(list.Sessions, session.AggregateSession{TabID: "local-1", HostKey: session.AggregateKeyLocal})
 	}
-	for id, digest := range digests {
-		key := session.AggregateKeyDevice + id
-		list.Hosts = append(list.Hosts, session.AggregateHostStatus{
-			AggregateHost: session.AggregateHost{Key: key, Kind: session.KindDevice, DeviceID: id, StateDigest: digest},
-			Status:        session.AggregateHostOK,
-		})
-		list.Sessions = append(list.Sessions, session.AggregateSession{TabID: id + "-1", HostKey: key})
+	for _, host := range devices {
+		list.Hosts = append(list.Hosts, session.AggregateHostStatus{AggregateHost: host, Status: session.AggregateHostOK})
+		list.Sessions = append(list.Sessions, session.AggregateSession{TabID: host.DeviceID + "-1", HostKey: host.Key})
 	}
 	return list
 }
@@ -455,7 +466,7 @@ func hostKeys(list session.AggregateList) map[string]bool {
 
 func TestWithoutDigestListsASharedHelperOnce(t *testing.T) {
 	list := digestList(map[string]string{"agent": "mine", "other": "theirs", "empty": ""}, true)
-	got := withoutDigest(list, "mine", true)
+	got := withoutLocalHelper(list, "mine", testInstanceID, true)
 	keys := hostKeys(got)
 	if keys[session.AggregateKeyDevice+"agent"] || !keys[session.AggregateKeyDevice+"other"] || !keys[session.AggregateKeyDevice+"empty"] || !keys[session.AggregateKeyLocal] {
 		t.Fatalf("hosts = %v; want only the device with this helper's digest dropped", keys)
@@ -468,11 +479,90 @@ func TestWithoutDigestListsASharedHelperOnce(t *testing.T) {
 	if len(got.Sessions) != 3 {
 		t.Fatalf("sessions = %d; want local plus two other devices", len(got.Sessions))
 	}
-	if kept := withoutDigest(list, "", true); len(kept.Hosts) != len(list.Hosts) {
+	if kept := withoutLocalHelper(list, "", testInstanceID, true); len(kept.Hosts) != len(list.Hosts) {
 		t.Fatalf("empty local digest dropped hosts: %v", hostKeys(kept))
 	}
-	if kept := withoutDigest(list, "mine", false); len(kept.Hosts) != len(list.Hosts) {
+	if kept := withoutLocalHelper(list, "mine", testInstanceID, false); len(kept.Hosts) != len(list.Hosts) {
 		t.Fatalf("device dropped although the local host is not listed: %v", hostKeys(kept))
+	}
+}
+
+func TestWithoutLocalHelperNeedsDigestAndInstanceID(t *testing.T) {
+	device := func(id, digest, instance string) session.AggregateHost {
+		return session.AggregateHost{Key: session.AggregateKeyDevice + id, Kind: session.KindDevice, DeviceID: id, StateDigest: digest, HelperInstanceID: instance}
+	}
+	list := hostsList([]session.AggregateHost{
+		device("same", "D", "A"), device("twin", "D", "B"), device("legacy", "D", ""), device("other", "X", "A"),
+	}, true)
+	keys := hostKeys(withoutLocalHelper(list, "D", "A", true))
+	if keys[session.AggregateKeyDevice+"same"] {
+		t.Fatalf("hosts = %v; the device with the local digest and instance id must be dropped", keys)
+	}
+	for _, id := range []string{"twin", "legacy", "other"} {
+		if !keys[session.AggregateKeyDevice+id] {
+			t.Fatalf("hosts = %v; device %s is not the local helper and must stay", keys, id)
+		}
+	}
+	// A local side without an instance id (nil callback or a helper from before ids) hides nothing.
+	if kept := withoutLocalHelper(list, "D", "", true); len(kept.Hosts) != len(list.Hosts) {
+		t.Fatalf("hosts = %v; no local instance id must hide nothing", hostKeys(kept))
+	}
+}
+
+func TestFilterSharedKeepsAnotherMachineWithTheSameDigest(t *testing.T) {
+	var digest atomic.Value
+	digest.Store("D")
+	service, _ := newDigestService(&digest)
+	service.localInstance = func() string { return "A" }
+	service.noteLocalHost(localUpdate(session.AggregateHostOK).Host)
+	list := hostsList([]session.AggregateHost{
+		{Key: session.AggregateKeyDevice + "same", Kind: session.KindDevice, DeviceID: "same", StateDigest: "D", HelperInstanceID: "A"},
+		{Key: session.AggregateKeyDevice + "twin", Kind: session.KindDevice, DeviceID: "twin", StateDigest: "D", HelperInstanceID: "B"},
+		{Key: session.AggregateKeyDevice + "legacy", Kind: session.KindDevice, DeviceID: "legacy", StateDigest: "D"},
+	}, false)
+	got := service.filterShared(list)
+	keys := hostKeys(got)
+	if keys[session.AggregateKeyDevice+"same"] || !keys[session.AggregateKeyDevice+"twin"] || !keys[session.AggregateKeyDevice+"legacy"] {
+		t.Fatalf("hosts = %v; want only the same helper hidden", keys)
+	}
+	for _, host := range got.Hosts {
+		if host.StateDigest != "" || host.HelperInstanceID != "" {
+			t.Fatalf("identity reached a listing: %+v", host.AggregateHost)
+		}
+	}
+	service.localInstance = nil
+	if kept := service.filterShared(list); len(kept.Hosts) != len(list.Hosts) {
+		t.Fatalf("hosts = %v; nil localInstance must hide nothing", hostKeys(kept))
+	}
+}
+
+func TestEmitKeepsADeviceWithAnotherInstanceID(t *testing.T) {
+	var digest atomic.Value
+	digest.Store("D")
+	service, drain := newDigestService(&digest)
+	service.localInstance = func() string { return "A" }
+	service.emit("", localUpdate(session.AggregateHostOK))
+	drain()
+	update := func(id, instance string) session.AggregateUpdate {
+		host := session.AggregateHostStatus{AggregateHost: session.AggregateHost{
+			Key: session.AggregateKeyDevice + id, Kind: session.KindDevice, DeviceID: id, StateDigest: "D", HelperInstanceID: instance,
+		}, Status: session.AggregateHostOK}
+		return session.AggregateUpdate{Host: host}
+	}
+	service.emit("", update("same", "A"))
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("published %+v; the same helper is listed locally", got)
+	}
+	service.emit("", update("twin", "B"))
+	got := drain()
+	if len(got) != 1 || got[0].Host.StateDigest != "" || got[0].Host.HelperInstanceID != "" {
+		t.Fatalf("published %+v; want the other machine's host with its identity cleared", got)
+	}
+}
+
+func TestLocalHelperInstanceIDWithoutHelper(t *testing.T) {
+	if localHelperInstanceID(nil) != nil {
+		t.Fatal("a nil helper must give a nil callback")
 	}
 }
 
@@ -485,6 +575,7 @@ func newDigestService(digest *atomic.Value) (*sessionAggregateService, func() []
 		mu.Unlock()
 	}}
 	service.localDigest = func() string { return digest.Load().(string) }
+	service.localInstance = func() string { return testInstanceID }
 	return service, func() []session.AggregateUpdate {
 		mu.Lock()
 		defer mu.Unlock()
@@ -514,7 +605,7 @@ func TestEmitFollowsTheLocalDigestAndHidesDigests(t *testing.T) {
 
 	service.emit("", deviceUpdate("agent", "after"))
 	got := drain()
-	if len(got) != 1 || got[0].Host.StateDigest != "" {
+	if len(got) != 1 || got[0].Host.StateDigest != "" || got[0].Host.HelperInstanceID != "" {
 		t.Fatalf("published %+v; want the device host with its digest cleared", got)
 	}
 	digest.Store("after") // the helper moved to the shared state directory
@@ -553,7 +644,7 @@ func TestAggregatorPublishPathIsFiltered(t *testing.T) {
 		if update.Host.Key == session.AggregateKeyDevice+"agent" {
 			t.Fatalf("background refresh published the shared device host: %+v", update)
 		}
-		if update.Host.StateDigest != "" {
+		if update.Host.StateDigest != "" || update.Host.HelperInstanceID != "" {
 			t.Fatalf("digest reached an event: %+v", update.Host)
 		}
 	}
@@ -602,6 +693,7 @@ func TestProductionAggregatorWiringFiltersBackgroundRefreshes(t *testing.T) {
 		digestReads.Add(1)
 		return "mine"
 	}
+	service.localInstance = func() string { return testInstanceID }
 	empty := func(context.Context) ([]base.DurableDescriptor, error) { return nil, nil }
 	hostOf := func(key string) session.AggregateHost {
 		return digestList(map[string]string{key: map[string]string{"shared": "mine", "other": "theirs"}[key]}, false).Hosts[0].AggregateHost
@@ -627,7 +719,7 @@ func TestProductionAggregatorWiringFiltersBackgroundRefreshes(t *testing.T) {
 		{Host: hostOf("shared"), List: empty}, {Host: hostOf("other"), List: empty}}
 	service.aggregator.List(context.Background(), "", targets, 0)
 	update := next("unrelated device host")
-	if update.Host.Key != session.AggregateKeyDevice+"other" || update.Host.StateDigest != "" {
+	if update.Host.Key != session.AggregateKeyDevice+"other" || update.Host.StateDigest != "" || update.Host.HelperInstanceID != "" {
 		t.Fatalf("event = %+v; want only the unrelated device host with its digest cleared", update.Host)
 	}
 	// Every emit reads the local digest once: local, shared and other.
@@ -645,5 +737,16 @@ func TestProductionAggregatorWiringFiltersBackgroundRefreshes(t *testing.T) {
 	case extra := <-events:
 		t.Fatalf("unexpected event %+v (digest %q)", extra.Host.Key, extra.Host.StateDigest)
 	default:
+	}
+}
+
+func TestDeviceTargetsCarryTheHelperInstanceID(t *testing.T) {
+	service := &sessionAggregateService{now: time.Now, devices: map[string]aggregateDeviceListing{}}
+	config := &DeviceConnectorConfig{Devices: func(context.Context, string) ([]AggregateDevice, error) {
+		return []AggregateDevice{{ID: "d1", Name: "box", Kind: "agent", Online: true, Digest: "D", HelperInstanceID: "A", TerminalEnabled: true}}, nil
+	}}
+	targets := service.deviceTargets(context.Background(), "u1", config, nil)
+	if len(targets) != 1 || targets[0].Host.StateDigest != "D" || targets[0].Host.HelperInstanceID != "A" {
+		t.Fatalf("targets = %+v; want the device host with its digest and instance id", targets)
 	}
 }

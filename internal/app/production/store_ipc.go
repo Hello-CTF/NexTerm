@@ -217,21 +217,36 @@ type snippetDTO struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Description and Steps describe a multi-step snippet; Steps is an empty array for a plain snippet.
+	Description string              `json:"description"`
+	Steps       []store.SnippetStep `json:"steps"`
 }
 
+// snippetMigrationStatusDTO reports the legacy runbook templates the startup migration could not turn into
+// snippets; they stay in the old table and are not usable.
+type snippetMigrationStatusDTO struct {
+	UnmigratedRunbookTemplates int64 `json:"unmigratedRunbookTemplates"`
+}
+
+// snippetInputRequest creates a snippet. With steps the body is derived on the server and any given body is ignored.
 type snippetInputRequest struct {
-	Name    string  `json:"name"`
-	Body    string  `json:"body"`
-	GroupID *string `json:"groupId"`
-	Sort    int64   `json:"sort"`
+	Name        string              `json:"name"`
+	Body        string              `json:"body"`
+	GroupID     *string             `json:"groupId"`
+	Sort        int64               `json:"sort"`
+	Description string              `json:"description,omitempty"`
+	Steps       []store.SnippetStep `json:"steps,omitempty"`
 }
 
+// snippetPatchRequest replaces a snippet's content; omitted steps turn it into a single-step snippet.
 type snippetPatchRequest struct {
-	ID      string                   `json:"id"`
-	Name    string                   `json:"name"`
-	Body    string                   `json:"body"`
-	GroupID optionalIPCValue[string] `json:"groupId"`
-	Sort    *int64                   `json:"sort"`
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Body        string                   `json:"body"`
+	GroupID     optionalIPCValue[string] `json:"groupId"`
+	Sort        *int64                   `json:"sort"`
+	Description string                   `json:"description,omitempty"`
+	Steps       []store.SnippetStep      `json:"steps,omitempty"`
 }
 
 type auditCountDTO struct {
@@ -509,10 +524,10 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				if err != nil {
 					return nil, err
 				}
-				if err := validateSnippetBody(input.Body); err != nil {
+				if err := validateSnippetBody(input.Body, input.Steps); err != nil {
 					return nil, err
 				}
-				row, err := database.SnippetCreate(ctx, name, input.Body, input.GroupID, input.Sort)
+				row, err := database.SnippetCreateContent(ctx, name, store.SnippetContent{Description: input.Description, Body: input.Body, Steps: input.Steps}, input.GroupID, input.Sort)
 				return map[string]string{"id": row.ID}, err
 			})
 		},
@@ -522,12 +537,18 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				if err != nil {
 					return nil, err
 				}
-				if err := validateSnippetBody(input.Body); err != nil {
+				if err := validateSnippetBody(input.Body, input.Steps); err != nil {
 					return nil, err
 				}
 				return nil, database.SnippetUpdateFields(ctx, input.ID, store.SnippetPatch{
-					Name: name, Body: input.Body, GroupID: input.GroupID.storeValue(), Sort: input.Sort,
+					Name: name, Body: input.Body, Description: input.Description, Steps: input.Steps, GroupID: input.GroupID.storeValue(), Sort: input.Sort,
 				})
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "snippet_migration_status", func(ctx context.Context, _ *ipc.Call, _ struct{}) (snippetMigrationStatusDTO, error) {
+				count, err := database.RunbookTemplateUnmigratedCount(ctx)
+				return snippetMigrationStatusDTO{UnmigratedRunbookTemplates: count}, err
 			})
 		},
 		func() error {
@@ -620,6 +641,7 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				return desktopTrayDTO{Enabled: input.Enabled}, nil
 			})
 		},
+		func() error { return registerAuditTimeline(dispatcher, database, desktop) },
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {
@@ -647,9 +669,14 @@ func productionGroupDTO(row store.AssetGroupRow) groupDTO {
 }
 
 func productionSnippetDTO(row store.SnippetRow) snippetDTO {
+	// A step column that cannot be decoded degrades to a single-step view; the body still holds the commands.
+	steps, err := store.DecodeSnippetSteps(row.Steps)
+	if err != nil {
+		steps = []store.SnippetStep{}
+	}
 	return snippetDTO{
 		ID: row.ID, Name: row.Name, Body: row.Body, GroupID: row.GroupID, Sort: row.Sort,
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, Description: row.Description, Steps: steps,
 	}
 }
 
@@ -682,7 +709,11 @@ func validatedSnippetName(name string) (string, error) {
 	return trimmed, nil
 }
 
-func validateSnippetBody(body string) error {
+// validateSnippetBody requires a non-empty body for a plain snippet; a multi-step snippet derives its body from the steps.
+func validateSnippetBody(body string, steps []store.SnippetStep) error {
+	if len(steps) > 0 {
+		return nil
+	}
 	if strings.TrimSpace(body) == "" {
 		return ipc.BadParam(fmt.Errorf("片段内容不能为空"))
 	}

@@ -1,12 +1,15 @@
+/** @vitest-environment jsdom */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushUntil } from "./reactTestUtils";
 
 interface FakeTerm {
   loadAddon: ReturnType<typeof vi.fn>;
+  registerLinkProvider: ReturnType<typeof vi.fn>;
 }
 
 function fakeTerm(): FakeTerm {
-  return { loadAddon: vi.fn() };
+  return { loadAddon: vi.fn(), registerLinkProvider: vi.fn() };
 }
 
 type Addons = typeof import("../../features/terminal/xtermAddons");
@@ -14,7 +17,6 @@ type Addons = typeof import("../../features/terminal/xtermAddons");
 async function loadModule(mocks: {
   webgl?: () => Record<string, unknown>;
   search?: () => Record<string, unknown>;
-  links?: () => Record<string, unknown>;
 }): Promise<Addons> {
   vi.resetModules();
   vi.doMock("@xterm/addon-webgl", mocks.webgl ?? (() => ({ WebglAddon: class {} })));
@@ -28,7 +30,6 @@ async function loadModule(mocks: {
         },
       })),
   );
-  vi.doMock("@xterm/addon-web-links", mocks.links ?? (() => ({ WebLinksAddon: class {} })));
   return import("../../features/terminal/xtermAddons");
 }
 
@@ -45,7 +46,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.doUnmock("@xterm/addon-webgl");
   vi.doUnmock("@xterm/addon-search");
-  vi.doUnmock("@xterm/addon-web-links");
 });
 
 describe("scheduleWebglRenderer", () => {
@@ -114,13 +114,16 @@ describe("scheduleWebglRenderer", () => {
   });
 });
 
+const noopHandlers = { activate: () => undefined, hover: () => undefined, leave: () => undefined };
+
 describe("attachLazyAddons", () => {
-  it("loads search and links, and runs a search issued before the addon arrived", async () => {
+  it("registers the link provider at once and runs a search issued before the addon arrived", async () => {
     const { attachLazyAddons } = await loadModule({});
     const term = fakeTerm();
-    const api = attachLazyAddons(term as never, { handler: () => undefined }, () => false);
+    const api = attachLazyAddons(term as never, noopHandlers, () => false);
+    expect(term.registerLinkProvider).toHaveBeenCalledTimes(1);
     api.findNext("needle");
-    await flushUntil(() => term.loadAddon.mock.calls.length === 2);
+    await flushUntil(() => term.loadAddon.mock.calls.length === 1);
     const search = term.loadAddon.mock.calls
       .map(([addon]) => addon as { findNext?: ReturnType<typeof vi.fn> })
       .find((addon) => addon.findNext);
@@ -128,15 +131,32 @@ describe("attachLazyAddons", () => {
     expect(search?.findNext).toHaveBeenCalledWith("needle");
   });
 
-  it("leaves the terminal usable when the addons fail to load", async () => {
+  it("finds a URL through the registered provider in a real terminal", async () => {
+    const { Terminal } = await import("@xterm/xterm");
+    const { attachLazyAddons } = await loadModule({
+      search: () => ({ SearchAddon: class { activate() {} dispose() {} } }),
+    });
+    const term = new Terminal({ cols: 60, rows: 5, allowProposedApi: true });
+    const register = vi.spyOn(term, "registerLinkProvider").mockImplementation(() => ({ dispose: () => undefined }));
+    attachLazyAddons(term, noopHandlers, () => false);
+    await new Promise<void>((resolve) => term.write("see https://example.com/docs now\r\n", resolve));
+    expect(register).toHaveBeenCalledTimes(1);
+    const provider = register.mock.calls[0][0];
+    const found = await new Promise<{ text: string }[] | undefined>((resolve) => provider.provideLinks(1, resolve));
+    expect(found?.map((link) => link.text)).toEqual(["https://example.com/docs"]);
+    term.dispose();
+  });
+
+  it("leaves the terminal usable when the search addon fails to load", async () => {
     const fail = () => {
       throw new Error("chunk load failed");
     };
-    const { attachLazyAddons } = await loadModule({ search: fail, links: fail });
+    const { attachLazyAddons } = await loadModule({ search: fail });
     const term = fakeTerm();
-    const api = attachLazyAddons(term as never, { handler: () => undefined }, () => false);
+    const api = attachLazyAddons(term as never, noopHandlers, () => false);
     expect(() => api.findNext("x")).not.toThrow();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(term.loadAddon).not.toHaveBeenCalled();
+    expect(term.registerLinkProvider).toHaveBeenCalledTimes(1);
   });
 });

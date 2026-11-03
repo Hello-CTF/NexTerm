@@ -7,11 +7,14 @@ import type { SnippetDto } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
 import { isMobileShell } from "../shell";
 import { useBackgroundSessionsAccess } from "../../features/terminal/backgroundSessionsAccess";
-import { insertSnippet } from "../../features/explorer/snippetInsert";
+import { executeSnippet, insertSnippet, isMultiStep } from "../../features/explorer/snippetInsert";
+import { analyzeSnippetSteps } from "../../features/explorer/snippetVariables";
 import { cloneAsset } from "../../features/explorer/assetClone";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../../features/logs/logTailTab";
 import { createFleetHealthTabId, FLEET_HEALTH_TAB_ID } from "../../features/fleet/fleetHealthTab";
+import { terminalLinkCommands } from "./terminalLinkCommands";
+import { terminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
 import { workspaceLayoutTree } from "../paneLayout";
 import { resolveActivePane } from "../splitTree";
 import {
@@ -47,9 +50,12 @@ export interface JumpCommand {
   run: () => void;
 }
 
-function snippetHint(body: string): string {
-  const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  return first.length > 36 ? `${first.slice(0, 36)}…` : first;
+function snippetHint(snippet: SnippetDto): string {
+  const steps = snippet.steps ?? [];
+  const source = steps.length > 0 ? steps[0].command : snippet.body;
+  const first = source.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const text = first.length > 36 ? `${first.slice(0, 36)}…` : first;
+  return steps.length > 0 ? `${steps.length} 步 · ${text}` : text;
 }
 
 function workspaceIcon(workspace: Workspace) {
@@ -107,7 +113,18 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
   }, [pushToast]);
 
   const backgroundAvailable = useBackgroundSessionsAccess(workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1]);
-  return useMemo<JumpCommand[]>(() => {
+  const linkSource = useMemo(() => {
+    const ws = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1];
+    const pane = ws?.panes.find((item) => item.id === ws.activePaneId) ?? ws?.panes[0];
+    const tab = pane?.tabs.find((item) => item.id === pane.activeTabId) ?? pane?.tabs[pane.tabs.length - 1];
+    return tab?.kind === "terminal" ? terminalLinkSource(tab.id) : undefined;
+  }, [workspaces, activeWorkspaceId]);
+  const linkHint = useMemo(() => keyHint("terminalLinks"), [keyHint]);
+  const linkCommands = useMemo(
+    () => (linkSource ? terminalLinkCommands(linkSource, linkHint) : []),
+    [linkSource, linkHint],
+  );
+  const base = useMemo(() => {
     const currentWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
       workspaces[workspaces.length - 1];
     const workspaceActions: JumpCommand[] = workspaces.map((workspace) => ({
@@ -380,6 +397,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         },
       },
     ];
+    const linkInsertAt = list.length;
     list.push(...workspaceActions);
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
@@ -410,16 +428,23 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       });
     }
     for (const s of snippets) {
+      // A multi-step snippet cannot be inserted; running it confirms each step that asks for it.
+      const multi = isMultiStep(s);
+      // Variables are only asked for and rendered in the snippets panel.
+      const needsPanel = multi && analyzeSnippetSteps((s.steps ?? []).map((x) => x.command)).hasVariables;
       list.push({
         id: `snippet-${s.id}`,
-        label: `插入片段 ${s.name}`,
+        label: `${multi ? "执行" : "插入"}片段 ${s.name}`,
         section: "片段",
-        hint: snippetHint(s.body),
+        hint: snippetHint(s),
         icon: IconCommand,
-        run: () => void insertSnippet(s),
+        run: () => {
+          if (needsPanel) pushToast("info", "带参数的片段请在片段面板中执行");
+          else void (multi ? executeSnippet(s) : insertSnippet(s));
+        },
       });
     }
-    return list;
+    return { list, linkInsertAt };
   }, [
     backgroundAvailable,
     assets,
@@ -442,4 +467,8 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
     runClone,
     unhideAsset,
   ]);
+  return useMemo<JumpCommand[]>(
+    () => [...base.list.slice(0, base.linkInsertAt), ...linkCommands, ...base.list.slice(base.linkInsertAt)],
+    [base, linkCommands],
+  );
 }

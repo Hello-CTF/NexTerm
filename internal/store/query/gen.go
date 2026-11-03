@@ -25,6 +25,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		AgentWatchOutboxRow:     newAgentWatchOutboxRow(db, opts...),
 		AgentWatchRow:           newAgentWatchRow(db, opts...),
 		AgentWatchTargetRow:     newAgentWatchTargetRow(db, opts...),
+		AlertEvaluatorState:     newAlertEvaluatorState(db, opts...),
 		AppUser:                 newAppUser(db, opts...),
 		AssetGroupRow:           newAssetGroupRow(db, opts...),
 		AssetRow:                newAssetRow(db, opts...),
@@ -36,6 +37,9 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		CredentialTombstone:     newCredentialTombstone(db, opts...),
 		CronJob:                 newCronJob(db, opts...),
 		DeviceAgent:             newDeviceAgent(db, opts...),
+		DeviceAlertEvent:        newDeviceAlertEvent(db, opts...),
+		DeviceAlertSettings:     newDeviceAlertSettings(db, opts...),
+		DeviceAlertState:        newDeviceAlertState(db, opts...),
 		DeviceEnrollCode:        newDeviceEnrollCode(db, opts...),
 		DeviceMetrics:           newDeviceMetrics(db, opts...),
 		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
@@ -88,6 +92,7 @@ type Query struct {
 	AgentWatchOutboxRow     agentWatchOutboxRow
 	AgentWatchRow           agentWatchRow
 	AgentWatchTargetRow     agentWatchTargetRow
+	AlertEvaluatorState     alertEvaluatorState
 	AppUser                 appUser
 	AssetGroupRow           assetGroupRow
 	AssetRow                assetRow
@@ -99,6 +104,9 @@ type Query struct {
 	CredentialTombstone     credentialTombstone
 	CronJob                 cronJob
 	DeviceAgent             deviceAgent
+	DeviceAlertEvent        deviceAlertEvent
+	DeviceAlertSettings     deviceAlertSettings
+	DeviceAlertState        deviceAlertState
 	DeviceEnrollCode        deviceEnrollCode
 	DeviceMetrics           deviceMetrics
 	DeviceMetricsHourly     deviceMetricsHourly
@@ -154,6 +162,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.clone(db),
 		AgentWatchRow:           q.AgentWatchRow.clone(db),
 		AgentWatchTargetRow:     q.AgentWatchTargetRow.clone(db),
+		AlertEvaluatorState:     q.AlertEvaluatorState.clone(db),
 		AppUser:                 q.AppUser.clone(db),
 		AssetGroupRow:           q.AssetGroupRow.clone(db),
 		AssetRow:                q.AssetRow.clone(db),
@@ -165,6 +174,9 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		CredentialTombstone:     q.CredentialTombstone.clone(db),
 		CronJob:                 q.CronJob.clone(db),
 		DeviceAgent:             q.DeviceAgent.clone(db),
+		DeviceAlertEvent:        q.DeviceAlertEvent.clone(db),
+		DeviceAlertSettings:     q.DeviceAlertSettings.clone(db),
+		DeviceAlertState:        q.DeviceAlertState.clone(db),
 		DeviceEnrollCode:        q.DeviceEnrollCode.clone(db),
 		DeviceMetrics:           q.DeviceMetrics.clone(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
@@ -225,6 +237,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.replaceDB(db),
 		AgentWatchRow:           q.AgentWatchRow.replaceDB(db),
 		AgentWatchTargetRow:     q.AgentWatchTargetRow.replaceDB(db),
+		AlertEvaluatorState:     q.AlertEvaluatorState.replaceDB(db),
 		AppUser:                 q.AppUser.replaceDB(db),
 		AssetGroupRow:           q.AssetGroupRow.replaceDB(db),
 		AssetRow:                q.AssetRow.replaceDB(db),
@@ -236,6 +249,9 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		CredentialTombstone:     q.CredentialTombstone.replaceDB(db),
 		CronJob:                 q.CronJob.replaceDB(db),
 		DeviceAgent:             q.DeviceAgent.replaceDB(db),
+		DeviceAlertEvent:        q.DeviceAlertEvent.replaceDB(db),
+		DeviceAlertSettings:     q.DeviceAlertSettings.replaceDB(db),
+		DeviceAlertState:        q.DeviceAlertState.replaceDB(db),
 		DeviceEnrollCode:        q.DeviceEnrollCode.replaceDB(db),
 		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
@@ -286,6 +302,7 @@ type queryCtx struct {
 	AgentWatchOutboxRow     *agentWatchOutboxRowDo
 	AgentWatchRow           *agentWatchRowDo
 	AgentWatchTargetRow     *agentWatchTargetRowDo
+	AlertEvaluatorState     *alertEvaluatorStateDo
 	AppUser                 *appUserDo
 	AssetGroupRow           *assetGroupRowDo
 	AssetRow                *assetRowDo
@@ -297,6 +314,9 @@ type queryCtx struct {
 	CredentialTombstone     *credentialTombstoneDo
 	CronJob                 *cronJobDo
 	DeviceAgent             *deviceAgentDo
+	DeviceAlertEvent        *deviceAlertEventDo
+	DeviceAlertSettings     *deviceAlertSettingsDo
+	DeviceAlertState        *deviceAlertStateDo
 	DeviceEnrollCode        *deviceEnrollCodeDo
 	DeviceMetrics           *deviceMetricsDo
 	DeviceMetricsHourly     *deviceMetricsHourlyDo
@@ -347,6 +367,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.WithContext(ctx),
 		AgentWatchRow:           q.AgentWatchRow.WithContext(ctx),
 		AgentWatchTargetRow:     q.AgentWatchTargetRow.WithContext(ctx),
+		AlertEvaluatorState:     q.AlertEvaluatorState.WithContext(ctx),
 		AppUser:                 q.AppUser.WithContext(ctx),
 		AssetGroupRow:           q.AssetGroupRow.WithContext(ctx),
 		AssetRow:                q.AssetRow.WithContext(ctx),
@@ -358,6 +379,9 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		CredentialTombstone:     q.CredentialTombstone.WithContext(ctx),
 		CronJob:                 q.CronJob.WithContext(ctx),
 		DeviceAgent:             q.DeviceAgent.WithContext(ctx),
+		DeviceAlertEvent:        q.DeviceAlertEvent.WithContext(ctx),
+		DeviceAlertSettings:     q.DeviceAlertSettings.WithContext(ctx),
+		DeviceAlertState:        q.DeviceAlertState.WithContext(ctx),
 		DeviceEnrollCode:        q.DeviceEnrollCode.WithContext(ctx),
 		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
 		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),

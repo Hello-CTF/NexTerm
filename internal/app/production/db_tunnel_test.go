@@ -136,7 +136,7 @@ func TestProductionPostgresDialerRevalidatesAssetAndConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nonSSH, err := database.AssetCreate(owner, store.AssetInput{Kind: session.KindLocal, Name: "local", OptionsJSON: `{}`})
+	nonSSH, err := createLocalFixtureAsset(owner, database, store.AssetInput{Kind: session.KindLocal, Name: "local", OptionsJSON: `{}`})
 	if err != nil {
 		t.Fatal(err)
 	}

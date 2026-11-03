@@ -132,6 +132,15 @@ describe("directory command generation", () => {
     });
   });
 
+  it("doubles typographic single quotes so a directory name cannot close the PowerShell literal", () => {
+    for (const quote of ["\u2018", "\u2019", "\u201A", "\u201B"]) {
+      expect(directoryCommandFor(`/x${quote}; calc; ${quote}y`, "powershell")).toEqual({
+        command: `Set-Location -LiteralPath '/x${quote}${quote}; calc; ${quote}${quote}y'`,
+        failure: null,
+      });
+    }
+  });
+
   it("preserves POSIX single-quote escaping", () => {
     expect(directoryCommandFor("/tmp/child's [x]", "posix")).toEqual({
       command: String.raw`cd '/tmp/child'\''s [x]'`,

@@ -8,6 +8,8 @@ import { browserFilesAvailable } from "../../ipc/webFiles";
 import { KIND_META, NEW_KIND_ORDER } from "./meta";
 import { resolveInlineKeyContent, useInlineKeyPicker } from "./keyStaging";
 import { useVaultInitGate } from "./useVaultInitGate";
+import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
+import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
 
 type Origin = "ref" | "vault";
 
@@ -24,7 +26,8 @@ export function NewCredentialModal({
   const [kind, setKind] = useState("password");
   const [value, setValue] = useState("");
   const webFiles = browserFilesAvailable();
-  const [origin, setOrigin] = useState<Origin>(webFiles ? "vault" : "ref");
+  const { restricted: serverLimited, text: serverText } = useServerAccountRestrictions();
+  const [origin, setOrigin] = useState<Origin>(webFiles || serverLimited ? "vault" : "ref");
   const [keyFilePath, setKeyFilePath] = useState("");
   const [inlineKeyContent, setInlineKeyContent] = useState<string | null>(null);
   const [contentMode, setContentMode] = useState<"file" | "paste">("file");
@@ -192,6 +195,8 @@ export function NewCredentialModal({
                   <button
                     type="button"
                     className={`nx-segment-item ${origin === "ref" ? "is-active" : ""}`}
+                    disabled={serverLimited}
+                    title={serverLimited ? serverText.fileCredential : undefined}
                     onClick={() => changeOrigin("ref")}
                   >
                     引用本地文件
@@ -204,6 +209,7 @@ export function NewCredentialModal({
                     存入凭据库
                   </button>
                 </div>
+                {serverLimited && <ServerRestrictionNote text={serverText.fileCredential} />}
 
                 {origin === "ref" ? (
                   <>

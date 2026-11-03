@@ -176,6 +176,11 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "transcript_export_cast", func(ctx context.Context, _ *ipc.Call, input transcriptExportCastRequest) (transcriptExportCastResult, error) {
+				return s.exportTranscriptCast(ctx, input)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "transcript_delete", func(ctx context.Context, _ *ipc.Call, input transcriptIDRequest) (any, error) {
 				if err := store.EnsureID(input.ID); err != nil {
 					return nil, err
@@ -184,6 +189,7 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 	}
+	registrations = append(registrations, func() error { return s.registerSearch(dispatcher) })
 	for _, register := range registrations {
 		if err := register(); err != nil {
 			return err

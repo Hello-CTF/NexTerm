@@ -98,6 +98,8 @@ type Spec struct {
 	TargetPort *uint16 `json:"targetPort"`
 	Kind       string  `json:"kind"`
 	CreatedAt  int64   `json:"createdAt"`
+	// Temporary forwards are loopback-only, never persisted and removed when their session fails.
+	Temporary bool `json:"temporary,omitempty"`
 }
 
 type CreateLocalArgs struct {
@@ -105,6 +107,7 @@ type CreateLocalArgs struct {
 	ListenPort uint16 `json:"listenPort"`
 	TargetHost string `json:"targetHost"`
 	TargetPort uint16 `json:"targetPort"`
+	Temporary  bool   `json:"temporary,omitempty"`
 }
 
 type CreateSocksArgs struct {

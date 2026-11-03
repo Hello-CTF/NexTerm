@@ -263,6 +263,10 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 		{name: "remote_account_device_revoke", scope: "remote", nested: true},
 		{name: "remote_account_devices", scope: "remote"},
 		{name: "remote_account_me", scope: "remote"},
+		{name: "remote_fleet_alert_settings_get", scope: "remote", nested: true},
+		{name: "remote_fleet_alert_settings_put", scope: "remote", nested: true},
+		{name: "remote_fleet_alerts", scope: "remote"},
+		{name: "remote_fleet_alerts_ack", scope: "remote", nested: true},
 		{name: "remote_fleet_base_urls_get", scope: "remote"},
 		{name: "remote_fleet_base_urls_put", scope: "remote", nested: true},
 		{name: "remote_fleet_device_autostart", scope: "remote", nested: true},
@@ -303,8 +307,8 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 27 {
-		t.Fatalf("selected remote desktop command count = %d, want 27", len(selected))
+	if len(selected) != 31 {
+		t.Fatalf("selected remote desktop command count = %d, want 31", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "remote" || command.Scope == "preview-share") && !selected[name] {
@@ -432,7 +436,9 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		{name: "transcript_list", input: "TranscriptListRequest", output: "TranscriptSummaryDTO[]"},
 		{name: "transcript_read", input: "TranscriptReadRequest", output: "TranscriptReadResult"},
 		{name: "transcript_search", input: "TranscriptSearchRequest", output: "TranscriptMatchDTO[]"},
+		{name: "transcript_search_host", input: "TranscriptHostSearchRequest", output: "TranscriptHostSearchResult"},
 		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
+		{name: "transcript_export_cast", input: "TranscriptExportCastRequest", output: "TranscriptExportCastResult"},
 		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
 	}
 	selected := make(map[string]bool, len(tests))
@@ -466,8 +472,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 6 {
-		t.Fatalf("selected transcript command count = %d, want 6", len(selected))
+	if len(selected) != 8 {
+		t.Fatalf("selected transcript command count = %d, want 8", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {
@@ -878,7 +884,7 @@ func TestVaultCredentialVerticalContracts(t *testing.T) {
 		input  string
 		output string
 	}{
-		{name: "vault_status", scope: "vault", input: "Record<string, never>", output: "VaultStatus"},
+		{name: "vault_status", scope: "vault", input: "Record<string, never>", output: "VaultStatusDTO"},
 		{name: "vault_init_master", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
 		{name: "vault_init_dpapi", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
 		{name: "vault_unlock", scope: "vault", input: "VaultPasswordRequest", output: "unknown"},
@@ -1121,7 +1127,7 @@ func TestDockerVerticalContracts(t *testing.T) {
 		{name: "docker_compose_action", stream: "none", input: "DockerComposeActionIPCRequest", output: "string"},
 		{name: "docker_compose_logs_attach", channel: true, stream: "binary", input: "DockerComposeLogsIPCRequest", output: "string"},
 		{name: "docker_compose_redeploy_attach", channel: true, stream: "binary", input: structType("sessionId: string;", "project: string;", "path: string;", "ticket: string;"), output: "string"},
-		{name: "docker_compose_redeploy_prepare", stream: "none", input: structType("sessionId: string;", "project: string;", "path: string;", "baseContentBase64: string;", "contentBase64: string;", "productionConfirmation?: DockerProductionConfirmation | null;"), output: "DockerComposeRedeployPrepareResult"},
+		{name: "docker_compose_redeploy_prepare", stream: "none", input: structType("sessionId: string;", "project: string;", "path: string;", "baseContentBase64: string;", "contentBase64: string;", "confirmedCommand?: string;", "productionConfirmation?: DockerProductionConfirmation | null;"), output: "DockerComposeRedeployPrepareResult"},
 		{name: "docker_compose_stacks", stream: "none", input: "SessionIDRequest", output: "ComposeOverview"},
 		{name: "docker_container_list_dir", stream: "none", input: structType("sessionId: string;", "containerId: string;", "path: string;"), output: "string[]"},
 		{name: "docker_disk_usage", stream: "none", input: "SessionIDRequest", output: "DiskUsage"},
@@ -1526,13 +1532,16 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		output string
 	}{
 		{name: "snippet_list", scope: "snippet", input: "Record<string, never>", output: "SnippetDTO[]"},
+		{name: "snippet_migration_status", scope: "snippet", input: "Record<string, never>", output: "SnippetMigrationStatusDTO"},
 		{name: "snippet_create", scope: "snippet", input: "SnippetInputRequest", output: "Record<string, string>"},
 		{name: "snippet_update", scope: "snippet", input: "SnippetPatchRequest", output: "unknown"},
 		{name: "snippet_delete", scope: "snippet", input: structType("id: string;"), output: "unknown"},
 		{name: "audit_query", scope: "audit", nested: true, input: "AuditQueryRequest", output: "AuditDTO[]"},
 		{name: "audit_count", scope: "audit", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;"), output: "AuditCountDTO"},
+		{name: "audit_timeline", scope: "audit", input: "AuditTimelineRequest", output: "AuditTimelineResult"},
 		{name: "command_query", scope: "command-log", nested: true, input: "CommandLogQueryRequest", output: "CommandLogDTO[]"},
 		{name: "command_count", scope: "command-log", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;"), output: "AuditCountDTO"},
+		{name: "command_search", scope: "command-log", input: "CommandSearchRequest", output: "CommandSearchResult"},
 		{name: "layout_get", scope: "layout", input: "Record<string, never>", output: "LayoutDTO"},
 		{name: "layout_put", scope: "layout", nested: true, input: "LayoutPutRequest", output: "LayoutSaveDTO"},
 		{name: "ssh_import_preview", scope: "ssh-import", nested: true, input: "SshImportPreviewRequest", output: "SshImportPreviewDTO"},
@@ -1569,8 +1578,8 @@ func TestOperationsVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 12 {
-		t.Fatalf("selected operations command count = %d, want 12", len(selected))
+	if len(selected) != 15 {
+		t.Fatalf("selected operations command count = %d, want 15", len(selected))
 	}
 	for name, command := range commands {
 		switch command.Scope {
@@ -1592,6 +1601,7 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		{name: "SnippetInputRequest", want: []string{"name: string;", "body: string;", "groupId?: string | null;", "sort?: number;"}},
 		{name: "SnippetPatchRequest", want: []string{"id: string;", "name: string;", "body: string;", "groupId?: string | null;", "sort?: number | null;"}},
 		{name: "AuditQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;", "limit?: number;", "offset?: number;"}},
+		{name: "AuditTimelineRequest", want: []string{"assetId?: string | null;", "origins?: string[];", "from?: number | null;", "to?: number | null;", "limit?: number;", "cursor?: "}},
 		{name: "AuditDTO", want: []string{"payload: unknown;", "exitCode: number | null;", "durationMs: number | null;"}},
 		{name: "AuditCountDTO", want: []string{"total: number;"}},
 		{name: "CommandLogQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;", "limit?: number;", "offset?: number;"}},
@@ -1616,6 +1626,80 @@ func TestOperationsVerticalContracts(t *testing.T) {
 			}
 		}
 	}
+}
+
+type verticalWant struct {
+	name   string
+	input  string
+	output string
+}
+
+func checkVerticalScope(t *testing.T, scope string, tests []verticalWant, fields map[string][]string) {
+	t.Helper()
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != scope || command.Nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected %s metadata: %+v", scope, command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input || output.TS != test.output {
+				t.Fatalf("input/output = %q/%q, want %q/%q", input.TS, output.TS, test.input, test.output)
+			}
+		})
+	}
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	for name, want := range fields {
+		declaration := declarations[name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", name)
+			continue
+		}
+		for _, field := range want {
+			if !strings.Contains(declaration.Body, field) {
+				t.Errorf("%s declaration is missing %q:\n%s", name, field, declaration.Body)
+			}
+		}
+	}
+}
+
+func TestHostPortsVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-ports", []verticalWant{
+		{name: "host_ports_list", input: "HostPortsListArgs", output: "HostPortsListResult"},
+		{name: "host_connectivity_test", input: "HostProbeArgs", output: "HostProbeResult"},
+	}, map[string][]string{
+		"HostPortsListArgs":   {"sessionId: string;", "processes: boolean;", "quietMs?: number;"},
+		"HostPortListener":    {"proto: string;", "address: string;", "port: number;", "pid?: number;", "process?: string;"},
+		"HostPortsListResult": {"listeners: HostPortListener[];", "skipped?:", "truncated?:"},
+		"HostProbeArgs":       {"ProbeRequest &", "sessionId: string;", "dryRun?: boolean;"},
+		"ProbeRequest":        {"method: string;"},
+		"HostProbeResult":     {"command: string;", "script?: string;", "ran: boolean;", "ok: boolean;", "output: string;", "durationMs: number;"},
+	})
+}
+
+func TestPreviewVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "preview", []verticalWant{
+		{name: "preview_embed_check", input: "EmbedCheckArgs", output: "EmbedCheck"},
+	}, map[string][]string{
+		"EmbedCheckArgs": {"url: string;"},
+		"EmbedCheck":     {"status:", "reason?:"},
+	})
 }
 
 func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
@@ -1955,4 +2039,15 @@ func TestReservedTransportInputFieldsAreRejected(t *testing.T) {
 	if err := checkReservedInputFields([]commandContract{streaming, build(`json:"releaseChannel"`)}); err != nil {
 		t.Fatalf("channel commands and renamed fields must pass: %v", err)
 	}
+}
+
+func TestHostProcessesVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-processes", []verticalWant{
+		{name: "host_processes_list", input: "ProcessListArgs", output: "ProcessListResult"},
+		{name: "host_process_kill", input: "ProcessKillArgs", output: "ProcessKillResult"},
+	}, map[string][]string{
+		"HostProcess":       {"pid: number;", "ppid: number;", "argName?: string;", "started?: string;", "elapsedSec: number;"},
+		"ProcessListResult": {"processes: HostProcess[];", "skippedRows?: number;", "partial?: string[];"},
+		"ProcessKillArgs":   {"sessionId: string;", "name: string;", "ppid: number;", "started?: string;", "dryRun?: boolean;"},
+	})
 }

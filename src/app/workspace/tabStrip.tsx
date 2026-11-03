@@ -22,6 +22,7 @@ import {
   IconDesktop,
   IconDrive,
   IconFolderOpen,
+  IconGlobe,
   IconHistory,
   IconKey,
   IconList,
@@ -51,6 +52,7 @@ const TAB_ICON = {
   execBatch: IconCommand,
   host: IconServer,
   remote: IconDesktop,
+  browser: IconGlobe,
 } as const;
 
 export function tabIcon(t: AppTab) {
@@ -216,7 +218,7 @@ export function TabProductionBadge({ sessionId }: { sessionId?: string }) {
   const classification = useAssetProductionClassification(assetId);
   if (!classification?.production) return null;
   return (
-    <span className="nx-badge nx-badge-amber shrink-0" title={`生产环境：${classification.environment}`}>
+    <span className="nx-badge nx-badge-amber nx-tab-production-badge shrink-0" title={`生产环境：${classification.environment}`}>
       生产
     </span>
   );

@@ -205,7 +205,9 @@ encrypted.
 `NEXTERM_DB` selects `sqlite` (the default), `postgres`, `mysql` or
 `mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; preserve that
 directory and `/etc/nexterm/master.key` when backing up. Run only one
-server instance against the same database.
+server instance against the same database: login rate limits and
+second-factor lockouts are held in process memory, are not shared between
+instances, and reset on restart.
 
 For a remote database, set all applicable values in the selected env file:
 
@@ -222,5 +224,30 @@ For a remote database, set all applicable values in the selected env file:
 Back up the external database as well as the local data directory and
 master key. Public deployments belong behind a TLS reverse proxy. Keep the
 listener on loopback, make the proxy overwrite `X-Forwarded-Proto`, and set
-`NEXTERM_TRUSTED_PROXY_CIDRS` to its source CIDRs so HTTPS session cookies
-are marked `Secure`.
+`NEXTERM_TRUSTED_PROXY_CIDRS` to the proxy's own addresses only (connections
+through an `ssh -L` tunnel also look like 127.0.0.1) so HTTPS session cookies
+are marked `Secure`. That setting only trusts `X-Forwarded-Proto`. To rate
+limit logins and record session origins by the real client address, also set
+`NEXTERM_TRUST_FORWARDED_FOR=1`, provided the proxy overwrites or appends to
+`X-Forwarded-For` (nginx `$remote_addr` and `$proxy_add_x_forwarded_for` both
+work) and never passes the client-supplied value through unchanged. With
+chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
+takes the rightmost address that is not in that list. Without it only the
+direct peer address is used.
+
+## Multi-user limits
+
+With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
+used by the LazyCat package) the server does not run commands on the server
+machine or read its files on an account's behalf:
+
+- local terminal assets and disk mounts are unavailable;
+- SSH settings that run or read on the server are refused: ProxyCommand,
+  SSH agent use (including agent forwarding), and private key or certificate
+  file paths. Upload key contents or use the vault, and use a jump host or a
+  SOCKS/HTTP proxy instead;
+- imports from the server's `~/.ssh/config`, kubeconfig, or Docker contexts,
+  and Kubernetes target exec, are unavailable.
+
+Only open access lifts these limits: `--auth off`, or `--auth loopback`
+listening on loopback when no account is signed in.

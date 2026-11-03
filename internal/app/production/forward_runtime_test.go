@@ -24,6 +24,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type forwardRuntimeFixture struct {
@@ -434,10 +435,19 @@ func TestForwardRuntimeConnectDeviceForRecoveryUsesFullAssetConfig(t *testing.T)
 			port := int32(2222)
 			username := "deploy"
 			authKind := "key"
-			keyPath := "/home/deploy/.ssh/id_ed25519"
+			// The private key lives inline in the vault; the asset only references it by credId.
+			credentialVault := vault.Load(fixture.ctx, fixture.db)
+			if err := credentialVault.InitMaster(fixture.ctx, "test-password"); err != nil {
+				t.Fatal(err)
+			}
+			credID, err := putProductionCredential(fixture.ctx, credentialVault, fixture.db, "", "forward-key", vault.KindPrivateKey,
+				vault.InlinePrivateKey("-----BEGIN PRIVATE KEY-----\ninline\n-----END PRIVATE KEY-----", nil).Encode())
+			if err != nil {
+				t.Fatal(err)
+			}
 			asset, err := fixture.db.AssetCreate(fixture.ctx, store.AssetInput{
 				Kind: kind, Name: "strict-host", Host: &host, Port: &port, Username: &username,
-				AuthKind: &authKind, KeyPath: &keyPath,
+				AuthKind: &authKind, CredID: &credID,
 				OptionsJSON: `{"encoding":"gbk","startupCommand":"tmux","env":{"FOO":"bar"}}`,
 			})
 			if err != nil {
@@ -460,7 +470,7 @@ func TestForwardRuntimeConnectDeviceForRecoveryUsesFullAssetConfig(t *testing.T)
 			got := connected.Asset()
 			options, _ := got.Options.(map[string]any)
 			if options["host"] != host || options["port"] != port || options["username"] != username ||
-				options["authKind"] != authKind || options["keyPath"] != keyPath {
+				options["authKind"] != authKind || options["credId"] != credID || options["keyPath"] != nil {
 				t.Fatalf("recovered asset options = %+v", options)
 			}
 			if !got.StoreBacked || got.ConfigFingerprint == "" {

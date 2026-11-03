@@ -3,6 +3,7 @@
 package supervisor
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,6 +21,10 @@ func prepareEndpoint(path string) (net.Listener, endpointIdentity, func(), error
 		return nil, endpointIdentity{}, nil, fmt.Errorf("%w: socket path: %v", ErrInvalidInput, err)
 	}
 	if err := ensurePrivateDir(filepath.Dir(absolute)); err != nil {
+		var untrusted *UntrustedEndpointError
+		if errors.As(err, &untrusted) {
+			untrusted.Kind = EndpointSocketDir
+		}
 		return nil, endpointIdentity{}, nil, fmt.Errorf("supervisor socket directory: %w", err)
 	}
 	unlock, err := lockSocket(absolute)

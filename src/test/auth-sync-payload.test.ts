@@ -2,6 +2,7 @@
 // Verifies byte-for-byte alignment between frontend payload construction and Go json.Marshal. Fixtures are real Go encoding/json output
 // (structs copied field by field from internal/sync/object.go), covering sessionId position, content omitted for zero chunks,
 // <>& HTML escaping, U+2028/U+2029 and multilingual text; not self-proven with JS logic.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { TranscriptChunk, TranscriptSummary } from "../ipc/commands";
 import type { SyncCollectAIGrantDevice, SyncCollectAIGrantMode, SyncCollectAIGrantRule, SyncCollectAIProfile, SyncCollectAsset, SyncCollectCredential, SyncCollectKnownHost, SyncCollectTombstone } from "../ipc/types";
@@ -140,7 +141,17 @@ describe("remaining object payloads match Go byte for byte", () => {
   });
 
   it("snippet", () => {
-    expect(marshalSyncPayload(snippetPayload({ id: "s-1", groupId: "g1", name: "常用", body: "ls -la <&>", sort: 0, createdAt: 1, updatedAt: 2 }))).toBe(fixtureText("snippet"));
+    expect(marshalSyncPayload(snippetPayload({ id: "s-1", groupId: "g1", name: "常用", body: "ls -la <&>", sort: 0, createdAt: 1, updatedAt: 2, description: "", steps: [] }))).toBe(fixtureText("snippet"));
+  });
+
+  it("a multi-step snippet serializes like the Go golden payload (steps travel in a companion kind)", () => {
+    const golden = JSON.parse(readFileSync("internal/sync/testdata/snippet_multistep_payloads.json", "utf8")) as { snippet: string };
+    // Same row as TestSnippetStepsGoldenPayloads: body is the server-joined command text; description and steps are not part of this payload.
+    const text = marshalSyncPayload(snippetPayload({
+      id: "01M6G627NENBMSX21C095HZQ6E", groupId: null, name: "deploy <all> & more", body: "echo '<a>' && echo \"&\"\necho 2",
+      sort: 0, createdAt: 1000, updatedAt: 2000, description: "ignored", steps: [{ id: "a", name: "one", command: "x" }],
+    }));
+    expect(text).toBe(new TextDecoder().decode(Uint8Array.from(atob(golden.snippet), (c) => c.charCodeAt(0))));
   });
 
   it("supports group and credential tombstones", () => {
@@ -209,6 +220,20 @@ describe("ai_grant payloads match Go byte for byte", () => {
       id: "rule/r-2", deviceId: "dev-2", action: "exec_commands", createdAt: 1700000000000, updatedAt: 1700000002000,
     };
     expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(fixtureText("aiGrantRuleMinimal"));
+  });
+
+  it("writes kinds, programs and unattended after path in the Go field order under the scoped-rule/ id, only when set", () => {
+    const r: SyncCollectAIGrantRule = {
+      id: "scoped-rule/r-3", deviceId: "dev-3", action: "exec_commands", path: "", kinds: ["service", "program"], programs: ["git"],
+      unattended: true, expiresAt: 5, createdAt: 1, updatedAt: 2,
+    };
+    expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(
+      '{"id":"scoped-rule/r-3","deviceId":"dev-3","action":"exec_commands","kinds":["service","program"],"programs":["git"],"unattended":true,"expiresAt":5,"createdAt":1,"updatedAt":2}',
+    );
+    const empty: SyncCollectAIGrantRule = { ...r, id: "rule/r-3", kinds: [], programs: [], unattended: false };
+    expect(marshalSyncPayload(aiGrantRulePayload(empty))).toBe(
+      '{"id":"rule/r-3","deviceId":"dev-3","action":"exec_commands","expiresAt":5,"createdAt":1,"updatedAt":2}',
+    );
   });
 
   it("includes every device permission-mode field without omitempty", () => {

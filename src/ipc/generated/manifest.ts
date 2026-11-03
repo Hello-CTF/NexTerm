@@ -108,7 +108,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "struct{DeviceID string \"json:\\\"deviceId\\\"\"; Action string \"json:\\\"action\\\"\"; Path string \"json:\\\"path\\\"\"; ExpiresAt int64 \"json:\\\"expiresAt\\\"\"}", ts: "{\n  deviceId: string;\n  action: string;\n  path: string;\n  expiresAt: number;\n}" },
+      input: { go: "struct{DeviceID string \"json:\\\"deviceId\\\"\"; Action string \"json:\\\"action\\\"\"; Path string \"json:\\\"path\\\"\"; ExpiresAt int64 \"json:\\\"expiresAt\\\"\"; Unattended bool \"json:\\\"unattended\\\"\"}", ts: "{\n  deviceId: string;\n  action: string;\n  path: string;\n  expiresAt: number;\n  unattended: boolean;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/ai/guard.GrantRule", ts: "GrantRule" },
     },
     "ai_grant_set": {
@@ -564,6 +564,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditQueryRequest", ts: "AuditQueryRequest" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.auditDTO", ts: "AuditDTO[]" },
     },
+    "audit_timeline": {
+      scope: "audit",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditTimelineRequest", ts: "AuditTimelineRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.auditTimelineResult", ts: "AuditTimelineResult" },
+    },
     "biometric_disable": {
       scope: "biometric",
       nested: false,
@@ -611,6 +619,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.commandLogQueryRequest", ts: "CommandLogQueryRequest" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.commandLogDTO", ts: "CommandLogDTO[]" },
+    },
+    "command_search": {
+      scope: "command-log",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.commandSearchRequest", ts: "CommandSearchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.commandSearchResult", ts: "CommandSearchResult" },
     },
     "credential_update": {
       scope: "credential",
@@ -827,7 +843,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; BaseContentBase64 string \"json:\\\"baseContentBase64\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; ProductionConfirmation *github.com/Hello-CTF/NexTerm/internal/app/production.dockerProductionConfirmation \"json:\\\"productionConfirmation,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  baseContentBase64: string;\n  contentBase64: string;\n  productionConfirmation?: DockerProductionConfirmation | null;\n}" },
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; BaseContentBase64 string \"json:\\\"baseContentBase64\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; ConfirmedCommand string \"json:\\\"confirmedCommand,omitempty\\\"\"; ProductionConfirmation *github.com/Hello-CTF/NexTerm/internal/app/production.dockerProductionConfirmation \"json:\\\"productionConfirmation,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  baseContentBase64: string;\n  contentBase64: string;\n  confirmedCommand?: string;\n  productionConfirmation?: DockerProductionConfirmation | null;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeRedeployPrepareResult", ts: "DockerComposeRedeployPrepareResult" },
     },
     "docker_compose_stacks": {
@@ -1368,6 +1384,38 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest", ts: "AssetGroupPatchRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO" },
     },
+    "host_connectivity_test": {
+      scope: "host-ports",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs", ts: "HostProbeArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult", ts: "HostProbeResult" },
+    },
+    "host_ports_list": {
+      scope: "host-ports",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ListArgs", ts: "HostPortsListArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ListResult", ts: "HostPortsListResult" },
+    },
+    "host_process_kill": {
+      scope: "host-processes",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostprocs.ProcessKillArgs", ts: "ProcessKillArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostprocs.ProcessKillResult", ts: "ProcessKillResult" },
+    },
+    "host_processes_list": {
+      scope: "host-processes",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostprocs.ProcessListArgs", ts: "ProcessListArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostprocs.ProcessListResult", ts: "ProcessListResult" },
+    },
     "host_share_identity": {
       scope: "host-share",
       nested: false,
@@ -1645,6 +1693,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/mount.RemoveArgs", ts: "MountRemoveArgs" },
       output: { go: "any", ts: "unknown" },
     },
+    "preview_embed_check": {
+      scope: "preview",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/preview.EmbedCheckArgs", ts: "EmbedCheckArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/preview.EmbedCheck", ts: "EmbedCheck" },
+    },
     "preview_share_active": {
       scope: "preview-share",
       nested: true,
@@ -1764,6 +1820,38 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAccountMe", ts: "RemoteAccountMe | null" },
+    },
+    "remote_fleet_alert_settings_get": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteDeviceRequest", ts: "RemoteDeviceRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAlertSettings", ts: "RemoteAlertSettings | null" },
+    },
+    "remote_fleet_alert_settings_put": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteAlertSettingsPutRequest", ts: "RemoteAlertSettingsPutRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteAlertSettings", ts: "RemoteAlertSettings | null" },
+    },
+    "remote_fleet_alerts": {
+      scope: "remote",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteFleetAlerts", ts: "RemoteFleetAlerts | null" },
+    },
+    "remote_fleet_alerts_ack": {
+      scope: "remote",
+      nested: true,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.remoteAlertAckRequest", ts: "RemoteAlertAckRequest" },
+      output: { go: "*github.com/Hello-CTF/NexTerm/internal/sync.RemoteFleetAlertAck", ts: "RemoteFleetAlertAck | null" },
     },
     "remote_fleet_base_urls_get": {
       scope: "remote",
@@ -1989,46 +2077,6 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.StartRequest", ts: "StartRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/runbook.RunState", ts: "RunState" },
     },
-    "runbook_template_create": {
-      scope: "runbook",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplateInput", ts: "RunbookTemplateInput" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
-    },
-    "runbook_template_delete": {
-      scope: "runbook",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
-      output: { go: "any", ts: "unknown" },
-    },
-    "runbook_template_get": {
-      scope: "runbook",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateRequest", ts: "RunbookTemplateRequest" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
-    },
-    "runbook_template_list": {
-      scope: "runbook",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "struct{}", ts: "Record<string, never>" },
-      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate[]" },
-    },
-    "runbook_template_update": {
-      scope: "runbook",
-      nested: false,
-      channel: false,
-      stream: "none",
-      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.runbookTemplateUpdateRequest", ts: "RunbookTemplateUpdateRequest" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/store.RunbookTemplate", ts: "RunbookTemplate" },
-    },
     "services_action": {
       scope: "services",
       nested: false,
@@ -2190,6 +2238,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.snippetDTO", ts: "SnippetDTO[]" },
+    },
+    "snippet_migration_status": {
+      scope: "snippet",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.snippetMigrationStatusDTO", ts: "SnippetMigrationStatusDTO" },
     },
     "snippet_update": {
       scope: "snippet",
@@ -2813,6 +2869,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptIDRequest", ts: "TranscriptIDRequest" },
       output: { go: "any", ts: "unknown" },
     },
+    "transcript_export_cast": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastRequest", ts: "TranscriptExportCastRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastResult", ts: "TranscriptExportCastResult" },
+    },
     "transcript_hosts": {
       scope: "transcript",
       nested: false,
@@ -2844,6 +2908,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptSearchRequest", ts: "TranscriptSearchRequest" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptMatchDTO", ts: "TranscriptMatchDTO[]" },
+    },
+    "transcript_search_host": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostSearchRequest", ts: "TranscriptHostSearchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostSearchResult", ts: "TranscriptHostSearchResult" },
     },
     "transcript_sync_opt_in": {
       scope: "transcript",
@@ -2939,7 +3011,7 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
-      output: { go: "github.com/Hello-CTF/NexTerm/internal/vault.Status", ts: "VaultStatus" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.vaultStatusDTO", ts: "VaultStatusDTO" },
     },
     "vault_unlock": {
       scope: "vault",
@@ -3068,6 +3140,7 @@ export interface IPCCommandTypeMap {
   action: string;
   path: string;
   expiresAt: number;
+  unattended: boolean;
 };
     output: contractTypes.GrantRule;
   };
@@ -3257,6 +3330,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.AuditQueryRequest;
     output: contractTypes.AuditDTO[];
   };
+  "audit_timeline": {
+    input: contractTypes.AuditTimelineRequest;
+    output: contractTypes.AuditTimelineResult;
+  };
   "biometric_disable": {
     input: Record<string, never>;
     output: unknown;
@@ -3284,6 +3361,10 @@ export interface IPCCommandTypeMap {
   "command_query": {
     input: contractTypes.CommandLogQueryRequest;
     output: contractTypes.CommandLogDTO[];
+  };
+  "command_search": {
+    input: contractTypes.CommandSearchRequest;
+    output: contractTypes.CommandSearchResult;
   };
   "credential_update": {
     input: contractTypes.CredentialUpdateRequest;
@@ -3410,6 +3491,7 @@ export interface IPCCommandTypeMap {
   path: string;
   baseContentBase64: string;
   contentBase64: string;
+  confirmedCommand?: string;
   productionConfirmation?: contractTypes.DockerProductionConfirmation | null;
 };
     output: contractTypes.DockerComposeRedeployPrepareResult;
@@ -3795,6 +3877,22 @@ export interface IPCCommandTypeMap {
     input: contractTypes.AssetGroupPatchRequest;
     output: contractTypes.AssetGroupDTO;
   };
+  "host_connectivity_test": {
+    input: contractTypes.HostProbeArgs;
+    output: contractTypes.HostProbeResult;
+  };
+  "host_ports_list": {
+    input: contractTypes.HostPortsListArgs;
+    output: contractTypes.HostPortsListResult;
+  };
+  "host_process_kill": {
+    input: contractTypes.ProcessKillArgs;
+    output: contractTypes.ProcessKillResult;
+  };
+  "host_processes_list": {
+    input: contractTypes.ProcessListArgs;
+    output: contractTypes.ProcessListResult;
+  };
   "host_share_identity": {
     input: Record<string, never>;
     output: contractTypes.RemoteHostShareIdentity | null;
@@ -3915,6 +4013,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.MountRemoveArgs;
     output: unknown;
   };
+  "preview_embed_check": {
+    input: contractTypes.EmbedCheckArgs;
+    output: contractTypes.EmbedCheck;
+  };
   "preview_share_active": {
     input: contractTypes.PreviewShareActiveRequest;
     output: contractTypes.PreviewShareActiveResult;
@@ -3974,6 +4076,22 @@ export interface IPCCommandTypeMap {
   "remote_account_me": {
     input: Record<string, never>;
     output: contractTypes.RemoteAccountMe | null;
+  };
+  "remote_fleet_alert_settings_get": {
+    input: contractTypes.RemoteDeviceRequest;
+    output: contractTypes.RemoteAlertSettings | null;
+  };
+  "remote_fleet_alert_settings_put": {
+    input: contractTypes.RemoteAlertSettingsPutRequest;
+    output: contractTypes.RemoteAlertSettings | null;
+  };
+  "remote_fleet_alerts": {
+    input: Record<string, never>;
+    output: contractTypes.RemoteFleetAlerts | null;
+  };
+  "remote_fleet_alerts_ack": {
+    input: contractTypes.RemoteAlertAckRequest;
+    output: contractTypes.RemoteFleetAlertAck | null;
   };
   "remote_fleet_base_urls_get": {
     input: Record<string, never>;
@@ -4087,26 +4205,6 @@ export interface IPCCommandTypeMap {
     input: contractTypes.StartRequest;
     output: contractTypes.RunState;
   };
-  "runbook_template_create": {
-    input: contractTypes.RunbookTemplateInput;
-    output: contractTypes.RunbookTemplate;
-  };
-  "runbook_template_delete": {
-    input: contractTypes.RunbookTemplateRequest;
-    output: unknown;
-  };
-  "runbook_template_get": {
-    input: contractTypes.RunbookTemplateRequest;
-    output: contractTypes.RunbookTemplate;
-  };
-  "runbook_template_list": {
-    input: Record<string, never>;
-    output: contractTypes.RunbookTemplate[];
-  };
-  "runbook_template_update": {
-    input: contractTypes.RunbookTemplateUpdateRequest;
-    output: contractTypes.RunbookTemplate;
-  };
   "services_action": {
     input: contractTypes.ActionRequest;
     output: contractTypes.ServiceOperationBatch;
@@ -4176,6 +4274,10 @@ export interface IPCCommandTypeMap {
   "snippet_list": {
     input: Record<string, never>;
     output: contractTypes.SnippetDTO[];
+  };
+  "snippet_migration_status": {
+    input: Record<string, never>;
+    output: contractTypes.SnippetMigrationStatusDTO;
   };
   "snippet_update": {
     input: contractTypes.SnippetPatchRequest;
@@ -4445,6 +4547,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.TranscriptIDRequest;
     output: unknown;
   };
+  "transcript_export_cast": {
+    input: contractTypes.TranscriptExportCastRequest;
+    output: contractTypes.TranscriptExportCastResult;
+  };
   "transcript_hosts": {
     input: Record<string, never>;
     output: contractTypes.TranscriptHostDTO[];
@@ -4460,6 +4566,10 @@ export interface IPCCommandTypeMap {
   "transcript_search": {
     input: contractTypes.TranscriptSearchRequest;
     output: contractTypes.TranscriptMatchDTO[];
+  };
+  "transcript_search_host": {
+    input: contractTypes.TranscriptHostSearchRequest;
+    output: contractTypes.TranscriptHostSearchResult;
   };
   "transcript_sync_opt_in": {
     input: contractTypes.TranscriptSyncOptInRequest;
@@ -4507,7 +4617,7 @@ export interface IPCCommandTypeMap {
   };
   "vault_status": {
     input: Record<string, never>;
-    output: contractTypes.VaultStatus;
+    output: contractTypes.VaultStatusDTO;
   };
   "vault_unlock": {
     input: contractTypes.VaultPasswordRequest;

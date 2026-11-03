@@ -123,7 +123,7 @@ func readDeviceHello(conn *websocket.Conn) (agent.HelloMessage, error) {
 // Online is recorded only after hello_ok is written (a failed handshake produces no online); offline is recorded only when the conn is still the currently registered
 // connection (unregistration of a replaced old connection, or after service shutdown swapped the table, is rejected by the Registry).
 func (s *Service) serveDeviceControl(conn *websocket.Conn, hello agent.HelloMessage) {
-	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest, hello.Capabilities)
+	s.registry.RegisterControl(hello.DeviceID, conn, hello.StateDigest, hello.HelperInstanceID, hello.Capabilities)
 	// A revoke or account disable can land between authentication and registration (its kick would then find nothing),
 	// so re-check after registering and tear the channel down if the device is no longer allowed.
 	if err := s.recheckDevice(context.Background(), hello.DeviceID); err != nil {

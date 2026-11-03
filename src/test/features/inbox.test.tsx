@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mountWithClient, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   attentionSeen: vi.fn(),
@@ -11,6 +11,11 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
   return { ...actual, terminalApi: { ...actual.terminalApi, attentionSeen: mocks.attentionSeen } };
 });
+
+// The bell polls device alerts only for a signed-in account; these tests have none.
+vi.mock("../../features/fleet/useFleetAccount", () => ({
+  useFleetAccount: () => ({ loading: false, userId: null, isAdmin: false }),
+}));
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -289,7 +294,7 @@ describe("inbox button", () => {
   it("marks every listed session read from one button, shown only for two or more", async () => {
     vi.useRealTimers();
     applyAwareness([attention({ tabId: "T1" })]);
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
     click(bell);
     expect([...view.container.querySelectorAll("button")].some((b) => b.textContent === "全部标记已读")).toBe(false);
@@ -308,7 +313,7 @@ describe("inbox button", () => {
       attention({ tabId: "T2", reason: "notify", body: "approve?" }),
       attention({ tabId: "T1", state: "just_finished", reason: "command_end", exitCode: 0 }),
     ]);
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
     expect(bell.getAttribute("aria-label")).toContain("2 个会话");
 
@@ -349,7 +354,7 @@ describe("inbox button", () => {
   it("explains disabled rows inline, starts focus on the first row, and closes when focus leaves", () => {
     vi.useRealTimers();
     applyAwareness([attention({ tabId: "T2", reason: "notify", body: "approve?" }), attention({ tabId: "GONE" })]);
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     const bell = view.container.querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement;
     click(bell);
     const first = view.container.querySelector("[data-inbox-tab] button");

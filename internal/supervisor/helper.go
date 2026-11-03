@@ -36,7 +36,20 @@ type HelperConfig struct {
 	// NoSpawn attaches only: when no helper answers, ConnectHelper returns
 	// ErrHelperNotRunning instead of starting one.
 	NoSpawn bool
+	// KeepEnvStale makes EnsureHelperBuild report, but not replace, an idle helper that is stale only
+	// because it started with another SHELL or PATH and was spawned by the desktop (SpawnedByDesktop).
+	// It is for a helper directory shared with the desktop.
+	KeepEnvStale bool
+	// SpawnedBy names who starts the helper (SpawnedByDesktop or SpawnedByAgent). ConnectHelper passes
+	// it to a helper it spawns, which reports it in its hello acknowledgement; empty means unknown.
+	SpawnedBy string
 }
+
+// Who started a helper, as recorded by the helper itself.
+const (
+	SpawnedByDesktop = "desktop"
+	SpawnedByAgent   = "agent"
+)
 
 // StateDetectionEnv in the helper's environment overrides the
 // --state-detection option: "off", "0", "false" or "no" disables
@@ -128,10 +141,16 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve supervisor helper endpoint: %w", err)
 	}
+	if err := checkEndpointDirOwner(endpoint); err != nil {
+		return nil, err
+	}
 	client := NewClient(endpoint, stateDir)
 	err = probeHelper(ctx, client)
 	if err == nil {
 		return &Helper{endpoint: endpoint, client: client}, nil
+	}
+	if errors.Is(err, ErrUntrustedEndpoint) {
+		return nil, err
 	}
 	if errors.Is(err, ErrProtocol) {
 		return nil, fmt.Errorf("the supervisor helper at %s speaks an incompatible protocol; refusing to replace it: %w", endpoint, err)
@@ -171,6 +190,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 				return &Helper{endpoint: endpoint, client: client}, nil
 			}
 			return &Helper{endpoint: endpoint, client: client, spawned: true, process: process}, nil
+		}
+		if errors.Is(err, ErrUntrustedEndpoint) {
+			return nil, err
 		}
 		if errors.Is(err, ErrProtocol) {
 			return nil, fmt.Errorf("the spawned supervisor helper at %s speaks an incompatible protocol: %w", endpoint, err)
@@ -232,6 +254,9 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 	hlog := newHelperLog(stateDir)
 	defer hlog.close()
 	hlog.logStart(stateDir)
+	if _, err := HelperInstanceID(stateDir); err != nil {
+		hlog.event("instance_id_failed", "error", err.Error())
+	}
 	// Resolve the login-shell environment now so the first terminal does not wait for it.
 	shellenv.Default().Start()
 	if err := os.WriteFile(filepath.Join(stateDir, "helper.pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
@@ -248,7 +273,7 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 		_ = supervisor.Close()
 		return fmt.Errorf("resolve supervisor helper endpoint: %w", err)
 	}
-	server, err := NewServer(supervisor, endpoint)
+	server, err := newServer(supervisor, endpoint, config.SpawnedBy)
 	if err != nil {
 		_ = supervisor.Close()
 		return err
@@ -299,6 +324,9 @@ func helperSpawnArgs(stateDir string, config HelperConfig) []string {
 	if config.DisableStateDetection {
 		args = append(args, "--state-detection=off")
 	}
+	if config.SpawnedBy != "" {
+		args = append(args, "--spawned-by="+config.SpawnedBy)
+	}
 	return append(args, config.Limits.args()...)
 }
 
@@ -325,7 +353,7 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 			}
 			continue
 		}
-		if name != "--state-dir" && name != "--data-dir" && name != "--state-detection" && !limitOption(name) {
+		if name != "--state-dir" && name != "--data-dir" && name != "--state-detection" && name != "--spawned-by" && !limitOption(name) {
 			return HelperConfig{}, fmt.Errorf("unknown option %s", name)
 		}
 		if !hasValue {
@@ -346,6 +374,11 @@ func parseHelperArgs(args []string, getenv func(string) string) (HelperConfig, e
 				return HelperConfig{}, fmt.Errorf("option %s takes on or off, not %q", name, value)
 			}
 			config.DisableStateDetection = disabled
+		case "--spawned-by":
+			if value != SpawnedByDesktop && value != SpawnedByAgent {
+				return HelperConfig{}, fmt.Errorf("option %s takes %s or %s, not %q", name, SpawnedByDesktop, SpawnedByAgent, value)
+			}
+			config.SpawnedBy = value
 		default:
 			if err := config.Limits.set(name, value); err != nil {
 				return HelperConfig{}, err

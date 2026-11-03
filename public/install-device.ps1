@@ -1,5 +1,5 @@
 ﻿# NexTerm device agent one-line installer (Windows).
-# Usage: iex "& { $(iwr -useb https://<server>/install-device.ps1) } -Server <server URL> -Code <enrollment code> -Version <version> [-Insecure] [-DataDir <dir>]"
+# Usage: & ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((iwr -UseBasicParsing 'https://<server>/install-device.ps1').RawContentStream.ToArray()).TrimStart([char]0xFEFF))) -Server <server URL> -Code <enrollment code> -Version <version> [-Insecure] [-DataDir <dir>]
 # Supports Windows AMD64/ARM64 and requires PowerShell 5.1+; no administrator rights required: registers a logon scheduled task for the current user (schtasks, hidden background execution).
 # Installs only after the binary passes verification against the same release's SHA256SUMS, then enrolls the device and registers the NexTermAgent scheduled task.
 #Requires -Version 5.1

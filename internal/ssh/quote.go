@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 )
 
 func quoteShell(value string) string {
@@ -12,7 +14,7 @@ func quoteShell(value string) string {
 }
 
 func quotePowerShell(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return psquote.Quote(value)
 }
 
 func powerShellCommand(shell, script string) string {

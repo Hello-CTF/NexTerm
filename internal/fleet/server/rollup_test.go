@@ -13,7 +13,7 @@ func TestRollupRunnerSchedulesMetricsRetention(t *testing.T) {
 
 	// Insert one raw metric older than the raw retention period (48h), waiting for it to roll into the hourly bucket and be cleaned up.
 	old := time.Now().Add(-49 * time.Hour).UnixMilli()
-	if err := f.service.RecordMetrics(context.Background(), deviceID, MetricsSample{
+	if err := seedMetric(f.service, context.Background(), deviceID, MetricsSample{
 		TS: old, CPUPct: 20, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5,
 	}); err != nil {
 		t.Fatal(err)

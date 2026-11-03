@@ -16,6 +16,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostports"
+	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
@@ -67,6 +69,8 @@ type ProductionServices struct {
 	Runbook       *runbookIPCService
 	Forward       *forward.Service
 	Docker        *docker.Service
+	hostPorts     *hostports.Service
+	hostProcs     *hostprocs.Service
 	Retention     *RetentionRunner
 	Guard         *guard.Manager
 	Agent         *agent.Runner
@@ -95,6 +99,7 @@ type ProductionServices struct {
 	stagedBlobs         StagedBlobResolver
 	dataDir             string
 	desktop             bool
+	multiUser           bool // account-isolated server: server-path import sources and Kubernetes exec are refused
 	// updateChannels stores the per-machine release channel; set on the desktop only.
 	updateChannels   update.ChannelStore
 	hostKeysShared   bool
@@ -159,10 +164,11 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	if services.sessionAggregate == nil && services.Sessions != nil {
 		services.sessionAggregate = newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
 		services.sessionAggregate.localDigest = localHelperDigest(services.LocalHelper)
+		services.sessionAggregate.localInstance = localHelperInstanceID(services.LocalHelper)
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
-			withInventoryDockerAccess(services.Sessions, services.Docker))
+			withInventoryDockerAccess(services.Sessions, services.Docker), withInventoryMultiUser(services.multiUser))
 	}
 	config.Modules = append(productionModules(services), config.Modules...)
 	application, err := core.New(config)
@@ -204,7 +210,7 @@ func productionModules(services ProductionServices) []Module {
 					return err
 				}
 				if services.Vault != nil {
-					return registerSSHImportCommands(dispatcher, services.Store, services.Vault, services.desktop)
+					return registerSSHImportCommands(dispatcher, services.Store, services.Vault, services.desktop, services.multiUser)
 				}
 				return nil
 			},
@@ -226,7 +232,7 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "vault",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerVaultCommands(dispatcher, services.Vault, services.Store, services.Events)
+				return registerVaultCommands(dispatcher, services.Vault, services.Store, services.Events, services.desktop)
 			},
 			Component: newVaultComponent(services.Vault),
 		})
@@ -417,6 +423,15 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Docker != nil {
 		modules = append(modules, Module{Name: "docker", RegisterCommands: services.terminalCommands.registerDocker, Component: closeDockerComponent(services.Docker)})
+	}
+	if services.hostPorts != nil {
+		modules = append(modules, hostPortsModule(services.hostPorts))
+	}
+	if services.hostProcs != nil {
+		modules = append(modules, hostProcsModule(services.hostProcs))
+	}
+	if module, ok := previewModule(services.desktop); ok {
+		modules = append(modules, module)
 	}
 	if services.Retention != nil {
 		modules = append(modules, Module{Name: "retention", Component: services.Retention})

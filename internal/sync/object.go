@@ -19,6 +19,7 @@ const (
 	KindAsset        = "asset"
 	KindCredential   = "credential"
 	KindSnippet      = "snippet"
+	KindSnippetSteps = "snippet_steps"
 	KindTombstone    = "tombstone"
 	KindTranscript   = "transcript"
 	KindKnownHost    = "known_host"
@@ -172,6 +173,27 @@ type snippetObject struct {
 	UpdatedAt int64   `json:"updatedAt"`
 }
 
+// snippetStepsObject is the steps companion of a multi-step snippet. The snippet object itself keeps the
+// original field set (body is the commands joined by newlines), so clients without multi-step support
+// round-trip it byte for byte; the companion binds to the body it was made for through BodyHash.
+type snippetStepsObject struct {
+	ID          string              `json:"id"`
+	SnippetID   string              `json:"snippetId"`
+	BodyHash    string              `json:"bodyHash"`
+	Description string              `json:"description,omitempty"`
+	Steps       []snippetStepObject `json:"steps"`
+	UpdatedAt   int64               `json:"updatedAt"`
+}
+
+type snippetStepObject struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	Confirm     bool   `json:"confirm,omitempty"`
+	Interactive bool   `json:"interactive,omitempty"`
+}
+
 type tombstoneObject struct {
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
@@ -197,7 +219,7 @@ type knownHostObject struct {
 }
 
 // aiProfileObject fields correspond one-to-one with the internal/ai/profiles.Profile persisted form, plus the updatedAt revision.
-// apiKey is always plaintext in the payload (the whole payload is E2E-encrypted with the DEK) and must become an enc:v1: envelope before persisting.
+// apiKey is always plaintext in the payload (the whole payload is encrypted with the DEK) and must become an enc:v1: envelope before persisting.
 type aiProfileObject struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
@@ -229,7 +251,7 @@ type aiPermissionObject struct {
 }
 
 // AI grant objects share the ai_grant kind, split into three families by object ID prefix:
-// device/<deviceID> (device-level grants), rule/<ruleID> (path-level grant rules), mode/<deviceID> (per-device permission modes).
+// device/<deviceID> (device-level grants), rule/<ruleID> (path rules and unscoped command rules), scoped-rule/<ruleID> (rules with kinds, programs or unattended), mode/<deviceID> (per-device permission modes).
 // Fields align with the guard persisted forms (guard.DeviceGrant / guard.GrantRule / the ai.device_permission map values);
 // updatedAt is the LWW revision, revocations converge via tombstones sharing the object ID.
 type aiGrantDeviceObject struct {
@@ -240,13 +262,17 @@ type aiGrantDeviceObject struct {
 }
 
 type aiGrantRuleObject struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID       string `json:"id"`
+	DeviceID string `json:"deviceId"`
+	Action   string `json:"action"`
+	Path     string `json:"path,omitempty"`
+	// Field order is part of the browser-side payload contract.
+	Kinds      []string `json:"kinds,omitempty"`
+	Programs   []string `json:"programs,omitempty"`
+	Unattended bool     `json:"unattended,omitempty"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	UpdatedAt  int64    `json:"updatedAt"`
 }
 
 type aiGrantModeObject struct {
@@ -295,6 +321,7 @@ func (p *groupObject) payloadID() string         { return p.ID }
 func (p *assetObject) payloadID() string         { return p.ID }
 func (p *credentialObject) payloadID() string    { return p.ID }
 func (p *snippetObject) payloadID() string       { return p.ID }
+func (p *snippetStepsObject) payloadID() string  { return p.ID }
 func (p *transcriptObject) payloadID() string    { return p.ID }
 func (p *knownHostObject) payloadID() string     { return p.ID }
 func (p *aiProfileObject) payloadID() string     { return p.ID }

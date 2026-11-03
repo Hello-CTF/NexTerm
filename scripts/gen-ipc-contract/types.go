@@ -27,6 +27,11 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
+	"github.com/Hello-CTF/NexTerm/internal/hostports.Listener":                       "HostPortListener",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ListArgs":                       "HostPortsListArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ListResult":                     "HostPortsListResult",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs":                      "HostProbeArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult":                    "HostProbeResult",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":           "FSCancelRequest",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO":     "FSChunkUploadBeginDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO":  "FSChunkUploadProgressDTO",
@@ -151,7 +156,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"db_query":                        {{name: "ConnID"}, {name: "SQL"}, {name: "TimeoutMS", optional: true}},
 	"docker_action":                   {{name: "SessionID"}, {name: "ContainerID"}, {name: "Action"}, {name: "NewName", optional: true}},
 	"docker_compose_redeploy_attach":  {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "Ticket"}},
-	"docker_compose_redeploy_prepare": {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "BaseContentBase64"}, {name: "ContentBase64"}, {name: "ProductionConfirmation"}},
+	"docker_compose_redeploy_prepare": {{name: "SessionID"}, {name: "Project"}, {name: "Path"}, {name: "BaseContentBase64"}, {name: "ContentBase64"}, {name: "ConfirmedCommand"}, {name: "ProductionConfirmation"}},
 	"docker_container_list_dir":       {{name: "SessionID"}, {name: "ContainerID"}, {name: "Path"}},
 	"docker_exec_attach":              {{name: "SessionID"}, {name: "ContainerID"}, {name: "Cmd", optional: true}, {name: "Cols"}, {name: "Rows"}, {name: "ClientID"}},
 	"docker_image_pull":               {{name: "SessionID"}, {name: "Image"}},

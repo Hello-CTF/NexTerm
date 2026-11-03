@@ -194,15 +194,22 @@ describe("channel socket terminal input", () => {
     }
   });
 
-  it("drops input beyond the pending cap with a warning", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("reports input dropped beyond the pending cap", async () => {
     const { newBinaryChannel, sendChannelInput } = await import("../ipc/webTransport");
-    const ch = newBinaryChannel();
-    const http = vi.fn().mockImplementation(() => new Promise(() => {}));
-    sendChannelInput(ch.id, "t", bytes(1), http);
-    await Promise.resolve();
-    sendChannelInput(ch.id, "t", new Uint8Array(5 * 1024 * 1024), http);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+    const { setInputFailureHandler } = await import("../ipc/inputFailure");
+    const failures: Array<{ error: unknown; connectionLost: boolean }> = [];
+    setInputFailureHandler((failure) => failures.push(failure));
+    try {
+      const ch = newBinaryChannel();
+      const http = vi.fn().mockImplementation(() => new Promise(() => {}));
+      sendChannelInput(ch.id, "t", bytes(1), http);
+      await Promise.resolve();
+      sendChannelInput(ch.id, "t", new Uint8Array(5 * 1024 * 1024), http);
+      expect(failures).toHaveLength(1);
+      expect(failures[0].connectionLost).toBe(false);
+      expect(failures[0].error).toMatchObject({ code: "input_overflow" });
+    } finally {
+      setInputFailureHandler(null);
+    }
   });
 });

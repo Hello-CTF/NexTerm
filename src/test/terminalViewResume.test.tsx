@@ -9,7 +9,6 @@ import { attachOk, ctx, feedControl, installTerminalViewHooks, show, term } from
 vi.mock("@xterm/xterm", async () => (await import("./lib/terminalViewHarness")).xtermModule());
 vi.mock("@xterm/addon-webgl", async () => (await import("./lib/terminalViewHarness")).webglModule());
 vi.mock("@xterm/addon-search", async () => (await import("./lib/terminalViewHarness")).searchModule());
-vi.mock("@xterm/addon-web-links", async () => (await import("./lib/terminalViewHarness")).webLinksModule());
 vi.mock("../features/terminal/commandBlocks", async () => (await import("./lib/terminalViewHarness")).commandBlocksModule());
 vi.mock("../features/terminal/terminalGeometry", async () => (await import("./lib/terminalViewHarness")).terminalGeometryModule());
 vi.mock("../features/terminal/gridRuntimeAdapter", async () => (await import("./lib/terminalViewHarness")).gridRuntimeModule());

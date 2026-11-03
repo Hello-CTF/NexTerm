@@ -73,6 +73,9 @@ export type ChatItem =
       // sessionScope names what "本会话允许" covers; absent means the card
       // offers no session approval (risky, production or cross-target calls).
       sessionScope?: string;
+      // permanentScope names what "永久允许" covers; absent means the card
+      // offers no permanent approval.
+      permanentScope?: string;
       requestId?: string;
       hitlAttempt?: number;
       resolution?: string;
@@ -700,6 +703,7 @@ export function applyAiEvent(
             commands: commands && commands.length > 0 ? commands : undefined,
             rulePattern: typeof ev.rulePattern === "string" ? ev.rulePattern : undefined,
             sessionScope: typeof ev.sessionScope === "string" && ev.sessionScope !== "" ? ev.sessionScope : undefined,
+            permanentScope: typeof ev.permanentScope === "string" && ev.permanentScope !== "" ? ev.permanentScope : undefined,
             ...(requiredEnvironmentNames ? { requiredEnvironmentNames } : {}),
             ...interactionIdentityOf(ev),
           },

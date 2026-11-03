@@ -7,16 +7,18 @@ import { formatBytes } from "../../../ui/format";
 
 export interface RefChip {
   id: string;
-  kind: "asset" | "tab" | "file";
+  kind: "asset" | "tab" | "file" | "text";
   label: string;
   detail: string;
   refId: string;
   path?: string;
   sessionId?: string;
+  // Inline content for kind "text"; sent as a data reference, never merged into the message.
+  text?: string;
 }
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝；已开启免确认授权的操作除外" },
+  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝" },
   { value: "read_write", label: "读写", hint: "查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问" },
   { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍需要你确认" },
 ];
@@ -78,7 +80,7 @@ export const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persi
 export type SlashItem = { key: string; label: string; hint: string; run: () => void };
 
 export const CONFIRM_HELP =
-  "「允许一次」仅对本次操作生效；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。如需某类操作每次先确认，可在「设置 → AI 拦截规则」中添加。";
+  "「允许一次」仅对本次操作生效；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，只覆盖卡片上列出的范围，可随时撤销，只读模式和定时任务中不生效。高危、无法判断和生产环境的操作不会被这些授权放行，每次都会询问。如需某类操作每次先确认，可在「设置 → AI 拦截规则」中添加。";
 
 export function confirmTitle(risk: string | undefined): string {
   if (risk === "danger") return "高危操作，需要你确认";
@@ -86,15 +88,8 @@ export function confirmTitle(risk: string | undefined): string {
   return "需要你确认";
 }
 
-export const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", "send_keys"]);
-
 export function permanentScopeText(card: ConfirmItem): string {
-  if (card.tool === "write_file" || card.tool === "edit_file") {
-    const action = card.tool === "write_file" ? "写入" : "修改";
-    return `永久允许${action} ${card.rulePattern || "该路径"} 下的文件`;
-  }
-  if (card.tool === "send_keys") return "永久允许该设备发送普通按键";
-  return "永久允许该设备执行普通命令";
+  return `永久允许${card.permanentScope ?? ""}`;
 }
 
 export function extractUrls(text: string): string[] {

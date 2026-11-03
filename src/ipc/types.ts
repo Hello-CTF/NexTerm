@@ -135,7 +135,9 @@ status: string, tabs: Array<string>, createdAt: number, };
 
 export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, version: number, };
 
-export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, };
+export type SnippetStep = { id: string, name: string, description?: string, command: string, confirm?: boolean, interactive?: boolean, };
+
+export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, description: string, steps: Array<SnippetStep>, };
 
 export type SyncDigest = { origin: string, protocol: number, appVersion: string, 
 desktop: boolean, assets: Array<DigestEntry>, };
@@ -187,7 +189,7 @@ export type SyncReport = {
 };
 
 export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "ai_grant" | "preference"
-  | "state_rule" | "runbook_template" | "skill" | "memory" | "cron";
+  | "state_rule" | "runbook_template" | "skill" | "memory" | "cron" | "snippet_steps";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 
@@ -242,7 +244,7 @@ export type SyncCollectKindObjectsResult = { objects: SyncCollectKindObject[], w
 
 export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };
 export type SyncCollectAIGrantDevice = { id: string, deviceId: string, kinds: string[], updatedAt: number, };
-export type SyncCollectAIGrantRule = { id: string, deviceId: string, action: string, path?: string, expiresAt?: number, createdAt: number, updatedAt: number, };
+export type SyncCollectAIGrantRule = { id: string, deviceId: string, action: string, path?: string, kinds?: string[], programs?: string[], unattended?: boolean, expiresAt?: number, createdAt: number, updatedAt: number, };
 export type SyncCollectAIGrantMode = { id: string, deviceId: string, mode: string, updatedAt: number, };
 export type SyncCollectAIGrants = { grants: SyncCollectAIGrantDevice[], rules: SyncCollectAIGrantRule[], modes: SyncCollectAIGrantMode[], };
 export type SyncCollectPreference = { id: string, key: string, value: unknown, updatedAt: number, };

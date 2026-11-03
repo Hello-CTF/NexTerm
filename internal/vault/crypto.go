@@ -1,9 +1,11 @@
 package vault
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"runtime"
@@ -23,6 +25,8 @@ var (
 	userDEKRecoveryAAD = []byte("nexterm/go/user-dek-recovery/v1")
 	credentialAAD      = []byte("nexterm/go/credential/v1")
 	secretAAD          = []byte("nexterm/go/secret/v1")
+	keyCheckAAD        = []byte("nexterm/go/key-check/v1")
+	keyCheckPlaintext  = []byte("nexterm key check v1")
 )
 
 type secretKey struct {
@@ -169,4 +173,29 @@ func decodeDEK(plaintext []byte) (*secretKey, error) {
 	dek := &secretKey{}
 	copy(dek.bytes[:], plaintext)
 	return dek, nil
+}
+
+// sealKeyCheck returns base64(nonce || AES-GCM(dek, constant)) so a later unlock can
+// tell a mismatching DEK apart from a damaged ciphertext.
+func sealKeyCheck(dek *secretKey) (string, error) {
+	nonce, ciphertext, err := seal(dek, keyCheckPlaintext, keyCheckAAD)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(append(nonce, ciphertext...)), nil
+}
+
+func verifyKeyCheck(dek *secretKey, raw string) error {
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil || len(decoded) <= nonceLength {
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：密钥校验值已损坏")
+	}
+	plaintext, err := open(dek, decoded[:nonceLength], decoded[nonceLength:], keyCheckAAD)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(plaintext, keyCheckPlaintext) {
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：密钥校验值不匹配")
+	}
+	return nil
 }

@@ -14,7 +14,7 @@ const objectAADPrefix = "nexterm/go/sync-object/v1";
 // Same enum order as objectKinds in Go internal/sync/object.go (AAD binds kind; a wrong kind never decrypts).
 export const SYNC_OBJECT_KINDS = [
   "group", "asset", "credential", "snippet", "tombstone", "transcript", "known_host", "ai_profile", "ai_permission", "ai_grant", "preference",
-  "state_rule", "runbook_template", "skill", "memory", "cron",
+  "state_rule", "runbook_template", "skill", "memory", "cron", "snippet_steps",
 ] as const;
 export type SyncObjectKind = (typeof SYNC_OBJECT_KINDS)[number];
 

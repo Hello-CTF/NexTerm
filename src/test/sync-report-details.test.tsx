@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     transcriptRead: vi.fn(),
     collectAssets: vi.fn(),
     collectTombstones: vi.fn(),
+    collectKindObjects: vi.fn(),
     collectCredentials: vi.fn(),
     kindOptInGet: vi.fn(),
     toast: vi.fn(),
@@ -55,6 +56,7 @@ vi.mock("../ipc/commands", () => ({
     rotateToken: mocks.rotateToken,
     collectAssets: mocks.collectAssets,
     collectTombstones: mocks.collectTombstones,
+    collectKindObjects: mocks.collectKindObjects,
     collectCredentials: mocks.collectCredentials,
     kindOptInGet: mocks.kindOptInGet,
   },
@@ -136,6 +138,7 @@ beforeEach(() => {
   mocks.collectAssets.mockResolvedValue({ assets: [], hasMore: false });
   mocks.collectTombstones.mockResolvedValue({ tombstones: [], hasMore: false });
   mocks.collectCredentials.mockResolvedValue({ credentials: [], hasMore: false });
+  mocks.collectKindObjects.mockResolvedValue({ objects: [], warnings: [] });
   mocks.kindOptInGet.mockResolvedValue({ knownHost: false, aiProfile: false, aiPermission: false, aiGrant: false, preferences: false, stateRules: false, runbookTemplates: false, skills: false, memory: false, cron: false });
 });
 

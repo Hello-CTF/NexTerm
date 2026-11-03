@@ -54,6 +54,9 @@ type HelloMessage struct {
 	// with which the server passes the helper's hello verification for managed attach/create sessions; the digest itself
 	// is not a credential, it only identifies the state directory on the device.
 	StateDigest string `json:"state_digest,omitempty"`
+	// HelperInstanceID is the random id of the helper state directory. It only tells apart helpers on different
+	// machines that happen to share uid and path (and thus StateDigest); it is not a credential.
+	HelperInstanceID string `json:"helper_instance_id,omitempty"`
 }
 
 type serverMessage struct {

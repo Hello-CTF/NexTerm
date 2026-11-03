@@ -125,7 +125,6 @@ vi.mock("@xterm/addon-search", () => ({
     findPrevious() {}
   },
 }));
-vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
 vi.mock("../../features/terminal/commandBlocks", () => ({
   CommandBlockManager: class {
     copyBlock() { return ""; }

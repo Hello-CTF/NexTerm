@@ -1,0 +1,6 @@
+LISTEN 0      4096       127.0.0.53%lo:53         0.0.0.0:*
+LISTEN 0      128              0.0.0.0:22         0.0.0.0:*    users:(("sshd",pid=812,fd=3))
+LISTEN 0      128                 [::]:22            [::]:*    users:(("sshd",pid=812,fd=4))
+LISTEN 0      511                    *:80               *:*    users:(("nginx",pid=901,fd=6),("nginx",pid=900,fd=6))
+LISTEN 0      4096    [::ffff:127.0.0.1]:8080          *:*    users:(("node",pid=123,fd=20))
+LISTEN 0      4096               [::1]:5432          [::]:*    users:(("postgres",pid=77,fd=5))

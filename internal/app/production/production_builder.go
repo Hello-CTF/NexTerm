@@ -21,6 +21,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostports"
+	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/mount"
@@ -149,6 +151,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		sshConnector = defaultConnector
 	}
 	dockerService := config.Docker
+	var hostPortsService *hostports.Service
+	var hostProcsService *hostprocs.Service
 	var forwardService *forward.Service
 	var forwardRuntime *forwardRuntime
 	fsUploads := newFSChunkUploadRegistry(config.Config.Logger)
@@ -207,6 +211,12 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 							config.Config.Logger.Warn("close docker session on status change failed", "session", status.SessionID, "error", err)
 						}
 					}
+					if hostPortsService != nil {
+						forgetHostPortsOnStatus(hostPortsService.Forget, status)
+					}
+					if hostProcsService != nil {
+						forgetHostPortsOnStatus(hostProcsService.Forget, status)
+					}
 					if forwardService != nil {
 						switch status.Status {
 						case session.StatusReconnecting:
@@ -246,6 +256,8 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	if dockerService == nil {
 		dockerService = newProductionDockerService(sessionManager, database)
 	}
+	hostPortsService = newProductionHostPortsServiceWithAudit(sessionManager, database)
+	hostProcsService = newProductionHostProcsService(sessionManager, database)
 	deviceInstall := loadDeviceInstall(config.DataDir, config.Config.Logger)
 	syncService := syncservice.New(database, credentialVault, syncservice.WithDeviceInstall(deviceInstall), syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
 	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
@@ -382,17 +394,19 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Database:      newProductionDatabaseService(database, credentialVault, sessionManager),
 		RemoteDesktop: newProductionRemoteDesktopService(database, credentialVault, sessionManager),
 		Wake:          newProductionWakeService(database, sessionManager),
-		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
+		Mount: mount.NewService(mount.Config{Auditor: database, MultiUser: !shared, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {
 				return "", err
 			}
 			return connected.Asset().ID, nil
 		}}),
-		Sessions: sessionManager,
-		Forward:  forwardService,
-		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
+		Sessions:  sessionManager,
+		Forward:   forwardService,
+		hostPorts: hostPortsService, hostProcs: hostProcsService,
+		Docker: dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		desktop:        config.Desktop,
+		multiUser:      !shared,
 		hostKeysShared: config.Desktop || owner.OpenAccess(ctx),
 		stagedBlobs:    config.StagedBlobs,
 		fsUploads:      fsUploads,
@@ -504,6 +518,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 	values := []any{
 		"ownership_assigned", report.Ownership.Assigned,
 		"ownership_conflicts", report.Ownership.Conflicts,
+		"device_audit_owners", report.DeviceAuditOwners,
 		"layout_copied", report.Layout.Copied,
 		"layout_existing", report.Layout.Existing,
 		"layout_conflicts", report.Layout.Conflicts,
@@ -533,7 +548,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
 		return
 	}
-	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated > 0 || report.AI.Changed()
+	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated+report.DeviceAuditOwners > 0 || report.AI.Changed()
 	if changed {
 		c.logger.Info("completed data upgrade", values...)
 	}

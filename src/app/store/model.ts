@@ -455,6 +455,7 @@ export function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolea
     !t.tabId &&
     !tab.tabId &&
     t.path === tab.path &&
+    t.url === tab.url &&
     !isFleetHealthTabId(t.id) &&
     !isFleetHealthTabId(tab.id)
   );

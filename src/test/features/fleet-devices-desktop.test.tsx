@@ -53,6 +53,11 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     syncApi: { ...actual.syncApi, status: mocks.status },
   };
 });
+// Alert polling has its own tests; here it must not add requests to the counts under test.
+vi.mock("../../ipc/fleetAlertsApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/fleetAlertsApi")>()),
+  fleetAlertsClient: () => ({ list: () => Promise.resolve({ active: [], events: [] }) }),
+}));
 vi.mock("../../ipc/remoteApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/remoteApi")>();
   return {

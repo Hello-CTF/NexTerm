@@ -589,8 +589,8 @@ func (e *actionExecution) decide(ctx context.Context, ruling guard.Ruling) guard
 // persistPermanentGrant turns an "always allow" decision into a persistent send_keys rule;
 // any step that cannot safely determine the scope is rejected, and the caller treats it as fail-closed.
 func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools.InteractionState) error {
-	if state.Info.Risk != "needs_confirm" {
-		return errors.New("该操作必须逐次确认，不支持永久授权")
+	if state.Info.Risk != "needs_confirm" || state.Info.PermanentScope == "" {
+		return errors.New("该操作不支持永久授权")
 	}
 	if e.manager.deps.Grants == nil {
 		return errors.New("永久授权未配置")
@@ -598,7 +598,7 @@ func (e *actionExecution) persistPermanentGrant(ctx context.Context, state tools
 	if e.state.assetID == "" {
 		return errors.New("无法确定设备身份，不能保存永久授权")
 	}
-	_, err := e.manager.deps.Grants.AddRule(ctx, e.state.assetID, "send_keys", "", time.Time{})
+	_, err := e.manager.deps.Grants.AddRule(ctx, e.state.assetID, "send_keys", "", tools.PersistentRuleScope(state), time.Time{})
 	return err
 }
 
@@ -657,6 +657,9 @@ func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysAr
 		info := tools.Interaction{Kind: "confirm", CallID: callID, Tool: "send_keys", Args: string(encodedArgs), Risk: ruling.Risk.String(), Rendered: tools.DisplaySendKeys(tools.Call{ID: callID, Name: "send_keys", Args: encodedArgs}, terminalInput, cursor), Reason: ruling.Reason}
 		if !decision.Production {
 			info.SessionScope = tools.SessionScope(ruling, guard.Resource{Action: "send_keys"})
+			if e.state.assetID != "" && e.manager.deps.Grants != nil {
+				info.PermanentScope = guard.PermanentScope(ruling, guard.Resource{Action: "send_keys"})
+			}
 		}
 		state := tools.InteractionState{Kind: "confirm", CallID: callID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput, TerminalCursor: cursor, Info: info}
 		return tools.Output{}, tool.StatefulInterrupt(ctx, info, state)

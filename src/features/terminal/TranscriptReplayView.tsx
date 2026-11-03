@@ -59,9 +59,12 @@ function terminalSink(terminal: Terminal): ReplaySink {
 export function TranscriptReplayView({
   transcriptId,
   contentOmitted = false,
+  initialTs,
 }: {
   transcriptId: string;
   contentOmitted?: boolean;
+  // Absolute millisecond timestamp to land on once the recording is ready; playback stays paused.
+  initialTs?: number;
 }) {
   const [loadPhase, setLoadPhase] = useState<"loading" | "ready">("loading");
   const [hasChunks, setHasChunks] = useState(false);
@@ -82,6 +85,7 @@ export function TranscriptReplayView({
   const speedRef = useRef(1);
   const seekTimerRef = useRef<number | null>(null);
   const busyTimerRef = useRef<number | null>(null);
+  const appliedInitialRef = useRef<{ transcriptId: string; ts: number } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -290,6 +294,22 @@ export function TranscriptReplayView({
     },
     [commitSeek],
   );
+
+  useEffect(() => {
+    if (initialTs === undefined || loadPhase !== "ready") return;
+    const applied = appliedInitialRef.current;
+    if (applied && applied.transcriptId === transcriptId && applied.ts === initialTs) return;
+    const engine = engineRef.current;
+    const terminal = terminalRef.current;
+    if (!engine || !terminal || engine.chunkCount() === 0) return;
+    appliedInitialRef.current = { transcriptId, ts: initialTs };
+    setPlaying(false);
+    positionRef.current = engine.seek(
+      terminalSink(terminal),
+      Math.min(Math.max(0, initialTs - engine.firstTs()), engine.durationMs()),
+    );
+    setPosition(positionRef.current);
+  }, [initialTs, loadPhase, transcriptId]);
 
   const togglePlay = () => {
     const engine = engineRef.current;

@@ -13,10 +13,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 	"github.com/coder/websocket"
@@ -508,10 +510,8 @@ func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	binary := []byte("new-agent-binary")
 	archive := buildReleaseArchive(t, runtime.GOOS, binary)
-	release := newReleaseServer(t, map[string][]byte{
-		"/v" + version + "/" + asset:             archive,
-		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
-	})
+	release := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive},
+		signedChecksums(version, fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset))))
 	dataDir := t.TempDir()
 	entries := []BaseURLEntry{{URL: server.server.URL}}
 	writeRuntimeConfig(t, dataDir, entries, true)
@@ -521,7 +521,7 @@ func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
 	}
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
-		BaseURL: release.URL, Executable: target,
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: target,
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	}
@@ -558,7 +558,7 @@ func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
 	entries := []BaseURLEntry{{URL: server.server.URL}}
 	writeRuntimeConfig(t, dataDir, entries, true)
 	upgrader := &Upgrader{
-		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
 	}
@@ -566,7 +566,7 @@ func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+	if err := agentRuntime.Run(ctx); !errors.Is(err, ErrProtocolMismatch) {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch after retry exhaustion", err)
 	}
 	if got := release.requestCount("/v" + version + "/"); got != 3 {
@@ -588,7 +588,7 @@ func TestRuntimeSelfUpgradeCancelDuringDownloadStopsCleanly(t *testing.T) {
 	entries := []BaseURLEntry{{URL: server.server.URL}}
 	writeRuntimeConfig(t, dataDir, entries, true)
 	upgrader := &Upgrader{
-		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 1, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
@@ -629,7 +629,7 @@ func TestRuntimeEmbeddedDistributionSkipsSelfUpgrade(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+	if err := agentRuntime.Run(ctx); !errors.Is(err, ErrProtocolMismatch) {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
 	}
 }
@@ -642,7 +642,7 @@ func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
 	entries := []BaseURLEntry{{URL: server.server.URL}}
 	writeRuntimeConfig(t, dataDir, entries, true)
 	upgrader := &Upgrader{
-		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
 	}
@@ -650,7 +650,7 @@ func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+	if err := agentRuntime.Run(ctx); !errors.Is(err, ErrProtocolMismatch) {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
 	}
 	if got := release.requestCount("/"); got != 0 {
@@ -669,7 +669,7 @@ func TestRuntimeSelfUpgradeRefusesDowngrade(t *testing.T) {
 	entries := []BaseURLEntry{{URL: server.server.URL}}
 	writeRuntimeConfig(t, dataDir, entries, true)
 	upgrader := &Upgrader{
-		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
 	}
@@ -677,7 +677,7 @@ func TestRuntimeSelfUpgradeRefusesDowngrade(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := agentRuntime.Run(ctx); err != ErrProtocolMismatch {
+	if err := agentRuntime.Run(ctx); !errors.Is(err, ErrProtocolMismatch) {
 		t.Fatalf("Run = %v, want ErrProtocolMismatch", err)
 	}
 	if got := release.requestCount("/"); got != 0 {
@@ -973,5 +973,89 @@ func TestRuntimePurposeHandlerServesBridge(t *testing.T) {
 	case hello := <-probe.bridgeHello:
 		t.Fatalf("runtime dialed a purpose bridge itself: %+v", hello)
 	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+func TestRuntimeSelfUpgradeRefusalKeepsReason(t *testing.T) {
+	previous := releasesig.EmbeddedPublicKey
+	releasesig.EmbeddedPublicKey = ""
+	t.Cleanup(func() { releasesig.EmbeddedPublicKey = previous })
+	server := newFakeFleetServer(t)
+	server.setWSControl(mismatchControl("9.9.9"))
+	release := newReleaseServer(t, map[string][]byte{})
+	dataDir := t.TempDir()
+	entries := []BaseURLEntry{{URL: server.server.URL}}
+	writeRuntimeConfig(t, dataDir, entries, true)
+	upgrader := &Upgrader{
+		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond,
+		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+	}
+	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := agentRuntime.Run(ctx)
+	if !errors.Is(err, ErrProtocolMismatch) || !errors.Is(err, errUpgradeRefused) {
+		t.Fatalf("Run = %v, want ErrProtocolMismatch carrying the refusal", err)
+	}
+	if !strings.Contains(err.Error(), "签名公钥") {
+		t.Fatalf("Run error lost the reason: %v", err)
+	}
+	if got := release.requestCount("/"); got != 0 {
+		t.Fatalf("refused upgrade must not touch the network, got %d requests", got)
+	}
+}
+
+func TestSelfUpgradeFailedErrorKeepsSentinelAndCause(t *testing.T) {
+	cause := errors.New("download exploded")
+	err := error(&selfUpgradeFailedError{cause: cause})
+	if !errors.Is(err, ErrProtocolMismatch) || !errors.Is(err, cause) {
+		t.Fatalf("%v must match both ErrProtocolMismatch and its cause", err)
+	}
+	var failed *selfUpgradeFailedError
+	if !errors.As(fmt.Errorf("wrapped: %w", err), &failed) || failed.cause != cause {
+		t.Fatalf("errors.As lost the cause: %+v", failed)
+	}
+	if !strings.Contains(err.Error(), cause.Error()) {
+		t.Fatalf("Error() = %q lacks the cause", err.Error())
+	}
+}
+
+func TestRuntimeDefaultUpgraderLogsInDataDir(t *testing.T) {
+	dataDir := t.TempDir()
+	prober, err := NewProber([]BaseURLEntry{{URL: "http://127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime, err := New(Options{
+		Store: StoreAt(dataDir), DataDir: dataDir, Prober: prober, Manager: &fakeManager{},
+		Collector: fakeCollector{}, EnsureHelper: func(context.Context) error { return nil },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentRuntime.upgrader == nil || agentRuntime.upgrader.LogPath != filepath.Join(dataDir, upgradeLogName) {
+		t.Fatalf("upgrader = %+v", agentRuntime.upgrader)
+	}
+}
+
+func TestRuntimeDefaultUpgraderSkipsUnusableLogDir(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "missing")
+	prober, err := NewProber([]BaseURLEntry{{URL: "http://127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime, err := New(Options{
+		Store: StoreAt(dataDir), DataDir: dataDir, Prober: prober, Manager: &fakeManager{},
+		Collector: fakeCollector{}, EnsureHelper: func(context.Context) error { return nil },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentRuntime.upgrader == nil || agentRuntime.upgrader.LogPath != "" {
+		t.Fatalf("upgrader = %+v", agentRuntime.upgrader)
 	}
 }

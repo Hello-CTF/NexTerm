@@ -17,7 +17,7 @@ func TestCredentialSourceValidationMessages(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	credentialVault := vault.Load(ctx, database)
 	dispatcher := ipc.NewDispatcher()
-	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
+	if err := registerVaultCommands(dispatcher, credentialVault, database, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	requireProductionNull(t, dispatchStoreTest(dispatcher, "vault_init_master", `{"password":"test-password"}`))

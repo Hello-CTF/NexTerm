@@ -312,6 +312,10 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
 		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，且自动升级不可用或已失败；请执行 agent update --force，或使用 install-device.sh 重新安装")
+		var failed *selfUpgradeFailedError
+		if errors.As(err, &failed) {
+			printCLIError(stderr, "agent: 原因：", failed.cause)
+		}
 		return ExitProtocol
 	default:
 		printCLIError(stderr, "agent run:", err)
@@ -423,7 +427,8 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 			fmt.Fprintf(stdout, "持久终端组件：未运行（%s）\n", applog.RedactText(probeErr.Error()))
 		} else {
 			fmt.Fprintf(stdout, "持久终端组件：正常（%s）\n", endpoint)
-			printHelperBuild(ctx, stdout, stateDir)
+			shared, ok := sharedHelperDir(dir)
+			printHelperBuild(ctx, stdout, stateDir, ok && filepath.Clean(shared) == filepath.Clean(stateDir))
 		}
 	}
 	collector := NewCollector(dir, time.Now)
@@ -436,7 +441,8 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 }
 
 // printHelperBuild reports which process owns new terminals and whether it runs an older build.
-func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir string) {
+// inSharedDir is true when stateDir is the helper directory shared with the desktop app.
+func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir string, inSharedDir bool) {
 	inspectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	build, err := supervisor.InspectHelperBuild(inspectCtx, stateDir)
@@ -445,13 +451,22 @@ func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir string) {
 		return
 	}
 	started := helperStartedAt(inspectCtx, build.Helper.PID)
-	for _, line := range describeHelperBuild(build, started) {
+	for _, line := range describeHelperBuildIn(build, started, inSharedDir) {
 		fmt.Fprintln(stdout, line)
 	}
 }
 
 // describeHelperBuild lists the status lines about the host component that owns new terminals.
 func describeHelperBuild(build supervisor.HelperBuild, started string) []string {
+	return describeHelperBuildIn(build, started, false)
+}
+
+// describeHelperBuildIn is describeHelperBuild for a helper in the directory shared with the desktop app when
+// inSharedDir is set: the agent keeps an environment-stale helper there instead of replacing it, so it says so.
+func describeHelperBuildIn(build supervisor.HelperBuild, started string, inSharedDir bool) []string {
+	if inSharedDir && build.Stale && build.StaleReason == "env" && build.Helper.SpawnedBy == supervisor.SpawnedByDesktop {
+		build.EnvKept = true
+	}
 	release := "未知"
 	if build.Helper.Runtime != nil && build.Helper.Runtime.Version != "" {
 		release = build.Helper.Runtime.Version
@@ -470,7 +485,7 @@ func describeHelperBuild(build supervisor.HelperBuild, started string) []string 
 	case build.Notice() != "":
 		lines = append(lines, "提示: "+build.Notice())
 	case build.Stale && build.StaleReason == "env":
-		// Idle: it is replaced on the next check, so there is nothing to tell.
+		// Outside the shared directory it is replaced on the next check, so there is nothing to tell.
 	case build.Stale:
 		lines = append(lines, "提示: 主机端组件版本较旧，当前没有持久终端，将自动更新。")
 	}

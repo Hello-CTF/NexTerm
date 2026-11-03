@@ -49,7 +49,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     group: "ai",
     summary: "AI 授权",
     label: "同步 AI 授权与权限模式",
-    hint: "默认开启。设备授权、路径授权规则与设备权限模式端到端加密同步；会话内临时授权不同步。",
+    hint: "默认开启。设备授权、路径授权规则与设备权限模式加密同步；会话内临时授权不同步。",
   },
   {
     key: "preferences",
@@ -66,13 +66,6 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     hint: "默认开启。同步后的规则将应用到本机的会话助手；规则顺序取决于各设备收到的先后。",
   },
   {
-    key: "runbookTemplates",
-    group: "base",
-    summary: "Runbook 模板",
-    label: "同步 Runbook 模板",
-    hint: "默认开启。模板中的命令按保存时的快照同步。",
-  },
-  {
     key: "skills",
     group: "ai",
     summary: "AI 技能",
@@ -84,7 +77,7 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     group: "ai",
     summary: "AI 记忆",
     label: "同步 AI 记忆",
-    hint: "默认关闭。记忆内容端到端加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
+    hint: "默认关闭。记忆内容加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
   },
   {
     key: "cron",

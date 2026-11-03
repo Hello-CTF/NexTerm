@@ -71,7 +71,6 @@ vi.mock("@xterm/xterm", () => ({
 }));
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
 vi.mock("@xterm/addon-search", () => ({ SearchAddon: class { findNext() {} findPrevious() {} } }));
-vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
 vi.mock("../features/terminal/commandBlocks", () => ({
   CommandBlockManager: class {
     getBlockText() {

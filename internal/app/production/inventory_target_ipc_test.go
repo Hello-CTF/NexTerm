@@ -169,28 +169,52 @@ func inventoryCancelFor(request inventoryTargetExecRequest) inventoryTargetExecR
 	return request
 }
 
-func importDockerContext(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runner *recordingInventoryRunner) {
+// requireDockerContextImportRejected documents that account owners cannot import server Docker contexts;
+// the exec paths under test resolve their target from the request and a managed session instead.
+func requireDockerContextImportRejected(t *testing.T, dispatcher *ipc.Dispatcher, ctx context.Context, runner *recordingInventoryRunner) {
 	t.Helper()
 	if runner.outputs == nil {
 		runner.outputs = map[string][]byte{}
 	}
 	runner.outputs["docker context ls --format {{json .}}"] = dockerDiscoveryOutput()
 	keys := []string{"context/prod"}
-	var synced inventorySyncDTO
-	dispatchInventoryTest(t, dispatcher, ctx, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &keys}, &synced)
-	if synced.Created != 1 {
-		t.Fatalf("docker context import = %+v", synced)
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &keys}, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	if runner.callCount() != 0 {
+		t.Fatalf("rejected import ran commands: %+v", runner.calls)
 	}
 }
 
-func TestInventoryServerKubernetesDiscoveryRequiresAuthorization(t *testing.T) {
+func TestInventoryKubeconfigSourceRejectedForAccountOwners(t *testing.T) {
+	// Even with the operator opt-in set, an account owner must never reach the server kubeconfig.
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	service, database := newInventoryTestService(t, false)
+	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	keys := []string{"context/staging"}
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceKubernetes, Keys: &keys}, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	if runner.callCount() != 0 {
+		t.Fatalf("rejected kubeconfig import ran commands: %+v", runner.calls)
+	}
+	assets, err := database.AssetList(ctx, true)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("rejected kubeconfig import created assets: %+v err=%v", assets, err)
+	}
+}
+
+func TestInventoryServerKubernetesDiscoveryWithoutOwnerRequiresAuthorization(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	service, _ := newInventoryTestService(t, false)
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
 	denied := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	response := dispatchInventoryTest(t, denied, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
 	requireInventoryIPCError(t, response, ipc.CodeForbidden)
 	if runner.callCount() != 0 {
@@ -213,7 +237,7 @@ func TestInventoryDesktopKubernetesDiscoveryUnchanged(t *testing.T) {
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	var discovery inventoryDiscoveryDTO
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, &discovery)
 	if len(discovery.Items) != 2 {
@@ -279,7 +303,7 @@ func TestInventoryTargetExecDockerServerRequiresManagedSession(t *testing.T) {
 	sessionOther := connectInventoryTestSession(t, manager, "owner-a", otherAsset)
 
 	// Import stays available for target resolution but grants no exec rights.
-	importDockerContext(t, dispatcher, ctxA, runner)
+	requireDockerContextImportRejected(t, dispatcher, ctxA, runner)
 	response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_target_exec", inventoryDockerExecRequest(), nil)
 	requireInventoryIPCError(t, response, ipc.CodeBadParam)
 	if len(executor.calls) != 0 {
@@ -989,7 +1013,8 @@ func TestInventoryTargetExecCancelKubernetesCanonicalTarget(t *testing.T) {
 	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 1)}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	// Kubernetes exec is a desktop/open-access capability, so no owner context.
+	ctx := context.Background()
 	requestA := inventoryKubernetesExecRequest()
 	requestA.OperationID = "op-a"
 	doneA := make(chan ipc.Response, 1)
@@ -1073,7 +1098,7 @@ func TestInventoryTargetExecDockerServerProductionConfirmation(t *testing.T) {
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
-	importDockerContext(t, dispatcher, ctx, runner)
+	requireDockerContextImportRejected(t, dispatcher, ctx, runner)
 
 	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "prod-host", Host: stringPointerForInventory("prod.example"), Username: optionalString("ops")})
 	if err != nil {
@@ -1297,30 +1322,20 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	sshDir := filepath.Join(home, ".ssh")
-	pathA := filepath.Join(sshDir, "config-a")
-	pathB := filepath.Join(sshDir, "config-b")
-	writeInventoryTestFile(t, pathA, "Host alpha\n  HostName 10.0.0.1\n")
-	writeInventoryTestFile(t, pathB, "Host bravo\n  HostName 10.0.0.2\n")
-	ctxA := ipc.WithUserID(context.Background(), "owner-a")
-	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+	path := filepath.Join(home, ".ssh", "config-a")
+	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
+	ctx := context.Background()
 
 	first := newInventoryServiceForTest(t, database, false, dataDir)
 	dispatcher := newInventoryExecDispatcher(t, first)
 	enabled := true
-	var statusA inventorySSHWatchDTO
-	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &enabled, Path: pathA}, &statusA)
-	if !statusA.Watching || statusA.LastResult == nil || statusA.LastResult.Created != 1 {
-		t.Fatalf("owner-a watch = %+v", statusA)
-	}
-	var statusB inventorySSHWatchDTO
-	dispatchInventoryTest(t, dispatcher, ctxB, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &enabled, Path: pathB}, &statusB)
-	if !statusB.Watching {
-		t.Fatalf("owner-b watch = %+v", statusB)
+	var status inventorySSHWatchDTO
+	dispatchInventoryTest(t, dispatcher, ctx, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &enabled, Path: path}, &status)
+	if !status.Watching || status.LastResult == nil || status.LastResult.Created != 1 {
+		t.Fatalf("watch = %+v", status)
 	}
 	watchFile := filepath.Join(dataDir, "inventory-ssh-watches.json")
-	persisted := readPersistedWatchOwners(t, watchFile)
-	if len(persisted) != 2 || persisted["owner-a"] == "" || persisted["owner-b"] == "" {
+	if persisted := readPersistedWatchOwners(t, watchFile); len(persisted) != 1 || persisted[inventoryDefaultOwnerID] == "" {
 		t.Fatalf("persisted watches = %+v", persisted)
 	}
 	if err := first.Shutdown(context.Background()); err != nil {
@@ -1332,29 +1347,21 @@ func TestInventoryServerSSHWatchPersistsAndRestores(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInventory(t, func() (bool, error) {
-		statusA := second.watchStatus(ctxA)
-		statusB := second.watchStatus(ctxB)
-		return statusA.Watching && statusA.LastResult != nil && statusB.Watching && statusB.LastResult != nil, nil
+		restored := second.watchStatus(ctx)
+		return restored.Watching && restored.LastResult != nil, nil
 	})
-	if rows, err := database.AssetList(ctxA, false); err != nil || len(rows) != 1 || rows[0].Name != "alpha" {
-		t.Fatalf("restored owner-a assets = %+v, err=%v", rows, err)
+	if rows, err := database.AssetList(ctx, false); err != nil || len(rows) != 1 || rows[0].Name != "alpha" {
+		t.Fatalf("restored assets = %+v, err=%v", rows, err)
 	}
 
 	disabled := false
 	dispatcher2 := newInventoryExecDispatcher(t, second)
-	dispatchInventoryTest(t, dispatcher2, ctxA, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &disabled}, &statusA)
-	if statusA.Watching {
-		t.Fatal("owner-a watch still active after stop")
+	dispatchInventoryTest(t, dispatcher2, ctx, "inventory_ssh_watch", inventorySSHWatchRequest{Enabled: &disabled}, &status)
+	if status.Watching {
+		t.Fatal("watch still active after stop")
 	}
-	persisted = readPersistedWatchOwners(t, watchFile)
-	if _, exists := persisted["owner-a"]; exists {
+	if persisted := readPersistedWatchOwners(t, watchFile); len(persisted) != 0 {
 		t.Fatalf("stopped watch was persisted: %+v", persisted)
-	}
-	if _, exists := persisted["owner-b"]; !exists {
-		t.Fatalf("owner-b watch lost with owner-a stop: %+v", persisted)
-	}
-	if status := second.watchStatus(ctxB); !status.Watching {
-		t.Fatal("owner-b watch stopped with owner-a stop")
 	}
 }
 
@@ -1368,7 +1375,7 @@ func TestInventoryServerSSHWatchStartFailureIsNotPersisted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	service := newInventoryServiceForTest(t, database, false, dataDir)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	broken := filepath.Join(home, ".ssh", "broken")
 	if err := os.MkdirAll(broken, 0o700); err != nil {
 		t.Fatal(err)
@@ -1392,7 +1399,7 @@ func TestInventoryDesktopWatchDoesNotPersist(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	service := newInventoryServiceForTest(t, database, true, dataDir)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "config")
 	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
 	if _, err := service.startWatch(ctx, path, ""); err != nil {
@@ -1415,7 +1422,7 @@ func TestInventoryServerWatchStoreRequiresDataDir(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	service := newInventoryService(database, nil, false, "")
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	path := filepath.Join(home, ".ssh", "config")
 	writeInventoryTestFile(t, path, "Host alpha\n  HostName 10.0.0.1\n")
 	if _, err := service.startWatch(ctx, path, ""); err == nil || !strings.Contains(err.Error(), "数据目录") {
@@ -1435,3 +1442,56 @@ func TestInventoryServerWatchStoreRequiresDataDir(t *testing.T) {
 }
 
 var _ fleetinventory.CommandRunner = (*recordingInventoryRunner)(nil)
+
+func TestInventoryTargetExecKubernetesRejectedForMultiUser(t *testing.T) {
+	// Even with the operator opt-in set, a multi-user server must never run kubectl with the server kubeconfig.
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	cases := map[string]struct {
+		ctx       context.Context
+		multiUser bool
+	}{
+		"owner context":   {ctx: ipc.WithUserID(context.Background(), "owner-a")},
+		"structural flag": {ctx: context.Background(), multiUser: true},
+		"flag with owner": {ctx: ipc.WithUserID(context.Background(), "owner-a"), multiUser: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			service, _ := newInventoryTestService(t, false)
+			service.multiUser = tc.multiUser
+			runner := &recordingInventoryRunner{outputs: map[string][]byte{
+				"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
+			}}
+			service.runner = runner
+			dispatcher := newInventoryExecDispatcher(t, service)
+			response := dispatchInventoryTest(t, dispatcher, tc.ctx, "inventory_target_exec", inventoryKubernetesExecRequest(), nil)
+			requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+			if runner.callCount() != 0 {
+				t.Fatalf("rejected kubernetes exec ran commands: %+v", runner.calls)
+			}
+		})
+	}
+}
+
+func TestInventoryServerPathSourcesRejectedByStructuralFlag(t *testing.T) {
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeInventoryTestFile(t, filepath.Join(home, ".ssh", "config"), "Host a\n  HostName a.example\n")
+	service, database := newInventoryTestService(t, false)
+	service.multiUser = true
+	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	for _, source := range []string{store.InventorySourceSSHConfig, store.InventorySourceDockerContext, store.InventorySourceKubernetes} {
+		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_discover", inventoryDiscoverRequest{Source: source}, nil)
+		requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	}
+	if runner.callCount() != 0 {
+		t.Fatalf("rejected sources ran commands: %+v", runner.calls)
+	}
+	assets, err := database.AssetList(context.Background(), true)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("rejected sources created assets: %+v err=%v", assets, err)
+	}
+}

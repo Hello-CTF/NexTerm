@@ -392,6 +392,8 @@ jobs:
           merge-multiple: true
       - name: Stage and verify the reused production agent binaries
         shell: bash
+        env:
+          NEXTERM_MINISIGN_PUBLIC_KEY: ${{ vars.NEXTERM_MINISIGN_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           mkdir -p target/go-build

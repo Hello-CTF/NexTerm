@@ -34,6 +34,8 @@ type RunningHelper struct {
 	Runtime *RuntimeMetadata
 	// StartEnv is the SHELL and PATH digest the helper inherited at start; nil when it did not report them.
 	StartEnv *StartEnv
+	// SpawnedBy is who started the helper (SpawnedByDesktop or SpawnedByAgent); empty when unrecorded.
+	SpawnedBy string
 	// StartTime identifies the process beside its pid (Linux: start time in
 	// clock ticks since boot; Windows: creation time); zero when unknown.
 	StartTime uint64
@@ -71,6 +73,7 @@ type probeHelloMsg struct {
 	Runtime     *RuntimeMetadata  `json:"runtime,omitempty"`
 	Activity    *ActivitySnapshot `json:"activity,omitempty"`
 	StartEnv    *StartEnv         `json:"start_env,omitempty"`
+	SpawnedBy   string            `json:"spawned_by,omitempty"`
 }
 
 // InspectHelper reports the helper that serves stateDir on this build's
@@ -225,6 +228,7 @@ func inspectHelperConn(ctx context.Context, stateDir string, version int) (_ Run
 		env := *ack.StartEnv
 		helper.StartEnv = &env
 	}
+	helper.SpawnedBy = ack.SpawnedBy
 	_ = conn.SetDeadline(time.Time{})
 	return helper, conn, nil
 }

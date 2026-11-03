@@ -45,6 +45,7 @@ type ComposeStack struct {
 	Services    []string `json:"services"`
 	ReadOnly    bool     `json:"readOnly"`
 	Reason      string   `json:"reason,omitempty"`
+	UpCommand   string   `json:"upCommand,omitempty"`
 }
 
 type ComposeOverview struct {
@@ -81,9 +82,15 @@ type ComposeAttachRequest struct {
 	Project     string
 	Action      ComposeAction
 	ContentHash string
-	Tail        *int
-	Sink        FrameSink
+	// ExpectedCommand, when set for an up action, must equal the command the
+	// backend would execute; otherwise AttachCompose refuses with ErrComposeChanged.
+	ExpectedCommand string
+	Tail            *int
+	Sink            FrameSink
 }
+
+// ErrComposeChanged reports that the stack no longer matches the confirmed command.
+var ErrComposeChanged = errors.New("栈配置已变化，请重新确认")
 
 type composeProbe struct {
 	ready chan struct{}
@@ -131,6 +138,14 @@ func (s *Service) ComposeStacks(ctx context.Context, sessionID string) (ComposeO
 		stack.EnvExists = status.EnvExists
 		if len(status.Missing) > 0 {
 			markComposeReadOnly(stack, "Compose 文件或工作目录不存在: "+strings.Join(status.Missing, ", "))
+			continue
+		}
+		if liner, ok := backend.(interface {
+			ComposeCommandLine(ComposeCLI, ComposeStack, ComposeAction) (string, error)
+		}); ok {
+			if command, lineErr := liner.ComposeCommandLine(cli, *stack, ComposeActionUp); lineErr == nil {
+				stack.UpCommand = command
+			}
 		}
 	}
 	return overview, nil
@@ -430,6 +445,18 @@ func (s *Service) AttachCompose(ctx context.Context, request ComposeAttachReques
 	if err != nil {
 		return "", err
 	}
+	if request.Action == ComposeActionUp && request.ExpectedCommand != "" {
+		liner, ok := backend.(interface {
+			ComposeCommandLine(ComposeCLI, ComposeStack, ComposeAction) (string, error)
+		})
+		if !ok {
+			return "", ErrComposeChanged
+		}
+		command, lineErr := liner.ComposeCommandLine(cli, stack, ComposeActionUp)
+		if lineErr != nil || command != request.ExpectedCommand {
+			return "", ErrComposeChanged
+		}
+	}
 	streamCtx, streamCancel := context.WithCancel(context.Background())
 	stopSetupCancel := context.AfterFunc(setupCtx, streamCancel)
 	logStream, err := backend.OpenCompose(streamCtx, cli, stack, request.Action, tail)
@@ -444,7 +471,7 @@ func (s *Service) AttachCompose(ctx context.Context, request ComposeAttachReques
 	managed := newManagedStream(s.streams, request.SessionID, streamLogs, request.Sink, streamCtx, streamCancel)
 	managed.reader = logStream.Reader
 	if request.Action == ComposeActionUp {
-		managed.reader = newComposeResultReader(logStream.Reader, streamCtx, result)
+		managed.reader = newComposeResultReader(logStream.Reader, streamCtx, result, cli)
 	}
 	if err := s.streams.add(managed, token); err != nil {
 		_ = managed.close(err)
@@ -497,15 +524,19 @@ func (r *composeExecutionResult) snapshot(fallback StreamExit) (int, error) {
 }
 
 type composeResultReader struct {
-	reader io.ReadCloser
-	stream CommandStream
-	ctx    context.Context
-	result *composeExecutionResult
-	once   sync.Once
+	reader  io.ReadCloser
+	stream  CommandStream
+	ctx     context.Context
+	result  *composeExecutionResult
+	once    sync.Once
+	trailer []byte
+	final   error
+	ended   bool
+	command string
 }
 
-func newComposeResultReader(reader io.ReadCloser, ctx context.Context, result *composeExecutionResult) *composeResultReader {
-	wrapped := &composeResultReader{reader: reader, ctx: ctx, result: result}
+func newComposeResultReader(reader io.ReadCloser, ctx context.Context, result *composeExecutionResult, cli ComposeCLI) *composeResultReader {
+	wrapped := &composeResultReader{reader: reader, ctx: ctx, result: result, command: composeUpDisplayName(cli)}
 	if merged, ok := reader.(*mergedCommandReader); ok {
 		wrapped.stream = merged.stream
 	}
@@ -513,6 +544,9 @@ func newComposeResultReader(reader io.ReadCloser, ctx context.Context, result *c
 }
 
 func (r *composeResultReader) Read(buffer []byte) (int, error) {
+	if r.ended {
+		return r.drainTrailer(buffer)
+	}
 	count, err := r.reader.Read(buffer)
 	if !errors.Is(err, io.EOF) {
 		return count, err
@@ -528,13 +562,48 @@ func (r *composeResultReader) Read(buffer []byte) (int, error) {
 	r.result.mu.Lock()
 	exitCode, waitErr := r.result.exitCode, r.result.err
 	r.result.mu.Unlock()
-	if waitErr != nil {
-		return count, waitErr
+	switch {
+	case waitErr != nil:
+		r.final = waitErr
+		r.trailer = []byte(fmt.Sprintf("\r\n[NexTerm] %s 结束状态未知：%v\r\n", r.commandName(), waitErr))
+	case exitCode != 0:
+		r.final = &composeExitError{code: exitCode}
+		r.trailer = []byte(fmt.Sprintf("\r\n[NexTerm] %s 已结束，退出码 %d\r\n", r.commandName(), exitCode))
+	default:
+		r.final = io.EOF
+		r.trailer = []byte(fmt.Sprintf("\r\n[NexTerm] %s 已结束，退出码 0\r\n", r.commandName()))
 	}
-	if exitCode != 0 {
-		return count, &composeExitError{code: exitCode}
+	r.ended = true
+	if count > 0 {
+		return count, nil
 	}
-	return count, io.EOF
+	return r.drainTrailer(buffer)
+}
+
+func composeUpDisplayName(cli ComposeCLI) string {
+	if cli == ComposeCLILegacy {
+		return "docker-compose up -d"
+	}
+	return "docker compose up -d"
+}
+
+func (r *composeResultReader) commandName() string {
+	if r.command == "" {
+		return composeUpDisplayName(ComposeCLIPlugin)
+	}
+	return r.command
+}
+
+func (r *composeResultReader) drainTrailer(buffer []byte) (int, error) {
+	if len(r.trailer) == 0 {
+		return 0, r.final
+	}
+	if len(buffer) == 0 {
+		return 0, nil
+	}
+	count := copy(buffer, r.trailer)
+	r.trailer = r.trailer[count:]
+	return count, nil
 }
 
 func (r *composeResultReader) Close() error {

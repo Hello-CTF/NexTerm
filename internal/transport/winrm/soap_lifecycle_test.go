@@ -143,7 +143,7 @@ func testProductionSOAPLifecycleBound(t *testing.T, blocked lifecycleStage, mode
 	finished := make(chan outcome, 1)
 	begin := time.Now()
 	go func() {
-		_, err := transport.Exec(ctx, "Write-Output fixture", base.ExecOptions{Timeout: 80 * time.Millisecond})
+		_, err := transport.Exec(ctx, "Write-Output fixture", base.ExecOptions{Timeout: 250 * time.Millisecond})
 		finished <- outcome{err: err, duration: time.Since(begin)}
 	}()
 	select {

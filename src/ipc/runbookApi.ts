@@ -27,7 +27,9 @@ export type {
 export type RunbookStep = Step;
 export type RunbookStepState = StepState;
 export type RunbookRunState = RunState;
-export type RunbookStartRequest = StartRequest;
+// The server loads the steps of the stored snippet named by snippetId (including confirm/interactive flags); steps,
+// runbookId and runbookName are not sent, so the wire shape is narrower than the generated StartRequest.
+export type RunbookStartRequest = Omit<StartRequest, "steps" | "runbookId" | "runbookName"> & { snippetId: string };
 export type RunbookPrepareRequest = PrepareRequest;
 export type RunbookAdvanceRequest = AdvanceRequest;
 export type RunbookHistory = ExecBatchRunHistory;
@@ -38,7 +40,7 @@ export function createRunbookId(): string {
 }
 
 export const runbookApi = {
-  start: (request: StartRequest) => call("runbook_run_start", request),
+  start: (request: RunbookStartRequest) => call("runbook_run_start", request as unknown as StartRequest),
   get: (runId: string) => call("runbook_run_get", { runId }),
   prepare: (request: PrepareRequest) => call("runbook_run_prepare", request),
   advance: (request: AdvanceRequest) => call("runbook_run_advance", request),

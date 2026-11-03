@@ -1,6 +1,7 @@
 import type { ILinkHandler } from "@xterm/xterm";
+import type { DetectedTarget } from "./terminalLinkProvider";
 
-// One link policy for URLs detected in the text (WebLinksAddon) and OSC 8
+// One link policy for URLs detected in the text (terminalLinkProvider) and OSC 8
 // hyperlinks (xterm's linkHandler). Links open with Ctrl+click (Cmd+click on
 // macOS) unless the user chose plain click; the target, not the link text, is
 // what gets shown and opened. While a program tracks the mouse (tmux, htop,
@@ -193,6 +194,11 @@ export interface TerminalLinkDeps {
   openFile: (sessionId: string, path: string) => void;
   openDirectory: (sessionId: string, path: string) => void;
   describeError: (error: unknown) => string;
+  // Where http/https links open. Without these (or without openInApp) links always go to the system browser.
+  linkOpenMode?: () => "system" | "app" | "ask";
+  openInApp?: (url: string) => void;
+  // Resolves the user's choice for "ask", or null when cancelled.
+  chooseLinkTarget?: () => Promise<"system" | "app" | null>;
 }
 
 function parentDirectory(path: string): string | null {
@@ -243,13 +249,24 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
     case "blocked":
       deps.notify("error", `已阻止打开链接（${plan.reason}）：${shown}`);
       return;
-    case "external":
+    case "external": {
+      if (deps.openInApp && /^https?:/i.test(plan.url)) {
+        const mode = deps.linkOpenMode?.() ?? "system";
+        let target: "system" | "app" | null = mode === "app" ? "app" : "system";
+        if (mode === "ask") target = deps.chooseLinkTarget ? await deps.chooseLinkTarget() : "system";
+        if (target === null) return;
+        if (target === "app") {
+          deps.openInApp(plan.url);
+          return;
+        }
+      }
       try {
         await deps.openExternal(plan.url);
       } catch (error) {
         deps.notify("error", `无法打开链接 ${shown}：${deps.describeError(error)}`);
       }
       return;
+    }
     case "confirm": {
       const ok = await deps.confirm(
         `终端中的链接使用 ${plan.scheme}: 协议，将交给系统中注册的程序处理。请仅在信任来源时打开。\n\n${shown}`,
@@ -289,7 +306,7 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
 export interface TerminalLinkController {
   // For the Terminal `linkHandler` option (OSC 8 hyperlinks).
   linkHandler: ILinkHandler;
-  // For WebLinksAddon: the activation callback and its hover options.
+  // For the link provider: the activation callback and its hover options.
   webLinkHandler: (event: MouseEvent, uri: string) => void;
   webLinkOptions: {
     hover: (event: MouseEvent, uri: string) => void;
@@ -297,7 +314,11 @@ export interface TerminalLinkController {
   };
   // The link target under the pointer, if any.
   hovered: () => string | null;
-  // Forgets the hovered link and hides the tooltip.
+  // The IP or host:port under the pointer, if any (right-click menu only).
+  hoveredTarget: () => DetectedTarget | null;
+  // Receives the provider's onTargetHover callback.
+  onTargetHover: (target: DetectedTarget | null) => void;
+  // Forgets the hovered link and target and hides the tooltip.
   clear: () => void;
   dispose: () => void;
 }
@@ -312,11 +333,28 @@ export interface TerminalLinkControllerOptions {
   mouseTracking?: () => boolean;
   open: (uri: string) => void;
   mac?: boolean;
+  // Called (at most once per INACTIVE_CLICK_INTERVAL_MS) when a plain click lands on a link that needs a modifier.
+  onInactiveClick?: (message: string) => void;
+  // A click that ends a text selection is not a link click.
+  hasSelection?: () => boolean;
+  now?: () => number;
+}
+
+export const INACTIVE_CLICK_INTERVAL_MS = 10_000;
+
+export function inactiveClickMessage(activation: TerminalLinkActivation, mac: boolean, mouseTracking: boolean): string {
+  const hint = linkOpenHint(activation, mac, mouseTracking).replace(/打开$/, "");
+  return mouseTracking
+    ? `终端程序正在捕获鼠标，需 ${hint}打开链接，或右键选择「打开链接」`
+    : `需要 ${hint}打开链接，也可以右键选择「打开链接」`;
 }
 
 export function createTerminalLinkController(options: TerminalLinkControllerOptions): TerminalLinkController {
   const mac = options.mac ?? isMacPlatform();
   let hoveredUri: string | null = null;
+  let hoveredTargetValue: DetectedTarget | null = null;
+  let lastInactiveNotice = Number.NEGATIVE_INFINITY;
+  const now = options.now ?? Date.now;
   let pointer = { x: 0, y: 0 };
   let keys: LinkModifierState = { ctrlKey: false, metaKey: false, shiftKey: false };
   let tooltip: HTMLDivElement | null = null;
@@ -333,7 +371,7 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
   const render = () => {
     const isArmed = hoveredUri !== null && armed();
     options.cursorHost.dataset.nxLinkArmed = isArmed ? "true" : "false";
-    if (!isArmed || hoveredUri === null) {
+    if (hoveredUri === null) {
       hideTooltip();
       return;
     }
@@ -353,7 +391,9 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
     }
     const [target, hint] = tooltip.children as unknown as [HTMLElement, HTMLElement];
     target.textContent = displayTerminalLink(hoveredUri);
-    hint.textContent = linkOpenHint(options.activation(), mac, tracking());
+    const mouseTracking = tracking();
+    hint.textContent =
+      linkOpenHint(options.activation(), mac, mouseTracking) + (mouseTracking ? "，或右键选择「打开链接」" : "");
     const rect = host.getBoundingClientRect();
     tooltip.style.left = `${Math.max(0, pointer.x - rect.left + 8)}px`;
     tooltip.style.top = `${Math.max(0, pointer.y - rect.top + 16)}px`;
@@ -406,7 +446,16 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
   };
 
   const activate = (event: MouseEvent, uri: string) => {
-    if (!shouldOpenLink(event, options.activation(), mac, tracking())) return;
+    if (!shouldOpenLink(event, options.activation(), mac, tracking())) {
+      if (options.onInactiveClick && !options.hasSelection?.()) {
+        const at = now();
+        if (at - lastInactiveNotice >= INACTIVE_CLICK_INTERVAL_MS) {
+          lastInactiveNotice = at;
+          options.onInactiveClick(inactiveClickMessage(options.activation(), mac, tracking()));
+        }
+      }
+      return;
+    }
     event.preventDefault();
     options.open(uri);
   };
@@ -423,8 +472,16 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
     webLinkHandler: activate,
     webLinkOptions: { hover, leave },
     hovered: () => hoveredUri,
-    clear: leave,
+    hoveredTarget: () => hoveredTargetValue,
+    onTargetHover: (target) => {
+      hoveredTargetValue = target;
+    },
+    clear: () => {
+      hoveredTargetValue = null;
+      leave();
+    },
     dispose: () => {
+      hoveredTargetValue = null;
       leave();
       delete options.cursorHost.dataset.nxLinkArmed;
     },

@@ -11,9 +11,10 @@ import { isMobileShell } from "../../app/shell";
 import { WEB } from "../../ipc/env";
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { describeError } from "../../ui/errorText";
-import { IconActivity, IconGlobe, IconInfo, IconMonitor, IconServer, IconTerminal } from "../../ui/icons";
+import { IconActivity, IconBell, IconGlobe, IconInfo, IconMonitor, IconServer, IconTerminal } from "../../ui/icons";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import { fleetClient } from "../fleet/clients";
+import { DeviceAlertsCard } from "../fleet/DeviceAlertsCard";
 import { deviceOpenBlockReason } from "../fleet/DeviceTreeSection";
 import { formatTime, isOnline, relativeTime } from "../fleet/format";
 import { MetricsPanel } from "../fleet/MetricsPanel";
@@ -33,6 +34,9 @@ import {
   setHostDetailTitle,
   tunnelHostOf,
 } from "./hostDetail";
+import { HostDetailTabs } from "./HostOutputSearch";
+import { PortsSection } from "./PortsSection";
+import { ProcessesSection } from "./ProcessesSection";
 import { ContainersSection, DatabasesSection, HostSection, SectionHint, SessionsSection, SshHealthSection } from "./HostSections";
 
 const ASSET_KIND_LABEL: Record<string, string> = {
@@ -199,23 +203,30 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
           </>
         }
       />
-      <div className={SECTION_GRID}>
-        <SessionsSection workspace={workspace} />
-        {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
-        <DatabasesSection
-          databases={databases}
-          relations={relations}
-          visible={visible}
-          emptyHint="无经由该主机或指向其地址的数据库资产。"
-        />
-        {asset.kind === "ssh" ? (
-          <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
-        ) : (
-          <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-            <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
-          </HostSection>
-        )}
-      </div>
+      <HostDetailTabs
+        assetId={asset.id}
+        overview={
+          <div className={SECTION_GRID}>
+            <SessionsSection workspace={workspace} />
+            {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
+            <PortsSection workspace={workspace} visible={visible} hostName={asset.name} />
+            <ProcessesSection workspace={workspace} visible={visible} hostName={asset.name} />
+            <DatabasesSection
+              databases={databases}
+              relations={relations}
+              visible={visible}
+              emptyHint="无经由该主机或指向其地址的数据库资产。"
+            />
+            {asset.kind === "ssh" ? (
+              <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
+            ) : (
+              <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+                <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
+              </HostSection>
+            )}
+          </div>
+        }
+      />
     </Page>
   );
 }
@@ -393,17 +404,27 @@ function DeviceHostDetail({
         }
       />
       {blockReason && !revoked && <p className="nx-hint m-0 text-[12px]" role="note">{blockReason}</p>}
-      <div className={SECTION_GRID}>
-        <SessionsSection workspace={workspace} />
-        <ContainersSection workspace={workspace} visible={visible} />
-        <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-          {revoked ? (
-            <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
-          ) : visible ? (
-            <MetricsPanel deviceId={device.id} online={online} />
-          ) : null}
-        </HostSection>
-      </div>
+      <HostDetailTabs
+        assetId={assetId}
+        overview={
+          <div className={SECTION_GRID}>
+            <SessionsSection workspace={workspace} />
+            <ContainersSection workspace={workspace} visible={visible} />
+            <PortsSection workspace={workspace} visible={visible} hostName={device.name} />
+            <ProcessesSection workspace={workspace} visible={visible} hostName={device.name} />
+            <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+              {revoked ? (
+                <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
+              ) : visible ? (
+                <MetricsPanel deviceId={device.id} online={online} />
+              ) : null}
+            </HostSection>
+            <HostSection title="告警" icon={<IconBell size={14} />} testId="host-alerts">
+              {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
+            </HostSection>
+          </div>
+        }
+      />
     </Page>
   );
 }

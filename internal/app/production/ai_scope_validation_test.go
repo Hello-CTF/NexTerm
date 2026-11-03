@@ -53,15 +53,15 @@ func TestProductionScopeValidatorTwoAccountCoverage(t *testing.T) {
 		OpenAccess: true,
 	})
 	t.Cleanup(func() { _ = sessions.Close() })
-	assetA, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "local", Name: "A"})
+	assetA, err := createLocalFixtureAsset(ctxA, database, store.AssetInput{Kind: "local", Name: "A"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assetA2, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "local", Name: "A2"})
+	assetA2, err := createLocalFixtureAsset(ctxA, database, store.AssetInput{Kind: "local", Name: "A2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assetB, err := database.AssetCreate(ctxB, store.AssetInput{Kind: "local", Name: "B"})
+	assetB, err := createLocalFixtureAsset(ctxB, database, store.AssetInput{Kind: "local", Name: "B"})
 	if err != nil {
 		t.Fatal(err)
 	}

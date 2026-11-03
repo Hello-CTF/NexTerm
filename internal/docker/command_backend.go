@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/image"
 )
@@ -220,6 +221,9 @@ func (b *CommandBackend) OpenLogs(ctx context.Context, options LogsOptions) (Log
 	args := []string{"logs"}
 	if options.Follow {
 		args = append(args, "--follow")
+	}
+	if options.Timestamps {
+		args = append(args, "--timestamps")
 	}
 	args = append(args, "--tail", tail)
 	if options.Since != "" {
@@ -446,7 +450,7 @@ func cliLabel(labels, key string) (string, bool) {
 
 func quoteShell(value string, shell Shell) string {
 	if shell == ShellPowerShell {
-		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+		return psquote.Quote(value)
 	}
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

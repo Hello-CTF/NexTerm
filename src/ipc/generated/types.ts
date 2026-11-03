@@ -27,6 +27,7 @@ export type AggregateHost = {
   deviceId?: string;
   deviceKind?: string;
   stateDigest?: string;
+  helperInstanceId?: string;
 };
 
 export type AggregateHostStatus = AggregateHost & {
@@ -319,6 +320,41 @@ export type AuditQueryRequest = {
   offset?: number;
 };
 
+export type AuditTimelineCursorDTO = {
+  ts: number;
+  stream: string;
+  id: number;
+};
+
+export type AuditTimelineItemDTO = {
+  stream: string;
+  id: number;
+  ts: number;
+  origin: string;
+  source: string;
+  kind: string;
+  assetId: string | null;
+  sessionId: string | null;
+  command: string | null;
+  payload: unknown;
+  exitCode: number | null;
+  durationMs: number | null;
+};
+
+export type AuditTimelineRequest = {
+  assetId?: string | null;
+  origins?: string[];
+  from?: number | null;
+  to?: number | null;
+  limit?: number;
+  cursor?: AuditTimelineCursorDTO | null;
+};
+
+export type AuditTimelineResult = {
+  items: AuditTimelineItemDTO[];
+  nextCursor: AuditTimelineCursorDTO | null;
+};
+
 export type BatchProgress = {
   batchId: string;
   phase: string;
@@ -391,6 +427,9 @@ export type CollectAIGrantRule = {
   deviceId: string;
   action: string;
   path?: string;
+  kinds?: string[];
+  programs?: string[];
+  unattended?: boolean;
   expiresAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -588,6 +627,33 @@ export type CommandLogQueryRequest = {
   offset?: number;
 };
 
+export type CommandSearchItemDTO = {
+  id: number;
+  sessionId: string;
+  tabId: string;
+  assetId: string;
+  command: string;
+  source: string;
+  exitCode: number | null;
+  startedAt: number;
+  finishedAt: number;
+  transcriptId: string | null;
+};
+
+export type CommandSearchRequest = {
+  text: string;
+  assetId: string | null;
+  startedFrom: number | null;
+  startedTo: number | null;
+  limit: number;
+  offset: number;
+};
+
+export type CommandSearchResult = {
+  items: CommandSearchItemDTO[];
+  hasMore: boolean;
+};
+
 export type CompareResult = {
   rows: CompareRow[];
   warnings?: string[];
@@ -624,6 +690,7 @@ export type ComposeStack = {
   services: string[];
   readOnly: boolean;
   reason?: string;
+  upCommand?: string;
 };
 
 export type ConfirmationRequiredDetail = {
@@ -684,6 +751,7 @@ export type CreateLocalArgs = {
   listenPort: number;
   targetHost: string;
   targetPort: number;
+  temporary?: boolean;
 };
 
 export type CreateRemoteArgs = {
@@ -950,12 +1018,14 @@ export type DockerComposeLogsIPCRequest = {
 export type DockerComposeRedeployPrepareResult = {
   ticket: string;
   contentHash: string;
+  command: string;
 };
 
 export type DockerLogsRequest = {
   sessionId: string;
   containerId: string;
   tail: number;
+  timestamps?: boolean;
 };
 
 export type DockerProductionConfirmation = {
@@ -980,6 +1050,15 @@ export type DockerPrunePreviewIPCRequest = {
 export type DurableReadinessDTO = {
   state: string;
   reason?: string;
+};
+
+export type EmbedCheck = {
+  status: string;
+  reason?: string;
+};
+
+export type EmbedCheckArgs = {
+  url: string;
 };
 
 export type Entry = {
@@ -1408,6 +1487,9 @@ export type GrantRule = {
   deviceId: string;
   action: string;
   path?: string;
+  kinds?: string[];
+  programs?: string[];
+  unattended?: boolean;
   expiresAt?: number;
   createdAt: number;
   updatedAt: number;
@@ -1489,6 +1571,60 @@ export type HostLive = {
 export type HostMessage = {
   level: string;
   text: string;
+};
+
+export type HostPortListener = {
+  proto: string;
+  address: string;
+  port: number;
+  pid?: number;
+  process?: string;
+};
+
+export type HostPortsListArgs = {
+  sessionId: string;
+  processes: boolean;
+  quietMs?: number;
+};
+
+export type HostPortsListResult = {
+  listeners: HostPortListener[];
+  format: string;
+  platform: string;
+  truncated?: boolean;
+  skipped?: boolean;
+};
+
+export type HostProbeArgs = ProbeRequest & {
+  sessionId: string;
+  dryRun?: boolean;
+};
+
+export type HostProbeResult = {
+  command: string;
+  script?: string;
+  ran: boolean;
+  ok: boolean;
+  exitCode?: number | null;
+  output: string;
+  durationMs: number;
+};
+
+export type HostProcess = {
+  pid: number;
+  ppid: number;
+  user?: string;
+  cpu: number;
+  mem: number;
+  rssKiB: number;
+  elapsedSec: number;
+  elapsed?: string;
+  stat?: string;
+  name: string;
+  argName?: string;
+  command: string;
+  started?: string;
+  zombie?: boolean;
 };
 
 export type HostShareInputRequest = {
@@ -1959,6 +2095,13 @@ export type PreviewShareCreateResult = {
   sessionId: string;
 };
 
+export type ProbeRequest = {
+  method: string;
+  host: string;
+  port: number;
+  url: string;
+};
+
 export type Process = {
   pid: number;
   user: string;
@@ -1967,6 +2110,40 @@ export type Process = {
   elapsed: string;
   name: string;
   args: string;
+};
+
+export type ProcessKillArgs = {
+  sessionId: string;
+  pid: number;
+  name: string;
+  ppid: number;
+  started?: string;
+  force?: boolean;
+  dryRun?: boolean;
+};
+
+export type ProcessKillResult = {
+  command: string;
+  signal: string;
+  ran: boolean;
+  ok: boolean;
+  exitCode?: number | null;
+  output: string;
+  durationMs: number;
+  auditError?: string;
+};
+
+export type ProcessListArgs = {
+  sessionId: string;
+};
+
+export type ProcessListResult = {
+  processes: HostProcess[];
+  platform: string;
+  format: string;
+  truncated?: boolean;
+  partial?: string[];
+  skippedRows?: number;
 };
 
 export type ProductionConfirmation = {
@@ -2133,6 +2310,52 @@ export type RemoteAdminSetStateRequest = {
   state: string;
 };
 
+export type RemoteAlertAckRequest = {
+  ids: string[];
+};
+
+export type RemoteAlertSettings = {
+  device_id: string;
+  kind: string;
+  disk_enabled: boolean;
+  disk_threshold: number;
+  mem_enabled: boolean;
+  mem_threshold: number;
+  cpu_enabled: boolean;
+  cpu_threshold: number;
+  offline_enabled: boolean;
+  offline_minutes: number;
+  expected_offline: boolean;
+  quiet_enabled: boolean;
+  quiet_start: number;
+  quiet_end: number;
+  quiet_tz: string;
+  server_tz: string;
+  suspect_after_minutes: number;
+  clock_skew_ms: number;
+};
+
+export type RemoteAlertSettingsInput = {
+  disk_enabled: boolean;
+  disk_threshold: number;
+  mem_enabled: boolean;
+  mem_threshold: number;
+  cpu_enabled: boolean;
+  cpu_threshold: number;
+  offline_enabled: boolean;
+  offline_minutes: number;
+  expected_offline: boolean;
+  quiet_enabled: boolean;
+  quiet_start: number;
+  quiet_end: number;
+  quiet_tz: string;
+};
+
+export type RemoteAlertSettingsPutRequest = {
+  deviceId: string;
+  settings: RemoteAlertSettingsInput;
+};
+
 export type RemoteAutostartRequest = {
   deviceId: string;
   desired: boolean;
@@ -2253,6 +2476,37 @@ export type RemoteFleetAgent = {
   service_state: RemoteFleetServiceState;
   last_seen_at: number;
   state_digest?: string;
+  helper_instance_id?: string;
+};
+
+export type RemoteFleetAlert = {
+  device_id: string;
+  rule: string;
+  status: string;
+  since: number;
+  value?: number | null;
+};
+
+export type RemoteFleetAlertAck = {
+  ok: boolean;
+  acked: number;
+};
+
+export type RemoteFleetAlertEvent = {
+  id: string;
+  device_id: string;
+  rule: string;
+  kind: string;
+  ts: number;
+  value?: number | null;
+  threshold?: number | null;
+  duration_ms: number;
+  muted: boolean;
+};
+
+export type RemoteFleetAlerts = {
+  active: RemoteFleetAlert[];
+  events: RemoteFleetAlertEvent[];
 };
 
 export type RemoteFleetDevice = {
@@ -2525,39 +2779,6 @@ export type RunbookMetadata = {
   groupCount: number;
 };
 
-export type RunbookTemplate = {
-  id: string;
-  name: string;
-  description: string;
-  steps: RunbookTemplateStep[];
-  version: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type RunbookTemplateInput = {
-  name: string;
-  description: string;
-  steps: RunbookTemplateStep[];
-};
-
-export type RunbookTemplateRequest = {
-  id: string;
-};
-
-export type RunbookTemplateStep = {
-  id: string;
-  snippetId?: string;
-  name: string;
-  description?: string;
-  command: string;
-  interactive?: boolean;
-};
-
-export type RunbookTemplateUpdateRequest = RunbookTemplateInput & {
-  id: string;
-};
-
 export type ScreenInsets = {
   top: number;
   bottom: number;
@@ -2632,6 +2853,8 @@ export type SnippetDTO = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  description: string;
+  steps: SnippetStep[];
 };
 
 export type SnippetInputRequest = {
@@ -2639,6 +2862,12 @@ export type SnippetInputRequest = {
   body: string;
   groupId?: string | null;
   sort?: number;
+  description?: string;
+  steps?: SnippetStep[];
+};
+
+export type SnippetMigrationStatusDTO = {
+  unmigratedRunbookTemplates: number;
 };
 
 export type SnippetPatchRequest = {
@@ -2647,6 +2876,26 @@ export type SnippetPatchRequest = {
   body: string;
   groupId?: string | null;
   sort?: number | null;
+  description?: string;
+  steps?: SnippetStep[];
+};
+
+export type SnippetStep = {
+  id: string;
+  name: string;
+  description?: string;
+  command: string;
+  confirm?: boolean;
+  interactive?: boolean;
+};
+
+export type SnippetStepObject = {
+  id: string;
+  name: string;
+  description?: string;
+  command: string;
+  confirm?: boolean;
+  interactive?: boolean;
 };
 
 export type Spec = {
@@ -2661,6 +2910,7 @@ export type Spec = {
   targetPort: number | null;
   kind: string;
   createdAt: number;
+  temporary?: boolean;
 };
 
 export type SshImportApplyDTO = {
@@ -2738,7 +2988,7 @@ export type SshImportPreviewRequest = {
 export type StartRequest = {
   runId: string;
   runbookId: string;
-  templateId?: string;
+  snippetId?: string;
   runbookName: string;
   steps: Step[];
   sessionIds: string[];
@@ -2875,6 +3125,7 @@ export type Step = {
   description?: string;
   command: string;
   interactive?: boolean;
+  confirm?: boolean;
 };
 
 export type StepState = {
@@ -2949,6 +3200,8 @@ export type SyncBundleSnippet = {
   sort: number;
   createdAt: number;
   updatedAt: number;
+  description?: string;
+  steps?: SnippetStepObject[];
 };
 
 export type SyncCredentialTombstone = {
@@ -3115,6 +3368,18 @@ export type TranscriptChunkDTO = {
   dataBase64: string;
 };
 
+export type TranscriptExportCastRequest = {
+  id: string;
+  path: string;
+};
+
+export type TranscriptExportCastResult = {
+  path: string;
+  bytes: number;
+  events: number;
+  timingEstimated: boolean;
+};
+
 export type TranscriptHostDTO = {
   assetId: string;
   assetName: string;
@@ -3122,6 +3387,26 @@ export type TranscriptHostDTO = {
   assetDeleted: boolean;
   transcripts: number;
   lastStartedAt: number;
+};
+
+export type TranscriptHostSearchRequest = {
+  assetId: string;
+  query: string;
+  startedFrom: number | null;
+  startedTo: number | null;
+};
+
+export type TranscriptHostSearchResult = {
+  sessions: TranscriptHostSessionDTO[];
+  scannedSessions: number;
+  scannedBytes: number;
+  truncated: boolean;
+};
+
+export type TranscriptHostSessionDTO = {
+  transcript: TranscriptSummaryDTO;
+  matches: TranscriptMatchDTO[];
+  moreMatches: boolean;
 };
 
 export type TranscriptIDRequest = {
@@ -3232,6 +3517,10 @@ export type VaultStatus = {
   autoLockMinutes: number;
   passwordless: boolean;
   systemProtection: boolean;
+};
+
+export type VaultStatusDTO = VaultStatus & {
+  managed: boolean;
 };
 
 export type VolumeUsage = {

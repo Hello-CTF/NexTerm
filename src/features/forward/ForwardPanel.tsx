@@ -445,6 +445,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         >
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             {typeBadge(f)}
+            {f.temporary && (
+              <span className="nx-badge shrink-0" title="会话关闭时自动移除，仅监听 127.0.0.1">临时</span>
+            )}
             <span className={`nx-mono min-w-0 text-[12px] font-semibold text-neutral-100 ${clip}`} title={label}>{label}</span>
             <span className="text-[11px]">{statusText(f)}</span>
           </div>
@@ -594,6 +597,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                         </>
                       )}
                     </span>
+                    {f.temporary && (
+                      <span className="nx-badge ml-1" title="会话关闭时自动移除，仅监听 127.0.0.1">临时</span>
+                    )}
                   </td>
                   <td className="nx-mono font-semibold text-neutral-100">{label}</td>
                   <td className="nx-mono">

@@ -23,6 +23,9 @@ const mocks = vi.hoisted(() => ({
   transcriptSearch: vi.fn(),
   transcriptRemove: vi.fn(),
   transcriptSyncOptIn: vi.fn(),
+  transcriptExportCast: vi.fn(),
+  pickSavePath: vi.fn(),
+  finishSave: vi.fn(),
   ask: vi.fn(),
   toast: vi.fn(),
   copyText: vi.fn(),
@@ -44,11 +47,16 @@ vi.mock("../../ipc/commands", () => ({
     search: mocks.transcriptSearch,
     remove: mocks.transcriptRemove,
     syncOptIn: mocks.transcriptSyncOptIn,
+    exportCast: mocks.transcriptExportCast,
   },
   sessionApi: {},
   terminalApi: {},
 }));
-vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
+vi.mock("../../ui/dialogs", () => ({
+  ask: mocks.ask,
+  pickSavePath: mocks.pickSavePath,
+  finishSave: mocks.finishSave,
+}));
 vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../app/store", () => {
   mocks.uiState.pushToast = mocks.toast;
@@ -715,6 +723,73 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.transcriptRead).not.toHaveBeenCalled();
     expect(mounted.container.textContent).toContain("仅保留记录信息，没有输出内容");
     expect(mounted.container.textContent).not.toContain("没有任何可回放的内容");
+  });
+});
+
+describe("TranscriptHistoryPanel asciicast export", () => {
+  const exportButton = () =>
+    mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="导出 asciicast"]');
+
+  async function openRecord(overrides: Record<string, unknown> = {}) {
+    mocks.transcriptList.mockResolvedValue([summary(overrides)]);
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flush();
+  }
+
+  it("picks a path, exports, finishes the save and reports it", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.cast");
+    mocks.transcriptExportCast.mockResolvedValue({ path: "/tmp/out.cast", bytes: 10, events: 2, timingEstimated: false });
+    mocks.finishSave.mockResolvedValue("/tmp/out.cast");
+    await openRecord();
+    expect(exportButton()!.title).toContain("不含键盘输入");
+    click(exportButton()!);
+    await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
+    const name = mocks.pickSavePath.mock.calls[0][0] as string;
+    expect(name).toMatch(/\.cast$/);
+    expect(name).not.toMatch(/[\\/:*?"<>|]/);
+    expect(mocks.transcriptExportCast).toHaveBeenCalledWith(summary().id, "/tmp/out.cast");
+    expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/out.cast", name);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("/tmp/out.cast"));
+    expect(mocks.toast).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("估算"));
+  });
+
+  it("does not export when the save dialog is cancelled", async () => {
+    mocks.pickSavePath.mockResolvedValue(null);
+    await openRecord();
+    click(exportButton()!);
+    await flush();
+    expect(mocks.pickSavePath).toHaveBeenCalledTimes(1);
+    expect(mocks.transcriptExportCast).not.toHaveBeenCalled();
+    expect(mocks.finishSave).not.toHaveBeenCalled();
+  });
+
+  it("mentions estimated timestamps", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.cast");
+    mocks.transcriptExportCast.mockResolvedValue({ path: "/tmp/out.cast", bytes: 10, events: 2, timingEstimated: true });
+    mocks.finishSave.mockResolvedValue("/tmp/out.cast");
+    await openRecord();
+    click(exportButton()!);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("固定间隔估算")));
+  });
+
+  it("reports an export failure", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.cast");
+    mocks.transcriptExportCast.mockRejectedValue(new Error("disk full"));
+    await openRecord();
+    click(exportButton()!);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("disk full")));
+    expect(mocks.finishSave).not.toHaveBeenCalled();
+  });
+
+  it("disables the button for a record without content", async () => {
+    await openRecord({ contentOmitted: true });
+    expect(exportButton()!.disabled).toBe(true);
+    expect(exportButton()!.title).toContain("没有输出内容");
+    click(exportButton()!);
+    await flush();
+    expect(mocks.pickSavePath).not.toHaveBeenCalled();
   });
 });
 

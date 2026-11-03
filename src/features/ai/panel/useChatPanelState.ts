@@ -276,6 +276,19 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     return out;
   }, [sessionId, workspaces]);
 
+  // A queued reference (for example a command block to explain) is picked up by the visible panel only.
+  const { active, rightOpen, setRefs, setInput } = p;
+  const pendingRefCount = useUi((s) => s.aiPendingRefs.length);
+  useEffect(() => {
+    if (!active || !rightOpen || pendingRefCount === 0) return;
+    const taken = useUi.getState().takeAiPendingRefs();
+    if (taken.length === 0) return;
+    setRefs((prev) => [...prev, ...taken.filter((r) => !prev.some((x) => x.id === r.id))]);
+    // Only command output needs the explain prompt; a terminal or file reference just joins the list.
+    if (taken.some((r) => r.kind === "text")) setInput((prev) => (prev.trim() === "" ? "解释这段命令输出" : prev));
+    inputRef.current?.focus();
+  }, [active, rightOpen, pendingRefCount, setRefs, setInput]);
+
   const composeMessage = (text: string, refList: RefChip[]): string => {
     if (refList.length === 0) return text;
     const list = refList.map((r) => `- ${r.label}（${r.detail}）`).join("\n");

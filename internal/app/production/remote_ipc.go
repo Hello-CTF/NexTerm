@@ -14,6 +14,15 @@ type remoteDeviceRequest struct {
 	DeviceID string `json:"deviceId"`
 }
 
+type remoteAlertAckRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type remoteAlertSettingsPutRequest struct {
+	DeviceID string                               `json:"deviceId"`
+	Settings syncservice.RemoteAlertSettingsInput `json:"settings"`
+}
+
 type remoteMetricsRequest struct {
 	DeviceID string `json:"deviceId"`
 	SinceMS  int64  `json:"sinceMs"`
@@ -89,6 +98,35 @@ func registerRemoteCommands(dispatcher *ipc.Dispatcher, syncService *syncservice
 					return syncservice.RemoteOK{}, badEmpty("deviceId")
 				}
 				return remote.RevokeDevice(ctx, input.DeviceID)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "remote_fleet_alerts", func(ctx context.Context, _ *ipc.Call, _ struct{}) (*syncservice.RemoteFleetAlerts, error) {
+				return remote.ListAlerts(ctx)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "remote_fleet_alerts_ack", func(ctx context.Context, _ *ipc.Call, input remoteAlertAckRequest) (*syncservice.RemoteFleetAlertAck, error) {
+				if len(input.IDs) == 0 {
+					return nil, badEmpty("ids")
+				}
+				return remote.AckAlerts(ctx, input.IDs)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "remote_fleet_alert_settings_get", func(ctx context.Context, _ *ipc.Call, input remoteDeviceRequest) (*syncservice.RemoteAlertSettings, error) {
+				if input.DeviceID == "" {
+					return nil, badEmpty("deviceId")
+				}
+				return remote.GetAlertSettings(ctx, input.DeviceID)
+			})
+		},
+		func() error {
+			return ipc.RegisterNested(dispatcher, "remote_fleet_alert_settings_put", func(ctx context.Context, _ *ipc.Call, input remoteAlertSettingsPutRequest) (*syncservice.RemoteAlertSettings, error) {
+				if input.DeviceID == "" {
+					return nil, badEmpty("deviceId")
+				}
+				return remote.PutAlertSettings(ctx, input.DeviceID, input.Settings)
 			})
 		},
 		func() error {

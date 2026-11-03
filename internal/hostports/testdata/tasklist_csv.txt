@@ -1,0 +1,6 @@
+"System Idle Process","0","Services","0","8 K"
+"System","4","Services","0","148 K"
+"svchost.exe","1012","Services","0","12,044 K"
+"postgres.exe","4120","Services","0","20,112 K"
+"node.exe","5544","Console","1","80,332 K"
+"sshd.exe","1100","Services","0","6,100 K"

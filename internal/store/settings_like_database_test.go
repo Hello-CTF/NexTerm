@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -135,4 +136,33 @@ func openExactLikeNoBackslashStore(t *testing.T, fixture *dbtest.Fixture) *store
 		t.Fatalf("session sql_mode = %q, want NO_BACKSLASH_ESCAPES", sqlMode)
 	}
 	return db
+}
+
+func TestSettingValuesContainingReturnsLiteralMatchesDatabase(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	for key, value := range map[string]string{
+		"values.a": `{"k":"enc:v1:AAAA"}`,
+		"values.b": "enc:v1:BBBB",
+		"values.c": "enc:v2:CCCC",
+		"values.d": "plain",
+	} {
+		if err := db.SettingSet(ctx, key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := db.SettingValuesContaining(ctx, "enc:v1:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	want := []string{"enc:v1:BBBB", `{"k":"enc:v1:AAAA"}`}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("SettingValuesContaining = %v, want %v", got, want)
+	}
+	got, err = db.SettingValuesContaining(ctx, "absent-substring")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("absent substring = %v err=%v", got, err)
+	}
 }

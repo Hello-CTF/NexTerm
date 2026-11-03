@@ -93,6 +93,41 @@ afterEach(() => {
   ResetLiveOperationRegistry();
 });
 
+describe("dynamic inventory dialog on a multi-user server", () => {
+  const TEXTS = [
+    "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥",
+    "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Docker 上下文",
+    "多用户服务端不支持从 kubeconfig 导入：它会读取服务器上的 kubeconfig，属于跨账号共享凭据",
+  ];
+
+  it("disables every server-reading source with its reason and never calls the IPC", async () => {
+    mounted?.unmount();
+    useAuth.setState({ user: { id: "u1", username: "alice" } as never });
+    mounted = mountWithClient(createElement(InventoryDialog, { onClose: () => undefined }));
+    await flush();
+    const c = mounted.container;
+    const buttons = [...c.querySelectorAll<HTMLButtonElement>(".nx-segment-item")];
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) expect(button.disabled).toBe(true);
+    const notes = [...c.querySelectorAll('[role="note"]')].map((n) => n.textContent);
+    for (const text of TEXTS) expect(notes).toContain(`↳ ${text}`);
+    const find = (label: string) => [...c.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === label)!;
+    expect(find("预览").disabled).toBe(true);
+    expect(find("立即同步并开启自动同步").disabled).toBe(true);
+    click(find("预览"));
+    await flush();
+    expect(mocks.discover).not.toHaveBeenCalled();
+    expect(mocks.sync).not.toHaveBeenCalled();
+    expect(mocks.setWatch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the sources usable without an account", () => {
+    const buttons = [...mounted!.container.querySelectorAll<HTMLButtonElement>(".nx-segment-item")];
+    for (const button of buttons) expect(button.disabled).toBe(false);
+    expect(mounted!.container.querySelector('[role="note"]')).toBeNull();
+  });
+});
+
 describe("dynamic inventory dialog", () => {
   it("discovers read-only candidates and syncs only selected Docker keys", async () => {
     clickButton(mounted!.container, "Docker contexts");
@@ -325,15 +360,17 @@ describe("dynamic inventory dialog", () => {
   });
 
   it("keeps an in-flight exec bound to its launching account across an account switch", async () => {
-    act(() => {
-      useAuth.setState({ user: { id: "user-a", username: "a", display_name: "A", role: "user", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 } });
-      useUi.setState({ sessions: [DOCKER_SESSION] });
-    });
+    // Account owners cannot import Docker contexts from the server, so the candidate list is loaded
+    // before the account signs in; the exec binding under test only depends on the account at launch.
     mocks.discover.mockResolvedValue(EXEC_DISCOVERY);
     clickButton(mounted!.container, "Docker contexts");
     clickButton(mounted!.container, "预览");
     await flush();
     await waitFor(() => expect(mounted!.container.querySelectorAll('input[aria-label^="选择清单项"]').length).toBe(1));
+    act(() => {
+      useAuth.setState({ user: { id: "user-a", username: "a", display_name: "A", role: "user", state: "active", must_change_password: false, mfa_enabled: false, created_at: 1, updated_at: 1, last_login_at: 1 } });
+      useUi.setState({ sessions: [DOCKER_SESSION] });
+    });
     clickButton(mounted!.container, "执行命令");
     setInputValue(mounted!.container.querySelector('input[aria-label="命令"]')!, "true");
     setInputValue(mounted!.container.querySelector('input[aria-label="容器"]')!, "web");

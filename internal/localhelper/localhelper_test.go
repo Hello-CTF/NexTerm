@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -519,5 +520,87 @@ func TestRestartRefusesAHandMadeTokenThatHidesTheSessionCount(t *testing.T) {
 	}
 	if world.stopCount() != 0 {
 		t.Fatal("a hand-made token stopped the helper")
+	}
+}
+
+func TestServiceConnectsAsTheDesktopSpawner(t *testing.T) {
+	world := newFakeWorld()
+	config := world.config(t)
+	inner := config.connect
+	spawned := make(chan string, 8)
+	config.connect = func(ctx context.Context, hc supervisor.HelperConfig) (helperHandle, error) {
+		select {
+		case spawned <- hc.SpawnedBy:
+		default:
+		}
+		return inner(ctx, hc)
+	}
+	service := startService(t, config)
+	ready(t, service)
+	if got := <-spawned; got != supervisor.SpawnedByDesktop {
+		t.Fatalf("SpawnedBy = %q, want %q", got, supervisor.SpawnedByDesktop)
+	}
+}
+
+func TestServiceReportsUntrustedEndpointWithoutBusyRetry(t *testing.T) {
+	untrusted := &supervisor.UntrustedEndpointError{Kind: supervisor.EndpointSocketDir, Path: "/srv/other-user/helper", OwnerUID: 4242}
+	for _, where := range []string{"connect", "inspect"} {
+		t.Run(where, func(t *testing.T) {
+			world := newFakeWorld()
+			config := world.config(t)
+			config.BreakerThreshold = 1000
+			if where == "inspect" {
+				world.inspectErr = untrusted
+			} else {
+				world.connect = func(int) (helperHandle, error) { return nil, untrusted }
+			}
+			var probes atomic.Int64
+			probed := make(chan struct{}, 1024)
+			note := func() {
+				probes.Add(1)
+				select {
+				case probed <- struct{}{}:
+				default:
+				}
+			}
+			innerInspect, innerConnect := config.inspect, config.connect
+			config.inspect = func(ctx context.Context, dir string) (supervisor.RunningHelper, error) {
+				note()
+				return innerInspect(ctx, dir)
+			}
+			config.connect = func(ctx context.Context, hc supervisor.HelperConfig) (helperHandle, error) {
+				note()
+				return innerConnect(ctx, hc)
+			}
+			service := startService(t, config)
+			if _, err := service.WaitReady(context.Background(), 10*time.Millisecond); err == nil {
+				t.Fatal("an untrusted endpoint reported ready")
+			}
+			status := waitState(t, service, StateFailed)
+			if !strings.Contains(status.Reason, "/srv/other-user/helper") {
+				t.Fatalf("reason %q lacks the endpoint path", status.Reason)
+			}
+			// The retry round trip completes only once the service is parked
+			// waiting for the user, so no probe is in flight past this point.
+			if err := service.Retry(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			before := probes.Load()
+			for len(probed) > 0 {
+				<-probed
+			}
+			// Only a retry makes the service look again.
+			if err := service.Retry(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-probed:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("no new probe after a retry (probes %d)", probes.Load())
+			}
+			if probes.Load() <= before {
+				t.Fatalf("probes = %d, want more than %d after a retry", probes.Load(), before)
+			}
+		})
 	}
 }

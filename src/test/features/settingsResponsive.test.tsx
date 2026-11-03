@@ -49,6 +49,7 @@ import { AuditView } from "../../features/settings/AuditView";
 import { useUi } from "../../app/store";
 import { KEYBINDING_ACTIONS } from "../../app/keybindings";
 import { UI_FONT_SCALE_STEPS } from "../../app/preferences";
+import { setWindowsPlatform } from "../../app/platform";
 
 const PERMISSIONS = { mode: "read_write" as const, dangerRules: ["kubectl delete"] };
 const VAULT = { initialized: true, mode: "dpapi" as const, unlocked: true, autoLockMinutes: 0 };
@@ -185,7 +186,7 @@ describe("SettingsView responsive structure", () => {
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("密钥加密保存在当前实例");
     expect(text).toContain("启用档案同步并解锁凭据库后");
-    expect(text).toContain("端到端加密同步");
+    expect(text).toContain("才会加密同步");
     expect(text).not.toContain("不会上传");
     expect(text).not.toContain("明文存在本机 sqlite");
   });
@@ -285,6 +286,31 @@ describe("SettingsView responsive structure", () => {
     expect(useUi.getState().terminalOsc52).toBe(true);
     expect(localStorage.getItem("nexterm.terminal.v1")).toBe('{"osc52":true}');
     act(() => useUi.setState({ terminalOsc52: false }));
+  });
+
+  it("shows the Ctrl+V paste switch only on Windows and keeps it on this device", async () => {
+    const find = () => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="Ctrl+V 粘贴"]');
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    expect(find()).toBeNull();
+    mounted.unmount();
+
+    setWindowsPlatform(true);
+    try {
+      mounted = withClient(createElement(SettingsView));
+      await flush();
+      const box = find();
+      expect(box).toBeTruthy();
+      expect(box!.checked).toBe(true);
+      click(box!);
+      await flush();
+      expect(find()!.checked).toBe(false);
+      expect(localStorage.getItem("nexterm.terminal.ctrlVPaste.v1")).toBe("0");
+      expect(localStorage.getItem("nexterm.terminal.v1") ?? "").not.toContain("ctrlV");
+    } finally {
+      setWindowsPlatform(false);
+      localStorage.clear();
+    }
   });
 
   it("explains the host-lifetime limit of local background terminals", async () => {

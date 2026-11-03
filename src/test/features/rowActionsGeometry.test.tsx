@@ -258,6 +258,7 @@ describe("persistent row action bar DOM contract", () => {
     expect([...row.querySelectorAll<HTMLButtonElement>("button")].map((b) => b.getAttribute("aria-label"))).toEqual([
       "插入片段「check container status」",
       "执行片段「check container status」",
+      "在多台主机执行片段「check container status」",
       "编辑片段「check container status」",
       "删除片段「check container status」",
     ]);

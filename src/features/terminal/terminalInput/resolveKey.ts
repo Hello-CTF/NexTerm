@@ -16,6 +16,10 @@ export interface ResolveKeyContext {
   commitEnterPending: boolean;
   /** The running program enabled the kitty keyboard protocol, so xterm encodes every key itself. */
   kittyKeyboard: boolean;
+  /** The platform is Windows (Ctrl+V pastes there, as in Windows Terminal). */
+  windows: boolean;
+  /** The local "Ctrl+V pastes" setting (Windows only). */
+  ctrlVPaste: boolean;
 }
 
 export type KeyResolution =
@@ -30,6 +34,11 @@ export type KeyResolution =
    * per press (anything but tab, workspace and pane navigation): it neither reaches the terminal nor re-runs.
    */
   | { kind: "app-shortcut"; hit: AppKeybindingHit; dropRepeat: boolean }
+  /**
+   * Ctrl+V on Windows: the browser's default action must run so the paste event reaches the terminal. xterm would
+   * encode it as ^V and preventDefault, which suppresses the paste. Applies to keydown, keypress and keyup alike.
+   */
+  | { kind: "native-paste" }
   /** Bytes the pipeline sends in place of xterm's default encoding. */
   | { kind: "terminal-bytes"; bytes: string }
   /** xterm's default handling. */
@@ -45,17 +54,26 @@ export const COMPOSITION_COMMIT_WINDOW_MS = 50;
  * The single precedence order for a key event aimed at a terminal:
  *   1. IME composition (isComposing, keyCode 229, the one Enter WebKit delivers after committing)
  *   2. app shortcut (current keymap, web or desktop, including user rebinding)
- *   3. terminal override bytes (terminalKeyOverride; skipped while kitty keyboard reporting is active)
- *   4. xterm's default encoding
+ *   3. Ctrl+V paste on Windows (also while kitty keyboard reporting is active)
+ *   4. terminal override bytes (terminalKeyOverride; skipped while kitty keyboard reporting is active)
+ *   5. xterm's default encoding
  */
 export function resolveKey(event: TerminalKeyEvent, ctx: ResolveKeyContext): KeyResolution {
   if (isImeKeyEvent(event)) return { kind: "ime", toXterm: event.keyCode === 229 };
   if (event.key === "Enter" && ctx.commitEnterPending) return { kind: "ime", toXterm: false };
   const hit = ctx.matchAppShortcut(event);
   if (hit) return { kind: "app-shortcut", hit, dropRepeat: event.repeat && !keybindingRepeats(hit.action) };
+  if (ctx.windows && ctx.ctrlVPaste && isPlainCtrlV(event)) return { kind: "native-paste" };
   if (!ctx.kittyKeyboard) {
     const bytes = terminalKeyOverride(event, ctx.mac);
     if (bytes !== null) return { kind: "terminal-bytes", bytes };
   }
   return { kind: "pass" };
+}
+
+function isPlainCtrlV(event: TerminalKeyEvent): boolean {
+  if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return false;
+  if (event.key === "v" || event.key === "V") return true;
+  // A non-Latin layout reports another character for the physical V key, so fall back to the key code.
+  return !/^[A-Za-z]$/.test(event.key) && (event.code === "KeyV" || event.keyCode === 86);
 }

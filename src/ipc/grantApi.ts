@@ -18,7 +18,7 @@ export const grantApi = {
   set: (deviceId: string, kinds: AiGrantKind[]) => call("ai_grant_set", { deviceId, kinds }),
   revoke: (deviceId: string) => call("ai_grant_revoke", { deviceId }),
   ruleList: () => call("ai_grant_rule_list"),
-  ruleSet: (deviceId: string, action: AiGrantRuleAction, path: string, expiresAt: number) =>
-    call("ai_grant_rule_set", { deviceId, action, path, expiresAt }),
+  ruleSet: (deviceId: string, action: AiGrantRuleAction, path: string, expiresAt: number, unattended = false) =>
+    call("ai_grant_rule_set", { deviceId, action, path, expiresAt, unattended }),
   ruleRevoke: (id: string) => call("ai_grant_rule_revoke", { id }),
 };

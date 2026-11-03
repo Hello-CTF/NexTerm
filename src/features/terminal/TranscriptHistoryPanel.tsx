@@ -8,7 +8,7 @@ import {
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { startPolling } from "../../app/usePolling";
-import { ask } from "../../ui/dialogs";
+import { ask, finishSave, pickSavePath } from "../../ui/dialogs";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
@@ -32,6 +32,7 @@ import {
 } from "./transcriptText";
 import { TranscriptReplayView } from "./TranscriptReplayView";
 import { ResizeHandle } from "../../ui/ResizeHandle";
+import { useTranscriptFocus } from "./transcriptFocus";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
@@ -112,6 +113,18 @@ export function TranscriptHistoryPanel({
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
   const [listWidth, setListWidth] = useState(300);
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  // A focus request moves through "select" (wait for the session list) and "load" (wait for the text reader).
+  const [pendingFocus, setPendingFocus] = useState<{
+    assetId: string;
+    transcriptId: string;
+    ts: number;
+    seq?: number;
+    stage: "select" | "load";
+  } | null>(null);
+  const [focusTs, setFocusTs] = useState<{ transcriptId: string; ts: number } | null>(null);
+  const focusRequest = useTranscriptFocus((s) => s.request);
+  const focusRetriedRef = useRef(false);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
   const hostsGenerationRef = useRef(0);
@@ -233,6 +246,7 @@ export function TranscriptHistoryPanel({
       const result = normalizeRead(await transcriptApi.read(id, afterSeq, PAGE_BYTES));
       if (generation !== readerGenerationRef.current) return null;
       decodeChunks(result.chunks, result.done);
+      setLoadedId(id);
       setNextSeq(result.nextSeq);
       setDone(result.done);
       return result;
@@ -246,6 +260,7 @@ export function TranscriptHistoryPanel({
       searchGenerationRef.current += 1;
       decoderRef.current = createTranscriptDecoder();
       setReaderLoading(true);
+      setLoadedId(null);
       setLoadingMore(false);
       setReaderError(null);
       setChunks([]);
@@ -399,6 +414,22 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const exportCast = async (summary: TranscriptSummary) => {
+    if (summary.contentOmitted) return;
+    const day = new Date(summary.startedAt).toISOString().slice(0, 10);
+    const name = `${summary.assetName}-${day}.cast`.replace(/[\\/:*?"<>|]/g, "_");
+    const path = await pickSavePath(name);
+    if (!path) return;
+    try {
+      const result = await transcriptApi.exportCast(summary.id, path);
+      const where = await finishSave(path, name);
+      const estimated = result.timingEstimated ? "。部分时间戳缺失，已按固定间隔估算" : "";
+      pushToast(where ? "success" : "info", where ? `已导出到 ${where}${estimated}` : "已取消保存");
+    } catch (error) {
+      pushToast("error", `导出失败：${describeError(error)}。请更换保存位置后重试`);
+    }
+  };
+
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
     if (summary.syncOptIn) {
       const ok = await ask(
@@ -418,6 +449,79 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const switchAsset = (nextAssetId: string | null) => {
+    appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
+    sessionsGenerationRef.current += 1;
+    readerGenerationRef.current += 1;
+    searchGenerationRef.current += 1;
+    setAssetId(nextAssetId);
+    setSelectedId(null);
+    setSessions(null);
+    setPendingFocus(null);
+    useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
+  };
+
+  // Consume a focus request (search hit or command history entry) once this panel is the visible one for its host.
+  useEffect(() => {
+    if (!focusRequest || !visible) return;
+    if (fixedHost && focusRequest.assetId !== sourceAssetId) return;
+    const { nonce, assetId: targetAsset, transcriptId, ts, seq } = focusRequest;
+    useTranscriptFocus.getState().clear(nonce);
+    focusRetriedRef.current = false;
+    setPendingFocus({ assetId: targetAsset, transcriptId, ts, seq, stage: "select" });
+    setFocusTs(null);
+    if (targetAsset !== assetId) {
+      appliedSourceAssetIdRef.current = targetAsset;
+      sessionsGenerationRef.current += 1;
+      readerGenerationRef.current += 1;
+      searchGenerationRef.current += 1;
+      setAssetId(targetAsset);
+      setSelectedId(null);
+      setSessions(null);
+      if (!fixedHost) useUi.getState().updateTab("history", { assetId: targetAsset });
+    }
+  }, [focusRequest, visible, fixedHost, sourceAssetId, assetId]);
+
+  useEffect(() => {
+    if (!pendingFocus || pendingFocus.stage !== "select") return;
+    if (assetId !== pendingFocus.assetId || sessions === null) return;
+    const target = sessions.find((summary) => summary.id === pendingFocus.transcriptId);
+    if (!target) {
+      if (!focusRetriedRef.current) {
+        focusRetriedRef.current = true;
+        void loadSessions();
+        return;
+      }
+      setPendingFocus(null);
+      pushToast("info", "未找到对应的终端记录，可能已被删除");
+      return;
+    }
+    setSelectedId(target.id);
+    if (pendingFocus.seq === undefined || target.contentOmitted) {
+      setViewMode(target.contentOmitted ? "text" : "replay");
+      setFocusTs({ transcriptId: target.id, ts: pendingFocus.ts });
+      setPendingFocus(null);
+      return;
+    }
+    setViewMode("text");
+    setPendingFocus({ ...pendingFocus, stage: "load" });
+  }, [pendingFocus, assetId, sessions, loadSessions, pushToast]);
+
+  useEffect(() => {
+    if (!pendingFocus || pendingFocus.stage !== "load") return;
+    if (readerError) {
+      setPendingFocus(null);
+      return;
+    }
+    if (selectedId !== pendingFocus.transcriptId || loadedId !== pendingFocus.transcriptId) return;
+    if (viewMode !== "text" || pendingFocus.seq === undefined) return;
+    const { seq, ts } = pendingFocus;
+    setPendingFocus(null);
+    void jumpToMatch({ seq, ts, preview: "" });
+    // jumpToMatch reads the current render's reader state, which is what this effect was gated on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFocus, selectedId, loadedId, viewMode, readerError]);
+
   const hostOptions = hosts ?? [];
   const sessionList = sessions ?? [];
 
@@ -433,17 +537,7 @@ export function TranscriptHistoryPanel({
           disabled={hostOptions.length === 0}
           placeholder={hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
           options={hostOptions.map((host) => ({ value: host.assetId, label: hostLabel(host) }))}
-          onChange={(value) => {
-            const nextAssetId = value || null;
-            appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
-            sessionsGenerationRef.current += 1;
-            readerGenerationRef.current += 1;
-            searchGenerationRef.current += 1;
-            setAssetId(nextAssetId);
-            setSelectedId(null);
-            setSessions(null);
-            useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
-          }}
+          onChange={(value) => switchAsset(value || null)}
         />}
         <div className="nx-spacer" />
         <button
@@ -496,7 +590,10 @@ export function TranscriptHistoryPanel({
                   <tr
                     key={summary.id}
                     className={`cursor-pointer pointer-coarse:min-h-11 ${summary.id === selectedId ? "bg-neutral-800/60" : ""}`}
-                    onClick={() => setSelectedId(summary.id)}
+                    onClick={() => {
+                      setPendingFocus(null);
+                      setSelectedId(summary.id);
+                    }}
                   >
                     <td>
                       <div className="text-[12.5px] font-medium text-neutral-200">
@@ -518,7 +615,7 @@ export function TranscriptHistoryPanel({
                             title={
                               summary.syncOptIn
                                 ? "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留"
-                                : "通过账号将此记录同步到其他设备（端到端加密）"
+                                : "通过账号将此记录同步到其他设备（客户端加密，服务端只保存密文）"
                             }
                             aria-label={summary.syncOptIn ? "关闭该记录的同步" : "开启该记录的同步"}
                             onClick={(event) => {
@@ -671,6 +768,19 @@ export function TranscriptHistoryPanel({
                 按录制时间轴回放终端输出，期间不可输入
               </span>
             )}
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
+              aria-label="导出 asciicast"
+              disabled={!selected || selected.contentOmitted}
+              title={
+                selected?.contentOmitted
+                  ? "该记录只同步了元数据，没有输出内容，无法导出"
+                  : "只导出终端输出，不含键盘输入；可用 asciinema 播放"
+              }
+              onClick={() => selected && void exportCast(selected)}
+            >
+              导出 asciicast
+            </button>
             <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label="记录视图">
               {(["text", "replay"] as const).map((mode) => (
                 <button
@@ -682,7 +792,10 @@ export function TranscriptHistoryPanel({
                       ? "bg-neutral-700/70 text-neutral-100"
                       : "text-neutral-400 hover:bg-neutral-800/60"
                   }`}
-                  onClick={() => setViewMode(mode)}
+                  onClick={() => {
+                    setFocusTs(null);
+                    setViewMode(mode);
+                  }}
                 >
                   {mode === "text" ? "文本" : "回放"}
                 </button>
@@ -694,6 +807,7 @@ export function TranscriptHistoryPanel({
             <TranscriptReplayView
               transcriptId={selected.id}
               contentOmitted={selected.contentOmitted}
+              initialTs={focusTs?.transcriptId === selected.id ? focusTs.ts : undefined}
             />
           ) : (
             <>

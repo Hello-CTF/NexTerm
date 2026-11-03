@@ -14,6 +14,7 @@ import {
   loadKeybindings,
   matchAppKeybinding,
   matchBinding,
+  matchTerminalWithheldKeybinding,
   matchKeybinding,
   normalizeBinding,
   parseBinding,
@@ -248,12 +249,12 @@ describe("persistence", () => {
 
 describe("retired actions", () => {
   it("ignores a stored binding for the removed session panel toggle", () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ toggleSessionPanel: "Mod+Shift+e", toggleSidebar: "Mod+Shift+b" }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ toggleSessionPanel: "Mod+Shift+e", toggleSidebar: "Mod+Alt+b" }));
     loadKeybindings();
     applyAccountKeybindingLayers({}, { "keybinding.toggleSessionPanel": "Mod+Shift+e" });
     try {
       expect(KEYBINDING_ACTIONS.some((action) => (action.id as string) === "toggleSessionPanel")).toBe(false);
-      expect(getKeybinding("toggleSidebar")).toBe("Mod+Shift+b");
+      expect(getKeybinding("toggleSidebar")).toBe("Mod+Alt+b");
       expect(bindingConflicts()).toEqual([]);
       const hit = matchAppKeybinding({ key: "e", code: "KeyE", ctrlKey: true, metaKey: false, shiftKey: true, altKey: false });
       expect(hit).toBeNull();
@@ -389,5 +390,31 @@ describe("catalog sanity", () => {
       expect(parseBinding(action.defaultBinding), action.id).not.toBeNull();
       expect(normalizeBinding(action.defaultBinding), action.id).toBe(action.defaultBinding);
     }
+  });
+});
+
+describe("terminal link panel shortcut", () => {
+  it("is withheld from a focused terminal as Ctrl+Shift+U off macOS", () => {
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "U", code: "KeyU", ctrlKey: true, shiftKey: true }))).toEqual({
+      action: "terminalLinks",
+      digit: null,
+    });
+  });
+
+  it("does not conflict with another default action", () => {
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "terminalLinks"))).toEqual([]);
+  });
+});
+
+describe("session sidebar shortcut", () => {
+  it("is withheld from a focused terminal as Ctrl+Shift+B off macOS", () => {
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "B", code: "KeyB", ctrlKey: true, shiftKey: true }))).toEqual({
+      action: "sessionSidebar",
+      digit: null,
+    });
+  });
+
+  it("does not conflict with another default action", () => {
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "sessionSidebar"))).toEqual([]);
   });
 });

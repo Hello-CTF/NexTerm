@@ -73,7 +73,7 @@ func TestReloadCannotRestoreRevokedState(t *testing.T) {
 			if _, err := grants.Grant(context.Background(), "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := grants.AddRule(context.Background(), "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+			if _, err := grants.AddRule(context.Background(), "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 				t.Fatal(err)
 			}
 			settings.block = true
@@ -116,7 +116,7 @@ func TestPersistedAuthorizationRevalidatesTargetBeforeUse(t *testing.T) {
 	if _, err := grants.Grant(context.Background(), "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := grants.AddRule(context.Background(), "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(context.Background(), "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	manager, err := NewManager(context.Background(), settings, WithTargetValidator(validator))
@@ -171,7 +171,7 @@ func TestAutomaticAuthorizationGenerationSurvivesReloadAndRejectsStaleRecords(t 
 		t.Fatalf("persisted grant generation did not survive reload: %v", err)
 	}
 
-	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	resource := Resource{Action: "write_file", Path: "/var/log/app.log"}
@@ -179,7 +179,7 @@ func TestAutomaticAuthorizationGenerationSurvivesReloadAndRejectsStaleRecords(t 
 	if oldRule.Authorization == nil {
 		t.Fatal("rule decision has no authorization binding")
 	}
-	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := grants.RevalidateAuthorization(ctx, oldRule.Authorization); err == nil {

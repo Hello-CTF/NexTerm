@@ -34,7 +34,13 @@ func TestProductionAITargetResolutionOwnerFiltersAndLiveSessions(t *testing.T) {
 
 	createAsset := func(ctx context.Context, kind, name, tags string) store.AssetRow {
 		t.Helper()
-		asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: kind, Name: name, Tags: tags})
+		create := database.AssetCreate
+		if kind == "local" {
+			create = func(ctx context.Context, input store.AssetInput) (store.AssetRow, error) {
+				return createLocalFixtureAsset(ctx, database, input)
+			}
+		}
+		asset, err := create(ctx, store.AssetInput{Kind: kind, Name: name, Tags: tags})
 		if err != nil {
 			t.Fatal(err)
 		}

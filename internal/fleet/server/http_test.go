@@ -461,15 +461,15 @@ func TestFleetHTTPDeviceListStateDigest(t *testing.T) {
 	}
 
 	// No digest is delivered while the control channel is unregistered (device offline)
-	if agent := agentViewOf(); agent["state_digest"] != nil {
+	if agent := agentViewOf(); agent["state_digest"] != nil || agent["helper_instance_id"] != nil {
 		t.Fatalf("offline agent view carries state_digest: %v", agent)
 	}
 
 	// After the control channel hello reports the digest, it is delivered with the list (the only source of the browser supervisor hello)
 	_, controlServer := wsPair(t)
-	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc", nil)
-	if agent := agentViewOf(); agent["state_digest"] != "digest-abc" {
-		t.Fatalf("agent view state_digest=%v", agent)
+	fixture.service.registry.RegisterControl(deviceID, controlServer, "digest-abc", "0123456789abcdef0123456789abcdef", nil)
+	if agent := agentViewOf(); agent["state_digest"] != "digest-abc" || agent["helper_instance_id"] != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("agent view = %v", agent)
 	}
 }
 

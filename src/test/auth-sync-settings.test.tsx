@@ -498,7 +498,8 @@ describe("M166 AI permission and preference sync", () => {
     expect(mocks.collectAIPermission).not.toHaveBeenCalled();
     expect(mocks.collectAIGrants).not.toHaveBeenCalled();
     expect(mocks.collectPreferences).not.toHaveBeenCalled();
-    expect(mocks.collectKindObjects).not.toHaveBeenCalled();
+    // Only the switch-less snippet_steps companion kind is still collected.
+    expect(mocks.collectKindObjects.mock.calls.map(([kind]) => kind)).toEqual(["snippet_steps"]);
     expect(text()).not.toContain("preference:keybinding.newTerminal");
     expect(text()).not.toContain("dev-9");
 

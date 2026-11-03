@@ -157,8 +157,8 @@ func TestTakeoverAllowPersistentFailsClosed(t *testing.T) {
 	}{
 		{name: "danger", command: "sudo reboot", risk: "danger", assetID: "asset-a", withGrants: true, want: "不支持永久授权"},
 		{name: "unknowable", command: "echo $(id)", risk: "unknowable", assetID: "asset-a", withGrants: true, want: "不支持永久授权"},
-		{name: "missing asset", command: "touch /tmp/x", risk: "needs_confirm", withGrants: true, want: "无法确定设备身份"},
-		{name: "missing grants", command: "touch /tmp/x", risk: "needs_confirm", assetID: "asset-a", want: "永久授权未配置"},
+		{name: "missing asset", command: "touch /tmp/x", risk: "needs_confirm", withGrants: true, want: "不支持永久授权"},
+		{name: "missing grants", command: "touch /tmp/x", risk: "needs_confirm", assetID: "asset-a", want: "不支持永久授权"},
 	}
 	for _, mode := range persistentConfirmModes {
 		for _, test := range tests {

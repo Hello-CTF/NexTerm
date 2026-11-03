@@ -144,6 +144,10 @@ jobs:
           cache: pnpm
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+      - name: Check the lockfile resolves unchanged and keeps tarball integrity
+        run: |
+          pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
+          ! grep -n 'resolution: {tarball:' pnpm-lock.yaml
       - name: Frontend lint
         run: pnpm lint
 

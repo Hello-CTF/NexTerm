@@ -1,4 +1,4 @@
-import { isMac, isWindows } from "../../app/platform";
+import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import type { FileEntryDto } from "../../ipc/types";
 
 export type TransferDirection = "upload" | "download";
@@ -43,10 +43,10 @@ export const TRANSFER_STATUS_LABEL: Record<TransferStatus, string> = {
 };
 
 // Upload targets whose filesystem folds filename case: winrm is always NTFS semantics; a local
-// session follows the desktop OS, so a case-sensitive APFS volume may get an extra prompt.
+// session follows the backend OS, so a case-sensitive APFS volume may get an extra prompt.
 export function conflictCaseInsensitive(sessionKind: string): boolean {
   if (sessionKind === "winrm") return true;
-  if (sessionKind === "local") return isWindows() || isMac();
+  if (sessionKind === "local") return localSessionIsWindows() || localSessionIsMac();
   return false;
 }
 

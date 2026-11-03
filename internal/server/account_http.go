@@ -400,7 +400,6 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.accountThrottle.login.RecordSuccess(key)
 	if accountLoginGate != nil {
 		accountLoginGate(r.Context(), user)
 	}
@@ -411,7 +410,8 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if mfaEnabled {
-		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, epoch)
+		// The password-step throttle stays armed until the second factor passes.
+		ticket, expiresAt := s.mfaTickets.issue(user.ID, request.DeviceID, key, epoch)
 		if ticket == "" {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
@@ -419,6 +419,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
+	s.accountThrottle.login.RecordSuccess(key)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 
@@ -494,6 +495,7 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	}
 	s.accountThrottle.recovery.RecordSuccess(key)
 	if user, lookupErr := s.accounts.GetUserByUsername(r.Context(), request.Username); lookupErr == nil && user != nil {
+		s.unlockMFA(r, user.ID, "recovery_reset", "")
 		s.closeUserConnections(user.ID, "")
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -675,12 +677,14 @@ func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID s
 // closeUserConnections ends the live connections of a user's login sessions other than exceptSession, for
 // revocations that do not enumerate session ids. Only services that implement CloseAccountUser take part.
 func (s *Server) closeUserConnections(userID, exceptSession string) {
+	s.sockets.closeUser(userID, exceptSession)
 	if closer, ok := s.accountConnections.(interface{ CloseAccountUser(string, string) }); ok {
 		closer.CloseAccountUser(userID, exceptSession)
 	}
 }
 
 func (s *Server) closeAccountConnections(sessionID string) {
+	s.sockets.closeSession(sessionID)
 	if s.accountConnections == nil {
 		return
 	}
@@ -711,6 +715,7 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		writeAccountFailure(w, err)
 		return
 	}
+	s.unlockMFA(r, identity.UserID, "password_change", "")
 	s.closeUserConnections(identity.UserID, identity.SessionID)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -801,6 +806,7 @@ func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request
 		writeAccountFailure(w, err)
 		return
 	}
+	s.sockets.closeDevice(identity.UserID, r.PathValue("id"))
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -872,6 +878,11 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	adminID := ""
+	if identity := accountIdentityFrom(r.Context()); identity != nil {
+		adminID = identity.UserID
+	}
+	s.unlockMFA(r, r.PathValue("id"), "admin_reset", adminID)
 	s.closeUserConnections(r.PathValue("id"), "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

@@ -43,6 +43,9 @@ type TerminalDevice struct {
 	// Digest is the supervisor state digest of an online device; empty
 	// while it is offline.
 	Digest string
+	// HelperInstanceID is the random id of the helper state directory of an
+	// online device; empty while offline or for agents that predate it.
+	HelperInstanceID string
 }
 
 // TerminalDevices lists userID's devices that are not revoked and have an
@@ -69,37 +72,48 @@ func (s *Service) TerminalDevices(ctx context.Context, userID string) ([]Termina
 		if digest, ok := s.registry.StateDigest(device.ID); ok {
 			item.Digest = digest
 		}
+		if id, ok := s.registry.HelperInstanceID(device.ID); ok {
+			item.HelperInstanceID = id
+		}
 		created[device.ID] = device.CreatedAt
 		live = append(live, item)
 	}
 	return dropSharedHelperDevices(live, created), nil
 }
 
-// dropSharedHelperDevices keeps one device per supervisor state digest. Two
-// devices of one account report the same digest when they front the same
-// helper (a desktop's local-helper exposure and an agent on that machine),
-// and listing both would show every durable session twice. The agent device
-// is the canonical route; a local-helper device is dropped when an agent
-// reports the same digest. A device with terminal access off cannot serve
-// sessions, so it never displaces one that can: terminal-enabled devices are
-// preferred, and a device is dropped only for a kept one that is enabled.
-// Ties break by creation time, then id. Only online
-// devices carry a digest, so when the canonical device is offline the other
-// stays listed. Devices without a digest are never merged, and the caller
-// passes one account's devices, so digests of different accounts never meet.
+// dropSharedHelperDevices keeps one device per helper, identified by the pair
+// (supervisor state digest, helper instance id). The digest only depends on
+// uid and path, so different machines can share it; the instance id is a
+// random per-state-dir value that tells them apart. Two devices of one
+// account are the same helper only when both values are non-empty and equal
+// (a desktop's local-helper exposure and an agent on that machine), and
+// listing both would show every durable session twice. A device missing
+// either value (an agent that predates the instance id, or an offline device)
+// is never merged: at worst the same helper is listed twice, never hidden.
+// The agent device is the canonical route; a local-helper device is dropped
+// when an agent reports the same helper. A device with terminal access off
+// cannot serve sessions, so it never displaces one that can:
+// terminal-enabled devices are preferred, and a device is dropped only for a
+// kept one that is enabled. Ties break by creation time, then id. The caller
+// passes one account's devices, so helpers of different accounts never meet.
 func dropSharedHelperDevices(devices []TerminalDevice, created map[string]int64) []TerminalDevice {
-	best := make(map[string]int, len(devices))
+	type helperKey struct{ digest, instance string }
+	keyOf := func(device TerminalDevice) (helperKey, bool) {
+		return helperKey{device.Digest, device.HelperInstanceID}, device.Digest != "" && device.HelperInstanceID != ""
+	}
+	best := make(map[helperKey]int, len(devices))
 	for i, device := range devices {
-		if device.Digest == "" {
+		key, ok := keyOf(device)
+		if !ok {
 			continue
 		}
-		if j, ok := best[device.Digest]; !ok || preferHelperRoute(device, devices[j], created) {
-			best[device.Digest] = i
+		if j, found := best[key]; !found || preferHelperRoute(device, devices[j], created) {
+			best[key] = i
 		}
 	}
 	result := make([]TerminalDevice, 0, len(devices))
 	for i, device := range devices {
-		if device.Digest != "" && best[device.Digest] != i && devices[best[device.Digest]].TerminalEnabled {
+		if key, ok := keyOf(device); ok && best[key] != i && devices[best[key]].TerminalEnabled {
 			continue
 		}
 		result = append(result, device)

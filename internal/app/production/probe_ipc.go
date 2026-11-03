@@ -355,6 +355,11 @@ func (s *terminalCommandService) probeSSHReachability(ctx context.Context, targe
 		stripProbeAgentForwarding(&config)
 		return ssh.ProbeReachability(ctx, config, timeout)
 	}
+	if (s.sshConnector != nil && s.sshConnector.restricted(ctx)) || ipc.OwnerID(ctx) != "" {
+		if err := store.RejectServerSSHFields(store.ServerSSHFields{ProxyCommand: target.options.ProxyCommand}); err != nil {
+			return err
+		}
+	}
 	port := target.options.Port
 	if target.kind != session.KindSSH && target.kind != session.KindDocker && port == 0 {
 		switch target.kind {

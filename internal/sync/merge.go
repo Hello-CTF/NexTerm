@@ -167,10 +167,7 @@ func (e *Engine) collectSnippetObjects(ctx context.Context, c *localCollection) 
 		return err
 	}
 	for _, snippet := range snippets {
-		payload, err := marshalObject(snippetObject{
-			ID: snippet.ID, GroupID: snippet.GroupID, Name: snippet.Name, Body: snippet.Body,
-			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
-		})
+		payload, err := marshalObject(snippetObjectFromRow(snippet))
 		if err != nil {
 			return err
 		}
@@ -274,7 +271,8 @@ func (e *Engine) collectTombstoneObjects(ctx context.Context, c *localCollection
 		return err
 	}
 	for _, tombstone := range tombstones {
-		if !c.optIn.allowsKind(tombstone.Kind) {
+		if !c.optIn.allowsKind(tombstone.Kind) || tombstone.Kind == KindRunbookTemplate {
+			// runbook_template is receive-only: its deletions are never pushed again.
 			continue
 		}
 		if live, exists := c.objects[tombstone.ID]; exists && localRevision(live.kind, live.plaintext) > tombstone.DeletedAt {
@@ -774,6 +772,9 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		report.warnf("资产 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
+	if warning := store.ServerSSHAssetWarning(ctx, row); warning != "" {
+		report.warnf("%s", warning)
+	}
 	return true, false
 }
 
@@ -878,12 +879,32 @@ func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, paylo
 	return landed, nil
 }
 
+// snippetObjectFromRow builds the sync payload of a snippet. It carries only the original field set, so a
+// multi-step snippet reads as a single-step one (body = commands joined by newlines) to clients that predate
+// steps; the steps travel in the snippet_steps companion object.
+func snippetObjectFromRow(row store.SnippetRow) snippetObject {
+	return snippetObject{
+		ID: row.ID, GroupID: row.GroupID, Name: row.Name, Body: row.Body,
+		Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+	}
+}
+
+// snippetRowFromObject builds the row of a received snippet payload. Steps and description are not part of the
+// payload; the caller decides what happens to the local ones.
+func snippetRowFromObject(payload snippetObject) store.SnippetRow {
+	return store.SnippetRow{
+		ID: payload.ID, GroupID: payload.GroupID, Name: payload.Name, Body: payload.Body,
+		Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
+	}
+}
+
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload snippetObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("片段数据已损坏：%v", err)
 		return false, false
 	}
+	row := snippetRowFromObject(payload)
 	local, err := e.store.SnippetGet(ctx, payload.ID)
 	exists := err == nil
 	if err != nil && !isNotFound(err) {
@@ -897,10 +918,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		return false, false
 	}
 	if exists {
-		localPayload, err := marshalObject(snippetObject{
-			ID: local.ID, GroupID: local.GroupID, Name: local.Name, Body: local.Body,
-			Sort: local.Sort, CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
-		})
+		localPayload, err := marshalObject(snippetObjectFromRow(local))
 		if err != nil {
 			report.warnf("片段 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
@@ -911,10 +929,6 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		if !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
 			return false, false
 		}
-	}
-	row := store.SnippetRow{
-		ID: payload.ID, GroupID: payload.GroupID, Name: payload.Name, Body: payload.Body,
-		Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 	}
 	if row.GroupID != nil {
 		if *row.GroupID == "" {
@@ -930,6 +944,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 	var snapshot *store.SnippetRow
 	if exists {
 		snapshot = &local
+		row.Description, row.Steps = keptSnippetSteps(local, row.Body)
 	}
 	if err := e.snippetUpsert(ctx, row, snapshot); err != nil {
 		report.warnf("片段 %s 应用失败: %v", payload.ID, err)
@@ -993,7 +1008,7 @@ func (e *Engine) applySnippetTombstone(ctx context.Context, objectID string, del
 		return false, false
 	}
 	if exists {
-		if err := e.store.SnippetDelete(ctx, objectID); err != nil {
+		if err := e.store.SnippetDeleteSynced(ctx, objectID); err != nil {
 			report.warnf("应用片段 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}

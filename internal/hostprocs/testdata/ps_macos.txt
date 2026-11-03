@@ -1,0 +1,10 @@
+@@nexterm-procs ps
+  PID  PPID USER               %CPU %MEM      RSS     ELAPSED STAT                  STARTED COMMAND
+    1     0 root                0.0  0.1     9000 12-01:02:03 Ss   Thu Oct 22 07:00:00 2026 /sbin/launchd
+  501     1 dev                 3.4  2.0   300000       05:03 S    Tue Nov  3 08:00:00 2026 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=gpu
+  777     1 dev                 0.0  0.0        0       00:09 Z    Tue Nov  3 08:05:00 2026 <defunct>
+  778     1 dev                 0.0  0.0     1000       1:02 S    Tue Nov  3 08:04:00 2026 -zsh
+@@nexterm-procs comm
+    1 /sbin/launchd
+  501 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  778 -zsh

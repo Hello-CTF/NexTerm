@@ -32,10 +32,10 @@ describe("device notification preferences", () => {
   it("restores booleans and defaults each invalid or missing field independently", () => {
     localStorage.setItem(key, JSON.stringify({ system: false, needsMe: "false", inferred: true, finished: 0 }));
     // A key an earlier version stored is ignored.
-    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true });
+    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true, deviceAlerts: true });
     localStorage.setItem(key, JSON.stringify({ system: true, needsMe: false, finished: false, ai: false }));
     resetNotificationPrefsForTest();
-    expect(getNotificationPrefs()).toEqual({ system: true, needsMe: false, finished: false, ai: false });
+    expect(getNotificationPrefs()).toEqual({ system: true, needsMe: false, finished: false, ai: false, deviceAlerts: true });
   });
 
   it("persists a merged choice and notifies only current subscribers", () => {

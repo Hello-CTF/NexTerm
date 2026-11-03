@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -57,11 +57,7 @@ func fleetCSRFSafeEqual(sessionID, presented string) bool {
 }
 
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return realip.FromRequest(r)
 }
 
 func writeFleetJSON(w http.ResponseWriter, status int, payload any) {
@@ -109,6 +105,10 @@ var fleetRoutePatterns = []string{
 	"POST /fleet/devices/{id}/terminal-access",
 	"GET /fleet/devices/{id}/metrics",
 	"GET /fleet/devices/{id}/bridge",
+	"GET /fleet/alerts",
+	"POST /fleet/alerts/ack",
+	"GET /fleet/devices/{id}/alert-settings",
+	"PUT /fleet/devices/{id}/alert-settings",
 	"GET /fleet/base-urls",
 	"PUT /fleet/base-urls",
 	"POST /agent/sync",
@@ -158,6 +158,10 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
 	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
 	session("GET /fleet/sessions", s.serveSessionList)
+	session("GET /fleet/alerts", s.serveAlertList)
+	sessionCSRF("POST /fleet/alerts/ack", s.serveAlertAck)
+	session("GET /fleet/devices/{id}/alert-settings", s.serveAlertSettingsGet)
+	sessionCSRF("PUT /fleet/devices/{id}/alert-settings", s.serveAlertSettingsPut)
 
 	session("GET /fleet/base-urls", s.serveBaseURLsGet)
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)
@@ -351,6 +355,9 @@ type agentView struct {
 	ServiceState     ServiceState `json:"service_state"`
 	LastSeenAt       int64        `json:"last_seen_at"`
 	StateDigest      string       `json:"state_digest,omitempty"`
+	// HelperInstanceID is the random id of the device's helper state directory (not a credential); empty when
+	// offline or reported by an older agent.
+	HelperInstanceID string `json:"helper_instance_id,omitempty"`
 }
 
 // deviceListView is the GET /fleet/devices body.
@@ -398,6 +405,9 @@ func (s *Service) serveDeviceList(w http.ResponseWriter, r *http.Request) {
 		if view.Agent != nil {
 			if digest, ok := s.registry.StateDigest(device.ID); ok {
 				view.Agent.StateDigest = digest
+			}
+			if id, ok := s.registry.HelperInstanceID(device.ID); ok {
+				view.Agent.HelperInstanceID = id
 			}
 		}
 		views = append(views, view)

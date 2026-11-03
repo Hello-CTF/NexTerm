@@ -21,7 +21,7 @@ func TestGrantMutationsAllowRegularUsersWithinServerOwnerScope(t *testing.T) {
 	mutations := map[string]string{
 		"ai_grant_set":         `{"deviceId":"asset-g1","kinds":["terminal_write"]}`,
 		"ai_grant_revoke":      `{"deviceId":"asset-g2"}`,
-		"ai_grant_rule_set":    `{"deviceId":"asset-r1","action":"send_keys"}`,
+		"ai_grant_rule_set":    `{"deviceId":"asset-r1","action":"write_file","path":"/var/log/**"}`,
 		"ai_grant_rule_revoke": `{"id":"rule-a"}`,
 	}
 	dispatch := func(ctx context.Context, command, args string) ipc.Response {
@@ -47,7 +47,7 @@ func TestGrantMutationsAllowRegularUsersWithinServerOwnerScope(t *testing.T) {
 	}
 
 	desktop := newGrantDispatcher(t, Config{Grants: grants})
-	response := desktop.Dispatch(plain, ipc.Request{Command: "ai_grant_rule_set", Args: json.RawMessage(`{"deviceId":"asset-b","action":"send_keys"}`)}, ipc.Environment{})
+	response := desktop.Dispatch(plain, ipc.Request{Command: "ai_grant_rule_set", Args: json.RawMessage(`{"deviceId":"asset-b","action":"write_file","path":"/var/log/**"}`)}, ipc.Environment{})
 	if !response.OK {
 		t.Fatalf("desktop assembly rule set by regular user = %+v", response)
 	}

@@ -125,7 +125,7 @@ func TestCronConnectEvidenceHostKey(t *testing.T) {
 		t.Fatalf("approved SSH verdict = %q, %v", verdict, err)
 	}
 
-	local, err := fixture.database.AssetCreate(fixture.owner, store.AssetInput{Kind: session.KindLocal, Name: "local"})
+	local, err := createLocalFixtureAsset(fixture.owner, fixture.database, store.AssetInput{Kind: session.KindLocal, Name: "local"})
 	if err != nil {
 		t.Fatal(err)
 	}

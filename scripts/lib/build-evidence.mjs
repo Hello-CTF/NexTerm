@@ -79,6 +79,7 @@ export function writeBinaryManifest(file, { id, kind, goos, goarch, tags, cgo, s
     manifest.source_ref = RELEASE_REF;
     manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
   }
+  if (kind === "agent") manifest.updater_public_key_sha256 = desktopMinisignPublicKeyDigest();
   if (kind === "helper") {
     if (canExecuteHelperMetadata({ os: HOST_OS, arch: HOST_ARCH }, target)) {
       try {

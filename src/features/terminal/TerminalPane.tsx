@@ -1,15 +1,28 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
-import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
-import { CommandBlockPanel } from "./CommandBlockPanel";
+import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
+import type { DetectedTarget } from "./terminalLinkProvider";
+import { buildTargetMenu } from "./terminalTargetMenu";
+import { terminalIntegrations } from "./terminalIntegrations";
+import { TerminalLinkPanel } from "./TerminalLinkPanel";
+import { registerTerminalLinkSource } from "./terminalLinkRegistry";
+import type { ExtractedLink } from "./terminalLinkProvider";
+import { AssetEditor } from "../../app/lazyPanels";
+import { Lazy } from "../../ui/LazyBoundary";
+import { openHostDetail } from "../hosts/hostDetail";
+import { TerminalCommandBlocks } from "./TerminalCommandBlocks";
+import { SessionSidebar } from "./SessionSidebar";
+import { useSessionSidebarHost } from "./sessionSidebarHost";
+import { setSessionSidebarOpen, getCtrlVPaste, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { PersistenceHintBar } from "./PersistenceHintBar";
+import { PortDiscoveryBanner } from "../preview/PortDiscoveryBanner";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
 import {
   dismissPersistenceHint,
@@ -52,11 +65,11 @@ import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type 
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { reattachLostTabs } from "./backgroundSessionsAccess";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, findTab, isUnconfirmedDurableExit, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { nextTabId, openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, findTab, isUnconfirmedDurableExit, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
-import { modHint } from "../../app/platform";
+import { pasteShortcutLabel } from "./pasteShortcut";
 import { disconnectSessionWithConfirm } from "./sessionDisconnect";
 import { createOsc52Handler } from "./oscHandlers";
 import {
@@ -98,6 +111,7 @@ import {
   IconEye,
   IconGlobe,
   IconList,
+  IconPanelRight,
   IconMergeH,
   IconPlug,
   IconRefresh,
@@ -301,11 +315,13 @@ export function TerminalPane({
   const [previewOpenRequest, setPreviewOpenRequest] = useState(0);
   const [previewActive, setPreviewActive] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [linkPanel, setLinkPanel] = useState<ExtractedLink[] | null>(null);
   const [query, setQuery] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [assetDraft, setAssetDraft] = useState<{ kind: "ssh"; name: string; host: string; port: number } | null>(null);
   const [control, setControl] = useState<{
     sizeOwner: string | null;
     subscribers: number;
@@ -447,9 +463,22 @@ export function TerminalPane({
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
   );
+  const sidebarOpen = useSessionSidebarOpen();
+  const [paneNarrow, setPaneNarrow] = useState(false);
+  const paneNarrowRef = useRef(false);
+  paneNarrowRef.current = paneNarrow;
   const myPaneId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.paneId ?? null,
   );
+  const paneIsActive = useUi((s) =>
+    Boolean(workspaceId && myPaneId && s.workspaces.find((w) => w.id === workspaceId)?.activePaneId === myPaneId),
+  );
+  const hostPaneId = useSessionSidebarHost((s) => (workspaceId ? (s.hosts[workspaceId] ?? null) : null));
+  const hostFits = useSessionSidebarHost((s) => (hostPaneId ? s.reports[hostPaneId]?.wide === true : false));
+  const sidebarEligible = visible !== false && !paneNarrow;
+  const sidebarShown = sidebarOpen && sidebarEligible && myPaneId !== null && myPaneId === hostPaneId;
+  const sidebarCtl = useRef({ shown: false, workspaceId: null as string | null, paneId: null as string | null });
+  sidebarCtl.current = { shown: sidebarShown, workspaceId, paneId: myPaneId };
   const broadcastCount = useUi((s) => {
     const wsId = findWorkspacePane(s.workspaces, storeTabId)?.wsId;
     const bc = s.broadcast;
@@ -970,6 +999,102 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // Closes the sidebar when this pane shows it; otherwise moves it here and keeps it open.
+  const toggleSidebarHere = useCallback(() => {
+    const { shown, workspaceId: ws, paneId } = sidebarCtl.current;
+    if (shown) {
+      setSessionSidebarOpen(false);
+      return;
+    }
+    if (ws && paneId) useSessionSidebarHost.getState().setHost(ws, paneId);
+    setSessionSidebarOpen(true);
+  }, []);
+
+  // Only the visible terminal of a pane reports its fit, and only the same tab may withdraw the report.
+  useLayoutEffect(() => {
+    if (!myPaneId || visible === false) return;
+    const { report, clearReport } = useSessionSidebarHost.getState();
+    report(myPaneId, storeTabId, !paneNarrow);
+    return () => clearReport(myPaneId, storeTabId);
+  }, [myPaneId, storeTabId, visible, paneNarrow]);
+
+  // Focus alone never moves the sidebar; the active pane takes it only when the host pane cannot show it any more.
+  useEffect(() => {
+    if (!workspaceId || !myPaneId || !sidebarOpen || !paneIsActive || !sidebarEligible) return;
+    // Read the store, not the render snapshot: a report written in this same commit must count.
+    if (hostPaneId === myPaneId || (hostPaneId !== null && useSessionSidebarHost.getState().reports[hostPaneId]?.wide === true)) return;
+    useSessionSidebarHost.getState().setHost(workspaceId, myPaneId);
+  }, [workspaceId, myPaneId, sidebarOpen, paneIsActive, sidebarEligible, hostPaneId, hostFits]);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "sessionSidebar")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (paneNarrowRef.current) {
+        pushToast("info", "窗格太窄，无法显示侧栏");
+        return;
+      }
+      toggleSidebarHere();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, [pushToast, toggleSidebarHere]);
+
+  // The sidebar is mounted, not just hidden, so a narrow pane must be known in JS; 560px matches the container query.
+  useLayoutEffect(() => {
+    const width = paneRef.current?.getBoundingClientRect().width ?? 0;
+    setPaneNarrow(width > 0 && width <= 560);
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setPaneNarrow(width > 0 && width <= 560);
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
+
+  const openLinkPanel = useCallback(() => {
+    setLinkPanel(handleRef.current?.extractLinks?.(2000) ?? []);
+  }, []);
+  const closeLinkPanel = useCallback(() => {
+    setLinkPanel(null);
+    window.setTimeout(() => handleRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "terminalLinks")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openLinkPanel();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, [openLinkPanel]);
+
+  useEffect(
+    () =>
+      registerTerminalLinkSource(storeTabId, {
+        extract: () => handleRef.current?.extractLinks?.(2000) ?? [],
+        open: (url) => handleRef.current?.openLink(url),
+        openPanel: openLinkPanel,
+      }),
+    [storeTabId, openLinkPanel],
+  );
 
   const previousSessionStatus = useRef(sessionStatus);
   useEffect(() => {
@@ -1691,7 +1816,8 @@ export function TerminalPane({
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
-    const pasteHint = `请在终端内按 ${modHint()}+V 粘贴文件，或将文件拖入终端`;
+    const pasteKey = pasteShortcutLabel(getCtrlVPaste());
+    const pasteHint = `请在终端内按 ${pasteKey} 粘贴文件，或将文件拖入终端`;
     if (typeof navigator.clipboard?.read !== "function") {
       handleRef.current?.focus();
       pushToast("info", `当前环境不支持直接读取剪贴板图片；${pasteHint}`);
@@ -1717,7 +1843,7 @@ export function TerminalPane({
       return;
     }
     if (files.length === 0) {
-      pushToast("info", "剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 Ctrl+V 或拖入");
+      pushToast("info", `剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 ${pasteKey} 或拖入`);
       return;
     }
     await handlePasteFiles(files);
@@ -1922,13 +2048,21 @@ export function TerminalPane({
 
   // Link actions for the terminal menu: right-click on a hovered link, or a
   // touch long-press on one (touch has no modifier for opening).
-  const buildLinkMenu = (uri: string): MenuItem[] => [
+  const buildLinkMenu = (uri: string): MenuItem[] => {
+    const inApp = terminalIntegrations().openInApp;
+    const plan = planTerminalLink(uri);
+    const webUrl = plan.kind === "external" && /^https?:/i.test(plan.url) ? plan.url : null;
+    return [
     { kind: "group", label: "链接" },
     {
       kind: "item",
       label: "打开链接",
+      hint: "不受修饰键和鼠标捕获影响",
       onSelect: () => handleRef.current?.openLink(uri),
     },
+    ...(inApp && webUrl
+      ? [{ kind: "item" as const, label: "在 NexTerm 中打开", onSelect: () => inApp(webUrl) }]
+      : []),
     {
       kind: "item",
       label: "复制链接",
@@ -1939,7 +2073,23 @@ export function TerminalPane({
           (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
         ),
     },
-  ];
+    ];
+  };
+
+  // Actions for an IP or host:port under the right-click.
+  const buildAddressMenu = (target: DetectedTarget): MenuItem[] =>
+    buildTargetMenu(target, {
+      sessionId,
+      listAssets: () => assetApi.list(),
+      openHostDetail,
+      openAssetDraft: setAssetDraft,
+      createLocalForward: terminalIntegrations().createLocalForward,
+      openForwardTab: (id) =>
+        useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: "端口转发", sessionId: id, closable: true }),
+      copy: copyText,
+      toast: pushToast,
+      describeError,
+    });
 
   const openLinkMenu = (request: TerminalLinkMenuRequest) => {
     setMenu({ x: request.x, y: request.y, title: displayTerminalLink(request.uri), items: buildLinkMenu(request.uri) });
@@ -2085,16 +2235,37 @@ export function TerminalPane({
     e.preventDefault();
     const selected = (handleRef.current?.getSelection() ?? "").trim();
     const link = handleRef.current?.hoveredLink?.() ?? null;
+    const target = link ? null : (handleRef.current?.hoveredTarget?.() ?? null);
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: link ? displayTerminalLink(link) : selected ? clipText(selected.split("\n")[0], 80) : title,
-      items: link ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()] : buildTerminalMenu(),
+      title: link
+        ? displayTerminalLink(link)
+        : target
+          ? target.text
+          : selected
+            ? clipText(selected.split("\n")[0], 80)
+            : title,
+      items: link
+        ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()]
+        : target
+          ? [...buildAddressMenu(target), { kind: "separator" }, ...buildTerminalMenu()]
+          : buildTerminalMenu(),
     });
   };
 
+  const commandBlockProps = {
+    kernelTabId,
+    sourceLabel: title,
+    blocks,
+    getText: (i: number) => handleRef.current?.copyBlock(i) ?? "",
+    onLocate: (i: number) => handleRef.current?.scrollToBlock(i),
+    onClear: () => handleRef.current?.clearBlocks(),
+    onToast: pushToast,
+  };
+
   return (
-    <div ref={paneRef} className="nx-pane bg-term @container/term">
+    <div ref={paneRef} className={`nx-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
       <div className="nx-toolbar nx-term-toolbar">
         <span className="nx-toolbar-title" title={title}>{title}</span>
         <span
@@ -2247,6 +2418,15 @@ export function TerminalPane({
             </button>
           </>
         )}
+        <button
+          className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+          aria-pressed={sidebarShown}
+          title={`会话侧栏：端口、最近文件、命令记录 (${formatBinding(bindings.sessionSidebar)})`}
+          onClick={toggleSidebarHere}
+        >
+          <IconPanelRight size={13} />
+          侧栏
+        </button>
         {broadcastCount > 0 && (
           <button
             type="button"
@@ -2396,8 +2576,20 @@ export function TerminalPane({
         />
       )}
 
+      {!containerId && <PortDiscoveryBanner sessionId={sessionId} />}
+
       <div className="nx-terminal-body relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>
+          {linkPanel && (
+            <TerminalLinkPanel
+              links={linkPanel}
+              onOpen={(url) => {
+                handleRef.current?.openLink(url);
+                closeLinkPanel();
+              }}
+              onClose={closeLinkPanel}
+            />
+          )}
           <div className="h-full w-full p-1.5">
             <XtermView
               key={epoch}
@@ -2683,13 +2875,19 @@ export function TerminalPane({
             </div>
           )}
         </div>
-        {blocksSupported && blocksOpen && (
-          <CommandBlockPanel
-            blocks={blocks}
-            getText={(i) => handleRef.current?.copyBlock(i) ?? ""}
-            onLocate={(i) => handleRef.current?.scrollToBlock(i)}
-            onClear={() => handleRef.current?.clearBlocks()}
-            onToast={pushToast}
+        {blocksSupported && blocksOpen && !sidebarShown && <TerminalCommandBlocks {...commandBlockProps} />}
+        {sidebarShown && (
+          <SessionSidebar
+            workspaceId={workspaceId}
+            storeTabId={storeTabId}
+            kernelTabId={kernelTabId}
+            title={title}
+            visible
+            commandBlocks={blocksSupported ? <TerminalCommandBlocks {...commandBlockProps} embedded /> : null}
+            onClose={() => {
+              setSessionSidebarOpen(false);
+              window.setTimeout(() => handleRef.current?.focus(), 0);
+            }}
           />
         )}
       </div>
@@ -2748,6 +2946,19 @@ export function TerminalPane({
         broadcastCount={memberBroadcastCount}
       />
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+      {assetDraft && (
+        <Lazy fallback="none" overlay>
+          <AssetEditor
+            kind="asset"
+            draft={assetDraft}
+            onClose={() => setAssetDraft(null)}
+            onSaved={() => {
+              setAssetDraft(null);
+              pushToast("success", "已创建资产");
+            }}
+          />
+        </Lazy>
+      )}
       {broadcastPickerOpen && workspaceId && myPaneId && (
         <BroadcastPickerModal
           workspaceId={workspaceId}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestGrantRuleCommandsLifecycle(t *testing.T) {
 		t.Fatalf("rule = %+v", rule)
 	}
 
-	expiring := dispatchGrant(t, dispatcher, "ai_grant_rule_set", `{"deviceId":"asset-a","action":"exec_commands","expiresAt":4102444800000}`)
+	expiring := dispatchGrant(t, dispatcher, "ai_grant_rule_set", `{"deviceId":"asset-a","action":"write_file","path":"/tmp/**","expiresAt":4102444800000,"unattended":true}`)
 	if !expiring.OK {
 		t.Fatalf("expiring rule set failed: %+v", expiring.Error)
 	}
@@ -36,8 +37,13 @@ func TestGrantRuleCommandsLifecycle(t *testing.T) {
 	if err := json.Unmarshal(expiring.Data, &expiringRule); err != nil {
 		t.Fatal(err)
 	}
-	if expiringRule.ExpiresAt != 4102444800000 {
+	if expiringRule.ExpiresAt != 4102444800000 || !expiringRule.Unattended {
 		t.Fatalf("expiring rule = %+v", expiringRule)
+	}
+
+	// Command rules cannot be created through IPC without an operation scope.
+	if wholeDevice := dispatchGrant(t, dispatcher, "ai_grant_rule_set", `{"deviceId":"asset-a","action":"exec_commands"}`); wholeDevice.OK || wholeDevice.Error == nil || wholeDevice.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("whole-device command rule = %+v", wholeDevice)
 	}
 
 	list := dispatchGrant(t, dispatcher, "ai_grant_rule_list", `{}`)

@@ -28,6 +28,36 @@ type productionConnector struct {
 	hostKeys *productionHostKeyStore
 	events   ipc.Emitter
 	device   atomic.Pointer[DeviceConnectorConfig]
+	// multiUser is set for account-based servers. Background reconnects can lose the owner in ctx, so the
+	// restriction on server-side commands and files must not depend on it alone.
+	multiUser bool
+}
+
+// restricted reports whether SSH options that run commands or read files on this machine are refused.
+func (c *productionConnector) restricted(ctx context.Context) bool {
+	return c.multiUser || ipc.OwnerID(ctx) != ""
+}
+
+func (o productionAssetOptions) serverSSHFields() store.ServerSSHFields {
+	return store.ServerSSHFields{
+		ProxyCommand: o.ProxyCommand, AgentSocket: o.AgentSocket, ForwardAgent: o.ForwardAgent,
+		AuthKind: o.AuthKind, KeyPath: strings.TrimSpace(o.KeyPath), CertPath: strings.TrimSpace(o.CertPath),
+	}
+}
+
+// rejectServerSSHOptions refuses restricted SSH settings and names the group when the offending
+// authentication setting (authKind agent, keyPath) was inherited from a group default.
+func rejectServerSSHOptions(options productionAssetOptions) error {
+	fields := options.serverSSHFields()
+	err := store.RejectServerSSHFields(fields)
+	if err == nil || options.InheritedFrom[store.InheritAuth] == "" {
+		return err
+	}
+	fields.AuthKind, fields.KeyPath = "", ""
+	if store.RejectServerSSHFields(fields) != nil {
+		return err
+	}
+	return inheritedError(options, store.InheritAuth, "认证方式", err)
 }
 
 type productionAssetOptions struct {
@@ -114,7 +144,7 @@ func newProductionConnector(ctx context.Context, database *store.Store, credenti
 	if err != nil {
 		return nil, err
 	}
-	return &productionConnector{database: database, vault: credentialVault, hostKeys: hostKeys, events: events}, nil
+	return &productionConnector{database: database, vault: credentialVault, hostKeys: hostKeys, events: events, multiUser: !shared}, nil
 }
 
 func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, generation uint64) (base.Transport, error) {
@@ -151,6 +181,9 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 	}
 	switch asset.Kind {
 	case session.KindLocal:
+		if c.restricted(ctx) {
+			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备")
+		}
 		transport = local.NewWithConfig(local.Config{Shell: options.Shell, CWD: options.CWD, Env: options.Env})
 	case session.KindSSH, session.KindDocker:
 		transport, err = c.connectSSH(ctx, asset.ID, options, generation)
@@ -234,6 +267,11 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 // sshConfigHop builds the SSH config for one hop; strict disables
 // auto-accepting unknown host keys on this hop and every jump hop below it.
 func (c *productionConnector) sshConfigHop(ctx context.Context, options productionAssetOptions, generation uint64, chain []string, strict bool) (ssh.Config, error) {
+	if c.restricted(ctx) {
+		if err := rejectServerSSHOptions(options); err != nil {
+			return ssh.Config{}, err
+		}
+	}
 	if options.Host == "" {
 		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset host is required"))
 	}
@@ -409,6 +447,9 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 	payload := vault.ParsePrivateKeyPayload(secret)
 	auth.Passphrase = stringValue(payload.Passphrase)
 	if payload.File != nil {
+		if c.restricted(ctx) {
+			return auth, store.RejectServerSSHFile()
+		}
 		auth.KeyPath = *payload.File
 		return auth, nil
 	}

@@ -28,6 +28,8 @@ type Options struct {
 	Auth              string
 	AllowedOrigins    []string
 	TrustedProxyCIDRs []string
+	// TrustForwardedFor lets peers inside TrustedProxyCIDRs supply the client address via X-Forwarded-For.
+	TrustForwardedFor bool
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {

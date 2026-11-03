@@ -226,7 +226,11 @@ describe("GrantPanel switches", () => {
     mocks.ask.mockResolvedValueOnce(false);
     await mountPanel("asset-1");
     await toggle("生产 Web：执行命令免确认");
-    expect(mocks.ask.mock.calls[0][0]).toContain("只读模式下同样生效");
+    const prompt = String(mocks.ask.mock.calls[0][0]);
+    expect(prompt).not.toContain("只读模式下同样生效");
+    expect(prompt).toContain("只读模式");
+    expect(prompt).toContain("定时任务");
+    expect(prompt).toContain("生产环境");
     expect(mocks.grantSet).not.toHaveBeenCalled();
   });
 
@@ -308,20 +312,77 @@ describe("GrantPanel rules", () => {
     expect(text()).toContain("修改文件 /var/www/**");
   });
 
-  it("does not need a path for command rules", async () => {
-    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
-      Promise.resolve({ id: "r8", deviceId, action, path, expiresAt, createdAt: 1 }),
+  it("offers only file rules; command rules cannot be added by hand", async () => {
+    await mountPanel("asset-1");
+    clickButton(view!.container, "添加路径规则");
+    await flush();
+    const trigger = view!.container.querySelector<HTMLElement>('[aria-label="规则操作"]');
+    expect(trigger?.textContent).toContain("修改文件");
+    expect(() => chooseSelectOption(view!.container, "规则操作", "执行命令")).toThrow();
+    expect(() => chooseSelectOption(view!.container, "规则操作", "发送按键")).toThrow();
+    chooseSelectOption(view!.container, "规则操作", "写入文件");
+    await flush();
+    expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).not.toBeNull();
+  });
+
+  it("passes unattended only when the scheduled-task box is ticked, and says so in the confirmation", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number, unattended: boolean) =>
+      Promise.resolve({ id: "r7", deviceId, action, path, expiresAt, unattended, createdAt: 1 }),
     );
     await mountPanel("asset-1");
     clickButton(view!.container, "添加路径规则");
     await flush();
-    chooseSelectOption(view!.container, "规则操作", "执行命令");
+    expect(checkbox("允许定时任务使用此规则").checked).toBe(false);
+    setInputValue(view!.container.querySelector<HTMLInputElement>('input[aria-label="规则路径范围"]')!, "/srv/**");
     await flush();
-    expect(view!.container.querySelector('input[aria-label="规则路径范围"]')).toBeNull();
+    click(checkbox("允许定时任务使用此规则"));
+    await flush();
     click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);
     await flush();
     await flush();
-    expect(mocks.ruleSet.mock.calls[0].slice(0, 3)).toEqual(["asset-1", "exec_commands", ""]);
+    expect(String(mocks.ask.mock.calls[0][0])).toContain("定时任务运行时也会自动放行匹配的操作");
+    expect(String(mocks.ask.mock.calls[0][0])).not.toContain("只读模式下同样生效");
+    expect(mocks.ruleSet.mock.calls[0][4]).toBe(true);
+    expect(text()).toContain("定时任务可用");
+  });
+
+  it("passes unattended=false by default", async () => {
+    mocks.ruleSet.mockImplementation((deviceId: string, action: string, path: string, expiresAt: number) =>
+      Promise.resolve({ id: "r6", deviceId, action, path, expiresAt, createdAt: 1 }),
+    );
+    await mountPanel("asset-1");
+    clickButton(view!.container, "添加路径规则");
+    await flush();
+    setInputValue(view!.container.querySelector<HTMLInputElement>('input[aria-label="规则路径范围"]')!, "/srv/**");
+    await flush();
+    click([...view!.container.querySelectorAll("button")].find((b) => b.textContent === "添加")!);
+    await flush();
+    await flush();
+    expect(mocks.ruleSet.mock.calls[0][4]).toBe(false);
+    expect(String(mocks.ask.mock.calls[0][0])).not.toContain("定时任务运行时也会自动放行");
+  });
+
+  it("marks a legacy whole-host command rule as disabled and still revokes it", async () => {
+    mocks.ruleList.mockResolvedValue([{ id: "old1", deviceId: "asset-1", action: "exec_commands", path: "", expiresAt: 0, createdAt: 1 }]);
+    await mountPanel("asset-1");
+    expect(text()).toContain("已停用");
+    const badge = [...view!.container.querySelectorAll("[title]")].find((e) => e.textContent === "已停用");
+    expect(badge?.getAttribute("title")).toContain("不再自动放行");
+    click(view!.container.querySelector<HTMLButtonElement>('button[aria-label^="撤销规则"]')!);
+    await flush();
+    expect(mocks.ruleRevoke).toHaveBeenCalledWith("old1");
+  });
+
+  it("shows Chinese labels for kinds and programs of a scoped command rule", async () => {
+    mocks.ruleList.mockResolvedValue([
+      { id: "k1", deviceId: "asset-1", action: "exec_commands", path: "", kinds: ["service", "program", "weird_kind"], programs: ["git", "make"], unattended: true, expiresAt: 0, createdAt: 1 },
+    ]);
+    await mountPanel("asset-1");
+    expect(text()).toContain("服务与系统设置变更");
+    expect(text()).toContain("git、make 命令");
+    expect(text()).toContain("weird_kind");
+    expect(text()).toContain("定时任务可用");
+    expect(text()).not.toContain("已停用");
   });
 
   it("revokes a host's grant and every rule together", async () => {

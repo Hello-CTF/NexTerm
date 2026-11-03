@@ -354,6 +354,25 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, text 
 	if maxScanBytes <= 0 || maxScanBytes > 64<<20 {
 		maxScanBytes = 8 << 20
 	}
+	matches, _, _, err := s.scanTranscriptOutput(ctx, transcriptID, text, maxMatches, maxScanBytes)
+	return matches, err
+}
+
+// transcriptScanStop says why a transcript scan ended while unread output
+// remained.
+type transcriptScanStop int
+
+const (
+	transcriptScanComplete transcriptScanStop = iota
+	// transcriptScanMatchesFull means the per-call match cap was reached.
+	transcriptScanMatchesFull
+	// transcriptScanLimited means the byte budget or chunk cap ended the scan.
+	transcriptScanLimited
+)
+
+// scanTranscriptOutput scans one transcript's output blocks. stop reports
+// which limit, if any, ended the scan while unread output remained.
+func (s *Store) scanTranscriptOutput(ctx context.Context, transcriptID string, text []byte, maxMatches, maxScanBytes int) (matches []TranscriptMatch, scanned int, stop transcriptScanStop, err error) {
 	chunk := query.Use(s.db).TranscriptChunkRow
 	rows, err := chunk.WithContext(ctx).
 		Where(chunk.TranscriptID.Eq(transcriptID)).
@@ -361,27 +380,31 @@ func (s *Store) TranscriptSearch(ctx context.Context, transcriptID string, text 
 		Order(chunk.Seq).
 		Rows()
 	if err != nil {
-		return nil, dbError(err)
+		return nil, 0, transcriptScanComplete, dbError(err)
 	}
 	defer rows.Close()
 	matcher := newVisibleMatcher(text, maxMatches)
-	scanned := 0
 	outputChunks := 0
 scanBlocks:
 	for rows.Next() {
 		var stored TranscriptChunkRow
 		if err := s.db.ScanRows(rows, &stored); err != nil {
-			return nil, dbError(err)
+			return nil, 0, transcriptScanComplete, dbError(err)
 		}
 		chunks, err := decodeTranscriptBlock(stored)
 		if err != nil {
-			return nil, err
+			return nil, 0, transcriptScanComplete, err
 		}
 		for _, row := range chunks {
 			if row.Kind != TranscriptChunkKindOutput {
 				continue
 			}
-			if matcher.full() || scanned >= maxScanBytes || outputChunks >= 8192 {
+			if matcher.full() {
+				stop = transcriptScanMatchesFull
+				break scanBlocks
+			}
+			if scanned >= maxScanBytes || outputChunks >= 8192 {
+				stop = transcriptScanLimited
 				break scanBlocks
 			}
 			scanned += len(row.Data)
@@ -390,9 +413,9 @@ scanBlocks:
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, dbError(err)
+		return nil, 0, transcriptScanComplete, dbError(err)
 	}
-	return matcher.matches, nil
+	return matcher.matches, scanned, stop, nil
 }
 
 func (s *Store) TranscriptDelete(ctx context.Context, id string) error {

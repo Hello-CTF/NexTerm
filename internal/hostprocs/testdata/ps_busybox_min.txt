@@ -1,0 +1,5 @@
+@@nexterm-procs ps-busybox-min
+  PID  PPID USER       RSS STAT COMMAND
+    1     0 root      1234 S    init
+   40     1 root         0 Z    [defunct-thing] <defunct>
+  120     1 app        12M S    /usr/bin/node /srv/app.js --x 1

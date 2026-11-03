@@ -767,7 +767,7 @@ function DesktopSyncConsole() {
     try {
       const { ask } = await import("../../ui/dialogs");
       const confirmed = action === "restore-local"
-        ? await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+        ? await ask(`确定要用本机「${row.name}」覆盖服务端上本机无法解密的数据吗？此操作将替换服务端的原有密文。`, {
           title: "用本机副本修复服务端数据", kind: "warning",
         })
         : await ask(`本次对比中没有可用的本机数据 ${id}。确定要清除这条无法解密且类型未知的服务端副本吗？`, {
@@ -1155,7 +1155,8 @@ const OPT_IN_BY_KIND: Partial<Record<string, keyof SyncKindOptIn>> = {
 
 // GENERIC_COLLECT_KINDS are collected through sync_collect_kind_objects: the server returns each object's
 // canonical payload, which is sealed as is so hashes and revisions match the desktop engine.
-const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "runbook_template", "skill", "memory", "cron"];
+// runbook_template is receive-only: the server converts legacy objects into multi-step snippets and no longer collects any.
+const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "skill", "memory", "cron", "snippet_steps"];
 
 function allKindOptIn(): SyncKindOptIn {
   const optIn = {} as SyncKindOptIn;
@@ -1442,7 +1443,8 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "cron": return 13;
       case "tombstone": return 14;
       case "transcript": return 15;
-      default: return 16;
+      case "snippet_steps": return 16;
+      default: return 17;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));
@@ -1869,7 +1871,7 @@ function CompareConsole() {
       if (action === "restore-local") {
         if (!row.local) throw new Error("本机已没有同 ID 副本，请重试读取");
         const { ask } = await import("../../ui/dialogs");
-        if (!(await ask(`确定要用本机「${row.name}」覆盖服务端无法解密的数据吗？此操作将替换服务端的原有密文。`, {
+        if (!(await ask(`确定要用本机「${row.name}」覆盖服务端上本机无法解密的数据吗？此操作将替换服务端的原有密文。`, {
           title: "用本机副本修复服务端数据", kind: "warning",
         }))) return;
         if (!stillCurrent()) return;

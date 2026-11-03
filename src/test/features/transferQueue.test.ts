@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { setMacPlatform, setWindowsPlatform } from "../../app/platform";
+import { applyBackendPlatform, setBackendOS, setMacPlatform, setWindowsPlatform } from "../../app/platform";
 import {
   conflictCaseInsensitive,
   findConflict,
@@ -61,6 +61,16 @@ describe("conflictCaseInsensitive (case-insensitive target detection)", () => {
   afterEach(() => {
     setWindowsPlatform(false);
     setMacPlatform(false);
+    setBackendOS(null);
+  });
+
+  it("judges local sessions by the server OS in browser mode", () => {
+    setWindowsPlatform(true);
+    applyBackendPlatform("linux", false);
+    expect(conflictCaseInsensitive("local")).toBe(false);
+    setWindowsPlatform(false);
+    applyBackendPlatform("windows", false);
+    expect(conflictCaseInsensitive("local")).toBe(true);
   });
 
   it("always folds case for winrm sessions (NTFS semantics)", () => {

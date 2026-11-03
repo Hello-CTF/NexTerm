@@ -313,6 +313,13 @@ export const biometricApi = {
   disable: (): Promise<void> => call("biometric_disable") as Promise<void>,
 };
 
+import type { SnippetStep } from "./types";
+
+export interface SnippetContent {
+  description?: string;
+  steps?: SnippetStep[];
+}
+
 import type { UpdateChannelDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
@@ -838,6 +845,8 @@ export const transcriptApi = {
   remove: (id: string) => call("transcript_delete", { id }) as Promise<void>,
   syncOptIn: (id: string, optIn: boolean) =>
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
+  exportCast: (id: string, path: string) =>
+    call("transcript_export_cast", { id, path }) as Promise<import("./generated/types").TranscriptExportCastResult>,
 };
 
 export interface LayoutDto {
@@ -935,14 +944,21 @@ export const assetApi = {
   // What the empty connection fields of an asset (saved or being edited) would inherit from its group, resolved by the backend.
   inheritancePreview: (args: AssetInheritanceRequest) => call("asset_inheritance_preview", args) as Promise<AssetInheritance>,
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
-  snippetList: (): Promise<import("./types").SnippetDto[]> => call("snippet_list"),
-  snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
-    call("snippet_create", { name, body, groupId, sort }) as Promise<{ id: string }>,
+  snippetList: () => call("snippet_list") as Promise<import("./types").SnippetDto[]>,
+  snippetMigrationStatus: () => call("snippet_migration_status") as Promise<{ unmigratedRunbookTemplates: number }>,
+  snippetCreate: (
+    name: string,
+    body: string,
+    groupId?: string,
+    sort?: number,
+    content: SnippetContent = {},
+  ) => call("snippet_create", { name, body, groupId, sort, ...content }) as Promise<{ id: string }>,
+  // Steps replace the stored ones on every update; leaving them out turns a multi-step snippet into a single command.
   snippetUpdate: (
     id: string,
     name: string,
     body: string,
-    patch: { groupId?: string | null; sort?: number } = {},
+    patch: { groupId?: string | null; sort?: number } & SnippetContent = {},
   ) => call("snippet_update", { id, name, body, ...patch }) as Promise<void>,
   snippetDelete: (id: string) => call("snippet_delete", { id }) as Promise<void>,
   auditQuery: (args: Record<string, unknown> = {}) =>
@@ -1139,16 +1155,7 @@ export interface ImageSummary {
   createdSince: string;
 }
 
-export interface ComposeStack {
-  project: string;
-  workingDir: string;
-  configFiles: string[];
-  envPath: string;
-  envExists: boolean;
-  services: string[];
-  readOnly: boolean;
-  reason?: string;
-}
+export type ComposeStack = import("./generated/types").ComposeStack;
 
 export interface ComposeOverview {
   cli?: "docker compose" | "docker-compose";
@@ -1229,6 +1236,8 @@ export type ComposeRedeployPrepareRequest = {
   path: string;
   baseContentBase64: string;
   contentBase64: string;
+  // The command the user saw in the confirmation; the server rejects the request when its own command differs.
+  confirmedCommand?: string;
   productionConfirmation?: DockerProductionConfirmation;
 };
 
@@ -1252,12 +1261,14 @@ export const dockerApi = {
     containerId: string,
     tail: number,
     channel: unknown,
+    options?: { timestamps?: boolean },
   ) =>
     call("docker_logs_attach", {
       sessionId,
       containerId,
       tail,
       channel,
+      ...(options?.timestamps ? { timestamps: true } : {}),
       clientId: clientId(),
     }),
   execAttach: (
@@ -1301,7 +1312,7 @@ export const dockerApi = {
   composeLogsAttach: (sessionId: string, project: string, tail: number, channel: unknown) =>
     call("docker_compose_logs_attach", { sessionId, project, tail, channel, clientId: clientId() }),
   composeRedeployPrepare: (request: ComposeRedeployPrepareRequest) =>
-    call("docker_compose_redeploy_prepare", request) as Promise<{ ticket: string; contentHash: string }>,
+    call("docker_compose_redeploy_prepare", request) as Promise<{ ticket: string; contentHash: string; command: string }>,
   composeRedeployAttach: (request: ComposeRedeployAttachRequest) => {
     const { channel, ...body } = request;
     return call("docker_compose_redeploy_attach", { ...body, channel, clientId: clientId() });
@@ -1445,7 +1456,7 @@ export const aiApi = {
       message: string;
       selection?: string;
       images?: string[];
-      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string }[];
+      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string; text?: string }[];
       planMode?: boolean;
       channel: unknown;
     },
@@ -1551,6 +1562,8 @@ export interface VaultStatus {
   autoLockMinutes: number;
   passwordless: boolean;
   systemProtection: boolean;
+  // True when the server manages the vault.
+  managed: boolean;
 }
 
 export interface CredentialUsedBy {
@@ -1641,7 +1654,7 @@ export const sshImportApi = {
   }) => call("ssh_import_apply", { args }) as Promise<import("./types").SshImportApplyDto>,
 };
 
-export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string };
+export type ForwardSpec = import("./types").ForwardSpecDto & { listenHost?: string; temporary?: boolean };
 
 export const forwardApi = {
   env: (): Promise<import("./types").ForwardEnvDto> => call("forward_env"),
@@ -1651,6 +1664,15 @@ export const forwardApi = {
       listenPort,
       targetHost,
       targetPort,
+    }) as Promise<ForwardSpec>,
+  // Listens on 127.0.0.1 with a system-assigned port and is removed when the session ends.
+  createTemporary: (sessionId: string, targetHost: string, targetPort: number) =>
+    call("forward_create", {
+      sessionId,
+      listenPort: 0,
+      targetHost,
+      targetPort,
+      temporary: true,
     }) as Promise<ForwardSpec>,
   createSocks: (sessionId: string, listenPort: number, acknowledgeRisk = false) =>
     call("forward_create_socks", {
