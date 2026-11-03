@@ -60,9 +60,16 @@ func runbookSnippetMapKey(ownerID, templateID string) string {
 	return "runbook_template.snippet." + ownerID + "." + templateID
 }
 
-func snippetOwnerOf(tx *gorm.DB, id string) (owner string, found bool, err error) {
+// snippetOwnerOf reads who holds a snippet ID. A locking read returns the latest committed row even under
+// REPEATABLE READ (MySQL/MariaDB), where a plain read would keep seeing the transaction's older snapshot;
+// SQLite ignores the clause.
+func snippetOwnerOf(tx *gorm.DB, id string, locking bool) (owner string, found bool, err error) {
 	var owners []string
-	if err := tx.Model(&model.SnippetRow{}).Where("id = ?", id).Limit(1).Pluck("owner_id", &owners).Error; err != nil {
+	q := tx.Model(&model.SnippetRow{}).Where("id = ?", id)
+	if locking {
+		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := q.Limit(1).Pluck("owner_id", &owners).Error; err != nil {
 		return "", false, err
 	}
 	if len(owners) == 0 {
@@ -84,7 +91,7 @@ func (s *Store) resolveTemplateSnippetID(ctx context.Context, tx *gorm.DB, owner
 		return "", false, err
 	}
 	derived := LegacyRunbookSnippetID(templateID)
-	owner, taken, err := snippetOwnerOf(tx, derived)
+	owner, taken, err := snippetOwnerOf(tx, derived, false)
 	if err != nil {
 		return "", false, err
 	}
@@ -181,7 +188,7 @@ func (s *Store) migrateRunbookTemplate(ctx context.Context, tx *gorm.DB, templat
 	if err != nil {
 		return err
 	}
-	if owner, held, err := snippetOwnerOf(tx, id); err != nil {
+	if owner, held, err := snippetOwnerOf(tx, id, false); err != nil {
 		return err
 	} else if !held || owner != template.OwnerID {
 		var maxSort *int64
@@ -216,7 +223,7 @@ func (s *Store) placeTemplateSnippet(ctx context.Context, tx *gorm.DB, ownerID, 
 			return "", err
 		}
 		// The owner is re-read whatever the row count says, because drivers differ in what a skipped insert reports.
-		owner, held, err := snippetOwnerOf(tx, row.ID)
+		owner, held, err := snippetOwnerOf(tx, row.ID, true)
 		if err != nil {
 			return "", err
 		}
