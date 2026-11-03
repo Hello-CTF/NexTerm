@@ -94,7 +94,7 @@ The script downloads the latest server archive and verifies it against `SHA256SU
 
 - The service listens on `127.0.0.1:8080` and requires sign-in by default; run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`. Settings live in `/etc/nexterm/nexterm.env`; run `systemctl restart nexterm-server` after changing them.
 - `--auth off` disables accounts, administration and device routes; anyone who can reach the listen address can operate the server, so never use it on a public network.
-- For public access, put a TLS reverse proxy in front, have it overwrite `X-Forwarded-Proto`, and list its source ranges in `NEXTERM_TRUSTED_PROXY_CIDRS`.
+- For public access, put a TLS reverse proxy in front, have it overwrite `X-Forwarded-Proto`, and list its source ranges in `NEXTERM_TRUSTED_PROXY_CIDRS`. The proxy must also overwrite or append `X-Forwarded-For`; once listed, login rate limits and session origins use the rightmost untrusted address in `X-Forwarded-For`, and without the setting only the direct peer address is used.
 - SQLite is the default; use `NEXTERM_DB=postgres|mysql|mariadb` with `NEXTERM_DB_DSN` for an external database, with one server instance per database.
 - Back up `/var/lib/nexterm`, `/etc/nexterm/master.key`, and any external database. See the bundled `README.md` and `nexterm-server --help` for every option.
 

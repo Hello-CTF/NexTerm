@@ -1,0 +1,150 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+)
+
+func newRealIPFixture(t *testing.T, trusted []string) *accountFixture {
+	t.Helper()
+	database, err := store.OpenInMemory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	config := testConfig(t, false)
+	config.Options.Auth = AuthOn
+	config.Options.TrustedProxyCIDRs = trusted
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	config.Accounts = accounts
+	server, httpServer := newTestHTTP(t, config)
+	return &accountFixture{server: server, http: httpServer, accounts: accounts, db: database.DB(), client: &http.Client{}}
+}
+
+func (f *accountFixture) loginVia(t *testing.T, password, xff string) accountCall {
+	t.Helper()
+	headers := map[string]string{}
+	if xff != "" {
+		headers["X-Forwarded-For"] = xff
+	}
+	return f.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": password}, nil, "", headers)
+}
+
+// failUntilThrottled returns once the source is rate limited; it fails the test if that never happens.
+func (f *accountFixture) failUntilThrottled(t *testing.T, xff string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		call := f.loginVia(t, "wrong-password", xff)
+		if call.status == http.StatusTooManyRequests {
+			return
+		}
+		if call.status != http.StatusForbidden {
+			t.Fatalf("failed login status = %d body = %v", call.status, call.body)
+		}
+	}
+	t.Fatal("login was never rate limited")
+}
+
+func TestRealIPTrustedProxySeparatesLoginThrottle(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"})
+	fixture.createUser(t, "root", "password-a1")
+
+	fixture.failUntilThrottled(t, "203.0.113.9")
+	if call := fixture.loginVia(t, "password-a1", "203.0.113.9"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("throttled client login status = %d", call.status)
+	}
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusOK {
+		t.Fatalf("other client behind the proxy login status = %d body = %v", call.status, call.body)
+	}
+}
+
+func TestRealIPUntrustedProxyIgnoresForwardedFor(t *testing.T) {
+	fixture := newRealIPFixture(t, nil)
+	fixture.createUser(t, "root", "password-a1")
+
+	fixture.failUntilThrottled(t, "203.0.113.9")
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("rotating X-Forwarded-For escaped the throttle: status = %d", call.status)
+	}
+}
+
+func TestRealIPSessionOriginUsesForwardedClient(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"})
+	fixture.createUser(t, "root", "password-a1")
+
+	call := fixture.loginVia(t, "password-a1", "198.51.100.77, 127.0.0.1")
+	if call.status != http.StatusOK {
+		t.Fatalf("login status = %d body = %v", call.status, call.body)
+	}
+	session := captureSession(t, call)
+	listed := fixture.call(t, http.MethodGet, "/auth/sessions", nil, session, "", nil)
+	rows, _ := listed.body["sessions"].([]any)
+	if listed.status != http.StatusOK || len(rows) != 1 {
+		t.Fatalf("session list = %d %v", listed.status, listed.body)
+	}
+	if origin, _ := rows[0].(map[string]any)["origin"].(string); !strings.Contains(origin, "198.51.100.77") {
+		t.Fatalf("session origin = %q, want the forwarded client address", origin)
+	}
+}
+
+func enrollAttempt(t *testing.T, base, xff string) int {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, base+"/device/enroll", strings.NewReader(`{"code":"bad","name":"n"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-For", xff)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	return response.StatusCode
+}
+
+func TestRealIPFleetEnrollThrottleFollowsForwardedClient(t *testing.T) {
+	config := testConfig(t, false)
+	config.Fleet = newTestFleet(t, false)
+	config.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	_, httpServer := newTestHTTP(t, config)
+
+	throttled := false
+	for i := 0; i < 100 && !throttled; i++ {
+		throttled = enrollAttempt(t, httpServer.URL, "203.0.113.9") == http.StatusTooManyRequests
+	}
+	if !throttled {
+		t.Fatal("enroll was never rate limited")
+	}
+	if status := enrollAttempt(t, httpServer.URL, "198.51.100.4"); status == http.StatusTooManyRequests {
+		t.Fatal("a different client behind the proxy was throttled")
+	}
+}
+
+func TestRealIPTransportGuardResolvesBeforePreflight(t *testing.T) {
+	config := testConfig(t, false)
+	config.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	server, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen string
+	handler := server.transportGuard(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seen = clientIP(r)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/x", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Host = "127.0.0.1"
+	request.Header.Set("X-Forwarded-For", "203.0.113.9")
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+	if seen != "203.0.113.9" {
+		t.Fatalf("clientIP behind guard = %q", seen)
+	}
+}

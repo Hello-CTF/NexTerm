@@ -223,4 +223,7 @@ Back up the external database as well as the local data directory and
 master key. Public deployments belong behind a TLS reverse proxy. Keep the
 listener on loopback, make the proxy overwrite `X-Forwarded-Proto`, and set
 `NEXTERM_TRUSTED_PROXY_CIDRS` to its source CIDRs so HTTPS session cookies
-are marked `Secure`.
+are marked `Secure`. The proxy must also overwrite or append
+`X-Forwarded-For`; once listed, login rate limits and session origins use the
+rightmost untrusted address in `X-Forwarded-For`, and without the setting only
+the direct peer address is used.

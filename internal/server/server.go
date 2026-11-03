@@ -16,6 +16,7 @@ import (
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 	"github.com/Hello-CTF/NexTerm/internal/sharing"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
@@ -101,6 +102,7 @@ type Config struct {
 type Server struct {
 	options           Options
 	trustedProxyCIDRs []netip.Prefix
+	realIP            realip.Resolver
 	dispatcher        *ipc.Dispatcher
 	peerDispatcher    *ipc.Dispatcher
 	environment       ipc.Environment
@@ -274,7 +276,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, trustedProxyCIDRs: trustedProxyCIDRs, dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
+		options: config.Options, trustedProxyCIDRs: trustedProxyCIDRs, realIP: realip.NewResolver(trustedProxyCIDRs), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),

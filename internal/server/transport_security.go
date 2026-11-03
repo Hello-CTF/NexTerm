@@ -10,13 +10,16 @@ import (
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 )
 
 var defaultAllowedOrigins = []string{"localhost:*", "127.0.0.1:*"}
 
 func (s *Server) transportGuard(next http.Handler) http.Handler {
 	hostGuard := s.options.Auth == AuthLoopback && core.LoopbackListen(s.options.Listen)
+	resolver := s.realIP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(realip.WithClientIP(r.Context(), resolver.ClientIP(r)))
 		if hostGuard && !loopbackHost(r.Host) {
 			http.Error(w, "回环监听模式只允许通过 localhost、127.0.0.1 或 ::1 访问", http.StatusMisdirectedRequest)
 			return

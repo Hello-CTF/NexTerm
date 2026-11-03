@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/realip"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -57,11 +57,7 @@ func fleetCSRFSafeEqual(sessionID, presented string) bool {
 }
 
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return realip.FromRequest(r)
 }
 
 func writeFleetJSON(w http.ResponseWriter, status int, payload any) {
