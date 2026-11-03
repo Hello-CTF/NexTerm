@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/shellenv"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"go.uber.org/goleak"
@@ -401,7 +402,7 @@ func TestHelperEndpointIsVersionedAndPrivate(t *testing.T) {
 	if !strings.Contains(endpoint, fmt.Sprintf("supervisor-v%d.sock", ProtocolVersion)) {
 		t.Fatalf("endpoint %q is not versioned", endpoint)
 	}
-	if !strings.HasPrefix(endpoint, os.TempDir()) {
+	if !strings.HasPrefix(filepath.Clean(endpoint), filepath.Clean(platform.TempDir())+string(filepath.Separator)) {
 		t.Fatalf("endpoint %q is not under the user runtime directory", endpoint)
 	}
 	other, err := HelperEndpoint(filepath.Join(t.TempDir(), "state"))
