@@ -1127,7 +1127,7 @@ func TestDockerVerticalContracts(t *testing.T) {
 		{name: "docker_compose_action", stream: "none", input: "DockerComposeActionIPCRequest", output: "string"},
 		{name: "docker_compose_logs_attach", channel: true, stream: "binary", input: "DockerComposeLogsIPCRequest", output: "string"},
 		{name: "docker_compose_redeploy_attach", channel: true, stream: "binary", input: structType("sessionId: string;", "project: string;", "path: string;", "ticket: string;"), output: "string"},
-		{name: "docker_compose_redeploy_prepare", stream: "none", input: structType("sessionId: string;", "project: string;", "path: string;", "baseContentBase64: string;", "contentBase64: string;", "productionConfirmation?: DockerProductionConfirmation | null;"), output: "DockerComposeRedeployPrepareResult"},
+		{name: "docker_compose_redeploy_prepare", stream: "none", input: structType("sessionId: string;", "project: string;", "path: string;", "baseContentBase64: string;", "contentBase64: string;", "confirmedCommand?: string;", "productionConfirmation?: DockerProductionConfirmation | null;"), output: "DockerComposeRedeployPrepareResult"},
 		{name: "docker_compose_stacks", stream: "none", input: "SessionIDRequest", output: "ComposeOverview"},
 		{name: "docker_container_list_dir", stream: "none", input: structType("sessionId: string;", "containerId: string;", "path: string;"), output: "string[]"},
 		{name: "docker_disk_usage", stream: "none", input: "SessionIDRequest", output: "DiskUsage"},

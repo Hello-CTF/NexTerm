@@ -843,7 +843,7 @@ export const ipcContractManifest = {
       nested: false,
       channel: false,
       stream: "none",
-      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; BaseContentBase64 string \"json:\\\"baseContentBase64\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; ProductionConfirmation *github.com/Hello-CTF/NexTerm/internal/app/production.dockerProductionConfirmation \"json:\\\"productionConfirmation,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  baseContentBase64: string;\n  contentBase64: string;\n  productionConfirmation?: DockerProductionConfirmation | null;\n}" },
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Project string \"json:\\\"project\\\"\"; Path string \"json:\\\"path\\\"\"; BaseContentBase64 string \"json:\\\"baseContentBase64\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; ConfirmedCommand string \"json:\\\"confirmedCommand,omitempty\\\"\"; ProductionConfirmation *github.com/Hello-CTF/NexTerm/internal/app/production.dockerProductionConfirmation \"json:\\\"productionConfirmation,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  project: string;\n  path: string;\n  baseContentBase64: string;\n  contentBase64: string;\n  confirmedCommand?: string;\n  productionConfirmation?: DockerProductionConfirmation | null;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.dockerComposeRedeployPrepareResult", ts: "DockerComposeRedeployPrepareResult" },
     },
     "docker_compose_stacks": {
@@ -3491,6 +3491,7 @@ export interface IPCCommandTypeMap {
   path: string;
   baseContentBase64: string;
   contentBase64: string;
+  confirmedCommand?: string;
   productionConfirmation?: contractTypes.DockerProductionConfirmation | null;
 };
     output: contractTypes.DockerComposeRedeployPrepareResult;
