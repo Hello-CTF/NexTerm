@@ -207,7 +207,7 @@ func TestAllowPersistentFailsClosedWithoutDeviceIdentity(t *testing.T) {
 	}
 	events := waitClosed(t, stream)
 	result := toolResultOf(t, events, "write")
-	if result.OK || !strings.Contains(result.Text, "无法确定设备身份") {
+	if result.OK || !strings.Contains(result.Text, "不支持永久授权") {
 		t.Fatalf("result = %+v", result)
 	}
 	if rules := mustAgentRules(t, grants); len(rules) != 0 {

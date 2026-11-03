@@ -157,8 +157,8 @@ func TestDeviceGrantEvaluationOrder(t *testing.T) {
 		t.Fatalf("unknowable grant coverage = %+v", decision)
 	}
 	confirm := Confirm(KindProcess, "终端控制键可能中断或改变程序")
-	if decision := grants.Evaluate(context.Background(), Config{Mode: ReadOnly}, confirm, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionAllow {
-		t.Fatalf("device-grant before global-mode = %+v", decision)
+	if decision := grants.Evaluate(context.Background(), Config{Mode: ReadOnly}, confirm, nil, "device-a", "send_keys", "run-1"); decision.Action != ActionDeny {
+		t.Fatalf("read-only mode must outrank a device grant = %+v", decision)
 	}
 }
 
@@ -256,7 +256,7 @@ func TestGrantsReloadPicksUpExternalWrites(t *testing.T) {
 	if _, err := external.Grant(ctx, "device-a", []GrantKind{GrantKindTerminalWrite}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := external.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := external.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	// The live instance keeps its cached state until Reload (the sync reload hook's contract).
@@ -325,7 +325,7 @@ func TestGrantRuleRevokeRecordsSyncTombstone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -115,7 +115,7 @@ func TestWritePathRejectsParentEscape(t *testing.T) {
 func TestPersistentRuleDoesNotCoverParentTraversal(t *testing.T) {
 	recorder := &chatGrantRecorder{}
 	grants := newChatGrantManager(t, recorder)
-	if _, err := grants.AddRule(context.Background(), "asset-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(context.Background(), "asset-a", "write_file", "/var/log/**", guard.RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	h := newChatGrantHarness(guard.Config{Mode: guard.ReadWrite}, "asset-a", grants, recorder)
@@ -135,7 +135,7 @@ func TestPersistentRuleDoesNotCoverParentTraversal(t *testing.T) {
 func TestPersistentRuleCoversNormalizedInTreePath(t *testing.T) {
 	recorder := &chatGrantRecorder{}
 	grants := newChatGrantManager(t, recorder)
-	if _, err := grants.AddRule(context.Background(), "asset-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(context.Background(), "asset-a", "write_file", "/var/log/**", guard.RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	h := newChatGrantHarness(guard.Config{Mode: guard.ReadWrite}, "asset-a", grants, recorder)

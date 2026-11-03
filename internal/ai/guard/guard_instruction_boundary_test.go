@@ -21,7 +21,7 @@ func TestGuardShapesCarryNoInstructionFields(t *testing.T) {
 			t.Fatalf("Config grew unexpected field %q", typeOf.Field(index).Name)
 		}
 	}
-	ruleAllowed := map[string]bool{"ID": true, "DeviceID": true, "Action": true, "Path": true, "ExpiresAt": true, "CreatedAt": true, "UpdatedAt": true, "Legacy": true, "generation": true}
+	ruleAllowed := map[string]bool{"ID": true, "DeviceID": true, "Action": true, "Path": true, "Kinds": true, "Programs": true, "Unattended": true, "ExpiresAt": true, "CreatedAt": true, "UpdatedAt": true, "Legacy": true, "generation": true}
 	ruleType := reflect.TypeOf(GrantRule{})
 	for index := 0; index < ruleType.NumField(); index++ {
 		if !ruleAllowed[ruleType.Field(index).Name] {
@@ -95,7 +95,7 @@ func TestGrantMutationsRequireAuthorization(t *testing.T) {
 	if _, err := grants.Grant(context.Background(), "asset-1", []GrantKind{GrantKindSessionExec}); !errors.Is(err, rejected) {
 		t.Fatalf("grant error = %v, want the validator rejection", err)
 	}
-	if _, err := grants.AddRule(context.Background(), "asset-1", "write_file", "/srv/app/**", time.Time{}); !errors.Is(err, rejected) {
+	if _, err := grants.AddRule(context.Background(), "asset-1", "write_file", "/srv/app/**", RuleScope{}, time.Time{}); !errors.Is(err, rejected) {
 		t.Fatalf("add rule error = %v, want the validator rejection", err)
 	}
 	listed, err := grants.List(context.Background())

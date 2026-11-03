@@ -52,7 +52,7 @@ func TestSchedulerExecutorContextIsAccountScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := scheduler.claim(WithInternalAccess(context.Background()), jobA, time.Now())
+	claimed, _, err := scheduler.claim(WithInternalAccess(context.Background()), jobA, time.Now())
 	if err != nil || !claimed {
 		t.Fatalf("claim = %v, %v", claimed, err)
 	}

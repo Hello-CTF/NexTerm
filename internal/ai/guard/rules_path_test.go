@@ -224,7 +224,7 @@ func TestMatchPathDirAndFileRules(t *testing.T) {
 func TestGrantRuleDoesNotCoverParentTraversal(t *testing.T) {
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{}); err != nil {
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	ruling := Confirm(KindWriteFS, "写入或编辑文件")

@@ -337,6 +337,9 @@ type Interaction struct {
 	// SessionScope describes what a session approval covers; empty means the
 	// card offers no session approval.
 	SessionScope string
+	// PermanentScope describes what a permanent grant of this call covers; empty
+	// means the card offers no permanent grant and the backend refuses one.
+	PermanentScope string
 	// RequiredEnvironmentNames are the production environment names the
 	// confirmation must type back, computed from the real target set (for
 	// example a multi-target exec batch challenge).
@@ -942,6 +945,9 @@ func (e *Execution) initial(ctx context.Context, call Call) (Output, error) {
 		}
 		if !forcedConfirm && !isolatedTarget && !decision.Production {
 			info.SessionScope = SessionScope(ruling, resource)
+		}
+		if ruling.Risk == guard.NeedsConfirm && guard.RuleActionSupported(resource.Action) && !forcedConfirm && !isolatedTarget && !decision.Production && e.grantDeviceID(ctx) != "" {
+			info.PermanentScope = guard.PermanentScope(ruling, resource)
 		}
 		state := InteractionState{Kind: "confirm", CallID: call.ID, MemoryKind: ruling.Kind, MemoryKinds: ruling.ApprovalKinds(), MemoryPrograms: ruling.Programs, TerminalInput: terminalInput, TerminalCursor: cursor, Info: info, AuthorizationID: GuardAuthorizationID(decision), Authorization: decision.Authorization, Target: call.Target, Resource: resource, IsolatedTarget: isolatedTarget}
 		if forcedConfirm || isolatedTarget {

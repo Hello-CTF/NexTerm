@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { modelApi } from "../../../ipc/commands";
 import { IconAlert, IconRefresh, IconBot, IconShield, IconInfo, IconList } from "../../../ui/icons";
 import { useUi } from "../../../app/store";
-import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, RULE_CAPABLE_TOOLS, permanentScopeText, interceptionRuleFromCard } from "./aiSidebarShared";
+import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, permanentScopeText, interceptionRuleFromCard } from "./aiSidebarShared";
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
 import type { AiChatCtx } from "./aiChatCtx";
 
@@ -177,10 +177,10 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                     本会话允许
                   </button>
                 )}
-                {confirmCard.risk === "needs_confirm" && RULE_CAPABLE_TOOLS.has(confirmCard.tool) && (
+                {confirmCard.permanentScope && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
-                    title={`${permanentScopeText(confirmCard)}；高危或无法判断的操作仍会询问，可随时在授权管理中撤销`}
+                    title={`${permanentScopeText(confirmCard)}；只读模式和定时任务中不生效，高危、无法判断和生产环境的操作仍会询问，可随时在授权管理中撤销`}
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_persistent")}
                   >

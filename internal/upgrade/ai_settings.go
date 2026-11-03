@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -505,7 +506,8 @@ func findAIGrantRule(rules []guard.GrantRule, id string) (guard.GrantRule, bool)
 
 func aiGrantRuleKeyConflict(rules []guard.GrantRule, candidate guard.GrantRule) bool {
 	for _, rule := range rules {
-		if rule.ID != candidate.ID && rule.DeviceID == candidate.DeviceID && rule.Action == candidate.Action && rule.Path == candidate.Path {
+		if rule.ID != candidate.ID && rule.DeviceID == candidate.DeviceID && rule.Action == candidate.Action && rule.Path == candidate.Path &&
+			slices.Equal(rule.Kinds, candidate.Kinds) && slices.Equal(rule.Programs, candidate.Programs) && rule.Unattended == candidate.Unattended {
 			return true
 		}
 	}
@@ -530,7 +532,7 @@ func (m *aiSettingsMigration) migrateGrantRules() error {
 		if rule.ID == "" {
 			return errors.New("open-mode AI grant rule has an empty ID")
 		}
-		if m.tombstoned(guard.AIGrantSyncRulePrefix + rule.ID) {
+		if m.tombstoned(guard.RuleSyncObjectID(rule)) {
 			m.report.GrantRules.Tombstoned++
 			continue
 		}
@@ -570,9 +572,10 @@ func (m *aiSettingsMigration) targetActive(kind, id string) bool {
 		case strings.HasPrefix(id, guard.AIGrantSyncDevicePrefix):
 			_, ok := m.grants[strings.TrimPrefix(id, guard.AIGrantSyncDevicePrefix)]
 			return ok
-		case strings.HasPrefix(id, guard.AIGrantSyncRulePrefix):
-			_, ok := findAIGrantRule(m.rules, strings.TrimPrefix(id, guard.AIGrantSyncRulePrefix))
-			return ok
+		case strings.HasPrefix(id, guard.AIGrantSyncRulePrefix), strings.HasPrefix(id, guard.AIGrantSyncScopedRulePrefix):
+			ruleID := strings.TrimPrefix(strings.TrimPrefix(id, guard.AIGrantSyncScopedRulePrefix), guard.AIGrantSyncRulePrefix)
+			rule, ok := findAIGrantRule(m.rules, ruleID)
+			return ok && guard.RuleSyncObjectID(rule) == id
 		case strings.HasPrefix(id, guard.AIGrantSyncModePrefix):
 			_, ok := m.modes[strings.TrimPrefix(id, guard.AIGrantSyncModePrefix)]
 			return ok

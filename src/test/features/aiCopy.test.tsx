@@ -153,12 +153,13 @@ describe("M134 AI copy", () => {
     expect(alert!.textContent).not.toContain("自定义危险操作");
   });
 
-  it("states the read-only hint with the device-grant exception", async () => {
+  it("states that read-only mode rejects every change", async () => {
     click(view!.container.querySelector('button[title^="AI 权限"]')!);
     await flush();
     const text = view!.container.textContent ?? "";
     const readOnly = [...view!.container.querySelectorAll('[role="radio"]')].find((radio) => radio.textContent === "只读");
-    expect(readOnly?.getAttribute("title")).toContain("已开启免确认授权的操作除外");
+    expect(readOnly?.getAttribute("title")).toContain("修改一律拒绝");
+    expect(readOnly?.getAttribute("title")).not.toContain("除外");
     expect(text).toContain("高危和无法判断的操作始终询问");
   });
 

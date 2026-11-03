@@ -302,8 +302,8 @@ func TestDBGrantRevokeRestoresConfirmImmediately(t *testing.T) {
 }
 
 // Production behavior (M74) must survive the identity fix: session memory
-// never auto-authorizes a production DB asset, while an explicit permanent
-// grant still does.
+// never auto-authorizes a production DB asset, and neither does a long-term
+// device grant.
 func TestDBGrantProductionKeepsExplicitConfirmation(t *testing.T) {
 	recorder := &chatGrantRecorder{}
 	grants, err := guard.NewGrants(context.Background(), &chatGrantSettings{values: make(map[string]string)}, recorder.record,
@@ -329,10 +329,10 @@ func TestDBGrantProductionKeepsExplicitConfirmation(t *testing.T) {
 	if _, err := grants.Grant(context.Background(), "asset-db", []guard.GrantKind{guard.GrantKindDBQuery}); err != nil {
 		t.Fatal(err)
 	}
-	messages, err := h.invoke(context.Background(), "call-2", "db_query", dbWriteCall)
-	requireDBGrantExecuted(t, messages, err)
-	if h.database.executed() != 1 {
-		t.Fatal("explicit permanent grant did not authorize the production write")
+	_, err = h.invoke(context.Background(), "call-2", "db_query", dbWriteCall)
+	requireDBGrantConfirm(t, err)
+	if h.database.executed() != 0 {
+		t.Fatal("device grant authorized the production write")
 	}
 }
 
@@ -364,9 +364,8 @@ func TestDBGrantWithoutIdentitySeamDisablesGrantBranch(t *testing.T) {
 	requireDBGrantConfirm(t, err)
 }
 
-// A granted connection keeps the device-grant precedence over the global
-// read-only mode, matching the semantics the grant panel advertises.
-func TestDBGrantOverridesReadOnlyMode(t *testing.T) {
+// Read-only mode outranks a device grant: the grant never lifts the mode.
+func TestDBGrantDoesNotOverrideReadOnlyMode(t *testing.T) {
 	recorder := &chatGrantRecorder{}
 	grants := newChatGrantManager(t, recorder)
 	if _, err := grants.Grant(context.Background(), "asset-db", []guard.GrantKind{guard.GrantKindDBQuery}); err != nil {
@@ -376,9 +375,10 @@ func TestDBGrantOverridesReadOnlyMode(t *testing.T) {
 	h.database.bind("conn-1", "asset-db")
 	h.execution.Permission = guard.Config{Mode: guard.ReadOnly}
 
-	messages, err := h.invoke(context.Background(), "call-1", "db_query", dbWriteCall)
-	requireDBGrantExecuted(t, messages, err)
-	if h.database.executed() != 1 {
-		t.Fatal("device grant did not take precedence over the global read-only mode")
+	if _, err := h.invoke(context.Background(), "call-1", "db_query", dbWriteCall); err != nil {
+		t.Fatalf("read-only deny must surface as a failed tool result: %v", err)
+	}
+	if h.database.executed() != 0 {
+		t.Fatal("device grant lifted the global read-only mode")
 	}
 }

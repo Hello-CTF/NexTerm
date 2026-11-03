@@ -368,12 +368,14 @@ func (s *Scheduler) startDueJobs(ctx context.Context, now time.Time) (int, error
 				progressed = true
 				continue
 			}
-			claimed, err := s.claim(ctx, job, now)
+			claimed, disabled, err := s.claim(ctx, job, now)
 			if err != nil {
 				return started, err
 			}
 			if claimed {
 				started++
+			}
+			if claimed || disabled {
 				progressed = true
 			}
 		}
@@ -411,16 +413,23 @@ func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.T
 		}
 		return storageError("disable unexecutable", job.ID, err)
 	}
+	// Surface the single-job failure; the job's LastError alone is invisible until the list is opened.
+	s.notify(fmt.Errorf("cron job %s disabled: %w", job.ID, cause))
 	return nil
 }
 
-func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, error) {
+// claim reports whether the job started and whether it was disabled instead.
+// A job whose schedule cannot be evaluated is disabled with a visible
+// LastError so one bad row never stops the scheduler; only storage failures
+// are returned.
+func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (claimed, disabled bool, err error) {
 	if s.locallyRunning(job.ID, "") || leaseHeldByAnother(job.Lease, s.ownerID, now) {
-		return false, nil
+		return false, false, nil
 	}
 	schedule, err := loadSchedule(job.Schedule, job.Timezone)
 	if err != nil {
-		return false, fmt.Errorf("load schedule for cron job %s: %w", job.ID, err)
+		cause := fmt.Errorf("load schedule for cron job %s: %w", job.ID, err)
+		return false, true, s.disableUnexecutable(ctx, job, now, cause)
 	}
 	scheduledFor := job.NextRunAt
 	if scheduledFor.IsZero() {
@@ -430,16 +439,17 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 	if !ok && schedule.oneShot {
 		next = time.Time{}
 	} else if !ok {
-		return false, fmt.Errorf("%w: no occurrence within ten years for job %s", ErrInvalidSchedule, job.ID)
+		cause := fmt.Errorf("%w: no occurrence within ten years for job %s", ErrInvalidSchedule, job.ID)
+		return false, true, s.disableUnexecutable(ctx, job, now, cause)
 	}
 	following, ok := schedule.Next(scheduledFor)
 	coalesced := ok && !following.After(now)
 	runID := ids.New()
 	if runID == "" {
-		return false, errors.New("cron generated an empty run ID")
+		return false, false, errors.New("cron generated an empty run ID")
 	}
 	if !s.tryAcquireExecutionSlot() {
-		return false, nil
+		return false, false, nil
 	}
 	job.Lease = Lease{Owner: s.ownerID, ExpiresAt: now.Add(s.options.LeaseDuration)}
 	job.Run = RunState{
@@ -453,16 +463,16 @@ func (s *Scheduler) claim(ctx context.Context, job Job, now time.Time) (bool, er
 		s.releaseExecutionSlot()
 		wrapped := storageError("claim", job.ID, err)
 		if errors.Is(wrapped, ErrConflict) || errors.Is(wrapped, ErrNotFound) {
-			return false, nil
+			return false, false, nil
 		}
-		return false, wrapped
+		return false, false, wrapped
 	}
 	s.mu.Lock()
 	s.local[stored.ID] = stored.Run.ID
 	s.wg.Add(1)
 	s.mu.Unlock()
 	go s.execute(ctx, stored)
-	return true, nil
+	return true, false, nil
 }
 
 func (s *Scheduler) tryAcquireExecutionSlot() bool {

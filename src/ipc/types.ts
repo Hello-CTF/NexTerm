@@ -242,7 +242,7 @@ export type SyncCollectKindObjectsResult = { objects: SyncCollectKindObject[], w
 
 export type SyncCollectAIPermission = { id: string, mode: string, dangerRules: string[], updatedAt: number, found: boolean, };
 export type SyncCollectAIGrantDevice = { id: string, deviceId: string, kinds: string[], updatedAt: number, };
-export type SyncCollectAIGrantRule = { id: string, deviceId: string, action: string, path?: string, expiresAt?: number, createdAt: number, updatedAt: number, };
+export type SyncCollectAIGrantRule = { id: string, deviceId: string, action: string, path?: string, kinds?: string[], programs?: string[], unattended?: boolean, expiresAt?: number, createdAt: number, updatedAt: number, };
 export type SyncCollectAIGrantMode = { id: string, deviceId: string, mode: string, updatedAt: number, };
 export type SyncCollectAIGrants = { grants: SyncCollectAIGrantDevice[], rules: SyncCollectAIGrantRule[], modes: SyncCollectAIGrantMode[], };
 export type SyncCollectPreference = { id: string, key: string, value: unknown, updatedAt: number, };

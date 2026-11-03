@@ -242,6 +242,7 @@ describe("AiSidebar takeover controls", () => {
       tool: "exec_commands",
       rendered: "$ nginx",
       risk: "needs_confirm",
+      permanentScope: "该设备上的 git 命令",
       confirmationNonce: "nonce-persistent",
     });
     await flush();

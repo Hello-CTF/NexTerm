@@ -450,6 +450,7 @@ describe("confirmRequired event fields", () => {
       risk: "needs_confirm",
       commands: ["ls -l", "pwd"],
       rulePattern: "/var/log/**",
+      permanentScope: "写入 /var/log/** 下的文件",
       confirmationNonce: "n-9",
     });
     expect(result.accepted).toBe(true);
@@ -457,6 +458,7 @@ describe("confirmRequired event fields", () => {
     expect(card?.risk).toBe("needs_confirm");
     expect(card?.commands).toEqual(["ls -l", "pwd"]);
     expect(card?.rulePattern).toBe("/var/log/**");
+    expect(card?.permanentScope).toBe("写入 /var/log/** 下的文件");
   });
 
   it("drops malformed commands and non-string risk fields", () => {
@@ -475,6 +477,7 @@ describe("confirmRequired event fields", () => {
     expect(card?.risk).toBeUndefined();
     expect(card?.commands).toEqual(["ok"]);
     expect(card?.rulePattern).toBeUndefined();
+    expect(card?.permanentScope).toBeUndefined();
   });
 
   it("leaves commands undefined for events without them", () => {

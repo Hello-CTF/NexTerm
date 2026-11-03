@@ -14,7 +14,21 @@ const (
 	AIGrantSyncDevicePrefix = "device/"
 	AIGrantSyncRulePrefix   = "rule/"
 	AIGrantSyncModePrefix   = "mode/"
+	// AIGrantSyncScopedRulePrefix carries rules with kinds, programs or unattended scope. It must not start with
+	// "rule/": releases before the scope fields decode leniently by that prefix, drop the new fields and push the
+	// result back as a whole-device rule, so they have to see an unknown prefix (warn and skip) instead.
+	AIGrantSyncScopedRulePrefix = "scoped-rule/"
 )
+
+// RuleSyncObjectID is the sync object (and tombstone) ID of a rule. The prefix is decided by fields that never
+// change for a rule ID: AddRule treats a different kinds, programs or unattended value as a new rule, so a rule
+// never migrates between prefixes and the two prefixes never carry the same ID.
+func RuleSyncObjectID(rule GrantRule) string {
+	if len(rule.Kinds) > 0 || len(rule.Programs) > 0 || rule.Unattended {
+		return AIGrantSyncScopedRulePrefix + rule.ID
+	}
+	return AIGrantSyncRulePrefix + rule.ID
+}
 
 // aiGrantSyncOptInReader is implemented by the store: reads the AI grant sync opt-in (default on) for the account user.
 type aiGrantSyncOptInReader interface {

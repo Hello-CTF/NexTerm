@@ -417,7 +417,7 @@ func newAIGrantPayload(objectID string) (any, error) {
 	switch {
 	case strings.HasPrefix(objectID, aiGrantDevicePrefix):
 		return &aiGrantDeviceObject{}, nil
-	case strings.HasPrefix(objectID, aiGrantRulePrefix):
+	case strings.HasPrefix(objectID, aiGrantRulePrefix), strings.HasPrefix(objectID, aiGrantScopedRulePrefix):
 		return &aiGrantRuleObject{}, nil
 	case strings.HasPrefix(objectID, aiGrantModePrefix):
 		return &aiGrantModeObject{}, nil

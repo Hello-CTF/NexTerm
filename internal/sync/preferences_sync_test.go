@@ -432,7 +432,7 @@ func TestEngineAIGrantConverge(t *testing.T) {
 	if _, err := grantsA.Grant(userCtx, "dev-1", []guard.GrantKind{guard.GrantKindTerminalWrite}); err != nil {
 		t.Fatal(err)
 	}
-	rule, err := grantsA.AddRule(userCtx, "dev-1", "write_file", "/var/log/**", time.Time{})
+	rule, err := grantsA.AddRule(userCtx, "dev-1", "write_file", "/var/log/**", guard.RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
