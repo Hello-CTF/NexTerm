@@ -73,5 +73,10 @@ func dialPipe(ctx context.Context, path string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Only the owner of the helper may serve the pipe; refuse a server another account created first.
+	if _, err := verifiedHelperPeer(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	return conn, nil
 }
