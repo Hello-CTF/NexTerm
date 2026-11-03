@@ -109,6 +109,13 @@ func TestCommandBackendLogsTimestamps(t *testing.T) {
 	if !strings.Contains(runner.commands[0], "'--timestamps'") {
 		t.Fatalf("timestamps flag missing: %q", runner.commands[0])
 	}
+	plain := &recordingRunner{}
+	if _, err := NewCommandBackend(plain, nil, ShellPOSIX).OpenLogs(t.Context(), LogsOptions{Container: "c1", Tail: 10, Timestamps: false}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.commands[0], "--timestamps") {
+		t.Fatalf("timestamps flag present when disabled: %q", plain.commands[0])
+	}
 }
 
 func TestCommandBackendReportsFailureAndTruncation(t *testing.T) {

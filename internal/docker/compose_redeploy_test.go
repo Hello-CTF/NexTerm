@@ -134,3 +134,77 @@ func TestComposeStacksReadOnlyHasNoUpCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestComposeResultReaderNamesActualCLI(t *testing.T) {
+	for _, test := range []struct {
+		cli  ComposeCLI
+		want string
+	}{
+		{ComposeCLIPlugin, "docker compose up -d"},
+		{ComposeCLILegacy, "docker-compose up -d"},
+	} {
+		t.Run(string(test.cli), func(t *testing.T) {
+			for _, stream := range []*waitStream{{}, {code: 3}, {err: errors.New("lost")}} {
+				reader := newComposeResultReader(io.NopCloser(strings.NewReader("out")), t.Context(), &composeExecutionResult{}, test.cli)
+				reader.stream = stream
+				got, _ := readAllChunked(t, reader, 5)
+				if !strings.Contains(got, "[NexTerm] "+test.want+" ") {
+					t.Fatalf("output = %q, want command %q", got, test.want)
+				}
+			}
+		})
+	}
+}
+
+func TestComposeCommandLineQuotesAwkwardPaths(t *testing.T) {
+	stack := ComposeStack{
+		Project: "shop", WorkingDir: "/srv/my shop/$HOME", ConfigFiles: []string{"/srv/my shop/$HOME/compose $1.yml"},
+	}
+	posix, err := NewCommandBackend(nil, nil, ShellPOSIX).ComposeCommandLine(ComposeCLIPlugin, stack, ComposeActionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'/srv/my shop/$HOME'", "'/srv/my shop/$HOME/compose $1.yml'"} {
+		if !strings.Contains(posix, " "+want+" ") {
+			t.Fatalf("posix command %q lacks single-quoted %s", posix, want)
+		}
+	}
+	power, err := NewCommandBackend(nil, nil, ShellPowerShell).ComposeCommandLine(ComposeCLIPlugin, stack, ComposeActionUp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'/srv/my shop/$HOME'", "'/srv/my shop/$HOME/compose $1.yml'"} {
+		if !strings.Contains(power, " "+want+" ") {
+			t.Fatalf("powershell command %q lacks single-quoted %s", power, want)
+		}
+	}
+}
+
+func TestAttachComposeRejectsChangedCommand(t *testing.T) {
+	opener := &recordingOpener{stream: &fakeCommandStream{}}
+	backend := NewCommandBackend(composeAuditCLI(), opener, ShellPOSIX)
+	service := NewService(&stubProvider{sdkErr: ErrNoBackend, command: backend})
+	overview, err := service.ComposeStacks(t.Context(), "s1")
+	if err != nil || len(overview.Stacks) != 1 || overview.Stacks[0].UpCommand == "" {
+		t.Fatalf("stacks = %+v, %v", overview, err)
+	}
+	_, err = service.AttachCompose(t.Context(), ComposeAttachRequest{
+		SessionID: "s1", Project: "shop", Action: ComposeActionUp,
+		ExpectedCommand: overview.Stacks[0].UpCommand + " --changed", Sink: newCollectSink(),
+	})
+	if !errors.Is(err, ErrComposeChanged) {
+		t.Fatalf("err = %v, want ErrComposeChanged", err)
+	}
+	if len(opener.commands) != 0 {
+		t.Fatalf("compose was opened: %q", opener.commands)
+	}
+	if _, err := service.AttachCompose(t.Context(), ComposeAttachRequest{
+		SessionID: "s1", Project: "shop", Action: ComposeActionUp,
+		ExpectedCommand: overview.Stacks[0].UpCommand, Sink: newCollectSink(),
+	}); err != nil {
+		t.Fatalf("matching command rejected: %v", err)
+	}
+	if len(opener.commands) != 1 {
+		t.Fatalf("opened = %q", opener.commands)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,25 +26,37 @@ type redeployCommandRunner struct {
 	mu       sync.Mutex
 	commands []string
 	workDir  string
+	// labelDir overrides only the working_dir label, keeping config_files stable.
+	labelDir string
 }
 
 func (r *redeployCommandRunner) RunCommand(_ context.Context, command string) (docker.CommandResult, error) {
 	r.mu.Lock()
 	r.commands = append(r.commands, command)
+	workDir, labelDir := r.workDir, r.labelDir
 	r.mu.Unlock()
+	if labelDir == "" {
+		labelDir = workDir
+	}
 	switch command {
 	case "docker 'ps' '-a' '--format' '{{json .}}'":
 		return docker.CommandResult{Stdout: "{\"ID\":\"c1\",\"Names\":\"web\",\"Image\":\"example\",\"State\":\"running\",\"Status\":\"Up\",\"Labels\":\"com.docker.compose.project=shop,com.docker.compose.service=web\"}\n"}, nil
 	case "docker 'inspect' 'c1'":
 		raw, _ := json.Marshal(map[string]any{"Config": map[string]any{"Labels": map[string]string{
 			"com.docker.compose.project":              "shop",
-			"com.docker.compose.project.working_dir":  r.workDir,
-			"com.docker.compose.project.config_files": filepath.Join(r.workDir, "compose.yml"),
+			"com.docker.compose.project.working_dir":  labelDir,
+			"com.docker.compose.project.config_files": filepath.Join(workDir, "compose.yml"),
 		}}})
 		return docker.CommandResult{Stdout: string(raw)}, nil
 	default:
 		return docker.CommandResult{}, nil
 	}
+}
+
+func (r *redeployCommandRunner) setLabelDir(dir string) {
+	r.mu.Lock()
+	r.labelDir = dir
+	r.mu.Unlock()
 }
 
 func (r *redeployCommandRunner) upCalls() int {
@@ -289,5 +302,89 @@ func TestComposeRedeployBackupFollowsStoredAssetOption(t *testing.T) {
 	fixture.confirmedPrepare(t, fixture.request("v3\n", "v4\n"))
 	if got, _ := readBackup(); got != "v2\n" || fixture.content(t) != "v4\n" {
 		t.Fatalf("disabled overwrite: backup=%q content=%q", got, fixture.content(t))
+	}
+}
+
+func (f *redeployIPCFixture) confirmed(t *testing.T, request dockerComposeRedeployIPCRequest) dockerComposeRedeployIPCRequest {
+	t.Helper()
+	response := dispatchExecBatchTest(f.dispatcher, f.ctx, "docker_compose_redeploy_prepare", request)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
+		t.Fatalf("expected confirmation challenge: %+v", response)
+	}
+	var challenge dockerConfirmationRequiredDetail
+	encoded, err := json.Marshal(response.Error.Detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &challenge); err != nil {
+		t.Fatal(err)
+	}
+	request.ProductionConfirmation = &dockerProductionConfirmation{
+		Confirmed: true, TargetSetHash: challenge.TargetSetHash, CommandHash: challenge.CommandHash,
+		EnvironmentNames: challenge.RequiredEnvironmentNames,
+	}
+	return request
+}
+
+func TestComposeRedeployPrepareReturnsAndBindsCommand(t *testing.T) {
+	fixture := newRedeployIPCFixture(t)
+	fixture.write(t, "old\n")
+	request := fixture.request("old\n", "new\n")
+	stack, err := fixture.service.docker.ComposeStack(fixture.ctx, fixture.connected.ID, "shop")
+	if err != nil || stack.UpCommand == "" {
+		t.Fatalf("stack = %+v, %v", stack, err)
+	}
+
+	// A mismatched confirmed command is refused before anything is written.
+	mismatch := fixture.confirmed(t, request)
+	mismatch.ConfirmedCommand = stack.UpCommand + " --other"
+	response := dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", mismatch)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || fixture.content(t) != "old\n" {
+		t.Fatalf("mismatched command response = %+v content=%q", response, fixture.content(t))
+	}
+
+	request = fixture.confirmed(t, request)
+	request.ConfirmedCommand = stack.UpCommand
+	response = dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", request)
+	if !response.OK {
+		t.Fatalf("prepare = %+v", response)
+	}
+	prepared := decodeExecBatchTest[dockerComposeRedeployPrepareResult](t, response)
+	if prepared.Command != stack.UpCommand {
+		t.Fatalf("command = %q, want %q", prepared.Command, stack.UpCommand)
+	}
+
+	// The stack changes after prepare: attach must be refused without running compose.
+	fixture.runner.setLabelDir(t.TempDir())
+	attach := request
+	attach.Ticket = prepared.Ticket
+	_, _, ticket, err := fixture.service.authorizeComposeRedeployAttach(fixture.ctx, attach)
+	if err != nil || ticket.command != stack.UpCommand {
+		t.Fatalf("ticket = %+v, %v", ticket, err)
+	}
+	_, err = fixture.service.docker.AttachCompose(fixture.ctx, docker.ComposeAttachRequest{
+		SessionID: fixture.connected.ID, Project: "shop", Action: docker.ComposeActionUp,
+		ExpectedCommand: ticket.command, Sink: docker.FrameSinkFunc(func(context.Context, []byte) error { return nil }),
+	})
+	if !errors.Is(err, docker.ErrComposeChanged) || fixture.runner.upCalls() != 0 {
+		t.Fatalf("attach err = %v, up calls = %d", err, fixture.runner.upCalls())
+	}
+}
+
+func TestDockerMutationCommandHashFollowsUpCommand(t *testing.T) {
+	first := dockerMutationOperation{Kind: "compose_redeploy", CommandHash: dockerConfirmationDigest("compose-up-v1", []byte("a"))}
+	second := first
+	second.CommandHash = dockerConfirmationDigest("compose-up-v1", []byte("b"))
+	target := dockerConfirmationTarget{SessionID: "s1", Environment: "prod"}
+	one, err := newDockerProductionChallenge(target, first, func(string) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := newDockerProductionChallenge(target, second, func(string) (bool, error) { return true, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one == nil || two == nil || one.commandHash == two.commandHash {
+		t.Fatalf("command hash did not change: %+v %+v", one, two)
 	}
 }
