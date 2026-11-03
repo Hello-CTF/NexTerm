@@ -185,14 +185,36 @@ func requireDockerContextImportRejected(t *testing.T, dispatcher *ipc.Dispatcher
 	}
 }
 
-func TestInventoryServerKubernetesDiscoveryRequiresAuthorization(t *testing.T) {
+func TestInventoryKubeconfigSourceRejectedForAccountOwners(t *testing.T) {
+	// Even with the operator opt-in set, an account owner must never reach the server kubeconfig.
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	service, database := newInventoryTestService(t, false)
+	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	response := dispatchInventoryTest(t, dispatcher, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	keys := []string{"context/staging"}
+	response = dispatchInventoryTest(t, dispatcher, ctx, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceKubernetes, Keys: &keys}, nil)
+	requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	if runner.callCount() != 0 {
+		t.Fatalf("rejected kubeconfig import ran commands: %+v", runner.calls)
+	}
+	assets, err := database.AssetList(ctx, true)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("rejected kubeconfig import created assets: %+v err=%v", assets, err)
+	}
+}
+
+func TestInventoryServerKubernetesDiscoveryWithoutOwnerRequiresAuthorization(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	service, _ := newInventoryTestService(t, false)
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
 	denied := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	response := dispatchInventoryTest(t, denied, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, nil)
 	requireInventoryIPCError(t, response, ipc.CodeForbidden)
 	if runner.callCount() != 0 {
@@ -215,7 +237,7 @@ func TestInventoryDesktopKubernetesDiscoveryUnchanged(t *testing.T) {
 	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	var discovery inventoryDiscoveryDTO
 	dispatchInventoryTest(t, dispatcher, ctx, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceKubernetes}, &discovery)
 	if len(discovery.Items) != 2 {

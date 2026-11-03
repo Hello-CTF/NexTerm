@@ -386,6 +386,8 @@ func (s *inventoryService) discover(ctx context.Context, source, path string) ([
 			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")
 		case store.InventorySourceDockerContext:
 			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Docker 上下文")
+		case store.InventorySourceKubernetes:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从 kubeconfig 导入：它会读取服务器上的 kubeconfig，属于跨账号共享凭据")
 		}
 	}
 	switch source {
