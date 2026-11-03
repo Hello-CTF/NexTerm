@@ -123,6 +123,7 @@ func TestStepOfflineRecoveryHold(t *testing.T) {
 		g   = int64(150_000)
 	)
 	hold := RecoveryHold.Milliseconds()
+	withBaseline := func(i OfflineInput, b int64) OfflineInput { i.Baseline = b; return i }
 	since := now - 60*minMS
 	in := func(heardAgo int64, muted bool) OfflineInput {
 		heard := now - heardAgo
@@ -144,6 +145,9 @@ func TestStepOfflineRecoveryHold(t *testing.T) {
 		{"gap beyond G clears the hold", State{Status: StatusFiring, Since: since, RecoveringSince: now - 2*minMS}, in(g+1, false), StatusFiring, 0, false, 0, false},
 		{"heard exactly G keeps the hold", State{Status: StatusFiring, Since: since, RecoveringSince: now - 2*minMS}, in(g, false), StatusFiring, now - 2*minMS, false, 0, false},
 		{"just short of the hold", State{Status: StatusFiring, Since: since, RecoveringSince: now - hold + 1}, in(0, false), StatusFiring, now - hold + 1, false, 0, false},
+		{"hold from a previous run starts over", State{Status: StatusFiring, Since: since, RecoveringSince: now - hold - minMS}, withBaseline(in(0, false), now-hold-minMS), StatusFiring, now, false, 0, false},
+		{"hold from a previous run while silent is dropped", State{Status: StatusFiring, Since: since, RecoveringSince: now - hold - minMS}, withBaseline(in(s, false), now-hold-minMS), StatusFiring, 0, false, 0, false},
+		{"hold begun after the baseline is kept", State{Status: StatusFiring, Since: since, RecoveringSince: now - hold}, withBaseline(in(0, false), now-hold-minMS), StatusOK, 0, true, now - hold - since, false},
 		{"hold elapsed resolves", State{Status: StatusFiring, Since: since, RecoveringSince: now - hold}, in(0, false), StatusOK, 0, true, now - hold - since, false},
 		{"muted hold elapsed resolves as muted", State{Status: StatusMuted, Since: since, RecoveringSince: now - hold}, in(0, true), StatusOK, 0, true, now - hold - since, true},
 		{"muted does not escalate while recovering", State{Status: StatusMuted, Since: since, RecoveringSince: now - minMS}, in(0, false), StatusMuted, now - minMS, false, 0, false},

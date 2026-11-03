@@ -123,6 +123,10 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 // RecoveryHold before the alert resolves, so a flapping device yields one fired and one resolved.
 // done is false when the normal table should continue (the hold is not running).
 func recoverOffline(st State, in OfflineInput, heardAgo int64) (State, *OfflineEmit, bool) {
+	// A hold begun in a previous run was not observed continuously across the downtime: start over.
+	if st.RecoveringSince > 0 && st.RecoveringSince <= in.Baseline {
+		st.RecoveringSince = 0
+	}
 	if st.RecoveringSince == 0 {
 		if heardAgo < in.S {
 			st.RecoveringSince = in.Now
