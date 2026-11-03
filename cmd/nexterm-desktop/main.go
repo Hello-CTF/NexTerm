@@ -150,7 +150,7 @@ func run(args []string) int {
 		Services: []application.Service{
 			application.NewService(service),
 		},
-		Assets: application.AssetOptions{Handler: assets},
+		Assets: application.AssetOptions{Handler: assets, Middleware: runtimeRequestGuard},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
