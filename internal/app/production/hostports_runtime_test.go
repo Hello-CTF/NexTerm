@@ -1,10 +1,15 @@
 package production
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/hostports"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -124,5 +129,67 @@ func TestForgetHostPortsOnStatus(t *testing.T) {
 	forgetHostPortsOnStatus(nil, session.StatusEvent{SessionID: "s", Status: session.StatusFailed})
 	if len(forgotten) != 1 || forgotten[0] != "s" {
 		t.Fatalf("forgotten = %v", forgotten)
+	}
+}
+
+type failingAuditor struct{}
+
+func (failingAuditor) AuditInsert(context.Context, store.AuditInput) error {
+	return errors.New("disk full")
+}
+
+func TestHostPortsAuditTruncatesOnRuneBoundary(t *testing.T) {
+	zero := 0
+	auditor := &recordingAuditor{}
+	// The 512-byte cut falls inside a three-byte character.
+	stdout := "a" + strings.Repeat("好", 400)
+	service := hostports.NewService(func(context.Context, string) (hostports.Target, error) {
+		return hostports.Target{Runner: auditRunner{base.ExecResult{Stdout: stdout, ExitCode: &zero}}, Shell: hostports.ShellPOSIX}, nil
+	})
+	service.SetAudit(hostPortsAudit(auditor))
+	req := hostports.ProbeRequest{Method: "tcp", Host: "example.com", Port: 22}
+	if _, err := service.Probe(t.Context(), hostports.ProbeArgs{SessionID: "s", ProbeRequest: req}); err != nil || len(auditor.inputs) != 1 {
+		t.Fatalf("err=%v inputs=%d", err, len(auditor.inputs))
+	}
+	payload, ok := auditor.inputs[0].Payload.(hostPortsAuditPayload)
+	if !ok || !utf8.ValidString(payload.Output) || payload.Output == "" || len(payload.Output) > maxHostPortsAuditOutput {
+		t.Fatalf("output valid=%v len=%d", utf8.ValidString(payload.Output), len(payload.Output))
+	}
+}
+
+func TestHostPortsAuditRecordsScriptForCmdHosts(t *testing.T) {
+	zero := 0
+	auditor := &recordingAuditor{}
+	service := hostports.NewService(func(context.Context, string) (hostports.Target, error) {
+		return hostports.Target{Runner: auditRunner{base.ExecResult{ExitCode: &zero}}, Shell: hostports.ShellUnknown}, nil
+	})
+	service.SetAudit(hostPortsAudit(auditor))
+	req := hostports.ProbeRequest{Method: "tcp", Host: "example.com", Port: 22}
+	result, err := service.Probe(t.Context(), hostports.ProbeArgs{SessionID: "s", ProbeRequest: req})
+	if err != nil || result.Script == "" || len(auditor.inputs) != 1 {
+		t.Fatalf("err=%v script=%q inputs=%d", err, result.Script, len(auditor.inputs))
+	}
+	payload, ok := auditor.inputs[0].Payload.(hostPortsAuditPayload)
+	if !ok || payload.Script != result.Script {
+		t.Fatalf("payload = %+v", auditor.inputs[0].Payload)
+	}
+}
+
+func TestHostPortsAuditFailureIsLogged(t *testing.T) {
+	zero := 0
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	service := hostports.NewService(func(context.Context, string) (hostports.Target, error) {
+		return hostports.Target{Runner: auditRunner{base.ExecResult{Stdout: "ok", ExitCode: &zero}}, Shell: hostports.ShellPOSIX}, nil
+	})
+	service.SetAudit(hostPortsAuditWithLogger(failingAuditor{}, logger))
+	req := hostports.ProbeRequest{Method: "tcp", Host: "example.com", Port: 22}
+	result, err := service.Probe(t.Context(), hostports.ProbeArgs{SessionID: "s", ProbeRequest: req})
+	if err != nil || !result.OK {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "level=WARN") || !strings.Contains(logged, "disk full") {
+		t.Fatalf("log = %q", logged)
 	}
 }
