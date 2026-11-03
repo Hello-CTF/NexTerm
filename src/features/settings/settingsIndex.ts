@@ -122,6 +122,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"], panel: "appearance-advanced" },
   { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或临时终端", keywords: ["durable", "persistent", "detach", "持久", "local", "本机", "本地终端", "持久组件", "持久终端组件"] },
   { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
+  { id: "ctrl-v-paste", section: "settings-terminal", label: "Ctrl+V 粘贴", description: "Windows：关闭后 Ctrl+V 发送 ^V", keywords: ["paste", "ctrl+v", "clipboard", "粘贴", "剪贴板"] },
   { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签页时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"] },
   { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在本机保留的滚动历史行数，不随账号同步", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"] },

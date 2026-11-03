@@ -6,7 +6,7 @@ import { flush, flushMacrotask, mount, waitForRendered, type MountedView } from 
 
 const mocks = vi.hoisted(() => {
   return {
-    flags: { web: false },
+    flags: { web: false, windows: false },
     listLive: vi.fn(),
     ask: vi.fn(),
     pickSavePath: vi.fn(),
@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("../../app/platform", () => ({
   isMac: () => false,
+  isWindows: () => mocks.flags.windows,
   modHint: () => "Ctrl",
   setMacPlatform: () => {},
   wailsDragRegionStyle: {},
@@ -335,6 +336,28 @@ describe("TerminalPane image paste orchestration", () => {
     expect(mocks.fsDelete).toHaveBeenCalledWith("s1", dir, true);
   });
 
+  it.each([
+    ["Linux", false, true, "Ctrl+Shift+V"],
+    ["Windows with Ctrl+V paste", true, true, "Ctrl+V"],
+    ["Windows without Ctrl+V paste", true, false, "Ctrl+Shift+V"],
+  ])("names the paste chord for %s when the clipboard has no image", async (_name, windows, ctrlVPaste, chord) => {
+    seedTab();
+    mocks.flags.windows = windows;
+    localStorage.setItem("nexterm.terminal.ctrlVPaste.v1", ctrlVPaste ? "1" : "0");
+    vi.stubGlobal("navigator", { clipboard: { read: vi.fn().mockResolvedValue([]) } });
+    mounted = mount(createElement(TerminalPane, {
+      sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1",
+    }));
+    await flush();
+
+    await pasteFromMenu();
+
+    const text = useUi.getState().toasts.at(-1)?.text ?? "";
+    expect(text).toContain(`按 ${chord} 或拖入`);
+    mocks.flags.windows = false;
+    localStorage.clear();
+  });
+
   it.each(["NotAllowedError", "SecurityError"])("offers direct paste and drag when image clipboard reading fails with %s", async (name) => {
     seedTab();
     vi.stubGlobal("navigator", {
@@ -349,7 +372,7 @@ describe("TerminalPane image paste orchestration", () => {
 
     const toast = useUi.getState().toasts.at(-1);
     expect(toast?.kind).toBe("info");
-    expect(toast?.text).toContain("Ctrl+V");
+    expect(toast?.text).toContain("Ctrl+Shift+V");
     expect(toast?.text).toContain("拖入");
     expect(toast?.text).not.toContain("platform technical details");
     expect(mocks.fsWrite).not.toHaveBeenCalled();

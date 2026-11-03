@@ -10,6 +10,7 @@ import { flushMacrotask } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
+  windows: false,
   attach: vi.fn(),
   detach: vi.fn(),
   setVisible: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@xterm/addon-search", () => ({ SearchAddon: class { findNext() {} findP
 vi.mock("../../app/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../app/platform")>()),
   isMac: () => harness.mac,
+  isWindows: () => harness.windows,
 }));
 vi.mock("../../features/terminal/terminalGeometry", () => ({
   measureTerminalGeometry: () => ({
@@ -127,6 +129,8 @@ const settle = () =>
 beforeEach(() => {
   sent = [];
   harness.mac = false;
+  harness.windows = false;
+  localStorage.clear();
   harness.attach.mockReset().mockResolvedValue({
     tabId: "tab-1",
     sessionId: "session",
@@ -163,6 +167,46 @@ afterEach(() => {
   resetAllKeybindings();
   clearStickyModifiers();
   vi.unstubAllGlobals();
+});
+
+describe("XtermView Ctrl+V on Windows", () => {
+  const ctrlV = { key: "v", code: "KeyV", keyCode: 86, ctrlKey: true };
+
+  it("leaves Ctrl+V to the browser's default paste instead of sending ^V", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    const down = key(textarea, "keydown", ctrlV);
+    const press = key(textarea, "keypress", { ...ctrlV, charCode: 22 });
+    key(textarea, "keyup", ctrlV);
+    expect(down.defaultPrevented).toBe(false);
+    expect(press.defaultPrevented).toBe(false);
+    expect(sent).toEqual([]);
+  });
+
+  it("sends ^V when the setting is off", async () => {
+    harness.windows = true;
+    localStorage.setItem("nexterm.terminal.ctrlVPaste.v1", "0");
+    const textarea = await show();
+    const down = key(textarea, "keydown", ctrlV);
+    expect(down.defaultPrevented).toBe(true);
+    expect(sent).toEqual(["\x16"]);
+  });
+
+  it("keeps ^V on Linux", async () => {
+    const textarea = await show();
+    key(textarea, "keydown", ctrlV);
+    expect(sent).toEqual(["\x16"]);
+  });
+
+  it("forwards pasted text once through the paste event", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    const paste = new Event("paste", { bubbles: true, cancelable: true }) as Event & { clipboardData?: unknown };
+    paste.clipboardData = { getData: (t: string) => (t === "text/plain" ? "hello" : ""), files: [], items: [], types: ["text/plain"] };
+    textarea.dispatchEvent(paste);
+    await settle();
+    expect(sent).toEqual(["hello"]);
+  });
 });
 
 describe("XtermView input pipeline bytes", () => {

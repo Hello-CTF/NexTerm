@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => {
 
 vi.mock("../../app/platform", () => ({
   isMac: () => harness.mac,
+  isWindows: () => false,
   isMobile: () => false,
   isCoarsePointer: () => false,
   modHint: () => (harness.mac ? "⌘" : "Ctrl"),

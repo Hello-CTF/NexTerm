@@ -334,7 +334,7 @@ describe("Settings search focus and anchors", () => {
     }
     await flush();
     const missing = SETTINGS_ITEMS.filter(
-      (item) => item.id !== "close-to-tray" && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
+      (item) => item.id !== "close-to-tray" && item.id !== "ctrl-v-paste" && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
     ).map((item) => item.id);
     expect(missing).toEqual([]);
   });

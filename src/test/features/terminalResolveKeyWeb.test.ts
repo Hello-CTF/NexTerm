@@ -31,7 +31,7 @@ function ev(key: string, code: string, mods: Partial<TerminalKeyEvent> = {}): Te
 }
 
 const resolve = (event: TerminalKeyEvent) =>
-  resolveKey(event, { mac: harness.mac, matchAppShortcut: matchTerminalWithheldKeybinding, commitEnterPending: false, kittyKeyboard: false });
+  resolveKey(event, { mac: harness.mac, matchAppShortcut: matchTerminalWithheldKeybinding, commitEnterPending: false, kittyKeyboard: false, windows: false, ctrlVPaste: true });
 
 beforeEach(() => {
   harness.mac = false;
