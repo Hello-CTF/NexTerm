@@ -18,9 +18,24 @@ func dialSocket(ctx context.Context, path string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyPeerUID(conn, expectedPeerUID()); err != nil {
+	if err := verifyHelperSocketOwner(conn, path); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
 	return conn, nil
+}
+
+func verifyHelperSocketOwner(conn net.Conn, path string) error {
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		return verifyPeerUID(conn, expectedPeerUID())
+	}
+	uid, err := peerUID(unixConn)
+	if err != nil {
+		return err
+	}
+	if uid != expectedPeerUID() {
+		return &UntrustedEndpointError{Kind: EndpointSocket, Path: path, OwnerUID: uid}
+	}
+	return nil
 }

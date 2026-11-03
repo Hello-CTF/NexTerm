@@ -8,7 +8,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestDialSocketRejectsPeerOfAnotherUser(t *testing.T) {
@@ -35,14 +37,19 @@ func TestDialSocketRejectsPeerOfAnotherUser(t *testing.T) {
 
 	defer func(previous func() int) { expectedPeerUID = previous }(expectedPeerUID)
 	expectedPeerUID = func() int { return os.Geteuid() + 1 }
-	if conn, err := dialSocket(context.Background(), path); !errors.Is(err, ErrProtocol) {
-		if conn != nil {
-			_ = conn.Close()
-		}
-		t.Fatalf("dial to a listener of another uid: err = %v, want ErrProtocol", err)
+	conn, err := dialSocket(context.Background(), path)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	var untrusted *UntrustedEndpointError
+	if !errors.Is(err, ErrUntrustedEndpoint) || errors.Is(err, ErrProtocol) || !errors.As(err, &untrusted) || untrusted.Path != path {
+		t.Fatalf("dial to a listener of another uid: err = %v, want ErrUntrustedEndpoint naming %s", err, path)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("error text %q does not name the socket", err)
 	}
 	expectedPeerUID = os.Geteuid
-	conn, err := dialSocket(context.Background(), path)
+	conn, err = dialSocket(context.Background(), path)
 	if err != nil {
 		t.Fatalf("dial to own listener: %v", err)
 	}
@@ -59,7 +66,54 @@ func TestEnsurePrivateDirRejectsDirectoryOfAnotherUser(t *testing.T) {
 	}
 	defer func(previous func() int) { expectedPeerUID = previous }(expectedPeerUID)
 	expectedPeerUID = func() int { return os.Geteuid() + 1 }
-	if err := ensurePrivateDir(dir); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("directory of another user: err = %v, want ErrInvalidInput", err)
+	err := ensurePrivateDir(dir)
+	var untrusted *UntrustedEndpointError
+	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrUntrustedEndpoint) || !errors.As(err, &untrusted) || untrusted.Path != dir {
+		t.Fatalf("directory of another user: err = %v, want ErrInvalidInput and ErrUntrustedEndpoint naming %s", err, dir)
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Fatalf("error text %q does not name the directory", err)
+	}
+}
+
+func TestConnectHelperRefusesUntrustedEndpointWithoutSpawning(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := helperEndpoint(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "spawned")
+	script := filepath.Join(t.TempDir(), "fake-helper")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch '"+marker+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func(previous func() int) { expectedPeerUID = previous }(expectedPeerUID)
+	expectedPeerUID = func() int { return os.Geteuid() + 1 }
+
+	_, err = ConnectHelper(context.Background(), HelperConfig{StateDir: stateDir, Executable: script, SpawnTimeout: time.Second})
+	if !errors.Is(err, ErrUntrustedEndpoint) || errors.Is(err, ErrProtocol) {
+		t.Fatalf("ConnectHelper: err = %v, want ErrUntrustedEndpoint", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("ConnectHelper spawned a helper")
+	}
+
+	// The endpoint directory check alone, as ConnectHelper runs it after the state directory passes.
+	endpointDir := filepath.Dir(endpoint)
+	if err := os.MkdirAll(endpointDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(endpointDir) })
+	err = checkEndpointDirOwner(endpoint)
+	var untrusted *UntrustedEndpointError
+	if !errors.Is(err, ErrUntrustedEndpoint) || !errors.As(err, &untrusted) || untrusted.Path != endpointDir {
+		t.Fatalf("checkEndpointDirOwner: err = %v, want ErrUntrustedEndpoint naming %s", err, endpointDir)
+	}
+	expectedPeerUID = os.Geteuid
+	if err := checkEndpointDirOwner(endpoint); err != nil {
+		t.Fatalf("own endpoint directory: %v", err)
 	}
 }

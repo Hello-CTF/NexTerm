@@ -131,10 +131,16 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve supervisor helper endpoint: %w", err)
 	}
+	if err := checkEndpointDirOwner(endpoint); err != nil {
+		return nil, err
+	}
 	client := NewClient(endpoint, stateDir)
 	err = probeHelper(ctx, client)
 	if err == nil {
 		return &Helper{endpoint: endpoint, client: client}, nil
+	}
+	if errors.Is(err, ErrUntrustedEndpoint) {
+		return nil, err
 	}
 	if errors.Is(err, ErrProtocol) {
 		return nil, fmt.Errorf("the supervisor helper at %s speaks an incompatible protocol; refusing to replace it: %w", endpoint, err)
@@ -174,6 +180,9 @@ func ConnectHelper(ctx context.Context, config HelperConfig) (*Helper, error) {
 				return &Helper{endpoint: endpoint, client: client}, nil
 			}
 			return &Helper{endpoint: endpoint, client: client, spawned: true, process: process}, nil
+		}
+		if errors.Is(err, ErrUntrustedEndpoint) {
+			return nil, err
 		}
 		if errors.Is(err, ErrProtocol) {
 			return nil, fmt.Errorf("the spawned supervisor helper at %s speaks an incompatible protocol: %w", endpoint, err)
