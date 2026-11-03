@@ -17,7 +17,6 @@ env:
 
 jobs:
   version:
-    environment: release
     name: Validate the release tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -112,7 +111,6 @@ jobs:
       ort_version: ${{ needs.version.outputs.ort-version }}
 
   desktop:
-    environment: release
     name: ${{ matrix.os }}/${{ matrix.arch }} native package
     needs: [ci, version]
     strategy:
@@ -470,7 +468,6 @@ jobs:
           overwrite: true
 
   publish:
-    environment: release
     name: Verify complete release evidence and upload a draft
     needs: [desktop, server, mobile, agent]
     permissions:
@@ -550,7 +547,6 @@ jobs:
         run: node .github/scripts/release-upload.mjs target/release-work/candidate --notes-file target/release-work/candidate/release-body.md
 
   testflight:
-    environment: release
     name: Upload the signed iOS build to TestFlight
     needs: publish
     if: ${{ !failure() && !cancelled() && vars.NEXTERM_IOS_SIGNING == 'true' && vars.NEXTERM_IOS_TESTFLIGHT_UPLOAD == 'true' }}
