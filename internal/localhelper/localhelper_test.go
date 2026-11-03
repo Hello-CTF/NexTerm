@@ -521,3 +521,32 @@ func TestRestartRefusesAHandMadeTokenThatHidesTheSessionCount(t *testing.T) {
 		t.Fatal("a hand-made token stopped the helper")
 	}
 }
+
+func TestServiceReportsUntrustedEndpointWithoutBusyRetry(t *testing.T) {
+	untrusted := &supervisor.UntrustedEndpointError{Kind: supervisor.EndpointDir, Path: "/srv/other-user/helper", OwnerUID: 4242}
+	for _, where := range []string{"connect", "inspect"} {
+		t.Run(where, func(t *testing.T) {
+			world := newFakeWorld()
+			config := world.config(t)
+			config.BreakerThreshold = 1000
+			if where == "inspect" {
+				world.inspectErr = untrusted
+			} else {
+				world.connect = func(int) (helperHandle, error) { return nil, untrusted }
+			}
+			service := startService(t, config)
+			if _, err := service.WaitReady(context.Background(), 10*time.Millisecond); err == nil {
+				t.Fatal("an untrusted endpoint reported ready")
+			}
+			waitState(t, service, StateFailed)
+			status := service.Status()
+			if !strings.Contains(status.Reason, "/srv/other-user/helper") {
+				t.Fatalf("reason %q lacks the endpoint path", status.Reason)
+			}
+			time.Sleep(200 * time.Millisecond)
+			if n := world.connectCount() + world.inspectCount(); n > 10 {
+				t.Fatalf("untrusted endpoint was probed %d times in 200ms; want a wait for the user", n)
+			}
+		})
+	}
+}

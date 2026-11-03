@@ -563,6 +563,10 @@ func (s *Service) logPath() string {
 	return filepath.Join(s.dir(), "helper.log")
 }
 
+// untrustedRecheck is how long an untrusted helper endpoint stays reported
+// before the next check; a retry from the user ends the wait early.
+const untrustedRecheck = time.Minute
+
 // watchOutcome is how a watched helper stopped serving.
 type watchOutcome int
 
@@ -612,6 +616,12 @@ func (s *Service) run() {
 			}
 			continue
 		}
+		if errors.Is(inspectErr, supervisor.ErrUntrustedEndpoint) {
+			if !s.failUntrusted(inspectErr) {
+				return
+			}
+			continue
+		}
 		if inspectErr != nil && !errors.Is(inspectErr, supervisor.ErrHelperNotRunning) {
 			// Something serves the endpoint but cannot be inspected: a hello
 			// that times out, a pid that does not match, a protocol error. Its
@@ -656,6 +666,12 @@ func (s *Service) run() {
 		if errors.Is(err, supervisor.ErrHelperNotRunning) {
 			// The attach found the helper gone; inspect again, which settles
 			// on idle without spawning.
+			continue
+		}
+		if errors.Is(err, supervisor.ErrUntrustedEndpoint) {
+			if !s.failUntrusted(err) {
+				return
+			}
 			continue
 		}
 		if err != nil {
@@ -723,6 +739,17 @@ func (s *Service) run() {
 			}
 		}
 	}
+}
+
+// failUntrusted reports an endpoint the current user may not trust. It is not
+// recovered automatically and does not count toward the start breaker; the
+// service waits for a retry or the poll interval before checking again. It
+// returns false when the service is closed.
+func (s *Service) failUntrusted(err error) bool {
+	s.config.Logger.Warn("local helper endpoint is not trusted", "error", err)
+	s.setStatus(Status{State: StateFailed, Reason: "本机持久终端组件不可用：" + err.Error()}, nil)
+	s.markChecked()
+	return s.pauseFor(untrustedRecheck)
 }
 
 // replacedBy reports whether another process now serves the endpoint the
