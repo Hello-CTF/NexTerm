@@ -3,6 +3,12 @@ import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
+import type { DetectedTarget } from "./terminalLinkProvider";
+import { buildTargetMenu } from "./terminalTargetMenu";
+import { terminalIntegrations } from "./terminalIntegrations";
+import { AssetEditor } from "../../app/lazyPanels";
+import { Lazy } from "../../ui/LazyBoundary";
+import { openHostDetail } from "../hosts/hostDetail";
 import { CommandBlockPanel } from "./CommandBlockPanel";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
@@ -52,7 +58,7 @@ import { listenEvent, EVENTS, EventVersionGate, type TerminalControlEvent, type 
 import { onEventsResync } from "../../ipc/webTransport";
 import { clientId, WEB } from "../../ipc/env";
 import { reattachLostTabs } from "./backgroundSessionsAccess";
-import { openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, findTab, isUnconfirmedDurableExit, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
+import { nextTabId, openTerminalTab, takePendingDirectory, sessionStatusText, isSessionSuspect, confirmSuspectReconnect, connectProgressText, reconnectLiveSession, reconnectDeadHost, requestCloseTab, useUi, fallbackTerminalReason, useKnownDurableReadiness, findTab, isUnconfirmedDurableExit, type AppTab, type BroadcastState, type Workspace } from "../../app/store";
 import { applyRemoteTabTitleToView, reconcileBackendTabTitle, resetTerminalView } from "../../app/terminalViewStore";
 import { directoryCommandFor } from "../files/pathUtils";
 import { formatBinding, matchKeybinding, useKeybindings } from "../../app/keybindings";
@@ -306,6 +312,7 @@ export function TerminalPane({
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [assetDraft, setAssetDraft] = useState<{ kind: "ssh"; name: string; host: string; port: number } | null>(null);
   const [control, setControl] = useState<{
     sizeOwner: string | null;
     subscribers: number;
@@ -1927,6 +1934,7 @@ export function TerminalPane({
     {
       kind: "item",
       label: "打开链接",
+      hint: "不受修饰键和鼠标捕获影响",
       onSelect: () => handleRef.current?.openLink(uri),
     },
     {
@@ -1940,6 +1948,21 @@ export function TerminalPane({
         ),
     },
   ];
+
+  // Actions for an IP or host:port under the right-click.
+  const buildAddressMenu = (target: DetectedTarget): MenuItem[] =>
+    buildTargetMenu(target, {
+      sessionId,
+      listAssets: () => assetApi.list(),
+      openHostDetail,
+      openAssetDraft: setAssetDraft,
+      createLocalForward: terminalIntegrations().createLocalForward,
+      openForwardTab: (id) =>
+        useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: "端口转发", sessionId: id, closable: true }),
+      copy: copyText,
+      toast: pushToast,
+      describeError,
+    });
 
   const openLinkMenu = (request: TerminalLinkMenuRequest) => {
     setMenu({ x: request.x, y: request.y, title: displayTerminalLink(request.uri), items: buildLinkMenu(request.uri) });
@@ -2085,11 +2108,22 @@ export function TerminalPane({
     e.preventDefault();
     const selected = (handleRef.current?.getSelection() ?? "").trim();
     const link = handleRef.current?.hoveredLink?.() ?? null;
+    const target = link ? null : (handleRef.current?.hoveredTarget?.() ?? null);
     setMenu({
       x: e.clientX,
       y: e.clientY,
-      title: link ? displayTerminalLink(link) : selected ? clipText(selected.split("\n")[0], 80) : title,
-      items: link ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()] : buildTerminalMenu(),
+      title: link
+        ? displayTerminalLink(link)
+        : target
+          ? target.text
+          : selected
+            ? clipText(selected.split("\n")[0], 80)
+            : title,
+      items: link
+        ? [...buildLinkMenu(link), { kind: "separator" }, ...buildTerminalMenu()]
+        : target
+          ? [...buildAddressMenu(target), { kind: "separator" }, ...buildTerminalMenu()]
+          : buildTerminalMenu(),
     });
   };
 
@@ -2748,6 +2782,19 @@ export function TerminalPane({
         broadcastCount={memberBroadcastCount}
       />
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+      {assetDraft && (
+        <Lazy fallback="none" overlay>
+          <AssetEditor
+            kind="asset"
+            draft={assetDraft}
+            onClose={() => setAssetDraft(null)}
+            onSaved={() => {
+              setAssetDraft(null);
+              pushToast("success", "已创建资产");
+            }}
+          />
+        </Lazy>
+      )}
       {broadcastPickerOpen && workspaceId && myPaneId && (
         <BroadcastPickerModal
           workspaceId={workspaceId}

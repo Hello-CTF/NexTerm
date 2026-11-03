@@ -14,6 +14,7 @@ const harness = vi.hoisted(() => ({
   listDurable: vi.fn(),
   fitChanged: true,
   hoveredLink: null as string | null,
+  hoveredTarget: null as { kind: string; text: string; host: string; port?: number } | null,
   openLink: vi.fn(),
   copyText: vi.fn(),
 }));
@@ -107,6 +108,7 @@ vi.mock("../features/terminal/XtermView", async () => {
           dimensions: () => ({ cols: 80, rows: 24 }),
           hoveredLink: () => harness.hoveredLink,
           openLink: harness.openLink,
+          hoveredTarget: () => harness.hoveredTarget,
         });
         (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
@@ -143,6 +145,7 @@ beforeEach(() => {
   harness.listDurable.mockResolvedValue([]);
   harness.fitChanged = true;
   harness.hoveredLink = null;
+  harness.hoveredTarget = null;
   harness.copyText.mockResolvedValue(undefined);
   useUi.setState({
     sessions: [
@@ -216,7 +219,10 @@ describe("terminal link menu", () => {
     const onLinkMenu = harness.xtermProps?.onLinkMenu as (request: { uri: string; x: number; y: number }) => void;
     expect(onLinkMenu).toBeTypeOf("function");
     act(() => onLinkMenu({ uri: "https://example.com/docs", x: 30, y: 40 }));
-    expect(menuItems()).toEqual(["打开链接", "复制链接"]);
+    const touchItems = menuItems();
+    expect(touchItems).toHaveLength(2);
+    expect(touchItems[0]).toMatch(/^打开链接/);
+    expect(touchItems[1]).toBe("复制链接");
 
     click(menuItem("打开链接"));
     expect(harness.openLink).toHaveBeenCalledWith("https://example.com/docs");
@@ -235,7 +241,8 @@ describe("terminal link menu", () => {
       area!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     });
     const items = menuItems();
-    expect(items.slice(0, 2)).toEqual(["打开链接", "复制链接"]);
+    expect(items[0]).toMatch(/^打开链接/);
+    expect(items[1]).toBe("复制链接");
     expect(items).toContain("粘贴");
   });
 
@@ -247,5 +254,31 @@ describe("terminal link menu", () => {
     });
     expect(menuItems()).not.toContain("打开链接");
     expect(menuItems()).toContain("粘贴");
+  });
+
+  it("the open item says it ignores modifiers and mouse capture, and still opens the link", async () => {
+    await mountReadyPane();
+    harness.hoveredLink = "https://example.com/x";
+    const area = mounted!.container.querySelector(".relative.min-h-0.min-w-0.flex-1");
+    act(() => {
+      area!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    expect(menuItem("打开链接").textContent).toContain("不受修饰键和鼠标捕获影响");
+    click(menuItem("打开链接"));
+    expect(harness.openLink).toHaveBeenCalledWith("https://example.com/x");
+  });
+
+  it("right-click on an IP shows the address group before the terminal actions", async () => {
+    await mountReadyPane();
+    harness.hoveredTarget = { kind: "ip", text: "10.0.0.5", host: "10.0.0.5" };
+    const area = mounted!.container.querySelector(".relative.min-h-0.min-w-0.flex-1");
+    act(() => {
+      area!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    });
+    const items = menuItems();
+    expect(document.body.textContent).toContain("地址 10.0.0.5");
+    expect(items.slice(0, 3)).toEqual(["打开已有资产", "新建 SSH 资产", "复制地址"]);
+    expect(items).toContain("粘贴");
+    expect(items).not.toContain("打开链接");
   });
 });

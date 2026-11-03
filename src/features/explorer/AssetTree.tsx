@@ -2133,11 +2133,14 @@ export function AssetEditor({
   initial,
   initialGroup,
   presetGroupId,
+  draft,
   onClose,
   onSaved,
 }: {
   kind: "asset" | "group";
   initial?: Asset;
+  // Initial values for a new asset; ignored when editing an existing one.
+  draft?: Partial<Pick<Asset, "kind" | "name" | "host" | "port" | "username">>;
   // Editing an existing group: name, parent and connection defaults.
   initialGroup?: AssetGroup;
   presetGroupId?: string | null;
@@ -2145,19 +2148,19 @@ export function AssetEditor({
   onSaved: (asset?: Asset) => void;
 }) {
   const managed = assetInventoryMetadata(initial);
-  const [name, setName] = useState(initial?.name ?? initialGroup?.name ?? "");
+  const [name, setName] = useState(initial?.name ?? initialGroup?.name ?? draft?.name ?? "");
   const [groupDefaults, setGroupDefaults] = useState(() => groupDefaultsFrom(initialGroup));
-  const [groupKind, setGroupKind] = useState<AssetFormKind>((initial?.kind as AssetFormKind) ?? "ssh");
+  const [groupKind, setGroupKind] = useState<AssetFormKind>(((initial?.kind ?? draft?.kind) as AssetFormKind) ?? "ssh");
   const kindFields = assetKindFields(groupKind);
   const inventoryOnly = isInventoryOnlyKind(groupKind);
   const [groupId, setGroupId] = useState<string | null>(initial?.groupId ?? initialGroup?.parentId ?? presetGroupId ?? null);
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [note, setNote] = useState(initial?.note ?? "");
-  const [host, setHost] = useState(initial?.host ?? "");
-  const [port, setPort] = useState(initial?.port ?? assetKindFields(initial?.kind ?? "ssh").defaultPort);
+  const [host, setHost] = useState(initial?.host ?? draft?.host ?? "");
+  const [port, setPort] = useState(initial?.port ?? draft?.port ?? assetKindFields(initial?.kind ?? draft?.kind ?? "ssh").defaultPort);
   // A new asset starts with no username: the field shows what it would inherit or the protocol default, and a
   // value is stored only when the user types one (or nothing is inherited, see save).
-  const [username, setUsername] = useState(initial?.username ?? "");
+  const [username, setUsername] = useState(initial?.username ?? draft?.username ?? "");
   // An empty authentication method means "inherit the group's"; a new asset starts with its own password choice.
   const [authKind, setAuthKind] = useState(initial ? (initial.authKind === "none" ? "password" : initial.authKind ?? "") : "password");
   const [keyPath, setKeyPath] = useState(initial?.keyPath ?? "");
