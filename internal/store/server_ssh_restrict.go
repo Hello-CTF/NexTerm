@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -50,23 +51,46 @@ func RejectServerSSHFile() error {
 }
 
 // serverSSHFieldsFromJSON reads the restricted fields from stored asset options. Non-object payloads
-// carry none of them.
+// carry none of them. The connector decodes options with encoding/json into a struct, which matches
+// keys case-insensitively and lets the last duplicate win; to never disagree with it, every key that
+// folds to a restricted name is inspected on its own and any restricted value counts, whatever its
+// case or position. A value of the wrong type makes the connector fail before anything runs, so it
+// carries nothing here.
 func serverSSHFieldsFromJSON(raw string) ServerSSHFields {
 	var options map[string]json.RawMessage
 	if json.Unmarshal([]byte(raw), &options) != nil {
 		return ServerSSHFields{}
 	}
-	text := func(key string) string {
-		var value string
-		_ = json.Unmarshal(options[key], &value)
-		return value
+	var fields ServerSSHFields
+	setText := func(target *string, value json.RawMessage) {
+		var text string
+		if json.Unmarshal(value, &text) == nil && *target == "" && text != "" {
+			*target = text
+		}
 	}
-	var forward bool
-	_ = json.Unmarshal(options["forwardAgent"], &forward)
-	return ServerSSHFields{
-		ProxyCommand: text("proxyCommand"), AgentSocket: text("agentSocket"), ForwardAgent: forward,
-		AuthKind: text("authKind"), KeyPath: text("keyPath"), CertPath: text("certPath"),
+	for key, value := range options {
+		switch {
+		case strings.EqualFold(key, "proxyCommand"):
+			setText(&fields.ProxyCommand, value)
+		case strings.EqualFold(key, "agentSocket"):
+			setText(&fields.AgentSocket, value)
+		case strings.EqualFold(key, "authKind"):
+			var kind string
+			if json.Unmarshal(value, &kind) == nil && kind == "agent" {
+				fields.AuthKind = kind
+			}
+		case strings.EqualFold(key, "keyPath"):
+			setText(&fields.KeyPath, value)
+		case strings.EqualFold(key, "certPath"):
+			setText(&fields.CertPath, value)
+		case strings.EqualFold(key, "forwardAgent"):
+			var forward bool
+			if json.Unmarshal(value, &forward) == nil && forward {
+				fields.ForwardAgent = true
+			}
+		}
 	}
+	return fields
 }
 
 func isSSHAssetKind(kind string) bool { return kind == "ssh" || kind == "docker" }
@@ -112,4 +136,30 @@ func checkServerLocalAssetKind(ctx context.Context, kind string) error {
 		return ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持创建本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备")
 	}
 	return nil
+}
+
+// ServerSSHAssetWarning explains why an asset written outside the user-facing validation (sync merge,
+// bundle import) cannot connect on a multi-user server. It returns "" for desktop contexts, non-SSH
+// kinds and assets without restricted settings.
+func ServerSSHAssetWarning(ctx context.Context, row AssetRow) string {
+	if ipc.OwnerID(ctx) == "" || !isSSHAssetKind(row.Kind) {
+		return ""
+	}
+	fields := serverSSHFieldsFromJSON(row.OptionsJSON)
+	if row.AuthKind != nil {
+		fields.AuthKind = *row.AuthKind
+	}
+	if row.KeyPath != nil {
+		fields.KeyPath = strings.TrimSpace(*row.KeyPath)
+	}
+	err := RejectServerSSHFields(fields)
+	if err == nil {
+		return ""
+	}
+	var appErr *ipc.Error
+	message := err.Error()
+	if errors.As(err, &appErr) {
+		message = appErr.Message
+	}
+	return fmt.Sprintf("资产「%s」已保存，但在服务端无法连接：%s", row.Name, message)
 }
