@@ -404,11 +404,13 @@ func run(args []string) int {
 	}
 	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
-			logger.Error("vault is required but unavailable", "error", err)
+			logger.Error("vault is required but unavailable", "error", err, "hint", vaultMasterKeyHint)
+			fmt.Fprintln(os.Stderr, "nexterm-server:", vaultMasterKeyHint)
 			return 1
 		}
 	} else if err := server.BootstrapVault(ctx, application.Services.Vault, masterKey); err != nil {
-		logger.Error("vault bootstrap failed", "error", err)
+		logger.Error("vault bootstrap failed", "error", err, "hint", vaultMasterKeyHint)
+		fmt.Fprintln(os.Stderr, "nexterm-server:", vaultMasterKeyHint)
 	}
 	if err := application.Serve(ctx, core.ServeConfig{
 		Listen:         invocation.Listen,
@@ -766,3 +768,6 @@ func remoteDesktopServer(service *remotedesktop.Service) server.RemoteDesktopSer
 	}
 	return service
 }
+
+// vaultMasterKeyHint tells the operator how to recover when the vault was initialized with another master key.
+const vaultMasterKeyHint = "the vault could not be unlocked; if it was initialized with a different master key, pass the original key file with --master-key-file (the key itself is never printed)"

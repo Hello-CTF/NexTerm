@@ -65,6 +65,22 @@ describe("VaultCard on a server-managed vault", () => {
     expect(mounted.container.textContent).not.toContain("关闭加密");
   });
 
+  it("warns that the server vault failed to unlock instead of only showing the managed text", async () => {
+    mocks.status.mockResolvedValue({ ...MASTER, unlocked: false, managed: true });
+    mounted = render(createElement(VaultCard));
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库未能解锁，请联系管理员") ?? false);
+    expect(mounted.container.querySelector('[role="alert"]')?.textContent).toContain("请联系管理员");
+    expect(mounted.container.textContent).toContain("服务端凭据库由服务器托管");
+    expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it("shows no unlock warning when the managed vault is unlocked", async () => {
+    mocks.status.mockResolvedValue({ ...MASTER, unlocked: true, managed: true });
+    mounted = render(createElement(VaultCard));
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库由服务器托管") ?? false);
+    expect(mounted.container.textContent).not.toContain("未能解锁");
+  });
+
   it.each([false, undefined])("keeps the controls when managed is %s", async (managed) => {
     mocks.status.mockResolvedValue({ ...MASTER, managed });
     mounted = render(createElement(VaultCard));

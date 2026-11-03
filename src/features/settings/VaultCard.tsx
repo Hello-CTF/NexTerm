@@ -144,154 +144,161 @@ export function VaultCard() {
       </div>
 
       {managed ? (
-        <p className="nx-hint mt-1" data-setting="vault-managed">
-          服务端凭据库由服务器托管，无需在此初始化、设置密码或锁定。
-        </p>
+        <>
+          <p className="nx-hint mt-1" data-setting="vault-managed">
+            服务端凭据库由服务器托管，无需在此初始化、设置密码或锁定。
+          </p>
+          {vault && !vault.unlocked && (
+            <p className="nx-hint mt-1.5 text-amber-300" role="alert" data-setting="vault-managed-locked">
+              服务端凭据库未能解锁，请联系管理员。
+            </p>
+          )}
+        </>
       ) : (
         <>
-      <label className="flex cursor-pointer items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
-          <p className="nx-hint mt-0.5">
-            {vaultPasswordProtected
-              ? "开启：每次启动需输入密码后方可使用凭据。"
-              : vault?.mode === "not_init"
-                ? "尚未初始化：启用保护后才能保存密码或私钥。"
-                : vaultPasswordless
-                  ? "已启用：凭据加密保存、无需密码即可使用，但任何获得数据目录的人均可解密；设置密码后，每次启动需输入密码。"
-                  : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
-          </p>
-        </div>
-        <input
-          type="checkbox"
-          className="mt-0.5 h-4 w-4 shrink-0"
-          checked={vaultPasswordProtected}
-          disabled={busy}
-          onChange={() => {
-            if (vaultPasswordProtected) {
-              void disablePasswordProtection();
-            } else if (vaultPasswordless) {
-              setVaultPasswordOpen(true);
-            } else {
-              setProtPwd("");
-              setPendingEnable(true);
-            }
-          }}
-        />
-      </label>
-
-      {pendingEnable && !vaultPasswordProtected && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <input
-            type="password"
-            className="nx-input max-w-[240px]"
-            aria-label="保护密码"
-            placeholder="设置保护密码（至少 8 位，留空表示不设置）"
-            value={protPwd}
-            autoComplete="off"
-            disabled={busy}
-            onChange={(e) => setProtPwd(e.target.value)}
-          />
-          <button
-            type="button"
-            className="nx-btn nx-btn-primary"
-            disabled={busy || (protPwd.length > 0 && protPwd.length < 8)}
-            title={protPwd.length > 0 && protPwd.length < 8 ? "密码至少 8 位" : undefined}
-            onClick={() =>
-              void run(
-                () => vaultApi.initMaster(protPwd),
-                protPwd === "" ? "已完成初始化，未设置密码" : "已开启密码保护",
-              ).then((ok) => {
-                if (ok) setPendingEnable(false);
-              })
-            }
-          >
-            {busy ? "正在启用…" : "启用保护"}
-          </button>
-          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={() => setPendingEnable(false)}>
-            取消
-          </button>
-          <p className="nx-hint w-full text-[11px]">
-            保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何获得数据目录的人均可解密；忘记密码后，已保存的凭据将无法恢复。
-          </p>
-        </div>
-      )}
-
-      {vault?.mode === "master" && vaultPasswordOpen && (
-        <div className="mt-3">
-          <PasswordChangeForm
-            requireCurrent={!vaultPasswordless}
-            submitLabel={vaultPasswordless ? "设置密码" : "确认修改"}
-            allowEmpty={!vaultPasswordless}
-            emptyLabel="关闭密码保护"
-            onSubmit={changeVaultPassword}
-            onCancel={() => setVaultPasswordOpen(false)}
-          />
-          <p className="nx-hint mt-1.5 text-[11px]">保护密码仅用于本机的凭据库，忘记后已保存的凭据将无法恢复。</p>
-        </div>
-      )}
-
-      {vault?.mode === "master" && !vaultPasswordOpen && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          {!vaultPasswordless && <span className="nx-hint">锁定与解锁请在「凭据」页中操作</span>}
-          <button
-            type="button"
-            className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
-            disabled={busy}
-            onClick={() => setVaultPasswordOpen(true)}
-          >
-            {vaultPasswordless ? "设置密码" : "修改密码"}
-          </button>
-          {vaultPasswordless && systemProtection && (
-            <button
-              type="button"
-              className="nx-btn nx-btn-outline nx-btn-sm"
-              disabled={busy}
-              onClick={() => void disableVaultEncryption()}
-            >
-              关闭加密
-            </button>
-          )}
-        </div>
-      )}
-
-      {vaultPasswordProtected && (
-        <div className="mt-3 border-t border-neutral-800/60 pt-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[12.5px] text-neutral-200" data-setting="vault-auto-lock">闲置自动锁定</span>
+          <label className="flex cursor-pointer items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
+              <p className="nx-hint mt-0.5">
+                {vaultPasswordProtected
+                  ? "开启：每次启动需输入密码后方可使用凭据。"
+                  : vault?.mode === "not_init"
+                    ? "尚未初始化：启用保护后才能保存密码或私钥。"
+                    : vaultPasswordless
+                      ? "已启用：凭据加密保存、无需密码即可使用，但任何获得数据目录的人均可解密；设置密码后，每次启动需输入密码。"
+                      : "关闭：无需密码，凭据由系统级密钥保护，启动后直接使用。"}
+              </p>
+            </div>
             <input
-              type="number"
-              className="nx-input nx-input-sm w-[96px]"
-              aria-label="闲置自动锁定分钟数"
-              min={0}
-              max={1440}
-              step={1}
-              value={autoLockDraft}
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0"
+              checked={vaultPasswordProtected}
               disabled={busy}
-              onChange={(e) => setAutoLockDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (!autoLockUnchanged) saveAutoLock();
+              onChange={() => {
+                if (vaultPasswordProtected) {
+                  void disablePasswordProtection();
+                } else if (vaultPasswordless) {
+                  setVaultPasswordOpen(true);
+                } else {
+                  setProtPwd("");
+                  setPendingEnable(true);
                 }
               }}
             />
-            <span className="nx-hint">分钟，0 为不自动锁定</span>
-            <button
-              type="button"
-              className="nx-btn nx-btn-outline nx-btn-sm"
-              disabled={busy || autoLockUnchanged}
-              title={autoLockUnchanged ? "尚无改动" : undefined}
-              onClick={saveAutoLock}
-            >
-              保存
-            </button>
-          </div>
-          <p className="nx-hint mt-1.5">
-            闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码。
-          </p>
-        </div>
-      )}
+          </label>
+
+          {pendingEnable && !vaultPasswordProtected && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                type="password"
+                className="nx-input max-w-[240px]"
+                aria-label="保护密码"
+                placeholder="设置保护密码（至少 8 位，留空表示不设置）"
+                value={protPwd}
+                autoComplete="off"
+                disabled={busy}
+                onChange={(e) => setProtPwd(e.target.value)}
+              />
+              <button
+                type="button"
+                className="nx-btn nx-btn-primary"
+                disabled={busy || (protPwd.length > 0 && protPwd.length < 8)}
+                title={protPwd.length > 0 && protPwd.length < 8 ? "密码至少 8 位" : undefined}
+                onClick={() =>
+                  void run(
+                    () => vaultApi.initMaster(protPwd),
+                    protPwd === "" ? "已完成初始化，未设置密码" : "已开启密码保护",
+                  ).then((ok) => {
+                    if (ok) setPendingEnable(false);
+                  })
+                }
+              >
+                {busy ? "正在启用…" : "启用保护"}
+              </button>
+              <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={() => setPendingEnable(false)}>
+                取消
+              </button>
+              <p className="nx-hint w-full text-[11px]">
+                保护密码仅用于此处凭据库，不会随账号同步。留空则不设密码，任何获得数据目录的人均可解密；忘记密码后，已保存的凭据将无法恢复。
+              </p>
+            </div>
+          )}
+
+          {vault?.mode === "master" && vaultPasswordOpen && (
+            <div className="mt-3">
+              <PasswordChangeForm
+                requireCurrent={!vaultPasswordless}
+                submitLabel={vaultPasswordless ? "设置密码" : "确认修改"}
+                allowEmpty={!vaultPasswordless}
+                emptyLabel="关闭密码保护"
+                onSubmit={changeVaultPassword}
+                onCancel={() => setVaultPasswordOpen(false)}
+              />
+              <p className="nx-hint mt-1.5 text-[11px]">保护密码仅用于本机的凭据库，忘记后已保存的凭据将无法恢复。</p>
+            </div>
+          )}
+
+          {vault?.mode === "master" && !vaultPasswordOpen && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {!vaultPasswordless && <span className="nx-hint">锁定与解锁请在「凭据」页中操作</span>}
+              <button
+                type="button"
+                className={`nx-btn nx-btn-sm ${vaultPasswordless ? "nx-btn-primary" : "nx-btn-outline"}`}
+                disabled={busy}
+                onClick={() => setVaultPasswordOpen(true)}
+              >
+                {vaultPasswordless ? "设置密码" : "修改密码"}
+              </button>
+              {vaultPasswordless && systemProtection && (
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-sm"
+                  disabled={busy}
+                  onClick={() => void disableVaultEncryption()}
+                >
+                  关闭加密
+                </button>
+              )}
+            </div>
+          )}
+
+          {vaultPasswordProtected && (
+            <div className="mt-3 border-t border-neutral-800/60 pt-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] text-neutral-200" data-setting="vault-auto-lock">闲置自动锁定</span>
+                <input
+                  type="number"
+                  className="nx-input nx-input-sm w-[96px]"
+                  aria-label="闲置自动锁定分钟数"
+                  min={0}
+                  max={1440}
+                  step={1}
+                  value={autoLockDraft}
+                  disabled={busy}
+                  onChange={(e) => setAutoLockDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!autoLockUnchanged) saveAutoLock();
+                    }
+                  }}
+                />
+                <span className="nx-hint">分钟，0 为不自动锁定</span>
+                <button
+                  type="button"
+                  className="nx-btn nx-btn-outline nx-btn-sm"
+                  disabled={busy || autoLockUnchanged}
+                  title={autoLockUnchanged ? "尚无改动" : undefined}
+                  onClick={saveAutoLock}
+                >
+                  保存
+                </button>
+              </div>
+              <p className="nx-hint mt-1.5">
+                闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码。
+              </p>
+            </div>
+          )}
         </>
       )}
     </section>
