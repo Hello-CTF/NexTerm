@@ -48,6 +48,8 @@ import {
   type JumpSessionEntry,
 } from "./jump/jumpSessions";
 import { useJumpCommands, type JumpCommand } from "./jump/useJumpCommands";
+import { CommandHistorySearch, type CommandHistoryKeyHandler } from "./jump/CommandHistorySearch";
+import { historyQueryText } from "./jump/commandHistorySearch";
 
 const PROBE_DEBOUNCE_MS = 250;
 const PROBE_VISIBLE_LIMIT = 24;
@@ -170,6 +172,8 @@ export function JumpPalette({
   const closedRef = useRef(false);
   const probeSeq = useRef(0);
   const orderRef = useRef<{ token: string; keys: string[] } | null>(null);
+  const historyKeyRef = useRef<CommandHistoryKeyHandler | null>(null);
+  const [historyActiveId, setHistoryActiveId] = useState<string | undefined>(undefined);
   const [announcement, setAnnouncement] = useState("");
   const queryClient = useQueryClient();
   const listId = useId();
@@ -527,7 +531,10 @@ export function JumpPalette({
     assetsQuery.isError ||
     (showAll && snippetsQuery.isError) ||
     showConnectionActions;
-  const tabSwitchesScope = !databaseOnly && !panelHasControls;
+  // An input starting with ">" switches the palette body to command history search (not in the database picker).
+  const historyText = databaseOnly ? null : historyQueryText(query);
+  const historyMode = historyText !== null;
+  const tabSwitchesScope = !databaseOnly && !panelHasControls && !historyMode;
 
   const moveCursor = (next: number) => {
     if (rows.length > 0) setCursor((next + rows.length) % rows.length);
@@ -547,6 +554,10 @@ export function JumpPalette({
       return;
     }
     if (isImeKeyEvent(event)) return;
+    if (historyMode && event.key !== "Escape") {
+      historyKeyRef.current?.(event);
+      return;
+    }
     if (event.key === "Escape" && !event.repeat) {
       event.preventDefault();
       closeOverlay();
@@ -711,7 +722,7 @@ export function JumpPalette({
             aria-autocomplete="list"
             aria-expanded="true"
             aria-controls={listId}
-            aria-activedescendant={activeOptionId}
+            aria-activedescendant={historyMode ? historyActiveId : activeOptionId}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -739,6 +750,18 @@ export function JumpPalette({
             </div>
           )}
         </div>
+        {historyMode && (
+          <CommandHistorySearch
+            text={historyText}
+            assets={assets}
+            listId={listId}
+            helpId={helpId}
+            keyRef={historyKeyRef}
+            onActiveChange={setHistoryActiveId}
+            onClose={closeOverlay}
+          />
+        )}
+        {!historyMode && (<>
         <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={text.list} tabIndex={-1}>
           {rows.map((row, index) => {
             const section = sectionLabel(row);
@@ -810,6 +833,7 @@ export function JumpPalette({
             </div>
           )}
         </div>
+        </>)}
         {connectError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={connectError.message}>
@@ -845,6 +869,7 @@ export function JumpPalette({
           </div>
         )}
         <div className="nx-sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+        {!historyMode && (
         <div id={helpId} className="nx-command-help flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/70 bg-neutral-950/40 px-4 py-2 text-[10.5px]">
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">↑</span>
@@ -869,7 +894,13 @@ export function JumpPalette({
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">Esc</span> 关闭
           </span>
+          {showAll && (
+            <span className="flex items-center gap-1.5">
+              <span className="nx-kbd">&gt;</span> 搜索命令历史
+            </span>
+          )}
         </div>
+        )}
       </div>
     </div>
     {creating && (
