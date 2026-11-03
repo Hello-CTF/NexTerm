@@ -108,6 +108,19 @@ describe("link stitching rules", () => {
     expect(urls(hard(line, "Continue"), line.length)).toEqual(["https://example.com/docs"]);
   });
 
+  it("stops a URL at full-width punctuation", () => {
+    expect(urls(hard("访问 https://example.com/docs。然后"), 80)).toEqual(["https://example.com/docs"]);
+    expect(urls(hard("链接：https://a.example/x，谢谢"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x；y https://b.example/z！"), 80)).toEqual(["https://a.example/x", "https://b.example/z"]);
+    expect(urls(hard("（https://a.example/x）"), 80)).toEqual(["https://a.example/x"]);
+  });
+
+  it("does not continue a full URL row with non-ASCII text", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "中文文字"), 40)).toEqual([full]);
+    expect(urls(hard(full, "caf\u00e9-menu"), 40)).toEqual([full]);
+  });
+
   it("does not join a boxed URL with a following boxed sentence", () => {
     const rows = hard("│ https://a.example/x      │", "│ Paste code here          │");
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);
