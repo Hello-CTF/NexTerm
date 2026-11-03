@@ -230,6 +230,14 @@ describe("link stitching rules", () => {
     }
   });
 
+  it("documents the boxed URL that exactly fills its box (known limit)", () => {
+    // The URL is as wide as the box, so its row cannot be told from a hard
+    // wrap, and a border-aligned next row is joined. Accepted residual risk.
+    const url = "https://a.com/docs";
+    const joined = urls(hard(`│ ${url} │`, `│ ${"v1.2.3".padEnd(url.length)} │`), 40);
+    expect(joined).toEqual([url + "v1.2.3"]);
+  });
+
   it("does not join a full URL row with a boxed short word", () => {
     const full = "https://a.example/" + "a".repeat(22);
     expect(urls(hard(full, "│ Done │"), 40)).toEqual([full]);
