@@ -205,9 +205,9 @@ encrypted.
 `NEXTERM_DB` selects `sqlite` (the default), `postgres`, `mysql` or
 `mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; preserve that
 directory and `/etc/nexterm/master.key` when backing up. Run only one
-server instance against the same database: second-factor lockouts and
-session rechecks are held in process memory and are not shared between
-instances.
+server instance against the same database: login rate limits and
+second-factor lockouts are held in process memory, are not shared between
+instances, and reset on restart.
 
 For a remote database, set all applicable values in the selected env file:
 
@@ -234,3 +234,20 @@ work) and never passes the client-supplied value through unchanged. With
 chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
+
+## Multi-user limits
+
+With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
+used by the LazyCat package) the server does not run commands on the server
+machine or read its files on an account's behalf:
+
+- local terminal assets and disk mounts are unavailable;
+- SSH settings that run or read on the server are refused: ProxyCommand,
+  SSH agent use (including agent forwarding), and private key or certificate
+  file paths. Upload key contents or use the vault, and use a jump host or a
+  SOCKS/HTTP proxy instead;
+- imports from the server's `~/.ssh/config`, kubeconfig, or Docker contexts,
+  and Kubernetes target exec, are unavailable.
+
+Only open access lifts these limits: `--auth off`, or `--auth loopback`
+listening on loopback when no account is signed in.
