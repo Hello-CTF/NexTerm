@@ -17,7 +17,7 @@ func scheduleDeferredReplace(newPath, targetPath string) error {
 		return err
 	}
 	scriptPath := script.Name()
-	body := renderReplaceScriptWindows(newPath, targetPath, replaceScriptDelaySeconds)
+	body := renderReplaceScriptWindows(newPath, targetPath, replaceScriptDelaySeconds, windowsRestartCommand())
 	if _, err := script.WriteString(body); err != nil {
 		_ = script.Close()
 		_ = os.Remove(scriptPath)

@@ -456,9 +456,15 @@ func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, resta
 	return b.String()
 }
 
+// windowsRestartCommand restarts the scheduled task after a successful swap-in: the agent exits with ExitOK, which the task's
+// RestartOnFailure policy does not restart. A failing schtasks must not abort the script, so errors are swallowed.
+func windowsRestartCommand() string {
+	return "try { & schtasks.exe /Run /TN " + psQuote(windowsTaskName) + " *> $null } catch {}"
+}
+
 // renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
-// powershell deferred replacement, rolling back to the old binary on failure.
-func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) string {
+// powershell deferred replacement, rolling back to the old binary on failure. restartCmd runs only after a successful swap-in.
+func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int, restartCmd string) string {
 	var b strings.Builder
 	b.WriteString("Start-Sleep -Seconds " + strconv.Itoa(delaySeconds) + "\n")
 	b.WriteString("$nxTarget = " + psQuote(filepath.Clean(targetPath)) + "\n")
@@ -468,6 +474,7 @@ func renderReplaceScriptWindows(newPath, targetPath string, delaySeconds int) st
 	b.WriteString("try {\n")
 	b.WriteString("  Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force -ErrorAction Stop\n")
 	b.WriteString("  Remove-Item -LiteralPath $nxBak -Force -ErrorAction SilentlyContinue\n")
+	b.WriteString("  " + restartCmd + "\n")
 	b.WriteString("} catch {\n")
 	b.WriteString("  try { Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force -ErrorAction Stop } catch {}\n")
 	b.WriteString("}\n")

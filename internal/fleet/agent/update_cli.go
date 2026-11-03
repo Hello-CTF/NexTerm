@@ -180,7 +180,7 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 	state := cliNewManager(getenv).Status(ctx)
 	switch {
 	case runtime.GOOS == "windows" && state.Active:
-		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件；随后请重启设备代理的计划任务或服务，以载入新版本\n", replaceScriptDelaySeconds)
+		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并重新启动计划任务\n", replaceScriptDelaySeconds)
 	case state.Installed:
 		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并自动重启后台服务\n", replaceScriptDelaySeconds)
 	default:

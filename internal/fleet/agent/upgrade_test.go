@@ -505,11 +505,9 @@ func TestRenderReplaceScriptUnix(t *testing.T) {
 }
 
 func TestRenderReplaceScriptWindows(t *testing.T) {
-	script := renderReplaceScriptWindows(`C:\bin\.nexterm-agent.exe.nexterm-new`, `C:\bin\nexterm-agent.exe`, 3)
+	script := renderReplaceScriptWindows(`C:\bin\.nexterm-agent.exe.nexterm-new`, `C:\bin\nexterm-agent.exe`, 3, windowsRestartCommand())
 	for _, fragment := range []string{
 		"Start-Sleep -Seconds 3",
-		"Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force",
-		"Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force",
 		"Remove-Item -LiteralPath $PSCommandPath",
 	} {
 		if !strings.Contains(script, fragment) {
@@ -518,6 +516,31 @@ func TestRenderReplaceScriptWindows(t *testing.T) {
 	}
 	if !strings.Contains(script, "$nxTarget = 'C:\\bin\\nexterm-agent.exe'") {
 		t.Fatalf("target must be single-quoted:\n%s", script)
+	}
+	// The swap-in runs in the multi-line try block; its catch block is the rollback.
+	_, afterTry, ok := strings.Cut(script, "try {\n")
+	if !ok {
+		t.Fatalf("script has no swap-in try block:\n%s", script)
+	}
+	success, rollback, ok := strings.Cut(afterTry, "\n} catch {\n")
+	if !ok {
+		t.Fatalf("script has no rollback catch block:\n%s", script)
+	}
+	rollback, _, _ = strings.Cut(rollback, "\n}\n")
+	restart := windowsRestartCommand()
+	swap := strings.Index(success, "Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force")
+	restartAt := strings.Index(success, restart)
+	if swap < 0 || restartAt < 0 || restartAt < swap {
+		t.Fatalf("restart must follow the successful swap-in:\n%s", script)
+	}
+	if !strings.Contains(restart, "schtasks.exe") || !strings.Contains(restart, "/Run") || !strings.Contains(restart, "'NexTermAgent'") {
+		t.Fatalf("restart command must run the quoted scheduled task: %s", restart)
+	}
+	if !strings.Contains(rollback, "Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force") {
+		t.Fatalf("rollback block must restore the backup:\n%s", script)
+	}
+	if strings.Contains(rollback, "schtasks") || strings.Contains(rollback, restart) {
+		t.Fatalf("rollback must not restart the task:\n%s", script)
 	}
 	if got := psQuote("o'brien"); got != "'o''brien'" {
 		t.Fatalf("psQuote escaping = %q", got)
