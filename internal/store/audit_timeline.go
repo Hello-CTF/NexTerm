@@ -33,7 +33,8 @@ func timelineRank(stream string) int {
 	return 0
 }
 
-var timelinePresenceKinds = []string{"device_online", "device_offline", "device_failover"}
+// Presence and alert records are written by the fleet, so they belong to the device origin.
+var timelinePresenceKinds = []string{"device_online", "device_offline", "device_failover", "device_alert_fired", "device_alert_resolved"}
 
 type AuditTimelineCursor struct {
 	TS     int64

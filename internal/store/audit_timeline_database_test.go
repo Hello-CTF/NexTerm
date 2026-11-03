@@ -286,3 +286,42 @@ func TestAuditTimelineLimitClampDatabase(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditTimelineDeviceAlertsUseDeviceOriginDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := context.Background()
+	fired := timelineAudit(t, database, "", "fleet", "device_alert_fired", 100, "dev1")
+	resolved := timelineAudit(t, database, "", "fleet", "device_alert_resolved", 200, "dev1")
+	user := timelineAudit(t, database, "", "user", "x", 300, "dev1")
+
+	collect := func(origins ...string) map[int64]store.AuditTimelineItem {
+		out := map[int64]store.AuditTimelineItem{}
+		for _, item := range timelineAll(t, ctx, database, store.AuditTimelineQuery{Origins: origins}) {
+			if _, dup := out[item.ID]; dup {
+				t.Fatalf("record %d listed twice", item.ID)
+			}
+			out[item.ID] = item
+		}
+		return out
+	}
+	all := collect()
+	for _, id := range []int64{fired, resolved} {
+		if got := all[id]; got.Origin != "device" {
+			t.Fatalf("alert %d origin = %q, want device", id, got.Origin)
+		}
+	}
+	if got := all[user]; got.Origin != "user" {
+		t.Fatalf("user row origin = %q", got.Origin)
+	}
+	userOnly := collect("user")
+	if _, ok := userOnly[fired]; ok {
+		t.Fatal("alert shown under the user origin")
+	}
+	if _, ok := userOnly[user]; !ok {
+		t.Fatal("user row missing under the user origin")
+	}
+	deviceOnly := collect("device")
+	if len(deviceOnly) != 2 || deviceOnly[fired].Origin != "device" || deviceOnly[resolved].Origin != "device" {
+		t.Fatalf("device origin items = %v", deviceOnly)
+	}
+}
