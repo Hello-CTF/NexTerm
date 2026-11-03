@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import { applyBackendPlatform, isMac, isWindows, setMacPlatform, setWindowsPlatform } from "../../app/platform";
+import { applyBackendPlatform, isMac, isWindows, localSessionIsMac, localSessionIsWindows, setBackendOS, setMacPlatform, setWindowsPlatform } from "../../app/platform";
 
 afterEach(() => {
+  setBackendOS(null);
   setMacPlatform(false);
   setWindowsPlatform(false);
 });
@@ -33,5 +34,23 @@ describe("applyBackendPlatform", () => {
     applyBackendPlatform("", true);
     applyBackendPlatform(undefined, true);
     expect(isWindows()).toBe(true);
+  });
+
+  it("judges local sessions by the server OS in the browser while keyboard detection stays on the browser", () => {
+    setMacPlatform(true);
+    applyBackendPlatform("windows", false);
+    expect(isMac()).toBe(true);
+    expect(isWindows()).toBe(false);
+    expect(localSessionIsWindows()).toBe(true);
+    expect(localSessionIsMac()).toBe(false);
+    applyBackendPlatform("linux", false);
+    expect(localSessionIsWindows()).toBe(false);
+    expect(localSessionIsMac()).toBe(false);
+  });
+
+  it("matches isWindows and isMac on the desktop transport", () => {
+    applyBackendPlatform("darwin", true);
+    expect(localSessionIsMac()).toBe(isMac());
+    expect(localSessionIsWindows()).toBe(isWindows());
   });
 });

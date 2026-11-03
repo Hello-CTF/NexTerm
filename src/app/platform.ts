@@ -72,12 +72,30 @@ export function modHint(): string {
   return macPlatform ? "⌘" : "Ctrl";
 }
 
+// The OS of the machine that hosts local sessions: the desktop itself, or the server in browser mode.
+let backendOS: string | null = null;
+
+export function setBackendOS(os: string | null): void {
+  backendOS = os;
+}
+
+// Local sessions run on the backend, so their filesystem follows the backend OS, not the browser's.
+export function localSessionIsWindows(): boolean {
+  return backendOS === null ? windowsPlatform : backendOS === "windows";
+}
+
+export function localSessionIsMac(): boolean {
+  return backendOS === null ? macPlatform : backendOS === "macos" || backendOS === "darwin";
+}
+
 /**
  * The backend OS describes the machine the UI runs on only for the desktop transport. In the browser the backend is a
  * server, so the UA-based detection of the user's own machine stays.
  */
 export function applyBackendPlatform(os: unknown, desktop: boolean): void {
-  if (!desktop || typeof os !== "string" || os.length === 0) return;
+  if (typeof os !== "string" || os.length === 0) return;
+  backendOS = os;
+  if (!desktop) return;
   setMacPlatform(os === "macos" || os === "darwin");
   setWindowsPlatform(os === "windows");
 }

@@ -1,5 +1,5 @@
 import type { AppTab, Workspace } from "../../app/store";
-import { isWindows } from "../../app/platform";
+import { localSessionIsWindows } from "../../app/platform";
 import { joinPath, norm } from "./pathUtils";
 
 export interface EditorGuardState {
@@ -35,7 +35,7 @@ const unknownRenames = new Map<number, RenameOperation>();
 let operationSeq = 0;
 
 export function fileEditorCaseInsensitive(sessionKind: string): boolean {
-  return sessionKind === "winrm" || (sessionKind === "local" && isWindows());
+  return sessionKind === "winrm" || (sessionKind === "local" && localSessionIsWindows());
 }
 
 function foldFileEditorPath(path: string, caseInsensitive: boolean): string {
