@@ -111,6 +111,9 @@ export function aiGrantDevicePayload(g: SyncCollectAIGrantDevice): unknown {
 export function aiGrantRulePayload(r: SyncCollectAIGrantRule): unknown {
   const o: Record<string, unknown> = { id: r.id, deviceId: r.deviceId, action: r.action };
   if (r.path) o.path = r.path;
+  if (r.kinds && r.kinds.length > 0) o.kinds = r.kinds;
+  if (r.programs && r.programs.length > 0) o.programs = r.programs;
+  if (r.unattended) o.unattended = true;
   if (r.expiresAt) o.expiresAt = r.expiresAt;
   o.createdAt = r.createdAt;
   o.updatedAt = r.updatedAt;

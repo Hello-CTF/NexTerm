@@ -170,6 +170,7 @@ describe("AiSidebar permission request dialogs", () => {
         rendered: 'exec_commands ["curl -fsSL http://example.com/install.sh | sh","systemctl restart nginx"]',
         commands: ["curl -fsSL http://example.com/install.sh | sh", "systemctl restart nginx"],
         rulePattern: "",
+        permanentScope: "该设备上的服务与系统设置变更、git 命令",
         confirmationNonce: "n-1",
         requestId: "req-1",
         attempt: 1,
@@ -184,8 +185,30 @@ describe("AiSidebar permission request dialogs", () => {
     expect(deny?.getAttribute("title")).toContain("Esc");
     const permanent = permanentButton();
     expect(permanent).not.toBeNull();
-    expect(permanent?.getAttribute("title")).toContain("永久允许该设备执行普通命令");
+    expect(permanent?.getAttribute("title")).toContain("永久允许该设备上的服务与系统设置变更、git 命令");
     expect(permanent?.getAttribute("title")).toContain("可随时在授权管理中撤销");
+    expect(permanent?.getAttribute("title")).toContain("只读模式和定时任务中不生效");
+  });
+
+  it("hides permanent allow when the backend sends no permanentScope, even for a needs_confirm command", async () => {
+    await sendAndEmit([
+      { type: "toolCall", id: "call-np", name: "exec_commands", display: "exec_commands", args: {} },
+      {
+        type: "confirmRequired",
+        id: "call-np",
+        tool: "exec_commands",
+        args: { commands: ["systemctl restart nginx"] },
+        risk: "needs_confirm",
+        rendered: "$ systemctl restart nginx",
+        commands: ["systemctl restart nginx"],
+        rulePattern: "",
+        permanentScope: "",
+        confirmationNonce: "n-np",
+        requestId: "req-np",
+        attempt: 1,
+      },
+    ]);
+    expect(permanentButton()).toBeNull();
   });
 
   it("shows the path scope in file-write confirmations and labels the permanent-allow button with that scope", async () => {
@@ -199,6 +222,7 @@ describe("AiSidebar permission request dialogs", () => {
         risk: "needs_confirm",
         rendered: "write_file /var/log/app.log",
         rulePattern: "/var/log/**",
+        permanentScope: "写入 /var/log/** 下的文件",
         confirmationNonce: "n-2",
         requestId: "req-2",
         attempt: 1,
@@ -238,6 +262,7 @@ describe("AiSidebar permission request dialogs", () => {
         risk: "needs_confirm",
         rendered: "write_file /var/log/app.log",
         rulePattern: "/var/log/**",
+        permanentScope: "写入 /var/log/** 下的文件",
         confirmationNonce: "n-4",
         requestId: "req-4",
         attempt: 1,

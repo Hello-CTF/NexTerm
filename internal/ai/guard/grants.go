@@ -3,6 +3,7 @@ package guard
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -345,20 +346,15 @@ func (g *Grants) Revoke(ctx context.Context, deviceID string) error {
 	return nil
 }
 
-func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, expiresAt time.Time) (GrantRule, error) {
+func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, scope RuleScope, expiresAt time.Time) (GrantRule, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return GrantRule{}, ErrRuleDeviceRequired
 	}
-	if !RuleActionSupported(action) {
-		return GrantRule{}, ErrRuleActionUnsupported
-	}
 	pattern = strings.TrimSpace(pattern)
-	if RuleActionNeedsPath(action) && pattern == "" {
-		return GrantRule{}, ErrRulePathRequired
-	}
-	if !RuleActionNeedsPath(action) && pattern != "" {
-		return GrantRule{}, ErrRulePathUnsupported
+	scope = scope.normalized()
+	if err := ValidateRuleScope(action, pattern, scope); err != nil {
+		return GrantRule{}, err
 	}
 	if err := g.authorizeMutation(ctx); err != nil {
 		return GrantRule{}, err
@@ -386,9 +382,11 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 	now := g.now().UnixMilli()
 	next := append([]GrantRule(nil), entry.rules...)
 	for index, existing := range next {
-		if existing.DeviceID != deviceID || existing.Action != action || existing.Path != pattern {
+		if existing.DeviceID != deviceID || existing.Action != action || existing.Path != pattern ||
+			!slices.Equal(existing.Kinds, scope.Kinds) || !slices.Equal(existing.Programs, scope.Programs) {
 			continue
 		}
+		existing.Unattended = scope.Unattended
 		existing.ExpiresAt = expiresAtMS
 		existing.UpdatedAt = now
 		existing = existing.Renewed()
@@ -402,7 +400,7 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 		g.emitAudit(ctx, GrantAuditEvent{Action: "rule_grant", DeviceID: deviceID, Operation: action, RuleID: existing.ID, RulePath: pattern})
 		return existing, nil
 	}
-	rule := GrantRule{ID: g.newID(), DeviceID: deviceID, Action: action, Path: pattern, ExpiresAt: expiresAtMS, CreatedAt: now, UpdatedAt: now}.Renewed()
+	rule := GrantRule{ID: g.newID(), DeviceID: deviceID, Action: action, Path: pattern, Kinds: scope.Kinds, Programs: scope.Programs, Unattended: scope.Unattended, ExpiresAt: expiresAtMS, CreatedAt: now, UpdatedAt: now}.Renewed()
 	next = append(next, rule)
 	if err := g.persistRulesLocked(ctx, entry, next); err != nil {
 		g.mu.Unlock()
@@ -474,9 +472,12 @@ func (g *Grants) Rules(ctx context.Context) ([]GrantRule, error) {
 	return result, nil
 }
 
-func matchRule(entry *grantState, now time.Time, deviceID, action, path string) (GrantRule, bool) {
+func matchRule(entry *grantState, now time.Time, deviceID, action, path string, ruling Ruling, unattendedOnly bool) (GrantRule, bool) {
 	for _, rule := range entry.rules {
-		if rule.DeviceID == deviceID && !rule.Expired(now) && rule.Covers(action, path) {
+		if unattendedOnly && !rule.Unattended {
+			continue
+		}
+		if rule.DeviceID == deviceID && !rule.Expired(now) && rule.Covers(action, path, ruling) {
 			return rule, true
 		}
 	}
@@ -565,6 +566,12 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	if ruling.Risk != NeedsConfirm || deviceID == "" {
 		return DecideResource(config, ruling, memory, resource)
 	}
+	mode := config.Normalized().Mode
+	// Read-only never consults rules or device grants; production targets are
+	// never covered by long-term authorization.
+	if mode == ReadOnly || resource.ProductionTarget() {
+		return DecideResource(config, ruling, memory, resource)
+	}
 	entry, err := g.stateFor(ctx)
 	if err != nil {
 		return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
@@ -574,11 +581,11 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 		action = operation
 	}
 	g.mu.RLock()
-	rule, ruleOK := matchRule(entry, g.now(), deviceID, action, resource.Path)
+	rule, ruleOK := matchRule(entry, g.now(), deviceID, action, resource.Path, ruling, mode == Unattended)
 	grant, grantOK := entry.grants[deviceID]
 	grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
 	g.mu.RUnlock()
-	grantCovers := grantOK && grant.Covers(OperationGrantKind(operation))
+	grantCovers := grantOK && mode != Unattended && grant.Covers(OperationGrantKind(operation))
 	if ruleOK || grantCovers {
 		if err := g.authorizeTarget(ctx, deviceID); err != nil {
 			return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}

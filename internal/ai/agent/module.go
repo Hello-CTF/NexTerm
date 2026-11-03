@@ -66,6 +66,8 @@ func agentIPCError(err error) error {
 		errors.Is(err, guard.ErrRuleActionUnsupported),
 		errors.Is(err, guard.ErrRulePathRequired),
 		errors.Is(err, guard.ErrRulePathUnsupported),
+		errors.Is(err, guard.ErrRuleScopeRequired),
+		errors.Is(err, guard.ErrRuleScopeUnsupported),
 		errors.Is(err, guard.ErrRuleExpiryInvalid),
 		errors.Is(err, guard.ErrRuleIDRequired),
 		errors.Is(err, guard.ErrDeviceModeInvalid),
@@ -315,6 +317,9 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				Action    string `json:"action"`
 				Path      string `json:"path"`
 				ExpiresAt int64  `json:"expiresAt"`
+				// Unattended lets scheduled runs use the rule; only path rules
+				// can be created through IPC.
+				Unattended bool `json:"unattended"`
 			}) (guard.GrantRule, error) {
 				if err := r.guardGrantMutation(ctx); err != nil {
 					return guard.GrantRule{}, agentIPCError(err)
@@ -326,7 +331,7 @@ func (r *Runner) RegisterCommands(dispatcher *ipc.Dispatcher) error {
 				if args.ExpiresAt != 0 {
 					expiresAt = time.UnixMilli(args.ExpiresAt)
 				}
-				rule, err := r.config.Grants.AddRule(ctx, args.DeviceID, args.Action, args.Path, expiresAt)
+				rule, err := r.config.Grants.AddRule(ctx, args.DeviceID, args.Action, args.Path, guard.RuleScope{Unattended: args.Unattended}, expiresAt)
 				return rule, agentIPCError(err)
 			})
 		},

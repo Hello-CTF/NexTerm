@@ -128,13 +128,24 @@ func persistentRulePattern(resource guard.Resource) string {
 	return ""
 }
 
+// PersistentRuleScope derives the rule scope a permanent grant of the confirmed
+// call writes: command rules carry the ruling's kinds and programs, path rules
+// are limited by their pattern. Confirmation cards never create unattended rules.
+func PersistentRuleScope(state InteractionState) guard.RuleScope {
+	if guard.RuleActionNeedsPath(state.Resource.Action) {
+		return guard.RuleScope{}
+	}
+	ruling := state.SessionRuling()
+	return guard.RuleScope{Kinds: ruling.ApprovalKinds(), Programs: ruling.Programs}
+}
+
 // persistPermanentGrant turns an "always allow" decision into a persistent rule; any step that
 // cannot safely determine the scope (non-NeedsConfirm ruling, grants not configured, device
 // identity unresolvable) is rejected with an error, and the caller treats it as fail-closed
 // without executing the operation.
 func (e *Execution) persistPermanentGrant(ctx context.Context, state InteractionState) error {
-	if state.Info.Risk != "needs_confirm" {
-		return errors.New("该操作必须逐次确认，不支持永久授权")
+	if state.Info.Risk != "needs_confirm" || state.Info.PermanentScope == "" {
+		return errors.New("该操作不支持永久授权")
 	}
 	if e.Registry == nil || e.Registry.deps.Grants == nil {
 		return errors.New("永久授权未配置")
@@ -143,7 +154,7 @@ func (e *Execution) persistPermanentGrant(ctx context.Context, state Interaction
 	if deviceID == "" {
 		return errors.New("无法确定设备身份，不能保存永久授权")
 	}
-	_, err := e.Registry.deps.Grants.AddRule(ctx, deviceID, state.Resource.Action, persistentRulePattern(state.Resource), time.Time{})
+	_, err := e.Registry.deps.Grants.AddRule(ctx, deviceID, state.Resource.Action, persistentRulePattern(state.Resource), PersistentRuleScope(state), time.Time{})
 	return err
 }
 

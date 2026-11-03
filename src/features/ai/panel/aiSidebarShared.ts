@@ -78,7 +78,7 @@ export const CONFIRM_RESOLUTION: Record<"allow" | "allow_session" | "allow_persi
 export type SlashItem = { key: string; label: string; hint: string; run: () => void };
 
 export const CONFIRM_HELP =
-  "「允许一次」仅对本次操作生效；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，可随时撤销。高危、无法判断和生产环境的操作每次都会询问。如需某类操作每次先确认，可在「设置 → AI 拦截规则」中添加。";
+  "「允许一次」仅对本次操作生效；「本会话允许」在本次对话中不再询问同类操作；「永久允许」写入授权管理，只覆盖卡片上列出的范围，可随时撤销，只读模式和定时任务中不生效。高危、无法判断和生产环境的操作不会被这些授权放行，每次都会询问。如需某类操作每次先确认，可在「设置 → AI 拦截规则」中添加。";
 
 export function confirmTitle(risk: string | undefined): string {
   if (risk === "danger") return "高危操作，需要你确认";
@@ -86,15 +86,8 @@ export function confirmTitle(risk: string | undefined): string {
   return "需要你确认";
 }
 
-export const RULE_CAPABLE_TOOLS = new Set(["write_file", "edit_file", "exec_commands", "send_keys"]);
-
 export function permanentScopeText(card: ConfirmItem): string {
-  if (card.tool === "write_file" || card.tool === "edit_file") {
-    const action = card.tool === "write_file" ? "写入" : "修改";
-    return `永久允许${action} ${card.rulePattern || "该路径"} 下的文件`;
-  }
-  if (card.tool === "send_keys") return "永久允许该设备发送普通按键";
-  return "永久允许该设备执行普通命令";
+  return `永久允许${card.permanentScope ?? ""}`;
 }
 
 export function extractUrls(text: string): string[] {

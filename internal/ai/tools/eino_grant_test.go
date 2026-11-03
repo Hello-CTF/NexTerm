@@ -338,7 +338,7 @@ func TestChatGrantNeverCoversDanger(t *testing.T) {
 	}
 }
 
-func TestChatGrantOverridesGlobalModeDeny(t *testing.T) {
+func TestChatGrantDoesNotOverrideReadOnlyMode(t *testing.T) {
 	recorder := &chatGrantRecorder{}
 	h := newChatGrantHarness(guard.Config{Mode: guard.ReadOnly}, "asset-a", nil, recorder)
 	messages, err := h.invoke("call-1", "exec_commands", `{"commands":["touch /tmp/x"]}`)
@@ -358,9 +358,11 @@ func TestChatGrantOverridesGlobalModeDeny(t *testing.T) {
 	}
 	granted := newChatGrantHarness(guard.Config{Mode: guard.ReadOnly}, "asset-a", grants, recorder)
 	messages, err = granted.invoke("call-1", "exec_commands", `{"commands":["touch /tmp/x"]}`)
-	requireChatGrantResult(t, messages, err, "touch /tmp/x")
-	if granted.transport.calls() != 1 {
-		t.Fatal("device grant did not take precedence over the global read-only mode")
+	if err != nil || len(messages) != 1 || !strings.Contains(messages[0].Content, "权限策略已拒绝") {
+		t.Fatalf("granted read-only result = %+v, %v", messages, err)
+	}
+	if granted.transport.calls() != 0 {
+		t.Fatal("device grant lifted the global read-only mode")
 	}
 }
 

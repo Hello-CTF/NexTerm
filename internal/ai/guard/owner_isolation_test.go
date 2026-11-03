@@ -101,7 +101,7 @@ func TestConcurrentOwnerIsolationAndReload(t *testing.T) {
 		if _, err := grants.Grant(test.ctx, test.deviceID, []GrantKind{test.kind}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := grants.AddRule(test.ctx, test.deviceID, "write_file", test.path, time.Time{}); err != nil {
+		if _, err := grants.AddRule(test.ctx, test.deviceID, "write_file", test.path, RuleScope{}, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -126,7 +126,7 @@ func TestConcurrentOwnerIsolationAndReload(t *testing.T) {
 						t.Errorf("%s grant: %v", ipc.OwnerID(test.ctx), err)
 						return
 					}
-					if _, err := grants.AddRule(test.ctx, test.deviceID, "write_file", test.path, time.Time{}); err != nil {
+					if _, err := grants.AddRule(test.ctx, test.deviceID, "write_file", test.path, RuleScope{}, time.Time{}); err != nil {
 						t.Errorf("%s add rule: %v", ipc.OwnerID(test.ctx), err)
 						return
 					}

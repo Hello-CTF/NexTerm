@@ -37,8 +37,6 @@ const DB_KINDS: AiGrantKind[] = ["db_query"];
 const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean }[] = [
   { value: "edit_file", label: "修改文件", needsPath: true },
   { value: "write_file", label: "写入文件", needsPath: true },
-  { value: "exec_commands", label: "执行命令", needsPath: false },
-  { value: "send_keys", label: "发送按键", needsPath: false },
 ];
 
 const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
@@ -47,6 +45,31 @@ const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
   exec_commands: "执行命令",
   send_keys: "发送按键",
 };
+
+// Mirrors the backend labels for command-rule kinds; unknown kinds render as-is.
+const COMMAND_KIND_LABEL: Record<string, string> = {
+  sudo: "sudo 提权",
+  write_fs: "文件写入",
+  service: "服务与系统设置变更",
+  docker_mutate: "Docker 容器变更",
+  package: "软件包安装与卸载",
+  process: "新建终端",
+  db_write: "数据库写入",
+  shell_pipe: "管道执行",
+  schedule: "定时提醒",
+  perm: "权限与属主变更",
+  shell_history: "读取 shell 历史",
+};
+
+function isCommandRule(rule: AiGrantRule): boolean {
+  return rule.action === "exec_commands" || rule.action === "send_keys";
+}
+
+// Command rules without kinds predate scoped rules: they are kept and
+// revocable but the guard no longer auto-approves them.
+function isLegacyRule(rule: AiGrantRule): boolean {
+  return isCommandRule(rule) && (rule.kinds ?? []).length === 0;
+}
 
 const RULE_EXPIRY_OPTIONS: { value: string; label: string; millis: number }[] = [
   { value: "1d", label: "1 天", millis: 86_400_000 },
@@ -76,7 +99,11 @@ type GrantTarget = { id: string; name: string; kind: string };
 
 function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action as AiGrantRuleAction] ?? rule.action;
-  return rule.path ? `${action} ${rule.path}` : action;
+  if (rule.path) return `${action} ${rule.path}`;
+  const parts = (rule.kinds ?? []).map((kind) =>
+    kind === "program" ? `${(rule.programs ?? []).join("、")} 命令` : (COMMAND_KIND_LABEL[kind] ?? kind),
+  );
+  return parts.length > 0 ? `${action}：${parts.join("、")}` : action;
 }
 
 function ruleExpiryText(rule: AiGrantRule, now: number): string {
@@ -94,7 +121,7 @@ interface GrantState {
   grants: Record<string, AiDeviceGrant>;
   rules: AiGrantRule[];
   setGrant: (target: GrantTarget, kind: AiGrantKind, on: boolean) => Promise<void>;
-  addRule: (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string) => Promise<boolean>;
+  addRule: (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string, unattended: boolean) => Promise<boolean>;
   revokeRule: (rule: AiGrantRule) => Promise<void>;
   revokeAll: (target: GrantTarget) => Promise<void>;
   busy: string | null;
@@ -169,7 +196,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
       const confirmed = await ask(
-        `确定要让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问吗？\n\n只读模式下同样生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
+        `确定要让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问吗？\n\n只读模式、定时任务和生产环境中不生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
         { title: "开启免确认授权", kind: "warning" },
       );
       if (!confirmed) return;
@@ -195,20 +222,20 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     }
   };
 
-  const addRule = async (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string) => {
+  const addRule = async (target: GrantTarget, action: AiGrantRuleAction, path: string, expiry: string, unattended: boolean) => {
     const needsPath = RULE_ACTION_OPTIONS.find((o) => o.value === action)?.needsPath ?? true;
     const pattern = path.trim();
     if (needsPath && pattern === "") return false;
     const option = RULE_EXPIRY_OPTIONS.find((o) => o.value === expiry) ?? RULE_EXPIRY_OPTIONS[0];
     const scope = needsPath ? `${RULE_ACTION_LABEL[action]} ${pattern}` : RULE_ACTION_LABEL[action];
     const confirmed = await ask(
-      `确定要为「${target.name}」添加授权规则吗？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问，只读模式下同样生效；高危和无法判断的操作仍会询问。`,
+      `确定要为「${target.name}」添加授权规则吗？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问；只读模式和生产环境中不生效，高危和无法判断的操作仍会询问。${unattended ? "\n\n定时任务运行时也会自动放行匹配的操作。" : ""}`,
       { title: "添加授权规则", kind: "warning" },
     );
     if (!confirmed) return false;
     setBusy(target.id);
     try {
-      const saved = await grantApi.ruleSet(target.id, action, needsPath ? pattern : "", option.millis === 0 ? 0 : Date.now() + option.millis);
+      const saved = await grantApi.ruleSet(target.id, action, needsPath ? pattern : "", option.millis === 0 ? 0 : Date.now() + option.millis, unattended);
       setRules((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
       pushToast("success", `已添加规则：${target.name} ${scope}`);
       return true;
@@ -398,6 +425,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
   const [action, setAction] = useState<AiGrantRuleAction>("edit_file");
   const [path, setPath] = useState("");
   const [expiry, setExpiry] = useState(RULE_EXPIRY_OPTIONS[0].value);
+  const [unattended, setUnattended] = useState(false);
   const grant = state.grants[target.id];
   const rules = state.rules.filter((r) => r.deviceId === target.id);
   const busy = state.busy === target.id;
@@ -433,6 +461,19 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               <span className="min-w-0 flex-1 truncate font-mono text-neutral-300" title={ruleScopeText(rule)}>
                 {ruleScopeText(rule)}
               </span>
+              {isLegacyRule(rule) && (
+                <span
+                  className="nx-count shrink-0 text-red-300"
+                  title="旧版整机规则已不再自动放行，相关操作会重新询问；可撤销后在确认卡上按范围重新永久允许"
+                >
+                  已停用
+                </span>
+              )}
+              {rule.unattended && (
+                <span className="nx-count shrink-0" title="定时任务运行时也会自动放行匹配的操作">
+                  定时任务可用
+                </span>
+              )}
               <span className={`shrink-0 text-[10.5px] ${(rule.expiresAt ?? 0) !== 0 && (rule.expiresAt ?? 0) <= now ? "text-red-300" : "text-neutral-500"}`}>
                 {ruleExpiryText(rule, now)}
               </span>
@@ -474,13 +515,24 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
                 onChange={setExpiry}
                 options={RULE_EXPIRY_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
               />
+              <label className="flex cursor-pointer items-center gap-1 text-[10.5px] text-neutral-400" title="勾选后，定时任务运行时也会自动放行匹配的操作">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5"
+                  aria-label="允许定时任务使用此规则"
+                  checked={unattended}
+                  onChange={(event) => setUnattended(event.target.checked)}
+                />
+                允许定时任务使用
+              </label>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 disabled={busy || (needsPath && path.trim() === "")}
                 onClick={() =>
-                  void state.addRule(target, action, path, expiry).then((saved) => {
+                  void state.addRule(target, action, path, expiry, unattended).then((saved) => {
                     if (saved) {
                       setPath("");
+                      setUnattended(false);
                       setFormOpen(false);
                     }
                   })

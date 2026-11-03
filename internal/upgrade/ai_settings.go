@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -505,7 +506,8 @@ func findAIGrantRule(rules []guard.GrantRule, id string) (guard.GrantRule, bool)
 
 func aiGrantRuleKeyConflict(rules []guard.GrantRule, candidate guard.GrantRule) bool {
 	for _, rule := range rules {
-		if rule.ID != candidate.ID && rule.DeviceID == candidate.DeviceID && rule.Action == candidate.Action && rule.Path == candidate.Path {
+		if rule.ID != candidate.ID && rule.DeviceID == candidate.DeviceID && rule.Action == candidate.Action && rule.Path == candidate.Path &&
+			slices.Equal(rule.Kinds, candidate.Kinds) && slices.Equal(rule.Programs, candidate.Programs) {
 			return true
 		}
 	}

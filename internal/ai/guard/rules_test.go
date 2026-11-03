@@ -55,19 +55,19 @@ func TestAddRuleValidation(t *testing.T) {
 	t.Parallel()
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	if _, err := grants.AddRule(ctx, " ", "write_file", "/var/log/**", time.Time{}); err == nil {
+	if _, err := grants.AddRule(ctx, " ", "write_file", "/var/log/**", RuleScope{}, time.Time{}); err == nil {
 		t.Fatal("empty device accepted")
 	}
-	if _, err := grants.AddRule(ctx, "device-a", "docker_exec", "", time.Time{}); err == nil {
+	if _, err := grants.AddRule(ctx, "device-a", "docker_exec", "", RuleScope{}, time.Time{}); err == nil {
 		t.Fatal("unsupported action accepted")
 	}
-	if _, err := grants.AddRule(ctx, "device-a", "write_file", "", time.Time{}); err == nil {
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "", RuleScope{}, time.Time{}); err == nil {
 		t.Fatal("write rule without path accepted")
 	}
-	if _, err := grants.AddRule(ctx, "device-a", "exec_commands", "/var/log/**", time.Time{}); err == nil {
+	if _, err := grants.AddRule(ctx, "device-a", "exec_commands", "/var/log/**", RuleScope{Kinds: []Kind{KindService}}, time.Time{}); err == nil {
 		t.Fatal("exec rule with path accepted")
 	}
-	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Now().Add(-time.Minute)); err == nil {
+	if _, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Now().Add(-time.Minute)); err == nil {
 		t.Fatal("past expiry accepted")
 	}
 	if rules := mustGrantRules(t, grants); len(rules) != 0 {
@@ -78,7 +78,7 @@ func TestAddRuleValidation(t *testing.T) {
 func TestGrantRuleCoversOnlyScopedActionAndPath(t *testing.T) {
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestGrantRuleCoversOnlyScopedActionAndPath(t *testing.T) {
 func TestGrantRuleActionWideCoversOldEvaluate(t *testing.T) {
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	if _, err := grants.AddRule(ctx, "device-a", "send_keys", "", time.Time{}); err != nil {
+	if _, err := grants.AddRule(ctx, "device-a", "send_keys", "", RuleScope{Kinds: []Kind{KindProcess}}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	ruling := Confirm(KindProcess, "终端控制键可能中断或改变程序")
@@ -128,7 +128,7 @@ func TestGrantRuleActionWideCoversOldEvaluate(t *testing.T) {
 func TestGrantRuleExpiry(t *testing.T) {
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	if _, err := grants.AddRule(ctx, "device-a", "exec_commands", "", time.Now().Add(time.Hour)); err != nil {
+	if _, err := grants.AddRule(ctx, "device-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindWriteFS}}, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	ruling := Confirm(KindWriteFS, "写入或编辑文件")
@@ -148,7 +148,7 @@ func TestGrantRuleAuditAndRevoke(t *testing.T) {
 	recorder := &grantAuditRecorder{}
 	grants, settings := newTestGrants(t, recorder.record)
 	ctx := context.Background()
-	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	rule, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,11 +188,11 @@ func TestGrantRuleAuditAndRevoke(t *testing.T) {
 func TestGrantRuleSameScopeUpdatesInsteadOfDuplicating(t *testing.T) {
 	grants, _ := newTestGrants(t, nil)
 	ctx := context.Background()
-	first, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Now().Add(time.Hour))
+	first, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Now().Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	second, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestGrantRuleSameScopeUpdatesInsteadOfDuplicating(t *testing.T) {
 	grants.mu.Lock()
 	grants.states[""].rules[0].ExpiresAt = grants.now().Add(-time.Millisecond).UnixMilli()
 	grants.mu.Unlock()
-	revived, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	revived, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestGrantRuleSameScopeUpdatesInsteadOfDuplicating(t *testing.T) {
 func TestGrantRulePersistenceRoundTrip(t *testing.T) {
 	grants, settings := newTestGrants(t, nil)
 	ctx := context.Background()
-	created, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", time.Time{})
+	created, err := grants.AddRule(ctx, "device-a", "write_file", "/var/log/**", RuleScope{}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

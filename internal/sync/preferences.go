@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -164,10 +165,7 @@ func (e *Engine) collectAIGrantObjects(ctx context.Context, objects map[string]l
 		}
 		for _, rule := range rules.Current {
 			id := aiGrantRulePrefix + rule.ID
-			payload, err := marshalObject(aiGrantRuleObject{
-				ID: id, DeviceID: rule.DeviceID, Action: rule.Action, Path: rule.Path,
-				ExpiresAt: rule.ExpiresAt, CreatedAt: rule.CreatedAt, UpdatedAt: rule.UpdatedAt,
-			})
+			payload, err := marshalObject(aiGrantRuleObjectFor(id, rule))
 			if err != nil {
 				return err
 			}
@@ -390,6 +388,21 @@ func (e *Engine) applyAIGrantDevice(ctx context.Context, plaintext []byte, repor
 	return true, false
 }
 
+func aiGrantRuleObjectFor(id string, rule guard.GrantRule) aiGrantRuleObject {
+	object := aiGrantRuleObject{
+		ID: id, DeviceID: rule.DeviceID, Action: rule.Action, Path: rule.Path,
+		Programs: append([]string(nil), rule.Programs...), Unattended: rule.Unattended,
+		ExpiresAt: rule.ExpiresAt, CreatedAt: rule.CreatedAt, UpdatedAt: rule.UpdatedAt,
+	}
+	for _, kind := range rule.Kinds {
+		object.Kinds = append(object.Kinds, string(kind))
+	}
+	if len(object.Programs) == 0 {
+		object.Programs = nil
+	}
+	return object
+}
+
 func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	if _, err := e.aiOwnerID(ctx); err != nil {
 		report.warnf("AI 授权规则应用需要账号身份: %v", err)
@@ -413,13 +426,28 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 		report.warnf("AI 授权规则 %s 动作不受支持: %s", payload.ID, payload.Action)
 		return false, false
 	}
-	if guard.RuleActionNeedsPath(payload.Action) && payload.Path == "" {
-		report.warnf("AI 授权规则 %s 缺少路径范围", payload.ID)
-		return false, false
+	scope := guard.RuleScope{Kinds: make([]guard.Kind, 0, len(payload.Kinds)), Programs: append([]string(nil), payload.Programs...), Unattended: payload.Unattended}
+	for _, kind := range payload.Kinds {
+		scope.Kinds = append(scope.Kinds, guard.Kind(kind))
 	}
-	if !guard.RuleActionNeedsPath(payload.Action) && payload.Path != "" {
-		report.warnf("AI 授权规则 %s 的路径范围不受支持", payload.ID)
-		return false, false
+	slices.Sort(scope.Kinds)
+	scope.Kinds = slices.Compact(scope.Kinds)
+	slices.Sort(scope.Programs)
+	scope.Programs = slices.Compact(scope.Programs)
+	// An old whole-device command rule is still accepted: it is stored as a
+	// legacy rule that never authorizes anything.
+	legacyCommand := !guard.RuleActionNeedsPath(payload.Action) && len(scope.Kinds) == 0 && len(scope.Programs) == 0 && payload.Path == ""
+	if !legacyCommand {
+		if err := guard.ValidateRuleScope(payload.Action, payload.Path, scope); err != nil {
+			report.warnf("AI 授权规则 %s 不受支持: %v", payload.ID, err)
+			return false, false
+		}
+	}
+	if len(scope.Kinds) == 0 {
+		scope.Kinds = nil
+	}
+	if len(scope.Programs) == 0 {
+		scope.Programs = nil
 	}
 	if err := e.validateAIGrantTarget(ctx, payload.DeviceID); err != nil {
 		report.warnf("AI 授权目标校验失败: %v", err)
@@ -443,6 +471,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	}
 	applied := guard.GrantRule{
 		ID: ruleID, DeviceID: payload.DeviceID, Action: payload.Action, Path: payload.Path,
+		Kinds: scope.Kinds, Programs: scope.Programs, Unattended: payload.Unattended,
 		ExpiresAt: payload.ExpiresAt, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 	}.Renewed()
 	index := -1
@@ -454,10 +483,7 @@ func (e *Engine) applyAIGrantRule(ctx context.Context, plaintext []byte, report 
 	}
 	if index >= 0 {
 		local := rules.Current[index]
-		localPlaintext, err := marshalObject(aiGrantRuleObject{
-			ID: payload.ID, DeviceID: local.DeviceID, Action: local.Action, Path: local.Path,
-			ExpiresAt: local.ExpiresAt, CreatedAt: local.CreatedAt, UpdatedAt: local.UpdatedAt,
-		})
+		localPlaintext, err := marshalObject(aiGrantRuleObjectFor(payload.ID, local))
 		if err != nil {
 			return false, false
 		}
@@ -950,13 +976,16 @@ type CollectAIGrantDevice struct {
 }
 
 type CollectAIGrantRule struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID         string   `json:"id"`
+	DeviceID   string   `json:"deviceId"`
+	Action     string   `json:"action"`
+	Path       string   `json:"path,omitempty"`
+	Kinds      []string `json:"kinds,omitempty"`
+	Programs   []string `json:"programs,omitempty"`
+	Unattended bool     `json:"unattended,omitempty"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	UpdatedAt  int64    `json:"updatedAt"`
 }
 
 type CollectAIGrantMode struct {
@@ -1017,6 +1046,7 @@ func (s *Service) CollectAIGrants(ctx context.Context) (CollectAIGrants, error) 
 			}
 			result.Rules = append(result.Rules, CollectAIGrantRule{
 				ID: payload.ID, DeviceID: payload.DeviceID, Action: payload.Action, Path: payload.Path,
+				Kinds: payload.Kinds, Programs: payload.Programs, Unattended: payload.Unattended,
 				ExpiresAt: payload.ExpiresAt, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 			})
 		case strings.HasPrefix(id, aiGrantModePrefix):

@@ -211,6 +211,20 @@ describe("ai_grant payloads match Go byte for byte", () => {
     expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(fixtureText("aiGrantRuleMinimal"));
   });
 
+  it("writes kinds, programs and unattended after path in the Go field order, only when set", () => {
+    const r: SyncCollectAIGrantRule = {
+      id: "rule/r-3", deviceId: "dev-3", action: "exec_commands", path: "", kinds: ["service", "program"], programs: ["git"],
+      unattended: true, expiresAt: 5, createdAt: 1, updatedAt: 2,
+    };
+    expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(
+      '{"id":"rule/r-3","deviceId":"dev-3","action":"exec_commands","kinds":["service","program"],"programs":["git"],"unattended":true,"expiresAt":5,"createdAt":1,"updatedAt":2}',
+    );
+    const empty: SyncCollectAIGrantRule = { ...r, kinds: [], programs: [], unattended: false };
+    expect(marshalSyncPayload(aiGrantRulePayload(empty))).toBe(
+      '{"id":"rule/r-3","deviceId":"dev-3","action":"exec_commands","expiresAt":5,"createdAt":1,"updatedAt":2}',
+    );
+  });
+
   it("includes every device permission-mode field without omitempty", () => {
     const m: SyncCollectAIGrantMode = { id: "mode/dev-1", deviceId: "dev-1", mode: "read_only", updatedAt: 1700000000000 };
     expect(marshalSyncPayload(aiGrantModePayload(m))).toBe(fixtureText("aiGrantMode"));

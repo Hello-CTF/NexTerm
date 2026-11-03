@@ -240,13 +240,17 @@ type aiGrantDeviceObject struct {
 }
 
 type aiGrantRuleObject struct {
-	ID        string `json:"id"`
-	DeviceID  string `json:"deviceId"`
-	Action    string `json:"action"`
-	Path      string `json:"path,omitempty"`
-	ExpiresAt int64  `json:"expiresAt,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID       string `json:"id"`
+	DeviceID string `json:"deviceId"`
+	Action   string `json:"action"`
+	Path     string `json:"path,omitempty"`
+	// Field order is part of the browser-side payload contract.
+	Kinds      []string `json:"kinds,omitempty"`
+	Programs   []string `json:"programs,omitempty"`
+	Unattended bool     `json:"unattended,omitempty"`
+	ExpiresAt  int64    `json:"expiresAt,omitempty"`
+	CreatedAt  int64    `json:"createdAt"`
+	UpdatedAt  int64    `json:"updatedAt"`
 }
 
 type aiGrantModeObject struct {

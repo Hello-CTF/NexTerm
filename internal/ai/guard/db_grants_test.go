@@ -159,12 +159,11 @@ func TestEvaluateDBResourceStripsSessionMemoryForProduction(t *testing.T) {
 		t.Fatalf("configured production db decision = %+v", decision)
 	}
 
-	// An explicit persistent device grant still authorizes production: the
-	// session-memory ban does not weaken deliberate long-term grants.
+	// Production targets are never covered by long-term authorization either.
 	if _, err := grants.Grant(ctx, "asset-a", []GrantKind{GrantKindDBQuery}); err != nil {
 		t.Fatal(err)
 	}
-	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-4", production); decision.Action != ActionAllow {
+	if decision := grants.EvaluateDBResource(ctx, Config{Mode: ReadWrite}, ruling, memory, "conn-a", "db_query", "run-4", production); decision.Action != ActionAsk {
 		t.Fatalf("granted production db decision = %+v", decision)
 	}
 }
