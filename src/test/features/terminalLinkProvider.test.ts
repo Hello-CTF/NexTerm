@@ -153,6 +153,16 @@ describe("link stitching rules", () => {
     expect(urls(hard(`Docs: ${head.slice(0, 34)}`, "abcdef", ""), 40)).toEqual([head.slice(0, 34)]);
   });
 
+  it("excludes pipe, backslash and caret from URLs", () => {
+    expect(urls(hard("https://a.example/x|grep"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x\\n"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x^M"), 80)).toEqual(["https://a.example/x"]);
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "bb|grep"), 40)).toEqual([full]);
+    expect(urls(hard(full, "bb\\cc"), 40)).toEqual([full]);
+    expect(urls(hard(full, "bb^cc"), 40)).toEqual([full]);
+  });
+
   it("does not join a boxed URL with a following boxed sentence", () => {
     const rows = hard("│ https://a.example/x      │", "│ Paste code here          │");
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);

@@ -45,8 +45,8 @@ interface LogicalLine {
 
 // First-row URLs end at full-width punctuation; continuation fragments are
 // printable ASCII only.
-const URL_START = /https?:\/\/[^\s"'<>`│┃║。，；：！？\u3000-\u303f\uff00-\uff60]+/gi;
-const URL_CHARS = /^(?:(?!["'<>`])[\x21-\x7e])+/;
+const URL_START = /https?:\/\/[^\s"'<>`│┃║|\\^。，；：！？\u3000-\u303f\uff00-\uff60]+/gi;
+const URL_CHARS = /^(?:(?!["'<>`|\\^])[\x21-\x7e])+/;
 const SCHEME_AT_START = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME = /https?:\/\//i;
 const ONLY_TRAILING_DECOR = /^[\s│┃║|]*$/;
