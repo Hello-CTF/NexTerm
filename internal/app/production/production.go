@@ -16,6 +16,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostports"
+	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
@@ -67,6 +69,8 @@ type ProductionServices struct {
 	Runbook       *runbookIPCService
 	Forward       *forward.Service
 	Docker        *docker.Service
+	hostPorts     *hostports.Service
+	hostProcs     *hostprocs.Service
 	Retention     *RetentionRunner
 	Guard         *guard.Manager
 	Agent         *agent.Runner
@@ -419,6 +423,15 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.Docker != nil {
 		modules = append(modules, Module{Name: "docker", RegisterCommands: services.terminalCommands.registerDocker, Component: closeDockerComponent(services.Docker)})
+	}
+	if services.hostPorts != nil {
+		modules = append(modules, hostPortsModule(services.hostPorts))
+	}
+	if services.hostProcs != nil {
+		modules = append(modules, hostProcsModule(services.hostProcs))
+	}
+	if module, ok := previewModule(services.desktop); ok {
+		modules = append(modules, module)
 	}
 	if services.Retention != nil {
 		modules = append(modules, Module{Name: "retention", Component: services.Retention})
