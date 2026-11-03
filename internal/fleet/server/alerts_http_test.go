@@ -174,7 +174,7 @@ func TestNewAlertEvaluatorUsesRegistryPresence(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, control := wsPair(t)
-	f.service.registry.RegisterControl(device, control, "", nil)
+	f.service.registry.RegisterControl(device, control, "", "", nil)
 	tick := func() {
 		t.Helper()
 		if err := evaluator.Tick(context.Background()); err != nil {
