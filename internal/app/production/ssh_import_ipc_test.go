@@ -44,7 +44,7 @@ func sshImportTestRigModeWithMaster(t *testing.T, desktop, initializeMaster bool
 	credentialVault := vault.Load(ctx, database)
 	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop}
 	dispatcher := ipc.NewDispatcher()
-	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
+	if err := registerVaultCommands(dispatcher, credentialVault, database, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := planner.registerCommands(dispatcher); err != nil {

@@ -226,7 +226,7 @@ func productionModules(services ProductionServices) []Module {
 		modules = append(modules, Module{
 			Name: "vault",
 			RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
-				return registerVaultCommands(dispatcher, services.Vault, services.Store, services.Events)
+				return registerVaultCommands(dispatcher, services.Vault, services.Store, services.Events, services.desktop)
 			},
 			Component: newVaultComponent(services.Vault),
 		})
