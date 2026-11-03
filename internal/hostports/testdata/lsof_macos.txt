@@ -1,0 +1,6 @@
+COMMAND     PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+rapportd    412   dev    8u  IPv4 0x6b6d3e1c3f9a1b2d      0t0  TCP *:49152 (LISTEN)
+rapportd    412   dev    9u  IPv6 0x6b6d3e1c3f9a1c3e      0t0  TCP *:49152 (LISTEN)
+node        980   dev   23u  IPv6 0x6b6d3e1c3f9a2d4f      0t0  TCP [::1]:8080 (LISTEN)
+postgres     55   dev    7u  IPv4 0x6b6d3e1c3f9a3e50      0t0  TCP 127.0.0.1:5432 (LISTEN)
+Google\x20Chrome    77   dev   30u  IPv4 0x6b6d3e1c3f9a4f61      0t0  TCP 127.0.0.1:9222 (LISTEN)

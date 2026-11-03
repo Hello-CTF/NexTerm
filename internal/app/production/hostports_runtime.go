@@ -1,0 +1,96 @@
+package production
+
+import (
+	"context"
+	"encoding/json"
+	"runtime"
+	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/hostports"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/device"
+)
+
+// newProductionHostPortsService runs port discovery and connectivity probes on the session's exec channel,
+// after the caller has been authorized for the session.
+func newProductionHostPortsService(sessions *session.Manager) *hostports.Service {
+	return hostports.NewService(func(ctx context.Context, sessionID string) (hostports.Target, error) {
+		ctx = productionSessionRequestContext(ctx)
+		connected, err := sessions.SessionFor(ctx, sessionID)
+		if err != nil {
+			return hostports.Target{}, session.IPCError(err)
+		}
+		transport, err := sessions.TransportFor(ctx, sessionID)
+		if err != nil {
+			return hostports.Target{}, session.IPCError(err)
+		}
+		shell := hostPortsShellForGOOS(connected.Asset(), runtime.GOOS)
+		// Device agents know their real platform; it overrides the asset-level guess.
+		if deviceTransport, ok := transport.(*device.Transport); ok {
+			shell = hostports.ShellPOSIX
+			if deviceTransport.Platform() == "windows" {
+				shell = hostports.ShellPowerShell
+			}
+		}
+		return hostports.Target{
+			Runner: transport,
+			Shell:  shell,
+			LastOutputAgo: func() (time.Duration, bool) {
+				tabs, err := sessions.ListTabsFor(ctx)
+				if err != nil {
+					return 0, false
+				}
+				return terminalOutputAge(tabs, sessionID)
+			},
+		}, nil
+	})
+}
+
+// hostPortsShellForGOOS picks the command language of the exec channel. SSH hosts stay unknown unless the
+// asset names PowerShell, because Windows OpenSSH hosts default to cmd and are told apart by probing.
+func hostPortsShellForGOOS(asset session.Asset, goos string) hostports.Shell {
+	switch asset.Kind {
+	case session.KindWinRM:
+		return hostports.ShellPowerShell
+	case session.KindLocal:
+		if goos == "windows" {
+			return hostports.ShellPowerShell
+		}
+		return hostports.ShellPOSIX
+	case session.KindDevice:
+		return hostports.ShellPOSIX
+	}
+	var options struct {
+		Shell string `json:"shell"`
+	}
+	if raw, err := json.Marshal(asset.Options); err == nil {
+		_ = json.Unmarshal(raw, &options)
+	}
+	if windowsShell(options.Shell) {
+		return hostports.ShellPowerShell
+	}
+	return hostports.ShellUnknown
+}
+
+// terminalOutputAge is the shortest time since output over the session's terminals that have produced any.
+func terminalOutputAge(tabs []session.TabInfo, sessionID string) (time.Duration, bool) {
+	var best time.Duration
+	found := false
+	for _, tab := range tabs {
+		if tab.SessionID != sessionID || tab.LastOutputAt == 0 {
+			continue
+		}
+		age := time.Duration(max(tab.LastOutputMSAgo, 0)) * time.Millisecond
+		if !found || age < best {
+			best, found = age, true
+		}
+	}
+	return best, found
+}
+
+func hostPortsModule(service *hostports.Service) Module {
+	return Module{Name: "host-ports", RegisterCommands: func(dispatcher *ipc.Dispatcher) error {
+		return service.RegisterCommands(dispatcher)
+	}}
+}
