@@ -1593,6 +1593,7 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		{name: "SnippetInputRequest", want: []string{"name: string;", "body: string;", "groupId?: string | null;", "sort?: number;"}},
 		{name: "SnippetPatchRequest", want: []string{"id: string;", "name: string;", "body: string;", "groupId?: string | null;", "sort?: number | null;"}},
 		{name: "AuditQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;", "limit?: number;", "offset?: number;"}},
+		{name: "AuditTimelineRequest", want: []string{"assetId?: string | null;", "origins?: string[];", "from?: number | null;", "to?: number | null;", "limit?: number;", "cursor?: "}},
 		{name: "AuditDTO", want: []string{"payload: unknown;", "exitCode: number | null;", "durationMs: number | null;"}},
 		{name: "AuditCountDTO", want: []string{"total: number;"}},
 		{name: "CommandLogQueryRequest", want: []string{"sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;", "limit?: number;", "offset?: number;"}},

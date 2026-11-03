@@ -14,12 +14,12 @@ type auditTimelineCursorDTO struct {
 }
 
 type auditTimelineRequest struct {
-	AssetID *string                 `json:"assetId"`
-	Origins []string                `json:"origins"`
-	From    *int64                  `json:"from"`
-	To      *int64                  `json:"to"`
-	Limit   int64                   `json:"limit"`
-	Cursor  *auditTimelineCursorDTO `json:"cursor"`
+	AssetID *string                 `json:"assetId,omitempty"`
+	Origins []string                `json:"origins,omitempty"`
+	From    *int64                  `json:"from,omitempty"`
+	To      *int64                  `json:"to,omitempty"`
+	Limit   int64                   `json:"limit,omitempty"`
+	Cursor  *auditTimelineCursorDTO `json:"cursor,omitempty"`
 }
 
 type auditTimelineItemDTO struct {
