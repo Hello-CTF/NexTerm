@@ -1,11 +1,16 @@
 package production
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hostports"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 func TestHostPortsShellSelection(t *testing.T) {
@@ -45,5 +50,79 @@ func TestTerminalOutputAge(t *testing.T) {
 	}
 	if _, ok := terminalOutputAge([]session.TabInfo{{SessionID: "a"}}, "a"); ok {
 		t.Fatal("tab without output reported an age")
+	}
+}
+
+type recordingAuditor struct {
+	inputs []store.AuditInput
+	ctxs   []context.Context
+}
+
+func (r *recordingAuditor) AuditInsert(ctx context.Context, input store.AuditInput) error {
+	r.inputs = append(r.inputs, input)
+	r.ctxs = append(r.ctxs, ctx)
+	return nil
+}
+
+type auditRunner struct{ result base.ExecResult }
+
+func (r auditRunner) Exec(context.Context, string, base.ExecOptions) (base.ExecResult, error) {
+	return r.result, nil
+}
+
+func TestHostPortsProbeAuditRecordsExecutionOnly(t *testing.T) {
+	zero := 0
+	auditor := &recordingAuditor{}
+	service := hostports.NewService(func(context.Context, string) (hostports.Target, error) {
+		return hostports.Target{Runner: auditRunner{base.ExecResult{Stdout: "ok", ExitCode: &zero}}, Shell: hostports.ShellPOSIX, AssetID: "asset-9"}, nil
+	})
+	service.SetAudit(hostPortsAudit(auditor))
+	ctx := ipc.WithUserID(t.Context(), "user-7")
+	req := hostports.ProbeRequest{Method: "http", URL: "http://example.com/?a=1&b=2"}
+
+	if _, err := service.Probe(ctx, hostports.ProbeArgs{SessionID: "s1", ProbeRequest: req, DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(auditor.inputs) != 0 {
+		t.Fatalf("dry run audited: %+v", auditor.inputs)
+	}
+	result, err := service.Probe(ctx, hostports.ProbeArgs{SessionID: "s1", ProbeRequest: req})
+	if err != nil || len(auditor.inputs) != 1 {
+		t.Fatalf("err=%v inputs=%d", err, len(auditor.inputs))
+	}
+	in := auditor.inputs[0]
+	if in.SessionID == nil || *in.SessionID != "s1" || in.AssetID == nil || *in.AssetID != "asset-9" ||
+		in.Kind != "port_probe" || in.Source != "user" || in.ExitCode == nil || *in.ExitCode != 0 || in.DurationMS == nil {
+		t.Fatalf("input = %+v", in)
+	}
+	if got := ipc.OwnerID(auditor.ctxs[0]); got != "user-7" {
+		t.Fatalf("audit owner = %q", got)
+	}
+	raw, err := json.Marshal(in.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["command"] != result.Command || payload["method"] != "http" || payload["url"] != req.URL || payload["ok"] != true {
+		t.Fatalf("payload = %v", payload)
+	}
+}
+
+func TestForgetHostPortsOnStatus(t *testing.T) {
+	var forgotten []string
+	forget := func(id string) { forgotten = append(forgotten, id) }
+	for _, status := range []session.Status{session.StatusConnected, session.StatusConnecting} {
+		forgetHostPortsOnStatus(forget, session.StatusEvent{SessionID: "s", Status: status})
+	}
+	if len(forgotten) != 0 {
+		t.Fatalf("forgot a live session: %v", forgotten)
+	}
+	forgetHostPortsOnStatus(forget, session.StatusEvent{SessionID: "s", Status: session.StatusDisconnected})
+	forgetHostPortsOnStatus(nil, session.StatusEvent{SessionID: "s", Status: session.StatusFailed})
+	if len(forgotten) != 1 || forgotten[0] != "s" {
+		t.Fatalf("forgotten = %v", forgotten)
 	}
 }
