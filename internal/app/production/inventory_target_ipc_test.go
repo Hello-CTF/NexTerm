@@ -1441,3 +1441,27 @@ func TestInventoryServerWatchStoreRequiresDataDir(t *testing.T) {
 }
 
 var _ fleetinventory.CommandRunner = (*recordingInventoryRunner)(nil)
+
+func TestInventoryServerPathSourcesRejectedByStructuralFlag(t *testing.T) {
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	writeInventoryTestFile(t, filepath.Join(home, ".ssh", "config"), "Host a\n  HostName a.example\n")
+	service, database := newInventoryTestService(t, false)
+	service.multiUser = true
+	runner := &recordingInventoryRunner{outputs: kubernetesDiscoveryOutputs()}
+	service.runner = runner
+	dispatcher := newInventoryExecDispatcher(t, service)
+	for _, source := range []string{store.InventorySourceSSHConfig, store.InventorySourceDockerContext, store.InventorySourceKubernetes} {
+		response := dispatchInventoryTest(t, dispatcher, context.Background(), "inventory_discover", inventoryDiscoverRequest{Source: source}, nil)
+		requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+	}
+	if runner.callCount() != 0 {
+		t.Fatalf("rejected sources ran commands: %+v", runner.calls)
+	}
+	assets, err := database.AssetList(context.Background(), true)
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("rejected sources created assets: %+v err=%v", assets, err)
+	}
+}

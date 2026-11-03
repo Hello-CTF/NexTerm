@@ -114,6 +114,7 @@ type sshImportPlanner struct {
 	vault            *vault.Vault
 	termiusKeySource func() (termiusdb.KeySource, error)
 	desktop          bool
+	multiUser        bool // structural multi-user server; refuses server-path sources without an owner context too
 }
 
 type sshImportPlan struct {
@@ -131,8 +132,8 @@ type sshImportExisting struct {
 	credIDByFP    map[string]string
 }
 
-func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault, desktop bool) error {
-	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop}
+func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault, desktop, multiUser bool) error {
+	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop, multiUser: multiUser}
 	return planner.registerCommands(dispatcher)
 }
 
@@ -266,7 +267,7 @@ func sshImportPreviewIDs(preview *sshconfig.ImportPreview) ([]string, []string) 
 }
 
 func (p *sshImportPlanner) derive(ctx context.Context, source, path string, confirmed, withMaterial bool) (*sshImportPlan, error) {
-	if ipc.OwnerID(ctx) != "" {
+	if p.multiUser || ipc.OwnerID(ctx) != "" {
 		switch source {
 		case "ssh-config", "ssh-home":
 			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")

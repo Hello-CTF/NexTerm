@@ -95,6 +95,7 @@ type ProductionServices struct {
 	stagedBlobs         StagedBlobResolver
 	dataDir             string
 	desktop             bool
+	multiUser           bool // account-isolated server: server-path import sources and Kubernetes exec are refused
 	// updateChannels stores the per-machine release channel; set on the desktop only.
 	updateChannels   update.ChannelStore
 	hostKeysShared   bool
@@ -162,7 +163,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
-			withInventoryDockerAccess(services.Sessions, services.Docker))
+			withInventoryDockerAccess(services.Sessions, services.Docker), withInventoryMultiUser(services.multiUser))
 	}
 	config.Modules = append(productionModules(services), config.Modules...)
 	application, err := core.New(config)
@@ -204,7 +205,7 @@ func productionModules(services ProductionServices) []Module {
 					return err
 				}
 				if services.Vault != nil {
-					return registerSSHImportCommands(dispatcher, services.Store, services.Vault, services.desktop)
+					return registerSSHImportCommands(dispatcher, services.Store, services.Vault, services.desktop, services.multiUser)
 				}
 				return nil
 			},

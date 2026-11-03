@@ -1734,3 +1734,30 @@ func TestSSHImportServerPathSourcesRejectedForAccountOwners(t *testing.T) {
 		t.Fatalf("credentials created: %v err=%v", rows, err)
 	}
 }
+
+func TestSSHImportServerPathSourcesRejectedByStructuralFlag(t *testing.T) {
+	dispatcher, database, _, planner := sshImportTestRigModeWithMaster(t, false, true)
+	planner.multiUser = true
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyPath, _ := sshImportTestKeyFile(t, dir)
+	configPath := sshImportTestConfig(t, dir, keyPath)
+	for source, path := range map[string]string{"ssh-config": configPath, "ssh-home": dir, "termius": filepath.Join(home, "termius.db")} {
+		for _, command := range []string{"ssh_import_preview", "ssh_import_apply"} {
+			args := `{"args":{"source":"` + source + `","path":` + strconvQuote(path) + `,"confirmed":true,"hosts":[],"keys":[]}}`
+			response := dispatcher.Dispatch(t.Context(), ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
+			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+				t.Fatalf("%s %s = %+v, want unsupported", command, source, response)
+			}
+		}
+	}
+	rows, err := database.CredentialList(t.Context())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("credentials created: %v err=%v", rows, err)
+	}
+}
