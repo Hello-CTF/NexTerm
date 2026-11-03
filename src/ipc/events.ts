@@ -1,6 +1,6 @@
 import { noteEvent } from "./probeHooks";
 import { WEB } from "./env";
-import { INPUT_MAX_PENDING_BYTES, inputOverflowError, reportInputFailure } from "./inputFailure";
+import { INPUT_MAX_PENDING_BYTES, reportInputFailure, reportInputOverflow } from "./inputFailure";
 import {
   newBinaryChannel,
   onChannelReopen as onWsChannelReopen,
@@ -387,7 +387,7 @@ function sendDesktopInput(tabId: string, data: Uint8Array, http: (data: Uint8Arr
   const queued = desktopInput.get(tabId);
   if (queued) {
     if (queued.bytes + data.length > INPUT_MAX_PENDING_BYTES) {
-      reportInputFailure(tabId, inputOverflowError(data.length));
+      reportInputOverflow(tabId);
       return;
     }
     queued.chunks.push(data);

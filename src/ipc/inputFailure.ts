@@ -13,18 +13,20 @@ export const INPUT_FAILURE_THROTTLE_MS = 5000;
 let handler: ((failure: InputFailure) => void) | null = null;
 let lastReported = Number.NEGATIVE_INFINITY;
 let lastLostProbe = Number.NEGATIVE_INFINITY;
+let lastOverflow = Number.NEGATIVE_INFINITY;
 
 export function setInputFailureHandler(next: ((failure: InputFailure) => void) | null): void {
   handler = next;
   lastReported = Number.NEGATIVE_INFINITY;
   lastLostProbe = Number.NEGATIVE_INFINITY;
+  lastOverflow = Number.NEGATIVE_INFINITY;
 }
 
 export const INPUT_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 
-/** The error reported when queued terminal input exceeds the cap and `dropped` bytes are discarded. */
-export function inputOverflowError(dropped: number): { code: string; message: string } {
-  return { code: "input_overflow", message: `终端输入积压超过 4 MiB，已丢弃 ${dropped} 字节` };
+/** The error reported when queued terminal input exceeds the cap and part of it is discarded. */
+export function inputOverflowError(): { code: string; message: string } {
+  return { code: "input_overflow", message: "终端输入积压超过 4 MiB，部分输入已丢弃" };
 }
 
 export function isConnectionLostError(error: unknown): boolean {
@@ -50,6 +52,19 @@ export function reportInputFailure(tabId: string, error: unknown): void {
   }
   try {
     handler({ tabId, error, connectionLost });
+  } catch {
+    // A failing reporter must not break the input path.
+  }
+}
+
+// Overflow keeps its own window, so it is neither swallowed by a recent ordinary failure nor takes their throttle.
+export function reportInputOverflow(tabId: string): void {
+  if (!handler) return;
+  const now = Date.now();
+  if (now - lastOverflow < INPUT_FAILURE_THROTTLE_MS) return;
+  lastOverflow = now;
+  try {
+    handler({ tabId, error: inputOverflowError(), connectionLost: false });
   } catch {
     // A failing reporter must not break the input path.
   }

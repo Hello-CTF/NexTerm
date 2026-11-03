@@ -10,7 +10,7 @@ vi.mock("../ipc/wails", () => ({
   newWailsChannel: vi.fn(),
 }));
 
-import { INPUT_FAILURE_THROTTLE_MS, inputOverflowError, isConnectionLostError, reportInputFailure, setInputFailureHandler } from "../ipc/inputFailure";
+import { INPUT_FAILURE_THROTTLE_MS, inputOverflowError, isConnectionLostError, reportInputFailure, reportInputOverflow, setInputFailureHandler } from "../ipc/inputFailure";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -27,7 +27,7 @@ describe("terminal input failures", () => {
     expect(isConnectionLostError({ code: "internal", message: "终端标签页已关闭" })).toBe(true);
     expect(isConnectionLostError({ code: "internal", message: "内部错误" })).toBe(false);
     expect(isConnectionLostError(new Error("boom"))).toBe(false);
-    expect(isConnectionLostError(inputOverflowError(10))).toBe(false);
+    expect(isConnectionLostError(inputOverflowError())).toBe(false);
   });
 
   it("reports a burst of failures once per window and a connection loss separately", () => {
@@ -44,6 +44,50 @@ describe("terminal input failures", () => {
     vi.setSystemTime(1_000_000 + INPUT_FAILURE_THROTTLE_MS);
     reportInputFailure("t", { code: "disconnected", message: "断开" });
     expect(handler).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports an overflow right after an ordinary failure", () => {
+    const handler = vi.fn();
+    setInputFailureHandler(handler);
+    reportInputFailure("t", new Error("a"));
+    reportInputOverflow("t");
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect(handler.mock.calls[1][0].error).toMatchObject({ code: "input_overflow" });
+    expect(handler.mock.calls[1][0].connectionLost).toBe(false);
+  });
+
+  it("reports at most one overflow per window and again after it", () => {
+    const handler = vi.fn();
+    setInputFailureHandler(handler);
+    reportInputOverflow("t");
+    reportInputOverflow("t");
+    expect(handler).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(1_000_000 + INPUT_FAILURE_THROTTLE_MS);
+    reportInputOverflow("t");
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps ordinary failures reportable after an overflow", () => {
+    const handler = vi.fn();
+    setInputFailureHandler(handler);
+    reportInputOverflow("t");
+    reportInputFailure("t", new Error("a"));
+    reportInputFailure("t", { code: "disconnected", message: "断开" });
+    expect(handler).toHaveBeenCalledTimes(3);
+  });
+
+  it("resets the overflow window when the handler is replaced", () => {
+    const first = vi.fn();
+    setInputFailureHandler(first);
+    reportInputOverflow("t");
+    const second = vi.fn();
+    setInputFailureHandler(second);
+    reportInputOverflow("t");
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
+  it("words the overflow without a byte count", () => {
+    expect(inputOverflowError().message).not.toMatch(/\d+\s*字节/);
   });
 
   it("surfaces a failed desktop input write instead of swallowing it", async () => {
