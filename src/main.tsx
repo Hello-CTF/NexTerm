@@ -21,6 +21,7 @@ import { installLongPressContextMenu } from "./app/longPress";
 import { installInputCapitalization } from "./app/inputCapitalization";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
+import { startUnlessFramed } from "./app/frameGuard";
 import { Lazy } from "./ui/LazyBoundary";
 import { notifyAi } from "./features/inbox/inboxNotifications";
 
@@ -166,12 +167,14 @@ async function wireMobileInsets(): Promise<void> {
   window.addEventListener("orientationchange", () => void apply());
 }
 
-const publicPreviewToken =
-  typeof window === "undefined" ? null : publicPreviewTokenFromPath(window.location.pathname);
-
-if (publicPreviewToken) {
-  forceResolvedTheme("dark");
-  mount(<Lazy><PublicPreviewApp token={publicPreviewToken} /></Lazy>);
-} else {
-  void bootstrapApp();
+function start(): void {
+  const publicPreviewToken = publicPreviewTokenFromPath(window.location.pathname);
+  if (publicPreviewToken) {
+    forceResolvedTheme("dark");
+    mount(<Lazy><PublicPreviewApp token={publicPreviewToken} /></Lazy>);
+  } else {
+    void bootstrapApp();
+  }
 }
+
+if (typeof window !== "undefined") startUnlessFramed(window, document.body, start);
