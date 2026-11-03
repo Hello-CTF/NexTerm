@@ -275,7 +275,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
+		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs, config.Options.TrustForwardedFor), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),

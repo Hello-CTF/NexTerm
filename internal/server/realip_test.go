@@ -12,7 +12,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
-func newRealIPFixture(t *testing.T, trusted []string) *accountFixture {
+func newRealIPFixture(t *testing.T, trusted []string, trustForwardedFor bool) *accountFixture {
 	t.Helper()
 	database, err := store.OpenInMemory(context.Background())
 	if err != nil {
@@ -22,6 +22,7 @@ func newRealIPFixture(t *testing.T, trusted []string) *accountFixture {
 	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
 	config.Options.TrustedProxyCIDRs = trusted
+	config.Options.TrustForwardedFor = trustForwardedFor
 	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
@@ -53,7 +54,7 @@ func (f *accountFixture) failUntilThrottled(t *testing.T, xff string) {
 }
 
 func TestRealIPTrustedProxySeparatesLoginThrottle(t *testing.T) {
-	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"})
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
 	fixture.createUser(t, "root", "password-a1")
 
 	fixture.failUntilThrottled(t, "203.0.113.9")
@@ -66,7 +67,7 @@ func TestRealIPTrustedProxySeparatesLoginThrottle(t *testing.T) {
 }
 
 func TestRealIPUntrustedProxyIgnoresForwardedFor(t *testing.T) {
-	fixture := newRealIPFixture(t, nil)
+	fixture := newRealIPFixture(t, nil, true)
 	fixture.createUser(t, "root", "password-a1")
 
 	fixture.failUntilThrottled(t, "203.0.113.9")
@@ -76,7 +77,7 @@ func TestRealIPUntrustedProxyIgnoresForwardedFor(t *testing.T) {
 }
 
 func TestRealIPSessionOriginUsesForwardedClient(t *testing.T) {
-	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"})
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
 	fixture.createUser(t, "root", "password-a1")
 
 	call := fixture.loginVia(t, "password-a1", "198.51.100.77, 127.0.0.1")
@@ -114,6 +115,7 @@ func TestRealIPFleetEnrollThrottleFollowsForwardedClient(t *testing.T) {
 	config := testConfig(t, false)
 	config.Fleet = newTestFleet(t, false)
 	config.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	config.Options.TrustForwardedFor = true
 	_, httpServer := newTestHTTP(t, config)
 
 	throttled := false
@@ -131,6 +133,7 @@ func TestRealIPFleetEnrollThrottleFollowsForwardedClient(t *testing.T) {
 func TestRealIPTransportGuardResolvesBeforePreflight(t *testing.T) {
 	config := testConfig(t, false)
 	config.Options.TrustedProxyCIDRs = []string{"127.0.0.1/32"}
+	config.Options.TrustForwardedFor = true
 	server, err := New(config)
 	if err != nil {
 		t.Fatal(err)
@@ -146,5 +149,58 @@ func TestRealIPTransportGuardResolvesBeforePreflight(t *testing.T) {
 	handler.ServeHTTP(httptest.NewRecorder(), request)
 	if seen != "203.0.113.9" {
 		t.Fatalf("clientIP behind guard = %q", seen)
+	}
+}
+
+func TestRealIPTrustedCIDRsAloneIgnoreForwardedFor(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, false)
+	fixture.createUser(t, "root", "password-a1")
+
+	fixture.failUntilThrottled(t, "203.0.113.9")
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("rotating X-Forwarded-For escaped the throttle: status = %d", call.status)
+	}
+}
+
+func TestRealIPSessionOriginIsPeerWithoutForwardedForOptIn(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, false)
+	fixture.createUser(t, "root", "password-a1")
+
+	call := fixture.loginVia(t, "password-a1", "198.51.100.77")
+	if call.status != http.StatusOK {
+		t.Fatalf("login status = %d body = %v", call.status, call.body)
+	}
+	session := captureSession(t, call)
+	listed := fixture.call(t, http.MethodGet, "/auth/sessions", nil, session, "", nil)
+	rows, _ := listed.body["sessions"].([]any)
+	if listed.status != http.StatusOK || len(rows) != 1 {
+		t.Fatalf("session list = %d %v", listed.status, listed.body)
+	}
+	origin, _ := rows[0].(map[string]any)["origin"].(string)
+	if strings.Contains(origin, "198.51.100.77") || !strings.Contains(origin, "127.0.0.1") {
+		t.Fatalf("session origin = %q, want the peer address", origin)
+	}
+}
+
+func TestRealIPForwardedProtoStillTrustedWithoutForwardedForOptIn(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, false)
+	fixture.createUser(t, "root", "password-a1")
+
+	request, err := http.NewRequest(http.MethodPost, fixture.http.URL+"/auth/login", strings.NewReader(`{"username":"root","password":"password-a1"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Forwarded-Proto", "https")
+	response, err := fixture.client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d", response.StatusCode)
+	}
+	if len(response.Cookies()) != 1 || !response.Cookies()[0].Secure {
+		t.Fatalf("cookie = %+v, want Secure", response.Cookies())
 	}
 }

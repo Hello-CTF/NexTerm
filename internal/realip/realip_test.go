@@ -47,7 +47,7 @@ func TestResolverClientIP(t *testing.T) {
 			for _, v := range tc.xff {
 				req.Header.Add("X-Forwarded-For", v)
 			}
-			got := NewResolver(prefixes(t, tc.trusted...)).ClientIP(req)
+			got := NewResolver(prefixes(t, tc.trusted...), true).ClientIP(req)
 			if got != tc.want {
 				t.Fatalf("ClientIP = %q, want %q", got, tc.want)
 			}
@@ -55,8 +55,20 @@ func TestResolverClientIP(t *testing.T) {
 	}
 }
 
+func TestResolverForwardedForDisabled(t *testing.T) {
+	r := NewResolver(prefixes(t, "10.0.0.0/8"), false)
+	req := &http.Request{RemoteAddr: "10.0.0.2:5000", Header: http.Header{}}
+	req.Header.Add("X-Forwarded-For", "203.0.113.9")
+	if got := r.ClientIP(req); got != "10.0.0.2" {
+		t.Fatalf("ClientIP = %q, want the peer address", got)
+	}
+	if !r.Trusted(netip.MustParseAddr("10.0.0.2")) {
+		t.Fatal("Trusted must keep following the CIDRs")
+	}
+}
+
 func TestResolverTrusted(t *testing.T) {
-	r := NewResolver(prefixes(t, "10.0.0.0/8"))
+	r := NewResolver(prefixes(t, "10.0.0.0/8"), false)
 	if !r.Trusted(netip.MustParseAddr("::ffff:10.1.2.3")) {
 		t.Fatal("mapped address should match")
 	}

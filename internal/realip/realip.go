@@ -12,10 +12,15 @@ import (
 type ctxKey struct{}
 
 // Resolver decides which peers are trusted proxies. The zero value trusts none.
-type Resolver struct{ trusted []netip.Prefix }
+// trustForwardedFor is an explicit opt-in: a trusted CIDR alone only vouches for X-Forwarded-Proto, because a
+// proxy that appends to a client-supplied X-Forwarded-For would otherwise let clients pick their own address.
+type Resolver struct {
+	trusted           []netip.Prefix
+	trustForwardedFor bool
+}
 
-func NewResolver(trusted []netip.Prefix) Resolver {
-	return Resolver{trusted: append([]netip.Prefix(nil), trusted...)}
+func NewResolver(trusted []netip.Prefix, trustForwardedFor bool) Resolver {
+	return Resolver{trusted: append([]netip.Prefix(nil), trusted...), trustForwardedFor: trustForwardedFor}
 }
 
 func (r Resolver) Trusted(addr netip.Addr) bool {
@@ -28,13 +33,13 @@ func (r Resolver) Trusted(addr netip.Addr) bool {
 	return false
 }
 
-// ClientIP returns the RemoteAddr host unless it is a trusted proxy, in which case X-Forwarded-For is
+// ClientIP returns the RemoteAddr host unless X-Forwarded-For is trusted and the peer is a trusted proxy, in which case X-Forwarded-For is
 // walked from the right and the first non-trusted address wins. Parsing stops at the first malformed entry.
 // X-Real-IP and Forwarded are deliberately ignored.
 func (r Resolver) ClientIP(req *http.Request) string {
 	host := remoteHost(req)
 	hop, err := netip.ParseAddr(host)
-	if err != nil || !r.Trusted(hop) {
+	if !r.trustForwardedFor || err != nil || !r.Trusted(hop) {
 		return host
 	}
 	var items []string
