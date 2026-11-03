@@ -87,7 +87,7 @@ func TestDescribeHelperBuildEnvStaleSaysNothing(t *testing.T) {
 
 func TestDescribeHelperBuildEnvStaleInSharedDirTellsTheUser(t *testing.T) {
 	build := supervisor.HelperBuild{
-		Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7},
+		Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7, SpawnedBy: supervisor.SpawnedByDesktop},
 		Stale:  true, StaleReason: "env",
 	}
 	notice := supervisor.HelperBuild{EnvKept: true}.Notice()
@@ -96,5 +96,17 @@ func TestDescribeHelperBuildEnvStaleInSharedDirTellsTheUser(t *testing.T) {
 	}
 	if text := strings.Join(describeHelperBuildIn(build, "", false), "\n"); strings.Contains(text, "提示") {
 		t.Fatalf("non-shared dir status must stay silent:\n%s", text)
+	}
+}
+
+func TestDescribeHelperBuildKeepsEnvStaleNoticeOnlyForDesktopSpawnedHelpers(t *testing.T) {
+	for _, spawnedBy := range []string{supervisor.SpawnedByAgent, ""} {
+		build := supervisor.HelperBuild{
+			Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7, SpawnedBy: spawnedBy},
+			Stale:  true, StaleReason: "env",
+		}
+		if text := strings.Join(describeHelperBuildIn(build, "", true), "\n"); strings.Contains(text, "提示") {
+			t.Fatalf("helper spawned by %q is replaced, so no keep notice is due:\n%s", spawnedBy, text)
+		}
 	}
 }

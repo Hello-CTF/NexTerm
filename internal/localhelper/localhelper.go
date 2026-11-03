@@ -657,7 +657,7 @@ func (s *Service) run() {
 			// Without a durable terminal asking for one, this only attaches to
 			// the helper just inspected; it never spawns one.
 			helper, err = s.config.connect(s.ctx, supervisor.HelperConfig{
-				StateDir: s.dir(), Executable: executable, Limits: s.config.Limits, NoSpawn: !s.isWanted(),
+				StateDir: s.dir(), Executable: executable, Limits: s.config.Limits, NoSpawn: !s.isWanted(), SpawnedBy: supervisor.SpawnedByDesktop,
 			})
 		}
 		if s.ctx.Err() != nil {

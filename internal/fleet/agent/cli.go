@@ -460,7 +460,7 @@ func describeHelperBuild(build supervisor.HelperBuild, started string) []string 
 // describeHelperBuildIn is describeHelperBuild for a helper in the directory shared with the desktop app when
 // inSharedDir is set: the agent keeps an environment-stale helper there instead of replacing it, so it says so.
 func describeHelperBuildIn(build supervisor.HelperBuild, started string, inSharedDir bool) []string {
-	if inSharedDir && build.Stale && build.StaleReason == "env" {
+	if inSharedDir && build.Stale && build.StaleReason == "env" && build.Helper.SpawnedBy == supervisor.SpawnedByDesktop {
 		build.EnvKept = true
 	}
 	release := "未知"

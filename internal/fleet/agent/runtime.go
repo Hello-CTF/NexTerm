@@ -196,7 +196,7 @@ func New(options Options) (*Runtime, error) {
 			return supervisor.EnsureHelperBuild(ctx, config)
 		}
 		ensureHelper = func(ctx context.Context) error {
-			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
+			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable, SpawnedBy: supervisor.SpawnedByAgent})
 			return err
 		}
 	}
@@ -265,6 +265,7 @@ func (r *Runtime) helperConfig() supervisor.HelperConfig {
 	dir := r.currentStateDir()
 	return supervisor.HelperConfig{
 		StateDir:     dir,
+		SpawnedBy:    supervisor.SpawnedByAgent,
 		KeepEnvStale: r.sharedDir != "" && filepath.Clean(dir) == filepath.Clean(r.sharedDir),
 	}
 }

@@ -117,7 +117,7 @@ func BridgePipe(ctx context.Context, conn *websocket.Conn, spawn BridgeSpawner, 
 			}
 		}
 		if replaceToken != "" {
-			reply := supervisor.ReplaceStaleHelperFrame(ctx, supervisor.HelperConfig{StateDir: stateDir}, replaceToken)
+			reply := supervisor.ReplaceStaleHelperFrame(ctx, supervisor.HelperConfig{StateDir: stateDir, SpawnedBy: supervisor.SpawnedByAgent}, replaceToken)
 			if len(reply) > 0 {
 				_ = conn.Write(ctx, websocket.MessageBinary, reply)
 			}

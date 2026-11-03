@@ -522,6 +522,25 @@ func TestRestartRefusesAHandMadeTokenThatHidesTheSessionCount(t *testing.T) {
 	}
 }
 
+func TestServiceConnectsAsTheDesktopSpawner(t *testing.T) {
+	world := newFakeWorld()
+	config := world.config(t)
+	inner := config.connect
+	spawned := make(chan string, 8)
+	config.connect = func(ctx context.Context, hc supervisor.HelperConfig) (helperHandle, error) {
+		select {
+		case spawned <- hc.SpawnedBy:
+		default:
+		}
+		return inner(ctx, hc)
+	}
+	service := startService(t, config)
+	ready(t, service)
+	if got := <-spawned; got != supervisor.SpawnedByDesktop {
+		t.Fatalf("SpawnedBy = %q, want %q", got, supervisor.SpawnedByDesktop)
+	}
+}
+
 func TestServiceReportsUntrustedEndpointWithoutBusyRetry(t *testing.T) {
 	untrusted := &supervisor.UntrustedEndpointError{Kind: supervisor.EndpointDir, Path: "/srv/other-user/helper", OwnerUID: 4242}
 	for _, where := range []string{"connect", "inspect"} {

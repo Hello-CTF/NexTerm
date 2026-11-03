@@ -97,3 +97,10 @@ func TestRuntimeHelperConfigKeepsEnvStaleOnlyInTheSharedDir(t *testing.T) {
 		t.Fatal("a non-shared directory must not keep env-stale helpers")
 	}
 }
+
+func TestRuntimeHelperConfigMarksTheAgentAsSpawner(t *testing.T) {
+	agentRuntime := newStateRuntime(t, Options{DataDir: t.TempDir()})
+	if got := agentRuntime.helperConfig().SpawnedBy; got != supervisor.SpawnedByAgent {
+		t.Fatalf("SpawnedBy = %q, want %q", got, supervisor.SpawnedByAgent)
+	}
+}
