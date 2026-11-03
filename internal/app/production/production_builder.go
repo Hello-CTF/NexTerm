@@ -504,6 +504,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 	values := []any{
 		"ownership_assigned", report.Ownership.Assigned,
 		"ownership_conflicts", report.Ownership.Conflicts,
+		"device_audit_owners", report.DeviceAuditOwners,
 		"layout_copied", report.Layout.Copied,
 		"layout_existing", report.Layout.Existing,
 		"layout_conflicts", report.Layout.Conflicts,
@@ -533,7 +534,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
 		return
 	}
-	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated > 0 || report.AI.Changed()
+	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated+report.DeviceAuditOwners > 0 || report.AI.Changed()
 	if changed {
 		c.logger.Info("completed data upgrade", values...)
 	}
