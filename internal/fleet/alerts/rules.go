@@ -51,6 +51,10 @@ const (
 	MaxThreshold     = 100.0
 )
 
+// GapTolerance is G = 2.5*I: the longest silence between samples, or since the latest one, that a
+// threshold rule still treats as continuous data.
+func GapTolerance(interval time.Duration) time.Duration { return interval * 5 / 2 }
+
 // ThresholdRules lists the rules evaluated from device_metrics.
 var ThresholdRules = []Rule{RuleDisk, RuleMem, RuleCPU}
 

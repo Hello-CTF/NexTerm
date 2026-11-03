@@ -19,7 +19,7 @@ func series(end, span, step int64, v float64) []Sample {
 func TestClassify(t *testing.T) {
 	const now = int64(10_000_000_000)
 	sustain := 10 * time.Minute
-	gap := 2 * time.Minute
+	gap := GapTolerance(DefaultInterval)
 	with := func(base []Sample, mut func([]Sample) []Sample) []Sample { return mut(base) }
 	cases := []struct {
 		name    string
@@ -31,7 +31,7 @@ func TestClassify(t *testing.T) {
 		{"duration too short", series(now, 9*minMS, minMS, 95), VerdictUnknown},
 		{"equal to threshold is not a breach", series(now, 10*minMS, minMS, 90), VerdictClear},
 		{"latest sample stale", series(now-3*minMS, 14*minMS, minMS, 95), VerdictUnknown},
-		{"latest exactly G old still fresh", series(now-2*minMS, 14*minMS, minMS, 95), VerdictBreach},
+		{"latest within G still fresh", series(now-2*minMS, 14*minMS, minMS, 95), VerdictBreach},
 		{"gap larger than G", with(series(now, 12*minMS, minMS, 95), func(s []Sample) []Sample {
 			var out []Sample
 			for _, x := range s {
@@ -42,7 +42,7 @@ func TestClassify(t *testing.T) {
 			}
 			return out
 		}), VerdictUnknown},
-		{"gap exactly G allowed", with(series(now, 12*minMS, minMS, 95), func(s []Sample) []Sample {
+		{"gap within G allowed", with(series(now, 12*minMS, minMS, 95), func(s []Sample) []Sample {
 			var out []Sample
 			for _, x := range s {
 				if x.TS == now-5*minMS {
@@ -198,5 +198,54 @@ func TestSampleValue(t *testing.T) {
 				t.Fatalf("%v accepted %+v", r, b)
 			}
 		}
+	}
+}
+
+func TestGapTolerance(t *testing.T) {
+	if got := GapTolerance(DefaultInterval); got != 150*time.Second {
+		t.Fatalf("GapTolerance = %v, want 2.5 intervals", got)
+	}
+	if got := GapTolerance(time.Second); got != 2500*time.Millisecond {
+		t.Fatalf("GapTolerance(1s) = %v, want no integer truncation", got)
+	}
+}
+
+func TestClassifyGapBoundary(t *testing.T) {
+	const (
+		now = int64(10_000_000_000)
+		sec = int64(1000)
+	)
+	gap := GapTolerance(DefaultInterval)
+	// A 12-minute run of 1-minute samples, with the samples in (now-ago, ...) rewritten as asked.
+	run := func(latestAgo int64) []Sample { return series(now-latestAgo, 12*minMS, minMS, 95) }
+	holes := func(gapMS int64) []Sample {
+		// One hole of gapMS between two samples, early enough to sit inside the sustain window.
+		a, b := now-8*minMS, now-8*minMS+gapMS
+		var out []Sample
+		for ts := now - 12*minMS; ts < a; ts += minMS {
+			out = append(out, Sample{TS: ts, Value: 95})
+		}
+		out = append(out, Sample{TS: a, Value: 95})
+		for ts := b; ts <= now; ts += minMS {
+			out = append(out, Sample{TS: ts, Value: 95})
+		}
+		return out
+	}
+	cases := []struct {
+		name    string
+		samples []Sample
+		want    Verdict
+	}{
+		{"latest exactly 150s old is fresh", run(150 * sec), VerdictBreach},
+		{"latest 151s old is unknown", run(151 * sec), VerdictUnknown},
+		{"interval exactly 150s holds", holes(150 * sec), VerdictBreach},
+		{"interval 151s breaks", holes(151 * sec), VerdictUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, _ := Classify(tc.samples, now, 90, 10*time.Minute, gap); got != tc.want {
+				t.Fatalf("verdict = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

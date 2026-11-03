@@ -26,7 +26,6 @@ const (
 	attemptTimeout     = 5 * time.Minute
 	cleanupEvery       = time.Hour
 	warmupIntervals    = 2
-	gapIntervals       = 2
 	maxThresholdWindow = 15 * time.Minute
 )
 
@@ -176,7 +175,7 @@ func (e *Evaluator) evaluateDevice(ctx context.Context, now int64, dev *model.Us
 }
 
 func (e *Evaluator) thresholdChanges(ctx context.Context, now int64, dev *model.UserDevice, set *Settings, states map[stateKey]*model.DeviceAlertState) ([]change, error) {
-	gap := gapIntervals * e.interval
+	gap := GapTolerance(e.interval)
 	from := now - (maxThresholdWindow + gap).Milliseconds()
 	m := query.Use(e.db).DeviceMetrics
 	rows, err := m.WithContext(ctx).
