@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../app/platform", () => ({
   isMac: () => false,
   isWindows: () => false,
+  localSessionIsWindows: () => false,
+  localSessionIsMac: () => false,
   modHint: () => "Ctrl",
   setMacPlatform: () => {},
   wailsDragRegionStyle: {},
