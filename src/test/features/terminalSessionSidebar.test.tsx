@@ -10,6 +10,7 @@ const harness = vi.hoisted(() => ({
   findNext: vi.fn(),
   findPrevious: vi.fn(),
   focus: vi.fn(),
+  fit: vi.fn(),
   xtermRenders: 0,
 }));
 
@@ -91,7 +92,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
           clear: () => {},
           getSelection: () => harness.selection,
           focus: harness.focus,
-          fit: () => {},
+          fit: harness.fit,
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
@@ -111,6 +112,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
 
 import { TerminalPane } from "../../features/terminal/TerminalPane";
 import { useUi } from "../../app/store";
+import { useSessionSidebarHost } from "../../features/terminal/sessionSidebarHost";
 import { SESSION_SIDEBAR_STORAGE_KEY, setSessionSidebarOpen } from "../../app/preferences";
 
 let mounted: MountedView | undefined;
@@ -155,6 +157,7 @@ beforeEach(async () => {
   harness.mac = false;
   harness.selection = "";
   harness.xtermRenders = 0;
+  useSessionSidebarHost.setState({ hosts: {}, reports: {} });
   useUi.setState({
     sessions: [
       {
@@ -276,6 +279,59 @@ function stubPaneWidth(width: number) {
   );
 }
 
+// Observers whose width can be changed per observed element index; every pane starts wide.
+function stubControllableObservers() {
+  const observed: { target: Element; cb: ResizeObserverCallback; self: unknown }[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(target: Element) {
+        observed.push({ target, cb: this.cb, self: this });
+        this.cb([{ target, contentRect: { width: 1000, height: 400 } } as ResizeObserverEntry], this as never);
+      }
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  return {
+    resize(index: number, width: number) {
+      const panes = Array.from(mounted!.container.querySelectorAll(".nx-pane"));
+      const entry = observed.find((o) => o.target === panes[index]);
+      if (!entry) throw new Error("pane is not observed");
+      act(() => entry.cb([{ target: entry.target, contentRect: { width, height: 400 } } as ResizeObserverEntry], entry.self as never));
+    },
+  };
+}
+
+function setActivePane(paneId: string) {
+  act(() => {
+    useUi.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, activePaneId: paneId })) }));
+  });
+}
+
+const hostTabs = () =>
+  Array.from(mounted!.container.querySelectorAll("[data-testid='session-sidebar']")).map((e) => e.getAttribute("data-tab"));
+
+async function mountSplit() {
+  setSessionSidebarOpen(true);
+  useUi.setState((s) => ({
+    workspaces: s.workspaces.map((w) => ({
+      ...w,
+      panes: [...w.panes, { id: "p2", activeTabId: "t2", tabs: [tab("t2", "kernel-2")] }],
+    })),
+  }));
+  mounted = mount(
+    createElement(
+      "div",
+      null,
+      createElement(TerminalPane, { sessionId: "s1", title: "one", storeTabId: "t1" }),
+      createElement(TerminalPane, { sessionId: "s1", title: "two", storeTabId: "t2" }),
+    ),
+  );
+  await flush();
+}
+
 const tab = (id: string, kernel: string) => ({
   id, kind: "terminal" as const, title: id, sessionId: "s1", tabId: kernel, closable: true,
 });
@@ -298,30 +354,66 @@ describe("session sidebar placement", () => {
     expect(harness.xtermRenders).toBe(before);
   });
 
-  it("mounts the sidebar only in the active pane of a split workspace", async () => {
-    setSessionSidebarOpen(true);
-    useUi.setState((s) => ({
-      workspaces: s.workspaces.map((w) => ({
-        ...w,
-        panes: [...w.panes, { id: "p2", activeTabId: "t2", tabs: [tab("t2", "kernel-2")] }],
-      })),
-    }));
-    mounted = mount(
-      createElement(
-        "div",
-        null,
-        createElement(TerminalPane, { sessionId: "s1", title: "one", storeTabId: "t1" }),
-        createElement(TerminalPane, { sessionId: "s1", title: "two", storeTabId: "t2" }),
-      ),
-    );
+  it("keeps the sidebar in its host pane while focus moves between panes", async () => {
+    await mountSplit();
+    expect(hostTabs()).toEqual(["t1"]);
+    harness.fit.mockClear();
+    setActivePane("p2");
     await flush();
-    const tabs = () => Array.from(mounted!.container.querySelectorAll("[data-testid='session-sidebar']")).map((e) => e.getAttribute("data-tab"));
-    expect(tabs()).toEqual(["t1"]);
+    expect(hostTabs()).toEqual(["t1"]);
+    setActivePane("p1");
+    await flush();
+    expect(hostTabs()).toEqual(["t1"]);
+    expect(harness.fit).not.toHaveBeenCalled();
+  });
+
+  it("hands the sidebar to the active pane when the host pane unmounts", async () => {
+    await mountSplit();
+    setActivePane("p2");
+    await flush();
+    act(() => mounted!.root.render(createElement(TerminalPane, { sessionId: "s1", title: "two", storeTabId: "t2" })));
+    await flush();
+    expect(hostTabs()).toEqual(["t2"]);
+  });
+
+  it("hands the sidebar to the active pane when the host pane becomes narrow", async () => {
+    const ro = stubControllableObservers();
+    await mountSplit();
+    setActivePane("p2");
+    await flush();
+    expect(hostTabs()).toEqual(["t1"]);
+    ro.resize(0, 400);
+    await flush();
+    expect(hostTabs()).toEqual(["t2"]);
+  });
+
+  it("moves the sidebar to a non-host pane from the toolbar instead of closing it", async () => {
+    await mountSplit();
+    const buttons = () => Array.from(mounted!.container.querySelectorAll<HTMLButtonElement>("button[aria-pressed][title*='侧栏']"));
+    // Like PaneGroup, activate the pane on mousedown before the click lands.
     act(() => {
-      useUi.setState((s) => ({ workspaces: s.workspaces.map((w) => ({ ...w, activePaneId: "p2" })) }));
+      buttons()[1].dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     });
+    await act(async () => buttons()[1].click());
     await flush();
-    expect(tabs()).toEqual(["t2"]);
+    expect(hostTabs()).toEqual(["t2"]);
+    expect(localStorage.getItem(SESSION_SIDEBAR_STORAGE_KEY)).toBe("1");
+    expect(buttons()[1].getAttribute("aria-pressed")).toBe("true");
+    expect(buttons()[0].getAttribute("aria-pressed")).toBe("false");
+    await act(async () => buttons()[1].click());
+    await flush();
+    expect(hostTabs()).toEqual([]);
+  });
+
+  it("moves the sidebar with the shortcut pressed in a non-host pane", async () => {
+    await mountSplit();
+    const ta = mounted!.container.querySelectorAll<HTMLTextAreaElement>("[data-testid='xterm-textarea']")[1];
+    keyDown(ta, "B", SIDEBAR);
+    await flush();
+    expect(hostTabs()).toEqual(["t2"]);
+    keyDown(ta, "B", SIDEBAR);
+    await flush();
+    expect(hostTabs()).toEqual([]);
   });
 
   it("does not mount the sidebar in a narrow pane and explains the shortcut", async () => {
