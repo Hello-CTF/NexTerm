@@ -326,6 +326,30 @@ func TestUpdateSetsUpgradeLogInDataDir(t *testing.T) {
 	}
 }
 
+func TestUpdateLeavesLogPathEmptyForMissingDataDir(t *testing.T) {
+	h := newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+	missing := filepath.Join(t.TempDir(), "missing")
+	var captured *Upgrader
+	factory := cliUpgraderFactory
+	cliUpgraderFactory = func(executable string) *Upgrader {
+		captured = factory(executable)
+		return captured
+	}
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return missing
+		}
+		return ""
+	}
+	var stdout, stderr bytes.Buffer
+	if code := RunCLI([]string{"update", "--yes"}, getenv, &stdout, &stderr); code != ExitOK || len(h.replaced) != 1 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if captured == nil || captured.LogPath != "" {
+		t.Fatalf("LogPath = %+v", captured)
+	}
+}
+
 // noticePrefix returns the fixed part of a notice template after its leading "%d" seconds.
 func noticePrefix(template string) string {
 	_, rest, _ := strings.Cut(template, "%d")

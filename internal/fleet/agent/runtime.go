@@ -205,9 +205,7 @@ func New(options Options) (*Runtime, error) {
 	upgrader := options.Upgrader
 	if upgrader == nil && len(cliServicePrefix) == 0 && !options.NoSelfUpgrade {
 		upgrader = defaultUpgrader(executable)
-		if options.DataDir != "" {
-			upgrader.LogPath = filepath.Join(options.DataDir, upgradeLogName)
-		}
+		upgrader.LogPath = upgradeLogPathIn(options.DataDir)
 	}
 	*runtimeState = Runtime{
 		store:           options.Store,

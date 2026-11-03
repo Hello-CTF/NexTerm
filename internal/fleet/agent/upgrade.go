@@ -61,6 +61,21 @@ var errUpgradeRefused = errors.New("self-upgrade refused")
 // source, verifies the release's SHA256SUMS Minisign signature against the trusted key, verifies the archive against that
 // SHA256SUMS, and schedules a deferred replacement after unpacking. Download/verify/staging failures are retried by Upgrade with exponential
 // backoff; once retries are exhausted the old binary is kept exactly as-is.
+// upgradeLogPathIn returns the upgrade log path under dir, or "" when dir is not an existing writable directory:
+// a log that cannot be opened must not be handed to the replace script.
+func upgradeLogPathIn(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	if err := checkWritableDir(dir); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, upgradeLogName)
+}
+
 type Upgrader struct {
 	BaseURL    string
 	Executable string
@@ -458,6 +473,8 @@ func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, resta
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\n")
 	b.WriteString("NX_LOG=" + shQuote(logPath) + "\n")
+	// A failed redirection on a compound command skips the whole command, so probe the log in a subshell (a failed redirect on a special builtin exits the shell) and fall back to /dev/null.
+	b.WriteString("( : >>\"$NX_LOG\" ) 2>/dev/null || NX_LOG=/dev/null\n")
 	b.WriteString("sleep " + strconv.Itoa(delaySeconds) + "\n")
 	b.WriteString("mv -f " + shQuote(targetPath) + " " + shQuote(backup) + " 2>/dev/null || true\n")
 	b.WriteString("if mv -f " + shQuote(newPath) + " " + shQuote(targetPath) + "; then\n")

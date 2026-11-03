@@ -653,4 +653,50 @@ func TestReplaceScriptUnixExecutes(t *testing.T) {
 			t.Fatalf("rollback must not restart, log %q", got)
 		}
 	})
+	t.Run("unopenable log still swaps and restarts", func(t *testing.T) {
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		newPath := filepath.Join(dir, ".nexterm-agent.nexterm-new")
+		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		restartMarker := filepath.Join(dir, "restarted.marker")
+		_ = os.Remove(restartMarker)
+		badLog := filepath.Join(dir, "no-such-dir", "upgrade.log")
+		scriptPath := filepath.Join(dir, "replace-badlog.sh")
+		if err := os.WriteFile(scriptPath, []byte(renderReplaceScriptUnix(newPath, target, 0, "touch "+shQuote(restartMarker), badLog)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
+			t.Fatalf("script failed: %v\n%s", err, output)
+		}
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "new-binary" {
+			t.Fatalf("target = %q, %v", content, err)
+		}
+		if _, err := os.Stat(restartMarker); err != nil {
+			t.Fatalf("restart command must run even when the log cannot be opened: %v", err)
+		}
+	})
+}
+
+func TestUpgradeLogPathIn(t *testing.T) {
+	dir := t.TempDir()
+	if got := upgradeLogPathIn(dir); got != filepath.Join(dir, upgradeLogName) {
+		t.Fatalf("writable dir: got %q", got)
+	}
+	if got := upgradeLogPathIn(filepath.Join(dir, "missing")); got != "" {
+		t.Fatalf("missing dir: got %q", got)
+	}
+	file := filepath.Join(dir, "plain-file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := upgradeLogPathIn(file); got != "" {
+		t.Fatalf("not a directory: got %q", got)
+	}
+	if got := upgradeLogPathIn(""); got != "" {
+		t.Fatalf("empty dir: got %q", got)
+	}
 }
