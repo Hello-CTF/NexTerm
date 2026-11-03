@@ -76,7 +76,7 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 		prev = State{Status: old.Status, Since: old.Since, FiredAt: old.FiredAt, ResolvedAt: old.ResolvedAt, RecoveringSince: old.RecoveringSince}
 	}
 	next, emit := StepOffline(prev, OfflineInput{
-		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Started: e.started, QuietEnd: quietEnd, G: GapTolerance(e.interval).Milliseconds(),
+		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Baseline: e.baseline(), QuietEnd: quietEnd, G: GapTolerance(e.interval).Milliseconds(),
 		Enabled: enabled, Muted: muted, S: suspectAfter, A: alertAfter,
 	})
 	if emit == nil && sameState(prev, next) {
@@ -109,4 +109,12 @@ func buildOfflineRecords(now int64, dev *model.UserDevice, emit *OfflineEmit) (*
 	body, _ := json.Marshal(p)
 	assetID := dev.ID
 	return ev, &model.AuditRow{TS: now, AssetID: &assetID, Source: auditSource, Kind: kind, PayloadJSON: string(body), DurationMS: &d, OwnerID: dev.UserID}
+}
+
+// baseline is the previous run's last evaluation time, or the start time on a first deployment.
+func (e *Evaluator) baseline() int64 {
+	if e.prevLastTick > 0 {
+		return e.prevLastTick
+	}
+	return e.started
 }

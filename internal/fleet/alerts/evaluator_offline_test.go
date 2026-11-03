@@ -786,3 +786,69 @@ func TestResolvedAcknowledgesFiredDatabase(t *testing.T) {
 		}
 	})
 }
+
+func TestOfflineRestartBaselineDatabase(t *testing.T) {
+	restart := func(h *harness, p *presenceSet, at int64) *Evaluator {
+		h.clock.Store(at)
+		return h.offlineEvaluator(p)
+	}
+	t.Run("suspect survives a restart and alerts once", func(t *testing.T) {
+		h, e, p, _, dev := offlineSetup(t, "base-suspect")
+		h.tick(e, baseTS+15*minMS)
+		if h.status(dev) != StatusSuspect {
+			t.Fatalf("status = %q", h.status(dev))
+		}
+		at := baseTS + 16*minMS
+		e2 := restart(h, p, at)
+		for _, m := range []int64{2, 3, 6} {
+			h.tick(e2, at+m*minMS)
+			if h.status(dev) != StatusSuspect || len(h.events(dev)) != 0 {
+				t.Fatalf("+%dm: %q %+v", m, h.status(dev), h.events(dev))
+			}
+		}
+		h.tick(e2, at+10*minMS)
+		h.tick(e2, at+12*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("device lost just before the downtime alerts after the restart", func(t *testing.T) {
+		h, e, p, _, dev := offlineSetup(t, "base-just-lost")
+		h.heard(dev, baseTS+18*minMS)
+		h.tick(e, baseTS+20*minMS) // last tick of the first run
+		at := baseTS + 8*60*minMS
+		e2 := restart(h, p, at)
+		h.tick(e2, at+2*minMS)
+		for _, m := range []int64{5, 10, 12} {
+			h.tick(e2, at+m*minMS)
+		}
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v status=%q", evs, h.status(dev))
+		}
+	})
+	t.Run("device already gone during the previous run is dormant after a restart", func(t *testing.T) {
+		h, e, p, owner, dev := offlineSetup(t, "base-gone")
+		h.settings(owner, dev, func(s *Settings) { s.OfflineEnabled = ptr(false) })
+		h.tick(e, baseTS+60*minMS) // rule off: no state row, but the tick is recorded
+		h.settings(owner, dev, func(s *Settings) { s.OfflineEnabled = ptr(true) })
+		at := baseTS + 2*60*minMS
+		e2 := restart(h, p, at)
+		for _, m := range []int64{2, 5, 15, 60} {
+			h.tick(e2, at+m*minMS)
+		}
+		if h.status(dev) != StatusDormant || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+	})
+	t.Run("first deployment keeps long-gone devices dormant", func(t *testing.T) {
+		h := newHarness(t)
+		p := &presenceSet{}
+		owner, dev := h.device("base-first")
+		h.agentRow(owner, dev, ptr(baseTS-24*60*minMS))
+		e := h.offlineEvaluator(p)
+		h.tick(e, baseTS+2*minMS)
+		if h.status(dev) != StatusDormant {
+			t.Fatalf("status = %q", h.status(dev))
+		}
+	})
+}

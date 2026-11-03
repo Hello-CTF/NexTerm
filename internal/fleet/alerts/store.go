@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -96,6 +97,35 @@ func ackFired(ctx context.Context, tx *gorm.DB, deviceID, rule string, now int64
 		Update("acked_at", now).Error
 	if err != nil {
 		return fmt.Errorf("ack fired alert events: %w", err)
+	}
+	return nil
+}
+
+const evaluatorStateID = "default"
+
+// loadLastTick returns the previous run's last evaluation time, or 0 when none was recorded.
+// GEN-TODO: AlertEvaluatorState get by id.
+func loadLastTick(ctx context.Context, db *gorm.DB) (int64, error) {
+	var row model.AlertEvaluatorState
+	err := db.WithContext(ctx).Model(&model.AlertEvaluatorState{}).Where("id = ?", evaluatorStateID).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("load alert evaluator state: %w", err)
+	}
+	return row.LastTickAt, nil
+}
+
+// saveLastTick records the evaluation time.
+// GEN-TODO: AlertEvaluatorState upsert.
+func saveLastTick(ctx context.Context, db *gorm.DB, at int64) error {
+	row := &model.AlertEvaluatorState{ID: evaluatorStateID, LastTickAt: at, UpdatedAt: at}
+	err := db.WithContext(ctx).Model(&model.AlertEvaluatorState{}).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}}, UpdateAll: true,
+	}).Create(row).Error
+	if err != nil {
+		return fmt.Errorf("save alert evaluator state: %w", err)
 	}
 	return nil
 }

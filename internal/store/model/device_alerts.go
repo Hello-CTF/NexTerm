@@ -58,3 +58,12 @@ type DeviceAlertEvent struct {
 }
 
 func (DeviceAlertEvent) TableName() string { return "device_alert_event" }
+
+// AlertEvaluatorState is the single-row bookkeeping of the device alert evaluator.
+type AlertEvaluatorState struct {
+	ID         string `gorm:"size:32;column:id;primaryKey" json:"id"`
+	LastTickAt int64  `gorm:"column:last_tick_at;not null;default:0" json:"lastTickAt"`
+	UpdatedAt  int64  `gorm:"column:updated_at;not null;default:0" json:"updatedAt"`
+}
+
+func (AlertEvaluatorState) TableName() string { return "alert_evaluator_state" }

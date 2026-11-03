@@ -43,6 +43,7 @@ type DeviceMetricsHourly = model.DeviceMetricsHourly
 type DeviceAlertSettings = model.DeviceAlertSettings
 type DeviceAlertState = model.DeviceAlertState
 type DeviceAlertEvent = model.DeviceAlertEvent
+type AlertEvaluatorState = model.AlertEvaluatorState
 type UserTOTP = model.UserTOTP
 type UserTOTPRecoveryCode = model.UserTOTPRecoveryCode
 type SharePreviewLink = model.SharePreviewLink

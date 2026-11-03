@@ -39,8 +39,9 @@ type OfflineInput struct {
 	LastHeard int64
 	// Effective is max(LastHeard, evaluator start) so server downtime never counts as silence.
 	Effective int64
-	// Started is the evaluator start time.
-	Started int64
+	// Baseline is the time up to which silence is already known: the previous run's last evaluation,
+	// or the evaluator start on a first deployment.
+	Baseline int64
 	// QuietEnd is the latest quiet-hours end (0 when quiet hours are off): reaching A is timed from it
 	// so a device does not alert the moment quiet hours end.
 	QuietEnd int64
@@ -81,7 +82,7 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 		}
 	case StatusSuspect:
 		switch {
-		case silence < in.S:
+		case heardAgo < in.S:
 			return State{Status: StatusOK, ResolvedAt: st.ResolvedAt}, nil
 		case silenceA >= in.A:
 			if in.Muted {
@@ -106,9 +107,9 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 		}
 		st = next
 	default:
-		// A device with no live alert state that was already gone for longer than A before this
-		// evaluator started is a known-offline device, not a new outage.
-		if in.LastHeard < in.Started-in.A {
+		// A device with no live alert state that was already gone for longer than A before the
+		// baseline is a known-offline device, not a new outage.
+		if in.LastHeard < in.Baseline-in.A {
 			return State{Status: StatusDormant, ResolvedAt: st.ResolvedAt}, nil
 		}
 		if silence >= in.S {

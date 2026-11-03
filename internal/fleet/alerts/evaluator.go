@@ -49,6 +49,10 @@ type Evaluator struct {
 	logger   *slog.Logger
 	after    func(time.Duration) <-chan time.Time
 	started  int64
+	// prevLastTick is the last evaluation time of the previous run (0 on a first deployment); it is read
+	// once, by the first evaluating Tick.
+	prevLastTick int64
+	tickLoaded   bool
 
 	tickMu      sync.Mutex
 	lastCleanup int64
@@ -96,6 +100,13 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 	if now < e.started+warmupIntervals*e.interval.Milliseconds() {
 		return nil
 	}
+	if !e.tickLoaded {
+		prev, err := loadLastTick(ctx, e.db)
+		if err != nil {
+			return err
+		}
+		e.prevLastTick, e.tickLoaded = prev, true
+	}
 	if err := deleteRevokedStates(ctx, e.db); err != nil {
 		return err
 	}
@@ -138,6 +149,9 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 		} else {
 			e.lastCleanup = now
 		}
+	}
+	if err := saveLastTick(ctx, e.db, now); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

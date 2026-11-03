@@ -85,7 +85,7 @@ func TestStepOfflineDormant(t *testing.T) {
 	)
 	started := now - 60*minMS
 	in := func(heard int64, enabled bool) OfflineInput {
-		return OfflineInput{Now: now, LastHeard: heard, Effective: max(heard, started), Started: started, Enabled: enabled, S: s, A: a}
+		return OfflineInput{Now: now, LastHeard: heard, Effective: max(heard, started), Baseline: started, Enabled: enabled, S: s, A: a}
 	}
 	longGone := started - 30*24*60*minMS
 	cases := []struct {
@@ -195,5 +195,19 @@ func TestStepOfflineQuietEnd(t *testing.T) {
 		if got.Status != c.wantStatus || (emit != nil) != c.wantEmit {
 			t.Errorf("%s: %+v %+v, want %s emit=%v", c.name, got, emit, c.wantStatus, c.wantEmit)
 		}
+	}
+}
+
+func TestStepOfflineSuspectSurvivesRestart(t *testing.T) {
+	const now = int64(10_000_000_000)
+	// After a restart Effective is the start time, but the device is still really silent.
+	in := OfflineInput{Now: now, LastHeard: now - 8*minMS, Effective: now - 2*minMS, Baseline: now - 2*minMS, Enabled: true, S: 5 * minMS, A: 10 * minMS, G: 150_000}
+	got, emit := StepOffline(State{Status: StatusSuspect, Since: now - 8*minMS}, in)
+	if got.Status != StatusSuspect || emit != nil {
+		t.Fatalf("clamped silence reset a silent suspect: %+v %+v", got, emit)
+	}
+	in.LastHeard = now - minMS // really heard again
+	if got, _ = StepOffline(State{Status: StatusSuspect, Since: now - 8*minMS}, in); got.Status != StatusOK {
+		t.Fatalf("heard device stayed suspect: %+v", got)
 	}
 }
