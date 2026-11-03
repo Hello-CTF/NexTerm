@@ -7,7 +7,13 @@ import { mountWithClient, type MountedView } from "./reactTestUtils";
 const mocks = vi.hoisted(() => ({
   insert: vi.fn(async (_s: unknown) => true),
   execute: vi.fn(async (_s: unknown) => true),
+  write: vi.fn(async () => undefined),
 }));
+
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../ipc/commands")>();
+  return { ...original, terminalApi: { ...original.terminalApi, write: mocks.write } };
+});
 
 vi.mock("../../features/explorer/snippetInsert", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../features/explorer/snippetInsert")>();
@@ -15,6 +21,7 @@ vi.mock("../../features/explorer/snippetInsert", async (importOriginal) => {
 });
 
 import { useJumpCommands, type JumpCommand } from "../../app/jump/useJumpCommands";
+import { useUi } from "../../app/store";
 import type { SnippetDto } from "../../ipc/types";
 
 function snippet(id: string, steps: SnippetDto["steps"]): SnippetDto {
@@ -56,5 +63,17 @@ describe("jump palette snippets", () => {
     cmd?.run();
     expect(mocks.execute).toHaveBeenCalledTimes(1);
     expect(mocks.insert).not.toHaveBeenCalled();
+  });
+
+  it("does not run a parameterised multi-step snippet from the palette and tells the user where to run it", () => {
+    const steps = [{ name: "一", command: "echo {{x}}", confirm: false }] as SnippetDto["steps"];
+    const toast = vi.fn();
+    useUi.setState({ pushToast: toast });
+    const cmd = commands([snippet("p", steps)]).find((c) => c.id === "snippet-p");
+    cmd?.run();
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.insert).not.toHaveBeenCalled();
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(toast).toHaveBeenCalledWith("info", "带参数的片段请在片段面板中执行");
   });
 });
