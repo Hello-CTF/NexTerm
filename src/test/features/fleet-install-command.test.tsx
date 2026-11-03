@@ -2,7 +2,7 @@
 // FLEET168 one-line install command for brand-new machines: construction of oneLineInstallCommand (curl fetches
 // /install-device.sh + --server/--code/--version real version + --insecure follows
 // the enrollment URL, dynamic params single-quote wrapped), Windows devices additionally get the PowerShell version
-// oneLineInstallCommandWindows (iex fetches /install-device.ps1, same-named params),
+// oneLineInstallCommandWindows (a scriptblock created from the fetched /install-device.ps1, same-named params),
 // plus the one-line install command in the DevicesView enrollment panel - the version
 // comes from the real /healthz, the whole block is hidden when the version is unavailable (no faking), existing
 // enroll/install commands are kept, and install success is never claimed.
@@ -207,18 +207,18 @@ describe("oneLineInstallCommand construction", () => {
 });
 
 describe("oneLineInstallCommandWindows construction", () => {
-  it("downloads install-device.ps1 with iex and forwards the same values as PowerShell-native parameters", () => {
+  it("downloads install-device.ps1 as a scriptblock and forwards the same values as PowerShell-native parameters", () => {
     expect(oneLineInstallCommandWindows("https://nexterm.example.com", false, "c-1", "0.2.2")).toBe(
-      "iex \"& { $(iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1') } " +
-        "-Server 'https://nexterm.example.com' -Code 'c-1' -Version '0.2.2'\"",
+      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').Content)) " +
+        "-Server 'https://nexterm.example.com' -Code 'c-1' -Version '0.2.2'",
     );
   });
 
   it("passes -Insecure through to the script arguments for an explicitly insecure base URL", () => {
     const command = oneLineInstallCommandWindows("https://10.0.0.8:8443", true, "c-1", "0.2.2");
     expect(command).toBe(
-      "iex \"& { $(iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1') } " +
-        "-Server 'https://10.0.0.8:8443' -Code 'c-1' -Version '0.2.2' -Insecure\"",
+      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://10.0.0.8:8443/install-device.ps1').Content)) " +
+        "-Server 'https://10.0.0.8:8443' -Code 'c-1' -Version '0.2.2' -Insecure",
     );
   });
 
@@ -227,6 +227,24 @@ describe("oneLineInstallCommandWindows construction", () => {
     expect(command).toContain("'https://nexterm.example.com/mirror;v2/$(id)/install-device.ps1'");
     expect(command).toContain("-Code 'co''de'");
     expect(psQuote("a'b")).toBe("'a''b'");
+  });
+
+  it("doubles every typographic single quote so a value cannot close its literal early", () => {
+    for (const quote of ["\u2018", "\u2019", "\u201A", "\u201B"]) {
+      expect(psQuote(`a${quote}b`)).toBe(`'a${quote}${quote}b'`);
+    }
+    const command = oneLineInstallCommandWindows("https://h/\u2019;calc", false, "c\u2018d", "1.0.0");
+    expect(command).toContain("-Server 'https://h/\u2019\u2019;calc'");
+    expect(command).toContain("-Code 'c\u2018\u2018d'");
+  });
+
+  it("never places values inside a double-quoted string, so $( ) and backticks are not expanded", () => {
+    const command = oneLineInstallCommandWindows("https://h/$(calc)`whoami`\"x", false, "c", "1.0.0");
+    expect(command).not.toContain("iex");
+    expect(command).not.toContain('"&');
+    expect(command.startsWith("& ([scriptblock]::Create(")).toBe(true);
+    expect(command).toContain("'https://h/$(calc)`whoami`\"x/install-device.ps1'");
+    expect(command.replace(/'[^']*(?:''[^']*)*'/g, "")).not.toMatch(/[$`"]/);
   });
 });
 
@@ -275,8 +293,8 @@ describe("Device management - guided enrollment", () => {
     await openIssuedPanel();
     click(buttonByText("Windows") as HTMLButtonElement);
     expect(mainCommand()).toBe(
-      "iex \"& { $(iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1') } " +
-        "-Server 'https://nexterm.example.com' -Code 'fleet-code-1' -Version '0.2.2'\"",
+      "& ([scriptblock]::Create((iwr -UseBasicParsing 'https://nexterm.example.com/install-device.ps1').Content)) " +
+        "-Server 'https://nexterm.example.com' -Code 'fleet-code-1' -Version '0.2.2'",
     );
     expect(mainCommand()).not.toContain("install-device.sh");
     expect(document.body.textContent).toContain("无需管理员权限");

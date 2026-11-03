@@ -1,4 +1,6 @@
 
+import { psQuote } from "../../lib/psQuote";
+
 export const HOME = "~";
 
 export type PathStyle = "windows" | "posix" | "unknown";
@@ -129,7 +131,7 @@ export function directoryCommandFor(
 ): { command: string | null; failure: DirectoryCommandFailure | null } {
   if (/[\x00-\x1f\x7f]/.test(path)) return { command: null, failure: "control" };
   if (shell === "powershell") {
-    return { command: `Set-Location -LiteralPath '${path.replace(/'/g, "''")}'`, failure: null };
+    return { command: `Set-Location -LiteralPath ${psQuote(path)}`, failure: null };
   }
   if (shell === "posix") {
     return { command: `cd '${path.replace(/'/g, "'\\''")}'`, failure: null };
