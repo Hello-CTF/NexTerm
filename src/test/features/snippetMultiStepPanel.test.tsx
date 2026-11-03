@@ -7,6 +7,7 @@ import { click, clickButton, flush, mount, setInputValue, waitForRendered, type 
 
 const mocks = vi.hoisted(() => ({
   snippetList: vi.fn(),
+  snippetMigrationStatus: vi.fn(),
   snippetCreate: vi.fn(),
   snippetUpdate: vi.fn(),
   snippetDelete: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("../../ipc/commands", () => ({
   terminalApi: { write: mocks.write },
   assetApi: {
     snippetList: mocks.snippetList,
+    snippetMigrationStatus: mocks.snippetMigrationStatus,
     snippetCreate: mocks.snippetCreate,
     snippetUpdate: mocks.snippetUpdate,
     snippetDelete: mocks.snippetDelete,
@@ -81,6 +83,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   document.body.replaceChildren();
   mocks.snippetList.mockResolvedValue([structuredClone(MULTI), structuredClone(SINGLE)]);
+  mocks.snippetMigrationStatus.mockResolvedValue({ unmigratedRunbookTemplates: 0 });
   mocks.snippetCreate.mockResolvedValue({ id: "new" });
   mocks.snippetUpdate.mockResolvedValue(undefined);
   mocks.ask.mockResolvedValue(true);
@@ -96,6 +99,24 @@ afterEach(() => {
 });
 
 describe("multi-step snippets in the snippets panel", () => {
+  it("tells the user how many legacy runbook templates could not be migrated", async () => {
+    mocks.snippetMigrationStatus.mockResolvedValue({ unmigratedRunbookTemplates: 3 });
+    await openPanel();
+    await waitForRendered(() => expect(ui().textContent).toContain("有 3 个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中"));
+  });
+
+  it("shows no migration notice when everything migrated or the lookup fails", async () => {
+    await openPanel();
+    await flush();
+    expect(ui().textContent).not.toContain("未能迁移");
+    mounted?.unmount();
+    mocks.snippetMigrationStatus.mockRejectedValue(new Error("boom"));
+    await openPanel();
+    await flush();
+    expect(ui().textContent).not.toContain("未能迁移");
+    expect(ui().textContent).toContain("disk usage");
+  });
+
   it("marks a multi-step snippet with its step count and description, and drops the standalone flow entry", async () => {
     await openPanel();
     const rows = [...ui().querySelectorAll("[data-snippet-row]")];

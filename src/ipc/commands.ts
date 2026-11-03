@@ -952,6 +952,9 @@ export const assetApi = {
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
   // The generated snippet type lacks description/steps until bindings are regenerated, hence the cast.
   snippetList: () => call("snippet_list") as Promise<import("./types").SnippetDto[]>,
+  // The generated bindings do not know snippet_migration_status yet, hence the cast.
+  snippetMigrationStatus: () =>
+    call("snippet_migration_status" as never) as unknown as Promise<{ unmigratedRunbookTemplates: number }>,
   snippetCreate: (
     name: string,
     body: string,

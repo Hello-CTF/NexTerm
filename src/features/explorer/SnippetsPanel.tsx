@@ -63,6 +63,15 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     refetchOnWindowFocus: false,
   });
 
+  // A failed lookup only hides the notice.
+  const migration = useQuery({
+    queryKey: ["snippet-migration-status"],
+    queryFn: () => assetApi.snippetMigrationStatus(),
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const unmigrated = migration.data?.unmigratedRunbookTemplates ?? 0;
+
   const refresh = () => void qc.invalidateQueries({ queryKey: ["snippets"] });
 
   // Variables are asked for once; every step of a multi-step snippet renders with the same values.
@@ -182,6 +191,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           <p className="nx-hint mb-2.5">
             「插入」将命令写入当前终端的输入行，不按回车；「执行」写入后立即回车运行。片段含换行或控制字符时，将先请求确认。多步片段只能执行，会按顺序逐步写入当前终端；标记了「执行前确认」的步骤会先询问。
           </p>
+          {unmigrated > 0 && (
+            <p className="nx-hint mb-2.5" role="status" data-testid="snippet-migration-notice">
+              有 {unmigrated} 个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中。
+            </p>
+          )}
           {blockedReason && (snippets.data?.length ?? 0) > 0 && (
             <p className="nx-hint mb-2.5" role="status">{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。</p>
           )}
