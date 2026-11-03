@@ -27,11 +27,20 @@ describe("isFramed", () => {
 });
 
 describe("startUnlessFramed", () => {
-  it("does not start the app in a frame and renders a static notice", () => {
+  it("starts the app inside a frame outside the desktop transport", () => {
     const start = vi.fn();
     const win = { self: {}, top: {} } as unknown as Window;
     const body = document.createElement("body");
-    startUnlessFramed(win, body, start);
+    startUnlessFramed(win, body, start, { desktop: false });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(body.textContent).toBe("");
+  });
+
+  it("does not start the desktop app in a frame and renders a static notice", () => {
+    const start = vi.fn();
+    const win = { self: {}, top: {} } as unknown as Window;
+    const body = document.createElement("body");
+    startUnlessFramed(win, body, start, { desktop: true });
     expect(start).not.toHaveBeenCalled();
     expect(body.textContent).toContain("NexTerm 不能在框架中打开");
   });
@@ -41,7 +50,7 @@ describe("startUnlessFramed", () => {
     const win = {} as Window;
     Object.assign(win, { self: win, top: win });
     const body = document.createElement("body");
-    startUnlessFramed(win, body, start);
+    startUnlessFramed(win, body, start, { desktop: true });
     expect(start).toHaveBeenCalledTimes(1);
     expect(body.textContent).toBe("");
   });

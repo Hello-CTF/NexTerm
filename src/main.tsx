@@ -174,4 +174,4 @@ function start(): void {
   }
 }
 
-if (typeof window !== "undefined") startUnlessFramed(window, document.body, start);
+if (typeof window !== "undefined") startUnlessFramed(window, document.body, start, { desktop: DESKTOP });
