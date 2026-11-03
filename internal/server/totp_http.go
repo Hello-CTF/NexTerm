@@ -19,8 +19,13 @@ const (
 	mfaMaxTicketsPerUser = 3
 	// mfaLockThreshold consecutive wrong second-factor codes lock the user's
 	// second factor for mfaLockDuration, regardless of ticket or client IP.
-	mfaLockThreshold = 10
-	mfaLockDuration  = 15 * time.Minute
+	// Reaching the threshold again after a lock expired doubles the next lock
+	// (30m, 1h, 2h, ...) up to mfaLockMaxDuration. A success clears the
+	// escalation; so does mfaLockDecay without any lock after the last one ended.
+	mfaLockThreshold   = 10
+	mfaLockDuration    = 15 * time.Minute
+	mfaLockMaxDuration = 24 * time.Hour
+	mfaLockDecay       = 24 * time.Hour
 
 	mfaLockedMessage = "第二因素验证失败次数过多，已暂时锁定，请稍后再试"
 )
@@ -119,6 +124,25 @@ type mfaLockEntry struct {
 	fails       int
 	inflight    int
 	lockedUntil time.Time
+	// level counts the locks since the last success; it sets the next duration.
+	level int
+	// lastLockEnd is when the most recent lock expired (zero while none has).
+	lastLockEnd time.Time
+}
+
+// mfaLockDurationFor is the lock length for the given 1-based escalation level.
+func mfaLockDurationFor(level int) time.Duration {
+	d := mfaLockDuration
+	for i := 1; i < level; i++ {
+		if d >= mfaLockMaxDuration/2 {
+			return mfaLockMaxDuration
+		}
+		d *= 2
+	}
+	if d > mfaLockMaxDuration {
+		return mfaLockMaxDuration
+	}
+	return d
 }
 
 // mfaLockout counts second-factor failures per user. Unlike the LRU-backed
@@ -142,7 +166,7 @@ func (l *mfaLockout) begin(userID string) bool {
 	now := l.now()
 	if len(l.entries) > 1024 {
 		for id, e := range l.entries {
-			if e.inflight == 0 && !e.lockedUntil.IsZero() && !now.Before(e.lockedUntil) {
+			if e.inflight == 0 && !e.lockedUntil.IsZero() && !now.Before(e.lockedUntil) && now.Sub(e.lockedUntil) >= mfaLockDecay {
 				delete(l.entries, id)
 			}
 		}
@@ -156,7 +180,10 @@ func (l *mfaLockout) begin(userID string) bool {
 		if now.Before(e.lockedUntil) {
 			return false
 		}
-		e.fails, e.lockedUntil = 0, time.Time{}
+		e.fails, e.lastLockEnd, e.lockedUntil = 0, e.lockedUntil, time.Time{}
+	}
+	if e.level > 0 && e.fails == 0 && e.inflight == 0 && !e.lastLockEnd.IsZero() && now.Sub(e.lastLockEnd) >= mfaLockDecay {
+		e.level = 0
 	}
 	if e.fails+e.inflight >= mfaLockThreshold {
 		return false
@@ -179,7 +206,7 @@ func (l *mfaLockout) success(userID string) {
 	defer l.mu.Unlock()
 	if e := l.entries[userID]; e != nil {
 		if e.inflight > 1 {
-			e.fails, e.lockedUntil = 0, time.Time{}
+			e.fails, e.level, e.lockedUntil, e.lastLockEnd = 0, 0, time.Time{}, time.Time{}
 			e.inflight--
 		} else {
 			delete(l.entries, userID)
@@ -188,25 +215,26 @@ func (l *mfaLockout) success(userID string) {
 }
 
 // failure counts a wrong code; locked is true only for the call that crosses the threshold.
-func (l *mfaLockout) failure(userID string) (fails int, until time.Time, locked bool) {
+func (l *mfaLockout) failure(userID string) (fails int, until time.Time, level int, locked bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e := l.entries[userID]
 	if e == nil {
-		return 0, time.Time{}, false
+		return 0, time.Time{}, 0, false
 	}
 	if e.inflight > 0 {
 		e.inflight--
 	}
 	e.fails++
 	if e.fails >= mfaLockThreshold && e.lockedUntil.IsZero() {
-		e.lockedUntil = l.now().Add(mfaLockDuration)
+		e.level++
+		e.lockedUntil = l.now().Add(mfaLockDurationFor(e.level))
 		locked = true
 	}
-	return e.fails, e.lockedUntil, locked
+	return e.fails, e.lockedUntil, e.level, locked
 }
 
-func (s *Server) auditMFALockout(r *http.Request, userID string, fails int, until time.Time) {
+func (s *Server) auditMFALockout(r *http.Request, userID string, fails int, until time.Time, level int) {
 	if s.audit == nil {
 		return
 	}
@@ -214,7 +242,12 @@ func (s *Server) auditMFALockout(r *http.Request, userID string, fails int, unti
 	defer cancel()
 	_ = s.audit(ctx, "auth", "totp_lockout", map[string]any{
 		"user_id": userID, "failures": fails, "locked_until": until.UnixMilli(), "client_ip": clientIP(r),
+		"lock_level": level, "lock_seconds": int64(mfaLockDurationFor(level) / time.Second),
 	})
+}
+
+func writeMFALocked(w http.ResponseWriter) {
+	writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, mfaLockedMessage))
 }
 
 type accountMFABeginView struct {
@@ -250,7 +283,7 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.mfaLock.begin(entry.userID) {
-		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, mfaLockedMessage))
+		writeMFALocked(w)
 		return
 	}
 	valid, err := s.accounts.VerifyTOTPLoginCode(r.Context(), entry.userID, request.Code)
@@ -261,8 +294,8 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !valid {
 		s.accountThrottle.mfa.RecordFailure(key)
-		if fails, until, locked := s.mfaLock.failure(entry.userID); locked {
-			s.auditMFALockout(r, entry.userID, fails, until)
+		if fails, until, level, locked := s.mfaLock.failure(entry.userID); locked {
+			s.auditMFALockout(r, entry.userID, fails, until, level)
 		}
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "验证码错误"))
 		return

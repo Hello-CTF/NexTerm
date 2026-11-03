@@ -196,7 +196,7 @@ func TestMFALockoutConcurrentFailures(t *testing.T) {
 				return
 			}
 			admitted.Add(1)
-			if _, _, locked := lockout.failure("u1"); locked {
+			if _, _, _, locked := lockout.failure("u1"); locked {
 				crossings.Add(1)
 			}
 		}()
