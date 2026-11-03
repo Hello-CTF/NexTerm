@@ -20,6 +20,13 @@ export function setInputFailureHandler(next: ((failure: InputFailure) => void) |
   lastLostProbe = Number.NEGATIVE_INFINITY;
 }
 
+export const INPUT_MAX_PENDING_BYTES = 4 * 1024 * 1024;
+
+/** The error reported when queued terminal input exceeds the cap and `dropped` bytes are discarded. */
+export function inputOverflowError(dropped: number): { code: string; message: string } {
+  return { code: "input_overflow", message: `终端输入积压超过 4 MiB，已丢弃 ${dropped} 字节` };
+}
+
 export function isConnectionLostError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const { code, message } = error as { code?: unknown; message?: unknown };

@@ -1,6 +1,6 @@
 
 import { clientId, wsUrl } from "./env";
-import { reportInputFailure } from "./inputFailure";
+import { INPUT_MAX_PENDING_BYTES, inputOverflowError, reportInputFailure } from "./inputFailure";
 
 type ChannelMessage = unknown;
 
@@ -46,7 +46,7 @@ const INPUT_SUBPROTOCOL = "nexterm.input";
 const INPUT_FRAME = 1;
 const INPUT_MAX_PAYLOAD = 16 * 1024;
 const INPUT_MAX_BUFFERED = 256 * 1024;
-const INPUT_MAX_PENDING = 4 * 1024 * 1024;
+const INPUT_MAX_PENDING = INPUT_MAX_PENDING_BYTES;
 const INPUT_DRAIN_MS = 10;
 
 const channels = new Map<string, ChannelEntry>();
@@ -190,7 +190,7 @@ function connect(entry: ChannelEntry) {
  * HTTP). Only when the socket is not open does `http` carry the bytes, one
  * request in flight per channel, and later writes wait for it so the two paths never reorder. Frames already handed to a
  * socket that then drops are not resent: the server may have applied them and keystrokes must not be double-applied
- * (accepted trade-off: such in-flight frames can be lost). Queued input beyond 4 MiB is dropped with a warning.
+ * (accepted trade-off: such in-flight frames can be lost). Queued input beyond 4 MiB is dropped and reported through reportInputFailure.
  */
 export function sendChannelInput(
   channelId: string,
@@ -205,7 +205,7 @@ export function sendChannelInput(
   }
   const input = entry.input;
   if (input.pendingBytes + data.length > INPUT_MAX_PENDING) {
-    console.warn(`terminal input dropped: ${data.length} bytes exceed the pending input cap`);
+    reportInputFailure(tabId, inputOverflowError(data.length));
     return;
   }
   const last = input.batches[input.batches.length - 1];

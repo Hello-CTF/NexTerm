@@ -10,7 +10,7 @@ vi.mock("../ipc/wails", () => ({
   newWailsChannel: vi.fn(),
 }));
 
-import { INPUT_FAILURE_THROTTLE_MS, isConnectionLostError, reportInputFailure, setInputFailureHandler } from "../ipc/inputFailure";
+import { INPUT_FAILURE_THROTTLE_MS, inputOverflowError, isConnectionLostError, reportInputFailure, setInputFailureHandler } from "../ipc/inputFailure";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -27,6 +27,7 @@ describe("terminal input failures", () => {
     expect(isConnectionLostError({ code: "internal", message: "终端标签页已关闭" })).toBe(true);
     expect(isConnectionLostError({ code: "internal", message: "内部错误" })).toBe(false);
     expect(isConnectionLostError(new Error("boom"))).toBe(false);
+    expect(isConnectionLostError(inputOverflowError(10))).toBe(false);
   });
 
   it("reports a burst of failures once per window and a connection loss separately", () => {
