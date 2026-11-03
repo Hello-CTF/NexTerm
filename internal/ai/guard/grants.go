@@ -383,10 +383,11 @@ func (g *Grants) AddRule(ctx context.Context, deviceID, action, pattern string, 
 	next := append([]GrantRule(nil), entry.rules...)
 	for index, existing := range next {
 		if existing.DeviceID != deviceID || existing.Action != action || existing.Path != pattern ||
-			!slices.Equal(existing.Kinds, scope.Kinds) || !slices.Equal(existing.Programs, scope.Programs) {
+			!slices.Equal(existing.Kinds, scope.Kinds) || !slices.Equal(existing.Programs, scope.Programs) ||
+			existing.Unattended != scope.Unattended {
+			// Scope fields are part of the identity: they decide the sync object prefix, which must stay fixed per ID.
 			continue
 		}
-		existing.Unattended = scope.Unattended
 		existing.ExpiresAt = expiresAtMS
 		existing.UpdatedAt = now
 		existing = existing.Renewed()
@@ -454,7 +455,7 @@ func (g *Grants) RevokeRule(ctx context.Context, ruleID string) error {
 	}
 	entry.rules = next.Current
 	g.mu.Unlock()
-	if err := recordAIGrantTombstone(ctx, g.settings, AIGrantSyncRulePrefix+ruleID); err != nil {
+	if err := recordAIGrantTombstone(ctx, g.settings, RuleSyncObjectID(previous)); err != nil {
 		return err
 	}
 	g.emitAudit(ctx, GrantAuditEvent{Action: "rule_revoke", DeviceID: previous.DeviceID, Operation: previous.Action, RuleID: previous.ID, RulePath: previous.Path})

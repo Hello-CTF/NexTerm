@@ -103,6 +103,7 @@ export function aiPermissionPayload(p: SyncCollectAIPermission): unknown {
 }
 
 // aiGrant*Payload mirror aiGrantDeviceObject/aiGrantRuleObject/aiGrantModeObject: field order matches the Go structs;
+// rule ids arrive prefixed by the backend (scoped-rule/ for rules with kinds, programs or unattended, rule/ otherwise) and are used as-is;
 // rule path/expiresAt are omitted via omitempty when empty/zero, kinds has no omitempty (always an array).
 export function aiGrantDevicePayload(g: SyncCollectAIGrantDevice): unknown {
   return { id: g.id, deviceId: g.deviceId, kinds: g.kinds, updatedAt: g.updatedAt };

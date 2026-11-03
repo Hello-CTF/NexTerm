@@ -229,7 +229,7 @@ type aiPermissionObject struct {
 }
 
 // AI grant objects share the ai_grant kind, split into three families by object ID prefix:
-// device/<deviceID> (device-level grants), rule/<ruleID> (path-level grant rules), mode/<deviceID> (per-device permission modes).
+// device/<deviceID> (device-level grants), rule/<ruleID> (path rules and unscoped command rules), scoped-rule/<ruleID> (rules with kinds, programs or unattended), mode/<deviceID> (per-device permission modes).
 // Fields align with the guard persisted forms (guard.DeviceGrant / guard.GrantRule / the ai.device_permission map values);
 // updatedAt is the LWW revision, revocations converge via tombstones sharing the object ID.
 type aiGrantDeviceObject struct {

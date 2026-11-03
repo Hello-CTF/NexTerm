@@ -43,3 +43,33 @@ func TestCommandRuleDecisionReasonIsGrantRule(t *testing.T) {
 		t.Fatalf("path rule decision = %+v", got)
 	}
 }
+
+func TestAddRuleTreatsUnattendedAsDistinctRule(t *testing.T) {
+	grants, _ := newTestGrants(t, nil)
+	ctx := context.Background()
+	interactive, err := grants.AddRule(ctx, "device-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindService}}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unattended, err := grants.AddRule(ctx, "device-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindService}, Unattended: true}, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interactive.ID == unattended.ID {
+		t.Fatal("unattended variant reused the interactive rule ID")
+	}
+	again, err := grants.AddRule(ctx, "device-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindService}, Unattended: true}, time.Time{})
+	if err != nil || again.ID != unattended.ID {
+		t.Fatalf("identical scope not deduplicated: %+v, %v", again, err)
+	}
+	if got := RuleSyncObjectID(plainPathRule()); got != "rule/p" {
+		t.Fatalf("path rule sync id = %s", got)
+	}
+	if got := RuleSyncObjectID(interactive); got != "scoped-rule/"+interactive.ID {
+		t.Fatalf("scoped rule sync id = %s", got)
+	}
+}
+
+func plainPathRule() GrantRule {
+	return GrantRule{ID: "p", DeviceID: "d", Action: "write_file", Path: "/a/**"}
+}

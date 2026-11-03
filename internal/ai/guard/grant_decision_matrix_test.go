@@ -151,7 +151,7 @@ func TestAddRuleScopeValidation(t *testing.T) {
 func TestAddRuleDedupesByScope(t *testing.T) {
 	grants, settings := newTestGrants(t, nil)
 	ctx := context.Background()
-	first, err := grants.AddRule(ctx, "dev-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindService, KindProgram, KindService}, Programs: []string{"git", "bash", "git"}}, time.Time{})
+	first, err := grants.AddRule(ctx, "dev-a", "exec_commands", "", RuleScope{Kinds: []Kind{KindService, KindProgram, KindService}, Programs: []string{"git", "bash", "git"}, Unattended: true}, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -211,15 +211,15 @@ describe("ai_grant payloads match Go byte for byte", () => {
     expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(fixtureText("aiGrantRuleMinimal"));
   });
 
-  it("writes kinds, programs and unattended after path in the Go field order, only when set", () => {
+  it("writes kinds, programs and unattended after path in the Go field order under the scoped-rule/ id, only when set", () => {
     const r: SyncCollectAIGrantRule = {
-      id: "rule/r-3", deviceId: "dev-3", action: "exec_commands", path: "", kinds: ["service", "program"], programs: ["git"],
+      id: "scoped-rule/r-3", deviceId: "dev-3", action: "exec_commands", path: "", kinds: ["service", "program"], programs: ["git"],
       unattended: true, expiresAt: 5, createdAt: 1, updatedAt: 2,
     };
     expect(marshalSyncPayload(aiGrantRulePayload(r))).toBe(
-      '{"id":"rule/r-3","deviceId":"dev-3","action":"exec_commands","kinds":["service","program"],"programs":["git"],"unattended":true,"expiresAt":5,"createdAt":1,"updatedAt":2}',
+      '{"id":"scoped-rule/r-3","deviceId":"dev-3","action":"exec_commands","kinds":["service","program"],"programs":["git"],"unattended":true,"expiresAt":5,"createdAt":1,"updatedAt":2}',
     );
-    const empty: SyncCollectAIGrantRule = { ...r, kinds: [], programs: [], unattended: false };
+    const empty: SyncCollectAIGrantRule = { ...r, id: "rule/r-3", kinds: [], programs: [], unattended: false };
     expect(marshalSyncPayload(aiGrantRulePayload(empty))).toBe(
       '{"id":"rule/r-3","deviceId":"dev-3","action":"exec_commands","expiresAt":5,"createdAt":1,"updatedAt":2}',
     );
