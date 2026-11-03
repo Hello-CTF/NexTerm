@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { isHostWorkspace, restoreClosedTab, useUi, type Workspace } from "../../app/store";
+import { isHostWorkspace, restoreClosedTab, useUi } from "../../app/store";
 import { useClosedTabs } from "../../app/closedTabs";
 import { PortsSection } from "../hosts/PortsSection";
 import { IconChevronDown, IconChevronRight, IconClose, IconFile, IconFolder, IconSparkles } from "../../ui/icons";
@@ -7,7 +7,7 @@ import { IconChevronDown, IconChevronRight, IconClose, IconFile, IconFolder, Ico
 const FILE_LIMIT = 10;
 
 export interface SessionSidebarProps {
-  workspace: Workspace | undefined;
+  workspaceId: string | null;
   storeTabId: string;
   kernelTabId: string | null;
   title: string;
@@ -60,7 +60,8 @@ function FileRow({ path, onClick }: { path: string; onClick: () => void }) {
   );
 }
 
-export function SessionSidebar({ workspace, storeTabId, kernelTabId, title, visible, commandBlocks, onClose }: SessionSidebarProps) {
+export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, visible, commandBlocks, onClose }: SessionSidebarProps) {
+  const workspace = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined));
   const [portsOpen, setPortsOpen] = useState(true);
   const entries = useClosedTabs((s) => s.stack.entries);
   const hostName = workspace?.title ?? title;

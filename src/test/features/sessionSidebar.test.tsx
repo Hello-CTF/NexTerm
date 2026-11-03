@@ -46,7 +46,7 @@ function closed(key: string, path: string, over: Partial<ClosedTabEntry> = {}): 
 function mountSidebar(over: Partial<Parameters<typeof SessionSidebar>[0]> = {}) {
   mounted = mountWithClient(
     createElement(SessionSidebar, {
-      workspace,
+      workspaceId: "ws",
       storeTabId: "t1",
       kernelTabId: "k1",
       title: "term",
@@ -64,6 +64,7 @@ beforeEach(() => {
   mocks.list.mockResolvedValue({ ports: [] });
   mocks.restoreClosedTab.mockResolvedValue(true);
   useUi.setState({
+    workspaces: [workspace],
     sessions: [{ id: "s1", assetId: "a1", name: "web-01", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
     aiPendingRefs: [],
     rightOpen: false,

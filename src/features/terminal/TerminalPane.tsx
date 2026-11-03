@@ -462,8 +462,11 @@ export function TerminalPane({
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
   );
-  const workspace = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined));
   const sidebarOpen = useSessionSidebarOpen();
+  const activePaneId = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId)?.activePaneId : undefined) ?? null);
+  const [paneNarrow, setPaneNarrow] = useState(false);
+  const paneNarrowRef = useRef(false);
+  paneNarrowRef.current = paneNarrow;
   const myPaneId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.paneId ?? null,
   );
@@ -997,10 +1000,26 @@ export function TerminalPane({
       if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
       e.preventDefault();
       e.stopPropagation();
+      if (paneNarrowRef.current) {
+        pushToast("info", "窗格太窄，无法显示侧栏");
+        return;
+      }
       setSessionSidebarOpen(!getSessionSidebarOpen());
     };
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
+  }, [pushToast]);
+
+  // The sidebar is mounted, not just hidden, so a narrow pane must be known in JS; 560px matches the container query.
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setPaneNarrow(width > 0 && width <= 560);
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
   }, []);
 
   const openLinkPanel = useCallback(() => {
@@ -2193,6 +2212,7 @@ export function TerminalPane({
     });
   };
 
+  const sidebarShown = sidebarOpen && visible !== false && !paneNarrow && myPaneId !== null && myPaneId === activePaneId;
   const commandBlockProps = {
     kernelTabId,
     sourceLabel: title,
@@ -2814,16 +2834,19 @@ export function TerminalPane({
             </div>
           )}
         </div>
-        {blocksSupported && blocksOpen && <TerminalCommandBlocks {...commandBlockProps} />}
-        {sidebarOpen && (
+        {blocksSupported && blocksOpen && !sidebarShown && <TerminalCommandBlocks {...commandBlockProps} />}
+        {sidebarShown && (
           <SessionSidebar
-            workspace={workspace}
+            workspaceId={workspaceId}
             storeTabId={storeTabId}
             kernelTabId={kernelTabId}
             title={title}
-            visible={visible !== false}
+            visible
             commandBlocks={blocksSupported ? <TerminalCommandBlocks {...commandBlockProps} embedded /> : null}
-            onClose={() => setSessionSidebarOpen(false)}
+            onClose={() => {
+              setSessionSidebarOpen(false);
+              window.setTimeout(() => handleRef.current?.focus(), 0);
+            }}
           />
         )}
       </div>
