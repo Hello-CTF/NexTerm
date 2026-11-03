@@ -626,3 +626,28 @@ func TestStepConfirmFlagRequiresConfirmationUnderProductionOnlyPolicy(t *testing
 		t.Fatalf("an unflagged step must run without confirmation under production_only, got %+v", state)
 	}
 }
+
+func TestCancelArrivingAfterExecutionReturnsStillCancelsRun(t *testing.T) {
+	service := New(&fakeExecutor{})
+	startTestRun(t, service, testSteps(), []string{"s1"}, ConfirmEveryStep, nil)
+	prepareTestStep(t, service, 1, RenderedCommand{SessionID: "s1", Command: "one"})
+	service.mu.Lock()
+	r := service.runs["run-1"]
+	service.mu.Unlock()
+	r.beforeAdvanceRelease = func() {
+		if _, err := service.Cancel(context.Background(), "owner-a", "run-1"); err != nil {
+			t.Errorf("cancel: %v", err)
+		}
+	}
+	returned, err := service.Advance(context.Background(), "owner-a", AdvanceRequest{RunID: "run-1", StepNumber: 1, Confirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.Get(context.Background(), "owner-a", "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != RunCanceled || returned.Status != RunCanceled {
+		t.Fatalf("status after late cancel = %q (returned %q), want canceled: %+v", state.Status, returned.Status, state)
+	}
+}
