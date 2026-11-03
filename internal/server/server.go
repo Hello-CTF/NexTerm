@@ -136,14 +136,18 @@ type Server struct {
 	previewRevalidateInterval time.Duration
 	// accountSocketRevalidateNanos is how often (nanoseconds, 0 for the default) account WebSockets recheck their login session; tests may lower it.
 	accountSocketRevalidateNanos atomic.Int64
-	db                           DBHealthSource
-	accountConnections           AccountConnectionCloser
-	remoteDesktop                RemoteDesktopServer
-	accountCleanup               AccountCleanupFunc
-	accountCleanupPrepare        AccountCleanupPrepareFunc
-	accountRevocationMu          *sync.Mutex
-	revokeUserSessions           func(context.Context, string, string, ...func() error) ([]string, error)
-	accountExecutionAdmission    func(context.Context, string, *account.Identity, func() error) error
+	// sessionRecheck merges the periodic rechecks of the sockets of one login session; sessionCheckFn replaces the
+	// account lookup (nil uses Accounts.CheckSession) and is set by tests before sockets open.
+	sessionRecheck            sessionRechecker
+	sessionCheckFn            func(context.Context, string) (*account.Identity, error)
+	db                        DBHealthSource
+	accountConnections        AccountConnectionCloser
+	remoteDesktop             RemoteDesktopServer
+	accountCleanup            AccountCleanupFunc
+	accountCleanupPrepare     AccountCleanupPrepareFunc
+	accountRevocationMu       *sync.Mutex
+	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
+	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
 
 	readGate func()
 }

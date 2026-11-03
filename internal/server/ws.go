@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
@@ -318,6 +319,7 @@ func (s *Server) superviseAccountSocket(ctx context.Context, connection *websock
 		interval = defaultAccountSocketRevalidateInterval
 	}
 	cookieToken, _ := sessionCookie(r)
+	s.sessionRecheck.acquire(identity.SessionID)
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -332,7 +334,7 @@ func (s *Server) superviseAccountSocket(ctx context.Context, connection *websock
 				_ = connection.Close(websocket.StatusPolicyViolation, sessionReloginMessage)
 				return
 			case <-ticker.C:
-				if s.accountSocketSessionInvalid(ctx, cookieToken, identity) {
+				if s.accountSocketSessionInvalid(ctx, interval, cookieToken, identity) {
 					_ = connection.Close(websocket.StatusPolicyViolation, sessionReloginMessage)
 					return
 				}
@@ -342,16 +344,28 @@ func (s *Server) superviseAccountSocket(ctx context.Context, connection *websock
 	return func() {
 		cancel()
 		<-done
+		s.sessionRecheck.release(identity.SessionID)
 	}
 }
 
-func (s *Server) accountSocketSessionInvalid(ctx context.Context, cookieToken string, identity *account.Identity) bool {
-	if s.accounts == nil || cookieToken == "" {
+// accountSocketSessionInvalid rechecks the login session without sliding it. Sockets of one session share a single
+// lookup per interval; a transient lookup error is not cached and never closes the socket.
+func (s *Server) accountSocketSessionInvalid(ctx context.Context, interval time.Duration, cookieToken string, identity *account.Identity) bool {
+	check := s.sessionCheckFn
+	if check == nil {
+		if s.accounts == nil {
+			return false
+		}
+		check = s.accounts.CheckSession
+	}
+	if cookieToken == "" {
 		return false
 	}
-	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	current, err := s.accounts.ValidateSession(checkCtx, cookieToken)
+	current, err := s.sessionRecheck.check(ctx, identity.SessionID, interval, func(ctx context.Context) (*account.Identity, error) {
+		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return check(checkCtx, cookieToken)
+	})
 	if err != nil {
 		return confirmedAccountSessionInvalid(err)
 	}
@@ -438,4 +452,96 @@ func (s *Server) keepAliveSocket(ctx context.Context, connection *websocket.Conn
 			return
 		}
 	}
+}
+
+// sessionRechecker coalesces the periodic session recheck of account sockets per session: concurrent callers share one
+// in-flight lookup and a conclusive result (valid or confirmed invalid) is reused for ttl. An entry lives only while
+// at least one socket of the session is registered.
+type sessionRechecker struct {
+	mu      sync.Mutex
+	entries map[string]*sessionRecheckEntry
+	now     func() time.Time
+}
+
+type sessionRecheckEntry struct {
+	refs     int
+	at       time.Time
+	has      bool
+	identity *account.Identity
+	err      error
+	inflight *sessionRecheckCall
+}
+
+type sessionRecheckCall struct {
+	done     chan struct{}
+	identity *account.Identity
+	err      error
+}
+
+func (c *sessionRechecker) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+func (c *sessionRechecker) acquire(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = make(map[string]*sessionRecheckEntry)
+	}
+	e := c.entries[sessionID]
+	if e == nil {
+		e = &sessionRecheckEntry{}
+		c.entries[sessionID] = e
+	}
+	e.refs++
+}
+
+func (c *sessionRechecker) release(sessionID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entries[sessionID]; e != nil {
+		if e.refs--; e.refs <= 0 {
+			delete(c.entries, sessionID)
+		}
+	}
+}
+
+func (c *sessionRechecker) check(ctx context.Context, sessionID string, ttl time.Duration, lookup func(context.Context) (*account.Identity, error)) (*account.Identity, error) {
+	c.mu.Lock()
+	e := c.entries[sessionID]
+	if e == nil {
+		c.mu.Unlock()
+		return lookup(ctx)
+	}
+	if e.has && c.clock().Sub(e.at) < ttl {
+		identity, err := e.identity, e.err
+		c.mu.Unlock()
+		return identity, err
+	}
+	if call := e.inflight; call != nil {
+		c.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.identity, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	call := &sessionRecheckCall{done: make(chan struct{})}
+	e.inflight = call
+	c.mu.Unlock()
+
+	call.identity, call.err = lookup(ctx)
+
+	c.mu.Lock()
+	e.inflight = nil
+	if call.err == nil || confirmedAccountSessionInvalid(call.err) {
+		e.identity, e.err, e.at, e.has = call.identity, call.err, c.clock(), true
+	}
+	c.mu.Unlock()
+	close(call.done)
+	return call.identity, call.err
 }

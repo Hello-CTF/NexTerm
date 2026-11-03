@@ -166,51 +166,13 @@ func (a *Accounts) ListUserSessions(ctx context.Context, userID string) ([]Sessi
 	return result, nil
 }
 
+// ValidateSession authenticates a session token and slides its expiry.
 func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity, error) {
+	session, user, now, err := a.checkSessionState(ctx, token)
+	if err != nil {
+		return nil, err
+	}
 	userSession := query.Use(a.db).UserSession
-	row, err := userSession.WithContext(ctx).Where(userSession.TokenHash.Eq(sessionTokenHash(token))).First()
-	if err == gorm.ErrRecordNotFound {
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
-	}
-	if err != nil {
-		return nil, dbError(err)
-	}
-	session := Session{
-		ID: row.ID, UserID: row.UserID, CreatedAt: row.CreatedAt, TouchedAt: row.TouchedAt, ExpiresAt: row.ExpiresAt,
-	}
-	if row.DeviceID != nil {
-		session.DeviceID = *row.DeviceID
-	}
-	if row.RevokedAt != nil {
-		session.RevokedAt = *row.RevokedAt
-	}
-	appUser := query.Use(a.db).AppUser
-	user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(session.UserID)).First()
-	if err != nil {
-		return nil, dbError(err)
-	}
-	deviceRevoked := false
-	if session.DeviceID != "" {
-		userDevice := query.Use(a.db).UserDevice
-		device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(session.DeviceID)).First()
-		if err != nil {
-			return nil, dbError(err)
-		}
-		deviceRevoked = device.RevokedAt != nil
-	}
-	now := a.now()
-	switch {
-	case session.RevokedAt != 0:
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
-	case deviceRevoked:
-		return nil, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
-	case now >= session.ExpiresAt:
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
-	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
-		return nil, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
-	case user.State == string(StateDisabled):
-		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
-	}
 	if now-session.TouchedAt >= sessionSlidePersist.Milliseconds() {
 		expiresAt := now + SessionSlidingTTL.Milliseconds()
 		if absolute := session.CreatedAt + SessionAbsoluteTTL.Milliseconds(); expiresAt > absolute {
@@ -231,6 +193,71 @@ func (a *Accounts) ValidateSession(ctx context.Context, token string) (*Identity
 			}
 		}
 	}
+	return a.sessionIdentity(ctx, session, user)
+}
+
+// CheckSession applies the same validity rules as ValidateSession without
+// writing: it never slides the session, so a periodic recheck cannot keep an
+// otherwise idle session alive.
+func (a *Accounts) CheckSession(ctx context.Context, token string) (*Identity, error) {
+	session, user, _, err := a.checkSessionState(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	return a.sessionIdentity(ctx, session, user)
+}
+
+// checkSessionState loads the session and rejects it when revoked, expired,
+// bound to a revoked device or owned by a disabled user. It is read-only.
+func (a *Accounts) checkSessionState(ctx context.Context, token string) (Session, *store.AppUser, int64, error) {
+	userSession := query.Use(a.db).UserSession
+	row, err := userSession.WithContext(ctx).Where(userSession.TokenHash.Eq(sessionTokenHash(token))).First()
+	if err == gorm.ErrRecordNotFound {
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话无效，请重新登录")
+	}
+	if err != nil {
+		return Session{}, nil, 0, dbError(err)
+	}
+	session := Session{
+		ID: row.ID, UserID: row.UserID, CreatedAt: row.CreatedAt, TouchedAt: row.TouchedAt, ExpiresAt: row.ExpiresAt,
+	}
+	if row.DeviceID != nil {
+		session.DeviceID = *row.DeviceID
+	}
+	if row.RevokedAt != nil {
+		session.RevokedAt = *row.RevokedAt
+	}
+	appUser := query.Use(a.db).AppUser
+	user, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(session.UserID)).First()
+	if err != nil {
+		return Session{}, nil, 0, dbError(err)
+	}
+	deviceRevoked := false
+	if session.DeviceID != "" {
+		userDevice := query.Use(a.db).UserDevice
+		device, err := userDevice.WithContext(ctx).Where(userDevice.ID.Eq(session.DeviceID)).First()
+		if err != nil {
+			return Session{}, nil, 0, dbError(err)
+		}
+		deviceRevoked = device.RevokedAt != nil
+	}
+	now := a.now()
+	switch {
+	case session.RevokedAt != 0:
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已吊销，请重新登录")
+	case deviceRevoked:
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "设备已吊销")
+	case now >= session.ExpiresAt:
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
+	case now >= session.CreatedAt+SessionAbsoluteTTL.Milliseconds():
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "会话已过期，请重新登录")
+	case user.State == string(StateDisabled):
+		return Session{}, nil, 0, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
+	}
+	return session, user, now, nil
+}
+
+func (a *Accounts) sessionIdentity(ctx context.Context, session Session, user *store.AppUser) (*Identity, error) {
 	mfaEnabled := false
 	userTOTP := query.Use(a.db).UserTOTP
 	if _, err := userTOTP.WithContext(ctx).Where(userTOTP.UserID.Eq(session.UserID), userTOTP.SecretEnvelope.IsNotNull()).First(); err == nil {
