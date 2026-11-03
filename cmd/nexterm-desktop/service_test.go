@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	core "github.com/Hello-CTF/NexTerm/internal/app"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -95,5 +97,65 @@ func TestServiceCallPreservesClientAndDeliversEarlyChannelFrames(t *testing.T) {
 	}
 	if _, err := streams.OpenBinary(context.Background(), ipc.ChannelRef{ID: "after-shutdown"}); err == nil {
 		t.Fatal("stream factory remained open after service shutdown")
+	}
+}
+
+func TestServiceShutdownFailsFastWhenStreamDispatchIsStuck(t *testing.T) {
+	window := newGatedStreamWindow(t)
+	streams := newDesktopStreamFactory()
+	streams.SetWindow(window)
+	stuck, err := streams.OpenBinary(t.Context(), ipc.ChannelRef{ID: "stuck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := streams.OpenBinary(t.Context(), ipc.ChannelRef{ID: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct{ closeReturned, sendErr error }
+	componentDone := make(chan outcome, 1)
+	applicationCore, err := core.New(core.Config{
+		Streams: streams,
+		Modules: []core.Module{{
+			Name: "desktop-shutdown-test",
+			Component: core.ComponentFuncs{
+				ShutdownFunc: func(context.Context) error {
+					closeErr := stuck.Close()
+					componentDone <- outcome{closeReturned: closeErr, sendErr: other.SendBinary(context.Background(), []byte{2})}
+					return nil
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{app: applicationCore, streams: streams}
+	if err := service.ServiceStartup(t.Context(), application.ServiceOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = stuck.SendBinary(context.Background(), []byte{1}) }()
+	<-window.entered
+
+	result := make(chan error, 1)
+	go func() { result <- service.ServiceShutdown() }()
+	select {
+	case err := <-result:
+		if errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("shutdown error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ServiceShutdown did not return promptly")
+	}
+	select {
+	case got := <-componentDone:
+		if got.closeReturned != nil || !errors.Is(got.sendErr, errDesktopStreamClosed) {
+			t.Fatalf("component saw close=%v send=%v", got.closeReturned, got.sendErr)
+		}
+	default:
+		t.Fatal("component shutdown did not run")
+	}
+	if got := window.calls.Load(); got != 1 {
+		t.Fatalf("dispatch calls = %d, want only the stuck one", got)
 	}
 }

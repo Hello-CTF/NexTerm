@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Hello-CTF/NexTerm/internal/diagcapture"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -38,15 +39,19 @@ type desktopStreamFactory struct {
 	mu       sync.Mutex
 	window   desktopStreamWindow
 	channels map[string]*desktopStream
-	closed   bool
+	// closed is atomic so dispatch can fail fast without taking mu while a
+	// shutdown is in progress.
+	closed atomic.Bool
 }
 
 type desktopStream struct {
 	factory *desktopStreamFactory
 	topic   string
 
-	mu     sync.Mutex
-	closed bool
+	// mu only serializes dispatches on this channel; Close never takes it.
+	mu             sync.Mutex
+	closed         atomic.Bool
+	closeEventSent atomic.Bool
 }
 
 func newDesktopStreamFactory() *desktopStreamFactory {
@@ -76,7 +81,7 @@ func (f *desktopStreamFactory) open(ctx context.Context, channel ipc.ChannelRef)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed {
+	if f.closed.Load() {
 		return nil, errDesktopStreamClosed
 	}
 	if f.window == nil {
@@ -91,12 +96,10 @@ func (f *desktopStreamFactory) open(ctx context.Context, channel ipc.ChannelRef)
 }
 
 func (f *desktopStreamFactory) Close() error {
-	f.mu.Lock()
-	if f.closed {
-		f.mu.Unlock()
+	if !f.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	f.closed = true
+	f.mu.Lock()
 	streams := make([]*desktopStream, 0, len(f.channels))
 	for _, stream := range f.channels {
 		streams = append(streams, stream)
@@ -117,13 +120,12 @@ func (f *desktopStreamFactory) remove(channelID string, stream *desktopStream) {
 }
 
 func (f *desktopStreamFactory) dispatch(event *application.CustomEvent) error {
-	f.mu.Lock()
-	window := f.window
-	closed := f.closed
-	f.mu.Unlock()
-	if closed {
+	if f.closed.Load() {
 		return errDesktopStreamClosed
 	}
+	f.mu.Lock()
+	window := f.window
+	f.mu.Unlock()
 	if window == nil {
 		return ipc.ErrStreamsUnavailable
 	}
@@ -163,9 +165,20 @@ func (s *desktopStream) send(ctx context.Context, payload any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s.closed.Load() || s.factory.closed.Load() {
+		return errDesktopStreamClosed
+	}
+	err := s.dispatchLocked(ctx, payload)
+	// A Close that raced with this dispatch could not take mu; hand the closed
+	// event over to whichever side releases the lock last.
+	s.flushClosedEvent()
+	return err
+}
+
+func (s *desktopStream) dispatchLocked(ctx context.Context, payload any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed {
+	if s.closed.Load() {
 		return errDesktopStreamClosed
 	}
 	if err := ctx.Err(); err != nil {
@@ -174,18 +187,30 @@ func (s *desktopStream) send(ctx context.Context, payload any) error {
 	return s.factory.dispatch(&application.CustomEvent{Name: s.topic, Data: payload})
 }
 
-func (s *desktopStream) Close() error {
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil
+// flushClosedEvent emits the closed event once, after any in-flight data
+// event. If another sender holds mu, that sender flushes after it unlocks.
+func (s *desktopStream) flushClosedEvent() {
+	if !s.closed.Load() || s.factory.closed.Load() {
+		return
 	}
-	s.closed = true
-	s.mu.Unlock()
-	s.factory.remove(s.topic[len("channel://"):], s)
+	if !s.mu.TryLock() {
+		return
+	}
+	defer s.mu.Unlock()
+	if !s.closeEventSent.CompareAndSwap(false, true) {
+		return
+	}
 	_ = s.factory.dispatch(&application.CustomEvent{
 		Name: s.topic, Data: desktopStreamClosedEvent{Type: desktopStreamClosedEventType},
 	})
+}
+
+func (s *desktopStream) Close() error {
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.factory.remove(s.topic[len("channel://"):], s)
+	s.flushClosedEvent()
 	return nil
 }
 
