@@ -1,12 +1,15 @@
 package hostports
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 )
 
 const maxURLLength = 2048
@@ -138,16 +141,22 @@ func ProbeCommand(shell Shell, req ProbeRequest) (string, error) {
 	case ShellPowerShell:
 		return powerShellProbe(req, host), nil
 	}
-	script := powerShellProbe(req, host)
-	if strings.ContainsAny(script, "\"%^&|<>!") {
-		return "", errors.New("该主机通过 cmd.exe 执行命令，而测试内容含有 cmd 无法安全传递的字符（例如 URL 查询串），暂不支持这类主机")
+	// cmd.exe must not see the script: the base64 alphabet contains no character cmd treats specially.
+	return "powershell -NoProfile -NonInteractive -EncodedCommand " + encodePowerShell(powerShellProbe(req, host)), nil
+}
+
+func encodePowerShell(script string) string {
+	units := utf16.Encode([]rune(script))
+	raw := make([]byte, 2*len(units))
+	for i, u := range units {
+		binary.LittleEndian.PutUint16(raw[2*i:], u)
 	}
-	return `powershell -NoProfile -NonInteractive -Command "` + script + `"`, nil
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 func posixProbe(req ProbeRequest, host string) string {
 	if req.Method == "http" {
-		return "curl -sS -o /dev/null -w '%{http_code} %{time_total}\\n' --max-time 10 --proto '=http,https' -- " + quotePOSIX(req.URL)
+		return "curl -sS -g -o /dev/null -w '%{http_code} %{time_total}\\n' --max-time 10 --proto '=http,https' -- " + quotePOSIX(req.URL)
 	}
 	h, p := quotePOSIX(host), quotePOSIX(strconv.Itoa(int(req.Port)))
 	return "if command -v nc >/dev/null 2>&1; then nc -z -v -w 5 " + h + " " + p +

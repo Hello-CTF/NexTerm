@@ -213,10 +213,13 @@ func parseNetstatLinux(output string) ([]Listener, bool) {
 func parseNetstatBSD(output string) ([]Listener, bool) {
 	var out []Listener
 	recognized := false
+	// The pid column moves between macOS versions, so it is located through the header; without one no PID is read.
+	pidCol := -1
 	for _, line := range lines(output) {
 		fields := strings.Fields(line)
 		if len(fields) >= 5 && fields[0] == "Proto" && fields[1] == "Recv-Q" {
 			recognized = true
+			pidCol = bsdPIDColumn(fields)
 			continue
 		}
 		if len(fields) < 6 || !strings.HasPrefix(fields[0], "tcp") || fields[5] != "LISTEN" {
@@ -229,16 +232,28 @@ func parseNetstatBSD(output string) ([]Listener, bool) {
 		recognized = true
 		address, proto := classify(host, fields[0] != "tcp4")
 		l := Listener{Proto: proto, Address: address, Port: port}
-		if len(fields) >= 9 {
-			if _, err := strconv.Atoi(fields[6]); err == nil {
-				if _, err := strconv.Atoi(fields[7]); err == nil {
-					l.PID, _ = strconv.Atoi(fields[8])
-				}
-			}
+		if pidCol >= 0 && pidCol < len(fields) {
+			l.PID, _ = strconv.Atoi(fields[pidCol])
 		}
 		out = append(out, l)
 	}
 	return out, recognized
+}
+
+// bsdPIDColumn maps the "pid" header token to its index in a data row, where "Local Address" and
+// "Foreign Address" are single fields. It returns -1 when the header has no pid column.
+func bsdPIDColumn(header []string) int {
+	col := 0
+	for i, name := range header {
+		if name == "pid" {
+			return col
+		}
+		if name == "Address" && i > 0 && (header[i-1] == "Local" || header[i-1] == "Foreign") {
+			continue
+		}
+		col++
+	}
+	return -1
 }
 
 // parseLsof handles `lsof -nP -iTCP -sTCP:LISTEN`; lsof escapes spaces in command names as \x20.

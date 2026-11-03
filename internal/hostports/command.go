@@ -26,9 +26,10 @@ var ErrNoSentinel = errors.New("port listing sentinel missing")
 // ListCommand returns a POSIX script that prints a sentinel line naming the tool it used, followed by that
 // tool's output.
 func ListCommand(withProcess bool) string {
-	ss, netstat, mac := "ss -ltnH", "netstat -ltn", "netstat -anv -p tcp"
+	// LC_ALL=C keeps the tools from localizing the headers and states the parsers rely on.
+	ss, netstat, mac := "LC_ALL=C ss -ltnH", "LC_ALL=C netstat -ltn", "LC_ALL=C netstat -anv -p tcp"
 	if withProcess {
-		ss, netstat = "ss -ltnpH", "netstat -ltnp"
+		ss, netstat = "LC_ALL=C ss -ltnpH", "LC_ALL=C netstat -ltnp"
 	}
 	macBranch := "out=$(" + mac + " 2>/dev/null)"
 	macFormat := "netstat-bsd"

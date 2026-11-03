@@ -33,7 +33,20 @@ type Target struct {
 	Shell  Shell
 	// LastOutputAgo reports how long ago any terminal of the session last produced output; false means unknown.
 	LastOutputAgo func() (time.Duration, bool)
+	// AssetID names the asset behind the session, for audit records.
+	AssetID string
 }
+
+// AuditEvent describes one connectivity test that was actually executed on a host.
+type AuditEvent struct {
+	Args    ProbeArgs
+	AssetID string
+	Result  ProbeResult
+}
+
+// AuditFunc receives an AuditEvent after each executed connectivity test. Dry runs and rejected
+// requests are never reported.
+type AuditFunc func(context.Context, AuditEvent)
 
 // Resolver authorizes the caller for sessionID and returns its target.
 type Resolver func(ctx context.Context, sessionID string) (Target, error)
@@ -70,6 +83,20 @@ type Service struct {
 
 	mu        sync.Mutex
 	platforms map[string]string
+	audit     AuditFunc
+}
+
+// SetAudit installs the callback that records executed connectivity tests; call it before serving requests.
+func (s *Service) SetAudit(fn AuditFunc) {
+	s.mu.Lock()
+	s.audit = fn
+	s.mu.Unlock()
+}
+
+func (s *Service) auditFunc() AuditFunc {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.audit
 }
 
 func NewService(resolver Resolver) *Service {
@@ -179,7 +206,7 @@ func (s *Service) listPOSIX(ctx context.Context, target Target, withProcess bool
 	if err != nil {
 		return ListResult{}, err
 	}
-	listeners, format, err := ParseListOutput(res.Stdout)
+	listeners, format, err := ParseListOutput(dropCutLine(res.Stdout, res.Truncated))
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -191,14 +218,14 @@ func (s *Service) listWindows(ctx context.Context, target Target, withProcess bo
 	if err != nil {
 		return ListResult{}, err
 	}
-	listeners, err := Parse(FormatNetstatWindows, res.Stdout)
+	listeners, err := Parse(FormatNetstatWindows, dropCutLine(res.Stdout, res.Truncated))
 	if err != nil {
 		return ListResult{}, fmt.Errorf("%w: %v", ErrNoSentinel, err)
 	}
 	truncated := res.Truncated
 	// "-p tcp" covers IPv4 only; the IPv6 table is best effort.
 	if v6, err := target.Runner.Exec(ctx, windowsNetstat6Command, base.ExecOptions{Timeout: listTimeout}); err == nil {
-		if more, err := Parse(FormatNetstatWindows, v6.Stdout); err == nil {
+		if more, err := Parse(FormatNetstatWindows, dropCutLine(v6.Stdout, v6.Truncated)); err == nil {
 			listeners = Normalize(append(listeners, more...))
 			truncated = truncated || v6.Truncated
 		}
@@ -209,6 +236,20 @@ func (s *Service) listWindows(ctx context.Context, target Target, withProcess bo
 		}
 	}
 	return ListResult{Listeners: nonNil(listeners), Format: string(FormatNetstatWindows), Platform: platformWindows, Truncated: truncated}, nil
+}
+
+// dropCutLine removes the last line of truncated output, which the cut may have left incomplete. The
+// first line is kept so the sentinel survives.
+func dropCutLine(stdout string, truncated bool) string {
+	if !truncated {
+		return stdout
+	}
+	trimmed := strings.TrimRight(stdout, "\r\n")
+	i := strings.LastIndexByte(trimmed, '\n')
+	if i < 0 {
+		return stdout
+	}
+	return trimmed[:i+1]
 }
 
 func nonNil(l []Listener) []Listener {
@@ -264,12 +305,20 @@ func (s *Service) Probe(ctx context.Context, args ProbeArgs) (ProbeResult, error
 	result := ProbeResult{Command: command, Ran: true, DurationMs: time.Since(started).Milliseconds()}
 	if err != nil {
 		result.Output = truncateOutput(err.Error())
+		s.recordProbe(ctx, args, target, result)
 		return result, nil
 	}
 	result.ExitCode = res.ExitCode
 	result.OK = res.ExitCode != nil && *res.ExitCode == 0
 	result.Output = truncateOutput(strings.TrimSpace(res.Stdout + "\n" + res.Stderr))
+	s.recordProbe(ctx, args, target, result)
 	return result, nil
+}
+
+func (s *Service) recordProbe(ctx context.Context, args ProbeArgs, target Target, result ProbeResult) {
+	if audit := s.auditFunc(); audit != nil {
+		audit(ctx, AuditEvent{Args: args, AssetID: target.AssetID, Result: result})
+	}
 }
 
 func truncateOutput(text string) string {

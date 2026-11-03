@@ -2,12 +2,15 @@ package hostports
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -58,17 +61,35 @@ func TestValidateProbeAcceptsOrdinaryTargets(t *testing.T) {
 	}
 }
 
-func TestProbeCommandWindowsWrapperRefusesShellMetacharacters(t *testing.T) {
-	if _, err := ProbeCommand(ShellUnknown, ProbeRequest{Method: "http", URL: "http://example.com/?a=1&b=2"}); err == nil {
-		t.Fatal("ampersand URL accepted for a cmd host")
-	}
-	command, err := ProbeCommand(ShellUnknown, ProbeRequest{Method: "tcp", Host: "example.com", Port: 22})
-	if err != nil || !strings.HasPrefix(command, "powershell -NoProfile -NonInteractive -Command \"") {
-		t.Fatalf("%q %v", command, err)
-	}
-	inner := strings.TrimSuffix(strings.TrimPrefix(command, "powershell -NoProfile -NonInteractive -Command \""), "\"")
-	if strings.ContainsAny(inner, "\"%^&|<>!") {
-		t.Fatalf("wrapper body contains forbidden characters: %q", inner)
+func TestProbeCommandWindowsWrapperEncodesScript(t *testing.T) {
+	const prefix = "powershell -NoProfile -NonInteractive -EncodedCommand "
+	for _, req := range []ProbeRequest{
+		{Method: "http", URL: "http://example.com/?a=1&b=2!c%20d"},
+		{Method: "tcp", Host: "example.com", Port: 22},
+	} {
+		command, err := ProbeCommand(ShellUnknown, req)
+		if err != nil || !strings.HasPrefix(command, prefix) {
+			t.Fatalf("%q %v", command, err)
+		}
+		encoded := strings.TrimPrefix(command, prefix)
+		if strings.Trim(encoded, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=") != "" {
+			t.Fatalf("encoded body has characters unsafe for cmd: %q", encoded)
+		}
+		raw, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || len(raw)%2 != 0 {
+			t.Fatalf("decode: %v", err)
+		}
+		units := make([]uint16, len(raw)/2)
+		for i := range units {
+			units[i] = binary.LittleEndian.Uint16(raw[2*i:])
+		}
+		host := ""
+		if req.Method == "tcp" {
+			host = req.Host
+		}
+		if got, want := string(utf16.Decode(units)), powerShellProbe(req, host); got != want {
+			t.Fatalf("decoded script = %q want %q", got, want)
+		}
 	}
 	ps, err := ProbeCommand(ShellPowerShell, ProbeRequest{Method: "http", URL: "http://example.com/?a=1&b=2"})
 	if err != nil || !strings.Contains(ps, "'http://example.com/?a=1&b=2'") {
@@ -137,7 +158,7 @@ func TestProbeCommandPassesValuesAsDiscreteArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	runPOSIX(t, command, dir)
-	want := []string{"-sS", "-o", "/dev/null", "-w", "%{http_code} %{time_total}\\n", "--max-time", "10", "--proto", "=http,https", "--", url}
+	want := []string{"-sS", "-g", "-o", "/dev/null", "-w", "%{http_code} %{time_total}\\n", "--max-time", "10", "--proto", "=http,https", "--", url}
 	if got := readLines(t, curlLog); !reflect.DeepEqual(got, want) {
 		t.Fatalf("curl argv = %q want %q", got, want)
 	}
@@ -189,5 +210,35 @@ func TestServiceProbeDryRunAndExecution(t *testing.T) {
 	res, err = NewService(resolverFor(Target{Runner: failing, Shell: ShellPOSIX})).Probe(context.Background(), ProbeArgs{SessionID: "s", ProbeRequest: req})
 	if err != nil || res.OK || res.ExitCode == nil || *res.ExitCode != 1 || !strings.Contains(res.Output, "refused") {
 		t.Fatalf("failure: %+v %v", res, err)
+	}
+}
+
+func TestServiceProbeAuditsOnlyRealExecutions(t *testing.T) {
+	zero := 0
+	runner := &fakeRunner{reply: func(string) (base.ExecResult, error) {
+		return base.ExecResult{Stdout: "open", ExitCode: &zero}, nil
+	}}
+	service := NewService(resolverFor(Target{Runner: runner, Shell: ShellPOSIX, AssetID: "asset-1"}))
+	var events []AuditEvent
+	service.SetAudit(func(_ context.Context, event AuditEvent) { events = append(events, event) })
+	req := ProbeRequest{Method: "tcp", Host: "example.com", Port: 22}
+
+	if _, err := service.Probe(t.Context(), ProbeArgs{SessionID: "s", ProbeRequest: req, DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Probe(t.Context(), ProbeArgs{SessionID: "s", ProbeRequest: ProbeRequest{Method: "tcp", Host: ";id", Port: 1}}); err == nil {
+		t.Fatal("invalid probe ran")
+	}
+	if len(events) != 0 {
+		t.Fatalf("dry run or rejected probe audited: %+v", events)
+	}
+	res, err := service.Probe(t.Context(), ProbeArgs{SessionID: "s", ProbeRequest: req})
+	if err != nil || len(events) != 1 {
+		t.Fatalf("err=%v events=%d", err, len(events))
+	}
+	got := events[0]
+	if got.Args.SessionID != "s" || got.AssetID != "asset-1" || got.Args.Method != "tcp" || got.Args.Host != "example.com" ||
+		got.Result.Command != res.Command || !got.Result.Ran || !got.Result.OK {
+		t.Fatalf("event = %+v", got)
 	}
 }

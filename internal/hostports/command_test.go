@@ -3,6 +3,9 @@ package hostports
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -28,9 +31,60 @@ func TestParseListOutputReadsSentinel(t *testing.T) {
 	}
 }
 
-func TestListCommandMentionsProcessFlagsOnlyWhenAsked(t *testing.T) {
-	if !strings.Contains(ListCommand(true), "ss -ltnpH") || strings.Contains(ListCommand(false), "-ltnpH") {
-		t.Fatal("process flag selection wrong")
+// runListScript runs the generated script under /bin/sh with only the named fake tools on PATH. Each fake
+// prints its name, its arguments and the LC_ALL it was started with.
+func runListScript(t *testing.T, withProcess bool, uname string, tools ...string) string {
+	t.Helper()
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("no /bin/sh")
+	}
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("uname", "echo "+uname)
+	for _, tool := range tools {
+		write(tool, "echo \"tool="+tool+" args=$* LC_ALL=$LC_ALL\"")
+	}
+	cmd := exec.Command("/bin/sh", "-c", ListCommand(withProcess))
+	cmd.Env = []string{"PATH=" + dir}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return string(out)
+}
+
+func TestListCommandRunsTheExpectedTool(t *testing.T) {
+	cases := []struct {
+		name        string
+		withProcess bool
+		uname       string
+		tools       []string
+		want        []string
+	}{
+		{"ss", false, "Linux", []string{"ss", "netstat"}, []string{"@@nexterm-ports ss\n", "tool=ss args=-ltnH LC_ALL=C"}},
+		{"ss with processes", true, "Linux", []string{"ss", "netstat"}, []string{"@@nexterm-ports ss\n", "tool=ss args=-ltnpH LC_ALL=C"}},
+		{"only netstat", false, "Linux", []string{"netstat"}, []string{"@@nexterm-ports netstat-linux\n", "tool=netstat args=-ltn LC_ALL=C"}},
+		{"only netstat with processes", true, "Linux", []string{"netstat"}, []string{"@@nexterm-ports netstat-linux\n", "tool=netstat args=-ltnp LC_ALL=C"}},
+		{"macOS netstat", false, "Darwin", []string{"netstat", "lsof"}, []string{"@@nexterm-ports netstat-bsd\n", "tool=netstat args=-anv -p tcp LC_ALL=C"}},
+		{"macOS lsof", true, "Darwin", []string{"netstat", "lsof"}, []string{"@@nexterm-ports lsof\n", "tool=lsof args=-nP -iTCP -sTCP:LISTEN"}},
+		{"nothing", false, "Linux", nil, []string{"@@nexterm-ports none\n"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runListScript(t, tc.withProcess, tc.uname, tc.tools...)
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("output lacks %q:\n%s", want, out)
+				}
+			}
+			if strings.Count(out, sentinelPrefix) != 1 {
+				t.Fatalf("expected exactly one sentinel:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -175,5 +229,37 @@ func TestServiceListErrors(t *testing.T) {
 	service = NewService(resolverFor(Target{Runner: runner, Shell: ShellUnknown}))
 	if _, err := service.List(t.Context(), "s", false); err == nil {
 		t.Fatal("unrecognized host produced no error")
+	}
+}
+
+func TestServiceDropsPossiblyCutLastLineWhenTruncated(t *testing.T) {
+	out := "@@nexterm-ports ss\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:80 0.0.0.0:*\nLISTEN 0 128 0.0.0.0:8 0.0.0.0:*"
+	for _, truncated := range []bool{false, true} {
+		runner := &fakeRunner{reply: func(string) (base.ExecResult, error) {
+			return base.ExecResult{Stdout: out, Truncated: truncated}, nil
+		}}
+		result, err := NewService(resolverFor(Target{Runner: runner, Shell: ShellPOSIX})).List(t.Context(), "s", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ports := map[uint16]bool{}
+		for _, l := range result.Listeners {
+			ports[l.Port] = true
+		}
+		if truncated {
+			if !result.Truncated || ports[8] || !ports[22] || !ports[80] {
+				t.Fatalf("truncated: %+v", result)
+			}
+		} else if result.Truncated || !ports[8] {
+			t.Fatalf("complete output must be kept whole: %+v", result)
+		}
+	}
+	// Dropping must not remove the sentinel itself.
+	runner := &fakeRunner{reply: func(string) (base.ExecResult, error) {
+		return base.ExecResult{Stdout: "@@nexterm-ports ss\n", Truncated: true}, nil
+	}}
+	result, err := NewService(resolverFor(Target{Runner: runner, Shell: ShellPOSIX})).List(t.Context(), "s", false)
+	if err != nil || !result.Truncated || result.Format != "ss" {
+		t.Fatalf("sentinel-only output: %+v %v", result, err)
 	}
 }

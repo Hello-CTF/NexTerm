@@ -58,6 +58,9 @@ func TestParseFixtures(t *testing.T) {
 			"tcp 127.0.0.1 5432 pid=412 ", "tcp6 :: 3000 pid=980 ", "tcp6 :: 8080 pid=981 ", "tcp6 ::1 8081 pid=982 ",
 			"tcp 0.0.0.0 5000 pid=200 ", "tcp6 fe80::1%lo0 8082 pid=983 ",
 		}},
+		{"macos netstat -anv with another column layout", FormatNetstatBSD, "netstat_macos_anv_wide.txt", []string{
+			"tcp 127.0.0.1 5432 pid=412 ", "tcp6 :: 3000 pid=980 ",
+		}},
 		{"macos netstat -an", FormatNetstatBSD, "netstat_macos_an.txt", []string{
 			"tcp 127.0.0.1 5432 pid=0 ", "tcp6 :: 3000 pid=0 ", "tcp6 ::1 8081 pid=0 ",
 		}},
@@ -173,5 +176,19 @@ func TestParseWindowsCRLFMatchesLF(t *testing.T) {
 	got := ParseTasklistCSV(strings.ReplaceAll(lf, "\n", "\r\n"))
 	if len(want) == 0 || fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("tasklist crlf = %v, lf = %v", got, want)
+	}
+}
+
+func TestParseNetstatBSDWithoutPIDColumnLeavesPIDEmpty(t *testing.T) {
+	noHeader := "tcp4       0      0  127.0.0.1.5432         *.*                    LISTEN         131072 131072    412      0 0x0100 0x00000106\n"
+	got, err := Parse(FormatNetstatBSD, noHeader)
+	if err != nil || len(got) != 1 || got[0].PID != 0 || got[0].Port != 5432 {
+		t.Fatalf("headerless: %+v %v", got, err)
+	}
+	noPID := "Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)        rhiwat shiwat state\n" +
+		"tcp4       0      0  127.0.0.1.5432         *.*                    LISTEN         131072 131072 0x0100\n"
+	got, err = Parse(FormatNetstatBSD, noPID)
+	if err != nil || len(got) != 1 || got[0].PID != 0 {
+		t.Fatalf("no pid column: %+v %v", got, err)
 	}
 }

@@ -1,0 +1,5 @@
+Active Internet connections (including servers)
+Proto Recv-Q Send-Q  Local Address          Foreign Address        (state)        rxbytes txbytes rhiwat shiwat  epid    pid state    options
+tcp4       0      0  192.168.1.5.52113      17.253.144.10.443      ESTABLISHED     120     340 131072 132480     0    540 0x0102 0x00000004
+tcp4       0      0  127.0.0.1.5432         *.*                    LISTEN            0       0 131072 131072     0    412 0x0100 0x00000106
+tcp6       0      0  *.3000                 *.*                    LISTEN            0       0 131072 131072     0    980 0x0100 0x00000106
