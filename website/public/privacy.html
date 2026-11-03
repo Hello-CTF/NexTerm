@@ -56,9 +56,9 @@
   <h2>2. 数据存储位置</h2>
   <ul>
     <li><strong>本地数据</strong>：桌面和移动端在应用数据目录保存资产、设置、终端历史和 AI 对话。凭据库可使用系统保护或你设置的保护密码；终端历史可能含敏感输入，请保护应用数据目录和备份。</li>
-    <li><strong>端到端加密同步</strong>：桌面端使用跨设备同步时，资产、分组、片段、凭据和可选配置作为加密同步对象传输；服务端无法解密这些同步对象。</li>
-    <li><strong>终端历史</strong>：历史记录默认不参与跨设备同步；你可以对单条记录单独开启端到端加密同步，也可以逐条删除。浏览器模式的会话和历史由你部署的服务端处理和保存。</li>
-    <li><strong>自托管服务端</strong>：服务端由你或你的团队部署，账号、工作区、会话及 AI 对话等数据保存在其数据目录或数据库（SQLite / PostgreSQL / MySQL / MariaDB）中。浏览器模式保存的凭据由服务端 master key 保护的凭据库加密，与上述端到端加密同步不同；服务端可解密凭据以建立连接。服务端管理员应控制访问权限，并保护数据目录、master key 和备份。</li>
+    <li><strong>加密同步</strong>：桌面端使用跨设备同步时，资产、分组、片段、凭据和可选配置在客户端加密后作为同步对象上传，服务端只保存密文、不持久化明文。这不是端到端加密：登录时密码会发送给服务端，服务端同时保存用该密码保护的数据密钥，服务端运营者或能截获登录请求的人可以据此解密同步对象。请只登录你信任的服务端，并使用 HTTPS。</li>
+    <li><strong>终端历史</strong>：历史记录默认不参与跨设备同步；你可以对单条记录单独开启上述加密同步，也可以逐条删除。浏览器模式的会话和历史由你部署的服务端处理和保存。</li>
+    <li><strong>自托管服务端</strong>：服务端由你或你的团队部署，账号、工作区、会话及 AI 对话等数据保存在其数据目录或数据库（SQLite / PostgreSQL / MySQL / MariaDB）中。浏览器模式保存的凭据由服务端 master key 保护的凭据库加密，与上述加密同步不同；服务端可解密凭据以建立连接。服务端管理员应控制访问权限，并保护数据目录、master key 和备份。</li>
   </ul>
 
   <h2>3. 生物识别</h2>
@@ -96,9 +96,9 @@
     <h2>2. Where Data Is Stored</h2>
     <ul>
       <li><strong>Local data</strong>: desktop and mobile apps store assets, settings, terminal history, and AI conversations in the app data directory. The credential vault can use OS protection or a protection password you set. Terminal history may contain sensitive input; protect the app data directory and its backups.</li>
-      <li><strong>End-to-end encrypted sync</strong>: when you use desktop cross-device sync, assets, groups, snippets, credentials, and optional settings are transmitted as encrypted sync objects. The server cannot decrypt those sync objects.</li>
-      <li><strong>Terminal history</strong>: recordings are excluded from cross-device sync by default. You may enable end-to-end encrypted sync per entry or delete entries individually. In browser mode, sessions and history are processed and stored by the server you deploy.</li>
-      <li><strong>Self-hosted server</strong>: you or your team deploy the server. Accounts, workspaces, sessions, AI conversations, and related data live in its data directory or database (SQLite / PostgreSQL / MySQL / MariaDB). In browser mode, credentials are encrypted by the server-side vault protected by its master key, separately from the end-to-end encrypted sync above; the server can decrypt credentials to establish connections. Server administrators should control access and protect the data directory, master key, and backups.</li>
+      <li><strong>Encrypted sync</strong>: when you use desktop cross-device sync, assets, groups, snippets, credentials, and optional settings are encrypted on the client and uploaded as sync objects; the server stores only ciphertext and never persists plaintext. This is not end-to-end encryption: the password is sent to the server at sign-in, and the server also stores the data key protected by that password, so the server operator, or anyone who can intercept a sign-in request, can decrypt the sync objects. Sign in only to servers you trust, over HTTPS.</li>
+      <li><strong>Terminal history</strong>: recordings are excluded from cross-device sync by default. You may enable the encrypted sync above per entry or delete entries individually. In browser mode, sessions and history are processed and stored by the server you deploy.</li>
+      <li><strong>Self-hosted server</strong>: you or your team deploy the server. Accounts, workspaces, sessions, AI conversations, and related data live in its data directory or database (SQLite / PostgreSQL / MySQL / MariaDB). In browser mode, credentials are encrypted by the server-side vault protected by its master key, separately from the encrypted sync above; the server can decrypt credentials to establish connections. Server administrators should control access and protect the data directory, master key, and backups.</li>
     </ul>
 
     <h2>3. Biometrics</h2>
