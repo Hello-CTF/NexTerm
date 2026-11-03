@@ -8,9 +8,11 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -378,19 +380,57 @@ func TestServeVNCCertificateTrustOnFirstUse(t *testing.T) {
 
 // rdpServer is a fake RDP server: X.224 confirm selecting protocol, then TLS, then "pong:"+data.
 func rdpServer(t testing.TB, cert func() tls.Certificate, selected uint32, gotRequest chan<- []byte) (string, int) {
+	return rdpServerWith(t, rdpServerOptions{Cert: cert, Selected: selected, GotRequest: gotRequest})
+}
+
+// rdpServerOptions configures rdpServerWith. Versions, when set, must be buffered: it receives the negotiated TLS
+// version of every completed handshake; GotRequest must be buffered too, as the server goroutine sends to it
+// without ever blocking the test. Connections counts accepted TCP connections.
+type rdpServerOptions struct {
+	Cert        func() tls.Certificate
+	Selected    uint32
+	GotRequest  chan<- []byte
+	MinVersion  uint16 // 0 means TLS 1.2
+	Versions    chan<- uint16
+	Connections *atomic.Int32
+	// ResetTLS12 drops the connection on a hello that does not offer TLS 1.3, like a middlebox that cannot parse 1.2.
+	ResetTLS12 bool
+}
+
+func rdpServerWith(t testing.TB, opts rdpServerOptions) (string, int) {
+	minVersion := opts.MinVersion
+	if minVersion == 0 {
+		minVersion = tls.VersionTLS12
+	}
 	return listen(t, func(conn net.Conn) {
+		if opts.Connections != nil {
+			opts.Connections.Add(1)
+		}
 		head := mustRead(t, conn, 4)
 		rest := mustRead(t, conn, int(binary.BigEndian.Uint16(head[2:]))-4)
-		if gotRequest != nil {
-			gotRequest <- append(head, rest...)
+		if opts.GotRequest != nil {
+			opts.GotRequest <- append(head, rest...)
 		}
 		confirm := []byte{3, 0, 0, 19, 14, x224Confirm, 0, 0, 0x12, 0x34, 0, rdpNegResponse, 0, 8, 0, 0, 0, 0, 0}
-		binary.LittleEndian.PutUint32(confirm[15:], selected)
+		binary.LittleEndian.PutUint32(confirm[15:], opts.Selected)
 		_, _ = conn.Write(confirm)
-		c := cert()
-		tlsConn := tls.Server(conn, &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: tls.VersionTLS12})
+		c := opts.Cert()
+		config := &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: minVersion}
+		if opts.ResetTLS12 {
+			config.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+				if !slices.Contains(hello.SupportedVersions, uint16(tls.VersionTLS13)) {
+					_ = conn.Close()
+					return nil, errors.New("dropped")
+				}
+				return nil, nil
+			}
+		}
+		tlsConn := tls.Server(conn, config)
 		if err := tlsConn.Handshake(); err != nil {
 			return
+		}
+		if opts.Versions != nil {
+			opts.Versions <- tlsConn.ConnectionState().Version
 		}
 		buf := make([]byte, 256)
 		for {
@@ -410,6 +450,47 @@ func rdpClientRequest(ticket, destination string) []byte {
 		Version: rdCleanPathVersion1, Destination: destination, HasDestination: true,
 		ProxyAuth: ticket, HasProxyAuth: true, X224: x224Request, HasX224: true,
 	}).marshal()
+}
+
+func TestServeRDPNegotiatesTLS12(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp-tls12")
+	versions := make(chan uint16, 1)
+	host, port := rdpServerWith(t, rdpServerOptions{Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx, Versions: versions})
+	f.resolver.set(Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+
+	prepared, err := f.svc.Prepare(userCtx("u1", "s1"), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := newMemPair(8)
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan error, 1)
+	go func() { done <- f.svc.Serve(background(), server, Identity{UserID: "u1", LoginSessionID: "s1"}, "") }()
+	if err := client.WriteFrame(rdpClientRequest(prepared.Ticket, "example.com:3389")); err != nil {
+		t.Fatal(err)
+	}
+	responseFrame, err := client.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := parseRDCleanPath(responseFrame)
+	if err != nil || response.Error != nil {
+		t.Fatalf("response = %+v, %v", response, err)
+	}
+	select {
+	case version := <-versions:
+		if version != tls.VersionTLS12 {
+			t.Fatalf("TLS version = 0x%x, want 0x%x", version, tls.VersionTLS12)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never reported a TLS version")
+	}
+	client.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("serve = %v", err)
+	}
 }
 
 func TestServeRDPRelaysWithServerCertificateAndIgnoresClientDestination(t *testing.T) {
@@ -1189,4 +1270,126 @@ func TestCloseAccountUserWithNothingSparedClosesConnectionsWithoutLoginSession(t
 		t.Fatal("ticket without a login session survived a full revocation")
 	}
 	client.Close()
+}
+
+// serveRDPOnce runs one RDCleanPath exchange against host:port and returns the client-visible response and Serve error.
+func serveRDPOnce(t *testing.T, f *fixture, host string, port int) (*rdCleanPathPDU, error) {
+	t.Helper()
+	f.resolver.set(Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+	prepared, err := f.svc.Prepare(userCtx("u1", "s1"), "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := newMemPair(8)
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan error, 1)
+	go func() { done <- f.svc.Serve(background(), server, Identity{UserID: "u1", LoginSessionID: "s1"}, "") }()
+	if err := client.WriteFrame(rdpClientRequest(prepared.Ticket, "")); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := client.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdu, err := parseRDCleanPath(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Close()
+	select {
+	case err := <-done:
+		return pdu, err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return")
+		return nil, nil
+	}
+}
+
+func TestServeRDPFallsBackToTLS13(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp-tls13")
+	versions := make(chan uint16, 4)
+	var conns atomic.Int32
+	host, port := rdpServerWith(t, rdpServerOptions{
+		Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx,
+		MinVersion: tls.VersionTLS13, Versions: versions, Connections: &conns,
+	})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+
+	pdu, err := serveRDPOnce(t, f, host, port)
+	if err != nil || pdu.Error != nil {
+		t.Fatalf("pdu=%+v err=%v", pdu, err)
+	}
+	select {
+	case version := <-versions:
+		if version != tls.VersionTLS13 {
+			t.Fatalf("TLS version = 0x%x, want 0x%x", version, tls.VersionTLS13)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never completed a handshake")
+	}
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("upstream connections = %d, want 2", got)
+	}
+}
+
+func TestServeRDPFallbackStillChecksPin(t *testing.T) {
+	f := newFixture(t)
+	cert, _ := newTestCertificate(t, "rdp-tls13-pin")
+	_, otherDER := newTestCertificate(t, "rdp-other")
+	host, port := rdpServerWith(t, rdpServerOptions{
+		Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx, MinVersion: tls.VersionTLS13,
+	})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(otherDER)
+
+	pdu, err := serveRDPOnce(t, f, host, port)
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeNeedsConfirm || pdu.Error == nil || pdu.Error.HTTPStatus != 403 {
+		t.Fatalf("pdu=%+v err=%v", pdu, err)
+	}
+}
+
+func TestServeRDPTLS12ServerIsNotRetried(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp-tls12-once")
+	var conns atomic.Int32
+	host, port := rdpServerWith(t, rdpServerOptions{
+		Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx, Connections: &conns,
+	})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+
+	if pdu, err := serveRDPOnce(t, f, host, port); err != nil || pdu.Error != nil {
+		t.Fatalf("pdu=%+v err=%v", pdu, err)
+	}
+	if got := conns.Load(); got != 1 {
+		t.Fatalf("upstream connections = %d, want 1", got)
+	}
+}
+
+func TestServeRDPFallsBackWhenTLS12HelloIsDropped(t *testing.T) {
+	f := newFixture(t)
+	cert, der := newTestCertificate(t, "rdp-drop")
+	versions := make(chan uint16, 4)
+	var conns atomic.Int32
+	host, port := rdpServerWith(t, rdpServerOptions{
+		Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx,
+		Versions: versions, Connections: &conns, ResetTLS12: true,
+	})
+	f.certs.pinned[host+":"+strconv.Itoa(port)+"/"+certKeyTypeRDP] = fingerprintOf(der)
+
+	pdu, err := serveRDPOnce(t, f, host, port)
+	if err != nil || pdu.Error != nil {
+		t.Fatalf("pdu=%+v err=%v", pdu, err)
+	}
+	select {
+	case version := <-versions:
+		if version != tls.VersionTLS13 {
+			t.Fatalf("TLS version = 0x%x, want 0x%x", version, tls.VersionTLS13)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never completed a handshake")
+	}
+	if got := conns.Load(); got != 2 {
+		t.Fatalf("upstream connections = %d, want 2", got)
+	}
 }

@@ -1,6 +1,9 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Select } from "../../ui/Select";
+import { RESOLUTION_PRESETS } from "../remote/remoteTypes";
 import type { RemoteDesktopOptions } from "./assetKindFields";
+
+const CUSTOM = "custom";
 
 function ToggleRow({
   label,
@@ -47,6 +50,11 @@ export function RemoteDesktopFields({
   const widthId = useId();
   const heightId = useId();
   const errorId = useId();
+  // Picking "自定义" while the size happens to equal a preset must keep the number inputs on screen.
+  const preset = RESOLUTION_PRESETS.find((p) => p.width === values.width && p.height === values.height);
+  // Sticky: typing a preset's numbers into the inputs must not swap them for the preset mid-edit.
+  const [custom, setCustom] = useState(values.resolution === "fixed" && !preset);
+  const selected = values.resolution === "follow" ? "follow" : custom || !preset ? CUSTOM : `${preset.width}x${preset.height}`;
   return (
     <>
       {protocol === "rdp" && (
@@ -65,14 +73,28 @@ export function RemoteDesktopFields({
             <label className="nx-label">分辨率</label>
             <Select
               ariaLabel="分辨率"
-              value={values.resolution}
-              onChange={(value) => onChange({ resolution: value as "follow" | "fixed" })}
+              value={selected}
+              onChange={(value) => {
+                if (value === "follow") {
+                  setCustom(false);
+                  onChange({ resolution: "follow" });
+                } else if (value === CUSTOM) {
+                  setCustom(true);
+                  onChange({ resolution: "fixed" });
+                } else {
+                  const [w, h] = value.split("x").map(Number);
+                  setCustom(false);
+                  onChange({ resolution: "fixed", width: w, height: h });
+                }
+              }}
               options={[
-                { value: "follow", label: "跟随窗口大小" },
-                { value: "fixed", label: "固定分辨率" },
+                { value: "follow", label: "跟随窗口" },
+                ...RESOLUTION_PRESETS.map((p) => ({ value: `${p.width}x${p.height}`, label: `${p.width} x ${p.height}` })),
+                { value: CUSTOM, label: "自定义" },
               ]}
             />
-            {values.resolution === "fixed" && (
+            <p className="nx-hint mt-0.5">连接时以此大小启动；服务器支持时，会话中也可在工具栏的“分辨率”里临时调整。</p>
+            {selected === CUSTOM && (
               <div className="mt-1.5 flex items-center gap-2">
                 <input
                   id={widthId}
@@ -82,7 +104,10 @@ export function RemoteDesktopFields({
                   aria-invalid={resolutionError ? true : undefined}
                   aria-describedby={resolutionError ? errorId : undefined}
                   value={values.width}
-                  onChange={(event) => onChange({ width: Number(event.target.value) })}
+                  onChange={(event) => {
+                    setCustom(true);
+                    onChange({ width: Number(event.target.value) });
+                  }}
                 />
                 <span className="text-neutral-500">x</span>
                 <input
@@ -93,7 +118,10 @@ export function RemoteDesktopFields({
                   aria-invalid={resolutionError ? true : undefined}
                   aria-describedby={resolutionError ? errorId : undefined}
                   value={values.height}
-                  onChange={(event) => onChange({ height: Number(event.target.value) })}
+                  onChange={(event) => {
+                    setCustom(true);
+                    onChange({ height: Number(event.target.value) });
+                  }}
                 />
               </div>
             )}

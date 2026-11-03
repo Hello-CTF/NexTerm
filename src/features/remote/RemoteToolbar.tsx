@@ -3,17 +3,10 @@ import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/Cont
 import { IconChevronDown, IconClose, IconMaximize, IconMore } from "../../ui/icons";
 import { filterCombos, MODIFIER_LABEL, type KeyCombo } from "./keys";
 import { RELEASE_CHORD_LABEL } from "../../app/inputCapture";
-import { FIXED_SCALES, MODIFIER_KEYS, type ModifierKey, type RemoteProtocol, type ScaleMode } from "./remoteTypes";
+import { FIXED_SCALES, MODIFIER_KEYS, RESOLUTION_PRESETS, type ModifierKey, type RemoteProtocol, type ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
 
 export type ResolutionChoice = "follow" | { width: number; height: number };
-
-export const RESOLUTION_PRESETS = [
-  { width: 1280, height: 720 },
-  { width: 1600, height: 900 },
-  { width: 1920, height: 1080 },
-  { width: 2560, height: 1440 },
-] as const;
 
 export interface RemoteToolbarProps {
   protocol: RemoteProtocol;
@@ -28,6 +21,10 @@ export interface RemoteToolbarProps {
   onFetchClipboard: () => void;
   resolution: ResolutionChoice;
   onResolution: (choice: ResolutionChoice) => void;
+  // Asks for a typed width and height; absent where the host cannot prompt.
+  onCustomResolution?: () => void;
+  // The size the server currently shows, for the VNC note.
+  desktopSize?: { width: number; height: number };
   viewOnly: boolean;
   onViewOnly: (viewOnly: boolean) => void;
   captured: boolean;
@@ -189,22 +186,35 @@ export function RemoteToolbar(props: RemoteToolbarProps) {
     ...(props.clipboardEnabled ? [] : [{ kind: "item" as const, label: "此资产已关闭剪贴板", disabled: true }]),
   ];
 
+  const resolutionItems = (): MenuItem[] => {
+    if (protocol !== "rdp") {
+      const size = props.desktopSize && props.desktopSize.width > 0 ? `当前 ${props.desktopSize.width} x ${props.desktopSize.height}。` : "";
+      return [
+        { kind: "group", label: "分辨率" },
+        { kind: "item", label: "VNC 的分辨率由服务器决定", hint: `${size}客户端无法修改，请在服务器端调整。`, disabled: true },
+      ];
+    }
+    const current = props.resolution;
+    const isPreset = current !== "follow" && RESOLUTION_PRESETS.some((p) => p.width === current.width && p.height === current.height);
+    return [
+      { kind: "group", label: "分辨率（仅本次连接）" },
+      { kind: "item", label: "跟随窗口大小", accel: current === "follow" ? "当前" : undefined, onSelect: () => props.onResolution("follow") },
+      ...RESOLUTION_PRESETS.map<MenuItem>((preset) => ({
+        kind: "item",
+        label: `${preset.width} x ${preset.height}`,
+        accel: current !== "follow" && current.width === preset.width && current.height === preset.height ? "当前" : undefined,
+        onSelect: () => props.onResolution({ ...preset }),
+      })),
+      ...(props.onCustomResolution
+        ? [{ kind: "item" as const, label: "自定义…", accel: current !== "follow" && !isPreset ? "当前" : undefined, onSelect: props.onCustomResolution }]
+        : []),
+      { kind: "separator" },
+      { kind: "item", label: "要长期使用某个分辨率，请在资产设置里修改", disabled: true },
+    ];
+  };
+
   const moreItems = (): MenuItem[] => {
     const items: MenuItem[] = [];
-    if (protocol === "rdp") {
-      items.push(
-        { kind: "group", label: "分辨率" },
-        { kind: "item", label: "跟随窗口大小", accel: props.resolution === "follow" ? "当前" : undefined, onSelect: () => props.onResolution("follow") },
-        ...RESOLUTION_PRESETS.map<MenuItem>((preset) => ({
-          kind: "item",
-          label: `${preset.width} x ${preset.height}`,
-          accel:
-            props.resolution !== "follow" && props.resolution.width === preset.width && props.resolution.height === preset.height ? "当前" : undefined,
-          onSelect: () => props.onResolution({ ...preset }),
-        })),
-        { kind: "separator" },
-      );
-    }
     if (props.touch) {
       items.push(
         { kind: "group", label: "触控方式" },
@@ -245,6 +255,13 @@ export function RemoteToolbar(props: RemoteToolbarProps) {
               {MODIFIER_LABEL[key]}
             </ToolButton>
           ))}
+          <ToolButton
+            onClick={(event) => openMenu(event, resolutionItems(), "分辨率")}
+            title={protocol === "rdp" ? `分辨率：${resolutionLabel(props.resolution)}（仅本次连接）` : "VNC 的分辨率由服务器决定"}
+          >
+            分辨率
+            <IconChevronDown size={11} />
+          </ToolButton>
           <ToolButton onClick={(event) => openMenu(event, clipboardItems(), "剪贴板")} title="剪贴板">
             剪贴板
             <IconChevronDown size={11} />

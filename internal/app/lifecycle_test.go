@@ -90,7 +90,16 @@ func TestLifecycleRejectsLateOrDuplicateComponents(t *testing.T) {
 	}
 }
 
+func setShutdownGrace(t *testing.T, grace time.Duration) {
+	t.Helper()
+	previous := shutdownGrace
+	shutdownGrace = grace
+	t.Cleanup(func() { shutdownGrace = previous })
+}
+
 func TestLifecycleShutdownAbandonsAComponentThatIgnoresItsContext(t *testing.T) {
+	// Healthy components return immediately, so a generous grace only matters when the scheduler is slow.
+	setShutdownGrace(t, 500*time.Millisecond)
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	stopped := make(chan string, 2)
@@ -129,5 +138,38 @@ func TestLifecycleShutdownAbandonsAComponentThatIgnoresItsContext(t *testing.T) 
 		default:
 			t.Fatalf("component %q was not stopped after the stuck one", want)
 		}
+	}
+}
+
+func TestLifecycleShutdownBoundsEachStuckComponentByTheGrace(t *testing.T) {
+	const grace = 150 * time.Millisecond
+	setShutdownGrace(t, grace)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	var lifecycle Lifecycle
+	for _, name := range []string{"first", "stuck-b", "stuck-a"} {
+		if err := lifecycle.Add(name, ComponentFuncs{ShutdownFunc: func(context.Context) error { <-release; return nil }}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lifecycle.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	finished := make(chan error, 1)
+	started := time.Now()
+	go func() { finished <- lifecycle.Shutdown(ctx) }()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, errShutdownTimeout) {
+			t.Fatalf("shutdown error = %v, want a timeout", err)
+		}
+		// Three stuck components: the first costs deadline+grace, the others about one grace each.
+		if elapsed := time.Since(started); elapsed < 3*grace {
+			t.Fatalf("shutdown took %v, want at least %v of grace across three stuck components", elapsed, 3*grace)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown stayed blocked on components that ignore their context")
 	}
 }

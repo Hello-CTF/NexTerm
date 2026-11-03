@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestCloseTab } from "../../app/store";
 import { captureKeyboard, isReleaseChord, RELEASE_CHORD_LABEL, releaseKeyboard } from "../../app/inputCapture";
 import { isTouchShell } from "../../app/shell/shellMode";
+import { promptText } from "../../ui/dialogs";
 import { IconLoader } from "../../ui/icons";
+import { parseResolutionInput } from "./resolution";
 import type { KeyCombo } from "./keys";
 import { RemoteKeysBar } from "./RemoteKeysBar";
 import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
@@ -17,6 +19,12 @@ const TOOLBAR_HIDE_MS = 2500;
 const TOOLBAR_REVEAL_ZONE_PX = 56;
 const RESIZE_DEBOUNCE_MS = 300;
 const HINT_MS = 3500;
+const PENDING_RETRY_MS = 600;
+const PENDING_RETRY_MAX = 10;
+const NOTICE_RECONNECT = "可重新连接，按所选大小启动。";
+const NOTICE_UNCONFIRMED = `远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
+const NOTICE_UNSUPPORTED = `这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
+const NOTICE_REFUSED = `远程主机拒绝了这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
 
 function failureTitle(failure: Failure): string {
   switch (failure.kind) {
@@ -33,6 +41,26 @@ function failureTitle(failure: Failure): string {
     default:
       return "无法连接远程桌面";
   }
+}
+
+// The engine's own text, folded away: useful in a bug report, wrong as a headline.
+function FailureDetail({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    void navigator.clipboard
+      ?.writeText(text)
+      .then(() => setCopied(true))
+      .catch(() => undefined);
+  };
+  return (
+    <details className="max-w-md text-left text-[11.5px] text-neutral-400" data-testid="remote-failure-detail">
+      <summary className="cursor-pointer text-center">详情</summary>
+      <pre className="mt-1 max-h-40 overflow-auto rounded bg-black/50 p-2 break-words whitespace-pre-wrap select-text">{text}</pre>
+      <button type="button" className="nx-btn nx-btn-outline mt-1" onClick={copy}>
+        {copied ? "已复制" : "复制详情"}
+      </button>
+    </details>
+  );
 }
 
 function DisconnectOverlay({
@@ -64,9 +92,10 @@ function DisconnectOverlay({
       data-testid="remote-disconnect-overlay"
     >
       <div id="nx-remote-overlay-title" className="text-[15px] font-semibold text-neutral-100">
-        {failureTitle(failure)}
+        {failure.title ?? failureTitle(failure)}
       </div>
       <div className="max-w-md text-[12.5px] break-words text-neutral-300">{failure.message}</div>
+      {failure.detail && <FailureDetail text={failure.detail} />}
       {retryIn !== null && (
         <div className="text-[12.5px] text-neutral-300" role="status" data-testid="remote-retry-countdown">
           {retryIn} 秒后自动重新连接（第 {attempt + 1} 次）
@@ -109,7 +138,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const viewportRef = useRef<HTMLDivElement>(null);
   const keyboardInputRef = useRef<HTMLInputElement>(null);
   const session = useRemoteSession(tabId, assetId, viewportRef);
-  const { clientRef, protocol, options } = session;
+  const { clientRef, protocol, options, desktopSize, setResolution: setSessionResolution } = session;
   const touch = isTouchShell();
 
   const [captured, setCaptured] = useState(false);
@@ -119,6 +148,8 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const [scale, setScale] = useState<ScaleMode>("fit");
   const [viewOnly, setViewOnly] = useState<boolean | null>(null);
   const [resolution, setResolution] = useState<ResolutionChoice | null>(null);
+  // A fixed resolution the server could not apply while connected; offers a reconnect that starts at that size.
+  const [resolutionNotice, setResolutionNotice] = useState<string | null>(null);
   const [held, setHeld] = useState<ReadonlySet<ModifierKey>>(new Set());
   const [latched, setLatched] = useState<ReadonlySet<ModifierKey>>(new Set());
   const [touchMode, setTouchMode] = useState<TouchMode>("direct");
@@ -239,32 +270,110 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     if (connected) clientRef.current?.focus();
   }, [connected, clientRef]);
 
-  // Resolution follows the pane (RDP): after the pane settles, ask the server for a matching desktop.
+  // Resolution (RDP): the desktop follows the pane, or is held at the chosen size. A size the connection already
+  // started with needs no request; a request before the Display Control channel opens is retried shortly.
+  useEffect(() => {
+    if (!connected) setResolutionNotice(null);
+  }, [connected]);
+  const fixedResolution = effectiveResolution !== "follow";
+  // A desktop size change that answers the outstanding fixed-size request (even late, or rounded) clears the notice;
+  // a server-initiated resize to some other size does not.
+  useEffect(() => {
+    if (!desktopSize || !resolutionNotice) return;
+    if (effectiveResolution === "follow") {
+      setResolutionNotice(null);
+      return;
+    }
+    if (desktopSize.width === effectiveResolution.width && desktopSize.height === effectiveResolution.height) {
+      setResolutionNotice(null);
+      return;
+    }
+    const outcome = clientRef.current?.resize(effectiveResolution.width, effectiveResolution.height);
+    if (outcome === "applied") setResolutionNotice(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to a new desktop size only
+  }, [desktopSize]);
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport || protocol !== "rdp" || !connected) return;
     let timer: number | null = null;
+    let retryTimer: number | null = null;
+    let retries = 0;
+    let cancelled = false;
     const apply = () => {
+      if (cancelled) return;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+        retryTimer = null;
+      }
       const client = clientRef.current;
       if (!client || !client.supportsResize) return;
+      let target: { width: number; height: number };
       if (effectiveResolution === "follow") {
         const zoom = typeof scale === "number" ? scale : 1;
-        if (viewport.clientWidth > 1 && viewport.clientHeight > 1) client.resize(viewport.clientWidth / zoom, viewport.clientHeight / zoom);
+        if (viewport.clientWidth <= 1 || viewport.clientHeight <= 1) return;
+        target = { width: viewport.clientWidth / zoom, height: viewport.clientHeight / zoom };
       } else {
-        client.resize(effectiveResolution.width, effectiveResolution.height);
+        target = effectiveResolution;
+        const now = client.desktopSize();
+        if (now.width === target.width && now.height === target.height) {
+          setResolutionNotice(null);
+          return;
+        }
+      }
+      const outcome = client.resize(target.width, target.height);
+      if (outcome === "applied") {
+        setResolutionNotice(null);
+      } else if (outcome === "pending" || outcome === "awaiting") {
+        // "pending" re-sends the request on each retry; "awaiting" only looks again, the request is already in flight.
+        if (retries < PENDING_RETRY_MAX) {
+          retries += 1;
+          retryTimer = window.setTimeout(apply, PENDING_RETRY_MS);
+        } else if (fixedResolution) {
+          setResolutionNotice(NOTICE_UNCONFIRMED);
+        }
+      } else if (fixedResolution) {
+        setResolutionNotice(outcome === "unavailable" ? NOTICE_UNSUPPORTED : NOTICE_REFUSED);
       }
     };
     const observer = new ResizeObserver(() => {
       if (timer !== null) window.clearTimeout(timer);
-      timer = window.setTimeout(apply, RESIZE_DEBOUNCE_MS);
+      timer = window.setTimeout(() => {
+        retries = 0;
+        apply();
+      }, RESIZE_DEBOUNCE_MS);
     });
     observer.observe(viewport);
     apply();
     return () => {
+      cancelled = true;
       observer.disconnect();
       if (timer !== null) window.clearTimeout(timer);
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
-  }, [protocol, connected, effectiveResolution, scale, clientRef]);
+  }, [protocol, connected, effectiveResolution, scale, clientRef, fixedResolution]);
+
+  const chooseResolution = useCallback(
+    (choice: ResolutionChoice) => {
+      setResolutionNotice(null);
+      setResolution(choice);
+      setSessionResolution(choice);
+    },
+    [setSessionResolution],
+  );
+
+  const chooseCustomResolution = useCallback(async () => {
+    let message = "输入分辨率（宽 x 高），例如 1600 x 900。\n仅对本次连接生效，不会保存到资产。";
+    for (;;) {
+      const text = await promptText(message, "");
+      if (text === null) return;
+      const parsed = parseResolutionInput(text);
+      if (parsed.ok) {
+        chooseResolution({ width: parsed.width, height: parsed.height });
+        return;
+      }
+      message = `${parsed.error}\n\n输入分辨率（宽 x 高），例如 1600 x 900。`;
+    }
+  }, [chooseResolution]);
 
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === paneRef.current);
@@ -449,7 +558,9 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           onSendClipboard={() => void clientRef.current?.sendClipboard()}
           onFetchClipboard={() => void clientRef.current?.fetchClipboard()}
           resolution={effectiveResolution}
-          onResolution={setResolution}
+          onResolution={chooseResolution}
+          onCustomResolution={() => void chooseCustomResolution()}
+          desktopSize={protocol === "vnc" && connected ? clientRef.current?.desktopSize() : undefined}
           viewOnly={effectiveViewOnly}
           onViewOnly={setViewOnly}
           captured={captured}
@@ -464,6 +575,21 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           onPinnedChange={setPinned}
           onReveal={reveal}
         />
+        {resolutionNotice && connected && (
+          <div
+            role="alert"
+            className="absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100%-1.5rem)] -translate-x-1/2 items-center gap-2 rounded-lg bg-neutral-800/95 px-3 py-2 text-[12px] text-neutral-100"
+            data-testid="remote-resolution-notice"
+          >
+            <span>{resolutionNotice}</span>
+            <button type="button" className="nx-btn nx-btn-primary shrink-0" onClick={session.connect}>
+              重新连接
+            </button>
+            <button type="button" className="nx-btn nx-btn-outline shrink-0" onClick={() => setResolutionNotice(null)}>
+              忽略
+            </button>
+          </div>
+        )}
         {hint && (
           <div
             role="status"

@@ -6,8 +6,13 @@ noVNC 1.7.0
   NexTerm ships the noVNC library unmodified. Its complete source is available at the address above, under the
   terms of the MPL-2.0: https://www.mozilla.org/MPL/2.0/
 
-IronRDP (iron-remote-desktop 0.11.0, iron-remote-desktop-rdp 0.7.0)
+IronRDP (iron-remote-desktop 0.11.0; iron-remote-desktop-rdp 0.7.0, modified build)
   License: MIT OR Apache-2.0
-  Source:  https://github.com/Devolutions/IronRDP
+  Base source: https://github.com/Devolutions/IronRDP/tree/e45f68c7e52297ca50d33b44c0ace36c9940fbe6
+  Modified source: https://github.com/huangzheng2016/IronRDP/tree/ec55949ee0e6edd1381503c6ebb6a9971c097d3b
+  Modifications: the DeactivateAll fix (https://github.com/Devolutions/IronRDP/pull/1371), Progressive EGFX decoding,
+  decoder memory and bounds hardening, and SSPI 0.23.1. The complete source diff from the base is UPSTREAM.patch in
+  the packaged build's release. Rebuilding the Rust sources uses Rust 1.93.
+  Packaged build: https://github.com/huangzheng2016/IronRDP/releases/tag/v0.7.0-egfx.3
   Copyright (c) Devolutions Inc. and contributors. Licensed under the MIT license or the Apache License 2.0, at
   your option: https://opensource.org/licenses/MIT and https://www.apache.org/licenses/LICENSE-2.0

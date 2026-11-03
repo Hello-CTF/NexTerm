@@ -17,6 +17,7 @@ import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
 import { setMacPlatform, setWindowsPlatform } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
+import { installInputCapitalization } from "./app/inputCapitalization";
 import { setMountUnavailableReason } from "./app/capabilities";
 import { forceResolvedTheme } from "./app/theme";
 import { Lazy } from "./ui/LazyBoundary";
@@ -43,6 +44,7 @@ function publicPreviewTokenFromPath(pathname: string): string | null {
 }
 
 function mount(node: React.ReactNode): void {
+  installInputCapitalization();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>{node}</React.StrictMode>,
   );

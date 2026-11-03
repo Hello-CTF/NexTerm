@@ -32,3 +32,9 @@ func StateDigest(stateDir, identity string) (string, error) {
 	sum := sha256.Sum256([]byte(identity + "\x00" + stateDir))
 	return hex.EncodeToString(sum[:]), nil
 }
+
+// LocalStateDigest is the state digest of a helper whose state directory is
+// stateDir on this host and runs as the current user: the value a local
+// helper or an agent fronting it reports, so a caller can tell that two
+// routes reach the same helper.
+func LocalStateDigest(stateDir string) (string, error) { return stateDigestFor(stateDir) }

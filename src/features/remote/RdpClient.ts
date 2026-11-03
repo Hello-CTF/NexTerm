@@ -1,6 +1,7 @@
 import type { IronError, UserInteraction } from "@devolutions/iron-remote-desktop";
 import { prepareRdpTransport, remoteProxyAddress } from "./remoteSocket";
 import { RemoteEngineError, type ClientCallbacks, type ClientOptions, type EngineFailure, type RemoteClient, type RemoteSecret, type ScaleMode } from "./remoteTypes";
+import { stripBuildPaths } from "./rdpFailure";
 import { drawThumbnail } from "./thumbnail";
 
 type IronElement = HTMLElement & { module?: unknown };
@@ -34,23 +35,56 @@ function keyNameOf(code: string): string {
   return code;
 }
 
-function engineFailureOf(error: unknown): EngineFailure {
+// Replaces every non-empty secret with *** so a copied failure report never carries the login or the ticket.
+export function redactSecrets(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) if (secret) out = out.split(secret).join("***");
+  return out;
+}
+
+export function engineFailureOf(error: unknown, secrets: readonly string[] = []): EngineFailure {
   const iron = error as Partial<IronError> | null;
   let rdpKind: number | undefined;
   let httpStatus: number | undefined;
   let tlsAlert: number | undefined;
-  let message = "";
+  let wsaError: number | undefined;
+  let detail = "";
   try {
     rdpKind = typeof iron?.kind === "function" ? Number(iron.kind()) : undefined;
     const details = typeof iron?.rdcleanpathDetails === "function" ? iron.rdcleanpathDetails() : undefined;
     httpStatus = details?.httpStatusCode;
     tlsAlert = details?.tlsAlertCode;
-    message = typeof iron?.backtrace === "function" ? iron.backtrace().split("\n")[0].trim() : "";
+    wsaError = details?.wsaErrorCode;
+    detail = typeof iron?.backtrace === "function" ? iron.backtrace().trim() : "";
   } catch {
     // A malformed error object is reported as a plain failure.
   }
-  if (!message) message = error instanceof Error ? error.message : "RDP 连接失败";
-  return { protocol: "rdp", stage: "connect", message: message.slice(0, 200), rdpKind, httpStatus, tlsAlert };
+  if (!detail) detail = error instanceof Error ? error.message : "";
+  detail = redactSecrets(detail, secrets);
+  // The first line is the engine's own summary; it is cleaned up for the classifier, never shown as the headline.
+  const first = stripBuildPaths(detail.split("\n")[0] ?? "");
+  return {
+    protocol: "rdp",
+    stage: "connect",
+    message: (first || "RDP 连接失败").slice(0, 200),
+    detail: detail.slice(0, 2000),
+    rdpKind,
+    httpStatus,
+    tlsAlert,
+    wsaError,
+  };
+}
+
+// "applied": the canvas reached the requested size, or changed in answer to it (a server may round the size).
+// "pending": the Display Control channel is not ready, so sending the request again is right.
+// "awaiting": the request was sent and the server has not answered yet; it must not be sent again.
+// "unavailable" means no channel; "failed" is another refusal.
+export type ResizeOutcome = "applied" | "pending" | "awaiting" | "unavailable" | "failed";
+
+export function resizeOutcomeOf(text: string): ResizeOutcome {
+  if (/not yet connected/i.test(text)) return "pending";
+  if (/not available/i.test(text)) return "unavailable";
+  return "failed";
 }
 
 // RdpClient drives the IronRDP web component (WebAssembly, loaded on first use). Audio redirection is not part of the
@@ -63,6 +97,17 @@ export class RdpClient implements RemoteClient {
   private sizer: HTMLElement | null = null;
   private holder: HTMLElement | null = null;
   private observer: ResizeObserver | null = null;
+  private canvasObserver: MutationObserver | null = null;
+  // The size in flight, the canvas size it was sent from, and the canvas size the server answered with (if any).
+  // `earlier` holds the sizes of requests this one replaced: their late answers must not satisfy this request.
+  private pendingResize: {
+    width: number;
+    height: number;
+    from: { width: number; height: number };
+    answer: { width: number; height: number } | null;
+    earlier: Array<{ width: number; height: number }>;
+  } | null = null;
+  private lastDesktopSize = { width: 0, height: 0 };
   private scale: ScaleMode = "fit";
   private connected = false;
   private closed = false;
@@ -70,6 +115,9 @@ export class RdpClient implements RemoteClient {
   // The login secret lives here only while connecting; it is dropped as soon as the handshake has used it.
   private secret: RemoteSecret | null;
   private focusAllowed = false;
+  private lastWarning = "";
+  // Values that must never appear in a failure report; kept after the login secret itself is dropped.
+  private redact: string[] = [];
   private readonly held = new Set<string>();
 
   private readonly options: ClientOptions;
@@ -99,9 +147,13 @@ export class RdpClient implements RemoteClient {
       ui.setScale(3);
       ui.setEnableClipboard(this.options.clipboard);
       ui.setEnableAutoClipboard(false);
-      ui.onWarningCallback((message) => console.warn("rdp:", message));
+      ui.onWarningCallback((message) => {
+        this.lastWarning = message;
+        console.warn("rdp:", message);
+      });
       const secret = this.secret;
       const prepared = this.options.prepared;
+      this.redact = [secret?.password ?? "", prepared.ticket];
       const builder = ui
         .configBuilder()
         .withUsername(secret?.username ?? prepared.username)
@@ -119,29 +171,40 @@ export class RdpClient implements RemoteClient {
         this.secret = null;
       }
       if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: "已取消" });
+      // The handshake is over: the password is no longer held; the ticket stays for later reports.
+      this.redact = this.redact.slice(1);
       this.connected = true;
       this.guardFocus();
+      const canvas = this.canvas();
+      if (canvas) {
+        this.canvasObserver = new MutationObserver(() => {
+          this.layout();
+          this.reportDesktopSize();
+        });
+        this.canvasObserver.observe(canvas, { attributes: true, attributeFilter: ["width", "height"] });
+        const viewer = this.element?.shadowRoot?.querySelector(".screen-viewer");
+        if (viewer) this.canvasObserver.observe(viewer, { attributes: true, attributeFilter: ["style"] });
+      }
       this.layout();
       this.callbacks.onConnected();
-      const size = this.desktopSize();
-      this.callbacks.onDesktopSize?.(size.width, size.height);
+      this.reportDesktopSize();
       void session
         .run()
         .then((info) => {
           if (this.closed) return;
           this.connected = false;
-          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: info.reason() || "远程桌面已断开" });
+          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: redactSecrets(info.reason(), this.redact) || "远程桌面已断开" });
         })
         .catch((error: unknown) => {
           if (this.closed) return;
           this.connected = false;
-          this.callbacks.onDisconnected({ ...engineFailureOf(error), stage: "closed", wasConnected: true });
+          this.callbacks.onDisconnected({ ...engineFailureOf(error, this.redact), stage: "closed", wasConnected: true });
         });
     } catch (error) {
       this.secret = null;
       this.teardown();
       if (error instanceof RemoteEngineError) throw error;
-      throw new RemoteEngineError(engineFailureOf(error));
+      throw new RemoteEngineError(engineFailureOf(error, this.redact));
     }
   }
 
@@ -201,16 +264,54 @@ export class RdpClient implements RemoteClient {
     };
   }
 
+  private reportDesktopSize(): void {
+    const size = this.desktopSize();
+    const pending = this.pendingResize;
+    if (pending && !pending.answer && this.answersPending(pending, size)) pending.answer = size;
+    if (this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
+    this.lastDesktopSize = size;
+    this.callbacks.onDesktopSize?.(size.width, size.height);
+  }
+
+  private answersPending(pending: NonNullable<RdpClient["pendingResize"]>, size: { width: number; height: number }): boolean {
+    if (size.width === pending.from.width && size.height === pending.from.height) return false;
+    return !pending.earlier.some((earlier) => earlier.width === size.width && earlier.height === size.height);
+  }
+
   private layout(): void {
     const canvas = this.canvas();
     const sizer = this.sizer;
     const holder = this.holder;
     if (!canvas || !sizer || !holder || canvas.width < 2) return;
+    canvas.style.display = "block";
     const dw = canvas.width;
     const dh = canvas.height;
     const cw = this.stage.clientWidth;
     const ch = this.stage.clientHeight;
     if (cw < 2 || ch < 2) return;
+    const viewer = this.element?.shadowRoot?.querySelector<HTMLElement>(".screen-viewer");
+    if (viewer) {
+      const wrongSize =
+        viewer.style.width !== `${dw}px` ||
+        viewer.style.height !== `${dh}px` ||
+        viewer.style.minWidth !== "0px" ||
+        viewer.style.minHeight !== "0px" ||
+        viewer.style.maxWidth !== "none" ||
+        viewer.style.maxHeight !== "none";
+      if (wrongSize) {
+        viewer.style.width = `${dw}px`;
+        viewer.style.height = `${dh}px`;
+        viewer.style.minWidth = "0";
+        viewer.style.minHeight = "0";
+        viewer.style.maxWidth = "none";
+        viewer.style.maxHeight = "none";
+      }
+    }
+    if (this.element && (this.element.style.width !== `${dw}px` || this.element.style.height !== `${dh}px`)) {
+      this.element.style.width = `${dw}px`;
+      this.element.style.height = `${dh}px`;
+    }
+    this.stage.style.overflow = this.scale === "fit" ? "hidden" : "auto";
     const scale = this.scale === "fit" ? Math.min(cw / dw, ch / dh) : this.scale;
     const w = dw * scale;
     const h = dh * scale;
@@ -232,6 +333,10 @@ export class RdpClient implements RemoteClient {
   private teardown(): void {
     this.observer?.disconnect();
     this.observer = null;
+    this.canvasObserver?.disconnect();
+    this.canvasObserver = null;
+    this.pendingResize = null;
+    this.lastDesktopSize = { width: 0, height: 0 };
     try {
       this.ui?.shutdown();
     } catch {
@@ -255,15 +360,47 @@ export class RdpClient implements RemoteClient {
     if (viewOnly) this.releaseAllKeys();
   }
 
-  resize(width: number, height: number): void {
-    if (!this.ui || !this.connected) return;
+  resize(width: number, height: number): ResizeOutcome {
     const w = Math.max(320, Math.min(8192, Math.floor(width) & ~1));
     const h = Math.max(240, Math.min(8192, Math.floor(height) & ~1));
+    const size = this.desktopSize();
+    if (size.width === w && size.height === h) {
+      this.pendingResize = null;
+      return "applied";
+    }
+    if (!this.ui || !this.connected) return "pending";
+    const inFlight = this.pendingResize;
+    if (inFlight && inFlight.width === w && inFlight.height === h) {
+      // A canvas change after the request is the server's answer, even when it rounded or clamped the size.
+      if (inFlight.answer && inFlight.answer.width === size.width && inFlight.answer.height === size.height) return "applied";
+      if (!inFlight.answer && this.answersPending(inFlight, size)) {
+        inFlight.answer = size;
+        return "applied";
+      }
+      if (!inFlight.answer) return "awaiting";
+    }
+    this.lastWarning = "";
+    const earlier = inFlight ? [...inFlight.earlier, { width: inFlight.width, height: inFlight.height }] : [];
+    this.pendingResize = { width: w, height: h, from: size, answer: null, earlier };
     try {
       this.ui.resize(w, h);
-    } catch {
-      // The server may not allow a resize right now; the next layout pass tries again.
+    } catch (error) {
+      this.pendingResize = null;
+      const iron = error as Partial<IronError> | null;
+      let text = error instanceof Error ? error.message : String(error ?? "");
+      try {
+        if (typeof iron?.backtrace === "function") text += ` ${iron.backtrace()}`;
+      } catch {
+        // Fall back to the message alone.
+      }
+      return resizeOutcomeOf(text);
     }
+    // The component may report a refused resize as a warning instead of throwing.
+    if (this.lastWarning) {
+      this.pendingResize = null;
+      return resizeOutcomeOf(this.lastWarning);
+    }
+    return "awaiting";
   }
 
   focus(): void {

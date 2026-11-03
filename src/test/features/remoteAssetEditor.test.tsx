@@ -162,7 +162,7 @@ function field(label: string): HTMLInputElement {
 describe("AssetEditor remote desktop kinds", () => {
   it("fills in the RDP port and shows the RDP fields without the SSH-only ones", async () => {
     mountEditor();
-    chooseKind("远程桌面（RDP）");
+    chooseKind("RDP");
     await flush();
     expect(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="1.2.3.4"]')).not.toBeNull();
     expect((mounted!.container.querySelector('input[type="number"]') as HTMLInputElement).value).toBe("3389");
@@ -176,7 +176,7 @@ describe("AssetEditor remote desktop kinds", () => {
 
   it("uses 5900 for VNC and offers no user name or domain", async () => {
     mountEditor();
-    chooseKind("远程桌面（VNC）");
+    chooseKind("VNC");
     await flush();
     expect((mounted!.container.querySelector('input[type="number"]') as HTMLInputElement).value).toBe("5900");
     expect(mounted!.container.querySelector('input[aria-label="域"]')).toBeNull();
@@ -186,11 +186,11 @@ describe("AssetEditor remote desktop kinds", () => {
 
   it("saves an RDP asset with its domain, fixed resolution and options", async () => {
     mountEditor();
-    chooseKind("远程桌面（RDP）");
+    chooseKind("RDP");
     await flush();
     fillRequiredFields("win-01");
     setInputValue(field("域"), "CORP");
-    chooseSelectOption(mounted!.container, "分辨率", "固定分辨率");
+    chooseSelectOption(mounted!.container, "分辨率", "自定义");
     await flush();
     setInputValue(field("宽度"), "1600");
     setInputValue(field("高度"), "900");
@@ -203,12 +203,40 @@ describe("AssetEditor remote desktop kinds", () => {
     });
   });
 
-  it("refuses a fixed resolution that is too small", async () => {
+  it("saves a preset resolution as width and height, and follow stores none", async () => {
     mountEditor();
-    chooseKind("远程桌面（RDP）");
+    chooseKind("RDP");
     await flush();
     fillRequiredFields("win-01");
-    chooseSelectOption(mounted!.container, "分辨率", "固定分辨率");
+    chooseSelectOption(mounted!.container, "分辨率", "1366 x 768");
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="宽度"]')).toBeNull();
+    await save();
+    expect(createdPayload()).toMatchObject({ kind: "rdp", options: { width: 1366, height: 768 } });
+  });
+
+  it("keeps the custom inputs while a preset size is typed into them", async () => {
+    mountEditor();
+    chooseKind("RDP");
+    await flush();
+    fillRequiredFields("win-01");
+    chooseSelectOption(mounted!.container, "分辨率", "自定义");
+    await flush();
+    setInputValue(field("宽度"), "1920");
+    setInputValue(field("高度"), "1080");
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="宽度"]')).not.toBeNull();
+    setInputValue(field("宽度"), "1600");
+    await flush();
+    expect((field("宽度") as HTMLInputElement).value).toBe("1600");
+  });
+
+  it("refuses a fixed resolution that is too small", async () => {
+    mountEditor();
+    chooseKind("RDP");
+    await flush();
+    fillRequiredFields("win-01");
+    chooseSelectOption(mounted!.container, "分辨率", "自定义");
     await flush();
     setInputValue(field("宽度"), "100");
     clickButton(mounted!.container, "保存");
@@ -221,7 +249,7 @@ describe("AssetEditor remote desktop kinds", () => {
     // The asset list holds no devices: they come from the fleet, and revoked ones are not offered.
     mocks.listAssets.mockResolvedValue([sshAsset("ssh-a", "gateway-a")]);
     mountEditor();
-    chooseKind("远程桌面（VNC）");
+    chooseKind("VNC");
     await flushUntil(() => mounted!.container.querySelector('button[aria-label="通过跳板连接"]') !== null);
     const trigger = mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="通过跳板连接"]')!;
     click(trigger);
@@ -249,7 +277,7 @@ describe("AssetEditor remote desktop kinds", () => {
 
   it("stores no password when the password is asked at connect time", async () => {
     mountEditor();
-    chooseKind("远程桌面（RDP）");
+    chooseKind("RDP");
     await flush();
     fillRequiredFields("win-01");
     click(field("每次连接时输入密码"));
@@ -264,7 +292,7 @@ describe("AssetEditor remote desktop kinds", () => {
 describe("AssetEditor wake-on-LAN options", () => {
   it("saves the MAC, broadcast and port on an RDP asset", async () => {
     mountEditor();
-    chooseKind("远程桌面（RDP）");
+    chooseKind("RDP");
     await flush();
     fillRequiredFields("win-01");
     setInputValue(field("唤醒 MAC 地址"), "AA-BB-CC-DD-EE-01");
@@ -280,7 +308,7 @@ describe("AssetEditor wake-on-LAN options", () => {
 
   it("refuses to save a malformed MAC or broadcast address", async () => {
     mountEditor();
-    chooseKind("远程桌面（VNC）");
+    chooseKind("VNC");
     await flush();
     fillRequiredFields("box");
     setInputValue(field("唤醒 MAC 地址"), "AABBCCDDEE01");

@@ -79,7 +79,11 @@ if (!customElements.get("iron-remote-desktop")) {
     class extends HTMLElement {
       connectedCallback() {
         const root = this.attachShadow({ mode: "open" });
-        root.append(scenario.canvas);
+        const viewer = document.createElement("div");
+        viewer.className = "screen-viewer";
+        viewer.style.cssText = "width:333px;height:222px;min-width:333px;min-height:222px";
+        viewer.append(scenario.canvas);
+        root.append(viewer);
         if (!scenario.ready) return;
         const detail = { irgUserInteraction: scenario.ui };
         queueMicrotask(() => this.dispatchEvent(new CustomEvent("ready", { detail })));
@@ -126,6 +130,17 @@ class FakeObserver {
   disconnect() {
     this.disconnected = true;
   }
+}
+
+// jsdom's real MutationObserver delivers its records as a microtask.
+async function flushMutations() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function setCanvasSize(width: number, height: number) {
+  scenario.canvas.width = width;
+  scenario.canvas.height = height;
 }
 
 beforeEach(() => {
@@ -217,9 +232,11 @@ describe("RdpClient connect", () => {
       protocol: "rdp",
       stage: "connect",
       message: "Negotiation failed",
+      detail: "Negotiation failed\nstack frame 1",
       rdpKind: 4,
       httpStatus: 403,
       tlsAlert: 48,
+      wsaError: undefined,
     });
     expect(classifyFailure(error.failure)).toBeDefined();
   });
@@ -333,11 +350,17 @@ describe("RdpClient session end", () => {
     scenario.ui.shutdown.mockImplementation(() => {
       throw new Error("gone");
     });
-    const { client } = await connected();
+    const disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
+    const { client, cb } = await connected();
     expect(stage.children).toHaveLength(1);
     expect(() => client.disconnect()).not.toThrow();
     expect(stage.children).toHaveLength(0);
     expect(FakeObserver.instances.every((observer) => observer.disconnected)).toBe(true);
+    expect(disconnect).toHaveBeenCalled();
+    const reports = (cb as { onDesktopSize: ReturnType<typeof vi.fn> }).onDesktopSize.mock.calls.length;
+    setCanvasSize(640, 480);
+    await flushMutations();
+    expect((cb as { onDesktopSize: ReturnType<typeof vi.fn> }).onDesktopSize.mock.calls).toHaveLength(reports);
     expect(client.inputElement()).toBeNull();
     expect(client.desktopSize()).toEqual({ width: 0, height: 0 });
   });
@@ -365,6 +388,74 @@ describe("RdpClient resize", () => {
     });
     const { client } = await connected();
     expect(() => client.resize(800, 600)).not.toThrow();
+    expect(client.resize(800, 600)).toBe("failed");
+  });
+
+  it("does not send the same size again while it waits for the server", async () => {
+    const { client } = await connected();
+    expect(client.resize(1280, 720)).toBe("awaiting");
+    for (let i = 0; i < 20; i += 1) expect(client.resize(1280, 720)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("counts a rounded canvas size as the server's answer", async () => {
+    const { client } = await connected();
+    expect(client.resize(1366, 768)).toBe("awaiting");
+    setCanvasSize(1364, 768);
+    await flushMutations();
+    expect(client.resize(1366, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    // A later, different canvas size is not the answer to that request any more.
+    setCanvasSize(1000, 500);
+    await flushMutations();
+    expect(client.resize(1366, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not let an earlier request's answer satisfy a newer one", async () => {
+    const { client } = await connected();
+    expect(client.resize(1280, 720)).toBe("awaiting");
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    setCanvasSize(1280, 720);
+    await flushMutations();
+    expect(client.resize(1024, 768)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+    setCanvasSize(1022, 768);
+    await flushMutations();
+    expect(client.resize(1024, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(2);
+  });
+
+  it("recognises the answer even before the canvas observer has run", async () => {
+    const { client } = await connected();
+    client.resize(1366, 768);
+    setCanvasSize(1364, 768);
+    expect(client.resize(1366, 768)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the actual canvas size before reporting a resize as applied", async () => {
+    const early = new RdpClient(stage, options(), callbacks());
+    expect(early.resize(800, 600)).toBe("pending");
+    const { client } = await connected();
+    expect(client.resize(800, 600)).toBe("awaiting");
+    expect(client.resize(800, 600)).toBe("awaiting");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    scenario.canvas.width = 800;
+    scenario.canvas.height = 600;
+    await flushMutations();
+    expect(client.resize(800, 600)).toBe("applied");
+    expect(scenario.ui.resize).toHaveBeenCalledTimes(1);
+    scenario.ui.resize.mockImplementationOnce(() => {
+      throw new Error("Could not encode a resize: Display Control Virtual Channel is not yet connected");
+    });
+    expect(client.resize(1024, 768)).toBe("pending");
+    scenario.ui.resize.mockImplementationOnce(() => {
+      throw { backtrace: () => "Could not encode a resize: Display Control Virtual Channel is not available" };
+    });
+    expect(client.resize(1024, 768)).toBe("unavailable");
   });
 });
 
@@ -379,6 +470,11 @@ describe("RdpClient layout", () => {
     expect(sizer.style.top).toBe("125px");
     expect(holder.style.transform).toBe("scale(0.5)");
     expect(holder.style.width).toBe("1000px");
+    expect(stage.style.overflow).toBe("hidden");
+    const viewer = stage.querySelector("iron-remote-desktop")!.shadowRoot!.querySelector<HTMLElement>(".screen-viewer")!;
+    expect(viewer.style.width).toBe("1000px");
+    expect(viewer.style.height).toBe("500px");
+    expect(viewer.style.minWidth).toBe("0px");
     setStageSize(2000, 1000);
     FakeObserver.instances[0].callback();
     expect(holder.style.transform).toBe("scale(2)");
@@ -391,6 +487,34 @@ describe("RdpClient layout", () => {
     setStageSize(500, 500);
     client.setScale(1.5);
     expect(sizer.style.left).toBe("0px");
+  });
+
+  it("uses the actual canvas size after the server confirms a resize", async () => {
+    setStageSize(500, 500);
+    const { client, cb } = await connected();
+    const sizer = stage.firstElementChild as HTMLElement;
+    const holder = sizer.firstElementChild as HTMLElement;
+    const viewer = stage.querySelector("iron-remote-desktop")!.shadowRoot!.querySelector<HTMLElement>(".screen-viewer")!;
+    viewer.style.cssText = "width:1366px;height:768px;min-width:1366px;min-height:768px";
+    await flushMutations();
+    expect(viewer.style.width).toBe("1000px");
+    expect(viewer.style.height).toBe("500px");
+    expect(cb.onDesktopSize).toHaveBeenCalledTimes(1);
+    scenario.canvas.width = 600;
+    scenario.canvas.height = 800;
+    await flushMutations();
+    expect(holder.style.transform).toBe("scale(0.625)");
+    expect(sizer.style.width).toBe("375px");
+    expect(sizer.style.height).toBe("500px");
+    expect(sizer.style.left).toBe("62.5px");
+    expect(sizer.style.top).toBe("0px");
+    expect(viewer.style.width).toBe("600px");
+    expect(viewer.style.height).toBe("800px");
+    expect(cb.onDesktopSize).toHaveBeenLastCalledWith(600, 800);
+    expect(stage.style.overflow).toBe("hidden");
+    client.setScale(1);
+    expect(stage.style.overflow).toBe("auto");
+    expect(sizer.style.width).toBe("600px");
   });
 
   it("leaves the layout alone while the pane has no size yet", async () => {

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { connectAsset, useUi, openTerminalTab } from "../store";
+import { connectAsset, reopenRemoteDesktopTab, useUi, openTerminalTab } from "../store";
 import { formatBinding, useKeybindings } from "../keybindings";
 import { useShell } from "../shell";
 import { sessionApi } from "../../ipc/commands";
@@ -13,7 +13,7 @@ import { AssetEditor } from "../lazyPanels";
 import { IconCommand, IconPlus, IconSearch, IconTerminal, Logo, assetIcon } from "../../ui/icons";
 import { assetKindName, recentConnections } from "./recentConnections";
 
-export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
+function EmptyCard({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center bg-neutral-900 px-6">
       <div className="flex w-[300px] flex-col items-center gap-3.5 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -21,16 +21,64 @@ export function WorkspaceEmpty({ onNew }: { onNew: () => void }) {
           <IconTerminal size={18} />
         </div>
         <div>
-          <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">暂无终端</div>
-          <div className="mt-1 text-[11.5px] text-neutral-500">创建一个新的终端会话</div>
+          <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">{title}</div>
+          {subtitle && <div className="mt-1 text-[11.5px] text-neutral-500">{subtitle}</div>}
         </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// An empty pane of a remote desktop workspace: terminals do not belong here, so the only action reopens the desktop.
+function RemoteWorkspaceEmpty({ workspaceId, paneId }: { workspaceId: string; paneId?: string }) {
+  const workspace = useUi((s) => s.workspaces.find((item) => item.id === workspaceId));
+  const [busy, setBusy] = useState(false);
+  if (!workspace) return null;
+  if (workspace.deletedTarget) {
+    return <EmptyCard title="远程桌面已关闭" subtitle={`「${workspace.title}」的资产已删除，无法重新连接。`} />;
+  }
+  const openElsewhere = workspace.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote"));
+  if (openElsewhere) return <EmptyCard title="此窗格暂无内容" subtitle="远程桌面在其他窗格中打开。" />;
+  const reconnect = () => {
+    setBusy(true);
+    void reopenRemoteDesktopTab(workspaceId, paneId)
+      .then((result) => {
+        if (!result.ok && result.error) useUi.getState().pushToast("error", result.error);
+      })
+      .finally(() => setBusy(false));
+  };
+  return (
+    <EmptyCard title="远程桌面已关闭" subtitle={`「${workspace.title}」的连接已断开。`}>
+      <button type="button" className="nx-btn nx-btn-primary" disabled={busy} onClick={reconnect}>
+        {busy ? "正在连接…" : "重新连接"}
+      </button>
+    </EmptyCard>
+  );
+}
+
+// workspaceId scopes the empty state to a pane of that workspace; without it this is the no-workspace fallback.
+export function WorkspaceEmpty({ onNew, workspaceId, paneId }: { onNew: () => void; workspaceId?: string; paneId?: string }) {
+  const kind = useUi((s) => (workspaceId ? s.workspaces.find((item) => item.id === workspaceId)?.kind : undefined));
+  if (workspaceId && kind === "remote") return <RemoteWorkspaceEmpty workspaceId={workspaceId} paneId={paneId} />;
+  if (kind === "db" || kind === "tools") {
+    return (
+      <EmptyCard title="此窗格暂无内容" subtitle="从左侧栏或跳转面板打开所需的面板。">
         <button className="nx-btn nx-btn-primary" onClick={onNew}>
           <IconPlus size={14} />
           新建终端
         </button>
-        <div className="nx-hint">在左侧栏的文件树中双击文件，可打开编辑器标签页。</div>
-      </div>
-    </div>
+      </EmptyCard>
+    );
+  }
+  return (
+    <EmptyCard title="暂无终端" subtitle="创建一个新的终端会话">
+      <button className="nx-btn nx-btn-primary" onClick={onNew}>
+        <IconPlus size={14} />
+        新建终端
+      </button>
+      <div className="nx-hint">在左侧栏的文件树中双击文件，可打开编辑器标签页。</div>
+    </EmptyCard>
   );
 }
 

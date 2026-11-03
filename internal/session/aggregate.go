@@ -56,6 +56,10 @@ type AggregateHost struct {
 	// DeviceKind is the device's enroll kind, such as local-helper for a
 	// desktop that exposes its local terminals.
 	DeviceKind string `json:"deviceKind,omitempty"`
+	// StateDigest is the supervisor state digest of a device's helper. It
+	// travels from a server to the desktop that dedupes helpers shared with
+	// its own local terminals, and is cleared before a listing reaches a UI.
+	StateDigest string `json:"stateDigest,omitempty"`
 }
 
 // AggregateHostStatus is a host and how its listing went.

@@ -1324,6 +1324,28 @@ describe("Device management view - revocation and autostart", () => {
     expect(card?.querySelector('input[aria-label="随登录自动启动"]')).toBeNull();
   });
 
+  it("marks an agent device and a local-helper device that share one helper, and no others", async () => {
+    const withDigest = (device: typeof AGENT_DEVICE, id: string, name: string, kind: string, digest?: string) => ({
+      ...device, id, name, kind, agent: { ...device.agent, state_digest: digest },
+    });
+    const devices = [
+      withDigest(AGENT_DEVICE, "d-a", "box-agent", "agent", "same"),
+      withDigest(AGENT_DEVICE, "d-l", "box-desktop", "local-helper", "same"),
+      withDigest(AGENT_DEVICE, "d-o", "other-box", "agent", "different"),
+      withDigest(AGENT_DEVICE, "d-n", "no-digest", "agent"),
+    ];
+    route(fleetHandler({ devices: { devices } }));
+    seedUser(SUPERADMIN);
+    mounted = mountWithClient(createElement(DevicesView));
+    await flushUntil(() => document.body.textContent?.includes("box-agent") ?? false);
+
+    const cardOf = (name: string) => [...document.querySelectorAll(".nx-card")].find((c) => c.textContent?.includes(name));
+    expect(cardOf("box-agent")?.textContent).toContain("与本机终端共用持久终端");
+    expect(cardOf("box-desktop")?.textContent).toContain("与「box-agent」共用持久终端");
+    expect(cardOf("other-box")?.textContent).not.toContain("共用持久终端");
+    expect(cardOf("no-digest")?.textContent).not.toContain("共用持久终端");
+  });
+
   it("confirms that offline autostart changes only save desired state", async () => {
     const calls = route(fleetHandler());
     mocks.ask.mockResolvedValue(true);

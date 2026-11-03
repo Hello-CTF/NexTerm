@@ -178,11 +178,11 @@ func newLocalHelperExposureRunner(dataDir string, helper *localhelper.Service, s
 			return nil, err
 		}
 		return agent.New(agent.Options{
-			Store:    store,
-			DataDir:  dataDir,
-			Prober:   prober,
-			Manager:  agent.EmbeddedServiceManager(),
-			StateDir: helper.StateDir(),
+			Store:          store,
+			DataDir:        dataDir,
+			Prober:         prober,
+			Manager:        agent.EmbeddedServiceManager(),
+			StateDirSource: helper.StateDir,
 			EnsureHelper: func(ctx context.Context) error {
 				if reason := localHelperExposureBlocked(ctx, helper, settings); reason != "" {
 					return errors.New(reason)

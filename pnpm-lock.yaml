@@ -33,8 +33,8 @@ importers:
         specifier: 0.11.0
         version: 0.11.0
       '@devolutions/iron-remote-desktop-rdp':
-        specifier: 0.7.0
-        version: 0.7.0
+        specifier: https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.3/devolutions-iron-remote-desktop-rdp-0.7.0.tgz
+        version: https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.3/devolutions-iron-remote-desktop-rdp-0.7.0.tgz
       '@novnc/novnc':
         specifier: 1.7.0
         version: 1.7.0
@@ -278,8 +278,9 @@ packages:
     resolution: {integrity: sha512-OoKoR0f76dCY666JlcbhmVTs2drYj1GUXZTYTcbUgJjh9Nv41aFfZ21bPQTERm5+L5cBDo466NltB2lplS5GBw==}
     engines: {node: '>=20.19.0'}
 
-  '@devolutions/iron-remote-desktop-rdp@0.7.0':
-    resolution: {integrity: sha512-CclAh4OS9aBoPJT0l7bih7ETOHPnB9KjT0drB0a6r5+Qh95pTEuQCx7uFN/XA2AlkFlrqx+DBAMDGYXmgsjHAQ==}
+  '@devolutions/iron-remote-desktop-rdp@https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.3/devolutions-iron-remote-desktop-rdp-0.7.0.tgz':
+    resolution: {integrity: sha512-mYLs1IJw9JQy/Xcny9TUkFP1Fei+IvZlinGkx7y0lpH4o1bjXnJlZnI1vYev4UbpVs4zwDKneRsSfmzWTCEUXg==, tarball: https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.3/devolutions-iron-remote-desktop-rdp-0.7.0.tgz}
+    version: 0.7.0
 
   '@devolutions/iron-remote-desktop@0.11.0':
     resolution: {integrity: sha512-ZH8xfabDA+6rAXkW2V3XgRdj0LHOsHoXAzars/H22DmKsHM39LdMfheKFUR3qLaFDM8mjf6DTFngzjgr+Byx0Q==}
@@ -1958,7 +1959,7 @@ snapshots:
 
   '@csstools/css-tokenizer@4.0.2': {}
 
-  '@devolutions/iron-remote-desktop-rdp@0.7.0': {}
+  '@devolutions/iron-remote-desktop-rdp@https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.3/devolutions-iron-remote-desktop-rdp-0.7.0.tgz': {}
 
   '@devolutions/iron-remote-desktop@0.11.0': {}
 

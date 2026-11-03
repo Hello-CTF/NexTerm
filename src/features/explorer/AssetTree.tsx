@@ -153,8 +153,8 @@ const KIND_LABEL: Record<string, string> = {
   mysql: "MySQL / MariaDB",
   postgres: "PostgreSQL",
   redis: "Redis",
-  rdp: "远程桌面（RDP）",
-  vnc: "远程桌面（VNC）",
+  rdp: "RDP",
+  vnc: "VNC",
 };
 
 

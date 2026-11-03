@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 type aggregateTestClock struct {
@@ -421,4 +423,227 @@ func TestSyncLinkChangeReconcilesExposureAndStartsTheDeviceListingOver(t *testin
 	}
 	// Without exposure or listing the callback still runs.
 	onSyncLinkChanged(nil, nil)()
+}
+
+func digestList(digests map[string]string, withLocal bool) session.AggregateList {
+	list := session.AggregateList{Hosts: []session.AggregateHostStatus{}, Sessions: []session.AggregateSession{}, Complete: true}
+	if withLocal {
+		list.Hosts = append(list.Hosts, session.AggregateHostStatus{
+			AggregateHost: session.AggregateHost{Key: session.AggregateKeyLocal, Kind: session.KindLocal},
+			Status:        session.AggregateHostOK,
+		})
+		list.Sessions = append(list.Sessions, session.AggregateSession{TabID: "local-1", HostKey: session.AggregateKeyLocal})
+	}
+	for id, digest := range digests {
+		key := session.AggregateKeyDevice + id
+		list.Hosts = append(list.Hosts, session.AggregateHostStatus{
+			AggregateHost: session.AggregateHost{Key: key, Kind: session.KindDevice, DeviceID: id, StateDigest: digest},
+			Status:        session.AggregateHostOK,
+		})
+		list.Sessions = append(list.Sessions, session.AggregateSession{TabID: id + "-1", HostKey: key})
+	}
+	return list
+}
+
+func hostKeys(list session.AggregateList) map[string]bool {
+	keys := map[string]bool{}
+	for _, host := range list.Hosts {
+		keys[host.Key] = true
+	}
+	return keys
+}
+
+func TestWithoutDigestListsASharedHelperOnce(t *testing.T) {
+	list := digestList(map[string]string{"agent": "mine", "other": "theirs", "empty": ""}, true)
+	got := withoutDigest(list, "mine", true)
+	keys := hostKeys(got)
+	if keys[session.AggregateKeyDevice+"agent"] || !keys[session.AggregateKeyDevice+"other"] || !keys[session.AggregateKeyDevice+"empty"] || !keys[session.AggregateKeyLocal] {
+		t.Fatalf("hosts = %v; want only the device with this helper's digest dropped", keys)
+	}
+	for _, item := range got.Sessions {
+		if item.HostKey == session.AggregateKeyDevice+"agent" {
+			t.Fatalf("session %s of the dropped host remains", item.TabID)
+		}
+	}
+	if len(got.Sessions) != 3 {
+		t.Fatalf("sessions = %d; want local plus two other devices", len(got.Sessions))
+	}
+	if kept := withoutDigest(list, "", true); len(kept.Hosts) != len(list.Hosts) {
+		t.Fatalf("empty local digest dropped hosts: %v", hostKeys(kept))
+	}
+	if kept := withoutDigest(list, "mine", false); len(kept.Hosts) != len(list.Hosts) {
+		t.Fatalf("device dropped although the local host is not listed: %v", hostKeys(kept))
+	}
+}
+
+func newDigestService(digest *atomic.Value) (*sessionAggregateService, func() []session.AggregateUpdate) {
+	var mu sync.Mutex
+	var published []session.AggregateUpdate
+	service := &sessionAggregateService{publish: func(_ string, update session.AggregateUpdate) {
+		mu.Lock()
+		published = append(published, update)
+		mu.Unlock()
+	}}
+	service.localDigest = func() string { return digest.Load().(string) }
+	return service, func() []session.AggregateUpdate {
+		mu.Lock()
+		defer mu.Unlock()
+		out := published
+		published = nil
+		return out
+	}
+}
+
+func deviceUpdate(id, digest string) session.AggregateUpdate {
+	host := digestList(map[string]string{id: digest}, false).Hosts[0]
+	return session.AggregateUpdate{Host: host, Sessions: []session.AggregateSession{{TabID: id + "-1", HostKey: host.Key}}}
+}
+
+func localUpdate(status string) session.AggregateUpdate {
+	host := digestList(nil, true).Hosts[0]
+	host.Status = status
+	return session.AggregateUpdate{Host: host}
+}
+
+func TestEmitFollowsTheLocalDigestAndHidesDigests(t *testing.T) {
+	var digest atomic.Value
+	digest.Store("before")
+	service, drain := newDigestService(&digest)
+	service.emit("", localUpdate(session.AggregateHostOK))
+	drain()
+
+	service.emit("", deviceUpdate("agent", "after"))
+	got := drain()
+	if len(got) != 1 || got[0].Host.StateDigest != "" {
+		t.Fatalf("published %+v; want the device host with its digest cleared", got)
+	}
+	digest.Store("after") // the helper moved to the shared state directory
+	service.emit("", deviceUpdate("agent", "after"))
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("published %+v after migration; the shared helper is listed locally", got)
+	}
+}
+
+func TestAggregatorPublishPathIsFiltered(t *testing.T) {
+	var digest atomic.Value
+	digest.Store("mine")
+	service, drain := newDigestService(&digest)
+	service.aggregator = session.NewAggregator(session.AggregatorConfig{Describe: describeAggregateError, Publish: service.emit})
+	service.emit("", localUpdate(session.AggregateHostOK))
+	drain()
+	list := func(ctx context.Context) ([]base.DurableDescriptor, error) { return nil, nil }
+	targets := []session.AggregateTarget{
+		{Host: digestList(map[string]string{"agent": "mine"}, false).Hosts[0].AggregateHost, List: list},
+		{Host: digestList(map[string]string{"other": "theirs"}, false).Hosts[0].AggregateHost, List: list},
+	}
+	// wait 0: the listings finish in the background and publish through the aggregator.
+	service.aggregator.List(context.Background(), "", targets, 0)
+	deadline := time.Now().Add(5 * time.Second)
+	var got []session.AggregateUpdate
+	for time.Now().Before(deadline) {
+		got = append(got, drain()...)
+		if len(got) > 0 {
+			time.Sleep(50 * time.Millisecond)
+			got = append(got, drain()...)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, update := range got {
+		if update.Host.Key == session.AggregateKeyDevice+"agent" {
+			t.Fatalf("background refresh published the shared device host: %+v", update)
+		}
+		if update.Host.StateDigest != "" {
+			t.Fatalf("digest reached an event: %+v", update.Host)
+		}
+	}
+	if len(got) == 0 {
+		t.Fatal("the unrelated device host was never published")
+	}
+}
+
+func TestSharedDeviceReappearsWhileLocalListingFails(t *testing.T) {
+	var digest atomic.Value
+	digest.Store("mine")
+	service, drain := newDigestService(&digest)
+	service.emit("", localUpdate(session.AggregateHostFailed))
+	drain()
+	service.emit("", deviceUpdate("agent", "mine"))
+	if got := drain(); len(got) != 1 {
+		t.Fatalf("published %+v; a failed local listing keeps the device route", got)
+	}
+	remote := digestList(map[string]string{"agent": "mine"}, false)
+	service.publishRemote(remote)
+	if got := drain(); len(got) != 1 {
+		t.Fatalf("publishRemote published %+v while the local host failed; want the device", got)
+	}
+	service.emit("", localUpdate(session.AggregateHostOK))
+	drain()
+	service.publishRemote(remote)
+	if got := drain(); len(got) != 0 {
+		t.Fatalf("publishRemote published %+v once the local host answered", got)
+	}
+}
+
+// TestProductionAggregatorWiringFiltersBackgroundRefreshes builds the service
+// through the constructor the app uses, so it fails if the aggregator's
+// Publish bypasses the service's emit filter.
+func TestProductionAggregatorWiringFiltersBackgroundRefreshes(t *testing.T) {
+	events := make(chan session.AggregateUpdate, 16)
+	emitter := ipc.EmitterFunc(func(_ context.Context, event ipc.Event) error {
+		if update, ok := event.Payload.(session.AggregateUpdate); ok {
+			events <- update
+		}
+		return nil
+	})
+	service := newAggregateTestService(t, nil, emitter)
+	var digestReads atomic.Int32
+	service.localDigest = func() string {
+		digestReads.Add(1)
+		return "mine"
+	}
+	empty := func(context.Context) ([]base.DurableDescriptor, error) { return nil, nil }
+	hostOf := func(key string) session.AggregateHost {
+		return digestList(map[string]string{key: map[string]string{"shared": "mine", "other": "theirs"}[key]}, false).Hosts[0].AggregateHost
+	}
+	local := session.AggregateTarget{Host: session.AggregateHost{Key: session.AggregateKeyLocal, Kind: session.KindLocal, Name: "本机"}, List: empty}
+	next := func(want string) session.AggregateUpdate {
+		t.Helper()
+		select {
+		case update := <-events:
+			return update
+		case <-time.After(10 * time.Second):
+			t.Fatalf("no event while waiting for %s", want)
+			return session.AggregateUpdate{}
+		}
+	}
+
+	// The local host is listed OK first, so the shared device host is redundant.
+	service.aggregator.List(context.Background(), "", []session.AggregateTarget{local}, 0)
+	if update := next("local host"); update.Host.Key != session.AggregateKeyLocal || update.Host.Status != session.AggregateHostOK {
+		t.Fatalf("first event = %+v; want the local host listed ok", update.Host)
+	}
+	targets := []session.AggregateTarget{local,
+		{Host: hostOf("shared"), List: empty}, {Host: hostOf("other"), List: empty}}
+	service.aggregator.List(context.Background(), "", targets, 0)
+	update := next("unrelated device host")
+	if update.Host.Key != session.AggregateKeyDevice+"other" || update.Host.StateDigest != "" {
+		t.Fatalf("event = %+v; want only the unrelated device host with its digest cleared", update.Host)
+	}
+	// Every emit reads the local digest once: local, shared and other.
+	deadline := time.After(10 * time.Second)
+	for digestReads.Load() < 3 {
+		select {
+		case extra := <-events:
+			t.Fatalf("unexpected event %+v (digest %q)", extra.Host.Key, extra.Host.StateDigest)
+		case <-deadline:
+			t.Fatalf("the shared host's refresh never went through the service filter (digest reads %d)", digestReads.Load())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	select {
+	case extra := <-events:
+		t.Fatalf("unexpected event %+v (digest %q)", extra.Host.Key, extra.Host.StateDigest)
+	default:
+	}
 }

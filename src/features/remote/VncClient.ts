@@ -139,8 +139,9 @@ export class VncClient implements RemoteClient {
     if (this.rfb) this.rfb.viewOnly = viewOnly;
   }
 
-  resize(): void {
-    // The relay offers no desktop resize for VNC.
+  resize(): "unavailable" {
+    // The relay offers no desktop resize for VNC; the server decides the size.
+    return "unavailable";
   }
 
   focus(): void {
