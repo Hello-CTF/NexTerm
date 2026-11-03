@@ -350,6 +350,55 @@ func TestUpdateLeavesLogPathEmptyForMissingDataDir(t *testing.T) {
 	}
 }
 
+func TestUpdateWindowsEndsTaskOnlyWhenSafe(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		detached bool
+		inJob    bool
+		jobErr   error
+		wantStop bool
+	}{
+		{"script outside job and CLI in job", true, true, nil, true},
+		{"script in job and CLI in job", false, true, nil, false},
+		{"script in job and job query fails", false, false, errors.New("job-query-failure"), false},
+		{"script in job but CLI outside job", false, false, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+			factory := cliUpgraderFactory
+			cliUpgraderFactory = func(executable string) *Upgrader {
+				upgrader := factory(executable)
+				upgrader.scheduleReplace = nil
+				upgrader.scheduleReplaceDetached = func(string, string) (bool, error) { return tc.detached, nil }
+				return upgrader
+			}
+			manager := &stoppableManager{fakeManager: fakeManager{state: ServiceState{Installed: true, Enabled: true, Active: true}}}
+			restoreManager, restoreGOOS, restoreJob := cliNewManager, cliGOOS, cliProcessInJob
+			cliNewManager = func(func(string) string) ServiceManager { return manager }
+			cliGOOS = "windows"
+			cliProcessInJob = func() (bool, error) { return tc.inJob, tc.jobErr }
+			t.Cleanup(func() { cliNewManager, cliGOOS, cliProcessInJob = restoreManager, restoreGOOS, restoreJob })
+
+			code, out, errOut := runUpdate("--yes")
+			if code != ExitOK {
+				t.Fatalf("code=%d stderr=%q", code, errOut)
+			}
+			if (manager.stopCalls == 1) != tc.wantStop || manager.stopCalls > 1 {
+				t.Fatalf("Stop calls = %d, want stop=%v", manager.stopCalls, tc.wantStop)
+			}
+			if tc.wantStop {
+				return
+			}
+			if !strings.Contains(out, noticePrefix(updateNoticeTaskManual)) || strings.Contains(out, noticePrefix(updateNoticeTaskRestart)) {
+				t.Fatalf("manual notice expected: %q", out)
+			}
+			if !strings.Contains(errOut, "agent update") {
+				t.Fatalf("reason must be explained on stderr: %q", errOut)
+			}
+		})
+	}
+}
+
 // noticePrefix returns the fixed part of a notice template after its leading "%d" seconds.
 func noticePrefix(template string) string {
 	_, rest, _ := strings.Cut(template, "%d")

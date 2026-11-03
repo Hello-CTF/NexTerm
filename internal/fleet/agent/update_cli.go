@@ -28,6 +28,8 @@ var (
 	cliExecutable      = os.Executable
 	cliGOOS            = runtime.GOOS
 	cliStdin           = io.Reader(os.Stdin)
+	// cliProcessInJob reports whether this process runs inside a Windows job object.
+	cliProcessInJob    = currentProcessInJob
 	cliStdinIsTerminal = func() bool {
 		info, err := os.Stdin.Stat()
 		return err == nil && info.Mode()&os.ModeCharDevice != 0
@@ -197,7 +199,14 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 	state := manager.Status(ctx)
 	switch {
 	case cliGOOS == "windows" && state.Active:
-		// The task runs with IgnoreNew, so the replace script's /Run is dropped while this instance is alive: end it first.
+		// The task runs with IgnoreNew, so the replace script's /Run is dropped while this instance is alive: end it first,
+		// unless ending the task's job would also terminate a replace script that stayed inside it.
+		inJob, jobErr := cliProcessInJob()
+		if !upgrader.LastReplaceDetached() && (inJob || jobErr != nil) {
+			fmt.Fprintln(stderr, "agent update: 本次更新运行在设备代理的计划任务进程树内（例如由代理拉起的终端），结束计划任务会连同替换脚本一起终止，已跳过自动结束；请换一个不经过设备代理的终端重新执行 agent update，或在替换完成后手动重启计划任务")
+			fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
+			break
+		}
 		var stopErr error = errors.New("当前服务管理器不支持结束计划任务")
 		if stopper, ok := manager.(taskStopper); ok {
 			stopErr = stopper.Stop(ctx)

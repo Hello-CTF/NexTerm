@@ -634,25 +634,6 @@ func TestReplaceScriptUnixExecutes(t *testing.T) {
 		}
 	})
 
-	t.Run("failed swap rolls back old binary", func(t *testing.T) {
-		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		missing := filepath.Join(dir, ".nexterm-agent.nexterm-new")
-		_ = os.Remove(missing)
-		scriptPath := writeScript(missing, "echo must-not-run")
-		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
-			t.Fatalf("script failed: %v\n%s", err, output)
-		}
-		content, err := os.ReadFile(target)
-		if err != nil || string(content) != "old-binary" {
-			t.Fatalf("rollback must restore the old binary, target = %q, %v", content, err)
-		}
-		got := readLog()
-		if strings.Contains(got, "must-not-run") || strings.Contains(got, upgradeLogRestartExit) {
-			t.Fatalf("rollback must not restart, log %q", got)
-		}
-	})
 	t.Run("unopenable log still swaps and restarts", func(t *testing.T) {
 		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 			t.Fatal(err)
@@ -679,6 +660,26 @@ func TestReplaceScriptUnixExecutes(t *testing.T) {
 			t.Fatalf("restart command must run even when the log cannot be opened: %v", err)
 		}
 	})
+
+	t.Run("failed swap rolls back old binary", func(t *testing.T) {
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		missing := filepath.Join(dir, ".nexterm-agent.nexterm-new")
+		_ = os.Remove(missing)
+		scriptPath := writeScript(missing, "echo must-not-run")
+		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
+			t.Fatalf("script failed: %v\n%s", err, output)
+		}
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "old-binary" {
+			t.Fatalf("rollback must restore the old binary, target = %q, %v", content, err)
+		}
+		got := readLog()
+		if strings.Contains(got, "must-not-run") || strings.Contains(got, upgradeLogRestartExit) {
+			t.Fatalf("rollback must not restart, log %q", got)
+		}
+	})
 }
 
 func TestUpgradeLogPathIn(t *testing.T) {
@@ -698,5 +699,33 @@ func TestUpgradeLogPathIn(t *testing.T) {
 	}
 	if got := upgradeLogPathIn(""); got != "" {
 		t.Fatalf("empty dir: got %q", got)
+	}
+}
+
+func TestUpgraderReportsDetachedReplace(t *testing.T) {
+	version := "1.2.3"
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	archive := buildReleaseArchive(t, runtime.GOOS, []byte("new-agent"))
+	sums := fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)
+	server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive}, signedChecksums(version, sums)))
+	for _, detached := range []bool{true, false} {
+		target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var replaced []stagedReplace
+		u := &Upgrader{
+			BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(), MaxAttempts: 1,
+			scheduleReplaceDetached: func(newPath, targetPath string) (bool, error) {
+				replaced = append(replaced, stagedReplace{newPath: newPath, targetPath: targetPath})
+				return detached, nil
+			},
+		}
+		if err := u.Upgrade(context.Background(), version); err != nil {
+			t.Fatal(err)
+		}
+		if len(replaced) != 1 || u.LastReplaceDetached() != detached {
+			t.Fatalf("detached=%v: replaced=%d reported=%v", detached, len(replaced), u.LastReplaceDetached())
+		}
 	}
 }

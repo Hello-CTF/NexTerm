@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
@@ -61,21 +62,6 @@ var errUpgradeRefused = errors.New("self-upgrade refused")
 // source, verifies the release's SHA256SUMS Minisign signature against the trusted key, verifies the archive against that
 // SHA256SUMS, and schedules a deferred replacement after unpacking. Download/verify/staging failures are retried by Upgrade with exponential
 // backoff; once retries are exhausted the old binary is kept exactly as-is.
-// upgradeLogPathIn returns the upgrade log path under dir, or "" when dir is not an existing writable directory:
-// a log that cannot be opened must not be handed to the replace script.
-func upgradeLogPathIn(dir string) string {
-	if dir == "" {
-		return ""
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return ""
-	}
-	if err := checkWritableDir(dir); err != nil {
-		return ""
-	}
-	return filepath.Join(dir, upgradeLogName)
-}
-
 type Upgrader struct {
 	BaseURL    string
 	Executable string
@@ -90,6 +76,28 @@ type Upgrader struct {
 
 	sleep           func(ctx context.Context, d time.Duration) bool
 	scheduleReplace func(newPath, targetPath string) error
+	// scheduleReplaceDetached replaces scheduleReplace in tests that need to control whether the script left the caller's job.
+	scheduleReplaceDetached func(newPath, targetPath string) (bool, error)
+	replaceDetached         atomic.Bool
+}
+
+// LastReplaceDetached reports whether the most recently scheduled replace script runs outside the caller's Windows job
+// object, so ending the scheduled task cannot terminate it. It is false before a replacement is scheduled.
+func (u *Upgrader) LastReplaceDetached() bool { return u.replaceDetached.Load() }
+
+// upgradeLogPathIn returns the upgrade log path under dir, or "" when dir is not an existing writable directory:
+// a log that cannot be opened must not be handed to the replace script.
+func upgradeLogPathIn(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	if err := checkWritableDir(dir); err != nil {
+		return ""
+	}
+	return filepath.Join(dir, upgradeLogName)
 }
 
 func defaultUpgrader(executable string) *Upgrader {
@@ -221,14 +229,19 @@ func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
 	if err := extractAgentBinary(archivePath, staged, agentBinaryName(runtime.GOOS)); err != nil {
 		return err
 	}
-	schedule := u.scheduleReplace
+	schedule := u.scheduleReplaceDetached
 	if schedule == nil {
 		logPath := u.LogPath
-		schedule = func(newPath, targetPath string) error {
+		schedule = func(newPath, targetPath string) (bool, error) {
+			if u.scheduleReplace != nil {
+				return false, u.scheduleReplace(newPath, targetPath)
+			}
 			return scheduleDeferredReplace(newPath, targetPath, logPath)
 		}
 	}
-	if err := schedule(staged, target); err != nil {
+	detached, err := schedule(staged, target)
+	u.replaceDetached.Store(err == nil && detached)
+	if err != nil {
 		_ = os.Remove(staged)
 		return fmt.Errorf("schedule deferred replace: %w", err)
 	}

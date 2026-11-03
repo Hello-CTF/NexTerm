@@ -11,10 +11,10 @@ import (
 
 // scheduleDeferredReplace starts the deferred replacement script via powershell with a hidden window: the script waits for
 // this process to exit, then completes the binary switch, and automatically rolls back to the old binary on failure.
-func scheduleDeferredReplace(newPath, targetPath, logPath string) error {
+func scheduleDeferredReplace(newPath, targetPath, logPath string) (bool, error) {
 	script, err := os.CreateTemp(filepath.Dir(newPath), ".nexterm-replace-*.ps1")
 	if err != nil {
-		return err
+		return false, err
 	}
 	scriptPath := script.Name()
 	body := renderReplaceScriptWindows(windowsReplaceScript{
@@ -24,19 +24,19 @@ func scheduleDeferredReplace(newPath, targetPath, logPath string) error {
 	if _, err := script.WriteString(body); err != nil {
 		_ = script.Close()
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	if err := script.Close(); err != nil {
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
-	cmd, err := startReplaceScript(scriptPath, logPath)
+	cmd, detached, err := startReplaceScript(scriptPath, logPath)
 	if err != nil {
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	go func() { _ = cmd.Wait() }()
-	return nil
+	return detached, nil
 }
 
 const (
@@ -48,8 +48,8 @@ const (
 // startReplaceScript prefers CREATE_BREAKAWAY_FROM_JOB: Task Scheduler tracks a task instance with a job object, and a script left
 // in that job can keep the instance looking alive after the agent exits, so the restart block could only time out. When the
 // job forbids breakaway, CreateProcess is refused and the script starts without the flag, relying on the restart block's
-// timeout; the fallback is recorded in the upgrade log.
-func startReplaceScript(scriptPath, logPath string) (*exec.Cmd, error) {
+// timeout; the fallback is recorded in the upgrade log. The bool reports whether the script left the job.
+func startReplaceScript(scriptPath, logPath string) (*exec.Cmd, bool, error) {
 	build := func(flags uint32) *exec.Cmd {
 		cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", scriptPath)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}
@@ -57,12 +57,12 @@ func startReplaceScript(scriptPath, logPath string) (*exec.Cmd, error) {
 	}
 	cmd := build(createNoWindow | createBreakawayFromJob)
 	if err := cmd.Start(); err == nil {
-		return cmd, nil
+		return cmd, true, nil
 	}
 	appendUpgradeLog(logPath, breakawayFallbackNote)
 	cmd = build(createNoWindow)
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return cmd, nil
+	return cmd, false, nil
 }

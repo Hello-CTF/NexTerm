@@ -14,26 +14,26 @@ import (
 // completes the binary switch, and automatically rolls back to the old binary on failure. setsid lets the script escape launchd's cleanup of
 // leftover processes in the same process group; systemd cleans up by cgroup, where setsid has no effect, so on linux under
 // systemd (INVOCATION_ID present) the script is placed in a separate scope cgroup via systemd-run --scope, ensuring it can still finish the replacement and restart the service after the agent unit stops.
-func scheduleDeferredReplace(newPath, targetPath, logPath string) error {
+func scheduleDeferredReplace(newPath, targetPath, logPath string) (bool, error) {
 	script, err := os.CreateTemp(filepath.Dir(newPath), ".nexterm-replace-*.sh")
 	if err != nil {
-		return err
+		return false, err
 	}
 	scriptPath := script.Name()
 	body := renderReplaceScriptUnix(newPath, targetPath, replaceScriptDelaySeconds, unixRestartCommand(runtime.GOOS), logPath)
 	if _, err := script.WriteString(body); err != nil {
 		_ = script.Close()
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	if err := script.Chmod(0o755); err != nil {
 		_ = script.Close()
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	if err := script.Close(); err != nil {
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	cmd := exec.Command("/bin/sh", scriptPath)
 	if runtime.GOOS == "linux" && os.Getenv("INVOCATION_ID") != "" {
@@ -43,8 +43,8 @@ func scheduleDeferredReplace(newPath, targetPath, logPath string) error {
 	}
 	if err := cmd.Start(); err != nil {
 		_ = os.Remove(scriptPath)
-		return err
+		return false, err
 	}
 	go func() { _ = cmd.Wait() }()
-	return nil
+	return true, nil
 }
