@@ -149,7 +149,13 @@ interface ChainState {
   bare: boolean;
   /** A full-width continuation row has already been accepted. */
   chained: boolean;
+  /** The URL stitched so far contains a query. */
+  hasQuery: boolean;
+  /** Text of the logical line after the candidate; undefined at the end of the rows. */
+  following: string | undefined;
 }
+
+const CLEAN_CONTEXT = /^(?:\s*|\s*[$>#](?:\s.*)?|[\s╰└╯┘─━═]*[╰└─━═][\s╰└╯┘─━═]*)$/;
 
 const QUERY_EVIDENCE = /[=&%?#]/;
 
@@ -188,7 +194,13 @@ function continuationFragment(
   const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
   const full = endCol >= cols - 2 || (borderCol >= 0 && state.prevBorderCol >= 0 && Math.abs(borderCol - state.prevBorderCol) <= 1);
   if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol, borderCol };
-  if (!/[^A-Za-z]/.test(fragment)) return null;
+  if (!/[^A-Za-z]/.test(fragment)) {
+    // Letters only is usually prose; a query URL followed by a blank line, a
+    // prompt or a box edge is the exception.
+    const clean = state.following === undefined || CLEAN_CONTEXT.test(state.following);
+    if (!(state.bare && state.hasQuery && clean)) return null;
+    return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
+  }
   // A short tail is the weakest evidence: a lone number is not a URL tail, and
   // after a row that also holds prose it must look like a query string.
   if (/^\d{1,3}$/.test(fragment)) return null;
@@ -240,6 +252,8 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
         bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
         chained: false,
+        hasQuery: m[0].includes("?"),
+        following: undefined,
       };
       const fullRow = borderIdx >= 0 || endCol >= cols - 2;
       const maxRows = maxContinuationRows(cols);
@@ -247,6 +261,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       // is worse than an unrecognised one.
       let overflow = false;
       for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && cur + 1 < lines.length; n++) {
+        state.following = lines[cur + 2]?.text;
         const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
         if (!next) break;
         const len = next.piece.end - next.piece.start;
@@ -260,6 +275,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         if (!next.more) break;
         state.prevBorderCol = next.borderCol;
         state.chained = true;
+        state.hasQuery ||= lines[next.piece.line].text.slice(next.piece.start, next.piece.end).includes("?");
       }
       if (overflow) continue;
       const built = finishLink(lines, pieces);

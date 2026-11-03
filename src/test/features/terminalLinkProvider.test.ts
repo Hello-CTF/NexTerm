@@ -140,6 +140,19 @@ describe("link stitching rules", () => {
     expect(urls(hard(`│ ${full} │`, "│ /api/v2/next                           │"), 44)).toEqual([full + "/api/v2/next"]);
   });
 
+  it("accepts a letters-only tail when the URL has a query and the context ends cleanly", () => {
+    const head = "https://a.example/x?k=" + "a".repeat(18);
+    expect(urls(hard(head, "abcdef"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", ""), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "$ ls"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "> "), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "╰────────╯"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "Next sentence follows"), 40)).toEqual([head]);
+    const noQuery = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(noQuery, "abcdef", ""), 40)).toEqual([noQuery]);
+    expect(urls(hard(`Docs: ${head.slice(0, 34)}`, "abcdef", ""), 40)).toEqual([head.slice(0, 34)]);
+  });
+
   it("does not join a boxed URL with a following boxed sentence", () => {
     const rows = hard("│ https://a.example/x      │", "│ Paste code here          │");
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);
