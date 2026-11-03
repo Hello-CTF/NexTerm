@@ -282,17 +282,15 @@ func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
 	server.setWSControl(mismatchControl(version))
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	archive := buildReleaseArchive(t, runtime.GOOS, []byte("new-agent"))
-	release := newReleaseServer(t, map[string][]byte{
-		"/v" + version + "/" + asset:             archive,
-		"/v" + version + "/" + checksumsFileName: []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)),
-	})
+	release := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive},
+		signedChecksums(version, fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset))))
 	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
 	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var replaced []stagedReplace
 	stubCLIRuntimeWithUpgrader(t, &Upgrader{
-		BaseURL: release.URL, Executable: target,
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: target,
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	})
@@ -325,7 +323,7 @@ func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
 	server.setWSControl(mismatchControl("9.9.9"))
 	release := newReleaseServer(t, map[string][]byte{})
 	stubCLIRuntimeWithUpgrader(t, &Upgrader{
-		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
+		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
 	})
@@ -347,5 +345,11 @@ func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "install-device.sh") {
 		t.Fatalf("run stderr = %q, want manual reinstall guidance", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "原因") || !strings.Contains(stderr.String(), "self-upgrade to 9.9.9 failed") {
+		t.Fatalf("run stderr = %q, want the upgrade failure reason", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "control channel protocol version mismatch") {
+		t.Fatalf("run stderr = %q, reason must not repeat the sentinel text", stderr.String())
 	}
 }

@@ -205,6 +205,7 @@ func New(options Options) (*Runtime, error) {
 	upgrader := options.Upgrader
 	if upgrader == nil && len(cliServicePrefix) == 0 && !options.NoSelfUpgrade {
 		upgrader = defaultUpgrader(executable)
+		upgrader.LogPath = upgradeLogPathIn(options.DataDir)
 	}
 	*runtimeState = Runtime{
 		store:           options.Store,
@@ -871,7 +872,7 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 			return
 		}
 		r.logger.Error("self-upgrade failed; staying on the current binary for manual intervention", "target_version", serverVersion, "error", err)
-		r.fatal(ErrProtocolMismatch)
+		r.fatal(&selfUpgradeFailedError{cause: err})
 		return
 	}
 	r.logger.Info("self-upgrade staged; deferred replace will swap the binary and restart the service", "target_version", serverVersion)
@@ -1017,3 +1018,13 @@ func sleepContext(ctx context.Context, duration time.Duration) bool {
 		return true
 	}
 }
+
+// selfUpgradeFailedError is ErrProtocolMismatch carrying why the automatic upgrade did not happen, so callers can print the
+// cause without parsing the message.
+type selfUpgradeFailedError struct{ cause error }
+
+func (e *selfUpgradeFailedError) Error() string {
+	return ErrProtocolMismatch.Error() + ": " + e.cause.Error()
+}
+
+func (e *selfUpgradeFailedError) Unwrap() []error { return []error{ErrProtocolMismatch, e.cause} }

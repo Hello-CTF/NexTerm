@@ -3,6 +3,8 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
+	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,7 +27,7 @@ func TestSignedReleaseAssetSizeBoundaries(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			key := newTestMinisignKey(20)
+			key := releasesigtest.NewKey(20)
 			fixture := linuxFixture(t, "0.3.0", false)
 			switch test.asset {
 			case checksumsAssetName:
@@ -38,11 +40,11 @@ func TestSignedReleaseAssetSizeBoundaries(t *testing.T) {
 				t.Fatalf("unexpected asset %q", test.asset)
 			}
 
-			trust, err := parseMinisignPublicKey(key.encodedPublic)
+			trust, err := releasesig.ParsePublicKey(key.EncodedPublic)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyMinisign([]byte(fixture.checksums), []byte(fixture.signature), trust, "NexTerm 0.3.0 SHA256SUMS"); err != nil {
+			if err := releasesig.Verify([]byte(fixture.checksums), []byte(fixture.signature), trust, "NexTerm 0.3.0 SHA256SUMS"); err != nil {
 				t.Fatalf("test input must be cryptographically valid: %v", err)
 			}
 			server := newObservedReleaseServer(t, fixture, nil)
@@ -54,7 +56,7 @@ func TestSignedReleaseAssetSizeBoundaries(t *testing.T) {
 			manager := &Manager{
 				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
 				ExePath: executable, APIURL: server.server.URL + "/releases",
-				MinisignPublicKey: key.publicKeyFile(), RequireSignedChecksums: true,
+				MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 				RestartFunc: func(context.Context, string) error {
 					restartCalled = true
 					return nil
@@ -105,11 +107,11 @@ func TestInstallResolveAssetRevalidatesSignature(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			key := newTestMinisignKey(21)
+			key := releasesigtest.NewKey(21)
 			fixture := linuxFixture(t, "0.3.0", false)
 			fixture.sign(key, "0.3.0")
 			validSignature := fixture.signature
-			badSignature := key.sign([]byte("another manifest"), "NexTerm 0.3.0 SHA256SUMS")
+			badSignature := key.Sign([]byte("another manifest"), "NexTerm 0.3.0 SHA256SUMS")
 			server := newObservedReleaseServer(t, fixture, func(response http.ResponseWriter, attempt int64) {
 				if attempt <= 2 {
 					_, _ = response.Write([]byte(validSignature))
@@ -129,7 +131,7 @@ func TestInstallResolveAssetRevalidatesSignature(t *testing.T) {
 			manager := &Manager{
 				CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
 				ExePath: executable, APIURL: server.server.URL + "/releases",
-				MinisignPublicKey: key.publicKeyFile(), RequireSignedChecksums: true,
+				MinisignPublicKey: key.PublicKeyFile(), RequireSignedChecksums: true,
 				RestartFunc: func(context.Context, string) error {
 					restartCalled = true
 					return nil

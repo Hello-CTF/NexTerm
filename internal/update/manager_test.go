@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -134,8 +135,8 @@ func linuxFixture(t *testing.T, version string, corruptChecksum bool) *releaseFi
 	}
 }
 
-func (fixture *releaseFixture) sign(key testMinisignKey, version string) {
-	fixture.signature = key.sign([]byte(fixture.checksums), fmt.Sprintf("NexTerm %s %s", version, checksumsAssetName))
+func (fixture *releaseFixture) sign(key releasesigtest.Key, version string) {
+	fixture.signature = key.Sign([]byte(fixture.checksums), fmt.Sprintf("NexTerm %s %s", version, checksumsAssetName))
 	fixture.releases[0].Assets = append(fixture.releases[0].Assets, Asset{Name: checksumSignatureAssetName})
 }
 

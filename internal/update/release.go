@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
 
 const DefaultReleasesAPI = "https://api.github.com/repos/Hello-CTF/NexTerm/releases"
@@ -117,8 +119,8 @@ func (m *Manager) fetchChecksums(ctx context.Context, release Release) (map[stri
 	if err != nil {
 		return nil, err
 	}
-	expectedComment := fmt.Sprintf("NexTerm %s %s", release.version(), checksumsAssetName)
-	if err := verifyMinisign(contents, signature, trust, expectedComment); err != nil {
+	expectedComment := releasesig.ChecksumsTrustedComment(release.version())
+	if err := releasesig.Verify(contents, signature, trust, expectedComment); err != nil {
 		return nil, fmt.Errorf("%s 的 minisign 验证失败: %w", checksumsAssetName, err)
 	}
 	sums, err := parseSHA256SUMS(bytes.NewReader(contents))

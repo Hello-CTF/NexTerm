@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readHostHelperProtocolMetadata } from "./helper-metadata.mjs";
 import { helperTarget } from "./helper-matrix.mjs";
+import { agentManifestKeyProblems, minisignPublicKeyDigest, normalizeMinisignPublicKey } from "../../scripts/lib/release-signing.mjs";
 import { binaryManifestProblems, helperMetadataManifestProblems, loadManifest } from "../../scripts/lib/build-manifest.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -30,6 +31,11 @@ const problems = binaryManifestProblems({
   file,
   expect: { id, goos, goarch, goarm: helper?.goarm || "", tags: ["production"], cgo, stripped: true, version, commit },
 });
+if (id.startsWith("agent-")) {
+  const normalized = normalizeMinisignPublicKey(process.env.NEXTERM_MINISIGN_PUBLIC_KEY);
+  if (normalized.problem) die(normalized.problem);
+  problems.push(...agentManifestKeyProblems({ id, manifest, releaseVersion: process.env.NEXTERM_RELEASE_VERSION, expectedDigest: minisignPublicKeyDigest(normalized.key) }));
+}
 if (id.startsWith("helper-")) {
   let expected;
   try {
