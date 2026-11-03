@@ -2,6 +2,8 @@ import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { assetApi, vaultApi, type Asset, type AssetGroup, type AssetInheritance, type AssetInheritanceRequest, type GroupDefaults } from "../../ipc/commands";
 import { Select } from "../../ui/Select";
+import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
+import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
 
 // Kinds that read group connection defaults. The backend decides what each kind really inherits; this only
 // avoids asking for a preview that can never show anything.
@@ -140,6 +142,7 @@ export function GroupDefaultsFields({
   groupId: string | null;
 }) {
   const ids = useId();
+  const { restricted: serverLimited, text: serverText } = useServerAccountRestrictions();
   const credentials = useQuery({ queryKey: ["credentials"], queryFn: () => vaultApi.listCredentials(), refetchOnWindowFocus: false });
   const assets = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), refetchOnWindowFocus: false });
   const patch = (partial: Partial<GroupDefaultsState>) => onChange({ ...value, ...partial });
@@ -194,16 +197,24 @@ export function GroupDefaultsFields({
                 { value: "password", label: "密码" },
                 { value: "keyboard-interactive", label: "键盘交互（密码）" },
                 { value: "key", label: "私钥" },
-                { value: "agent", label: "SSH Agent" },
+                { value: "agent", label: serverLimited ? "SSH Agent（多用户服务端不可用）" : "SSH Agent", disabled: serverLimited },
               ]}
             />
             {value.authKind === "key" && (
               <input
                 className="nx-input mt-1.5 font-mono text-[12px]"
                 aria-label="默认私钥路径"
+                disabled={serverLimited}
                 value={value.keyPath}
                 onChange={(e) => patch({ keyPath: e.target.value })}
                 placeholder="私钥文件路径（或在下方选择私钥凭据）"
+              />
+            )}
+            {serverLimited && value.authKind === "agent" && <ServerRestrictionNote text={serverText.agentAuth} />}
+            {serverLimited && value.authKind === "key" && (
+              <ServerRestrictionNote
+                text={serverText.keyPath}
+                onClear={value.keyPath ? () => patch({ keyPath: "" }) : undefined}
               />
             )}
             {value.authKind !== "" && value.authKind !== "agent" && (

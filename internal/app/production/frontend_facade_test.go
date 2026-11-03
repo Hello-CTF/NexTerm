@@ -36,7 +36,8 @@ func readGeneratedIPCManifest(t *testing.T) generatedIPCManifest {
 	return manifest
 }
 
-var desktopOnlyProductionCommands = []string{"local_file_read", "local_file_read_range", "local_folder_list", "log_tail_save", "app_update_channel_get", "app_update_channel_set"}
+var desktopOnlyProductionCommands = []string{"local_file_read", "local_file_read_range", "local_folder_list", "log_tail_save", "app_update_channel_get", "app_update_channel_set",
+	"vault_init_master", "vault_init_dpapi", "vault_unlock", "vault_lock", "vault_set_autolock", "vault_change_password"}
 
 func commandSet(commands []string) map[string]bool {
 	set := make(map[string]bool, len(commands))

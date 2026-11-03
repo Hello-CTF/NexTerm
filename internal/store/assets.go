@@ -95,6 +95,12 @@ func (s *Store) AssetCreateTx(ctx context.Context, tx *gorm.DB, input AssetInput
 }
 
 func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) (AssetRow, error) {
+	if err := checkServerLocalAssetKind(ctx, input.Kind); err != nil {
+		return AssetRow{}, err
+	}
+	if err := checkServerSSHAssetInput(ctx, input.Kind, &input.OptionsJSON, input.AuthKind, input.KeyPath); err != nil {
+		return AssetRow{}, err
+	}
 	if err := validateAssetPasteOptions(input.OptionsJSON); err != nil {
 		return AssetRow{}, err
 	}
@@ -205,6 +211,9 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 		if err := validateInventoryPatch(current, patch); err != nil {
 			return AssetRow{}, err
 		}
+		if err := checkServerSSHAssetInput(ctx, current.Kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
+			return AssetRow{}, err
+		}
 		if patch.OptionsJSON != nil {
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
@@ -257,6 +266,10 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 	}
 	if current.UpdatedAt != expectedUpdatedAt || current.DeletedAt != nil {
 		return AssetRow{}, ErrWriteConflict
+	}
+	// Inventory source sync is still a user-driven write on a multi-user server.
+	if err := checkServerSSHAssetInput(ctx, current.Kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
+		return AssetRow{}, err
 	}
 	if !sourceSync {
 		if err := validateInventoryPatch(current, patch); err != nil {

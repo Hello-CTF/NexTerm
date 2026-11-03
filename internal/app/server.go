@@ -22,6 +22,12 @@ type ServeConfig struct {
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
 	Stderr         io.Writer
+
+	// Listener replaces the listener opened for Listen; nil keeps ListenAndServe behavior.
+	Listener net.Listener
+	// ReadIdleTimeout and WriteIdleTimeout bound request-body and response-write stalls; zero uses one minute.
+	ReadIdleTimeout  time.Duration
+	WriteIdleTimeout time.Duration
 }
 
 type Health struct {
@@ -72,9 +78,16 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		config.Stderr = os.Stderr
 	}
 	WarnIfExposed(a.logger, config.Stderr, config.Listen, config.SyncOnly, config.Auth)
+	readIdle, writeIdle := config.ReadIdleTimeout, config.WriteIdleTimeout
+	if readIdle <= 0 {
+		readIdle = defaultRequestReadIdleTimeout
+	}
+	if writeIdle <= 0 {
+		writeIdle = defaultRequestWriteIdleTimeout
+	}
 	server := &http.Server{
 		Addr:              config.Listen,
-		Handler:           handler,
+		Handler:           withRequestTimeouts(readIdle, writeIdle, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext: func(net.Listener) context.Context {
@@ -83,6 +96,10 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}
 	serveResult := make(chan error, 1)
 	go func() {
+		if config.Listener != nil {
+			serveResult <- server.Serve(config.Listener)
+			return
+		}
 		serveResult <- server.ListenAndServe()
 	}()
 

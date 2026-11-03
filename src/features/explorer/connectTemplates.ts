@@ -101,3 +101,40 @@ export const useConnectTemplates = create<ConnectTemplatesState>((set) => ({
       return { templates };
     }),
 }));
+
+// restrictTemplateForServer drops the settings a multi-user server rejects, so applying a template
+// there never selects them. It reports which fields were dropped.
+export function restrictTemplateForServer(t: ConnectTemplate): { template: ConnectTemplate; dropped: string[] } {
+  const dropped: string[] = [];
+  const next = { ...t };
+  if (next.kind === "local") {
+    next.kind = "ssh";
+    dropped.push("本地终端类型");
+  }
+  if (next.authKind === "agent") {
+    next.authKind = "password";
+    dropped.push("SSH Agent 认证");
+  }
+  if (next.proxyCommand) {
+    next.proxyCommand = "";
+    dropped.push("代理命令");
+  }
+  if (next.forwardAgent) {
+    next.forwardAgent = false;
+    dropped.push("Agent 转发");
+  }
+  if (next.agentSocket) {
+    next.agentSocket = "";
+    dropped.push("Agent socket");
+  }
+  if (next.certPath) {
+    next.certPath = "";
+    dropped.push("证书路径");
+  }
+  if (next.keyPath || next.keyOrigin === "ref") {
+    if (next.keyPath) dropped.push("私钥路径");
+    next.keyPath = "";
+    next.keyOrigin = "vault";
+  }
+  return { template: next, dropped };
+}

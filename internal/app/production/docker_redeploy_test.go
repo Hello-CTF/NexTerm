@@ -74,7 +74,7 @@ func newRedeployIPCFixture(t *testing.T) *redeployIPCFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: session.KindLocal, Name: "production", Tags: "env:prod"})
+	asset, err := createLocalFixtureAsset(ctx, database, store.AssetInput{Kind: session.KindLocal, Name: "production", Tags: "env:prod"})
 	if err != nil {
 		t.Fatal(err)
 	}

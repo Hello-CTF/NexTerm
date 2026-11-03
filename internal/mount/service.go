@@ -19,6 +19,7 @@ import (
 
 type Service struct {
 	goos        string
+	multiUser   bool
 	auditor     Auditor
 	runner      commandRunner
 	newID       func() string
@@ -46,6 +47,7 @@ func NewService(config Config) *Service {
 	}
 	return &Service{
 		goos:        runtime.GOOS,
+		multiUser:   config.MultiUser,
 		auditor:     config.Auditor,
 		runner:      execRunner{timeout: config.CommandTimeout},
 		newID:       config.NewID,
@@ -64,7 +66,25 @@ func (s *Service) Shutdown(context.Context) error {
 	return nil
 }
 
+// MultiUserUnavailableReason explains why accounts-based servers do not mount disks: sshfs would run on
+// the server with the service process's SSH configuration, keys and agent.
+const MultiUserUnavailableReason = "多用户服务端不支持挂载：它会在服务器上用服务进程的 SSH 配置和凭据执行 sshfs"
+
+// CapabilityFor adds the per-request owner check to Capability: a request that carries an account owner is
+// never allowed to mount, even when the service was not flagged multi-user at assembly time.
+func (s *Service) CapabilityFor(ctx context.Context) *string {
+	if s.multiUser || ipc.OwnerID(ctx) != "" {
+		reason := MultiUserUnavailableReason
+		return &reason
+	}
+	return s.Capability()
+}
+
 func (s *Service) Capability() *string {
+	if s.multiUser {
+		reason := MultiUserUnavailableReason
+		return &reason
+	}
 	if s.goos == "darwin" {
 		reason := MacOSUnavailableReason
 		return &reason
@@ -77,6 +97,9 @@ func (s *Service) Capability() *string {
 }
 
 func (s *Service) Create(ctx context.Context, args CreateArgs) (Entry, error) {
+	if s.multiUser || ipc.OwnerID(ctx) != "" {
+		return Entry{}, ipc.NewError(ipc.CodeUnsupported, MultiUserUnavailableReason)
+	}
 	if err := validateCreate(s.goos, args); err != nil {
 		return Entry{}, ipc.BadParam(err)
 	}
@@ -156,6 +179,9 @@ func (s *Service) create(ctx context.Context, args CreateArgs) (Entry, error) {
 }
 
 func (s *Service) Remove(ctx context.Context, args RemoveArgs) error {
+	if s.multiUser || ipc.OwnerID(ctx) != "" {
+		return ipc.NewError(ipc.CodeUnsupported, MultiUserUnavailableReason)
+	}
 	if err := validateRemove(s.goos, args); err != nil {
 		return ipc.BadParam(err)
 	}
@@ -242,6 +268,9 @@ func (s *Service) mountPresent(entries []Entry, owned Entry) bool {
 }
 
 func (s *Service) ListFor(ctx context.Context, args listRequest) ([]Entry, error) {
+	if s.multiUser || ipc.OwnerID(ctx) != "" {
+		return nil, ipc.NewError(ipc.CodeUnsupported, MultiUserUnavailableReason)
+	}
 	if args.SessionID == "" {
 		return nil, ipc.NewError(ipc.CodeBadParam, "请指定当前会话")
 	}

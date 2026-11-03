@@ -12,8 +12,8 @@ type listRequest struct {
 }
 
 func (s *Service) RegisterCommands(dispatcher *ipc.Dispatcher) error {
-	if err := ipc.Register(dispatcher, "mount_capability", func(context.Context, *ipc.Call, struct{}) (*string, error) {
-		return s.Capability(), nil
+	if err := ipc.Register(dispatcher, "mount_capability", func(ctx context.Context, _ *ipc.Call, _ struct{}) (*string, error) {
+		return s.CapabilityFor(ctx), nil
 	}); err != nil {
 		return err
 	}

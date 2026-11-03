@@ -354,6 +354,7 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 			authKind = "key"
 			keyPath = &host.IdentityFiles[0]
 		}
+		authKindPtr := &authKind
 		target := map[string]any{
 			"type": "ssh-config", "alias": host.Alias, "proxyJump": host.ProxyJump,
 			"identityFiles": append([]string(nil), host.IdentityFiles...), "sourcePath": host.Source,
@@ -372,13 +373,28 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		}
 		items = append(items, store.InventoryItem{
 			Key: "host/" + host.Alias, Kind: "ssh", Name: host.Alias,
-			Host: &hostname, Port: &port, Username: optionalString(username), AuthKind: &authKind, KeyPath: keyPath, Options: options,
+			Host: &hostname, Port: &port, Username: optionalString(username), AuthKind: authKindPtr, KeyPath: keyPath, Options: options,
 		})
 	}
 	return items, warnings, nil
 }
 
+const (
+	inventoryKubeconfigMultiUserImportMessage = "多用户服务端不支持从 kubeconfig 导入：它会读取服务器上的 kubeconfig，属于跨账号共享凭据"
+	inventoryKubernetesMultiUserExecMessage   = "多用户服务端不支持 Kubernetes 目标执行：它会使用服务器上的 kubeconfig，属于跨账号共享凭据"
+)
+
 func (s *inventoryService) discover(ctx context.Context, source, path string) ([]store.InventoryItem, []string, error) {
+	if s.multiUser || ipc.OwnerID(ctx) != "" {
+		switch source {
+		case store.InventorySourceSSHConfig:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")
+		case store.InventorySourceDockerContext:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Docker 上下文")
+		case store.InventorySourceKubernetes:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, inventoryKubeconfigMultiUserImportMessage)
+		}
+	}
 	switch source {
 	case store.InventorySourceSSHConfig:
 		return s.sshConfigItems(ctx, effectiveInventorySSHPath(path))
@@ -518,6 +534,9 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	target, err := fleetinventory.ResolveTarget(candidate)
 	if err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
+	}
+	if target.Kubernetes != nil && (s.multiUser || ipc.OwnerID(ctx) != "") {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeUnsupported, inventoryKubernetesMultiUserExecMessage)
 	}
 	if !s.desktop && target.Docker != nil {
 		return s.execDockerTargetViaSession(ctx, input, target)

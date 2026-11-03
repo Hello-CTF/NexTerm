@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
@@ -108,6 +109,7 @@ type Server struct {
 	accounts        *account.Accounts
 	accountThrottle accountThrottles
 	mfaTickets      *mfaTicketStore
+	mfaLock         *mfaLockout
 	gatewayAuthKey  string
 	authRequired    bool
 	events          *EventBroker
@@ -133,6 +135,12 @@ type Server struct {
 	previewResolve *account.LoginThrottle
 	// previewRevalidateInterval is the authorization recheck interval for preview connections; tests may lower it.
 	previewRevalidateInterval time.Duration
+	// accountSocketRevalidateNanos is how often (nanoseconds, 0 for the default) account WebSockets recheck their login session; tests may lower it.
+	accountSocketRevalidateNanos atomic.Int64
+	// sessionRecheck merges the periodic rechecks of the sockets of one login session; sessionCheckFn replaces the
+	// account lookup (nil uses Accounts.CheckSession) and is set by tests before sockets open.
+	sessionRecheck            sessionRechecker
+	sessionCheckFn            func(context.Context, string) (*account.Identity, error)
 	db                        DBHealthSource
 	accountConnections        AccountConnectionCloser
 	remoteDesktop             RemoteDesktopServer
@@ -283,6 +291,7 @@ func New(config Config) (*Server, error) {
 			mfa: account.NewLoginThrottle(),
 		},
 		mfaTickets:     newMFATicketStore(),
+		mfaLock:        newMFALockout(),
 		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,

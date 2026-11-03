@@ -1,8 +1,9 @@
-package server
+package app
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -35,7 +36,6 @@ func TestWithRequestTimeoutsCutsStalledBodyRead(t *testing.T) {
 	if _, err := fmt.Fprintf(connection, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 100\r\n\r\na"); err != nil {
 		t.Fatal(err)
 	}
-	// Only 1 byte is sent before stalling; after readIdle passes, the server-side read must be judged timed out.
 	_ = connection.SetReadDeadline(time.Now().Add(5 * time.Second))
 	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
 	if err != nil {
@@ -72,13 +72,13 @@ func TestWithRequestTimeoutsCutsBlockedWrite(t *testing.T) {
 	if _, err := fmt.Fprintf(connection, "GET / HTTP/1.1\r\nHost: test\r\n\r\n"); err != nil {
 		t.Fatal(err)
 	}
-	// The client never reads; after the server-side socket write blocks beyond writeIdle, it must be cut.
 	select {
 	case err := <-writeErr:
 		if err == nil {
 			t.Fatal("blocked write must fail with idle timeout")
 		}
-		if networkErr, ok := err.(net.Error); !ok || !networkErr.Timeout() {
+		var networkErr net.Error
+		if !errors.As(err, &networkErr) || !networkErr.Timeout() {
 			t.Fatalf("write error = %v, want timeout", err)
 		}
 	case <-time.After(10 * time.Second):
@@ -102,8 +102,7 @@ func TestWithRequestTimeoutsWebSocketSurvivesPastHeaderDeadline(t *testing.T) {
 		}
 		_ = connection.Write(context.Background(), messageType, append([]byte("echo:"), data...))
 	})))
-	// Consistent with production: the request-header read deadline is set by ReadHeaderTimeout and must be cleared after hijack,
-	// otherwise long-lived connections are mistakenly killed when the first deadline expires after the handshake.
+	// Hijack must clear the ReadHeaderTimeout deadline, or long-lived connections die after the handshake.
 	server.Config.ReadHeaderTimeout = idle
 	server.Start()
 	defer server.Close()
@@ -115,7 +114,6 @@ func TestWithRequestTimeoutsWebSocketSurvivesPastHeaderDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer connection.Close(websocket.StatusNormalClosure, "")
-	// Idle far beyond idle and ReadHeaderTimeout, then send and receive: the connection must still be alive.
 	time.Sleep(6 * idle)
 	if err := connection.Write(ctx, websocket.MessageText, []byte("hi")); err != nil {
 		t.Fatal(err)

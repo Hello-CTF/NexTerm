@@ -52,6 +52,9 @@ func (s *Store) GroupCreate(ctx context.Context, input GroupInput) (AssetGroupRo
 	now := ids.NowMS()
 	row := AssetGroupRow{ID: id, ParentID: input.ParentID, Name: input.Name, Sort: input.Sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
 	if input.Defaults != nil {
+		if err := checkServerSSHGroupDefaults(ctx, *input.Defaults); err != nil {
+			return AssetGroupRow{}, err
+		}
 		if err := s.validateGroupDefaults(ctx, row.OwnerID, *input.Defaults); err != nil {
 			return AssetGroupRow{}, err
 		}
@@ -79,6 +82,9 @@ func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (A
 		row.Sort = *patch.Sort
 	}
 	if patch.Defaults != nil {
+		if err := checkServerSSHGroupDefaults(ctx, *patch.Defaults); err != nil {
+			return AssetGroupRow{}, err
+		}
 		if err := s.validateGroupDefaults(ctx, row.OwnerID, *patch.Defaults); err != nil {
 			return AssetGroupRow{}, err
 		}

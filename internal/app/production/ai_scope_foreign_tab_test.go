@@ -46,11 +46,11 @@ func TestScopeRebindRejectsForeignTabWithOwnAssetR2(t *testing.T) {
 		}),
 	})
 	t.Cleanup(func() { _ = sessions.Close() })
-	assetA, err := database.AssetCreate(ctxA, store.AssetInput{Kind: "local", Name: "A"})
+	assetA, err := createLocalFixtureAsset(ctxA, database, store.AssetInput{Kind: "local", Name: "A"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	assetB, err := database.AssetCreate(ctxB, store.AssetInput{Kind: "local", Name: "B"})
+	assetB, err := createLocalFixtureAsset(ctxB, database, store.AssetInput{Kind: "local", Name: "B"})
 	if err != nil {
 		t.Fatal(err)
 	}

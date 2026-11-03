@@ -841,6 +841,9 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 				return err
 			}
 			createdFlags[index] = created
+			if warning := store.ServerSSHAssetWarning(ctx, entry.row); warning != "" {
+				warnf("%s", warning)
+			}
 		}
 		// An asset that conflicted at write time must not take its credentials down with
 		// it: a credential referenced only by conflicted assets is compensated back to its

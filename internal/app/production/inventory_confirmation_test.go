@@ -55,7 +55,7 @@ func TestInventoryTargetExecProductionConfirmationUsesConfiguredEnvironmentNames
 		t.Fatal(err)
 	}
 	connected := connectInventoryTestSession(t, manager, "owner-a", asset)
-	importDockerContext(t, dispatcher, ctx, runner)
+	requireDockerContextImportRejected(t, dispatcher, ctx, runner)
 
 	request := inventoryDockerExecRequest()
 	request.SessionID = connected.ID

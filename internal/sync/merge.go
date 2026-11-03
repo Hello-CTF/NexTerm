@@ -774,6 +774,9 @@ func (e *Engine) applyAssetObject(ctx context.Context, plaintext []byte, report 
 		report.warnf("资产 %s 应用失败: %v", payload.ID, err)
 		return false, false
 	}
+	if warning := store.ServerSSHAssetWarning(ctx, row); warning != "" {
+		report.warnf("%s", warning)
+	}
 	return true, false
 }
 

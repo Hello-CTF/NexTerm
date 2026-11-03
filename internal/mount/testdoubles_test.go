@@ -20,12 +20,14 @@ type fakeRunner struct {
 	lookups  map[string]string
 	commands []command
 	runs     []fakeRun
+	looked   []string
 	run      func(context.Context, command) (commandResult, error)
 }
 
 func (r *fakeRunner) LookPath(file string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.looked = append(r.looked, file)
 	if path, ok := r.lookups[file]; ok {
 		return path, nil
 	}
@@ -93,4 +95,10 @@ func requireCommandCount(t *testing.T, runner *fakeRunner, want int) []command {
 		t.Fatalf("command count = %d, want %d: %+v", len(commands), want, commands)
 	}
 	return commands
+}
+
+func (r *fakeRunner) lookupsUsed() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.looked...)
 }

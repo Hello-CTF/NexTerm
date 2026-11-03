@@ -1551,6 +1551,8 @@ export interface VaultStatus {
   autoLockMinutes: number;
   passwordless: boolean;
   systemProtection: boolean;
+  // Temporary hand-written field until bindings are regenerated: true when the server manages the vault.
+  managed?: boolean;
 }
 
 export interface CredentialUsedBy {

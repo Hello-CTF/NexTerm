@@ -38,7 +38,7 @@ func newSSHImportDatabaseFixture(t *testing.T) *sshImportDatabaseFixture {
 	credentialVault := vault.Load(ctx, database)
 	planner := &sshImportPlanner{database: database, vault: credentialVault, desktop: true}
 	dispatcher := ipc.NewDispatcher()
-	if err := registerVaultCommands(dispatcher, credentialVault, database, nil); err != nil {
+	if err := registerVaultCommands(dispatcher, credentialVault, database, nil, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := planner.registerCommands(dispatcher); err != nil {

@@ -53,6 +53,12 @@ func withInventoryWatchInterval(interval time.Duration) inventoryServiceOption {
 	}
 }
 
+// withInventoryMultiUser marks the service as part of a multi-user server so
+// server-path sources are refused even for requests without an owner context.
+func withInventoryMultiUser(multiUser bool) inventoryServiceOption {
+	return func(service *inventoryService) { service.multiUser = multiUser }
+}
+
 func withInventoryDockerAccess(sessions inventorySessionResolver, docker inventoryDockerExecutor) inventoryServiceOption {
 	return func(service *inventoryService) {
 		service.sessions = sessions
@@ -64,6 +70,7 @@ type inventoryService struct {
 	database       *store.Store
 	runner         fleetinventory.CommandRunner
 	desktop        bool
+	multiUser      bool // structural: the server has per-account isolation, whether or not this request carries an owner
 	events         ipc.Emitter
 	watchInterval  time.Duration
 	sshLimits      sshconfig.Limits

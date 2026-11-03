@@ -18,6 +18,8 @@ import { IconAlert, IconKey, IconServer, IconXCircle } from "../../ui/icons";
 import { useVaultInitGate } from "../credentials/useVaultInitGate";
 import { normalizeAssetTags } from "./assetSearch";
 import { Select } from "../../ui/Select";
+import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
+import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
 
 type Phase = "form" | "loading" | "preview" | "applying" | "done";
 
@@ -98,6 +100,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
     initialFocus: () => pathInputRef.current,
   });
 
+  // Every source here reads server paths, which a multi-user server refuses for account users.
+  const { restricted: serverLimited, text: serverText } = useServerAccountRestrictions();
   const termius = source === "termius";
   const mobile = useShell() === "mobile";
   const termiusSupported = !WEB && !mobile && isMac();
@@ -106,6 +110,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
 
   const runPreview = async () => {
+    if (serverLimited) return;
     if (termius && !termiusSupported) {
       setError("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。");
       return;
@@ -271,6 +276,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       className={`nx-segment-item ${source === "ssh-config" ? "is-active" : ""}`}
+                      disabled={serverLimited}
+                      title={serverLimited ? serverText.importSshServerPath : undefined}
                       onClick={() => setSource("ssh-config")}
                     >
                       OpenSSH 配置
@@ -278,6 +285,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     <button
                       type="button"
                       className={`nx-segment-item ${source === "ssh-home" ? "is-active" : ""}`}
+                      disabled={serverLimited}
+                      title={serverLimited ? serverText.importSshServerPath : undefined}
                       onClick={() => setSource("ssh-home")}
                     >
                       ~/.ssh 目录
@@ -296,6 +305,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       </button>
                     )}
                   </div>
+                  {serverLimited && <ServerRestrictionNote text={serverText.importSshServerPath} />}
                   {termiusUnsupported && (
                     <div className="nx-hint mt-1.5" role="note">
                       当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。
@@ -447,7 +457,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {phase === "form" && (
               <button
                 className="nx-btn nx-btn-primary"
-                disabled={termius && !confirmed}
+                disabled={serverLimited || (termius && !confirmed)}
                 onClick={() => void runPreview()}
               >
                 预览

@@ -382,7 +382,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Database:      newProductionDatabaseService(database, credentialVault, sessionManager),
 		RemoteDesktop: newProductionRemoteDesktopService(database, credentialVault, sessionManager),
 		Wake:          newProductionWakeService(database, sessionManager),
-		Mount: mount.NewService(mount.Config{Auditor: database, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
+		Mount: mount.NewService(mount.Config{Auditor: database, MultiUser: !shared, SessionHost: func(ctx context.Context, sessionID string) (string, error) {
 			connected, err := sessionManager.SessionFor(productionSessionRequestContext(ctx), sessionID)
 			if err != nil {
 				return "", err
@@ -393,6 +393,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		Forward:  forwardService,
 		Docker:   dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		desktop:        config.Desktop,
+		multiUser:      !shared,
 		hostKeysShared: config.Desktop || owner.OpenAccess(ctx),
 		stagedBlobs:    config.StagedBlobs,
 		fsUploads:      fsUploads,

@@ -114,6 +114,7 @@ type sshImportPlanner struct {
 	vault            *vault.Vault
 	termiusKeySource func() (termiusdb.KeySource, error)
 	desktop          bool
+	multiUser        bool // structural multi-user server; refuses server-path sources without an owner context too
 }
 
 type sshImportPlan struct {
@@ -131,8 +132,8 @@ type sshImportExisting struct {
 	credIDByFP    map[string]string
 }
 
-func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault, desktop bool) error {
-	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop}
+func registerSSHImportCommands(dispatcher *ipc.Dispatcher, database *store.Store, credentialVault *vault.Vault, desktop, multiUser bool) error {
+	planner := &sshImportPlanner{database: database, vault: credentialVault, termiusKeySource: termiusdb.PlatformKeySource, desktop: desktop, multiUser: multiUser}
 	return planner.registerCommands(dispatcher)
 }
 
@@ -266,6 +267,14 @@ func sshImportPreviewIDs(preview *sshconfig.ImportPreview) ([]string, []string) 
 }
 
 func (p *sshImportPlanner) derive(ctx context.Context, source, path string, confirmed, withMaterial bool) (*sshImportPlan, error) {
+	if p.multiUser || ipc.OwnerID(ctx) != "" {
+		switch source {
+		case "ssh-config", "ssh-home":
+			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")
+		case "termius":
+			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据")
+		}
+	}
 	existing, err := p.loadExisting(ctx)
 	if err != nil {
 		return nil, err
@@ -729,7 +738,7 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 		outcome := keyOutcome{Name: name, Fingerprint: item.Fingerprint}
 		switch {
 		case selection.Action == "import" && item.Action == sshconfig.PlanAdd:
-			payload, err := p.importKeyPayload(plan, item)
+			payload, err := p.importKeyPayload(ctx, plan, item)
 			if err != nil {
 				return fmt.Errorf("第 %d 条密钥 %q 读取失败: %w", index+1, name, err)
 			}
@@ -759,7 +768,7 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 			if err := p.validateCredentialTarget(ctx, tx, item); err != nil {
 				return fmt.Errorf("第 %d 条密钥 %q 的冲突目标校验失败: %w", index+1, name, err)
 			}
-			payload, err := p.importKeyPayload(plan, item)
+			payload, err := p.importKeyPayload(ctx, plan, item)
 			if err != nil {
 				return fmt.Errorf("第 %d 条密钥 %q 读取失败: %w", index+1, name, err)
 			}
@@ -871,13 +880,16 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 	return nil
 }
 
-func (p *sshImportPlanner) importKeyPayload(plan *sshImportPlan, item *sshconfig.KeyPreview) (string, error) {
+func (p *sshImportPlanner) importKeyPayload(ctx context.Context, plan *sshImportPlan, item *sshconfig.KeyPreview) (string, error) {
 	if item.Source == "termius" {
 		material, ok := plan.termiusKeys[item.Fingerprint]
 		if !ok {
 			return "", ipc.NewError(ipc.CodeInternal, fmt.Sprintf("Termius 密钥 %q 的材料不可用", item.Aliases[0]))
 		}
 		return vault.InlinePrivateKey(material, nil).Encode(), nil
+	}
+	if ipc.OwnerID(ctx) != "" {
+		return "", store.RejectServerSSHFile()
 	}
 	return vault.ReferencedPrivateKey(item.Path, nil).Encode(), nil
 }

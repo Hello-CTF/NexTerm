@@ -22,6 +22,13 @@ type vaultAutoLockRequest struct {
 	Minutes *uint64 `json:"minutes"`
 }
 
+// vaultStatusDTO adds Managed: the server keeps its vault unlocked from a master key file, so clients hide
+// the unlock, lock and password entries.
+type vaultStatusDTO struct {
+	vault.Status
+	Managed bool `json:"managed"`
+}
+
 type credentialSetRequest struct {
 	ID         string  `json:"id"`
 	Name       string  `json:"name"`
@@ -59,47 +66,57 @@ type revealedCredentialDTO struct {
 	Passphrase *string `json:"passphrase"`
 }
 
-func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Vault, database *store.Store, events ipc.Emitter) error {
+func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Vault, database *store.Store, events ipc.Emitter, desktop bool) error {
+	// The server vault is held open by its master key file, so locking or re-keying it from an account would
+	// desynchronize the shared vault from that file; only the desktop owns these commands.
+	desktopOnly := func(register func() error) func() error {
+		return func() error {
+			if !desktop {
+				return nil
+			}
+			return register()
+		}
+	}
 	registrations := []func() error{
 		func() error {
-			return ipc.Register(dispatcher, "vault_status", func(_ context.Context, _ *ipc.Call, _ struct{}) (vault.Status, error) {
-				return credentialVault.Status(), nil
+			return ipc.Register(dispatcher, "vault_status", func(_ context.Context, _ *ipc.Call, _ struct{}) (vaultStatusDTO, error) {
+				return vaultStatusDTO{Status: credentialVault.Status(), Managed: !desktop}, nil
 			})
 		},
-		func() error {
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_init_master", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
 				return nil, credentialVault.InitMaster(ctx, input.Password)
 			})
-		},
-		func() error {
+		}),
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_init_dpapi", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
 				return nil, credentialVault.InitDPAPI(ctx, input.Password)
 			})
-		},
-		func() error {
+		}),
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_unlock", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
 				return nil, credentialVault.UnlockMaster(ctx, input.Password)
 			})
-		},
-		func() error {
+		}),
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_lock", func(_ context.Context, _ *ipc.Call, _ struct{}) (any, error) {
 				credentialVault.Lock()
 				return nil, nil
 			})
-		},
-		func() error {
+		}),
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_set_autolock", func(ctx context.Context, _ *ipc.Call, input vaultAutoLockRequest) (any, error) {
 				if input.Minutes == nil {
 					return nil, ipc.BadParam(fmt.Errorf("自动锁定时长需在 0（禁用）至 1440 分钟之间"))
 				}
 				return nil, credentialVault.SetAutoLock(ctx, *input.Minutes)
 			})
-		},
-		func() error {
+		}),
+		desktopOnly(func() error {
 			return ipc.Register(dispatcher, "vault_change_password", func(ctx context.Context, _ *ipc.Call, input vaultPasswordRequest) (any, error) {
 				return nil, credentialVault.ChangeMasterPassword(ctx, input.OldPassword, input.NewPassword)
 			})
-		},
+		}),
 		func() error {
 			return ipc.RegisterNested(dispatcher, "vault_set_credential", func(ctx context.Context, _ *ipc.Call, input credentialSetRequest) (map[string]string, error) {
 				plaintext := input.Secret
@@ -110,6 +127,9 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 					}
 					switch source {
 					case "file":
+						if ipc.OwnerID(ctx) != "" {
+							return nil, store.RejectServerSSHFile()
+						}
 						plaintext = vault.ReferencedPrivateKey(input.Secret, input.Passphrase).Encode()
 					case "inline":
 						plaintext = vault.InlinePrivateKey(input.Secret, input.Passphrase).Encode()
@@ -211,6 +231,9 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						}
 						switch source {
 						case "file":
+							if ipc.OwnerID(ctx) != "" {
+								return nil, store.RejectServerSSHFile()
+							}
 							payload = vault.ReferencedPrivateKey(*input.Secret, payload.Passphrase)
 						case "inline":
 							payload = vault.InlinePrivateKey(*input.Secret, payload.Passphrase)
