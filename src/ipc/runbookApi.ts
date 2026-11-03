@@ -24,10 +24,12 @@ export type {
   Step,
   StepState,
 };
-export type RunbookStep = Step;
-export type RunbookStepState = StepState;
-export type RunbookRunState = RunState;
-export type RunbookStartRequest = StartRequest;
+// confirm marks a step that needs an explicit confirmation under the production-only policy. Drop the local
+// additions once the generated Step type carries the field.
+export type RunbookStep = Step & { confirm?: boolean };
+export type RunbookStepState = Omit<StepState, "step"> & { step: RunbookStep };
+export type RunbookRunState = Omit<RunState, "steps"> & { steps: RunbookStepState[] };
+export type RunbookStartRequest = Omit<StartRequest, "steps"> & { steps: RunbookStep[] };
 export type RunbookPrepareRequest = PrepareRequest;
 export type RunbookAdvanceRequest = AdvanceRequest;
 export type RunbookHistory = ExecBatchRunHistory;
@@ -38,7 +40,7 @@ export function createRunbookId(): string {
 }
 
 export const runbookApi = {
-  start: (request: StartRequest) => call("runbook_run_start", request),
+  start: (request: RunbookStartRequest) => call("runbook_run_start", request as StartRequest) as Promise<RunbookRunState>,
   get: (runId: string) => call("runbook_run_get", { runId }),
   prepare: (request: PrepareRequest) => call("runbook_run_prepare", request),
   advance: (request: AdvanceRequest) => call("runbook_run_advance", request),

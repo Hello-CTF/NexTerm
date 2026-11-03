@@ -182,7 +182,7 @@ export function ScriptDirectiveHelp() {
           <li><code className="nx-mono">@NEXTERM:CONFIRM 提示语</code>：询问是或否，标准输入收到 <code className="nx-mono">yes</code> 或 <code className="nx-mono">no</code></li>
           <li><code className="nx-mono">@NEXTERM:MESSAGE info|warn|error 文本</code>：显示一条消息</li>
         </ul>
-        <p>执行流程的命令是单行的，多条语句可用 <code className="nx-mono">sh -c '...'</code> 包装；下面的示例用 <code className="nx-mono">printf</code> 打印指令，Tab 写作 <code className="nx-mono">{"\\t"}</code>。</p>
+        <p>多主机执行时每步命令是单行的，多条语句可用 <code className="nx-mono">sh -c '...'</code> 包装；下面的示例用 <code className="nx-mono">printf</code> 打印指令，Tab 写作 <code className="nx-mono">{"\\t"}</code>。</p>
         <p>变量名只能包含字母、数字和下划线，且不以数字开头。指令行最长 1024 字节，提示语、标题和消息最长 200 个字符，不能包含控制字符。格式错误的指令会作为普通输出显示并给出警告，不会中断运行。</p>
         <p>未勾选时，步骤输出原样显示，不解释任何 <code className="nx-mono">@NEXTERM:</code> 行，标准输入照常立即关闭。勾选后标准输入保持打开直到脚本结束，请只读取脚本自己请求的行，不要读到输入结束。只有 SSH 连接支持提问；受管设备及其他连接类型仍支持 STEP、PROGRESS 和 MESSAGE，提问会显示警告并被忽略。输入、保密输入和确认请求不受频率限制（每台主机最多 32 次，超出则该主机失败）；步骤、进度和消息有频率限制，进度只保留最新值。每台主机分别提问、分别回答，等待回答期间不计入命令超时，但超过 5 分钟没有回答会使该主机失败。</p>
         <p>脚本的输出和提问内容来自远端主机，界面只会以纯文本显示并标明来源主机。保密输入不会回显；请不要在脚本中把它打印出来。</p>

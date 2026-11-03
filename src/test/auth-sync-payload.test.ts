@@ -140,7 +140,25 @@ describe("remaining object payloads match Go byte for byte", () => {
   });
 
   it("snippet", () => {
-    expect(marshalSyncPayload(snippetPayload({ id: "s-1", groupId: "g1", name: "常用", body: "ls -la <&>", sort: 0, createdAt: 1, updatedAt: 2 }))).toBe(fixtureText("snippet"));
+    expect(marshalSyncPayload(snippetPayload({ id: "s-1", groupId: "g1", name: "常用", body: "ls -la <&>", sort: 0, createdAt: 1, updatedAt: 2, description: "", steps: [] }))).toBe(fixtureText("snippet"));
+  });
+
+  it("multi-step snippets match Go output byte for byte", () => {
+    const multi = marshalSyncPayload(snippetPayload({
+      id: "s-2", groupId: "g1", name: "部署 <app>", body: "git pull\nsystemctl restart app", sort: 3, createdAt: 1, updatedAt: 2,
+      description: "拉取并重启 & 验证\u2028",
+      steps: [
+        { id: "st-1", name: "pull", command: "git pull" },
+        { id: "st-2", name: "", description: "重启 <svc>", command: "systemctl restart {{svc:app}}", confirm: true, interactive: true },
+        { id: "st-3", name: "check", command: "curl -fsS localhost", interactive: true, confirm: false },
+      ],
+    }));
+    expect(multi).toBe(fixtureText("snippetMulti"));
+    const noGroup = marshalSyncPayload(snippetPayload({
+      id: "s-3", groupId: null, name: "x", body: "a\nb", sort: 0, createdAt: 1, updatedAt: 2, description: "",
+      steps: [{ id: "a", name: "n", command: "a" }, { id: "b", name: "m", command: "b", confirm: true }],
+    }));
+    expect(noGroup).toBe(fixtureText("snippetMultiNoGroup"));
   });
 
   it("supports group and credential tombstones", () => {

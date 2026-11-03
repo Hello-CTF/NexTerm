@@ -313,6 +313,13 @@ export const biometricApi = {
   disable: (): Promise<void> => call("biometric_disable") as Promise<void>,
 };
 
+import type { SnippetStep } from "./types";
+
+export interface SnippetContent {
+  description?: string;
+  steps?: SnippetStep[];
+}
+
 import type { UpdateChannelDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
@@ -935,15 +942,22 @@ export const assetApi = {
   // What the empty connection fields of an asset (saved or being edited) would inherit from its group, resolved by the backend.
   inheritancePreview: (args: AssetInheritanceRequest) => call("asset_inheritance_preview", args) as Promise<AssetInheritance>,
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
-  snippetList: (): Promise<import("./types").SnippetDto[]> => call("snippet_list"),
-  snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
-    call("snippet_create", { name, body, groupId, sort }) as Promise<{ id: string }>,
+  // The generated snippet type lacks description/steps until bindings are regenerated, hence the cast.
+  snippetList: () => call("snippet_list") as Promise<import("./types").SnippetDto[]>,
+  snippetCreate: (
+    name: string,
+    body: string,
+    groupId?: string,
+    sort?: number,
+    content: SnippetContent = {},
+  ) => call("snippet_create", { name, body, groupId, sort, ...content } as never) as Promise<{ id: string }>,
+  // Steps replace the stored ones on every update; leaving them out turns a multi-step snippet into a single command.
   snippetUpdate: (
     id: string,
     name: string,
     body: string,
-    patch: { groupId?: string | null; sort?: number } = {},
-  ) => call("snippet_update", { id, name, body, ...patch }) as Promise<void>,
+    patch: { groupId?: string | null; sort?: number } & SnippetContent = {},
+  ) => call("snippet_update", { id, name, body, ...patch } as never) as Promise<void>,
   snippetDelete: (id: string) => call("snippet_delete", { id }) as Promise<void>,
   auditQuery: (args: Record<string, unknown> = {}) =>
     call("audit_query", { args: args as unknown as IPCInput<"audit_query"> }) as Promise<import("./types").AuditEntryDto[]>,

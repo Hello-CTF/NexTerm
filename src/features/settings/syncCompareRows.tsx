@@ -39,7 +39,7 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
   ai_grant: "AI 授权",
   preference: "偏好设置",
   state_rule: "状态规则",
-  runbook_template: "Runbook 模板",
+  runbook_template: "旧版执行流程模板（只读，会转换为片段）",
   skill: "AI 技能",
   memory: "AI 记忆",
   cron: "定时任务",

@@ -4,13 +4,14 @@ import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { insertSnippet, executeSnippet, terminalTarget, type Snippet } from "./snippetInsert";
+import { insertSnippet, executeSnippet, isMultiStep, terminalTarget, type Snippet } from "./snippetInsert";
+import type { SnippetStep } from "../../ipc/types";
 import { LoadError } from "../../ui/LoadError";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
-import { RunbookPanel } from "./RunbookPanel";
+import { MultiHostRunPanel } from "./MultiHostRunPanel";
 import {
-  analyzeSnippetTemplate,
+  analyzeSnippetSteps,
   renderSnippetTemplate,
   type SnippetAsset,
 } from "./snippetVariables";
@@ -19,8 +20,11 @@ import {
   IconEdit,
   IconInsert,
   IconLoader,
+  IconArrowDown,
+  IconArrowUp,
   IconPlay,
   IconPlus,
+  IconServer,
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
@@ -40,7 +44,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
   const { promptForValues, promptElement, prompting } = useSnippetVariablePrompt();
   const [editing, setEditing] = useState<Snippet | "new" | null>(null);
-  const [runbookOpen, setRunbookOpen] = useState(false);
+  const [multiHostSnippet, setMultiHostSnippet] = useState<Snippet | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const modalRef = useRef<HTMLDivElement>(null);
@@ -61,10 +65,13 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["snippets"] });
 
-  const prepareBody = async (s: Snippet): Promise<string | null> => {
+  // Variables are asked for once; every step of a multi-step snippet renders with the same values.
+  const prepareSnippet = async (s: Snippet): Promise<Snippet | null> => {
     try {
-      const analysis = analyzeSnippetTemplate(s.body);
-      if (!analysis.hasVariables) return s.body;
+      const multi = isMultiStep(s);
+      const commands = multi ? (s.steps ?? []).map((step) => step.command) : [s.body];
+      const analysis = analyzeSnippetSteps(commands);
+      if (!analysis.hasVariables) return s;
       if (analysis.unknownVariables.length > 0) {
         pushToast("error", `片段包含未识别的变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
         return null;
@@ -81,7 +88,9 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       }
       const values = await promptForValues(`填写片段变量 · ${s.name}`, analysis.variables);
       if (values === null) return null;
-      return renderSnippetTemplate(s.body, values, asset);
+      if (!multi) return { ...s, body: renderSnippetTemplate(s.body, values, asset) };
+      const steps = (s.steps ?? []).map((step) => ({ ...step, command: renderSnippetTemplate(step.command, values, asset) }));
+      return { ...s, steps, body: steps.map((step) => step.command).join("\n") };
     } catch (cause) {
       pushToast("error", `无法解析片段变量：${describeError(cause)}`);
       return null;
@@ -91,9 +100,8 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   const run = async (s: Snippet, action: "insert" | "execute") => {
     if (prompting) return;
     const epoch = useUi.getState().accountEpoch;
-    const body = await prepareBody(s);
-    if (body === null || useUi.getState().accountEpoch !== epoch) return;
-    const rendered = { ...s, body };
+    const rendered = await prepareSnippet(s);
+    if (rendered === null || useUi.getState().accountEpoch !== epoch) return;
     if (await (action === "insert" ? insertSnippet(rendered) : executeSnippet(rendered))) onClose();
   };
 
@@ -131,11 +139,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     trapOverlayTab(event, modalRef.current);
   };
 
-  if (runbookOpen) {
+  if (multiHostSnippet) {
     return (
-      <RunbookPanel
-        snippets={snippets.data ?? []}
-        onBack={() => setRunbookOpen(false)}
+      <MultiHostRunPanel
+        snippet={multiHostSnippet}
+        onBack={() => setMultiHostSnippet(null)}
         onClose={onClose}
       />
     );
@@ -143,7 +151,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
 
   const needle = query.trim().toLowerCase();
   const visible = (snippets.data ?? []).filter(
-    (s) => !needle || s.name.toLowerCase().includes(needle) || s.body.toLowerCase().includes(needle),
+    (s) =>
+      !needle ||
+      s.name.toLowerCase().includes(needle) ||
+      s.body.toLowerCase().includes(needle) ||
+      (s.description ?? "").toLowerCase().includes(needle),
   );
 
   return (
@@ -165,19 +177,10 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             <IconPlus size={12} />
             新建片段
           </button>
-          <button
-            type="button"
-            className="nx-btn nx-btn-sm"
-            title="按顺序在多台主机上运行多个片段或命令"
-            onClick={() => setRunbookOpen(true)}
-          >
-            <IconPlay size={12} />
-            执行流程
-          </button>
         </div>
         <div className="nx-modal-body flex min-h-[320px] flex-1 flex-col overflow-y-auto">
           <p className="nx-hint mb-2.5">
-            「插入」将命令写入当前终端的输入行，不按回车；「执行」写入后立即回车运行。片段含换行或控制字符时，将先请求确认。
+            「插入」将命令写入当前终端的输入行，不按回车；「执行」写入后立即回车运行。片段含换行或控制字符时，将先请求确认。多步片段只能执行，会按顺序逐步写入当前终端；标记了「执行前确认」的步骤会先询问。
           </p>
           {blockedReason && (snippets.data?.length ?? 0) > 0 && (
             <p className="nx-hint mb-2.5" role="status">{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。</p>
@@ -218,22 +221,28 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
             {visible.map((s) => {
               const insertLabel = `插入片段「${s.name}」`;
               const executeLabel = `执行片段「${s.name}」`;
-              const preview = s.body.split("\n")[0];
+              const multi = isMultiStep(s);
+              const multiHostLabel = `在多台主机执行片段「${s.name}」`;
+              const preview = (multi ? s.steps?.[0]?.command ?? s.body : s.body).split("\n")[0];
               return (
                 <div key={s.id} data-snippet-row className="flex items-center gap-2 rounded-md border border-neutral-800/70 px-2.5 py-1.5">
                   <IconCommand size={13} className="shrink-0 text-neutral-500" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[12.5px] text-neutral-200">{s.name}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-[12.5px] text-neutral-200">{s.name}</span>
+                      {multi && <span className="nx-badge shrink-0">{s.steps?.length ?? 0} 步</span>}
+                    </div>
+                    {s.description && <div className="truncate text-[11px] text-neutral-400" title={s.description}>{s.description}</div>}
                     <div className="truncate font-mono text-[11px] text-neutral-500" title={s.body}>
                       {preview}
-                      {s.body.includes("\n") ? " …" : ""}
+                      {multi || s.body.includes("\n") ? " …" : ""}
                     </div>
                   </div>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title={blockedReason ?? "插入到当前终端"}
+                    title={multi ? "多步片段只能执行" : (blockedReason ?? "插入到当前终端")}
                     aria-label={insertLabel}
-                    disabled={deletingId === s.id || blockedReason !== null}
+                    disabled={deletingId === s.id || blockedReason !== null || multi}
                     onClick={() => void insert(s)}
                   >
                     <IconInsert size={11} />
@@ -248,6 +257,16 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   >
                     <IconPlay size={11} />
                     执行
+                  </button>
+                  <button
+                    className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
+                    title="在多台主机执行…"
+                    aria-label={multiHostLabel}
+                    disabled={deletingId === s.id}
+                    onClick={() => setMultiHostSnippet(s)}
+                  >
+                    <IconServer size={11} />
+                    多主机…
                   </button>
                   <button
                     className="nx-icon-btn nx-icon-btn-sm shrink-0"
@@ -294,6 +313,16 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+type EditorStep = SnippetStep;
+
+function newStepId(): string {
+  return globalThis.crypto.randomUUID();
+}
+
+function blankStep(command = ""): EditorStep {
+  return { id: newStepId(), name: "", command };
+}
+
 function SnippetEditor({
   initial,
   onClose,
@@ -304,21 +333,50 @@ function SnippetEditor({
   onSaved: () => void;
 }) {
   const pushToast = useUi((s) => s.pushToast);
+  const initialSteps = initial?.steps ?? [];
   const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
+  const [multi, setMulti] = useState(initialSteps.length > 0);
+  // Existing steps keep their ids and any fields the editor does not show (such as a step description).
+  const [steps, setSteps] = useState<EditorStep[]>(() => initialSteps.map((step) => ({ ...step })));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
-  const nameId = useId();
-  const bodyId = useId();
   const hintId = useId();
   const layer = useOverlayFocus(true, modalRef, {
     initialFocus: () => nameInputRef.current,
   });
 
-  const dirty = name !== (initial?.name ?? "") || body !== (initial?.body ?? "");
+  const dirty =
+    name !== (initial?.name ?? "") ||
+    description !== (initial?.description ?? "") ||
+    multi !== (initialSteps.length > 0) ||
+    (multi ? JSON.stringify(steps) !== JSON.stringify(initialSteps) : body !== (initial?.body ?? ""));
+
+  const updateStep = (id: string, patch: Partial<EditorStep>) =>
+    setSteps((current) => current.map((step) => (step.id === id ? { ...step, ...patch } : step)));
+  const moveStep = (index: number, offset: -1 | 1) =>
+    setSteps((current) => {
+      const destination = index + offset;
+      if (destination < 0 || destination >= current.length) return current;
+      const next = [...current];
+      [next[index], next[destination]] = [next[destination], next[index]];
+      return next;
+    });
+
+  const toMulti = () => {
+    setSteps((current) => (current.length > 0 ? current : [blankStep(body)]));
+    setMulti(true);
+  };
+  const toSingle = () => {
+    if (steps.length > 0) setBody(steps.map((step) => step.command).join("\n"));
+    setMulti(false);
+  };
+
+  const valid = name.trim() !== "" && (multi ? steps.length > 0 && steps.every((step) => step.command.trim() !== "") : body.trim() !== "");
 
   const requestClose = async () => {
     if (saving) return;
@@ -337,17 +395,32 @@ function SnippetEditor({
   const save = async () => {
     if (saving) return;
     const n = name.trim();
-    if (!n || !body.trim()) {
-      setError("名称和内容都不能为空");
+    if (!valid) {
+      setError(multi ? "名称不能为空，且每一步都要填写命令" : "名称和内容都不能为空");
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      if (initial) {
-        await assetApi.snippetUpdate(initial.id, n, body);
+      // An omitted description is stored as empty, so it is only sent when there is one.
+      const cleanDescription = description.trim();
+      const descriptionPatch = cleanDescription ? { description: cleanDescription } : {};
+      if (multi) {
+        const cleanSteps = steps.map((step) => ({ ...step, name: step.name.trim() }));
+        const joined = cleanSteps.map((step) => step.command).join("\n");
+        if (initial) {
+          await assetApi.snippetUpdate(initial.id, n, joined, { ...descriptionPatch, steps: cleanSteps });
+        } else {
+          await assetApi.snippetCreate(n, joined, undefined, undefined, { ...descriptionPatch, steps: cleanSteps });
+        }
+      } else if (initial) {
+        await (cleanDescription
+          ? assetApi.snippetUpdate(initial.id, n, body, descriptionPatch)
+          : assetApi.snippetUpdate(initial.id, n, body));
       } else {
-        await assetApi.snippetCreate(n, body);
+        await (cleanDescription
+          ? assetApi.snippetCreate(n, body, undefined, undefined, descriptionPatch)
+          : assetApi.snippetCreate(n, body));
       }
       pushToast("success", initial ? "已保存片段" : "已创建片段");
       onSaved();
@@ -379,7 +452,7 @@ function SnippetEditor({
     >
       <div
         ref={modalRef}
-        className="nx-modal flex nx-modal-md flex-col"
+        className="nx-modal flex nx-modal-md max-h-[88dvh] flex-col"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -394,9 +467,9 @@ function SnippetEditor({
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor={nameId}>名称</label>
+            <label className="nx-label" htmlFor="snippet-name">名称</label>
             <input
-              id={nameId}
+              id="snippet-name"
               ref={nameInputRef}
               className="nx-input"
               value={name}
@@ -405,19 +478,79 @@ function SnippetEditor({
             />
           </div>
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor={bodyId}>内容</label>
-            <textarea
-              id={bodyId}
-              className="nx-textarea font-mono text-[11.5px]"
-              rows={8}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="docker ps --format '{{.Names}}'"
-              aria-describedby={hintId}
+            <label className="nx-label" htmlFor="snippet-description">说明（可选）</label>
+            <input
+              id="snippet-description"
+              className="nx-input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
             />
+          </div>
+          <div className="nx-form-row">
+            <div className="flex items-center gap-2">
+              <span className="nx-label">{multi ? "步骤" : "内容"}</span>
+              <div className="nx-spacer" />
+              <button type="button" className="nx-btn nx-btn-sm" onClick={multi ? toSingle : toMulti}>
+                {multi ? "改为单条" : "改为多步"}
+              </button>
+            </div>
+            {!multi ? (
+              <textarea
+                id="snippet-body"
+                className="nx-textarea font-mono text-[11.5px]"
+                rows={8}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="docker ps --format '{{.Names}}'"
+                aria-label="内容"
+                aria-describedby={hintId}
+              />
+            ) : (
+              <div className="mt-1.5 flex flex-col gap-2">
+                {steps.map((step, index) => (
+                  <div key={step.id} className="rounded border border-neutral-800 p-2.5">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="nx-badge">{index + 1}</span>
+                      <input
+                        className="nx-input min-w-40 flex-1"
+                        aria-label={`步骤 ${index + 1} 名称`}
+                        placeholder="步骤名称（可选）"
+                        value={step.name}
+                        onChange={(e) => updateStep(step.id, { name: e.target.value })}
+                      />
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === 0} aria-label={`上移步骤 ${index + 1}`} title="上移" onClick={() => moveStep(index, -1)}><IconArrowUp size={12} /></button>
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === steps.length - 1} aria-label={`下移步骤 ${index + 1}`} title="下移" onClick={() => moveStep(index, 1)}><IconArrowDown size={12} /></button>
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm is-danger" aria-label={`删除步骤 ${index + 1}`} title="删除步骤" onClick={() => setSteps((current) => current.filter((candidate) => candidate.id !== step.id))}><IconTrash size={12} /></button>
+                    </div>
+                    <textarea
+                      className="nx-textarea font-mono text-[11.5px]"
+                      rows={2}
+                      aria-label={`步骤 ${index + 1} 命令`}
+                      aria-describedby={hintId}
+                      value={step.command}
+                      onChange={(e) => updateStep(step.id, { command: e.target.value })}
+                    />
+                    <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-400">
+                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 执行前确认`} checked={step.confirm === true} onChange={(e) => updateStep(step.id, { confirm: e.target.checked || undefined })} />
+                      执行前确认
+                    </label>
+                    <label className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
+                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 启用脚本交互指令`} checked={step.interactive === true} onChange={(e) => updateStep(step.id, { interactive: e.target.checked || undefined })} />
+                      启用脚本交互指令（仅多主机执行；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）
+                    </label>
+                  </div>
+                ))}
+                <div>
+                  <button type="button" className="nx-btn nx-btn-sm" onClick={() => setSteps((current) => [...current, blankStep()])}>
+                    <IconPlus size={12} />添加步骤
+                  </button>
+                </div>
+              </div>
+            )}
             <div id={hintId} className="nx-hint mt-1.5 leading-relaxed">
               <div>
-                支持使用变量，运行时需填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
+                支持使用变量，运行时需填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 或 <code>{"{{service:nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
+                {multi && "多步片段的所有步骤共用同一组变量，只填写一次。"}
               </div>
               <div className="mt-1">
                 自动填入当前主机信息：<code>{"{{asset.name}}"}</code> 名称、<code>{"{{asset.host}}"}</code> 地址、<code>{"{{asset.tags}}"}</code> 标签。
@@ -436,7 +569,7 @@ function SnippetEditor({
           </button>
           <button
             className="nx-btn nx-btn-primary"
-            disabled={saving || !name.trim() || !body.trim()}
+            disabled={saving || !valid}
             onClick={() => void save()}
           >
             {saving ? "正在保存…" : "保存"}

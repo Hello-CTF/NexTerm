@@ -47,9 +47,12 @@ export interface JumpCommand {
   run: () => void;
 }
 
-function snippetHint(body: string): string {
-  const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
-  return first.length > 36 ? `${first.slice(0, 36)}…` : first;
+function snippetHint(snippet: SnippetDto): string {
+  const steps = snippet.steps ?? [];
+  const source = steps.length > 0 ? steps[0].command : snippet.body;
+  const first = source.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  const text = first.length > 36 ? `${first.slice(0, 36)}…` : first;
+  return steps.length > 0 ? `${steps.length} 步 · ${text}` : text;
 }
 
 function workspaceIcon(workspace: Workspace) {
@@ -414,7 +417,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         id: `snippet-${s.id}`,
         label: `插入片段 ${s.name}`,
         section: "片段",
-        hint: snippetHint(s.body),
+        hint: snippetHint(s),
         icon: IconCommand,
         run: () => void insertSnippet(s),
       });
