@@ -133,8 +133,6 @@ export const searchModule = () => ({
   },
 });
 
-export const webLinksModule = () => ({ WebLinksAddon: class {} });
-
 export const commandBlocksModule = () => ({
   CommandBlockManager: class {
     feedInput = harness.feedInput;

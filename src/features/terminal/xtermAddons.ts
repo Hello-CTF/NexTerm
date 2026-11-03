@@ -1,15 +1,12 @@
 import type { Terminal } from "@xterm/xterm";
 import type { SearchAddon } from "@xterm/addon-search";
-import type { ILinkProviderOptions } from "@xterm/addon-web-links";
+import { createTerminalLinkProvider, type TerminalLinkProviderHandlers } from "./terminalLinkProvider";
 import { createWebglController, type GpuAccelerationMode, type WebglHost } from "./webglPolicy";
 
-export interface WebLinks {
-  handler: (event: MouseEvent, uri: string) => void;
-  options?: ILinkProviderOptions;
-}
+export type WebLinks = TerminalLinkProviderHandlers;
 
 /**
- * Optional xterm addons are fetched with dynamic import() after the terminal is mounted so they stay
+ * The search addon is fetched with dynamic import() after the terminal is mounted so it stays
  * out of the first-load closure. The terminal is fully usable (DOM renderer, no links, no search)
  * while they arrive, and a failed import leaves that baseline in place.
  */
@@ -39,13 +36,11 @@ export function attachLazyAddons(
     return searchPromise;
   };
   void loadSearch();
-  void import("@xterm/addon-web-links").then(
-    ({ WebLinksAddon }) => {
-      if (isDisposed()) return;
-      term.loadAddon(new WebLinksAddon(links.handler, links.options));
-    },
-    () => undefined,
-  );
+  // Links are detected by our own provider (wrapped lines, box borders), registered up front.
+  // A terminal without link support (partial test doubles) simply has no links.
+  if (typeof term.registerLinkProvider === "function") {
+    term.registerLinkProvider(createTerminalLinkProvider(term, links));
+  }
   const run = (action: (addon: SearchAddon) => void) => {
     if (search) {
       action(search);

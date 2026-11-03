@@ -49,6 +49,7 @@ import {
   type TerminalLinkMenuRequest,
 } from "./terminalLinks";
 import { terminalLinkDeps } from "./terminalLinkActions";
+import { extractTerminalLinks, type DetectedTarget, type ExtractedLink } from "./terminalLinkProvider";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
 import { productionGridRuntime } from "./gridRuntimeAdapter";
@@ -111,6 +112,10 @@ export interface TerminalHandle {
   hoveredLink: () => string | null;
   // Opens a link through the terminal link policy, without a modifier check.
   openLink: (uri: string) => void;
+  // The IP or host:port under the pointer, if any.
+  hoveredTarget?: () => DetectedTarget | null;
+  // URLs found in the visible screen and recent scrollback, with their surrounding text.
+  extractLinks?: (maxScrollbackRows?: number) => ExtractedLink[];
 }
 
 export type { TerminalLinkMenuRequest } from "./terminalLinks";
@@ -334,6 +339,8 @@ export function XtermView(props: XtermViewProps) {
       activation: () => getTerminalPrefs().linkActivation,
       mouseTracking: () => (termRef.current?.modes.mouseTrackingMode ?? "none") !== "none",
       open: openLink,
+      onInactiveClick: (message) => useUi.getState().pushToast("info", message),
+      hasSelection: () => termRef.current?.hasSelection() ?? false,
     });
     const term = new Terminal({
       scrollback: getTerminalPrefs().scrollback,
@@ -377,7 +384,12 @@ export function XtermView(props: XtermViewProps) {
     let disposed = false;
     const search = attachLazyAddons(
       term,
-      { handler: links.webLinkHandler, options: links.webLinkOptions },
+      {
+        activate: links.webLinkHandler,
+        hover: links.webLinkOptions.hover,
+        leave: links.webLinkOptions.leave,
+        onTargetHover: links.onTargetHover,
+      },
       () => disposed,
     );
     const webgl = scheduleWebglRenderer(term, () => disposed, {
@@ -484,6 +496,8 @@ export function XtermView(props: XtermViewProps) {
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
       hoveredLink: () => links.hovered(),
       openLink,
+      hoveredTarget: () => links.hoveredTarget(),
+      extractLinks: (maxScrollbackRows) => extractTerminalLinks(term, maxScrollbackRows),
     });
 
     let ephemeral: boolean | undefined;

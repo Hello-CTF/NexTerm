@@ -216,7 +216,7 @@ export function TabProductionBadge({ sessionId }: { sessionId?: string }) {
   const classification = useAssetProductionClassification(assetId);
   if (!classification?.production) return null;
   return (
-    <span className="nx-badge nx-badge-amber shrink-0" title={`生产环境：${classification.environment}`}>
+    <span className="nx-badge nx-badge-amber nx-tab-production-badge shrink-0" title={`生产环境：${classification.environment}`}>
       生产
     </span>
   );
