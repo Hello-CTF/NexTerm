@@ -8,6 +8,7 @@ const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; la
   { key: "needsMe", label: "需要处理", hint: "终端响铃，或程序发出通知" },
   { key: "finished", label: "长命令结束", hint: "运行 10 秒以上的命令结束（需要 shell 集成）" },
   { key: "ai", label: "AI 通知", hint: "AI 助手的通知，仅在窗口不在前台时显示" },
+  { key: "deviceAlerts", label: "设备告警", hint: "受管设备的磁盘、内存、CPU 或离线告警及恢复" },
 ];
 
 function statusText(status: SystemNotificationStatus | null): string {

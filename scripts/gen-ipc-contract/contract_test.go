@@ -263,6 +263,10 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 		{name: "remote_account_device_revoke", scope: "remote", nested: true},
 		{name: "remote_account_devices", scope: "remote"},
 		{name: "remote_account_me", scope: "remote"},
+		{name: "remote_fleet_alert_settings_get", scope: "remote", nested: true},
+		{name: "remote_fleet_alert_settings_put", scope: "remote", nested: true},
+		{name: "remote_fleet_alerts", scope: "remote"},
+		{name: "remote_fleet_alerts_ack", scope: "remote", nested: true},
 		{name: "remote_fleet_base_urls_get", scope: "remote"},
 		{name: "remote_fleet_base_urls_put", scope: "remote", nested: true},
 		{name: "remote_fleet_device_autostart", scope: "remote", nested: true},
@@ -303,8 +307,8 @@ func TestRemoteDesktopVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 27 {
-		t.Fatalf("selected remote desktop command count = %d, want 27", len(selected))
+	if len(selected) != 31 {
+		t.Fatalf("selected remote desktop command count = %d, want 31", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "remote" || command.Scope == "preview-share") && !selected[name] {

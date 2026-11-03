@@ -1,7 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, mount, type MountedView } from "./reactTestUtils";
+import { click, flush, mountWithClient, type MountedView } from "./reactTestUtils";
+
+// The bell polls device alerts only for a signed-in account; these tests have none.
+vi.mock("../../features/fleet/useFleetAccount", () => ({
+  useFleetAccount: () => ({ loading: false, userId: null, isAdmin: false }),
+}));
 
 vi.mock("../../ipc/events", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/events")>();
@@ -69,7 +74,7 @@ describe("inbox first-run guidance", () => {
     const input = document.createElement("input");
     document.body.appendChild(input);
     input.focus();
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
 
     act(() => applyAwareness([attention("T1")]));
@@ -86,7 +91,7 @@ describe("inbox first-run guidance", () => {
   });
 
   it("clears the cue on click and shows the card when the user opens the list", () => {
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     act(() => applyAwareness([attention("T1")]));
     expect(guidance(view)).toBeNull();
     click(bell(view));
@@ -97,14 +102,14 @@ describe("inbox first-run guidance", () => {
 
   it("is not shown again after it was dismissed, including after a reload", () => {
     act(() => applyAwareness([attention("T1")]));
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     click(bell(view));
     click(view.container.querySelector('[data-guidance="dismiss"]') as Element);
     expect(guidance(view)).toBeNull();
     view.unmount();
 
     resetInboxGuidanceForTest();
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     expect(view.container.querySelector("[data-inbox-cue]")).toBeNull();
     click(bell(view));
     expect(view.container.querySelector('[role="dialog"]')).not.toBeNull();
@@ -113,7 +118,7 @@ describe("inbox first-run guidance", () => {
 
   it("asks for the system notification permission from the enable button", async () => {
     act(() => applyAwareness([attention("T1")]));
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     click(bell(view));
     click(view.container.querySelector('[data-guidance="enable"]') as Element);
     await flush();
@@ -125,7 +130,7 @@ describe("inbox first-run guidance", () => {
   it("offers no enable button when the permission is already granted", () => {
     permission = "granted";
     act(() => applyAwareness([attention("T1")]));
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     click(bell(view));
     expect(guidance(view)).not.toBeNull();
     expect(view.container.querySelector('[data-guidance="enable"]')).toBeNull();
@@ -133,7 +138,7 @@ describe("inbox first-run guidance", () => {
 
   it("opens the terminal settings section from the settings link", () => {
     act(() => applyAwareness([attention("T1")]));
-    view = mount(createElement(InboxButton));
+    view = mountWithClient(createElement(InboxButton));
     click(bell(view));
     const sections: string[] = [];
     const off = onSettingsSection((id) => sections.push(id));

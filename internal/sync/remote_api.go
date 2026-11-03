@@ -398,3 +398,108 @@ func (c *remoteClient) Healthz(ctx context.Context) (string, error) {
 	}
 	return view.Version, nil
 }
+
+// fleet: device alerts.
+
+// RemoteFleetAlert is a firing alert of one device rule.
+type RemoteFleetAlert struct {
+	DeviceID string   `json:"device_id"`
+	Rule     string   `json:"rule"`
+	Status   string   `json:"status"`
+	Since    int64    `json:"since"`
+	Value    *float64 `json:"value,omitempty"`
+}
+
+// RemoteFleetAlertEvent is one fired or resolved alert occurrence.
+type RemoteFleetAlertEvent struct {
+	ID         string   `json:"id"`
+	DeviceID   string   `json:"device_id"`
+	Rule       string   `json:"rule"`
+	Kind       string   `json:"kind"`
+	TS         int64    `json:"ts"`
+	Value      *float64 `json:"value,omitempty"`
+	Threshold  *float64 `json:"threshold,omitempty"`
+	DurationMS int64    `json:"duration_ms"`
+	Muted      bool     `json:"muted"`
+}
+
+type RemoteFleetAlerts struct {
+	Active []RemoteFleetAlert      `json:"active"`
+	Events []RemoteFleetAlertEvent `json:"events"`
+}
+
+type RemoteFleetAlertAck struct {
+	OK    bool  `json:"ok"`
+	Acked int64 `json:"acked"`
+}
+
+// RemoteAlertSettingsInput is the PUT body; every field is required by the server.
+type RemoteAlertSettingsInput struct {
+	DiskEnabled     bool    `json:"disk_enabled"`
+	DiskThreshold   float64 `json:"disk_threshold"`
+	MemEnabled      bool    `json:"mem_enabled"`
+	MemThreshold    float64 `json:"mem_threshold"`
+	CPUEnabled      bool    `json:"cpu_enabled"`
+	CPUThreshold    float64 `json:"cpu_threshold"`
+	OfflineEnabled  bool    `json:"offline_enabled"`
+	OfflineMinutes  int64   `json:"offline_minutes"`
+	ExpectedOffline bool    `json:"expected_offline"`
+	QuietEnabled    bool    `json:"quiet_enabled"`
+	QuietStart      int64   `json:"quiet_start"`
+	QuietEnd        int64   `json:"quiet_end"`
+	QuietTZ         string  `json:"quiet_tz"`
+}
+
+// RemoteAlertSettings is a device's effective alert settings with defaults filled in.
+type RemoteAlertSettings struct {
+	DeviceID            string  `json:"device_id"`
+	Kind                string  `json:"kind"`
+	DiskEnabled         bool    `json:"disk_enabled"`
+	DiskThreshold       float64 `json:"disk_threshold"`
+	MemEnabled          bool    `json:"mem_enabled"`
+	MemThreshold        float64 `json:"mem_threshold"`
+	CPUEnabled          bool    `json:"cpu_enabled"`
+	CPUThreshold        float64 `json:"cpu_threshold"`
+	OfflineEnabled      bool    `json:"offline_enabled"`
+	OfflineMinutes      int64   `json:"offline_minutes"`
+	ExpectedOffline     bool    `json:"expected_offline"`
+	QuietEnabled        bool    `json:"quiet_enabled"`
+	QuietStart          int64   `json:"quiet_start"`
+	QuietEnd            int64   `json:"quiet_end"`
+	QuietTZ             string  `json:"quiet_tz"`
+	ServerTZ            string  `json:"server_tz"`
+	SuspectAfterMinutes int64   `json:"suspect_after_minutes"`
+	ClockSkewMS         int64   `json:"clock_skew_ms"`
+}
+
+func (c *remoteClient) ListAlerts(ctx context.Context) (*RemoteFleetAlerts, error) {
+	var view RemoteFleetAlerts
+	if err := c.api(ctx, http.MethodGet, "/fleet/alerts", nil, &view); err != nil {
+		return nil, err
+	}
+	return &view, nil
+}
+
+func (c *remoteClient) AckAlerts(ctx context.Context, ids []string) (*RemoteFleetAlertAck, error) {
+	var view RemoteFleetAlertAck
+	if err := c.api(ctx, http.MethodPost, "/fleet/alerts/ack", map[string]any{"ids": ids}, &view); err != nil {
+		return nil, err
+	}
+	return &view, nil
+}
+
+func (c *remoteClient) GetAlertSettings(ctx context.Context, deviceID string) (*RemoteAlertSettings, error) {
+	var view RemoteAlertSettings
+	if err := c.api(ctx, http.MethodGet, "/fleet/devices/"+url.PathEscape(deviceID)+"/alert-settings", nil, &view); err != nil {
+		return nil, err
+	}
+	return &view, nil
+}
+
+func (c *remoteClient) PutAlertSettings(ctx context.Context, deviceID string, settings RemoteAlertSettingsInput) (*RemoteAlertSettings, error) {
+	var view RemoteAlertSettings
+	if err := c.api(ctx, http.MethodPut, "/fleet/devices/"+url.PathEscape(deviceID)+"/alert-settings", settings, &view); err != nil {
+		return nil, err
+	}
+	return &view, nil
+}

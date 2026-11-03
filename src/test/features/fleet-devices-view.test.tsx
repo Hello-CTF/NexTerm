@@ -24,6 +24,11 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+// Alert polling has its own tests; here it must not add requests to the counts under test.
+vi.mock("../../ipc/fleetAlertsApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/fleetAlertsApi")>()),
+  fleetAlertsClient: () => ({ list: () => Promise.resolve({ active: [], events: [] }) }),
+}));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
 vi.mock("../../ipc/events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../ipc/events")>()),
