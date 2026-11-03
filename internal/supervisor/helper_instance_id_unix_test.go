@@ -93,3 +93,22 @@ func TestHelperInstanceIDKeepsFileOfAnotherUser(t *testing.T) {
 		t.Fatal("file of another user was modified")
 	}
 }
+
+func TestHelperInstanceIDReplacesUnreadableFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0000 file, so it is never unreadable")
+	}
+	dir := filepath.Join(t.TempDir(), "state")
+	if _, err := HelperInstanceID(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, HelperInstanceIDFile)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	id, err := HelperInstanceID(dir)
+	if err != nil {
+		t.Fatalf("an unreadable id file must be replaced: %v", err)
+	}
+	assertPrivateIDFile(t, path, id)
+}

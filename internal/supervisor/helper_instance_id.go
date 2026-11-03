@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,6 +73,10 @@ func readInstanceID(path string) (string, error) {
 		return "", errInstanceIDInvalid
 	}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrPermission) {
+		// Our own file that we cannot read (for example mode 0000) is replaced like a malformed one.
+		return "", errInstanceIDInvalid
+	}
 	if err != nil {
 		return "", err
 	}
