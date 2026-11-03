@@ -5,6 +5,7 @@ import { wailsNoDragRegionStyle } from "../../app/platform";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import { describeError } from "../../ui/errorText";
 import { IconBell, IconCheck } from "../../ui/icons";
+import { DeviceAlertInbox, useDeviceAlertNotifications, useUnackedAlertCount } from "./DeviceAlertInbox";
 import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openAggregateEntry, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
@@ -128,7 +129,10 @@ export function InboxButton() {
   const rootRef = useRef<HTMLDivElement>(null);
   const bellRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const count = entries.length;
+  useDeviceAlertNotifications();
+  const alertCount = useUnackedAlertCount();
+  const sessionCount = entries.length;
+  const count = sessionCount + alertCount;
   const guidanceDismissed = useInboxGuidanceDismissed();
   const guidanceOpened = useRef(false);
   const [cue, setCue] = useState(false);
@@ -201,7 +205,12 @@ export function InboxButton() {
       .finally(() => setMarkingAll(false));
   };
 
-  const label = count > 0 ? `收件箱：${count} 个会话需要关注` : "收件箱：暂无需要关注的会话";
+  const label =
+    count === 0
+      ? "收件箱：暂无需要关注的会话"
+      : alertCount === 0
+        ? `收件箱：${count} 个会话需要关注`
+        : `收件箱：${count} 项需要关注`;
   return (
     <div
       className="relative"
@@ -274,13 +283,14 @@ export function InboxButton() {
           </div>
           {count === 0 ? (
             <p className="px-2 py-3 text-[12px] text-neutral-500">暂无需要处理或刚结束的会话。</p>
-          ) : (
+          ) : sessionCount === 0 ? null : (
             <ul className="flex flex-col">
               {entries.map((entry) => (
                 <InboxRow key={entry.tabId} entry={entry} now={now} onOpen={() => setOpen(false)} onMarked={keepFocusInPanel} />
               ))}
             </ul>
           )}
+          <DeviceAlertInbox />
         </div>
       )}
     </div>

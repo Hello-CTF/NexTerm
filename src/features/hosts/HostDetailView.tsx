@@ -11,9 +11,10 @@ import { isMobileShell } from "../../app/shell";
 import { WEB } from "../../ipc/env";
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { describeError } from "../../ui/errorText";
-import { IconActivity, IconGlobe, IconInfo, IconMonitor, IconServer, IconTerminal } from "../../ui/icons";
+import { IconActivity, IconBell, IconGlobe, IconInfo, IconMonitor, IconServer, IconTerminal } from "../../ui/icons";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import { fleetClient } from "../fleet/clients";
+import { DeviceAlertsCard } from "../fleet/DeviceAlertsCard";
 import { deviceOpenBlockReason } from "../fleet/DeviceTreeSection";
 import { formatTime, isOnline, relativeTime } from "../fleet/format";
 import { MetricsPanel } from "../fleet/MetricsPanel";
@@ -402,6 +403,9 @@ function DeviceHostDetail({
           ) : visible ? (
             <MetricsPanel deviceId={device.id} online={online} />
           ) : null}
+        </HostSection>
+        <HostSection title="告警" icon={<IconBell size={14} />} testId="host-alerts">
+          {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
         </HostSection>
       </div>
     </Page>

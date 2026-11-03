@@ -23,7 +23,7 @@ describe("notification prefs", () => {
 
   it("reads stored values and falls back per field for invalid ones", () => {
     localStorage.setItem(KEY, JSON.stringify({ system: false, needsMe: "yes", inferred: true, finished: null }));
-    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true });
+    expect(getNotificationPrefs()).toEqual({ system: false, needsMe: true, finished: true, ai: true, deviceAlerts: true });
   });
 
   it("falls back to defaults for corrupt JSON", () => {

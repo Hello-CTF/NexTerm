@@ -37,6 +37,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { formatTime, isOnline, ONLINE_THRESHOLD_MS, relativeTime } from "./format";
+import { activeAlertCounts, useFleetAlerts } from "./deviceAlerts";
 import { sharedHelperLabel, sharedHelperPeers } from "./sharedHelper";
 import { BaseUrlsSection } from "./BaseUrlsSection";
 import { MetricsPanel } from "./MetricsPanel";
@@ -159,6 +160,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const [busy, setBusy] = useState(false);
   const revoked = device.revoked_at !== 0;
   const agent = device.agent;
+  const alertCount = activeAlertCounts(useFleetAlerts().data).get(device.id) ?? 0;
   const lastSeenAt = agent?.last_seen_at || device.last_seen_at;
   // Heartbeat-determined online state feeds the status hint: event-driven online state defers to the control channel.
   const heartbeatOnline = agent ? isOnline(lastSeenAt, now) : false;
@@ -288,6 +290,11 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
           {statusLabel}
         </span>
         {agent?.platform && <span className="nx-hint shrink-0">{platformLabel(agent.platform)}</span>}
+        {!revoked && alertCount > 0 && (
+          <span className="nx-badge nx-badge-amber shrink-0" data-testid="device-alert-badge">
+            {alertCount} 条告警
+          </span>
+        )}
         {isAdmin && device.owner && (
           <span className="nx-badge nx-badge-blue shrink-0" title={`所有者 ${device.owner.username}`}>
             {device.owner.username}
