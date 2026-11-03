@@ -28,6 +28,8 @@ const (
 	cleanupEvery       = time.Hour
 	warmupIntervals    = 2
 	maxThresholdWindow = 15 * time.Minute
+	// maxBaselineAge bounds how old the previous run's last tick may be to serve as the dormancy baseline.
+	maxBaselineAge = 24 * time.Hour
 )
 
 // Config wires an Evaluator.

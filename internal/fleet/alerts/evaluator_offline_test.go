@@ -923,3 +923,32 @@ func TestDisablingRuleAcknowledgesFiredDatabase(t *testing.T) {
 		}
 	})
 }
+
+func TestOfflineStaleBaselineDatabase(t *testing.T) {
+	const hourMS = 60 * minMS
+	run := func(t *testing.T, prevAgo int64) (*harness, string) {
+		h := newHarness(t)
+		owner, dev := h.device("stale-baseline")
+		h.agentRow(owner, dev, ptr(baseTS-5*hourMS)) // after prevLastTick, long before the start
+		if err := saveLastTick(context.Background(), h.db, baseTS-prevAgo); err != nil {
+			t.Fatal(err)
+		}
+		e := h.offlineEvaluator(&presenceSet{})
+		for _, m := range []int64{2, 5, 20, 40} {
+			h.tick(e, baseTS+m*minMS)
+		}
+		return h, dev
+	}
+	t.Run("a baseline older than a day is replaced by the start time", func(t *testing.T) {
+		h, dev := run(t, 25*hourMS)
+		if h.status(dev) != StatusDormant || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+	})
+	t.Run("a recent baseline is used as is", func(t *testing.T) {
+		h, dev := run(t, 23*hourMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("%q %+v", h.status(dev), evs)
+		}
+	})
+}

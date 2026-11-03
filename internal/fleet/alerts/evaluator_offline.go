@@ -112,9 +112,10 @@ func buildOfflineRecords(now int64, dev *model.UserDevice, emit *OfflineEmit) (*
 	return ev, &model.AuditRow{TS: now, AssetID: &assetID, Source: auditSource, Kind: kind, PayloadJSON: string(body), DurationMS: &d, OwnerID: dev.UserID}
 }
 
-// baseline is the previous run's last evaluation time, or the start time on a first deployment.
+// baseline is the previous run's last evaluation time, or the start time on a first deployment or
+// when that run ended more than maxBaselineAge before the start.
 func (e *Evaluator) baseline() int64 {
-	if e.prevLastTick > 0 {
+	if e.prevLastTick > 0 && e.prevLastTick >= e.started-maxBaselineAge.Milliseconds() {
 		return e.prevLastTick
 	}
 	return e.started
