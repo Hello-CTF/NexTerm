@@ -438,19 +438,35 @@ func TestOfflineEligibilityDatabase(t *testing.T) {
 			t.Fatalf("status = %q", h.status(dev))
 		}
 	})
-	t.Run("latest metric counts as heard", func(t *testing.T) {
+	t.Run("device-clock metric samples are not a heartbeat", func(t *testing.T) {
 		h := newHarness(t)
 		owner, dev := h.device("off-metric")
-		h.agentRow(owner, dev, ptr(baseTS-60*minMS))
-		h.cpu(dev, baseTS+8*minMS, baseTS+10*minMS, 10)
+		h.agentRow(owner, dev, ptr(baseTS+10*minMS))
+		// A sample stamped far in the future by a skewed device clock must not keep it online.
+		h.cpu(dev, baseTS+600*minMS, baseTS+601*minMS, 10)
 		e := h.offlineEvaluator(&presenceSet{})
-		h.tick(e, baseTS+14*minMS) // silence 4 minutes since the metric
-		if h.status(dev) == StatusSuspect {
-			t.Fatalf("metric ignored")
-		}
 		h.tick(e, baseTS+15*minMS)
 		if h.status(dev) != StatusSuspect {
 			t.Fatalf("status = %q", h.status(dev))
+		}
+		h.tick(e, baseTS+21*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("silence counts from the last observed presence", func(t *testing.T) {
+		h, e, p, _, dev := offlineSetup(t, "off-presence")
+		p.set(dev, true)
+		h.tick(e, baseTS+30*minMS)
+		p.set(dev, false) // channel drops; the stored last_seen stays at baseTS+10m
+		h.tick(e, baseTS+33*minMS)
+		h.tick(e, baseTS+36*minMS) // 6 minutes since presence
+		if h.status(dev) != StatusSuspect || len(h.events(dev)) != 0 {
+			t.Fatalf("status = %q %+v", h.status(dev), h.events(dev))
+		}
+		h.tick(e, baseTS+41*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
 		}
 	})
 }

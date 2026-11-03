@@ -53,6 +53,8 @@ type Evaluator struct {
 
 	tickMu      sync.Mutex
 	lastCleanup int64
+	// lastOnline is the last time Presence reported each device; only touched inside Tick.
+	lastOnline map[string]int64
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -66,7 +68,7 @@ func NewEvaluator(cfg Config) (*Evaluator, error) {
 	}
 	e := &Evaluator{
 		db: cfg.DB, interval: cfg.Interval, now: cfg.Now, presence: cfg.Presence, logger: cfg.Logger,
-		after: time.After,
+		after: time.After, lastOnline: map[string]int64{},
 	}
 	if e.interval <= 0 {
 		e.interval = DefaultInterval

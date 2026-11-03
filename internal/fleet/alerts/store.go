@@ -87,22 +87,3 @@ func deleteEventsBefore(ctx context.Context, db *gorm.DB, cutoff int64) error {
 	}
 	return nil
 }
-
-// latestMetricTS returns the newest device_metrics ts per device.
-// GEN-TODO: DeviceMetrics max(ts) group by device_id.
-func latestMetricTS(ctx context.Context, db *gorm.DB) (map[string]int64, error) {
-	var rows []struct {
-		DeviceID string
-		TS       int64
-	}
-	err := db.WithContext(ctx).Model(&model.DeviceMetrics{}).
-		Select("device_id AS device_id, MAX(ts) AS ts").Group("device_id").Scan(&rows).Error
-	if err != nil {
-		return nil, fmt.Errorf("load latest metrics: %w", err)
-	}
-	out := make(map[string]int64, len(rows))
-	for _, r := range rows {
-		out[r.DeviceID] = r.TS
-	}
-	return out, nil
-}

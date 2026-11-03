@@ -12,8 +12,7 @@ import (
 
 // offlineData is what one Tick reads once for every device's offline rule.
 type offlineData struct {
-	agents     map[string]*model.DeviceAgent
-	lastMetric map[string]int64
+	agents map[string]*model.DeviceAgent
 }
 
 func (e *Evaluator) loadOffline(ctx context.Context) (*offlineData, error) {
@@ -21,22 +20,19 @@ func (e *Evaluator) loadOffline(ctx context.Context) (*offlineData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list device agents: %w", err)
 	}
-	d := &offlineData{agents: make(map[string]*model.DeviceAgent, len(rows)), lastMetric: map[string]int64{}}
+	d := &offlineData{agents: make(map[string]*model.DeviceAgent, len(rows))}
 	for _, r := range rows {
 		d.agents[r.DeviceID] = r
-	}
-	if len(rows) == 0 {
-		return d, nil
-	}
-	if d.lastMetric, err = latestMetricTS(ctx, e.db); err != nil {
-		return nil, err
 	}
 	return d, nil
 }
 
-// lastHeard is now while the control channel is registered, else the newest sign of life.
+// lastHeard is now while the control channel is registered, else the newest sign of life. Only
+// server-clock sources count: device-reported metric timestamps can be skewed. It runs inside Tick,
+// so lastOnline needs no extra locking.
 func (e *Evaluator) lastHeard(now int64, dev *model.UserDevice, off *offlineData) (int64, bool) {
 	if e.presence != nil && e.presence(dev.ID) {
+		e.lastOnline[dev.ID] = now
 		return now, true
 	}
 	var heard int64
@@ -48,7 +44,7 @@ func (e *Evaluator) lastHeard(now int64, dev *model.UserDevice, off *offlineData
 	}
 	consider(off.agents[dev.ID].LastSeenAt)
 	consider(dev.LastSeenAt)
-	if ts, ok := off.lastMetric[dev.ID]; ok {
+	if ts, ok := e.lastOnline[dev.ID]; ok {
 		consider(&ts)
 	}
 	return heard, found
