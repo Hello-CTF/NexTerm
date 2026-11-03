@@ -672,8 +672,9 @@ func TestEvaluatorDisabledOwnerDatabase(t *testing.T) {
 		if h.status(dev) == StatusSuspect || len(h.events(dev)) != 0 {
 			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
 		}
-		h.tick(e, baseTS+41*minMS)
 		h.tick(e, baseTS+42*minMS)
+		h.tick(e, baseTS+43*minMS) // 12 minutes after re-enabling
+		h.tick(e, baseTS+44*minMS)
 		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
 			t.Fatalf("events = %+v", evs)
 		}
@@ -696,12 +697,12 @@ func TestEvaluatorDisabledOwnerDatabase(t *testing.T) {
 		if h.status(dev) != StatusSuspect || len(h.events(dev)) != 0 {
 			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
 		}
-		h.tick(e, baseTS+40*minMS)
+		h.tick(e, baseTS+42*minMS)
 		if len(h.events(dev)) != 0 {
 			t.Fatalf("fired before A: %+v", h.events(dev))
 		}
-		h.tick(e, baseTS+41*minMS) // A after re-enabling
-		h.tick(e, baseTS+42*minMS)
+		h.tick(e, baseTS+43*minMS) // 12 minutes after re-enabling (the owner backoff)
+		h.tick(e, baseTS+44*minMS)
 		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
 			t.Fatalf("events = %+v", evs)
 		}
@@ -920,6 +921,45 @@ func TestDisablingRuleAcknowledgesFiredDatabase(t *testing.T) {
 		h.tick(e, baseTS+21*minMS)
 		if got := listKinds(t, h, owner, dev); got["offline:fired"] != 0 {
 			t.Fatalf("after disabling: %v", got)
+		}
+	})
+}
+
+func TestOfflineOwnerBackoffDatabase(t *testing.T) {
+	setup := func(name string) (*harness, *Evaluator, string) {
+		h, e, _, owner, dev := offlineSetup(t, name)
+		h.setOwnerState(owner, "disabled")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+30*minMS)
+		h.setOwnerState(owner, "active")
+		h.tick(e, baseTS+31*minMS) // usable again at +31m
+		h.tick(e, baseTS+36*minMS)
+		return h, e, dev
+	}
+	t.Run("agent returning at the backoff cap never alerts", func(t *testing.T) {
+		h, e, dev := setup("off-backoff-return")
+		h.tick(e, baseTS+41*minMS) // 10 minutes after re-enabling
+		h.tick(e, baseTS+42*minMS)
+		h.heard(dev, baseTS+43*minMS) // 12 minutes after re-enabling
+		h.tick(e, baseTS+43*minMS)
+		if len(h.events(dev)) != 0 || h.status(dev) != StatusOK {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		if n := len(h.audits("device_alert_fired")) + len(h.audits("device_alert_resolved")); n != 0 {
+			t.Fatalf("audits = %d", n)
+		}
+	})
+	t.Run("silent agent alerts at twelve minutes, not ten", func(t *testing.T) {
+		h, e, dev := setup("off-backoff-silent")
+		h.tick(e, baseTS+41*minMS)
+		h.tick(e, baseTS+42*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("fired before 12 minutes: %+v", h.events(dev))
+		}
+		h.tick(e, baseTS+43*minMS)
+		h.tick(e, baseTS+44*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
 		}
 	})
 }

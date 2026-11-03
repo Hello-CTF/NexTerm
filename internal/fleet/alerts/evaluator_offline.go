@@ -61,6 +61,11 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 	}
 	suspectAfter := SuspectAfter(e.interval).Milliseconds()
 	alertAfter := max(minutes*60_000, suspectAfter)
+	// Agents back off up to 10 minutes (plus jitter) after their account becomes usable again, so a
+	// silence timed from the reactivation needs more room before it counts as an outage.
+	if usable := e.ownerUsableSince[dev.UserID]; usable > max(lastHeard, e.started) {
+		alertAfter = max(alertAfter, ownerBackoffAlertAfter.Milliseconds())
+	}
 	muted := false
 	var quietEnd int64
 	if set != nil {
