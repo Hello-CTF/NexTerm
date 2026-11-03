@@ -105,6 +105,10 @@ var fleetRoutePatterns = []string{
 	"POST /fleet/devices/{id}/terminal-access",
 	"GET /fleet/devices/{id}/metrics",
 	"GET /fleet/devices/{id}/bridge",
+	"GET /fleet/alerts",
+	"POST /fleet/alerts/ack",
+	"GET /fleet/devices/{id}/alert-settings",
+	"PUT /fleet/devices/{id}/alert-settings",
 	"GET /fleet/base-urls",
 	"PUT /fleet/base-urls",
 	"POST /agent/sync",
@@ -154,6 +158,10 @@ func (s *Service) mountRoutes(mux *http.ServeMux) {
 	session("GET /fleet/devices/{id}/metrics", s.serveDeviceMetrics)
 	session("GET /fleet/devices/{id}/bridge", s.serveDeviceBridgeRelay)
 	session("GET /fleet/sessions", s.serveSessionList)
+	session("GET /fleet/alerts", s.serveAlertList)
+	sessionCSRF("POST /fleet/alerts/ack", s.serveAlertAck)
+	session("GET /fleet/devices/{id}/alert-settings", s.serveAlertSettingsGet)
+	sessionCSRF("PUT /fleet/devices/{id}/alert-settings", s.serveAlertSettingsPut)
 
 	session("GET /fleet/base-urls", s.serveBaseURLsGet)
 	adminCSRF("PUT /fleet/base-urls", s.serveBaseURLsPut)

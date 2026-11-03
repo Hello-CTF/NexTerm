@@ -100,6 +100,30 @@ func (p *RemoteProxy) RevokeDevice(ctx context.Context, deviceID string) (Remote
 	return RemoteOK{OK: err == nil}, err
 }
 
+func (p *RemoteProxy) ListAlerts(ctx context.Context) (*RemoteFleetAlerts, error) {
+	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteFleetAlerts, error) {
+		return client.ListAlerts(ctx)
+	})
+}
+
+func (p *RemoteProxy) AckAlerts(ctx context.Context, ids []string) (*RemoteFleetAlertAck, error) {
+	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteFleetAlertAck, error) {
+		return client.AckAlerts(ctx, ids)
+	})
+}
+
+func (p *RemoteProxy) GetAlertSettings(ctx context.Context, deviceID string) (*RemoteAlertSettings, error) {
+	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteAlertSettings, error) {
+		return client.GetAlertSettings(ctx, deviceID)
+	})
+}
+
+func (p *RemoteProxy) PutAlertSettings(ctx context.Context, deviceID string, settings RemoteAlertSettingsInput) (*RemoteAlertSettings, error) {
+	return remoteGet(ctx, p, func(ctx context.Context, client *remoteClient) (*RemoteAlertSettings, error) {
+		return client.PutAlertSettings(ctx, deviceID, settings)
+	})
+}
+
 func (p *RemoteProxy) SetDeviceAutostart(ctx context.Context, deviceID string, desired bool) (RemoteAutostartResult, error) {
 	err := p.call(ctx, func(ctx context.Context, client *remoteClient) error {
 		return client.SetDeviceAutostart(ctx, deviceID, desired)
