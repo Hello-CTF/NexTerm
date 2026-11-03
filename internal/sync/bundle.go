@@ -98,6 +98,9 @@ type SyncBundleSnippet struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Description and Steps are omitted for plain single-step snippets.
+	Description string              `json:"description,omitempty"`
+	Steps       []snippetStepObject `json:"steps,omitempty"`
 }
 
 type SyncBundle struct {
@@ -270,9 +273,14 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 	}
 	for _, snippet := range snippets {
 		collectGroupAncestors(snippet.GroupID)
+		object, err := snippetObjectFromRow(snippet)
+		if err != nil {
+			return SyncBundle{}, err
+		}
 		bundle.Snippets = append(bundle.Snippets, SyncBundleSnippet{
 			ID: snippet.ID, GroupID: snippet.GroupID, Name: snippet.Name, Body: snippet.Body,
 			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
+			Description: object.Description, Steps: object.Steps,
 		})
 	}
 	// Group defaults travel with their group: the credential only when credentials are exported, the jump asset
@@ -748,7 +756,16 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 			continue
 		}
 		name := strings.TrimSpace(payload.Name)
-		body := payload.Body
+		bundleSteps := make([]store.SnippetStep, len(payload.Steps))
+		for i, step := range payload.Steps {
+			bundleSteps[i] = store.SnippetStep(step)
+		}
+		description, body, encodedSteps, contentErr := store.NormalizeSnippetContent(store.SnippetContent{Description: payload.Description, Body: payload.Body, Steps: bundleSteps})
+		if contentErr != nil {
+			report.Refused++
+			warnf("片段 %s 的步骤或说明不合法，已拒绝导入：%v", id, contentErr)
+			continue
+		}
 		sort := payload.Sort
 		createdAt := payload.CreatedAt
 		if createdAt <= 0 {
@@ -770,7 +787,7 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		}
 		prepared := preparedSnippet{
 			row: store.SnippetRow{
-				ID: id, GroupID: groupID, Name: name, Body: body,
+				ID: id, GroupID: groupID, Name: name, Body: body, Description: description, Steps: encodedSteps,
 				Sort: sort, CreatedAt: createdAt, UpdatedAt: updatedAt,
 			},
 			exists: exists,

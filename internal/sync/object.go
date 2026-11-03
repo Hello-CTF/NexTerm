@@ -170,6 +170,19 @@ type snippetObject struct {
 	Sort      int64   `json:"sort"`
 	CreatedAt int64   `json:"createdAt"`
 	UpdatedAt int64   `json:"updatedAt"`
+	// Description and Steps trail the original fields and are omitted when empty, so
+	// a single-step snippet keeps byte-identical payloads (and hashes) across versions.
+	Description string              `json:"description,omitempty"`
+	Steps       []snippetStepObject `json:"steps,omitempty"`
+}
+
+type snippetStepObject struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	Confirm     bool   `json:"confirm,omitempty"`
+	Interactive bool   `json:"interactive,omitempty"`
 }
 
 type tombstoneObject struct {

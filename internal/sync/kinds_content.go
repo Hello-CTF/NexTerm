@@ -70,32 +70,6 @@ func stateRulePayload(row store.StateRuleRow) stateRuleObject {
 	}
 }
 
-func runbookTemplatePayload(template store.RunbookTemplate) runbookTemplateObject {
-	steps := make([]runbookTemplateStepObject, len(template.Steps))
-	for i, step := range template.Steps {
-		steps[i] = runbookTemplateStepObject{
-			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
-		}
-	}
-	return runbookTemplateObject{
-		ID: template.ID, Name: template.Name, Description: template.Description, Steps: steps,
-		Version: template.Version, CreatedAt: template.CreatedAt, UpdatedAt: template.UpdatedAt,
-	}
-}
-
-func runbookTemplateFromPayload(payload runbookTemplateObject) store.RunbookTemplate {
-	steps := make([]store.RunbookTemplateStep, len(payload.Steps))
-	for i, step := range payload.Steps {
-		steps[i] = store.RunbookTemplateStep{
-			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
-		}
-	}
-	return store.RunbookTemplate{
-		ID: payload.ID, Name: payload.Name, Description: payload.Description, Steps: steps,
-		Version: payload.Version, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
-	}
-}
-
 func skillPayload(override skills.Override) skillObject {
 	return skillObject{
 		ID: skills.SyncObjectID(override.Name), Name: override.Name, Description: override.Description,
@@ -141,18 +115,9 @@ func (e *Engine) collectStateRuleObjects(ctx context.Context, c *localCollection
 	return nil
 }
 
-func (e *Engine) collectRunbookTemplateObjects(ctx context.Context, c *localCollection) error {
-	templates, err := e.store.RunbookTemplateList(ctx)
-	if err != nil {
-		return err
-	}
-	for _, template := range templates {
-		payload, err := marshalObject(runbookTemplatePayload(template))
-		if err != nil {
-			return err
-		}
-		c.objects[template.ID] = localObject{KindRunbookTemplate, payload}
-	}
+// collectRunbookTemplateObjects collects nothing: runbook_template is a receive-only legacy kind.
+// Templates became multi-step snippets, which sync as snippets, and nothing about the old kind is pushed.
+func (e *Engine) collectRunbookTemplateObjects(context.Context, *localCollection) error {
 	return nil
 }
 
@@ -292,55 +257,93 @@ func (e *Engine) applyStateRuleTombstone(ctx context.Context, objectID string, d
 	return applied, false
 }
 
+// applyRunbookTemplateObject converts a template pushed by an older client into the multi-step
+// snippet with the derived ID that the startup migration produces, so every device agrees on it.
 func (e *Engine) applyRunbookTemplateObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
 	var payload runbookTemplateObject
 	if err := unmarshalObject(plaintext, &payload); err != nil {
 		report.warnf("Runbook 模板数据已损坏：%v", err)
 		return false, false
 	}
-	local, err := e.store.RunbookTemplateGet(ctx, payload.ID)
+	steps := make([]store.RunbookTemplateStep, len(payload.Steps))
+	for i, step := range payload.Steps {
+		steps[i] = store.RunbookTemplateStep{
+			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
+		}
+	}
+	snippetPayload := snippetObject{
+		ID: store.LegacyRunbookSnippetID(payload.ID), Name: payload.Name, Description: payload.Description,
+		CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
+	}
+	for _, step := range store.SnippetStepsFromRunbookTemplate(steps) {
+		snippetPayload.Steps = append(snippetPayload.Steps, snippetStepObject(step))
+	}
+	if len(snippetPayload.Steps) == 0 || strings.TrimSpace(payload.Name) == "" {
+		report.warnf("Runbook 模板 %s 内容不合法，已跳过", payload.ID)
+		return false, false
+	}
+	row, err := snippetRowFromObject(snippetPayload)
+	if err != nil {
+		report.warnf("Runbook 模板 %s 无法转换为片段，已跳过：%v", payload.ID, err)
+		return false, false
+	}
+	local, err := e.store.SnippetGet(ctx, row.ID)
 	exists := err == nil
 	if err != nil && !isNotFound(err) {
-		report.warnf("无法检查 Runbook 模板 %s: %v", payload.ID, err)
+		report.warnf("无法检查 Runbook 模板 %s 对应的片段: %v", payload.ID, err)
 		return false, false
 	}
-	if deleted, ok := e.tombstoneWins(ctx, payload.ID, payload.UpdatedAt, report, " Runbook 模板"); !ok || deleted {
+	if tombstone, found, err := e.syncTombstoneGet(ctx, row.ID); err != nil {
+		report.warnf("无法检查 Runbook 模板 %s 对应片段的删除标记：%v", payload.ID, err)
+		return false, false
+	} else if found && tombstone.DeletedAt >= payload.UpdatedAt {
 		return false, false
 	}
-	var expected *store.RunbookTemplate
+	var snapshot *store.SnippetRow
 	if exists {
-		localPayload, err := marshalObject(runbookTemplatePayload(local))
-		if err != nil {
-			report.warnf("Runbook 模板 %s 本机数据编码失败：%v", payload.ID, err)
-			return false, false
+		if local.UpdatedAt >= payload.UpdatedAt {
+			return false, local.UpdatedAt == payload.UpdatedAt
 		}
-		if bytes.Equal(plaintext, localPayload) {
-			return false, true
-		}
-		if !remoteWins(payload.UpdatedAt, local.UpdatedAt, plaintext, localPayload) {
-			return false, false
-		}
-		expected = &local
+		// Placement is local: an existing snippet keeps its group and position.
+		row.GroupID, row.Sort = local.GroupID, local.Sort
+		snapshot = &local
 	}
-	err = e.store.RunbookTemplateSyncPut(ctx, runbookTemplateFromPayload(payload), expected)
-	switch {
-	case err == nil:
-		return true, false
-	case errors.Is(err, store.ErrWriteConflict):
-		report.markUnresolvedRef(payload.ID)
-	default:
-		report.warnf("Runbook 模板 %s 应用失败: %v", payload.ID, err)
+	if err := e.snippetUpsert(ctx, row, snapshot); err != nil {
+		if errors.Is(err, store.ErrWriteConflict) {
+			report.markUnresolvedRef(payload.ID)
+		} else {
+			report.warnf("Runbook 模板 %s 转换为片段失败: %v", payload.ID, err)
+		}
+		return false, false
 	}
-	return false, false
+	report.markChanged(KindSnippet)
+	return true, false
 }
 
+// applyRunbookTemplateTombstone removes the snippet a template was converted to, unless that snippet
+// changed after the deletion, and records the deletion as a snippet tombstone.
 func (e *Engine) applyRunbookTemplateTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
-	applied, err := e.store.RunbookTemplateSyncDelete(ctx, objectID, deletedAt)
+	snippetID := store.LegacyRunbookSnippetID(objectID)
+	local, err := e.store.SnippetGet(ctx, snippetID)
 	if err != nil {
+		if !isNotFound(err) {
+			report.warnf("无法检查 Runbook 模板 %s 对应的片段: %v", objectID, err)
+		}
+		return false, false
+	}
+	if local.UpdatedAt > deletedAt {
+		return false, false
+	}
+	if err := e.syncTombstonePut(ctx, snippetID, KindSnippet, deletedAt); err != nil {
+		report.warnf("Runbook 模板 %s 的删除标记记录失败：%v", objectID, err)
+		return false, false
+	}
+	if err := e.store.SnippetDelete(ctx, snippetID); err != nil {
 		report.warnf("应用 Runbook 模板 %s 的删除标记失败：%v", objectID, err)
 		return false, false
 	}
-	return applied, false
+	report.markChanged(KindSnippet)
+	return true, false
 }
 
 func (e *Engine) applySkillObject(ctx context.Context, objectID string, plaintext []byte, report *SyncReport) (bool, bool) {

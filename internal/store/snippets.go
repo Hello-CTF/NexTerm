@@ -23,7 +23,17 @@ func (s *Store) SnippetList(ctx context.Context) ([]SnippetRow, error) {
 	return result, nil
 }
 
+// SnippetCreate creates a plain single-step snippet.
 func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *string, sort int64) (SnippetRow, error) {
+	return s.SnippetCreateContent(ctx, name, SnippetContent{Body: body}, groupID, sort)
+}
+
+// SnippetCreateContent creates a snippet that may carry a description and steps.
+func (s *Store) SnippetCreateContent(ctx context.Context, name string, content SnippetContent, groupID *string, sort int64) (SnippetRow, error) {
+	description, body, steps, err := NormalizeSnippetContent(content)
+	if err != nil {
+		return SnippetRow{}, err
+	}
 	if groupID != nil {
 		if _, err := s.groupReference(ctx, s.db, *groupID); err != nil {
 			return SnippetRow{}, err
@@ -31,7 +41,7 @@ func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *s
 	}
 	id := ids.New()
 	now := ids.NowMS()
-	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Description: description, Steps: steps, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
 	if err := query.Use(s.db).SnippetRow.WithContext(ctx).Create(&row); err != nil {
 		return SnippetRow{}, dbError(err)
 	}
@@ -58,22 +68,31 @@ func (s *Store) SnippetUpdate(ctx context.Context, id, name, body string) error 
 	_, err := snippet.WithContext(ctx).
 		Where(snippet.ID.Eq(id)).
 		Where(ownerConditions(ctx, snippet.TableName())...).
-		UpdateColumns(map[string]any{"name": name, "body": body, "updated_at": ids.NowMS()})
+		UpdateColumns(map[string]any{"name": name, "body": body, "steps": "", "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
+// SnippetPatch is a full replacement of the snippet content plus optional
+// placement changes. Steps replaces the stored steps on every update; empty
+// means a single-step snippet. With steps, Body is ignored and derived.
 type SnippetPatch struct {
-	Name    string
-	Body    string
-	GroupID Optional[string]
-	Sort    *int64
+	Name        string
+	Body        string
+	Description string
+	Steps       []SnippetStep
+	GroupID     Optional[string]
+	Sort        *int64
 }
 
 func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch SnippetPatch) error {
 	row, err := s.SnippetGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	description, body, steps, err := NormalizeSnippetContent(SnippetContent{Description: patch.Description, Body: patch.Body, Steps: patch.Steps})
 	if err != nil {
 		return err
 	}
@@ -83,7 +102,9 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 		}
 	}
 	row.Name = patch.Name
-	row.Body = patch.Body
+	row.Body = body
+	row.Description = description
+	row.Steps = steps
 	applyOptional(&row.GroupID, patch.GroupID)
 	if patch.Sort != nil {
 		row.Sort = *patch.Sort
@@ -92,7 +113,7 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 	_, err = snippet.WithContext(ctx).
 		Where(snippet.ID.Eq(id)).
 		Where(ownerConditions(ctx, snippet.TableName())...).
-		UpdateColumns(map[string]any{"name": row.Name, "body": row.Body, "group_id": row.GroupID, "sort": row.Sort, "updated_at": ids.NowMS()})
+		UpdateColumns(map[string]any{"name": row.Name, "body": row.Body, "description": row.Description, "steps": row.Steps, "group_id": row.GroupID, "sort": row.Sort, "updated_at": ids.NowMS()})
 	if err != nil {
 		return dbError(err)
 	}

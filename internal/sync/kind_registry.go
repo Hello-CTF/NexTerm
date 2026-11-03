@@ -291,6 +291,8 @@ func init() {
 			browserCollect: true,
 		},
 		{
+			// Receive-only legacy kind: templates convert to multi-step snippets on arrival and are never pushed.
+			// browserCollect stays so older frontends that still ask for the kind get an empty list.
 			kind: KindRunbookTemplate, rank: 10, optIn: optInRunbookTemplate, strictID: true, idInPayload: true,
 			newPayload: newPayload[runbookTemplateObject],
 			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {

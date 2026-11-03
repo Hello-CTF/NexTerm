@@ -49,14 +49,14 @@ type Step struct {
 	// Interactive opts the step into @NEXTERM: script directives. Off by default: the
 	// output is then passed through untouched and stdin closes immediately.
 	Interactive bool `json:"interactive,omitempty"`
+	// Confirm requires an explicit confirmation before this step runs, whatever the run's policy.
+	Confirm bool `json:"confirm,omitempty"`
 }
 
 type StartRequest struct {
 	RunID     string `json:"runId"`
 	RunbookID string `json:"runbookId"`
-	// TemplateID starts the run from a persisted template: the server fills runbookId, runbookName and steps from it.
-	TemplateID string `json:"templateId,omitempty"`
-	// RunbookVersion is set by the server from the resolved template, never by the client.
+	// RunbookVersion is internal and always zero now that templates no longer exist.
 	RunbookVersion     int32              `json:"-"`
 	RunbookName        string             `json:"runbookName"`
 	Steps              []Step             `json:"steps"`

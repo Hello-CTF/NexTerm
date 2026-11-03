@@ -19,12 +19,6 @@ func syncedStateRuleInput(pattern string) store.StateRuleInput {
 	return store.StateRuleInput{Scope: store.StateRuleScopeGlobal, Region: staterule.RegionBottom, Pattern: pattern, State: "needs_me", Enabled: true}
 }
 
-func syncedRunbookInput(name string) store.RunbookTemplateInput {
-	return store.RunbookTemplateInput{Name: name, Description: "restart", Steps: []store.RunbookTemplateStep{
-		{ID: "s1", Name: "restart", Command: "systemctl restart api"},
-	}}
-}
-
 func deviceSkills(t *testing.T, device *testDevice) *skills.Manager {
 	t.Helper()
 	manager, err := device.engine.skillManager(context.Background())
@@ -45,14 +39,6 @@ func requireStateRule(t *testing.T, device *testDevice, id string, want bool) {
 	}
 }
 
-func requireRunbookTemplate(t *testing.T, device *testDevice, id string, want bool) {
-	t.Helper()
-	_, err := device.db.RunbookTemplateGet(context.Background(), id)
-	if found := err == nil; found != want {
-		t.Fatalf("runbook template %s present=%v (err=%v), want %v", id, found, err, want)
-	}
-}
-
 func requireSkill(t *testing.T, device *testDevice, name string, want bool) {
 	t.Helper()
 	overrides, err := deviceSkills(t, device).Overrides(context.Background())
@@ -68,8 +54,8 @@ func requireSkill(t *testing.T, device *testDevice, name string, want bool) {
 	}
 }
 
-// Rules, templates and skills created on one device reach another, and their deletions follow.
-func TestStateRulesRunbookTemplatesAndSkillsSyncBetweenDevices(t *testing.T) {
+// Rules and skills created on one device reach another, and their deletions follow.
+func TestStateRulesAndSkillsSyncBetweenDevices(t *testing.T) {
 	ctx := context.Background()
 	server := newTestSyncServer(t)
 	server.createUser(t, "alice", "alice-pw-123")
@@ -77,10 +63,6 @@ func TestStateRulesRunbookTemplatesAndSkillsSyncBetweenDevices(t *testing.T) {
 	deviceB := newTestDevice(t)
 
 	rule, err := deviceA.db.StateRuleSave(ctx, syncedStateRuleInput(`Continue\?`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	template, err := deviceA.db.RunbookTemplateCreate(ctx, syncedRunbookInput("restart api"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,15 +77,7 @@ func TestStateRulesRunbookTemplatesAndSkillsSyncBetweenDevices(t *testing.T) {
 		t.Fatalf("changed kinds=%v, want state rules marked so the round pushes them to helpers", report.changedKinds)
 	}
 	requireStateRule(t, deviceB, rule.ID, true)
-	requireRunbookTemplate(t, deviceB, template.ID, true)
 	requireSkill(t, deviceB, "disk-check", true)
-	received, err := deviceB.db.RunbookTemplateGet(ctx, template.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if received.Version != template.Version || received.Steps[0].Command != "systemctl restart api" {
-		t.Fatalf("received template=%+v", received)
-	}
 	material, err := deviceSkills(t, deviceB).Material(ctx, "disk-check")
 	if err != nil {
 		t.Fatal(err)
@@ -120,16 +94,12 @@ func TestStateRulesRunbookTemplatesAndSkillsSyncBetweenDevices(t *testing.T) {
 	if err := deviceA.db.StateRuleDelete(ctx, rule.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := deviceA.db.RunbookTemplateDelete(ctx, template.ID); err != nil {
-		t.Fatal(err)
-	}
 	if err := deviceSkills(t, deviceA).DeleteOverride(ctx, "disk-check"); err != nil {
 		t.Fatal(err)
 	}
 	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
 	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
 	requireStateRule(t, deviceB, rule.ID, false)
-	requireRunbookTemplate(t, deviceB, template.ID, false)
 	requireSkill(t, deviceB, "disk-check", false)
 }
 
@@ -321,10 +291,6 @@ func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	template, err := instance.db.RunbookTemplateCreate(ctx, syncedRunbookInput("deploy"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	manager, err := instance.service.engine.skillManager(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -367,7 +333,6 @@ func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 		updated  int64
 	}{
 		{KindStateRule, rule.ID, rule.UpdatedAt},
-		{KindRunbookTemplate, template.ID, template.UpdatedAt},
 		{KindSkill, skills.SyncObjectID("disk-check"), skill.UpdatedAt},
 		{KindMemory, memoryID, 200},
 		{KindCron, "job-legacy", now.UnixMilli()},
@@ -390,6 +355,11 @@ func TestCollectKindObjectsMatchesEngineCollection(t *testing.T) {
 	}
 	if !strings.Contains(collectedPayload[KindCron], `"deviceId":"`+jobs.Device().ID+`"`) {
 		t.Fatalf("cron payload %s, want the unbound job sent as bound to this device %s", collectedPayload[KindCron], jobs.Device().ID)
+	}
+	// The legacy runbook_template kind is receive-only: generic collection yields nothing.
+	legacy, err := instance.service.CollectKindObjects(ctx, CollectKindObjectsRequest{Kind: KindRunbookTemplate})
+	if err != nil || len(legacy.Objects) != 0 {
+		t.Fatalf("runbook_template collected %+v, %v", legacy, err)
 	}
 	if _, err := instance.service.CollectKindObjects(ctx, CollectKindObjectsRequest{Kind: KindAsset}); err == nil {
 		t.Fatal("kinds with their own collect command must be rejected")

@@ -2,6 +2,7 @@ package production
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -193,6 +194,65 @@ func TestSnippetIPCGroupPlacementAndOrdering(t *testing.T) {
 	for _, row := range rows {
 		if row.CreatedAt == 0 || row.UpdatedAt == 0 {
 			t.Fatalf("snippet DTO missing timestamps: %+v", row)
+		}
+	}
+}
+
+func TestSnippetIPCMultiStepContract(t *testing.T) {
+	ctx := t.Context()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+	list := func() []snippetDTO {
+		t.Helper()
+		var rows []snippetDTO
+		requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "snippet_list", `{}`), &rows)
+		return rows
+	}
+
+	// Without steps the DTO carries an empty array, never null.
+	dispatchStoreTest(dispatcher, "snippet_create", `{"name":"plain","body":"echo hi"}`)
+	raw := dispatchStoreTest(dispatcher, "snippet_list", `{}`)
+	if !raw.OK || !strings.Contains(string(raw.Data), `"steps":[]`) || !strings.Contains(string(raw.Data), `"description":""`) {
+		t.Fatalf("plain snippet list = %s", raw.Data)
+	}
+
+	var created map[string]string
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "snippet_create", `{"name":"deploy","description":"ship it","body":"ignored","steps":[`+
+		`{"id":"a","name":"build","command":"make"},{"id":"b","name":"push","command":"make push","confirm":true,"interactive":true}]}`), &created)
+	var multi snippetDTO
+	for _, row := range list() {
+		if row.ID == created["id"] {
+			multi = row
+		}
+	}
+	if multi.Description != "ship it" || multi.Body != "make\nmake push" || len(multi.Steps) != 2 || !multi.Steps[1].Confirm || !multi.Steps[1].Interactive || multi.Steps[0].Name != "build" {
+		t.Fatalf("multi-step snippet = %+v", multi)
+	}
+
+	for _, args := range []string{
+		`{"name":"x","steps":[{"id":"a","command":"  "}]}`,
+		`{"name":"x","steps":[{"id":"a","command":"c"},{"id":"a","command":"d"}]}`,
+		`{"name":"x","description":"` + strings.Repeat("d", 4097) + `","body":"c"}`,
+	} {
+		if response := dispatchStoreTest(dispatcher, "snippet_create", args); response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("snippet_create %.60s = %+v, want bad_param", args, response)
+		}
+	}
+
+	// An update without steps returns the snippet to a single step.
+	if response := dispatchStoreTest(dispatcher, "snippet_update", `{"id":"`+created["id"]+`","name":"deploy","body":"make all"}`); !response.OK {
+		t.Fatalf("update failed: %+v", response.Error)
+	}
+	for _, row := range list() {
+		if row.ID == created["id"] && (len(row.Steps) != 0 || row.Body != "make all" || row.Description != "") {
+			t.Fatalf("after update = %+v", row)
 		}
 	}
 }

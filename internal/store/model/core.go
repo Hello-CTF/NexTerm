@@ -137,6 +137,10 @@ type SnippetRow struct {
 	CreatedAt int64   `gorm:"column:created_at;not null" json:"created_at"`
 	UpdatedAt int64   `gorm:"column:updated_at;not null" json:"updated_at"`
 	OwnerID   string  `gorm:"size:191;column:owner_id;not null;default:'';index:idx_snippet_owner" json:"owner_id"`
+	// Description is free text shown with a multi-step snippet.
+	Description string `gorm:"column:description;not null;default:''" json:"description"`
+	// Steps is a JSON array of store.SnippetStep; an empty string is a plain single-step snippet.
+	Steps string `gorm:"column:steps;not null;default:''" json:"steps"`
 }
 
 func (SnippetRow) TableName() string { return "snippet" }

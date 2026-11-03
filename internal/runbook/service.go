@@ -174,7 +174,7 @@ func (s *Service) Advance(ctx context.Context, ownerID string, input AdvanceRequ
 		return RunState{}, fmt.Errorf("%w: no production challenge is pending", ErrInvalid)
 	}
 	if !r.stepConfirmed {
-		if r.state.ConfirmationPolicy == ConfirmEveryStep && !input.Confirmed {
+		if (r.state.ConfirmationPolicy == ConfirmEveryStep || r.currentStepLocked().Step.Confirm) && !input.Confirmed {
 			r.mu.Unlock()
 			return RunState{}, ErrStepConfirmationRequired
 		}

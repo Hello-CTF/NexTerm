@@ -598,3 +598,31 @@ func TestConcurrentAdvanceCancelKeepsRunStateConsistent(t *testing.T) {
 		}
 	}
 }
+
+func TestStepConfirmFlagRequiresConfirmationUnderProductionOnlyPolicy(t *testing.T) {
+	executor := &fakeExecutor{}
+	service := New(executor)
+	steps := []Step{
+		{ID: "guarded", Name: "guarded", Command: "echo guarded", Confirm: true},
+		{ID: "free", Name: "free", Command: "echo free"},
+	}
+	startTestRun(t, service, steps, []string{"s1"}, ConfirmProductionOnly, nil)
+
+	prepareTestStep(t, service, 1, RenderedCommand{SessionID: "s1", Command: "echo guarded"})
+	if _, err := service.Advance(t.Context(), "owner-a", AdvanceRequest{RunID: "run-1", StepNumber: 1}); !errors.Is(err, ErrStepConfirmationRequired) {
+		t.Fatalf("unconfirmed guarded step error = %v", err)
+	}
+	if got := len(executor.Requests()); got != 0 {
+		t.Fatalf("executed %d batches before confirmation", got)
+	}
+	state := advanceTestStep(t, service, 1, true)
+	if state.CurrentStep != 2 {
+		t.Fatalf("state after confirmed step = %+v", state)
+	}
+
+	prepareTestStep(t, service, 2, RenderedCommand{SessionID: "s1", Command: "echo free"})
+	state = advanceTestStep(t, service, 2, false)
+	if state.Status != RunSuccess {
+		t.Fatalf("an unflagged step must run without confirmation under production_only, got %+v", state)
+	}
+}
