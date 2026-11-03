@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
 import { useUi } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
-import type { RunbookRunState, RunbookStartRequest } from "../../ipc/runbookApi";
+import type { RunbookRunState, RunbookStartRequest, RunbookStep } from "../../ipc/runbookApi";
 import {
   click,
   clickButton,
@@ -95,18 +95,34 @@ function asset(id: string, name: string): Asset {
   };
 }
 
+// Stands in for the server, which loads the stored snippet's steps when the request names a snippetId.
+let storedSnippet: Snippet | undefined;
+
+function storedSteps(snippetId: string): RunbookStep[] {
+  if (!storedSnippet || storedSnippet.id !== snippetId) throw new Error(`unknown snippet ${snippetId}`);
+  const snippet = storedSnippet;
+  if (snippet.steps && snippet.steps.length > 0) {
+    return snippet.steps.map((step, index) => ({
+      id: step.id, name: step.name || `步骤 ${index + 1}`, command: step.command,
+      ...(step.confirm ? { confirm: true } : {}), ...(step.interactive ? { interactive: true } : {}),
+    }));
+  }
+  return [{ id: `${snippet.id}-step-1`, name: snippet.name, command: snippet.body }];
+}
+
 function initialState(input: RunbookStartRequest): RunbookRunState {
+  const steps = storedSteps(input.snippetId);
   return {
     runId: input.runId,
-    runbookId: input.runbookId,
-    runbookName: input.runbookName,
+    runbookId: input.snippetId,
+    runbookName: storedSnippet?.name ?? "",
     status: "awaiting_render",
     confirmationPolicy: input.confirmationPolicy ?? "every_step",
     stopOnFailure: input.stopOnFailure ?? true,
     sessionIds: [...input.sessionIds],
     currentStep: 1,
-    stepCount: input.steps.length,
-    steps: input.steps.map((step, index) => ({
+    stepCount: steps.length,
+    steps: steps.map((step, index) => ({
       number: index + 1,
       step: { ...step },
       status: index === 0 ? "awaiting_render" : "pending",
@@ -183,6 +199,7 @@ function targetCheckbox(id: string): HTMLInputElement {
 }
 
 function openPanel(snippet: Snippet, strict = false): void {
+  storedSnippet = snippet;
   mounted?.unmount();
   const panelNode = createElement(MultiHostRunPanel, { snippet, onClose: vi.fn() });
   mounted = mountWithClient(strict ? createElement(StrictMode, null, panelNode) : panelNode);
@@ -269,7 +286,7 @@ afterEach(() => {
 });
 
 describe("MultiHostRunPanel", () => {
-  it("starts the run from the snippet with its id, name, and per-step flags", async () => {
+  it("starts the run from the snippet id only", async () => {
     openPanel(snippetOf("deploy", "Deploy app", [
       { name: "build", command: "make", confirm: true },
       { name: "probe", command: "curl -fsS localhost", interactive: true },
@@ -279,15 +296,13 @@ describe("MultiHostRunPanel", () => {
     startRun();
     await flushUntil(() => text().includes("请确认下列命令"));
     const request = mocks.start.mock.calls[0][0] as RunbookStartRequest;
-    expect(request.runbookId).toBe("deploy");
-    expect(request.runbookName).toBe("Deploy app");
-    expect(request.steps.map((step) => ({ command: step.command, confirm: step.confirm, interactive: step.interactive }))).toEqual([
-      { command: "make", confirm: true, interactive: undefined },
-      { command: "curl -fsS localhost", interactive: true, confirm: undefined },
-      { command: "true", confirm: undefined, interactive: undefined },
-    ]);
-    expect(request.steps[0].name).toBe("build");
-    expect(request.steps[2].name).toBeTruthy();
+    expect(request.snippetId).toBe("deploy");
+    expect(request).not.toHaveProperty("steps");
+    expect(request).not.toHaveProperty("runbookId");
+    expect(request).not.toHaveProperty("runbookName");
+    // Execution follows the steps the server returns for the stored snippet.
+    expect(text()).toContain("make");
+    expect(text()).toContain("probe");
   });
 
   it("shows the snippet steps read-only and offers no step editor", () => {
@@ -297,7 +312,7 @@ describe("MultiHostRunPanel", () => {
     ]));
     expect(text()).toContain("Deploy app");
     expect(text()).toContain("make");
-    expect(text()).toContain("curl -fsS localhost");
+    expect(text()).toContain("probe");
     expect(panel().container.querySelectorAll("textarea")).toHaveLength(0);
     expect(panel().container.querySelector("#runbook-name")).toBeNull();
     expect(panel().container.querySelector('[data-testid="multi-host-step-1"]')?.textContent).toContain("执行前确认");
@@ -311,9 +326,8 @@ describe("MultiHostRunPanel", () => {
     startRun();
     await flushUntil(() => text().includes("请确认下列命令"));
     const request = mocks.start.mock.calls[0][0] as RunbookStartRequest;
-    expect(request.steps).toHaveLength(1);
-    expect(request.steps[0].command).toBe("true");
-    expect(request.runbookId).toBe("true-once");
+    expect(request.snippetId).toBe("true-once");
+    expect(request).not.toHaveProperty("steps");
   });
 
   it("confirms the exact rendered commands at every step and keeps prior results visible", async () => {

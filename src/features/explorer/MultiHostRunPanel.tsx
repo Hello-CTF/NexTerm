@@ -343,8 +343,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
       pendingRunIdRef.current = runId;
       try {
         const initial = await runbookApi.start({
-          runId, runbookId: snippet.id, runbookName: snippet.name,
-          steps,
+          runId, snippetId: snippet.id,
           sessionIds: selectedIds,
           confirmationPolicy: policy,
           stopOnFailure,
