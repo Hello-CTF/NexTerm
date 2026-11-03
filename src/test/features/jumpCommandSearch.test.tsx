@@ -44,6 +44,7 @@ vi.mock("../../ipc/searchApi", () => ({
 vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 
 import { JumpPalette } from "../../app/JumpPalette";
+import { COMMAND_SEARCH_DEBOUNCE_MS } from "../../app/jump/commandHistorySearch";
 import { resetTabRecency } from "../../app/jump/tabRecency";
 import { resetAwarenessStore } from "../../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
@@ -170,11 +171,16 @@ afterEach(() => {
 describe("jump palette command history search", () => {
   it("does not search unless the input starts with >", async () => {
     const view = await mountPalette();
-    setInputValue(combobox(view), "docker");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 350));
-    });
-    expect(mocks.search).not.toHaveBeenCalled();
+    vi.useFakeTimers();
+    try {
+      setInputValue(combobox(view), "docker");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(COMMAND_SEARCH_DEBOUNCE_MS + 150);
+      });
+      expect(mocks.search).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("searches with the text after > and re-queries when the filters change", async () => {
@@ -274,6 +280,21 @@ describe("jump palette command history search", () => {
       (call![2] as { onSelect: () => void }).onSelect();
     });
     expect(mocks.copyText).toHaveBeenCalledWith("echo a\necho b");
+  });
+
+  it.each([
+    ["a bracketed-paste terminator", "echo x\x1b[201~rm -rf /"],
+    ["a lone carriage return", "echo a\recho b"],
+  ])("refuses to fill a command containing %s", async (_label, command) => {
+    mocks.search.mockResolvedValue({ items: [item(1, { command })], hasMore: false });
+    const view = await mountPalette();
+    await typeCommand(view, ">echo");
+    await waitForRendered(() => expect(rowTexts(view)).toHaveLength(1));
+    keyDown(combobox(view), "Enter", { shiftKey: true });
+
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("控制字符"), expect.anything());
   });
 
   it("explains why nothing was filled when there is no usable terminal", async () => {
