@@ -100,6 +100,24 @@ func TestCommandBackendPowerShellQuoting(t *testing.T) {
 	}
 }
 
+func TestCommandBackendLogsTimestamps(t *testing.T) {
+	runner := &recordingRunner{}
+	backend := NewCommandBackend(runner, nil, ShellPOSIX)
+	if _, err := backend.OpenLogs(t.Context(), LogsOptions{Container: "c1", Tail: 10, Timestamps: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.commands[0], "'--timestamps'") {
+		t.Fatalf("timestamps flag missing: %q", runner.commands[0])
+	}
+	plain := &recordingRunner{}
+	if _, err := NewCommandBackend(plain, nil, ShellPOSIX).OpenLogs(t.Context(), LogsOptions{Container: "c1", Tail: 10, Timestamps: false}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain.commands[0], "--timestamps") {
+		t.Fatalf("timestamps flag present when disabled: %q", plain.commands[0])
+	}
+}
+
 func TestCommandBackendReportsFailureAndTruncation(t *testing.T) {
 	code := 2
 	for _, test := range []struct {

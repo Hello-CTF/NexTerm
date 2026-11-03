@@ -221,6 +221,9 @@ func (b *CommandBackend) OpenLogs(ctx context.Context, options LogsOptions) (Log
 	if options.Follow {
 		args = append(args, "--follow")
 	}
+	if options.Timestamps {
+		args = append(args, "--timestamps")
+	}
 	args = append(args, "--tail", tail)
 	if options.Since != "" {
 		args = append(args, "--since", options.Since)
@@ -444,9 +447,15 @@ func cliLabel(labels, key string) (string, bool) {
 	return "", false
 }
 
+var powerShellQuoteDoubler = strings.NewReplacer(
+	"'", "''", "\u2018", "\u2018\u2018", "\u2019", "\u2019\u2019",
+	"\u201A", "\u201A\u201A", "\u201B", "\u201B\u201B",
+)
+
 func quoteShell(value string, shell Shell) string {
 	if shell == ShellPowerShell {
-		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+		// PowerShell treats the typographic single quotes like the ASCII one.
+		return "'" + powerShellQuoteDoubler.Replace(value) + "'"
 	}
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

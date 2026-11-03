@@ -23,6 +23,15 @@ type ProductionSave = {
   challenge: DockerConfirmationChallenge;
 };
 
+const STACK_CHANGED = "栈配置已变化";
+
+function isStackChanged(cause: unknown): boolean {
+  const message = typeof cause === "string" ? cause : (cause as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message.includes(STACK_CHANGED);
+}
+
+const STACK_CHANGED_HINT = "栈配置已变化，请关闭后重新打开编辑器确认";
+
 export function ComposeEditor({
   sessionId,
   stack,
@@ -81,6 +90,7 @@ export function ComposeEditor({
         path: change.path,
         baseContentBase64: change.baseContentBase64,
         contentBase64: bytesToBase64(bytes),
+        confirmedCommand: stack.upCommand ?? "",
         ...(confirmation ? { productionConfirmation: confirmation } : {}),
       });
       pendingSave.resolve(true);
@@ -97,10 +107,15 @@ export function ComposeEditor({
           ticket: prepared.ticket,
           channel,
         });
-        setStream({ id, sessionId, title: `${stack.project} · up -d`, channel, sink });
+        setStream({ id, sessionId, title: `${stack.project} · ${prepared.command}`, channel, sink });
       } catch (cause) {
         disposeChannel(channel);
-        setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
+        if (isStackChanged(cause)) {
+          setError("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认");
+          onChanged();
+        } else {
+          setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
+        }
       }
     } catch (cause) {
       const challenge = getDockerConfirmationChallenge(cause);
@@ -111,7 +126,12 @@ export function ComposeEditor({
         pendingSave.resolve(false);
         setPending(null);
         setProduction(null);
-        setError(`保存或 redeploy 失败：${describeError(cause)}`);
+        if (isStackChanged(cause)) {
+          setError(STACK_CHANGED_HINT);
+          onChanged();
+        } else {
+          setError(`保存或 redeploy 失败：${describeError(cause)}`);
+        }
       }
     } finally {
       finishInFlight.current = false;
@@ -183,6 +203,7 @@ export function ComposeEditor({
       {pending && (
         <DiffSaveDialog
           pending={pending}
+          stack={stack}
           busy={busy}
           onCancel={cancelPending}
           onConfirm={() => void confirmDiff()}
@@ -193,7 +214,9 @@ export function ComposeEditor({
           key={`${production.challenge.targetSetHash}:${production.challenge.commandHash}`}
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
-          command={`保存 ${production.pending.change.path} 并执行 docker compose up -d`}
+          command={stack.upCommand
+            ? `保存 ${production.pending.change.path} 并执行：${stack.upCommand}`
+            : `保存 ${production.pending.change.path} 并执行 docker compose up -d`}
           onCancel={cancelPending}
           onConfirm={(environmentNames) => void finish(production.pending, dockerConfirmation(production.challenge, environmentNames))}
         />
@@ -203,8 +226,9 @@ export function ComposeEditor({
   );
 }
 
-function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
+function DiffSaveDialog({ pending, stack, busy, onCancel, onConfirm }: {
   pending: PendingSave;
+  stack: ComposeStack;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -239,6 +263,16 @@ function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
         <div className="nx-modal-header">保存并重新部署</div>
         <div className="nx-modal-body min-h-0 overflow-auto">
           <p className="mb-2 break-all font-mono text-xs text-neutral-400">{pending.change.path}</p>
+          <dl className="mb-2 space-y-1 text-xs">
+            <div>
+              <dt className="text-neutral-500">工作目录</dt>
+              <dd className="select-text break-all font-mono text-neutral-300">{stack.workingDir}</dd>
+            </div>
+            <div>
+              <dt className="text-neutral-500">将执行的命令</dt>
+              <dd className="select-text break-all font-mono text-neutral-300">{stack.upCommand || "docker compose up -d（命令预览不可用）"}</dd>
+            </div>
+          </dl>
           {diff.length === 0 ? (
             <p className="text-xs text-amber-300">文件内容没有变化；继续仍会执行 up -d。</p>
           ) : (

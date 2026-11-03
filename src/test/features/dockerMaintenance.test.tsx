@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { clickButton, flush, flushMacrotask, mount, setInputValue, waitFor, type MountedView } from "./reactTestUtils";
+import { clickButton, flush, flushMacrotask, mount, setInputValue, waitFor, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { ComposeStack, ContainerSummary, DockerPrunePreview } from "../../ipc/commands";
 
 const mocks = vi.hoisted(() => ({
@@ -156,7 +156,7 @@ beforeEach(() => {
   mocks.ask.mockResolvedValue(true);
   mocks.fsWrite.mockResolvedValue(undefined);
   mocks.closeTab.mockResolvedValue(undefined);
-  mocks.composePrepare.mockResolvedValue({ ticket: "ticket-1", contentHash: "content-hash-1" });
+  mocks.composePrepare.mockResolvedValue({ ticket: "ticket-1", contentHash: "content-hash-1", command: "server-command up" });
   mocks.composeAttach.mockResolvedValue("up-stream");
 });
 
@@ -264,6 +264,76 @@ describe("Compose stack actions", () => {
 });
 
 describe("Compose edit and redeploy", () => {
+  it("shows the working directory and the exact up command in the diff dialog", async () => {
+    const upCommand = "docker 'compose' '--project-name' 'shop' 'up' '--detach'";
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, workingDir: "/opt/deploy/shop", upCommand }, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    const dialog = document.body.querySelector('[aria-label="确认 Compose 变更"]')!;
+    expect(dialog.textContent).toContain("/opt/deploy/shop");
+    expect(dialog.textContent).toContain(upCommand);
+    mounted.unmount();
+  });
+
+  it("falls back to a generic command line when the preview is unavailable", async () => {
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, workingDir: "/opt/deploy/shop" }, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    const dialog = document.body.querySelector('[aria-label="确认 Compose 变更"]')!;
+    expect(dialog.textContent).toContain("/opt/deploy/shop");
+    expect(dialog.textContent).toContain("docker compose up -d（命令预览不可用）");
+    mounted.unmount();
+  });
+
+  it("binds the confirmed command to prepare and titles the stream with the server command", async () => {
+    const upCommand = "docker 'compose' 'up' '--detach'";
+    const onChanged = vi.fn();
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, upCommand }, onClose: vi.fn(), onChanged }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitFor(() => expect(mocks.composeAttach).toHaveBeenCalledTimes(1));
+    expect(mocks.composePrepare.mock.calls[0][0]).toMatchObject({ confirmedCommand: upCommand });
+    await waitFor(() => expect(document.body.textContent).toContain("shop · server-command up"));
+    expect(document.body.querySelector('[title^="shop ·"]')?.getAttribute("title")).not.toContain(upCommand);
+    mounted.unmount();
+  });
+
+  it("sends an empty confirmedCommand when the stack has no command preview", async () => {
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(1));
+    expect(mocks.composePrepare.mock.calls[0][0]).toMatchObject({ confirmedCommand: "" });
+    mounted.unmount();
+  });
+
+  it("asks to reopen the editor and refreshes stacks when the stack changed", async () => {
+    mocks.composePrepare.mockRejectedValueOnce({ code: "bad_param", message: "栈配置已变化，请重新确认" });
+    const onChanged = vi.fn();
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, upCommand: "old" }, onClose: vi.fn(), onChanged }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitForRendered(() => expect(document.body.textContent).toContain("栈配置已变化，请关闭后重新打开编辑器确认"));
+    expect(onChanged).toHaveBeenCalled();
+    expect(mocks.composeAttach).not.toHaveBeenCalled();
+    mounted.unmount();
+  });
+
+  it("reports a saved file when attach finds the stack changed", async () => {
+    mocks.composeAttach.mockRejectedValueOnce({ code: "bad_param", message: "栈配置已变化，请重新确认" });
+    const onChanged = vi.fn();
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitForRendered(() => expect(document.body.textContent).toContain("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认"));
+    expect(onChanged).toHaveBeenCalled();
+    mounted.unmount();
+  });
+
   it("shows diff and completes production guard before writing and streaming up", async () => {
     mocks.composePrepare.mockRejectedValueOnce(typedChallenge());
     const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));
@@ -305,7 +375,7 @@ describe("Compose edit and redeploy", () => {
     });
     expect(mocks.composeAttach.mock.calls[0][0]).not.toHaveProperty("productionConfirmation");
     expect(mocks.composePrepare.mock.invocationCallOrder[1]).toBeLessThan(mocks.composeAttach.mock.invocationCallOrder[0]);
-    await waitFor(() => expect(document.body.textContent).toContain("shop · up -d"));
+    await waitFor(() => expect(document.body.textContent).toContain("shop · server-command up"));
     mounted.unmount();
     expect(mocks.closeTab).toHaveBeenCalledWith("up-stream", "kill", "s1");
   });

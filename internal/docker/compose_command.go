@@ -67,12 +67,25 @@ func (b *CommandBackend) pathExists(ctx context.Context, value string, directory
 	return result.ExitCode == nil || *result.ExitCode == 0, nil
 }
 
-func (b *CommandBackend) RunCompose(ctx context.Context, cli ComposeCLI, stack ComposeStack, action ComposeAction) (string, error) {
-	args, err := composeActionArgs(stack, action, 0)
+// ComposeCommandLine returns the exact command string RunCompose and OpenCompose execute.
+func (b *CommandBackend) ComposeCommandLine(cli ComposeCLI, stack ComposeStack, action ComposeAction) (string, error) {
+	return b.composeCommandLine(cli, stack, action, 0)
+}
+
+func (b *CommandBackend) composeCommandLine(cli ComposeCLI, stack ComposeStack, action ComposeAction, tail int) (string, error) {
+	args, err := composeActionArgs(stack, action, tail)
 	if err != nil {
 		return "", err
 	}
-	result, err := b.runComposeResult(ctx, cli, args)
+	return b.composeCommand(cli, args), nil
+}
+
+func (b *CommandBackend) RunCompose(ctx context.Context, cli ComposeCLI, stack ComposeStack, action ComposeAction) (string, error) {
+	command, err := b.composeCommandLine(cli, stack, action, 0)
+	if err != nil {
+		return "", err
+	}
+	result, err := b.runComposeCommand(ctx, command)
 	if err != nil {
 		return result.Stdout + result.Stderr, err
 	}
@@ -80,11 +93,11 @@ func (b *CommandBackend) RunCompose(ctx context.Context, cli ComposeCLI, stack C
 }
 
 func (b *CommandBackend) OpenCompose(ctx context.Context, cli ComposeCLI, stack ComposeStack, action ComposeAction, tail int) (LogStream, error) {
-	args, err := composeActionArgs(stack, action, tail)
+	command, err := b.composeCommandLine(cli, stack, action, tail)
 	if err != nil {
 		return LogStream{}, err
 	}
-	stream, err := b.open(ctx, b.composeCommand(cli, args), 120, 40)
+	stream, err := b.open(ctx, command, 120, 40)
 	if err != nil {
 		return LogStream{}, err
 	}
@@ -116,10 +129,14 @@ func composeActionArgs(stack ComposeStack, action ComposeAction, tail int) ([]st
 }
 
 func (b *CommandBackend) runComposeResult(ctx context.Context, cli ComposeCLI, args []string) (CommandResult, error) {
+	return b.runComposeCommand(ctx, b.composeCommand(cli, args))
+}
+
+func (b *CommandBackend) runComposeCommand(ctx context.Context, command string) (CommandResult, error) {
 	if b.runner == nil {
 		return CommandResult{}, fmt.Errorf("%w: command runner", ErrNoBackend)
 	}
-	result, err := b.runner.RunCommand(ctx, b.composeCommand(cli, args))
+	result, err := b.runner.RunCommand(ctx, command)
 	if err != nil {
 		return CommandResult{}, err
 	}

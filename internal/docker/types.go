@@ -83,6 +83,8 @@ type LogsOptions struct {
 	Tail      int
 	Follow    bool
 	Since     string
+	// Timestamps asks the daemon to prefix each line with an RFC3339Nano time.
+	Timestamps bool
 }
 
 type ExecOptions struct {
@@ -245,10 +247,11 @@ type ReplaySink interface {
 }
 
 type LogsAttachRequest struct {
-	SessionID string
-	Container string
-	Tail      *int
-	Sink      FrameSink
+	SessionID  string
+	Container  string
+	Tail       *int
+	Timestamps bool
+	Sink       FrameSink
 }
 
 type ExecAttachRequest struct {

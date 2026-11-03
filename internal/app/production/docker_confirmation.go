@@ -41,6 +41,7 @@ type dockerMutationOperation struct {
 	Path            string `json:"path,omitempty"`
 	BaseContentHash string `json:"baseContentHash,omitempty"`
 	ContentHash     string `json:"contentHash,omitempty"`
+	CommandHash     string `json:"commandHash,omitempty"`
 	PreviewToken    string `json:"previewToken,omitempty"`
 	PreviewDigest   string `json:"previewDigest,omitempty"`
 }
@@ -51,6 +52,7 @@ type dockerConfirmationAuditOperation struct {
 	Path            string `json:"path,omitempty"`
 	BaseContentHash string `json:"baseContentHash,omitempty"`
 	ContentHash     string `json:"contentHash,omitempty"`
+	CommandHash     string `json:"commandHash,omitempty"`
 }
 
 type dockerConfirmationRequiredDetail struct {
@@ -171,6 +173,7 @@ func newDockerConfirmationAuditInput(ctx context.Context, target dockerConfirmat
 	auditOperation := dockerConfirmationAuditOperation{
 		Kind: operation.Kind, Project: operation.Project, Path: operation.Path,
 		BaseContentHash: operation.BaseContentHash, ContentHash: operation.ContentHash,
+		CommandHash: operation.CommandHash,
 	}
 	return store.AuditInput{
 		SessionID: dockerStringPointer(target.SessionID), AssetID: dockerStringPointer(target.AssetID),

@@ -37,12 +37,14 @@ type dockerComposeRedeployIPCRequest struct {
 	BaseContentBase64      string                        `json:"baseContentBase64"`
 	ContentBase64          string                        `json:"contentBase64"`
 	Ticket                 string                        `json:"ticket"`
+	ConfirmedCommand       string                        `json:"confirmedCommand,omitempty"`
 	ProductionConfirmation *dockerProductionConfirmation `json:"productionConfirmation,omitempty"`
 }
 
 type dockerComposeRedeployPrepareResult struct {
 	Ticket      string `json:"ticket"`
 	ContentHash string `json:"contentHash"`
+	Command     string `json:"command"`
 }
 
 type dockerPrunePreviewIPCRequest struct {
@@ -127,10 +129,14 @@ func (s *terminalCommandService) registerDockerMaintenance(dispatcher *ipc.Dispa
 				}
 				id, err := s.docker.AttachCompose(ctx, docker.ComposeAttachRequest{
 					SessionID: input.SessionID, AssetID: connected.Asset().ID, Source: "user", Project: input.Project,
-					Action: docker.ComposeActionUp, ContentHash: ticket.operation.ContentHash, Sink: sink,
+					Action: docker.ComposeActionUp, ContentHash: ticket.operation.ContentHash,
+					ExpectedCommand: ticket.command, Sink: sink,
 				})
 				if err != nil {
 					_ = stream.Close()
+					if errors.Is(err, docker.ErrComposeChanged) {
+						return "", ipc.BadParam(err)
+					}
 					return "", terminalIPCError(err)
 				}
 				s.watchDockerStream(id, stream)
@@ -208,9 +214,16 @@ func (s *terminalCommandService) authorizeComposeRedeploy(ctx context.Context, i
 }
 
 func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input dockerComposeRedeployIPCRequest) (dockerComposeRedeployPrepareResult, error) {
-	connected, _, err := s.authorizeComposeRedeploy(ctx, input)
+	connected, stack, err := s.authorizeComposeRedeploy(ctx, input)
 	if err != nil {
 		return dockerComposeRedeployPrepareResult{}, err
+	}
+	upCommand := stack.UpCommand
+	if upCommand == "" {
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("无法确定将执行的 Compose 命令"))
+	}
+	if input.ConfirmedCommand != upCommand {
+		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(docker.ErrComposeChanged)
 	}
 	baseContent, err := base64.StdEncoding.DecodeString(input.BaseContentBase64)
 	if err != nil {
@@ -246,6 +259,7 @@ func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input
 		Kind: "compose_redeploy", Project: input.Project, Path: input.Path,
 		BaseContentHash: dockerConfirmationDigest("base-content-v1", baseContent),
 		ContentHash:     dockerConfirmationDigest("content-v1", content),
+		CommandHash:     dockerConfirmationDigest("compose-up-v1", []byte(upCommand)),
 	}
 	if err := s.guardDockerMutation(ctx, connected, operation, input.ProductionConfirmation); err != nil {
 		return dockerComposeRedeployPrepareResult{}, dockerMutationIPCError(err)
@@ -253,11 +267,11 @@ func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input
 	if err := filesystem.WriteFile(ctx, input.Path, content, sessionAssetBackupBeforeOverwrite(ctx, s.sessions, s.database, input.SessionID)); err != nil {
 		return dockerComposeRedeployPrepareResult{}, fsIPCError(transport.Kind(), err)
 	}
-	ticket, err := issueDockerRedeployTicket(input.SessionID, input.Project, input.Path, operation)
+	ticket, err := issueDockerRedeployTicket(input.SessionID, input.Project, input.Path, upCommand, operation)
 	if err != nil {
 		return dockerComposeRedeployPrepareResult{}, terminalIPCError(err)
 	}
-	return dockerComposeRedeployPrepareResult{Ticket: ticket, ContentHash: operation.ContentHash}, nil
+	return dockerComposeRedeployPrepareResult{Ticket: ticket, ContentHash: operation.ContentHash, Command: upCommand}, nil
 }
 
 func (s *terminalCommandService) authorizeComposeRedeployAttach(ctx context.Context, input dockerComposeRedeployIPCRequest) (*session.Session, docker.ComposeStack, dockerRedeployTicket, error) {
@@ -276,6 +290,7 @@ type dockerRedeployTicket struct {
 	sessionID string
 	project   string
 	path      string
+	command   string
 	operation dockerMutationOperation
 	expiresAt time.Time
 }
@@ -285,7 +300,7 @@ var dockerRedeployTickets = struct {
 	items map[string]dockerRedeployTicket
 }{items: make(map[string]dockerRedeployTicket)}
 
-func issueDockerRedeployTicket(sessionID, project, path string, operation dockerMutationOperation) (string, error) {
+func issueDockerRedeployTicket(sessionID, project, path, command string, operation dockerMutationOperation) (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return "", err
@@ -299,7 +314,7 @@ func issueDockerRedeployTicket(sessionID, project, path string, operation docker
 		}
 	}
 	dockerRedeployTickets.items[token] = dockerRedeployTicket{
-		sessionID: sessionID, project: project, path: path, operation: operation, expiresAt: now.Add(5 * time.Minute),
+		sessionID: sessionID, project: project, path: path, command: command, operation: operation, expiresAt: now.Add(5 * time.Minute),
 	}
 	dockerRedeployTickets.Unlock()
 	return token, nil

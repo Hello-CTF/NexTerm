@@ -1173,6 +1173,7 @@ export interface ComposeStack {
   services: string[];
   readOnly: boolean;
   reason?: string;
+  upCommand?: string;
 }
 
 export interface ComposeOverview {
@@ -1254,6 +1255,8 @@ export type ComposeRedeployPrepareRequest = {
   path: string;
   baseContentBase64: string;
   contentBase64: string;
+  // The command the user saw in the confirmation; the server rejects the request when its own command differs.
+  confirmedCommand?: string;
   productionConfirmation?: DockerProductionConfirmation;
 };
 
@@ -1277,12 +1280,14 @@ export const dockerApi = {
     containerId: string,
     tail: number,
     channel: unknown,
+    options?: { timestamps?: boolean },
   ) =>
     call("docker_logs_attach", {
       sessionId,
       containerId,
       tail,
       channel,
+      ...(options?.timestamps ? { timestamps: true } : {}),
       clientId: clientId(),
     }),
   execAttach: (
@@ -1326,7 +1331,7 @@ export const dockerApi = {
   composeLogsAttach: (sessionId: string, project: string, tail: number, channel: unknown) =>
     call("docker_compose_logs_attach", { sessionId, project, tail, channel, clientId: clientId() }),
   composeRedeployPrepare: (request: ComposeRedeployPrepareRequest) =>
-    call("docker_compose_redeploy_prepare", request) as Promise<{ ticket: string; contentHash: string }>,
+    call("docker_compose_redeploy_prepare", request) as Promise<{ ticket: string; contentHash: string; command: string }>,
   composeRedeployAttach: (request: ComposeRedeployAttachRequest) => {
     const { channel, ...body } = request;
     return call("docker_compose_redeploy_attach", { ...body, channel, clientId: clientId() });
