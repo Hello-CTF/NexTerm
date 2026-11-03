@@ -37,7 +37,7 @@ func Unquote(text string) (value string, ok bool) {
 			continue
 		}
 		if i+1 < len(runes) && isQuote(runes[i+1]) {
-			out = append(out, runes[i])
+			out = append(out, runes[i+1])
 			i++
 			continue
 		}

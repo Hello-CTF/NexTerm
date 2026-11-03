@@ -34,3 +34,10 @@ func TestUnquoteRejectsEarlyClose(t *testing.T) {
 		t.Fatal("a lone typographic quote must close the string and leave trailing text")
 	}
 }
+
+func TestUnquoteMixedPairKeepsSecondRune(t *testing.T) {
+	got, ok := Unquote("'a\u2019'b'")
+	if !ok || got != "a'b" {
+		t.Fatalf("got %q ok=%v, want a'b", got, ok)
+	}
+}
