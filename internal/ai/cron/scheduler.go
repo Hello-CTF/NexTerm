@@ -413,6 +413,8 @@ func (s *Scheduler) disableUnexecutable(ctx context.Context, job Job, now time.T
 		}
 		return storageError("disable unexecutable", job.ID, err)
 	}
+	// Surface the single-job failure; the job's LastError alone is invisible until the list is opened.
+	s.notify(fmt.Errorf("cron job %s disabled: %w", job.ID, cause))
 	return nil
 }
 
