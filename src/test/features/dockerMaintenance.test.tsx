@@ -299,13 +299,13 @@ describe("Compose edit and redeploy", () => {
     mounted.unmount();
   });
 
-  it("omits confirmedCommand when the stack has no command preview", async () => {
+  it("sends an empty confirmedCommand when the stack has no command preview", async () => {
     const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));
     clickButton(document.body, "trigger-save");
     await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
     clickButton(document.body, "保存并 up -d");
     await waitFor(() => expect(mocks.composePrepare).toHaveBeenCalledTimes(1));
-    expect(mocks.composePrepare.mock.calls[0][0]).not.toHaveProperty("confirmedCommand");
+    expect(mocks.composePrepare.mock.calls[0][0]).toMatchObject({ confirmedCommand: "" });
     mounted.unmount();
   });
 

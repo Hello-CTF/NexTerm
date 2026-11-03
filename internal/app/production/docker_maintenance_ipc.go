@@ -222,7 +222,7 @@ func (s *terminalCommandService) composeRedeployWrite(ctx context.Context, input
 	if upCommand == "" {
 		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(errors.New("无法确定将执行的 Compose 命令"))
 	}
-	if input.ConfirmedCommand != "" && input.ConfirmedCommand != upCommand {
+	if input.ConfirmedCommand != upCommand {
 		return dockerComposeRedeployPrepareResult{}, ipc.BadParam(docker.ErrComposeChanged)
 	}
 	baseContent, err := base64.StdEncoding.DecodeString(input.BaseContentBase64)

@@ -90,7 +90,7 @@ export function ComposeEditor({
         path: change.path,
         baseContentBase64: change.baseContentBase64,
         contentBase64: bytesToBase64(bytes),
-        ...(stack.upCommand ? { confirmedCommand: stack.upCommand } : {}),
+        confirmedCommand: stack.upCommand ?? "",
         ...(confirmation ? { productionConfirmation: confirmation } : {}),
       });
       pendingSave.resolve(true);

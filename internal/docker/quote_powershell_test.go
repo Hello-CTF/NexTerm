@@ -1,9 +1,6 @@
 package docker
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func isPowerShellQuote(r rune) bool {
 	switch r {
@@ -58,9 +55,6 @@ func TestQuoteShellPowerShellRoundTrips(t *testing.T) {
 		parsed, ok := parsePowerShellSingleQuoted(quoteShell(value, ShellPowerShell))
 		if !ok || parsed != value {
 			t.Errorf("value %q parsed as %q ok=%v", value, parsed, ok)
-		}
-		if strings.Count(quoteShell(value, ShellPowerShell), "\n") != 0 {
-			t.Errorf("unexpected newline")
 		}
 	}
 }

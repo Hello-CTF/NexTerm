@@ -118,9 +118,14 @@ func newRedeployIPCFixture(t *testing.T) *redeployIPCFixture {
 	}
 }
 
-func (f *redeployIPCFixture) request(base, content string) dockerComposeRedeployIPCRequest {
+func (f *redeployIPCFixture) request(t *testing.T, base, content string) dockerComposeRedeployIPCRequest {
+	t.Helper()
+	stack, err := f.service.docker.ComposeStack(f.ctx, f.connected.ID, "shop")
+	if err != nil || stack.UpCommand == "" {
+		t.Fatalf("stack = %+v, %v", stack, err)
+	}
 	return dockerComposeRedeployIPCRequest{
-		SessionID: f.connected.ID, Project: "shop", Path: f.path,
+		SessionID: f.connected.ID, Project: "shop", Path: f.path, ConfirmedCommand: stack.UpCommand,
 		BaseContentBase64: base64.StdEncoding.EncodeToString([]byte(base)),
 		ContentBase64:     base64.StdEncoding.EncodeToString([]byte(content)),
 	}
@@ -145,7 +150,7 @@ func (f *redeployIPCFixture) content(t *testing.T) string {
 func TestComposeRedeployIPCConfirmsActualBytesBeforeWrite(t *testing.T) {
 	fixture := newRedeployIPCFixture(t)
 	fixture.write(t, "old\n")
-	request := fixture.request("old\n", "new\n")
+	request := fixture.request(t, "old\n", "new\n")
 	response := dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", request)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
 		t.Fatalf("unconfirmed response = %+v", response)
@@ -191,13 +196,13 @@ func TestComposeRedeployIPCConfirmsActualBytesBeforeWrite(t *testing.T) {
 		t.Fatal("redeploy ticket was accepted twice")
 	}
 
-	stale := fixture.request("old\n", "must-not-win\n")
+	stale := fixture.request(t, "old\n", "must-not-win\n")
 	response = dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", stale)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || fixture.content(t) != "new\n" {
 		t.Fatalf("stale base response = %+v content=%q", response, fixture.content(t))
 	}
 
-	changed := fixture.request("new\n", "confirmed-new\n")
+	changed := fixture.request(t, "new\n", "confirmed-new\n")
 	response = dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", changed)
 	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeNeedsConfirm {
 		t.Fatalf("changed content did not require production confirmation: %+v", response)
@@ -285,21 +290,21 @@ func TestComposeRedeployBackupFollowsStoredAssetOption(t *testing.T) {
 
 	// Default: the asset has no option, so no backup is requested.
 	fixture.write(t, "v1\n")
-	fixture.confirmedPrepare(t, fixture.request("v1\n", "v2\n"))
+	fixture.confirmedPrepare(t, fixture.request(t, "v1\n", "v2\n"))
 	if _, ok := readBackup(); ok || fixture.content(t) != "v2\n" {
 		t.Fatalf("default overwrite produced a backup or lost the write: content=%q", fixture.content(t))
 	}
 
 	// Enabling the option after the session connected applies without reconnecting.
 	fixture.setBackupOption(t, true)
-	fixture.confirmedPrepare(t, fixture.request("v2\n", "v3\n"))
+	fixture.confirmedPrepare(t, fixture.request(t, "v2\n", "v3\n"))
 	if got, ok := readBackup(); !ok || got != "v2\n" || fixture.content(t) != "v3\n" {
 		t.Fatalf("enabled overwrite: backup=%q ok=%v content=%q", got, ok, fixture.content(t))
 	}
 
 	// Disabling again stops further backups: the stale backup is not refreshed.
 	fixture.setBackupOption(t, false)
-	fixture.confirmedPrepare(t, fixture.request("v3\n", "v4\n"))
+	fixture.confirmedPrepare(t, fixture.request(t, "v3\n", "v4\n"))
 	if got, _ := readBackup(); got != "v2\n" || fixture.content(t) != "v4\n" {
 		t.Fatalf("disabled overwrite: backup=%q content=%q", got, fixture.content(t))
 	}
@@ -329,7 +334,7 @@ func (f *redeployIPCFixture) confirmed(t *testing.T, request dockerComposeRedepl
 func TestComposeRedeployPrepareReturnsAndBindsCommand(t *testing.T) {
 	fixture := newRedeployIPCFixture(t)
 	fixture.write(t, "old\n")
-	request := fixture.request("old\n", "new\n")
+	request := fixture.request(t, "old\n", "new\n")
 	stack, err := fixture.service.docker.ComposeStack(fixture.ctx, fixture.connected.ID, "shop")
 	if err != nil || stack.UpCommand == "" {
 		t.Fatalf("stack = %+v, %v", stack, err)
@@ -386,5 +391,17 @@ func TestDockerMutationCommandHashFollowsUpCommand(t *testing.T) {
 	}
 	if one == nil || two == nil || one.commandHash == two.commandHash {
 		t.Fatalf("command hash did not change: %+v %+v", one, two)
+	}
+}
+
+func TestComposeRedeployPrepareRequiresConfirmedCommand(t *testing.T) {
+	fixture := newRedeployIPCFixture(t)
+	fixture.write(t, "old\n")
+	request := fixture.request(t, "old\n", "new\n")
+	request.ConfirmedCommand = ""
+	request.ProductionConfirmation = &dockerProductionConfirmation{Confirmed: true}
+	response := dispatchExecBatchTest(fixture.dispatcher, fixture.ctx, "docker_compose_redeploy_prepare", request)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam || fixture.content(t) != "old\n" {
+		t.Fatalf("missing confirmedCommand response = %+v content=%q", response, fixture.content(t))
 	}
 }
