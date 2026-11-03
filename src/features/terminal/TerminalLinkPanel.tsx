@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useUi } from "../../app/store";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
-import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
+import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
 import { terminalIntegrations } from "./terminalIntegrations";
 import type { ExtractedLink } from "./terminalLinkProvider";
 import "./terminalLinks.css";
@@ -48,8 +48,14 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
     else if (e.key === "Escape") onClose();
     else if (e.key === "Enter" && e.shiftKey) {
       if (openInApp && current) {
-        openInApp(current.url);
-        onClose();
+        const plan = planTerminalLink(current.url);
+        if (plan.kind === "external" && /^https?:/i.test(plan.url)) {
+          openInApp(plan.url);
+          onClose();
+        } else {
+          const why = plan.kind === "blocked" ? `（${plan.reason}）` : "";
+          useUi.getState().pushToast("info", `只能在 NexTerm 中打开 http/https 链接${why}`);
+        }
       }
     } else if (e.key === "Enter") {
       if (current) onOpen(current.url);
