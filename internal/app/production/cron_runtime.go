@@ -311,9 +311,71 @@ type cronRuntime struct {
 	profiles       profileLookup
 	scopeValidator agent.ScopeValidator
 
+	// Injection points for the supervisor; nil selects the scheduler, a
+	// cancellable timer and the wall clock.
+	run  func(context.Context) error
+	wait func(context.Context, time.Duration) error
+	now  func() time.Time
+
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+}
+
+const (
+	cronRestartBackoffInitial = time.Second
+	cronRestartBackoffMax     = 5 * time.Minute
+)
+
+func (c *cronRuntime) runScheduler(ctx context.Context) error {
+	if c.run != nil {
+		return c.run(ctx)
+	}
+	return c.scheduler.Run(ctx)
+}
+
+func (c *cronRuntime) sleep(ctx context.Context, d time.Duration) error {
+	if c.wait != nil {
+		return c.wait(ctx, d)
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *cronRuntime) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// supervise restarts the scheduler after a storage or internal failure so a
+// transient error cannot silently stop every scheduled job until the process
+// restarts. A run that lasted at least the maximum backoff counts as healthy
+// and resets the delay.
+func (c *cronRuntime) supervise(ctx context.Context) {
+	backoff := cronRestartBackoffInitial
+	for ctx.Err() == nil {
+		started := c.clock()
+		err := c.runScheduler(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if c.clock().Sub(started) >= cronRestartBackoffMax {
+			backoff = cronRestartBackoffInitial
+		}
+		slog.Error("cron scheduler stopped; restarting", "error", err, "retryIn", backoff)
+		if c.sleep(ctx, backoff) != nil {
+			return
+		}
+		backoff = min(backoff*2, cronRestartBackoffMax)
+	}
 }
 
 type profileLookup interface {
@@ -399,9 +461,7 @@ func (c *cronRuntime) Start(ctx context.Context) error {
 	c.done = done
 	go func() {
 		defer close(done)
-		if err := c.scheduler.Run(runCtx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("cron scheduler stopped", "error", err)
-		}
+		c.supervise(runCtx)
 	}()
 	return nil
 }
