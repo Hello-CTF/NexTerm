@@ -28,7 +28,7 @@ locales:
       「打开浏览器就能连服务器」成立。如果需要更强的隔离，请勿在这台微服上
       保存生产环境的 SSH 口令，请改用密钥认证。
 
-      磁盘挂载（sshfs）依赖「挂载 FUSE 文件系统」权限；未授权时该入口不可用，并显示原因。
+      多用户服务端不支持挂载：它会在服务器上用服务进程的 SSH 配置和凭据执行 sshfs，因此磁盘挂载入口在此不可用，并显示原因。
 
       端口转发在此平台上不可用：平台的端口暴露为未经鉴权的裸 TCP，应用侧无法弥补。
       需要把远端端口开放给外部时，请改用微服平台自带的转发功能。
@@ -47,8 +47,9 @@ locales:
       your own hardware, and this is what makes "open a browser and connect" possible. If you need
       stronger isolation, do not store production SSH passwords here — use key authentication.
 
-      Disk mounting (sshfs) requires the "mount FUSE filesystem" permission. Without it the entry
-      is greyed out with a readable reason.
+      Disk mounting is not supported on a multi-user server: it would run sshfs on the server with
+      the service process's SSH configuration and credentials, so the entry is unavailable and
+      shows this reason.
 
       Port forwarding is not available on this platform: the platform exposes ports as raw TCP with
       no authentication, and the app cannot compensate for that. To expose a remote port, use the
@@ -59,5 +60,4 @@ permissions:
     - net.internet
     - net.lan
   optional:
-    - fuse.mount
     - user.notify

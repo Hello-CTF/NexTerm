@@ -42,4 +42,7 @@ type Config struct {
 	NewID          func() string
 	Now            func() time.Time
 	OnError        func(error)
+	// MultiUser disables mounting for account-based servers, where sshfs would run with the service
+	// process's SSH configuration and credentials.
+	MultiUser bool
 }
