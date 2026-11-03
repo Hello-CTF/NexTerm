@@ -76,7 +76,7 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 		prev = State{Status: old.Status, Since: old.Since, FiredAt: old.FiredAt, ResolvedAt: old.ResolvedAt, RecoveringSince: old.RecoveringSince}
 	}
 	next, emit := StepOffline(prev, OfflineInput{
-		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started), Baseline: e.baseline(), QuietEnd: quietEnd, G: GapTolerance(e.interval).Milliseconds(),
+		Now: now, LastHeard: lastHeard, Effective: max(lastHeard, e.started, e.ownerUsableSince[dev.UserID]), Baseline: e.baseline(), QuietEnd: quietEnd, G: GapTolerance(e.interval).Milliseconds(),
 		Enabled: enabled, Muted: muted, S: suspectAfter, A: alertAfter,
 	})
 	if emit == nil && sameState(prev, next) {

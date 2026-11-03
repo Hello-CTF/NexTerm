@@ -645,9 +645,34 @@ func TestEvaluatorDisabledOwnerDatabase(t *testing.T) {
 		if h.offlineStateAny(dev) || len(h.events(dev)) != 0 || len(h.audits("device_alert_fired")) != 0 {
 			t.Fatalf("disabled owner was evaluated: %+v", h.events(dev))
 		}
-		h.setOwnerState(owner, "reset_required") // still evaluated
+		h.setOwnerState(owner, "reset_required") // also skipped
 		h.tick(e, baseTS+31*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("reset_required owner was evaluated: %+v", h.events(dev))
+		}
+		h.setOwnerState(owner, "active")
 		h.tick(e, baseTS+32*minMS)
+		h.tick(e, baseTS+33*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("reset_required owner is skipped and timed from the recovery", func(t *testing.T) {
+		h, e, _, owner, dev := offlineSetup(t, "off-reset-required")
+		h.setOwnerState(owner, "reset_required")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+30*minMS)
+		if h.status(dev) != "" || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		h.setOwnerState(owner, "active")
+		h.tick(e, baseTS+31*minMS)
+		h.tick(e, baseTS+33*minMS)
+		if h.status(dev) == StatusSuspect || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		h.tick(e, baseTS+41*minMS)
+		h.tick(e, baseTS+42*minMS)
 		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
 			t.Fatalf("events = %+v", evs)
 		}
@@ -662,7 +687,20 @@ func TestEvaluatorDisabledOwnerDatabase(t *testing.T) {
 		}
 		h.setOwnerState(owner, "active")
 		h.tick(e, baseTS+31*minMS)
-		h.tick(e, baseTS+32*minMS)
+		h.tick(e, baseTS+33*minMS) // 2 minutes after re-enabling
+		if st := h.status(dev); st == StatusSuspect || st == StatusFiring || len(h.events(dev)) != 0 {
+			t.Fatalf("alerted right after re-enabling: %q %+v", st, h.events(dev))
+		}
+		h.tick(e, baseTS+36*minMS) // S after re-enabling
+		if h.status(dev) != StatusSuspect || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		h.tick(e, baseTS+40*minMS)
+		if len(h.events(dev)) != 0 {
+			t.Fatalf("fired before A: %+v", h.events(dev))
+		}
+		h.tick(e, baseTS+41*minMS) // A after re-enabling
+		h.tick(e, baseTS+42*minMS)
 		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
 			t.Fatalf("events = %+v", evs)
 		}

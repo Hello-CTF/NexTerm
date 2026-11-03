@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -52,7 +53,10 @@ type Evaluator struct {
 	// prevLastTick is the last evaluation time of the previous run (0 on a first deployment); it is read
 	// once, by the first evaluating Tick.
 	prevLastTick int64
-	tickLoaded   bool
+	// ownerWasUnusable and ownerUsableSince are only touched inside Tick.
+	ownerWasUnusable map[string]bool
+	ownerUsableSince map[string]int64
+	tickLoaded       bool
 
 	tickMu      sync.Mutex
 	lastCleanup int64
@@ -72,6 +76,7 @@ func NewEvaluator(cfg Config) (*Evaluator, error) {
 	e := &Evaluator{
 		db: cfg.DB, interval: cfg.Interval, now: cfg.Now, presence: cfg.Presence, logger: cfg.Logger,
 		after: time.After, lastOnline: map[string]int64{},
+		ownerWasUnusable: map[string]bool{}, ownerUsableSince: map[string]int64{},
 	}
 	if e.interval <= 0 {
 		e.interval = DefaultInterval
@@ -127,16 +132,17 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	disabled, err := disabledOwners(ctx, e.db)
+	unusable, err := unusableOwners(ctx, e.db)
 	if err != nil {
 		return err
 	}
+	e.trackOwners(now, unusable, devices)
 	var errs []error
 	for _, dev := range devices {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if disabled[dev.UserID] {
+		if unusable[dev.UserID] {
 			continue // existing states are kept for when the account is enabled again
 		}
 		if err := e.evaluateDevice(ctx, now, dev, settings[dev.ID], states, off); err != nil {
@@ -156,18 +162,34 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// disabledOwners returns the ids of disabled accounts in one query.
-func disabledOwners(ctx context.Context, db *gorm.DB) (map[string]bool, error) {
+// unusableOwners returns the ids of accounts that are disabled or must reset their password, in one query.
+func unusableOwners(ctx context.Context, db *gorm.DB) (map[string]bool, error) {
 	u := query.Use(db).AppUser
-	rows, err := u.WithContext(ctx).Select(u.ID).Where(u.State.Eq("disabled")).Find()
+	rows, err := u.WithContext(ctx).Select(u.ID).
+		Where(u.State.In(string(account.StateDisabled), string(account.StateResetRequired))).Find()
 	if err != nil {
-		return nil, fmt.Errorf("list disabled accounts: %w", err)
+		return nil, fmt.Errorf("list unusable accounts: %w", err)
 	}
 	out := make(map[string]bool, len(rows))
 	for _, r := range rows {
 		out[r.ID] = true
 	}
 	return out, nil
+}
+
+// trackOwners remembers when each owner became usable again after being skipped, so silence is timed
+// from then and a re-enabled account does not alert at once. The state lives in memory only.
+func (e *Evaluator) trackOwners(now int64, unusable map[string]bool, devices []*model.UserDevice) {
+	for _, dev := range devices {
+		owner := dev.UserID
+		switch {
+		case unusable[owner]:
+			e.ownerWasUnusable[owner] = true
+		case e.ownerWasUnusable[owner]:
+			delete(e.ownerWasUnusable, owner)
+			e.ownerUsableSince[owner] = now
+		}
+	}
 }
 
 // evaluateDevice runs every rule for one device and commits their changes in a single transaction.
