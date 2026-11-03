@@ -324,11 +324,11 @@ func TestOfflineRecoveryDatabase(t *testing.T) {
 }
 
 func TestOfflineRestartDatabase(t *testing.T) {
-	t.Run("old last_seen does not alert after restart", func(t *testing.T) {
+	t.Run("recent last_seen does not alert right after restart", func(t *testing.T) {
 		h := newHarness(t)
 		p := &presenceSet{}
 		owner, dev := h.device("off-restart-old")
-		h.agentRow(owner, dev, ptr(baseTS-3*60*minMS))
+		h.agentRow(owner, dev, ptr(baseTS-3*minMS)) // within A of the start: timed from the start
 		e := h.offlineEvaluator(p)
 		h.tick(e, baseTS+minMS) // warm-up
 		if h.status(dev) != "" {
@@ -453,4 +453,36 @@ func TestOfflineEligibilityDatabase(t *testing.T) {
 			t.Fatalf("status = %q", h.status(dev))
 		}
 	})
+}
+
+func TestOfflineDormantDatabase(t *testing.T) {
+	h := newHarness(t)
+	p := &presenceSet{}
+	owner, dev := h.device("off-dormant")
+	h.agentRow(owner, dev, ptr(baseTS-30*24*60*minMS))
+	e := h.offlineEvaluator(p)
+	for _, m := range []int64{2, 3, 10, 60, 24 * 60} {
+		h.tick(e, baseTS+m*minMS)
+		if h.status(dev) != StatusDormant || len(h.events(dev)) != 0 {
+			t.Fatalf("t+%dm: %q %+v", m, h.status(dev), h.events(dev))
+		}
+	}
+	if n := len(h.audits("device_alert_fired")) + len(h.audits("device_alert_resolved")); n != 0 {
+		t.Fatalf("audits = %d", n)
+	}
+	// Coming back online returns to ok without an event.
+	p.set(dev, true)
+	h.tick(e, baseTS+25*60*minMS)
+	if h.status(dev) != StatusOK || len(h.events(dev)) != 0 {
+		t.Fatalf("after recovery: %q %+v", h.status(dev), h.events(dev))
+	}
+	// A later outage alerts exactly once.
+	p.set(dev, false)
+	h.heard(dev, baseTS+25*60*minMS)
+	for _, m := range []int64{1, 6, 11, 20} {
+		h.tick(e, baseTS+25*60*minMS+m*minMS)
+	}
+	if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+		t.Fatalf("events = %+v", evs)
+	}
 }

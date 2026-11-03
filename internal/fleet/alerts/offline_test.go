@@ -73,3 +73,41 @@ func TestStepOfflineSinceAndRestart(t *testing.T) {
 		t.Fatalf("resolve = %+v %+v", got, emit)
 	}
 }
+
+func TestStepOfflineDormant(t *testing.T) {
+	const (
+		now = int64(10_000_000_000)
+		s   = 5 * minMS
+		a   = 10 * minMS
+	)
+	started := now - 60*minMS
+	in := func(heard int64, enabled bool) OfflineInput {
+		return OfflineInput{Now: now, LastHeard: heard, Effective: max(heard, started), Started: started, Enabled: enabled, S: s, A: a}
+	}
+	longGone := started - 30*24*60*minMS
+	cases := []struct {
+		name       string
+		st         State
+		in         OfflineInput
+		wantStatus string
+	}{
+		{"ok long gone goes dormant", State{Status: StatusOK}, in(longGone, true), StatusDormant},
+		{"just beyond A before start goes dormant", State{Status: StatusOK}, in(started-a-1, true), StatusDormant},
+		{"within A before start is normal", State{Status: StatusOK}, in(started-a+1, true), StatusSuspect},
+		{"dormant stays while silent", State{Status: StatusDormant}, in(longGone, true), StatusDormant},
+		{"dormant never escalates", State{Status: StatusDormant}, in(started-a-1, true), StatusDormant},
+		{"dormant heard again returns to ok", State{Status: StatusDormant}, in(now-minMS, true), StatusOK},
+		{"dormant disabled resets", State{Status: StatusDormant}, in(longGone, false), StatusOK},
+		{"persisted firing is unaffected", State{Status: StatusFiring, Since: longGone}, in(longGone, true), StatusFiring},
+		{"persisted suspect is unaffected", State{Status: StatusSuspect, Since: longGone}, in(longGone, true), StatusFiring},
+	}
+	for _, c := range cases {
+		got, emit := StepOffline(c.st, c.in)
+		if got.Status != c.wantStatus {
+			t.Errorf("%s: status = %s, want %s", c.name, got.Status, c.wantStatus)
+		}
+		if emit != nil && c.wantStatus != StatusFiring {
+			t.Errorf("%s: unexpected emit %+v", c.name, emit)
+		}
+	}
+}

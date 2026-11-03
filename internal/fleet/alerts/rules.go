@@ -28,6 +28,9 @@ const (
 	StatusFiring  = "firing"
 	StatusSuspect = "suspect"
 	StatusMuted   = "muted"
+	// StatusDormant marks a device that was already long gone when the evaluator started: a known
+	// offline device that never alerts until it is heard again.
+	StatusDormant = "dormant"
 
 	KindFired    = "fired"
 	KindResolved = "resolved"

@@ -39,8 +39,10 @@ type OfflineInput struct {
 	LastHeard int64
 	// Effective is max(LastHeard, evaluator start) so server downtime never counts as silence.
 	Effective int64
-	Enabled   bool
-	Muted     bool
+	// Started is the evaluator start time.
+	Started int64
+	Enabled bool
+	Muted   bool
 	// S is the suspect threshold and A (>= S) the alert threshold.
 	S, A int64
 }
@@ -67,6 +69,10 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 	silence := in.Now - in.Effective
 	heardAgo := in.Now - in.LastHeard
 	switch st.Status {
+	case StatusDormant:
+		if heardAgo < in.S {
+			return State{Status: StatusOK, ResolvedAt: st.ResolvedAt}, nil
+		}
 	case StatusSuspect:
 		switch {
 		case silence < in.S:
@@ -92,6 +98,11 @@ func StepOffline(st State, in OfflineInput) (State, *OfflineEmit) {
 			return State{Status: StatusOK, ResolvedAt: in.Now}, emit
 		}
 	default:
+		// A device with no live alert state that was already gone for longer than A before this
+		// evaluator started is a known-offline device, not a new outage.
+		if in.LastHeard < in.Started-in.A {
+			return State{Status: StatusDormant, ResolvedAt: st.ResolvedAt}, nil
+		}
 		if silence >= in.S {
 			return State{Status: StatusSuspect, Since: in.LastHeard, ResolvedAt: st.ResolvedAt}, nil
 		}
