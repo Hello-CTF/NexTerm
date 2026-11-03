@@ -8,7 +8,7 @@ import {
 } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { startPolling } from "../../app/usePolling";
-import { ask } from "../../ui/dialogs";
+import { ask, finishSave, pickSavePath } from "../../ui/dialogs";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
@@ -399,6 +399,22 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const exportCast = async (summary: TranscriptSummary) => {
+    if (summary.contentOmitted) return;
+    const day = new Date(summary.startedAt).toISOString().slice(0, 10);
+    const name = `${summary.assetName}-${day}.cast`.replace(/[\\/:*?"<>|]/g, "_");
+    const path = await pickSavePath(name);
+    if (!path) return;
+    try {
+      const result = await transcriptApi.exportCast(summary.id, path);
+      const where = await finishSave(path, name);
+      const estimated = result.timingEstimated ? "。部分时间戳缺失，已按固定间隔估算" : "";
+      pushToast(where ? "success" : "info", where ? `已导出到 ${where}${estimated}` : "已取消保存");
+    } catch (error) {
+      pushToast("error", `导出失败：${describeError(error)}。请更换保存位置后重试`);
+    }
+  };
+
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
     if (summary.syncOptIn) {
       const ok = await ask(
@@ -671,6 +687,19 @@ export function TranscriptHistoryPanel({
                 按录制时间轴回放终端输出，期间不可输入
               </span>
             )}
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
+              aria-label="导出 asciicast"
+              disabled={!selected || selected.contentOmitted}
+              title={
+                selected?.contentOmitted
+                  ? "该记录只同步了元数据，没有输出内容，无法导出"
+                  : "只导出终端输出，不含键盘输入；可用 asciinema 播放"
+              }
+              onClick={() => selected && void exportCast(selected)}
+            >
+              导出 asciicast
+            </button>
             <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label="记录视图">
               {(["text", "replay"] as const).map((mode) => (
                 <button

@@ -845,6 +845,14 @@ export const transcriptApi = {
   remove: (id: string) => call("transcript_delete", { id }) as Promise<void>,
   syncOptIn: (id: string, optIn: boolean) =>
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
+  // The generated command table has no transcript_export_cast yet, hence the casts.
+  exportCast: (id: string, path: string) =>
+    (call as (cmd: string, args?: unknown) => Promise<unknown>)("transcript_export_cast", { id, path }) as Promise<{
+      path: string;
+      bytes: number;
+      events: number;
+      timingEstimated: boolean;
+    }>,
 };
 
 export interface LayoutDto {
