@@ -23,6 +23,15 @@ type ProductionSave = {
   challenge: DockerConfirmationChallenge;
 };
 
+const STACK_CHANGED = "栈配置已变化";
+
+function isStackChanged(cause: unknown): boolean {
+  const message = typeof cause === "string" ? cause : (cause as { message?: unknown } | null)?.message;
+  return typeof message === "string" && message.includes(STACK_CHANGED);
+}
+
+const STACK_CHANGED_HINT = "栈配置已变化，请关闭后重新打开编辑器确认";
+
 export function ComposeEditor({
   sessionId,
   stack,
@@ -81,6 +90,7 @@ export function ComposeEditor({
         path: change.path,
         baseContentBase64: change.baseContentBase64,
         contentBase64: bytesToBase64(bytes),
+        ...(stack.upCommand ? { confirmedCommand: stack.upCommand } : {}),
         ...(confirmation ? { productionConfirmation: confirmation } : {}),
       });
       pendingSave.resolve(true);
@@ -97,10 +107,15 @@ export function ComposeEditor({
           ticket: prepared.ticket,
           channel,
         });
-        setStream({ id, sessionId, title: `${stack.project} · up -d`, channel, sink });
+        setStream({ id, sessionId, title: `${stack.project} · ${prepared.command}`, channel, sink });
       } catch (cause) {
         disposeChannel(channel);
-        setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
+        if (isStackChanged(cause)) {
+          setError(STACK_CHANGED_HINT);
+          onChanged();
+        } else {
+          setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
+        }
       }
     } catch (cause) {
       const challenge = getDockerConfirmationChallenge(cause);
@@ -111,7 +126,12 @@ export function ComposeEditor({
         pendingSave.resolve(false);
         setPending(null);
         setProduction(null);
-        setError(`保存或 redeploy 失败：${describeError(cause)}`);
+        if (isStackChanged(cause)) {
+          setError(STACK_CHANGED_HINT);
+          onChanged();
+        } else {
+          setError(`保存或 redeploy 失败：${describeError(cause)}`);
+        }
       }
     } finally {
       finishInFlight.current = false;
