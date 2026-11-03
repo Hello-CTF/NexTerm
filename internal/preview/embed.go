@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -32,12 +33,16 @@ type EmbedCheck struct {
 }
 
 // CheckEmbeddable asks the target which framing policy it sends. The embedding page is the app origin,
-// which never matches the target, so any frame-ancestors list without a wildcard blocks it.
+// which never matches the target, so any frame-ancestors list blocks it unless a wildcard admits the embedder.
 func CheckEmbeddable(ctx context.Context, client *http.Client, rawURL string) (EmbedCheck, error) {
 	return checkEmbeddable(ctx, client, rawURL, checkTimeout)
 }
 
 func checkEmbeddable(ctx context.Context, client *http.Client, rawURL string, timeout time.Duration) (EmbedCheck, error) {
+	return checkEmbeddableOn(ctx, client, rawURL, timeout, runtime.GOOS)
+}
+
+func checkEmbeddableOn(ctx context.Context, client *http.Client, rawURL string, timeout time.Duration, goos string) (EmbedCheck, error) {
 	target, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Hostname() == "" {
 		return EmbedCheck{}, errors.New("仅支持 http 和 https 地址")
@@ -79,7 +84,7 @@ func checkEmbeddable(ctx context.Context, client *http.Client, rawURL string, ti
 	defer resp.Body.Close()
 	_, _ = io.CopyN(io.Discard, resp.Body, maxBodyToRead)
 
-	if reason := blockReason(resp.Header); reason != "" {
+	if reason := blockReason(resp.Header, goos); reason != "" {
 		return EmbedCheck{Status: StatusBlocked, Reason: reason}, nil
 	}
 	return EmbedCheck{Status: StatusEmbeddable}, nil
@@ -94,7 +99,7 @@ func fetchHeaders(ctx context.Context, client *http.Client, method, target strin
 	return client.Do(req)
 }
 
-func blockReason(header http.Header) string {
+func blockReason(header http.Header, goos string) string {
 	for _, value := range header.Values("X-Frame-Options") {
 		for _, part := range strings.Split(value, ",") {
 			switch strings.ToUpper(strings.TrimSpace(part)) {
@@ -105,7 +110,7 @@ func blockReason(header http.Header) string {
 	}
 	for _, value := range header.Values("Content-Security-Policy") {
 		for _, policy := range strings.Split(value, ",") {
-			if frameAncestorsRestricted(policy) {
+			if frameAncestorsRestricted(policy, wildcardMatchesEmbedder(goos)) {
 				return "该网站通过 Content-Security-Policy 的 frame-ancestors 拒绝嵌入"
 			}
 		}
@@ -113,15 +118,23 @@ func blockReason(header http.Header) string {
 	return ""
 }
 
-// frameAncestorsRestricted reports whether one policy has a frame-ancestors directive without a wildcard.
-func frameAncestorsRestricted(policy string) bool {
+// wildcardMatchesEmbedder reports whether "*" in frame-ancestors admits the app origin. The wildcard
+// does not match non-network schemes such as wails://, so it only helps where the app is served from
+// http://wails.localhost (Windows) or https://wails.localhost (Android).
+func wildcardMatchesEmbedder(goos string) bool {
+	return goos == "windows" || goos == "android"
+}
+
+// frameAncestorsRestricted reports whether one policy has a frame-ancestors directive that excludes the
+// embedder; wildcard says whether "*" admits it.
+func frameAncestorsRestricted(policy string, wildcard bool) bool {
 	for _, directive := range strings.Split(policy, ";") {
 		fields := strings.Fields(directive)
 		if len(fields) == 0 || !strings.EqualFold(fields[0], "frame-ancestors") {
 			continue
 		}
 		for _, source := range fields[1:] {
-			if source == "*" {
+			if source == "*" && wildcard {
 				return false
 			}
 		}

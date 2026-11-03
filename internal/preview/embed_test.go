@@ -41,7 +41,6 @@ func TestCheckEmbeddableHeaders(t *testing.T) {
 		{"csp none", map[string][]string{"Content-Security-Policy": {"default-src 'self'; frame-ancestors 'none'"}}, StatusBlocked},
 		{"csp self", map[string][]string{"Content-Security-Policy": {"frame-ancestors 'self'"}}, StatusBlocked},
 		{"csp host", map[string][]string{"Content-Security-Policy": {"FRAME-ANCESTORS https://example.com"}}, StatusBlocked},
-		{"csp star", map[string][]string{"Content-Security-Policy": {"frame-ancestors *"}}, StatusEmbeddable},
 		{"csp second header blocks", map[string][]string{"Content-Security-Policy": {"frame-ancestors *", "frame-ancestors 'none'"}}, StatusBlocked},
 		{"csp comma policies", map[string][]string{"Content-Security-Policy": {"frame-ancestors *, frame-ancestors 'self'"}}, StatusBlocked},
 		{"csp without frame-ancestors", map[string][]string{"Content-Security-Policy": {"default-src 'none'; script-src 'self'"}}, StatusEmbeddable},
@@ -203,4 +202,24 @@ func hasCommand(d *ipc.Dispatcher, name string) bool {
 		}
 	}
 	return false
+}
+
+// A frame-ancestors wildcard matches only network schemes, so it admits the embedder only where the app
+// itself is served over http(s): Windows and Android.
+func TestBlockReasonWildcardDependsOnEmbedderScheme(t *testing.T) {
+	star := http.Header{"Content-Security-Policy": {"default-src 'self'; frame-ancestors *"}}
+	starAndHost := http.Header{"Content-Security-Policy": {"frame-ancestors * https://example.com"}}
+	for goos, wantBlocked := range map[string]bool{"windows": false, "android": false, "linux": true, "darwin": true, "ios": true} {
+		for name, header := range map[string]http.Header{"star": star, "star and host": starAndHost} {
+			if got := blockReason(header, goos) != ""; got != wantBlocked {
+				t.Errorf("%s %s: blocked = %v, want %v", goos, name, got, wantBlocked)
+			}
+		}
+		if blockReason(http.Header{"Content-Security-Policy": {"frame-ancestors 'none'"}}, goos) == "" {
+			t.Errorf("%s: 'none' not blocked", goos)
+		}
+		if blockReason(http.Header{"Content-Security-Policy": {"default-src 'self'"}}, goos) != "" {
+			t.Errorf("%s: policy without frame-ancestors blocked", goos)
+		}
+	}
 }
