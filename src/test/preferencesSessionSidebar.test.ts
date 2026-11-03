@@ -49,4 +49,18 @@ describe("session sidebar preference", () => {
     setSessionSidebarOpen(false);
     expect(listener).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps toggling and notifying when only writes fail", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    const listener = vi.fn();
+    const off = subscribeSessionSidebar(listener);
+    setSessionSidebarOpen(true);
+    expect(getSessionSidebarOpen()).toBe(true);
+    setSessionSidebarOpen(false);
+    expect(getSessionSidebarOpen()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+    off();
+  });
 });
