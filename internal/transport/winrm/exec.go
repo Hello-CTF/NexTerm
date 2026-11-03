@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -22,7 +23,7 @@ type powerShellRunner interface {
 }
 
 func quoteLiteral(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return psquote.Quote(value)
 }
 
 func wrapCommand(cwd, command string) string {

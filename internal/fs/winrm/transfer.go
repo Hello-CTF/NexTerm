@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const MaxWriteBytes = 48 * 1024
 
 func quoteLiteral(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+	return psquote.Quote(value)
 }
 
 func resolvePath(path string) string {

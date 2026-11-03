@@ -168,7 +168,7 @@ func staticContentType(path string) string {
 		return "font/otf"
 	case ".wasm":
 		return "application/wasm"
-	case ".txt":
+	case ".txt", ".ps1", ".sh":
 		return "text/plain; charset=utf-8"
 	default:
 		return "application/octet-stream"
