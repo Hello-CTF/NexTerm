@@ -189,7 +189,7 @@ describe("Desktop credential protection disable paths", () => {
     );
     const text = mounted.container.textContent ?? "";
     expect(text).toContain("启用档案同步并解锁凭据库后");
-    expect(text).toContain("端到端加密同步");
+    expect(text).toContain("才会加密同步");
     expect(text).not.toContain("不会上传");
   });
 });

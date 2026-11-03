@@ -870,7 +870,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
           </div>
           <p className="nx-hint mb-3.5">
-            配置 OpenAI 兼容端点，支持云端模型及本地 Ollama、LM Studio、vLLM。密钥加密保存在当前实例；启用档案同步并解锁凭据库后，才会端到端加密同步。
+            配置 OpenAI 兼容端点，支持云端模型及本地 Ollama、LM Studio、vLLM。密钥加密保存在当前实例；启用档案同步并解锁凭据库后，才会加密同步。
           </p>
 
           <ModelManager />

@@ -81,7 +81,7 @@ export function knownHostPayload(k: SyncCollectKnownHost): unknown {
 
 // aiProfilePayload mirrors aiProfileObject: field order matches the Go struct; empty fallbackModel and maxTokens/
 // timeout pointers are omitted via omitempty, proxy/apiKey have no omitempty (default output null/empty string). apiKey is always plaintext
-// (the whole thing is end-to-end encrypted with the DEK), and the payload is only built when collect yields plaintext in revealed state.
+// (the whole thing is encrypted with the DEK), and the payload is only built when collect yields plaintext in revealed state.
 export function aiProfilePayload(p: SyncCollectAIProfile): unknown {
   const o: Record<string, unknown> = { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: p.apiKey ?? "", model: p.model };
   if (p.fallbackModel) o.fallbackModel = p.fallbackModel;

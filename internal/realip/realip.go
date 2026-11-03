@@ -12,8 +12,9 @@ import (
 type ctxKey struct{}
 
 // Resolver decides which peers are trusted proxies. The zero value trusts none.
-// trustForwardedFor is an explicit opt-in: a trusted CIDR alone only vouches for X-Forwarded-Proto, because a
-// proxy that appends to a client-supplied X-Forwarded-For would otherwise let clients pick their own address.
+// trustForwardedFor is an explicit opt-in so that deployments which listed a proxy only for X-Forwarded-Proto do
+// not start trusting X-Forwarded-For; a proxy that overwrites or appends to it is safe, one that passes the
+// client's header through unchanged is not.
 type Resolver struct {
 	trusted           []netip.Prefix
 	trustForwardedFor bool

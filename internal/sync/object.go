@@ -219,7 +219,7 @@ type knownHostObject struct {
 }
 
 // aiProfileObject fields correspond one-to-one with the internal/ai/profiles.Profile persisted form, plus the updatedAt revision.
-// apiKey is always plaintext in the payload (the whole payload is E2E-encrypted with the DEK) and must become an enc:v1: envelope before persisting.
+// apiKey is always plaintext in the payload (the whole payload is encrypted with the DEK) and must become an enc:v1: envelope before persisting.
 type aiProfileObject struct {
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
