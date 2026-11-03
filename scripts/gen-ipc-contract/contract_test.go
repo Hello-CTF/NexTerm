@@ -1618,6 +1618,63 @@ func TestOperationsVerticalContracts(t *testing.T) {
 	}
 }
 
+func TestHostProcessesVerticalContracts(t *testing.T) {
+	generated := generateForTest(t, nil)
+	commands := commandsByName(generated.commands)
+	tests := []struct {
+		name   string
+		nested bool
+		input  string
+		output string
+	}{
+		{name: "host_processes_list", input: "ProcessListArgs", output: "ProcessListResult"},
+		{name: "host_process_kill", input: "ProcessKillArgs", output: "ProcessKillResult"},
+	}
+	registry := newTypeRegistry()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command, ok := commands[test.name]
+			if !ok {
+				t.Fatalf("selected command %q is missing", test.name)
+			}
+			if command.Scope != "host-processes" || command.Nested != test.nested || command.Channel || command.Stream != "none" {
+				t.Fatalf("unexpected host-processes metadata: %+v", command)
+			}
+			input, err := registry.ref(command.Input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			output, err := registry.ref(command.Output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.TS != test.input || output.TS != test.output {
+				t.Fatalf("input/output = %q/%q, want %q/%q", input.TS, output.TS, test.input, test.output)
+			}
+		})
+	}
+	declarations := make(map[string]*tsDeclaration)
+	for _, declaration := range registry.declarations {
+		declarations[declaration.Name] = declaration
+	}
+	for name, want := range map[string][]string{
+		"HostProcess":       {"pid: number;", "ppid: number;", "argName?: string;", "started?: string;", "elapsedSec: number;"},
+		"ProcessListResult": {"processes: HostProcess[];", "skippedRows?: number;", "partial?: string[];"},
+		"ProcessKillArgs":   {"sessionId: string;", "name: string;", "ppid: number;", "started?: string;", "dryRun?: boolean;"},
+	} {
+		declaration := declarations[name]
+		if declaration == nil {
+			t.Errorf("%s declaration is missing", name)
+			continue
+		}
+		for _, field := range want {
+			if !strings.Contains(declaration.Body, field) {
+				t.Errorf("%s declaration is missing %q:\n%s", name, field, declaration.Body)
+			}
+		}
+	}
+}
+
 func TestRemainingLegacyCommandsAreExplicitlyDeferred(t *testing.T) {
 	generated := generateForTest(t, nil)
 	want := []string{
