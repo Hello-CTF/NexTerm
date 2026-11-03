@@ -20,6 +20,37 @@ function stripBrackets(address: string): string {
   return address.startsWith("[") && address.endsWith("]") ? address.slice(1, -1) : address;
 }
 
+function isIPv4(value: string): boolean {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function isIPv6(value: string): boolean {
+  if (!/^[0-9a-fA-F:.]+$/.test(value) || !value.includes(":")) return false;
+  const halves = value.split("::");
+  if (halves.length > 2) return false;
+  const groups = (half: string) => (half === "" ? [] : half.split(":"));
+  const all = halves.flatMap(groups);
+  let units = 0;
+  for (let i = 0; i < all.length; i++) {
+    const group = all[i];
+    if (group.includes(".")) {
+      // An embedded IPv4 address is only valid as the final group and counts as two.
+      if (i !== all.length - 1 || !isIPv4(group)) return false;
+      units += 2;
+    } else if (/^[0-9a-fA-F]{1,4}$/.test(group)) {
+      units += 1;
+    } else {
+      return false;
+    }
+  }
+  return halves.length === 2 ? units < 8 : units === 8;
+}
+
+function isIPLiteral(value: string): boolean {
+  return value === "" || isIPv4(value) || isIPv6(value);
+}
+
 // Parses ContainerSummary.ports (moby and docker CLI formats). Only published tcp ports are returned, one entry per
 // host port with IPv4 bindings preferred; ranges expand to at most 16 ports.
 export function parsePublishedPorts(ports: string): PublishedPort[] {
@@ -33,6 +64,7 @@ export function parsePublishedPorts(ports: string): PublishedPort[] {
     if (protocol !== "tcp") continue;
     const colon = hostSide.lastIndexOf(":");
     const hostIp = colon < 0 ? "" : stripBrackets(hostSide.slice(0, colon));
+    if (!isIPLiteral(hostIp)) continue;
     const hostRange = parseRange(colon < 0 ? hostSide : hostSide.slice(colon + 1));
     const containerRange = parseRange(containerSide);
     if (!hostRange || !containerRange) continue;
@@ -46,10 +78,4 @@ export function parsePublishedPorts(ports: string): PublishedPort[] {
     }
   }
   return [...byHostPort.values()];
-}
-
-// The address to dial on the container host for a published binding.
-export function dialHostFor(hostIp: string): string {
-  const address = stripBrackets(hostIp.trim());
-  return address === "" || address === "0.0.0.0" || address === "::" ? "127.0.0.1" : address;
 }

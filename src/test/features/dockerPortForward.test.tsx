@@ -20,10 +20,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
     dockerApi: { ...actual.dockerApi, ps: mocks.ps, images: mocks.images, composeStacks: mocks.composeStacks },
   };
 });
-vi.mock("../../features/preview/forwardAndOpen", () => ({ forwardAndOpen: mocks.forwardAndOpen }));
+vi.mock("../../features/preview/forwardAndOpen", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../features/preview/forwardAndOpen")>()),
+  forwardAndOpen: mocks.forwardAndOpen,
+}));
 
 import { DockerPanel } from "../../features/docker/DockerPanel";
-import { dialHostFor, parsePublishedPorts } from "../../features/docker/containerPorts";
+import { parsePublishedPorts } from "../../features/docker/containerPorts";
 import { useUi } from "../../app/store";
 
 describe("parsePublishedPorts", () => {
@@ -54,14 +57,28 @@ describe("parsePublishedPorts", () => {
   });
 });
 
-describe("dialHostFor", () => {
-  it("maps wildcard binds to loopback and keeps specific addresses", () => {
-    expect(dialHostFor("0.0.0.0")).toBe("127.0.0.1");
-    expect(dialHostFor("::")).toBe("127.0.0.1");
-    expect(dialHostFor("")).toBe("127.0.0.1");
-    expect(dialHostFor("127.0.0.1")).toBe("127.0.0.1");
-    expect(dialHostFor("192.168.1.5")).toBe("192.168.1.5");
-    expect(dialHostFor("[::1]")).toBe("::1");
+describe("parsePublishedPorts host validation", () => {
+  it("accepts empty, IPv4 and IPv6 literals", () => {
+    expect(parsePublishedPorts("[2001:db8::1]:80->80/tcp")[0].hostIp).toBe("2001:db8::1");
+    expect(parsePublishedPorts("[::ffff:192.168.1.5]:80->80/tcp")[0].hostIp).toBe("::ffff:192.168.1.5");
+    expect(parsePublishedPorts("[1:2:3:4:5:6:7:8]:80->80/tcp")).toHaveLength(1);
+    expect(parsePublishedPorts("127.0.0.1:80->80/tcp")).toHaveLength(1);
+  });
+
+  it("skips entries whose host is not an IP literal", () => {
+    for (const bad of [
+      "evil.example:80->80/tcp",
+      "1.2.3.999:80->80/tcp",
+      "1.2.3:80->80/tcp",
+      "[fe80::1%eth0]:80->80/tcp",
+      "[1:2:3:4:5:6:7:8:9]:80->80/tcp",
+      "[1::2::3]:80->80/tcp",
+      "[g::1]:80->80/tcp",
+      "1.2.3.4 :80->80/tcp",
+      "[::1:80->80/tcp",
+    ]) {
+      expect(parsePublishedPorts(bad), bad).toEqual([]);
+    }
   });
 });
 
@@ -97,18 +114,32 @@ async function mountPanel(info: SessionInfo, containers: ContainerSummary[]) {
 const portButtons = () => mounted!.container.querySelectorAll<HTMLButtonElement>('button[aria-label^="转发并打开端口"]');
 
 describe("container port forwarding buttons", () => {
-  it("forwards a published port of a running container on a connected ssh session", async () => {
-    await mountPanel(session("ssh", "connected"), [container("web", "running", "0.0.0.0:8080->80/tcp, [::]:8080->80/tcp")]);
+  const clickedHost = async (ports: string) => {
+    await mountPanel(session("ssh", "connected"), [container("web", "running", ports)]);
     expect(portButtons()).toHaveLength(1);
-    expect(portButtons()[0].getAttribute("aria-label")).toBe("转发并打开端口 8080");
     portButtons()[0].click();
-    expect(mocks.forwardAndOpen).toHaveBeenCalledWith({ sessionId: "s1", host: "127.0.0.1", port: 8080 });
+    return mocks.forwardAndOpen.mock.calls.at(-1)?.[0];
+  };
+
+  it("dials loopback for a wildcard IPv4 bind", async () => {
+    expect(await clickedHost("0.0.0.0:8080->80/tcp")).toEqual({ sessionId: "s1", host: "127.0.0.1", port: 8080 });
+  });
+
+  it("dials ::1 for an IPv6-only wildcard bind", async () => {
+    expect(await clickedHost("[::]:8080->80/tcp")).toMatchObject({ host: "::1", port: 8080 });
+  });
+
+  it("prefers loopback IPv4 when the same port is also bound on IPv4", async () => {
+    expect(await clickedHost(":::8080->80/tcp, 0.0.0.0:8080->80/tcp")).toMatchObject({ host: "127.0.0.1" });
   });
 
   it("dials a specific bind address as is", async () => {
-    await mountPanel(session("ssh", "connected"), [container("web", "running", "192.168.1.5:9090->80/tcp")]);
-    portButtons()[0].click();
-    expect(mocks.forwardAndOpen).toHaveBeenCalledWith({ sessionId: "s1", host: "192.168.1.5", port: 9090 });
+    expect(await clickedHost("192.168.1.5:9090->80/tcp")).toEqual({ sessionId: "s1", host: "192.168.1.5", port: 9090 });
+  });
+
+  it("shows no button for invalid host addresses", async () => {
+    await mountPanel(session("ssh", "connected"), [container("web", "running", "evil.example:8080->80/tcp, 1.2.3.999:80->80/tcp")]);
+    expect(portButtons()).toHaveLength(0);
   });
 
   it("is hidden for non-ssh sessions, disconnected sessions and stopped containers", async () => {

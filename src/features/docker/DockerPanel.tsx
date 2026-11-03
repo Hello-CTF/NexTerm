@@ -25,8 +25,8 @@ import {
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { useCompactWidth } from "./useCompactWidth";
 import { ContainerInsight } from "./ContainerInsight";
-import { dialHostFor, parsePublishedPorts } from "./containerPorts";
-import { forwardAndOpen } from "../preview/forwardAndOpen";
+import { parsePublishedPorts } from "./containerPorts";
+import { forwardAndOpen, targetHostFor } from "../preview/forwardAndOpen";
 import { ComposeStackHeader } from "./ComposeStackHeader";
 import { groupContainersByCompose } from "./composeGrouping";
 import { DockerDiskPanel } from "./DockerDiskPanel";
@@ -158,21 +158,27 @@ function PortForwardButtons({ sessionId, container }: { sessionId: string; conta
   if (published.length === 0) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
-      {published.slice(0, MAX_PORT_BUTTONS).map((p) => (
-        <button
-          type="button"
-          key={p.hostPort}
-          className="nx-btn nx-btn-ghost nx-btn-sm nx-mono !px-1.5 !py-0 text-[10.5px]"
-          title={`通过 SSH 临时转发 ${dialHostFor(p.hostIp)}:${p.hostPort} 并打开`}
-          aria-label={`转发并打开端口 ${p.hostPort}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            void forwardAndOpen({ sessionId, host: dialHostFor(p.hostIp), port: p.hostPort });
-          }}
-        >
-          转发并打开 :{p.hostPort}
-        </button>
-      ))}
+      {published.slice(0, MAX_PORT_BUTTONS).map((p) => {
+        const host = targetHostFor(
+          { address: p.hostIp, port: p.hostPort },
+          published.map((x) => ({ address: x.hostIp, port: x.hostPort })),
+        );
+        return (
+          <button
+            type="button"
+            key={p.hostPort}
+            className="nx-btn nx-btn-ghost nx-btn-sm nx-mono !px-1.5 !py-0 text-[10.5px]"
+            title={`通过 SSH 临时转发 ${host}:${p.hostPort} 并打开`}
+            aria-label={`转发并打开端口 ${p.hostPort}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void forwardAndOpen({ sessionId, host, port: p.hostPort });
+            }}
+          >
+            转发并打开 :{p.hostPort}
+          </button>
+        );
+      })}
     </span>
   );
 }
