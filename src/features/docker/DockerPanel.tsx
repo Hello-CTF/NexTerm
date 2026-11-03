@@ -25,6 +25,8 @@ import {
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { useCompactWidth } from "./useCompactWidth";
 import { ContainerInsight } from "./ContainerInsight";
+import { dialHostFor, parsePublishedPorts } from "./containerPorts";
+import { forwardAndOpen } from "../preview/forwardAndOpen";
 import { ComposeStackHeader } from "./ComposeStackHeader";
 import { groupContainersByCompose } from "./composeGrouping";
 import { DockerDiskPanel } from "./DockerDiskPanel";
@@ -148,6 +150,33 @@ function TableQueryBody({
   return <>{children}</>;
 }
 
+const MAX_PORT_BUTTONS = 4;
+
+function PortForwardButtons({ sessionId, container }: { sessionId: string; container: ContainerSummary }) {
+  if (container.state !== "running") return null;
+  const published = parsePublishedPorts(container.ports);
+  if (published.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {published.slice(0, MAX_PORT_BUTTONS).map((p) => (
+        <button
+          type="button"
+          key={p.hostPort}
+          className="nx-btn nx-btn-ghost nx-btn-sm nx-mono !px-1.5 !py-0 text-[10.5px]"
+          title={`通过 SSH 临时转发 ${dialHostFor(p.hostIp)}:${p.hostPort} 并打开`}
+          aria-label={`转发并打开端口 ${p.hostPort}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            void forwardAndOpen({ sessionId, host: dialHostFor(p.hostIp), port: p.hostPort });
+          }}
+        >
+          转发并打开 :{p.hostPort}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 // Docker refuses to remove a container that is running, paused or restarting, so only settled ones are offered.
 function canRemoveContainer(c: ContainerSummary): boolean {
   return c.state === "exited" || c.state === "created" || c.state === "dead";
@@ -220,6 +249,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const pushToast = useUi((s) => s.pushToast);
   const session = useUi((state) => state.sessions.find((entry) => entry.id === sessionId));
   const sessionStatus = session?.status;
+  const canForwardPorts = session?.kind === "ssh" && sessionStatus === "connected";
   const sessionAssetId = session?.assetId ?? null;
   const [tab, setTab] = useState<"containers" | "images" | "disk">("containers");
   const [attached, setAttached] = useState<LogAttach | null>(null);
@@ -769,6 +799,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   <div className="nx-mono mt-0.5 line-clamp-2 break-all text-[10.5px] text-neutral-500" title={`${c.image}${c.ports ? ` · ${c.ports}` : ""}`}>
                     {c.image}{c.ports ? ` · ${c.ports}` : ""}
                   </div>
+                  {canForwardPorts && <PortForwardButtons sessionId={sessionId} container={c} />}
                   <div className={`line-clamp-2 text-[10.5px] ${c.state === "running" ? "text-neutral-500" : "text-red-300"}`} title={c.status}>{c.status}</div>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
@@ -1072,8 +1103,9 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                   <td className="nx-mono truncate" title={c.image}>
                     {c.image}
                   </td>
-                  <td className="nx-mono truncate text-[10.5px]" title={c.ports || "—"}>
-                    {c.ports || "—"}
+                  <td className="nx-mono text-[10.5px]">
+                    <span className="block truncate" title={c.ports || "—"}>{c.ports || "—"}</span>
+                    {canForwardPorts && <PortForwardButtons sessionId={sessionId} container={c} />}
                   </td>
                   <td className="nx-right sticky right-0 bg-[var(--nx-bg-pane)] shadow-[inset_1px_0_0_var(--nx-border)]">
                     <span className="inline-flex flex-wrap items-center justify-end gap-0.5">
