@@ -173,6 +173,11 @@ func (e *Evaluator) evaluateDevice(ctx context.Context, now int64, dev *model.Us
 				return err
 			}
 			if c.event != nil {
+				if c.event.Kind == KindResolved {
+					if err := ackFired(ctx, tx, c.event.DeviceID, c.event.RuleKey, now); err != nil {
+						return err
+					}
+				}
 				if err := insertEvent(ctx, tx, c.event); err != nil {
 					return err
 				}

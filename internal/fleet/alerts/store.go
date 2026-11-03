@@ -87,3 +87,15 @@ func deleteEventsBefore(ctx context.Context, db *gorm.DB, cutoff int64) error {
 	}
 	return nil
 }
+
+// ackFired acknowledges the device's unacknowledged fired events of one rule; a resolve supersedes them.
+// GEN-TODO: DeviceAlertEvent ack update by device and rule.
+func ackFired(ctx context.Context, tx *gorm.DB, deviceID, rule string, now int64) error {
+	err := tx.WithContext(ctx).Model(&model.DeviceAlertEvent{}).
+		Where("device_id = ? AND rule_key = ? AND kind = ? AND acked_at IS NULL", deviceID, rule, KindFired).
+		Update("acked_at", now).Error
+	if err != nil {
+		return fmt.Errorf("ack fired alert events: %w", err)
+	}
+	return nil
+}

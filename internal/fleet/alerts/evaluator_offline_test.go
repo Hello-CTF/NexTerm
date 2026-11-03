@@ -712,3 +712,77 @@ func (h *harness) offlineStateAny(deviceID string) bool {
 	}
 	return false
 }
+
+func listKinds(t *testing.T, h *harness, owner, dev string) map[string]int {
+	t.Helper()
+	got, err := h.service().List(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int{}
+	for _, ev := range got.Events {
+		if ev.DeviceID == dev {
+			out[ev.Rule+":"+ev.Kind]++
+		}
+	}
+	return out
+}
+
+func TestResolvedAcknowledgesFiredDatabase(t *testing.T) {
+	t.Run("threshold rule", func(t *testing.T) {
+		h := newHarness(t)
+		owner, dev := h.device("ack-cpu")
+		h.addEvent(owner, dev, "mem", KindFired, baseTS-minMS)
+		e := h.evaluator()
+		h.cpu(dev, baseTS-20*minMS, baseTS+20*minMS, 95)
+		h.tick(e, baseTS+2*minMS)
+		if got := listKinds(t, h, owner, dev); got["cpu:fired"] != 1 {
+			t.Fatalf("after fire: %v", got)
+		}
+		// Restart, then the value drops and the alert resolves.
+		h.cpu(dev, baseTS+21*minMS, baseTS+40*minMS, 10)
+		e2 := h.evaluator()
+		h.tick(e2, baseTS+40*minMS)
+		h.tick(e2, baseTS+41*minMS)
+		got := listKinds(t, h, owner, dev)
+		if got["cpu:fired"] != 0 || got["cpu:resolved"] != 1 || got["mem:fired"] != 1 {
+			t.Fatalf("after resolve: %v", got)
+		}
+	})
+	t.Run("offline rule", func(t *testing.T) {
+		h, e, p, owner, dev := offlineSetup(t, "ack-off")
+		_, otherDev := h.device("ack-off-other")
+		h.addEvent(owner, otherDev, "offline", KindFired, baseTS-minMS)
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+20*minMS)
+		if got := listKinds(t, h, owner, dev); got["offline:fired"] != 1 {
+			t.Fatalf("after fire: %v", got)
+		}
+		p.set(dev, true)
+		h.tick(e, baseTS+25*minMS)
+		h.tick(e, baseTS+30*minMS)
+		got := listKinds(t, h, owner, dev)
+		if got["offline:fired"] != 0 || got["offline:resolved"] != 1 {
+			t.Fatalf("after resolve: %v", got)
+		}
+		var n int64
+		h.db.Model(&model.DeviceAlertEvent{}).Where("device_id = ? AND kind = ? AND acked_at IS NULL", otherDev, KindFired).Count(&n)
+		if n != 1 {
+			t.Fatalf("another device's fired was acknowledged")
+		}
+	})
+	t.Run("muted resolve leaves other rules alone", func(t *testing.T) {
+		h, e, p, owner, dev := offlineSetup(t, "ack-muted")
+		h.addEvent(owner, dev, "cpu", KindFired, baseTS-minMS)
+		h.settings(owner, dev, func(s *Settings) { s.ExpectedOffline = true })
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+25*minMS)
+		p.set(dev, true)
+		h.tick(e, baseTS+26*minMS)
+		h.tick(e, baseTS+32*minMS)
+		got := listKinds(t, h, owner, dev)
+		if got["offline:resolved"] != 1 || got["cpu:fired"] != 1 {
+			t.Fatalf("%v", got)
+		}
+	})
+}
