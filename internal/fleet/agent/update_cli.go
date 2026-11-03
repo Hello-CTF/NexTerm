@@ -108,6 +108,11 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		return ExitError
 	}
 	upgrader := cliUpgraderFactory(executable)
+	if upgrader.LogPath == "" {
+		if dir, err := resolveDataDir("", getenv); err == nil {
+			upgrader.LogPath = filepath.Join(dir, upgradeLogName)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), updateOverallTimeout)
 	defer cancel()
 

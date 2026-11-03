@@ -1006,3 +1006,22 @@ func TestRuntimeSelfUpgradeRefusalKeepsReason(t *testing.T) {
 		t.Fatalf("refused upgrade must not touch the network, got %d requests", got)
 	}
 }
+
+func TestRuntimeDefaultUpgraderLogsInDataDir(t *testing.T) {
+	dataDir := t.TempDir()
+	prober, err := NewProber([]BaseURLEntry{{URL: "http://127.0.0.1:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRuntime, err := New(Options{
+		Store: StoreAt(dataDir), DataDir: dataDir, Prober: prober, Manager: &fakeManager{},
+		Collector: fakeCollector{}, EnsureHelper: func(context.Context) error { return nil },
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if agentRuntime.upgrader == nil || agentRuntime.upgrader.LogPath != filepath.Join(dataDir, upgradeLogName) {
+		t.Fatalf("upgrader = %+v", agentRuntime.upgrader)
+	}
+}
