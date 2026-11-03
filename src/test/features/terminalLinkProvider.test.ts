@@ -137,15 +137,32 @@ describe("link stitching rules", () => {
 
   it("does not join a lone token that follows a URL filling the row", () => {
     const full = "https://a.example/" + "a".repeat(22);
-    for (const token of ["[OK]", "200", "42"]) {
-      expect(urls(hard(full, token), 40), token).toEqual([full]);
-      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([full.slice(0, 34)]);
+    // A bracketed tag is never a continuation, so the first row stays a link.
+    expect(urls(hard(full, "[OK]"), 40)).toEqual([full]);
+    expect(urls(hard(`Docs: ${full.slice(0, 34)}`, "[OK]"), 40)).toEqual([full.slice(0, 34)]);
+    // A number after letters is no tail either, but the filled row may be cut:
+    // an address that could be a prefix is not offered.
+    for (const token of ["200", "42"]) {
+      expect(urls(hard(full, token), 40), token).toEqual([]);
+      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([]);
     }
-    // After a row that holds more than the URL, a bare path token is not evidence enough.
+    // A path tail with a slash is evidence enough even after a row that also holds prose.
     const head = "https://a.example/" + "a".repeat(10);
     const prose = `Docs: ${head}`;
-    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head]);
+    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head + "/api/v2/next"]);
     expect(urls(hard(prose, "/api/v2/next?x=1"), prose.length)).toEqual([head + "/api/v2/next?x=1"]);
+  });
+
+  it("never cuts a hard-wrapped URL down to a valid prefix", () => {
+    const a = "Created PR: https://github.com/acme/wi";
+    expect(urls(hard(a, "dget/pull/1234"), a.length)).toEqual(["https://github.com/acme/widget/pull/1234"]);
+    const b = "https://github.com/acme/widget/pull/12";
+    expect(urls(hard(b, "34"), b.length)).toEqual(["https://github.com/acme/widget/pull/1234"]);
+    // A number after a letter is not a tail; the filled row is dropped, not truncated.
+    const c = "See https://a.example/docs";
+    expect(urls(hard(c, "200"), c.length)).toEqual([]);
+    // Letters-only tokens keep the first-row link.
+    expect(urls(hard(c, "Done"), c.length)).toEqual(["https://a.example/docs"]);
   });
 
   it("joins a path tail after a row that holds only the URL (indistinguishable from a cut URL)", () => {
@@ -194,6 +211,31 @@ describe("link stitching rules", () => {
     expect(urls(hard(`│ ${a} │`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
     expect(urls(hard(`│ ${a}│`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
     expect(urls(hard(`│ ${a}  │`, "│ b1/c2                │"), 40)).toEqual([a]);
+  });
+
+  it("allows right padding that mirrors the left padding of the box", () => {
+    const a = "https://a.example/" + "a".repeat(10);
+    const box = (text: string, width: number) => `│  ${text.padEnd(width)}  │`;
+    const w = a.length;
+    expect(urls(hard(box(a, w), box("b1/c2", w)), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(box(a, w), box("b1/c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7".slice(0, w), w), box("t1/u2", w)), 60)).toEqual([
+      a + "b1/c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7".slice(0, w) + "t1/u2",
+    ]);
+    // One cell more than the left side has is still not a border.
+    expect(urls(hard(`│  ${a}   │`, box("b1/c2", w)), 40)).toEqual([a]);
+    // Short boxed URLs are not stitched to the next boxed row.
+    const url = "https://a.com/docs";
+    for (const next of ["v1.2.3", "/next"]) {
+      expect(urls(hard(`│  ${url}      │`, `│  ${next.padEnd(url.length + 4)}  │`), 40), next).toEqual([url]);
+    }
+  });
+
+  it("documents the boxed URL that exactly fills its box (known limit)", () => {
+    // The URL is as wide as the box, so its row cannot be told from a hard
+    // wrap, and a border-aligned next row is joined. Accepted residual risk.
+    const url = "https://a.com/docs";
+    const joined = urls(hard(`│ ${url} │`, `│ ${"v1.2.3".padEnd(url.length)} │`), 40);
+    expect(joined).toEqual([url + "v1.2.3"]);
   });
 
   it("does not join a full URL row with a boxed short word", () => {
@@ -246,6 +288,32 @@ describe("link stitching rules", () => {
       { text: "bb cc", isWrapped: true },
     ];
     expect(urls(rows, 22)).toEqual(["https://a.example/aabb"]);
+  });
+});
+
+describe("hover window edge", () => {
+  // At 512 columns a URL may span 4 rows, so the hover window reaches 4 lines
+  // below the hovered row and the line after the tail is the first one outside it.
+  const cols = 512;
+  const headText = "https://a.example/x?k=" + "a".repeat(cols - 2 - 22);
+  const fullRow = "b".repeat(cols - 2);
+  const tail = "abcdef";
+
+  async function run(after: string) {
+    const term = await makeTerm(cols, [headText, fullRow, fullRow, fullRow, tail, after, ""].join("\r\n"), 20);
+    return { extracted: extractTerminalLinks(term).map((l) => l.url), provided: provide(term, 1).map((l) => l.text) };
+  }
+
+  it("does not trust the line past the window as clean", async () => {
+    const { extracted, provided } = await run("Next sentence follows");
+    expect(extracted).toEqual([headText + fullRow.repeat(3)]);
+    expect(provided).toEqual(extracted);
+  });
+
+  it("still accepts the tail when the line past the window is clean", async () => {
+    const { extracted, provided } = await run("$ ls");
+    expect(extracted).toEqual([headText + fullRow.repeat(3) + tail]);
+    expect(provided).toEqual(extracted);
   });
 });
 

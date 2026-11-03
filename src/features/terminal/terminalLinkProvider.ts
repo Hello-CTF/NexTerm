@@ -54,13 +54,19 @@ const HTTP_SCHEME = /https?:\/\//i;
 const ONLY_TRAILING_DECOR = /^[\s│┃║|]*$/;
 const BORDER_GAP = /^(\s*)[│┃║|]/;
 
+const LEFT_BORDER_PAD = /[│┃║|]( *)$/;
+
 /**
- * Index (in `line.text`) of the right border that follows `end` after at most
- * one blank cell, or -1 when the text does not reach a border.
+ * Index (in `line.text`) of the right border that follows `end`, or -1 when
+ * the text does not reach a border. The blank cells allowed before it mirror
+ * the padding after the left border of the text starting at `start`, and are
+ * at least one.
  */
-function borderIndexAfter(line: LogicalLine, end: number): number {
+function borderIndexAfter(line: LogicalLine, start: number, end: number): number {
   const m = BORDER_GAP.exec(line.text.slice(end));
-  return m !== null && m[1].length <= 1 ? end + m[1].length : -1;
+  if (m === null) return -1;
+  const pad = LEFT_BORDER_PAD.exec(line.text.slice(0, start));
+  return m[1].length <= Math.max(1, pad ? pad[1].length : 0) ? end + m[1].length : -1;
 }
 const LEFT_PREFIX = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])+/;
 const LEFT_PREFIX_ONLY = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])*$/;
@@ -155,6 +161,8 @@ interface ChainState {
   prevEndCol: number;
   /** The URL stitched so far contains a query. */
   hasQuery: boolean;
+  /** Last character stitched so far. */
+  lastChar: string;
   /** Text of the logical line after the candidate; undefined at the end of the rows. */
   following: string | undefined;
 }
@@ -170,7 +178,11 @@ function sameWidth(a: number, b: number): boolean {
   return a >= MIN_EQUAL_WIDTH && b >= MIN_EQUAL_WIDTH && Math.abs(a - b) <= 1;
 }
 
-const QUERY_EVIDENCE = /[=&%?#]/;
+const QUERY_EVIDENCE = /[=&%?#/]/;
+
+// The candidate looks like a tail but is too weak to join. When the previous
+// row was full, stopping here would leave a valid-looking prefix of a cut URL.
+const WEAK_TAIL = Symbol("weak tail");
 
 // Decides whether logical line `next` continues a URL that ended at `prev`
 // (see the rules in the module comment). Returns the accepted fragment piece
@@ -181,7 +193,7 @@ function continuationFragment(
   lineIndex: number,
   cols: number,
   state: ChainState,
-): { piece: Piece; more: boolean; endCol: number; borderCol: number } | null {
+): { piece: Piece; more: boolean; endCol: number; borderCol: number } | typeof WEAK_TAIL | null {
   const prefix = LEFT_PREFIX.exec(line.text);
   const from = prefix ? prefix[0].length : 0;
   const rest = line.text.slice(from);
@@ -203,7 +215,7 @@ function continuationFragment(
   // same box as the previous row; a short row followed by a border is just
   // padding.
   if (fragment.startsWith("[")) return null;
-  const borderIdx = borderIndexAfter(line, end);
+  const borderIdx = borderIndexAfter(line, from, end);
   const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
   const full =
     endCol >= cols - 2 ||
@@ -219,8 +231,8 @@ function continuationFragment(
   }
   // A short tail is the weakest evidence: a lone number is not a URL tail, and
   // after a row that also holds prose it must look like a query string.
-  if (/^\d{1,3}$/.test(fragment)) return null;
-  if (!state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return null;
+  if (/^\d{1,3}$/.test(fragment) && !/[\d/=]/.test(state.lastChar)) return WEAK_TAIL;
+  if (!/^\d{1,3}$/.test(fragment) && !state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return WEAK_TAIL;
   return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
 }
 
@@ -263,13 +275,14 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       const urlEnd = m.index + m[0].length;
       const endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
-      const borderIdx = borderIndexAfter(line, urlEnd);
+      const borderIdx = borderIndexAfter(line, m.index, urlEnd);
       const state: ChainState = {
         prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
         bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
         chained: false,
         prevEndCol: endCol,
         hasQuery: m[0].includes("?"),
+        lastChar: m[0].slice(-1),
         following: undefined,
       };
       // Whether the previous row of the chain is known to be a full row, and
@@ -277,12 +290,16 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       let prevFull = borderIdx >= 0 || endCol >= cols - 2;
       let prevPrevEnd = -1;
       const maxRows = maxContinuationRows(cols);
-      // A URL that would continue past a limit is dropped: a truncated address
+      // A URL that would continue past a limit, or into a tail too weak to join, is dropped: a truncated address
       // is worse than an unrecognised one.
       let overflow = false;
       for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && cur + 1 < lines.length; n++) {
         state.following = lines[cur + 2]?.text;
         const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
+        if (next === WEAK_TAIL) {
+          if (prevFull) overflow = true;
+          break;
+        }
         if (!next) break;
         // A row that is not full by width is still full when it is as wide as
         // its neighbours (the program wrapped at a different width).
@@ -301,6 +318,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         state.prevEndCol = next.endCol;
         state.prevBorderCol = next.borderCol;
         state.chained = true;
+        state.lastChar = lines[next.piece.line].text[next.piece.end - 1];
         state.hasQuery ||= lines[next.piece.line].text.slice(next.piece.start, next.piece.end).includes("?");
       }
       if (overflow) continue;
@@ -426,7 +444,8 @@ function windowBounds(term: Terminal, y0: number): { first: number; last: number
   let last = y0;
   for (let seen = 0; ; seen++) {
     while (last + 1 < buf.length && wrappedAt(last + 1) && last - y0 < WINDOW_MAX_PHYSICAL_ROWS) last++;
-    if (seen >= WINDOW_LOGICAL_LINES || last + 1 >= buf.length || last - y0 >= WINDOW_MAX_PHYSICAL_ROWS) break;
+    // One line more than a URL can span, so the line after its last row is seen.
+    if (seen >= WINDOW_LOGICAL_LINES + 1 || last + 1 >= buf.length || last - y0 >= WINDOW_MAX_PHYSICAL_ROWS) break;
     last++;
   }
   return { first, last };
