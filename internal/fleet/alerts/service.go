@@ -88,7 +88,7 @@ func (s *Service) List(ctx context.Context, ownerID string) (*Overview, error) {
 	var events []model.DeviceAlertEvent
 	since := s.now().Add(-EventListWindow).UnixMilli()
 	err = s.db.WithContext(ctx).Model(&model.DeviceAlertEvent{}).
-		Where("owner_id = ? AND acked_at IS NULL AND ts >= ?", ownerID, since).
+		Where("owner_id = ? AND acked_at IS NULL AND ts >= ? AND device_id IN (?)", ownerID, since, live).
 		Order("ts DESC, id DESC").Limit(MaxListedEvents).Find(&events).Error
 	if err != nil {
 		return nil, fmt.Errorf("list alert events: %w", err)

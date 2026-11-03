@@ -116,10 +116,17 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	disabled, err := disabledOwners(ctx, e.db)
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, dev := range devices {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if disabled[dev.UserID] {
+			continue // existing states are kept for when the account is enabled again
 		}
 		if err := e.evaluateDevice(ctx, now, dev, settings[dev.ID], states, off); err != nil {
 			errs = append(errs, fmt.Errorf("device %s: %w", dev.ID, err))
@@ -133,6 +140,20 @@ func (e *Evaluator) Tick(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// disabledOwners returns the ids of disabled accounts in one query.
+func disabledOwners(ctx context.Context, db *gorm.DB) (map[string]bool, error) {
+	u := query.Use(db).AppUser
+	rows, err := u.WithContext(ctx).Select(u.ID).Where(u.State.Eq("disabled")).Find()
+	if err != nil {
+		return nil, fmt.Errorf("list disabled accounts: %w", err)
+	}
+	out := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		out[r.ID] = true
+	}
+	return out, nil
 }
 
 // evaluateDevice runs every rule for one device and commits their changes in a single transaction.

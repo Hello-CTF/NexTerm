@@ -624,3 +624,91 @@ func TestOfflineRecoveryHoldDatabase(t *testing.T) {
 		}
 	})
 }
+
+func (h *harness) setOwnerState(owner, state string) {
+	h.t.Helper()
+	if err := h.db.Model(&model.AppUser{}).Where("id = ?", owner).Update("state", state).Error; err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func TestEvaluatorDisabledOwnerDatabase(t *testing.T) {
+	t.Run("threshold rule resumes without duplicates", func(t *testing.T) {
+		h := newHarness(t)
+		owner, dev := h.device("alerts-disabled-cpu")
+		e := h.evaluator()
+		h.cpu(dev, baseTS-20*minMS, baseTS+30*minMS, 95)
+		h.setOwnerState(owner, "disabled")
+		for _, m := range []int64{2, 3, 20, 30} {
+			h.tick(e, baseTS+m*minMS)
+		}
+		if h.offlineStateAny(dev) || len(h.events(dev)) != 0 || len(h.audits("device_alert_fired")) != 0 {
+			t.Fatalf("disabled owner was evaluated: %+v", h.events(dev))
+		}
+		h.setOwnerState(owner, "reset_required") // still evaluated
+		h.tick(e, baseTS+31*minMS)
+		h.tick(e, baseTS+32*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+	})
+	t.Run("offline rule resumes and keeps its state meanwhile", func(t *testing.T) {
+		h, e, p, owner, dev := offlineSetup(t, "off-disabled")
+		h.setOwnerState(owner, "disabled")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+30*minMS)
+		if h.status(dev) != "" || len(h.events(dev)) != 0 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+		h.setOwnerState(owner, "active")
+		h.tick(e, baseTS+31*minMS)
+		h.tick(e, baseTS+32*minMS)
+		if evs := h.events(dev); len(evs) != 1 || evs[0].Kind != KindFired {
+			t.Fatalf("events = %+v", evs)
+		}
+		// An existing firing state is kept while disabled, even when the device comes back.
+		h.setOwnerState(owner, "disabled")
+		p.set(dev, true)
+		h.tick(e, baseTS+40*minMS)
+		h.tick(e, baseTS+50*minMS)
+		if h.status(dev) != StatusFiring || len(h.events(dev)) != 1 {
+			t.Fatalf("%q %+v", h.status(dev), h.events(dev))
+		}
+	})
+}
+
+func TestServiceListSkipsRevokedDeviceEventsDatabase(t *testing.T) {
+	h := newHarness(t)
+	owner, live := h.device("svc-rev-live")
+	_, gone := h.device("svc-rev-gone")
+	if err := h.db.Model(&model.UserDevice{}).Where("id = ?", gone).Update("user_id", owner).Error; err != nil {
+		t.Fatal(err)
+	}
+	h.addEvent(owner, live, "cpu", KindFired, baseTS-minMS)
+	h.addEvent(owner, gone, "cpu", KindFired, baseTS-minMS)
+	if err := h.db.Model(&model.UserDevice{}).Where("id = ?", gone).Update("revoked_at", baseTS).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.service().List(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Events) != 1 || got.Events[0].DeviceID != live {
+		t.Fatalf("events = %+v", got.Events)
+	}
+}
+
+// offlineStateAny reports whether the device has any persisted alert state row.
+func (h *harness) offlineStateAny(deviceID string) bool {
+	h.t.Helper()
+	states, err := loadStates(context.Background(), h.db)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	for k := range states {
+		if k.device == deviceID {
+			return true
+		}
+	}
+	return false
+}
