@@ -1,0 +1,2 @@
+@@nexterm-procs windows-cim
+{"cpuOk":false,"userOk":false,"memTotalKiB":0,"items":null}

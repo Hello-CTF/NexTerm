@@ -1,0 +1,2 @@
+@@nexterm-procs windows-cim
+{"cpuOk":true,"userOk":false,"memTotalKiB":1000,"items":{"pid":321,"ppid":4,"name":"svc.exe","cmd":"svc.exe -k","rssKiB":100,"cpu":0,"user":null,"elapsedSec":12}}

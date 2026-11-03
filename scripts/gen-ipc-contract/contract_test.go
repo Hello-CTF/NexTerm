@@ -2032,3 +2032,14 @@ func TestReservedTransportInputFieldsAreRejected(t *testing.T) {
 		t.Fatalf("channel commands and renamed fields must pass: %v", err)
 	}
 }
+
+func TestHostProcessesVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-processes", []verticalWant{
+		{name: "host_processes_list", input: "ProcessListArgs", output: "ProcessListResult"},
+		{name: "host_process_kill", input: "ProcessKillArgs", output: "ProcessKillResult"},
+	}, map[string][]string{
+		"HostProcess":       {"pid: number;", "ppid: number;", "argName?: string;", "started?: string;", "elapsedSec: number;"},
+		"ProcessListResult": {"processes: HostProcess[];", "skippedRows?: number;", "partial?: string[];"},
+		"ProcessKillArgs":   {"sessionId: string;", "name: string;", "ppid: number;", "started?: string;", "dryRun?: boolean;"},
+	})
+}

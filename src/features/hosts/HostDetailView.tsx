@@ -35,6 +35,7 @@ import {
 } from "./hostDetail";
 import { HostDetailTabs } from "./HostOutputSearch";
 import { PortsSection } from "./PortsSection";
+import { ProcessesSection } from "./ProcessesSection";
 import { ContainersSection, DatabasesSection, HostSection, SectionHint, SessionsSection, SshHealthSection } from "./HostSections";
 
 const ASSET_KIND_LABEL: Record<string, string> = {
@@ -208,6 +209,7 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
             <SessionsSection workspace={workspace} />
             {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
             <PortsSection workspace={workspace} visible={visible} hostName={asset.name} />
+            <ProcessesSection workspace={workspace} visible={visible} hostName={asset.name} />
             <DatabasesSection
               databases={databases}
               relations={relations}
@@ -408,6 +410,7 @@ function DeviceHostDetail({
             <SessionsSection workspace={workspace} />
             <ContainersSection workspace={workspace} visible={visible} />
             <PortsSection workspace={workspace} visible={visible} hostName={device.name} />
+            <ProcessesSection workspace={workspace} visible={visible} hostName={device.name} />
             <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
               {revoked ? (
                 <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
