@@ -322,4 +322,33 @@ describe("jump palette command history search", () => {
     setInputValue(combobox(view), ">e");
     await waitForRendered(() => expect(view.container.textContent).toContain("boom"));
   });
+
+  it("re-enables load more after the query changes while a page is still loading", async () => {
+    const pending = deferred<{ items: ReturnType<typeof item>[]; hasMore: boolean }>();
+    mocks.search
+      .mockResolvedValueOnce({ items: [item(1)], hasMore: true })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce({ items: [item(3, { command: "fresh result" })], hasMore: true });
+    const view = await mountPalette();
+    await typeCommand(view, ">d");
+    await waitForRendered(() => expect(rowTexts(view)).toHaveLength(1));
+    const moreButton = () => [...view.container.querySelectorAll("button")].find((b) => /加载更多|加载中/.test(b.textContent ?? ""));
+    await act(async () => {
+      moreButton()!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitForRendered(() => expect(mocks.search).toHaveBeenCalledTimes(2));
+
+    setInputValue(combobox(view), ">de");
+    await waitForRendered(() => expect(rowTexts(view)[0]).toContain("fresh result"));
+    await waitForRendered(() => {
+      const button = moreButton();
+      expect(button?.textContent).toContain("加载更多");
+      expect(button?.hasAttribute("disabled")).toBe(false);
+    });
+
+    await act(async () => pending.resolve({ items: [item(9, { command: "stale page" })], hasMore: false }));
+    await flush();
+    expect(rowTexts(view)).toHaveLength(1);
+    expect(rowTexts(view)[0]).toContain("fresh result");
+  });
 });

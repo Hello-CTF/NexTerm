@@ -57,6 +57,8 @@ export function CommandHistorySearch({
   useEffect(() => {
     const generation = ++generationRef.current;
     setLoading(true);
+    // A page request from the previous query is ignored by the generation guard, so its finally never clears this.
+    setLoadingMore(false);
     setError(null);
     const timer = window.setTimeout(() => {
       void commandSearchApi
