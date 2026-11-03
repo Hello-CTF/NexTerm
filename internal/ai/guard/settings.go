@@ -236,7 +236,8 @@ func (m *Manager) DeviceMode(ctx context.Context, deviceID string) (Mode, bool, 
 }
 
 // WithDeviceMode applies the per-device mode override, but never relaxes an
-// unattended run: Unattended is the strictest mode and stays in force.
+// unattended run. Only the context marker identifies such a run; a globally
+// configured Unattended mode without the marker is still overridden by the device mode.
 func (m *Manager) WithDeviceMode(ctx context.Context, config Config, deviceID string) (Config, error) {
 	if deviceID == "" {
 		return config, nil
@@ -251,7 +252,7 @@ func (m *Manager) WithDeviceMode(ctx context.Context, config Config, deviceID st
 				return Config{}, err
 			}
 		}
-		if config.Mode == Unattended || UnattendedFrom(ctx) {
+		if UnattendedFrom(ctx) {
 			config.Mode = Unattended
 		} else {
 			config.Mode = mode

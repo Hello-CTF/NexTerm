@@ -18,13 +18,13 @@ func TestDeviceModeNeverRelaxesUnattended(t *testing.T) {
 		if err := manager.SetDeviceMode(context.Background(), "dev", device); err != nil {
 			t.Fatal(err)
 		}
-		// Both the context marker and the configured mode keep Unattended.
+		// The context marker keeps Unattended whatever the configured mode is.
 		cases := map[string]struct {
 			ctx    context.Context
 			config Config
 		}{
-			"ctx":    {WithUnattended(context.Background()), Config{Mode: Unattended}},
-			"config": {context.Background(), Config{Mode: Unattended}},
+			"ctx":        {WithUnattended(context.Background()), Config{Mode: Unattended}},
+			"ctx-config": {WithUnattended(context.Background()), Config{Mode: ReadWrite}},
 		}
 		for name, c := range cases {
 			got, err := manager.WithDeviceMode(c.ctx, c.config, "dev")
@@ -64,5 +64,25 @@ func TestDeviceModeStillOverridesInteractiveConfig(t *testing.T) {
 	}
 	if got.Mode != Silent {
 		t.Fatalf("mode = %s", got.Mode)
+	}
+}
+
+func TestDeviceModeOverridesGlobalUnattendedWithoutMarker(t *testing.T) {
+	settings := &memorySettings{values: make(map[string]string)}
+	manager, err := NewManager(context.Background(), settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, device := range []Mode{Silent, ReadWrite} {
+		if err := manager.SetDeviceMode(context.Background(), "dev", device); err != nil {
+			t.Fatal(err)
+		}
+		got, err := manager.WithDeviceMode(context.Background(), Config{Mode: Unattended}, "dev")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Mode != device {
+			t.Fatalf("device %s: mode = %s", device, got.Mode)
+		}
 	}
 }
