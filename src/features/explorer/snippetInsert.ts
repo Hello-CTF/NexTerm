@@ -76,7 +76,19 @@ async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction):
   return true;
 }
 
-async function runSteps(s: Snippet, steps: readonly SnippetStep[]): Promise<boolean> {
+// stepTargetState reports why the terminal a run started in can no longer take input, or null while it can.
+function stepTargetState(tabId: string): string | null {
+  for (const ws of useUi.getState().workspaces) {
+    for (const pane of ws.panes) {
+      const tab = pane.tabs.find((t) => t.kind === "terminal" && t.tabId === tabId);
+      if (!tab) continue;
+      return tab.dead || tab.exited ? "原终端已断开或已结束" : null;
+    }
+  }
+  return "原终端已关闭";
+}
+
+async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const epoch = useUi.getState().accountEpoch;
   if (steps.some((step) => insertRisk(step.command) === "control")) {
@@ -97,14 +109,14 @@ async function runSteps(s: Snippet, steps: readonly SnippetStep[]): Promise<bool
         return false;
       }
     }
-    const target = terminalTarget();
-    if ("blocked" in target) {
-      pushToast("info", `${target.blocked}，已停止「${s.name}」：已执行到第 ${done} 步`);
+    const blocked = stepTargetState(tabId);
+    if (blocked) {
+      pushToast("info", `${blocked}，已停止「${s.name}」：已执行到第 ${done} 步`);
       return false;
     }
     const payload = /[\r\n]$/.test(step.command) ? step.command : step.command + "\r";
     try {
-      await terminalApi.write(target.tabId, new TextEncoder().encode(payload));
+      await terminalApi.write(tabId, new TextEncoder().encode(payload));
     } catch (e) {
       pushToast("error", `执行失败：${describeError(e)}（已执行到第 ${done} 步）`);
       return false;
@@ -127,7 +139,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
       pushToast("info", `${first.blocked}，才能${label}片段`);
       return false;
     }
-    return runSteps(s, s.steps ?? []);
+    return runSteps(s, s.steps ?? [], first.tabId);
   }
   const target = terminalTarget();
   if ("blocked" in target) {

@@ -102,4 +102,54 @@ describe("multi-step snippet execution in the current terminal", () => {
     expect(await insertSnippet(single)).toBe(true);
     expect(written()).toEqual(["df -h\r", "df -h"]);
   });
+
+  function seedTwo() {
+    const mk = (id: string, tabId: string, extra: Partial<AppTab> = {}): AppTab =>
+      ({ id, kind: "terminal", title: id, tabId, closable: true, ...extra });
+    useUi.setState({
+      workspaces: [{
+        id: "ws-1", kind: "session", title: "W",
+        panes: [{ id: "pane-1", tabs: [mk("tab-1", "term-1"), mk("tab-2", "term-2")], activeTabId: "tab-1" }],
+        activePaneId: "pane-1", closable: true,
+      }],
+      activeWorkspaceId: "ws-1",
+    });
+  }
+  const setTab = (id: string, patch: Partial<AppTab>) => {
+    const ws = useUi.getState().workspaces;
+    useUi.setState({
+      workspaces: ws.map((w) => ({
+        ...w,
+        panes: w.panes.map((p) => ({ ...p, tabs: p.tabs.map((t) => (t.id === id ? { ...t, ...patch } : t)) })),
+      })),
+    });
+  };
+
+  it("keeps writing to the original terminal after the active tab changes during a confirmation", async () => {
+    seedTwo();
+    mocks.ask.mockImplementation(async () => {
+      const ws = useUi.getState().workspaces;
+      useUi.setState({
+        workspaces: ws.map((w) => ({ ...w, panes: w.panes.map((p) => ({ ...p, activeTabId: "tab-2" })) })),
+      });
+      return true;
+    });
+    expect(await executeSnippet(multi([{ command: "a" }, { command: "b", confirm: true }, { command: "c" }]))).toBe(true);
+    expect(mocks.write.mock.calls.map(([id]) => id)).toEqual(["term-1", "term-1", "term-1"]);
+  });
+
+  it("stops when the original terminal ends even though another terminal is active", async () => {
+    seedTwo();
+    mocks.ask.mockImplementation(async () => {
+      setTab("tab-1", { exited: true });
+      const ws = useUi.getState().workspaces;
+      useUi.setState({
+        workspaces: ws.map((w) => ({ ...w, panes: w.panes.map((p) => ({ ...p, activeTabId: "tab-2" })) })),
+      });
+      return true;
+    });
+    expect(await executeSnippet(multi([{ command: "a" }, { command: "b", confirm: true }, { command: "c" }]))).toBe(false);
+    expect(written()).toEqual(["a\r"]);
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("1"));
+  });
 });
