@@ -26,25 +26,25 @@ func normalizeHost(host string) (string, error) {
 		if ip := net.ParseIP(inner); ip != nil && strings.Contains(inner, ":") {
 			return inner, nil
 		}
-		return "", errors.New("invalid IPv6 address")
+		return "", errors.New("IPv6 地址无效")
 	}
 	if host == "" {
-		return "", errors.New("host is empty")
+		return "", errors.New("主机地址不能为空")
 	}
 	if net.ParseIP(host) != nil {
 		return host, nil
 	}
 	if len(host) > 253 {
-		return "", errors.New("host name too long")
+		return "", errors.New("主机名过长")
 	}
 	for _, label := range strings.Split(host, ".") {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return "", errors.New("invalid host name")
+			return "", errors.New("主机名无效")
 		}
 		for i := 0; i < len(label); i++ {
 			c := label[i]
 			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
-				return "", errors.New("invalid host name")
+				return "", errors.New("主机名无效")
 			}
 		}
 	}
@@ -62,29 +62,29 @@ func urlByteAllowed(c byte) bool {
 
 func validateURL(raw string) (*url.URL, error) {
 	if raw == "" || len(raw) > maxURLLength {
-		return nil, errors.New("invalid URL length")
+		return nil, errors.New("URL 长度无效")
 	}
 	for i := 0; i < len(raw); i++ {
 		if !urlByteAllowed(raw[i]) {
-			return nil, errors.New("URL contains a disallowed character")
+			return nil, errors.New("URL 含有不允许的字符")
 		}
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, errors.New("invalid URL")
+		return nil, errors.New("URL 无效")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, errors.New("only http and https URLs are supported")
+		return nil, errors.New("仅支持 http 和 https URL")
 	}
 	if u.User != nil || strings.Contains(u.Host, "@") {
-		return nil, errors.New("URLs with credentials are not allowed")
+		return nil, errors.New("URL 不允许包含账号密码")
 	}
 	if _, err := normalizeHost(bracketIfIPv6(u.Hostname())); err != nil {
-		return nil, fmt.Errorf("URL host: %w", err)
+		return nil, fmt.Errorf("URL 主机无效: %w", err)
 	}
 	if port := u.Port(); port != "" {
 		if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
-			return nil, errors.New("URL port out of range")
+			return nil, errors.New("URL 端口超出范围")
 		}
 	}
 	return u, nil
@@ -105,14 +105,14 @@ func ValidateProbe(req ProbeRequest) error {
 			return err
 		}
 		if req.Port == 0 {
-			return errors.New("port must be between 1 and 65535")
+			return errors.New("端口必须在 1 到 65535 之间")
 		}
 		return nil
 	case "http":
 		_, err := validateURL(req.URL)
 		return err
 	}
-	return fmt.Errorf("unsupported probe method %q", req.Method)
+	return fmt.Errorf("不支持的测试方式 %q", req.Method)
 }
 
 func quotePOSIX(value string) string {
@@ -140,7 +140,7 @@ func ProbeCommand(shell Shell, req ProbeRequest) (string, error) {
 	}
 	script := powerShellProbe(req, host)
 	if strings.ContainsAny(script, "\"%^&|<>!") {
-		return "", errors.New("this host runs commands through cmd.exe and the probe contains characters cmd cannot pass safely (for example a URL query string); this kind of host is not supported yet")
+		return "", errors.New("该主机通过 cmd.exe 执行命令，而测试内容含有 cmd 无法安全传递的字符（例如 URL 查询串），暂不支持这类主机")
 	}
 	return `powershell -NoProfile -NonInteractive -Command "` + script + `"`, nil
 }
@@ -152,7 +152,7 @@ func posixProbe(req ProbeRequest, host string) string {
 	h, p := quotePOSIX(host), quotePOSIX(strconv.Itoa(int(req.Port)))
 	return "if command -v nc >/dev/null 2>&1; then nc -z -v -w 5 " + h + " " + p +
 		"; elif command -v bash >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then timeout 5 bash -c 'exec 3<>\"/dev/tcp/$0/$1\"' " + h + " " + p +
-		"; else echo 'neither nc nor bash with timeout is available on the host' >&2; exit 127; fi"
+		"; else echo '主机上没有 nc，也没有带 timeout 的 bash' >&2; exit 127; fi"
 }
 
 func powerShellProbe(req ProbeRequest, host string) string {

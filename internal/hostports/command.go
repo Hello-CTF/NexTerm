@@ -56,11 +56,11 @@ func ParseListOutput(stdout string) ([]Listener, Format, error) {
 	name, rest, _ := strings.Cut(text, "\n")
 	format := Format(strings.TrimSpace(name))
 	if format == "none" {
-		return nil, "", errors.New("no supported port listing tool (ss, netstat or lsof) found on the host")
+		return nil, "", errors.New("主机上没有 ss、netstat 或 lsof")
 	}
 	listeners, err := Parse(format, rest)
 	if err != nil {
-		return nil, format, fmt.Errorf("parse %s output: %w", format, err)
+		return nil, format, fmt.Errorf("解析 %s 输出失败: %w", format, err)
 	}
 	return listeners, format, nil
 }

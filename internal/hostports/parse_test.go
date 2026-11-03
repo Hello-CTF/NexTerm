@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +146,32 @@ func TestNormalizeDeduplicates(t *testing.T) {
 	})
 	if len(got) != 3 || got[0].Port != 8 || got[1].PID != 5 {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// Git normalizes the committed fixtures to LF, while Windows hosts answer with CRLF.
+func TestParseWindowsCRLFMatchesLF(t *testing.T) {
+	for _, file := range []string{"netstat_windows_en.txt", "netstat_windows_zh.txt"} {
+		t.Run(file, func(t *testing.T) {
+			lf := strings.ReplaceAll(fixture(t, file), "\r\n", "\n")
+			crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+			want, err := Parse(FormatNetstatWindows, lf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := Parse(FormatNetstatWindows, crlf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(want) == 0 || fmt.Sprint(describe(got)) != fmt.Sprint(describe(want)) {
+				t.Fatalf("crlf = %v, lf = %v", describe(got), describe(want))
+			}
+		})
+	}
+	lf := strings.ReplaceAll(fixture(t, "tasklist_csv.txt"), "\r\n", "\n")
+	want := ParseTasklistCSV(lf)
+	got := ParseTasklistCSV(strings.ReplaceAll(lf, "\n", "\r\n"))
+	if len(want) == 0 || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("tasklist crlf = %v, lf = %v", got, want)
 	}
 }

@@ -34,11 +34,11 @@ func Parse(format Format, output string) ([]Listener, error) {
 	case FormatNetstatWindows:
 		parse = parseNetstatWindows
 	default:
-		return nil, fmt.Errorf("unknown port listing format %q", format)
+		return nil, fmt.Errorf("未知的端口列表格式 %q", format)
 	}
 	listeners, recognized := parse(output)
 	if !recognized && strings.TrimSpace(output) != "" {
-		return nil, fmt.Errorf("unrecognized %s output", format)
+		return nil, fmt.Errorf("无法识别 %s 输出", format)
 	}
 	return Normalize(listeners), nil
 }
