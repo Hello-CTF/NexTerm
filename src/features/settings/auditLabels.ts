@@ -8,4 +8,6 @@ export const KIND_LABELS: Record<string, string> = {
   device_terminal_toggle: "设备远程终端开关",
   device_failover: "设备切换连接",
   device_terminal: "设备终端",
+  device_alert_fired: "设备告警触发",
+  device_alert_resolved: "设备告警恢复",
 };
