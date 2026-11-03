@@ -1156,7 +1156,7 @@ const OPT_IN_BY_KIND: Partial<Record<string, keyof SyncKindOptIn>> = {
 // GENERIC_COLLECT_KINDS are collected through sync_collect_kind_objects: the server returns each object's
 // canonical payload, which is sealed as is so hashes and revisions match the desktop engine.
 // runbook_template is receive-only: the server converts legacy objects into multi-step snippets and no longer collects any.
-const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "skill", "memory", "cron"];
+const GENERIC_COLLECT_KINDS: SyncObjectKind[] = ["state_rule", "skill", "memory", "cron", "snippet_steps"];
 
 function allKindOptIn(): SyncKindOptIn {
   const optIn = {} as SyncKindOptIn;
@@ -1443,7 +1443,8 @@ async function sealAll(dek: Uint8Array, list: LocalEntity[]): Promise<{ id: stri
       case "cron": return 13;
       case "tombstone": return 14;
       case "transcript": return 15;
-      default: return 16;
+      case "snippet_steps": return 16;
+      default: return 17;
     }
   };
   const ordered = [...list].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id.localeCompare(b.id));

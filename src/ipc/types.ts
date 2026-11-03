@@ -189,7 +189,7 @@ export type SyncReport = {
 };
 
 export type SyncApplyObjectKind = "group" | "asset" | "credential" | "snippet" | "tombstone" | "transcript" | "known_host" | "ai_profile" | "ai_permission" | "ai_grant" | "preference"
-  | "state_rule" | "runbook_template" | "skill" | "memory" | "cron";
+  | "state_rule" | "runbook_template" | "skill" | "memory" | "cron" | "snippet_steps";
 
 export type SyncApplyObject = { id: string, kind: SyncApplyObjectKind, payload: JsonValue, };
 

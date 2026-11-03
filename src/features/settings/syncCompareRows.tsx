@@ -43,6 +43,7 @@ export const COMPARE_KIND_LABELS: Record<string, string> = {
   skill: "AI 技能",
   memory: "AI 记忆",
   cron: "定时任务",
+  snippet_steps: "片段步骤",
 };
 
 export function compareRowLabel(state: CompareRowState): { text: string; tone: string; hint: string } {
@@ -67,7 +68,7 @@ export function compareRowLabel(state: CompareRowState): { text: string; tone: s
 }
 
 const SUMMARY_KIND_ORDER = [
-  "asset", "group", "snippet", "credential", "known_host", "ai_profile", "ai_permission",
+  "asset", "group", "snippet", "snippet_steps", "credential", "known_host", "ai_profile", "ai_permission",
   "ai_grant", "preference", "state_rule", "runbook_template", "skill", "memory", "cron", "transcript", "tombstone",
 ];
 

@@ -49,8 +49,8 @@ export function collectAssetPayload(a: SyncCollectAsset): unknown {
   return o;
 }
 
-// snippetPayload mirrors snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt, description(omitempty),
-// steps(omitempty; each step: id, name, description(omitempty), command, confirm(omitempty), interactive(omitempty)).
+// snippetPayload mirrors snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt.
+// Multi-step snippets carry their steps in the snippet_steps companion kind, which the server collects.
 export function snippetPayload(s: SnippetDto): unknown {
   const o: Record<string, unknown> = { id: s.id };
   if (s.groupId !== null) o.groupId = s.groupId;
@@ -59,18 +59,6 @@ export function snippetPayload(s: SnippetDto): unknown {
   o.sort = s.sort;
   o.createdAt = s.createdAt;
   o.updatedAt = s.updatedAt;
-  if (s.description) o.description = s.description;
-  const steps = s.steps ?? [];
-  if (steps.length > 0) {
-    o.steps = steps.map((step) => {
-      const entry: Record<string, unknown> = { id: step.id, name: step.name };
-      if (step.description) entry.description = step.description;
-      entry.command = step.command;
-      if (step.confirm) entry.confirm = true;
-      if (step.interactive) entry.interactive = true;
-      return entry;
-    });
-  }
   return o;
 }
 
