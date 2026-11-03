@@ -16,7 +16,7 @@ export interface RefChip {
 }
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝；已开启免确认授权的操作除外" },
+  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝" },
   { value: "read_write", label: "读写", hint: "查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问" },
   { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍需要你确认" },
 ];
