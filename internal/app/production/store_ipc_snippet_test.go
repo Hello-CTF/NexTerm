@@ -256,3 +256,37 @@ func TestSnippetIPCMultiStepContract(t *testing.T) {
 		}
 	}
 }
+
+func TestSnippetMigrationStatusCountsOnlyTheCallersLeftoverTemplates(t *testing.T) {
+	ctx := t.Context()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := ipc.NewDispatcher()
+	if err := registerStoreCommands(dispatcher, database, nil, t.TempDir(), true); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []store.RunbookTemplateRow{
+		{OwnerID: "owner-a", ID: "tpl-a1", Name: "a1", Steps: "[]", Version: 1, CreatedAt: 1, UpdatedAt: 1},
+		{OwnerID: "owner-a", ID: "tpl-a2", Name: "a2", Steps: "[]", Version: 1, CreatedAt: 1, UpdatedAt: 1},
+		{OwnerID: "owner-b", ID: "tpl-b1", Name: "b1", Steps: "[]", Version: 1, CreatedAt: 1, UpdatedAt: 1},
+	} {
+		if err := database.GORM().Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(owner string) int64 {
+		t.Helper()
+		response := dispatcher.Dispatch(ipc.WithUserID(ctx, owner), ipc.Request{Command: "snippet_migration_status", Args: []byte(`{}`)}, ipc.Environment{})
+		var status struct {
+			Unmigrated int64 `json:"unmigratedRunbookTemplates"`
+		}
+		requireStoreTestResponse(t, response, &status)
+		return status.Unmigrated
+	}
+	if a, b, none := count("owner-a"), count("owner-b"), count("owner-c"); a != 2 || b != 1 || none != 0 {
+		t.Fatalf("leftover templates a=%d b=%d c=%d", a, b, none)
+	}
+}

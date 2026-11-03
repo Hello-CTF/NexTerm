@@ -222,6 +222,12 @@ type snippetDTO struct {
 	Steps       []store.SnippetStep `json:"steps"`
 }
 
+// snippetMigrationStatusDTO reports the legacy runbook templates the startup migration could not turn into
+// snippets; they stay in the old table and are not usable.
+type snippetMigrationStatusDTO struct {
+	UnmigratedRunbookTemplates int64 `json:"unmigratedRunbookTemplates"`
+}
+
 // snippetInputRequest creates a snippet. With steps the body is derived on the server and any given body is ignored.
 type snippetInputRequest struct {
 	Name        string              `json:"name"`
@@ -537,6 +543,12 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				return nil, database.SnippetUpdateFields(ctx, input.ID, store.SnippetPatch{
 					Name: name, Body: input.Body, Description: input.Description, Steps: input.Steps, GroupID: input.GroupID.storeValue(), Sort: input.Sort,
 				})
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "snippet_migration_status", func(ctx context.Context, _ *ipc.Call, _ struct{}) (snippetMigrationStatusDTO, error) {
+				count, err := database.RunbookTemplateUnmigratedCount(ctx)
+				return snippetMigrationStatusDTO{UnmigratedRunbookTemplates: count}, err
 			})
 		},
 		func() error {
