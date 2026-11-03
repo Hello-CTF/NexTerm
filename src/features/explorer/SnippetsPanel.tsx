@@ -366,7 +366,7 @@ function SnippetEditor({
 
   const dirty =
     name !== (initial?.name ?? "") ||
-    description !== (initial?.description ?? "") ||
+    (multi && description !== (initial?.description ?? "")) ||
     multi !== (initialSteps.length > 0) ||
     (multi ? JSON.stringify(steps) !== JSON.stringify(initialSteps) : body !== (initial?.body ?? ""));
 
@@ -417,7 +417,9 @@ function SnippetEditor({
     setError(null);
     try {
       // An omitted description is stored as empty, so it is only sent when there is one.
-      const cleanDescription = description.trim();
+      // Single-step snippets cannot edit the description (it only syncs with multi-step snippets);
+      // an existing one is sent back unchanged.
+      const cleanDescription = (multi ? description : initial?.description ?? "").trim();
       const descriptionPatch = cleanDescription ? { description: cleanDescription } : {};
       if (multi) {
         const cleanSteps = steps.map((step) => ({ ...step, name: step.name.trim() }));
@@ -491,15 +493,22 @@ function SnippetEditor({
               placeholder="看容器状态"
             />
           </div>
-          <div className="nx-form-row">
-            <label className="nx-label" htmlFor="snippet-description">说明（可选）</label>
-            <input
-              id="snippet-description"
-              className="nx-input"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
+          {multi ? (
+            <div className="nx-form-row">
+              <label className="nx-label" htmlFor="snippet-description">说明（可选）</label>
+              <input
+                id="snippet-description"
+                className="nx-input"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </div>
+          ) : initial?.description ? (
+            <div className="nx-form-row">
+              <span className="nx-label">说明</span>
+              <div data-testid="snippet-description-readonly" className="text-[12px] text-neutral-400">{initial.description}</div>
+            </div>
+          ) : null}
           <div className="nx-form-row">
             <div className="flex items-center gap-2">
               <span className="nx-label">{multi ? "步骤" : "内容"}</span>

@@ -164,10 +164,10 @@ describe("multi-step snippets in the snippets panel", () => {
     clickButton(ui(), "新建片段");
     await flush();
     setInputValue(document.body.querySelector<HTMLInputElement>("#snippet-name")!, "release");
-    setInputValue(document.body.querySelector<HTMLInputElement>("#snippet-description")!, "ship it");
     setInputValue(document.body.querySelector<HTMLTextAreaElement>("#snippet-body")!, "make build");
     clickButton(document.body, "改为多步");
     await flush();
+    setInputValue(document.body.querySelector<HTMLInputElement>("#snippet-description")!, "ship it");
     // The existing single command becomes step 1.
     expect(byLabel<HTMLTextAreaElement>("步骤 1 命令").value).toBe("make build");
     clickButton(document.body, "添加步骤");
@@ -189,6 +189,29 @@ describe("multi-step snippets in the snippets panel", () => {
     expect(content.steps[1]).toMatchObject({ name: "deploy", command: "make deploy", confirm: true, interactive: true });
     expect(content.steps[0].id).toBeTruthy();
     expect(content.steps[1].id).not.toBe(content.steps[0].id);
+  });
+
+  it("hides the description input in single-step mode and shows it for multi-step", async () => {
+    await openPanel();
+    clickButton(ui(), "新建片段");
+    await flush();
+    expect(document.body.querySelector("#snippet-description")).toBeNull();
+    clickButton(document.body, "改为多步");
+    await flush();
+    expect(document.body.querySelector("#snippet-description")).not.toBeNull();
+  });
+
+  it("shows an existing single-step description read-only and sends it back unchanged", async () => {
+    mocks.snippetList.mockResolvedValue([{ ...structuredClone(SINGLE), description: "free disk" }]);
+    await openPanel();
+    click(byLabel("编辑片段「disk usage」"));
+    await flush();
+    expect(document.body.querySelector("#snippet-description")).toBeNull();
+    expect(document.body.querySelector('[data-testid="snippet-description-readonly"]')?.textContent).toBe("free disk");
+    setInputValue(document.body.querySelector<HTMLInputElement>("#snippet-name")!, "disk");
+    clickButton(document.body, "保存");
+    await flush();
+    expect(mocks.snippetUpdate.mock.calls[0][3]?.description).toBe("free disk");
   });
 
   it("rejects a multi-step snippet with an empty step command", async () => {
