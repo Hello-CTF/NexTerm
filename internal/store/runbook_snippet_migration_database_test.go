@@ -204,3 +204,142 @@ func TestSnippetStepsContractDatabase(t *testing.T) {
 		t.Error("oversized description accepted")
 	}
 }
+
+func snippetIDs(t *testing.T, database *store.Store, ctx context.Context) []string {
+	t.Helper()
+	rows, err := database.SnippetList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		out[i] = row.ID
+	}
+	return out
+}
+
+// The ID a template converts to is decided once per owner and then reused: a collision with another owner
+// moves the owner to a fresh ID, remembered so the migration and the sync conversion agree.
+func TestRunbookTemplateSnippetIDMappingSurvivesCrossOwnerCollisionDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctxA := execBatchDatabaseContext("owner-a")
+	ctxB := execBatchDatabaseContext("owner-b")
+	ctx := context.Background()
+	tpl := ids.New()
+	derived := store.LegacyRunbookSnippetID(tpl)
+	if err := database.GORM().Create(&store.SnippetRow{ID: derived, Name: "foreign", Body: "echo a", OwnerID: "owner-a", CreatedAt: 1, UpdatedAt: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	insertLegacyTemplate(t, database, "owner-b", tpl, "mine", 10, 20, store.RunbookTemplateStep{ID: "s", Name: "s", Command: "echo b"})
+	if err := database.MigrateRunbookTemplatesForTest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	migrated := snippetIDs(t, database, ctxB)
+	if len(migrated) != 1 || migrated[0] == derived {
+		t.Fatalf("owner-b snippets = %v", migrated)
+	}
+	// The sync conversion of the same template resolves to the migrated snippet, not to a second one.
+	resolved, err := database.ResolveRunbookTemplateSnippetID(ctxB, tpl)
+	if err != nil || resolved != migrated[0] {
+		t.Fatalf("resolved = %q (%v), want %q", resolved, err, migrated[0])
+	}
+	if looked, found, err := database.LookupRunbookTemplateSnippetID(ctxB, tpl); err != nil || !found || looked != migrated[0] {
+		t.Fatalf("lookup = %q %v %v", looked, found, err)
+	}
+	// Owner-a keeps the derived ID; owner-b's mapping does not leak.
+	if resolvedA, err := database.ResolveRunbookTemplateSnippetID(ctxA, tpl); err != nil || resolvedA != derived {
+		t.Fatalf("owner-a resolved = %q (%v)", resolvedA, err)
+	}
+	// A template of another owner that nobody collides with converts to the derived ID, without a mapping.
+	free := ids.New()
+	if got, err := database.ResolveRunbookTemplateSnippetID(ctxB, free); err != nil || got != store.LegacyRunbookSnippetID(free) {
+		t.Fatalf("free template resolved = %q (%v)", got, err)
+	}
+	// Lookup never allocates: a collided template without a mapping has no snippet.
+	other := ids.New()
+	if err := database.GORM().Create(&store.SnippetRow{ID: store.LegacyRunbookSnippetID(other), Name: "foreign", Body: "x", OwnerID: "owner-a", CreatedAt: 1, UpdatedAt: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := database.LookupRunbookTemplateSnippetID(ctxB, other); err != nil || found {
+		t.Fatalf("lookup of a collided unmapped template: found=%v err=%v", found, err)
+	}
+	// Re-running the migration and a re-created template keep a single snippet.
+	insertLegacyTemplate(t, database, "owner-b", tpl, "mine", 10, 20, store.RunbookTemplateStep{ID: "s", Name: "s", Command: "echo b"})
+	if err := database.MigrateRunbookTemplatesForTest(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if again := snippetIDs(t, database, ctxB); len(again) != 1 || again[0] != migrated[0] {
+		t.Fatalf("after rerun owner-b snippets = %v", again)
+	}
+}
+
+// An insert that loses the ID to another owner between the check and the write moves to a fresh ID; an ID
+// the owner already holds counts as migrated.
+func TestRunbookTemplateSnippetInsertCollisionFallsBackToNewIDDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctxB := execBatchDatabaseContext("owner-b")
+	ctx := context.Background()
+	tpl := ids.New()
+	derived := store.LegacyRunbookSnippetID(tpl)
+	if err := database.GORM().Create(&store.SnippetRow{ID: derived, Name: "foreign", Body: "echo a", OwnerID: "owner-a", CreatedAt: 1, UpdatedAt: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	row := store.SnippetRow{ID: derived, OwnerID: "owner-b", Name: "mine", Body: "echo b", CreatedAt: 2, UpdatedAt: 3}
+	placed, err := database.PlaceRunbookTemplateSnippetForTest(ctx, "owner-b", tpl, row)
+	if err != nil || placed == derived || !ids.Valid(placed) {
+		t.Fatalf("placed = %q (%v)", placed, err)
+	}
+	if got, err := database.ResolveRunbookTemplateSnippetID(ctxB, tpl); err != nil || got != placed {
+		t.Fatalf("mapping = %q (%v), want %q", got, err, placed)
+	}
+	// Placing again lands on the same snippet instead of creating another.
+	row.ID = placed
+	again, err := database.PlaceRunbookTemplateSnippetForTest(ctx, "owner-b", tpl, row)
+	if err != nil || again != placed || len(snippetIDs(t, database, ctxB)) != 1 {
+		t.Fatalf("second placement = %q (%v), snippets %v", again, err, snippetIDs(t, database, ctxB))
+	}
+}
+
+// Templates of one owner migrate in name order, which fixes the sort the snippets receive.
+func TestRunbookTemplateMigrationOrdersByOwnerNameThenIDDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctx := execBatchDatabaseContext("owner-a")
+	step := store.RunbookTemplateStep{ID: "s", Name: "s", Command: "echo"}
+	idZ, idA := "0Z"+ids.New()[2:], "0A"+ids.New()[2:]
+	insertLegacyTemplate(t, database, "owner-a", idZ, "alpha", 1, 1, step)
+	insertLegacyTemplate(t, database, "owner-a", idA, "bravo", 1, 1, step)
+	if err := database.MigrateRunbookTemplatesForTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := database.SnippetList(ctx)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("snippets = %+v %v", rows, err)
+	}
+	byName := map[string]int64{}
+	for _, row := range rows {
+		byName[row.Name] = row.Sort
+	}
+	if byName["alpha"] >= byName["bravo"] {
+		t.Fatalf("sorts by name = %v, want alpha before bravo regardless of id order", byName)
+	}
+}
+
+func TestSnippetMigrationStatusCountsOwnersLeftoverTemplatesDatabase(t *testing.T) {
+	database := dbtest.NewFixture(t).OpenStore(t)
+	ctxA := execBatchDatabaseContext("owner-a")
+	ctxB := execBatchDatabaseContext("owner-b")
+	step := store.RunbookTemplateStep{ID: "s", Name: "s", Command: "echo"}
+	insertLegacyTemplate(t, database, "owner-a", ids.New(), "ok", 1, 1, step)
+	// An empty template cannot become a snippet and stays behind.
+	insertLegacyTemplate(t, database, "owner-a", ids.New(), "empty", 1, 1)
+	insertLegacyTemplate(t, database, "owner-b", ids.New(), "other", 1, 1, step)
+	if err := database.MigrateRunbookTemplatesForTest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := database.RunbookTemplateUnmigratedCount(ctxA); err != nil || count != 1 {
+		t.Fatalf("owner-a leftovers = %d (%v)", count, err)
+	}
+	if count, err := database.RunbookTemplateUnmigratedCount(ctxB); err != nil || count != 0 {
+		t.Fatalf("owner-b leftovers = %d (%v)", count, err)
+	}
+}
