@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -34,7 +35,9 @@ func newUpdateHarness(t *testing.T, current, latest string, stdin string, termin
 		asset := releaseAssetName(v, runtime.GOOS, runtime.GOARCH)
 		archive := buildReleaseArchive(t, runtime.GOOS, []byte("agent-"+v))
 		files["/download/v"+v+"/"+asset] = archive
-		files["/download/v"+v+"/"+checksumsFileName] = []byte(fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset))
+		for path, content := range signedChecksums(v, fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)) {
+			files["/download"+path] = content
+		}
 	}
 	h.release = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.hits.Add(1)
@@ -60,7 +63,7 @@ func newUpdateHarness(t *testing.T, current, latest string, stdin string, termin
 	restoreFactory, restoreExe, restoreStdin, restoreTTY := cliUpgraderFactory, cliExecutable, cliStdin, cliStdinIsTerminal
 	cliUpgraderFactory = func(string) *Upgrader {
 		return &Upgrader{
-			BaseURL: h.release.URL + "/download", Executable: h.target,
+			BaseURL: h.release.URL + "/download", Executable: h.target, PublicKey: testReleaseKey.PublicKeyFile(),
 			MaxAttempts: 1, Backoff: time.Millisecond,
 			sleep: instantSleep, scheduleReplace: captureReplace(&h.replaced),
 		}
@@ -206,5 +209,30 @@ func TestResolveLatestVersionParsesRedirect(t *testing.T) {
 		if ok != want.ok || (ok && cmp != want.cmp) {
 			t.Errorf("compare(1.2.5,%s)=%d,%v", target, cmp, ok)
 		}
+	}
+}
+
+func TestUpdateWithoutSigningKeyShowsReason(t *testing.T) {
+	previous := releasesig.EmbeddedPublicKey
+	releasesig.EmbeddedPublicKey = ""
+	t.Cleanup(func() { releasesig.EmbeddedPublicKey = previous })
+	h := newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+	factory := cliUpgraderFactory
+	cliUpgraderFactory = func(executable string) *Upgrader {
+		upgrader := factory(executable)
+		upgrader.PublicKey = ""
+		return upgrader
+	}
+	hitsBefore := h.hits.Load()
+	code, _, errOut := runUpdate("--yes")
+	if code != ExitError || !strings.Contains(errOut, "签名公钥") {
+		t.Fatalf("code=%d stderr=%q, want a failure naming the missing signing key", code, errOut)
+	}
+	if len(h.replaced) != 0 {
+		t.Fatalf("staged a replacement without a signing key: %+v", h.replaced)
+	}
+	// Only the latest-version lookup may touch the network.
+	if got := h.hits.Load() - hitsBefore; got > 1 {
+		t.Fatalf("network requests after refusal = %d", got)
 	}
 }

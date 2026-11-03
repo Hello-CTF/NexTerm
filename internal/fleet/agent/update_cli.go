@@ -171,7 +171,7 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 	if upgrader.Logger == nil {
 		upgrader.Logger = slog.New(applog.NewRedactingHandler(slog.NewTextHandler(stderr, nil)))
 	}
-	fmt.Fprintf(stdout, "正在从官方 release 下载 %s 并校验 SHA256SUMS...\n", wanted)
+	fmt.Fprintf(stdout, "正在从官方 release 下载 %s 并校验 Minisign 签名与 SHA256SUMS...\n", wanted)
 	if err := upgrader.Upgrade(ctx, wanted); err != nil {
 		printCLIError(stderr, "agent update: 升级失败，当前版本保持不变：", err)
 		return ExitError

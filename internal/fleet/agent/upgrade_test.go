@@ -20,6 +20,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
+	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
 )
 
 func buildTarGz(t *testing.T, name string, content []byte) []byte {
@@ -70,6 +73,26 @@ func buildReleaseArchive(t *testing.T, goos string, content []byte) []byte {
 func sha256Hex(content []byte) string {
 	sum := sha256.Sum256(content)
 	return hex.EncodeToString(sum[:])
+}
+
+var testReleaseKey = releasesigtest.NewKey(7)
+
+// signedChecksums returns the SHA256SUMS and SHA256SUMS.minisig entries of a release, signed by testReleaseKey.
+func signedChecksums(version, sums string) map[string][]byte {
+	return map[string][]byte{
+		"/v" + version + "/" + checksumsFileName:              []byte(sums),
+		"/v" + version + "/" + checksumsFileName + ".minisig": []byte(testReleaseKey.Sign([]byte(sums), releasesig.ChecksumsTrustedComment(version))),
+	}
+}
+
+func mergeFiles(parts ...map[string][]byte) map[string][]byte {
+	out := map[string][]byte{}
+	for _, part := range parts {
+		for key, value := range part {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 type releaseServer struct {
@@ -173,10 +196,7 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	binary := []byte("#!/bin/sh\necho new-agent\n")
 	archive := buildReleaseArchive(t, runtime.GOOS, binary)
 	sums := fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)
-	server := newReleaseServer(t, map[string][]byte{
-		"/v" + version + "/" + asset:             archive,
-		"/v" + version + "/" + checksumsFileName: []byte(sums),
-	})
+	server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive}, signedChecksums(version, sums)))
 
 	targetDir := t.TempDir()
 	target := filepath.Join(targetDir, agentBinaryName(runtime.GOOS))
@@ -185,7 +205,7 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	}
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
-		BaseURL: server.URL, Executable: target,
+		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	}
@@ -218,7 +238,7 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	if err != nil || string(oldContent) != "old-binary" {
 		t.Fatalf("old binary must stay untouched until the deferred replace: %q, %v", oldContent, err)
 	}
-	if server.requestCount("/v"+version+"/"+asset) != 1 || server.requestCount("/v"+version+"/"+checksumsFileName) != 1 {
+	if server.requestCount("/v"+version+"/"+asset) != 1 || server.requestCount("/v"+version+"/"+checksumsFileName) != 2 {
 		t.Fatalf("requests = %v", server.requests)
 	}
 }
@@ -228,17 +248,14 @@ func TestUpgradeRejectsChecksumMismatch(t *testing.T) {
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), []byte("agent"))
 	sums := fmt.Sprintf("%s  %s\n", strings.Repeat("0", 64), asset)
-	server := newReleaseServer(t, map[string][]byte{
-		"/v" + version + "/" + asset:             archive,
-		"/v" + version + "/" + checksumsFileName: []byte(sums),
-	})
+	server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive}, signedChecksums(version, sums)))
 	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
 	if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
-		BaseURL: server.URL, Executable: target,
+		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 2, Backoff: time.Millisecond,
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	}
@@ -265,14 +282,11 @@ func TestUpgradeMissingChecksumEntry(t *testing.T) {
 	version := "1.2.3"
 	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
 	archive := buildTarGz(t, agentBinaryName(runtime.GOOS), []byte("agent"))
-	server := newReleaseServer(t, map[string][]byte{
-		"/v" + version + "/" + asset:             archive,
-		"/v" + version + "/" + checksumsFileName: []byte(strings.Repeat("a", 64) + "  other-asset.tar.gz\n"),
-	})
+	server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive}, signedChecksums(version, strings.Repeat("a", 64)+"  other-asset.tar.gz\n")))
 	target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
-		BaseURL: server.URL, Executable: target,
+		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 1, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), version)
@@ -284,6 +298,121 @@ func TestUpgradeMissingChecksumEntry(t *testing.T) {
 	}
 }
 
+func TestUpgradeRefusesWithoutPublicKey(t *testing.T) {
+	previous := releasesig.EmbeddedPublicKey
+	releasesig.EmbeddedPublicKey = ""
+	t.Cleanup(func() { releasesig.EmbeddedPublicKey = previous })
+	server := newReleaseServer(t, map[string][]byte{})
+	var replaced []stagedReplace
+	upgrader := &Upgrader{
+		BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 3, Backoff: time.Millisecond, sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+	}
+	err := upgrader.Upgrade(context.Background(), "1.2.3")
+	if err == nil || !errors.Is(err, errUpgradeRefused) || !strings.Contains(err.Error(), "签名公钥") {
+		t.Fatalf("Upgrade = %v, want a refusal that names the missing signing key", err)
+	}
+	if got := server.requestCount("/"); got != 0 {
+		t.Fatalf("a build without a signing key must not touch the network, got %d requests", got)
+	}
+	if len(replaced) != 0 {
+		t.Fatal("scheduleReplace must not run")
+	}
+}
+
+func TestUpgradeUsesEmbeddedPublicKey(t *testing.T) {
+	previous := releasesig.EmbeddedPublicKey
+	releasesig.EmbeddedPublicKey = testReleaseKey.EncodedPublic
+	t.Cleanup(func() { releasesig.EmbeddedPublicKey = previous })
+	version := "1.2.3"
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	archive := buildReleaseArchive(t, runtime.GOOS, []byte("agent"))
+	server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive},
+		signedChecksums(version, fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset))))
+	var replaced []stagedReplace
+	upgrader := &Upgrader{
+		BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
+		MaxAttempts: 1, scheduleReplace: captureReplace(&replaced),
+	}
+	if err := upgrader.Upgrade(context.Background(), version); err != nil || len(replaced) != 1 {
+		t.Fatalf("Upgrade = %v, replaced %d", err, len(replaced))
+	}
+}
+
+func TestUpgradeRefusesUnverifiedChecksums(t *testing.T) {
+	version := "1.2.3"
+	asset := releaseAssetName(version, runtime.GOOS, runtime.GOARCH)
+	archive := buildReleaseArchive(t, runtime.GOOS, []byte("agent"))
+	sums := fmt.Sprintf("%s  %s\n", sha256Hex(archive), asset)
+	sumsPath := "/v" + version + "/" + checksumsFileName
+	sigPath := sumsPath + ".minisig"
+	otherKey := releasesigtest.NewKey(8)
+	tests := []struct {
+		name  string
+		files func() map[string][]byte
+		key   string
+	}{
+		{name: "missing signature", files: func() map[string][]byte {
+			files := signedChecksums(version, sums)
+			delete(files, sigPath)
+			return files
+		}},
+		{name: "signed by another key", files: func() map[string][]byte {
+			return map[string][]byte{sumsPath: []byte(sums), sigPath: []byte(otherKey.Sign([]byte(sums), releasesig.ChecksumsTrustedComment(version)))}
+		}},
+		{name: "trusted comment of another version", files: func() map[string][]byte {
+			return map[string][]byte{sumsPath: []byte(sums), sigPath: []byte(testReleaseKey.Sign([]byte(sums), releasesig.ChecksumsTrustedComment("1.2.2")))}
+		}},
+		{name: "checksums changed after signing", files: func() map[string][]byte {
+			files := signedChecksums(version, sums)
+			files[sumsPath] = []byte(fmt.Sprintf("%s  %s\n", strings.Repeat("0", 64), asset))
+			return files
+		}},
+		{name: "invalid trusted key", key: "not-a-key", files: func() map[string][]byte { return signedChecksums(version, sums) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newReleaseServer(t, mergeFiles(map[string][]byte{"/v" + version + "/" + asset: archive}, test.files()))
+			target := filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS))
+			if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			publicKey := test.key
+			if publicKey == "" {
+				publicKey = testReleaseKey.PublicKeyFile()
+			}
+			var replaced []stagedReplace
+			var sleeps int
+			upgrader := &Upgrader{
+				BaseURL: server.URL, Executable: target, PublicKey: publicKey,
+				MaxAttempts: 3, Backoff: time.Millisecond,
+				sleep:           func(context.Context, time.Duration) bool { sleeps++; return true },
+				scheduleReplace: captureReplace(&replaced),
+			}
+			err := upgrader.Upgrade(context.Background(), version)
+			if !errors.Is(err, errUpgradeRefused) {
+				t.Fatalf("Upgrade = %v, want a permanent refusal", err)
+			}
+			if len(replaced) != 0 {
+				t.Fatal("scheduleReplace must not run")
+			}
+			if got := server.requestCount("/v" + version + "/" + asset); got != 0 {
+				t.Fatalf("the archive must not be downloaded before the signature verifies, got %d requests", got)
+			}
+			if got := server.requestCount(sumsPath); got > 2 {
+				t.Fatalf("a refusal must not be retried, got %d checksum requests", got)
+			}
+			if sleeps != 0 {
+				t.Fatalf("a refusal must not back off, slept %d times", sleeps)
+			}
+			content, readErr := os.ReadFile(target)
+			if readErr != nil || string(content) != "old-binary" {
+				t.Fatalf("old binary must stay untouched: %q, %v", content, readErr)
+			}
+		})
+	}
+}
+
 func TestUpgradeRetryCapAndBackoff(t *testing.T) {
 	version := "9.9.9"
 	server := newReleaseServer(t, map[string][]byte{})
@@ -291,7 +420,7 @@ func TestUpgradeRetryCapAndBackoff(t *testing.T) {
 	var replaced []stagedReplace
 	var sleeps []time.Duration
 	upgrader := &Upgrader{
-		BaseURL: server.URL, Executable: target,
+		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 3, Backoff: time.Millisecond,
 		sleep: func(_ context.Context, d time.Duration) bool {
 			sleeps = append(sleeps, d)
@@ -316,7 +445,7 @@ func TestUpgradeRetryCapAndBackoff(t *testing.T) {
 
 func TestUpgradeInvalidVersionSkipsNetwork(t *testing.T) {
 	server := newReleaseServer(t, map[string][]byte{})
-	upgrader := &Upgrader{BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent")}
+	upgrader := &Upgrader{BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"), PublicKey: testReleaseKey.PublicKeyFile()}
 	if err := upgrader.Upgrade(context.Background(), "../1.0"); err == nil {
 		t.Fatal("invalid version must fail")
 	}

@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -312,6 +313,9 @@ func cliRun(args []string, getenv func(string) string, stdout, stderr io.Writer)
 		return ExitRevoked
 	case errors.Is(err, ErrProtocolMismatch):
 		fmt.Fprintln(stderr, "agent: 控制通道协议版本不兼容，且自动升级不可用或已失败；请执行 agent update --force，或使用 install-device.sh 重新安装")
+		if detail := strings.TrimPrefix(err.Error(), ErrProtocolMismatch.Error()+": "); detail != err.Error() {
+			printCLIError(stderr, "agent: 原因：", errors.New(detail))
+		}
 		return ExitProtocol
 	default:
 		printCLIError(stderr, "agent run:", err)

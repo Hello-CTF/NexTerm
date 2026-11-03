@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -871,7 +872,7 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 			return
 		}
 		r.logger.Error("self-upgrade failed; staying on the current binary for manual intervention", "target_version", serverVersion, "error", err)
-		r.fatal(ErrProtocolMismatch)
+		r.fatal(fmt.Errorf("%w: %w", ErrProtocolMismatch, err))
 		return
 	}
 	r.logger.Info("self-upgrade staged; deferred replace will swap the binary and restart the service", "target_version", serverVersion)

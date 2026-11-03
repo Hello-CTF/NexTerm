@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
 
 // ReleaseBaseURL is the only official release source for self-upgrade: the domain is hardcoded, the server only reports
@@ -28,6 +30,9 @@ const ReleaseBaseURL = "https://github.com/Hello-CTF/NexTerm/releases/download"
 
 const (
 	checksumsFileName         = "SHA256SUMS"
+	checksumSignatureSuffix   = ".minisig"
+	maxChecksumsBytes         = 1 << 20
+	maxChecksumSignatureBytes = 16 << 10
 	maxReleaseVersionLength   = 64
 	upgradeDownloadTimeout    = 10 * time.Minute
 	defaultUpgradeMaxAttempts = 3
@@ -42,13 +47,19 @@ var maxUpgradeDownloadBytes int64 = 512 << 20
 // the replacement script completes the binary switch and restarts the service, and the cli layer ends this process with ExitOK accordingly.
 var errUpgradeStaged = errors.New("agent self-upgrade staged")
 
+// errUpgradeRefused marks permanent refusals (no trusted signing key, missing or invalid release signature): Upgrade returns them
+// at once instead of retrying, and the old binary is left as-is.
+var errUpgradeRefused = errors.New("self-upgrade refused")
+
 // Upgrader self-upgrades the running agent to the version reported by the server: it downloads the platform asset from the fixed official release
-// source, verifies it against the same release's SHA256SUMS (same verification-chain semantics as install-device.sh),
-// and schedules a deferred replacement after unpacking. Download/verify/staging failures are retried by Upgrade with exponential
+// source, verifies the release's SHA256SUMS Minisign signature against the trusted key, verifies the archive against that
+// SHA256SUMS, and schedules a deferred replacement after unpacking. Download/verify/staging failures are retried by Upgrade with exponential
 // backoff; once retries are exhausted the old binary is kept exactly as-is.
 type Upgrader struct {
-	BaseURL     string
-	Executable  string
+	BaseURL    string
+	Executable string
+	// PublicKey is the trusted Minisign public key text; empty falls back to releasesig.EmbeddedPublicKey.
+	PublicKey   string
 	MaxAttempts int
 	Backoff     time.Duration
 	Logger      *slog.Logger
@@ -98,6 +109,9 @@ func (u *Upgrader) Upgrade(ctx context.Context, targetVersion string) error {
 		if err = u.attempt(ctx, targetVersion); err == nil {
 			return nil
 		}
+		if errors.Is(err, errUpgradeRefused) {
+			return err
+		}
 		if attempt < maxAttempts {
 			logger.Warn("self-upgrade attempt failed; retrying", "target_version", targetVersion, "attempt", attempt, "max_attempts", maxAttempts, "error", err, "delay", backoff)
 			if !sleep(ctx, backoff) {
@@ -109,32 +123,68 @@ func (u *Upgrader) Upgrade(ctx context.Context, targetVersion string) error {
 	return fmt.Errorf("self-upgrade to %s failed after %d attempts: %w", targetVersion, maxAttempts, err)
 }
 
+func (u *Upgrader) trustedKey() (releasesig.PublicKey, error) {
+	encoded := u.PublicKey
+	if encoded == "" {
+		encoded = releasesig.EmbeddedPublicKey
+	}
+	if encoded == "" {
+		return releasesig.PublicKey{}, fmt.Errorf("%w: 此构建未内置发布签名公钥（开发构建），已拒绝自升级；请用 install-device.sh 或官方发行版重新安装", errUpgradeRefused)
+	}
+	key, err := releasesig.ParsePublicKey(encoded)
+	if err != nil {
+		return releasesig.PublicKey{}, fmt.Errorf("%w: 受信发布签名公钥无效: %v", errUpgradeRefused, err)
+	}
+	return key, nil
+}
+
+// verifiedChecksums fetches SHA256SUMS and its Minisign signature and returns the manifest only when the signature verifies
+// for exactly this release version.
+func (u *Upgrader) verifiedChecksums(ctx context.Context, tag, targetVersion string, key releasesig.PublicKey) ([]byte, error) {
+	sums, err := u.fetch(ctx, tag+"/"+checksumsFileName, maxChecksumsBytes)
+	if err != nil {
+		return nil, err
+	}
+	signature, err := u.fetch(ctx, tag+"/"+checksumsFileName+checksumSignatureSuffix, maxChecksumSignatureBytes)
+	var statusErr *downloadStatusError
+	if errors.As(err, &statusErr) && statusErr.status == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: release 缺少 %s%s: %v", errUpgradeRefused, checksumsFileName, checksumSignatureSuffix, err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := releasesig.Verify(sums, signature, key, releasesig.ChecksumsTrustedComment(targetVersion)); err != nil {
+		return nil, fmt.Errorf("%w: %s 的 minisign 验证失败: %v", errUpgradeRefused, checksumsFileName, err)
+	}
+	return sums, nil
+}
+
 func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
+	key, err := u.trustedKey()
+	if err != nil {
+		return err
+	}
 	asset := releaseAssetName(targetVersion, runtime.GOOS, runtime.GOARCH)
 	tag := "v" + targetVersion
+	sumsContent, err := u.verifiedChecksums(ctx, tag, targetVersion, key)
+	if err != nil {
+		return err
+	}
 	stageDir, err := os.MkdirTemp("", "nexterm-agent-upgrade-*")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(stageDir) }()
-	archivePath := filepath.Join(stageDir, asset)
-	if err := u.download(ctx, tag+"/"+asset, archivePath); err != nil {
-		return err
-	}
-	sumsPath := filepath.Join(stageDir, checksumsFileName)
-	if err := u.download(ctx, tag+"/"+checksumsFileName, sumsPath); err != nil {
-		return err
-	}
-	sumsContent, err := os.ReadFile(sumsPath)
-	if err != nil {
-		return err
-	}
 	expected := parseSHA256SUMS(sumsContent)[asset]
 	if len(expected) != sha256.Size*2 {
 		return fmt.Errorf("%s 中没有 %s 的合法校验和条目, 拒绝升级", checksumsFileName, asset)
 	}
 	if _, err := hex.DecodeString(expected); err != nil {
 		return fmt.Errorf("%s 中 %s 的校验和不是合法 sha256, 拒绝升级", checksumsFileName, asset)
+	}
+	archivePath := filepath.Join(stageDir, asset)
+	if err := u.download(ctx, tag+"/"+asset, archivePath); err != nil {
+		return err
 	}
 	actual, err := fileSHA256(archivePath)
 	if err != nil {
@@ -159,7 +209,15 @@ func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
 	return nil
 }
 
-func (u *Upgrader) download(ctx context.Context, ref, dest string) error {
+type downloadStatusError struct {
+	url    string
+	status int
+	text   string
+}
+
+func (e *downloadStatusError) Error() string { return fmt.Sprintf("download %s: %s", e.url, e.text) }
+
+func (u *Upgrader) open(ctx context.Context, ref string) (*http.Response, error) {
 	client := u.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: upgradeDownloadTimeout}
@@ -167,16 +225,42 @@ func (u *Upgrader) download(ctx context.Context, ref, dest string) error {
 	url := strings.TrimRight(u.BaseURL, "/") + "/" + ref
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("download %s: %w", url, err)
+		return nil, fmt.Errorf("download %s: %w", url, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		_ = response.Body.Close()
+		return nil, &downloadStatusError{url: url, status: response.StatusCode, text: response.Status}
+	}
+	return response, nil
+}
+
+// fetch reads a small release file into memory, failing when it exceeds limit bytes.
+func (u *Upgrader) fetch(ctx context.Context, ref string, limit int64) ([]byte, error) {
+	response, err := u.open(ctx, ref)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("download %s: %s", url, response.Status)
+	content, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", ref, err)
 	}
+	if int64(len(content)) > limit {
+		return nil, fmt.Errorf("%s exceeds %d bytes", ref, limit)
+	}
+	return content, nil
+}
+
+func (u *Upgrader) download(ctx context.Context, ref, dest string) error {
+	response, err := u.open(ctx, ref)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
 	out, err := os.Create(dest)
 	if err != nil {
 		return err

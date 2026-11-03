@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parseReleaseVersion } from "./semver.mjs";
+import { releaseSigningKeyProblem } from "./release-signing.mjs";
 import { COMMIT, RELEASE_REF, ROOT, VERSION, die, log, option } from "./build-context.mjs";
 
 function desktopMinisignPublicKey() {
@@ -45,9 +46,13 @@ export function ldflags(kind, goos) {
     `-X github.com/Hello-CTF/NexTerm/internal/version.Version=${VERSION}`,
     `-X github.com/Hello-CTF/NexTerm/internal/version.Commit=${COMMIT}`,
   ];
-  if (kind === "desktop") {
+  if (kind === "desktop" || kind === "agent") {
     const publicKey = desktopMinisignPublicKey();
-    if (publicKey) flags.push(`-X github.com/Hello-CTF/NexTerm/internal/update.defaultMinisignPublicKey=${publicKey}`);
+    if (kind === "agent") {
+      const problem = releaseSigningKeyProblem({ kind, releaseVersion: process.env.NEXTERM_RELEASE_VERSION, publicKey });
+      if (problem) die(problem);
+    }
+    if (publicKey) flags.push(`-X github.com/Hello-CTF/NexTerm/internal/releasesig.EmbeddedPublicKey=${publicKey}`);
   }
   if (kind === "desktop" && goos === "windows") flags.push("-H windowsgui");
   return flags.join(" ");
