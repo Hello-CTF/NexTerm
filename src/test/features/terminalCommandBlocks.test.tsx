@@ -102,11 +102,11 @@ describe("TerminalCommandBlocks", () => {
     expect(mocks.snippetCreate).toHaveBeenCalledWith("my snippet", "ls -l");
   });
 
-  it("drops the fixed side-panel width when embedded", () => {
-    const fixed = view("tab-7");
-    expect(fixed.firstElementChild?.className).toContain("w-[252px]");
+  it("switches to the embedded layout when embedded", () => {
+    const panel = view("tab-7");
+    expect(panel.firstElementChild?.getAttribute("data-layout")).toBe("panel");
     mounted?.unmount();
     const embedded = view("tab-7", true);
-    expect(embedded.firstElementChild?.className).not.toContain("w-[252px]");
+    expect(embedded.firstElementChild?.getAttribute("data-layout")).toBe("embedded");
   });
 });
