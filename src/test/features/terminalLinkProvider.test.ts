@@ -291,6 +291,32 @@ describe("link stitching rules", () => {
   });
 });
 
+describe("hover window edge", () => {
+  // At 512 columns a URL may span 4 rows, so the hover window reaches 4 lines
+  // below the hovered row and the line after the tail is the first one outside it.
+  const cols = 512;
+  const headText = "https://a.example/x?k=" + "a".repeat(cols - 2 - 22);
+  const fullRow = "b".repeat(cols - 2);
+  const tail = "abcdef";
+
+  async function run(after: string) {
+    const term = await makeTerm(cols, [headText, fullRow, fullRow, fullRow, tail, after, ""].join("\r\n"), 20);
+    return { extracted: extractTerminalLinks(term).map((l) => l.url), provided: provide(term, 1).map((l) => l.text) };
+  }
+
+  it("does not trust the line past the window as clean", async () => {
+    const { extracted, provided } = await run("Next sentence follows");
+    expect(extracted).toEqual([headText + fullRow.repeat(3)]);
+    expect(provided).toEqual(extracted);
+  });
+
+  it("still accepts the tail when the line past the window is clean", async () => {
+    const { extracted, provided } = await run("$ ls");
+    expect(extracted).toEqual([headText + fullRow.repeat(3) + tail]);
+    expect(provided).toEqual(extracted);
+  });
+});
+
 describe("long URLs on narrow terminals", () => {
   const fx = LINK_FIXTURES.find((f) => f.name === "claude-code-login-45-cols")!;
 

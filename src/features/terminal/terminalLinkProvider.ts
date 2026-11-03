@@ -444,7 +444,8 @@ function windowBounds(term: Terminal, y0: number): { first: number; last: number
   let last = y0;
   for (let seen = 0; ; seen++) {
     while (last + 1 < buf.length && wrappedAt(last + 1) && last - y0 < WINDOW_MAX_PHYSICAL_ROWS) last++;
-    if (seen >= WINDOW_LOGICAL_LINES || last + 1 >= buf.length || last - y0 >= WINDOW_MAX_PHYSICAL_ROWS) break;
+    // One line more than a URL can span, so the line after its last row is seen.
+    if (seen >= WINDOW_LOGICAL_LINES + 1 || last + 1 >= buf.length || last - y0 >= WINDOW_MAX_PHYSICAL_ROWS) break;
     last++;
   }
   return { first, last };
