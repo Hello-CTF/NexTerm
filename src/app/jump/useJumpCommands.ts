@@ -12,6 +12,8 @@ import { cloneAsset } from "../../features/explorer/assetClone";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../../features/logs/logTailTab";
 import { createFleetHealthTabId, FLEET_HEALTH_TAB_ID } from "../../features/fleet/fleetHealthTab";
+import { terminalLinkCommands } from "./terminalLinkCommands";
+import { terminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
 import { workspaceLayoutTree } from "../paneLayout";
 import { resolveActivePane } from "../splitTree";
 import {
@@ -380,6 +382,12 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         },
       },
     ];
+    const activeWs = currentWorkspace;
+    const activePane = activeWs?.panes.find((item) => item.id === activeWs.activePaneId) ?? activeWs?.panes[0];
+    const activeTab =
+      activePane?.tabs.find((item) => item.id === activePane.activeTabId) ?? activePane?.tabs[activePane.tabs.length - 1];
+    const linkSource = activeTab?.kind === "terminal" ? terminalLinkSource(activeTab.id) : undefined;
+    if (linkSource) list.push(...terminalLinkCommands(linkSource, keyHint("terminalLinks")));
     list.push(...workspaceActions);
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {

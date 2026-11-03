@@ -6,6 +6,9 @@ import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
 import type { DetectedTarget } from "./terminalLinkProvider";
 import { buildTargetMenu } from "./terminalTargetMenu";
 import { terminalIntegrations } from "./terminalIntegrations";
+import { TerminalLinkPanel } from "./TerminalLinkPanel";
+import { registerTerminalLinkSource } from "./terminalLinkRegistry";
+import type { ExtractedLink } from "./terminalLinkProvider";
 import { AssetEditor } from "../../app/lazyPanels";
 import { Lazy } from "../../ui/LazyBoundary";
 import { openHostDetail } from "../hosts/hostDetail";
@@ -307,6 +310,7 @@ export function TerminalPane({
   const [previewOpenRequest, setPreviewOpenRequest] = useState(0);
   const [previewActive, setPreviewActive] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [linkPanel, setLinkPanel] = useState<ExtractedLink[] | null>(null);
   const [query, setQuery] = useState("");
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
@@ -977,6 +981,39 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
+
+  const openLinkPanel = useCallback(() => {
+    setLinkPanel(handleRef.current?.extractLinks?.(2000) ?? []);
+  }, []);
+  const closeLinkPanel = useCallback(() => {
+    setLinkPanel(null);
+    window.setTimeout(() => handleRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "terminalLinks")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openLinkPanel();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, [openLinkPanel]);
+
+  useEffect(
+    () =>
+      registerTerminalLinkSource(storeTabId, {
+        extract: () => handleRef.current?.extractLinks?.(2000) ?? [],
+        open: (url) => handleRef.current?.openLink(url),
+        openPanel: openLinkPanel,
+      }),
+    [storeTabId, openLinkPanel],
+  );
 
   const previousSessionStatus = useRef(sessionStatus);
   useEffect(() => {
@@ -2432,6 +2469,16 @@ export function TerminalPane({
 
       <div className="nx-terminal-body relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>
+          {linkPanel && (
+            <TerminalLinkPanel
+              links={linkPanel}
+              onOpen={(url) => {
+                handleRef.current?.openLink(url);
+                closeLinkPanel();
+              }}
+              onClose={closeLinkPanel}
+            />
+          )}
           <div className="h-full w-full p-1.5">
             <XtermView
               key={epoch}

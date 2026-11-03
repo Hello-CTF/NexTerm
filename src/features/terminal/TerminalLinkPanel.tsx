@@ -1,0 +1,100 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useUi } from "../../app/store";
+import { copyText } from "../../ui/clipboard";
+import { describeError } from "../../ui/errorText";
+import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
+import { terminalIntegrations } from "./terminalIntegrations";
+import type { ExtractedLink } from "./terminalLinkProvider";
+import "./terminalLinks.css";
+
+interface TerminalLinkPanelProps {
+  /** Newest first. */
+  links: ExtractedLink[];
+  onOpen: (url: string) => void;
+  onClose: () => void;
+}
+
+export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelProps) {
+  const [selected, setSelected] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const openInApp = terminalIntegrations().openInApp;
+  const last = links.length - 1;
+
+  useEffect(() => {
+    listRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [selected]);
+
+  const copy = (url: string) => {
+    const pushToast = useUi.getState().pushToast;
+    void copyText(cleanTerminalLink(url)).then(
+      () => pushToast("success", "已复制链接"),
+      (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
+    );
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    const current = links[selected];
+    let handled = true;
+    if (e.key === "ArrowDown") setSelected((i) => Math.min(last, i + 1));
+    else if (e.key === "ArrowUp") setSelected((i) => Math.max(0, i - 1));
+    else if (e.key === "Home") setSelected(0);
+    else if (e.key === "End") setSelected(Math.max(0, last));
+    else if (e.key === "Escape") onClose();
+    else if (e.key === "Enter" && e.shiftKey) {
+      if (openInApp && current) {
+        openInApp(current.url);
+        onClose();
+      }
+    } else if (e.key === "Enter") {
+      if (current) onOpen(current.url);
+    } else if ((e.key === "c" || e.key === "C") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (current) copy(current.url);
+    } else handled = false;
+    if (handled) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  return (
+    <div className="nx-term-link-panel" role="dialog" aria-label="终端链接面板">
+      <div
+        ref={listRef}
+        className="nx-term-link-list"
+        role="listbox"
+        aria-label="终端链接"
+        tabIndex={0}
+        aria-activedescendant={links[selected] ? `nx-term-link-${selected}` : undefined}
+        onKeyDown={onKeyDown}
+      >
+        {links.length === 0 ? (
+          <div className="nx-term-link-empty">当前终端没有可识别的链接</div>
+        ) : (
+          links.map((link, i) => (
+            <div
+              key={link.url}
+              id={`nx-term-link-${i}`}
+              role="option"
+              aria-selected={i === selected}
+              className="nx-term-link-row"
+              onMouseMove={() => i !== selected && setSelected(i)}
+              onClick={() => onOpen(link.url)}
+            >
+              <span className="nx-term-link-url">{displayTerminalLink(link.url)}</span>
+              {link.context && <span className="nx-term-link-context">{link.context}</span>}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="nx-term-link-footer">
+        ↑↓ 选择 · Enter 打开 · C 复制{openInApp ? " · Shift+Enter 在 NexTerm 中打开" : ""} · Esc 关闭
+      </div>
+    </div>
+  );
+}

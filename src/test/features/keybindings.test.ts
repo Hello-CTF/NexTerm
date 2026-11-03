@@ -14,6 +14,7 @@ import {
   loadKeybindings,
   matchAppKeybinding,
   matchBinding,
+  matchTerminalWithheldKeybinding,
   matchKeybinding,
   normalizeBinding,
   parseBinding,
@@ -389,5 +390,18 @@ describe("catalog sanity", () => {
       expect(parseBinding(action.defaultBinding), action.id).not.toBeNull();
       expect(normalizeBinding(action.defaultBinding), action.id).toBe(action.defaultBinding);
     }
+  });
+});
+
+describe("terminal link panel shortcut", () => {
+  it("is withheld from a focused terminal as Ctrl+Shift+U off macOS", () => {
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "U", code: "KeyU", ctrlKey: true, shiftKey: true }))).toEqual({
+      action: "terminalLinks",
+      digit: null,
+    });
+  });
+
+  it("does not conflict with another default action", () => {
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "terminalLinks"))).toEqual([]);
   });
 });
