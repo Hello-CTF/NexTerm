@@ -205,3 +205,23 @@ func TestEnsureHelperBuildKeepsOnlyDesktopSpawnedEnvStaleHelper(t *testing.T) {
 		})
 	}
 }
+
+func TestEnsureHelperBuildReplacesBuildStaleDesktopHelper(t *testing.T) {
+	ctx := context.Background()
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Cleanup(func() { killHelperProcesses(t, stateDir) })
+	config := HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second, KeepEnvStale: true, SpawnedBy: SpawnedByDesktop}
+	if _, err := ConnectHelper(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	local, err := CurrentRuntimeMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local.Commit += "-other"
+	local.SHA256 = strings.Repeat("0", 64)
+	build, err := ensureHelperBuild(ctx, config, local)
+	if err != nil || build.StaleReason != "build" || !build.Replaced || build.EnvKept {
+		t.Fatalf("build-stale desktop helper: %+v, %v; want replaced", build, err)
+	}
+}
