@@ -76,7 +76,7 @@ Options:
   -y, --yes      do not ask for confirmation when upgrading from before 1.3.0
   -h, --help     show this help
 
-Test hooks (see scripts/test-systemd-install.py):
+Test hooks (see the Go tests in scripts/installer):
   NEXTERM_INSTALL_SYSTEMCTL   systemctl executable to call
   NEXTERM_INSTALL_UNAME       uname executable to call
   NEXTERM_INSTALL_INIT_ADMIN  replacement for the server binary during the
@@ -1378,6 +1378,7 @@ print_next_steps() {
       log "  the web UI listens on $listen, reachable from this machine only"
       log "  from your computer: ssh -L $port:$listen <user>@<this-server>, then open http://localhost:$port"
       log "  for public access, put a TLS reverse proxy in front and list its source ranges in NEXTERM_TRUSTED_PROXY_CIDRS"
+      log "  to rate limit by the real client address, also set NEXTERM_TRUST_FORWARDED_FOR=1 (the proxy must not pass a client-supplied X-Forwarded-For through unchanged)"
       ;;
     *)
       log "  the web UI listens on $listen; open http://<this-server>:$port (use a TLS reverse proxy for public access)"
