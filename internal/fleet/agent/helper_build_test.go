@@ -4,10 +4,12 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,5 +110,46 @@ func TestDescribeHelperBuildKeepsEnvStaleNoticeOnlyForDesktopSpawnedHelpers(t *t
 		if text := strings.Join(describeHelperBuildIn(build, "", true), "\n"); strings.Contains(text, "提示") {
 			t.Fatalf("helper spawned by %q is replaced, so no keep notice is due:\n%s", spawnedBy, text)
 		}
+	}
+}
+
+type countingHandler struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *countingHandler) Handle(_ context.Context, record slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, record.Level.String()+" "+record.Message)
+	return nil
+}
+func (h *countingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *countingHandler) WithGroup(string) slog.Handler      { return h }
+func (h *countingHandler) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.records)
+}
+
+func TestCheckHelperBuildLogsTheSameNoticeOncePerHelper(t *testing.T) {
+	handler := &countingHandler{}
+	agentRuntime := newStateRuntime(t, Options{DataDir: t.TempDir()})
+	agentRuntime.logger = slog.New(handler)
+	pid := 7
+	agentRuntime.checkBuild = func(context.Context) (supervisor.HelperBuild, error) {
+		return supervisor.HelperBuild{Helper: supervisor.RunningHelper{PID: pid}, EnvKept: true}, nil
+	}
+	agentRuntime.checkHelperBuild(context.Background())
+	agentRuntime.checkHelperBuild(context.Background())
+	if got := handler.count(); got != 1 {
+		t.Fatalf("log records after two checks of one helper = %d, want 1", got)
+	}
+	pid = 8
+	agentRuntime.checkHelperBuild(context.Background())
+	agentRuntime.checkHelperBuild(context.Background())
+	if got := handler.count(); got != 2 {
+		t.Fatalf("log records after the helper changed = %d, want 2", got)
 	}
 }

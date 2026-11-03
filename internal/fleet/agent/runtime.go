@@ -105,8 +105,11 @@ type Runtime struct {
 	digestDir string
 	// channelCancel ends the control channel so it re-announces a changed state digest.
 	channelCancel context.CancelFunc
-	logger        *slog.Logger
-	now           func() time.Time
+	// noticePID and noticeText are the helper build hint last logged, so it is not repeated every cycle.
+	noticePID  int
+	noticeText string
+	logger     *slog.Logger
+	now        func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
@@ -762,7 +765,14 @@ func (r *Runtime) checkHelperBuild(ctx context.Context) {
 	case build.Replaced:
 		r.logger.Info("replaced the stale supervisor helper that ran no terminals", "reason", build.StaleReason, "to", build.Local.Version)
 	case build.Notice() != "":
-		r.logger.Warn(build.Notice())
+		// The check repeats every sync cycle; the same hint for the same helper is logged once.
+		r.mu.Lock()
+		repeated := r.noticePID == build.Helper.PID && r.noticeText == build.Notice()
+		r.noticePID, r.noticeText = build.Helper.PID, build.Notice()
+		r.mu.Unlock()
+		if !repeated {
+			r.logger.Warn(build.Notice())
+		}
 	}
 }
 
