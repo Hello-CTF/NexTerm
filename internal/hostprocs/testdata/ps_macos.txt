@@ -1,0 +1,6 @@
+@@nexterm-procs ps
+  PID  PPID USER               %CPU %MEM      RSS     ELAPSED STAT COMMAND
+    1     0 root                0.0  0.1     9000 12-01:02:03 Ss   /sbin/launchd
+  501     1 dev                 3.4  2.0   300000       05:03 S    /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --type=gpu
+  777     1 dev                 0.0  0.0        0       00:09 Z    <defunct>
+  778     1 dev                 0.0  0.0     1000       1:02 S    -zsh

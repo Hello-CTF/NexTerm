@@ -1,0 +1,10 @@
+@@nexterm-procs ps
+    PID    PPID USER     %CPU %MEM   RSS     ELAPSED STAT COMMAND
+      1       0 root      0.0  0.1 11520    12:34:56 Ss   /sbin/init splash
+      2       0 root      0.0  0.0     0 3-04:05:06 S    [kthreadd]
+     55       2 root      0.0  0.0     0       59:01 I    [kworker/0:1-events]
+    812       1 abcdefg+  12.5  3.2 262144       00:07 Sl   /usr/lib/srv/server --name "a b" --port 80
+    900     812 www-data  0.3  0.0  2048       01:02 Z    [worker] <defunct>
+    901       1 root      bad  0.0  1 00:01 S    broken-row
+   1000       1 root      1.0  0.0   100       xx:yy S    weird etime
+   1100       1 root      7.0  1.0   500       05:00 R+   sshd: dev@pts/0
