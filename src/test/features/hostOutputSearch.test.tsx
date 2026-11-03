@@ -265,7 +265,7 @@ describe("host output search tab", () => {
 
   it("states that records are stored in plain text and opens the host history", async () => {
     await openSearchTab();
-    expect(view().textContent).toContain("终端记录以明文保存在本机数据库");
+    expect(view().textContent).toContain("终端记录以明文保存在数据库中");
     const button = [...view().querySelectorAll("button")].find((item) => item.textContent === "打开终端历史")!;
     click(button);
     const tabs = useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs));

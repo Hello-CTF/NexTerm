@@ -90,7 +90,7 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
     <div className="flex flex-col gap-3" data-testid="host-output-search">
       <div className="flex flex-wrap items-center gap-2 rounded border border-neutral-800/60 px-3 py-2 text-[12px] text-neutral-400">
         <IconHistory size={13} />
-        <span className="min-w-0 flex-1">终端记录以明文保存在本机数据库，可在终端历史中逐条删除。</span>
+        <span className="min-w-0 flex-1">终端记录以明文保存在数据库中，可在终端历史中逐条删除。</span>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => openHostHistoryTab(assetId)}>
           打开终端历史
         </button>
