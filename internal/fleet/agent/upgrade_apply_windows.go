@@ -12,22 +12,12 @@ import (
 // scheduleDeferredReplace starts the deferred replacement script via powershell with a hidden window: the script waits for
 // this process to exit, then completes the binary switch, and automatically rolls back to the old binary on failure.
 func scheduleDeferredReplace(newPath, targetPath, logPath string) (bool, error) {
-	script, err := os.CreateTemp(filepath.Dir(newPath), ".nexterm-replace-*.ps1")
-	if err != nil {
-		return false, err
-	}
-	scriptPath := script.Name()
 	body := renderReplaceScriptWindows(windowsReplaceScript{
 		NewPath: newPath, TargetPath: targetPath, WaitPID: os.Getpid(), WaitTimeoutSeconds: replaceWaitTimeoutSeconds,
 		LogPath: logPath, RestartBlock: windowsRestartBlock(windowsTaskName),
 	})
-	if _, err := script.WriteString(body); err != nil {
-		_ = script.Close()
-		_ = os.Remove(scriptPath)
-		return false, err
-	}
-	if err := script.Close(); err != nil {
-		_ = os.Remove(scriptPath)
+	scriptPath, err := writeReplaceScriptFile(filepath.Dir(newPath), body)
+	if err != nil {
 		return false, err
 	}
 	cmd, detached, err := startReplaceScript(scriptPath, logPath)

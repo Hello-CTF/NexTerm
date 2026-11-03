@@ -540,6 +540,28 @@ func windowsRestartBlock(taskName string) string {
 	return strings.Join(lines, "\n")
 }
 
+// windowsScriptBOM makes Windows PowerShell 5.1 read the script as UTF-8 instead of the ANSI code page.
+const windowsScriptBOM = "\xEF\xBB\xBF"
+
+// writeReplaceScriptFile writes the script to a new temp file in dir, prefixed with a UTF-8 BOM, and returns its path.
+func writeReplaceScriptFile(dir, body string) (string, error) {
+	script, err := os.CreateTemp(dir, ".nexterm-replace-*.ps1")
+	if err != nil {
+		return "", err
+	}
+	path := script.Name()
+	if _, err := script.WriteString(windowsScriptBOM + body); err != nil {
+		_ = script.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := script.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return path, nil
+}
+
 // renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
 // powershell deferred replacement, rolling back to the old binary on failure. RestartBlock runs only after a successful swap-in.
 func renderReplaceScriptWindows(p windowsReplaceScript) string {
