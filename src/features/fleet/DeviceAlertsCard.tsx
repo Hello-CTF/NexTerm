@@ -9,7 +9,7 @@ import {
 import type { FleetDevice } from "../../ipc/fleetApi";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
-import { deviceActiveAlerts, ruleName, RULE_SUSTAIN_MINUTES, useFleetAlerts } from "./deviceAlerts";
+import { clockSkewText, deviceActiveAlerts, ruleName, RULE_SUSTAIN_MINUTES, useFleetAlerts } from "./deviceAlerts";
 import { formatTime } from "./format";
 
 const FORBIDDEN_TEXT = "仅设备所有者可修改告警设置";
@@ -195,6 +195,11 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
       {forbidden && (
         <p className="nx-hint m-0 text-[12px]" role="note">
           {FORBIDDEN_TEXT}
+        </p>
+      )}
+      {clockSkewText(data?.clock_skew_ms) !== "" && (
+        <p className="nx-hint m-0 text-[12px]" role="note" data-testid="device-clock-skew">
+          {clockSkewText(data?.clock_skew_ms)}
         </p>
       )}
       {!form && !forbidden && (

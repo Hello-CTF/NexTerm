@@ -55,6 +55,8 @@ export interface FleetAlertSettings extends FleetAlertSettingsInput {
   kind: string;
   server_tz: string;
   suspect_after_minutes: number;
+  // Device clock minus server clock in ms (signed); 0 means no skew.
+  clock_skew_ms?: number;
 }
 
 export interface FleetAlertsClient {

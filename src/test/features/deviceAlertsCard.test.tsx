@@ -156,4 +156,21 @@ describe("DeviceAlertsCard", () => {
     expect(view!.container.textContent).toContain("仅设备所有者可修改告警设置");
     expect(view!.container.querySelector('[aria-label="磁盘使用率阈值"]')).toBeNull();
   });
+
+  it("shows no skew note without a clock skew", async () => {
+    await open();
+    expect(view!.container.textContent).not.toContain("设备时钟偏差");
+  });
+
+  it("explains a fast device clock", async () => {
+    mocks.getSettings.mockResolvedValue({ ...settings, clock_skew_ms: 180_000 });
+    await open();
+    expect(view!.container.textContent).toContain("设备时钟偏差约 3 分钟（快），指标按服务器接收时间记录");
+  });
+
+  it("explains a slow device clock", async () => {
+    mocks.getSettings.mockResolvedValue({ ...settings, clock_skew_ms: -7_200_000 });
+    await open();
+    expect(view!.container.textContent).toContain("设备时钟偏差约 2 小时（慢）");
+  });
 });
