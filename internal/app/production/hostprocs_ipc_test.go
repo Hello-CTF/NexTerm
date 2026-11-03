@@ -17,8 +17,8 @@ const hostProcsListOutput = "@@nexterm-procs ps\n" +
 	"@@nexterm-procs comm\n" +
 	"  812 server\n"
 
-// These tests wire the module the way production_builder.go does (newProductionHostProcsService plus
-// hostProcsModule) but do not depend on production.go registering it.
+// These tests assemble the module with the production constructors (newProductionHostProcsService plus
+// hostProcsModule); production wiring lands at integration, so they do not depend on it.
 func newHostProcsDispatcher(t *testing.T) (*ipc.Dispatcher, *session.Manager) {
 	t.Helper()
 	transport := newExecBatchTestTransport(func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
