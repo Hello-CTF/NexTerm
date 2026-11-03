@@ -359,6 +359,7 @@ func run(args []string) int {
 			Auth:              invocation.Auth,
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
+			TrustForwardedFor: os.Getenv("NEXTERM_TRUST_FORWARDED_FOR") == "1",
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,
