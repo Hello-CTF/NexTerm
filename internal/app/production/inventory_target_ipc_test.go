@@ -1013,7 +1013,8 @@ func TestInventoryTargetExecCancelKubernetesCanonicalTarget(t *testing.T) {
 	runner := &recordingInventoryRunner{block: true, started: make(chan struct{}, 1)}
 	service.runner = runner
 	dispatcher := newInventoryExecDispatcher(t, service)
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	// Kubernetes exec is a desktop/open-access capability, so no owner context.
+	ctx := context.Background()
 	requestA := inventoryKubernetesExecRequest()
 	requestA.OperationID = "op-a"
 	doneA := make(chan ipc.Response, 1)
@@ -1441,6 +1442,35 @@ func TestInventoryServerWatchStoreRequiresDataDir(t *testing.T) {
 }
 
 var _ fleetinventory.CommandRunner = (*recordingInventoryRunner)(nil)
+
+func TestInventoryTargetExecKubernetesRejectedForMultiUser(t *testing.T) {
+	// Even with the operator opt-in set, a multi-user server must never run kubectl with the server kubeconfig.
+	t.Setenv(inventoryKubeconfigEnv, "1")
+	cases := map[string]struct {
+		ctx       context.Context
+		multiUser bool
+	}{
+		"owner context":   {ctx: ipc.WithUserID(context.Background(), "owner-a")},
+		"structural flag": {ctx: context.Background(), multiUser: true},
+		"flag with owner": {ctx: ipc.WithUserID(context.Background(), "owner-a"), multiUser: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			service, _ := newInventoryTestService(t, false)
+			service.multiUser = tc.multiUser
+			runner := &recordingInventoryRunner{outputs: map[string][]byte{
+				"kubectl --context staging exec -n ops api-0 -c app -- uname -a": []byte("Linux\n"),
+			}}
+			service.runner = runner
+			dispatcher := newInventoryExecDispatcher(t, service)
+			response := dispatchInventoryTest(t, dispatcher, tc.ctx, "inventory_target_exec", inventoryKubernetesExecRequest(), nil)
+			requireInventoryIPCError(t, response, ipc.CodeUnsupported)
+			if runner.callCount() != 0 {
+				t.Fatalf("rejected kubernetes exec ran commands: %+v", runner.calls)
+			}
+		})
+	}
+}
 
 func TestInventoryServerPathSourcesRejectedByStructuralFlag(t *testing.T) {
 	t.Setenv(inventoryKubeconfigEnv, "1")

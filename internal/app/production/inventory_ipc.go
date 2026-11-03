@@ -381,6 +381,7 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 
 const (
 	inventoryKubeconfigMultiUserImportMessage = "多用户服务端不支持从 kubeconfig 导入：它会读取服务器上的 kubeconfig，属于跨账号共享凭据"
+	inventoryKubernetesMultiUserExecMessage   = "多用户服务端不支持 Kubernetes 目标执行：它会使用服务器上的 kubeconfig，属于跨账号共享凭据"
 )
 
 func (s *inventoryService) discover(ctx context.Context, source, path string) ([]store.InventoryItem, []string, error) {
@@ -533,6 +534,9 @@ func (s *inventoryService) execTarget(ctx context.Context, input inventoryTarget
 	target, err := fleetinventory.ResolveTarget(candidate)
 	if err != nil {
 		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeBadParam, err.Error())
+	}
+	if target.Kubernetes != nil && (s.multiUser || ipc.OwnerID(ctx) != "") {
+		return inventoryTargetExecResponse{}, ipc.NewError(ipc.CodeUnsupported, inventoryKubernetesMultiUserExecMessage)
 	}
 	if !s.desktop && target.Docker != nil {
 		return s.execDockerTargetViaSession(ctx, input, target)
