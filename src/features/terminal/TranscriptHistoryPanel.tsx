@@ -32,6 +32,7 @@ import {
 } from "./transcriptText";
 import { TranscriptReplayView } from "./TranscriptReplayView";
 import { ResizeHandle } from "../../ui/ResizeHandle";
+import { useTranscriptFocus } from "./transcriptFocus";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
@@ -112,6 +113,18 @@ export function TranscriptHistoryPanel({
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
   const [listWidth, setListWidth] = useState(300);
+  const [loadedId, setLoadedId] = useState<string | null>(null);
+  // A focus request moves through "select" (wait for the session list) and "load" (wait for the text reader).
+  const [pendingFocus, setPendingFocus] = useState<{
+    assetId: string;
+    transcriptId: string;
+    ts: number;
+    seq?: number;
+    stage: "select" | "load";
+  } | null>(null);
+  const [focusTs, setFocusTs] = useState<{ transcriptId: string; ts: number } | null>(null);
+  const focusRequest = useTranscriptFocus((s) => s.request);
+  const focusRetriedRef = useRef(false);
   const readerRef = useRef<HTMLDivElement | null>(null);
   const decoderRef = useRef<TranscriptDecoder | null>(null);
   const hostsGenerationRef = useRef(0);
@@ -233,6 +246,7 @@ export function TranscriptHistoryPanel({
       const result = normalizeRead(await transcriptApi.read(id, afterSeq, PAGE_BYTES));
       if (generation !== readerGenerationRef.current) return null;
       decodeChunks(result.chunks, result.done);
+      setLoadedId(id);
       setNextSeq(result.nextSeq);
       setDone(result.done);
       return result;
@@ -246,6 +260,7 @@ export function TranscriptHistoryPanel({
       searchGenerationRef.current += 1;
       decoderRef.current = createTranscriptDecoder();
       setReaderLoading(true);
+      setLoadedId(null);
       setLoadingMore(false);
       setReaderError(null);
       setChunks([]);
@@ -418,6 +433,79 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const switchAsset = (nextAssetId: string | null) => {
+    appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
+    sessionsGenerationRef.current += 1;
+    readerGenerationRef.current += 1;
+    searchGenerationRef.current += 1;
+    setAssetId(nextAssetId);
+    setSelectedId(null);
+    setSessions(null);
+    setPendingFocus(null);
+    useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
+  };
+
+  // Consume a focus request (search hit or command history entry) once this panel is the visible one for its host.
+  useEffect(() => {
+    if (!focusRequest || !visible) return;
+    if (fixedHost && focusRequest.assetId !== sourceAssetId) return;
+    const { nonce, assetId: targetAsset, transcriptId, ts, seq } = focusRequest;
+    useTranscriptFocus.getState().clear(nonce);
+    focusRetriedRef.current = false;
+    setPendingFocus({ assetId: targetAsset, transcriptId, ts, seq, stage: "select" });
+    setFocusTs(null);
+    if (targetAsset !== assetId) {
+      appliedSourceAssetIdRef.current = targetAsset;
+      sessionsGenerationRef.current += 1;
+      readerGenerationRef.current += 1;
+      searchGenerationRef.current += 1;
+      setAssetId(targetAsset);
+      setSelectedId(null);
+      setSessions(null);
+      if (!fixedHost) useUi.getState().updateTab("history", { assetId: targetAsset });
+    }
+  }, [focusRequest, visible, fixedHost, sourceAssetId, assetId]);
+
+  useEffect(() => {
+    if (!pendingFocus || pendingFocus.stage !== "select") return;
+    if (assetId !== pendingFocus.assetId || sessions === null) return;
+    const target = sessions.find((summary) => summary.id === pendingFocus.transcriptId);
+    if (!target) {
+      if (!focusRetriedRef.current) {
+        focusRetriedRef.current = true;
+        void loadSessions();
+        return;
+      }
+      setPendingFocus(null);
+      pushToast("info", "未找到对应的终端记录，可能已被删除");
+      return;
+    }
+    setSelectedId(target.id);
+    if (pendingFocus.seq === undefined || target.contentOmitted) {
+      setViewMode(target.contentOmitted ? "text" : "replay");
+      setFocusTs({ transcriptId: target.id, ts: pendingFocus.ts });
+      setPendingFocus(null);
+      return;
+    }
+    setViewMode("text");
+    setPendingFocus({ ...pendingFocus, stage: "load" });
+  }, [pendingFocus, assetId, sessions, loadSessions, pushToast]);
+
+  useEffect(() => {
+    if (!pendingFocus || pendingFocus.stage !== "load") return;
+    if (readerError) {
+      setPendingFocus(null);
+      return;
+    }
+    if (selectedId !== pendingFocus.transcriptId || loadedId !== pendingFocus.transcriptId) return;
+    if (viewMode !== "text" || pendingFocus.seq === undefined) return;
+    const { seq, ts } = pendingFocus;
+    setPendingFocus(null);
+    void jumpToMatch({ seq, ts, preview: "" });
+    // jumpToMatch reads the current render's reader state, which is what this effect was gated on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFocus, selectedId, loadedId, viewMode, readerError]);
+
   const hostOptions = hosts ?? [];
   const sessionList = sessions ?? [];
 
@@ -433,17 +521,7 @@ export function TranscriptHistoryPanel({
           disabled={hostOptions.length === 0}
           placeholder={hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
           options={hostOptions.map((host) => ({ value: host.assetId, label: hostLabel(host) }))}
-          onChange={(value) => {
-            const nextAssetId = value || null;
-            appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
-            sessionsGenerationRef.current += 1;
-            readerGenerationRef.current += 1;
-            searchGenerationRef.current += 1;
-            setAssetId(nextAssetId);
-            setSelectedId(null);
-            setSessions(null);
-            useUi.getState().updateTab("history", { assetId: nextAssetId ?? undefined });
-          }}
+          onChange={(value) => switchAsset(value || null)}
         />}
         <div className="nx-spacer" />
         <button
@@ -496,7 +574,10 @@ export function TranscriptHistoryPanel({
                   <tr
                     key={summary.id}
                     className={`cursor-pointer pointer-coarse:min-h-11 ${summary.id === selectedId ? "bg-neutral-800/60" : ""}`}
-                    onClick={() => setSelectedId(summary.id)}
+                    onClick={() => {
+                      setPendingFocus(null);
+                      setSelectedId(summary.id);
+                    }}
                   >
                     <td>
                       <div className="text-[12.5px] font-medium text-neutral-200">
@@ -682,7 +763,10 @@ export function TranscriptHistoryPanel({
                       ? "bg-neutral-700/70 text-neutral-100"
                       : "text-neutral-400 hover:bg-neutral-800/60"
                   }`}
-                  onClick={() => setViewMode(mode)}
+                  onClick={() => {
+                    setFocusTs(null);
+                    setViewMode(mode);
+                  }}
                 >
                   {mode === "text" ? "文本" : "回放"}
                 </button>
@@ -694,6 +778,7 @@ export function TranscriptHistoryPanel({
             <TranscriptReplayView
               transcriptId={selected.id}
               contentOmitted={selected.contentOmitted}
+              initialTs={focusTs?.transcriptId === selected.id ? focusTs.ts : undefined}
             />
           ) : (
             <>

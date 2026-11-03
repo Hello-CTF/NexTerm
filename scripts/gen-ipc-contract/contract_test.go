@@ -432,6 +432,7 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		{name: "transcript_list", input: "TranscriptListRequest", output: "TranscriptSummaryDTO[]"},
 		{name: "transcript_read", input: "TranscriptReadRequest", output: "TranscriptReadResult"},
 		{name: "transcript_search", input: "TranscriptSearchRequest", output: "TranscriptMatchDTO[]"},
+		{name: "transcript_search_host", input: "TranscriptHostSearchRequest", output: "TranscriptHostSearchResult"},
 		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
 		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
 	}
@@ -466,8 +467,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 6 {
-		t.Fatalf("selected transcript command count = %d, want 6", len(selected))
+	if len(selected) != 7 {
+		t.Fatalf("selected transcript command count = %d, want 7", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {
@@ -1533,6 +1534,7 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		{name: "audit_count", scope: "audit", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;"), output: "AuditCountDTO"},
 		{name: "command_query", scope: "command-log", nested: true, input: "CommandLogQueryRequest", output: "CommandLogDTO[]"},
 		{name: "command_count", scope: "command-log", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;"), output: "AuditCountDTO"},
+		{name: "command_search", scope: "command-log", input: "CommandSearchRequest", output: "CommandSearchResult"},
 		{name: "layout_get", scope: "layout", input: "Record<string, never>", output: "LayoutDTO"},
 		{name: "layout_put", scope: "layout", nested: true, input: "LayoutPutRequest", output: "LayoutSaveDTO"},
 		{name: "ssh_import_preview", scope: "ssh-import", nested: true, input: "SshImportPreviewRequest", output: "SshImportPreviewDTO"},
@@ -1569,8 +1571,8 @@ func TestOperationsVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 12 {
-		t.Fatalf("selected operations command count = %d, want 12", len(selected))
+	if len(selected) != 13 {
+		t.Fatalf("selected operations command count = %d, want 13", len(selected))
 	}
 	for name, command := range commands {
 		switch command.Scope {

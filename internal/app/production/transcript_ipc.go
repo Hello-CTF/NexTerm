@@ -184,6 +184,7 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 	}
+	registrations = append(registrations, func() error { return s.registerSearch(dispatcher) })
 	for _, register := range registrations {
 		if err := register(); err != nil {
 			return err

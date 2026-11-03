@@ -346,4 +346,26 @@ describe("TranscriptReplayView", () => {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
     }
   });
+
+  it("seeks to initialTs once loaded, clamps it and does not autoplay", async () => {
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" initialTs={2000} />);
+    await flush();
+    const terminal = terminalMocks.instances[0];
+    expect(writtenText(terminal)).toContain("world");
+    const seek = mounted.container.querySelector<HTMLInputElement>("[data-testid='replay-seek']")!;
+    expect(seek.value).toBe("1000");
+    expect(mounted.container.querySelector("button[aria-label='开始回放']")).not.toBeNull();
+  });
+
+  it("clamps an initialTs outside the recording", async () => {
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" initialTs={1} />);
+    await flush();
+    const seek = mounted.container.querySelector<HTMLInputElement>("[data-testid='replay-seek']")!;
+    expect(seek.value).toBe("0");
+    mounted.unmount();
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" initialTs={999999} />);
+    await flush();
+    const seekEnd = mounted.container.querySelector<HTMLInputElement>("[data-testid='replay-seek']")!;
+    expect(seekEnd.value).toBe("1500");
+  });
 });
