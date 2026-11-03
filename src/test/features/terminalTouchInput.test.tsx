@@ -25,7 +25,6 @@ vi.mock("@xterm/xterm", async (importOriginal) => {
 });
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
 vi.mock("@xterm/addon-search", () => ({ SearchAddon: class { findNext() {} findPrevious() {} activate() {} dispose() {} } }));
-vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class { activate() {} dispose() {} } }));
 vi.mock("../../features/terminal/terminalGeometry", () => ({
   measureTerminalGeometry: () => ({
     viewport: { widthPx: 360, heightPx: 480 },

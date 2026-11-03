@@ -2,7 +2,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Terminal, type IBufferRange } from "@xterm/xterm";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import {
   LINK_LONG_PRESS_MS,
   attachLinkLongPress,
@@ -19,6 +18,7 @@ import {
   type TerminalLinkDeps,
   type TerminalLinkEntry,
 } from "../../features/terminal/terminalLinks";
+import { createTerminalLinkProvider } from "../../features/terminal/terminalLinkProvider";
 
 describe("terminal link scheme policy", () => {
   it("opens http, https and mailto externally", () => {
@@ -299,7 +299,14 @@ describe("terminal links in a real xterm", () => {
     });
     term = new Terminal({ allowProposedApi: true, cols: 80, rows: 10, linkHandler: controller.linkHandler });
     term.open(host);
-    term.loadAddon(new WebLinksAddon(controller.webLinkHandler, controller.webLinkOptions));
+    term.registerLinkProvider(
+      createTerminalLinkProvider(term, {
+        activate: controller.webLinkHandler,
+        hover: controller.webLinkOptions.hover,
+        leave: controller.webLinkOptions.leave,
+        onTargetHover: controller.onTargetHover,
+      }),
+    );
   });
 
   afterEach(() => {
