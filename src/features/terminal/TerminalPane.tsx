@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
@@ -12,7 +12,10 @@ import type { ExtractedLink } from "./terminalLinkProvider";
 import { AssetEditor } from "../../app/lazyPanels";
 import { Lazy } from "../../ui/LazyBoundary";
 import { openHostDetail } from "../hosts/hostDetail";
-import { CommandBlockPanel } from "./CommandBlockPanel";
+import { TerminalCommandBlocks } from "./TerminalCommandBlocks";
+import { SessionSidebar } from "./SessionSidebar";
+import { useSessionSidebarHost } from "./sessionSidebarHost";
+import { setSessionSidebarOpen, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -108,6 +111,7 @@ import {
   IconEye,
   IconGlobe,
   IconList,
+  IconPanelRight,
   IconMergeH,
   IconPlug,
   IconRefresh,
@@ -459,9 +463,22 @@ export function TerminalPane({
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
   );
+  const sidebarOpen = useSessionSidebarOpen();
+  const [paneNarrow, setPaneNarrow] = useState(false);
+  const paneNarrowRef = useRef(false);
+  paneNarrowRef.current = paneNarrow;
   const myPaneId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.paneId ?? null,
   );
+  const paneIsActive = useUi((s) =>
+    Boolean(workspaceId && myPaneId && s.workspaces.find((w) => w.id === workspaceId)?.activePaneId === myPaneId),
+  );
+  const hostPaneId = useSessionSidebarHost((s) => (workspaceId ? (s.hosts[workspaceId] ?? null) : null));
+  const hostFits = useSessionSidebarHost((s) => (hostPaneId ? s.reports[hostPaneId]?.wide === true : false));
+  const sidebarEligible = visible !== false && !paneNarrow;
+  const sidebarShown = sidebarOpen && sidebarEligible && myPaneId !== null && myPaneId === hostPaneId;
+  const sidebarCtl = useRef({ shown: false, workspaceId: null as string | null, paneId: null as string | null });
+  sidebarCtl.current = { shown: sidebarShown, workspaceId, paneId: myPaneId };
   const broadcastCount = useUi((s) => {
     const wsId = findWorkspacePane(s.workspaces, storeTabId)?.wsId;
     const bc = s.broadcast;
@@ -981,6 +998,69 @@ export function TerminalPane({
     };
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Closes the sidebar when this pane shows it; otherwise moves it here and keeps it open.
+  const toggleSidebarHere = useCallback(() => {
+    const { shown, workspaceId: ws, paneId } = sidebarCtl.current;
+    if (shown) {
+      setSessionSidebarOpen(false);
+      return;
+    }
+    if (ws && paneId) useSessionSidebarHost.getState().setHost(ws, paneId);
+    setSessionSidebarOpen(true);
+  }, []);
+
+  // Only the visible terminal of a pane reports its fit, and only the same tab may withdraw the report.
+  useLayoutEffect(() => {
+    if (!myPaneId || visible === false) return;
+    const { report, clearReport } = useSessionSidebarHost.getState();
+    report(myPaneId, storeTabId, !paneNarrow);
+    return () => clearReport(myPaneId, storeTabId);
+  }, [myPaneId, storeTabId, visible, paneNarrow]);
+
+  // Focus alone never moves the sidebar; the active pane takes it only when the host pane cannot show it any more.
+  useEffect(() => {
+    if (!workspaceId || !myPaneId || !sidebarOpen || !paneIsActive || !sidebarEligible) return;
+    // Read the store, not the render snapshot: a report written in this same commit must count.
+    if (hostPaneId === myPaneId || (hostPaneId !== null && useSessionSidebarHost.getState().reports[hostPaneId]?.wide === true)) return;
+    useSessionSidebarHost.getState().setHost(workspaceId, myPaneId);
+  }, [workspaceId, myPaneId, sidebarOpen, paneIsActive, sidebarEligible, hostPaneId, hostFits]);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "sessionSidebar")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (paneNarrowRef.current) {
+        pushToast("info", "窗格太窄，无法显示侧栏");
+        return;
+      }
+      toggleSidebarHere();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, [pushToast, toggleSidebarHere]);
+
+  // The sidebar is mounted, not just hidden, so a narrow pane must be known in JS; 560px matches the container query.
+  useLayoutEffect(() => {
+    const width = paneRef.current?.getBoundingClientRect().width ?? 0;
+    setPaneNarrow(width > 0 && width <= 560);
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      setPaneNarrow(width > 0 && width <= 560);
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
   }, []);
 
   const openLinkPanel = useCallback(() => {
@@ -2173,6 +2253,16 @@ export function TerminalPane({
     });
   };
 
+  const commandBlockProps = {
+    kernelTabId,
+    sourceLabel: title,
+    blocks,
+    getText: (i: number) => handleRef.current?.copyBlock(i) ?? "",
+    onLocate: (i: number) => handleRef.current?.scrollToBlock(i),
+    onClear: () => handleRef.current?.clearBlocks(),
+    onToast: pushToast,
+  };
+
   return (
     <div ref={paneRef} className={`nx-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
       <div className="nx-toolbar nx-term-toolbar">
@@ -2327,6 +2417,15 @@ export function TerminalPane({
             </button>
           </>
         )}
+        <button
+          className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+          aria-pressed={sidebarShown}
+          title={`会话侧栏：端口、最近文件、命令记录 (${formatBinding(bindings.sessionSidebar)})`}
+          onClick={toggleSidebarHere}
+        >
+          <IconPanelRight size={13} />
+          侧栏
+        </button>
         {broadcastCount > 0 && (
           <button
             type="button"
@@ -2775,13 +2874,19 @@ export function TerminalPane({
             </div>
           )}
         </div>
-        {blocksSupported && blocksOpen && (
-          <CommandBlockPanel
-            blocks={blocks}
-            getText={(i) => handleRef.current?.copyBlock(i) ?? ""}
-            onLocate={(i) => handleRef.current?.scrollToBlock(i)}
-            onClear={() => handleRef.current?.clearBlocks()}
-            onToast={pushToast}
+        {blocksSupported && blocksOpen && !sidebarShown && <TerminalCommandBlocks {...commandBlockProps} />}
+        {sidebarShown && (
+          <SessionSidebar
+            workspaceId={workspaceId}
+            storeTabId={storeTabId}
+            kernelTabId={kernelTabId}
+            title={title}
+            visible
+            commandBlocks={blocksSupported ? <TerminalCommandBlocks {...commandBlockProps} embedded /> : null}
+            onClose={() => {
+              setSessionSidebarOpen(false);
+              window.setTimeout(() => handleRef.current?.focus(), 0);
+            }}
           />
         )}
       </div>

@@ -863,3 +863,41 @@ subscribeTheme(() => {
   applyAppearance();
   notifyAppearance();
 });
+
+// Session sidebar open state is a per-device preference: it is never written to the account store.
+export const SESSION_SIDEBAR_STORAGE_KEY = "nexterm.sessionSidebar.v1";
+const sessionSidebarListeners = new Set<() => void>();
+// Holds the value of a write that localStorage rejected, so the toggle still works for the current page.
+let sessionSidebarMemory = false;
+let sessionSidebarMemoryValid = false;
+
+export function getSessionSidebarOpen(): boolean {
+  if (sessionSidebarMemoryValid) return sessionSidebarMemory;
+  try {
+    return localStorage.getItem(SESSION_SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setSessionSidebarOpen(open: boolean): void {
+  try {
+    localStorage.setItem(SESSION_SIDEBAR_STORAGE_KEY, open ? "1" : "0");
+    sessionSidebarMemoryValid = false;
+  } catch {
+    sessionSidebarMemory = open;
+    sessionSidebarMemoryValid = true;
+  }
+  for (const listener of sessionSidebarListeners) listener();
+}
+
+export function subscribeSessionSidebar(listener: () => void): () => void {
+  sessionSidebarListeners.add(listener);
+  return () => {
+    sessionSidebarListeners.delete(listener);
+  };
+}
+
+export function useSessionSidebarOpen(): boolean {
+  return useSyncExternalStore(subscribeSessionSidebar, getSessionSidebarOpen, () => false);
+}

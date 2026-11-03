@@ -145,6 +145,16 @@ describe("AiSidebar pending references", () => {
     expect(args.message).toBe("[引用]\n- 命令块 #3 · ls（web-01）\n\n解释这段命令输出");
   });
 
+  it("does not prefill the input for a non-text reference", async () => {
+    act(() => {
+      useUi.getState().queueAiRef({ kind: "tab", id: "tab:t9", label: "term", detail: "web-01 的终端", refId: "kernel-9" });
+    });
+    await flush();
+    expect(useUi.getState().aiPendingRefs).toEqual([]);
+    expect(view!.container.querySelector("textarea")!.value).toBe("");
+    expect(view!.container.textContent).toContain("term");
+  });
+
   it("keeps text the user already typed", async () => {
     const textarea = view!.container.querySelector("textarea")!;
     setInputValue(textarea, "my own question");

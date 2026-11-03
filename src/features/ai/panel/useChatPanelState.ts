@@ -284,7 +284,8 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     const taken = useUi.getState().takeAiPendingRefs();
     if (taken.length === 0) return;
     setRefs((prev) => [...prev, ...taken.filter((r) => !prev.some((x) => x.id === r.id))]);
-    setInput((prev) => (prev.trim() === "" ? "解释这段命令输出" : prev));
+    // Only command output needs the explain prompt; a terminal or file reference just joins the list.
+    if (taken.some((r) => r.kind === "text")) setInput((prev) => (prev.trim() === "" ? "解释这段命令输出" : prev));
     inputRef.current?.focus();
   }, [active, rightOpen, pendingRefCount, setRefs, setInput]);
 

@@ -25,6 +25,7 @@ export type KeybindingActionId =
   | "restoreClosedTab"
   | "terminalSearch"
   | "terminalLinks"
+  | "sessionSidebar"
   | "reclaimTakeover"
   | "openSettings"
   | "focusAiInput"
@@ -64,6 +65,7 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: "终端链接面板", defaultBinding: "Mod+Shift+u" },
+  { id: "sessionSidebar", label: "收起 / 展开会话侧栏", defaultBinding: "Mod+Shift+b" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Mod+Shift+e" },
   { id: "openSettings", label: "打开设置", defaultBinding: "Mod+," },
@@ -573,7 +575,7 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
  * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
  * terminal pane intercepts before xterm. Listed in match precedence order.
  */
-export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks"];
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks", "sessionSidebar"];
 
 /** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
 export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
@@ -581,7 +583,8 @@ export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybind
   if (hit) return hit;
   if (isAltGraph(event)) return null;
   if (matchActionBinding(event, "terminalSearch")) return { action: "terminalSearch", digit: null };
-  return matchActionBinding(event, "terminalLinks") ? { action: "terminalLinks", digit: null } : null;
+  if (matchActionBinding(event, "terminalLinks")) return { action: "terminalLinks", digit: null };
+  return matchActionBinding(event, "sessionSidebar") ? { action: "sessionSidebar", digit: null } : null;
 }
 
 export interface KeybindingConflict {
