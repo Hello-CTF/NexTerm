@@ -6,11 +6,15 @@ import { planTerminalLink } from "./terminalLinks";
 // draw it inside a box or behind a quote/line-number prefix, are joined by the
 // conservative rules in continuationFragment().
 
-export const MAX_CONTINUATION_ROWS = 4;
+export const MIN_CONTINUATION_ROWS = 4;
 export const MAX_LINK_LENGTH = 2048;
-const WINDOW_LOGICAL_LINES = MAX_CONTINUATION_ROWS;
-const WINDOW_MAX_PHYSICAL_ROWS = 16;
+const CONTEXT_PHYSICAL_SLACK = 16;
 const CONTEXT_LIMIT = 120;
+
+/** Rows a URL may continue over: enough to carry MAX_LINK_LENGTH at this width. */
+export function maxContinuationRows(cols: number): number {
+  return Math.max(MIN_CONTINUATION_ROWS, Math.ceil(MAX_LINK_LENGTH / Math.max(1, cols)));
+}
 
 export interface TextRow {
   text: string;
@@ -202,17 +206,25 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       let endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
       const fullRow = RIGHT_BORDER_NEXT.test(tail) || endCol >= cols - 2;
-      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && n < MAX_CONTINUATION_ROWS && cur + 1 < lines.length; n++) {
+      const maxRows = maxContinuationRows(cols);
+      // A URL that would continue past a limit is dropped: a truncated address
+      // is worse than an unrecognised one.
+      let overflow = false;
+      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && cur + 1 < lines.length; n++) {
         const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, endCol);
         if (!next) break;
         const len = next.piece.end - next.piece.start;
-        if (total + len > MAX_LINK_LENGTH) break;
+        if (n >= maxRows || total + len > MAX_LINK_LENGTH) {
+          overflow = true;
+          break;
+        }
         pieces.push(next.piece);
         total += len;
         cur++;
         if (!next.more) break;
         endCol = next.endCol;
       }
+      if (overflow) continue;
       const built = finishLink(lines, pieces);
       if (built) links.push(built);
     }
@@ -323,6 +335,8 @@ function lineAt(term: Terminal, row: number): IBufferLine | undefined {
 
 function windowBounds(term: Terminal, y0: number): { first: number; last: number } {
   const buf = term.buffer.active;
+  const WINDOW_LOGICAL_LINES = maxContinuationRows(term.cols);
+  const WINDOW_MAX_PHYSICAL_ROWS = WINDOW_LOGICAL_LINES * 2 + CONTEXT_PHYSICAL_SLACK;
   const wrappedAt = (r: number) => lineAt(term, r)?.isWrapped === true;
   let first = y0;
   for (let seen = 0; ; seen++) {

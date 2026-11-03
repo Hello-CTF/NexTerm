@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Terminal, type ILink } from "@xterm/xterm";
 import {
-  MAX_CONTINUATION_ROWS,
+  MAX_LINK_LENGTH,
+  maxContinuationRows,
   createTerminalLinkProvider,
   extractTerminalLinks,
   findLinksInRows,
@@ -51,6 +52,7 @@ function bufferRows(term: Terminal): string[] {
   return out;
 }
 
+const MAX_CONTINUATION_ROWS_FLOOR = 4;
 const hard = (...lines: string[]): TextRow[] => lines.map((text) => ({ text, isWrapped: false }));
 const urls = (rows: TextRow[], cols: number) => findLinksInRows(rows, cols).map((l) => l.url);
 
@@ -122,17 +124,32 @@ describe("link stitching rules", () => {
     expect(urls(rows, 40)).toEqual([first + "abc", "https://b.example/zz"]);
   });
 
-  it("joins at most MAX_CONTINUATION_ROWS extra rows", () => {
-    const rows = hard("https://a.example/" + "a".repeat(22), ...Array.from({ length: 6 }, () => "1".repeat(40)));
-    const [link] = findLinksInRows(rows, 40);
-    expect(link.segments.length).toBe(MAX_CONTINUATION_ROWS + 1);
-    expect(link.url.length).toBe(40 * (MAX_CONTINUATION_ROWS + 1));
+  it("sizes the continuation limit from the terminal width", () => {
+    expect(maxContinuationRows(1000)).toBe(4);
+    expect(maxContinuationRows(45)).toBeGreaterThanOrEqual(Math.ceil(MAX_LINK_LENGTH / 45));
   });
 
-  it("stops before exceeding the length limit", () => {
+  it("stitches a URL over many rows when the width needs them", () => {
+    const rows = hard("https://a.example/" + "a".repeat(22), ...Array.from({ length: 9 }, () => "1".repeat(40)));
+    const [link] = findLinksInRows(rows, 40);
+    expect(link.segments.length).toBe(10);
+    expect(link.url.length).toBe(400);
+  });
+
+  it("gives no link when the length limit cuts a URL that would continue", () => {
     const head = "https://a.example/" + "a".repeat(1000 - 18);
     const rows = hard(head, "b".repeat(1000), "c".repeat(1000));
-    expect(urls(rows, 1000)).toEqual([head + "b".repeat(1000)]);
+    expect(urls(rows, 1000)).toEqual([]);
+  });
+
+  it("gives no link when the row limit cuts a URL that would continue", () => {
+    const rows = hard("https://a.example/" + "a".repeat(982), ...Array.from({ length: 6 }, () => "1".repeat(1000)));
+    expect(urls(rows, 1000)).toEqual([]);
+  });
+
+  it("stops at the length limit when nothing continues past it", () => {
+    const head = "https://a.example/" + "a".repeat(1000 - 18);
+    expect(urls(hard(head, "b".repeat(1000)), 1000)).toEqual([head + "b".repeat(1000)]);
   });
 
   it("only recognises http and https, and drops blocked URLs", () => {
@@ -146,6 +163,26 @@ describe("link stitching rules", () => {
       { text: "bb cc", isWrapped: true },
     ];
     expect(urls(rows, 22)).toEqual(["https://a.example/aabb"]);
+  });
+});
+
+describe("long URLs on narrow terminals", () => {
+  const fx = LINK_FIXTURES.find((f) => f.name === "claude-code-login-45-cols")!;
+
+  it("recognises a 379 character URL hard-wrapped at 45 columns", () => {
+    expect(fx.urls[0].url.length).toBeGreaterThan(370);
+    expect(fx.urls[0].parts.length).toBeGreaterThan(MAX_CONTINUATION_ROWS_FLOOR);
+  });
+
+  it("provides the whole URL from its first, middle and last row", async () => {
+    const term = await makeTerm(fx.cols, fx.data);
+    const rows = bufferRows(term);
+    const { url, parts } = fx.urls[0];
+    for (const idx of [0, Math.floor(parts.length / 2), parts.length - 1]) {
+      const y = rows.findIndex((r) => r === parts[idx]) + 1;
+      expect(y).toBeGreaterThan(0);
+      expect(provide(term, y).map((l) => l.text)).toContain(url);
+    }
   });
 });
 

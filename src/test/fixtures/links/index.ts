@@ -46,11 +46,11 @@ export const OAUTH_URL =
 
 const NL = "\r\n";
 
-function claudeLogin(): LinkFixture {
-  const cols = 80;
+function claudeLogin(cols = 80, name = "claude-code-login"): LinkFixture {
   const parts = hardWrap(OAUTH_URL, cols);
-  const data = [" Browser didn't open? Use the url below to sign in (c to copy)", "", ...parts, "", " Paste code here if prompted >"].join(NL);
-  return { name: "claude-code-login", recorded: false, cols, data, urls: [{ url: OAUTH_URL, parts }] };
+  const header = cols >= 70 ? " Browser didn't open? Use the url below to sign in (c to copy)" : " Use the url below to sign in";
+  const data = [header, "", ...parts, "", " Paste code here >"].join(NL);
+  return { name, recorded: false, cols, data, urls: [{ url: OAUTH_URL, parts }] };
 }
 
 function boxed(width: number, termCols: number, name: string): LinkFixture {
@@ -126,6 +126,7 @@ function numbered(): LinkFixture {
 
 export const LINK_FIXTURES: LinkFixture[] = [
   claudeLogin(),
+  claudeLogin(45, "claude-code-login-45-cols"),
   boxed(84, 100, "claude-code-login-boxed"),
   ghLogin(100, "gh-auth-login"),
   ghLogin(40, "gh-auth-login-narrow"),
