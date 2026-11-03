@@ -199,6 +199,15 @@ describe("resolveKey Ctrl+V on Windows", () => {
     expect(resolveKey(ev("v", "KeyV"), c)).toEqual(PASS);
   });
 
+  it("recognises the V key on a non-Latin layout but not another Latin letter on that key", () => {
+    const c = ctx({ windows: true });
+    expect(resolveKey(ev("м", "KeyV", { ctrlKey: true }), c)).toEqual(NATIVE);
+    expect(resolveKey(ev("м", "KeyM", { ctrlKey: true }, { keyCode: 86 }), c)).toEqual(NATIVE);
+    expect(resolveKey(ev("м", "KeyM", { ctrlKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ev("x", "KeyV", { ctrlKey: true }), c)).toEqual(PASS);
+    expect(resolveKey(ev("м", "KeyV", { ctrlKey: true, shiftKey: true }), c)).toEqual(PASS);
+  });
+
   it("lets the IME win", () => {
     expect(resolveKey(ctrlV({ isComposing: true }), ctx({ windows: true }))).toEqual({ kind: "ime", toXterm: false });
   });

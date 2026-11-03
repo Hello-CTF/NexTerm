@@ -72,5 +72,8 @@ export function resolveKey(event: TerminalKeyEvent, ctx: ResolveKeyContext): Key
 }
 
 function isPlainCtrlV(event: TerminalKeyEvent): boolean {
-  return (event.key === "v" || event.key === "V") && event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
+  if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return false;
+  if (event.key === "v" || event.key === "V") return true;
+  // A non-Latin layout reports another character for the physical V key, so fall back to the key code.
+  return !/^[A-Za-z]$/.test(event.key) && (event.code === "KeyV" || event.keyCode === 86);
 }
