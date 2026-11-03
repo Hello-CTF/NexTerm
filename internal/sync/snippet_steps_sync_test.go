@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -254,20 +255,25 @@ func TestOldClientSnippetPayloadWithoutStepsDegradesMultiStepSnippetToSingleStep
 	}
 }
 
-func TestSnippetPayloadWithInvalidStepsIsSkippedWithWarning(t *testing.T) {
+func TestSnippetStepsPayloadWithInvalidStepsIsSkippedWithWarning(t *testing.T) {
 	ctx := context.Background()
 	instance := newTestInstance(t, false)
-	id := ids.New()
-	payload := snippetObject{ID: id, Name: "bad", Body: "x", CreatedAt: 1, UpdatedAt: 2, Steps: []snippetStepObject{
-		{ID: "a", Command: "echo"}, {ID: "a", Command: "dup"},
-	}}
-	result := mustApplyObjects(t, instance, ApplyObject{ID: id, Kind: KindSnippet, Payload: applyPayload(t, payload)})
+	created, err := instance.db.SnippetCreate(ctx, "plain", "echo", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := snippetStepsObject{
+		ID: store.SnippetStepsObjectID(created.ID), SnippetID: created.ID, BodyHash: snippetBodyHash("echo\ndup"), UpdatedAt: created.UpdatedAt,
+		Steps: []snippetStepObject{{ID: "a", Command: "echo"}, {ID: "a", Command: "dup"}},
+	}
+	result := mustApplyObjects(t, instance, ApplyObject{ID: payload.ID, Kind: KindSnippetSteps, Payload: applyPayload(t, payload)})
 	requireApplyResult(t, result.Objects[0], ApplyResultSkipped)
 	if result.Objects[0].Warning == "" {
-		t.Fatal("skipped snippet must carry a warning")
+		t.Fatal("skipped companion must carry a warning")
 	}
-	if _, err := instance.db.SnippetGet(ctx, id); !isNotFound(err) {
-		t.Fatalf("invalid snippet was written: %v", err)
+	got, err := instance.db.SnippetGet(ctx, created.ID)
+	if err != nil || got.Steps != "" {
+		t.Fatalf("invalid steps were written: %+v %v", got, err)
 	}
 }
 
@@ -340,5 +346,73 @@ func TestBundleCarriesSnippetDescriptionAndSteps(t *testing.T) {
 	}
 	if _, err := target.db.SnippetGet(ctx, badID); !isNotFound(err) {
 		t.Fatalf("invalid snippet imported: %v", err)
+	}
+}
+
+// The retired runbookTemplates switch no longer decides whether an older client's template becomes a snippet.
+func TestLegacyRunbookTemplateConvertsWithOptInOff(t *testing.T) {
+	ctx := context.Background()
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	device := newTestDevice(t)
+	user, err := server.accounts.GetUserByUsername(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := device.db.SetRunbookTemplateSyncOptIn(ctx, user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	templateID := ids.New()
+	pushLegacyObject(t, device, server, KindRunbookTemplate, templateID, legacyTemplate(templateID, 2000))
+	syncDevice(t, device, server, "alice", "alice-pw-123")
+	if _, err := device.db.SnippetGet(ctx, store.LegacyRunbookSnippetID(templateID)); err != nil {
+		t.Fatalf("template was not converted with the switch off: %v", err)
+	}
+}
+
+// Owner B's template derives to an ID owner A already holds. Conversions from sync land on the fresh snippet ID
+// the store resolves for B (the one the startup migration uses too), once, and never touch A's snippet.
+func TestLegacyRunbookTemplateSyncConversionAvoidsCrossOwnerIDDatabase(t *testing.T) {
+	instance := newDatabaseTestInstance(t, false)
+	ctxA := ipc.WithUserID(context.Background(), "owner-a")
+	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+	templateID := ids.New()
+	derived := store.LegacyRunbookSnippetID(templateID)
+	if err := instance.db.GORM().Create(&store.SnippetRow{ID: derived, Name: "foreign", Body: "echo a", OwnerID: "owner-a", CreatedAt: 1, UpdatedAt: 1}).Error; err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := instance.db.ResolveRunbookTemplateSnippetID(ctxB, templateID)
+	if err != nil || resolved == derived {
+		t.Fatalf("resolved = %q, %v", resolved, err)
+	}
+
+	report := &SyncReport{}
+	converted := legacyTemplate(templateID, 2000)
+	if applied, _ := instance.service.engine.applyRunbookTemplateObject(ctxB, applyPayload(t, converted), report); !applied {
+		t.Fatalf("conversion not applied: %v", report.Warnings)
+	}
+	newer := legacyTemplate(templateID, 3000)
+	newer.Name = "restart api v2"
+	if applied, _ := instance.service.engine.applyRunbookTemplateObject(ctxB, applyPayload(t, newer), report); !applied {
+		t.Fatalf("newer conversion not applied: %v", report.Warnings)
+	}
+	after, err := instance.db.SnippetList(ctxB)
+	if err != nil || len(after) != 1 || after[0].ID != resolved || after[0].Name != "restart api v2" || after[0].UpdatedAt != 3000 {
+		t.Fatalf("owner-b snippets after sync = %+v, %v", after, err)
+	}
+	foreign, err := instance.db.SnippetList(ctxA)
+	if err != nil || len(foreign) != 1 || foreign[0].Name != "foreign" || foreign[0].ID != derived {
+		t.Fatalf("owner-a snippets = %+v, %v", foreign, err)
+	}
+
+	// The deletion of the template removes B's snippet and leaves A's alone.
+	if applied, _ := instance.service.engine.applyRunbookTemplateTombstone(ctxB, templateID, 4000, report); !applied {
+		t.Fatalf("tombstone not applied: %v", report.Warnings)
+	}
+	if left, err := instance.db.SnippetList(ctxB); err != nil || len(left) != 0 {
+		t.Fatalf("owner-b snippets after tombstone = %+v, %v", left, err)
+	}
+	if foreign, err := instance.db.SnippetList(ctxA); err != nil || len(foreign) != 1 {
+		t.Fatalf("owner-a snippets after tombstone = %+v, %v", foreign, err)
 	}
 }

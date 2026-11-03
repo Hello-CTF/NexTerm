@@ -273,14 +273,14 @@ func (s *Service) ExportBundle(ctx context.Context, request ExportBundleRequest)
 	}
 	for _, snippet := range snippets {
 		collectGroupAncestors(snippet.GroupID)
-		object, err := snippetObjectFromRow(snippet)
+		companion, _, err := snippetStepsObjectFromRow(snippet)
 		if err != nil {
 			return SyncBundle{}, err
 		}
 		bundle.Snippets = append(bundle.Snippets, SyncBundleSnippet{
 			ID: snippet.ID, GroupID: snippet.GroupID, Name: snippet.Name, Body: snippet.Body,
 			Sort: snippet.Sort, CreatedAt: snippet.CreatedAt, UpdatedAt: snippet.UpdatedAt,
-			Description: object.Description, Steps: object.Steps,
+			Description: snippet.Description, Steps: companion.Steps,
 		})
 	}
 	// Group defaults travel with their group: the credential only when credentials are exported, the jump asset

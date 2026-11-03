@@ -167,12 +167,7 @@ func (e *Engine) collectSnippetObjects(ctx context.Context, c *localCollection) 
 		return err
 	}
 	for _, snippet := range snippets {
-		object, err := snippetObjectFromRow(snippet)
-		if err != nil {
-			c.report.warnf("片段 %s 的步骤数据已损坏，本次不同步：%v", snippet.ID, err)
-			continue
-		}
-		payload, err := marshalObject(object)
+		payload, err := marshalObject(snippetObjectFromRow(snippet))
 		if err != nil {
 			return err
 		}
@@ -881,39 +876,23 @@ func (e *Engine) credentialUpsertTxBound(ctx context.Context, tx *gorm.DB, paylo
 	return landed, nil
 }
 
-// snippetObjectFromRow builds the sync payload of a snippet. Single-step snippets carry no
-// description or steps in the payload when those are empty.
-func snippetObjectFromRow(row store.SnippetRow) (snippetObject, error) {
-	object := snippetObject{
+// snippetObjectFromRow builds the sync payload of a snippet. It carries only the original field set, so a
+// multi-step snippet reads as a single-step one (body = commands joined by newlines) to clients that predate
+// steps; the steps travel in the snippet_steps companion object.
+func snippetObjectFromRow(row store.SnippetRow) snippetObject {
+	return snippetObject{
 		ID: row.ID, GroupID: row.GroupID, Name: row.Name, Body: row.Body,
-		Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, Description: row.Description,
+		Sort: row.Sort, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
-	steps, err := store.DecodeSnippetSteps(row.Steps)
-	if err != nil {
-		return snippetObject{}, err
-	}
-	for _, step := range steps {
-		object.Steps = append(object.Steps, snippetStepObject(step))
-	}
-	return object, nil
 }
 
-// snippetRowFromObject validates a received snippet payload and builds its row. Without steps the
-// snippet is single-step (steps column cleared), which is how an older client's edit of a multi-step
-// snippet lands: the commands stay in the body, step names and confirmation flags are lost.
-func snippetRowFromObject(payload snippetObject) (store.SnippetRow, error) {
-	steps := make([]store.SnippetStep, len(payload.Steps))
-	for i, step := range payload.Steps {
-		steps[i] = store.SnippetStep(step)
-	}
-	description, body, encoded, err := store.NormalizeSnippetContent(store.SnippetContent{Description: payload.Description, Body: payload.Body, Steps: steps})
-	if err != nil {
-		return store.SnippetRow{}, err
-	}
+// snippetRowFromObject builds the row of a received snippet payload. Steps and description are not part of the
+// payload; the caller decides what happens to the local ones.
+func snippetRowFromObject(payload snippetObject) store.SnippetRow {
 	return store.SnippetRow{
-		ID: payload.ID, GroupID: payload.GroupID, Name: payload.Name, Body: body, Description: description, Steps: encoded,
+		ID: payload.ID, GroupID: payload.GroupID, Name: payload.Name, Body: payload.Body,
 		Sort: payload.Sort, CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
-	}, nil
+	}
 }
 
 func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, report *SyncReport) (bool, bool) {
@@ -922,12 +901,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		report.warnf("片段数据已损坏：%v", err)
 		return false, false
 	}
-	// Steps and description are validated before anything else: an invalid payload never lands.
-	row, err := snippetRowFromObject(payload)
-	if err != nil {
-		report.warnf("片段 %s 的内容不合法，已跳过：%v", payload.ID, err)
-		return false, false
-	}
+	row := snippetRowFromObject(payload)
 	local, err := e.store.SnippetGet(ctx, payload.ID)
 	exists := err == nil
 	if err != nil && !isNotFound(err) {
@@ -941,12 +915,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 		return false, false
 	}
 	if exists {
-		localSnippet, err := snippetObjectFromRow(local)
-		if err != nil {
-			report.warnf("片段 %s 本机数据编码失败：%v", payload.ID, err)
-			return false, false
-		}
-		localPayload, err := marshalObject(localSnippet)
+		localPayload, err := marshalObject(snippetObjectFromRow(local))
 		if err != nil {
 			report.warnf("片段 %s 本机数据编码失败：%v", payload.ID, err)
 			return false, false
@@ -972,6 +941,7 @@ func (e *Engine) applySnippetObject(ctx context.Context, plaintext []byte, repor
 	var snapshot *store.SnippetRow
 	if exists {
 		snapshot = &local
+		row.Description, row.Steps = keptSnippetSteps(local, row.Body)
 	}
 	if err := e.snippetUpsert(ctx, row, snapshot); err != nil {
 		report.warnf("片段 %s 应用失败: %v", payload.ID, err)
@@ -1035,7 +1005,7 @@ func (e *Engine) applySnippetTombstone(ctx context.Context, objectID string, del
 		return false, false
 	}
 	if exists {
-		if err := e.store.SnippetDelete(ctx, objectID); err != nil {
+		if err := e.store.SnippetDeleteSynced(ctx, objectID); err != nil {
 			report.warnf("应用片段 %s 的删除标记失败：%v", objectID, err)
 			return false, false
 		}

@@ -113,3 +113,12 @@ func DecodeSnippetSteps(encoded string) ([]SnippetStep, error) {
 	}
 	return steps, nil
 }
+
+// SyncTombstoneKindSnippetSteps tags the deletion marker of a snippet's steps companion object.
+const SyncTombstoneKindSnippetSteps = "snippet_steps"
+
+// SnippetStepsObjectID derives the sync object ID of a multi-step snippet's steps
+// companion, so every device computes the same ID from the snippet ID alone.
+func SnippetStepsObjectID(snippetID string) string {
+	return deriveObjectID("nexterm:snippet-steps:" + snippetID)
+}

@@ -151,7 +151,7 @@ var (
 
 // decryptOrder is the fixed decryption attempt order; AAD binds kind, so a wrong kind can never decrypt.
 // It must list every registered kind exactly once.
-var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference,
+var decryptOrder = []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindSnippetSteps, KindTombstone, KindTranscript, KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference,
 	KindStateRule, KindRunbookTemplate, KindSkill, KindMemory, KindCron}
 
 func init() {
@@ -189,6 +189,21 @@ func init() {
 				return e.applySnippetTombstone(ctx, objectID, tombstone.DeletedAt, report)
 			},
 			collect: (*Engine).collectSnippetObjects,
+		},
+		{
+			// Steps of a multi-step snippet. It has no opt-in of its own: it syncs wherever snippets do.
+			kind: KindSnippetSteps, rank: 16, strictID: true, idInPayload: true,
+			newPayload:    newPayload[snippetStepsObject],
+			displayName:   snippetStepsDisplayName,
+			validateApply: (*Engine).validateSnippetStepsApply,
+			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
+				return e.applySnippetStepsObject(ctx, plaintext, report)
+			},
+			applyTombstone: func(e *Engine, ctx context.Context, objectID string, tombstone tombstoneObject, report *SyncReport, _ string) (bool, bool) {
+				return e.applySnippetStepsTombstone(ctx, objectID, tombstone.DeletedAt, report)
+			},
+			collect:        (*Engine).collectSnippetStepsObjects,
+			browserCollect: true,
 		},
 		{
 			kind: KindAsset, rank: 3, strictID: true, idInPayload: true,
@@ -292,8 +307,9 @@ func init() {
 		},
 		{
 			// Receive-only legacy kind: templates convert to multi-step snippets on arrival and are never pushed.
+			// The runbookTemplates opt-in no longer gates the conversion; the switch only remains in the IPC view.
 			// browserCollect stays so older frontends that still ask for the kind get an empty list.
-			kind: KindRunbookTemplate, rank: 10, optIn: optInRunbookTemplate, strictID: true, idInPayload: true,
+			kind: KindRunbookTemplate, rank: 10, strictID: true, idInPayload: true,
 			newPayload: newPayload[runbookTemplateObject],
 			apply: func(e *Engine, ctx context.Context, _ string, plaintext []byte, report *SyncReport, _ string) (bool, bool) {
 				return e.applyRunbookTemplateObject(ctx, plaintext, report)

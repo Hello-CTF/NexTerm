@@ -271,21 +271,25 @@ func (e *Engine) applyRunbookTemplateObject(ctx context.Context, plaintext []byt
 			ID: step.ID, SnippetID: step.SnippetID, Name: step.Name, Description: step.Description, Command: step.Command, Interactive: step.Interactive,
 		}
 	}
-	snippetPayload := snippetObject{
-		ID: store.LegacyRunbookSnippetID(payload.ID), Name: payload.Name, Description: payload.Description,
-		CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
-	}
-	for _, step := range store.SnippetStepsFromRunbookTemplate(steps) {
-		snippetPayload.Steps = append(snippetPayload.Steps, snippetStepObject(step))
-	}
-	if len(snippetPayload.Steps) == 0 || strings.TrimSpace(payload.Name) == "" {
+	if strings.TrimSpace(payload.Name) == "" {
 		report.warnf("Runbook 模板 %s 内容不合法，已跳过", payload.ID)
 		return false, false
 	}
-	row, err := snippetRowFromObject(snippetPayload)
-	if err != nil {
+	description, body, encodedSteps, err := store.NormalizeSnippetContent(store.SnippetContent{
+		Description: payload.Description, Steps: store.SnippetStepsFromRunbookTemplate(steps),
+	})
+	if err != nil || encodedSteps == "" {
 		report.warnf("Runbook 模板 %s 无法转换为片段，已跳过：%v", payload.ID, err)
 		return false, false
+	}
+	snippetID, err := e.store.ResolveRunbookTemplateSnippetID(ctx, payload.ID)
+	if err != nil {
+		report.warnf("无法确定 Runbook 模板 %s 对应的片段：%v", payload.ID, err)
+		return false, false
+	}
+	row := store.SnippetRow{
+		ID: snippetID, Name: payload.Name, Body: body, Description: description, Steps: encodedSteps,
+		CreatedAt: payload.CreatedAt, UpdatedAt: payload.UpdatedAt,
 	}
 	local, err := e.store.SnippetGet(ctx, row.ID)
 	exists := err == nil
@@ -323,7 +327,14 @@ func (e *Engine) applyRunbookTemplateObject(ctx context.Context, plaintext []byt
 // applyRunbookTemplateTombstone removes the snippet a template was converted to, unless that snippet
 // changed after the deletion, and records the deletion as a snippet tombstone.
 func (e *Engine) applyRunbookTemplateTombstone(ctx context.Context, objectID string, deletedAt int64, report *SyncReport) (bool, bool) {
-	snippetID := store.LegacyRunbookSnippetID(objectID)
+	snippetID, found, err := e.store.LookupRunbookTemplateSnippetID(ctx, objectID)
+	if err != nil {
+		report.warnf("无法确定 Runbook 模板 %s 对应的片段：%v", objectID, err)
+		return false, false
+	}
+	if !found {
+		return false, false
+	}
 	local, err := e.store.SnippetGet(ctx, snippetID)
 	if err != nil {
 		if !isNotFound(err) {
@@ -338,7 +349,7 @@ func (e *Engine) applyRunbookTemplateTombstone(ctx context.Context, objectID str
 		report.warnf("Runbook 模板 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
 	}
-	if err := e.store.SnippetDelete(ctx, snippetID); err != nil {
+	if err := e.store.SnippetDeleteSynced(ctx, snippetID); err != nil {
 		report.warnf("应用 Runbook 模板 %s 的删除标记失败：%v", objectID, err)
 		return false, false
 	}
