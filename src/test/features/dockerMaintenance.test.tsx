@@ -322,6 +322,18 @@ describe("Compose edit and redeploy", () => {
     mounted.unmount();
   });
 
+  it("reports a saved file when attach finds the stack changed", async () => {
+    mocks.composeAttach.mockRejectedValueOnce({ code: "bad_param", message: "栈配置已变化，请重新确认" });
+    const onChanged = vi.fn();
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    clickButton(document.body, "保存并 up -d");
+    await waitForRendered(() => expect(document.body.textContent).toContain("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认"));
+    expect(onChanged).toHaveBeenCalled();
+    mounted.unmount();
+  });
+
   it("shows diff and completes production guard before writing and streaming up", async () => {
     mocks.composePrepare.mockRejectedValueOnce(typedChallenge());
     const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));

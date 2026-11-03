@@ -111,7 +111,7 @@ export function ComposeEditor({
       } catch (cause) {
         disposeChannel(channel);
         if (isStackChanged(cause)) {
-          setError(STACK_CHANGED_HINT);
+          setError("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认");
           onChanged();
         } else {
           setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
