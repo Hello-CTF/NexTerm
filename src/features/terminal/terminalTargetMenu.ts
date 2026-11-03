@@ -52,7 +52,7 @@ export function buildTargetMenu(target: DetectedTarget, deps: TargetMenuDeps): M
       {
         kind: "item",
         label: "新建 SSH 资产",
-        onSelect: () => deps.openAssetDraft({ kind: "ssh", name: bareHost, host: bareHost, port: target.port ?? 22 }),
+        onSelect: () => deps.openAssetDraft({ kind: "ssh", name: bareHost, host: bareHost, port: 22 }),
       },
     );
   }

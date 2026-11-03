@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useUi } from "../../app/store";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
-import { cleanTerminalLink, displayTerminalLink } from "./terminalLinks";
+import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
 import { terminalIntegrations } from "./terminalIntegrations";
 import type { ExtractedLink } from "./terminalLinkProvider";
 import "./terminalLinks.css";
@@ -48,8 +48,14 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
     else if (e.key === "Escape") onClose();
     else if (e.key === "Enter" && e.shiftKey) {
       if (openInApp && current) {
-        openInApp(current.url);
-        onClose();
+        const plan = planTerminalLink(current.url);
+        if (plan.kind === "external" && /^https?:/i.test(plan.url)) {
+          openInApp(plan.url);
+          onClose();
+        } else {
+          const why = plan.kind === "blocked" ? `（${plan.reason}）` : "";
+          useUi.getState().pushToast("info", `只能在 NexTerm 中打开 http/https 链接${why}`);
+        }
       }
     } else if (e.key === "Enter") {
       if (current) onOpen(current.url);
@@ -76,7 +82,9 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
         {links.length === 0 ? (
           <div className="nx-term-link-empty">当前终端没有可识别的链接</div>
         ) : (
-          links.map((link, i) => (
+          links.map((link, i) => {
+            const context = cleanTerminalLink(link.context);
+            return (
             <div
               key={link.url}
               id={`nx-term-link-${i}`}
@@ -87,9 +95,10 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
               onClick={() => onOpen(link.url)}
             >
               <span className="nx-term-link-url">{displayTerminalLink(link.url)}</span>
-              {link.context && <span className="nx-term-link-context">{link.context}</span>}
+              {context && <span className="nx-term-link-context">{context}</span>}
             </div>
-          ))
+            );
+          })
         )}
       </div>
       <div className="nx-term-link-footer">

@@ -6,6 +6,8 @@ export interface LinkFixtureUrl {
   url: string;
   /** Expected URL text on each buffer row it spans, in order (no border, no prefix). */
   parts: string[];
+  /** The terminal soft-wrapped the URL: it is one underlined range across rows. */
+  soft?: boolean;
 }
 
 export interface LinkFixture {
@@ -46,11 +48,11 @@ export const OAUTH_URL =
 
 const NL = "\r\n";
 
-function claudeLogin(): LinkFixture {
-  const cols = 80;
+function claudeLogin(cols = 80, name = "claude-code-login"): LinkFixture {
   const parts = hardWrap(OAUTH_URL, cols);
-  const data = [" Browser didn't open? Use the url below to sign in (c to copy)", "", ...parts, "", " Paste code here if prompted >"].join(NL);
-  return { name: "claude-code-login", recorded: false, cols, data, urls: [{ url: OAUTH_URL, parts }] };
+  const header = cols >= 70 ? " Browser didn't open? Use the url below to sign in (c to copy)" : " Use the url below to sign in";
+  const data = [header, "", ...parts, "", " Paste code here >"].join(NL);
+  return { name, recorded: false, cols, data, urls: [{ url: OAUTH_URL, parts }] };
 }
 
 function boxed(width: number, termCols: number, name: string): LinkFixture {
@@ -82,7 +84,7 @@ function ghLogin(cols: number, name: string): LinkFixture {
     "! First copy your one-time code: 1A2B-3C4D",
     `${prefix}${DEVICE_URL} in your browser... `,
   ].join(NL);
-  return { name, recorded: false, cols, data, urls: [{ url: DEVICE_URL, parts: softParts(prefix.length, DEVICE_URL, cols) }] };
+  return { name, recorded: false, cols, data, urls: [{ url: DEVICE_URL, parts: softParts(prefix.length, DEVICE_URL, cols), soft: true }] };
 }
 
 const NPM_LOGIN_URL = "https://www.npmjs.com/login?next=/login/cli/8c3f1b2e-4d5a-4b6c-9e7f-0a1b2c3d4e5f";
@@ -102,7 +104,7 @@ function npmLogin(): LinkFixture {
     data,
     urls: [
       { url: "https://registry.npmjs.org/", parts: ["https://registry.npmjs.org/"] },
-      { url: NPM_LOGIN_URL, parts: softParts(0, NPM_LOGIN_URL, cols) },
+      { url: NPM_LOGIN_URL, parts: softParts(0, NPM_LOGIN_URL, cols), soft: true },
     ],
   };
 }
@@ -126,6 +128,7 @@ function numbered(): LinkFixture {
 
 export const LINK_FIXTURES: LinkFixture[] = [
   claudeLogin(),
+  claudeLogin(45, "claude-code-login-45-cols"),
   boxed(84, 100, "claude-code-login-boxed"),
   ghLogin(100, "gh-auth-login"),
   ghLogin(40, "gh-auth-login-narrow"),

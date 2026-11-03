@@ -3,7 +3,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Terminal, type ILink } from "@xterm/xterm";
 import {
-  MAX_CONTINUATION_ROWS,
+  MAX_LINK_LENGTH,
+  maxContinuationRows,
   createTerminalLinkProvider,
   extractTerminalLinks,
   findLinksInRows,
@@ -51,6 +52,7 @@ function bufferRows(term: Terminal): string[] {
   return out;
 }
 
+const MAX_CONTINUATION_ROWS_FLOOR = 4;
 const hard = (...lines: string[]): TextRow[] => lines.map((text) => ({ text, isWrapped: false }));
 const urls = (rows: TextRow[], cols: number) => findLinksInRows(rows, cols).map((l) => l.url);
 
@@ -63,19 +65,33 @@ describe("link fixtures", () => {
       expect(extracted.length).toBe(fx.urls.length);
 
       const rows = bufferRows(term);
-      for (const { url, parts } of fx.urls) {
+      for (const { url, parts, soft } of fx.urls) {
         let from = 0;
+        const ys: number[] = [];
         for (const part of parts) {
           const y = rows.findIndex((r, i) => i >= from && r.includes(part)) + 1;
           expect(y, part).toBeGreaterThan(0);
           from = y;
+          ys.push(y);
+        }
+        parts.forEach((part, i) => {
+          const y = ys[i];
           const link = provide(term, y).find((l) => l.text === url);
           expect(link, `row ${y}`).toBeDefined();
-          const col = rows[y - 1].indexOf(part);
-          expect(link!.range.start).toEqual({ x: col + 1, y });
-          expect(link!.range.end).toEqual({ x: col + part.length, y });
           expect(link!.decorations).toEqual({ underline: true, pointerCursor: true });
-        }
+          const col = rows[y - 1].indexOf(part);
+          if (soft) {
+            // One range from the first to the last character, whichever row is hovered.
+            const lastPart = parts[parts.length - 1];
+            expect(link!.range.start).toEqual({ x: rows[ys[0] - 1].indexOf(parts[0]) + 1, y: ys[0] });
+            expect(link!.range.end).toEqual({ x: rows[ys[ys.length - 1] - 1].indexOf(lastPart) + lastPart.length, y: ys[ys.length - 1] });
+            if (parts.length > 1) expect(link!.range.start.y).not.toBe(link!.range.end.y);
+          } else {
+            // Hard-wrapped pieces are underlined per row, keeping borders and prefixes out.
+            expect(link!.range.start).toEqual({ x: col + 1, y });
+            expect(link!.range.end).toEqual({ x: col + part.length, y });
+          }
+        });
       }
     });
   }
@@ -106,9 +122,78 @@ describe("link stitching rules", () => {
     expect(urls(hard(line, "Continue"), line.length)).toEqual(["https://example.com/docs"]);
   });
 
+  it("stops a URL at full-width punctuation", () => {
+    expect(urls(hard("访问 https://example.com/docs。然后"), 80)).toEqual(["https://example.com/docs"]);
+    expect(urls(hard("链接：https://a.example/x，谢谢"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x；y https://b.example/z！"), 80)).toEqual(["https://a.example/x", "https://b.example/z"]);
+    expect(urls(hard("（https://a.example/x）"), 80)).toEqual(["https://a.example/x"]);
+  });
+
+  it("does not continue a full URL row with non-ASCII text", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "中文文字"), 40)).toEqual([full]);
+    expect(urls(hard(full, "caf\u00e9-menu"), 40)).toEqual([full]);
+  });
+
+  it("does not join a lone token that follows a URL filling the row", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    for (const token of ["[OK]", "200", "42"]) {
+      expect(urls(hard(full, token), 40), token).toEqual([full]);
+      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([full.slice(0, 34)]);
+    }
+    // After a row that holds more than the URL, a bare path token is not evidence enough.
+    const head = "https://a.example/" + "a".repeat(10);
+    const prose = `Docs: ${head}`;
+    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head]);
+    expect(urls(hard(prose, "/api/v2/next?x=1"), prose.length)).toEqual([head + "/api/v2/next?x=1"]);
+  });
+
+  it("joins a path tail after a row that holds only the URL (indistinguishable from a cut URL)", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "/api/v2/next"), 40)).toEqual([full + "/api/v2/next"]);
+    expect(urls(hard(`│ ${full} │`, "│ /api/v2/next                           │"), 44)).toEqual([full + "/api/v2/next"]);
+  });
+
+  it("accepts a letters-only tail when the URL has a query and the context ends cleanly", () => {
+    const head = "https://a.example/x?k=" + "a".repeat(18);
+    expect(urls(hard(head, "abcdef"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", ""), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "$ ls"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "> "), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "╰────────╯"), 40)).toEqual([head + "abcdef"]);
+    expect(urls(hard(head, "abcdef", "Next sentence follows"), 40)).toEqual([head]);
+    const noQuery = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(noQuery, "abcdef", ""), 40)).toEqual([noQuery]);
+    expect(urls(hard(`Docs: ${head.slice(0, 34)}`, "abcdef", ""), 40)).toEqual([head.slice(0, 34)]);
+  });
+
+  it("excludes pipe, backslash and caret from URLs", () => {
+    expect(urls(hard("https://a.example/x|grep"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x\\n"), 80)).toEqual(["https://a.example/x"]);
+    expect(urls(hard("https://a.example/x^M"), 80)).toEqual(["https://a.example/x"]);
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "bb|grep"), 40)).toEqual([full]);
+    expect(urls(hard(full, "bb\\cc"), 40)).toEqual([full]);
+    expect(urls(hard(full, "bb^cc"), 40)).toEqual([full]);
+  });
+
   it("does not join a boxed URL with a following boxed sentence", () => {
     const rows = hard("│ https://a.example/x      │", "│ Paste code here          │");
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);
+  });
+
+  it("does not stitch a short boxed URL to the next boxed row", () => {
+    const url = "https://a.com/docs";
+    for (const next of ["│ v1.2.3                      │", "│ /next                       │"]) {
+      expect(urls(hard("│ https://a.com/docs          │", next), 40), next).toEqual([url]);
+    }
+  });
+
+  it("stitches a boxed URL that reaches the border, with at most one blank cell", () => {
+    const a = "https://a.example/" + "a".repeat(10);
+    expect(urls(hard(`│ ${a} │`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(`│ ${a}│`, "│ b1/c2                │"), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(`│ ${a}  │`, "│ b1/c2                │"), 40)).toEqual([a]);
   });
 
   it("does not join a full URL row with a boxed short word", () => {
@@ -122,17 +207,32 @@ describe("link stitching rules", () => {
     expect(urls(rows, 40)).toEqual([first + "abc", "https://b.example/zz"]);
   });
 
-  it("joins at most MAX_CONTINUATION_ROWS extra rows", () => {
-    const rows = hard("https://a.example/" + "a".repeat(22), ...Array.from({ length: 6 }, () => "1".repeat(40)));
-    const [link] = findLinksInRows(rows, 40);
-    expect(link.segments.length).toBe(MAX_CONTINUATION_ROWS + 1);
-    expect(link.url.length).toBe(40 * (MAX_CONTINUATION_ROWS + 1));
+  it("sizes the continuation limit from the terminal width", () => {
+    expect(maxContinuationRows(1000)).toBe(4);
+    expect(maxContinuationRows(45)).toBeGreaterThanOrEqual(Math.ceil(MAX_LINK_LENGTH / 45));
   });
 
-  it("stops before exceeding the length limit", () => {
+  it("stitches a URL over many rows when the width needs them", () => {
+    const rows = hard("https://a.example/" + "a".repeat(22), ...Array.from({ length: 9 }, () => "1".repeat(40)));
+    const [link] = findLinksInRows(rows, 40);
+    expect(link.segments.length).toBe(10);
+    expect(link.url.length).toBe(400);
+  });
+
+  it("gives no link when the length limit cuts a URL that would continue", () => {
     const head = "https://a.example/" + "a".repeat(1000 - 18);
     const rows = hard(head, "b".repeat(1000), "c".repeat(1000));
-    expect(urls(rows, 1000)).toEqual([head + "b".repeat(1000)]);
+    expect(urls(rows, 1000)).toEqual([]);
+  });
+
+  it("gives no link when the row limit cuts a URL that would continue", () => {
+    const rows = hard("https://a.example/" + "a".repeat(982), ...Array.from({ length: 6 }, () => "1".repeat(1000)));
+    expect(urls(rows, 1000)).toEqual([]);
+  });
+
+  it("stops at the length limit when nothing continues past it", () => {
+    const head = "https://a.example/" + "a".repeat(1000 - 18);
+    expect(urls(hard(head, "b".repeat(1000)), 1000)).toEqual([head + "b".repeat(1000)]);
   });
 
   it("only recognises http and https, and drops blocked URLs", () => {
@@ -146,6 +246,83 @@ describe("link stitching rules", () => {
       { text: "bb cc", isWrapped: true },
     ];
     expect(urls(rows, 22)).toEqual(["https://a.example/aabb"]);
+  });
+});
+
+describe("long URLs on narrow terminals", () => {
+  const fx = LINK_FIXTURES.find((f) => f.name === "claude-code-login-45-cols")!;
+
+  it("recognises a 379 character URL hard-wrapped at 45 columns", () => {
+    expect(fx.urls[0].url.length).toBeGreaterThan(370);
+    expect(fx.urls[0].parts.length).toBeGreaterThan(MAX_CONTINUATION_ROWS_FLOOR);
+  });
+
+  it("provides the whole URL from its first, middle and last row", async () => {
+    const term = await makeTerm(fx.cols, fx.data);
+    const rows = bufferRows(term);
+    const { url, parts } = fx.urls[0];
+    for (const idx of [0, Math.floor(parts.length / 2), parts.length - 1]) {
+      const y = rows.findIndex((r) => r === parts[idx]) + 1;
+      expect(y).toBeGreaterThan(0);
+      expect(provide(term, y).map((l) => l.text)).toContain(url);
+    }
+  });
+});
+
+describe("extractTerminalLinks context", () => {
+  it("drops control and invisible characters from the source line summary", async () => {
+    const term = await makeTerm(100, "see\u202e\u200b txt https://example.com/a now\r\n");
+    const [link] = extractTerminalLinks(term);
+    expect(link.url).toBe("https://example.com/a");
+    expect(link.context).toContain("https://example.com/a");
+    expect(link.context).not.toMatch(/[\u202e\u200b\u0007]/);
+  });
+});
+
+describe("rows written for another width", () => {
+  const fx = LINK_FIXTURES[0];
+
+  it("stitches rows that are as wide as each other although the terminal is wider", () => {
+    const parts = fx.urls[0].parts;
+    expect(urls(hard(...parts), 120)).toEqual([fx.urls[0].url]);
+    expect(urls(hard("Open:", ...parts, "", "Paste code here >"), 200)).toEqual([fx.urls[0].url]);
+  });
+
+  it("still recognises the URL after the terminal is resized wider", async () => {
+    const term = await makeTerm(fx.cols, fx.data);
+    term.resize(120, 40);
+    expect(extractTerminalLinks(term).map((l) => l.url)).toEqual([fx.urls[0].url]);
+    const rows = bufferRows(term);
+    for (const part of fx.urls[0].parts) {
+      const y = rows.findIndex((r) => r === part) + 1;
+      expect(provide(term, y).map((l) => l.text)).toContain(fx.urls[0].url);
+    }
+  });
+
+  it("does not let equal widths join unrelated short rows", () => {
+    expect(urls(hard("https://a.com/docs", "v1.2.3-rc1-release"), 120)).toEqual(["https://a.com/docs"]);
+    expect(urls(hard("│ https://a.com/docs          │", "│ v1.2.3                      │"), 120)).toEqual(["https://a.com/docs"]);
+  });
+});
+
+describe("underline ranges", () => {
+  it("covers a soft-wrapped URL as one range from any of its rows", async () => {
+    const fx = LINK_FIXTURES.find((f) => f.name === "npm-login")!;
+    const term = await makeTerm(fx.cols, fx.data);
+    const rows = bufferRows(term);
+    const first = rows.findIndex((r) => r === fx.urls[1].parts[0]) + 1;
+    const [a, b] = [provide(term, first), provide(term, first + 1)].map((l) => l.find((x) => x.text === fx.urls[1].url)!);
+    expect(a.range).toEqual(b.range);
+    expect(a.range.start).toEqual({ x: 1, y: first });
+    expect(a.range.end.y).toBe(first + 1);
+  });
+
+  it("keeps hard-wrapped pieces apart so borders stay out of the underline", async () => {
+    const fx = LINK_FIXTURES.find((f) => f.name === "claude-code-login-boxed")!;
+    const term = await makeTerm(fx.cols, fx.data);
+    const y = bufferRows(term).findIndex((r) => r.includes(fx.urls[0].parts[0])) + 1;
+    const link = provide(term, y).find((l) => l.text === fx.urls[0].url)!;
+    expect(link.range.start.y).toBe(link.range.end.y);
   });
 });
 

@@ -56,9 +56,6 @@ importers:
       '@xterm/addon-serialize':
         specifier: 0.15.0-beta.310
         version: 0.15.0-beta.310(@xterm/xterm@6.1.0-beta.315)
-      '@xterm/addon-web-links':
-        specifier: 0.13.0-beta.310
-        version: 0.13.0-beta.310(@xterm/xterm@6.1.0-beta.315)
       '@xterm/addon-webgl':
         specifier: 0.20.0-beta.309
         version: 0.20.0-beta.309(@xterm/xterm@6.1.0-beta.315)
@@ -887,11 +884,6 @@ packages:
 
   '@xterm/addon-serialize@0.15.0-beta.310':
     resolution: {integrity: sha512-Kc2+SBXmlTXU8bava1mxFBipRkqUT7hWkwJpO8Bafq0oDq1HkMF4eb6JcYZ6kGHunylUSIUudO3ufGjnOZ2sLQ==}
-    peerDependencies:
-      '@xterm/xterm': ^6.1.0-beta.315
-
-  '@xterm/addon-web-links@0.13.0-beta.310':
-    resolution: {integrity: sha512-sxY3n5N3BCafchHLpqZSP44SncYhgt7rYSqk797naAeTJgymL3kG7fNIRob6SeV3nvf3MH0EIB6B3xxATtHYsQ==}
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.315
 
@@ -2419,10 +2411,6 @@ snapshots:
       '@xterm/xterm': 6.1.0-beta.315
 
   '@xterm/addon-serialize@0.15.0-beta.310(@xterm/xterm@6.1.0-beta.315)':
-    dependencies:
-      '@xterm/xterm': 6.1.0-beta.315
-
-  '@xterm/addon-web-links@0.13.0-beta.310(@xterm/xterm@6.1.0-beta.315)':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.315
 

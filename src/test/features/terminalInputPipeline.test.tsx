@@ -18,7 +18,6 @@ const harness = vi.hoisted(() => ({
 
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
 vi.mock("@xterm/addon-search", () => ({ SearchAddon: class { findNext() {} findPrevious() {} activate() {} dispose() {} } }));
-vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class { activate() {} dispose() {} } }));
 vi.mock("../../app/platform", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../app/platform")>()),
   isMac: () => harness.mac,

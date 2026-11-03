@@ -1,16 +1,20 @@
 import type { IBufferLine, IBufferRange, ILink, ILinkProvider, Terminal } from "@xterm/xterm";
-import { planTerminalLink } from "./terminalLinks";
+import { cleanTerminalLink, planTerminalLink } from "./terminalLinks";
 
 // Link detection across hard line breaks. xterm's own soft wrapping is joined
 // unconditionally; TUIs (Ink, gh, npm) that break a URL at their own width, or
 // draw it inside a box or behind a quote/line-number prefix, are joined by the
 // conservative rules in continuationFragment().
 
-export const MAX_CONTINUATION_ROWS = 4;
+export const MIN_CONTINUATION_ROWS = 4;
 export const MAX_LINK_LENGTH = 2048;
-const WINDOW_LOGICAL_LINES = MAX_CONTINUATION_ROWS;
-const WINDOW_MAX_PHYSICAL_ROWS = 16;
+const CONTEXT_PHYSICAL_SLACK = 16;
 const CONTEXT_LIMIT = 120;
+
+/** Rows a URL may continue over: enough to carry MAX_LINK_LENGTH at this width. */
+export function maxContinuationRows(cols: number): number {
+  return Math.max(MIN_CONTINUATION_ROWS, Math.ceil(MAX_LINK_LENGTH / Math.max(1, cols)));
+}
 
 export interface TextRow {
   text: string;
@@ -20,6 +24,8 @@ export interface LinkRowSegment {
   row: number;
   start: number;
   end: number;
+  /** Logical line the segment belongs to: segments sharing it are one soft-wrapped run. */
+  group?: number;
 }
 export interface StitchedLink {
   url: string;
@@ -39,13 +45,25 @@ interface LogicalLine {
   offsets: number[];
 }
 
-const URL_START = /https?:\/\/[^\s"'<>`│┃║]+/gi;
-const URL_CHARS = /^[^\s"'<>`│┃║]+/;
+// First-row URLs end at full-width punctuation; continuation fragments are
+// printable ASCII only.
+const URL_START = /https?:\/\/[^\s"'<>`│┃║|\\^。，；：！？\u3000-\u303f\uff00-\uff60]+/gi;
+const URL_CHARS = /^(?:(?!["'<>`|\\^])[\x21-\x7e])+/;
 const SCHEME_AT_START = /^[a-z][a-z0-9+.-]*:\/\//i;
 const HTTP_SCHEME = /https?:\/\//i;
 const ONLY_TRAILING_DECOR = /^[\s│┃║|]*$/;
-const RIGHT_BORDER_NEXT = /^\s*[│┃║|]/;
+const BORDER_GAP = /^(\s*)[│┃║|]/;
+
+/**
+ * Index (in `line.text`) of the right border that follows `end` after at most
+ * one blank cell, or -1 when the text does not reach a border.
+ */
+function borderIndexAfter(line: LogicalLine, end: number): number {
+  const m = BORDER_GAP.exec(line.text.slice(end));
+  return m !== null && m[1].length <= 1 ? end + m[1].length : -1;
+}
 const LEFT_PREFIX = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])+/;
+const LEFT_PREFIX_ONLY = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])*$/;
 
 function charWidth(code: number): number {
   if (code < 0x300) return 1;
@@ -108,14 +126,14 @@ function columnOf(rows: TextRow[], line: LogicalLine, index: number): number {
   return cellWidth(text, 0, index - line.offsets[slot]);
 }
 
-function segmentsOf(line: LogicalLine, start: number, end: number): LinkRowSegment[] {
+function segmentsOf(line: LogicalLine, start: number, end: number, group: number): LinkRowSegment[] {
   const out: LinkRowSegment[] = [];
   for (let slot = 0; slot < line.rows.length; slot++) {
     const rowStart = line.offsets[slot];
     const rowEnd = slot + 1 < line.offsets.length ? line.offsets[slot + 1] : line.text.length;
     const s = Math.max(start, rowStart);
     const e = Math.min(end, rowEnd);
-    if (e > s) out.push({ row: line.rows[slot], start: s - rowStart, end: e - rowStart });
+    if (e > s) out.push({ row: line.rows[slot], start: s - rowStart, end: e - rowStart, group });
   }
   return out;
 }
@@ -126,6 +144,34 @@ interface Piece {
   end: number;
 }
 
+// Where a candidate continuation sits in its URL, for the lone-token rules.
+interface ChainState {
+  prevBorderCol: number;
+  /** The URL's first row holds nothing but the URL (and prefix decoration). */
+  bare: boolean;
+  /** A full-width continuation row has already been accepted. */
+  chained: boolean;
+  /** Content end column of the previous row of the chain. */
+  prevEndCol: number;
+  /** The URL stitched so far contains a query. */
+  hasQuery: boolean;
+  /** Text of the logical line after the candidate; undefined at the end of the rows. */
+  following: string | undefined;
+}
+
+const CLEAN_CONTEXT = /^(?:\s*|\s*[$>#](?:\s.*)?|[\s╰└╯┘─━═]*[╰└─━═][\s╰└╯┘─━═]*)$/;
+
+// Rows of a URL hard-wrapped at an application's own width (which can differ
+// from the terminal's after a resize) end in the same column. Narrower rows
+// are too likely to match by chance.
+const MIN_EQUAL_WIDTH = 30;
+
+function sameWidth(a: number, b: number): boolean {
+  return a >= MIN_EQUAL_WIDTH && b >= MIN_EQUAL_WIDTH && Math.abs(a - b) <= 1;
+}
+
+const QUERY_EVIDENCE = /[=&%?#]/;
+
 // Decides whether logical line `next` continues a URL that ended at `prev`
 // (see the rules in the module comment). Returns the accepted fragment piece
 // and whether stitching may go on after it.
@@ -134,8 +180,8 @@ function continuationFragment(
   line: LogicalLine,
   lineIndex: number,
   cols: number,
-  prevEndCol: number,
-): { piece: Piece; more: boolean; endCol: number } | null {
+  state: ChainState,
+): { piece: Piece; more: boolean; endCol: number; borderCol: number } | null {
   const prefix = LEFT_PREFIX.exec(line.text);
   const from = prefix ? prefix[0].length : 0;
   const rest = line.text.slice(from);
@@ -148,18 +194,34 @@ function continuationFragment(
     // A second URL glued on: keep what precedes it and stop.
     fragment = fragment.slice(0, inner.index);
     if (!fragment) return null;
-    return { piece: { line: lineIndex, start: from, end: from + fragment.length }, more: false, endCol: 0 };
+    return { piece: { line: lineIndex, start: from, end: from + fragment.length }, more: false, endCol: 0, borderCol: -1 };
   }
   const end = from + fragment.length;
   if (!ONLY_TRAILING_DECOR.test(line.text.slice(end))) return null;
   const endCol = columnOf(rows, line, end - 1);
-  const hasBorder = RIGHT_BORDER_NEXT.test(line.text.slice(end));
-  // Inside a box a full row is as wide as the previous one; a short row
-  // followed by a border is just padding.
-  const full = endCol >= cols - 2 || (hasBorder && Math.abs(endCol - prevEndCol) <= 1);
-  if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol };
-  if (!/[^A-Za-z]/.test(fragment)) return null;
-  return { piece: { line: lineIndex, start: from, end }, more: false, endCol };
+  // Inside a box a row is full only when the text reaches the border of the
+  // same box as the previous row; a short row followed by a border is just
+  // padding.
+  if (fragment.startsWith("[")) return null;
+  const borderIdx = borderIndexAfter(line, end);
+  const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
+  const full =
+    endCol >= cols - 2 ||
+    sameWidth(endCol, state.prevEndCol) ||
+    (borderCol >= 0 && state.prevBorderCol >= 0 && Math.abs(borderCol - state.prevBorderCol) <= 1);
+  if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol, borderCol };
+  if (!/[^A-Za-z]/.test(fragment)) {
+    // Letters only is usually prose; a query URL followed by a blank line, a
+    // prompt or a box edge is the exception.
+    const clean = state.following === undefined || CLEAN_CONTEXT.test(state.following);
+    if (!(state.bare && state.hasQuery && clean)) return null;
+    return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
+  }
+  // A short tail is the weakest evidence: a lone number is not a URL tail, and
+  // after a row that also holds prose it must look like a query string.
+  if (/^\d{1,3}$/.test(fragment)) return null;
+  if (!state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return null;
+  return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
 }
 
 function trimLength(url: string): number {
@@ -199,20 +261,49 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       let total = m[0].length;
       let cur = li;
       const urlEnd = m.index + m[0].length;
-      let endCol = columnOf(rows, line, urlEnd - 1);
+      const endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
-      const fullRow = RIGHT_BORDER_NEXT.test(tail) || endCol >= cols - 2;
-      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && n < MAX_CONTINUATION_ROWS && cur + 1 < lines.length; n++) {
-        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, endCol);
+      const borderIdx = borderIndexAfter(line, urlEnd);
+      const state: ChainState = {
+        prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
+        bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
+        chained: false,
+        prevEndCol: endCol,
+        hasQuery: m[0].includes("?"),
+        following: undefined,
+      };
+      // Whether the previous row of the chain is known to be a full row, and
+      // the end column of the row before it.
+      let prevFull = borderIdx >= 0 || endCol >= cols - 2;
+      let prevPrevEnd = -1;
+      const maxRows = maxContinuationRows(cols);
+      // A URL that would continue past a limit is dropped: a truncated address
+      // is worse than an unrecognised one.
+      let overflow = false;
+      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && cur + 1 < lines.length; n++) {
+        state.following = lines[cur + 2]?.text;
+        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
         if (!next) break;
+        // A row that is not full by width is still full when it is as wide as
+        // its neighbours (the program wrapped at a different width).
+        if (!prevFull && !sameWidth(state.prevEndCol, next.endCol) && !sameWidth(state.prevEndCol, prevPrevEnd)) break;
         const len = next.piece.end - next.piece.start;
-        if (total + len > MAX_LINK_LENGTH) break;
+        if (n >= maxRows || total + len > MAX_LINK_LENGTH) {
+          overflow = true;
+          break;
+        }
         pieces.push(next.piece);
         total += len;
         cur++;
         if (!next.more) break;
-        endCol = next.endCol;
+        prevFull = true;
+        prevPrevEnd = state.prevEndCol;
+        state.prevEndCol = next.endCol;
+        state.prevBorderCol = next.borderCol;
+        state.chained = true;
+        state.hasQuery ||= lines[next.piece.line].text.slice(next.piece.start, next.piece.end).includes("?");
       }
+      if (overflow) continue;
       const built = finishLink(lines, pieces);
       if (built) links.push(built);
     }
@@ -243,7 +334,7 @@ function finishLink(lines: LogicalLine[], pieces: Piece[]): StitchedLink | null 
     return null;
   }
   if (planTerminalLink(url).kind === "blocked") return null;
-  const segments = pieces.flatMap((p) => segmentsOf(lines[p.line], p.start, p.end));
+  const segments = pieces.flatMap((p) => segmentsOf(lines[p.line], p.start, p.end, p.line));
   return { url, segments };
 }
 
@@ -323,6 +414,8 @@ function lineAt(term: Terminal, row: number): IBufferLine | undefined {
 
 function windowBounds(term: Terminal, y0: number): { first: number; last: number } {
   const buf = term.buffer.active;
+  const WINDOW_LOGICAL_LINES = maxContinuationRows(term.cols);
+  const WINDOW_MAX_PHYSICAL_ROWS = WINDOW_LOGICAL_LINES * 2 + CONTEXT_PHYSICAL_SLACK;
   const wrappedAt = (r: number) => lineAt(term, r)?.isWrapped === true;
   let first = y0;
   for (let seen = 0; ; seen++) {
@@ -364,6 +457,17 @@ function cellRange(map: { col: number[]; width: number[] }, seg: LinkRowSegment,
   return { start: { x: startCell + 1, y }, end: { x: endCell, y } };
 }
 
+/** Splits segments into soft-wrapped runs; hard-wrapped and boxed pieces stay separate. */
+function softRuns(segments: LinkRowSegment[]): LinkRowSegment[][] {
+  const runs: LinkRowSegment[][] = [];
+  for (const seg of segments) {
+    const run = runs[runs.length - 1];
+    if (run && seg.group !== undefined && run[0].group === seg.group) run.push(seg);
+    else runs.push([seg]);
+  }
+  return runs;
+}
+
 export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLinkProviderHandlers): ILinkProvider {
   return {
     provideLinks(y, callback) {
@@ -383,13 +487,26 @@ export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLin
       const links = findLinksInRows(rows, cols);
       const targets = handlers.onTargetHover ? findTargetsInRows(rows, cols, links) : [];
       const result: ILink[] = [];
-      let map: ReturnType<typeof cellMap> | undefined;
-      const mapOfRow = () => (map ??= cellMap(lineAt(term, row0)!));
+      const maps = new Map<number, ReturnType<typeof cellMap>>();
+      const mapOfRow = (row: number) => {
+        let map = maps.get(row);
+        if (!map) {
+          map = cellMap(lineAt(term, first + row)!);
+          maps.set(row, map);
+        }
+        return map;
+      };
       for (const link of links) {
-        for (const seg of link.segments) {
-          if (seg.row !== idx) continue;
+        for (const run of softRuns(link.segments)) {
+          if (!run.some((seg) => seg.row === idx)) continue;
+          // A soft-wrapped URL is one range, so the underline covers all of it.
+          const head = run[0];
+          const tail = run[run.length - 1];
           result.push({
-            range: cellRange(mapOfRow(), seg, y),
+            range: {
+              start: cellRange(mapOfRow(head.row), head, first + head.row + 1).start,
+              end: cellRange(mapOfRow(tail.row), tail, first + tail.row + 1).end,
+            },
             text: link.url,
             decorations: { underline: true, pointerCursor: true },
             activate: (event, text) => handlers.activate(event, text),
@@ -401,7 +518,7 @@ export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLin
       for (const target of targets) {
         if (target.segment.row !== idx) continue;
         result.push({
-          range: cellRange(mapOfRow(), target.segment, y),
+          range: cellRange(mapOfRow(idx), target.segment, y),
           text: target.text,
           decorations: { underline: false, pointerCursor: false },
           activate: () => {},
@@ -436,7 +553,7 @@ export function extractTerminalLinks(term: Terminal, maxScrollbackRows = 2000): 
     if (seen.has(link.url)) continue;
     seen.add(link.url);
     const first = link.segments[0].row;
-    out.push({ url: link.url, context: rows[first].text.trim().slice(0, CONTEXT_LIMIT), row: start + first });
+    out.push({ url: link.url, context: cleanTerminalLink(rows[first].text).trim().slice(0, CONTEXT_LIMIT), row: start + first });
   }
   return out;
 }

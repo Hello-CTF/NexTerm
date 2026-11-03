@@ -109,7 +109,18 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
   }, [pushToast]);
 
   const backgroundAvailable = useBackgroundSessionsAccess(workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1]);
-  return useMemo<JumpCommand[]>(() => {
+  const linkSource = useMemo(() => {
+    const ws = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1];
+    const pane = ws?.panes.find((item) => item.id === ws.activePaneId) ?? ws?.panes[0];
+    const tab = pane?.tabs.find((item) => item.id === pane.activeTabId) ?? pane?.tabs[pane.tabs.length - 1];
+    return tab?.kind === "terminal" ? terminalLinkSource(tab.id) : undefined;
+  }, [workspaces, activeWorkspaceId]);
+  const linkHint = useMemo(() => keyHint("terminalLinks"), [keyHint]);
+  const linkCommands = useMemo(
+    () => (linkSource ? terminalLinkCommands(linkSource, linkHint) : []),
+    [linkSource, linkHint],
+  );
+  const base = useMemo(() => {
     const currentWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
       workspaces[workspaces.length - 1];
     const workspaceActions: JumpCommand[] = workspaces.map((workspace) => ({
@@ -382,12 +393,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         },
       },
     ];
-    const activeWs = currentWorkspace;
-    const activePane = activeWs?.panes.find((item) => item.id === activeWs.activePaneId) ?? activeWs?.panes[0];
-    const activeTab =
-      activePane?.tabs.find((item) => item.id === activePane.activeTabId) ?? activePane?.tabs[activePane.tabs.length - 1];
-    const linkSource = activeTab?.kind === "terminal" ? terminalLinkSource(activeTab.id) : undefined;
-    if (linkSource) list.push(...terminalLinkCommands(linkSource, keyHint("terminalLinks")));
+    const linkInsertAt = list.length;
     list.push(...workspaceActions);
     const isHidden = (id: string) => hiddenIds.includes(id);
     for (const asset of assets.filter((a) => showHidden || !isHidden(a.id))) {
@@ -427,7 +433,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         run: () => void insertSnippet(s),
       });
     }
-    return list;
+    return { list, linkInsertAt };
   }, [
     backgroundAvailable,
     assets,
@@ -450,4 +456,8 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
     runClone,
     unhideAsset,
   ]);
+  return useMemo<JumpCommand[]>(
+    () => [...base.list.slice(0, base.linkInsertAt), ...linkCommands, ...base.list.slice(base.linkInsertAt)],
+    [base, linkCommands],
+  );
 }

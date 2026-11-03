@@ -129,6 +129,29 @@ describe("TerminalLinkPanel", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("passes only the planned http(s) URL to the in-app opener", () => {
+    const openInApp = vi.fn();
+    restore = registerTerminalIntegrations({ openInApp });
+    render({ links: [{ url: "https://Example.com", context: "", row: 1 }] });
+    key({ key: "Enter", shiftKey: true });
+    expect(openInApp).toHaveBeenCalledWith("https://example.com/");
+  });
+
+  it.each(["mailto:a@example.com", "javascript:alert(1)"])("refuses %s in the app and says so", (url) => {
+    const openInApp = vi.fn();
+    restore = registerTerminalIntegrations({ openInApp });
+    render({ links: [{ url, context: "", row: 1 }] });
+    key({ key: "Enter", shiftKey: true });
+    expect(openInApp).not.toHaveBeenCalled();
+    expect(harness.toast).toHaveBeenCalledWith("info", expect.stringContaining("http/https"));
+  });
+
+  it("shows the context without control or invisible characters", () => {
+    render({ links: [{ url: "https://a.example.com/", context: "ok\u202e\u200b\u0007 line", row: 1 }] });
+    const ctx = document.querySelector(".nx-term-link-context")?.textContent;
+    expect(ctx).toBe("ok line");
+  });
+
   it("explains an empty list", () => {
     render({ links: [] });
     expect(document.body.textContent).toContain("当前终端没有可识别的链接");
