@@ -167,3 +167,11 @@ func TestStaticPathAllowsNormalAssets(t *testing.T) {
 		t.Fatalf("path = %q, %v", path, err)
 	}
 }
+
+func TestStaticContentTypeServesInstallScriptsAsText(t *testing.T) {
+	for _, name := range []string{"install-device.ps1", "install-device.sh", "INSTALL.PS1"} {
+		if got := staticContentType(name); got != "text/plain; charset=utf-8" {
+			t.Errorf("staticContentType(%q) = %q, want text/plain; charset=utf-8", name, got)
+		}
+	}
+}
