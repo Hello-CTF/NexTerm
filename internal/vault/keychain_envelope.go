@@ -53,3 +53,16 @@ func parseKeychainEnvelope(envelope []byte, accountBase string) (account string,
 	}
 	return accountBase + "/" + string(id), false, nil
 }
+
+// keychainDiscardAccount returns the account behind an envelope that may be deleted.
+// Only v2 envelopes qualify: the v1 account is shared by every data directory.
+func keychainDiscardAccount(envelope []byte, accountBase string) (string, error) {
+	account, legacy, err := parseKeychainEnvelope(envelope, accountBase)
+	if err != nil {
+		return "", err
+	}
+	if legacy {
+		return "", ipc.WrapError(ipc.CodeCrypto, "加密错误：旧版钥匙串条目可能被其他数据目录共用，拒绝删除", errKeychainEnvelope)
+	}
+	return account, nil
+}

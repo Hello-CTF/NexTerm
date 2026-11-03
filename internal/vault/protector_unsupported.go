@@ -15,3 +15,6 @@ func systemUnprotect([]byte) ([]byte, error) {
 }
 
 func systemEnvelopeIsLegacy([]byte) bool { return false }
+
+// systemDiscard is a no-op: the protected blob is not kept in external storage.
+func systemDiscard([]byte) error { return nil }

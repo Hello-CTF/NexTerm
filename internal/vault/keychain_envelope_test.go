@@ -58,3 +58,19 @@ func TestKeychainEnvelopeRejectsMalformed(t *testing.T) {
 		}
 	}
 }
+
+func TestKeychainDiscardAccountOnlyForV2(t *testing.T) {
+	envelope, account, err := newKeychainEnvelope("vault-dek-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := keychainDiscardAccount(envelope, "vault-dek-go")
+	if err != nil || got != account {
+		t.Fatalf("got=%q err=%v", got, err)
+	}
+	for _, bad := range [][]byte{keychainLegacyMarker, []byte("garbage"), []byte(keychainEnvelopePrefix + "xyz")} {
+		if got, err := keychainDiscardAccount(bad, "vault-dek-go"); err == nil || got != "" {
+			t.Fatalf("envelope %q must not be discardable: %q", bad, got)
+		}
+	}
+}

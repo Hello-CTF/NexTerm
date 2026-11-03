@@ -24,3 +24,13 @@ type legacyEnvelopeDetector interface {
 func (systemProtector) IsLegacyEnvelope(envelope []byte) bool {
 	return systemEnvelopeIsLegacy(envelope)
 }
+
+// envelopeDiscarder is optionally implemented by a Protector whose Protect stores the key
+// outside the database; Discard releases the entry behind an envelope that was never persisted.
+type envelopeDiscarder interface {
+	Discard(envelope []byte) error
+}
+
+func (systemProtector) Discard(envelope []byte) error {
+	return systemDiscard(envelope)
+}

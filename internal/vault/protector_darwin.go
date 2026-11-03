@@ -62,6 +62,19 @@ func systemUnprotect(envelope []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// systemDiscard deletes the entry behind a v2 envelope that was never persisted.
+func systemDiscard(envelope []byte) error {
+	account, err := keychainDiscardAccount(envelope, keychainAccount)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("/usr/bin/security", "delete-generic-password", "-a", account, "-s", keychainService)
+	if output, err := cmd.CombinedOutput(); err != nil && !bytes.Contains(output, []byte("could not be found")) {
+		return fmt.Errorf("keychain discard: %w: %s", err, output)
+	}
+	return nil
+}
+
 // cleanupKeychainForTests deletes the (test-replaced) prefix account and the account of each
 // given envelope. Real entries are only reachable when a test leaves keychainAccount alone.
 func cleanupKeychainForTests(envelopes ...[]byte) error {

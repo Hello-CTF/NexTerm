@@ -335,6 +335,17 @@ func (v *Vault) initDPAPILocked(ctx context.Context, password string) error {
 	return nil
 }
 
+// discardEnvelope releases the external entry behind an envelope whose persistence failed.
+func (v *Vault) discardEnvelope(envelope []byte) {
+	discarder, ok := v.protector.(envelopeDiscarder)
+	if !ok {
+		return
+	}
+	if err := discarder.Discard(envelope); err != nil {
+		slog.Warn("failed to discard unused system-protection envelope", "error", err)
+	}
+}
+
 func (v *Vault) migrateMasterToDPAPILocked(ctx context.Context, password string) error {
 	if err := v.unlockMasterLocked(ctx, password); err != nil {
 		return err
@@ -348,6 +359,7 @@ func (v *Vault) migrateMasterToDPAPILocked(ctx context.Context, password string)
 		settingMode:         string(ModeDPAPI),
 		settingPasswordless: "0",
 	}); err != nil {
+		v.discardEnvelope(protected)
 		return err
 	}
 	v.kek.destroy()
@@ -383,6 +395,7 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 		}
 		keyCheck, err := sealKeyCheck(dek)
 		if err != nil {
+			v.discardEnvelope(protected)
 			dek.destroy()
 			return err
 		}
@@ -390,6 +403,7 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 			settingEnvelope: base64.StdEncoding.EncodeToString(protected),
 			settingKeyCheck: keyCheck,
 		}); err != nil {
+			v.discardEnvelope(protected)
 			dek.destroy()
 			return err
 		}
@@ -438,6 +452,7 @@ func (v *Vault) migrateLegacyEnvelopeLocked(ctx context.Context, envelope []byte
 	}
 	if err := v.store.SettingSet(ctx, settingEnvelope, base64.StdEncoding.EncodeToString(protected)); err != nil {
 		slog.Warn("failed to store migrated system-protection envelope; keeping the old one", "error", err)
+		v.discardEnvelope(protected)
 	}
 }
 

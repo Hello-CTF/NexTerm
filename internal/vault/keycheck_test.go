@@ -47,6 +47,9 @@ type envelopeProtector struct {
 	seq         int
 	failProtect bool
 	protects    int
+	issued      [][]byte
+	discarded   [][]byte
+	afterIssue  func()
 }
 
 func newEnvelopeProtector() *envelopeProtector {
@@ -63,7 +66,29 @@ func (p *envelopeProtector) Protect(data []byte) ([]byte, error) {
 	p.seq++
 	envelope := "env:v2:" + string(rune('a'+p.seq))
 	p.keys[envelope] = append([]byte(nil), data...)
+	p.issued = append(p.issued, []byte(envelope))
+	hook := p.afterIssue
+	p.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	p.mu.Lock()
 	return []byte(envelope), nil
+}
+
+// Discard drops an envelope that was issued but never persisted.
+func (p *envelopeProtector) Discard(envelope []byte) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.discarded = append(p.discarded, append([]byte(nil), envelope...))
+	delete(p.keys, string(envelope))
+	return nil
+}
+
+func (p *envelopeProtector) liveEntries() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.issued) - len(p.discarded)
 }
 
 func (p *envelopeProtector) Unprotect(envelope []byte) ([]byte, error) {
@@ -466,4 +491,68 @@ func TestDPAPIKeyMismatchReportsCryptoCode(t *testing.T) {
 	if v.Status().Unlocked {
 		t.Fatal("mismatched DPAPI key must not unlock")
 	}
+}
+
+func requireOnlyIssuedEnvelopeDiscarded(t *testing.T, p *envelopeProtector, issuedBefore int) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.issued) != issuedBefore+1 || len(p.discarded) != 1 {
+		t.Fatalf("issued=%d discarded=%d, want one new envelope discarded", len(p.issued)-issuedBefore, len(p.discarded))
+	}
+	if string(p.discarded[0]) != string(p.issued[len(p.issued)-1]) {
+		t.Fatalf("discarded %q, want the freshly issued %q", p.discarded[0], p.issued[len(p.issued)-1])
+	}
+}
+
+func TestFirstDEKPersistFailureDiscardsIssuedEnvelope(t *testing.T) {
+	db := testStore(t)
+	p := newEnvelopeProtector()
+	p.afterIssue = func() { _ = db.Close() }
+	v := loadTestVault(db, p)
+	if err := v.InitDPAPI(context.Background(), ""); err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	requireOnlyIssuedEnvelopeDiscarded(t, p, 0)
+	if p.liveEntries() != 0 {
+		t.Fatalf("live entries=%d", p.liveEntries())
+	}
+}
+
+func TestLegacyMigrationPersistFailureDiscardsOnlyNewEnvelope(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	p := newEnvelopeProtector()
+	dek := testDEK(4)
+	p.setLegacy(dek.bytes[:])
+	putCredential(t, db, dek, "keep")
+	if err := db.SettingSetMany(ctx, map[string]string{
+		settingMode:     string(ModeDPAPI),
+		settingEnvelope: base64.StdEncoding.EncodeToString([]byte("env:v1")),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p.afterIssue = func() { _ = db.Close() }
+	if v := loadTestVault(db, p); !v.Status().Unlocked {
+		t.Fatal("vault must stay unlocked when migration cannot persist")
+	}
+	requireOnlyIssuedEnvelopeDiscarded(t, p, 0)
+	if _, ok := p.keys["env:v1"]; !ok {
+		t.Fatal("the old envelope must not be discarded")
+	}
+}
+
+func TestMasterToDPAPIPersistFailureDiscardsIssuedEnvelope(t *testing.T) {
+	ctx := context.Background()
+	db := testStore(t)
+	p := newEnvelopeProtector()
+	v := loadTestVault(db, p)
+	if err := v.InitMaster(ctx, "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	p.afterIssue = func() { _ = db.Close() }
+	if err := v.InitDPAPI(ctx, "correct-password"); err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	requireOnlyIssuedEnvelopeDiscarded(t, p, 0)
 }
