@@ -30,10 +30,10 @@ func TestRollupMetricsDatabase(t *testing.T) {
 	}
 	now := (time.Now().UnixMilli() / metricsHourMS) * metricsHourMS
 	old := now - 49*metricsHourMS + time.Minute.Milliseconds()
-	if err := service.RecordMetrics(ctx, device.ID, MetricsSample{TS: old, CPUPct: 20, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5}); err != nil {
+	if err := seedMetric(service, ctx, device.ID, MetricsSample{TS: old, CPUPct: 20, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.RecordMetrics(ctx, device.ID, MetricsSample{TS: old + time.Minute.Milliseconds(), CPUPct: 40, MemUsed: 3, MemTotal: 4, DiskUsed: 5, DiskTotal: 6, UptimeS: 7}); err != nil {
+	if err := seedMetric(service, ctx, device.ID, MetricsSample{TS: old + time.Minute.Milliseconds(), CPUPct: 40, MemUsed: 3, MemTotal: 4, DiskUsed: 5, DiskTotal: 6, UptimeS: 7}); err != nil {
 		t.Fatal(err)
 	}
 	if err := query.Use(database.GORM()).DeviceMetricsHourly.WithContext(ctx).Create(&store.DeviceMetricsHourly{

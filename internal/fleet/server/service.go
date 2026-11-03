@@ -94,6 +94,10 @@ type Service struct {
 
 	sessionList sessionListState
 
+	// skewMu guards skews: the latest out-of-range device clock offset per device (in memory only).
+	skewMu sync.Mutex
+	skews  map[string]clockSkew
+
 	// afterAuthenticate is a test seam fired between a successful device authentication and channel registration.
 	afterAuthenticate func(deviceID string)
 }
@@ -933,9 +937,7 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample Met
 	if device.RevokedAt != nil {
 		return ipc.NewError(ipc.CodeForbidden, "设备已吊销")
 	}
-	if sample.TS == 0 {
-		sample.TS = s.now()
-	}
+	sample.TS = s.trustedMetricTS(deviceID, sample.TS)
 	row := store.DeviceMetrics{
 		ID: ids.New(), DeviceID: deviceID, TS: sample.TS,
 		CPUPct: &sample.CPUPct, MemUsed: &sample.MemUsed, MemTotal: &sample.MemTotal,
@@ -945,6 +947,46 @@ func (s *Service) RecordMetrics(ctx context.Context, deviceID string, sample Met
 		return dbError(err)
 	}
 	return nil
+}
+
+// clockSkew is a device clock offset (device minus server) seen at observedAt.
+type clockSkew struct {
+	ms, observedAt int64
+}
+
+// clockSkewReportWindow bounds how long an observed skew is still reported.
+const clockSkewReportWindow = time.Hour
+
+// trustedMetricTS returns the timestamp to store for a sample. A device clock more than one sync
+// interval away from the server clock is not trusted: the receive time is stored and the offset noted.
+func (s *Service) trustedMetricTS(deviceID string, ts int64) int64 {
+	now := s.now()
+	if ts == 0 {
+		return now
+	}
+	offset := ts - now
+	s.skewMu.Lock()
+	defer s.skewMu.Unlock()
+	if offset > DefaultMetricsIntervalMS || offset < -DefaultMetricsIntervalMS {
+		if s.skews == nil {
+			s.skews = map[string]clockSkew{}
+		}
+		s.skews[deviceID] = clockSkew{ms: offset, observedAt: now}
+		return now
+	}
+	delete(s.skews, deviceID)
+	return ts
+}
+
+// clockSkewMS returns the recently observed device clock offset, or 0.
+func (s *Service) clockSkewMS(deviceID string) int64 {
+	s.skewMu.Lock()
+	defer s.skewMu.Unlock()
+	k, ok := s.skews[deviceID]
+	if !ok || s.now()-k.observedAt > clockSkewReportWindow.Milliseconds() {
+		return 0
+	}
+	return k.ms
 }
 
 type DeviceMetricsResult struct {

@@ -41,7 +41,14 @@ func (s *Service) DeviceAlertSettings(ctx context.Context, identity *account.Ide
 	if err != nil {
 		return nil, err
 	}
-	return s.alertService().GetSettings(ctx, deviceID, grant.kind)
+	return s.withClockSkew(s.alertService().GetSettings(ctx, deviceID, grant.kind))
+}
+
+func (s *Service) withClockSkew(out *alerts.EffectiveSettings, err error) (*alerts.EffectiveSettings, error) {
+	if err == nil {
+		out.ClockSkewMS = s.clockSkewMS(out.DeviceID)
+	}
+	return out, err
 }
 
 // PutDeviceAlertSettings replaces the alert settings of a device the caller owns.
@@ -50,5 +57,5 @@ func (s *Service) PutDeviceAlertSettings(ctx context.Context, identity *account.
 	if err != nil {
 		return nil, err
 	}
-	return s.alertService().PutSettings(ctx, grant.userID, deviceID, grant.kind, in)
+	return s.withClockSkew(s.alertService().PutSettings(ctx, grant.userID, deviceID, grant.kind, in))
 }

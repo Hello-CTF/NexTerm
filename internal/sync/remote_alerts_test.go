@@ -25,7 +25,7 @@ func TestRemoteAPIAlertsRoundTrip(t *testing.T) {
 		writeSyncJSON(w, http.StatusOK, map[string]any{"ok": true, "acked": 2})
 	}))))
 	mux.Handle("GET /fleet/devices/{id}/alert-settings", fixture.session(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeSyncJSON(w, http.StatusOK, map[string]any{"device_id": r.PathValue("id"), "kind": "agent", "disk_threshold": 90, "server_tz": "UTC", "suspect_after_minutes": 5})
+		writeSyncJSON(w, http.StatusOK, map[string]any{"device_id": r.PathValue("id"), "kind": "agent", "disk_threshold": 90, "server_tz": "UTC", "suspect_after_minutes": 5, "clock_skew_ms": -600000})
 	})))
 	mux.Handle("PUT /fleet/devices/{id}/alert-settings", fixture.session(fixture.csrf(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&putBody)
@@ -56,7 +56,7 @@ func TestRemoteAPIAlertsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.DeviceID != "d-1" || got.DiskThreshold != 90 || got.ServerTZ != "UTC" || got.SuspectAfterMinutes != 5 {
+	if got.DeviceID != "d-1" || got.DiskThreshold != 90 || got.ServerTZ != "UTC" || got.SuspectAfterMinutes != 5 || got.ClockSkewMS != -600000 {
 		t.Fatalf("settings = %+v", got)
 	}
 	put, err := client.PutAlertSettings(ctx, "d-1", RemoteAlertSettingsInput{CPUThreshold: 55, QuietTZ: "Asia/Shanghai"})

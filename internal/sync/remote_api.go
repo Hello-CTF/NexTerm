@@ -468,6 +468,7 @@ type RemoteAlertSettings struct {
 	QuietTZ             string  `json:"quiet_tz"`
 	ServerTZ            string  `json:"server_tz"`
 	SuspectAfterMinutes int64   `json:"suspect_after_minutes"`
+	ClockSkewMS         int64   `json:"clock_skew_ms"`
 }
 
 func (c *remoteClient) ListAlerts(ctx context.Context) (*RemoteFleetAlerts, error) {

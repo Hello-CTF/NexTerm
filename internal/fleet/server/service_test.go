@@ -843,7 +843,7 @@ func TestFleetMetricsQueryExcludesFutureSamples(t *testing.T) {
 		{TS: fixture.now - 5*time.Minute.Milliseconds(), CPUPct: 2},
 		{TS: fixture.now + time.Hour.Milliseconds(), CPUPct: 99},
 	} {
-		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+		if err := seedMetric(fixture.service, context.Background(), result.DeviceID, sample); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -999,16 +999,16 @@ func TestFleetMetricsRollup(t *testing.T) {
 	old := fixture.now - 49*time.Hour.Milliseconds()
 	for i := 0; i < 3; i++ {
 		sample := MetricsSample{TS: old + int64(i)*time.Minute.Milliseconds(), CPUPct: float64(10 * (i + 1)), MemUsed: 100, MemTotal: 200, DiskUsed: 300, DiskTotal: 400, UptimeS: 5000}
-		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+		if err := seedMetric(fixture.service, context.Background(), result.DeviceID, sample); err != nil {
 			t.Fatal(err)
 		}
 	}
 	ancient := MetricsSample{TS: fixture.now - 31*24*time.Hour.Milliseconds(), CPUPct: 99, MemUsed: 1, MemTotal: 2, DiskUsed: 3, DiskTotal: 4, UptimeS: 5}
-	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, ancient); err != nil {
+	if err := seedMetric(fixture.service, context.Background(), result.DeviceID, ancient); err != nil {
 		t.Fatal(err)
 	}
 	recent := MetricsSample{TS: fixture.now - time.Hour.Milliseconds(), CPUPct: 55, MemUsed: 110, MemTotal: 200, DiskUsed: 310, DiskTotal: 400, UptimeS: 6000}
-	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, recent); err != nil {
+	if err := seedMetric(fixture.service, context.Background(), result.DeviceID, recent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1040,12 +1040,12 @@ func TestFleetMetricsRollupBoundaryBucket(t *testing.T) {
 	bucketStart := fixture.now - 50*metricsHourMS
 	for i, cpu := range []float64{10, 20, 40} {
 		sample := MetricsSample{TS: bucketStart + int64(10+i*20)*time.Minute.Milliseconds(), CPUPct: cpu, MemUsed: 100, MemTotal: 200, DiskUsed: 300, DiskTotal: 400, UptimeS: 5000}
-		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+		if err := seedMetric(fixture.service, context.Background(), result.DeviceID, sample); err != nil {
 			t.Fatal(err)
 		}
 	}
 	recent := MetricsSample{TS: fixture.now - 30*time.Minute.Milliseconds(), CPUPct: 55}
-	if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, recent); err != nil {
+	if err := seedMetric(fixture.service, context.Background(), result.DeviceID, recent); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1106,7 +1106,7 @@ func TestFleetMetricsQueryClamp(t *testing.T) {
 		{TS: since, CPUPct: 3},
 		{TS: fixture.now - 30*time.Minute.Milliseconds(), CPUPct: 4},
 	} {
-		if err := fixture.service.RecordMetrics(context.Background(), result.DeviceID, sample); err != nil {
+		if err := seedMetric(fixture.service, context.Background(), result.DeviceID, sample); err != nil {
 			t.Fatal(err)
 		}
 	}

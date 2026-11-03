@@ -125,23 +125,26 @@ func (s *Service) Ack(ctx context.Context, ownerID string, ids []string) (int64,
 
 // EffectiveSettings is a device's settings with defaults filled in.
 type EffectiveSettings struct {
-	DeviceID            string  `json:"device_id"`
-	Kind                string  `json:"kind"`
-	DiskEnabled         bool    `json:"disk_enabled"`
-	DiskThreshold       float64 `json:"disk_threshold"`
-	MemEnabled          bool    `json:"mem_enabled"`
-	MemThreshold        float64 `json:"mem_threshold"`
-	CPUEnabled          bool    `json:"cpu_enabled"`
-	CPUThreshold        float64 `json:"cpu_threshold"`
-	OfflineEnabled      bool    `json:"offline_enabled"`
-	OfflineMinutes      int64   `json:"offline_minutes"`
-	ExpectedOffline     bool    `json:"expected_offline"`
-	QuietEnabled        bool    `json:"quiet_enabled"`
-	QuietStart          int64   `json:"quiet_start"`
-	QuietEnd            int64   `json:"quiet_end"`
-	QuietTZ             string  `json:"quiet_tz"`
-	ServerTZ            string  `json:"server_tz"`
-	SuspectAfterMinutes int64   `json:"suspect_after_minutes"`
+	DeviceID        string  `json:"device_id"`
+	Kind            string  `json:"kind"`
+	DiskEnabled     bool    `json:"disk_enabled"`
+	DiskThreshold   float64 `json:"disk_threshold"`
+	MemEnabled      bool    `json:"mem_enabled"`
+	MemThreshold    float64 `json:"mem_threshold"`
+	CPUEnabled      bool    `json:"cpu_enabled"`
+	CPUThreshold    float64 `json:"cpu_threshold"`
+	OfflineEnabled  bool    `json:"offline_enabled"`
+	OfflineMinutes  int64   `json:"offline_minutes"`
+	ExpectedOffline bool    `json:"expected_offline"`
+	QuietEnabled    bool    `json:"quiet_enabled"`
+	QuietStart      int64   `json:"quiet_start"`
+	QuietEnd        int64   `json:"quiet_end"`
+	QuietTZ         string  `json:"quiet_tz"`
+	ServerTZ        string  `json:"server_tz"`
+	// ClockSkewMS is the device clock minus the server clock seen on its latest out-of-range metric
+	// sample (0 when none was observed in the last hour); the fleet server fills it in.
+	ClockSkewMS         int64 `json:"clock_skew_ms"`
+	SuspectAfterMinutes int64 `json:"suspect_after_minutes"`
 }
 
 // SettingsInput is the PUT body; every field is required (nil is rejected) and the row is replaced whole.
