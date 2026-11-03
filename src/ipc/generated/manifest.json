@@ -481,6 +481,12 @@
       "channel": false,
       "stream": "none"
     },
+    "audit_timeline": {
+      "scope": "audit",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "biometric_disable": {
       "scope": "biometric",
       "nested": false,
@@ -514,6 +520,12 @@
     "command_query": {
       "scope": "command-log",
       "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "command_search": {
+      "scope": "command-log",
+      "nested": false,
       "channel": false,
       "stream": "none"
     },
@@ -1081,6 +1093,30 @@
       "channel": false,
       "stream": "none"
     },
+    "host_connectivity_test": {
+      "scope": "host-ports",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_ports_list": {
+      "scope": "host-ports",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_process_kill": {
+      "scope": "host-processes",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "host_processes_list": {
+      "scope": "host-processes",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "host_share_identity": {
       "scope": "host-share",
       "nested": false,
@@ -1296,6 +1332,12 @@
       "channel": false,
       "stream": "none"
     },
+    "preview_embed_check": {
+      "scope": "preview",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "preview_share_active": {
       "scope": "preview-share",
       "nested": true,
@@ -1383,6 +1425,30 @@
     "remote_account_me": {
       "scope": "remote",
       "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_alert_settings_get": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_alert_settings_put": {
+      "scope": "remote",
+      "nested": true,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_alerts": {
+      "scope": "remote",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "remote_fleet_alerts_ack": {
+      "scope": "remote",
+      "nested": true,
       "channel": false,
       "stream": "none"
     },
@@ -1554,36 +1620,6 @@
       "channel": false,
       "stream": "none"
     },
-    "runbook_template_create": {
-      "scope": "runbook",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "runbook_template_delete": {
-      "scope": "runbook",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "runbook_template_get": {
-      "scope": "runbook",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "runbook_template_list": {
-      "scope": "runbook",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
-    "runbook_template_update": {
-      "scope": "runbook",
-      "nested": false,
-      "channel": false,
-      "stream": "none"
-    },
     "services_action": {
       "scope": "services",
       "nested": false,
@@ -1706,6 +1742,12 @@
       "stream": "none"
     },
     "snippet_list": {
+      "scope": "snippet",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "snippet_migration_status": {
       "scope": "snippet",
       "nested": false,
       "channel": false,
@@ -2198,6 +2240,12 @@
       "channel": false,
       "stream": "none"
     },
+    "transcript_export_cast": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "transcript_hosts": {
       "scope": "transcript",
       "nested": false,
@@ -2217,6 +2265,12 @@
       "stream": "none"
     },
     "transcript_search": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_search_host": {
       "scope": "transcript",
       "nested": false,
       "channel": false,
