@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1936,4 +1938,21 @@ func commandsByName(commands []commandContract) map[string]commandContract {
 
 func strconvQuote(value string) string {
 	return `"` + value + `"`
+}
+
+func TestReservedTransportInputFieldsAreRejected(t *testing.T) {
+	build := func(tag string) commandContract {
+		field := types.NewField(token.NoPos, nil, "Channel", types.Typ[types.String], false)
+		return commandContract{Name: "demo_set", Input: types.NewStruct([]*types.Var{field}, []string{tag})}
+	}
+	for _, tag := range []string{`json:"channel"`, `json:"channel,omitempty"`} {
+		if err := checkReservedInputFields([]commandContract{build(tag)}); err == nil {
+			t.Fatalf("%s must be rejected", tag)
+		}
+	}
+	streaming := build(`json:"channel"`)
+	streaming.Channel = true
+	if err := checkReservedInputFields([]commandContract{streaming, build(`json:"releaseChannel"`)}); err != nil {
+		t.Fatalf("channel commands and renamed fields must pass: %v", err)
+	}
 }

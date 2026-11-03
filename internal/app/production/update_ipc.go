@@ -71,8 +71,9 @@ func registerUpdateCommands(dispatcher *ipc.Dispatcher, manager updateCommandMan
 	return nil
 }
 
+// The request field is not named "channel": the IPC transports reserve that key for stream channels.
 type updateChannelRequest struct {
-	Channel string `json:"channel"`
+	ReleaseChannel string `json:"releaseChannel"`
 }
 
 type updateChannelResponse struct {
@@ -88,7 +89,7 @@ func registerUpdateChannelCommands(dispatcher *ipc.Dispatcher, store update.Chan
 		return err
 	}
 	return ipc.Register(dispatcher, "app_update_channel_set", func(ctx context.Context, _ *ipc.Call, input updateChannelRequest) (updateChannelResponse, error) {
-		channel, ok := update.ParseReleaseChannel(input.Channel)
+		channel, ok := update.ParseReleaseChannel(input.ReleaseChannel)
 		if !ok {
 			return updateChannelResponse{}, ipc.NewError(ipc.CodeBadParam, "更新通道只能是 stable 或 rc")
 		}

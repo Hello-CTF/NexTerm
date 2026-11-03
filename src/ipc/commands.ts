@@ -323,7 +323,7 @@ export const appUpdateApi = {
   // The release channel is stored on this machine only (never synced); desktop builds only.
   getChannel: (): Promise<UpdateChannelDto> => call("app_update_channel_get"),
   setChannel: (channel: UpdateReleaseChannel): Promise<UpdateChannelDto> =>
-    call("app_update_channel_set", { channel }),
+    call("app_update_channel_set", { releaseChannel: channel }),
 };
 
 export interface SessionInfo {

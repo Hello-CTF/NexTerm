@@ -3180,7 +3180,7 @@ export type TranscriptSyncOptInRequest = {
 };
 
 export type UpdateChannelRequest = {
-  channel: string;
+  releaseChannel: string;
 };
 
 export type UpdateChannelResponse = {

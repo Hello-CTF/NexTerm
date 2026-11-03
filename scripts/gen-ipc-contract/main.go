@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"go/types"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -72,6 +74,9 @@ func generateContract(root string, overlay map[string][]byte) (*generation, erro
 	}
 	commands, err := extractContracts(packages)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkReservedInputFields(commands); err != nil {
 		return nil, err
 	}
 	events, err := extractEventTopics(packages)
@@ -166,4 +171,55 @@ func sortedFileNames(files map[string][]byte) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// reservedTransportFields are lifted out of the request args by both transports (src/ipc/wails.ts and
+// src/ipc/commands.ts) for stream channels, so a command input cannot receive them in its body. clientId is
+// stripped too but is re-delivered to handlers through the envelope (ipc.Call.ClientID), so it is not reserved here.
+var reservedTransportFields = map[string]bool{"channel": true}
+
+// checkReservedInputFields rejects non-channel commands whose input declares a field the transport strips.
+func checkReservedInputFields(commands []commandContract) error {
+	for _, command := range commands {
+		if command.Channel || command.Input == nil {
+			continue
+		}
+		if field := reservedInputField(command.Input, 0); field != "" {
+			return fmt.Errorf("command %s input declares JSON field %q, which the IPC transport reserves for stream channels and strips from the request body; rename the field", command.Name, field)
+		}
+	}
+	return nil
+}
+
+func reservedInputField(value types.Type, depth int) string {
+	if pointer, ok := types.Unalias(value).(*types.Pointer); ok {
+		value = pointer.Elem()
+	}
+	structure, ok := types.Unalias(value).Underlying().(*types.Struct)
+	if !ok || depth > 4 {
+		return ""
+	}
+	for index := 0; index < structure.NumFields(); index++ {
+		field := structure.Field(index)
+		if !field.Exported() {
+			continue
+		}
+		tag := strings.Split(reflect.StructTag(structure.Tag(index)).Get("json"), ",")[0]
+		if tag == "-" {
+			continue
+		}
+		if field.Embedded() && tag == "" {
+			if nested := reservedInputField(field.Type(), depth+1); nested != "" {
+				return nested
+			}
+			continue
+		}
+		if tag == "" {
+			tag = field.Name()
+		}
+		if reservedTransportFields[tag] {
+			return tag
+		}
+	}
+	return ""
 }

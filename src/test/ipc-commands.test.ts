@@ -780,7 +780,7 @@ describe("desktop platform, update and biometric facade IPC contracts", () => {
     expect(await appUpdateApi.getChannel()).toEqual({ channel: "stable" });
     expect(await appUpdateApi.setChannel("rc")).toEqual({ channel: "rc" });
     expect(requestAt(0)).toEqual({ cmd: "app_update_channel_get", args: null });
-    expect(requestAt(1)).toMatchObject({ cmd: "app_update_channel_set", channel: "rc" });
+    expect(requestAt(1)).toEqual({ cmd: "app_update_channel_set", args: { releaseChannel: "rc" } });
   });
 
   it("preserves all 11 flat envelopes, null arguments and facade void results", async () => {

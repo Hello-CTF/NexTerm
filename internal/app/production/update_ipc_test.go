@@ -462,7 +462,7 @@ func TestUpdateChannelIPCStoresLocallyAndValidates(t *testing.T) {
 	if state.Channel != "stable" {
 		t.Fatalf("default channel = %q, want stable", state.Channel)
 	}
-	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_set", `{"channel":"rc"}`), &state)
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "app_update_channel_set", `{"releaseChannel":"rc"}`), &state)
 	if state.Channel != "rc" {
 		t.Fatalf("set response = %q", state.Channel)
 	}
@@ -473,7 +473,7 @@ func TestUpdateChannelIPCStoresLocallyAndValidates(t *testing.T) {
 	if state.Channel != "rc" {
 		t.Fatalf("get after set = %q", state.Channel)
 	}
-	for _, body := range []string{`{"channel":"beta"}`, `{"channel":""}`, `{"channel":"RC"}`, `{}`} {
+	for _, body := range []string{`{"releaseChannel":"beta"}`, `{"releaseChannel":""}`, `{"releaseChannel":"RC"}`, `{"channel":"rc"}`, `{}`} {
 		response := dispatchStoreTest(dispatcher, "app_update_channel_set", body)
 		if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
 			t.Fatalf("%s must be rejected with bad param: %+v", body, response)
