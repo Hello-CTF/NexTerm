@@ -17,6 +17,8 @@ import { IconAlert, IconLoader, IconServer, IconXCircle } from "../../ui/icons";
 import { inventoryExecTarget, inventorySourceLabel, inventoryTargetText } from "./inventory";
 import { InventoryTargetActions, targetExecutable, type InventoryTargetSession } from "./InventoryTargetActions";
 import { Select } from "../../ui/Select";
+import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
+import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
 
 const SOURCE_ORDER: InventorySource[] = ["ssh-config", "docker-context", "kubernetes"];
 const SOURCE_LABEL: Record<InventorySource, string> = {
@@ -40,6 +42,13 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
     queryFn: () => inventoryApi.sshWatchStatus(),
     refetchOnWindowFocus: false,
   });
+  // All three sources read server files or tools, which a multi-user server refuses for account users.
+  const { restricted: serverLimited, text: serverText } = useServerAccountRestrictions();
+  const sourceRestriction: Record<InventorySource, string> = {
+    "ssh-config": serverText.importSshServerPath,
+    "docker-context": serverText.importDockerContext,
+    kubernetes: serverText.importKubeconfig,
+  };
   const [source, setSource] = useState<InventorySource>("ssh-config");
   const [path, setPath] = useState("");
   const [groupId, setGroupId] = useState("");
@@ -87,6 +96,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   };
 
   const runDiscover = async () => {
+    if (serverLimited) return;
     const epoch = accountEpoch;
     setBusy("discover");
     setError(null);
@@ -108,6 +118,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   };
 
   const runSync = async () => {
+    if (serverLimited) return;
     // The epoch is captured at entry: a confirmation that resolves after an account switch must
     // never reach inventoryApi.sync — empty keys would soft-delete the new account's assets, and
     // no post-hoc staleness check can undo that call.
@@ -140,6 +151,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
   };
 
   const setWatch = async (enabled: boolean) => {
+    if (serverLimited && enabled) return;
     const epoch = accountEpoch;
     setBusy("watch");
     setError(null);
@@ -210,7 +222,8 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 key={item}
                 type="button"
                 className={`nx-segment-item ${source === item ? "is-active" : ""}`}
-                disabled={busy !== null}
+                disabled={busy !== null || serverLimited}
+                title={serverLimited ? sourceRestriction[item] : undefined}
                 onClick={() => {
                   setSource(item);
                   setDiscovery(null);
@@ -224,6 +237,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
               </button>
             ))}
           </div>
+          {serverLimited && SOURCE_ORDER.map((item) => <ServerRestrictionNote key={item} text={sourceRestriction[item]} />)}
 
           <div className="nx-form-row">
             <label className="nx-label" htmlFor="inventory-group">同步到分组</label>
@@ -248,7 +262,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 ref={pathRef}
                 className="nx-input font-mono text-[12px]"
                 value={path}
-                disabled={busy !== null || watching}
+                disabled={busy !== null || watching || serverLimited}
                 onChange={(event) => setPath(event.target.value)}
                 placeholder="~/.ssh/config"
                 autoComplete="off"
@@ -257,7 +271,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void setWatch(!watching)}>
+                <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null || (serverLimited && !watching)} onClick={() => void setWatch(!watching)}>
                   {busy === "watch" ? <IconLoader size={12} className="animate-spin" /> : null}
                   {watching ? "关闭自动同步" : "立即同步并开启自动同步"}
                 </button>
@@ -383,10 +397,10 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         <div className="nx-modal-footer shrink-0">
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy !== null} onClick={onClose}>关闭</button>
           <div className="nx-spacer" />
-          <button type="button" className="nx-btn nx-btn-outline" disabled={busy !== null} onClick={() => void runDiscover()}>
+          <button type="button" className="nx-btn nx-btn-outline" disabled={busy !== null || serverLimited} onClick={() => void runDiscover()}>
             {busy === "discover" ? "正在读取…" : discovery ? "重新读取" : "预览"}
           </button>
-          <button type="button" className="nx-btn nx-btn-primary" disabled={busy !== null || !discovery} onClick={() => void runSync()}>
+          <button type="button" className="nx-btn nx-btn-primary" disabled={busy !== null || serverLimited || !discovery} onClick={() => void runSync()}>
             {busy === "sync" ? "正在同步…" : source === "ssh-config" ? "同步全部" : "同步选中的主机"}
           </button>
         </div>
