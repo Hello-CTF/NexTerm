@@ -620,6 +620,7 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				return desktopTrayDTO{Enabled: input.Enabled}, nil
 			})
 		},
+		func() error { return registerAuditTimeline(dispatcher, database, desktop) },
 	}
 	for _, register := range registrations {
 		if err := register(); err != nil {

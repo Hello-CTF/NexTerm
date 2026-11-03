@@ -1531,6 +1531,7 @@ func TestOperationsVerticalContracts(t *testing.T) {
 		{name: "snippet_delete", scope: "snippet", input: structType("id: string;"), output: "unknown"},
 		{name: "audit_query", scope: "audit", nested: true, input: "AuditQueryRequest", output: "AuditDTO[]"},
 		{name: "audit_count", scope: "audit", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "source?: string | null;", "kind?: string | null;"), output: "AuditCountDTO"},
+		{name: "audit_timeline", scope: "audit", input: "AuditTimelineRequest", output: "AuditTimelineResult"},
 		{name: "command_query", scope: "command-log", nested: true, input: "CommandLogQueryRequest", output: "CommandLogDTO[]"},
 		{name: "command_count", scope: "command-log", nested: true, input: structType("sessionId?: string | null;", "assetId?: string | null;", "userId?: string | null;"), output: "AuditCountDTO"},
 		{name: "layout_get", scope: "layout", input: "Record<string, never>", output: "LayoutDTO"},
@@ -1569,8 +1570,8 @@ func TestOperationsVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 12 {
-		t.Fatalf("selected operations command count = %d, want 12", len(selected))
+	if len(selected) != 13 {
+		t.Fatalf("selected operations command count = %d, want 13", len(selected))
 	}
 	for name, command := range commands {
 		switch command.Scope {
