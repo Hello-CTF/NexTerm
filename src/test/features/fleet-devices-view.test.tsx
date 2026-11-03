@@ -1325,14 +1325,16 @@ describe("Device management view - revocation and autostart", () => {
   });
 
   it("marks an agent device and a local-helper device that share one helper, and no others", async () => {
-    const withDigest = (device: typeof AGENT_DEVICE, id: string, name: string, kind: string, digest?: string) => ({
-      ...device, id, name, kind, agent: { ...device.agent, state_digest: digest },
+    const withDigest = (device: typeof AGENT_DEVICE, id: string, name: string, kind: string, digest?: string, instance?: string) => ({
+      ...device, id, name, kind, agent: { ...device.agent, state_digest: digest, helper_instance_id: instance },
     });
     const devices = [
-      withDigest(AGENT_DEVICE, "d-a", "box-agent", "agent", "same"),
-      withDigest(AGENT_DEVICE, "d-l", "box-desktop", "local-helper", "same"),
-      withDigest(AGENT_DEVICE, "d-o", "other-box", "agent", "different"),
+      withDigest(AGENT_DEVICE, "d-a", "box-agent", "agent", "same", "inst-1"),
+      withDigest(AGENT_DEVICE, "d-l", "box-desktop", "local-helper", "same", "inst-1"),
+      withDigest(AGENT_DEVICE, "d-o", "other-box", "agent", "different", "inst-3"),
       withDigest(AGENT_DEVICE, "d-n", "no-digest", "agent"),
+      withDigest(AGENT_DEVICE, "d-t", "twin-box", "agent", "same", "inst-2"),
+      withDigest(AGENT_DEVICE, "d-old", "old-agent", "agent", "same"),
     ];
     route(fleetHandler({ devices: { devices } }));
     seedUser(SUPERADMIN);
@@ -1344,6 +1346,9 @@ describe("Device management view - revocation and autostart", () => {
     expect(cardOf("box-desktop")?.textContent).toContain("与「box-agent」共用持久终端");
     expect(cardOf("other-box")?.textContent).not.toContain("共用持久终端");
     expect(cardOf("no-digest")?.textContent).not.toContain("共用持久终端");
+    // Same digest but another instance id (another machine), or no id (older agent): never paired.
+    expect(cardOf("twin-box")?.textContent).not.toContain("共用持久终端");
+    expect(cardOf("old-agent")?.textContent).not.toContain("共用持久终端");
   });
 
   it("confirms that offline autostart changes only save desired state", async () => {

@@ -48,7 +48,7 @@ type bridgeOutcome struct {
 func startBridgeRequest(t *testing.T, r *Registry, deviceID string) (context.CancelFunc, chan bridgeOutcome, string) {
 	t.Helper()
 	controlClient, controlServer := wsPair(t)
-	r.RegisterControl(deviceID, controlServer, "", []string{agent.PurposeTerminal})
+	r.RegisterControl(deviceID, controlServer, "", "", []string{agent.PurposeTerminal})
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan bridgeOutcome, 1)
 	go func() {
@@ -209,7 +209,7 @@ func TestRegistryDeliverAbandonDoubleReadyNoLeak(t *testing.T) {
 func TestRegistryCapabilitiesRoundTrip(t *testing.T) {
 	r := NewRegistry()
 	_, controlServer := wsPair(t)
-	r.RegisterControl("dev-caps", controlServer, "digest-1", []string{"terminal", "file"})
+	r.RegisterControl("dev-caps", controlServer, "digest-1", "", []string{"terminal", "file"})
 	capabilities, ok := r.Capabilities("dev-caps")
 	if !ok || len(capabilities) != 2 || capabilities[0] != "terminal" || capabilities[1] != "file" {
 		t.Fatalf("Capabilities = %v, %v", capabilities, ok)
@@ -241,7 +241,7 @@ func TestRequestBridgeRejectsMissingCapabilities(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			r := NewRegistry()
 			controlClient, controlServer := wsPair(t)
-			r.RegisterControl("dev-no-capabilities", controlServer, "", nil)
+			r.RegisterControl("dev-no-capabilities", controlServer, "", "", nil)
 			requestCtx, requestCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 			_, err := r.RequestBridge(requestCtx, "dev-no-capabilities", testCase.purpose)
 			requestCancel()
@@ -265,7 +265,7 @@ func TestRequestBridgeRejectsMissingCapabilities(t *testing.T) {
 func TestRequestBridgeAdvertisedPurpose(t *testing.T) {
 	r := NewRegistry()
 	controlClient, controlServer := wsPair(t)
-	r.RegisterControl("dev-file", controlServer, "", []string{"terminal", "file"})
+	r.RegisterControl("dev-file", controlServer, "", "", []string{"terminal", "file"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan bridgeOutcome, 1)
@@ -317,5 +317,31 @@ func TestPurposeUnsupportedMessageNamesPurposeAndUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(purposeUnsupportedMessage("forward"), "forward") || !strings.Contains(purposeUnsupportedMessage(""), "terminal") {
 		t.Fatal("message should name the missing purpose, defaulting to terminal")
+	}
+}
+
+func TestRegistryHelperInstanceIDLifecycle(t *testing.T) {
+	r := NewRegistry()
+	if _, ok := r.HelperInstanceID("dev-inst"); ok {
+		t.Fatal("offline device reported an instance id")
+	}
+	_, first := wsPair(t)
+	r.RegisterControl("dev-inst", first, "d", "id-one", nil)
+	if id, ok := r.HelperInstanceID("dev-inst"); !ok || id != "id-one" {
+		t.Fatalf("HelperInstanceID = %q, %v", id, ok)
+	}
+	_, second := wsPair(t)
+	r.RegisterControl("dev-inst", second, "d", "id-two", nil)
+	if id, ok := r.HelperInstanceID("dev-inst"); !ok || id != "id-two" {
+		t.Fatalf("after replacement HelperInstanceID = %q, %v", id, ok)
+	}
+	_, empty := wsPair(t)
+	r.RegisterControl("dev-old", empty, "d", "", nil)
+	if _, ok := r.HelperInstanceID("dev-old"); ok {
+		t.Fatal("agent without an id reported one")
+	}
+	r.UnregisterControl("dev-inst", second)
+	if _, ok := r.HelperInstanceID("dev-inst"); ok {
+		t.Fatal("disconnected device still reports an instance id")
 	}
 }

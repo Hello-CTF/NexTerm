@@ -28,6 +28,9 @@ type controlChannel struct {
 	// the managed-share data path uses it to pass the bridge helper's hello verification. The digest is carried by the hello
 	// authenticated with device credentials and contains no credential material.
 	stateDigest string
+	// helperInstanceID is the random id of the agent's helper state directory; it tells apart machines whose
+	// state digests collide. Empty for agents that predate it. It is not a credential.
+	helperInstanceID string
 	// capabilities are the bridge purposes advertised in the agent hello; requests fail closed
 	// when the required purpose is absent.
 	capabilities []string
@@ -72,10 +75,10 @@ func NewRegistry() *Registry {
 // Replacement is a unilateral server-side teardown, so it uses CloseNow: a graceful close handshake would block the new connection's
 // hello_ok write (the peer may have stopped reading).
 // Returning true means a replacement happened (the device was previously online, so this is not a new online transition).
-func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest string, capabilities []string) (replaced bool) {
+func (r *Registry) RegisterControl(deviceID string, conn *websocket.Conn, stateDigest, helperInstanceID string, capabilities []string) (replaced bool) {
 	r.mu.Lock()
 	previous := r.controls[deviceID]
-	r.controls[deviceID] = &controlChannel{conn: conn, stateDigest: stateDigest, capabilities: append([]string(nil), capabilities...)}
+	r.controls[deviceID] = &controlChannel{conn: conn, stateDigest: stateDigest, helperInstanceID: helperInstanceID, capabilities: append([]string(nil), capabilities...)}
 	r.mu.Unlock()
 	if previous != nil {
 		previous.conn.CloseNow()
@@ -123,6 +126,18 @@ func (r *Registry) StateDigest(deviceID string) (string, bool) {
 		return "", false
 	}
 	return channel.stateDigest, true
+}
+
+// HelperInstanceID returns the helper instance id reported by the device control channel hello;
+// the second return value is false when the device is offline or has not reported one.
+func (r *Registry) HelperInstanceID(deviceID string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	channel := r.controls[deviceID]
+	if channel == nil || channel.helperInstanceID == "" {
+		return "", false
+	}
+	return channel.helperInstanceID, true
 }
 
 // Capabilities returns the bridge purposes advertised by the device control channel hello;

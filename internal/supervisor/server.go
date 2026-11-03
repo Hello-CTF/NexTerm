@@ -22,6 +22,7 @@ type Server struct {
 	stateDigest     string
 	runtimeMetadata *RuntimeMetadata
 	startEnv        StartEnv
+	spawnedBy       string
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
@@ -38,6 +39,10 @@ type Server struct {
 }
 
 func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
+	return newServer(supervisor, socketPath, "")
+}
+
+func newServer(supervisor *Supervisor, socketPath, spawnedBy string) (*Server, error) {
 	if supervisor == nil {
 		return nil, fmt.Errorf("%w: supervisor is required", ErrInvalidInput)
 	}
@@ -57,6 +62,7 @@ func NewServer(supervisor *Supervisor, socketPath string) (*Server, error) {
 		stateDigest:     stateDigest,
 		runtimeMetadata: provenRuntimeMetadata(),
 		startEnv:        CurrentStartEnv(),
+		spawnedBy:       spawnedBy,
 		endpoint:        endpoint,
 		listener:        listener,
 		unlock:          unlock,
@@ -244,7 +250,7 @@ func (c *serverConn) serve() {
 	}
 	startEnv := c.server.startEnv
 	ack := helloMsg{
-		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StartEnv: &startEnv,
+		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StartEnv: &startEnv, SpawnedBy: c.server.spawnedBy,
 		StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
 	}
 	if err := c.reply(frameHelloAck, ack); err != nil {

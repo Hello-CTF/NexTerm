@@ -312,7 +312,7 @@ func run(args []string) int {
 				for _, device := range devices {
 					result = append(result, production.AggregateDevice{
 						ID: device.ID, Name: device.Name, Kind: device.Kind, Platform: device.Platform,
-						Online: device.Digest != "", Digest: device.Digest, TerminalEnabled: device.TerminalEnabled,
+						Online: device.Digest != "", Digest: device.Digest, HelperInstanceID: device.HelperInstanceID, TerminalEnabled: device.TerminalEnabled,
 					})
 				}
 				return result, nil

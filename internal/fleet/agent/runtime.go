@@ -105,8 +105,11 @@ type Runtime struct {
 	digestDir string
 	// channelCancel ends the control channel so it re-announces a changed state digest.
 	channelCancel context.CancelFunc
-	logger        *slog.Logger
-	now           func() time.Time
+	// noticePID and noticeText are the helper build hint last logged, so it is not repeated every cycle.
+	noticePID  int
+	noticeText string
+	logger     *slog.Logger
+	now        func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
@@ -128,6 +131,8 @@ type Runtime struct {
 	platform    string
 	appVersion  string
 	stateDigest string
+	// helperInstanceID belongs to digestDir like stateDigest; empty when it could not be read.
+	helperInstanceID string
 
 	mu           sync.Mutex
 	desired      ConfigUpdate
@@ -189,10 +194,12 @@ func New(options Options) (*Runtime, error) {
 	ensureHelper := options.EnsureHelper
 	if ensureHelper == nil {
 		checkBuild = func(ctx context.Context) (supervisor.HelperBuild, error) {
-			return supervisor.EnsureHelperBuild(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
+			config := runtimeState.helperConfig()
+			config.Executable = executable
+			return supervisor.EnsureHelperBuild(ctx, config)
 		}
 		ensureHelper = func(ctx context.Context) error {
-			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable})
+			_, err := supervisor.ConnectHelper(ctx, supervisor.HelperConfig{StateDir: runtimeState.currentStateDir(), Executable: executable, SpawnedBy: supervisor.SpawnedByAgent})
 			return err
 		}
 	}
@@ -255,6 +262,18 @@ func (r *Runtime) currentStateDir() string {
 	return r.stateDir
 }
 
+// helperConfig is the helper configuration for the directory in use, without the executable. Inside the
+// directory shared with the desktop app an env-stale helper is kept: the desktop started it and replacing it
+// from here would swap the environment of its users.
+func (r *Runtime) helperConfig() supervisor.HelperConfig {
+	dir := r.currentStateDir()
+	return supervisor.HelperConfig{
+		StateDir:     dir,
+		SpawnedBy:    supervisor.SpawnedByAgent,
+		KeepEnvStale: r.sharedDir != "" && filepath.Clean(dir) == filepath.Clean(r.sharedDir),
+	}
+}
+
 // settleStateDir moves a runtime that shares its helper with the desktop from
 // the previous directory to the shared one once the helper there runs no
 // session (an idle one is stopped). It keeps the previous directory while
@@ -300,15 +319,15 @@ func (r *Runtime) useStateDir(dir string, settled bool) {
 func (r *Runtime) reconcileDigest() {
 	dir := r.currentStateDir()
 	r.mu.Lock()
-	current := r.digestDir == dir && r.stateDigest != ""
-	previous := r.stateDigest
+	current := r.digestDir == dir && r.stateDigest != "" && r.helperInstanceID != ""
+	previous, previousID := r.stateDigest, r.helperInstanceID
 	r.mu.Unlock()
 	if current {
 		return
 	}
 	r.computeStateDigest()
 	r.mu.Lock()
-	cancel, changed := r.channelCancel, r.stateDigest != previous
+	cancel, changed := r.channelCancel, r.stateDigest != previous || r.helperInstanceID != previousID
 	r.mu.Unlock()
 	if previous != "" && changed && cancel != nil {
 		cancel()
@@ -316,9 +335,15 @@ func (r *Runtime) reconcileDigest() {
 }
 
 func (r *Runtime) digestSnapshot() string {
+	digest, _ := r.announcedState()
+	return digest
+}
+
+// announcedState is the state digest and helper instance id that hello reports, read under one lock.
+func (r *Runtime) announcedState() (digest, instanceID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.stateDigest
+	return r.stateDigest, r.helperInstanceID
 }
 
 // effectiveAppVersion reports the running build's version when it is a real release build, so a manually
@@ -423,17 +448,19 @@ func (r *Runtime) Run(ctx context.Context) error {
 
 func (r *Runtime) hello(bridgeID, purpose string) HelloMessage {
 	r.reconcileDigest()
+	digest, instanceID := r.announcedState()
 	return HelloMessage{
-		Type:         "hello",
-		Protocol:     ProtocolVersion,
-		DeviceID:     r.deviceID,
-		Secret:       r.secret,
-		Platform:     r.platform,
-		AppVersion:   r.appVersion,
-		BridgeID:     bridgeID,
-		Purpose:      purpose,
-		StateDigest:  r.digestSnapshot(),
-		Capabilities: r.capabilities(),
+		Type:             "hello",
+		Protocol:         ProtocolVersion,
+		DeviceID:         r.deviceID,
+		Secret:           r.secret,
+		Platform:         r.platform,
+		AppVersion:       r.appVersion,
+		BridgeID:         bridgeID,
+		Purpose:          purpose,
+		StateDigest:      digest,
+		HelperInstanceID: instanceID,
+		Capabilities:     r.capabilities(),
 	}
 }
 
@@ -468,8 +495,16 @@ func (r *Runtime) computeStateDigest() {
 		r.logger.Warn("compute state digest failed; state digest unavailable", "error", err)
 		return
 	}
+	// The id only separates machines whose digests collide; without it hello still works and the server lists
+	// the device unmerged.
+	instanceID, err := supervisor.HelperInstanceID(absolute)
+	if err != nil {
+		r.logger.Warn("read helper instance id failed; devices that share this state digest cannot be told apart", "error", err)
+		instanceID = ""
+	}
 	r.mu.Lock()
 	r.stateDigest = digest
+	r.helperInstanceID = instanceID
 	r.digestDir = dir
 	r.mu.Unlock()
 }
@@ -731,7 +766,14 @@ func (r *Runtime) checkHelperBuild(ctx context.Context) {
 	case build.Replaced:
 		r.logger.Info("replaced the stale supervisor helper that ran no terminals", "reason", build.StaleReason, "to", build.Local.Version)
 	case build.Notice() != "":
-		r.logger.Warn(build.Notice())
+		// The check repeats every sync cycle; the same hint for the same helper is logged once.
+		r.mu.Lock()
+		repeated := r.noticePID == build.Helper.PID && r.noticeText == build.Notice()
+		r.noticePID, r.noticeText = build.Helper.PID, build.Notice()
+		r.mu.Unlock()
+		if !repeated {
+			r.logger.Warn(build.Notice())
+		}
 	}
 }
 
@@ -782,7 +824,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 		}
 		r.mu.Lock()
 		r.channelCancel = channelCancel
-		announcedOld := r.stateDigest != hello.StateDigest
+		announcedOld := r.stateDigest != hello.StateDigest || r.helperInstanceID != hello.HelperInstanceID
 		r.mu.Unlock()
 		if announcedOld {
 			// The digest changed between building the hello and registering the cancel.

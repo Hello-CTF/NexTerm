@@ -60,6 +60,11 @@ type AggregateHost struct {
 	// travels from a server to the desktop that dedupes helpers shared with
 	// its own local terminals, and is cleared before a listing reaches a UI.
 	StateDigest string `json:"stateDigest,omitempty"`
+	// HelperInstanceID is the random id of the device helper's state
+	// directory. Together with StateDigest it tells one helper from another
+	// machine with the same uid and path; it travels like StateDigest and is
+	// cleared before a listing reaches a UI.
+	HelperInstanceID string `json:"helperInstanceId,omitempty"`
 }
 
 // AggregateHostStatus is a host and how its listing went.

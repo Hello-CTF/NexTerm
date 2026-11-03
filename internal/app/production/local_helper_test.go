@@ -164,3 +164,12 @@ func TestProductionRegularLocalTerminalModeSpawnsNoHelper(t *testing.T) {
 		t.Fatal("an invalid local terminal mode was accepted")
 	}
 }
+
+func TestProductionWiresTheLocalHelperIdentityIntoTheSessionAggregate(t *testing.T) {
+	production, _ := newLocalHelperProduction(t, true)
+	aggregate := production.Services.sessionAggregate
+	if aggregate == nil || aggregate.localDigest == nil || aggregate.localInstance == nil {
+		t.Fatalf("session aggregate = %+v; the local helper's digest and instance id must both be wired", aggregate)
+	}
+	waitLocalHelperState(t, production, "idle")
+}

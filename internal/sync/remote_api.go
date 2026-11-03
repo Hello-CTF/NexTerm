@@ -37,6 +37,7 @@ type RemoteFleetAgent struct {
 	ServiceState     RemoteFleetServiceState `json:"service_state"`
 	LastSeenAt       int64                   `json:"last_seen_at"`
 	StateDigest      string                  `json:"state_digest,omitempty"`
+	HelperInstanceID string                  `json:"helper_instance_id,omitempty"`
 }
 
 type RemoteFleetDevice struct {

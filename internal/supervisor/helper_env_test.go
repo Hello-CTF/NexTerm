@@ -135,3 +135,93 @@ func TestHelperReportsItsStartEnvironment(t *testing.T) {
 		t.Fatalf("start env = %+v, want %+v", running.StartEnv, CurrentStartEnv())
 	}
 }
+
+func TestSpawnedByRoundTripsThroughHelperArgs(t *testing.T) {
+	for _, value := range []string{"", SpawnedByDesktop, SpawnedByAgent} {
+		args := helperSpawnArgs("/state", HelperConfig{SpawnedBy: value})
+		config, err := parseHelperArgs(args[1:], nil)
+		if err != nil || config.SpawnedBy != value {
+			t.Fatalf("spawned-by %q: parsed %+v, %v", value, config, err)
+		}
+	}
+	if _, err := parseHelperArgs([]string{"--state-dir", "/state", "--spawned-by=other"}, nil); err == nil {
+		t.Fatal("an unknown --spawned-by value was accepted")
+	}
+}
+
+func TestHelperReportsWhoSpawnedIt(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Cleanup(func() { killHelperProcesses(t, stateDir) })
+	ctx := context.Background()
+	if _, err := ConnectHelper(ctx, HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second, SpawnedBy: SpawnedByDesktop}); err != nil {
+		t.Fatal(err)
+	}
+	running, err := InspectHelper(ctx, stateDir)
+	if err != nil || running.SpawnedBy != SpawnedByDesktop {
+		t.Fatalf("spawned by = %q, %v; want %q", running.SpawnedBy, err, SpawnedByDesktop)
+	}
+}
+
+func TestEnsureHelperBuildKeepsOnlyDesktopSpawnedEnvStaleHelper(t *testing.T) {
+	ctx := context.Background()
+	local, err := CurrentRuntimeMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(previous func() StartEnv) { expectedStartEnv = previous }(expectedStartEnv)
+	expectedStartEnv = func() StartEnv { return StartEnv{Shell: "/bin/zsh", PathHash: HashPath("/other")} }
+	for name, tc := range map[string]struct {
+		spawnedBy string
+		kept      bool
+	}{
+		"desktop":  {SpawnedByDesktop, true},
+		"agent":    {SpawnedByAgent, false},
+		"unrecord": {"", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stateDir := filepath.Join(t.TempDir(), "state")
+			t.Cleanup(func() { killHelperProcesses(t, stateDir) })
+			config := HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second, KeepEnvStale: true, SpawnedBy: tc.spawnedBy}
+			helper, err := ConnectHelper(ctx, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			build, err := ensureHelperBuild(ctx, config, local)
+			if err != nil || build.StaleReason != "env" {
+				t.Fatalf("build: %+v, %v; want env stale", build, err)
+			}
+			if tc.kept {
+				if build.Replaced || !build.EnvKept || build.Notice() == "" {
+					t.Fatalf("desktop helper: %+v; want kept with a notice", build)
+				}
+				if running, err := InspectHelper(ctx, stateDir); err != nil || running.PID != helper.PID() {
+					t.Fatalf("the helper must stay: %+v, %v", running, err)
+				}
+				return
+			}
+			if !build.Replaced || build.EnvKept {
+				t.Fatalf("helper spawned by %q: %+v; want replaced", tc.spawnedBy, build)
+			}
+		})
+	}
+}
+
+func TestEnsureHelperBuildReplacesBuildStaleDesktopHelper(t *testing.T) {
+	ctx := context.Background()
+	stateDir := filepath.Join(t.TempDir(), "state")
+	t.Cleanup(func() { killHelperProcesses(t, stateDir) })
+	config := HelperConfig{StateDir: stateDir, SpawnTimeout: 30 * time.Second, KeepEnvStale: true, SpawnedBy: SpawnedByDesktop}
+	if _, err := ConnectHelper(ctx, config); err != nil {
+		t.Fatal(err)
+	}
+	local, err := CurrentRuntimeMetadata()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local.Commit += "-other"
+	local.SHA256 = strings.Repeat("0", 64)
+	build, err := ensureHelperBuild(ctx, config, local)
+	if err != nil || build.StaleReason != "build" || !build.Replaced || build.EnvKept {
+		t.Fatalf("build-stale desktop helper: %+v, %v; want replaced", build, err)
+	}
+}

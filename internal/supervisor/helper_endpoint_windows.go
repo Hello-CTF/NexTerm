@@ -28,3 +28,6 @@ func endpointPath(path string) string {
 	}
 	return path
 }
+
+// checkEndpointDirOwner has nothing to check: pipes have no directory.
+func checkEndpointDirOwner(string) error { return nil }

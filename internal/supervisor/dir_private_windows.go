@@ -69,7 +69,7 @@ func makeDirPrivate(path string) error {
 			}
 		}
 		if !owned {
-			return fmt.Errorf("%w: %s is owned by another user", ErrInvalidInput, path)
+			return &UntrustedEndpointError{Kind: EndpointStateDir, Path: path, OwnerUID: -1}
 		}
 	}
 	sid, err := currentUserSIDString()
