@@ -20,6 +20,7 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 	resolver := s.realIP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(realip.WithClientIP(r.Context(), resolver.ClientIP(r)))
+		s.setSecurityHeaders(w, r)
 		if hostGuard && !loopbackHost(r.Host) {
 			http.Error(w, "回环监听模式只允许通过 localhost、127.0.0.1 或 ::1 访问", http.StatusMisdirectedRequest)
 			return

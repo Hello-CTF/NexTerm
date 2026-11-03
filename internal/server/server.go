@@ -355,7 +355,7 @@ func (s *Server) routes(config Config) http.Handler {
 
 	staticHandler := config.Static
 	if staticHandler == nil && s.options.WebRoot != "" {
-		staticHandler = NewStaticHandler(s.options.WebRoot)
+		staticHandler = newStaticHandler(s.options.WebRoot, s.options.Auth != AuthPlatform)
 	}
 
 	if s.fleet != nil {
