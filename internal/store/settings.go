@@ -156,20 +156,30 @@ func settingLike(column, pattern string) field.Expr {
 }
 
 func (s *Store) SettingContainsValue(ctx context.Context, substring string) (bool, error) {
+	values, err := s.SettingValuesContaining(ctx, substring)
+	if err != nil {
+		return false, err
+	}
+	return len(values) > 0, nil
+}
+
+// SettingValuesContaining returns every setting value that contains substring literally.
+func (s *Store) SettingValuesContaining(ctx context.Context, substring string) ([]string, error) {
 	setting := query.Use(s.db).Setting
 	rows := []Setting{}
 	err := setting.WithContext(ctx).
 		Where(settingLike("value", "%"+EscapeLikePrefix(substring)+"%")).
 		Scan(&rows)
 	if err != nil {
-		return false, dbError(err)
+		return nil, dbError(err)
 	}
+	values := []string{}
 	for _, row := range rows {
 		if strings.Contains(row.Value, substring) {
-			return true, nil
+			values = append(values, row.Value)
 		}
 	}
-	return false, nil
+	return values, nil
 }
 
 type SettingTx interface {

@@ -38,3 +38,5 @@ func systemUnprotect(data []byte) ([]byte, error) {
 	result := append([]byte(nil), unsafe.Slice(output.Data, output.Size)...)
 	return result, nil
 }
+
+func systemEnvelopeIsLegacy([]byte) bool { return false }

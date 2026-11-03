@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ const (
 	settingSalt         = "vault.master_salt"
 	settingAutolock     = "vault.autolock_ms"
 	settingPasswordless = "vault.passwordless"
+	settingKeyCheck     = "vault.key_check"
 	defaultAutolock     = uint64(0)
 	maxAutoLockMS       = uint64(1440 * 60 * 1000)
 )
@@ -65,6 +67,9 @@ type Vault struct {
 	derive    func(string, []byte) (*secretKey, error)
 	now       func() int64
 	loadErr   error
+	// unlockErr is why the automatic system-protection unlock in Load failed; it replaces the
+	// misleading "not initialized" answer until an init or unlock succeeds.
+	unlockErr error
 
 	mu           sync.Mutex
 	mode         Mode
@@ -138,6 +143,7 @@ func Load(ctx context.Context, db *store.Store, options ...Option) *Vault {
 		v.mu.Lock()
 		if err := v.unlockDPAPILocked(ctx); err != nil {
 			slog.Warn("failed to auto-unlock vault; treating vault as uninitialized", "error", err)
+			v.unlockErr = err
 			v.mode = ModeNotInit
 			v.clearKeysLocked()
 		}
@@ -260,8 +266,15 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 		dek.destroy()
 		return err
 	}
+	keyCheck, err := sealKeyCheck(dek)
+	if err != nil {
+		kek.destroy()
+		dek.destroy()
+		return err
+	}
 	if err := v.store.SettingSetMany(ctx, map[string]string{
 		settingEnvelope:     base64.StdEncoding.EncodeToString(envelope),
+		settingKeyCheck:     keyCheck,
 		settingSalt:         base64.StdEncoding.EncodeToString(salt),
 		settingMode:         string(ModeMaster),
 		settingPasswordless: passwordlessFlag(password),
@@ -276,6 +289,7 @@ func (v *Vault) initMasterLocked(ctx context.Context, password string) error {
 	v.passwordless = password == ""
 	v.kek = kek
 	v.dek = dek
+	v.unlockErr = nil
 	v.lastUsedAt = v.now()
 	return nil
 }
@@ -367,7 +381,15 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 			dek.destroy()
 			return err
 		}
-		if err := v.store.SettingSet(ctx, settingEnvelope, base64.StdEncoding.EncodeToString(protected)); err != nil {
+		keyCheck, err := sealKeyCheck(dek)
+		if err != nil {
+			dek.destroy()
+			return err
+		}
+		if err := v.store.SettingSetMany(ctx, map[string]string{
+			settingEnvelope: base64.StdEncoding.EncodeToString(protected),
+			settingKeyCheck: keyCheck,
+		}); err != nil {
 			dek.destroy()
 			return err
 		}
@@ -387,11 +409,119 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek); err != nil {
+			return err
+		}
+		v.migrateLegacyEnvelopeLocked(ctx, envelope, dek)
 	}
 	v.dek.destroy()
 	v.dek = dek
+	v.unlockErr = nil
 	v.lastUsedAt = v.now()
 	return nil
+}
+
+// migrateLegacyEnvelopeLocked rewrites an envelope in a superseded platform format (for
+// example the fixed macOS Keychain account) once the DEK has been verified against this
+// database. Old entries stay readable until then and are never deleted, because they may
+// still back another data directory. Failures only log: the vault stays unlocked and the
+// next start retries.
+func (v *Vault) migrateLegacyEnvelopeLocked(ctx context.Context, envelope []byte, dek *secretKey) {
+	detector, ok := v.protector.(legacyEnvelopeDetector)
+	if !ok || !detector.IsLegacyEnvelope(envelope) {
+		return
+	}
+	protected, err := v.protector.Protect(dek.bytes[:])
+	if err != nil {
+		slog.Warn("failed to migrate legacy system-protection envelope; keeping the old one", "error", err)
+		return
+	}
+	if err := v.store.SettingSet(ctx, settingEnvelope, base64.StdEncoding.EncodeToString(protected)); err != nil {
+		slog.Warn("failed to store migrated system-protection envelope; keeping the old one", "error", err)
+	}
+}
+
+var secretEnvelopePattern = regexp.MustCompile(regexp.QuoteMeta(store.SecretEnvelopePrefix) + `[A-Za-z0-9+/=]+`)
+
+func errKeyMismatch() error {
+	return ipc.NewError(ipc.CodeCrypto, "加密错误：数据密钥与本凭据库不匹配（系统钥匙串条目可能已被其他数据目录覆盖），已拒绝解锁")
+}
+
+// verifyOrAdoptKeyCheckLocked proves dek belongs to this database. It destroys dek when it
+// does not. Databases without a key-check are probed against existing ciphertext, and the
+// check is recorded once the key is proven (or there is nothing to prove it against).
+func (v *Vault) verifyOrAdoptKeyCheckLocked(ctx context.Context, dek *secretKey) error {
+	err := v.checkDEKLocked(ctx, dek)
+	if err != nil {
+		dek.destroy()
+	}
+	return err
+}
+
+func (v *Vault) checkDEKLocked(ctx context.Context, dek *secretKey) error {
+	stored, found, err := v.store.SettingGet(ctx, settingKeyCheck)
+	if err != nil {
+		return err
+	}
+	if found && stored != "" {
+		if err := verifyKeyCheck(dek, stored); err != nil {
+			slog.Warn("vault key-check rejected the data key", "error", err)
+			return errKeyMismatch()
+		}
+		return nil
+	}
+	matches, hasCiphertext, err := v.probeCiphertext(ctx, dek)
+	if err != nil {
+		return err
+	}
+	if hasCiphertext && !matches {
+		return errKeyMismatch()
+	}
+	keyCheck, err := sealKeyCheck(dek)
+	if err == nil {
+		err = v.store.SettingSet(ctx, settingKeyCheck, keyCheck)
+	}
+	if err != nil {
+		slog.Warn("failed to record vault key-check; will retry on next unlock", "error", err)
+	}
+	return nil
+}
+
+// probeCiphertext reports whether any existing ciphertext opens with dek. One damaged
+// entry must not block an otherwise valid vault, so any success counts as a match.
+func (v *Vault) probeCiphertext(ctx context.Context, dek *secretKey) (matches, hasCiphertext bool, err error) {
+	rows, err := v.store.CredentialList(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	for _, row := range rows {
+		if row.Cipher != store.CipherAES256GCM {
+			continue
+		}
+		hasCiphertext = true
+		if plaintext, err := openCredential(dek, row.Nonce, row.Blob); err == nil {
+			clear(plaintext)
+			return true, true, nil
+		}
+	}
+	values, err := v.store.SettingValuesContaining(ctx, store.SecretEnvelopePrefix)
+	if err != nil {
+		return false, false, err
+	}
+	for _, value := range values {
+		for _, envelope := range secretEnvelopePattern.FindAllString(value, -1) {
+			hasCiphertext = true
+			raw, err := base64.StdEncoding.DecodeString(envelope[len(store.SecretEnvelopePrefix):])
+			if err != nil || len(raw) <= nonceLength {
+				continue
+			}
+			if plaintext, err := open(dek, raw[:nonceLength], raw[nonceLength:], secretAAD); err == nil {
+				clear(plaintext)
+				return true, true, nil
+			}
+		}
+	}
+	return false, hasCiphertext, nil
 }
 
 func (v *Vault) UnlockMaster(ctx context.Context, password string) error {
@@ -437,9 +567,14 @@ func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 		kek.destroy()
 		return err
 	}
+	if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek); err != nil {
+		kek.destroy()
+		return err
+	}
 	v.clearKeysLocked()
 	v.kek = kek
 	v.dek = dek
+	v.unlockErr = nil
 	v.passwordless = password == ""
 	v.lastUsedAt = v.now()
 	return nil
@@ -484,6 +619,9 @@ func (v *Vault) currentDEK(ctx context.Context) (*secretKey, error) {
 		v.lastUsedAt = v.now()
 	}
 	if v.dek == nil {
+		if v.unlockErr != nil {
+			return nil, v.unlockErr
+		}
 		if v.mode == ModeNotInit {
 			return nil, ipc.NewError(ipc.CodeVaultNotInit, "凭据库尚未初始化，请先在\"设置 → 凭据保护\"中完成初始化")
 		}
