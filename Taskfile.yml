@@ -130,7 +130,8 @@ tasks:
     cmds:
       - pnpm install --frozen-lockfile --lockfile-only --ignore-scripts
       # pnpm 9 records no integrity for URL tarballs; the hash is added by hand and must survive re-resolution.
-      - "! grep -n 'resolution: {tarball:' pnpm-lock.yaml"
+      # Avoid "!" and "if": the shell embedded in "wails3 task" (used by CI) mis-evaluates both.
+      - "test -z \"$(grep -n 'resolution: {tarball:' pnpm-lock.yaml || true)\""
 
   check:go:
     summary: Run Go formatting, module, static, vet and test checks from fastest to slowest
