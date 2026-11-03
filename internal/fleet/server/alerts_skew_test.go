@@ -6,12 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/dbtest"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
 func TestAlertClockSkewDatabase(t *testing.T) {
-	fixture := newServiceFixture(t)
+	database := dbtest.NewFixture(t).OpenStore(t)
+	accounts := account.New(database.GORM())
+	fixture := &serviceFixture{accounts: accounts, db: database.GORM(), now: time.Now().UnixMilli()}
+	service, err := New(Config{DB: database.GORM(), Accounts: accounts}, WithNow(func() int64 { return fixture.now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.service = service
 	alice := fixture.createUser(t, "alice")
 	result := fixture.enrollAgent(t, alice, "skew-host")
 	ctx := context.Background()
