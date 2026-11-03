@@ -8,4 +8,5 @@ var AllModels = []any{
 	SharePreviewLink{}, HostShare{}, CommandLog{}, ForwardRuleRow{}, ExecBatchRow{}, ExecBatchResultRow{}, ExecTargetSetRow{}, ExecTargetSetItemRow{}, RunbookTemplateRow{},
 	AgentRosterRow{}, AgentOutcomeRow{}, AgentEvidenceKeyRow{}, AgentEvidenceAnchorRow{},
 	StateRuleRow{},
+	DeviceAlertSettings{}, DeviceAlertState{}, DeviceAlertEvent{},
 }
