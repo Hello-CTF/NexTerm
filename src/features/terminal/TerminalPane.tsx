@@ -13,6 +13,8 @@ import { AssetEditor } from "../../app/lazyPanels";
 import { Lazy } from "../../ui/LazyBoundary";
 import { openHostDetail } from "../hosts/hostDetail";
 import { TerminalCommandBlocks } from "./TerminalCommandBlocks";
+import { SessionSidebar } from "./SessionSidebar";
+import { getSessionSidebarOpen, setSessionSidebarOpen, useSessionSidebarOpen } from "../../app/preferences";
 import { FollowerSizeBadge } from "./FollowerSizeBadge";
 import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
@@ -108,6 +110,7 @@ import {
   IconEye,
   IconGlobe,
   IconList,
+  IconPanelRight,
   IconMergeH,
   IconPlug,
   IconRefresh,
@@ -459,6 +462,8 @@ export function TerminalPane({
   const workspaceId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.wsId ?? null,
   );
+  const workspace = useUi((s) => (workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined));
+  const sidebarOpen = useSessionSidebarOpen();
   const myPaneId = useUi(
     (s) => findWorkspacePane(s.workspaces, storeTabId)?.paneId ?? null,
   );
@@ -978,6 +983,21 @@ export function TerminalPane({
         setSearchOpen(true);
       }
       window.setTimeout(() => searchInputRef.current?.focus(), 0);
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || isImeKeyEvent(e)) return;
+      if (!matchKeybinding(e, "sessionSidebar")) return;
+      if (e.target instanceof Element && e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSessionSidebarOpen(!getSessionSidebarOpen());
     };
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
@@ -2173,6 +2193,16 @@ export function TerminalPane({
     });
   };
 
+  const commandBlockProps = {
+    kernelTabId,
+    sourceLabel: title,
+    blocks,
+    getText: (i: number) => handleRef.current?.copyBlock(i) ?? "",
+    onLocate: (i: number) => handleRef.current?.scrollToBlock(i),
+    onClear: () => handleRef.current?.clearBlocks(),
+    onToast: pushToast,
+  };
+
   return (
     <div ref={paneRef} className={`nx-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
       <div className="nx-toolbar nx-term-toolbar">
@@ -2327,6 +2357,15 @@ export function TerminalPane({
             </button>
           </>
         )}
+        <button
+          className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
+          aria-pressed={sidebarOpen}
+          title={`会话侧栏：端口、最近文件、命令记录 (${formatBinding(bindings.sessionSidebar)})`}
+          onClick={() => setSessionSidebarOpen(!sidebarOpen)}
+        >
+          <IconPanelRight size={13} />
+          侧栏
+        </button>
         {broadcastCount > 0 && (
           <button
             type="button"
@@ -2775,15 +2814,16 @@ export function TerminalPane({
             </div>
           )}
         </div>
-        {blocksSupported && blocksOpen && (
-          <TerminalCommandBlocks
+        {blocksSupported && blocksOpen && <TerminalCommandBlocks {...commandBlockProps} />}
+        {sidebarOpen && (
+          <SessionSidebar
+            workspace={workspace}
+            storeTabId={storeTabId}
             kernelTabId={kernelTabId}
-            sourceLabel={title}
-            blocks={blocks}
-            getText={(i) => handleRef.current?.copyBlock(i) ?? ""}
-            onLocate={(i) => handleRef.current?.scrollToBlock(i)}
-            onClear={() => handleRef.current?.clearBlocks()}
-            onToast={pushToast}
+            title={title}
+            visible={visible !== false}
+            commandBlocks={blocksSupported ? <TerminalCommandBlocks {...commandBlockProps} embedded /> : null}
+            onClose={() => setSessionSidebarOpen(false)}
           />
         )}
       </div>
