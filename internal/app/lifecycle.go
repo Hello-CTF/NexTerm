@@ -127,9 +127,14 @@ func (l *Lifecycle) Shutdown(ctx context.Context) error {
 
 var errShutdownTimeout = errors.New("did not stop before the shutdown deadline")
 
+// shutdownGrace is how long a component may keep running after the shutdown deadline has passed before it is
+// abandoned. Without it, every component after a stuck one would be abandoned before its goroutine was even
+// scheduled. It is a var so tests can change it.
+var shutdownGrace = 250 * time.Millisecond
+
 // shutdownComponent stops one component without letting it hold the caller past ctx. A desktop shutdown runs on the
 // main UI thread, so a component that ignores its context would freeze the whole app: it is abandoned at the
-// deadline, its name and the goroutine stacks are logged, and shutdown moves on to the next component.
+// deadline plus shutdownGrace, its name and the goroutine stacks are logged, and shutdown moves on to the next component.
 func shutdownComponent(ctx context.Context, component namedComponent) error {
 	started := time.Now()
 	done := make(chan error, 1)
@@ -146,11 +151,13 @@ func shutdownComponent(ctx context.Context, component namedComponent) error {
 		case <-slow.C:
 			slog.Warn("component shutdown is taking long", "component", component.name)
 		case <-ctx.Done():
-			// The component may have finished at the same moment.
+			// The component may have finished at the same moment, or not been scheduled yet.
+			grace := time.NewTimer(shutdownGrace)
 			select {
 			case err := <-done:
+				grace.Stop()
 				return err
-			default:
+			case <-grace.C:
 			}
 			var stacks bytes.Buffer
 			if profile := pprof.Lookup("goroutine"); profile != nil {
