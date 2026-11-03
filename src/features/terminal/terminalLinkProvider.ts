@@ -24,6 +24,8 @@ export interface LinkRowSegment {
   row: number;
   start: number;
   end: number;
+  /** Logical line the segment belongs to: segments sharing it are one soft-wrapped run. */
+  group?: number;
 }
 export interface StitchedLink {
   url: string;
@@ -124,14 +126,14 @@ function columnOf(rows: TextRow[], line: LogicalLine, index: number): number {
   return cellWidth(text, 0, index - line.offsets[slot]);
 }
 
-function segmentsOf(line: LogicalLine, start: number, end: number): LinkRowSegment[] {
+function segmentsOf(line: LogicalLine, start: number, end: number, group: number): LinkRowSegment[] {
   const out: LinkRowSegment[] = [];
   for (let slot = 0; slot < line.rows.length; slot++) {
     const rowStart = line.offsets[slot];
     const rowEnd = slot + 1 < line.offsets.length ? line.offsets[slot + 1] : line.text.length;
     const s = Math.max(start, rowStart);
     const e = Math.min(end, rowEnd);
-    if (e > s) out.push({ row: line.rows[slot], start: s - rowStart, end: e - rowStart });
+    if (e > s) out.push({ row: line.rows[slot], start: s - rowStart, end: e - rowStart, group });
   }
   return out;
 }
@@ -332,7 +334,7 @@ function finishLink(lines: LogicalLine[], pieces: Piece[]): StitchedLink | null 
     return null;
   }
   if (planTerminalLink(url).kind === "blocked") return null;
-  const segments = pieces.flatMap((p) => segmentsOf(lines[p.line], p.start, p.end));
+  const segments = pieces.flatMap((p) => segmentsOf(lines[p.line], p.start, p.end, p.line));
   return { url, segments };
 }
 
@@ -455,6 +457,17 @@ function cellRange(map: { col: number[]; width: number[] }, seg: LinkRowSegment,
   return { start: { x: startCell + 1, y }, end: { x: endCell, y } };
 }
 
+/** Splits segments into soft-wrapped runs; hard-wrapped and boxed pieces stay separate. */
+function softRuns(segments: LinkRowSegment[]): LinkRowSegment[][] {
+  const runs: LinkRowSegment[][] = [];
+  for (const seg of segments) {
+    const run = runs[runs.length - 1];
+    if (run && seg.group !== undefined && run[0].group === seg.group) run.push(seg);
+    else runs.push([seg]);
+  }
+  return runs;
+}
+
 export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLinkProviderHandlers): ILinkProvider {
   return {
     provideLinks(y, callback) {
@@ -474,13 +487,26 @@ export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLin
       const links = findLinksInRows(rows, cols);
       const targets = handlers.onTargetHover ? findTargetsInRows(rows, cols, links) : [];
       const result: ILink[] = [];
-      let map: ReturnType<typeof cellMap> | undefined;
-      const mapOfRow = () => (map ??= cellMap(lineAt(term, row0)!));
+      const maps = new Map<number, ReturnType<typeof cellMap>>();
+      const mapOfRow = (row: number) => {
+        let map = maps.get(row);
+        if (!map) {
+          map = cellMap(lineAt(term, first + row)!);
+          maps.set(row, map);
+        }
+        return map;
+      };
       for (const link of links) {
-        for (const seg of link.segments) {
-          if (seg.row !== idx) continue;
+        for (const run of softRuns(link.segments)) {
+          if (!run.some((seg) => seg.row === idx)) continue;
+          // A soft-wrapped URL is one range, so the underline covers all of it.
+          const head = run[0];
+          const tail = run[run.length - 1];
           result.push({
-            range: cellRange(mapOfRow(), seg, y),
+            range: {
+              start: cellRange(mapOfRow(head.row), head, first + head.row + 1).start,
+              end: cellRange(mapOfRow(tail.row), tail, first + tail.row + 1).end,
+            },
             text: link.url,
             decorations: { underline: true, pointerCursor: true },
             activate: (event, text) => handlers.activate(event, text),
@@ -492,7 +518,7 @@ export function createTerminalLinkProvider(term: Terminal, handlers: TerminalLin
       for (const target of targets) {
         if (target.segment.row !== idx) continue;
         result.push({
-          range: cellRange(mapOfRow(), target.segment, y),
+          range: cellRange(mapOfRow(idx), target.segment, y),
           text: target.text,
           decorations: { underline: false, pointerCursor: false },
           activate: () => {},

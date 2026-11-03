@@ -65,19 +65,33 @@ describe("link fixtures", () => {
       expect(extracted.length).toBe(fx.urls.length);
 
       const rows = bufferRows(term);
-      for (const { url, parts } of fx.urls) {
+      for (const { url, parts, soft } of fx.urls) {
         let from = 0;
+        const ys: number[] = [];
         for (const part of parts) {
           const y = rows.findIndex((r, i) => i >= from && r.includes(part)) + 1;
           expect(y, part).toBeGreaterThan(0);
           from = y;
+          ys.push(y);
+        }
+        parts.forEach((part, i) => {
+          const y = ys[i];
           const link = provide(term, y).find((l) => l.text === url);
           expect(link, `row ${y}`).toBeDefined();
-          const col = rows[y - 1].indexOf(part);
-          expect(link!.range.start).toEqual({ x: col + 1, y });
-          expect(link!.range.end).toEqual({ x: col + part.length, y });
           expect(link!.decorations).toEqual({ underline: true, pointerCursor: true });
-        }
+          const col = rows[y - 1].indexOf(part);
+          if (soft) {
+            // One range from the first to the last character, whichever row is hovered.
+            const lastPart = parts[parts.length - 1];
+            expect(link!.range.start).toEqual({ x: rows[ys[0] - 1].indexOf(parts[0]) + 1, y: ys[0] });
+            expect(link!.range.end).toEqual({ x: rows[ys[ys.length - 1] - 1].indexOf(lastPart) + lastPart.length, y: ys[ys.length - 1] });
+            if (parts.length > 1) expect(link!.range.start.y).not.toBe(link!.range.end.y);
+          } else {
+            // Hard-wrapped pieces are underlined per row, keeping borders and prefixes out.
+            expect(link!.range.start).toEqual({ x: col + 1, y });
+            expect(link!.range.end).toEqual({ x: col + part.length, y });
+          }
+        });
       }
     });
   }
@@ -278,6 +292,27 @@ describe("rows written for another width", () => {
   it("does not let equal widths join unrelated short rows", () => {
     expect(urls(hard("https://a.com/docs", "v1.2.3-rc1-release"), 120)).toEqual(["https://a.com/docs"]);
     expect(urls(hard("│ https://a.com/docs          │", "│ v1.2.3                      │"), 120)).toEqual(["https://a.com/docs"]);
+  });
+});
+
+describe("underline ranges", () => {
+  it("covers a soft-wrapped URL as one range from any of its rows", async () => {
+    const fx = LINK_FIXTURES.find((f) => f.name === "npm-login")!;
+    const term = await makeTerm(fx.cols, fx.data);
+    const rows = bufferRows(term);
+    const first = rows.findIndex((r) => r === fx.urls[1].parts[0]) + 1;
+    const [a, b] = [provide(term, first), provide(term, first + 1)].map((l) => l.find((x) => x.text === fx.urls[1].url)!);
+    expect(a.range).toEqual(b.range);
+    expect(a.range.start).toEqual({ x: 1, y: first });
+    expect(a.range.end.y).toBe(first + 1);
+  });
+
+  it("keeps hard-wrapped pieces apart so borders stay out of the underline", async () => {
+    const fx = LINK_FIXTURES.find((f) => f.name === "claude-code-login-boxed")!;
+    const term = await makeTerm(fx.cols, fx.data);
+    const y = bufferRows(term).findIndex((r) => r.includes(fx.urls[0].parts[0])) + 1;
+    const link = provide(term, y).find((l) => l.text === fx.urls[0].url)!;
+    expect(link.range.start.y).toBe(link.range.end.y);
   });
 });
 
