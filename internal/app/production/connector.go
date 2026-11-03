@@ -45,6 +45,21 @@ func (o productionAssetOptions) serverSSHFields() store.ServerSSHFields {
 	}
 }
 
+// rejectServerSSHOptions refuses restricted SSH settings and names the group when the offending
+// authentication setting (authKind agent, keyPath) was inherited from a group default.
+func rejectServerSSHOptions(options productionAssetOptions) error {
+	fields := options.serverSSHFields()
+	err := store.RejectServerSSHFields(fields)
+	if err == nil || options.InheritedFrom[store.InheritAuth] == "" {
+		return err
+	}
+	fields.AuthKind, fields.KeyPath = "", ""
+	if store.RejectServerSSHFields(fields) != nil {
+		return err
+	}
+	return inheritedError(options, store.InheritAuth, "认证方式", err)
+}
+
 type productionAssetOptions struct {
 	Host                  string            `json:"host"`
 	Port                  int               `json:"port"`
@@ -253,7 +268,7 @@ func (c *productionConnector) sshConfig(ctx context.Context, options productionA
 // auto-accepting unknown host keys on this hop and every jump hop below it.
 func (c *productionConnector) sshConfigHop(ctx context.Context, options productionAssetOptions, generation uint64, chain []string, strict bool) (ssh.Config, error) {
 	if c.restricted(ctx) {
-		if err := store.RejectServerSSHFields(options.serverSSHFields()); err != nil {
+		if err := rejectServerSSHOptions(options); err != nil {
 			return ssh.Config{}, err
 		}
 	}
