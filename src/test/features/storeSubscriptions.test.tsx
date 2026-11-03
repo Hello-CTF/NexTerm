@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, Profiler, type ReactElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const mocks = vi.hoisted(() => ({
   listLive: vi.fn(),
@@ -219,7 +220,9 @@ describe("render counts for session-bound views", () => {
   });
 
   it("the header follows only the active workspace session", () => {
-    const probe = profiled(createElement(AppHeader, {
+    // The header's inbox button reads the account identity through react-query.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const probe = profiled(createElement(QueryClientProvider, { client }, createElement(AppHeader, {
       ws: workspaces[0],
       activeTab: null,
       rightDockOpen: false,
@@ -227,7 +230,7 @@ describe("render counts for session-bound views", () => {
       onOpenWorkspaceSwitcher: () => {},
       onToggleRight: () => {},
       onOpenPalette: () => {},
-    }));
+    })));
     mounted = probe.view;
     probe.reset();
 
