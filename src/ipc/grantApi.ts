@@ -11,8 +11,7 @@ export type AiDeviceGrant = DeviceGrant;
 
 export type AiGrantRuleAction = "write_file" | "edit_file" | "exec_commands" | "send_keys";
 
-// kinds/programs/unattended are optional until the generated GrantRule carries them.
-export type AiGrantRule = GrantRule & { kinds?: string[]; programs?: string[]; unattended?: boolean };
+export type AiGrantRule = GrantRule;
 
 export const grantApi = {
   list: () => call("ai_grant_list"),

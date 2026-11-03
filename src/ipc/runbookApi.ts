@@ -24,13 +24,11 @@ export type {
   Step,
   StepState,
 };
-// confirm marks a step that needs an explicit confirmation under the production-only policy. Drop the local
-// additions once the generated Step type carries the field.
-export type RunbookStep = Step & { confirm?: boolean };
-export type RunbookStepState = Omit<StepState, "step"> & { step: RunbookStep };
-export type RunbookRunState = Omit<RunState, "steps"> & { steps: RunbookStepState[] };
+export type RunbookStep = Step;
+export type RunbookStepState = StepState;
+export type RunbookRunState = RunState;
 // The server loads the steps of the stored snippet named by snippetId (including confirm/interactive flags); steps,
-// runbookId and runbookName are not sent. Drop this local shape once the generated StartRequest carries snippetId.
+// runbookId and runbookName are not sent, so the wire shape is narrower than the generated StartRequest.
 export type RunbookStartRequest = Omit<StartRequest, "steps" | "runbookId" | "runbookName"> & { snippetId: string };
 export type RunbookPrepareRequest = PrepareRequest;
 export type RunbookAdvanceRequest = AdvanceRequest;
@@ -42,7 +40,7 @@ export function createRunbookId(): string {
 }
 
 export const runbookApi = {
-  start: (request: RunbookStartRequest) => call("runbook_run_start", request as unknown as StartRequest) as Promise<RunbookRunState>,
+  start: (request: RunbookStartRequest) => call("runbook_run_start", request as unknown as StartRequest),
   get: (runId: string) => call("runbook_run_get", { runId }),
   prepare: (request: PrepareRequest) => call("runbook_run_prepare", request),
   advance: (request: AdvanceRequest) => call("runbook_run_advance", request),

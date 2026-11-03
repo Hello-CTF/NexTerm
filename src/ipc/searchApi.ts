@@ -56,7 +56,14 @@ export interface TranscriptHostSearchResult {
 
 export const commandSearchApi = {
   search: async (request: CommandSearchRequest): Promise<CommandSearchResult> => {
-    const result = (await call("command_search", request)) as CommandSearchResult;
+    const result = (await call("command_search", {
+      ...request,
+      assetId: request.assetId ?? null,
+      startedFrom: request.startedFrom ?? null,
+      startedTo: request.startedTo ?? null,
+      limit: request.limit ?? 0,
+      offset: request.offset ?? 0,
+    })) as CommandSearchResult;
     return {
       items: (result.items ?? []).map((item) => ({
         id: item.id,
@@ -77,7 +84,11 @@ export const commandSearchApi = {
 
 export const transcriptHostSearchApi = {
   search: async (request: TranscriptHostSearchRequest): Promise<TranscriptHostSearchResult> => {
-    const result = (await call("transcript_search_host", request)) as TranscriptHostSearchResult;
+    const result = (await call("transcript_search_host", {
+      ...request,
+      startedFrom: request.startedFrom ?? null,
+      startedTo: request.startedTo ?? null,
+    })) as TranscriptHostSearchResult;
     return {
       sessions: (result.sessions ?? []).map((session) => ({
         transcript: {

@@ -845,14 +845,8 @@ export const transcriptApi = {
   remove: (id: string) => call("transcript_delete", { id }) as Promise<void>,
   syncOptIn: (id: string, optIn: boolean) =>
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
-  // The generated command table has no transcript_export_cast yet, hence the casts.
   exportCast: (id: string, path: string) =>
-    (call as (cmd: string, args?: unknown) => Promise<unknown>)("transcript_export_cast", { id, path }) as Promise<{
-      path: string;
-      bytes: number;
-      events: number;
-      timingEstimated: boolean;
-    }>,
+    call("transcript_export_cast", { id, path }) as Promise<import("./generated/types").TranscriptExportCastResult>,
 };
 
 export interface LayoutDto {
@@ -950,25 +944,22 @@ export const assetApi = {
   // What the empty connection fields of an asset (saved or being edited) would inherit from its group, resolved by the backend.
   inheritancePreview: (args: AssetInheritanceRequest) => call("asset_inheritance_preview", args) as Promise<AssetInheritance>,
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
-  // The generated snippet type lacks description/steps until bindings are regenerated, hence the cast.
   snippetList: () => call("snippet_list") as Promise<import("./types").SnippetDto[]>,
-  // The generated bindings do not know snippet_migration_status yet, hence the cast.
-  snippetMigrationStatus: () =>
-    call("snippet_migration_status" as never) as unknown as Promise<{ unmigratedRunbookTemplates: number }>,
+  snippetMigrationStatus: () => call("snippet_migration_status") as Promise<{ unmigratedRunbookTemplates: number }>,
   snippetCreate: (
     name: string,
     body: string,
     groupId?: string,
     sort?: number,
     content: SnippetContent = {},
-  ) => call("snippet_create", { name, body, groupId, sort, ...content } as never) as Promise<{ id: string }>,
+  ) => call("snippet_create", { name, body, groupId, sort, ...content }) as Promise<{ id: string }>,
   // Steps replace the stored ones on every update; leaving them out turns a multi-step snippet into a single command.
   snippetUpdate: (
     id: string,
     name: string,
     body: string,
     patch: { groupId?: string | null; sort?: number } & SnippetContent = {},
-  ) => call("snippet_update", { id, name, body, ...patch } as never) as Promise<void>,
+  ) => call("snippet_update", { id, name, body, ...patch }) as Promise<void>,
   snippetDelete: (id: string) => call("snippet_delete", { id }) as Promise<void>,
   auditQuery: (args: Record<string, unknown> = {}) =>
     call("audit_query", { args: args as unknown as IPCInput<"audit_query"> }) as Promise<import("./types").AuditEntryDto[]>,
@@ -1164,17 +1155,7 @@ export interface ImageSummary {
   createdSince: string;
 }
 
-export interface ComposeStack {
-  project: string;
-  workingDir: string;
-  configFiles: string[];
-  envPath: string;
-  envExists: boolean;
-  services: string[];
-  readOnly: boolean;
-  reason?: string;
-  upCommand?: string;
-}
+export type ComposeStack = import("./generated/types").ComposeStack;
 
 export interface ComposeOverview {
   cli?: "docker compose" | "docker-compose";
@@ -1581,8 +1562,8 @@ export interface VaultStatus {
   autoLockMinutes: number;
   passwordless: boolean;
   systemProtection: boolean;
-  // Temporary hand-written field until bindings are regenerated: true when the server manages the vault.
-  managed?: boolean;
+  // True when the server manages the vault.
+  managed: boolean;
 }
 
 export interface CredentialUsedBy {
@@ -1685,9 +1666,8 @@ export const forwardApi = {
       targetPort,
     }) as Promise<ForwardSpec>,
   // Listens on 127.0.0.1 with a system-assigned port and is removed when the session ends.
-  // `temporary` is not in the generated forward_create arguments until the contract is regenerated.
   createTemporary: (sessionId: string, targetHost: string, targetPort: number) =>
-    (call as unknown as (cmd: string, args: Record<string, unknown>) => Promise<unknown>)("forward_create", {
+    call("forward_create", {
       sessionId,
       listenPort: 0,
       targetHost,
