@@ -264,6 +264,27 @@ describe("Compose stack actions", () => {
 });
 
 describe("Compose edit and redeploy", () => {
+  it("shows the working directory and the exact up command in the diff dialog", async () => {
+    const upCommand = "docker 'compose' '--project-name' 'shop' 'up' '--detach'";
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, workingDir: "/opt/deploy/shop", upCommand }, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    const dialog = document.body.querySelector('[aria-label="确认 Compose 变更"]')!;
+    expect(dialog.textContent).toContain("/opt/deploy/shop");
+    expect(dialog.textContent).toContain(upCommand);
+    mounted.unmount();
+  });
+
+  it("falls back to a generic command line when the preview is unavailable", async () => {
+    const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack: { ...stack, workingDir: "/opt/deploy/shop" }, onClose: vi.fn(), onChanged: vi.fn() }));
+    clickButton(document.body, "trigger-save");
+    await waitFor(() => expect(document.body.textContent).toContain("保存并重新部署"));
+    const dialog = document.body.querySelector('[aria-label="确认 Compose 变更"]')!;
+    expect(dialog.textContent).toContain("/opt/deploy/shop");
+    expect(dialog.textContent).toContain("docker compose up -d（命令预览不可用）");
+    mounted.unmount();
+  });
+
   it("shows diff and completes production guard before writing and streaming up", async () => {
     mocks.composePrepare.mockRejectedValueOnce(typedChallenge());
     const mounted = mountWithClient(createElement(ComposeEditor, { sessionId: "s1", stack, onClose: vi.fn(), onChanged: vi.fn() }));

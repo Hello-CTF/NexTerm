@@ -1148,6 +1148,7 @@ export interface ComposeStack {
   services: string[];
   readOnly: boolean;
   reason?: string;
+  upCommand?: string;
 }
 
 export interface ComposeOverview {

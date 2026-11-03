@@ -183,6 +183,7 @@ export function ComposeEditor({
       {pending && (
         <DiffSaveDialog
           pending={pending}
+          stack={stack}
           busy={busy}
           onCancel={cancelPending}
           onConfirm={() => void confirmDiff()}
@@ -193,7 +194,9 @@ export function ComposeEditor({
           key={`${production.challenge.targetSetHash}:${production.challenge.commandHash}`}
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
-          command={`保存 ${production.pending.change.path} 并执行 docker compose up -d`}
+          command={stack.upCommand
+            ? `保存 ${production.pending.change.path} 并执行：${stack.upCommand}`
+            : `保存 ${production.pending.change.path} 并执行 docker compose up -d`}
           onCancel={cancelPending}
           onConfirm={(environmentNames) => void finish(production.pending, dockerConfirmation(production.challenge, environmentNames))}
         />
@@ -203,8 +206,9 @@ export function ComposeEditor({
   );
 }
 
-function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
+function DiffSaveDialog({ pending, stack, busy, onCancel, onConfirm }: {
   pending: PendingSave;
+  stack: ComposeStack;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -239,6 +243,16 @@ function DiffSaveDialog({ pending, busy, onCancel, onConfirm }: {
         <div className="nx-modal-header">保存并重新部署</div>
         <div className="nx-modal-body min-h-0 overflow-auto">
           <p className="mb-2 break-all font-mono text-xs text-neutral-400">{pending.change.path}</p>
+          <dl className="mb-2 space-y-1 text-xs">
+            <div>
+              <dt className="text-neutral-500">工作目录</dt>
+              <dd className="select-text break-all font-mono text-neutral-300">{stack.workingDir}</dd>
+            </div>
+            <div>
+              <dt className="text-neutral-500">将执行的命令</dt>
+              <dd className="select-text break-all font-mono text-neutral-300">{stack.upCommand || "docker compose up -d（命令预览不可用）"}</dd>
+            </div>
+          </dl>
           {diff.length === 0 ? (
             <p className="text-xs text-amber-300">文件内容没有变化；继续仍会执行 up -d。</p>
           ) : (

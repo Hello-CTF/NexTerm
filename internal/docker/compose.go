@@ -45,6 +45,7 @@ type ComposeStack struct {
 	Services    []string `json:"services"`
 	ReadOnly    bool     `json:"readOnly"`
 	Reason      string   `json:"reason,omitempty"`
+	UpCommand   string   `json:"upCommand,omitempty"`
 }
 
 type ComposeOverview struct {
@@ -131,6 +132,14 @@ func (s *Service) ComposeStacks(ctx context.Context, sessionID string) (ComposeO
 		stack.EnvExists = status.EnvExists
 		if len(status.Missing) > 0 {
 			markComposeReadOnly(stack, "Compose 文件或工作目录不存在: "+strings.Join(status.Missing, ", "))
+			continue
+		}
+		if liner, ok := backend.(interface {
+			ComposeCommandLine(ComposeCLI, ComposeStack, ComposeAction) (string, error)
+		}); ok {
+			if command, lineErr := liner.ComposeCommandLine(cli, *stack, ComposeActionUp); lineErr == nil {
+				stack.UpCommand = command
+			}
 		}
 	}
 	return overview, nil
@@ -497,11 +506,14 @@ func (r *composeExecutionResult) snapshot(fallback StreamExit) (int, error) {
 }
 
 type composeResultReader struct {
-	reader io.ReadCloser
-	stream CommandStream
-	ctx    context.Context
-	result *composeExecutionResult
-	once   sync.Once
+	reader  io.ReadCloser
+	stream  CommandStream
+	ctx     context.Context
+	result  *composeExecutionResult
+	once    sync.Once
+	trailer []byte
+	final   error
+	ended   bool
 }
 
 func newComposeResultReader(reader io.ReadCloser, ctx context.Context, result *composeExecutionResult) *composeResultReader {
@@ -513,6 +525,9 @@ func newComposeResultReader(reader io.ReadCloser, ctx context.Context, result *c
 }
 
 func (r *composeResultReader) Read(buffer []byte) (int, error) {
+	if r.ended {
+		return r.drainTrailer(buffer)
+	}
 	count, err := r.reader.Read(buffer)
 	if !errors.Is(err, io.EOF) {
 		return count, err
@@ -528,13 +543,34 @@ func (r *composeResultReader) Read(buffer []byte) (int, error) {
 	r.result.mu.Lock()
 	exitCode, waitErr := r.result.exitCode, r.result.err
 	r.result.mu.Unlock()
-	if waitErr != nil {
-		return count, waitErr
+	switch {
+	case waitErr != nil:
+		r.final = waitErr
+		r.trailer = []byte(fmt.Sprintf("\r\n[NexTerm] docker compose up -d 结束状态未知：%v\r\n", waitErr))
+	case exitCode != 0:
+		r.final = &composeExitError{code: exitCode}
+		r.trailer = []byte(fmt.Sprintf("\r\n[NexTerm] docker compose up -d 已结束，退出码 %d\r\n", exitCode))
+	default:
+		r.final = io.EOF
+		r.trailer = []byte("\r\n[NexTerm] docker compose up -d 已结束，退出码 0\r\n")
 	}
-	if exitCode != 0 {
-		return count, &composeExitError{code: exitCode}
+	r.ended = true
+	if count > 0 {
+		return count, nil
 	}
-	return count, io.EOF
+	return r.drainTrailer(buffer)
+}
+
+func (r *composeResultReader) drainTrailer(buffer []byte) (int, error) {
+	if len(r.trailer) == 0 {
+		return 0, r.final
+	}
+	if len(buffer) == 0 {
+		return 0, nil
+	}
+	count := copy(buffer, r.trailer)
+	r.trailer = r.trailer[count:]
+	return count, nil
 }
 
 func (r *composeResultReader) Close() error {
