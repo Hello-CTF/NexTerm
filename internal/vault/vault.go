@@ -409,7 +409,7 @@ func (v *Vault) unlockDPAPILocked(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek); err != nil {
+		if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek, ModeDPAPI); err != nil {
 			return err
 		}
 		v.migrateLegacyEnvelopeLocked(ctx, envelope, dek)
@@ -443,22 +443,25 @@ func (v *Vault) migrateLegacyEnvelopeLocked(ctx context.Context, envelope []byte
 
 var secretEnvelopePattern = regexp.MustCompile(regexp.QuoteMeta(store.SecretEnvelopePrefix) + `[A-Za-z0-9+/=]+`)
 
-func errKeyMismatch() error {
-	return ipc.NewError(ipc.CodeCrypto, "加密错误：数据密钥与本凭据库不匹配（系统钥匙串条目可能已被其他数据目录覆盖），已拒绝解锁")
+func errKeyMismatch(mode Mode) error {
+	if mode == ModeDPAPI {
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：系统保护的数据密钥与本凭据库不匹配（macOS 上可能是钥匙串条目被其他数据目录覆盖），已拒绝解锁；如无法找回原数据密钥，请删除无法解密的凭据和 AI Key 后重新初始化")
+	}
+	return ipc.NewError(ipc.CodeCrypto, "加密错误：数据密钥与本凭据库的密钥校验值不匹配（数据库可能被部分恢复或修改），已拒绝解锁")
 }
 
 // verifyOrAdoptKeyCheckLocked proves dek belongs to this database. It destroys dek when it
 // does not. Databases without a key-check are probed against existing ciphertext, and the
 // check is recorded once the key is proven (or there is nothing to prove it against).
-func (v *Vault) verifyOrAdoptKeyCheckLocked(ctx context.Context, dek *secretKey) error {
-	err := v.checkDEKLocked(ctx, dek)
+func (v *Vault) verifyOrAdoptKeyCheckLocked(ctx context.Context, dek *secretKey, mode Mode) error {
+	err := v.checkDEKLocked(ctx, dek, mode)
 	if err != nil {
 		dek.destroy()
 	}
 	return err
 }
 
-func (v *Vault) checkDEKLocked(ctx context.Context, dek *secretKey) error {
+func (v *Vault) checkDEKLocked(ctx context.Context, dek *secretKey, mode Mode) error {
 	stored, found, err := v.store.SettingGet(ctx, settingKeyCheck)
 	if err != nil {
 		return err
@@ -466,7 +469,7 @@ func (v *Vault) checkDEKLocked(ctx context.Context, dek *secretKey) error {
 	if found && stored != "" {
 		if err := verifyKeyCheck(dek, stored); err != nil {
 			slog.Warn("vault key-check rejected the data key", "error", err)
-			return errKeyMismatch()
+			return errKeyMismatch(mode)
 		}
 		return nil
 	}
@@ -475,7 +478,7 @@ func (v *Vault) checkDEKLocked(ctx context.Context, dek *secretKey) error {
 		return err
 	}
 	if hasCiphertext && !matches {
-		return errKeyMismatch()
+		return errKeyMismatch(mode)
 	}
 	keyCheck, err := sealKeyCheck(dek)
 	if err == nil {
@@ -567,7 +570,7 @@ func (v *Vault) unlockMasterLocked(ctx context.Context, password string) error {
 		kek.destroy()
 		return err
 	}
-	if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek); err != nil {
+	if err := v.verifyOrAdoptKeyCheckLocked(ctx, dek, ModeMaster); err != nil {
 		kek.destroy()
 		return err
 	}

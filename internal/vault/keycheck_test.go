@@ -422,3 +422,48 @@ func TestLegacyEnvelopeNotMigratedWhenDEKMismatches(t *testing.T) {
 		t.Fatalf("envelope changed: %q", raw)
 	}
 }
+
+func TestSeparateEnvelopesKeepTwoDatabasesIndependent(t *testing.T) {
+	ctx := context.Background()
+	p := newEnvelopeProtector()
+	dbA, dbB := testStore(t), testStore(t)
+	a := loadTestVault(dbA, p)
+	if err := a.InitDPAPI(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	nonce, blob, err := a.EncryptCredential(ctx, "secret-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbA.CredentialPut(ctx, store.CredentialInput{Name: "a", Kind: "password", Nonce: nonce, Blob: blob}); err != nil {
+		t.Fatal(err)
+	}
+	b := loadTestVault(dbB, p)
+	if err := b.InitDPAPI(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := loadTestVault(dbA, p)
+	if !reloaded.Status().Unlocked {
+		t.Fatal("database A must stay unlocked after database B initialised against the same protector")
+	}
+	row := store.CredentialRow{Cipher: store.CipherAES256GCM, Nonce: nonce, Blob: blob}
+	plaintext, err := reloaded.DecryptCredential(ctx, row)
+	if err != nil || string(plaintext) != "secret-a" {
+		t.Fatalf("plaintext=%q err=%v", plaintext, err)
+	}
+}
+
+func TestDPAPIKeyMismatchReportsCryptoCode(t *testing.T) {
+	ctx := context.Background()
+	p := newEnvelopeProtector()
+	db := testStore(t)
+	dek := testDEK(9)
+	putCredential(t, db, testDEK(50), "other-key")
+	seedDPAPIVault(t, db, p, dek)
+	v := loadTestVault(db, p)
+	requireVaultCode(t, v.InitDPAPI(ctx, ""), ipc.CodeCrypto)
+	if v.Status().Unlocked {
+		t.Fatal("mismatched DPAPI key must not unlock")
+	}
+}
