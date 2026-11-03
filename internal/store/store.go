@@ -317,5 +317,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return migrateError(err)
 	}
+	if err := s.migrateRunbookTemplatesToSnippets(ctx); err != nil {
+		return migrateError(err)
+	}
 	return nil
 }

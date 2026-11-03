@@ -13,6 +13,16 @@ export function createAiSlice(set: UiSet, get: UiGet) {
     modelProfilesRevision: 0,
     bumpModelProfilesRevision: () =>
       set((state) => ({ modelProfilesRevision: state.modelProfilesRevision + 1 })),
+    aiPendingRefs: [],
+    queueAiRef: (ref) =>
+      set((state) =>
+        state.aiPendingRefs.some((r) => r.id === ref.id) ? state : { aiPendingRefs: [...state.aiPendingRefs, ref] },
+      ),
+    takeAiPendingRefs: () => {
+      const taken = get().aiPendingRefs;
+      if (taken.length > 0) set({ aiPendingRefs: [] });
+      return taken;
+    },
     aiRulePrefill: null,
     setAiRulePrefill: (v) => set({ aiRulePrefill: v }),
     setAiBusy: (v) => set({ aiBusy: v }),
@@ -25,7 +35,7 @@ export function createAiSlice(set: UiSet, get: UiGet) {
       const tabIds = Object.values(get().aiBoards).flatMap((board) => board.tabs.map((tab) => tab.id));
       clearAiTabRuns(tabIds);
       get().setTakeover(null);
-      set((state) => ({ aiBoards: {}, aiBusy: false, aiAccountEpoch: state.aiAccountEpoch + 1 }));
+      set((state) => ({ aiBoards: {}, aiPendingRefs: [], aiBusy: false, aiAccountEpoch: state.aiAccountEpoch + 1 }));
     },
     ensureAiBoard: (key) => {
       const existing = get().aiBoards[key];

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { CommandBlock } from "./commandBlocks";
-import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconTrash } from "../../ui/icons";
+import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconPlay, IconSave, IconSparkles, IconTrash } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
 
@@ -10,6 +10,10 @@ export interface CommandBlockPanelProps {
   getText: (index: number) => string;
   onLocate: (index: number) => void;
   onClear: () => void;
+  // The three actions below are optional; a button is shown only when its handler is given.
+  onRerun?: (block: CommandBlock) => void;
+  onSaveAsSnippet?: (block: CommandBlock) => void;
+  onExplain?: (block: CommandBlock, text: string) => void;
   onToast: (kind: "info" | "success" | "error", text: string) => void;
 }
 
@@ -33,8 +37,13 @@ export function CommandBlockPanel({
   getText,
   onLocate,
   onClear,
+  onRerun,
+  onSaveAsSnippet,
+  onExplain,
   onToast,
 }: CommandBlockPanelProps) {
+  // Rerun types into the live prompt, which is unsafe while a command still owns the terminal.
+  const anyRunning = blocks.some((b) => b.endedAt === null);
   const [expanded, setExpanded] = useState<{ index: number; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -58,6 +67,15 @@ export function CommandBlockPanel({
     } catch (e) {
       onToast("error", `复制失败：${describeError(e)}`);
     }
+  };
+
+  const explain = (b: CommandBlock) => {
+    const text = getText(b.index);
+    if (!text) {
+      onToast("info", `块 #${b.index} 的输出已滚出缓冲，无法解释`);
+      return;
+    }
+    onExplain?.(b, text);
   };
 
   const toggle = (index: number) => {
@@ -148,6 +166,37 @@ export function CommandBlockPanel({
                       </div>
                     </div>
                     <span className="mt-0.5 flex shrink-0 items-center gap-0.5">
+                      {onRerun && !running && b.command.trim() !== "" && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title={anyRunning ? "终端里还有命令在运行，结束后才能重新运行" : "重新运行"}
+                          aria-label="重新运行"
+                          disabled={anyRunning}
+                          onClick={() => onRerun(b)}
+                        >
+                          <IconPlay size={11} />
+                        </button>
+                      )}
+                      {onSaveAsSnippet && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title="保存为片段"
+                          aria-label="保存为片段"
+                          onClick={() => onSaveAsSnippet(b)}
+                        >
+                          <IconSave size={11} />
+                        </button>
+                      )}
+                      {onExplain && (
+                        <button
+                          className="nx-icon-btn nx-icon-btn-sm"
+                          title="让 AI 解释这段输出"
+                          aria-label="让 AI 解释这段输出"
+                          onClick={() => explain(b)}
+                        >
+                          <IconSparkles size={11} />
+                        </button>
+                      )}
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
                         title="定位到此命令"

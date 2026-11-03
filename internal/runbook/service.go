@@ -50,6 +50,8 @@ type run struct {
 	advancing       bool
 	stepConfirmed   bool
 	cancelRequested bool
+	// beforeAdvanceRelease runs after execution returned and before advancing is cleared (tests).
+	beforeAdvanceRelease func()
 }
 
 func New(executor Executor) *Service {
@@ -149,7 +151,7 @@ func (s *Service) Prepare(_ context.Context, ownerID string, input PrepareReques
 	return r.snapshotLocked(), nil
 }
 
-func (s *Service) Advance(ctx context.Context, ownerID string, input AdvanceRequest) (RunState, error) {
+func (s *Service) Advance(ctx context.Context, ownerID string, input AdvanceRequest) (result RunState, resultErr error) {
 	r, err := s.ownerRun(ownerID, input.RunID)
 	if err != nil {
 		return RunState{}, err
@@ -174,7 +176,7 @@ func (s *Service) Advance(ctx context.Context, ownerID string, input AdvanceRequ
 		return RunState{}, fmt.Errorf("%w: no production challenge is pending", ErrInvalid)
 	}
 	if !r.stepConfirmed {
-		if r.state.ConfirmationPolicy == ConfirmEveryStep && !input.Confirmed {
+		if (r.state.ConfirmationPolicy == ConfirmEveryStep || r.currentStepLocked().Step.Confirm) && !input.Confirmed {
 			r.mu.Unlock()
 			return RunState{}, ErrStepConfirmationRequired
 		}
@@ -187,8 +189,16 @@ func (s *Service) Advance(ctx context.Context, ownerID string, input AdvanceRequ
 	r.mu.Unlock()
 
 	defer func() {
+		if hook := r.beforeAdvanceRelease; hook != nil {
+			hook()
+		}
 		r.mu.Lock()
 		r.advancing = false
+		// A Cancel that arrived after executeCurrent's last check saw advancing and deferred to us.
+		if r.cancelRequested && !terminalRun(r.state.Status) {
+			r.finishCanceledLocked()
+			result = r.snapshotLocked()
+		}
 		r.mu.Unlock()
 	}()
 	return r.executeCurrent(ctx, ownerID, input.ProductionConfirmation), nil

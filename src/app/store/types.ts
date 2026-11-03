@@ -1,6 +1,7 @@
 import type { StoreApi } from "zustand";
 import type { assetApi, RecordingStatus, SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent, HelperProgressEvent, SessionStatusEvent as BaseSessionStatusEvent } from "../../ipc/events";
+import type { RefChip } from "../../features/ai/panel/aiSidebarShared";
 import type { HelperOperationKind, HelperOperationState } from "../../features/terminal/helperOperationState";
 import type { QuickConnectTarget } from "../quickConnectTarget";
 import type { ResolvedTheme, ThemeMode } from "../theme";
@@ -405,6 +406,11 @@ export interface UiState {
   textPrompt: TextPromptState | null;
   openTextPrompt: (s: TextPromptState) => void;
   closeTextPrompt: (v: string | null) => void;
+  aiPendingRefs: RefChip[];
+  // Queues a reference for the visible AI panel to pick up; an id already queued is not added twice.
+  queueAiRef: (ref: RefChip) => void;
+  // Atomically drains the queue so only one panel receives the references.
+  takeAiPendingRefs: () => RefChip[];
   aiRulePrefill: string | null;
   setAiRulePrefill: (v: string | null) => void;
   appDialog: AppDialogState | null;

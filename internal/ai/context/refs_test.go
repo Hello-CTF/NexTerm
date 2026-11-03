@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
@@ -111,5 +112,81 @@ func TestRenderRefsSkipsUnsupported(t *testing.T) {
 	}, nil)
 	if rendered != "" {
 		t.Fatalf("unsupported refs must render empty, got %q", rendered)
+	}
+}
+
+func TestRenderRefsTextKind(t *testing.T) {
+	builder := NewBuilder(Dependencies{})
+	rendered := builder.RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "ls -la\n(exit 0)", Text: "total 8\nfile-a"},
+	}, nil)
+	if rendered != "[Reference: command output ls -la (exit 0)]\ntotal 8\nfile-a\n" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestRenderRefsTextKindEmptyAndUnlabeled(t *testing.T) {
+	builder := NewBuilder(Dependencies{})
+	rendered := builder.RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", ID: "blk-1", Text: " \n\t"},
+	}, nil)
+	if rendered != "- blk-1 (empty)\n" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestRenderRefsTextKindKeepsTailWithinScreenLimit(t *testing.T) {
+	text := strings.Repeat("a", RefScreenRunes) + strings.Repeat("b", RefScreenRunes)
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "t", Text: text},
+	}, nil)
+	want := "[Reference: command output t]\n[Earlier content truncated]\n" + strings.Repeat("b", RefScreenRunes) + "\n"
+	if rendered != want {
+		t.Fatalf("rendered %d runes, want the exact tail section of %d runes", len([]rune(rendered)), len([]rune(want)))
+	}
+}
+
+func TestRenderRefsTextKindHonorsRemainingBudget(t *testing.T) {
+	refs := []RefSpec{
+		{Kind: "text", Label: "one", Text: strings.Repeat("a", RefScreenRunes)},
+		{Kind: "text", Label: "two", Text: strings.Repeat("b", RefScreenRunes)},
+		{Kind: "text", Label: "three", Text: strings.Repeat("c", RefScreenRunes)},
+		{Kind: "text", Label: "four", Text: strings.Repeat("d", RefScreenRunes)},
+	}
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), refs, nil)
+	// The first two sections leave 3934 of the 12000 runes; the third is cut to that tail and exhausts the
+	// budget, so the fourth is not rendered at all.
+	want := "[Reference: command output one]\n" + strings.Repeat("a", RefScreenRunes) + "\n" +
+		"[Reference: command output two]\n" + strings.Repeat("b", RefScreenRunes) + "\n" +
+		"[Reference: command output three]\n[Earlier content truncated]\n" + strings.Repeat("c", 3934) + "\n"
+	if rendered != want {
+		t.Fatalf("rendered %d runes, want %d", len([]rune(rendered)), len([]rune(want)))
+	}
+}
+
+func TestRenderRefsLabelsStayOnOneLine(t *testing.T) {
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: " ls\r\n\t\x1b[31mred\u0085  x\u2028y\x00 ", Text: "out"},
+		{Kind: "text", ID: "blk-2", Label: "\r\n\t\x1b\u009b", Text: "out2"},
+	}, nil)
+	want := "[Reference: command output ls [31mred x y]\nout\n" +
+		"[Reference: command output blk-2]\nout2\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
+	}
+	for _, r := range strings.ReplaceAll(rendered, "\n", "") {
+		if unicode.IsControl(r) {
+			t.Fatalf("control character %U survived in %q", r, rendered)
+		}
+	}
+}
+
+func TestRenderRefsIgnoresTextOnOtherKinds(t *testing.T) {
+	rendered := refsBuilder().RenderRefs(context.Background(), []RefSpec{
+		{Kind: "tab", ID: "tab-1", Label: "t", Text: "INJECTED-TEXT"},
+		{Kind: "asset", ID: "s1", Label: "a", Text: "INJECTED-TEXT"},
+	}, nil)
+	if strings.Contains(rendered, "INJECTED-TEXT") || rendered == "" {
+		t.Fatalf("text field must only affect the text kind: %q", rendered)
 	}
 }

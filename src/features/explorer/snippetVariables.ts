@@ -54,7 +54,8 @@ function builtinKind(name: string): ParsedVariable["builtin"] {
 function parseToken(source: string): ParsedToken | null {
   const sections = source.split("|");
   const head = sections[0]?.trim() ?? "";
-  const equals = head.indexOf("=");
+  // The first ":" or "=" ends the name; later separators belong to the default value.
+  const equals = head.search(/[:=]/);
   const name = (equals >= 0 ? head.slice(0, equals) : head).trim();
   if (!NAME_PATTERN.test(name)) return null;
 
@@ -85,10 +86,15 @@ function parseToken(source: string): ParsedToken | null {
 }
 
 function parseTemplate(template: string): { tokens: ParsedToken[]; variables: SnippetVariable[]; unknownVariables: string[] } {
+  return parseTemplates([template]);
+}
+
+// Several templates share one variable table: a name must be defined the same way everywhere.
+function parseTemplates(templates: readonly string[]): { tokens: ParsedToken[]; variables: SnippetVariable[]; unknownVariables: string[] } {
   const tokens: ParsedToken[] = [];
   const variables = new Map<string, SnippetVariable>();
   const unknownVariables = new Set<string>();
-  for (const match of template.matchAll(TOKEN_PATTERN)) {
+  for (const match of templates.flatMap((template) => [...template.matchAll(TOKEN_PATTERN)])) {
     const token = parseToken(match[1] ?? "");
     if (!token) continue;
     tokens.push(token);
@@ -120,6 +126,17 @@ function parseTemplate(template: string): { tokens: ParsedToken[]; variables: Sn
 
 export function analyzeSnippetTemplate(template: string): SnippetTemplateAnalysis {
   const parsed = parseTemplate(template);
+  return {
+    hasVariables: parsed.tokens.length > 0,
+    usesAsset: parsed.tokens.some((token) => token.variable.builtin !== null),
+    variables: parsed.variables,
+    unknownVariables: parsed.unknownVariables,
+  };
+}
+
+// A multi-step snippet asks for its values once; every step renders with the same set.
+export function analyzeSnippetSteps(commands: readonly string[]): SnippetTemplateAnalysis {
+  const parsed = parseTemplates(commands);
   return {
     hasVariables: parsed.tokens.length > 0,
     usesAsset: parsed.tokens.some((token) => token.variable.builtin !== null),

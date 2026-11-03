@@ -914,11 +914,11 @@ func (e *Engine) snippetUpsert(ctx context.Context, row store.SnippetRow, snapsh
 func (e *Engine) snippetUpsertTxBound(ctx context.Context, tx *gorm.DB, row store.SnippetRow, snapshot *store.SnippetRow) error {
 	row.OwnerID = ipc.OwnerID(ctx)
 	if snapshot == nil {
-		if err := store.UpsertOwnerGuardedExpected(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, 0); err != nil {
+		if err := store.UpsertOwnerGuardedExpected(ctx, tx, &row, []string{"group_id", "name", "body", "description", "steps", "sort", "updated_at"}, 0); err != nil {
 			return err
 		}
 	} else {
-		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "sort", "updated_at"}, snapshot); err != nil {
+		if _, err := store.UpsertOwnerGuardedExpectedContent(ctx, tx, &row, []string{"group_id", "name", "body", "description", "steps", "sort", "updated_at"}, snapshot); err != nil {
 			return err
 		}
 	}

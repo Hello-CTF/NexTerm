@@ -50,6 +50,7 @@ export function collectAssetPayload(a: SyncCollectAsset): unknown {
 }
 
 // snippetPayload mirrors snippetObject: id, groupId(omitempty), name, body, sort, createdAt, updatedAt.
+// Multi-step snippets carry their steps in the snippet_steps companion kind, which the server collects.
 export function snippetPayload(s: SnippetDto): unknown {
   const o: Record<string, unknown> = { id: s.id };
   if (s.groupId !== null) o.groupId = s.groupId;

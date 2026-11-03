@@ -66,13 +66,6 @@ export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
     hint: "默认开启。同步后的规则将应用到本机的会话助手；规则顺序取决于各设备收到的先后。",
   },
   {
-    key: "runbookTemplates",
-    group: "base",
-    summary: "Runbook 模板",
-    label: "同步 Runbook 模板",
-    hint: "默认开启。模板中的命令按保存时的快照同步。",
-  },
-  {
     key: "skills",
     group: "ai",
     summary: "AI 技能",

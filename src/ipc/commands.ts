@@ -313,6 +313,13 @@ export const biometricApi = {
   disable: (): Promise<void> => call("biometric_disable") as Promise<void>,
 };
 
+import type { SnippetStep } from "./types";
+
+export interface SnippetContent {
+  description?: string;
+  steps?: SnippetStep[];
+}
+
 import type { UpdateChannelDto, UpdateReleaseChannel, UpdateResultDto, UpdateStatusDto } from "./types";
 
 export const appUpdateApi = {
@@ -838,6 +845,14 @@ export const transcriptApi = {
   remove: (id: string) => call("transcript_delete", { id }) as Promise<void>,
   syncOptIn: (id: string, optIn: boolean) =>
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
+  // The generated command table has no transcript_export_cast yet, hence the casts.
+  exportCast: (id: string, path: string) =>
+    (call as (cmd: string, args?: unknown) => Promise<unknown>)("transcript_export_cast", { id, path }) as Promise<{
+      path: string;
+      bytes: number;
+      events: number;
+      timingEstimated: boolean;
+    }>,
 };
 
 export interface LayoutDto {
@@ -935,15 +950,25 @@ export const assetApi = {
   // What the empty connection fields of an asset (saved or being edited) would inherit from its group, resolved by the backend.
   inheritancePreview: (args: AssetInheritanceRequest) => call("asset_inheritance_preview", args) as Promise<AssetInheritance>,
   groupDelete: (id: string) => assetWrite(() => call("group_delete", { id }) as Promise<void>),
-  snippetList: (): Promise<import("./types").SnippetDto[]> => call("snippet_list"),
-  snippetCreate: (name: string, body: string, groupId?: string, sort?: number) =>
-    call("snippet_create", { name, body, groupId, sort }) as Promise<{ id: string }>,
+  // The generated snippet type lacks description/steps until bindings are regenerated, hence the cast.
+  snippetList: () => call("snippet_list") as Promise<import("./types").SnippetDto[]>,
+  // The generated bindings do not know snippet_migration_status yet, hence the cast.
+  snippetMigrationStatus: () =>
+    call("snippet_migration_status" as never) as unknown as Promise<{ unmigratedRunbookTemplates: number }>,
+  snippetCreate: (
+    name: string,
+    body: string,
+    groupId?: string,
+    sort?: number,
+    content: SnippetContent = {},
+  ) => call("snippet_create", { name, body, groupId, sort, ...content } as never) as Promise<{ id: string }>,
+  // Steps replace the stored ones on every update; leaving them out turns a multi-step snippet into a single command.
   snippetUpdate: (
     id: string,
     name: string,
     body: string,
-    patch: { groupId?: string | null; sort?: number } = {},
-  ) => call("snippet_update", { id, name, body, ...patch }) as Promise<void>,
+    patch: { groupId?: string | null; sort?: number } & SnippetContent = {},
+  ) => call("snippet_update", { id, name, body, ...patch } as never) as Promise<void>,
   snippetDelete: (id: string) => call("snippet_delete", { id }) as Promise<void>,
   auditQuery: (args: Record<string, unknown> = {}) =>
     call("audit_query", { args: args as unknown as IPCInput<"audit_query"> }) as Promise<import("./types").AuditEntryDto[]>,
@@ -1445,7 +1470,7 @@ export const aiApi = {
       message: string;
       selection?: string;
       images?: string[];
-      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string }[];
+      refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string; text?: string }[];
       planMode?: boolean;
       channel: unknown;
     },

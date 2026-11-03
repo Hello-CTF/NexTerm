@@ -50,7 +50,7 @@ describe("Shared SyncOptInSection toggles", () => {
     await flush();
     expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(0);
     expect(dialog()).toBeNull();
-    expect(mounted!.container.textContent).toContain("已开启 2 / 10 项，未开启：AI 模型档案、AI 授权、外观快捷键、状态规则、Runbook 模板、AI 技能、AI 记忆、定时任务");
+    expect(mounted!.container.textContent).toContain("已开启 2 / 9 项，未开启：AI 模型档案、AI 授权、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
   });
 
   it("renders the canonical title and description copy for every toggle, grouped, inside the dialog", async () => {
@@ -66,15 +66,18 @@ describe("Shared SyncOptInSection toggles", () => {
       expect(rendered).toContain(item.label + item.hint);
     }
     // Safety notes must survive the move into the dialog
+    // Runbook templates are no longer a switch; they were folded into multi-step snippets.
+    expect(dialog()!.textContent).not.toMatch(/Runbook|执行流程/);
+    expect(SYNC_OPT_IN_ITEMS.map((item) => item.key)).not.toContain("runbookTemplates");
     expect(dialog()!.textContent).toContain("含 API 密钥的档案仅在凭据库解锁时同步");
     expect(dialog()!.textContent).toContain("离开本机前和写入前都会再次脱敏疑似密钥");
     expect([...dialog()!.querySelectorAll("legend")].map((l) => l.textContent)).toEqual(["基础", "AI", "自动化"]);
   });
 
   it("builds the summary from the on/off state", () => {
-    expect(syncOptInSummary(ALL_ON)).toBe("已开启 10 / 10 项");
-    expect(syncOptInSummary(ALL_OFF)).toBe("已开启 0 / 10 项，未开启：已知主机、AI 模型档案、AI 权限、AI 授权、外观快捷键、状态规则、Runbook 模板、AI 技能、AI 记忆、定时任务");
-    expect(syncOptInSummary(MIXED)).toContain("已开启 2 / 10 项");
+    expect(syncOptInSummary(ALL_ON)).toBe("已开启 9 / 9 项");
+    expect(syncOptInSummary(ALL_OFF)).toBe("已开启 0 / 9 项，未开启：已知主机、AI 模型档案、AI 权限、AI 授权、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
+    expect(syncOptInSummary(MIXED)).toContain("已开启 2 / 9 项");
   });
 
   it("derives checked state from value and reports the corresponding key patch through onChange", async () => {
@@ -84,7 +87,7 @@ describe("Shared SyncOptInSection toggles", () => {
     await flush();
     expect(boxFor("knownHost").checked).toBe(true);
     expect(boxFor("aiProfile").checked).toBe(false);
-    for (const [key, next] of [["knownHost", false], ["aiProfile", true], ["aiPermission", false], ["aiGrant", true], ["preferences", true], ["stateRules", true], ["runbookTemplates", true], ["skills", true], ["memory", true], ["cron", true]] as const) {
+    for (const [key, next] of [["knownHost", false], ["aiProfile", true], ["aiPermission", false], ["aiGrant", true], ["preferences", true], ["stateRules", true], ["skills", true], ["memory", true], ["cron", true]] as const) {
       click(boxFor(key));
       expect(onChange).toHaveBeenLastCalledWith({ [key]: next });
     }
@@ -101,7 +104,7 @@ describe("Shared SyncOptInSection toggles", () => {
     click(done);
     await flush();
     expect(dialog()).toBeNull();
-    expect(mounted!.container.textContent).toContain("已开启 3 / 10 项");
+    expect(mounted!.container.textContent).toContain("已开启 3 / 9 项");
     openDialog();
     await flush();
     act(() => {

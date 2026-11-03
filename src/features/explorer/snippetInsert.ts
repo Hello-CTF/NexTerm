@@ -2,6 +2,7 @@ import { ask } from "../../ui/dialogs";
 import { terminalApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import type { SnippetStep } from "../../ipc/types";
 
 export interface Snippet {
   id: string;
@@ -9,6 +10,13 @@ export interface Snippet {
   body: string;
   groupId: string | null;
   sort: number;
+  description?: string;
+  // Present and non-empty for a multi-step snippet; the commands are already rendered when it is run.
+  steps?: SnippetStep[];
+}
+
+export function isMultiStep(s: Pick<Snippet, "steps">): boolean {
+  return (s.steps?.length ?? 0) > 0;
 }
 
 export type SnippetAction = "insert" | "execute";
@@ -68,9 +76,71 @@ async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction):
   return true;
 }
 
+// stepTargetState reports why the terminal a run started in can no longer take input, or null while it can.
+function stepTargetState(tabId: string): string | null {
+  for (const ws of useUi.getState().workspaces) {
+    for (const pane of ws.panes) {
+      const tab = pane.tabs.find((t) => t.kind === "terminal" && t.tabId === tabId);
+      if (!tab) continue;
+      return tab.dead || tab.exited ? "原终端已断开或已结束" : null;
+    }
+  }
+  return "原终端已关闭";
+}
+
+async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string): Promise<boolean> {
+  const pushToast = useUi.getState().pushToast;
+  const epoch = useUi.getState().accountEpoch;
+  if (steps.some((step) => insertRisk(step.command) === "control")) {
+    if (!(await confirmRisk(s, "control", "execute"))) return false;
+  }
+  for (const [index, step] of steps.entries()) {
+    const done = index;
+    if (useUi.getState().accountEpoch !== epoch) return false;
+    if (step.confirm) {
+      const title = step.name.trim() ? `「${step.name.trim()}」` : "";
+      const ok = await ask(
+        `片段「${s.name}」第 ${index + 1} / ${steps.length} 步${title}将执行：\n${step.command}\n\n确认执行吗？`,
+        { kind: "warning" },
+      );
+      if (useUi.getState().accountEpoch !== epoch) return false;
+      if (!ok) {
+        pushToast("info", `已停止「${s.name}」：已执行到第 ${done} 步`);
+        return false;
+      }
+    }
+    const blocked = stepTargetState(tabId);
+    if (blocked) {
+      pushToast("info", `${blocked}，已停止「${s.name}」：已执行到第 ${done} 步`);
+      return false;
+    }
+    const payload = /[\r\n]$/.test(step.command) ? step.command : step.command + "\r";
+    try {
+      await terminalApi.write(tabId, new TextEncoder().encode(payload));
+    } catch (e) {
+      pushToast("error", `执行失败：${describeError(e)}（已执行到第 ${done} 步）`);
+      return false;
+    }
+  }
+  pushToast("success", `已执行「${s.name}」 · 共 ${steps.length} 步`);
+  return true;
+}
+
 export async function runSnippetAction(s: Snippet, action: SnippetAction): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const label = ACTION_LABEL[action];
+  if (isMultiStep(s)) {
+    if (action === "insert") {
+      pushToast("info", "多步片段只能执行，不能插入");
+      return false;
+    }
+    const first = terminalTarget();
+    if ("blocked" in first) {
+      pushToast("info", `${first.blocked}，才能${label}片段`);
+      return false;
+    }
+    return runSteps(s, s.steps ?? [], first.tabId);
+  }
   const target = terminalTarget();
   if ("blocked" in target) {
     pushToast("info", `${target.blocked}，才能${label}片段`);

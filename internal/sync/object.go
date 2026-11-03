@@ -19,6 +19,7 @@ const (
 	KindAsset        = "asset"
 	KindCredential   = "credential"
 	KindSnippet      = "snippet"
+	KindSnippetSteps = "snippet_steps"
 	KindTombstone    = "tombstone"
 	KindTranscript   = "transcript"
 	KindKnownHost    = "known_host"
@@ -172,6 +173,27 @@ type snippetObject struct {
 	UpdatedAt int64   `json:"updatedAt"`
 }
 
+// snippetStepsObject is the steps companion of a multi-step snippet. The snippet object itself keeps the
+// original field set (body is the commands joined by newlines), so clients without multi-step support
+// round-trip it byte for byte; the companion binds to the body it was made for through BodyHash.
+type snippetStepsObject struct {
+	ID          string              `json:"id"`
+	SnippetID   string              `json:"snippetId"`
+	BodyHash    string              `json:"bodyHash"`
+	Description string              `json:"description,omitempty"`
+	Steps       []snippetStepObject `json:"steps"`
+	UpdatedAt   int64               `json:"updatedAt"`
+}
+
+type snippetStepObject struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command"`
+	Confirm     bool   `json:"confirm,omitempty"`
+	Interactive bool   `json:"interactive,omitempty"`
+}
+
 type tombstoneObject struct {
 	TargetKind string `json:"targetKind"`
 	DeletedAt  int64  `json:"deletedAt"`
@@ -299,6 +321,7 @@ func (p *groupObject) payloadID() string         { return p.ID }
 func (p *assetObject) payloadID() string         { return p.ID }
 func (p *credentialObject) payloadID() string    { return p.ID }
 func (p *snippetObject) payloadID() string       { return p.ID }
+func (p *snippetStepsObject) payloadID() string  { return p.ID }
 func (p *transcriptObject) payloadID() string    { return p.ID }
 func (p *knownHostObject) payloadID() string     { return p.ID }
 func (p *aiProfileObject) payloadID() string     { return p.ID }

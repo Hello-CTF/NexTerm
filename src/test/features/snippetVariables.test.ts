@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  analyzeSnippetSteps,
   analyzeSnippetTemplate,
   renderSnippetForTargets,
   renderSnippetTemplate,
@@ -67,5 +68,30 @@ describe("snippet variable templates", () => {
   it("returns templates without variables byte-for-byte unchanged", () => {
     const template = "docker ps --format '{{.Names}}'\t\n";
     expect(renderSnippetTemplate(template)).toBe(template);
+  });
+
+  it("accepts a colon default and splits at the first colon or equals sign", () => {
+    expect(analyzeSnippetTemplate("{{name:web}}").variables).toEqual([
+      { name: "name", required: true, defaultValue: "web", multiline: false },
+    ]);
+    expect(analyzeSnippetTemplate("{{a=x:y}}").variables[0].defaultValue).toBe("x:y");
+    expect(analyzeSnippetTemplate("{{a:x=y}}").variables[0].defaultValue).toBe("x=y");
+    expect(renderSnippetTemplate("echo {{port:8080}}")).toBe("echo 8080");
+    expect(renderSnippetTemplate("echo {{port:8080}}", { port: "9" })).toBe("echo 9");
+  });
+
+  it("still rejects defaults on built-in asset variables", () => {
+    expect(() => analyzeSnippetTemplate("{{asset.name:x}}")).toThrow(/内建变量/);
+    expect(() => analyzeSnippetTemplate("{{asset.host=x}}")).toThrow(/内建变量/);
+  });
+
+  it("merges variables across steps and rejects conflicting definitions", () => {
+    const merged = analyzeSnippetSteps(["echo {{svc:nginx}} {{asset.name}}", "restart {{svc=nginx}} {{env}}"]);
+    expect(merged.variables.map((v) => v.name)).toEqual(["svc", "env"]);
+    expect(merged.usesAsset).toBe(true);
+    expect(merged.hasVariables).toBe(true);
+    expect(() => analyzeSnippetSteps(["a {{svc=one}}", "b {{svc=two}}"])).toThrow(/不一致/);
+    expect(() => analyzeSnippetSteps(["a {{svc}}", "b {{svc|optional}}"])).toThrow(/不一致/);
+    expect(analyzeSnippetSteps(["ls", "pwd"]).hasVariables).toBe(false);
   });
 });

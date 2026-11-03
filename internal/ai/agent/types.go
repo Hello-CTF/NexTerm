@@ -149,6 +149,7 @@ type RefArg struct {
 	Label     string `json:"label"`
 	SessionID string `json:"sessionId,omitempty"`
 	Path      string `json:"path,omitempty"`
+	Text      string `json:"text,omitempty"`
 }
 
 type StartResponse struct {

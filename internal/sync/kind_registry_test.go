@@ -23,12 +23,13 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 		{"aiGrant", KindOptInPatch{AIGrant: boolPtr(false)}, func(v KindOptIn) bool { return !v.AIGrant }, KindAIGrant},
 		{"preferences", KindOptInPatch{Preferences: boolPtr(false)}, func(v KindOptIn) bool { return !v.Preferences }, KindPreference},
 		{"stateRules", KindOptInPatch{StateRules: boolPtr(false)}, func(v KindOptIn) bool { return !v.StateRules }, KindStateRule},
-		{"runbookTemplates", KindOptInPatch{RunbookTemplates: boolPtr(false)}, func(v KindOptIn) bool { return !v.RunbookTemplates }, KindRunbookTemplate},
+		// The runbookTemplates switch is stored and shown but gates nothing: templates always convert to snippets.
+		{"runbookTemplates", KindOptInPatch{RunbookTemplates: boolPtr(false)}, func(v KindOptIn) bool { return !v.RunbookTemplates }, ""},
 		{"skills", KindOptInPatch{Skills: boolPtr(false)}, func(v KindOptIn) bool { return !v.Skills }, KindSkill},
 		{"memory", KindOptInPatch{Memory: boolPtr(false)}, func(v KindOptIn) bool { return !v.Memory }, KindMemory},
 		{"cron", KindOptInPatch{Cron: boolPtr(false)}, func(v KindOptIn) bool { return !v.Cron }, KindCron},
 	}
-	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindRunbookTemplate, KindSkill, KindMemory, KindCron}
+	gated := []string{KindKnownHost, KindAIProfile, KindAIPermission, KindAIGrant, KindPreference, KindStateRule, KindSkill, KindMemory, KindCron}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			userID := "u-" + tc.name
@@ -67,7 +68,7 @@ func TestKindOptInSwitchesAreIndependent(t *testing.T) {
 					t.Fatalf("allowsRemote(tombstone->%s)=%v, want %v", kind, got, want)
 				}
 			}
-			for _, kind := range []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindTranscript, KindTombstone} {
+			for _, kind := range []string{KindGroup, KindAsset, KindCredential, KindSnippet, KindSnippetSteps, KindRunbookTemplate, KindTranscript, KindTombstone} {
 				if !optIn.allowsKind(kind) {
 					t.Fatalf("always-on kind %s gated", kind)
 				}

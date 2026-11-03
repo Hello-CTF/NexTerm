@@ -23,7 +23,17 @@ func (s *Store) SnippetList(ctx context.Context) ([]SnippetRow, error) {
 	return result, nil
 }
 
+// SnippetCreate creates a plain single-step snippet.
 func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *string, sort int64) (SnippetRow, error) {
+	return s.SnippetCreateContent(ctx, name, SnippetContent{Body: body}, groupID, sort)
+}
+
+// SnippetCreateContent creates a snippet that may carry a description and steps.
+func (s *Store) SnippetCreateContent(ctx context.Context, name string, content SnippetContent, groupID *string, sort int64) (SnippetRow, error) {
+	description, body, steps, err := NormalizeSnippetContent(content)
+	if err != nil {
+		return SnippetRow{}, err
+	}
 	if groupID != nil {
 		if _, err := s.groupReference(ctx, s.db, *groupID); err != nil {
 			return SnippetRow{}, err
@@ -31,7 +41,7 @@ func (s *Store) SnippetCreate(ctx context.Context, name, body string, groupID *s
 	}
 	id := ids.New()
 	now := ids.NowMS()
-	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	row := SnippetRow{ID: id, GroupID: groupID, Name: name, Body: body, Description: description, Steps: steps, Sort: sort, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
 	if err := query.Use(s.db).SnippetRow.WithContext(ctx).Create(&row); err != nil {
 		return SnippetRow{}, dbError(err)
 	}
@@ -54,26 +64,66 @@ func (s *Store) SnippetGet(ctx context.Context, id string) (SnippetRow, error) {
 }
 
 func (s *Store) SnippetUpdate(ctx context.Context, id, name, body string) error {
-	snippet := query.Use(s.db).SnippetRow
-	_, err := snippet.WithContext(ctx).
-		Where(snippet.ID.Eq(id)).
-		Where(ownerConditions(ctx, snippet.TableName())...).
-		UpdateColumns(map[string]any{"name": name, "body": body, "updated_at": ids.NowMS()})
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := ids.NowMS()
+		if err := s.recordSnippetStepsRemoved(ctx, tx, id, false, now); err != nil {
+			return err
+		}
+		snippet := query.Use(tx).SnippetRow
+		_, err := snippet.WithContext(ctx).
+			Where(snippet.ID.Eq(id)).
+			Where(ownerConditions(ctx, snippet.TableName())...).
+			UpdateColumns(map[string]any{"name": name, "body": body, "steps": "", "updated_at": now})
+		return err
+	})
 	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
+// recordSnippetStepsRemoved writes the deletion marker of a snippet's steps companion
+// when the snippet currently has steps and keepsSteps is false. Sync pushes the
+// marker so other devices drop steps that would otherwise survive a same-body edit.
+func (s *Store) recordSnippetStepsRemoved(ctx context.Context, tx *gorm.DB, snippetID string, keepsSteps bool, at int64) error {
+	if keepsSteps {
+		return nil
+	}
+	snippet := query.Use(tx).SnippetRow
+	row, err := snippet.WithContext(ctx).
+		Where(snippet.ID.Eq(snippetID)).
+		Where(ownerConditions(ctx, snippet.TableName())...).
+		First()
+	if isNoRows(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.Steps == "" {
+		return nil
+	}
+	return s.syncTombstonePut(ctx, tx, SnippetStepsObjectID(snippetID), SyncTombstoneKindSnippetSteps, at)
+}
+
+// SnippetPatch is a full replacement of the snippet content plus optional
+// placement changes. Steps replaces the stored steps on every update; empty
+// means a single-step snippet. With steps, Body is ignored and derived.
 type SnippetPatch struct {
-	Name    string
-	Body    string
-	GroupID Optional[string]
-	Sort    *int64
+	Name        string
+	Body        string
+	Description string
+	Steps       []SnippetStep
+	GroupID     Optional[string]
+	Sort        *int64
 }
 
 func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch SnippetPatch) error {
 	row, err := s.SnippetGet(ctx, id)
+	if err != nil {
+		return err
+	}
+	description, body, steps, err := NormalizeSnippetContent(SnippetContent{Description: patch.Description, Body: patch.Body, Steps: patch.Steps})
 	if err != nil {
 		return err
 	}
@@ -83,26 +133,50 @@ func (s *Store) SnippetUpdateFields(ctx context.Context, id string, patch Snippe
 		}
 	}
 	row.Name = patch.Name
-	row.Body = patch.Body
+	row.Body = body
+	row.Description = description
+	row.Steps = steps
 	applyOptional(&row.GroupID, patch.GroupID)
 	if patch.Sort != nil {
 		row.Sort = *patch.Sort
 	}
-	snippet := query.Use(s.db).SnippetRow
-	_, err = snippet.WithContext(ctx).
-		Where(snippet.ID.Eq(id)).
-		Where(ownerConditions(ctx, snippet.TableName())...).
-		UpdateColumns(map[string]any{"name": row.Name, "body": row.Body, "group_id": row.GroupID, "sort": row.Sort, "updated_at": ids.NowMS()})
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := ids.NowMS()
+		if err := s.recordSnippetStepsRemoved(ctx, tx, id, steps != "", now); err != nil {
+			return err
+		}
+		snippet := query.Use(tx).SnippetRow
+		_, err := snippet.WithContext(ctx).
+			Where(snippet.ID.Eq(id)).
+			Where(ownerConditions(ctx, snippet.TableName())...).
+			UpdateColumns(map[string]any{"name": row.Name, "body": row.Body, "description": row.Description, "steps": row.Steps, "group_id": row.GroupID, "sort": row.Sort, "updated_at": now})
+		return err
+	})
 	if err != nil {
 		return dbError(err)
 	}
 	return nil
 }
 
+// SnippetDelete deletes a snippet on the user's behalf and leaves deletion markers for it and its steps companion.
 func (s *Store) SnippetDelete(ctx context.Context, id string) error {
+	return s.snippetDelete(ctx, id, true)
+}
+
+// SnippetDeleteSynced applies a deletion that arrived from another device; the steps
+// companion marker is that device's to push, so none is created here.
+func (s *Store) SnippetDeleteSynced(ctx context.Context, id string) error {
+	return s.snippetDelete(ctx, id, false)
+}
+
+func (s *Store) snippetDelete(ctx context.Context, id string, markSteps bool) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		queries := query.Use(tx)
 		snippet := queries.SnippetRow
+		now := ids.NowMS()
+		if err := s.recordSnippetStepsRemoved(ctx, tx, id, !markSteps, now); err != nil {
+			return err
+		}
 		if _, err := snippet.WithContext(ctx).
 			Where(snippet.ID.Eq(id)).
 			Where(ownerConditions(ctx, snippet.TableName())...).
@@ -112,7 +186,7 @@ func (s *Store) SnippetDelete(ctx context.Context, id string) error {
 		tombstone := queries.SyncTombstone
 		return tombstone.WithContext(ctx).
 			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_id"}, {Name: "id"}}, DoNothing: true}).
-			Create(&SyncTombstone{ID: id, Kind: "snippet", DeletedAt: ids.NowMS(), OwnerID: ipc.OwnerID(ctx)})
+			Create(&SyncTombstone{ID: id, Kind: "snippet", DeletedAt: now, OwnerID: ipc.OwnerID(ctx)})
 	})
 	if err != nil {
 		return dbError(err)

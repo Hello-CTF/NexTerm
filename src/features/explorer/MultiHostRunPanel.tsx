@@ -14,20 +14,33 @@ import {
 } from "../../ipc/runbookApi";
 import { describeError } from "../../ui/errorText";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
-import { IconPlay, IconPlus, IconStop, IconTrash, IconXCircle } from "../../ui/icons";
+import { IconPlay, IconStop, IconXCircle } from "../../ui/icons";
 import type { Prompt } from "../../ipc/generated/types";
 import { ScriptActivity, ScriptDirectiveHelp, ScriptPrompts } from "./RunbookScriptActivity";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import { assetTagValues } from "./assetSearch";
 import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
-import { analyzeSnippetTemplate, renderSnippetForTargets } from "./snippetVariables";
-import type { Snippet } from "./snippetInsert";
+import { analyzeSnippetSteps, renderSnippetForTargets, type SnippetVariableValues } from "./snippetVariables";
+import { isMultiStep, type Snippet } from "./snippetInsert";
 import { Select } from "../../ui/Select";
 
 const MAX_TARGETS = 64;
 
-type EditorStep = RunbookStep & { description: string };
+// A single-command snippet runs as one step named after the snippet.
+function snippetRunSteps(snippet: Snippet): RunbookStep[] {
+  if (isMultiStep(snippet)) {
+    return (snippet.steps ?? []).map((step, index) => ({
+      id: step.id,
+      name: step.name.trim() || `步骤 ${index + 1}`,
+      ...(step.description ? { description: step.description } : {}),
+      command: step.command,
+      ...(step.confirm ? { confirm: true } : {}),
+      ...(step.interactive ? { interactive: true } : {}),
+    }));
+  }
+  return [{ id: `${snippet.id}-step-1`, name: snippet.name, command: snippet.body }];
+}
 
 const RUN_STATUS_LABELS: Record<string, string> = {
   awaiting_render: "等待填写变量",
@@ -139,7 +152,7 @@ function RunHistoryView({ history }: { history: RunbookHistory }) {
   return (
     <div className="mt-3 border-t border-neutral-800 pt-3" data-testid="runbook-history">
       <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-neutral-400">
-        <span title={`流程 ${history.runbookId} · 运行 ${history.runId}`}>本次运行</span>
+        <span title={`片段 ${history.runbookId} · 运行 ${history.runId}`}>本次运行</span>
         <span>执行到第 {history.reachedStep} / {history.stepCount} 步</span>
         <span className={statusClass(history.status)}>{RUN_STATUS_LABELS[history.status] ?? history.status}</span>
       </div>
@@ -158,14 +171,11 @@ function RunHistoryView({ history }: { history: RunbookHistory }) {
   );
 }
 
-export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly Snippet[]; onClose: () => void; onBack?: () => void }) {
+export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snippet; onClose: () => void; onBack?: () => void }) {
   const sessions = useSessionList();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const targets = useMemo(() => collectTargets(sessions, assetsQuery.data ?? []), [sessions, assetsQuery.data]);
-  const [runbookId] = useState(createRunbookId);
-  const [name, setName] = useState("新建执行流程");
-  const [steps, setSteps] = useState<EditorStep[]>([]);
-  const [snippetId, setSnippetId] = useState("");
+  const steps = useMemo(() => snippetRunSteps(snippet), [snippet]);
   const [selected, setSelected] = useState<string[]>([]);
   const [policy, setPolicy] = useState<RunbookConfirmationPolicy>("every_step");
   const [stopOnFailure, setStopOnFailure] = useState(true);
@@ -180,6 +190,8 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
   const pendingRunIdRef = useRef<string | null>(null);
   const lifecycleEpochRef = useRef(0);
   const transitionRef = useRef(false);
+  // One set of values is collected before the run and shared by every step.
+  const valuesRef = useRef<SnippetVariableValues>({});
   const mountedRef = useRef(true);
   const modalRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -229,23 +241,12 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     if (!isActiveEpoch(epoch)) return null;
     const step = state.steps[state.currentStep - 1];
     if (!step) throw new Error("当前步骤不存在");
-    const analysis = analyzeSnippetTemplate(step.step.command);
-    if (analysis.unknownVariables.length > 0) {
-      throw new Error(`未知变量：${analysis.unknownVariables.map((variable) => `「${variable}」`).join("、")}`);
-    }
-    const values = analysis.hasVariables
-      ? await promptForValues(`填写步骤变量 · ${step.step.name || `第 ${step.number} 步`}`, analysis.variables)
-      : {};
-    if (values === null) {
-      if (isActiveEpoch(epoch)) setError("已取消填写变量；可以重新填写当前步骤，或取消执行");
-      return null;
-    }
     const current = runRef.current;
     if (!isActiveEpoch(epoch) || !current || current.runId !== state.runId || terminalRun(current.status)) return null;
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
     const assetsById = new Map((assetsQuery.data ?? []).map((asset) => [asset.id, asset]));
     const targetsById = new Map(targets.map((target) => [target.id, target]));
-    const rendered = renderSnippetForTargets(step.step.command, values, state.sessionIds.map((id) => {
+    const rendered = renderSnippetForTargets(step.step.command, valuesRef.current, state.sessionIds.map((id) => {
       const session = sessionsById.get(id);
       const asset = session?.assetId ? assetsById.get(session.assetId) : undefined;
       return { id, label: targetsById.get(id)?.label ?? session?.name ?? id, asset };
@@ -253,7 +254,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     for (const target of rendered) {
       if (!target.command.trim()) throw new Error(`目标「${target.id}」渲染后的命令不能为空`);
       if (/[\r\n\0]/.test(target.command)) {
-        throw new Error(`目标「${target.id}」填入变量后的命令包含换行或空字符；执行流程只支持单行命令`);
+        throw new Error(`目标「${target.id}」填入变量后的命令包含换行或空字符；多主机执行只支持单行命令`);
       }
     }
     if (!isActiveEpoch(epoch)) return null;
@@ -288,7 +289,11 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
         state = await prepareState(state, epoch);
         continue;
       }
-      if (state.status === "awaiting_confirmation" && state.confirmationPolicy === "production_only") {
+      if (
+        state.status === "awaiting_confirmation" &&
+        state.confirmationPolicy === "production_only" &&
+        state.steps[state.currentStep - 1]?.step.confirm !== true
+      ) {
         state = await advanceState(state, false, epoch);
         continue;
       }
@@ -314,28 +319,31 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
   };
 
   const start = () => {
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError("请输入流程名称");
-      return;
-    }
-    if (steps.length === 0 || steps.some((step) => !step.command.trim())) {
-      setError("请至少添加一个步骤，并填写每步命令");
-      return;
-    }
     if (selected.length === 0) {
       setError("请至少选择一个已连接的 SSH 或受管设备会话");
       return;
     }
     setHistory(null);
     void transition(async (epoch) => {
+      const analysis = analyzeSnippetSteps(steps.map((step) => step.command));
+      if (analysis.unknownVariables.length > 0) {
+        throw new Error(`未知变量：${analysis.unknownVariables.map((variable) => `「${variable}」`).join("、")}`);
+      }
+      const values = analysis.hasVariables
+        ? await promptForValues(`填写变量 · ${snippet.name}`, analysis.variables)
+        : {};
+      if (values === null) {
+        if (isActiveEpoch(epoch)) setError("已取消填写变量，未开始执行");
+        return;
+      }
+      if (!isActiveEpoch(epoch)) return;
+      valuesRef.current = values;
       const selectedIds = targets.filter((target) => selected.includes(target.id)).map((target) => target.id);
       const runId = createRunbookId();
       pendingRunIdRef.current = runId;
       try {
         const initial = await runbookApi.start({
-          runId, runbookId, runbookName: trimmedName,
-          steps: steps.map((step) => ({ ...step, name: step.name.trim() || "未命名步骤" })),
+          runId, snippetId: snippet.id,
           sessionIds: selectedIds,
           confirmationPolicy: policy,
           stopOnFailure,
@@ -474,28 +482,6 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
     }
   };
 
-  const updateStep = (id: string, patch: Partial<EditorStep>) => {
-    setSteps((current) => current.map((step) => step.id === id ? { ...step, ...patch } : step));
-  };
-  const moveStep = (index: number, offset: -1 | 1) => {
-    setSteps((current) => {
-      const destination = index + offset;
-      if (destination < 0 || destination >= current.length) return current;
-      const next = [...current];
-      [next[index], next[destination]] = [next[destination], next[index]];
-      return next;
-    });
-  };
-  const addSnippet = () => {
-    const snippet = snippets.find((candidate) => candidate.id === snippetId);
-    if (!snippet) return;
-    setSteps((current) => [...current, {
-      id: createRunbookId(), snippetId: snippet.id, name: snippet.name,
-      description: "", command: snippet.body,
-    }]);
-    setSnippetId("");
-  };
-
   const onModalKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
     if (!layer.isTopmost()) return;
@@ -528,54 +514,27 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
               ← 命令片段
             </button>
           )}
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">执行流程</span>
-          <span className="nx-hint hidden sm:inline">按顺序在多台主机上执行多个步骤，默认每一步都先确认</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">在多台主机执行 · {snippet.name}</span>
+          <span className="nx-hint hidden sm:inline">按顺序在多台主机上执行片段的每一步，默认每一步都先确认</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {error && <div role="alert" className="mb-3 flex items-start gap-1.5 text-[12px] text-red-400"><IconXCircle size={13} className="mt-0.5 shrink-0" />{error}</div>}
           {!run ? (
             <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_280px]">
             <div className="min-w-0">
-              <div className="nx-form-row">
-                <label className="nx-label" htmlFor="runbook-name">流程名称</label>
-                <input id="runbook-name" className="nx-input" value={name} onChange={(event) => setName(event.target.value)} />
-              </div>
+              {snippet.description && <p className="mb-2 text-[11.5px] text-neutral-400">{snippet.description}</p>}
               <ScriptDirectiveHelp />
-              <div className="mb-3 flex flex-wrap items-end gap-2">
-                <div className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-                  <span>从命令片段添加</span>
-                  <Select
-                    ariaLabel="选择要添加的片段"
-                    value={snippetId}
-                    options={[
-                      { value: "", label: "选择片段" },
-                      ...snippets.map((snippet) => ({ value: snippet.id, label: snippet.name })),
-                    ]}
-                    onChange={setSnippetId}
-                  />
-                </div>
-                <button type="button" className="nx-btn" disabled={!snippetId} onClick={addSnippet}><IconPlus size={12} />添加片段步骤</button>
-                <button type="button" className="nx-btn" onClick={() => setSteps((current) => [...current, { id: createRunbookId(), name: `步骤 ${current.length + 1}`, description: "", command: "" }])}>
-                  <IconPlus size={12} />添加命令步骤
-                </button>
-              </div>
-              <div className="mb-3 flex flex-col gap-2" aria-label="流程步骤">
-                {steps.length === 0 && <div className="rounded border border-dashed border-neutral-800 p-6 text-center text-[11.5px] text-neutral-500">暂无步骤。请从上方选择命令片段，或添加空白命令。</div>}
+              <div className="mb-3 flex flex-col gap-2" aria-label="片段步骤">
                 {steps.map((step, index) => (
-                  <div key={step.id} className="rounded border border-neutral-800 p-2.5" data-testid={`runbook-editor-step-${index + 1}`}>
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <div key={step.id} className="rounded border border-neutral-800 p-2.5" data-testid={`multi-host-step-${index + 1}`}>
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px]">
                       <span className="nx-badge">{index + 1}</span>
-                      <input className="nx-input min-w-40 flex-1" aria-label={`步骤 ${index + 1} 名称`} value={step.name} onChange={(event) => updateStep(step.id, { name: event.target.value })} />
-                      <button type="button" className="nx-btn nx-btn-sm" disabled={index === 0} aria-label={`上移步骤 ${index + 1}`} onClick={() => moveStep(index, -1)}>上移</button>
-                      <button type="button" className="nx-btn nx-btn-sm" disabled={index === steps.length - 1} aria-label={`下移步骤 ${index + 1}`} onClick={() => moveStep(index, 1)}>下移</button>
-                      <button type="button" className="nx-icon-btn nx-icon-btn-sm is-danger" aria-label={`删除步骤 ${index + 1}`} onClick={() => setSteps((current) => current.filter((candidate) => candidate.id !== step.id))}><IconTrash size={12} /></button>
+                      <span className="font-medium text-neutral-200">{step.name}</span>
+                      {step.confirm && <span className="nx-badge text-amber-300">执行前确认</span>}
+                      {step.interactive && <span className="nx-badge">交互指令</span>}
                     </div>
-                    <input className="nx-input mb-2" aria-label={`步骤 ${index + 1} 说明`} placeholder="可选说明" value={step.description} onChange={(event) => updateStep(step.id, { description: event.target.value })} />
-                    <textarea className="nx-textarea font-mono text-[11.5px]" rows={2} placeholder="单行命令，可使用 {{变量}}" aria-label={`步骤 ${index + 1} 命令`} value={step.command} onChange={(event) => updateStep(step.id, { command: event.target.value })} />
-                    <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-400">
-                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 启用脚本交互指令`} checked={step.interactive === true} onChange={(event) => updateStep(step.id, { interactive: event.target.checked })} />
-                      启用脚本交互指令（默认关闭；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）
-                    </label>
+                    {step.description && <p className="mb-1.5 text-[11px] text-neutral-500">{step.description}</p>}
+                    <pre className="nx-pre whitespace-pre-wrap break-all text-[11px]">{step.command}</pre>
                   </div>
                 ))}
               </div>
@@ -597,8 +556,8 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
                     ariaLabel="执行前确认"
                     value={policy}
                     options={[
-                      { value: "every_step", label: "每一步都先确认（默认）" },
-                      { value: "production_only", label: "只有生产环境主机先确认" },
+                      { value: "every_step", label: "每一步都确认" },
+                      { value: "production_only", label: "只确认标记了『执行前确认』的步骤和生产主机" },
                     ]}
                     onChange={(value) => setPolicy(value as RunbookConfirmationPolicy)}
                   />
@@ -644,7 +603,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
               <ScriptPrompts prompts={run.prompts ?? []} disabled={canceling || terminalRun(run.status)} onRespond={respondToPrompt} />
               <ScriptActivity live={run.live ?? []} answers={run.answers ?? []} />
               {run.status === "awaiting_render" && !busy && (
-                <button type="button" className="nx-btn mt-3" onClick={retryPrepare}>重新填写当前步骤</button>
+                <button type="button" className="nx-btn mt-3" onClick={retryPrepare}>重新准备当前步骤</button>
               )}
               {run.status === "awaiting_confirmation" && (
                 <button type="button" className="nx-btn nx-btn-primary mt-3" disabled={busy || canceling} onClick={confirmStep}>
@@ -664,7 +623,7 @@ export function RunbookPanel({ snippets, onClose, onBack }: { snippets: readonly
         </div>
         <div className="nx-modal-footer shrink-0">
           <span className="nx-hint mr-auto">取消会停止当前步骤和后续步骤，不会关闭终端。</span>
-          {run && terminalRun(run.status) && <button type="button" className="nx-btn" onClick={() => { runRef.current = null; setRun(null); setHistory(null); setError(null); }}>返回编辑</button>}
+          {run && terminalRun(run.status) && <button type="button" className="nx-btn" onClick={() => { runRef.current = null; setRun(null); setHistory(null); setError(null); }}>返回</button>}
           {active && <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancelRun()}><IconStop size={12} />{canceling ? "正在取消…" : "取消执行"}</button>}
           {!run && <button type="button" className="nx-btn nx-btn-primary" disabled={busy || targets.length === 0} onClick={start}><IconPlay size={13} />开始运行</button>}
           <button type="button" className="nx-btn nx-btn-ghost" onClick={closePanel}>关闭</button>

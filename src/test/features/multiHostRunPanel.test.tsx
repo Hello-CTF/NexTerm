@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, StrictMode } from "react";
 import { useUi } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
-import type { RunbookRunState, RunbookStartRequest } from "../../ipc/runbookApi";
+import type { RunbookRunState, RunbookStartRequest, RunbookStep } from "../../ipc/runbookApi";
 import {
   click,
   clickButton,
@@ -57,12 +57,27 @@ vi.mock("../../ipc/runbookApi", async (importOriginal) => {
   };
 });
 
-import { RunbookPanel } from "../../features/explorer/RunbookPanel";
+import { MultiHostRunPanel } from "../../features/explorer/MultiHostRunPanel";
+import type { Snippet } from "../../features/explorer/snippetInsert";
 
-const snippets = [
-  { id: "snippet-one", name: "Render greeting", body: "echo {{asset.name}} {{service=one}}", groupId: null, sort: 1 },
-  { id: "snippet-two", name: "Finish", body: "true", groupId: null, sort: 2 },
-];
+function snippetOf(id: string, name: string, steps: Array<{ name?: string; command: string; confirm?: boolean; interactive?: boolean }>): Snippet {
+  return {
+    id, name, groupId: null, sort: 1,
+    body: steps.map((step) => step.command).join("\n"),
+    steps: steps.length > 1 || steps.some((step) => step.confirm || step.interactive)
+      ? steps.map((step, index) => ({ id: `${id}-step-${index + 1}`, name: step.name ?? "", command: step.command, confirm: step.confirm, interactive: step.interactive }))
+      : [],
+  };
+}
+
+const GREETING_COMMAND = "echo {{asset.name}} {{service=one}}";
+const greeting = snippetOf("greeting", "Render greeting", [
+  { name: "Render greeting", command: GREETING_COMMAND },
+  { name: "Finish", command: "echo {{service=one}} done" },
+]);
+const oneStepWithVariables = snippetOf("single-vars", "Single greeting", [{ command: GREETING_COMMAND }]);
+const trueOnce = snippetOf("true-once", "Finish", [{ command: "true" }]);
+const trueTwice = snippetOf("true-twice", "Finish twice", [{ command: "true" }, { command: "true" }]);
 
 let mounted: MountedView | undefined;
 let currentState: RunbookRunState | undefined;
@@ -80,18 +95,34 @@ function asset(id: string, name: string): Asset {
   };
 }
 
+// Stands in for the server, which loads the stored snippet's steps when the request names a snippetId.
+let storedSnippet: Snippet | undefined;
+
+function storedSteps(snippetId: string): RunbookStep[] {
+  if (!storedSnippet || storedSnippet.id !== snippetId) throw new Error(`unknown snippet ${snippetId}`);
+  const snippet = storedSnippet;
+  if (snippet.steps && snippet.steps.length > 0) {
+    return snippet.steps.map((step, index) => ({
+      id: step.id, name: step.name || `步骤 ${index + 1}`, command: step.command,
+      ...(step.confirm ? { confirm: true } : {}), ...(step.interactive ? { interactive: true } : {}),
+    }));
+  }
+  return [{ id: `${snippet.id}-step-1`, name: snippet.name, command: snippet.body }];
+}
+
 function initialState(input: RunbookStartRequest): RunbookRunState {
+  const steps = storedSteps(input.snippetId);
   return {
     runId: input.runId,
-    runbookId: input.runbookId,
-    runbookName: input.runbookName,
+    runbookId: input.snippetId,
+    runbookName: storedSnippet?.name ?? "",
     status: "awaiting_render",
     confirmationPolicy: input.confirmationPolicy ?? "every_step",
     stopOnFailure: input.stopOnFailure ?? true,
     sessionIds: [...input.sessionIds],
     currentStep: 1,
-    stepCount: input.steps.length,
-    steps: input.steps.map((step, index) => ({
+    stepCount: steps.length,
+    steps: steps.map((step, index) => ({
       number: index + 1,
       step: { ...step },
       status: index === 0 ? "awaiting_render" : "pending",
@@ -167,11 +198,30 @@ function targetCheckbox(id: string): HTMLInputElement {
   return input;
 }
 
-function addSnippet(id: string): void {
-  const snippet = snippets.find((item) => item.id === id);
-  if (!snippet) throw new Error(`snippet ${id} not found`);
-  chooseSelectOption(panel().container, "选择要添加的片段", snippet.name);
-  clickButton(panel().container, "添加片段步骤");
+function openPanel(snippet: Snippet, strict = false): void {
+  storedSnippet = snippet;
+  mounted?.unmount();
+  const panelNode = createElement(MultiHostRunPanel, { snippet, onClose: vi.fn() });
+  mounted = mountWithClient(strict ? createElement(StrictMode, null, panelNode) : panelNode);
+}
+
+const PRODUCTION_ONLY_LABEL = "只确认标记了『执行前确认』的步骤和生产主机";
+
+// Assets feed the built-in variables; wait until the list query has landed.
+async function settleAssets(): Promise<void> {
+  await act(async () => {
+    await flushMacrotask();
+  });
+}
+
+async function fillVariablesAndContinue(value?: string): Promise<void> {
+  await flushUntil(() => document.body.textContent?.includes("填写变量") ?? false);
+  const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+    (dialog) => dialog.textContent?.includes("填写变量"),
+  );
+  if (!prompt) throw new Error("variable prompt not found");
+  if (value !== undefined) setInputValue(prompt.querySelector<HTMLInputElement>("input")!, value);
+  clickButton(prompt, "继续");
 }
 
 function startRun(): void {
@@ -226,7 +276,6 @@ beforeEach(() => {
     }],
   });
   useUi.setState({ sessions: [session("s1"), session("s2")], workspaces: [], toasts: [], pushToast: vi.fn() });
-  mounted = mountWithClient(createElement(RunbookPanel, { snippets, onClose: vi.fn() }));
 });
 
 afterEach(() => {
@@ -236,46 +285,58 @@ afterEach(() => {
   document.body.style.overflow = "";
 });
 
-describe("RunbookPanel", () => {
-  it("keeps script directives off unless a step opts in", async () => {
-    addSnippet("snippet-two");
-    addSnippet("snippet-two");
-    const boxes = panel().container.querySelectorAll<HTMLInputElement>('input[aria-label$="启用脚本交互指令"]');
-    expect(boxes).toHaveLength(2);
-    expect(boxes[0].checked).toBe(false);
-    click(boxes[1]);
+describe("MultiHostRunPanel", () => {
+  it("starts the run from the snippet id only", async () => {
+    openPanel(snippetOf("deploy", "Deploy app", [
+      { name: "build", command: "make", confirm: true },
+      { name: "probe", command: "curl -fsS localhost", interactive: true },
+      { command: "true" },
+    ]));
+    await settleAssets();
     startRun();
     await flushUntil(() => text().includes("请确认下列命令"));
-    const steps = mocks.start.mock.calls[0][0].steps;
-    expect(steps[0].interactive).toBeFalsy();
-    expect(steps[1].interactive).toBe(true);
+    const request = mocks.start.mock.calls[0][0] as RunbookStartRequest;
+    expect(request.snippetId).toBe("deploy");
+    expect(request).not.toHaveProperty("steps");
+    expect(request).not.toHaveProperty("runbookId");
+    expect(request).not.toHaveProperty("runbookName");
+    // Execution follows the steps the server returns for the stored snippet.
+    expect(text()).toContain("make");
+    expect(text()).toContain("probe");
   });
 
-  it("edits, reorders, and deletes steps", () => {
-    addSnippet("snippet-one");
-    addSnippet("snippet-two");
-    let commands = [...panel().container.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label$="命令"]')];
-    expect(commands.map((input) => input.value)).toEqual([snippets[0].body, snippets[1].body]);
-    click(panel().container.querySelector('button[aria-label="上移步骤 2"]')!);
-    commands = [...panel().container.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label$="命令"]')];
-    expect(commands.map((input) => input.value)).toEqual([snippets[1].body, snippets[0].body]);
-    click(panel().container.querySelector('button[aria-label="删除步骤 1"]')!);
-    commands = [...panel().container.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label$="命令"]')];
-    expect(commands.map((input) => input.value)).toEqual([snippets[0].body]);
+  it("shows the snippet steps read-only and offers no step editor", () => {
+    openPanel(snippetOf("deploy", "Deploy app", [
+      { name: "build", command: "make", confirm: true },
+      { name: "probe", command: "curl -fsS localhost", interactive: true },
+    ]));
+    expect(text()).toContain("Deploy app");
+    expect(text()).toContain("make");
+    expect(text()).toContain("probe");
+    expect(panel().container.querySelectorAll("textarea")).toHaveLength(0);
+    expect(panel().container.querySelector("#runbook-name")).toBeNull();
+    expect(panel().container.querySelector('[data-testid="multi-host-step-1"]')?.textContent).toContain("执行前确认");
+    expect(panel().container.querySelector('[data-testid="multi-host-step-2"]')?.textContent).toContain("交互指令");
+    expect(panel().container.querySelector('[data-testid="multi-host-step-2"]')?.textContent).not.toContain("执行前确认");
+  });
+
+  it("treats a single-command snippet as one step", async () => {
+    openPanel(trueOnce);
+    await settleAssets();
+    startRun();
+    await flushUntil(() => text().includes("请确认下列命令"));
+    const request = mocks.start.mock.calls[0][0] as RunbookStartRequest;
+    expect(request.snippetId).toBe("true-once");
+    expect(request).not.toHaveProperty("steps");
   });
 
   it("confirms the exact rendered commands at every step and keeps prior results visible", async () => {
-    addSnippet("snippet-one");
-    addSnippet("snippet-two");
+    openPanel(greeting);
+    await settleAssets();
     startRun();
-    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
-    expect(mocks.advance).not.toHaveBeenCalled();
-    const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写步骤变量"),
-    );
-    if (!prompt) throw new Error("variable prompt not found");
-    clickButton(prompt, "继续");
+    await fillVariablesAndContinue();
     await flushUntil(() => text().includes("请确认下列命令"));
+    expect(mocks.start).toHaveBeenCalledTimes(1);
 
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({
       stepNumber: 1,
@@ -291,9 +352,17 @@ describe("RunbookPanel", () => {
 
     clickButton(panel().container, "确认并执行第 1 步");
     await flushUntil(() => text().includes("确认并执行第 2 步"));
+    // The shared values were asked for once; the second step renders without another form.
+    expect(document.body.textContent).not.toContain("填写变量");
     expect(mocks.advance).toHaveBeenCalledTimes(1);
     expect(panel().container.querySelector('[data-testid="runbook-step-results-1"]')?.textContent).toContain("echo api-a one");
-    expect(mocks.prepare).toHaveBeenLastCalledWith(expect.objectContaining({ stepNumber: 2 }));
+    expect(mocks.prepare).toHaveBeenLastCalledWith(expect.objectContaining({
+      stepNumber: 2,
+      commands: [
+        { sessionId: "s1", command: "echo one done" },
+        { sessionId: "s2", command: "echo one done" },
+      ],
+    }));
 
     clickButton(panel().container, "确认并执行第 2 步");
     await flushUntil(() => text().includes("查看本次运行历史"));
@@ -318,16 +387,12 @@ describe("RunbookPanel", () => {
       currentState = next;
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
-    addSnippet("snippet-one");
-    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
+    openPanel(oneStepWithVariables);
+    chooseSelectOption(panel().container, "执行前确认", PRODUCTION_ONLY_LABEL);
+    await settleAssets();
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
-    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
-    const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写步骤变量"),
-    );
-    if (!prompt) throw new Error("variable prompt not found");
-    clickButton(prompt, "继续");
+    await fillVariablesAndContinue();
     await flushUntil(() => document.body.querySelector('[aria-label="确认生产环境执行"]') !== null);
 
     expect(mocks.advance).toHaveBeenCalledWith(expect.objectContaining({ stepNumber: 1, confirmed: false }));
@@ -364,16 +429,12 @@ describe("RunbookPanel", () => {
       currentState = next;
       return Promise.resolve(next);
     }).mockImplementationOnce((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber)));
-    addSnippet("snippet-one");
-    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
+    openPanel(oneStepWithVariables);
+    chooseSelectOption(panel().container, "执行前确认", PRODUCTION_ONLY_LABEL);
+    await settleAssets();
     click(targetCheckbox("s1"));
     clickButton(panel().container, "开始运行");
-    await flushUntil(() => document.body.textContent?.includes("填写步骤变量") ?? false);
-    const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
-      (dialog) => dialog.textContent?.includes("填写步骤变量"),
-    );
-    if (!prompt) throw new Error("variable prompt not found");
-    clickButton(prompt, "继续");
+    await fillVariablesAndContinue();
     await flushUntil(() => document.body.querySelector('[aria-label="确认生产环境执行"]') !== null);
 
     const dialog = document.body.querySelector<HTMLElement>('[aria-label="确认生产环境执行"]')!;
@@ -398,8 +459,8 @@ describe("RunbookPanel", () => {
 
   it("stops after a failed step and reads back the run history", async () => {
     mocks.advance.mockImplementation((input: { stepNumber: number }) => Promise.resolve(finishCurrentStep(input.stepNumber, "exit_error")));
-    addSnippet("snippet-two");
-    addSnippet("snippet-one");
+    openPanel(snippetOf("fails", "Fails", [{ command: "true" }, { command: "echo second" }]));
+    await settleAssets();
     startRun();
     await flushUntil(() => text().includes("确认并执行第 1 步"));
     clickButton(panel().container, "确认并执行第 1 步");
@@ -412,7 +473,7 @@ describe("RunbookPanel", () => {
     clickButton(panel().container, "查看本次运行历史");
     await flushUntil(() => panel().container.querySelector('[data-testid="runbook-history"]') !== null);
     const history = panel().container.querySelector('[data-testid="runbook-history"]')!;
-    expect(history.querySelector('[title^="流程 runbook-history"]')).not.toBeNull();
+    expect(history.querySelector('[title^="片段 runbook-history"]')).not.toBeNull();
     expect(history.textContent).toContain("到第 1 / 2 步");
     expect(history.textContent).toContain("ssh-s1");
     expect(history.textContent).toContain("remote_exit");
@@ -424,7 +485,8 @@ describe("RunbookPanel", () => {
     const pendingCancel = deferred<RunbookRunState>();
     mocks.advance.mockReturnValue(pending.promise);
     mocks.cancel.mockReturnValue(pendingCancel.promise);
-    addSnippet("snippet-two");
+    openPanel(trueOnce);
+    await settleAssets();
     startRun();
     await flushUntil(() => text().includes("确认并执行第 1 步"));
     clickButton(panel().container, "确认并执行第 1 步");
@@ -449,7 +511,8 @@ describe("RunbookPanel", () => {
   it("does not revive a canceled run when an older prepare response arrives late", async () => {
     const pendingPrepare = deferred<RunbookRunState>();
     mocks.prepare.mockReturnValue(pendingPrepare.promise);
-    addSnippet("snippet-two");
+    openPanel(trueOnce);
+    await settleAssets();
     startRun();
     await flushUntil(() => mocks.prepare.mock.calls.length === 1);
     clickButton(panel().container, "取消执行");
@@ -475,8 +538,9 @@ describe("RunbookPanel", () => {
       return pendingStart.promise;
     });
     mocks.cancel.mockResolvedValue(undefined);
-    addSnippet("snippet-two");
-    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
+    openPanel(trueOnce);
+    chooseSelectOption(panel().container, "执行前确认", PRODUCTION_ONLY_LABEL);
+    await settleAssets();
     startRun();
     await flushUntil(() => mocks.start.mock.calls.length === 1);
     const runId = mocks.start.mock.calls[0][0].runId as string;
@@ -499,8 +563,9 @@ describe("RunbookPanel", () => {
   it("does not advance when a prepare response arrives after close", async () => {
     const pendingPrepare = deferred<RunbookRunState>();
     mocks.prepare.mockReturnValue(pendingPrepare.promise);
-    addSnippet("snippet-two");
-    chooseSelectOption(panel().container, "执行前确认", "只有生产环境主机先确认");
+    openPanel(trueOnce);
+    chooseSelectOption(panel().container, "执行前确认", PRODUCTION_ONLY_LABEL);
+    await settleAssets();
     startRun();
     await flushUntil(() => mocks.prepare.mock.calls.length === 1);
     if (!currentState) throw new Error("run not started");
@@ -527,14 +592,8 @@ describe("RunbookPanel", () => {
   it("keeps UI, drive, and busy state aligned under StrictMode", async () => {
     const pendingCancel = deferred<RunbookRunState>();
     mocks.cancel.mockReturnValue(pendingCancel.promise);
-    panel().unmount();
-    mounted = mountWithClient(createElement(
-      StrictMode,
-      null,
-      createElement(RunbookPanel, { snippets, onClose: vi.fn() }),
-    ));
-    addSnippet("snippet-two");
-    addSnippet("snippet-two");
+    openPanel(trueTwice, true);
+    await settleAssets();
     startRun();
     await flushUntil(() => text().includes("确认并执行第 1 步"));
     const firstConfirm = [...panel().container.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -562,5 +621,46 @@ describe("RunbookPanel", () => {
     panel().unmount();
     mounted = undefined;
     expect(mocks.terminalWrite).not.toHaveBeenCalled();
+  });
+
+  it("does not auto-advance a step marked for confirmation under the production-only policy", async () => {
+    openPanel(snippetOf("guarded", "Guarded", [
+      { name: "safe", command: "true" },
+      { name: "restart", command: "systemctl restart app", confirm: true },
+      { name: "after", command: "echo after" },
+    ]));
+    chooseSelectOption(panel().container, "执行前确认", PRODUCTION_ONLY_LABEL);
+    await settleAssets();
+    startRun();
+    // Step 1 is not marked, so it advances unconfirmed; step 2 stops for the user.
+    await flushUntil(() => text().includes("确认并执行第 2 步"));
+    expect(mocks.advance.mock.calls.map(([input]) => [input.stepNumber, input.confirmed])).toEqual([[1, false]]);
+
+    clickButton(panel().container, "确认并执行第 2 步");
+    await flushUntil(() => text().includes("查看本次运行历史"));
+    expect(mocks.advance.mock.calls.map(([input]) => [input.stepNumber, input.confirmed])).toEqual([
+      [1, false], [2, true], [3, false],
+    ]);
+  });
+
+  it("stops before the run when the variable form is canceled", async () => {
+    openPanel(oneStepWithVariables);
+    await settleAssets();
+    startRun();
+    await flushUntil(() => document.body.textContent?.includes("填写变量") ?? false);
+    const prompt = [...document.body.querySelectorAll<HTMLElement>('[role="dialog"]')].find(
+      (dialog) => dialog.textContent?.includes("填写变量"),
+    );
+    clickButton(prompt!, "取消");
+    await flushUntil(() => text().includes("已取消填写变量"));
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
+
+  it("rejects steps whose shared variables conflict", async () => {
+    openPanel(snippetOf("conflict", "Conflict", [{ command: "a {{svc=one}}" }, { command: "b {{svc=two}}" }]));
+    await settleAssets();
+    startRun();
+    await flushUntil(() => text().includes("不一致"));
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 });

@@ -97,6 +97,16 @@ func transcriptDisplayName(_ string, plaintext []byte) string {
 	return ""
 }
 
+func snippetStepsDisplayName(_ string, plaintext []byte) string {
+	var payload struct {
+		SnippetID string `json:"snippetId"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err == nil && payload.SnippetID != "" {
+		return "片段步骤 " + payload.SnippetID
+	}
+	return ""
+}
+
 func knownHostDisplayName(_ string, plaintext []byte) string {
 	var payload struct {
 		Host string `json:"host"`
