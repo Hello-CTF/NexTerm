@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -102,5 +104,34 @@ func TestRuntimeHelperConfigMarksTheAgentAsSpawner(t *testing.T) {
 	agentRuntime := newStateRuntime(t, Options{DataDir: t.TempDir()})
 	if got := agentRuntime.helperConfig().SpawnedBy; got != supervisor.SpawnedByAgent {
 		t.Fatalf("SpawnedBy = %q, want %q", got, supervisor.SpawnedByAgent)
+	}
+}
+
+func TestRuntimeHelloRetriesAFailedHelperInstanceIDRead(t *testing.T) {
+	dataDir := t.TempDir()
+	agentRuntime := newTestRuntime(t, dataDir, []BaseURLEntry{{URL: "http://127.0.0.1:1"}}, &fakeManager{})
+	stateDir := filepath.Join(dataDir, "durable", "supervisor")
+	blocker := filepath.Join(stateDir, supervisor.HelperInstanceIDFile)
+	if err := os.MkdirAll(filepath.Join(blocker, "keep"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first := agentRuntime.hello("", "")
+	if first.StateDigest == "" || first.HelperInstanceID != "" {
+		t.Fatalf("first hello = digest %q id %q; want a digest and no id while the id file is unusable", first.StateDigest, first.HelperInstanceID)
+	}
+	var cancels atomic.Int32
+	agentRuntime.mu.Lock()
+	agentRuntime.channelCancel = func() { cancels.Add(1) }
+	agentRuntime.mu.Unlock()
+	if err := os.RemoveAll(blocker); err != nil {
+		t.Fatal(err)
+	}
+	second := agentRuntime.hello("", "")
+	if len(second.HelperInstanceID) != 32 || second.StateDigest != first.StateDigest {
+		t.Fatalf("second hello = digest %q id %q; want the same digest and a valid id", second.StateDigest, second.HelperInstanceID)
+	}
+	// The digest was already announced, so the channel ends to re-announce the id.
+	if cancels.Load() != 1 {
+		t.Fatalf("channel cancels = %d, want 1", cancels.Load())
 	}
 }

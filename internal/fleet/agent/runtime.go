@@ -315,7 +315,7 @@ func (r *Runtime) useStateDir(dir string, settled bool) {
 func (r *Runtime) reconcileDigest() {
 	dir := r.currentStateDir()
 	r.mu.Lock()
-	current := r.digestDir == dir && r.stateDigest != ""
+	current := r.digestDir == dir && r.stateDigest != "" && r.helperInstanceID != ""
 	previous, previousID := r.stateDigest, r.helperInstanceID
 	r.mu.Unlock()
 	if current {
