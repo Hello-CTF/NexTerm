@@ -340,8 +340,6 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		}
 	}
 	items := make([]store.InventoryItem, 0, len(parsed.Hosts))
-	multiUser := ipc.OwnerID(ctx) != ""
-	skippedAuth := false
 	warnings := make([]string, 0, len(parsed.Diagnostics))
 	for _, diagnostic := range parsed.Diagnostics {
 		warnings = append(warnings, fmt.Sprintf("%s: %s", diagnostic.Source, diagnostic.Message))
@@ -357,11 +355,6 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 			keyPath = &host.IdentityFiles[0]
 		}
 		authKindPtr := &authKind
-		if multiUser {
-			// Agent and key-file auth read this server's files; leave auth to the group defaults instead.
-			authKindPtr, keyPath = nil, nil
-			skippedAuth = true
-		}
 		target := map[string]any{
 			"type": "ssh-config", "alias": host.Alias, "proxyJump": host.ProxyJump,
 			"identityFiles": append([]string(nil), host.IdentityFiles...), "sourcePath": host.Source,
@@ -383,13 +376,18 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 			Host: &hostname, Port: &port, Username: optionalString(username), AuthKind: authKindPtr, KeyPath: keyPath, Options: options,
 		})
 	}
-	if skippedAuth {
-		warnings = append(warnings, "多用户服务端不导入 SSH Agent 与私钥文件路径（会读取服务器文件），导入的主机请通过分组默认认证或凭据库私钥连接")
-	}
 	return items, warnings, nil
 }
 
 func (s *inventoryService) discover(ctx context.Context, source, path string) ([]store.InventoryItem, []string, error) {
+	if ipc.OwnerID(ctx) != "" {
+		switch source {
+		case store.InventorySourceSSHConfig:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")
+		case store.InventorySourceDockerContext:
+			return nil, nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Docker 上下文")
+		}
+	}
 	switch source {
 	case store.InventorySourceSSHConfig:
 		return s.sshConfigItems(ctx, effectiveInventorySSHPath(path))

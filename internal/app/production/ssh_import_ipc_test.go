@@ -1708,7 +1708,7 @@ func TestSSHImportServerHomeIncludeEscapeExcluded(t *testing.T) {
 	}
 }
 
-func TestSSHImportServerOwnerRejectsFileReferencedKeys(t *testing.T) {
+func TestSSHImportServerPathSourcesRejectedForAccountOwners(t *testing.T) {
 	dispatcher, database, _, _ := sshImportTestRigModeWithMaster(t, false, true)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -1720,16 +1720,14 @@ func TestSSHImportServerOwnerRejectsFileReferencedKeys(t *testing.T) {
 	keyPath, _ := sshImportTestKeyFile(t, dir)
 	configPath := sshImportTestConfig(t, dir, keyPath)
 	owner := ipc.WithUserID(t.Context(), "user-a")
-	call := func(command, args string) ipc.Response {
-		return dispatcher.Dispatch(owner, ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
-	}
-	response := call("ssh_import_preview", `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
-	var preview sshImportPreviewDTO
-	requireStoreTestResponse(t, response, &preview)
-	keyID := previewKey(t, preview, "id_ed25519").ID
-	response = call("ssh_import_apply", `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`,"hosts":[],"keys":[{"id":`+strconvQuote(keyID)+`,"action":"import"}]}}`)
-	if response.OK {
-		t.Fatalf("apply = %+v, want rejected", response)
+	for source, path := range map[string]string{"ssh-config": configPath, "ssh-home": dir, "termius": filepath.Join(home, "termius.db")} {
+		for _, command := range []string{"ssh_import_preview", "ssh_import_apply"} {
+			args := `{"args":{"source":"` + source + `","path":` + strconvQuote(path) + `,"confirmed":true,"hosts":[],"keys":[]}}`
+			response := dispatcher.Dispatch(owner, ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
+			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+				t.Fatalf("%s %s = %+v, want unsupported", command, source, response)
+			}
+		}
 	}
 	rows, err := database.CredentialList(owner)
 	if err != nil || len(rows) != 0 {

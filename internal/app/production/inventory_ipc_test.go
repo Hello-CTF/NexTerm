@@ -182,52 +182,33 @@ func TestInventoryWatchParseFailureKeepsLastSnapshot(t *testing.T) {
 	}
 }
 
-func TestInventoryServerSyncOwnerIsolationAndPathBoundary(t *testing.T) {
+func TestInventoryServerSyncPathBoundary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	sshDir := filepath.Join(home, ".ssh")
-	pathA := filepath.Join(sshDir, "config-a")
-	pathB := filepath.Join(sshDir, "config-b")
-	writeInventoryTestFile(t, pathA, "Host shared\n  HostName a.example\n")
-	writeInventoryTestFile(t, pathB, "Host shared\n  HostName b.example\n")
-	ctxA := ipc.WithUserID(context.Background(), "owner-a")
-	ctxB := ipc.WithUserID(context.Background(), "owner-b")
-	resultA, err := service.sync(ctxA, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: pathA})
-	if err != nil {
+	path := filepath.Join(sshDir, "config-a")
+	writeInventoryTestFile(t, path, "Host shared\n  HostName a.example\n")
+	ctx := context.Background()
+	if _, err := service.sync(ctx, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: path}); err != nil {
 		t.Fatal(err)
 	}
-	resultB, err := service.sync(ctxB, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: pathB})
-	if err != nil {
+	row, _, err := inventoryAssetByName(database, ctx, "shared")
+	if err != nil || row.Host == nil || *row.Host != "a.example" {
+		t.Fatalf("asset = %+v, err=%v", row, err)
+	}
+	writeInventoryTestFile(t, path, "# empty\n")
+	if _, err := service.sync(ctx, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: path}); err != nil {
 		t.Fatal(err)
 	}
-	if resultA.GroupID == resultB.GroupID {
-		t.Fatal("server owners share a managed group")
-	}
-	rowA, _, err := inventoryAssetByName(database, ctxA, "shared")
-	if err != nil || rowA.OwnerID != "owner-a" || rowA.Host == nil || *rowA.Host != "a.example" {
-		t.Fatalf("owner A asset = %+v, err=%v", rowA, err)
-	}
-	rowB, _, err := inventoryAssetByName(database, ctxB, "shared")
-	if err != nil || rowB.OwnerID != "owner-b" || rowB.Host == nil || *rowB.Host != "b.example" {
-		t.Fatalf("owner B asset = %+v, err=%v", rowB, err)
-	}
-	writeInventoryTestFile(t, pathA, "# empty\n")
-	if _, err := service.sync(ctxA, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: pathA}); err != nil {
-		t.Fatal(err)
-	}
-	rowA, _, err = inventoryAssetByName(database, ctxA, "shared")
-	if err != nil || rowA.DeletedAt == nil {
-		t.Fatalf("owner A removal = %+v, err=%v", rowA, err)
-	}
-	rowB, _, err = inventoryAssetByName(database, ctxB, "shared")
-	if err != nil || rowB.DeletedAt != nil {
-		t.Fatalf("owner A sync affected owner B: %+v, err=%v", rowB, err)
+	row, _, err = inventoryAssetByName(database, ctx, "shared")
+	if err != nil || row.DeletedAt == nil {
+		t.Fatalf("removal = %+v, err=%v", row, err)
 	}
 	outside := filepath.Join(t.TempDir(), "config")
 	writeInventoryTestFile(t, outside, "Host outside\n")
-	if _, err := service.sync(ctxA, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: outside}); err == nil {
+	if _, err := service.sync(ctx, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: outside}); err == nil {
 		t.Fatal("server accepted an SSH inventory outside ~/.ssh")
 	}
 }
@@ -257,8 +238,7 @@ func TestInventoryDockerDiscoveryReadOnlyAndSelectedSyncIPC(t *testing.T) {
 	if err := service.registerCommands(dispatcher); err != nil {
 		t.Fatal(err)
 	}
-	ctxA := ipc.WithUserID(context.Background(), "owner-a")
-	ctxB := ipc.WithUserID(context.Background(), "owner-b")
+	ctxA := context.Background()
 	var discovery inventoryDiscoveryDTO
 	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_discover", inventoryDiscoverRequest{Source: store.InventorySourceDockerContext}, &discovery)
 	if len(discovery.Items) != 2 {
@@ -277,7 +257,6 @@ func TestInventoryDockerDiscoveryReadOnlyAndSelectedSyncIPC(t *testing.T) {
 	if synced.Created != 0 || synced.Updated != 0 || synced.Unchanged != 1 {
 		t.Fatalf("idempotent selected sync = %+v", synced)
 	}
-	dispatchInventoryTest(t, dispatcher, ctxB, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &keys}, &synced)
 	empty := []string{}
 	dispatchInventoryTest(t, dispatcher, ctxA, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &empty}, &synced)
 	if synced.Removed != 1 {
@@ -286,11 +265,8 @@ func TestInventoryDockerDiscoveryReadOnlyAndSelectedSyncIPC(t *testing.T) {
 	if rows, err := database.AssetList(ctxA, false); err != nil || len(rows) != 0 {
 		t.Fatalf("owner A live assets = %+v, err=%v", rows, err)
 	}
-	if rows, err := database.AssetList(ctxB, false); err != nil || len(rows) != 1 || rows[0].OwnerID != "owner-b" {
-		t.Fatalf("owner B assets = %+v, err=%v", rows, err)
-	}
 	stale := []string{"context/missing"}
-	response := dispatchInventoryTest(t, dispatcher, ctxB, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &stale}, nil)
+	response := dispatchInventoryTest(t, dispatcher, ctxA, "inventory_sync", inventorySyncRequest{Source: store.InventorySourceDockerContext, Keys: &stale}, nil)
 	if response.OK {
 		t.Fatal("stale candidate key was accepted")
 	}
@@ -341,7 +317,7 @@ func TestInventoryServerWatchIncludeEscapeKeepsLastGood(t *testing.T) {
 	outside := t.TempDir()
 	mainPath := filepath.Join(sshDir, "config")
 	writeInventoryTestFile(t, mainPath, "Host alpha\n  HostName 10.0.0.1\n")
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	if _, err := service.startWatch(ctx, mainPath, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -497,28 +473,28 @@ var _ fleetinventory.CommandRunner = inventoryRunnerFunc(nil)
 
 func stringPointerForInventory(value string) *string { return &value }
 
-func TestInventoryMultiUserSyncDropsServerAuthSources(t *testing.T) {
+func TestInventoryServerPathSourcesRejectedForAccountOwners(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	service, database := newInventoryTestService(t, false)
 	path := filepath.Join(home, ".ssh", "config")
-	writeInventoryTestFile(t, path, "Host keyed\n  HostName k.example\n  IdentityFile ~/.ssh/id_x\nHost plain\n  HostName p.example\n")
+	writeInventoryTestFile(t, path, "Host keyed\n  HostName k.example\n  IdentityFile ~/.ssh/id_x\n")
 	owner := ipc.WithUserID(context.Background(), "owner-a")
-	result, err := service.sync(owner, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: path})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Warnings) == 0 {
-		t.Fatal("dropped agent and key-file auth was not reported")
-	}
-	for _, name := range []string{"keyed", "plain"} {
-		row, _, err := inventoryAssetByName(database, owner, name)
-		if err != nil {
-			t.Fatal(err)
+	for _, source := range []string{store.InventorySourceSSHConfig, store.InventorySourceDockerContext} {
+		if _, err := service.sync(owner, inventorySyncRequest{Source: source, Path: path}); !isUnsupportedError(err) {
+			t.Fatalf("%s sync err = %v, want unsupported", source, err)
 		}
-		if row.KeyPath != nil || (row.AuthKind != nil && *row.AuthKind != "") {
-			t.Fatalf("%s kept server-side auth: authKind=%v keyPath=%v", name, row.AuthKind, row.KeyPath)
+		if _, _, err := service.discover(owner, source, path); !isUnsupportedError(err) {
+			t.Fatalf("%s discover err = %v, want unsupported", source, err)
 		}
 	}
+	if _, found, err := inventoryAssetByName(database, owner, "keyed"); err != nil || found {
+		t.Fatalf("rejected source created an asset: found=%v err=%v", found, err)
+	}
+}
+
+func isUnsupportedError(err error) bool {
+	var appErr *ipc.Error
+	return errors.As(err, &appErr) && appErr.Code == ipc.CodeUnsupported
 }

@@ -266,6 +266,14 @@ func sshImportPreviewIDs(preview *sshconfig.ImportPreview) ([]string, []string) 
 }
 
 func (p *sshImportPlanner) derive(ctx context.Context, source, path string, confirmed, withMaterial bool) (*sshImportPlan, error) {
+	if ipc.OwnerID(ctx) != "" {
+		switch source {
+		case "ssh-config", "ssh-home":
+			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 SSH 配置和私钥")
+		case "termius":
+			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据")
+		}
+	}
 	existing, err := p.loadExisting(ctx)
 	if err != nil {
 		return nil, err

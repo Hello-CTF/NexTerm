@@ -27,7 +27,7 @@ func TestInventoryServerIncludeSymlinkEscapeRejected(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 	writeInventoryTestFile(t, mainPath, "Include linked.conf\nHost alpha\n  HostName 10.0.0.1\n")
-	ctx := ipc.WithUserID(context.Background(), "owner-a")
+	ctx := context.Background()
 	if _, err := service.sync(ctx, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: mainPath}); err == nil {
 		t.Fatal("server sync accepted a symlink escape include")
 	} else if !strings.Contains(err.Error(), "快照不完整") {
