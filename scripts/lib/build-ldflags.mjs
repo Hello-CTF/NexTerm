@@ -1,29 +1,18 @@
 // Updater public key handling, release reuse evidence and Go linker flags.
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parseReleaseVersion } from "./semver.mjs";
-import { releaseSigningKeyProblem } from "./release-signing.mjs";
+import { minisignPublicKeyDigest, normalizeMinisignPublicKey, releaseSigningKeyProblem } from "./release-signing.mjs";
 import { COMMIT, RELEASE_REF, ROOT, VERSION, die, log, option } from "./build-context.mjs";
 
 function desktopMinisignPublicKey() {
-  const configured = (process.env.NEXTERM_MINISIGN_PUBLIC_KEY || "").trim();
-  if (!configured) return "";
-  const lines = configured.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  if (lines.length === 2 && lines[0].startsWith("untrusted comment:")) lines.shift();
-  if (lines.length !== 1) die("NEXTERM_MINISIGN_PUBLIC_KEY must be one Base64 public key or a two-line minisign public key file");
-  const encoded = lines[0];
-  if (!/^[A-Za-z0-9+/]{56}$/.test(encoded)) die("NEXTERM_MINISIGN_PUBLIC_KEY must contain one 56-character Base64 minisign public key");
-  const decoded = Buffer.from(encoded, "base64");
-  if (decoded.length !== 42 || decoded.subarray(0, 2).toString() !== "Ed" || decoded.toString("base64") !== encoded) {
-    die("NEXTERM_MINISIGN_PUBLIC_KEY is not an Ed25519 minisign public key");
-  }
-  return encoded;
+  const { key, problem } = normalizeMinisignPublicKey(process.env.NEXTERM_MINISIGN_PUBLIC_KEY);
+  if (problem) die(problem);
+  return key;
 }
 
 export function desktopMinisignPublicKeyDigest() {
-  const publicKey = desktopMinisignPublicKey();
-  return publicKey ? crypto.createHash("sha256").update(publicKey).digest("hex") : "";
+  return minisignPublicKeyDigest(desktopMinisignPublicKey());
 }
 
 export function desktopReuseEvidence() {
