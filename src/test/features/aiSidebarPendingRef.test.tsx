@@ -141,8 +141,8 @@ describe("AiSidebar pending references", () => {
     await flush();
     expect(mocks.chat).toHaveBeenCalledTimes(1);
     const args = mocks.chat.mock.calls[0][0];
-    expect(args.refs).toEqual([expect.objectContaining({ kind: "text", id: "block:1", text: "SECRET-OUTPUT-LINE" })]);
-    expect(args.message).not.toContain("SECRET-OUTPUT-LINE");
+    expect(args.refs).toEqual([{ kind: "text", id: "block:1", label: "命令块 #3 · ls", text: "SECRET-OUTPUT-LINE" }]);
+    expect(args.message).toBe("[引用]\n- 命令块 #3 · ls（web-01）\n\n解释这段命令输出");
   });
 
   it("keeps text the user already typed", async () => {

@@ -104,6 +104,14 @@ describe("explainCommandBlock", () => {
     expect(useUi.getState().rightOpen).toBe(true);
   });
 
+  it("flattens newlines and control characters in the reference label and detail", () => {
+    expect(explainCommandBlock(block("echo a\n\n  echo\tb\u001b[0m"), "out", "web\r\n01\u0007  prod")).toBe(true);
+    const [ref] = useUi.getState().aiPendingRefs;
+    expect(ref.label).toBe("命令块 #4 · echo a echo b [0m");
+    expect(ref.detail).toBe("web 01 prod");
+    expect(/[\u0000-\u001f\u007f]/.test(`${ref.label}${ref.detail}`)).toBe(false);
+  });
+
   it("does nothing for output that already scrolled out", () => {
     expect(explainCommandBlock(block("ls"), "", "web-01")).toBe(false);
     expect(useUi.getState().aiPendingRefs).toEqual([]);

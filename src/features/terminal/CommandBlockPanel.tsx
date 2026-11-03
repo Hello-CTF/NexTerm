@@ -42,6 +42,8 @@ export function CommandBlockPanel({
   onExplain,
   onToast,
 }: CommandBlockPanelProps) {
+  // Rerun types into the live prompt, which is unsafe while a command still owns the terminal.
+  const anyRunning = blocks.some((b) => b.endedAt === null);
   const [expanded, setExpanded] = useState<{ index: number; text: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const virtualizer = useVirtualizer({
@@ -167,8 +169,9 @@ export function CommandBlockPanel({
                       {onRerun && !running && b.command.trim() !== "" && (
                         <button
                           className="nx-icon-btn nx-icon-btn-sm"
-                          title="重新运行"
+                          title={anyRunning ? "终端里还有命令在运行，结束后才能重新运行" : "重新运行"}
                           aria-label="重新运行"
+                          disabled={anyRunning}
                           onClick={() => onRerun(b)}
                         >
                           <IconPlay size={11} />

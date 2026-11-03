@@ -93,15 +93,14 @@ describe("CommandBlockPanel actions", () => {
     expect(t).not.toContain("让 AI 解释这段输出");
   });
 
-  it("calls the handlers and hides rerun for running blocks", () => {
+  it("calls the handlers of a finished block", () => {
     const onRerun = vi.fn();
     const onSaveAsSnippet = vi.fn();
     const onExplain = vi.fn();
     const done = mk(1, "ls", true);
     mounted = mount(
-      <CommandBlockPanel {...base} blocks={[done, mk(2, "sleep 9", false)]} onRerun={onRerun} onSaveAsSnippet={onSaveAsSnippet} onExplain={onExplain} />,
+      <CommandBlockPanel {...base} blocks={[done]} onRerun={onRerun} onSaveAsSnippet={onSaveAsSnippet} onExplain={onExplain} />,
     );
-    expect(mounted.container.querySelectorAll('button[title="重新运行"]')).toHaveLength(1);
     const row = mounted.container.querySelector("[data-command-block='1']")!;
     (row.querySelector('button[title="重新运行"]') as HTMLElement).click();
     (row.querySelector('button[title="保存为片段"]') as HTMLElement).click();
@@ -109,6 +108,21 @@ describe("CommandBlockPanel actions", () => {
     expect(onRerun).toHaveBeenCalledWith(done);
     expect(onSaveAsSnippet).toHaveBeenCalledWith(done);
     expect(onExplain).toHaveBeenCalledWith(done, "out");
+  });
+
+  it("disables every rerun button while any command is still running", () => {
+    const onRerun = vi.fn();
+    mounted = mount(
+      <CommandBlockPanel {...base} blocks={[mk(1, "ls", true), mk(2, "pwd", true), mk(3, "sleep 9", false)]} onRerun={onRerun} />,
+    );
+    const buttons = Array.from(mounted.container.querySelectorAll<HTMLButtonElement>('button[aria-label="重新运行"]'));
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe("终端里还有命令在运行，结束后才能重新运行");
+      button.click();
+    }
+    expect(onRerun).not.toHaveBeenCalled();
   });
 
   it("tells the user instead of explaining when the output scrolled out", () => {

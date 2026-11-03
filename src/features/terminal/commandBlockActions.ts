@@ -10,6 +10,11 @@ const EXPLAIN_TEXT_LIMIT = 16000;
 const COMMAND_LABEL_LIMIT = 32;
 const SNIPPET_NAME_LIMIT = 40;
 
+// singleLine turns line breaks and control characters into spaces and collapses whitespace so a reference label stays on one line.
+function singleLine(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function toast(kind: "info" | "success" | "error", text: string) {
   useUi.getState().pushToast(kind, text);
 }
@@ -70,13 +75,13 @@ export function explainCommandBlock(block: CommandBlock, text: string, sourceLab
   }
   const id = `block:${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
   const clipped = text.length > EXPLAIN_TEXT_LIMIT ? text.slice(-EXPLAIN_TEXT_LIMIT) : text;
-  const command = Array.from(block.command.trim()).slice(0, COMMAND_LABEL_LIMIT).join("");
+  const command = Array.from(singleLine(block.command)).slice(0, COMMAND_LABEL_LIMIT).join("");
   const ui = useUi.getState();
   ui.queueAiRef({
     kind: "text",
     id,
     label: `命令块 #${block.index} · ${command}`,
-    detail: sourceLabel,
+    detail: singleLine(sourceLabel),
     refId: id,
     text: clipped,
   });
