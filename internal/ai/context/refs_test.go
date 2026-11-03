@@ -113,3 +113,59 @@ func TestRenderRefsSkipsUnsupported(t *testing.T) {
 		t.Fatalf("unsupported refs must render empty, got %q", rendered)
 	}
 }
+
+func TestRenderRefsTextKind(t *testing.T) {
+	builder := NewBuilder(Dependencies{})
+	rendered := builder.RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "ls -la\n(exit 0)", Text: "total 8\nfile-a"},
+	}, nil)
+	if rendered != "[Reference: command output ls -la (exit 0)]\ntotal 8\nfile-a\n" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestRenderRefsTextKindEmptyAndUnlabeled(t *testing.T) {
+	builder := NewBuilder(Dependencies{})
+	rendered := builder.RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", ID: "blk-1", Text: " \n\t"},
+	}, nil)
+	if rendered != "- blk-1 (empty)\n" {
+		t.Fatalf("unexpected render: %q", rendered)
+	}
+}
+
+func TestRenderRefsTextKindKeepsTailWithinScreenLimit(t *testing.T) {
+	text := strings.Repeat("a", RefScreenRunes) + strings.Repeat("b", RefScreenRunes)
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: "t", Text: text},
+	}, nil)
+	if !strings.Contains(rendered, "[Earlier content truncated]\n"+strings.Repeat("b", RefScreenRunes)) {
+		t.Fatal("text reference must keep the latest tail")
+	}
+	if strings.Contains(rendered, "a") && strings.Contains(rendered, strings.Repeat("a", 100)) {
+		t.Fatal("text head must be truncated away")
+	}
+}
+
+func TestRenderRefsTextKindHonorsRemainingBudget(t *testing.T) {
+	refs := []RefSpec{
+		{Kind: "text", Label: "one", Text: strings.Repeat("a", RefScreenRunes)},
+		{Kind: "text", Label: "two", Text: strings.Repeat("b", RefScreenRunes)},
+		{Kind: "text", Label: "three", Text: strings.Repeat("c", RefScreenRunes)},
+		{Kind: "text", Label: "four", Text: strings.Repeat("d", RefScreenRunes)},
+	}
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), refs, nil)
+	if got := len([]rune(rendered)); got > RefTotalRunes+200 {
+		t.Fatalf("total budget exceeded: %d runes", got)
+	}
+}
+
+func TestRenderRefsIgnoresTextOnOtherKinds(t *testing.T) {
+	rendered := refsBuilder().RenderRefs(context.Background(), []RefSpec{
+		{Kind: "tab", ID: "tab-1", Label: "t", Text: "INJECTED-TEXT"},
+		{Kind: "asset", ID: "s1", Label: "a", Text: "INJECTED-TEXT"},
+	}, nil)
+	if strings.Contains(rendered, "INJECTED-TEXT") || rendered == "" {
+		t.Fatalf("text field must only affect the text kind: %q", rendered)
+	}
+}

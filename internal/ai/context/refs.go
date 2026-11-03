@@ -19,12 +19,14 @@ type RefSpec struct {
 	Label     string `json:"label"`
 	SessionID string `json:"sessionId,omitempty"`
 	Path      string `json:"path,omitempty"`
+	// Text carries the quoted content of a "text" reference, such as a command block's output.
+	Text string `json:"text,omitempty"`
 }
 
 type RefFileReader func(ctx context.Context, sessionID, path string) (string, error)
 
 // RenderRefs expands @-referenced objects into real content injected into the model: terminal tabs take
-// the current screen (tail-truncated to keep the latest output), sessions take the connection summary,
+// the current screen, text takes the quoted command output (tail-truncated) (tail-truncated to keep the latest output), sessions take the connection summary,
 // and files take content (head-truncated). All subject to the RefTotalRunes budget; per-item failures are annotated and skipped.
 func (b *Builder) RenderRefs(ctx context.Context, refs []RefSpec, readFile RefFileReader) string {
 	if len(refs) == 0 {
@@ -67,6 +69,11 @@ func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileRe
 			return fmt.Sprintf("- %s (terminal screen is empty)\n", label)
 		}
 		return fmt.Sprintf("[Reference: terminal screen of %s]\n%s\n", label, truncateRunes(screen.Text, min(RefScreenRunes, budget), true))
+	case "text":
+		if strings.TrimSpace(ref.Text) == "" {
+			return fmt.Sprintf("- %s (empty)\n", label)
+		}
+		return fmt.Sprintf("[Reference: command output %s]\n%s\n", label, truncateRunes(ref.Text, min(RefScreenRunes, budget), true))
 	case "asset":
 		if b.deps.Session == nil || ref.ID == "" {
 			return ""
