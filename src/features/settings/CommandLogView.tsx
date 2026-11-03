@@ -90,7 +90,7 @@ function CommandSkeletonRows() {
 
 // Command audit track: structured records of commands executed in sessions (device/user/session/exit code);
 // data comes from OSC 133 shell integration observation; plain output and other sources are not included.
-export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
+export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: () => void; onShowTimeline?: () => void }) {
   const [bodyRef, compact] = useCompactWidth(640);
   // In server multi-user mode, non-superadmins can only read their own command records (server-enforced), so the user filter entry is not offered.
   const account = useAuth((s) => s.user);
@@ -208,6 +208,11 @@ export function CommandLogView({ onShowAudit }: { onShowAudit: () => void }) {
           <button className="nx-segment-item is-active" disabled>
             命令
           </button>
+          {onShowTimeline && (
+            <button className="nx-segment-item" onClick={onShowTimeline}>
+              时间线
+            </button>
+          )}
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
