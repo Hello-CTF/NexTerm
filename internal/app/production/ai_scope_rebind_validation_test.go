@@ -18,7 +18,7 @@ func TestNewMissingSessionCannotUseAssetRebindR3(t *testing.T) {
 	ctxB := ipc.WithUserID(context.Background(), "owner-b")
 	services, database, transport, sessionA, _ := composeOutcomeRuntimeContext(t, "echo hi", ctxA, false)
 	assetA := scopeSessionAssetID(t, services, ctxA, sessionA)
-	assetB, err := database.AssetCreate(ctxB, store.AssetInput{Kind: "local", Name: "foreign"})
+	assetB, err := createLocalFixtureAsset(ctxB, database, store.AssetInput{Kind: "local", Name: "foreign"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestNewMissingSessionCannotUseAssetRebindR3(t *testing.T) {
 func TestPersistedMissingSessionCanRebindR3(t *testing.T) {
 	ctx := ipc.WithUserID(context.Background(), "owner-a")
 	services, database, _, _, _ := composeOutcomeRuntimeContext(t, "echo hi", ctx, false)
-	asset, err := database.AssetCreate(ctx, store.AssetInput{Kind: "local", Name: "owned local"})
+	asset, err := createLocalFixtureAsset(ctx, database, store.AssetInput{Kind: "local", Name: "owned local"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -340,6 +340,8 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		}
 	}
 	items := make([]store.InventoryItem, 0, len(parsed.Hosts))
+	multiUser := ipc.OwnerID(ctx) != ""
+	skippedAuth := false
 	warnings := make([]string, 0, len(parsed.Diagnostics))
 	for _, diagnostic := range parsed.Diagnostics {
 		warnings = append(warnings, fmt.Sprintf("%s: %s", diagnostic.Source, diagnostic.Message))
@@ -353,6 +355,12 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		if len(host.IdentityFiles) > 0 {
 			authKind = "key"
 			keyPath = &host.IdentityFiles[0]
+		}
+		authKindPtr := &authKind
+		if multiUser {
+			// Agent and key-file auth read this server's files; leave auth to the group defaults instead.
+			authKindPtr, keyPath = nil, nil
+			skippedAuth = true
 		}
 		target := map[string]any{
 			"type": "ssh-config", "alias": host.Alias, "proxyJump": host.ProxyJump,
@@ -372,8 +380,11 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 		}
 		items = append(items, store.InventoryItem{
 			Key: "host/" + host.Alias, Kind: "ssh", Name: host.Alias,
-			Host: &hostname, Port: &port, Username: optionalString(username), AuthKind: &authKind, KeyPath: keyPath, Options: options,
+			Host: &hostname, Port: &port, Username: optionalString(username), AuthKind: authKindPtr, KeyPath: keyPath, Options: options,
 		})
+	}
+	if skippedAuth {
+		warnings = append(warnings, "多用户服务端不导入 SSH Agent 与私钥文件路径（会读取服务器文件），导入的主机请通过分组默认认证或凭据库私钥连接")
 	}
 	return items, warnings, nil
 }

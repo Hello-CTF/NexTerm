@@ -127,6 +127,9 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 					}
 					switch source {
 					case "file":
+						if ipc.OwnerID(ctx) != "" {
+							return nil, store.RejectServerSSHFile()
+						}
 						plaintext = vault.ReferencedPrivateKey(input.Secret, input.Passphrase).Encode()
 					case "inline":
 						plaintext = vault.InlinePrivateKey(input.Secret, input.Passphrase).Encode()
@@ -228,6 +231,9 @@ func registerVaultCommands(dispatcher *ipc.Dispatcher, credentialVault *vault.Va
 						}
 						switch source {
 						case "file":
+							if ipc.OwnerID(ctx) != "" {
+								return nil, store.RejectServerSSHFile()
+							}
 							payload = vault.ReferencedPrivateKey(*input.Secret, payload.Passphrase)
 						case "inline":
 							payload = vault.InlinePrivateKey(*input.Secret, payload.Passphrase)

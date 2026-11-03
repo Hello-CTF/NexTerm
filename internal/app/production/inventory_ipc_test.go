@@ -496,3 +496,29 @@ func TestInventoryWatchDeleteRecreateKeepsLiveRowReadable(t *testing.T) {
 var _ fleetinventory.CommandRunner = inventoryRunnerFunc(nil)
 
 func stringPointerForInventory(value string) *string { return &value }
+
+func TestInventoryMultiUserSyncDropsServerAuthSources(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	service, database := newInventoryTestService(t, false)
+	path := filepath.Join(home, ".ssh", "config")
+	writeInventoryTestFile(t, path, "Host keyed\n  HostName k.example\n  IdentityFile ~/.ssh/id_x\nHost plain\n  HostName p.example\n")
+	owner := ipc.WithUserID(context.Background(), "owner-a")
+	result, err := service.sync(owner, inventorySyncRequest{Source: store.InventorySourceSSHConfig, Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("dropped agent and key-file auth was not reported")
+	}
+	for _, name := range []string{"keyed", "plain"} {
+		row, _, err := inventoryAssetByName(database, owner, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.KeyPath != nil || (row.AuthKind != nil && *row.AuthKind != "") {
+			t.Fatalf("%s kept server-side auth: authKind=%v keyPath=%v", name, row.AuthKind, row.KeyPath)
+		}
+	}
+}

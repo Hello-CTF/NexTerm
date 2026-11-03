@@ -433,11 +433,10 @@ func TestForwardRuntimeConnectDeviceForRecoveryUsesFullAssetConfig(t *testing.T)
 			host := "192.0.2.10"
 			port := int32(2222)
 			username := "deploy"
-			authKind := "key"
-			keyPath := "/home/deploy/.ssh/id_ed25519"
+			authKind := "password"
 			asset, err := fixture.db.AssetCreate(fixture.ctx, store.AssetInput{
 				Kind: kind, Name: "strict-host", Host: &host, Port: &port, Username: &username,
-				AuthKind: &authKind, KeyPath: &keyPath,
+				AuthKind:    &authKind,
 				OptionsJSON: `{"encoding":"gbk","startupCommand":"tmux","env":{"FOO":"bar"}}`,
 			})
 			if err != nil {
@@ -460,7 +459,7 @@ func TestForwardRuntimeConnectDeviceForRecoveryUsesFullAssetConfig(t *testing.T)
 			got := connected.Asset()
 			options, _ := got.Options.(map[string]any)
 			if options["host"] != host || options["port"] != port || options["username"] != username ||
-				options["authKind"] != authKind || options["keyPath"] != keyPath {
+				options["authKind"] != authKind {
 				t.Fatalf("recovered asset options = %+v", options)
 			}
 			if !got.StoreBacked || got.ConfigFingerprint == "" {

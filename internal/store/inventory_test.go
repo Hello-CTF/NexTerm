@@ -11,7 +11,7 @@ import (
 )
 
 func inventoryTestItem(key, name, host string) InventoryItem {
-	auth := "agent"
+	auth := "keyboard-interactive"
 	return InventoryItem{
 		Key: key, Kind: "ssh", Name: name, Host: ptr(host), Port: ptr(int32(22)), Username: ptr("deploy"), AuthKind: &auth,
 		Options: map[string]any{"jumpAssetId": "bastion", "inventoryTarget": map[string]any{"alias": key}},

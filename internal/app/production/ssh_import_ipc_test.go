@@ -1707,3 +1707,32 @@ func TestSSHImportServerHomeIncludeEscapeExcluded(t *testing.T) {
 		t.Fatalf("include-out-of-bounds diagnostics = %+v, want 1", preview.Diagnostics)
 	}
 }
+
+func TestSSHImportServerOwnerRejectsFileReferencedKeys(t *testing.T) {
+	dispatcher, database, _, _ := sshImportTestRigModeWithMaster(t, false, true)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	dir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyPath, _ := sshImportTestKeyFile(t, dir)
+	configPath := sshImportTestConfig(t, dir, keyPath)
+	owner := ipc.WithUserID(t.Context(), "user-a")
+	call := func(command, args string) ipc.Response {
+		return dispatcher.Dispatch(owner, ipc.Request{Command: command, Args: json.RawMessage(args)}, ipc.Environment{})
+	}
+	response := call("ssh_import_preview", `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`}}`)
+	var preview sshImportPreviewDTO
+	requireStoreTestResponse(t, response, &preview)
+	keyID := previewKey(t, preview, "id_ed25519").ID
+	response = call("ssh_import_apply", `{"args":{"source":"ssh-config","path":`+strconvQuote(configPath)+`,"hosts":[],"keys":[{"id":`+strconvQuote(keyID)+`,"action":"import"}]}}`)
+	if response.OK {
+		t.Fatalf("apply = %+v, want rejected", response)
+	}
+	rows, err := database.CredentialList(owner)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("credentials created: %v err=%v", rows, err)
+	}
+}
