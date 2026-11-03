@@ -53,12 +53,7 @@ export interface KillResult {
   auditError?: string;
 }
 
-type UntypedCall = (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
-
-// These commands are not in the generated manifest until the contract is regenerated, so they use the untyped path.
-const untyped: UntypedCall = (cmd, args) => (call as unknown as UntypedCall)(cmd, args);
-
 export const hostProcessesApi = {
-  list: (args: { sessionId: string }) => untyped("host_processes_list", args) as Promise<HostProcessesResult>,
-  kill: (args: KillRequest) => untyped("host_process_kill", { ...args }) as Promise<KillResult>,
+  list: (args: { sessionId: string }) => call("host_processes_list", args) as Promise<HostProcessesResult>,
+  kill: (args: KillRequest) => call("host_process_kill", { ...args }) as Promise<KillResult>,
 };

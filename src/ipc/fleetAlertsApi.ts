@@ -1,5 +1,4 @@
 // Device alerts: browser HTTP (/fleet/alerts*) and the desktop remote_fleet_alert* proxies behind one client.
-// The desktop commands are not in the generated bindings yet, so they go through the untyped call.
 
 import { call } from "./commands";
 import { WEB } from "./env";
@@ -75,15 +74,13 @@ const webClient: FleetAlertsClient = {
     request<FleetAlertSettings>("PUT", `/fleet/devices/${encodeURIComponent(deviceId)}/alert-settings`, settings, { csrf: true }),
 };
 
-// TODO(bindings): replace with generated commands once `task bindings` / `task ipc:contract` know remote_fleet_alert*.
-const untyped = call as unknown as <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-
 const remoteClient: FleetAlertsClient = {
-  list: () => untyped<FleetAlerts>("remote_fleet_alerts"),
-  ack: (ids) => untyped<{ ok: boolean; acked: number }>("remote_fleet_alerts_ack", { args: { ids } }),
-  getSettings: (deviceId) => untyped<FleetAlertSettings>("remote_fleet_alert_settings_get", { args: { deviceId } }),
-  putSettings: (deviceId, settings) =>
-    untyped<FleetAlertSettings>("remote_fleet_alert_settings_put", { args: { deviceId, settings } }),
+  list: async () => (await call("remote_fleet_alerts")) as FleetAlerts,
+  ack: async (ids) => (await call("remote_fleet_alerts_ack", { args: { ids } })) as { ok: boolean; acked: number },
+  getSettings: async (deviceId) =>
+    (await call("remote_fleet_alert_settings_get", { args: { deviceId } })) as FleetAlertSettings,
+  putSettings: async (deviceId, settings) =>
+    (await call("remote_fleet_alert_settings_put", { args: { deviceId, settings } })) as FleetAlertSettings,
 };
 
 export function fleetAlertsClient(): FleetAlertsClient {

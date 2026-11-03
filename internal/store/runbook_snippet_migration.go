@@ -63,13 +63,14 @@ func runbookSnippetMapKey(ownerID, templateID string) string {
 // snippetOwnerOf reads who holds a snippet ID. A locking read returns the latest committed row even under
 // REPEATABLE READ (MySQL/MariaDB), where a plain read would keep seeing the transaction's older snapshot;
 // SQLite ignores the clause.
-func snippetOwnerOf(tx *gorm.DB, id string, locking bool) (owner string, found bool, err error) {
+func snippetOwnerOf(ctx context.Context, tx *gorm.DB, id string, locking bool) (owner string, found bool, err error) {
 	var owners []string
-	q := tx.Model(&model.SnippetRow{}).Where("id = ?", id)
+	snippet := query.Use(tx).SnippetRow
+	q := snippet.WithContext(ctx).Where(snippet.ID.Eq(id))
 	if locking {
 		q = q.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
-	if err := q.Limit(1).Pluck("owner_id", &owners).Error; err != nil {
+	if err := q.Limit(1).Pluck(snippet.OwnerID, &owners); err != nil {
 		return "", false, err
 	}
 	if len(owners) == 0 {
@@ -91,7 +92,7 @@ func (s *Store) resolveTemplateSnippetID(ctx context.Context, tx *gorm.DB, owner
 		return "", false, err
 	}
 	derived := LegacyRunbookSnippetID(templateID)
-	owner, taken, err := snippetOwnerOf(tx, derived, false)
+	owner, taken, err := snippetOwnerOf(ctx, tx, derived, false)
 	if err != nil {
 		return "", false, err
 	}
@@ -137,12 +138,13 @@ func (s *Store) LookupRunbookTemplateSnippetID(ctx context.Context, templateID s
 // RunbookTemplateUnmigratedCount counts the caller's legacy templates that are still in the table, that is
 // the ones the startup migration could not turn into snippets.
 func (s *Store) RunbookTemplateUnmigratedCount(ctx context.Context) (int64, error) {
-	statement := s.db.WithContext(ctx).Model(&model.RunbookTemplateRow{})
+	template := query.Use(s.db).RunbookTemplateRow
+	statement := template.WithContext(ctx)
 	if owner := ipc.OwnerID(ctx); owner != "" {
-		statement = statement.Where("owner_id = ?", owner)
+		statement = statement.Where(template.OwnerID.Eq(owner))
 	}
-	var count int64
-	if err := statement.Count(&count).Error; err != nil {
+	count, err := statement.Count()
+	if err != nil {
 		return 0, dbError(err)
 	}
 	return count, nil
@@ -154,13 +156,14 @@ func (s *Store) RunbookTemplateUnmigratedCount(ctx context.Context) (int64, erro
 // leftover row removed. No sync tombstone is written, so other devices keep
 // their template until they migrate it to the same snippet ID.
 func (s *Store) migrateRunbookTemplatesToSnippets(ctx context.Context) error {
-	var templates []model.RunbookTemplateRow
-	if err := s.db.WithContext(ctx).Order("owner_id, name, id").Find(&templates).Error; err != nil {
+	table := query.Use(s.db).RunbookTemplateRow
+	templates, err := table.WithContext(ctx).Order(table.OwnerID, table.Name, table.ID).Find()
+	if err != nil {
 		return err
 	}
 	for _, template := range templates {
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return s.migrateRunbookTemplate(ctx, tx, template)
+			return s.migrateRunbookTemplate(ctx, tx, *template)
 		})
 		if err != nil {
 			return err
@@ -188,13 +191,14 @@ func (s *Store) migrateRunbookTemplate(ctx context.Context, tx *gorm.DB, templat
 	if err != nil {
 		return err
 	}
-	if owner, held, err := snippetOwnerOf(tx, id, false); err != nil {
+	if owner, held, err := snippetOwnerOf(ctx, tx, id, false); err != nil {
 		return err
 	} else if !held || owner != template.OwnerID {
 		var maxSort *int64
-		if err := tx.Model(&model.SnippetRow{}).
-			Where("owner_id = ? AND group_id IS NULL", template.OwnerID).
-			Select("MAX(sort)").Scan(&maxSort).Error; err != nil {
+		snippet := query.Use(tx).SnippetRow
+		if err := snippet.WithContext(ctx).
+			Where(snippet.OwnerID.Eq(template.OwnerID), snippet.GroupID.IsNull()).
+			Select(snippet.Sort.Max()).Scan(&maxSort); err != nil {
 			return err
 		}
 		sort := int64(0)
@@ -210,7 +214,9 @@ func (s *Store) migrateRunbookTemplate(ctx context.Context, tx *gorm.DB, templat
 			return err
 		}
 	}
-	return tx.Where("owner_id = ? AND id = ?", template.OwnerID, template.ID).Delete(&model.RunbookTemplateRow{}).Error
+	table := query.Use(tx).RunbookTemplateRow
+	_, err = table.WithContext(ctx).Where(table.OwnerID.Eq(template.OwnerID), table.ID.Eq(template.ID)).Delete()
+	return err
 }
 
 // placeTemplateSnippet inserts the converted snippet. If the ID was taken in the meantime (a row count of zero
@@ -219,11 +225,11 @@ func (s *Store) migrateRunbookTemplate(ctx context.Context, tx *gorm.DB, templat
 // that is remembered like the one resolveTemplateSnippetID allocates. The final ID is returned.
 func (s *Store) placeTemplateSnippet(ctx context.Context, tx *gorm.DB, ownerID, templateID string, row model.SnippetRow) (string, error) {
 	for attempt := 0; attempt < 4; attempt++ {
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+		if err := query.Use(tx).SnippetRow.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row); err != nil {
 			return "", err
 		}
 		// The owner is re-read whatever the row count says, because drivers differ in what a skipped insert reports.
-		owner, held, err := snippetOwnerOf(tx, row.ID, true)
+		owner, held, err := snippetOwnerOf(ctx, tx, row.ID, true)
 		if err != nil {
 			return "", err
 		}

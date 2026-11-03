@@ -40,10 +40,9 @@ export interface AuditTimelinePage {
   nextCursor: AuditTimelineCursor | null;
 }
 
-// Hand-written until the IPC contract is regenerated with the audit_timeline command.
 export const auditTimelineApi = {
   page: async (request: AuditTimelineRequest): Promise<AuditTimelinePage> => {
-    const result = (await call("audit_timeline" as never, request as never)) as unknown as Partial<AuditTimelinePage> | null;
+    const result = (await call("audit_timeline", request)) as Partial<AuditTimelinePage> | null;
     return { items: result?.items ?? [], nextCursor: result?.nextCursor ?? null };
   },
 };

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
-	"github.com/Hello-CTF/NexTerm/internal/store/model"
+	"github.com/Hello-CTF/NexTerm/internal/store/query"
 )
 
 const (
@@ -71,25 +71,25 @@ type Overview struct {
 }
 
 // List returns the owner's firing alerts and recent unacknowledged events.
-// GEN-TODO: DeviceAlertState / DeviceAlertEvent owner queries.
 func (s *Service) List(ctx context.Context, ownerID string) (*Overview, error) {
 	out := &Overview{Active: []ActiveAlert{}, Events: []EventView{}}
-	var states []model.DeviceAlertState
-	live := s.db.Table("user_device").Select("id").Where("revoked_at IS NULL")
-	err := s.db.WithContext(ctx).Model(&model.DeviceAlertState{}).
-		Where("owner_id = ? AND status = ? AND device_id IN (?)", ownerID, StatusFiring, live).
-		Order("device_id ASC, rule_key ASC").Find(&states).Error
+	q := query.Use(s.db)
+	live := q.UserDevice.WithContext(ctx).Select(q.UserDevice.ID).Where(q.UserDevice.RevokedAt.IsNull())
+	states, err := q.DeviceAlertState.WithContext(ctx).
+		Where(q.DeviceAlertState.OwnerID.Eq(ownerID), q.DeviceAlertState.Status.Eq(StatusFiring),
+			q.DeviceAlertState.Columns(q.DeviceAlertState.DeviceID).In(live)).
+		Order(q.DeviceAlertState.DeviceID, q.DeviceAlertState.RuleKey).Find()
 	if err != nil {
 		return nil, fmt.Errorf("list active alerts: %w", err)
 	}
 	for _, st := range states {
 		out.Active = append(out.Active, ActiveAlert{DeviceID: st.DeviceID, Rule: st.RuleKey, Status: st.Status, Since: st.Since, Value: st.LastValue})
 	}
-	var events []model.DeviceAlertEvent
 	since := s.now().Add(-EventListWindow).UnixMilli()
-	err = s.db.WithContext(ctx).Model(&model.DeviceAlertEvent{}).
-		Where("owner_id = ? AND acked_at IS NULL AND ts >= ? AND device_id IN (?)", ownerID, since, live).
-		Order("ts DESC, id DESC").Limit(MaxListedEvents).Find(&events).Error
+	events, err := q.DeviceAlertEvent.WithContext(ctx).
+		Where(q.DeviceAlertEvent.OwnerID.Eq(ownerID), q.DeviceAlertEvent.AckedAt.IsNull(), q.DeviceAlertEvent.TS.Gte(since),
+			q.DeviceAlertEvent.Columns(q.DeviceAlertEvent.DeviceID).In(live)).
+		Order(q.DeviceAlertEvent.TS.Desc(), q.DeviceAlertEvent.ID.Desc()).Limit(MaxListedEvents).Find()
 	if err != nil {
 		return nil, fmt.Errorf("list alert events: %w", err)
 	}
@@ -104,7 +104,6 @@ func (s *Service) List(ctx context.Context, ownerID string) (*Overview, error) {
 
 // Ack acknowledges the owner's events among ids; other owners' ids are ignored silently.
 // It returns how many rows changed.
-// GEN-TODO: DeviceAlertEvent ack update.
 func (s *Service) Ack(ctx context.Context, ownerID string, ids []string) (int64, error) {
 	if len(ids) == 0 || len(ids) > MaxAckIDs {
 		return 0, ipc.BadParam(fmt.Errorf("确认的告警数量需在 1-%d 之间", MaxAckIDs))
@@ -114,11 +113,12 @@ func (s *Service) Ack(ctx context.Context, ownerID string, ids []string) (int64,
 			return 0, ipc.BadParam(errors.New("告警 ID 不能为空"))
 		}
 	}
-	res := s.db.WithContext(ctx).Model(&model.DeviceAlertEvent{}).
-		Where("owner_id = ? AND acked_at IS NULL AND id IN ?", ownerID, ids).
-		Update("acked_at", s.now().UnixMilli())
-	if res.Error != nil {
-		return 0, fmt.Errorf("ack alert events: %w", res.Error)
+	q := query.Use(s.db)
+	res, err := q.DeviceAlertEvent.WithContext(ctx).
+		Where(q.DeviceAlertEvent.OwnerID.Eq(ownerID), q.DeviceAlertEvent.AckedAt.IsNull(), q.DeviceAlertEvent.ID.In(ids...)).
+		Update(q.DeviceAlertEvent.AckedAt, s.now().UnixMilli())
+	if err != nil {
+		return 0, fmt.Errorf("ack alert events: %w", err)
 	}
 	return res.RowsAffected, nil
 }
@@ -197,14 +197,13 @@ func (in SettingsInput) Validate() error {
 }
 
 // GetSettings returns the effective settings of a device of the given kind.
-// GEN-TODO: DeviceAlertSettings find by device.
 func (s *Service) GetSettings(ctx context.Context, deviceID, kind string) (*EffectiveSettings, error) {
-	var row model.DeviceAlertSettings
-	err := s.db.WithContext(ctx).Model(&model.DeviceAlertSettings{}).Where("device_id = ?", deviceID).Take(&row).Error
+	q := query.Use(s.db)
+	row, err := q.DeviceAlertSettings.WithContext(ctx).Where(q.DeviceAlertSettings.DeviceID.Eq(deviceID)).Take()
 	var set *Settings
 	switch {
 	case err == nil:
-		set = &row
+		set = row
 	case !errors.Is(err, gorm.ErrRecordNotFound):
 		return nil, fmt.Errorf("load alert settings: %w", err)
 	}
@@ -240,9 +239,9 @@ func (s *Service) PutSettings(ctx context.Context, ownerID, deviceID, kind strin
 		QuietEnabled: *in.QuietEnabled, QuietStart: *in.QuietStart, QuietEnd: *in.QuietEnd, QuietTZ: in.QuietTZ,
 		UpdatedAt: s.now().UnixMilli(),
 	}
-	err := s.db.WithContext(ctx).Model(&model.DeviceAlertSettings{}).Clauses(clause.OnConflict{
+	err := query.Use(s.db).DeviceAlertSettings.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "device_id"}}, UpdateAll: true,
-	}).Create(row).Error
+	}).Create(row)
 	if err != nil {
 		return nil, fmt.Errorf("save alert settings: %w", err)
 	}

@@ -37,14 +37,14 @@ export interface ConnectivityResult {
   durationMs: number;
 }
 
-type UntypedCall = (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
-
-// These commands are not in the generated manifest until the contract is regenerated, so they use the untyped path.
-const untyped: UntypedCall = (cmd, args) => (call as unknown as UntypedCall)(cmd, args);
-
 export const hostPortsApi = {
   list: (args: { sessionId: string; processes?: boolean; quietMs?: number }) =>
-    untyped("host_ports_list", args) as Promise<HostPortsResult>,
+    call("host_ports_list", { ...args, processes: args.processes ?? false }) as Promise<HostPortsResult>,
   connectivityTest: (args: ConnectivityRequest) =>
-    untyped("host_connectivity_test", { ...args }) as Promise<ConnectivityResult>,
+    call("host_connectivity_test", {
+      ...args,
+      host: args.host ?? "",
+      port: args.port ?? 0,
+      url: args.url ?? "",
+    }) as Promise<ConnectivityResult>,
 };
