@@ -19,6 +19,7 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
 import { PersistenceHintBar } from "./PersistenceHintBar";
+import { PortDiscoveryBanner } from "../preview/PortDiscoveryBanner";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
 import {
   dismissPersistenceHint,
@@ -2474,6 +2475,8 @@ export function TerminalPane({
           onDismiss={() => dismissPersistenceHint(storeTabId, hintKey)}
         />
       )}
+
+      {!containerId && <PortDiscoveryBanner sessionId={sessionId} />}
 
       <div className="nx-terminal-body relative flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1" onContextMenu={openTerminalMenu}>
