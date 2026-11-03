@@ -317,10 +317,25 @@ func (s *Service) transitionPresence(deviceID string, online bool) {
 		kind, action = auditKindDeviceOffline, "offline"
 	}
 	ctx := context.Background()
+	if owner := deviceOwnerID(ctx, query.Use(s.db), deviceID); owner != "" {
+		ctx = ipc.WithUserID(ctx, owner)
+	}
 	_ = s.audit(ctx, kind, auditPayload{Action: action, DeviceID: deviceID, Requester: deviceID, Outcome: "allow"})
 	if s.events != nil {
 		_ = ipc.Emit(ctx, s.events, ipc.TopicDeviceStatus, ipc.DeviceStatusEvent{DeviceID: deviceID, Online: online})
 	}
+}
+
+// deviceOwnerID returns the account that owns the device, revoked or not, so device-originated audits stay visible to that owner.
+// An unknown device yields an empty owner and a warning; callers must not fail on it.
+func deviceOwnerID(ctx context.Context, q *query.Query, deviceID string) string {
+	device := q.UserDevice
+	row, err := device.WithContext(ctx).Select(device.UserID).Where(device.ID.Eq(deviceID)).First()
+	if err != nil {
+		slog.Warn("failed to resolve device owner for audit", "device", deviceID, "error", err)
+		return ""
+	}
+	return row.UserID
 }
 
 type deviceGrant struct {
@@ -1286,7 +1301,7 @@ func (s *Service) SetCurrentURL(ctx context.Context, deviceID, url, reason strin
 		}
 		auditRow := store.AuditRow{
 			TS: s.now(), AssetID: &deviceID, Source: auditSourceFleet, Kind: auditKindDeviceFailover,
-			PayloadJSON: string(payload), OwnerID: ipc.OwnerID(ctx),
+			PayloadJSON: string(payload), OwnerID: deviceOwnerID(ctx, q, deviceID),
 		}
 		if err := q.AuditRow.WithContext(ctx).Create(&auditRow); err != nil {
 			return dbError(err)

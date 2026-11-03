@@ -7,6 +7,8 @@ import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { IconHistory, IconRefresh } from "../../ui/icons";
+import { KIND_LABELS } from "./auditLabels";
+import { AuditTimelineView } from "./AuditTimelineView";
 import { CommandLogView } from "./CommandLogView";
 import { useCompactWidth } from "./useCompactWidth";
 
@@ -30,18 +32,6 @@ const FILTERS: { value: SourceFilter; label: string }[] = [
   { value: "ai", label: "AI" },
   { value: "fleet", label: "设备" },
 ];
-
-// Chinese labels for fleet device audit kinds (audit_log.asset_id holds the device ID).
-const KIND_LABELS: Record<string, string> = {
-  device_enroll: "设备接入",
-  device_online: "设备上线",
-  device_offline: "设备离线",
-  device_revoke: "设备吊销",
-  device_autostart: "设备开机自启",
-  device_terminal_toggle: "设备远程终端开关",
-  device_failover: "设备切换连接",
-  device_terminal: "设备终端",
-};
 
 function sourceLabel(source: string): string {
   if (source === "ai") return "AI";
@@ -110,7 +100,7 @@ function AuditSkeletonRows() {
 export function AuditView() {
   const [bodyRef, compact] = useCompactWidth(640);
   const user = useAuth((s) => s.user);
-  const [view, setView] = useState<"audit" | "command">("audit");
+  const [view, setView] = useState<"audit" | "command" | "timeline">("audit");
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [source, setSource] = useState<SourceFilter>("");
   const [devices, setDevices] = useState<FleetDevice[] | null>(null);
@@ -187,7 +177,10 @@ export function AuditView() {
   }, [source, deviceId, loadFirstPage]);
 
   if (view === "command") {
-    return <CommandLogView onShowAudit={() => setView("audit")} />;
+    return <CommandLogView onShowAudit={() => setView("audit")} onShowTimeline={() => setView("timeline")} />;
+  }
+  if (view === "timeline") {
+    return <AuditTimelineView onShowAudit={() => setView("audit")} onShowCommand={() => setView("command")} />;
   }
 
   const knownTotal = total !== null ? total : lastPageFull ? null : entries.length;
@@ -223,6 +216,9 @@ export function AuditView() {
           </button>
           <button className="nx-segment-item" onClick={() => setView("command")}>
             命令
+          </button>
+          <button className="nx-segment-item" onClick={() => setView("timeline")}>
+            时间线
           </button>
         </div>
         <span className="nx-hint">
