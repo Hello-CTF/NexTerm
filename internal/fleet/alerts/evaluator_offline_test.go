@@ -288,7 +288,7 @@ func TestOfflineQuietHoursDatabase(t *testing.T) {
 		if len(evs) != 1 || evs[0].Kind != KindFired || evs[0].DurationMS != 60*minMS {
 			t.Fatalf("events = %+v", evs)
 		}
-		h.tick(e, baseTS+61*minMS)
+		h.tick(e, baseTS+71*minMS)
 		if len(h.events(dev)) != 1 {
 			t.Fatalf("repeat: %+v", h.events(dev))
 		}
@@ -601,7 +601,7 @@ func TestOfflineRecoveryHoldDatabase(t *testing.T) {
 			t.Fatalf("events = %+v", evs)
 		}
 	})
-	t.Run("recovery hold survives a restart", func(t *testing.T) {
+	t.Run("recovery hold restarts after a restart", func(t *testing.T) {
 		h, e, p, _, dev := offlineSetup(t, "off-hold-restart")
 		h.tick(e, baseTS+15*minMS)
 		h.tick(e, baseTS+20*minMS)
@@ -613,13 +613,14 @@ func TestOfflineRecoveryHoldDatabase(t *testing.T) {
 		restart := baseTS + 31*minMS
 		h.clock.Store(restart)
 		e2 := h.offlineEvaluator(p)
-		h.tick(e2, restart+2*minMS) // warm-up ends
-		h.tick(e2, restart+3*minMS)
-		if len(h.events(dev)) != 1 {
-			t.Fatalf("resolved too early: %+v", h.events(dev))
+		h.tick(e2, restart+2*minMS) // warm-up ends; the hold starts over here
+		h.tick(e2, restart+5*minMS)
+		if len(h.events(dev)) != 1 || h.status(dev) != StatusFiring {
+			t.Fatalf("resolved on the old hold: %q %+v", h.status(dev), h.events(dev))
 		}
-		h.tick(e2, baseTS+36*minMS)
-		if evs := h.events(dev); len(evs) != 2 || evs[1].Kind != KindResolved {
+		h.tick(e2, restart+7*minMS)
+		evs := h.events(dev)
+		if len(evs) != 2 || evs[1].Kind != KindResolved || evs[1].DurationMS != restart+2*minMS-(baseTS+10*minMS) {
 			t.Fatalf("events = %+v", evs)
 		}
 	})
@@ -887,6 +888,38 @@ func TestOfflineRestartBaselineDatabase(t *testing.T) {
 		h.tick(e, baseTS+2*minMS)
 		if h.status(dev) != StatusDormant {
 			t.Fatalf("status = %q", h.status(dev))
+		}
+	})
+}
+
+func TestDisablingRuleAcknowledgesFiredDatabase(t *testing.T) {
+	t.Run("threshold rule", func(t *testing.T) {
+		h := newHarness(t)
+		owner, dev := h.device("ack-off-cpu")
+		e := h.evaluator()
+		h.cpu(dev, baseTS-20*minMS, baseTS+20*minMS, 95)
+		h.tick(e, baseTS+2*minMS)
+		if got := listKinds(t, h, owner, dev); got["cpu:fired"] != 1 {
+			t.Fatalf("after fire: %v", got)
+		}
+		h.settings(owner, dev, func(s *Settings) { s.CPUEnabled = ptr(false) })
+		h.tick(e, baseTS+3*minMS)
+		got := listKinds(t, h, owner, dev)
+		if got["cpu:fired"] != 0 || got["cpu:resolved"] != 0 {
+			t.Fatalf("after disabling: %v", got)
+		}
+	})
+	t.Run("offline rule", func(t *testing.T) {
+		h, e, _, owner, dev := offlineSetup(t, "ack-off-offline")
+		h.tick(e, baseTS+15*minMS)
+		h.tick(e, baseTS+20*minMS)
+		if got := listKinds(t, h, owner, dev); got["offline:fired"] != 1 {
+			t.Fatalf("after fire: %v", got)
+		}
+		h.settings(owner, dev, func(s *Settings) { s.OfflineEnabled = ptr(false) })
+		h.tick(e, baseTS+21*minMS)
+		if got := listKinds(t, h, owner, dev); got["offline:fired"] != 0 {
+			t.Fatalf("after disabling: %v", got)
 		}
 	})
 }

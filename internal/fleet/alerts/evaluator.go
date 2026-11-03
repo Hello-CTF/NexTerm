@@ -95,6 +95,8 @@ type change struct {
 	state model.DeviceAlertState
 	event *model.DeviceAlertEvent
 	audit *model.AuditRow
+	// ackFired acknowledges the rule's unacknowledged fired events (the rule was switched off).
+	ackFired bool
 }
 
 // Tick runs one evaluation pass at the injected clock's current time.
@@ -205,6 +207,11 @@ func (e *Evaluator) evaluateDevice(ctx context.Context, now int64, dev *model.Us
 	err = e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for i := range changes {
 			c := &changes[i]
+			if c.ackFired {
+				if err := ackFired(ctx, tx, c.state.DeviceID, c.state.RuleKey, now); err != nil {
+					return err
+				}
+			}
 			if err := upsertState(ctx, tx, &c.state); err != nil {
 				return err
 			}
@@ -268,6 +275,7 @@ func (e *Evaluator) thresholdChanges(ctx context.Context, now int64, dev *model.
 			DeviceID: dev.ID, RuleKey: string(rule), OwnerID: dev.UserID, Status: next.Status,
 			Since: next.Since, FiredAt: next.FiredAt, ResolvedAt: next.ResolvedAt, LastValue: next.LastValue, UpdatedAt: now,
 		}}
+		c.ackFired = !enabled && prev.Status != StatusOK
 		if emit != nil {
 			c.event, c.audit = buildRecords(now, dev, rule, emit)
 		}

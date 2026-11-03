@@ -86,6 +86,7 @@ func (e *Evaluator) offlineChanges(now int64, dev *model.UserDevice, set *Settin
 		DeviceID: dev.ID, RuleKey: string(RuleOffline), OwnerID: dev.UserID, Status: next.Status,
 		Since: next.Since, FiredAt: next.FiredAt, ResolvedAt: next.ResolvedAt, RecoveringSince: next.RecoveringSince, UpdatedAt: now,
 	}}
+	c.ackFired = !enabled && prev.Status != StatusOK
 	if emit != nil {
 		c.event, c.audit = buildOfflineRecords(now, dev, emit)
 	}
