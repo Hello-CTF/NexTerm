@@ -213,6 +213,23 @@ describe("link stitching rules", () => {
     expect(urls(hard(`│ ${a}  │`, "│ b1/c2                │"), 40)).toEqual([a]);
   });
 
+  it("allows right padding that mirrors the left padding of the box", () => {
+    const a = "https://a.example/" + "a".repeat(10);
+    const box = (text: string, width: number) => `│  ${text.padEnd(width)}  │`;
+    const w = a.length;
+    expect(urls(hard(box(a, w), box("b1/c2", w)), 40)).toEqual([a + "b1/c2"]);
+    expect(urls(hard(box(a, w), box("b1/c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7".slice(0, w), w), box("t1/u2", w)), 60)).toEqual([
+      a + "b1/c2d3e4f5g6h7i8j9k0l1m2n3o4p5q6r7".slice(0, w) + "t1/u2",
+    ]);
+    // One cell more than the left side has is still not a border.
+    expect(urls(hard(`│  ${a}   │`, box("b1/c2", w)), 40)).toEqual([a]);
+    // Short boxed URLs are not stitched to the next boxed row.
+    const url = "https://a.com/docs";
+    for (const next of ["v1.2.3", "/next"]) {
+      expect(urls(hard(`│  ${url}      │`, `│  ${next.padEnd(url.length + 4)}  │`), 40), next).toEqual([url]);
+    }
+  });
+
   it("does not join a full URL row with a boxed short word", () => {
     const full = "https://a.example/" + "a".repeat(22);
     expect(urls(hard(full, "│ Done │"), 40)).toEqual([full]);

@@ -54,13 +54,19 @@ const HTTP_SCHEME = /https?:\/\//i;
 const ONLY_TRAILING_DECOR = /^[\s│┃║|]*$/;
 const BORDER_GAP = /^(\s*)[│┃║|]/;
 
+const LEFT_BORDER_PAD = /[│┃║|]( *)$/;
+
 /**
- * Index (in `line.text`) of the right border that follows `end` after at most
- * one blank cell, or -1 when the text does not reach a border.
+ * Index (in `line.text`) of the right border that follows `end`, or -1 when
+ * the text does not reach a border. The blank cells allowed before it mirror
+ * the padding after the left border of the text starting at `start`, and are
+ * at least one.
  */
-function borderIndexAfter(line: LogicalLine, end: number): number {
+function borderIndexAfter(line: LogicalLine, start: number, end: number): number {
   const m = BORDER_GAP.exec(line.text.slice(end));
-  return m !== null && m[1].length <= 1 ? end + m[1].length : -1;
+  if (m === null) return -1;
+  const pad = LEFT_BORDER_PAD.exec(line.text.slice(0, start));
+  return m[1].length <= Math.max(1, pad ? pad[1].length : 0) ? end + m[1].length : -1;
 }
 const LEFT_PREFIX = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])+/;
 const LEFT_PREFIX_ONLY = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])*$/;
@@ -209,7 +215,7 @@ function continuationFragment(
   // same box as the previous row; a short row followed by a border is just
   // padding.
   if (fragment.startsWith("[")) return null;
-  const borderIdx = borderIndexAfter(line, end);
+  const borderIdx = borderIndexAfter(line, from, end);
   const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
   const full =
     endCol >= cols - 2 ||
@@ -269,7 +275,7 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       const urlEnd = m.index + m[0].length;
       const endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
-      const borderIdx = borderIndexAfter(line, urlEnd);
+      const borderIdx = borderIndexAfter(line, m.index, urlEnd);
       const state: ChainState = {
         prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
         bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
