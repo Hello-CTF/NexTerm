@@ -22,10 +22,12 @@ type LayoutReport struct {
 type Report struct {
 	OwnerID                    string
 	DeferredNoActiveSuperadmin bool
-	Ownership                  OwnershipReport
-	Layout                     LayoutReport
-	AI                         AIHistoryReport
-	AISettings                 AISettingsReport
+	// DeviceAuditOwners counts fleet audit rows given to their device owner; it is not part of Ownership.Assigned.
+	DeviceAuditOwners int64
+	Ownership         OwnershipReport
+	Layout            LayoutReport
+	AI                AIHistoryReport
+	AISettings        AISettingsReport
 }
 
 // Migrate attributes ownerless data to the first active superadmin when an
@@ -41,6 +43,11 @@ func Migrate(ctx context.Context, database *gorm.DB, shared bool) (Report, error
 	var report Report
 	err := database.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if !shared {
+			backfilled, err := backfillDeviceAuditOwners(tx)
+			if err != nil {
+				return err
+			}
+			report.DeviceAuditOwners = backfilled
 			pending, err := dataMigrationPending(tx)
 			if err != nil {
 				return err
