@@ -186,3 +186,51 @@ func TestAddRuleDedupesByScope(t *testing.T) {
 		t.Fatal("rule covers unlisted program")
 	}
 }
+
+func TestSessionMemoryNeverOverridesModeDecision(t *testing.T) {
+	ruling := Confirm(KindWriteFS, "write file")
+	memories := map[string]func() *Memory{
+		"none": func() *Memory { return NewMemory() },
+		"kind": func() *Memory {
+			m := NewMemory()
+			m.Remember(ruling)
+			return m
+		},
+		"path": func() *Memory {
+			m := NewMemory()
+			m.AddPathRule("write_file", "/var/log/**")
+			return m
+		},
+	}
+	for name, build := range memories {
+		for _, mode := range []Mode{ReadOnly, ReadWrite, Silent, Unattended} {
+			for _, production := range []bool{false, true} {
+				want := ActionAsk
+				switch mode {
+				case ReadOnly, Unattended:
+					want = ActionDeny
+				case Silent:
+					want = ActionAllow
+				case ReadWrite:
+					if !production && name != "none" {
+						want = ActionAllow
+					}
+				}
+				label := name + "/" + string(mode)
+				if production {
+					label += "/production"
+				}
+				t.Run(label, func(t *testing.T) {
+					resource := Resource{Action: "write_file", Path: "/var/log/app.log"}
+					if production {
+						resource.Environment = "production"
+					}
+					got := DecideResource(Config{Mode: mode}, ruling, build(), resource)
+					if got.Action != want {
+						t.Fatalf("action = %q, want %q (%+v)", got.Action, want, got)
+					}
+				})
+			}
+		}
+	}
+}

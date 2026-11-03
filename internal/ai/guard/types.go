@@ -209,7 +209,9 @@ func DecideResource(config Config, ruling Ruling, memory *Memory, resource Resou
 		memory = nil
 	}
 	decision := Decide(config, ruling, memory)
-	if ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
+	// A path grant only answers a pending confirmation; it never lifts a read-only or unattended denial.
+	mode := config.Normalized().Mode
+	if decision.Action == ActionAsk && (mode == ReadWrite || mode == Silent) && ruling.Risk == NeedsConfirm && memory != nil && memory.CoversPathRule(resource.Action, resource.Path) {
 		decision = Decision{Action: ActionAllow, Ruling: ruling, Reason: "本会话路径授权"}
 	}
 	decision.Production = production
