@@ -664,7 +664,6 @@ var modelStaticText = map[string]string{
 	"提醒时间最远只能设定在 30 天内":                              "reminder time can be at most 30 days in the future",
 	"当前运行缺少会话标识，无法投递提醒":                              "current run has no conversation ID, so the reminder cannot be delivered",
 	"路径越界：规范化后仍包含 ..":                                "path escapes its boundary: normalized path still contains ..",
-	"该操作必须逐次确认，不支持永久授权":                              "this operation requires confirmation every time and does not support persistent grants",
 	"该操作不支持永久授权":                                     "this operation does not support persistent grants",
 	"永久授权未配置":                                        "persistent grants are not configured",
 	"无法确定设备身份，不能保存永久授权":                              "cannot determine device identity, so the persistent grant cannot be saved",
@@ -802,6 +801,7 @@ var modelStaticText = map[string]string{
 	"只读权限模式禁止此操作":                    "read-only permission mode forbids this operation",
 	"无人值守执行无法人工确认，已拒绝":               "unattended execution cannot be confirmed by a user; denied",
 	"路径规则授权":                         "authorized by path rule",
+	"授权规则":                           "authorized by grant rule",
 	"设备长期授权":                         "persistent device grant",
 
 	"命令嵌套过深，无法安全分析":        "command nesting is too deep for safe analysis",

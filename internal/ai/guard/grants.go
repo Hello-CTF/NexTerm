@@ -585,7 +585,7 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	grant, grantOK := entry.grants[deviceID]
 	grant.Kinds = append([]GrantKind(nil), grant.Kinds...)
 	g.mu.RUnlock()
-	grantCovers := grantOK && mode != Unattended && grant.Covers(OperationGrantKind(operation))
+	grantCovers := grantOK && mode != Unattended && grant.Covers(OperationGrantKind(operation)) && Rememberable(ruling)
 	if ruleOK || grantCovers {
 		if err := g.authorizeTarget(ctx, deviceID); err != nil {
 			return Decision{Action: ActionDeny, Ruling: ruling, Reason: err.Error()}
@@ -593,7 +593,11 @@ func (g *Grants) EvaluateResource(ctx context.Context, config Config, ruling Rul
 	}
 	if ruleOK {
 		g.emitAudit(ctx, GrantAuditEvent{Action: "use_rule", DeviceID: deviceID, Operation: action, RunID: runID, RuleID: rule.ID, RulePath: rule.Path})
-		return Decision{Action: ActionAllow, Ruling: ruling, Reason: "路径规则授权", Authorization: &AuthorizationBinding{Kind: "rule", DeviceID: deviceID, RuleID: rule.ID, Generation: rule.generation}}
+		reason := "路径规则授权"
+		if !RuleActionNeedsPath(rule.Action) {
+			reason = "授权规则"
+		}
+		return Decision{Action: ActionAllow, Ruling: ruling, Reason: reason, Authorization: &AuthorizationBinding{Kind: "rule", DeviceID: deviceID, RuleID: rule.ID, Generation: rule.generation}}
 	}
 	if grantCovers {
 		g.emitAudit(ctx, GrantAuditEvent{Action: "use", DeviceID: deviceID, Kinds: grant.Kinds, Operation: operation, RunID: runID})
