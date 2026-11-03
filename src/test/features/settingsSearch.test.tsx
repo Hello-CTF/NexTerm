@@ -40,7 +40,8 @@ vi.mock("../../features/settings/MemoryCard", () => ({ MemoryCard: () => null })
 vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () => null }));
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 
-import { SECTION_SEARCH, SETTINGS_ITEMS } from "../../features/settings/settingsIndex";
+import { setWindowsPlatform } from "../../app/platform";
+import { SECTION_SEARCH, SETTINGS_ITEMS, searchSettings } from "../../features/settings/settingsIndex";
 import { SettingsView } from "../../features/settings/SettingsView";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
@@ -95,6 +96,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setWindowsPlatform(false);
   mounted?.unmount();
   mounted = undefined;
   useAuth.setState({ user: null, dek: null, gate: "ready", pendingRecoveryKey: null, error: null, status: null });
@@ -325,6 +327,7 @@ describe("Settings search focus and anchors", () => {
       unlocked: true,
       autoLockMinutes: 5,
     });
+    setWindowsPlatform(true);
     mounted = withClient(createElement(SettingsView));
     await flush();
     for (const toggle of [...mounted.container.querySelectorAll("button")].filter(
@@ -334,8 +337,17 @@ describe("Settings search focus and anchors", () => {
     }
     await flush();
     const missing = SETTINGS_ITEMS.filter(
-      (item) => item.id !== "close-to-tray" && item.id !== "ctrl-v-paste" && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
+      (item) => (item.available?.() ?? true) && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
     ).map((item) => item.id);
     expect(missing).toEqual([]);
+    expect(SETTINGS_ITEMS.find((item) => item.id === "ctrl-v-paste")?.available?.()).toBe(true);
+  });
+
+  it("searches the Ctrl+V paste setting by vim and ^V terms only on Windows", () => {
+    const sections = [{ id: "settings-terminal", label: "终端" }];
+    const ids = (q: string) => searchSettings(q, sections).flatMap((r) => (r.kind === "item" ? [r.itemId] : []));
+    expect(ids("vim")).not.toContain("ctrl-v-paste");
+    setWindowsPlatform(true);
+    for (const q of ["vim", "^V", "quoted-insert", "块选择"]) expect(ids(q)).toContain("ctrl-v-paste");
   });
 });
