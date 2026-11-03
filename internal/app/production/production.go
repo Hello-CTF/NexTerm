@@ -159,6 +159,7 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	if services.sessionAggregate == nil && services.Sessions != nil {
 		services.sessionAggregate = newSessionAggregateService(services.Sessions, services.sshConnector, services.Events)
 		services.sessionAggregate.localDigest = localHelperDigest(services.LocalHelper)
+		services.sessionAggregate.localInstance = localHelperInstanceID(services.LocalHelper)
 	}
 	if services.inventory == nil && services.Store != nil {
 		services.inventory = newInventoryService(services.Store, services.Events, services.desktop, services.dataDir,
