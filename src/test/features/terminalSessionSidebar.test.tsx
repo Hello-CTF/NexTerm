@@ -416,6 +416,16 @@ describe("session sidebar placement", () => {
     expect(hostTabs()).toEqual([]);
   });
 
+  it("decides a narrow pane before the first paint without a ResizeObserver callback", async () => {
+    setSessionSidebarOpen(true);
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const width = this.classList.contains("nx-pane") ? 400 : 0;
+      return { x: 0, y: 0, top: 0, left: 0, right: width, bottom: 0, width, height: 0, toJSON: () => ({}) } as DOMRect;
+    });
+    await mountPane();
+    expect(sidebar()).toBeNull();
+  });
+
   it("does not mount the sidebar in a narrow pane and explains the shortcut", async () => {
     stubPaneWidth(400);
     const pushToast = vi.fn();

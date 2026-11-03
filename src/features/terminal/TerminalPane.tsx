@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
@@ -1046,6 +1046,11 @@ export function TerminalPane({
   }, [pushToast, toggleSidebarHere]);
 
   // The sidebar is mounted, not just hidden, so a narrow pane must be known in JS; 560px matches the container query.
+  useLayoutEffect(() => {
+    const width = paneRef.current?.getBoundingClientRect().width ?? 0;
+    setPaneNarrow(width > 0 && width <= 560);
+  }, []);
+
   useEffect(() => {
     const pane = paneRef.current;
     if (!pane || typeof ResizeObserver === "undefined") return;
