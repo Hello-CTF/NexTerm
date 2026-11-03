@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useUi } from "../../app/store";
 
 interface PaneReport {
   tabId: string;
@@ -20,7 +21,15 @@ export const useSessionSidebarHost = create<SessionSidebarHostState>((set) => ({
   hosts: {},
   reports: {},
   setHost: (workspaceId, paneId) =>
-    set((s) => (s.hosts[workspaceId] === paneId ? s : { hosts: { ...s.hosts, [workspaceId]: paneId } })),
+    set((s) => {
+      if (s.hosts[workspaceId] === paneId) return s;
+      // Drop hosts of workspaces that were closed so the map does not grow for the whole session.
+      const live = new Set(useUi.getState().workspaces.map((w) => w.id));
+      const hosts: Record<string, string> = {};
+      for (const [id, pane] of Object.entries(s.hosts)) if (live.has(id)) hosts[id] = pane;
+      hosts[workspaceId] = paneId;
+      return { hosts };
+    }),
   report: (paneId, tabId, wide) =>
     set((s) => {
       const cur = s.reports[paneId];

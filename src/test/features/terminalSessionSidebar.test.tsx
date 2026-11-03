@@ -357,14 +357,46 @@ describe("session sidebar placement", () => {
   it("keeps the sidebar in its host pane while focus moves between panes", async () => {
     await mountSplit();
     expect(hostTabs()).toEqual(["t1"]);
-    harness.fit.mockClear();
+    const node = mounted!.container.querySelector("[data-testid='session-sidebar']");
     setActivePane("p2");
     await flush();
     expect(hostTabs()).toEqual(["t1"]);
     setActivePane("p1");
     await flush();
     expect(hostTabs()).toEqual(["t1"]);
-    expect(harness.fit).not.toHaveBeenCalled();
+    expect(mounted!.container.querySelector("[data-testid='session-sidebar']")).toBe(node);
+  });
+
+  it("does not move the sidebar when hidden panes become visible again", async () => {
+    setSessionSidebarOpen(true);
+    useUi.setState((s) => ({
+      workspaces: s.workspaces.map((w) => ({
+        ...w,
+        activePaneId: "p2",
+        panes: [...w.panes, { id: "p2", activeTabId: "t2", tabs: [tab("t2", "kernel-2")] }],
+      })),
+    }));
+    useSessionSidebarHost.getState().setHost("ws1", "p1");
+    const panes = (visible: boolean) =>
+      createElement(
+        "div",
+        null,
+        createElement(TerminalPane, { sessionId: "s1", title: "one", storeTabId: "t1", visible }),
+        createElement(TerminalPane, { sessionId: "s1", title: "two", storeTabId: "t2", visible }),
+      );
+    mounted = mount(panes(false));
+    await flush();
+    act(() => mounted!.root.render(panes(true)));
+    await flush();
+    expect(hostTabs()).toEqual(["t1"]);
+  });
+
+  it("forgets the host of a workspace that no longer exists", () => {
+    const { setHost } = useSessionSidebarHost.getState();
+    setHost("gone", "pX");
+    useUi.setState({ workspaces: [] } as never);
+    setHost("ws-new", "pY");
+    expect(useSessionSidebarHost.getState().hosts).toEqual({ "ws-new": "pY" });
   });
 
   it("hands the sidebar to the active pane when the host pane unmounts", async () => {

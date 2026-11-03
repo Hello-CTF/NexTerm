@@ -1012,7 +1012,7 @@ export function TerminalPane({
   }, []);
 
   // Only the visible terminal of a pane reports its fit, and only the same tab may withdraw the report.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!myPaneId || visible === false) return;
     const { report, clearReport } = useSessionSidebarHost.getState();
     report(myPaneId, storeTabId, !paneNarrow);
@@ -1022,7 +1022,8 @@ export function TerminalPane({
   // Focus alone never moves the sidebar; the active pane takes it only when the host pane cannot show it any more.
   useEffect(() => {
     if (!workspaceId || !myPaneId || !sidebarOpen || !paneIsActive || !sidebarEligible) return;
-    if (hostPaneId === myPaneId || (hostPaneId !== null && hostFits)) return;
+    // Read the store, not the render snapshot: a report written in this same commit must count.
+    if (hostPaneId === myPaneId || (hostPaneId !== null && useSessionSidebarHost.getState().reports[hostPaneId]?.wide === true)) return;
     useSessionSidebarHost.getState().setHost(workspaceId, myPaneId);
   }, [workspaceId, myPaneId, sidebarOpen, paneIsActive, sidebarEligible, hostPaneId, hostFits]);
 
