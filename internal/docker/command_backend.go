@@ -221,6 +221,9 @@ func (b *CommandBackend) OpenLogs(ctx context.Context, options LogsOptions) (Log
 	if options.Follow {
 		args = append(args, "--follow")
 	}
+	if options.Timestamps {
+		args = append(args, "--timestamps")
+	}
 	args = append(args, "--tail", tail)
 	if options.Since != "" {
 		args = append(args, "--since", options.Since)

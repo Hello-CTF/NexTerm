@@ -423,9 +423,10 @@ func (s *Service) AttachLogs(ctx context.Context, request LogsAttachRequest) (st
 	stopSetupCancel := context.AfterFunc(setupCtx, streamCancel)
 	logStream, err := readWithFallback(setupCtx, s.provider, request.SessionID, func(backend Backend) (LogStream, error) {
 		return backend.OpenLogs(streamCtx, LogsOptions{
-			Container: request.Container,
-			Tail:      tail,
-			Follow:    true,
+			Container:  request.Container,
+			Tail:       tail,
+			Follow:     true,
+			Timestamps: request.Timestamps,
 		})
 	})
 	if err != nil {

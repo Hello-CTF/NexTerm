@@ -1252,12 +1252,14 @@ export const dockerApi = {
     containerId: string,
     tail: number,
     channel: unknown,
+    options?: { timestamps?: boolean },
   ) =>
     call("docker_logs_attach", {
       sessionId,
       containerId,
       tail,
       channel,
+      ...(options?.timestamps ? { timestamps: true } : {}),
       clientId: clientId(),
     }),
   execAttach: (

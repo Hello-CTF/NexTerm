@@ -131,6 +131,7 @@ func (b *MobyBackend) OpenLogs(ctx context.Context, options LogsOptions) (LogStr
 		Follow:     options.Follow,
 		Tail:       tail,
 		Since:      options.Since,
+		Timestamps: options.Timestamps,
 	})
 	if err != nil {
 		return LogStream{}, err

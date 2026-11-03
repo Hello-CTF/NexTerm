@@ -15,6 +15,7 @@ type dockerLogsRequest struct {
 	SessionID   string `json:"sessionId"`
 	ContainerID string `json:"containerId"`
 	Tail        int    `json:"tail"`
+	Timestamps  bool   `json:"timestamps,omitempty"`
 }
 
 type dockerExecRequest struct {
@@ -75,7 +76,7 @@ func (s *terminalCommandService) registerDocker(dispatcher *ipc.Dispatcher) erro
 					return "", err
 				}
 				id, err := s.docker.AttachLogs(ctx, docker.LogsAttachRequest{
-					SessionID: input.SessionID, Container: input.ContainerID, Tail: &input.Tail, Sink: sink,
+					SessionID: input.SessionID, Container: input.ContainerID, Tail: &input.Tail, Timestamps: input.Timestamps, Sink: sink,
 				})
 				if err != nil {
 					_ = stream.Close()

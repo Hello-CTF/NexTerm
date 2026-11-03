@@ -29,6 +29,8 @@ import { ComposeStackHeader } from "./ComposeStackHeader";
 import { groupContainersByCompose } from "./composeGrouping";
 import { DockerDiskPanel } from "./DockerDiskPanel";
 import { DockerLogStream } from "./DockerLogStream";
+import { DockerMergedLogs } from "./DockerMergedLogs";
+import { MERGED_LOG_MAX_CONTAINERS } from "./mergedLogs";
 export { createLogLineDecoder } from "./DockerLogStream";
 
 interface LogAttach {
@@ -227,6 +229,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [mergedLogs, setMergedLogs] = useState<{ id: string; name: string }[] | null>(null);
   const [refreshMs, setRefreshMs] = useState(loadRefreshIntervalMs);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [paneRef, compact] = useCompactWidth(COMPACT_MAX_WIDTH);
@@ -685,6 +688,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   }
 
   const running = cRows.filter((c) => c.state === "running").length;
+  const pickedContainers = cRows.filter((c) => picked.has(c.id));
   const rowCount = tab === "containers" ? cRows.length : iRows.length;
   const allPicked =
     rowCount > 0 &&
@@ -850,6 +854,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
   return (
     <div ref={paneRef} className="nx-pane">
       <ContextMenu state={menu} onClose={() => setMenu(null)} />
+      {mergedLogs && <DockerMergedLogs sessionId={sessionId} containers={mergedLogs} onClose={() => setMergedLogs(null)} />}
       <div className="nx-toolbar nx-docker-toolbar flex-wrap py-1">
         <div className="nx-segment">
           <button
@@ -898,6 +903,17 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
             >
               取消选择
             </button>
+            {tab === "containers" && (
+              <button
+                className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9"
+                disabled={bulkBusy || pickedContainers.length < 2 || pickedContainers.length > MERGED_LOG_MAX_CONTAINERS}
+                title={pickedContainers.length > MERGED_LOG_MAX_CONTAINERS ? `最多 ${MERGED_LOG_MAX_CONTAINERS} 个容器` : "按时间合并查看所选容器的日志（至少 2 个）"}
+                onClick={() => setMergedLogs(pickedContainers.map((c) => ({ id: c.id, name: c.name })))}
+              >
+                <IconList size={13} />
+                合并日志
+              </button>
+            )}
             <button
               className="nx-btn nx-btn-danger nx-btn-sm pointer-coarse:min-h-9"
               onClick={() => void removePicked()}
