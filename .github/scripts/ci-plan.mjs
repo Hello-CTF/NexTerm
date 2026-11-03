@@ -20,7 +20,8 @@ export function planCI({ isPR, files = [], labels = [] }) {
       || /^(docs\/|website\/|LICENSE$|\.gitignore$|\.github\/workflows\/pages\.yml$)/.test(file)) continue;
     if (/^(src\/|package\.json$|pnpm-lock\.yaml$|tsconfig|vite\.|vitest\.|eslint\.)/.test(file)) {
       frontend = true;
-      if (file.startsWith("src/ipc/")) tooling = true;
+      // Dependency manifests guard the lockfile integrity check in the quality job.
+      if (file.startsWith("src/ipc/") || file === "package.json" || file === "pnpm-lock.yaml") tooling = true;
     } else if (/\.go$|(^|\/)(go\.mod|go\.sum)$/.test(file)) {
       go = true;
     } else {
