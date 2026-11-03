@@ -281,3 +281,18 @@ func TestSchtasksUninstallReportsMissingTool(t *testing.T) {
 		t.Fatalf("missing schtasks must be reported explicitly, got %v", err)
 	}
 }
+
+func TestWindowsManagerStopEndsTask(t *testing.T) {
+	endKey := "schtasks.exe /End /TN NexTermAgent"
+	runner := &fakeRunner{responses: map[string]string{endKey: "SUCCESS"}}
+	if err := newTestWindowsManager(runner).Stop(context.Background()); err != nil {
+		t.Fatalf("Stop = %v", err)
+	}
+	if !runner.ran(endKey) {
+		t.Fatalf("Stop must run schtasks /End, got %+v", runner.commands)
+	}
+	failing := &fakeRunner{responses: map[string]string{endKey: "denied"}, errors: map[string]error{endKey: errors.New("boom")}}
+	if err := newTestWindowsManager(failing).Stop(context.Background()); err == nil {
+		t.Fatal("Stop must surface a failing /End")
+	}
+}

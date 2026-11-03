@@ -26,11 +26,22 @@ var (
 	// cliUpgraderFactory builds the Upgrader used by `update`; it is always pinned to the fixed official release source.
 	cliUpgraderFactory = defaultUpgrader
 	cliExecutable      = os.Executable
+	cliGOOS            = runtime.GOOS
 	cliStdin           = io.Reader(os.Stdin)
 	cliStdinIsTerminal = func() bool {
 		info, err := os.Stdin.Stat()
 		return err == nil && info.Mode()&os.ModeCharDevice != 0
 	}
+)
+
+// taskStopper is implemented by the Windows scheduled-task manager.
+type taskStopper interface {
+	Stop(ctx context.Context) error
+}
+
+const (
+	updateNoticeTaskRestart = "约 %d 秒后替换程序文件并重新启动计划任务"
+	updateNoticeTaskManual  = "约 %d 秒后替换程序文件；随后请重启设备代理的计划任务或服务，以载入新版本"
 )
 
 // latestReleaseURL derives the "latest release" page from the fixed release download base.
@@ -182,10 +193,21 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		return ExitError
 	}
 	fmt.Fprintf(stdout, "升级已就绪: %s -> %s\n", current, wanted)
-	state := cliNewManager(getenv).Status(ctx)
+	manager := cliNewManager(getenv)
+	state := manager.Status(ctx)
 	switch {
-	case runtime.GOOS == "windows" && state.Active:
-		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并重新启动计划任务\n", replaceScriptDelaySeconds)
+	case cliGOOS == "windows" && state.Active:
+		// The task runs with IgnoreNew, so the replace script's /Run is dropped while this instance is alive: end it first.
+		var stopErr error = errors.New("当前服务管理器不支持结束计划任务")
+		if stopper, ok := manager.(taskStopper); ok {
+			stopErr = stopper.Stop(ctx)
+		}
+		if stopErr == nil {
+			fmt.Fprintf(stdout, updateNoticeTaskRestart+"\n", replaceScriptDelaySeconds)
+			break
+		}
+		printCLIError(stderr, "agent update: 无法结束正在运行的计划任务：", stopErr)
+		fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
 	case state.Installed:
 		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并自动重启后台服务\n", replaceScriptDelaySeconds)
 	default:

@@ -76,6 +76,15 @@ func (m *windowsManager) Uninstall(ctx context.Context) error {
 	return nil
 }
 
+// Stop ends the running task instance so a following /Run is not dropped by MultipleInstancesPolicy=IgnoreNew.
+func (m *windowsManager) Stop(ctx context.Context) error {
+	output, err := m.runner.Run(ctx, "schtasks.exe", "/End", "/TN", windowsTaskName)
+	if err != nil {
+		return fmt.Errorf("结束计划任务失败: %w", schtasksHint(trimOutput(output), err))
+	}
+	return nil
+}
+
 func (m *windowsManager) Status(ctx context.Context) ServiceState {
 	status := ServiceState{}
 	_, err := m.runner.Run(ctx, "schtasks.exe", "/Query", "/TN", windowsTaskName, "/FO", "CSV", "/NH")

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -235,4 +237,97 @@ func TestUpdateWithoutSigningKeyShowsReason(t *testing.T) {
 	if got := h.hits.Load() - hitsBefore; got > 1 {
 		t.Fatalf("network requests after refusal = %d", got)
 	}
+}
+
+// stoppableManager reports an active scheduled task and records Stop calls.
+type stoppableManager struct {
+	fakeManager
+	stopCalls int
+	stopErr   error
+}
+
+func (m *stoppableManager) Stop(context.Context) error {
+	m.stopCalls++
+	return m.stopErr
+}
+
+func TestUpdateWindowsActiveTaskIsEndedBeforeRestartNotice(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		stopErr error
+	}{
+		{"end succeeds", nil},
+		{"end fails", errors.New("end-failure-reason")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+			manager := &stoppableManager{fakeManager: fakeManager{state: ServiceState{Installed: true, Enabled: true, Active: true}}, stopErr: tc.stopErr}
+			restoreManager, restoreGOOS := cliNewManager, cliGOOS
+			cliNewManager = func(func(string) string) ServiceManager { return manager }
+			cliGOOS = "windows"
+			t.Cleanup(func() { cliNewManager, cliGOOS = restoreManager, restoreGOOS })
+
+			code, out, errOut := runUpdate("--yes")
+			if code != ExitOK {
+				t.Fatalf("code=%d stderr=%q", code, errOut)
+			}
+			if manager.stopCalls != 1 {
+				t.Fatalf("Stop calls = %d, want 1", manager.stopCalls)
+			}
+			if tc.stopErr == nil {
+				if !strings.Contains(out, noticePrefix(updateNoticeTaskRestart)) || strings.Contains(out, noticePrefix(updateNoticeTaskManual)) {
+					t.Fatalf("success notice wrong: %q", out)
+				}
+				return
+			}
+			if !strings.Contains(out, noticePrefix(updateNoticeTaskManual)) || strings.Contains(out, noticePrefix(updateNoticeTaskRestart)) {
+				t.Fatalf("fallback notice wrong: %q", out)
+			}
+			if !strings.Contains(errOut, "end-failure-reason") {
+				t.Fatalf("failure reason must be printed, stderr=%q", errOut)
+			}
+		})
+	}
+}
+
+func TestUpdateOtherPlatformsDoNotStopTask(t *testing.T) {
+	newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+	manager := &stoppableManager{fakeManager: fakeManager{state: ServiceState{Installed: true, Enabled: true, Active: true}}}
+	restoreManager, restoreGOOS := cliNewManager, cliGOOS
+	cliNewManager = func(func(string) string) ServiceManager { return manager }
+	cliGOOS = "linux"
+	t.Cleanup(func() { cliNewManager, cliGOOS = restoreManager, restoreGOOS })
+	if code, _, errOut := runUpdate("--yes"); code != ExitOK || manager.stopCalls != 0 {
+		t.Fatalf("code=%d stops=%d stderr=%q", code, manager.stopCalls, errOut)
+	}
+}
+
+func TestUpdateSetsUpgradeLogInDataDir(t *testing.T) {
+	h := newUpdateHarness(t, "1.3.0", "1.4.0", "", false)
+	dataDir := t.TempDir()
+	var captured *Upgrader
+	factory := cliUpgraderFactory
+	cliUpgraderFactory = func(executable string) *Upgrader {
+		captured = factory(executable)
+		return captured
+	}
+	var stdout, stderr bytes.Buffer
+	getenv := func(key string) string {
+		if key == "NEXTERM_DATA_DIR" {
+			return dataDir
+		}
+		return ""
+	}
+	if code := RunCLI([]string{"update", "--yes"}, getenv, &stdout, &stderr); code != ExitOK || len(h.replaced) != 1 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if captured == nil || captured.LogPath != filepath.Join(dataDir, upgradeLogName) {
+		t.Fatalf("LogPath = %+v", captured)
+	}
+}
+
+// noticePrefix returns the fixed part of a notice template after its leading "%d" seconds.
+func noticePrefix(template string) string {
+	_, rest, _ := strings.Cut(template, "%d")
+	return strings.TrimSuffix(rest, "\n")
 }
