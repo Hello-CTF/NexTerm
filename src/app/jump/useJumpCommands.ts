@@ -7,7 +7,7 @@ import type { SnippetDto } from "../../ipc/types";
 import { describeError } from "../../ui/errorText";
 import { isMobileShell } from "../shell";
 import { useBackgroundSessionsAccess } from "../../features/terminal/backgroundSessionsAccess";
-import { insertSnippet } from "../../features/explorer/snippetInsert";
+import { executeSnippet, insertSnippet, isMultiStep } from "../../features/explorer/snippetInsert";
 import { cloneAsset } from "../../features/explorer/assetClone";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { createMultiHostLogTabId, MULTI_HOST_LOG_TAB_ID } from "../../features/logs/logTailTab";
@@ -427,13 +427,15 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       });
     }
     for (const s of snippets) {
+      // A multi-step snippet cannot be inserted; running it confirms each step that asks for it.
+      const multi = isMultiStep(s);
       list.push({
         id: `snippet-${s.id}`,
-        label: `插入片段 ${s.name}`,
+        label: `${multi ? "执行" : "插入"}片段 ${s.name}`,
         section: "片段",
         hint: snippetHint(s),
         icon: IconCommand,
-        run: () => void insertSnippet(s),
+        run: () => void (multi ? executeSnippet(s) : insertSnippet(s)),
       });
     }
     return { list, linkInsertAt };
