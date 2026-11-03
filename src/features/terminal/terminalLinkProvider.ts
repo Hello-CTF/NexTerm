@@ -149,6 +149,8 @@ interface ChainState {
   bare: boolean;
   /** A full-width continuation row has already been accepted. */
   chained: boolean;
+  /** Content end column of the previous row of the chain. */
+  prevEndCol: number;
   /** The URL stitched so far contains a query. */
   hasQuery: boolean;
   /** Text of the logical line after the candidate; undefined at the end of the rows. */
@@ -156,6 +158,15 @@ interface ChainState {
 }
 
 const CLEAN_CONTEXT = /^(?:\s*|\s*[$>#](?:\s.*)?|[\s╰└╯┘─━═]*[╰└─━═][\s╰└╯┘─━═]*)$/;
+
+// Rows of a URL hard-wrapped at an application's own width (which can differ
+// from the terminal's after a resize) end in the same column. Narrower rows
+// are too likely to match by chance.
+const MIN_EQUAL_WIDTH = 30;
+
+function sameWidth(a: number, b: number): boolean {
+  return a >= MIN_EQUAL_WIDTH && b >= MIN_EQUAL_WIDTH && Math.abs(a - b) <= 1;
+}
 
 const QUERY_EVIDENCE = /[=&%?#]/;
 
@@ -192,7 +203,10 @@ function continuationFragment(
   if (fragment.startsWith("[")) return null;
   const borderIdx = borderIndexAfter(line, end);
   const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
-  const full = endCol >= cols - 2 || (borderCol >= 0 && state.prevBorderCol >= 0 && Math.abs(borderCol - state.prevBorderCol) <= 1);
+  const full =
+    endCol >= cols - 2 ||
+    sameWidth(endCol, state.prevEndCol) ||
+    (borderCol >= 0 && state.prevBorderCol >= 0 && Math.abs(borderCol - state.prevBorderCol) <= 1);
   if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol, borderCol };
   if (!/[^A-Za-z]/.test(fragment)) {
     // Letters only is usually prose; a query URL followed by a blank line, a
@@ -252,18 +266,25 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
         bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
         chained: false,
+        prevEndCol: endCol,
         hasQuery: m[0].includes("?"),
         following: undefined,
       };
-      const fullRow = borderIdx >= 0 || endCol >= cols - 2;
+      // Whether the previous row of the chain is known to be a full row, and
+      // the end column of the row before it.
+      let prevFull = borderIdx >= 0 || endCol >= cols - 2;
+      let prevPrevEnd = -1;
       const maxRows = maxContinuationRows(cols);
       // A URL that would continue past a limit is dropped: a truncated address
       // is worse than an unrecognised one.
       let overflow = false;
-      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && cur + 1 < lines.length; n++) {
+      for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && cur + 1 < lines.length; n++) {
         state.following = lines[cur + 2]?.text;
         const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
         if (!next) break;
+        // A row that is not full by width is still full when it is as wide as
+        // its neighbours (the program wrapped at a different width).
+        if (!prevFull && !sameWidth(state.prevEndCol, next.endCol) && !sameWidth(state.prevEndCol, prevPrevEnd)) break;
         const len = next.piece.end - next.piece.start;
         if (n >= maxRows || total + len > MAX_LINK_LENGTH) {
           overflow = true;
@@ -273,6 +294,9 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         total += len;
         cur++;
         if (!next.more) break;
+        prevFull = true;
+        prevPrevEnd = state.prevEndCol;
+        state.prevEndCol = next.endCol;
         state.prevBorderCol = next.borderCol;
         state.chained = true;
         state.hasQuery ||= lines[next.piece.line].text.slice(next.piece.start, next.piece.end).includes("?");

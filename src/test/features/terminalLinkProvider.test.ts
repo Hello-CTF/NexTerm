@@ -245,6 +245,32 @@ describe("long URLs on narrow terminals", () => {
   });
 });
 
+describe("rows written for another width", () => {
+  const fx = LINK_FIXTURES[0];
+
+  it("stitches rows that are as wide as each other although the terminal is wider", () => {
+    const parts = fx.urls[0].parts;
+    expect(urls(hard(...parts), 120)).toEqual([fx.urls[0].url]);
+    expect(urls(hard("Open:", ...parts, "", "Paste code here >"), 200)).toEqual([fx.urls[0].url]);
+  });
+
+  it("still recognises the URL after the terminal is resized wider", async () => {
+    const term = await makeTerm(fx.cols, fx.data);
+    term.resize(120, 40);
+    expect(extractTerminalLinks(term).map((l) => l.url)).toEqual([fx.urls[0].url]);
+    const rows = bufferRows(term);
+    for (const part of fx.urls[0].parts) {
+      const y = rows.findIndex((r) => r === part) + 1;
+      expect(provide(term, y).map((l) => l.text)).toContain(fx.urls[0].url);
+    }
+  });
+
+  it("does not let equal widths join unrelated short rows", () => {
+    expect(urls(hard("https://a.com/docs", "v1.2.3-rc1-release"), 120)).toEqual(["https://a.com/docs"]);
+    expect(urls(hard("│ https://a.com/docs          │", "│ v1.2.3                      │"), 120)).toEqual(["https://a.com/docs"]);
+  });
+});
+
 describe("terminal link provider", () => {
   it("maps columns of a URL after wide characters", async () => {
     const term = await makeTerm(60, "中文前缀 https://example.com/path end");
