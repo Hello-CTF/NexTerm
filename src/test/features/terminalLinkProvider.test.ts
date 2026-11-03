@@ -121,6 +121,25 @@ describe("link stitching rules", () => {
     expect(urls(hard(full, "caf\u00e9-menu"), 40)).toEqual([full]);
   });
 
+  it("does not join a lone token that follows a URL filling the row", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    for (const token of ["[OK]", "200", "42"]) {
+      expect(urls(hard(full, token), 40), token).toEqual([full]);
+      expect(urls(hard(`Docs: ${full.slice(0, 34)}`, token), 40), token).toEqual([full.slice(0, 34)]);
+    }
+    // After a row that holds more than the URL, a bare path token is not evidence enough.
+    const head = "https://a.example/" + "a".repeat(10);
+    const prose = `Docs: ${head}`;
+    expect(urls(hard(prose, "/api/v2/next"), prose.length)).toEqual([head]);
+    expect(urls(hard(prose, "/api/v2/next?x=1"), prose.length)).toEqual([head + "/api/v2/next?x=1"]);
+  });
+
+  it("joins a path tail after a row that holds only the URL (indistinguishable from a cut URL)", () => {
+    const full = "https://a.example/" + "a".repeat(22);
+    expect(urls(hard(full, "/api/v2/next"), 40)).toEqual([full + "/api/v2/next"]);
+    expect(urls(hard(`│ ${full} │`, "│ /api/v2/next                           │"), 44)).toEqual([full + "/api/v2/next"]);
+  });
+
   it("does not join a boxed URL with a following boxed sentence", () => {
     const rows = hard("│ https://a.example/x      │", "│ Paste code here          │");
     expect(urls(rows, 40)).toEqual(["https://a.example/x"]);

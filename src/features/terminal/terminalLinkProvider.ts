@@ -61,6 +61,7 @@ function borderIndexAfter(line: LogicalLine, end: number): number {
   return m !== null && m[1].length <= 1 ? end + m[1].length : -1;
 }
 const LEFT_PREFIX = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])+/;
+const LEFT_PREFIX_ONLY = /^(?:\s+|[│┃║|>]|\d+\s*[│|:])*$/;
 
 function charWidth(code: number): number {
   if (code < 0x300) return 1;
@@ -141,6 +142,17 @@ interface Piece {
   end: number;
 }
 
+// Where a candidate continuation sits in its URL, for the lone-token rules.
+interface ChainState {
+  prevBorderCol: number;
+  /** The URL's first row holds nothing but the URL (and prefix decoration). */
+  bare: boolean;
+  /** A full-width continuation row has already been accepted. */
+  chained: boolean;
+}
+
+const QUERY_EVIDENCE = /[=&%?#]/;
+
 // Decides whether logical line `next` continues a URL that ended at `prev`
 // (see the rules in the module comment). Returns the accepted fragment piece
 // and whether stitching may go on after it.
@@ -149,7 +161,7 @@ function continuationFragment(
   line: LogicalLine,
   lineIndex: number,
   cols: number,
-  prevBorderCol: number,
+  state: ChainState,
 ): { piece: Piece; more: boolean; endCol: number; borderCol: number } | null {
   const prefix = LEFT_PREFIX.exec(line.text);
   const from = prefix ? prefix[0].length : 0;
@@ -171,11 +183,16 @@ function continuationFragment(
   // Inside a box a row is full only when the text reaches the border of the
   // same box as the previous row; a short row followed by a border is just
   // padding.
+  if (fragment.startsWith("[")) return null;
   const borderIdx = borderIndexAfter(line, end);
   const borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
-  const full = endCol >= cols - 2 || (borderCol >= 0 && prevBorderCol >= 0 && Math.abs(borderCol - prevBorderCol) <= 1);
+  const full = endCol >= cols - 2 || (borderCol >= 0 && state.prevBorderCol >= 0 && Math.abs(borderCol - state.prevBorderCol) <= 1);
   if (full) return { piece: { line: lineIndex, start: from, end }, more: true, endCol, borderCol };
   if (!/[^A-Za-z]/.test(fragment)) return null;
+  // A short tail is the weakest evidence: a lone number is not a URL tail, and
+  // after a row that also holds prose it must look like a query string.
+  if (/^\d{1,3}$/.test(fragment)) return null;
+  if (!state.bare && !state.chained && !QUERY_EVIDENCE.test(fragment)) return null;
   return { piece: { line: lineIndex, start: from, end }, more: false, endCol, borderCol };
 }
 
@@ -219,14 +236,18 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
       const endCol = columnOf(rows, line, urlEnd - 1);
       const tail = line.text.slice(urlEnd);
       const borderIdx = borderIndexAfter(line, urlEnd);
-      let borderCol = borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1;
+      const state: ChainState = {
+        prevBorderCol: borderIdx >= 0 ? columnOf(rows, line, borderIdx) : -1,
+        bare: LEFT_PREFIX_ONLY.test(line.text.slice(0, m.index)),
+        chained: false,
+      };
       const fullRow = borderIdx >= 0 || endCol >= cols - 2;
       const maxRows = maxContinuationRows(cols);
       // A URL that would continue past a limit is dropped: a truncated address
       // is worse than an unrecognised one.
       let overflow = false;
       for (let n = 0; ONLY_TRAILING_DECOR.test(tail) && fullRow && cur + 1 < lines.length; n++) {
-        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, borderCol);
+        const next = continuationFragment(rows, lines[cur + 1], cur + 1, cols, state);
         if (!next) break;
         const len = next.piece.end - next.piece.start;
         if (n >= maxRows || total + len > MAX_LINK_LENGTH) {
@@ -237,7 +258,8 @@ export function findLinksInRows(rows: TextRow[], cols: number): StitchedLink[] {
         total += len;
         cur++;
         if (!next.more) break;
-        borderCol = next.borderCol;
+        state.prevBorderCol = next.borderCol;
+        state.chained = true;
       }
       if (overflow) continue;
       const built = finishLink(lines, pieces);
