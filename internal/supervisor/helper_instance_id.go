@@ -16,7 +16,9 @@ const HelperInstanceIDFile = "helper-instance-id"
 
 // HelperInstanceID returns the random id persisted in stateDir, creating it on first use. Unlike the
 // state digest, which only depends on uid and path, it tells apart two machines that share both.
-// Concurrent first calls agree on one id.
+// Concurrent first calls agree on one id through link. A malformed or unsafe file of this user is
+// replaced by rename, which swaps the path itself and never writes through a symlink; concurrent
+// repairs may briefly return different ids, the last rename wins and later calls agree.
 func HelperInstanceID(stateDir string) (string, error) {
 	if stateDir == "" {
 		return "", fmt.Errorf("%w: helper state directory is required", ErrInvalidInput)
@@ -49,6 +51,7 @@ func HelperInstanceID(stateDir string) (string, error) {
 	} else if err := os.Rename(temp, final); err != nil {
 		return "", fmt.Errorf("replace helper instance id: %w", err)
 	}
+	// The re-read, not the temp id, is the answer: another caller may have won.
 	return readInstanceID(final)
 }
 
@@ -59,11 +62,14 @@ func readInstanceID(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := privateRegularFile(info); err != nil {
-		return "", err
-	}
+	// A file of another user is never replaced; check the owner first.
 	if err := instanceIDOwner(info); err != nil {
 		return "", fmt.Errorf("%w: %s: %v", ErrInvalidInput, path, err)
+	}
+	// A symlink, a non-regular file or a group/world accessible file is ours
+	// but unusable: report it invalid so rename replaces the path itself.
+	if err := privateRegularFile(info); err != nil {
+		return "", errInstanceIDInvalid
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
