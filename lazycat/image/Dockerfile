@@ -4,8 +4,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates=20250419~deb12u1 \
         openssh-client=1:9.2p1-2+deb12u10 \
-        sshfs=3.7.3-1.2~deb12u1 \
-        fuse3=3.14.0-4 \
         tzdata=2026c-0+deb12u1 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 nexterm \
