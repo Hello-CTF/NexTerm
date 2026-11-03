@@ -66,6 +66,8 @@ func ParseWebSocketEnv(getenv func(string) string) (WebSocketConfig, error) {
 	return config, nil
 }
 
+const defaultAccountSocketRevalidateInterval = 30 * time.Second
+
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	identity, ok := s.admitWebSocket(w, r)
 	if !ok {
@@ -78,12 +80,13 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	ctx, release, err := s.sockets.track(r.Context())
+	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), identity)
 	if err != nil {
 		_ = connection.CloseNow()
 		return
 	}
 	defer release()
+	defer s.superviseAccountSocket(ctx, connection, r, identity, revoked)()
 	since, present, resync := parseEventCursor(r)
 	subscriber, unsubscribe, err := s.events.subscribe(since, present, resync, s.eventFilter(identity))
 	if err != nil {
@@ -269,12 +272,13 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		// Input frames are tiny keystroke bundles; the default 32KiB read limit already bounds them.
 		connection.SetReadLimit(channelInputMaxData + 512)
 	}
-	ctx, release, err := s.sockets.track(r.Context())
+	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), identity)
 	if err != nil {
 		_ = connection.CloseNow()
 		return
 	}
 	defer release()
+	defer s.superviseAccountSocket(ctx, connection, r, identity, revoked)()
 	receiver, err := s.channels.BindChannel(channelID)
 	if err != nil {
 		_ = connection.CloseNow()
@@ -299,6 +303,59 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 			return 0, nil, nil, errors.New("unknown channel frame kind")
 		}
 	}, onRead)
+}
+
+// superviseAccountSocket closes the connection with a policy-violation code once its login session is revoked: either
+// signalled through the tracker, or found invalid by the periodic recheck that backs up revocation paths which do not
+// reach the tracker. Only a confirmed invalid session closes; transient lookup errors keep the socket. The close
+// runs beside the pump (Close is safe against concurrent Write), and the returned stop waits for the supervisor.
+func (s *Server) superviseAccountSocket(ctx context.Context, connection *websocket.Conn, r *http.Request, identity *account.Identity, revoked <-chan struct{}) (stop func()) {
+	if identity == nil {
+		return func() {}
+	}
+	interval := time.Duration(s.accountSocketRevalidateNanos.Load())
+	if interval <= 0 {
+		interval = defaultAccountSocketRevalidateInterval
+	}
+	cookieToken, _ := sessionCookie(r)
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-revoked:
+				_ = connection.Close(websocket.StatusPolicyViolation, sessionReloginMessage)
+				return
+			case <-ticker.C:
+				if s.accountSocketSessionInvalid(ctx, cookieToken, identity) {
+					_ = connection.Close(websocket.StatusPolicyViolation, sessionReloginMessage)
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func (s *Server) accountSocketSessionInvalid(ctx context.Context, cookieToken string, identity *account.Identity) bool {
+	if s.accounts == nil || cookieToken == "" {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	current, err := s.accounts.ValidateSession(checkCtx, cookieToken)
+	if err != nil {
+		return confirmedAccountSessionInvalid(err)
+	}
+	return current.SessionID != identity.SessionID || current.UserID != identity.UserID || current.State == account.StateResetRequired
 }
 
 // pumpSocket see pumpSocketWithRead; no upstream handling (the read loop discards all upstream bytes).

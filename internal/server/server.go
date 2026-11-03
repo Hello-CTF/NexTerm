@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
@@ -132,14 +133,16 @@ type Server struct {
 	previewResolve *account.LoginThrottle
 	// previewRevalidateInterval is the authorization recheck interval for preview connections; tests may lower it.
 	previewRevalidateInterval time.Duration
-	db                        DBHealthSource
-	accountConnections        AccountConnectionCloser
-	remoteDesktop             RemoteDesktopServer
-	accountCleanup            AccountCleanupFunc
-	accountCleanupPrepare     AccountCleanupPrepareFunc
-	accountRevocationMu       *sync.Mutex
-	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
-	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
+	// accountSocketRevalidateNanos is how often (nanoseconds, 0 for the default) account WebSockets recheck their login session; tests may lower it.
+	accountSocketRevalidateNanos atomic.Int64
+	db                           DBHealthSource
+	accountConnections           AccountConnectionCloser
+	remoteDesktop                RemoteDesktopServer
+	accountCleanup               AccountCleanupFunc
+	accountCleanupPrepare        AccountCleanupPrepareFunc
+	accountRevocationMu          *sync.Mutex
+	revokeUserSessions           func(context.Context, string, string, ...func() error) ([]string, error)
+	accountExecutionAdmission    func(context.Context, string, *account.Identity, func() error) error
 
 	readGate func()
 }

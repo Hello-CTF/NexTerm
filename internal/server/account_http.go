@@ -675,12 +675,14 @@ func (s *Server) prepareAccountCleanup(ctx context.Context, ownerID, cleanupID s
 // closeUserConnections ends the live connections of a user's login sessions other than exceptSession, for
 // revocations that do not enumerate session ids. Only services that implement CloseAccountUser take part.
 func (s *Server) closeUserConnections(userID, exceptSession string) {
+	s.sockets.closeUser(userID, exceptSession)
 	if closer, ok := s.accountConnections.(interface{ CloseAccountUser(string, string) }); ok {
 		closer.CloseAccountUser(userID, exceptSession)
 	}
 }
 
 func (s *Server) closeAccountConnections(sessionID string) {
+	s.sockets.closeSession(sessionID)
 	if s.accountConnections == nil {
 		return
 	}
@@ -801,6 +803,7 @@ func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request
 		writeAccountFailure(w, err)
 		return
 	}
+	s.sockets.closeDevice(identity.UserID, r.PathValue("id"))
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
