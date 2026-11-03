@@ -495,6 +495,7 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	}
 	s.accountThrottle.recovery.RecordSuccess(key)
 	if user, lookupErr := s.accounts.GetUserByUsername(r.Context(), request.Username); lookupErr == nil && user != nil {
+		s.unlockMFA(r, user.ID, "recovery_reset", "")
 		s.closeUserConnections(user.ID, "")
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -714,6 +715,7 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		writeAccountFailure(w, err)
 		return
 	}
+	s.unlockMFA(r, identity.UserID, "password_change", "")
 	s.closeUserConnections(identity.UserID, identity.SessionID)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -876,6 +878,11 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	adminID := ""
+	if identity := accountIdentityFrom(r.Context()); identity != nil {
+		adminID = identity.UserID
+	}
+	s.unlockMFA(r, r.PathValue("id"), "admin_reset", adminID)
 	s.closeUserConnections(r.PathValue("id"), "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

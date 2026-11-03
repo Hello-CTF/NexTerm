@@ -215,6 +215,27 @@ func (l *mfaLockout) success(userID string) {
 	}
 }
 
+// clear forgets all lock state of a user after a credential reset and reports
+// whether a failure count or lock was actually dropped. An entry with attempts
+// in flight is kept (zeroed) so their later failure/success/release stay
+// balanced; their outcome belongs to the new generation and can at most
+// count one failure, never revive the old lock or escalation level.
+func (l *mfaLockout) clear(userID string) (cleared bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e := l.entries[userID]
+	if e == nil {
+		return false
+	}
+	cleared = e.fails > 0 || e.level > 0 || !e.lockedUntil.IsZero() || !e.lastLockEnd.IsZero()
+	if e.inflight > 0 {
+		e.fails, e.level, e.lockedUntil, e.lastLockEnd = 0, 0, time.Time{}, time.Time{}
+	} else {
+		delete(l.entries, userID)
+	}
+	return cleared
+}
+
 // failure counts a wrong code; locked is true only for the call that crosses the threshold.
 func (l *mfaLockout) failure(userID string) (fails int, until time.Time, level int, locked bool) {
 	l.mu.Lock()
@@ -245,6 +266,22 @@ func (s *Server) auditMFALockout(r *http.Request, userID string, fails int, unti
 		"user_id": userID, "failures": fails, "locked_until": until.UnixMilli(), "client_ip": clientIP(r),
 		"lock_level": level, "lock_seconds": int64(mfaLockDurationFor(level) / time.Second),
 	})
+}
+
+// unlockMFA clears the second-factor lock after a credential reset and audits
+// it only when a failure count or lock was actually dropped. adminID is the
+// operator of an administrator reset and empty otherwise.
+func (s *Server) unlockMFA(r *http.Request, userID, reason, adminID string) {
+	if s.mfaLock == nil || !s.mfaLock.clear(userID) || s.audit == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	payload := map[string]any{"user_id": userID, "reason": reason, "client_ip": clientIP(r)}
+	if adminID != "" {
+		payload["admin_id"] = adminID
+	}
+	_ = s.audit(ctx, "auth", "totp_unlock", payload)
 }
 
 // mfaAttempt runs one second-factor verification under the per-user lock. It
