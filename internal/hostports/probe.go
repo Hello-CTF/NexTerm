@@ -128,8 +128,15 @@ func quotePowerShell(value string) string {
 
 // ProbeCommand builds the exact command run on the host. Every user value is a separate single-quoted argument.
 func ProbeCommand(shell Shell, req ProbeRequest) (string, error) {
+	command, _, err := probeCommandAndScript(shell, req)
+	return command, err
+}
+
+// probeCommandAndScript also returns the PowerShell script hidden inside an -EncodedCommand wrapper, or "" when the
+// command is sent as written.
+func probeCommandAndScript(shell Shell, req ProbeRequest) (string, string, error) {
 	if err := ValidateProbe(req); err != nil {
-		return "", err
+		return "", "", err
 	}
 	host := ""
 	if req.Method == "tcp" {
@@ -137,12 +144,13 @@ func ProbeCommand(shell Shell, req ProbeRequest) (string, error) {
 	}
 	switch shell {
 	case ShellPOSIX:
-		return posixProbe(req, host), nil
+		return posixProbe(req, host), "", nil
 	case ShellPowerShell:
-		return powerShellProbe(req, host), nil
+		return powerShellProbe(req, host), "", nil
 	}
 	// cmd.exe must not see the script: the base64 alphabet contains no character cmd treats specially.
-	return "powershell -NoProfile -NonInteractive -EncodedCommand " + encodePowerShell(powerShellProbe(req, host)), nil
+	script := powerShellProbe(req, host)
+	return "powershell -NoProfile -NonInteractive -EncodedCommand " + encodePowerShell(script), script, nil
 }
 
 func encodePowerShell(script string) string {

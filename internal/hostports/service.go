@@ -70,7 +70,9 @@ type ProbeArgs struct {
 
 // ProbeResult carries the exact command and, unless it was a dry run, its outcome.
 type ProbeResult struct {
-	Command    string `json:"command"`
+	Command string `json:"command"`
+	// Script is the PowerShell source behind an -EncodedCommand wrapper; empty when Command is sent as written.
+	Script     string `json:"script,omitempty"`
 	Ran        bool   `json:"ran"`
 	OK         bool   `json:"ok"`
 	ExitCode   *int   `json:"exitCode,omitempty"`
@@ -293,16 +295,16 @@ func (s *Service) Probe(ctx context.Context, args ProbeArgs) (ProbeResult, error
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	command, err := ProbeCommand(s.detectShell(ctx, args.SessionID, target), args.ProbeRequest)
+	command, script, err := probeCommandAndScript(s.detectShell(ctx, args.SessionID, target), args.ProbeRequest)
 	if err != nil {
 		return ProbeResult{}, ipc.BadParam(err)
 	}
 	if args.DryRun {
-		return ProbeResult{Command: command}, nil
+		return ProbeResult{Command: command, Script: script}, nil
 	}
 	started := time.Now()
 	res, err := target.Runner.Exec(ctx, command, base.ExecOptions{Timeout: probeTimeout})
-	result := ProbeResult{Command: command, Ran: true, DurationMs: time.Since(started).Milliseconds()}
+	result := ProbeResult{Command: command, Script: script, Ran: true, DurationMs: time.Since(started).Milliseconds()}
 	if err != nil {
 		result.Output = truncateOutput(err.Error())
 		s.recordProbe(ctx, args, target, result)
@@ -322,10 +324,15 @@ func (s *Service) recordProbe(ctx context.Context, args ProbeArgs, target Target
 }
 
 func truncateOutput(text string) string {
-	if len(text) <= maxProbeOutput {
+	return TruncateOutput(text, maxProbeOutput)
+}
+
+// TruncateOutput cuts text to at most max bytes without splitting a UTF-8 character.
+func TruncateOutput(text string, max int) string {
+	if len(text) <= max {
 		return text
 	}
-	cut := maxProbeOutput
+	cut := max
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}

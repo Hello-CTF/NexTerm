@@ -28,6 +28,8 @@ export interface ConnectivityRequest {
 
 export interface ConnectivityResult {
   command: string;
+  // PowerShell source behind an -EncodedCommand wrapper; absent when the command is sent as written.
+  script?: string;
   ran: boolean;
   ok: boolean;
   exitCode?: number;
