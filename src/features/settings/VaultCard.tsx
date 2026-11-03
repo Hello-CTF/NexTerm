@@ -28,6 +28,7 @@ export function VaultCard() {
       queryFn: () => vaultApi.status(),
       refetchOnWindowFocus: false,
     }).data ?? null;
+  const managed = vault?.managed === true;
   const vaultPasswordProtected = vault?.mode === "master" && !vault.passwordless;
   const vaultPasswordless = vault?.mode === "master" && !!vault?.passwordless;
   const systemProtection = DESKTOP && !!vault?.systemProtection;
@@ -124,7 +125,9 @@ export function VaultCard() {
         <IconLock size={15} className="text-neutral-400" />
         <span className="nx-card-title">凭据保护</span>
         {vault &&
-          (vaultPasswordProtected ? (
+          (managed ? (
+            <span className="nx-badge">服务端托管</span>
+          ) : vaultPasswordProtected ? (
             <span className="nx-badge nx-badge-green">已开启</span>
           ) : vault.mode === "not_init" ? (
             <span className="nx-badge nx-badge-amber">未初始化</span>
@@ -140,6 +143,12 @@ export function VaultCard() {
         )}
       </div>
 
+      {managed ? (
+        <p className="nx-hint mt-1" data-setting="vault-managed">
+          服务端凭据库由服务器托管，无需在此初始化、设置密码或锁定。
+        </p>
+      ) : (
+        <>
       <label className="flex cursor-pointer items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-neutral-200" data-setting="vault-password">用密码保护凭据</div>
@@ -282,6 +291,8 @@ export function VaultCard() {
             闲置超过该时长后凭据库自动锁定，再次使用需输入保护密码。
           </p>
         </div>
+      )}
+        </>
       )}
     </section>
   );

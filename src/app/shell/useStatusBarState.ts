@@ -44,7 +44,12 @@ export function useVaultStatus() {
   const refetchVault = vaultQuery.refetch;
   const retryVault = useCallback(() => void refetchVault(), [refetchVault]);
 
+  const managed = vaultQuery.data?.managed === true;
   const lockVault = useCallback(async () => {
+    if (managed) {
+      pushToast("info", "服务端凭据库由服务器托管，无需锁定");
+      return;
+    }
     if (vaultStatus.uninitialized) {
       pushToast("info", "凭据库尚未初始化");
       return;
@@ -60,7 +65,7 @@ export function useVaultStatus() {
     } catch (e) {
       pushToast("error", describeError(e));
     }
-  }, [queryClient, pushToast, vaultStatus.uninitialized, vaultStatus.passwordless]);
+  }, [queryClient, pushToast, managed, vaultStatus.uninitialized, vaultStatus.passwordless]);
 
   const vaultLocked = !!vaultQuery.data?.initialized && !vaultQuery.data.unlocked;
   return { vaultStatus, vaultLocked, lockVault, retryVault };
