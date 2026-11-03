@@ -70,20 +70,20 @@ func (s *Store) TranscriptSearchHost(ctx context.Context, input TranscriptHostSe
 			result.Truncated = true
 			break
 		}
-		matches, scanned, stopped, err := s.scanTranscriptOutput(ctx, row.ID, input.Text, transcriptHostSearchMaxMatches, int(remaining))
+		matches, scanned, stop, err := s.scanTranscriptOutput(ctx, row.ID, input.Text, transcriptHostSearchMaxMatches, int(remaining))
 		if err != nil {
 			return result, err
 		}
 		result.ScannedSessions++
 		result.ScannedBytes += int64(scanned)
-		if stopped {
+		if stop == transcriptScanLimited {
 			result.Truncated = true
 		}
 		if len(matches) > 0 {
 			result.Sessions = append(result.Sessions, TranscriptSessionMatches{
 				Transcript:  row,
 				Matches:     matches,
-				MoreMatches: stopped && len(matches) >= transcriptHostSearchMaxMatches,
+				MoreMatches: stop == transcriptScanMatchesFull,
 			})
 		}
 	}

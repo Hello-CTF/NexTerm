@@ -34,3 +34,32 @@ func TestTranscriptSearchHostByteBudgetTruncates(t *testing.T) {
 		t.Fatalf("budget must truncate the scan: %+v", res)
 	}
 }
+
+func TestTranscriptSearchHostMatchCapIsNotTruncation(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.TranscriptStart(ctx, TranscriptRow{ID: "m", SessionID: "sm", AssetID: "a", StartedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	var chunks []TranscriptChunkRow
+	for i := 0; i < transcriptHostSearchMaxMatches+10; i++ {
+		chunks = append(chunks, TranscriptChunkRow{Seq: int64(i), TabID: "t", TS: int64(i + 1), Data: []byte("needle\r\n")})
+	}
+	if err := db.TranscriptAppendChunks(ctx, "m", chunks); err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.TranscriptSearchHost(ctx, TranscriptHostSearch{AssetID: "a", Text: []byte("needle")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Truncated {
+		t.Fatalf("a per-session match cap must not mark the whole result truncated: sessions=%d scanned=%d", len(res.Sessions), res.ScannedSessions)
+	}
+	if len(res.Sessions) != 1 || !res.Sessions[0].MoreMatches || len(res.Sessions[0].Matches) != transcriptHostSearchMaxMatches {
+		t.Fatalf("session must report more matches: sessions=%d", len(res.Sessions))
+	}
+}
