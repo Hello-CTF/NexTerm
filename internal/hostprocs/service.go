@@ -3,6 +3,8 @@ package hostprocs
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -17,11 +19,15 @@ const (
 	listTimeout = 15 * time.Second
 	killTimeout = 15 * time.Second
 	maxOutput   = 8 << 10
+	// maxIdentityBytes caps the name and start time a caller can send.
+	maxIdentityBytes = 1 << 10
+	auditTimeout     = 5 * time.Second
 )
 
 type Service struct {
 	resolve Resolver
 	auditor Auditor
+	logger  *slog.Logger
 
 	mu        sync.Mutex
 	platforms map[string]string
@@ -30,6 +36,12 @@ type Service struct {
 // NewService builds the service; auditor may be nil, in which case kills are not recorded.
 func NewService(resolver Resolver, auditor Auditor) *Service {
 	return &Service{resolve: resolver, auditor: auditor, platforms: make(map[string]string)}
+}
+
+// WithLogger sets where failed audit writes are reported; the default is slog.Default().
+func (s *Service) WithLogger(logger *slog.Logger) *Service {
+	s.logger = logger
+	return s
 }
 
 // Forget drops what was learned about a session, for when it disconnects.
@@ -79,10 +91,10 @@ func platformFor(shell Shell) string {
 }
 
 // List lists the processes of the session's host.
-func (s *Service) List(ctx context.Context, sessionID string) (ListResult, error) {
+func (s *Service) List(ctx context.Context, sessionID string) (ProcessListResult, error) {
 	target, err := s.target(ctx, sessionID)
 	if err != nil {
-		return ListResult{}, err
+		return ProcessListResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, listTimeout)
 	defer cancel()
@@ -98,25 +110,25 @@ func (s *Service) List(ctx context.Context, sessionID string) (ListResult, error
 			s.rememberPlatform(sessionID, platformPOSIX)
 			return result, nil
 		case !errors.Is(err, ErrNoSentinel) || platform == platformPOSIX || target.Shell == ShellPOSIX:
-			return ListResult{}, listError(err)
+			return ProcessListResult{}, listError(err)
 		}
 	}
 	result, err := s.run(ctx, target, windowsListCommand)
 	if err != nil {
-		return ListResult{}, listError(err)
+		return ProcessListResult{}, listError(err)
 	}
 	s.rememberPlatform(sessionID, platformWindows)
 	return result, nil
 }
 
-func (s *Service) run(ctx context.Context, target Target, command string) (ListResult, error) {
+func (s *Service) run(ctx context.Context, target Target, command string) (ProcessListResult, error) {
 	res, err := target.Runner.Exec(ctx, command, base.ExecOptions{Timeout: listTimeout})
 	if err != nil {
-		return ListResult{}, err
+		return ProcessListResult{}, err
 	}
 	out, err := ParseOutput(res.Stdout)
 	if err != nil {
-		return ListResult{}, err
+		return ProcessListResult{}, err
 	}
 	out.Truncated = res.Truncated
 	return out, nil
@@ -153,6 +165,9 @@ func (s *Service) killPlatform(ctx context.Context, sessionID string, target Tar
 	return platform, nil
 }
 
+// errSystemProcess is returned for processes the platform policy never lets a caller end.
+var errSystemProcess = errors.New("不允许结束该系统进程")
+
 func validPID(platform string, pid int) bool {
 	if pid <= 1 || pid > math.MaxInt32 {
 		return false
@@ -161,52 +176,62 @@ func validPID(platform string, pid int) bool {
 }
 
 // Kill asks the process to end, or with DryRun only returns the command that would run. The PID is
-// re-checked against the confirmed name right before the command, since PIDs are reused.
-func (s *Service) Kill(ctx context.Context, args KillArgs) (KillResult, error) {
+// re-checked against the confirmed name, parent and start time right before the command, since PIDs are
+// reused.
+func (s *Service) Kill(ctx context.Context, args ProcessKillArgs) (ProcessKillResult, error) {
 	if args.PID <= 1 || args.PID > math.MaxInt32 {
-		return KillResult{}, ipc.BadParam(errors.New("进程 ID 无效"))
+		return ProcessKillResult{}, ipc.BadParam(errors.New("进程 ID 无效"))
 	}
 	if strings.TrimSpace(args.Name) == "" {
-		return KillResult{}, ipc.BadParam(errors.New("进程名不能为空"))
+		return ProcessKillResult{}, ipc.BadParam(errors.New("进程名不能为空"))
+	}
+	if len(args.Name) > maxIdentityBytes || len(args.Started) > maxIdentityBytes {
+		return ProcessKillResult{}, ipc.BadParam(errors.New("进程名或启动时间过长"))
+	}
+	if args.PPID < 0 {
+		return ProcessKillResult{}, ipc.BadParam(errors.New("父进程 ID 无效"))
 	}
 	target, err := s.target(ctx, args.SessionID)
 	if err != nil {
-		return KillResult{}, err
+		return ProcessKillResult{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, killTimeout)
 	defer cancel()
 	platform, err := s.killPlatform(ctx, args.SessionID, target)
 	if err != nil {
-		return KillResult{}, err
-	}
-	if !validPID(platform, args.PID) {
-		return KillResult{}, ipc.BadParam(errors.New("不允许结束该系统进程"))
+		return ProcessKillResult{}, err
 	}
 	command, signal := killCommand(platform, args.PID, args.Force)
-	result := KillResult{Command: command, Signal: signal}
-	if args.DryRun {
-		return result, nil
-	}
 	event := AuditEvent{
 		SessionID: args.SessionID, AssetID: target.AssetID, Host: target.Host,
 		PID: args.PID, Name: args.Name, Signal: signal, Command: command,
 	}
 	started := time.Now()
+	if !validPID(platform, args.PID) {
+		if !args.DryRun {
+			event.Result, event.Output = "refused", errSystemProcess.Error()
+			return ProcessKillResult{}, s.refuse(ctx, event, ipc.CodeBadParam, errSystemProcess.Error(), started)
+		}
+		return ProcessKillResult{}, ipc.BadParam(errSystemProcess)
+	}
+	result := ProcessKillResult{Command: command, Signal: signal}
+	if args.DryRun {
+		return result, nil
+	}
 
-	identity, err := target.Runner.Exec(ctx, identityCommand(platform, args.PID), base.ExecOptions{Timeout: killTimeout})
+	checked, err := target.Runner.Exec(ctx, identityCommand(platform, args.PID), base.ExecOptions{Timeout: killTimeout})
 	if err != nil {
-		event.Result, event.Output, event.Duration = "error", truncateOutput(err.Error()), time.Since(started)
-		s.audit(ctx, event)
-		return KillResult{}, ipc.WrapError(ipc.CodeIO, "复核进程失败: "+err.Error(), err)
+		event.Result, event.Output = "error", truncateOutput(err.Error())
+		return ProcessKillResult{}, s.refuse(ctx, event, ipc.CodeIO, "复核进程失败: "+err.Error(), started)
 	}
-	matches := posixNameMatches
-	if platform == platformWindows {
-		matches = windowsImageMatches
+	current, found := parseIdentity(checked.Stdout)
+	if found && platform == platformWindows && isWindowsCritical(current.Name) {
+		event.Result, event.Output = "refused", errSystemProcess.Error()
+		return ProcessKillResult{}, s.refuse(ctx, event, ipc.CodeBadParam, errSystemProcess.Error(), started)
 	}
-	if !matches(identity.Stdout, args.Name) {
-		event.Result, event.Duration = "refused", time.Since(started)
-		s.audit(ctx, event)
-		return KillResult{}, ipc.NewError(ipc.CodeNotFound, "进程已结束或 PID 已被其他进程占用，请刷新后重试")
+	if !found || !identityMatches(platform, current, args) {
+		event.Result = "refused"
+		return ProcessKillResult{}, s.refuse(ctx, event, ipc.CodeNotFound, "进程已结束或 PID 已被其他进程占用，请刷新后重试", started)
 	}
 
 	started = time.Now()
@@ -234,12 +259,49 @@ func (s *Service) Kill(ctx context.Context, args KillArgs) (KillResult, error) {
 	return result, nil
 }
 
+// identityMatches compares what the recheck found with what the caller confirmed. Names are compared as in
+// the listing: argv basename on POSIX, case-insensitive image name on Windows. Start times only count when
+// both sides have one.
+func identityMatches(platform string, current identity, args ProcessKillArgs) bool {
+	if platform == platformWindows {
+		if !strings.EqualFold(current.Name, args.Name) {
+			return false
+		}
+	} else if current.Name != args.Name {
+		return false
+	}
+	if current.PPID != args.PPID {
+		return false
+	}
+	return current.Started == "" || args.Started == "" || current.Started == args.Started
+}
+
+// refuse audits a kill that did not run and builds the error for the caller; a failed audit write is
+// appended to the message so the missing record stays visible.
+func (s *Service) refuse(ctx context.Context, event AuditEvent, code ipc.Code, message string, started time.Time) error {
+	event.Duration = time.Since(started)
+	if auditErr := s.audit(ctx, event); auditErr != nil {
+		message += fmt.Sprintf("（审计记录写入失败：%s）", auditErr)
+	}
+	return ipc.NewError(code, message)
+}
+
 func (s *Service) audit(ctx context.Context, event AuditEvent) error {
 	if s.auditor == nil {
 		return nil
 	}
-	// The kill may have used up the request deadline; the record must still be written.
-	return s.auditor.Audit(context.WithoutCancel(ctx), event)
+	// The kill may have used up the request deadline; the record must still be written for the same owner.
+	auditCtx, cancel := context.WithTimeout(ipc.WithUserID(context.WithoutCancel(ctx), ipc.OwnerID(ctx)), auditTimeout)
+	defer cancel()
+	err := s.auditor.Audit(auditCtx, event)
+	if err != nil {
+		logger := s.logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("host process kill audit write failed", "session", event.SessionID, "pid", event.PID, "result", event.Result, "error", err)
+	}
+	return err
 }
 
 func truncateOutput(text string) string {

@@ -1,5 +1,7 @@
 @@nexterm-procs ps-busybox
   PID  PPID USER       RSS ELAPSED STAT COMMAND
-    1     0 root      1234 1-02:03:04 S    init
+    1     0 root      1234 1234:56 S    init
    40     1 root         0   10:00 Z    [defunct-thing] <defunct>
-  120     1 app       4096   00:30 S    /usr/bin/node /srv/app.js --x 1
+  120     1 app        12m   00:30 S    /usr/bin/node /srv/app.js --x 1
+  121   120 app       1500g 99999:00 S    /usr/bin/big
+  122     1 app        8xx   00:30 S    broken-rss
