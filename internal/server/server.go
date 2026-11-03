@@ -100,35 +100,34 @@ type Config struct {
 }
 
 type Server struct {
-	options           Options
-	trustedProxyCIDRs []netip.Prefix
-	realIP            realip.Resolver
-	dispatcher        *ipc.Dispatcher
-	peerDispatcher    *ipc.Dispatcher
-	environment       ipc.Environment
-	accounts          *account.Accounts
-	accountThrottle   accountThrottles
-	mfaTickets        *mfaTicketStore
-	gatewayAuthKey    string
-	authRequired      bool
-	events            *EventBroker
-	channels          ChannelBinder
-	channelStats      ChannelStatsFunc
-	version           string
-	vaultStatus       func(context.Context) (any, error)
-	retention         *RetentionConfig
-	handler           http.Handler
-	logger            *slog.Logger
-	sockets           socketTracker
-	closeOnce         sync.Once
-	closeErr          error
-	webSocket         WebSocketConfig
-	preferences       *account.Preferences
-	audit             AuditFunc
-	assetOwner        AssetOwnerFunc
-	fleet             *fleetserver.Service
-	previews          *sharing.Service
-	spectator         PreviewSpectator
+	options         Options
+	realIP          realip.Resolver
+	dispatcher      *ipc.Dispatcher
+	peerDispatcher  *ipc.Dispatcher
+	environment     ipc.Environment
+	accounts        *account.Accounts
+	accountThrottle accountThrottles
+	mfaTickets      *mfaTicketStore
+	gatewayAuthKey  string
+	authRequired    bool
+	events          *EventBroker
+	channels        ChannelBinder
+	channelStats    ChannelStatsFunc
+	version         string
+	vaultStatus     func(context.Context) (any, error)
+	retention       *RetentionConfig
+	handler         http.Handler
+	logger          *slog.Logger
+	sockets         socketTracker
+	closeOnce       sync.Once
+	closeErr        error
+	webSocket       WebSocketConfig
+	preferences     *account.Preferences
+	audit           AuditFunc
+	assetOwner      AssetOwnerFunc
+	fleet           *fleetserver.Service
+	previews        *sharing.Service
+	spectator       PreviewSpectator
 	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
@@ -276,7 +275,7 @@ func New(config Config) (*Server, error) {
 	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
 
 	s := &Server{
-		options: config.Options, trustedProxyCIDRs: trustedProxyCIDRs, realIP: realip.NewResolver(trustedProxyCIDRs), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
+		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
 			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
