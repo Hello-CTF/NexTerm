@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -222,3 +224,192 @@ func TestDesktopStreamSerializesConcurrentSendsPerChannel(t *testing.T) {
 		t.Fatalf("ordered events = %+v", events)
 	}
 }
+
+// gatedStreamWindow blocks every dispatch until release is closed and records
+// events once they are let through.
+type gatedStreamWindow struct {
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int64
+	unblock func()
+	mu      sync.Mutex
+	events  []*application.CustomEvent
+}
+
+func newGatedStreamWindow(t *testing.T) *gatedStreamWindow {
+	w := &gatedStreamWindow{entered: make(chan struct{}, 64), release: make(chan struct{})}
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(w.release) }) })
+	w.unblock = func() { once.Do(func() { close(w.release) }) }
+	return w
+}
+
+func (w *gatedStreamWindow) DispatchWailsEvent(event *application.CustomEvent) {
+	w.calls.Add(1)
+	w.entered <- struct{}{}
+	<-w.release
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, event)
+}
+
+func (w *gatedStreamWindow) snapshot() []*application.CustomEvent {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]*application.CustomEvent(nil), w.events...)
+}
+
+func returnsWithin(d time.Duration, fn func()) bool {
+	done := make(chan struct{})
+	go func() { fn(); close(done) }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+func TestDesktopStreamCloseDoesNotBlockOnStuckDispatch(t *testing.T) {
+	window := newGatedStreamWindow(t)
+	factory := newDesktopStreamFactory()
+	factory.SetWindow(window)
+	stuck, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "stuck"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendDone := make(chan struct{})
+	go func() {
+		defer close(sendDone)
+		_ = stuck.SendBinary(context.Background(), []byte{1})
+	}()
+	<-window.entered
+
+	if !returnsWithin(time.Second, func() { _ = stuck.Close() }) {
+		t.Fatal("stream Close blocked behind an in-flight dispatch")
+	}
+	if !returnsWithin(time.Second, func() { _ = factory.Close() }) {
+		t.Fatal("factory Close blocked behind an in-flight dispatch")
+	}
+	before := window.calls.Load()
+	for _, s := range []ipc.BinaryStream{stuck, other} {
+		if err := s.SendBinary(context.Background(), []byte{2}); !errors.Is(err, errDesktopStreamClosed) {
+			t.Fatalf("send after shutdown = %v", err)
+		}
+	}
+	if got := window.calls.Load(); got != before {
+		t.Fatalf("dispatch calls grew from %d to %d after shutdown", before, got)
+	}
+	window.unblock()
+	<-sendDone
+}
+
+func TestDesktopStreamCloseDuringDispatchSendsClosedEventOnceAfterData(t *testing.T) {
+	window := newGatedStreamWindow(t)
+	factory := newDesktopStreamFactory()
+	factory.SetWindow(window)
+	stream, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "ordered"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendDone := make(chan struct{})
+	go func() {
+		defer close(sendDone)
+		_ = stream.SendBinary(context.Background(), []byte{1})
+	}()
+	<-window.entered
+	if !returnsWithin(time.Second, func() { _ = stream.Close(); _ = stream.Close() }) {
+		t.Fatal("Close blocked behind an in-flight dispatch")
+	}
+	window.unblock()
+	<-sendDone
+
+	events := window.snapshot()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want data then closed", events)
+	}
+	if _, ok := events[0].Data.(desktopBinaryEvent); !ok {
+		t.Fatalf("first event = %+v, want data", events[0].Data)
+	}
+	if closed, ok := events[1].Data.(desktopStreamClosedEvent); !ok || closed.Type != desktopStreamClosedEventType {
+		t.Fatalf("second event = %+v, want closed", events[1].Data)
+	}
+}
+
+func TestDesktopStreamFactoryCloseSendsNoClosedEvent(t *testing.T) {
+	window := &recordingStreamWindow{}
+	factory := newDesktopStreamFactory()
+	factory.SetWindow(window)
+	stream, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "quiet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = factory.Close()
+	_ = stream.Close()
+	if events := window.snapshot(); len(events) != 0 {
+		t.Fatalf("events after factory close = %+v", events)
+	}
+	if _, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "late"}); !errors.Is(err, errDesktopStreamClosed) {
+		t.Fatalf("open after close = %v", err)
+	}
+}
+
+func TestDesktopStreamSequentialAndConcurrentSendsKeepOrder(t *testing.T) {
+	window := &recordingStreamWindow{}
+	factory := newDesktopStreamFactory()
+	factory.SetWindow(window)
+	stream, err := factory.OpenBinary(t.Context(), ipc.ChannelRef{ID: "order"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 50; i++ {
+		if err := stream.SendBinary(t.Context(), []byte{byte(i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events := window.snapshot()
+	if len(events) != 50 {
+		t.Fatalf("events=%d", len(events))
+	}
+	for i, event := range events {
+		want := base64.StdEncoding.EncodeToString([]byte{byte(i)})
+		if got := event.Data.(desktopBinaryEvent).Data; got != want {
+			t.Fatalf("event %d data=%q want %q", i, got, want)
+		}
+	}
+	// Sends return only after the window call finished, so a send that returns is already delivered.
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = stream.SendBinary(t.Context(), []byte{1})
+		}()
+	}
+	wg.Wait()
+	if got := len(window.snapshot()); got != 58 {
+		t.Fatalf("events=%d, want 58", got)
+	}
+}
+
+func BenchmarkDesktopStreamDispatch(b *testing.B) {
+	factory := newDesktopStreamFactory()
+	factory.SetWindow(&nopStreamWindow{})
+	stream, err := factory.OpenBinary(context.Background(), ipc.ChannelRef{ID: "bench"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	payload := make([]byte, 1024)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = stream.SendBinary(context.Background(), payload)
+	}
+}
+
+type nopStreamWindow struct{}
+
+func (*nopStreamWindow) DispatchWailsEvent(*application.CustomEvent) {}

@@ -38,3 +38,8 @@ func systemUnprotect(data []byte) ([]byte, error) {
 	result := append([]byte(nil), unsafe.Slice(output.Data, output.Size)...)
 	return result, nil
 }
+
+func systemEnvelopeIsLegacy([]byte) bool { return false }
+
+// systemDiscard is a no-op: the protected blob is not kept in external storage.
+func systemDiscard([]byte) error { return nil }
