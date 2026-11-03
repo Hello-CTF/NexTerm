@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 )
@@ -139,11 +140,9 @@ func TestRenderRefsTextKindKeepsTailWithinScreenLimit(t *testing.T) {
 	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
 		{Kind: "text", Label: "t", Text: text},
 	}, nil)
-	if !strings.Contains(rendered, "[Earlier content truncated]\n"+strings.Repeat("b", RefScreenRunes)) {
-		t.Fatal("text reference must keep the latest tail")
-	}
-	if strings.Contains(rendered, "a") && strings.Contains(rendered, strings.Repeat("a", 100)) {
-		t.Fatal("text head must be truncated away")
+	want := "[Reference: command output t]\n[Earlier content truncated]\n" + strings.Repeat("b", RefScreenRunes) + "\n"
+	if rendered != want {
+		t.Fatalf("rendered %d runes, want the exact tail section of %d runes", len([]rune(rendered)), len([]rune(want)))
 	}
 }
 
@@ -155,8 +154,30 @@ func TestRenderRefsTextKindHonorsRemainingBudget(t *testing.T) {
 		{Kind: "text", Label: "four", Text: strings.Repeat("d", RefScreenRunes)},
 	}
 	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), refs, nil)
-	if got := len([]rune(rendered)); got > RefTotalRunes+200 {
-		t.Fatalf("total budget exceeded: %d runes", got)
+	// The first two sections leave 3934 of the 12000 runes; the third is cut to that tail and exhausts the
+	// budget, so the fourth is not rendered at all.
+	want := "[Reference: command output one]\n" + strings.Repeat("a", RefScreenRunes) + "\n" +
+		"[Reference: command output two]\n" + strings.Repeat("b", RefScreenRunes) + "\n" +
+		"[Reference: command output three]\n[Earlier content truncated]\n" + strings.Repeat("c", 3934) + "\n"
+	if rendered != want {
+		t.Fatalf("rendered %d runes, want %d", len([]rune(rendered)), len([]rune(want)))
+	}
+}
+
+func TestRenderRefsLabelsStayOnOneLine(t *testing.T) {
+	rendered := NewBuilder(Dependencies{}).RenderRefs(context.Background(), []RefSpec{
+		{Kind: "text", Label: " ls\r\n\t\x1b[31mred\u0085  x\u2028y\x00 ", Text: "out"},
+		{Kind: "text", ID: "blk-2", Label: "\r\n\t\x1b\u009b", Text: "out2"},
+	}, nil)
+	want := "[Reference: command output ls [31mred x y]\nout\n" +
+		"[Reference: command output blk-2]\nout2\n"
+	if rendered != want {
+		t.Fatalf("rendered %q, want %q", rendered, want)
+	}
+	for _, r := range strings.ReplaceAll(rendered, "\n", "") {
+		if unicode.IsControl(r) {
+			t.Fatalf("control character %U survived in %q", r, rendered)
+		}
 	}
 }
 

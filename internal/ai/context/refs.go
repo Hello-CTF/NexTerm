@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -52,7 +53,7 @@ func (b *Builder) RenderRefs(ctx context.Context, refs []RefSpec, readFile RefFi
 }
 
 func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileReader, budget int) string {
-	label := strings.ReplaceAll(strings.TrimSpace(ref.Label), "\n", " ")
+	label := singleLineLabel(ref.Label)
 	if label == "" {
 		label = ref.ID
 	}
@@ -106,6 +107,18 @@ func (b *Builder) renderRef(ctx context.Context, ref RefSpec, readFile RefFileRe
 	default:
 		return ""
 	}
+}
+
+// singleLineLabel turns a client-supplied label into one plain line: every control character becomes a
+// space and runs of whitespace collapse, so a label can neither break the reference header nor smuggle
+// terminal escapes or extra lines into the prompt.
+func singleLineLabel(label string) string {
+	return strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, label)), " ")
 }
 
 func truncateRunes(value string, limit int, keepTail bool) string {
