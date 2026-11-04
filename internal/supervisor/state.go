@@ -620,6 +620,18 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 	return state
 }
 
+// windowTitle is the program's OSC 0/2 window title, clipped like event
+// text; empty when the tracker reads a caller's screen.
+func (t *stateTracker) windowTitle() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.emu == nil {
+		return ""
+	}
+	title, _ := clipText(t.emu.Title())
+	return title
+}
+
 func clipText(s string) (string, bool) {
 	if len(s) <= maxEventText {
 		return s, false

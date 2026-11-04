@@ -445,6 +445,8 @@ export interface LiveTabInfo {
   lastOutputMsAgo: number;
   title?: string;
   titleCustom?: boolean;
+  // The program's OSC window title, reported even while a custom title hides it.
+  windowTitle?: string;
   titleChangedAt?: number;
   // Unix ms; detachedAt is absent while a client is subscribed.
   createdAt?: number;
@@ -489,6 +491,8 @@ export interface DurableDescriptor {
   incarnation: string;
   createdAt: number;
   title?: string;
+  // The program's OSC window title; absent from helpers that do not report it.
+  windowTitle?: string;
   metadataRevision: number;
   cols: number;
   rows: number;

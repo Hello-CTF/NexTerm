@@ -29,9 +29,12 @@ type DurableDescriptor struct {
 	ID          string
 	Incarnation string
 	// Generation is the helper generation that listed the session.
-	Generation       string
-	CreatedAt        time.Time
-	Title            string
+	Generation string
+	CreatedAt  time.Time
+	Title      string
+	// WindowTitle is the program's OSC window title the helper last saw;
+	// empty when the helper does not report one.
+	WindowTitle      string
 	MetadataRevision uint64
 	Cols             uint32
 	Rows             uint32

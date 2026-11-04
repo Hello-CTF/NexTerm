@@ -286,7 +286,7 @@ func (t *Tab) infoLocked() TabInfo {
 		ID: t.ID, SessionID: t.SessionID, Cols: t.cols, Rows: t.rows, GridRevision: t.gridRevision,
 		SizeOwner: t.sizeOwner, GuestControl: t.guestControl, Subscribers: len(t.subscribers), Viewers: len(viewers),
 		Exited: t.exited, Retainable: t.retainable || !t.ephemeral && !t.regularRemote, Ephemeral: t.ephemeral, Durable: t.durable != nil, Cwd: t.cwd, Encoding: t.encoding,
-		Title: t.title, TitleCustom: t.titleCustom, TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
+		Title: t.title, TitleCustom: t.titleCustom, WindowTitle: t.dynamicTitle(), TitleChangedAt: t.titleChangedAt, Shell: t.shell, LastOutputAt: terminalLastOutputAt(t.terminal),
 		CreatedAt: unixMilliOrZero(t.createdAt), DetachedAt: t.detachedAtLocked(), DetachedSinceOpen: t.detachedSinceOpenLocked(),
 	}
 }

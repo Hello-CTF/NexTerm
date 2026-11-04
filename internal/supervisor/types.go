@@ -61,10 +61,13 @@ type Info struct {
 	ID string `json:"id"`
 	// Generation is the helper generation that reported this info; it
 	// changes when the helper restarts.
-	Generation       string     `json:"generation,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	Incarnation      string     `json:"incarnation"`
-	Title            string     `json:"title,omitempty"`
+	Generation  string    `json:"generation,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	Incarnation string    `json:"incarnation"`
+	Title       string    `json:"title,omitempty"`
+	// WindowTitle is the program's OSC window title, kept apart from the
+	// custom Title; empty when state detection is off or none was set.
+	WindowTitle      string     `json:"window_title,omitempty"`
 	MetadataRevision uint64     `json:"metadata_revision,omitempty"`
 	Cols             uint32     `json:"cols"`
 	Rows             uint32     `json:"rows"`

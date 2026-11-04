@@ -144,6 +144,7 @@ type durableDescriptorDTO struct {
 	Incarnation      string `json:"incarnation"`
 	CreatedAt        int64  `json:"createdAt"`
 	Title            string `json:"title,omitempty"`
+	WindowTitle      string `json:"windowTitle,omitempty"`
 	MetadataRevision uint64 `json:"metadataRevision"`
 	Cols             uint32 `json:"cols"`
 	Rows             uint32 `json:"rows"`
@@ -388,6 +389,7 @@ type liveTabDTO struct {
 	LastOutputMSAgo int64   `json:"lastOutputMsAgo"`
 	Title           string  `json:"title,omitempty"`
 	TitleCustom     bool    `json:"titleCustom,omitempty"`
+	WindowTitle     string  `json:"windowTitle,omitempty"`
 	TitleChangedAt  int64   `json:"titleChangedAt,omitempty"`
 	CreatedAt       int64   `json:"createdAt,omitempty"`
 	DetachedAt      int64   `json:"detachedAt,omitempty"`
@@ -899,7 +901,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					for _, descriptor := range descriptors {
 						item := durableDescriptorDTO{
 							ID: descriptor.ID, Incarnation: descriptor.Incarnation, CreatedAt: descriptor.CreatedAt.UnixMilli(),
-							Title: descriptor.Title, MetadataRevision: descriptor.MetadataRevision,
+							Title: descriptor.Title, WindowTitle: descriptor.WindowTitle, MetadataRevision: descriptor.MetadataRevision,
 							Cols: descriptor.Cols, Rows: descriptor.Rows, Dead: descriptor.Dead, ExitCode: descriptor.ExitCode, Signal: descriptor.Signal,
 							Activity: newDurableActivityDTO(descriptor.Activity),
 						}
@@ -929,7 +931,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						TabID: info.ID, SessionID: info.SessionID, SessionName: sessionInfo.Name, SessionKind: sessionInfo.Kind,
 						Cols: info.Cols, Rows: info.Rows, SizeOwner: nullableProductionString(info.SizeOwner),
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
-						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, TitleChangedAt: info.TitleChangedAt,
+						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, WindowTitle: info.WindowTitle, TitleChangedAt: info.TitleChangedAt,
 						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
 					})
 				}

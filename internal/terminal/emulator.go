@@ -47,6 +47,11 @@ func (e *Emulator) Resize(cols, rows int) {
 	e.scr.resize(cols, rows)
 }
 
+// Title returns the latest OSC 0/2 window title.
+func (e *Emulator) Title() string {
+	return e.scr.title
+}
+
 // Snapshot returns the visible screen. LastOutputMsAgo is left zero.
 func (e *Emulator) Snapshot() Snapshot {
 	text := e.scr.text()

@@ -219,10 +219,18 @@ function shortTabId(tabId: string): string {
   return (compact || tabId).slice(-6);
 }
 
-// The tab strip's rule: the backend reports the custom title when there is one, otherwise the
-// program's title; either is sanitized the way the strip shows it.
-export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title">): string {
-  return sanitizeRemoteTabTitle(tab.title ?? "") || `终端 ${shortTabId(tab.tabId)}`;
+// The tab strip's rule: the custom title when there is one, otherwise the program's window title; either is
+// sanitized the way the strip shows it. A helper listing carries only the custom title as `title`, so the window
+// title it reports separately names a session nobody renamed.
+export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
+  return sanitizeRemoteTabTitle(tab.title ?? "") || sanitizeRemoteTabTitle(tab.windowTitle ?? "") || `终端 ${shortTabId(tab.tabId)}`;
+}
+
+// backgroundWindowTitle is the program's window title shown under a name it does not already match, so a renamed
+// session can still be found by what it is running.
+export function backgroundWindowTitle(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
+  const window = sanitizeRemoteTabTitle(tab.windowTitle ?? "");
+  return window && window !== backgroundTabName(tab) ? window : "";
 }
 
 function pad(value: number): string {
@@ -751,6 +759,7 @@ export function BackgroundSessions({
     const action = busy[key];
     const rowBusy = action !== undefined;
     const name = backgroundTabName(t);
+    const windowTitle = backgroundWindowTitle(t);
     const status = statusView(t);
     const time = timeView(t, now);
     const terminable = t.aggregateHost ? aggregateTerminatePath(t.aggregateHost, sessions) !== null : Boolean(t.sessionId);
@@ -760,6 +769,11 @@ export function BackgroundSessions({
           <span className="block truncate font-medium text-[var(--nx-fg-strong)]" title={name} data-testid="background-name">
             {name}
           </span>
+          {windowTitle && (
+            <span className="block truncate text-[11px] text-[var(--nx-fg-soft)]" title={windowTitle} data-testid="background-window-title">
+              {windowTitle}
+            </span>
+          )}
         </td>
         <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
           <span className="inline-flex items-center gap-1.5">

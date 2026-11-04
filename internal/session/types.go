@@ -234,6 +234,9 @@ type TabInfo struct {
 	// TitleCustom reports whether Title is a custom title (a manual or AI
 	// rename, or a restored durable title) rather than the OSC dynamic title.
 	TitleCustom bool `json:"titleCustom,omitempty"`
+	// WindowTitle is the latest OSC dynamic title, reported even while a
+	// custom Title hides it from the tab strip.
+	WindowTitle string `json:"windowTitle,omitempty"`
 	// TitleChangedAt is the client time (Unix ms) of the last explicit title
 	// decision, so clients can order it against their own; zero when unknown.
 	TitleChangedAt  int64  `json:"titleChangedAt,omitempty"`

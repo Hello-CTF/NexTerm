@@ -197,6 +197,7 @@ export function collectBackgroundTabs(
       const live = liveRows.get(key);
       if (live) {
         live.state ??= tab.state;
+        live.windowTitle ||= tab.windowTitle;
         // The helper created the session; this app may only have reattached to it.
         if (tab.createdAt > 0) {
           live.createdAt = tab.createdAt;
@@ -219,6 +220,7 @@ export function collectBackgroundTabs(
         title: tab.title,
         // A durable descriptor title is the canonical custom title.
         titleCustom: tab.title ? true : undefined,
+        windowTitle: tab.windowTitle,
         remote: true,
         durable: true,
         createdAt: tab.createdAt > 0 ? tab.createdAt : undefined,
@@ -268,6 +270,7 @@ export function aggregateBackgroundTabs(
       exited: false,
       title: item.title,
       titleCustom: item.title ? true : undefined,
+      windowTitle: item.windowTitle,
       remote: true,
       durable: true,
       createdAt: item.createdAt || undefined,

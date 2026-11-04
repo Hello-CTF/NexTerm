@@ -222,6 +222,7 @@ func durableDescriptors(infos []Info) []base.DurableDescriptor {
 			Generation:       info.Generation,
 			CreatedAt:        info.CreatedAt,
 			Title:            info.Title,
+			WindowTitle:      info.WindowTitle,
 			MetadataRevision: info.MetadataRevision,
 			Cols:             info.Cols,
 			Rows:             info.Rows,

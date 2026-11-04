@@ -239,11 +239,48 @@ func TestListFromHelperWithoutActivityDecodesAsUnknown(t *testing.T) {
 	if descriptor.Activity != nil {
 		t.Fatalf("an old helper decoded activity %+v, want unknown", descriptor.Activity)
 	}
+	if descriptor.WindowTitle != "" {
+		t.Fatalf("an old helper decoded window title %q", descriptor.WindowTitle)
+	}
 	if descriptor.State == nil || descriptor.State.State != "needs_me" {
 		t.Fatalf("state = %+v", descriptor.State)
 	}
 	if want := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC); !descriptor.CreatedAt.Equal(want) {
 		t.Fatalf("created at %v, want %v", descriptor.CreatedAt, want)
+	}
+}
+
+func TestListReportsWindowTitleApartFromCustomTitle(t *testing.T) {
+	supervisor := testSupervisor(t)
+	server := testServer(t, supervisor)
+	client := testClient(t, server)
+	session := testScriptSession(t, supervisor, `printf '\033]2;build 42\007'; sleep 30`)
+
+	deadline := time.Now().Add(testReadTimeout)
+	for {
+		descriptors, err := NewRemoteProvider(client).ListDurableDescriptors(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found *base.DurableDescriptor
+		for index := range descriptors {
+			if descriptors[index].ID == session.ID() {
+				found = &descriptors[index]
+			}
+		}
+		if found == nil {
+			t.Fatalf("session %s not listed", session.ID())
+		}
+		if found.WindowTitle == "build 42" {
+			if found.Title != "" {
+				t.Fatalf("the window title leaked into the custom title %q", found.Title)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("window title = %q, want %q", found.WindowTitle, "build 42")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

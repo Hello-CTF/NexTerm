@@ -278,6 +278,44 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("names a helper-listed session by its window title and keeps the window title under a custom name", async () => {
+    seedHost(s1, "ssh");
+    mocks.listDurable.mockResolvedValue([
+      descriptor({ id: "renamed", title: "部署脚本", windowTitle: "htop - build01" }),
+      descriptor({ id: "unnamed", windowTitle: "vim notes.md" }),
+      descriptor({ id: "same", title: "vim notes.md", windowTitle: "vim notes.md" }),
+      descriptor({ id: "0198a3f2-7c41-7000-8000-00000abc1234" }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(4));
+    try {
+      const renamed = row(view, "renamed");
+      expect(cell(renamed, "background-name").textContent).toBe("部署脚本");
+      expect(cell(renamed, "background-window-title").textContent).toBe("htop - build01");
+      const unnamed = row(view, "unnamed");
+      expect(cell(unnamed, "background-name").textContent).toBe("vim notes.md");
+      expect(unnamed.querySelector('[data-testid="background-window-title"]')).toBeNull();
+      expect(row(view, "same").querySelector('[data-testid="background-window-title"]')).toBeNull();
+      expect(cell(row(view, "0198a3f2-7c41-7000-8000-00000abc1234"), "background-name").textContent).toBe("终端 bc1234");
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("shows the window title of a renamed live tab", async () => {
+    seedHost({ ...s1, kind: "local", assetId: null }, "local");
+    mocks.listLive.mockResolvedValue([
+      liveTab({ tabId: "custom", title: "部署脚本", titleCustom: true, windowTitle: "tail -f deploy.log" }),
+      liveTab({ tabId: "program", title: "vim notes.md", windowTitle: "vim notes.md" }),
+    ]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(2));
+    try {
+      expect(cell(row(view, "custom"), "background-window-title").textContent).toBe("tail -f deploy.log");
+      expect(row(view, "program").querySelector('[data-testid="background-window-title"]')).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("reads remote durable status and times from the helper and shows missing activity as a dash", async () => {
     seedHost(s1, "ssh");
     mocks.listDurable.mockResolvedValue([

@@ -49,6 +49,7 @@ export type AggregateSession = {
   hostKey: string;
   tabId: string;
   title?: string;
+  windowTitle?: string;
   createdAt?: number;
   cols: number;
   rows: number;

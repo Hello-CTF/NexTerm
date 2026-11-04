@@ -133,6 +133,10 @@ func TestCustomTitlePrecedesOSCDynamicTitle(t *testing.T) {
 	if got := tab.Info().Title; got != "deploy" {
 		t.Fatalf("tab title = %q, want the custom title", got)
 	}
+	// The hidden OSC title is still reported apart, so listings can show it.
+	if got := tab.Info().WindowTitle; got != "sneaky" {
+		t.Fatalf("window title = %q, want the OSC title", got)
+	}
 }
 
 // Without an OSC report the tab title stays empty and no title control event

@@ -91,13 +91,16 @@ type AggregateSession struct {
 	HostKey string `json:"hostKey"`
 	// TabID is the durable session ID, which is also the tab ID it is
 	// attached under.
-	TabID     string `json:"tabId"`
-	Title     string `json:"title,omitempty"`
-	CreatedAt int64  `json:"createdAt,omitempty"`
-	Cols      uint32 `json:"cols"`
-	Rows      uint32 `json:"rows"`
-	Dead      bool   `json:"dead,omitempty"`
-	ExitCode  *int   `json:"exitCode,omitempty"`
+	TabID string `json:"tabId"`
+	Title string `json:"title,omitempty"`
+	// WindowTitle is the program's OSC window title, shown next to a custom
+	// Title so a renamed session can still be found by what it runs.
+	WindowTitle string `json:"windowTitle,omitempty"`
+	CreatedAt   int64  `json:"createdAt,omitempty"`
+	Cols        uint32 `json:"cols"`
+	Rows        uint32 `json:"rows"`
+	Dead        bool   `json:"dead,omitempty"`
+	ExitCode    *int   `json:"exitCode,omitempty"`
 	// Attention is the helper's state of the session; unknown when the
 	// helper reports none. Its version is zero: a client prefers any state
 	// an attached tab reports.
@@ -546,7 +549,7 @@ func aggregateSessions(hostKey string, descriptors []base.DurableDescriptor) []A
 			continue
 		}
 		item := AggregateSession{
-			HostKey: hostKey, TabID: descriptor.ID, Title: descriptor.Title,
+			HostKey: hostKey, TabID: descriptor.ID, Title: descriptor.Title, WindowTitle: descriptor.WindowTitle,
 			Cols: descriptor.Cols, Rows: descriptor.Rows, Dead: descriptor.Dead,
 		}
 		if !descriptor.CreatedAt.IsZero() {

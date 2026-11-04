@@ -84,6 +84,9 @@ func (s *Session) canonicalInfoWith(options listOptions) Info {
 	info.Generation = s.supervisor.generation
 	s.historyInfo(&info)
 	info.State = s.stateInfoLocked(options.Events, options.EventsAfter)
+	if s.state != nil {
+		info.WindowTitle = s.state.windowTitle()
+	}
 	info.Activity = s.activityLocked()
 	return info
 }
