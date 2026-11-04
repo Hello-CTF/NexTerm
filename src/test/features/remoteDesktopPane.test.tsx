@@ -361,6 +361,62 @@ describe("RemoteDesktopPane", () => {
     expect(mocks.createClient.mock.calls.map((call) => (call[1] as ClientOptions).prepared.ticket)).toEqual(["t-1", "t-2"]);
   });
 
+  it("asks before a fourth reconnect when the desktop keeps being taken over within five minutes", async () => {
+    vi.useFakeTimers();
+    await mountPane();
+    const drop: EngineFailure = { protocol: "vnc", stage: "closed", clean: false, wasConnected: true, message: "与远程桌面的连接已中断" };
+    // Every reconnect succeeds and is dropped again, as when another device takes the same session back.
+    for (let round = 0; round < 3; round++) {
+      const live = (await mocks.createClient.mock.results.at(-1)!.value) as FakeClient;
+      await act(async () => live.callbacks.onDisconnected(drop));
+      expect(document.querySelector("[data-testid='remote-reconnect-paused']")).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(pane().dataset.status).toBe("connected");
+    }
+    expect(mocks.prepare).toHaveBeenCalledTimes(4);
+    const live = (await mocks.createClient.mock.results.at(-1)!.value) as FakeClient;
+    await act(async () => live.callbacks.onDisconnected(drop));
+    expect(document.querySelector("[data-testid='remote-retry-countdown']")).toBeNull();
+    expect(document.querySelector("[data-testid='remote-reconnect-paused']")?.textContent).toContain("另一台设备");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+    });
+    expect(mocks.prepare).toHaveBeenCalledTimes(4);
+
+    const reconnect = [...document.querySelectorAll<HTMLButtonElement>("[data-testid='remote-disconnect-overlay'] button")].find((b) => b.textContent === "重新连接")!;
+    await act(async () => reconnect.click());
+    await flush();
+    expect(mocks.prepare).toHaveBeenCalledTimes(5);
+    expect(pane().dataset.status).toBe("connected");
+    // A confirmed reconnect starts a fresh budget.
+    const next = (await mocks.createClient.mock.results.at(-1)!.value) as FakeClient;
+    await act(async () => next.callbacks.onDisconnected(drop));
+    expect(document.querySelector("[data-testid='remote-retry-countdown']")?.textContent).toContain("2 秒");
+  });
+
+  it("reconnects automatically again once earlier reconnects leave the five-minute window", async () => {
+    vi.useFakeTimers();
+    await mountPane();
+    const drop: EngineFailure = { protocol: "vnc", stage: "closed", clean: false, wasConnected: true, message: "x" };
+    for (let round = 0; round < 3; round++) {
+      const live = (await mocks.createClient.mock.results.at(-1)!.value) as FakeClient;
+      await act(async () => live.callbacks.onDisconnected(drop));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      // Stable for a while between drops.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * 60_000);
+      });
+    }
+    const live = (await mocks.createClient.mock.results.at(-1)!.value) as FakeClient;
+    await act(async () => live.callbacks.onDisconnected(drop));
+    expect(document.querySelector("[data-testid='remote-reconnect-paused']")).toBeNull();
+    expect(document.querySelector("[data-testid='remote-retry-countdown']")).not.toBeNull();
+  });
+
   it("does not auto-reconnect after an auth failure and offers the two buttons", async () => {
     vi.useFakeTimers();
     mocks.createClient.mockImplementationOnce(async () => {

@@ -77,7 +77,7 @@ describe("VncClient drops", () => {
     expect(failure).toMatchObject({ clean: false, wasConnected: true, stage: "closed" });
     const classified = classifyFailure(failure);
     expect(classified.kind).toBe("retryable");
-    expect(mayAutoReconnect(classified, { promptPassword: false, attempt: 0 })).toBe(true);
+    expect(mayAutoReconnect(classified, { promptPassword: false, recent: 0 })).toBe(true);
   });
 
   it("reports nothing for a disconnect the client itself asked for", async () => {

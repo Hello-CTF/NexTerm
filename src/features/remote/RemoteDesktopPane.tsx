@@ -11,7 +11,7 @@ import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
 import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
-import type { Failure } from "./connectFlow";
+import { AUTO_RECONNECT_WINDOW_MS, MAX_AUTO_RECONNECTS, type Failure } from "./connectFlow";
 import type { ModifierKey, ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
 
@@ -67,6 +67,7 @@ function DisconnectOverlay({
   failure,
   retryIn,
   attempt,
+  reconnectPaused,
   onReconnect,
   onClose,
   onWake,
@@ -74,6 +75,7 @@ function DisconnectOverlay({
   failure: Failure;
   retryIn: number | null;
   attempt: number;
+  reconnectPaused: boolean;
   onReconnect: () => void;
   onClose: () => void;
   // Present when the asset has a Wake-on-LAN MAC.
@@ -99,6 +101,11 @@ function DisconnectOverlay({
       {retryIn !== null && (
         <div className="text-[12.5px] text-neutral-300" role="status" data-testid="remote-retry-countdown">
           {retryIn} 秒后自动重新连接（第 {attempt + 1} 次）
+        </div>
+      )}
+      {reconnectPaused && (
+        <div className="max-w-md text-[12.5px] text-amber-300" role="status" data-testid="remote-reconnect-paused">
+          {AUTO_RECONNECT_WINDOW_MS / 60_000} 分钟内已自动重新连接 {MAX_AUTO_RECONNECTS} 次，已暂停自动重连。可能有另一台设备正在使用同一个远程桌面，确认后请手动重新连接。
         </div>
       )}
       {never && <div className="text-[11.5px] text-neutral-400">这类失败不会自动重试，请处理后手动重新连接。</div>}
@@ -609,7 +616,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           </div>
         )}
         {session.status === "disconnected" && session.failure && (
-          <DisconnectOverlay failure={session.failure} retryIn={session.retryIn} attempt={session.attempt} onReconnect={session.connect} onClose={closeTab} onWake={session.wake.available ? () => wakeAsset(assetId, session.wake.name) : undefined} />
+          <DisconnectOverlay failure={session.failure} retryIn={session.retryIn} attempt={session.attempt} reconnectPaused={session.reconnectPaused} onReconnect={session.connect} onClose={closeTab} onWake={session.wake.available ? () => wakeAsset(assetId, session.wake.name) : undefined} />
         )}
       </div>
       {touch && connected && !effectiveViewOnly && (

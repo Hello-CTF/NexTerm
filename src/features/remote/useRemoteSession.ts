@@ -4,9 +4,11 @@ import { ask, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { releaseKeyboard } from "../../app/inputCapture";
 import {
+  autoReconnectPaused,
   classifyFailure,
   describeCertificate,
   mayAutoReconnect,
+  recentReconnects,
   retryDelayMs,
   runConnectFlow,
   type Failure,
@@ -50,6 +52,8 @@ export interface RemoteSession {
   // Seconds until the next automatic reconnect, or null when none is scheduled.
   retryIn: number | null;
   attempt: number;
+  // Automatic reconnects used up the window's budget; the next one waits for the user.
+  reconnectPaused: boolean;
   // The last desktop size the client reported; a new object for every change.
   desktopSize: { width: number; height: number } | null;
   protocol: RemoteProtocol;
@@ -73,6 +77,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   const [failure, setFailure] = useState<Failure | null>(null);
   const [retryIn, setRetryIn] = useState<number | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [reconnectPaused, setReconnectPaused] = useState(false);
   const [protocol, setProtocol] = useState<RemoteProtocol>("rdp");
   const [desktopSize, setDesktopSize] = useState<{ width: number; height: number } | null>(null);
   const [options, setOptions] = useState<RemoteDesktopOptions>(DEFAULT_OPTIONS);
@@ -80,7 +85,8 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   const clientRef = useRef<RemoteClient | null>(null);
   const holderRef = useRef<HTMLElement | null>(null);
   const generation = useRef(0);
-  const attemptRef = useRef(0);
+  // Start times of the automatic reconnects in the current window; a manual reconnect clears them.
+  const reconnectsRef = useRef<number[]>([]);
   const timers = useRef<{ countdown: number | null; retry: number | null }>({ countdown: null, retry: null });
   const connectRef = useRef<() => void>(() => undefined);
   // Whether the flow behind the live client asked the user for a password; such a session is not reconnected by
@@ -123,9 +129,14 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
       if (last) setRemoteThumbnail(tabId, last);
       setFailure(result);
       settle("disconnected");
-      if (!mayAutoReconnect(result, { promptPassword, attempt: attemptRef.current })) return;
-      const delay = retryDelayMs(attemptRef.current);
+      const recent = recentReconnects(reconnectsRef.current, Date.now());
+      reconnectsRef.current = recent;
+      const ctx = { promptPassword, recent: recent.length };
+      setReconnectPaused(autoReconnectPaused(result, ctx));
+      if (!mayAutoReconnect(result, ctx)) return;
+      const delay = retryDelayMs(recent.length);
       if (delay === null) return;
+      setAttempt(recent.length);
       let remaining = Math.ceil(delay / 1000);
       setRetryIn(remaining);
       timers.current.countdown = window.setInterval(() => {
@@ -134,8 +145,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
       }, 1000);
       timers.current.retry = window.setTimeout(() => {
         clearTimers();
-        attemptRef.current += 1;
-        setAttempt(attemptRef.current);
+        reconnectsRef.current = [...reconnectsRef.current, Date.now()];
         connectRef.current();
       }, delay);
     },
@@ -147,6 +157,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     clearTimers();
     dropClient();
     setFailure(null);
+    setReconnectPaused(false);
     settle("connecting");
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -171,8 +182,6 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
       const callbacks: ClientCallbacks = {
         onConnected: () => {
           if (gen !== generation.current) return;
-          attemptRef.current = 0;
-          setAttempt(0);
           settle("connected");
         },
         onDesktopSize: (width, height) => {
@@ -245,7 +254,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   connectRef.current = connect;
 
   const manualConnect = useCallback(() => {
-    attemptRef.current = 0;
+    reconnectsRef.current = [];
     setAttempt(0);
     connect();
   }, [connect]);
@@ -259,6 +268,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     clearTimers();
     dropClient();
     settle("disconnected");
+    setReconnectPaused(false);
     setFailure({ kind: "ended", message: "已断开连接" });
   }, [clearTimers, dropClient, settle]);
 
@@ -286,5 +296,5 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     return () => window.clearInterval(timer);
   }, [status, tabId]);
 
-  return { status, failure, retryIn, attempt, desktopSize, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
+  return { status, failure, retryIn, attempt, reconnectPaused, desktopSize, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
 }

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   classifyFailure,
   describeCertificate,
+  AUTO_RECONNECT_WINDOW_MS,
+  autoReconnectPaused,
   mayAutoReconnect,
+  recentReconnects,
   retryDelayMs,
   runConnectFlow,
   type FlowApi,
@@ -98,25 +101,37 @@ describe("classifyFailure", () => {
 });
 
 describe("auto reconnect policy", () => {
-  it("backs off and gives up", () => {
+  it("backs off and gives up after three reconnects in the window", () => {
     expect(retryDelayMs(0)).toBe(2000);
-    expect(retryDelayMs(4)).toBe(30000);
-    expect(retryDelayMs(5)).toBeNull();
+    expect(retryDelayMs(2)).toBe(8000);
+    expect(retryDelayMs(3)).toBeNull();
   });
 
   it("never retries auth, certificate or permission failures", () => {
     for (const kind of ["auth", "certificate", "permission", "ended", "fatal"] as const) {
-      expect(mayAutoReconnect({ kind, message: "x" }, { promptPassword: false, attempt: 0 })).toBe(false);
+      expect(mayAutoReconnect({ kind, message: "x" }, { promptPassword: false, recent: 0 })).toBe(false);
+      expect(autoReconnectPaused({ kind, message: "x" }, { promptPassword: false, recent: 3 })).toBe(false);
     }
-    expect(mayAutoReconnect({ kind: "retryable", message: "x" }, { promptPassword: false, attempt: 0 })).toBe(true);
+    expect(mayAutoReconnect({ kind: "retryable", message: "x" }, { promptPassword: false, recent: 0 })).toBe(true);
   });
 
   it("waits for the user when the password is asked at connect time", () => {
-    expect(mayAutoReconnect({ kind: "retryable", message: "x" }, { promptPassword: true, attempt: 0 })).toBe(false);
+    expect(mayAutoReconnect({ kind: "retryable", message: "x" }, { promptPassword: true, recent: 0 })).toBe(false);
   });
 
-  it("stops after the last attempt", () => {
-    expect(mayAutoReconnect({ kind: "retryable", message: "x" }, { promptPassword: false, attempt: 5 })).toBe(false);
+  it("pauses for confirmation once the window budget is used up", () => {
+    const drop = { kind: "retryable" as const, message: "x" };
+    expect(mayAutoReconnect(drop, { promptPassword: false, recent: 3 })).toBe(false);
+    expect(autoReconnectPaused(drop, { promptPassword: false, recent: 3 })).toBe(true);
+    expect(autoReconnectPaused(drop, { promptPassword: false, recent: 2 })).toBe(false);
+  });
+
+  it("forgets reconnects older than the window", () => {
+    const now = 10 * 60_000;
+    expect(recentReconnects([now - AUTO_RECONNECT_WINDOW_MS, now - AUTO_RECONNECT_WINDOW_MS + 1, now - 1], now)).toEqual([
+      now - AUTO_RECONNECT_WINDOW_MS + 1,
+      now - 1,
+    ]);
   });
 });
 
@@ -237,7 +252,7 @@ describe("runConnectFlow", () => {
     expect(result).toMatchObject({ ok: false, failure: { kind: "auth" } });
     expect(open).toHaveBeenCalledTimes(1);
     expect(api.prepare).toHaveBeenCalledTimes(1);
-    expect(mayAutoReconnect((result as { failure: { kind: "auth"; message: string } }).failure, { promptPassword: false, attempt: 0 })).toBe(false);
+    expect(mayAutoReconnect((result as { failure: { kind: "auth"; message: string } }).failure, { promptPassword: false, recent: 0 })).toBe(false);
   });
 
   it("asks once for a VNC password the asset does not hold when the server wants one", async () => {

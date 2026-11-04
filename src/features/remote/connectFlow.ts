@@ -79,18 +79,33 @@ export function classifyFailure(input: EngineFailure): Failure {
   return { ...base, kind: "fatal" };
 }
 
-export const MAX_AUTO_RECONNECTS = 5;
-export const RETRY_DELAYS_MS = [2000, 4000, 8000, 15000, 30000] as const;
+// Automatic reconnects are counted over a sliding window, not reset by a successful connect: two clients that keep
+// taking the same desktop from each other connect fine every time, and must still stop and wait for a person.
+export const MAX_AUTO_RECONNECTS = 3;
+export const AUTO_RECONNECT_WINDOW_MS = 5 * 60_000;
+export const RETRY_DELAYS_MS = [2000, 4000, 8000] as const;
 
-// retryDelayMs is the wait before reconnect attempt number `attempt` (0-based), or null when attempts are used up.
-export function retryDelayMs(attempt: number): number | null {
-  return attempt >= 0 && attempt < MAX_AUTO_RECONNECTS ? RETRY_DELAYS_MS[attempt] : null;
+// recentReconnects keeps the automatic reconnects that still count against the window ending at `now`.
+export function recentReconnects(history: readonly number[], now: number): number[] {
+  return history.filter((at) => now - at < AUTO_RECONNECT_WINDOW_MS);
+}
+
+// retryDelayMs is the wait before the automatic reconnect that follows `recent` others in the window, or null when
+// the window's budget is used up.
+export function retryDelayMs(recent: number): number | null {
+  return recent >= 0 && recent < MAX_AUTO_RECONNECTS ? RETRY_DELAYS_MS[recent] : null;
 }
 
 // A password asked at connect time is not kept, so an automatic reconnect would have to ask again without the user
 // being there. Those sessions wait for the user instead.
-export function mayAutoReconnect(failure: Failure, ctx: { promptPassword: boolean; attempt: number }): boolean {
-  return failure.kind === "retryable" && !ctx.promptPassword && retryDelayMs(ctx.attempt) !== null;
+export function mayAutoReconnect(failure: Failure, ctx: { promptPassword: boolean; recent: number }): boolean {
+  return failure.kind === "retryable" && !ctx.promptPassword && retryDelayMs(ctx.recent) !== null;
+}
+
+// autoReconnectPaused is a retryable drop that only the window budget keeps from reconnecting: the user confirms the
+// next attempt, since another client taking over the same desktop looks exactly like this.
+export function autoReconnectPaused(failure: Failure, ctx: { promptPassword: boolean; recent: number }): boolean {
+  return failure.kind === "retryable" && !ctx.promptPassword && retryDelayMs(ctx.recent) === null;
 }
 
 export interface FlowApi {
