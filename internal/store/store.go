@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/db/sqlitedriver"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
@@ -168,7 +169,7 @@ func newStore(db *gorm.DB, logger *slog.Logger) *Store {
 
 func openDB(dsn string, maxConnections int) (*gorm.DB, error) {
 	config := &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)}
-	db, err := gorm.Open(sqlite.Open(dsn), config)
+	db, err := gorm.Open(&sqlite.Dialector{DriverName: sqlitedriver.Name, DSN: dsn}, config)
 	if err != nil {
 		return nil, dbError(err)
 	}

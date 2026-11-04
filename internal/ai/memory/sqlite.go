@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/db/sqlitedriver"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
 	"github.com/glebarez/sqlite"
@@ -76,7 +77,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 }
 
 func open(ctx context.Context, dsn string, connections int) (*Store, error) {
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	db, err := gorm.Open(&sqlite.Dialector{DriverName: sqlitedriver.Name, DSN: dsn}, &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open semantic memory database: %w", err)
 	}

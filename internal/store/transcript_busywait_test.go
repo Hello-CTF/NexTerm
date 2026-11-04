@@ -6,9 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	sqlite "github.com/glebarez/go-sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // The busy-timeout fixture must reach every pooled connection: the default
@@ -60,30 +57,20 @@ func TestStoreBusyTimeoutOptionConfiguresPragma(t *testing.T) {
 	}
 }
 
-// isInterruptErr reports whether the driver aborted the statement with
-// SQLITE_INTERRUPT — the outcome when sqlite3_interrupt lands before the
-// busy handler engages.
-func isInterruptErr(err error) bool {
-	var sqliteErr *sqlite.Error
-	if !errors.As(err, &sqliteErr) {
-		return false
-	}
-	return sqliteErr.Code()&0xff == sqlite3.SQLITE_INTERRUPT
-}
-
 // Documents the modernc busy-handler contract M91 proved and this change
 // designs around rather than fixes. Every claim is anchored on the driver's
 // own terminal error, which the SQLITE_BUSY handler returns only after
 // busy_timeout expires — no pool metrics, no sleeps as synchronization:
 //
-//   - A contended statement runs the full busy_timeout even when its ctx is
-//     cancelled before the call: the tx begin executes on context.Background
-//     inside glebarez's newTx, and the plain statement path arms the
-//     driver's interruptOnDone watcher, yet the SQLITE_BUSY result comes
-//     back only at expiry in both cases. (An interrupt delivered in the
-//     narrow setup window before the busy handler engages can abort the
-//     statement with SQLITE_INTERRUPT instead — but the production flush
-//     path never delivers one: the durable write ctx is never cancelled.)
+//   - A contended transaction begin runs the full busy_timeout even when its
+//     ctx is cancelled before the call: it executes on context.Background
+//     inside glebarez's newTx, so the SQLITE_BUSY result comes back only at
+//     expiry. A plain statement under a ctx that already ended never reaches
+//     the driver: internal/db/sqlitedriver refuses it with the ctx error,
+//     because go-sqlite would otherwise race its watcher and either run the
+//     statement or skip it while reporting success. Once a statement is in
+//     the busy handler, cancellation still does not end the wait — the
+//     production flush path never cancels its durable write ctx anyway.
 //   - database/sql Close does not prevent a contended wait started after
 //     it: Go closes only free pool connections, a connection pre-acquired
 //     from the pool keeps working across Close, and the contended statement
@@ -157,15 +144,10 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 		mustBusy(err, "the contended begin")
 	})
 
-	// The plain statement path arms the driver's ctx watcher
-	// (interruptOnDone), so a cancelled ctx can abort the statement — but
-	// only when the interrupt lands before the busy handler engages; once
-	// the handler is running, the statement fails at busy_timeout instead
-	// (M91's probes). Which of the two outcomes a single run takes is
-	// decided by interrupt timing inside the driver, so the deterministic
-	// contract pinned here is the union: the statement never commits and it
-	// always ends with one of the two driver error classes.
-	t.Run("cancelled statement either interrupts before engagement or expires busy, never commits", func(t *testing.T) {
+	// A plain statement under a ctx that already ended is refused before it
+	// reaches the driver, so it neither waits nor commits, and it reports the
+	// cancellation rather than a driver error class.
+	t.Run("statement under an ended ctx is refused with the ctx error and never commits", func(t *testing.T) {
 		conn, err := database.DB().Conn(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -174,13 +156,9 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
 		_, err = conn.ExecContext(cancelled, "INSERT INTO transcript (id, session_id, started_at, owner_id) VALUES ('probe-cancel', 'session-probe', 1, '')")
-		if err == nil {
-			t.Fatal("the cancelled contended statement must not commit")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the statement under an ended ctx must report context.Canceled, got %v", err)
 		}
-		if !IsBusy(err) && !isInterruptErr(err) {
-			t.Fatalf("the cancelled statement must end interrupt-class or busy-class, got %v", err)
-		}
-		t.Logf("cancelled statement ended with %v (boundary outcome is interrupt-timing dependent)", err)
 	})
 
 	// A connection checked out before Close keeps working after it: the
@@ -201,8 +179,8 @@ func TestStoreSQLiteBusyWaitOutlivesCancelAndClose(t *testing.T) {
 
 	unlock()
 
-	// Whichever boundary outcome the cancelled statement took, it never
-	// committed: the probe row must not exist once the lock is gone.
+	// The refused statement never committed: the probe row must not exist
+	// once the lock is gone.
 	var rows int64
 	if err := locker.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM transcript WHERE id = 'probe-cancel'").Scan(&rows); err != nil {
 		t.Fatal(err)
