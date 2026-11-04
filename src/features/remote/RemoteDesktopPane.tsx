@@ -532,7 +532,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     >
       <div
         ref={wrapRef}
-        className={`relative min-h-0 flex-1 overflow-hidden border-2 ${captured ? "border-[var(--color-accent)]" : "border-transparent"}`}
+        className="relative min-h-0 flex-1 overflow-hidden"
         data-captured={captured ? "true" : "false"}
       >
         <div ref={viewportRef} className="absolute inset-0" onPointerDownCapture={focusScreen} />

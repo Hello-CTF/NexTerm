@@ -304,7 +304,7 @@ describe("RemoteDesktopPane", () => {
     expect(isKeyboardCaptured()).toBe(false);
   });
 
-  it("captures the keyboard on focus inside the screen and shows the accent border and hint", async () => {
+  it("captures the keyboard on focus inside the screen and shows the release hint", async () => {
     await mountPane();
     const screen = pane().querySelector<HTMLElement>("[data-captured]")!;
     const holder = screen.querySelector<HTMLElement>("div > div")!;
