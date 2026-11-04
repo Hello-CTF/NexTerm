@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { chooseSelectOption, clickButton, flush, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
+import { chooseSelectOption, clickButton, flush, mount, setInputValue, waitForRendered, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   create: vi.fn(),
@@ -199,7 +199,8 @@ describe("asset editor never invents connection values", () => {
   it("a new RDP asset saved before the preview answers stores no username", async () => {
     mocks.inheritancePreview.mockReturnValue(new Promise(() => undefined));
     mountEditor({ kind: "asset", presetGroupId: "g1" });
-    await flush();
+    // The group list loads asynchronously; pick from it only once the preset group is shown.
+    await waitForRendered(() => expect(mounted!.container.querySelector('button[aria-label="分组"]')?.textContent).toContain("生产环境"));
     chooseSelectOption(mounted!.container, "分组", "生产环境");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="web-01"]')!, "win");
     setInputValue(mounted!.container.querySelector<HTMLInputElement>('input[placeholder="1.2.3.4"]')!, "10.0.0.5");
