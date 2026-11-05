@@ -2,7 +2,7 @@
 // It reads existing APIs only. Opening the page never connects; "打开工作区" opens or switches to the host's workspace
 // without creating a terminal, like selecting the host in the asset tree.
 
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { connectAsset, connectDevice, DB_KIND_LABEL, dbKindOf, useUi } from "../../app/store";
 import { copyHostDeepLink } from "../../app/deepLink";
@@ -38,6 +38,7 @@ import { HostDetailTabs } from "./HostOutputSearch";
 import { PortsSection } from "./PortsSection";
 import { ProcessesSection } from "./ProcessesSection";
 import { ContainersSection, DatabasesSection, HostSection, SectionHint, SessionsSection, SshHealthSection } from "./HostSections";
+import type { ListFocus } from "./listControls";
 
 const ASSET_KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
@@ -46,13 +47,34 @@ const ASSET_KIND_LABEL: Record<string, string> = {
   device: "受管设备",
 };
 
-const SECTION_GRID = "grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3";
+// Short cards share rows; the tables (metrics, ports, processes) follow at full width so their columns stay legible.
+const SECTION_GRID = "grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] items-start gap-3";
+
+function Overview({ cards, wide }: { cards: ReactNode; wide: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className={SECTION_GRID}>{cards}</div>
+      {wide}
+    </div>
+  );
+}
+
+// useListLinks connects the ports and processes lists: a PID in the ports list opens its process, a port in the
+// processes list opens it among the ports.
+function useListLinks() {
+  const nonce = useRef(0);
+  const [portFocus, setPortFocus] = useState<ListFocus<number> | null>(null);
+  const [processFocus, setProcessFocus] = useState<ListFocus<number> | null>(null);
+  const showPort = useCallback((port: number) => setPortFocus({ value: port, nonce: ++nonce.current }), []);
+  const showProcess = useCallback((pid: number) => setProcessFocus({ value: pid, nonce: ++nonce.current }), []);
+  return { portFocus, processFocus, showPort, showProcess };
+}
 
 function Page({ children }: { children: ReactNode }) {
   return (
     <div className="nx-pane" data-testid="host-detail">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-3 px-3 py-3 sm:px-4">{children}</div>
+        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-3 px-3 py-3 sm:px-4">{children}</div>
       </div>
     </div>
   );
@@ -174,6 +196,7 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
   const kindLabel = ASSET_KIND_LABEL[asset.kind] ?? asset.kind;
   const hostKind = isHostAssetKind(asset.kind);
   const dockerCapable = asset.kind === "ssh" || asset.kind === "local";
+  const links = useListLinks();
   return (
     <Page>
       <Header
@@ -206,25 +229,45 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
       <HostDetailTabs
         assetId={asset.id}
         overview={
-          <div className={SECTION_GRID}>
-            <SessionsSection workspace={workspace} />
-            {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
-            <PortsSection workspace={workspace} visible={visible} hostName={asset.name} />
-            <ProcessesSection workspace={workspace} visible={visible} hostName={asset.name} />
-            <DatabasesSection
-              databases={databases}
-              relations={relations}
-              visible={visible}
-              emptyHint="无经由该主机或指向其地址的数据库资产。"
-            />
-            {asset.kind === "ssh" ? (
-              <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
-            ) : (
-              <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-                <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
-              </HostSection>
-            )}
-          </div>
+          <Overview
+            cards={
+              <>
+                <SessionsSection workspace={workspace} />
+                {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
+                <DatabasesSection
+                  databases={databases}
+                  relations={relations}
+                  visible={visible}
+                  emptyHint="无经由该主机或指向其地址的数据库资产。"
+                />
+                {asset.kind === "ssh" ? (
+                  <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
+                ) : (
+                  <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+                    <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
+                  </HostSection>
+                )}
+              </>
+            }
+            wide={
+              <>
+                <PortsSection
+                  workspace={workspace}
+                  visible={visible}
+                  hostName={asset.name}
+                  focus={links.portFocus}
+                  onShowProcess={links.showProcess}
+                />
+                <ProcessesSection
+                  workspace={workspace}
+                  visible={visible}
+                  hostName={asset.name}
+                  focus={links.processFocus}
+                  onShowPort={links.showPort}
+                />
+              </>
+            }
+          />
         }
       />
     </Page>
@@ -338,6 +381,7 @@ function DeviceHostDetail({
   visible: boolean;
 }) {
   const workspace = useUi((state) => hostWorkspaceOf(state.workspaces, assetId));
+  const links = useListLinks();
   useEffect(() => setHostDetailTitle(assetId, hostDetailTitle(device.name, false)), [assetId, device.name]);
   const now = Date.now();
   const agent = device.agent;
@@ -407,22 +451,42 @@ function DeviceHostDetail({
       <HostDetailTabs
         assetId={assetId}
         overview={
-          <div className={SECTION_GRID}>
-            <SessionsSection workspace={workspace} />
-            <ContainersSection workspace={workspace} visible={visible} />
-            <PortsSection workspace={workspace} visible={visible} hostName={device.name} />
-            <ProcessesSection workspace={workspace} visible={visible} hostName={device.name} />
-            <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics" className="col-span-full">
-              {revoked ? (
-                <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
-              ) : visible ? (
-                <MetricsPanel deviceId={device.id} online={online} />
-              ) : null}
-            </HostSection>
-            <HostSection title="告警" icon={<IconBell size={14} />} testId="host-alerts">
-              {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
-            </HostSection>
-          </div>
+          <Overview
+            cards={
+              <>
+                <SessionsSection workspace={workspace} />
+                <ContainersSection workspace={workspace} visible={visible} />
+                <HostSection title="告警" icon={<IconBell size={14} />} testId="host-alerts">
+                  {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
+                </HostSection>
+              </>
+            }
+            wide={
+              <>
+                <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+                  {revoked ? (
+                    <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
+                  ) : visible ? (
+                    <MetricsPanel deviceId={device.id} online={online} />
+                  ) : null}
+                </HostSection>
+                <PortsSection
+                  workspace={workspace}
+                  visible={visible}
+                  hostName={device.name}
+                  focus={links.portFocus}
+                  onShowProcess={links.showProcess}
+                />
+                <ProcessesSection
+                  workspace={workspace}
+                  visible={visible}
+                  hostName={device.name}
+                  focus={links.processFocus}
+                  onShowPort={links.showPort}
+                />
+              </>
+            }
+          />
         }
       />
     </Page>

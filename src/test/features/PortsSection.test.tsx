@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
-import { click, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
+import { act, createElement } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { click, flushUntil, mount, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), connectivityTest: vi.fn(), forwardAndOpen: vi.fn() }));
 
@@ -108,7 +109,7 @@ describe("PortsSection", () => {
     await flushUntil(() => view.container.querySelector('input[aria-label="搜索端口"]') !== null);
     const rows = () => [...view.container.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent);
 
-    expect(view.container.querySelector('[data-testid="host-ports-count"]')?.textContent).toBe("共 120 个");
+    expect(view.container.querySelector('[data-list-count]')?.textContent).toBe("共 120 个");
     expect(rows()).toHaveLength(50);
     expect(rows()[0]).toBe("10001");
     expect(view.container.textContent).toContain("第 1 / 3 页");
@@ -119,7 +120,7 @@ describe("PortsSection", () => {
     setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "postgres");
     await flushUntil(() => rows().length === 1);
     expect(rows()[0]).toBe("10113");
-    expect(view.container.querySelector('[data-testid="host-ports-count"]')?.textContent).toBe("匹配 1 / 120 个");
+    expect(view.container.querySelector('[data-list-count]')?.textContent).toBe("匹配 1 / 120 个");
     expect(view.container.textContent).not.toContain("下一页");
 
     setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "127.0.0.1 1011");
@@ -129,5 +130,58 @@ describe("PortsSection", () => {
 
     setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "no-such-port");
     await flushUntil(() => view.container.textContent!.includes("没有匹配的端口"));
+  });
+
+  it("filters exposed and loopback-only ports and opens the listening process", async () => {
+    mocks.list.mockResolvedValue({
+      listeners: [
+        { proto: "tcp", address: "0.0.0.0", port: 80, pid: 10, process: "nginx" },
+        { proto: "tcp", address: "127.0.0.1", port: 5432, pid: 20, process: "postgres" },
+        { proto: "tcp6", address: "::1", port: 6379, pid: 30, process: "redis" },
+        { proto: "tcp6", address: "::", port: 22, pid: 40, process: "sshd" },
+      ],
+      format: "ss",
+      platform: "posix",
+    });
+    const onShowProcess = vi.fn();
+    mounted = mountWithClient(createElement(PortsSection, { workspace, visible: true, hostName: "web-01", onShowProcess }));
+    const view = mounted;
+    click(view.container.querySelector('button[aria-label="刷新端口"]')!);
+    await flushUntil(() => view.container.querySelector('[aria-label="端口范围"]') !== null);
+    const ports = () => [...view.container.querySelectorAll("tbody tr")].map((row) => row.getAttribute("data-port"));
+    const scope = (label: string) => [...view.container.querySelectorAll<HTMLButtonElement>('[aria-label="端口范围"] button')].find((b) => b.textContent!.startsWith(label))!;
+
+    expect(scope("对外").textContent).toBe("对外 2");
+    click(scope("对外"));
+    await flushUntil(() => ports().length === 2);
+    expect(ports()).toEqual(["22", "80"]);
+    click(scope("仅本机"));
+    await flushUntil(() => ports().join() === "5432,6379");
+
+    click(view.container.querySelector('button[aria-label="查看进程 20"]')!);
+    expect(onShowProcess).toHaveBeenCalledWith(20);
+  });
+
+  it("shows a requested port even when a filter or another page hides it", async () => {
+    const listeners = Array.from({ length: 120 }, (_, index) => ({
+      proto: "tcp" as const, address: index === 100 ? "0.0.0.0" : "127.0.0.1", port: 20000 + index,
+    }));
+    mocks.list.mockResolvedValue({ listeners, format: "ss", platform: "posix" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const render = (focus: unknown) =>
+      createElement(QueryClientProvider, { client }, createElement(PortsSection, { workspace, visible: true, hostName: "web-01", focus: focus as never }));
+    const view = mount(render(null));
+    mounted = view;
+    click(view.container.querySelector('button[aria-label="刷新端口"]')!);
+    await flushUntil(() => view.container.querySelector('[aria-label="端口范围"]') !== null);
+    click([...view.container.querySelectorAll<HTMLButtonElement>('[aria-label="端口范围"] button')].find((b) => b.textContent!.startsWith("对外"))!);
+    await flushUntil(() => view.container.querySelectorAll("tbody tr").length === 1);
+
+    act(() => view.root.render(render({ value: 20010, nonce: 1 })));
+    await flushUntil(() => view.container.querySelector('tr[data-port="20010"]') !== null);
+    expect(view.container.querySelector('tr[data-port="20010"]')!.className).toContain("is-focused");
+    act(() => view.root.render(render({ value: 20110, nonce: 2 })));
+    await flushUntil(() => view.container.querySelector('tr[data-port="20110"]') !== null);
+    expect(view.container.textContent).toContain("第 3 / 3 页");
   });
 });

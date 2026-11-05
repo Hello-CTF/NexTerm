@@ -371,3 +371,56 @@ describe("ProcessesSection review fixes", () => {
     expect(mocks.list).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("ProcessesSection paging and links", () => {
+  const many = Array.from({ length: 130 }, (_, index) => proc(1000 + index, index === 120 ? "postgres" : `worker-${index}`, { cpu: 200 - index }));
+
+  function mountLinked(props: Record<string, unknown>) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const render = (next: Record<string, unknown>) =>
+      createElement(QueryClientProvider, { client }, createElement(ProcessesSection, { workspace, visible: true, hostName: "web-01", ...next }));
+    const view = mount(render(props));
+    return { view, rerender: (next: Record<string, unknown>) => act(() => view.root.render(render(next))) };
+  }
+
+  it("pages a long process list instead of cutting it off", async () => {
+    mocks.list.mockResolvedValue({ processes: many, platform: "posix", format: "ps" });
+    const view = mountSection();
+    mounted = view;
+    await refreshed(view);
+    expect(view.container.querySelectorAll("tbody tr")).toHaveLength(50);
+    expect(view.container.textContent).toContain("第 1 / 3 页");
+    expect(q(view, "[data-list-count]")!.textContent).toBe("共 130 个");
+    click([...view.container.querySelectorAll("button")].find((button) => button.textContent === "下一页")!);
+    await flushUntil(() => view.container.textContent!.includes("第 2 / 3 页"));
+    expect(q(view, 'tr[data-pid="1050"]')).not.toBeNull();
+  });
+
+  it("shows a requested PID: reads the list first, clears a search that hides it, turns to its page and marks it", async () => {
+    mocks.list.mockResolvedValue({ processes: many, platform: "posix", format: "ps" });
+    const linked = mountLinked({ focus: null });
+    mounted = linked.view;
+    linked.rerender({ focus: { value: 1125, nonce: 1 } });
+    await flushUntil(() => linked.view.container.querySelector('tr[data-pid="1125"]') !== null);
+    expect(mocks.list).toHaveBeenCalledTimes(1);
+    expect(linked.view.container.querySelector('tr[data-pid="1125"]')!.className).toContain("is-focused");
+    expect(linked.view.container.textContent).toContain("第 3 / 3 页");
+
+    setInputValue(linked.view.container.querySelector<HTMLInputElement>('input[aria-label="搜索进程"]')!, "postgres");
+    await flushUntil(() => linked.view.container.querySelectorAll("tbody tr").length === 1);
+    linked.rerender({ focus: { value: 1001, nonce: 2 } });
+    await flushUntil(() => linked.view.container.querySelector('tr[data-pid="1001"]') !== null);
+    expect(linked.view.container.querySelector<HTMLInputElement>('input[aria-label="搜索进程"]')!.value).toBe("");
+    expect(linked.view.container.querySelector('tr[data-pid="1001"]')!.className).toContain("is-focused");
+  });
+
+  it("opens a listening port in the ports list", async () => {
+    const onShowPort = vi.fn();
+    const linked = mountLinked({ onShowPort });
+    mounted = linked.view;
+    await refreshed(linked.view);
+    await flushUntil(() => linked.view.container.querySelector('button[aria-label="查看端口 8080"]') !== null);
+    click(linked.view.container.querySelector('button[aria-label="查看端口 8080"]')!);
+    expect(onShowPort).toHaveBeenCalledWith(8080);
+  });
+});

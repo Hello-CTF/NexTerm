@@ -250,6 +250,10 @@
   .nx-table tbody tr:hover td {
     background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent);
   }
+  /* A row another list jumped to, such as the process behind a port. */
+  .nx-table tbody tr.is-focused td {
+    background: color-mix(in srgb, var(--color-blue-500) 16%, transparent);
+  }
   .nx-table .nx-mono {
     font-family: var(--font-mono);
     font-size: calc(11.5px * var(--nx-ui-text-factor));

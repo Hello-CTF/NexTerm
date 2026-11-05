@@ -9,10 +9,10 @@ import { IconActivity, IconChevronDown, IconChevronRight, IconRefresh } from "..
 import { forwardAndOpen, targetHostFor } from "../preview/forwardAndOpen";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import { HostSection, SectionHint } from "./HostSections";
+import { ListToolbar, Pager, useListFocus, usePaging, type ListFocus } from "./listControls";
 import { buildRows, type ProcessSort } from "./processTree";
 
 const AUTO_REFRESH_MS = 5000;
-const MAX_ROWS = 300;
 const COLUMN_LABELS: Record<string, string> = { cpu: "CPU", mem: "内存", user: "用户", elapsed: "运行时长" };
 const CPU_TITLE = "POSIX：相对单核的百分比，多线程进程可超过 100；Windows：占全部 CPU 的比例。";
 const WINDOWS_CRITICAL = new Set(["csrss", "wininit", "smss", "services", "lsass", "winlogon"]);
@@ -42,15 +42,20 @@ function formatRss(kib: number): string {
 }
 
 // ProcessesSection lists the processes of a connected workspace's host. It reads only on demand (or on the
-// opt-in 5 second timer), because the command runs on the host.
+// opt-in 5 second timer), because the command runs on the host. focus asks it to show one PID, reading the list
+// first when it has none; onShowPort opens a listening port in the ports list.
 export function ProcessesSection({
   workspace,
   visible,
   hostName,
+  focus,
+  onShowPort,
 }: {
   workspace: Workspace | undefined;
   visible: boolean;
   hostName: string;
+  focus?: ListFocus<number> | null;
+  onShowPort?: (port: number) => void;
 }) {
   const session = useSessionById(workspace?.sessionId);
   const sessionId = workspace?.sessionId;
@@ -190,7 +195,24 @@ export function ProcessesSection({
     }
   };
 
-  const visibleRows = rows.slice(0, MAX_ROWS);
+  const paging = usePaging(rows, `${queryText}|${sort}|${tree}`);
+  const clearFilters = useCallback(() => setQueryText(""), []);
+  // A PID asked for before the list was read: read it once, then find the row.
+  const requested = useRef<number | null>(null);
+  useEffect(() => {
+    if (!focus || requested.current === focus.nonce || query.data || !connected) return;
+    requested.current = focus.nonce;
+    void refresh();
+  }, [focus, query.data, connected, refresh]);
+  const highlight = useListFocus({
+    focus,
+    indexOf: (pid) => rows.findIndex((row) => row.process.pid === pid),
+    filtered: queryText !== "",
+    clearFilters,
+    setPage: paging.setPage,
+    pageOf: paging.pageOf,
+    rowSelector: useCallback((pid: number) => `[data-testid="host-processes"] tr[data-pid="${pid}"]`, []),
+  });
   const fetching = query.isFetching;
   return (
     <HostSection
@@ -200,6 +222,9 @@ export function ProcessesSection({
       actions={
         connected && visible ? (
           <>
+            {query.dataUpdatedAt > 0 && (
+              <span className="nx-hint text-[11px]">读取于 {new Date(query.dataUpdatedAt).toLocaleTimeString()}</span>
+            )}
             <label className="flex items-center gap-1 text-[12px] text-neutral-400">
               <input
                 type="checkbox"
@@ -217,7 +242,7 @@ export function ProcessesSection({
               onClick={() => void refresh()}
             >
               <IconRefresh size={11} className={fetching ? "animate-spin" : ""} />
-              刷新
+              {query.data ? "刷新" : "读取"}
             </button>
           </>
         ) : null
@@ -230,17 +255,18 @@ export function ProcessesSection({
           {query.isError ? (
             <p className="m-0 text-[12px] text-red-300">未能读取进程：{describeError(query.error)}</p>
           ) : !query.data ? (
-            <SectionHint>点击「刷新」读取进程列表（会在主机上执行 ps 或等效命令）。</SectionHint>
+            <SectionHint>{fetching ? "正在读取进程列表…" : "点击「读取」查看进程列表（会在主机上执行 ps 或等效命令）。"}</SectionHint>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <input
-                  className="nx-input min-w-0 flex-1 basis-40"
-                  aria-label="搜索进程"
-                  placeholder="按名称、命令、用户或 PID 搜索"
-                  value={queryText}
-                  onChange={(e) => setQueryText(e.target.value)}
-                />
+              <ListToolbar
+                label="搜索进程"
+                placeholder="按名称、命令、用户或 PID 搜索"
+                query={queryText}
+                onQuery={setQueryText}
+                total={processes?.length ?? 0}
+                matched={queryText ? rows.length : processes?.length ?? 0}
+                unit="个"
+              >
                 <div className="nx-segment" role="group" aria-label="排序">
                   {(["cpu", "mem"] as const).map((k) => (
                     <button
@@ -258,7 +284,7 @@ export function ProcessesSection({
                   <input type="checkbox" aria-label="树形" checked={tree} onChange={(e) => setTree(e.target.checked)} />
                   树形
                 </label>
-              </div>
+              </ListToolbar>
               {partial.size > 0 && (
                 <SectionHint>
                   该主机未提供：{[...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、")}
@@ -284,10 +310,10 @@ export function ProcessesSection({
                       </tr>
                     </thead>
                     <tbody>
-                      {visibleRows.map(({ process: p, depth, hasChildren, expanded }) => {
+                      {paging.shown.map(({ process: p, depth, hasChildren, expanded }) => {
                         const ports = portsByPid.get(p.pid) ?? [];
                         return (
-                          <tr key={p.pid} data-pid={p.pid}>
+                          <tr key={p.pid} data-pid={p.pid} className={highlight === p.pid ? "is-focused" : undefined}>
                             <td className="nx-mono">{p.pid}</td>
                             <td title={p.command}>
                               <span className="inline-flex items-center gap-0.5" style={{ paddingLeft: depth * 14 }}>
@@ -320,7 +346,19 @@ export function ProcessesSection({
                                 ? "-"
                                 : ports.map((l) => (
                                     <span key={`${l.proto}|${l.address}|${l.port}`} className="mr-1 inline-flex items-center gap-0.5">
-                                      <span className="nx-mono">{l.port}</span>
+                                      {onShowPort ? (
+                                        <button
+                                          type="button"
+                                          className="nx-link nx-mono"
+                                          title="在端口列表中查看"
+                                          aria-label={`查看端口 ${l.port}`}
+                                          onClick={() => onShowPort(l.port)}
+                                        >
+                                          {l.port}
+                                        </button>
+                                      ) : (
+                                        <span className="nx-mono">{l.port}</span>
+                                      )}
                                       <button
                                         type="button"
                                         className="nx-btn nx-btn-ghost nx-btn-xs"
@@ -366,9 +404,7 @@ export function ProcessesSection({
                   </table>
                 </div>
               )}
-              {rows.length > MAX_ROWS && (
-                <SectionHint>共 {rows.length} 个进程，仅渲染前 {MAX_ROWS} 个，请用搜索缩小范围。</SectionHint>
-              )}
+              <Pager label="进程分页" page={paging.page} pages={paging.pages} onPage={paging.setPage} />
             </>
           )}
           {query.data?.truncated && <SectionHint>进程较多，仅显示一部分。</SectionHint>}
