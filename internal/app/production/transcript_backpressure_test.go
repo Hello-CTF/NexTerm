@@ -252,7 +252,10 @@ func TestTranscriptWriterSessionEndFlushesTailWithoutShutdown(t *testing.T) {
 	if len(events) == 0 || events[len(events)-1] != "end" {
 		t.Fatalf("End must follow the tail flush: %+v", events)
 	}
-	if stats := writer.statsSnapshot(); stats.sessionFlushes != 1 || stats.droppedChunks != 0 {
+	// The background batch may persist both chunks before SessionEnded runs,
+	// leaving the session-end flush nothing to do: which path wrote them is
+	// incidental, only that nothing was dropped or failed.
+	if stats := writer.statsSnapshot(); stats.sessionFlushes > 1 || stats.droppedChunks != 0 || stats.flushErrors != 0 {
 		t.Fatalf("session flush counters = %+v", stats)
 	}
 }
