@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -105,5 +106,24 @@ func TestRemoteClientPushCompressesRequest(t *testing.T) {
 	}
 	if response.Applied != 1 || response.Head != "next" {
 		t.Fatalf("push response = %+v", response)
+	}
+}
+
+// A route the server does not serve falls to its web app, which answers HTTP
+// 200 with index.html; the error must say a web page came back, not only that
+// the JSON was invalid.
+func TestRemoteClientNamesAWebPageInsteadOfJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>NexTerm</title>"))
+	}))
+	defer server.Close()
+	client, err := newRemoteClient(RemoteConfig{URL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ListSessions(t.Context(), 0)
+	if err == nil || !strings.Contains(err.Error(), "服务器返回了网页") {
+		t.Fatalf("ListSessions error = %v, want it to name the web page", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/netip"
@@ -463,10 +464,25 @@ func (c *remoteClient) doWithHeader(request *http.Request, out any, csrf bool) (
 	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, "远端同步响应数据结构无效", err)
+			return 0, nil, nil, ipc.WrapError(ipc.CodeInternal, invalidResponseMessage(response.Header.Get("Content-Type")), err)
 		}
 	}
 	return response.StatusCode, response.Header, nil, nil
+}
+
+// invalidResponseMessage names what came back instead of JSON. A web page
+// means the route reached the server's web app (an older server without the
+// route, or a proxy page) rather than its API.
+func invalidResponseMessage(contentType string) string {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	switch {
+	case mediaType == "text/html":
+		return "远端同步响应数据结构无效：服务器返回了网页而不是接口数据，服务器版本可能过旧，或请求被反向代理拦截"
+	case mediaType != "" && mediaType != "application/json":
+		return "远端同步响应数据结构无效（Content-Type: " + mediaType + "）"
+	default:
+		return "远端同步响应数据结构无效"
+	}
 }
 
 func remoteStatusError(status int, rpcErr *ipc.Error) error {

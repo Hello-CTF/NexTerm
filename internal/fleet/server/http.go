@@ -105,6 +105,7 @@ var fleetRoutePatterns = []string{
 	"POST /fleet/devices/{id}/terminal-access",
 	"GET /fleet/devices/{id}/metrics",
 	"GET /fleet/devices/{id}/bridge",
+	"GET /fleet/sessions",
 	"GET /fleet/alerts",
 	"POST /fleet/alerts/ack",
 	"GET /fleet/devices/{id}/alert-settings",
@@ -137,7 +138,14 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	}
 }
 
-func (s *Service) mountRoutes(mux *http.ServeMux) {
+// routeRegistrar is the part of http.ServeMux that mountRoutes uses, so a
+// test can record the patterns it registers.
+type routeRegistrar interface {
+	Handle(pattern string, handler http.Handler)
+	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
+}
+
+func (s *Service) mountRoutes(mux routeRegistrar) {
 	session := func(pattern string, handler http.HandlerFunc) {
 		mux.Handle(pattern, s.requireFleetSession(handler))
 	}
