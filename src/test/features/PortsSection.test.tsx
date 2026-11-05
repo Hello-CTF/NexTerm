@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
-import { click, flushUntil, mountWithClient, type MountedView } from "./reactTestUtils";
+import { click, flushUntil, mountWithClient, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), connectivityTest: vi.fn(), forwardAndOpen: vi.fn() }));
 
@@ -93,5 +93,41 @@ describe("PortsSection", () => {
     click(view.container.querySelector('button[aria-label="刷新端口"]')!);
     await flushUntil(() => view.container.textContent!.includes("未能读取端口"));
     expect(view.container.textContent).toContain("没有权限");
+  });
+  it("searches and pages a long port list in port order", async () => {
+    const listeners = Array.from({ length: 120 }, (_, index) => ({
+      proto: "tcp" as const,
+      address: index % 2 ? "127.0.0.1" : "0.0.0.0",
+      port: 10120 - index,
+      pid: 1000 + index,
+      process: index === 7 ? "postgres" : "worker",
+    }));
+    mocks.list.mockResolvedValue({ listeners, format: "ss", platform: "posix" });
+    const view = mountSection(workspace);
+    click(view.container.querySelector('button[aria-label="刷新端口"]')!);
+    await flushUntil(() => view.container.querySelector('input[aria-label="搜索端口"]') !== null);
+    const rows = () => [...view.container.querySelectorAll("tbody tr")].map((row) => row.querySelector("td")?.textContent);
+
+    expect(view.container.querySelector('[data-testid="host-ports-count"]')?.textContent).toBe("共 120 个");
+    expect(rows()).toHaveLength(50);
+    expect(rows()[0]).toBe("10001");
+    expect(view.container.textContent).toContain("第 1 / 3 页");
+    click([...view.container.querySelectorAll("button")].find((button) => button.textContent === "下一页")!);
+    await flushUntil(() => view.container.textContent!.includes("第 2 / 3 页"));
+    expect(rows()[0]).toBe("10051");
+
+    setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "postgres");
+    await flushUntil(() => rows().length === 1);
+    expect(rows()[0]).toBe("10113");
+    expect(view.container.querySelector('[data-testid="host-ports-count"]')?.textContent).toBe("匹配 1 / 120 个");
+    expect(view.container.textContent).not.toContain("下一页");
+
+    setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "127.0.0.1 1011");
+    // Every term must match some field: the PID 1011 of port 10109 counts as well as the ports 1011x.
+    await flushUntil(() => rows().length === 6);
+    expect(rows()).toEqual(["10109", "10111", "10113", "10115", "10117", "10119"]);
+
+    setInputValue(view.container.querySelector<HTMLInputElement>('input[aria-label="搜索端口"]')!, "no-such-port");
+    await flushUntil(() => view.container.textContent!.includes("没有匹配的端口"));
   });
 });
