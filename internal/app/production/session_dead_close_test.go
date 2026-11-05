@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
@@ -222,4 +223,51 @@ func TestProductionOrdinaryFallbackStartsDistinctShell(t *testing.T) {
 	if !alive {
 		t.Fatalf("ordinary fallback killed the original durable session: %+v", infos)
 	}
+}
+
+// Two sessions can reach one helper (the local session and this machine's
+// device agent). A kill sent for the route that does not hold the terminal
+// must not end the terminal another workspace shows.
+func TestProductionKillThroughOtherRouteKeepsWatchedTerminal(t *testing.T) {
+	fixture := newRemoteDaemonFixture(t)
+	resolver := &recordingDurableResolver{provider: fixture.provider}
+	production, _ := newRemoteRecoveryHarness(t, resolver)
+	first := connectRemoteSSHAsset(t, production)
+	host, port, username := "127.0.0.2", int32(22), "root"
+	other, err := production.Services.Store.AssetCreate(t.Context(), store.AssetInput{
+		Kind: "ssh", Name: "same-helper-route", Host: &host, Port: &port, Username: &username,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var second sessionInfoDTO
+	requireStoreTestResponse(t, dispatchDurableTest(t, production, "session_connect", `{"args":{"assetId":"`+other.ID+`"}}`, "second-route-connect", "client-a"), &second)
+	tabID := createDaemonTab(t, fixture.provider, "route-ready")
+
+	attached := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","sessionId":"`+first.ID+`","replayBytes":1024}`, "first-route-channel", "client-a")
+	if !attached.OK {
+		t.Fatalf("attach through the first route = %+v", attached)
+	}
+	refused := dispatchDurableTest(t, production, "terminal_attach_tab", `{"tabId":"`+tabID+`","sessionId":"`+second.ID+`","replayBytes":1024}`, "second-route-channel", "client-a")
+	if refused.OK || refused.Error == nil || refused.Error.Code != ipc.Code("tab_open_elsewhere") {
+		t.Fatalf("attach through the second route = %+v, want tab_open_elsewhere", refused)
+	}
+	killed := dispatchDurableTest(t, production, "terminal_close_tab", `{"tabId":"`+tabID+`","sessionId":"`+second.ID+`","mode":"kill"}`, "", "client-a")
+	if killed.OK {
+		t.Fatalf("kill through the other route succeeded: %+v", killed)
+	}
+	tab, err := production.Services.Sessions.Tab(tabID)
+	if err != nil || tab.SessionID != first.ID || tab.Info().Exited {
+		t.Fatalf("watched terminal after a kill through the other route = %v, %v", tab, err)
+	}
+	infos, err := fixture.client.List(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.ID == tabID && !info.Dead {
+			return
+		}
+	}
+	t.Fatalf("host process of the watched terminal ended: %+v", infos)
 }

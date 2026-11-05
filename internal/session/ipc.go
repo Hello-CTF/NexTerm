@@ -71,6 +71,8 @@ func IPCError(err error) *ipc.Error {
 		return ipc.WrapError(ipc.Code("client_upgrade_required"), userMessage(err), err)
 	case errors.Is(err, ErrAmbiguousDurable):
 		return ipc.WrapError(ipc.CodeBadParam, userMessage(err), err)
+	case errors.Is(err, ErrTabOpenElsewhere):
+		return ipc.WrapError(ipc.Code("tab_open_elsewhere"), userMessage(err), err)
 	case errors.Is(err, ErrUnsupported), errors.Is(err, base.ErrUnsupported):
 		return ipc.WrapError(ipc.CodeUnsupported, userMessage(err), err)
 	// durable.ErrUnavailable is transient: the host or its helper cannot be
@@ -139,6 +141,8 @@ func userMessage(err error) string {
 		return "终端选项无效"
 	case errors.Is(err, ErrTabExists):
 		return "终端标签页已存在"
+	case errors.Is(err, ErrTabOpenElsewhere):
+		return "该持久终端已在另一个工作区打开（同一主机可经「当前设备」和设备代理两条路径访问），请在那里继续使用，或先将其转入后台"
 	case errors.Is(err, ErrStaleGeneration):
 		return "会话已更新，请重试"
 	case errors.Is(err, ErrAssetSessionConflict):

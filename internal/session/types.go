@@ -55,6 +55,10 @@ var (
 	// ErrDurableUnrecoverable reports a durable tab without a recorded
 	// incarnation: checked attach cannot verify it, and unchecked attach no longer exists.
 	ErrDurableUnrecoverable = errors.New("durable terminal cannot be recovered: no recorded incarnation")
+	// ErrTabOpenElsewhere reports a durable terminal another connected session
+	// already shows: two routes to one helper (the local session and this
+	// machine's agent) see the same terminal ID, and only one may hold it.
+	ErrTabOpenElsewhere = errors.New("durable terminal is open through another session")
 )
 
 type Status string

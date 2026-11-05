@@ -1198,6 +1198,18 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 }
 
 func (s *terminalCommandService) closeSessionTab(ctx context.Context, call *ipc.Call, input terminalIDRequest) error {
+	// A durable terminal ID can be held by another session that reaches the
+	// same helper (the local session and this machine's device agent): a close
+	// sent for one workspace must never end or move the terminal another shows.
+	if input.SessionID != "" {
+		tab, err := s.sessions.TabFor(ctx, input.TabID)
+		if err != nil {
+			return err
+		}
+		if tab.SessionID != input.SessionID {
+			return session.ErrTabNotFound
+		}
+	}
 	if input.Mode == "detach" {
 		// A regular remote PTY cannot run without its viewer; detaching would only orphan the process.
 		tab, err := s.sessions.TabFor(ctx, input.TabID)

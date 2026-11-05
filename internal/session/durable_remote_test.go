@@ -1473,3 +1473,58 @@ func TestTabInfoRetainableOnlyForTabsThatCanRunInTheBackground(t *testing.T) {
 		t.Fatalf("local tab = %+v; local behaviour must not change", localTab)
 	}
 }
+
+// The local session and this machine's device agent reach one helper, so
+// both list a durable terminal under the same ID. Recovering it through the
+// second route must not fail with ErrTabExists once the first route left it
+// in the background, and must not take it while the first route still shows it.
+func TestRecoverRemoteDurableThroughSecondRouteToSameHelper(t *testing.T) {
+	provider := &listingDurableProvider{fakeDurableProvider: newFakeDurableProvider()}
+	tabID := "0123456789abcdef0123456789abcdef"
+	if _, err := provider.Create(t.Context(), base.DurableCreateOptions{ID: tabID, Cols: 80, Rows: 24}); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
+		DurableResolver: &countingResolver{provider: provider},
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	first, err := manager.Connect(t.Context(), Asset{ID: "route-a", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Connect(t.Context(), Asset{ID: "route-b", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{
+		SessionID: first.ID, ClientID: "client-a", ChannelID: "first", Cols: 80, Rows: 24,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{
+		SessionID: second.ID, ClientID: "client-a", ChannelID: "second-watched", Cols: 80, Rows: 24,
+	})
+	if !errors.Is(err, ErrTabOpenElsewhere) {
+		t.Fatalf("recovery while the other route shows the terminal = %v; want ErrTabOpenElsewhere", err)
+	}
+	if tab, err := manager.Tab(tabID); err != nil || tab.SessionID != first.ID {
+		t.Fatalf("watched terminal moved: tab = %v, %v", tab, err)
+	}
+
+	if err := manager.BackgroundTab(t.Context(), tabID, "client-a"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := manager.RecoverRemoteDurable(t.Context(), tabID, OpenTabOptions{
+		SessionID: second.ID, ClientID: "client-a", ChannelID: "second", Cols: 80, Rows: 24,
+	})
+	if err != nil || info.SessionID != second.ID {
+		t.Fatalf("recovery through the second route = %+v, %v", info, err)
+	}
+	provider.mu.Lock()
+	killed := provider.records[tabID].killed
+	provider.mu.Unlock()
+	if killed != 0 {
+		t.Fatalf("handing the terminal over killed its host process %d times", killed)
+	}
+}

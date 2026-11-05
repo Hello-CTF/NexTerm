@@ -770,6 +770,9 @@ func (m *Manager) RecoverRemoteDurableInSessions(ctx context.Context, tabID stri
 		return TabInfo{}, ErrTabNotFound
 	}
 	selected := matches[0]
+	if err := m.releaseDurableTabElsewhere(ctx, tabID, selected.sessionID); err != nil {
+		return TabInfo{}, err
+	}
 	options.TabID = tabID
 	options.SessionID = selected.sessionID
 	options.Durable = &DurableTabOptions{
@@ -1094,6 +1097,35 @@ func (t *Tab) addDurableFed(count int64) {
 		t.durableFed += count
 	}
 	t.mu.Unlock()
+}
+
+// releaseDurableTabElsewhere frees a durable terminal ID that another session
+// of this manager holds, so sessionID can recover it. The local session and
+// this machine's device agent reach the same helper, so both list the same
+// terminals under the same IDs. A record nobody watches is released (its host
+// process keeps running) and a watched one is refused with
+// ErrTabOpenElsewhere, so one route never steals or ends the other's view.
+func (m *Manager) releaseDurableTabElsewhere(ctx context.Context, tabID, sessionID string) error {
+	m.mu.Lock()
+	tab := m.tabs[tabID]
+	m.mu.Unlock()
+	if tab == nil || tab.session.ID == sessionID {
+		return nil
+	}
+	tab.session.mu.Lock()
+	allowed := sessionOwnerAllowed(tab.session, userIDFromContext(ctx)) || m.requestOpenAccess(ctx)
+	tab.session.mu.Unlock()
+	tab.mu.Lock()
+	durableTab := tab.durable != nil && !tab.closed && !tab.destroying
+	watched := len(tab.subscribers) > 0
+	tab.mu.Unlock()
+	if !allowed || !durableTab {
+		return ErrTabExists
+	}
+	if watched {
+		return ErrTabOpenElsewhere
+	}
+	return m.closeTab(tab, false)
 }
 
 // reclaimStaleLocalTab releases a leftover local record of a durable tab that

@@ -1143,6 +1143,31 @@ export function TerminalPane({
         markExecInterrupted();
         return;
       }
+      if (code === "tab_open_elsewhere") {
+        // The local session and this machine's device agent reach one helper, so another workspace already shows
+        // this durable terminal. This tab never held it: drop its id so closing it cannot end or move that terminal.
+        const st = useUi.getState();
+        const own = st.workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).find((t) => t.id === storeTabId);
+        const durableId = own?.tabId;
+        st.updateTab(storeTabId, { tabId: undefined });
+        setKernelTabId(null);
+        let other: { workspaceTitle: string; tabId: string } | undefined;
+        for (const w of st.workspaces) {
+          const hit = w.panes.flatMap((p) => p.tabs).find((t) => t.id !== storeTabId && t.tabId === durableId);
+          if (durableId && hit) {
+            other = { workspaceTitle: w.title, tabId: hit.id };
+            break;
+          }
+        }
+        if (other) {
+          const target = other;
+          void useUi.getState().closeTab(storeTabId).then(() => useUi.getState().setActiveTab(target.tabId));
+          pushToast("info", `该持久终端已在「${target.workspaceTitle}」工作区打开，已切换过去`);
+        } else {
+          pushToast("error", "该持久终端已在另一个窗口或设备代理工作区打开，请在那里继续使用，或先将其转入后台");
+        }
+        return;
+      }
       if (code !== "not_found") {
         if (ordinaryStarting) {
           setOrdinaryStarting(false);

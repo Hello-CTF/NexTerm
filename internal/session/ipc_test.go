@@ -77,6 +77,7 @@ func TestIPCErrorUserMessagesAreActionable(t *testing.T) {
 		{err: fmt.Errorf("%w: dial supervisor: connection refused", durable.ErrUnavailable), code: ipc.CodeDisconnected, want: "connection refused"},
 		{err: ErrDurableDisabled, code: ipc.CodeUnsupported, want: "已有持久终端可从后台会话恢复"},
 		{err: ErrAmbiguousDurable, code: ipc.CodeBadParam, want: "指定会话"},
+		{err: ErrTabOpenElsewhere, code: ipc.Code("tab_open_elsewhere"), want: "已在另一个工作区打开"},
 		{err: ErrDurableUnrecoverable, code: ipc.Code("durable_unrecoverable"), want: "无法恢复"},
 		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrHelperUpgradeRequired), code: ipc.Code("helper_upgrade_required"), want: "升级后才能使用"},
 		{err: fmt.Errorf("%w: %w", durable.ErrUnavailable, supervisor.ErrLegacyHelperRunning), code: ipc.Code("helper_upgrade_required"), want: "确认升级"},

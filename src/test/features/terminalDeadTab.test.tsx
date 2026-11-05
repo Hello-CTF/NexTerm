@@ -1253,4 +1253,32 @@ describe("terminal dead-tab context menu reconnect", () => {
     const retry = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("重新打开"));
     expect(retry?.disabled).toBe(true);
   });
+  it("switches to the workspace that already shows the durable terminal and never closes it from here", async () => {
+    seedTab({ tabId: "durable-1" }, { assetId: "local", assetKind: "local", title: "当前设备" });
+    const state = useUi.getState();
+    useUi.setState({
+      workspaces: [
+        ...state.workspaces,
+        {
+          id: "ws-agent",
+          kind: "session",
+          title: "build-box",
+          sessionId: "s-dev",
+          assetId: "device/d-1",
+          assetKind: "device",
+          panes: [{ id: "p-agent", tabs: [{ id: "t-agent", kind: "terminal", title: "build-box", sessionId: "s-dev", tabId: "durable-1", closable: true }], activeTabId: "t-agent" }],
+          activePaneId: "p-agent",
+          closable: true,
+        },
+      ],
+    });
+    mounted = mountPane();
+    await flush();
+
+    failAttach("tab_open_elsewhere");
+    await waitFor(() => expect(useUi.getState().activeWorkspaceId).toBe("ws-agent"));
+    expect(useUi.getState().workspaces.flatMap((w) => w.panes).flatMap((p) => p.tabs).some((t) => t.id === "t1")).toBe(false);
+    expect(mocks.closeTab).not.toHaveBeenCalled();
+    expect(toastTexts()).toContain("「build-box」工作区打开");
+  });
 });
