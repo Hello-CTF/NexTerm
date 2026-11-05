@@ -4,6 +4,7 @@ import { useAwarenessStore } from "../sessionAwarenessStore";
 import { hideMobileHome, showMobileHome, useMobileHome } from "./mobileHome";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { mountUnavailableReason } from "../capabilities";
+import { deviceIdOfHost, isHostAssetKind, openHostDetail } from "../../features/hosts/hostDetail";
 import {
   IconActivity,
   IconBox,
@@ -12,6 +13,7 @@ import {
   IconDatabase,
   IconDrive,
   IconHistory,
+  IconInfo,
   IconKey,
   IconList,
   IconMonitor,
@@ -61,6 +63,9 @@ export function AppRail({
   // The sidebar shows the file tree in a host workspace, so neither panel button is highlighted there.
   const railActive = resolveLeftView(workspace, leftMode, leftOverride);
   const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
+  const hostAssetId = workspace?.assetId ?? "";
+  const hasHostDetail = hasHost && hostAssetId !== "" &&
+    (isHostAssetKind(workspace?.assetKind ?? "") || deviceIdOfHost(hostAssetId) !== null);
 
   const railPanels: {
     key: string;
@@ -109,6 +114,17 @@ export function AppRail({
       onClick: openBackground,
       badge: backgroundCount ?? undefined,
     }] : []),
+    ...(hasHostDetail
+      ? [
+          {
+            key: "host-detail",
+            label: "主机详情",
+            hint: "打开当前主机的详情：会话、容器、端口、进程和指标",
+            icon: IconInfo,
+            onClick: () => openHostDetail(hostAssetId),
+          },
+        ]
+      : []),
     {
       key: "history",
       label: "终端历史",

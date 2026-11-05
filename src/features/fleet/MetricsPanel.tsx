@@ -132,7 +132,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   ];
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="@container flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-1" role="group" aria-label="时间范围">
         {METRIC_RANGES.map((r) => (
           <button
@@ -151,7 +151,8 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
       ) : !hasTrend ? (
         <div className="nx-hint text-[11.5px]">所选时间范围内暂无数据。</div>
       ) : null}
-      <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] sm:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading}>
+      {/* Columns follow the panel's own width, not the window: a narrow card stacks the charts so their axis text stays legible. */}
+      <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] @4xl:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading} data-testid="metric-blocks">
         {metricBlocks.map((m) => (
           <div key={m.kind}>
             <div className="nx-hint text-[11px]">{m.label}</div>

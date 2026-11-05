@@ -31,15 +31,18 @@ export function HostSection({
   actions,
   children,
   testId,
+  className,
 }: {
   title: string;
   icon: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   testId?: string;
+  // className adds grid placement, such as spanning the whole row.
+  className?: string;
 }) {
   return (
-    <section className="nx-card flex min-w-0 flex-col gap-2 !p-3" aria-label={title} data-testid={testId}>
+    <section className={`nx-card flex min-w-0 flex-col gap-2 !p-3${className ? ` ${className}` : ""}`} aria-label={title} data-testid={testId}>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="shrink-0 text-neutral-500">{icon}</span>
         <h3 className="nx-card-title m-0">{title}</h3>

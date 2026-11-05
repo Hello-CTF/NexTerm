@@ -467,11 +467,33 @@ describe("App workspace actions", () => {
     mounted = mountApp();
     await flush();
 
-    for (const label of ["文件树", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
+    for (const label of ["文件树", "主机详情", "容器", "磁盘挂载", "端口转发", "日志", "后台会话"]) {
       expect(mounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
     }
     // History needs no host, so it stays.
     expect(railButton("终端历史")).toBeTruthy();
+  });
+
+  it("opens the current host's detail page from the rail", async () => {
+    const ssh = { ...hostWorkspace("ws-ssh", "s1", "asset-ssh"), assetKind: "ssh" };
+    const device = { ...hostWorkspace("ws-dev", "s2", "device/d-1"), assetKind: "device" };
+    useUi.setState({
+      sessions: [sessionOf("s1"), sessionOf("s2")],
+      workspaces: [ssh, device],
+      activeWorkspaceId: device.id,
+    });
+    mounted = mountApp();
+    await flush();
+
+    await clickRail("主机详情");
+    const detail = () =>
+      useUi.getState().workspaces.flatMap((workspace) => workspace.panes).flatMap((pane) => pane.tabs).find((tab) => tab.kind === "host");
+    expect(detail()).toEqual(expect.objectContaining({ assetId: "device/d-1" }));
+
+    act(() => useUi.getState().setActiveWorkspace(ssh.id));
+    await flush();
+    await clickRail("主机详情");
+    expect(detail()).toEqual(expect.objectContaining({ assetId: "asset-ssh" }));
   });
 
   it("opens files, mount, docker and forward in the explicit current host and logs in the tools workspace", async () => {

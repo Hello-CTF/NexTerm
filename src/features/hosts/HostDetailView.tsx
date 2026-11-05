@@ -114,7 +114,7 @@ function CopyLinkButton({ assetId }: { assetId: string }) {
 }
 
 export function HostDetailView({ assetId, visible }: { assetId: string | undefined; visible: boolean }) {
-  if (!assetId) return <Notice title="未选择主机" hint="在资产树中右键主机，选择「主机详情」。" />;
+  if (!assetId) return <Notice title="未选择主机" hint="在主机工作区点左侧导航栏的「主机详情」，或在资产树中右键主机选择「主机详情」。" />;
   const deviceId = deviceIdOfHost(assetId);
   return deviceId ? (
     <DeviceDetail key={assetId} assetId={assetId} deviceId={deviceId} visible={visible} />
@@ -412,7 +412,7 @@ function DeviceHostDetail({
             <ContainersSection workspace={workspace} visible={visible} />
             <PortsSection workspace={workspace} visible={visible} hostName={device.name} />
             <ProcessesSection workspace={workspace} visible={visible} hostName={device.name} />
-            <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+            <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics" className="col-span-full">
               {revoked ? (
                 <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
               ) : visible ? (
