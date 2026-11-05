@@ -532,6 +532,7 @@ func (s *Session) finishReconnectLocked(err error) {
 	}
 	s.reconnecting = false
 	s.reconnectWake = nil
+	s.reconnectRetry = nil
 	s.reconnectCompletion.err = err
 	close(s.reconnectCompletion.done)
 }

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -164,11 +165,11 @@ func TestReconnectBackoffWakeIsHonoredOnlyWhenWakeable(t *testing.T) {
 	// arriving.
 	wake := make(chan struct{})
 	close(wake)
-	woken, err := waitReconnectBackoff(context.Background(), time.Hour, wake, true)
+	woken, err := waitReconnectBackoff(context.Background(), time.Hour, reconnectSignals{wake: wake}, true)
 	if err != nil || !woken {
 		t.Fatalf("wakeable wait = (%v, %v), want woken", woken, err)
 	}
-	woken, err = waitReconnectBackoff(context.Background(), time.Millisecond, wake, false)
+	woken, err = waitReconnectBackoff(context.Background(), time.Millisecond, reconnectSignals{wake: wake}, false)
 	if err != nil || woken {
 		t.Fatalf("non-wakeable wait = (%v, %v), want the full delay", woken, err)
 	}
@@ -181,7 +182,7 @@ func TestReconnectBackoffKeepsAWakeThatArrivedBeforeTheFirstWait(t *testing.T) {
 	wake <- struct{}{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	woken, err := waitReconnectBackoff(ctx, time.Hour, wake, true)
+	woken, err := waitReconnectBackoff(ctx, time.Hour, reconnectSignals{wake: wake}, true)
 	if err != nil || !woken {
 		t.Fatalf("wait with a pending wake = (%v, %v), want woken at once", woken, err)
 	}
@@ -261,10 +262,16 @@ type heartbeatConnector struct {
 	mu         sync.Mutex
 	transports []*heartbeatTransport
 	calls      atomic.Int32
+	// failNext makes that many following dials fail.
+	failNext atomic.Int32
 }
 
 func (c *heartbeatConnector) Connect(_ context.Context, asset Asset, _ uint64) (base.Transport, error) {
 	call := c.calls.Add(1)
+	if c.failNext.Add(-1) >= 0 {
+		return nil, errors.New("dial failed")
+	}
+	c.failNext.Store(0)
 	transport := &heartbeatTransport{
 		fakeTransport: newFakeTransport(asset.Kind, uint64(call)+2000),
 		entered:       make(chan struct{}, 16),
@@ -575,5 +582,32 @@ func TestProbeLivenessCutsReconnectBackoffShort(t *testing.T) {
 	}
 	if connected := fixture.nextStatus(t); connected.Status != StatusConnected {
 		t.Fatalf("status after the foreground probe = %+v, want connected", connected)
+	}
+}
+
+// A probe wake that led to a failed attempt makes the next backoff ignore probes, but the user's "retry now" must
+// still end it: otherwise the button does nothing while the countdown runs.
+func TestRetryReconnectNowEndsABackoffThatIgnoresProbes(t *testing.T) {
+	fixture := newLivenessFixture(t, time.Hour)
+	fixture.manager.jitter = func() float64 { return 0 }
+	fixture.connector.failNext.Store(1)
+	if err := fixture.manager.StartReconnect(fixture.session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if event := fixture.nextStatus(t); event.Status != StatusReconnecting {
+		t.Fatalf("status = %+v, want reconnecting", event)
+	}
+	if _, err := fixture.manager.ProbeLivenessFor(context.Background(), fixture.session.ID); err != nil {
+		t.Fatal(err)
+	}
+	retry := fixture.nextStatus(t)
+	if retry.Status != StatusReconnecting || retry.Attempt != 1 || retry.NextRetryAt == nil {
+		t.Fatalf("status after the failed woken attempt = %+v, want attempt 1 with a scheduled retry", retry)
+	}
+	if _, err := fixture.manager.RetryReconnectNowFor(context.Background(), fixture.session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if connected := fixture.nextStatus(t); connected.Status != StatusConnected {
+		t.Fatalf("status after retry now = %+v, want connected", connected)
 	}
 }

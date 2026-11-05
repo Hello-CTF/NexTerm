@@ -140,6 +140,7 @@ var contractScopes = []scopeSpec{
 		"session_open_line_tab",
 		"session_quick_connect_user",
 		"session_reconnect",
+		"session_reconnect_now",
 	}},
 	{name: "terminal", commands: []string{
 		"terminal_attach",

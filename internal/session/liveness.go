@@ -389,3 +389,31 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 	m.observeLiveness(session, generation, observation, err)
 	return session.Info(), nil
 }
+
+// RetryReconnectNowFor is the user's "retry now" on a reconnecting session: it
+// ends the current backoff whatever earlier probes did, so the next attempt
+// dials at once. An attempt already dialing answers it. A Failed session that
+// holds durable terminals starts reconnecting immediately.
+func (m *Manager) RetryReconnectNowFor(ctx context.Context, id string) (SessionInfo, error) {
+	session, err := m.SessionFor(ctx, id)
+	if err != nil {
+		return SessionInfo{}, err
+	}
+	session.mu.Lock()
+	if session.reconnecting {
+		if session.reconnectRetry != nil {
+			select {
+			case session.reconnectRetry <- struct{}{}:
+			default:
+			}
+		}
+		session.mu.Unlock()
+		return session.Info(), nil
+	}
+	status := session.status
+	session.mu.Unlock()
+	if status == StatusFailed && sessionHoldsDurable(session) {
+		_ = m.startReconnectImmediate(session.ID, 0)
+	}
+	return session.Info(), nil
+}

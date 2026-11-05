@@ -389,7 +389,10 @@ type Session struct {
 	// reconnectWake cuts the current reconnect backoff short (foreground
 	// probe); it belongs to the running reconnect loop.
 	reconnectWake chan struct{}
-	statusErr     error
+	// reconnectRetry is the user's explicit "retry now": unlike a probe wake it
+	// is honored on every wait, because a person pressed the button.
+	reconnectRetry chan struct{}
+	statusErr      error
 	// liveness tracks the heartbeat of the connection of generation
 	// livenessGen.
 	liveness    livenessTracker

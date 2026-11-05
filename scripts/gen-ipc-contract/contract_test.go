@@ -538,6 +538,7 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 		{name: "session_open_line_tab", scope: "session", channel: true, stream: "binary", output: "AttachedTabDTO"},
 		{name: "session_quick_connect_user", scope: "session", stream: "none", output: "string"},
 		{name: "session_reconnect", scope: "session", stream: "none", output: "boolean"},
+		{name: "session_reconnect_now", scope: "session", stream: "none", output: "SessionInfoDTO"},
 		{name: "terminal_attach", scope: "terminal", channel: true, stream: "binary", output: "AttachedTabDTO"},
 		{name: "terminal_broadcast_prepare", scope: "terminal", nested: true, stream: "none", output: "unknown"},
 		{name: "terminal_history_read", scope: "terminal", stream: "none", output: "TerminalHistoryDTO"},
@@ -570,8 +571,8 @@ func TestSessionTerminalVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 15 {
-		t.Fatalf("selected session/terminal command count = %d, want 15", len(selected))
+	if len(selected) != 16 {
+		t.Fatalf("selected session/terminal command count = %d, want 16", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "session" || command.Scope == "terminal") && !selected[name] {

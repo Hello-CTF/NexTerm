@@ -183,6 +183,8 @@ func (m *Manager) reconnectWith(ctx context.Context, id string, expectedGenerati
 	}
 	wake := make(chan struct{}, 1)
 	session.reconnectWake = wake
+	retry := make(chan struct{}, 1)
+	session.reconnectRetry = retry
 	channels := session.detachChannelsLocked()
 	m.byAsset[session.assetOwnerKey()] = session.ID
 	reconnectCtx := session.ctx
@@ -204,7 +206,7 @@ func (m *Manager) reconnectWith(ctx context.Context, id string, expectedGenerati
 		stop()
 		cancel()
 	}()
-	return m.reconnectLoop(runCtx, session, generation, firstDelay, wake)
+	return m.reconnectLoop(runCtx, session, generation, firstDelay, reconnectSignals{wake: wake, retry: retry})
 }
 
 // reconnectDelay is the jittered backoff before the given attempt: a uniform
@@ -219,14 +221,34 @@ func (m *Manager) reconnectDelay(attempt int) time.Duration {
 	return half + time.Duration(m.jitter()*float64(step-half))
 }
 
-// waitReconnectBackoff sleeps for the backoff unless the context ends or, when
-// wakeable, a foreground probe wakes the loop; woken reports the latter. A
-// wake already pending counts: the caller discards the ones a previous attempt
-// answered before waiting again.
-func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan struct{}, wakeable bool) (woken bool, err error) {
+// reconnectSignals cut a reconnect backoff short: wake is a foreground probe,
+// retry the user's explicit "retry now".
+type reconnectSignals struct {
+	wake  <-chan struct{}
+	retry <-chan struct{}
+}
+
+// drain discards the signals an attempt that was already dialing answered.
+func (s reconnectSignals) drain() {
+	select {
+	case <-s.wake:
+	default:
+	}
+	select {
+	case <-s.retry:
+	default:
+	}
+}
+
+// waitReconnectBackoff sleeps for the backoff unless the context ends, the
+// user asks to retry now, or, when wakeable, a foreground probe wakes the
+// loop; woken reports a probe wake. A signal already pending counts: the
+// caller discards the ones a previous attempt answered before waiting again.
+func waitReconnectBackoff(ctx context.Context, delay time.Duration, signals reconnectSignals, wakeable bool) (woken bool, err error) {
 	if delay <= 0 {
 		return false, ctx.Err()
 	}
+	wake := signals.wake
 	if !wakeable {
 		wake = nil
 	}
@@ -235,6 +257,8 @@ func waitReconnectBackoff(ctx context.Context, delay time.Duration, wake <-chan 
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
+	case <-signals.retry:
+		return false, nil
 	case <-wake:
 		return true, nil
 	case <-timer.C:
@@ -253,7 +277,7 @@ func waitReconnect(ctx context.Context, completion *reconnectCompletion) error {
 	return completion.err
 }
 
-func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64, delay time.Duration, wake <-chan struct{}) error {
+func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generation uint64, delay time.Duration, signals reconnectSignals) error {
 	var lastErr error
 	// A probe may cut a backoff short once; after a woken attempt fails, the
 	// next step waits its full delay so repeated foreground probes cannot
@@ -264,12 +288,9 @@ func (m *Manager) reconnectLoop(ctx context.Context, session *Session, generatio
 			// A wake that arrived while the previous attempt was still dialing was answered by that attempt. The
 			// first wait has no such attempt: a probe that lands as the reconnecting status is published must
 			// still cut the first backoff short.
-			select {
-			case <-wake:
-			default:
-			}
+			signals.drain()
 		}
-		woken, err := waitReconnectBackoff(ctx, delay, wake, wakeable)
+		woken, err := waitReconnectBackoff(ctx, delay, signals, wakeable)
 		if err != nil {
 			lastErr = err
 			break

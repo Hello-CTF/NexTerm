@@ -565,6 +565,18 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 			})
 		},
 		func() error {
+			// session_reconnect_now is the user's "retry now" on a reconnecting
+			// session: it ends the backoff, which a foreground probe may not.
+			return ipc.Register(dispatcher, "session_reconnect_now", func(ctx context.Context, _ *ipc.Call, input sessionIDRequest) (sessionInfoDTO, error) {
+				ctx = productionSessionRequestContext(ctx)
+				info, err := s.sessions.RetryReconnectNowFor(ctx, input.SessionID)
+				if err != nil {
+					return sessionInfoDTO{}, terminalIPCError(err)
+				}
+				return productionSessionInfo(info), nil
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "session_list", func(ctx context.Context, _ *ipc.Call, _ struct{}) ([]sessionInfoDTO, error) {
 				ctx = productionSessionRequestContext(ctx)
 				infos, err := s.sessions.ListSessionsFor(ctx)

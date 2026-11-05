@@ -7,6 +7,7 @@ import { click, clickButton, flush, mount, mountWithClient, type MountedView } f
 const mocks = vi.hoisted(() => ({
   reconnect: vi.fn(async (_id: string) => true),
   probe: vi.fn(async (_id: string) => undefined),
+  reconnectNow: vi.fn(async (_id: string) => undefined),
   confirm: vi.fn(async (_message: string) => true),
   reattach: vi.fn(async (_ids: string[]) => ({ taken: 1, failed: 0 })),
 }));
@@ -18,7 +19,7 @@ vi.mock("../../features/terminal/backgroundSessionsAccess", async (importOrigina
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../ipc/commands")>();
-  return { ...original, sessionApi: { ...original.sessionApi, probeLiveness: mocks.probe } };
+  return { ...original, sessionApi: { ...original.sessionApi, probeLiveness: mocks.probe, reconnectNow: mocks.reconnectNow } };
 });
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
@@ -149,13 +150,29 @@ describe("WorkspaceConnectionBar", () => {
     expect(buttons).toEqual(["立即重试"]);
   });
 
-  it("立即重试 probes the session liveness to cut the backoff short", async () => {
+  it("立即重试 asks for an attempt now and shows it dialing until the next status", async () => {
     useUi.setState({ sessions: [session("reconnecting", { attempt: 2, nextRetryAt: Date.now() + 30_000 })] });
     renderBar(workspace([]), null);
     clickButton(mounted!.container, "立即重试");
     await flush();
-    expect(mocks.probe).toHaveBeenCalledWith("s1");
+    expect(mocks.reconnectNow).toHaveBeenCalledWith("s1");
     expect(mocks.reconnect).not.toHaveBeenCalled();
+    expect(bar()?.textContent).toContain("第 3 次尝试中");
+    const button = bar()?.querySelector<HTMLButtonElement>("button");
+    expect(button?.disabled).toBe(true);
+    expect(button?.textContent?.trim()).toBe("连接中");
+
+    // The attempt failed and the backend scheduled the next one: the button is usable again.
+    act(() => useUi.setState({ sessions: [session("reconnecting", { attempt: 3, nextRetryAt: Date.now() + 30_000 })] }));
+    expect(bar()?.textContent).toMatch(/第 3 次，\d+ 秒后重试/);
+    expect(bar()?.querySelector<HTMLButtonElement>("button")?.disabled).toBe(false);
+  });
+
+  it("says an attempt is running once its scheduled time has passed instead of counting down from zero", () => {
+    useUi.setState({ sessions: [session("reconnecting", { attempt: 4, nextRetryAt: Date.now() - 1_000 })] });
+    renderBar(workspace([]), null);
+    expect(bar()?.textContent).toContain("第 5 次尝试中");
+    expect(bar()?.querySelector<HTMLButtonElement>("button")?.disabled).toBe(true);
   });
 
   describe("suspect connection", () => {

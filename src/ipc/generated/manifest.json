@@ -1729,6 +1729,12 @@
       "channel": false,
       "stream": "none"
     },
+    "session_reconnect_now": {
+      "scope": "session",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "snippet_create": {
       "scope": "snippet",
       "nested": false,

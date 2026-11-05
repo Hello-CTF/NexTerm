@@ -14,6 +14,7 @@ import {
 import { sessionApi } from "../../ipc/commands";
 import { reattachLostTabs } from "../../features/terminal/backgroundSessionsAccess";
 import { IconRefresh } from "../../ui/icons";
+import { describeError } from "../../ui/errorText";
 
 function retryDeadline(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined): number | null {
   const value = session?.nextRetryAt;
@@ -22,13 +23,23 @@ function retryDeadline(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefi
   return Number.isFinite(ms) && ms > 0 ? ms : null;
 }
 
-// reconnectingText names the attempt and, once the backend has scheduled one, the seconds until the next try.
+// reconnectDialing reports that the next attempt is running: its scheduled time has passed, or the user asked to
+// retry now and no newer status has arrived.
+function reconnectDialing(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined, now: number, retrying: boolean): boolean {
+  const deadline = retryDeadline(session);
+  return retrying || (deadline !== null && deadline <= now);
+}
+
+// reconnectingText names the attempt and, once the backend has scheduled one, the seconds until the next try; while
+// an attempt is dialing it says so instead of counting down to zero.
 export function reconnectingText(
   session: Pick<SessionRuntimeInfo, "attempt" | "nextRetryAt"> | undefined,
   now: number,
+  retrying = false,
 ): string {
   const attempt = Math.max(1, Math.floor(session?.attempt ?? 0));
   const deadline = retryDeadline(session);
+  if (reconnectDialing(session, now, retrying)) return `正在重新连接（第 ${attempt + (deadline === null ? 0 : 1)} 次尝试中…）`;
   if (deadline === null) return `正在重新连接（第 ${attempt} 次）`;
   const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
   return `正在重新连接（第 ${attempt} 次，${seconds} 秒后重试）`;
@@ -49,7 +60,11 @@ export function WorkspaceConnectionBar({
   const state = useUi((s) => workspaceConnectionState(ws, s.sessions));
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
+  // retryKey is the status the user pressed "retry now" on; a newer status (the attempt failed or succeeded) ends it.
+  const [retryKey, setRetryKey] = useState<string | null>(null);
   const reconnecting = state === "reconnecting";
+  const statusKey = `${session?.status}|${session?.attempt ?? 0}|${String(session?.nextRetryAt ?? "")}`;
+  const retrying = reconnecting && retryKey === statusKey;
   const suspect = isSessionSuspect(session?.status, session?.liveness);
   useEffect(() => {
     if (!reconnecting) return;
@@ -57,6 +72,14 @@ export function WorkspaceConnectionBar({
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [reconnecting]);
+
+  useEffect(() => {
+    if (retryKey === null) return;
+    // A retry the backend could not act on (the session left reconnecting there first) must not leave the button
+    // stuck; a real attempt reports a newer status long before this.
+    const timer = window.setTimeout(() => setRetryKey(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [retryKey]);
 
   if (!ws || ws.deletedTarget) return null;
   const reattach = async (tabIds: string[]) => {
@@ -123,8 +146,14 @@ export function WorkspaceConnectionBar({
     }
   };
   const retryNow = () => {
-    if (ws.sessionId) void sessionApi.probeLiveness(ws.sessionId).catch(() => undefined);
+    if (!ws.sessionId || retrying) return;
+    setRetryKey(statusKey);
+    void sessionApi.reconnectNow(ws.sessionId).catch((err: unknown) => {
+      setRetryKey(null);
+      useUi.getState().pushToast("error", `重试失败：${describeError(err)}`);
+    });
   };
+  const dialing = reconnecting && reconnectDialing(session, now, retrying);
   const dot = reconnecting || suspect ? "bg-[var(--nx-fg-tertiary)]" : "bg-red-500";
   return (
     <div
@@ -136,7 +165,7 @@ export function WorkspaceConnectionBar({
       <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} aria-hidden="true" />
       <span className="min-w-[min(12rem,70%)] flex-1 break-words">
         {reconnecting ? (
-          reconnectingText(session, now)
+          reconnectingText(session, now, retrying)
         ) : suspect ? (
           "连接不稳定"
         ) : (
@@ -155,10 +184,11 @@ export function WorkspaceConnectionBar({
         <button
           type="button"
           className="nx-btn nx-btn-primary nx-btn-sm shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-4"
+          disabled={dialing}
           onClick={retryNow}
         >
-          <IconRefresh size={13} />
-          立即重试
+          <IconRefresh size={13} className={dialing ? "animate-spin" : undefined} />
+          {dialing ? "连接中" : "立即重试"}
         </button>
       )}
       {!reconnecting && (

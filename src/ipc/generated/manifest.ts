@@ -2215,6 +2215,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
       output: { go: "bool", ts: "boolean" },
     },
+    "session_reconnect_now": {
+      scope: "session",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionIDRequest", ts: "SessionIDRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.sessionInfoDTO", ts: "SessionInfoDTO" },
+    },
     "snippet_create": {
       scope: "snippet",
       nested: false,
@@ -4268,6 +4276,10 @@ export interface IPCCommandTypeMap {
   "session_reconnect": {
     input: contractTypes.SessionIDRequest;
     output: boolean;
+  };
+  "session_reconnect_now": {
+    input: contractTypes.SessionIDRequest;
+    output: contractTypes.SessionInfoDTO;
   };
   "snippet_create": {
     input: contractTypes.SnippetInputRequest;

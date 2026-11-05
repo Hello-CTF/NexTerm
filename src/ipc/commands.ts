@@ -383,6 +383,8 @@ export const sessionApi = {
   // Checks the session's connection now: a dead connection reconnects at once and a pending
   // reconnect backoff is cut short. Results also arrive as session status events.
   probeLiveness: (sessionId: string) => call("session_liveness_probe", { sessionId }),
+  // The user's "retry now" on a reconnecting session: ends the backoff even when probes no longer may.
+  reconnectNow: (sessionId: string) => call("session_reconnect_now", { sessionId }),
   // Reports whether a new terminal can be durable now and starts the helper deployment in the background when needed.
   prepareDurable: (sessionId: string) =>
     call("session_prepare_durable", { sessionId }).then(normalizeDurableReadiness),
