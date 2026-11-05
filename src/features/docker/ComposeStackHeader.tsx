@@ -14,6 +14,16 @@ import { ComposeEditor } from "./ComposeEditor";
 
 type ComposeAction = "up" | "down" | "restart" | "pull";
 
+// ComposeMetadataState is how the panel's read of the Compose metadata went: still loading, failed (with why), or
+// done. A stack missing from a done read has no metadata on the host.
+export type ComposeMetadataState = { state: "loading" } | { state: "failed"; error: string } | { state: "ready" };
+
+function missingStackReason(metadata: ComposeMetadataState): string {
+  if (metadata.state === "loading") return "正在读取 Compose 元数据…";
+  if (metadata.state === "failed") return `读取 Compose 元数据失败：${metadata.error}`;
+  return "未找到该 Compose 项目的配置信息";
+}
+
 type PendingProduction = {
   challenge: DockerConfirmationChallenge;
   command: string;
@@ -26,12 +36,14 @@ export function ComposeStackHeader({
   stack,
   onChanged,
   compact = false,
+  metadata = { state: "ready" },
 }: {
   sessionId: string;
   project: string;
   stack: ComposeStack | null;
   onChanged: () => void;
   compact?: boolean;
+  metadata?: ComposeMetadataState;
 }) {
   const pushToast = useUi((state) => state.pushToast);
   const [busy, setBusy] = useState<ComposeAction | "logs" | null>(null);
@@ -50,8 +62,10 @@ export function ComposeStackHeader({
     envExists: false,
     services: [],
     readOnly: true,
-    reason: "Compose 元数据尚未加载或读取失败",
+    reason: missingStackReason(metadata),
   };
+  // Still loading is not a fault: the actions wait for the metadata without the read-only warning.
+  const loading = stack === null && metadata.state === "loading";
   const unavailable = effective.readOnly || busy !== null;
 
   useEffect(() => () => {
@@ -122,8 +136,19 @@ export function ComposeStackHeader({
         <ContextMenu state={menu} onClose={() => setMenu(null)} />
         <span className="nx-badge nx-badge-purple max-w-[60%] truncate" title={project}>{project}</span>
         <span className="text-[11px] text-neutral-500">{compact ? `${effective.services.length} services` : `Compose stack · ${effective.services.length} services`}</span>
-        {effective.readOnly && <span className="nx-badge nx-badge-amber" title={effective.reason}>只读</span>}
-        {effective.reason && <span className={`${compact ? "max-w-full" : "max-w-[460px]"} truncate text-[11px] text-amber-300`} title={effective.reason}>{effective.reason}</span>}
+        {loading ? (
+          <span className="nx-badge" title={effective.reason} role="status">加载中</span>
+        ) : (
+          effective.readOnly && <span className="nx-badge nx-badge-amber" title={effective.reason}>只读</span>
+        )}
+        {effective.reason && (
+          <span
+            className={`${compact ? "max-w-full" : "max-w-[460px]"} truncate text-[11px] ${loading ? "text-neutral-400" : "text-amber-300"}`}
+            title={effective.reason}
+          >
+            {effective.reason}
+          </span>
+        )}
         {compact ? (
           <>
         <div className="nx-spacer" />

@@ -242,6 +242,33 @@ describe("Compose stack actions", () => {
     mounted.unmount();
   });
 
+  it("tells loading Compose metadata apart from a failed read and from a missing project", () => {
+    const render = (metadata: unknown) => {
+      const mounted = mountWithClient(
+        createElement(ComposeStackHeader, { sessionId: "s1", project: "shop", stack: null, onChanged: vi.fn(), metadata: metadata as never }),
+      );
+      const text = mounted.container.textContent ?? "";
+      const upDisabled = [...mounted.container.querySelectorAll("button")].find((button) => button.textContent?.includes("up"))?.disabled;
+      mounted.unmount();
+      return { text, upDisabled };
+    };
+
+    const loading = render({ state: "loading" });
+    expect(loading.text).toContain("加载中");
+    expect(loading.text).toContain("正在读取 Compose 元数据");
+    expect(loading.text).not.toContain("只读");
+    expect(loading.text).not.toContain("失败");
+    expect(loading.upDisabled).toBe(true);
+
+    const failed = render({ state: "failed", error: "docker compose ls 超时" });
+    expect(failed.text).toContain("只读");
+    expect(failed.text).toContain("读取 Compose 元数据失败：docker compose ls 超时");
+
+    const missing = render({ state: "ready" });
+    expect(missing.text).toContain("只读");
+    expect(missing.text).toContain("未找到该 Compose 项目的配置信息");
+  });
+
   it("offers the remaining actions from the compact menu", async () => {
     mocks.composeAction.mockResolvedValueOnce("restarted");
     const mounted = mountWithClient(

@@ -27,7 +27,7 @@ import { useCompactWidth } from "./useCompactWidth";
 import { ContainerInsight } from "./ContainerInsight";
 import { parsePublishedPorts } from "./containerPorts";
 import { forwardAndOpen, targetHostFor } from "../preview/forwardAndOpen";
-import { ComposeStackHeader } from "./ComposeStackHeader";
+import { ComposeStackHeader, type ComposeMetadataState } from "./ComposeStackHeader";
 import { groupContainersByCompose } from "./composeGrouping";
 import { DockerDiskPanel } from "./DockerDiskPanel";
 import { DockerLogStream } from "./DockerLogStream";
@@ -387,6 +387,12 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
     refetchInterval: tab === "containers" ? autoRefreshMs : false,
   });
 
+  // A failed refresh after a good read keeps the earlier stacks, so only a read that never succeeded is shown failed.
+  const composeMetadata: ComposeMetadataState = compose.data
+    ? { state: "ready" }
+    : compose.isError
+      ? { state: "failed", error: describeError(compose.error) }
+      : { state: "loading" };
   const cRows = containers.data ?? [];
   const iRows = images.data ?? [];
 
@@ -774,6 +780,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                 sessionId={sessionId}
                 project={group.project}
                 stack={group.stack}
+                metadata={composeMetadata}
                 onChanged={() => {
                   void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
                   void qc.invalidateQueries({ queryKey: ["docker-compose-stacks", sessionId] });
@@ -1058,6 +1065,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                             sessionId={sessionId}
                             project={group.project}
                             stack={group.stack}
+                            metadata={composeMetadata}
                             onChanged={() => {
                               void qc.invalidateQueries({ queryKey: ["docker-ps", sessionId] });
                               void qc.invalidateQueries({ queryKey: ["docker-compose-stacks", sessionId] });
