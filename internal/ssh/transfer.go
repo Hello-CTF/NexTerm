@@ -218,6 +218,20 @@ func (h *FallbackHost) Rename(ctx context.Context, from, to string) error {
 	return nil
 }
 
+func (h *FallbackHost) ModTime(ctx context.Context, path string) (time.Time, error) {
+	if h.useFallback.Load() {
+		return hostModTime(ctx, h.fallback, path)
+	}
+	modTime, err := hostModTime(ctx, h.Host, path)
+	if err == nil || errors.Is(err, errModTimeUnsupported) {
+		return modTime, err
+	}
+	if !IsSFTPUnavailable(err) {
+		return time.Time{}, transferError(TransferStageSFTP, path, err)
+	}
+	return hostModTime(ctx, h.fallback, path)
+}
+
 func (h *FallbackHost) Delete(ctx context.Context, path string, directory bool) error {
 	if h.useFallback.Load() {
 		return h.fallback.Delete(ctx, path, directory)
@@ -408,6 +422,26 @@ func (h *ExecHost) Rename(ctx context.Context, from, to string) error {
 	}
 	_, err := h.run(ctx, command)
 	return err
+}
+
+func (h *ExecHost) ModTime(ctx context.Context, path string) (time.Time, error) {
+	command := "LC_ALL=C stat -c %Y -- " + quoteShell(path)
+	switch h.target.GOOS {
+	case "linux":
+	case "windows":
+		command = powerShellCommand("powershell.exe", "$ErrorActionPreference='Stop'; [Console]::Out.Write(([DateTimeOffset](Get-Item -LiteralPath "+quotePowerShell(path)+" -Force).LastWriteTimeUtc).ToUnixTimeSeconds())")
+	default:
+		command = "LC_ALL=C stat -f %m -- " + quoteShell(path)
+	}
+	stdout, err := h.run(ctx, command)
+	if err != nil {
+		return time.Time{}, err
+	}
+	seconds, err := strconv.ParseInt(strings.TrimSpace(stdout), 10, 64)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("modification time of %s: %q: %w", path, strings.TrimSpace(stdout), err)
+	}
+	return time.Unix(seconds, 0), nil
 }
 
 func (h *ExecHost) Delete(ctx context.Context, path string, directory bool) error {
@@ -633,6 +667,7 @@ func StageUploadLimited(ctx context.Context, host Host, target Target, source Up
 	if err != nil {
 		return "", err
 	}
+	var staleCheckedAt time.Time
 	for {
 		err = host.Mkdir(ctx, lock)
 		if err == nil {
@@ -647,6 +682,13 @@ func StageUploadLimited(ctx context.Context, host Host, target Target, source Up
 		}
 		if !exists {
 			continue
+		}
+		// An install that lost its connection cannot remove its lock, which would then block every later install.
+		if time.Since(staleCheckedAt) >= installLockStaleCheckEvery {
+			staleCheckedAt = time.Now()
+			if releaseStaleInstallLock(ctx, host, target, paths.BinDir, lock) {
+				continue
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -746,6 +788,50 @@ func StageUploadLimited(ctx context.Context, host Host, target Target, source Up
 		return targetPath, transferError(TransferStageChecksum, targetPath, fmt.Errorf("expected %s, got %s: %w", source.Digest, digest, ErrDigestMismatch))
 	}
 	return targetPath, nil
+}
+
+const (
+	// installLockStaleAfter is how old an install lock must be before it is taken as left behind: longer than the
+	// upload timeout that bounds a live install.
+	installLockStaleAfter      = defaultUploadTimeout + 5*time.Minute
+	installLockStaleCheckEvery = 30 * time.Second
+)
+
+var errModTimeUnsupported = errors.New("host cannot report modification times")
+
+func hostModTime(ctx context.Context, host any, path string) (time.Time, error) {
+	timed, ok := host.(interface {
+		ModTime(context.Context, string) (time.Time, error)
+	})
+	if !ok {
+		return time.Time{}, errModTimeUnsupported
+	}
+	return timed.ModTime(ctx, path)
+}
+
+// releaseStaleInstallLock removes an install lock older than installLockStaleAfter and reports whether it did. The
+// age is measured on the host's clock: a probe directory created now gives the host's current time, so clock skew
+// between this machine and the host cannot make a live lock look stale. Any failure keeps the lock.
+func releaseStaleInstallLock(ctx context.Context, host Host, target Target, binDir, lock string) bool {
+	locked, err := hostModTime(ctx, host, lock)
+	if err != nil {
+		return false
+	}
+	var nonce [4]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return false
+	}
+	clock := remoteTargetJoin(target, binDir, ".nexterm-clock-"+hex.EncodeToString(nonce[:]))
+	if err := host.Mkdir(ctx, clock); err != nil {
+		return false
+	}
+	now, err := hostModTime(ctx, host, clock)
+	_ = host.Delete(ctx, clock, true)
+	if err != nil || now.Sub(locked) < installLockStaleAfter {
+		return false
+	}
+	err = host.Delete(ctx, lock, true)
+	return err == nil || errors.Is(err, fs.ErrNotExist)
 }
 
 func ensureStageDirectory(ctx context.Context, host Host, directory string) error {

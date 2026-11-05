@@ -180,9 +180,21 @@ func (f *FS) Mkdir(ctx context.Context, remotePath string) error {
 		return err
 	}
 	if err := f.client.Mkdir(remotePath); err != nil {
-		return fmt.Errorf("SFTP mkdir %s: %w", remotePath, err)
+		return f.mkdirError(remotePath, err)
 	}
 	return ctx.Err()
+}
+
+// mkdirError names an existing path as fs.ErrExist. SFTP v3 has no "already exists" status, so OpenSSH's
+// sftp-server answers a mkdir of an existing path with the generic SSH_FX_FAILURE; callers that treat an existing
+// directory as a held lock or as done would otherwise see an unexplained failure.
+func (f *FS) mkdirError(remotePath string, err error) error {
+	if !errors.Is(err, fs.ErrExist) {
+		if _, lerr := f.client.Lstat(remotePath); lerr == nil {
+			return fmt.Errorf("SFTP mkdir %s: %w: %w", remotePath, fs.ErrExist, err)
+		}
+	}
+	return fmt.Errorf("SFTP mkdir %s: %w", remotePath, err)
 }
 
 // MkdirPrivate creates remotePath exclusively with mode 0700. SFTP mkdir is non-recursive and fails when anything
@@ -193,7 +205,7 @@ func (f *FS) MkdirPrivate(ctx context.Context, remotePath string) error {
 		return err
 	}
 	if err := f.client.Mkdir(remotePath); err != nil {
-		return fmt.Errorf("SFTP mkdir %s: %w", remotePath, err)
+		return f.mkdirError(remotePath, err)
 	}
 	if err := f.verifyPrivateDir(remotePath); err != nil {
 		// Remove only a real, empty directory: RemoveDirectory never follows a symlink or deletes contents, and a
@@ -364,6 +376,19 @@ func (f *FS) Size(ctx context.Context, remotePath string) (int64, error) {
 		return 0, fmt.Errorf("SFTP stat %s: %w", remotePath, err)
 	}
 	return info.Size(), ctx.Err()
+}
+
+// ModTime is the modification time of remotePath itself (a symlink is not followed), on the server's clock.
+func (f *FS) ModTime(ctx context.Context, remotePath string) (time.Time, error) {
+	remotePath, err := f.real(ctx, remotePath)
+	if err != nil {
+		return time.Time{}, err
+	}
+	info, err := f.client.Lstat(remotePath)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("SFTP lstat %s: %w", remotePath, err)
+	}
+	return info.ModTime(), ctx.Err()
 }
 
 func (f *FS) FileMode(ctx context.Context, remotePath string) (fs.FileMode, error) {

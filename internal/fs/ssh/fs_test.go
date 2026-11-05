@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -521,8 +522,8 @@ func TestSFTPMkdirPrivateIsExclusiveAndOwnerOnly(t *testing.T) {
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		t.Fatalf("private dir = %v, %v; want a 0700 directory", info, err)
 	}
-	if err := filesystem.MkdirPrivate(ctx, target); err == nil {
-		t.Fatal("MkdirPrivate reused an existing directory")
+	if err := filesystem.MkdirPrivate(ctx, target); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("MkdirPrivate on an existing directory = %v, want fs.ErrExist", err)
 	}
 	link := filepath.Join(root, "link")
 	if err := os.Symlink(filepath.Join(root, "elsewhere"), link); err != nil {
@@ -533,5 +534,22 @@ func TestSFTPMkdirPrivateIsExclusiveAndOwnerOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "elsewhere")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("symlink target was created: %v", err)
+	}
+}
+
+// The SFTP server answers a mkdir of an existing path with the generic SSH_FX_FAILURE; Mkdir must still report it as
+// fs.ErrExist, since the helper install lock treats an existing directory as held by another install.
+func TestSFTPMkdirReportsAnExistingPathAsErrExist(t *testing.T) {
+	filesystem, root := newTestFS(t, nil)
+	ctx := t.Context()
+	target := filepath.Join(root, "lock")
+	if err := filesystem.Mkdir(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.Mkdir(ctx, target); !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("second Mkdir = %v, want fs.ErrExist", err)
+	}
+	if err := filesystem.Mkdir(ctx, filepath.Join(root, "missing", "child")); err == nil || errors.Is(err, fs.ErrExist) {
+		t.Fatalf("Mkdir under a missing parent = %v, want an error that is not fs.ErrExist", err)
 	}
 }

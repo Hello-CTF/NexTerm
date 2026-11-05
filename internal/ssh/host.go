@@ -60,6 +60,14 @@ func (h *clientHost) Exists(ctx context.Context, path string) (bool, error) {
 	return filesystem.Exists(ctx, path)
 }
 
+func (h *clientHost) ModTime(ctx context.Context, path string) (time.Time, error) {
+	filesystem, err := h.filesystem(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return filesystem.ModTime(ctx, path)
+}
+
 func (h *clientHost) Mkdir(ctx context.Context, path string) error {
 	filesystem, err := h.filesystem(ctx)
 	if err != nil {

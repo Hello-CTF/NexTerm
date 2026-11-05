@@ -368,3 +368,79 @@ func TestEnsureDaemonConcurrentPrivateTemporaryCreation(t *testing.T) {
 		t.Fatalf("temporary concurrent uploads/renames = %d/%d, want 1/1", uploads, renames)
 	}
 }
+
+// agedLockHost reports the install lock as created at lockTime and anything else as created at now, on the host's
+// clock.
+type agedLockHost struct {
+	Host
+	lock     string
+	lockTime time.Time
+	now      time.Time
+}
+
+func (h *agedLockHost) ModTime(ctx context.Context, path string) (time.Time, error) {
+	exists, err := h.Host.Exists(ctx, path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !exists {
+		return time.Time{}, fs.ErrNotExist
+	}
+	if path == h.lock {
+		return h.lockTime, nil
+	}
+	return h.now, nil
+}
+
+// An install that lost its connection leaves its lock behind; the next install must take it over once it is older
+// than any live install can be, instead of failing or waiting on it forever.
+func TestInstallTakesOverALockLeftByAnInterruptedInstall(t *testing.T) {
+	digest := strings.Repeat("3c", 32)
+	shared := newSharedTarget("")
+	binDir := filepath.Join(t.TempDir(), "nexterm", "bin")
+	lock := binDir + "/.nexterm-" + digest + ".install"
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	host := &agedLockHost{Host: &fakeHost{shared: shared, uploadDigest: digest}, lock: lock, lockTime: created, now: created.Add(installLockStaleAfter + time.Minute)}
+	for _, dir := range []string{filepath.Dir(binDir), binDir, lock} {
+		if err := host.Mkdir(context.Background(), dir); err != nil && !errors.Is(err, fs.ErrExist) {
+			t.Fatal(err)
+		}
+	}
+	target, err := stageInstallLock(t, host, binDir, fakeUploadSource(digest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := binDir + "/nexterm-helper-" + digest; target != want {
+		t.Fatalf("target = %q, want %q", target, want)
+	}
+	if shared.exists(lock) {
+		t.Fatal("installation lock remained after cleanup")
+	}
+}
+
+func TestInstallWaitsOnALockAnotherInstallMayStillHold(t *testing.T) {
+	digest := strings.Repeat("4d", 32)
+	shared := newSharedTarget("")
+	binDir := filepath.Join(t.TempDir(), "nexterm", "bin")
+	lock := binDir + "/.nexterm-" + digest + ".install"
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	host := &agedLockHost{Host: &fakeHost{shared: shared, uploadDigest: digest}, lock: lock, lockTime: created, now: created.Add(time.Minute)}
+	for _, dir := range []string{filepath.Dir(binDir), binDir, lock} {
+		if err := host.Mkdir(context.Background(), dir); err != nil && !errors.Is(err, fs.ErrExist) {
+			t.Fatal(err)
+		}
+	}
+	upload := fakeUploadSource(digest)
+	target := Target{GOOS: "linux", GOARCH: upload.GOARCH, GOARM: upload.GOARM, DataRoot: filepath.Dir(filepath.Dir(binDir)), Identity: "0"}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := StageUpload(ctx, host, target, upload, false, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("install under a live lock = %v, want to wait until the deadline", err)
+	}
+	if !shared.exists(lock) {
+		t.Fatal("a live installation lock was removed")
+	}
+	if uploads, _, _ := shared.counts(); uploads != 0 {
+		t.Fatalf("uploads = %d under a live lock, want 0", uploads)
+	}
+}
