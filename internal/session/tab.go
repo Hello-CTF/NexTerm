@@ -2385,6 +2385,7 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	replay, _ := channel.Channel.(base.DurableReplayReporter)
 	m.startDurableReplay(ctx, tab, generation)
 	m.watchAttention(ctx, tab, generation)
+	m.watchRemoteSize(ctx, tab, generation)
 	for {
 		// A paused subscriber with a full coalescer stalls the PTY read:
 		// output backpressure reaches the shell instead of growing memory.

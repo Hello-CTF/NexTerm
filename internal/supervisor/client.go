@@ -462,6 +462,7 @@ func (c *Client) newStream(conn *clientConn, reply attachedMsg) *Stream {
 		inputWake:         make(chan struct{}),
 		creditWake:        make(chan struct{}, 1),
 		stateWake:         make(chan struct{}, 1),
+		sizeWake:          make(chan struct{}, 1),
 	}
 	if info.State != nil {
 		state := *info.State
@@ -534,7 +535,7 @@ func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) 
 		}
 	}
 	conn := &clientConn{conn: netConn, compress: c.compressOutput}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner, SizePush: true})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -806,6 +807,12 @@ type Stream struct {
 	stateEvents []SessionEvent
 	stateWake   chan struct{}
 
+	// pushedCols and pushedRows are the size another client last gave the
+	// session, zero until the helper pushed one (guarded by mu); sizeWake is
+	// signalled after each push.
+	pushedCols, pushedRows uint32
+	sizeWake               chan struct{}
+
 	// tokenWaitHook, when non-nil, runs immediately before requestRaw blocks
 	// acquiring the request token (after its initial ctx check) and before a
 	// write blocks acquiring the input token. Tests use it to observe the
@@ -884,6 +891,20 @@ func (s *Stream) applyStateLocked(state SessionState) {
 // StateUpdates is signalled after each pushed state. Signals coalesce.
 func (s *Stream) StateUpdates() <-chan struct{} {
 	return s.stateWake
+}
+
+// SizeUpdates is signalled after the helper pushed a size another client
+// gave the session. Signals coalesce; read PushedSize after each one.
+func (s *Stream) SizeUpdates() <-chan struct{} {
+	return s.sizeWake
+}
+
+// PushedSize is the size another client last gave the session; ok is false
+// until the helper pushed one.
+func (s *Stream) PushedSize() (cols, rows uint32, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pushedCols, s.pushedRows, s.pushedCols != 0
 }
 
 func (s *Stream) Identity() Identity {
@@ -1637,6 +1658,23 @@ func (s *Stream) readLoop() {
 			s.mu.Unlock()
 			select {
 			case s.stateWake <- struct{}{}:
+			default:
+			}
+		case frameSize:
+			var msg sizeMsg
+			if err := unmarshalFrame(payload, &msg); err != nil {
+				s.fail(err)
+				return
+			}
+			if validateSize(msg.Cols, msg.Rows) != nil {
+				s.fail(fmt.Errorf("%w: pushed size %dx%d is invalid", ErrProtocol, msg.Cols, msg.Rows))
+				return
+			}
+			s.mu.Lock()
+			s.pushedCols, s.pushedRows = msg.Cols, msg.Rows
+			s.mu.Unlock()
+			select {
+			case s.sizeWake <- struct{}{}:
 			default:
 			}
 		case frameExit:

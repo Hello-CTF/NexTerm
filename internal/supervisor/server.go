@@ -179,6 +179,8 @@ type serverConn struct {
 	// compress records the client's hello preference for gzip replay batches
 	// and zstd live output.
 	compress bool
+	// sizePush records that the client understands frameSize.
+	sizePush bool
 	// rulesOwner is the hello's state rule owner key; empty for none.
 	rulesOwner string
 
@@ -238,6 +240,7 @@ func (c *serverConn) serve() {
 		return
 	}
 	c.compress = hello.CompressOutput
+	c.sizePush = hello.SizePush
 	if hello.StateRulesOwner != "" && !validStateRulesOwner(hello.StateRulesOwner) {
 		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "malformed state rule owner key"})
 		return
@@ -428,6 +431,13 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 		return false
 	}
 	go c.streamOutput(attachment)
+	if c.sizePush {
+		c.server.wg.Add(1)
+		go func() {
+			defer c.server.wg.Done()
+			c.streamSize(attachment)
+		}()
+	}
 	if info.State != nil {
 		c.server.wg.Add(1)
 		go func() {
@@ -459,6 +469,23 @@ func (c *serverConn) streamState(attachment *Attachment, after uint64) {
 			return
 		}
 		after = state.LastEventSeq
+	}
+}
+
+// streamSize pushes the session's size whenever another client resized it.
+func (c *serverConn) streamSize(attachment *Attachment) {
+	for {
+		select {
+		case <-attachment.SizeUpdates():
+		case <-attachment.ctx.Done():
+			return
+		case <-c.done:
+			return
+		}
+		cols, rows := attachment.Size()
+		if c.reply(frameSize, sizeMsg{ID: attachment.ID(), Cols: cols, Rows: rows}) != nil {
+			return
+		}
 	}
 }
 

@@ -26,8 +26,10 @@ type Attachment struct {
 	// stateNotify is signalled when the session's attention state or
 	// events change.
 	stateNotify chan struct{}
-	ctx         context.Context
-	cancel      context.CancelFunc
+	// sizeNotify is signalled when another client resized the session.
+	sizeNotify chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	closeOnce sync.Once
 	closeErr  error
@@ -169,7 +171,24 @@ func (a *Attachment) Resize(ctx context.Context, cols, rows uint32) error {
 	if a.closed() {
 		return ErrClosed
 	}
-	return a.session.Resize(ctx, cols, rows)
+	if err := a.session.Resize(ctx, cols, rows); err != nil {
+		return err
+	}
+	a.session.notifySize(a)
+	return nil
+}
+
+// SizeUpdates is signalled after another attachment resized the session.
+// Signals coalesce; read Size after each one.
+func (a *Attachment) SizeUpdates() <-chan struct{} {
+	return a.sizeNotify
+}
+
+// Size is the session's current terminal size.
+func (a *Attachment) Size() (cols, rows uint32) {
+	a.session.mu.RLock()
+	defer a.session.mu.RUnlock()
+	return a.session.entry.Cols, a.session.entry.Rows
 }
 
 func (a *Attachment) Wait(ctx context.Context) error {

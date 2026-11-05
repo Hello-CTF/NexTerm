@@ -95,6 +95,18 @@ type DurableStateReporter interface {
 	MarkDurableStateSeen(ctx context.Context, since time.Time) error
 }
 
+// DurableSizeReporter is implemented by a durable attachment whose helper
+// tells it when another client, such as a second desktop attached through its
+// own connection, resized the session.
+type DurableSizeReporter interface {
+	// DurableSizeUpdates is signalled after another client resized the
+	// session. Signals coalesce; read DurablePushedSize after each one.
+	DurableSizeUpdates() <-chan struct{}
+	// DurablePushedSize is the size another client last gave the session;
+	// ok is false until one did.
+	DurablePushedSize() (cols, rows uint32, ok bool)
+}
+
 // SessionEvent is one entry of a session's recent events.
 type SessionEvent struct {
 	Seq  uint64    `json:"seq"`

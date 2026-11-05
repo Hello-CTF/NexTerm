@@ -70,7 +70,7 @@ func (t *Tab) noteInputLocked(client string, now time.Time) bool {
 	switch {
 	case t.sizeOwner == client:
 		t.sizeOwnerInput = now
-	case t.sizeOwner == "" || !t.clientAttachedLocked(t.sizeOwner) || now.Sub(t.sizeOwnerInput) >= sizeHandoffHold:
+	case t.sizeOwner == "" || t.sizeOwner != remoteSizeOwner && !t.clientAttachedLocked(t.sizeOwner) || now.Sub(t.sizeOwnerInput) >= sizeHandoffHold:
 		t.takeSizeLocked(client, now)
 		changed = true
 	}
@@ -188,7 +188,7 @@ func (t *Tab) releaseDetachedInputLocked() {
 	if t.guestControl != "" && !attached[t.guestControl] {
 		t.guestControl = ""
 	}
-	if t.sizeOwner == "" || t.clientAttachedLocked(t.sizeOwner) {
+	if t.sizeOwner == "" || t.sizeOwner == remoteSizeOwner || t.clientAttachedLocked(t.sizeOwner) {
 		return
 	}
 	var next subscriber

@@ -82,6 +82,10 @@ const (
 	// session's needs_me or just_finished state to its user (stateSeenMsg);
 	// the helper answers frameOK and pushes the seen state to every client.
 	frameStateSeen frameType = 34
+	// frameSize pushes an attached session's terminal size (sizeMsg) after
+	// another client resized it. Only connections whose hello set SizePush
+	// receive it; an older peer neither asks for nor sends it.
+	frameSize frameType = 35
 )
 
 // Every connection uses windowed input and credited output. The client may keep
@@ -126,6 +130,9 @@ type helloMsg struct {
 	// ask for gzip replay batches and per-frame zstd live output, local clients
 	// keep raw frames to save CPU.
 	CompressOutput bool `json:"compress_output,omitempty"`
+	// SizePush is sent by a client only: it understands frameSize. An older
+	// helper ignores it and pushes nothing.
+	SizePush bool `json:"size_push,omitempty"`
 	// Generation, Runtime and Activity are sent by the helper in its
 	// acknowledgement. Generation identifies the helper process.
 	Generation string `json:"generation,omitempty"`
@@ -214,6 +221,13 @@ type resizeMsg struct {
 	Rows              uint32 `json:"rows"`
 	ExpectGeneration  string `json:"expect_generation"`
 	ExpectIncarnation string `json:"expect_incarnation"`
+}
+
+// sizeMsg is the payload of frameSize.
+type sizeMsg struct {
+	ID   string `json:"id"`
+	Cols uint32 `json:"cols"`
+	Rows uint32 `json:"rows"`
 }
 
 // stateMsg is the payload of frameState.

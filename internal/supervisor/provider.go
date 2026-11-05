@@ -265,6 +265,13 @@ func (a *channelAttachment) DurableSessionState() *base.SessionState {
 
 func (a *channelAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
 
+func (a *channelAttachment) DurableSizeUpdates() <-chan struct{} { return a.SizeUpdates() }
+
+func (a *channelAttachment) DurablePushedSize() (cols, rows uint32, ok bool) {
+	cols, rows = a.Size()
+	return cols, rows, cols != 0
+}
+
 func (a *channelAttachment) MarkDurableStateSeen(_ context.Context, since time.Time) error {
 	return translateError(a.MarkStateSeen(since))
 }
@@ -520,6 +527,10 @@ func (a *streamAttachment) DurableSessionState() *base.SessionState {
 }
 
 func (a *streamAttachment) DurableStateUpdates() <-chan struct{} { return a.StateUpdates() }
+
+func (a *streamAttachment) DurableSizeUpdates() <-chan struct{} { return a.SizeUpdates() }
+
+func (a *streamAttachment) DurablePushedSize() (cols, rows uint32, ok bool) { return a.PushedSize() }
 
 func (a *streamAttachment) MarkDurableStateSeen(ctx context.Context, since time.Time) error {
 	return translateError(a.MarkStateSeen(ctx, since))

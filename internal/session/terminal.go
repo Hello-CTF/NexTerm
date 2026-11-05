@@ -625,7 +625,7 @@ func (m *Manager) SetVisible(tabID string, visible bool) error {
 		return ErrTabClosed
 	}
 	mode := terminalgrid.ModeHidden
-	if visible && tab.sizeOwner != "" {
+	if visible && tab.sizeOwner != "" && tab.sizeOwner != remoteSizeOwner {
 		mode = terminalgrid.ModeController
 	} else if visible {
 		mode = terminalgrid.ModeObserver

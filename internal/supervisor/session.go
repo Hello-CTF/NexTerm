@@ -212,6 +212,23 @@ func (s *Session) stateInfoLocked(withEvents bool, after uint64) *SessionState {
 	return state
 }
 
+// notifySize tells every attachment except the one that resized that the
+// session's size changed, so a client sharing the terminal from another
+// process renders the new size instead of keeping its own.
+func (s *Session) notifySize(except *Attachment) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for attachment := range s.attachments {
+		if attachment == except {
+			continue
+		}
+		select {
+		case attachment.sizeNotify <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // notifyState wakes the state pushers of the attachments.
 func (s *Session) notifyState() {
 	s.mu.RLock()
@@ -427,6 +444,7 @@ func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 		result:      replay,
 		notify:      make(chan struct{}, 1),
 		stateNotify: make(chan struct{}, 1),
+		sizeNotify:  make(chan struct{}, 1),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
