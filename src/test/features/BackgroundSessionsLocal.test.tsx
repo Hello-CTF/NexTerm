@@ -1468,11 +1468,36 @@ describe("closing a local terminal follows explicit capability and preference", 
 
     await requestCloseTab(tab.id);
 
+    // A tab that never attached is neither offered the background nor told its process ends: it closes without a
+    // mode, so the backend backgrounds a durable terminal, closes a regular one, or finds nothing to act on.
     expect(mocks.askChoiceRemember).not.toHaveBeenCalled();
-    expect(mocks.ask).toHaveBeenCalledTimes(1);
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined);
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(toastText()).not.toContain("已转入后台");
+  });
+
+  it("closes a workspace with a never-attached local tab without killing it or announcing an ended process", async () => {
+    const tab = { ...terminal(), retainable: undefined };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+
+    await useUi.getState().closeWorkspace("ws");
+
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", undefined);
+    expect(mocks.closeTab).not.toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(toastText()).not.toContain("进程已结束");
+  });
+
+  it("still confirms the end of a local terminal that reported it cannot go to the background", async () => {
+    const tab = { ...terminal(), retainable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }]);
+    mocks.ask.mockResolvedValueOnce(true);
+
+    await requestCloseTab(tab.id);
+
     expect(mocks.ask.mock.calls[0][0]).toContain("不支持转入后台");
     expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
-    expect(toastText()).not.toContain("已转入后台");
   });
 
   it("keeps a retainable local tab with closeError and no success toast when detach fails", async () => {
@@ -1495,7 +1520,11 @@ describe("closing a local terminal follows explicit capability and preference", 
 
     const unknown = { ...terminal("unknown"), retainable: undefined };
     seed([{ id: "p", tabs: [unknown], activeTabId: unknown.id }], "local");
-    expect(closeActionHint(unknown)).toBe("结束本地进程");
-    expect(closeTabHint(unknown)).toBe("关闭标签页（结束本地进程）");
+    expect(closeActionHint(unknown)).toBe("终端未连上，只移除标签页");
+    expect(closeTabHint(unknown)).toBe("关闭标签页（终端未连上，只移除标签页）");
+
+    const regular = { ...terminal("regular"), retainable: false };
+    seed([{ id: "p", tabs: [regular], activeTabId: regular.id }], "local");
+    expect(closeActionHint(regular)).toBe("结束本地进程");
   });
 });

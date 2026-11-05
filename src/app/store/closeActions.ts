@@ -35,11 +35,16 @@ function isRunningTerminal(t: AppTab): boolean {
   return isTerminalCloseCandidate(t) && !t.exited;
 }
 
+// unattached is a local terminal tab that never attached: whether it holds a durable or a regular terminal is unknown,
+// so closing it sends no mode and the backend decides (a durable terminal goes to the background, a regular one closes;
+// a terminal the backend does not hold is only dropped). It is never reported as a process that will end.
+type DetachBlock = "exec" | "winrm" | "local" | "regular" | "unknown" | "unattached";
+
 function detachBlockOf(
   t: AppTab,
   sessions: SessionInfo[],
   assetKind?: string,
-): "exec" | "winrm" | "local" | "regular" | "unknown" | null {
+): DetachBlock | null {
   if (t.containerId) return "exec";
   const kind = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.kind : undefined;
   if (kind === "winrm" || (!kind && assetKind === "winrm")) return "winrm";
@@ -48,11 +53,17 @@ function detachBlockOf(
   // Until the durable flag arrives, a remote tab that reports itself as not retainable is a regular PTY too.
   if ((kind === "ssh" || (!kind && assetKind === "ssh")) && (t.durable === false || (t.durable === undefined && t.retainable === false))) return "regular";
   if (t.retainable === true) return null;
-  if (kind === "local" || (!kind && assetKind === "local")) return "local";
+  if (kind === "local" || (!kind && assetKind === "local")) {
+    return t.retainable === undefined && t.durable === undefined ? "unattached" : "local";
+  }
   return "unknown";
 }
 
-function detachBlockLabel(block: "exec" | "winrm" | "local" | "regular" | "unknown"): string {
+function endsOnClose(block: DetachBlock | null): block is Exclude<DetachBlock, "unattached"> {
+  return block !== null && block !== "unattached";
+}
+
+function detachBlockLabel(block: Exclude<DetachBlock, "unattached">): string {
   if (block === "exec") return "容器 exec";
   if (block === "regular") return "临时";
   if (block === "winrm") return "WinRM 非交互";
@@ -71,7 +82,7 @@ function assetKindForTab(t: AppTab): string | undefined {
 
 export function countBlockedTerminals(tabs: AppTab[], assetKind?: string): number {
   const sessions = useUi.getState().sessions;
-  return tabs.filter((t) => isRunningTerminal(t) && detachBlockOf(t, sessions, assetKind) !== null)
+  return tabs.filter((t) => isRunningTerminal(t) && endsOnClose(detachBlockOf(t, sessions, assetKind)))
     .length;
 }
 
@@ -141,12 +152,12 @@ export function collectWorkspaceClose(
 ): WorkspaceCloseSummary {
   const { sessions, workspaceRuntime } = useUi.getState();
   const live = tabs.filter(isRunningTerminal);
-  const blocked = live.filter((t) => detachBlockOf(t, sessions, assetKind) !== null);
+  const blocked = live.filter((t) => endsOnClose(detachBlockOf(t, sessions, assetKind)));
   const blockedKinds = [
     ...new Set(
       blocked
         .map((t) => detachBlockOf(t, sessions, assetKind))
-        .filter((b): b is "exec" | "winrm" | "local" | "unknown" => b !== null),
+        .filter((b): b is Exclude<DetachBlock, "unattached"> => endsOnClose(b)),
     ),
   ]
     .map(detachBlockLabel)
@@ -161,7 +172,10 @@ export function collectWorkspaceClose(
     confirmBlocked: false,
     blocked,
     blockedKinds,
-    cleanup: tabs.filter((t) => t.kind === "terminal" && t.tabId && !t.dead && t.exited && !isUnconfirmedDurableExit(t)),
+    cleanup: tabs.filter((t) =>
+      t.kind === "terminal" && t.tabId && !t.dead && (
+        (t.exited && !isUnconfirmedDurableExit(t)) || (!t.exited && detachBlockOf(t, sessions, assetKind) === "unattached")
+      )),
     unconfirmed: tabs.filter((t) => Boolean(t.tabId) && isUnconfirmedDurableExit(t)),
     dbConnIds: [
       ...new Set(tabs.filter((t) => t.kind === "db" && t.connId).map((t) => t.connId as string)),
@@ -286,6 +300,7 @@ export function closeActionHint(t: AppTab): string | undefined {
   if (block === "exec") return "结束容器内命令进程";
   if (block === "winrm") return "结束 WinRM 非交互进程";
   if (block === "local") return "结束本地进程";
+  if (block === "unattached") return "终端未连上，只移除标签页";
   if (block === "regular" || block === "unknown") return "结束进程";
   const action = getTerminalPrefs().closeAction;
   if (action === "kill") return "结束进程";
@@ -335,6 +350,10 @@ async function requestCloseTabWithAction(
   }
   if (decided === null) return;
   const block = detachBlockOf(target, st.sessions, ws.assetKind);
+  if (block === "unattached") {
+    await st.closeTab(id);
+    return;
+  }
   if (block) {
     const action = decided ?? getTerminalPrefs().closeAction;
     if (block === "regular" && (decided !== undefined || action !== "kill")) {
