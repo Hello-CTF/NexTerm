@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -155,7 +156,13 @@ func newUpdateTestProduction(t *testing.T, desktop bool, recorder ipc.Emitter) *
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = production.Shutdown(t.Context()) })
+	// t.Context is already canceled when cleanups run, which would abandon each component after a short grace while
+	// it may still write into the data directory that the TempDir cleanup then fails to remove.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = production.Shutdown(ctx)
+	})
 	return production
 }
 
