@@ -2853,6 +2853,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "terminal_take_size": {
+      scope: "terminal",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.terminalTakeSizeRequest", ts: "TerminalTakeSizeRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "terminal_write": {
       scope: "terminal",
       nested: true,
@@ -4537,6 +4545,10 @@ export interface IPCCommandTypeMap {
   };
   "terminal_stream_ack": {
     input: contractTypes.TerminalStreamAckRequest;
+    output: unknown;
+  };
+  "terminal_take_size": {
+    input: contractTypes.TerminalTakeSizeRequest;
     output: unknown;
   };
   "terminal_write": {

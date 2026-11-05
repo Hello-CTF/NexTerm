@@ -3354,6 +3354,11 @@ export type TerminalStreamAckRequest = {
   acceptedBytes: number;
 };
 
+export type TerminalTakeSizeRequest = {
+  tabId: string;
+  clientId: string;
+};
+
 export type TerminalWriteRequest = {
   tabId: string;
   data: number[];

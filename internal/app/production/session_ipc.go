@@ -260,6 +260,11 @@ type terminalWriteRequest struct {
 	Broadcast *terminalBroadcastWriteOptions `json:"broadcast,omitempty"`
 }
 
+type terminalTakeSizeRequest struct {
+	TabID    string `json:"tabId"`
+	ClientID string `json:"clientId"`
+}
+
 type terminalResizeRequest struct {
 	TabID    string `json:"tabId"`
 	ClientID string `json:"clientId"`
@@ -799,6 +804,13 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 				ctx = productionSessionRequestContext(ctx)
 				client := gridRequestClient(call.ClientID, input.ClientID)
 				return nil, terminalIPCError(s.sessions.FlushResizeFor(ctx, input.TabID, client))
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, session.CommandTerminalTakeSize, func(ctx context.Context, call *ipc.Call, input terminalTakeSizeRequest) (any, error) {
+				ctx = productionSessionRequestContext(ctx)
+				client := gridRequestClient(call.ClientID, input.ClientID)
+				return nil, terminalIPCError(s.sessions.TakeSizeFor(ctx, input.TabID, client))
 			})
 		},
 		func() error {

@@ -462,7 +462,7 @@ describe("follower size badge", () => {
         chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
       expect(chip.getAttribute("aria-expanded")).toBe("true");
-      expect(element.querySelector("[data-follower-why]")?.textContent).toContain("在此输入即改用本设备尺寸");
+      expect(element.querySelector("[data-follower-why]")?.textContent).toContain("即改用本设备尺寸");
       act(() => {
         chip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
@@ -487,6 +487,29 @@ describe("follower size badge", () => {
       // A grid that fits at the user's size has nothing to zoom.
       expect(element.querySelector("[data-follower-zoom-toggle]")).toBeNull();
       expect(element.querySelector("[data-follower-chip]")?.textContent).toBe("跟随");
+    } finally {
+      act(() => badgeRoot.unmount());
+      element.remove();
+    }
+  });
+
+  it("offers to take the size back only while another device owns it", () => {
+    const element = document.createElement("div");
+    document.body.append(element);
+    const badgeRoot = createRoot(element);
+    const onTakeSize = vi.fn();
+    const scale: FollowerScale = { ratio: 0.5, zoom: "fit", panX: false, panY: false };
+    try {
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale, ownedElsewhere: true, zoom: "fit", onZoom: vi.fn(), onTakeSize })));
+      const take = element.querySelector<HTMLButtonElement>("[data-follower-take-size]")!;
+      expect(take.textContent).toBe("用本机尺寸");
+      act(() => {
+        take.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onTakeSize).toHaveBeenCalledTimes(1);
+      // Between owners there is no other device to take the size from.
+      act(() => badgeRoot.render(createElement(FollowerSizeBadge, { scale, ownedElsewhere: false, zoom: "fit", onZoom: vi.fn(), onTakeSize })));
+      expect(element.querySelector("[data-follower-take-size]")).toBeNull();
     } finally {
       act(() => badgeRoot.unmount());
       element.remove();

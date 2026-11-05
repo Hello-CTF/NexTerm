@@ -700,6 +700,8 @@ export const terminalApi = {
     call<void>("terminal_resize", { tabId, cols, rows, clientId: clientId() }),
   resizeFlush: (tabId: string) =>
     call<void>("terminal_resize_flush", { tabId, clientId: clientId() }),
+  takeSize: (tabId: string) =>
+    ignoreResult(call("terminal_take_size", { tabId, clientId: clientId() })),
   detach: (tabId: string, channelId?: string) =>
     call<void>("terminal_detach", { tabId, channelId }),
   listLive: () => listTerminal<LiveTabInfo[]>(),

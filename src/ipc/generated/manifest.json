@@ -2228,6 +2228,12 @@
       "channel": false,
       "stream": "none"
     },
+    "terminal_take_size": {
+      "scope": "terminal",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "terminal_write": {
       "scope": "terminal",
       "nested": true,

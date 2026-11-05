@@ -261,3 +261,47 @@ func pendingControlEvents(events chan ControlEvent) <-chan ControlEvent {
 		}
 	}
 }
+
+// A follower view takes the PTY size back without typing; the hold then
+// protects it from the previous owner's next key, as after a typed handoff.
+func TestTakeSizeMovesOwnershipWithoutInput(t *testing.T) {
+	events := make(chan ControlEvent, 256)
+	clock := newSessionTestClock()
+	manager, _, _, session := openGridTestSessionAt(t, events, clock.Now)
+	ctx := context.Background()
+	tab := openTestTab(t, manager, session, "desktop", "desktop-1")
+	if _, err := manager.AttachTab(ctx, tab.ID, AttachOptions{ClientID: "phone", ChannelID: "phone-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Resize(ctx, tab.ID, "desktop", 160, 50); err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(sizeHandoffHold)
+	drainControlEvents(events)
+
+	if err := manager.TakeSize(tab.ID, "phone"); err != nil {
+		t.Fatal(err)
+	}
+	announced := false
+	for event := range pendingControlEvents(events) {
+		announced = announced || event.SizeOwner == "phone"
+	}
+	if !announced {
+		t.Fatalf("no control event named the new size owner: %+v", tab.Info())
+	}
+	if err := manager.Resize(ctx, tab.ID, "phone", 50, 30); err != nil {
+		t.Fatal(err)
+	}
+	if info := tab.Info(); info.Cols != 50 || info.Rows != 30 {
+		t.Fatalf("size after taking it = %+v", info)
+	}
+	if err := manager.Write(ctx, tab.ID, "desktop", []byte("d")); err != nil {
+		t.Fatal(err)
+	}
+	if owner := tab.Info().SizeOwner; owner != "phone" {
+		t.Fatalf("previous owner took the size back within the hold: %q", owner)
+	}
+	if err := manager.TakeSize(tab.ID, "unattached"); err == nil {
+		t.Fatal("a client without a view took the size")
+	}
+}

@@ -9,6 +9,7 @@ import (
 const (
 	CommandTerminalResize      = "terminal_resize"
 	CommandTerminalResizeFlush = "terminal_resize_flush"
+	CommandTerminalTakeSize    = "terminal_take_size"
 )
 
 type terminalResizeArgs struct {

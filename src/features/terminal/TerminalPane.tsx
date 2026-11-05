@@ -616,6 +616,18 @@ export function TerminalPane({
     [kernelTabId, storeTabId],
   );
 
+  const takeSize = useCallback(
+    async (tabId: string) => {
+      try {
+        await terminalApi.takeSize(tabId);
+      } catch (e) {
+        pushToast("error", `无法改用本机尺寸：${describeError(e)}`);
+      }
+      await refreshControl(tabId);
+    },
+    [pushToast, refreshControl],
+  );
+
   const broadcastContext = useCallback((): BroadcastContext | null => {
     if (visible === false) return null;
     return readBroadcastContext(useUi.getState(), storeTabId);
@@ -2760,6 +2772,7 @@ export function TerminalPane({
                   ownedElsewhere={control?.sizeOwner != null}
                   zoom={followerZoom}
                   onZoom={setFollowerZoom}
+                  onTakeSize={kernelTabId && !containerId ? () => void takeSize(kernelTabId) : undefined}
                 />
               )}
             </div>

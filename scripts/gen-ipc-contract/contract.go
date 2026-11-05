@@ -146,6 +146,7 @@ var contractScopes = []scopeSpec{
 		"terminal_broadcast_prepare",
 		"terminal_history_read",
 		"terminal_rename_tab",
+		"terminal_take_size",
 		"terminal_write",
 	}},
 	{name: "terminal-stream", commands: []string{"terminal_pause", "terminal_recover", "terminal_resume", "terminal_stream_ack"}},

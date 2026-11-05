@@ -8,13 +8,15 @@ export interface FollowerSizeBadgeProps {
   ownedElsewhere: boolean;
   zoom: FollowerZoom;
   onZoom: (zoom: FollowerZoom) => void;
+  // Takes the PTY size for this view without typing; absent where the terminal cannot hand its size over.
+  onTakeSize?: () => void;
 }
 
 // FollowerSizeBadge is a compact chip on a terminal that renders the PTY size another device set: "跟随 · 62%" and a
 // zoom toggle. The chip expands to explain that the PTY follows the device that typed last, so typing here takes the
-// size; there is no other way to take it. The zoom switches between the whole grid and a larger font that fits the
+// size, as does 「用本机尺寸」. The zoom switches between the whole grid and a larger font that fits the
 // rows and pans the columns (a pinch on the terminal does the same).
-export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: FollowerSizeBadgeProps) {
+export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom, onTakeSize }: FollowerSizeBadgeProps) {
   const id = useId();
   // A pinch is only suggested where a touch screen is the primary pointer.
   const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
@@ -55,6 +57,17 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: Follo
             放大文字
           </button>
         )}
+        {ownedElsewhere && onTakeSize && (
+          <button
+            type="button"
+            className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto pointer-coarse:min-h-8 px-1.5 py-0 text-[11px]"
+            title="让终端改用本设备的尺寸，另一台设备随后按比例显示"
+            data-follower-take-size=""
+            onClick={onTakeSize}
+          >
+            用本机尺寸
+          </button>
+        )}
       </div>
       {expanded && (
         <p
@@ -62,7 +75,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom }: Follo
           className="pointer-events-auto max-w-[320px] rounded bg-neutral-900/90 px-2 py-1 text-right text-[11px] text-neutral-300"
           data-follower-why=""
         >
-          终端尺寸跟随最后输入的设备。在此输入即改用本设备尺寸，另一台设备随后按比例显示。
+          终端尺寸跟随最后输入的设备。在此输入或选择「用本机尺寸」即改用本设备尺寸，另一台设备随后按比例显示。
         </p>
       )}
       {small && (

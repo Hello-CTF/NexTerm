@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminalgrid"
@@ -216,4 +217,45 @@ func (t *Tab) resetInputLocked() {
 	t.sizeOwner = ""
 	t.guestControl = ""
 	t.inputOrder = nil
+}
+
+// TakeSize makes client the size owner without typing: a view that renders
+// another device's PTY size asks for its own size back. It counts as the
+// owner's latest input, so the other device takes the size again only by
+// typing after sizeHandoffHold, as with any handoff. A client without an
+// interactive view cannot own the size.
+func (m *Manager) TakeSize(tabID, client string) error {
+	tab, err := m.Tab(tabID)
+	if err != nil {
+		return err
+	}
+	id := clientID(client)
+	tab.mu.Lock()
+	if tab.closed || tab.destroying {
+		tab.mu.Unlock()
+		return ErrTabClosed
+	}
+	if !tab.clientAttachedLocked(id) {
+		tab.mu.Unlock()
+		return ErrInvalidOptions
+	}
+	now := m.now()
+	if tab.sizeOwner == id {
+		tab.sizeOwnerInput = now
+		tab.mu.Unlock()
+		return nil
+	}
+	tab.takeSizeLocked(id, now)
+	event := tab.controlEventLocked()
+	tab.mu.Unlock()
+	m.emit(context.Background(), TopicTerminalControl, event)
+	return nil
+}
+
+// TakeSizeFor is TakeSize for a tab the requester may access.
+func (m *Manager) TakeSizeFor(ctx context.Context, tabID, client string) error {
+	if _, err := m.TabFor(ctx, tabID); err != nil {
+		return err
+	}
+	return m.TakeSize(tabID, client)
 }
