@@ -25,8 +25,8 @@ const copy = {
     play: "播放", pause: "暂停", speed: "回放倍速", progress: "回放进度",
     docker: "容器", containers: "容器", logs: "日志", restart: "重启", stop: "停止", start: "启动",
     running: "运行中", stopped: "已停止", restarting: "重启中",
-    database: "数据库", tables: "表", run: "运行", rows: "行", dangerQuery: "尝试 DELETE",
-    dangerNote: "DELETE / DROP 等危险语句执行前会要求确认。示例中不会执行。",
+    database: "数据库", tables: "表", run: "运行", rows: "行",
+    sampleNote: "演示只运行示例表的 SELECT 查询，不会修改任何数据。",
   },
   en: {
     sample: "Interactive demo · Sample data, no live connection",
@@ -44,8 +44,8 @@ const copy = {
     play: "Play", pause: "Pause", speed: "Replay speed", progress: "Replay position",
     docker: "Containers", containers: "Containers", logs: "Logs", restart: "Restart", stop: "Stop", start: "Start",
     running: "Running", stopped: "Stopped", restarting: "Restarting",
-    database: "Database", tables: "Tables", run: "Run", rows: "rows", dangerQuery: "Try DELETE",
-    dangerNote: "Dangerous statements such as DELETE or DROP ask for confirmation first. The sample never runs them.",
+    database: "Database", tables: "Tables", run: "Run", rows: "rows",
+    sampleNote: "This demo only runs SELECT queries on the sample tables and never changes data.",
   },
 } as const;
 
@@ -385,7 +385,7 @@ function DatabaseDemo({ language }: { language: Language }) {
     setWarning(false);
   };
   const run = () => {
-    if (/^\s*(delete|drop|truncate|update)\b/i.test(query)) {
+    if (!/^\s*select\b/i.test(query)) {
       setWarning(true);
       return;
     }
@@ -404,10 +404,9 @@ function DatabaseDemo({ language }: { language: Language }) {
           <textarea aria-label="SQL" value={query} spellCheck={false} onChange={(event) => setQuery(event.target.value)} />
           <div>
             <button type="button" className="primary" onClick={run}><Play size={12} />{t.run}</button>
-            <button type="button" onClick={() => { setQuery(`DELETE FROM ${table};`); setWarning(false); }}>{t.dangerQuery}</button>
           </div>
         </div>
-        {warning ? <div className="demo-db-warning" role="status">{t.dangerNote}</div> : data && <div className="demo-db-result">
+        {warning ? <div className="demo-db-warning" role="status">{t.sampleNote}</div> : data && <div className="demo-db-result">
           <table><thead><tr>{data.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
             <tbody>{data.rows.map((row) => <tr key={row[0]}>{row.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody></table>
         </div>}

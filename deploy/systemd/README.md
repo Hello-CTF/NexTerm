@@ -4,6 +4,39 @@ Use these steps from the extracted Linux server archive. The full server and
 sync-only peer share their listen address and data directory; enable only one
 of their units.
 
+## Quick install
+
+Without downloading the archive first, run as root:
+
+```sh
+curl -fsSL https://nexterm.work/install.sh | sudo bash
+```
+
+The script downloads the latest server archive, verifies it against
+`SHA256SUMS`, and runs the bundled `install.sh` described below. Running it
+again upgrades in place; add `-s -- --rollback` to undo the last upgrade or
+`-s -- --version x.y.z` to pin a version. Set `NEXTERM_ADMIN_PASSWORD` to
+preset the initial super-admin password; otherwise the installer prints a
+random one once.
+
+The service listens on `127.0.0.1:8080` and requires sign-in. Reach it
+through an SSH tunnel, `ssh -L 8080:127.0.0.1:8080 user@server`, then open
+`http://localhost:8080`, or put a TLS reverse proxy in front (see
+[Database settings](#database-settings) for the proxy trust settings).
+Settings live in `/etc/nexterm/nexterm.env`; run
+`systemctl restart nexterm-server` after changing them. Back up
+`/var/lib/nexterm`, `/etc/nexterm/master.key`, and any external database.
+`nexterm-server --help` lists every option.
+
+`--auth off` disables accounts, administration and device routes: anyone who
+can reach the listen address can operate the server, so never use it on a
+public network.
+
+The LazyCat MicroServer package installs from its App Store (amd64 devices
+only). It runs in platform mode, has the [multi-user limits](#multi-user-limits)
+below, and its built-in port forwarding is unavailable, so use the
+platform's forwarding.
+
 ## Supported platforms
 
 `install.sh` requires a Linux distribution with systemd and fails with a
