@@ -488,7 +488,7 @@ describe("AiSidebar permission request dialogs", () => {
 
     const call = mocks.chat.mock.calls[0][0] as Record<string, unknown>;
     expect(call.refs).toEqual([
-      { kind: "tab", id: "term-2", label: "构建机", path: undefined, sessionId: undefined },
+      expect.objectContaining({ kind: "tab", id: "term-2", label: expect.stringMatching(/^构建机（.+）$/) as unknown, sessionId: undefined }),
       { kind: "file", id: "f1", label: "nginx.conf", path: "/etc/nginx/nginx.conf", sessionId: "s1" },
     ]);
     expect(call.message).toContain("[引用]");

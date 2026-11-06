@@ -59,7 +59,8 @@ export function registerAiRunGeneration(tabKey: string, generation: number): voi
 }
 
 export function clearAiTabRun(tabKey: string): void {
-  aiTabBusyIds.delete(tabKey);
+  // Goes through setAiTabBusy so the tab dot, close guard and global aiBusy see the change.
+  setAiTabBusy(tabKey, false);
   aiTabRunControls.delete(tabKey);
   aiTabRunGenerations.delete(tabKey);
 }

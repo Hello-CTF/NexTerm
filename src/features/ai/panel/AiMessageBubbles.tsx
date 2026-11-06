@@ -6,7 +6,7 @@ import { Markdown } from "../Markdown";
 import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
-import { toolLabel, extractUrls } from "./aiSidebarShared";
+import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
 import { TOOL_USER_DENIED } from "./aiConfirmLabels";
 
 
@@ -32,6 +32,7 @@ export const ChatBubble = memo(function ChatBubble({
   agentApprovalBusy: boolean;
 }) {
   if (item.role === "user") {
+    const { refs, body } = splitUserRefs(item.text);
     return (
       <div className="group/user relative ml-10 rounded-[10px] rounded-br-[3px] border border-blue-500/25 bg-blue-500/20 px-3 py-2 text-[12.3px] leading-relaxed text-[var(--nx-fg-on-tint)]">
         {item.messageId ? (
@@ -51,7 +52,20 @@ export const ChatBubble = memo(function ChatBubble({
             {item.imageCount} 张图片
           </div>
         ) : null}
-        <pre className="font-sans break-words whitespace-pre-wrap">{item.text}</pre>
+        {refs.length > 0 ? (
+          <ul className="mb-1 flex flex-wrap gap-1" aria-label="引用">
+            {refs.map((ref, index) => (
+              <li
+                key={`${index}:${ref}`}
+                className="max-w-full truncate rounded border border-blue-400/30 bg-blue-500/15 px-1.5 py-px text-[11px] text-[var(--nx-fg-soft)]"
+                title={ref}
+              >
+                @{ref}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <pre className="font-sans break-words whitespace-pre-wrap">{body}</pre>
         {item.steer ? (
           <div className="mt-1 text-[10.5px] text-[var(--nx-fg-soft)]">
             {item.steer === "pending"

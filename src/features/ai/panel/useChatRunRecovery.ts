@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { isCurrentAiRun, markAiRunCancellationUnconfirmed, requestAiRunCancellation, confirmAiRunTerminal, settleAiRun, clearAiTabRun, registerAiRunGeneration, aiTabRunControls, bindAiRunJob, createAiRun } from "../runOwnership";
+import { isCurrentAiRun, markAiRunCancellationUnconfirmed, requestAiRunCancellation, confirmAiRunTerminal, settleAiRun, clearAiTabRun, registerAiRunGeneration, aiTabRunControls, aiTabBusyIds, bindAiRunJob, createAiRun } from "../runOwnership";
 import type { AiHitlEventDto, AiHitlSnapshotDto, AiRunDto, MessageDto } from "../../../ipc/types";
 import { aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
@@ -420,7 +420,16 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
     }
     if (!isRestoreActive(restoreGeneration, id)) return;
     setConversationRuns(runs);
-    if (runs.length === 0) return;
+    // A tab unmounted mid-run leaves its busy entry and run control behind; nothing in the old
+    // instance can clear them any more, so the restoring instance either adopts the run or releases them.
+    const releaseOrphanedBusy = () => {
+      if (activeRunRef.current && !activeRunRef.current.settled) return;
+      if (aiTabBusyIds.has(tabKey) && aiTabRunControls.get(tabKey) !== runControl) clearAiTabRun(tabKey);
+    };
+    if (runs.length === 0) {
+      releaseOrphanedBusy();
+      return;
+    }
     const replay = replayableRuns(runs);
     const generations = new Map<string, number>();
     for (const run of replay) {
@@ -454,7 +463,22 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       },
       () => isRestoreActive(restoreGeneration, id),
     );
-    if (!resumable || !isRestoreActive(restoreGeneration, id)) return;
+    if (!isRestoreActive(restoreGeneration, id)) return;
+    if (!resumable) {
+      // A still-running run is adopted without a live channel: the terminal poll settles it and
+      // catches up its events, and the stop button and close guard act on it.
+      const running = runs.find((run) => run.status === "running" && generations.has(run.id));
+      const runningGeneration = running ? generations.get(running.id) : undefined;
+      if (running && runningGeneration !== undefined && !(activeRunRef.current && !activeRunRef.current.settled)) {
+        registerAiRunGeneration(tabKey, runningGeneration);
+        aiTabRunControls.set(tabKey, runControl);
+        setActiveRun(bindAiRunJob(createAiRun(runningGeneration), running.id));
+        setBusy(true);
+        return;
+      }
+      releaseOrphanedBusy();
+      return;
+    }
     const generation = generations.get(resumable.run.id);
     if (generation === undefined) return;
     if (activeRunRef.current && !activeRunRef.current.settled) return;

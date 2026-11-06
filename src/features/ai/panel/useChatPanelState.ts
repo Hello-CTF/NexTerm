@@ -10,7 +10,9 @@ import { findItemMatches, stepMatch } from "../conversationSearch";
 import { describeError } from "../../../ui/errorText";
 import { productionSkillsApi } from "../../settings/skillsApi";
 import { useUi } from "../../../app/store";
-import { type RefChip, type AiChatBase } from "./aiSidebarShared";
+import { type RefChip, type AiChatBase, composeUserMessage } from "./aiSidebarShared";
+import { currentAtQuery } from "../userRefs";
+import { hasExitEvidence } from "../../../app/store";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 
 export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
@@ -236,7 +238,8 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
 
   const refCandidates = useMemo<RefChip[]>(() => {
     const out: RefChip[] = [];
-    const sess = useUi.getState().sessions.find((s) => s.id === sessionId);
+    const sessions = useUi.getState().sessions;
+    const sess = sessions.find((s) => s.id === sessionId);
     if (sess) {
       out.push({
         id: `asset:${sess.id}`,
@@ -250,11 +253,14 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
       for (const p of w.panes) {
         for (const t of p.tabs) {
           if (t.kind === "terminal" && t.tabId) {
+            // A terminal with proof it ended cannot be read; one that only lost its stream may still run.
+            if (t.dead || hasExitEvidence(t)) continue;
+            const host = t.sessionId ? sessions.find((s) => s.id === t.sessionId)?.name : undefined;
             out.push({
               id: `tab:${t.id}`,
               kind: "tab",
               label: t.title,
-              detail: `${w.title} 的终端`,
+              detail: host && host !== w.title ? `${host} · ${w.title}` : `${w.title} 的终端`,
               refId: t.tabId,
             });
             continue;
@@ -276,6 +282,19 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     return out;
   }, [sessionId, workspaces]);
 
+  const atQuery = atOpen ? currentAtQuery(input) : null;
+  const atItems = useMemo<RefChip[]>(() => {
+    if (atQuery === null) return [];
+    const needle = atQuery.toLowerCase();
+    return refCandidates
+      .filter((r) => needle === "" || `${r.label} ${r.detail}`.toLowerCase().includes(needle))
+      .slice(0, 30);
+  }, [atQuery, refCandidates]);
+  const [atIndex, setAtIndex] = useState(0);
+  useEffect(() => {
+    setAtIndex(0);
+  }, [atQuery]);
+
   // A queued reference (for example a command block to explain) is picked up by the visible panel only.
   const { active, rightOpen, setRefs, setInput } = p;
   const pendingRefCount = useUi((s) => s.aiPendingRefs.length);
@@ -289,13 +308,9 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     inputRef.current?.focus();
   }, [active, rightOpen, pendingRefCount, setRefs, setInput]);
 
-  const composeMessage = (text: string, refList: RefChip[]): string => {
-    if (refList.length === 0) return text;
-    const list = refList.map((r) => `- ${r.label}（${r.detail}）`).join("\n");
-    return `[引用]\n${list}\n\n${text}`;
-  };
+  const composeMessage = composeUserMessage;
 
-  return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, imageInputRef };
+  return { isRestoreActive, setConversationRuns, updateConversationId, clearMessageHistory, resetMessageHistory, permOpen, setPermOpen, setAtOpen, composeMessage, deletedConversationIdsRef, conversationRuns, inputRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, historyOpen, setHistoryOpen, setCompacting, compacting, slashQuery, modelQuery, modelOptions, skillOptions, searchOpen, setSearchOpen, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, conversations, runStatusByConv, permError, loadPermission, perm, permDeviceOverride, followGlobalMode, switchMode, setScrollEl, messageWindowStart, loadOlderMessages, virtual, activeMatchIndex, follow, slashIndex, setSlashIndex, atOpen, refCandidates, atItems, atIndex, setAtIndex, imageInputRef };
 }
 
 export type UseChatPanelStateOut = ReturnType<typeof useChatPanelState>;

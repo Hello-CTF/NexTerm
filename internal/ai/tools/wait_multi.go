@@ -57,7 +57,7 @@ func (r *Registry) waitForTabs(waitContext context.Context, jobID string, scope 
 	targets := make([]*waitTarget, 0, len(tabIDs))
 	seen := make(map[string]bool, len(tabIDs))
 	for _, requested := range tabIDs {
-		tabID, err := r.resolveTab(waitContext, jobID, scope, requested)
+		tabID, err := r.resolveReadableTab(waitContext, jobID, scope, requested)
 		if err != nil {
 			return Fail(err)
 		}

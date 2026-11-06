@@ -273,6 +273,9 @@ func (r *Runner) initializeEino(current *job) error {
 			}
 		}
 	}
+	if prompt := r.grantReferencedTabs(current); prompt != "" {
+		messages = append(messages, schema.UserMessage(prompt))
+	}
 	if r.config.Roster != nil {
 		injection, err := r.config.Roster.InjectContext(current.ctx, current.args.ConversationID)
 		if err != nil {

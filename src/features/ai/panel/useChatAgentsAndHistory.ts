@@ -10,6 +10,7 @@ import { ask, promptText, askChoice } from "../../../ui/dialogs";
 import { withTakeoverPaused, registerTakeoverResumeHandler, takeoverPaused } from "../../../app/TakeoverBanner";
 import { createAiChannel, disposeChannel } from "../../../ipc/events";
 import { runStatusOf, type SlashItem, type RefChip, readAsDataUrl, type AiChatBase } from "./aiSidebarShared";
+import { currentAtQuery, MAX_MESSAGE_REFS } from "../userRefs";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
@@ -30,7 +31,7 @@ export function clipboardImageFiles(data: DataTransfer): File[] {
 }
 
 export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut & UseChatRunRecoveryOut & UseChatActionsOut) {
-  const { pushToast, requestCancellation, stopRef, tabKey, runControl, cancelWaitersRef, activeRunRef, cancelOperationRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, conversationIdRef, onTitleChange, historyOpen, setHistoryOpen, busy, restoreGenerationRef, isRestoreActive, updateConversationId, resetMessageHistory, setConversationError, setEditing, restoreConversationRuns, clearMessageHistory, setConversationRuns, stream, isLifecycleActive, deletedConversationIdsRef, setInput, setAtOpen, inputRef, setCompacting, restoreConversation, planMode, setPlanMode, compacting, setPermOpen, slashQuery, modelQuery, modelOptions, skillOptions, setRefs, setImages, pushAgentEvent, settleRestoredRun, runChannelRef, tabId, activeRun, takeoverState, active, runSequenceRef, setActiveRun, setBusy, anyAiBusy, beginRun, driveCancellation, bindings, reclaimKeyLabel, unconfirmCancellation } = p;
+  const { refs, pushToast, requestCancellation, stopRef, tabKey, runControl, cancelWaitersRef, activeRunRef, cancelOperationRef, setRunStatusByConv, setHistoryStatus, setHistoryError, setConversations, conversationIdRef, onTitleChange, historyOpen, setHistoryOpen, busy, restoreGenerationRef, isRestoreActive, updateConversationId, resetMessageHistory, setConversationError, setEditing, restoreConversationRuns, clearMessageHistory, setConversationRuns, stream, isLifecycleActive, deletedConversationIdsRef, setInput, setAtOpen, inputRef, setCompacting, restoreConversation, planMode, setPlanMode, compacting, setPermOpen, slashQuery, modelQuery, modelOptions, skillOptions, setRefs, setImages, pushAgentEvent, settleRestoredRun, runChannelRef, tabId, activeRun, takeoverState, active, runSequenceRef, setActiveRun, setBusy, anyAiBusy, beginRun, driveCancellation, bindings, reclaimKeyLabel, unconfirmCancellation } = p;
 
   const openAgentTerminal = useCallback(
     (tabId: string, entry: AgentRosterEntry) => {
@@ -299,13 +300,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
 
   const onInputChange = (v: string) => {
     setInput(v);
-    const at = v.lastIndexOf("@");
-    if (at < 0) {
-      setAtOpen(false);
-      return;
-    }
-    const prevCh = at === 0 ? " " : v[at - 1];
-    if (/\s/.test(prevCh)) setAtOpen(true);
+    setAtOpen(currentAtQuery(v) !== null);
   };
 
   const pickSkill = (name: string) => {
@@ -399,6 +394,10 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       : "无匹配的命令或技能";
 
   const pickRef = (ref: RefChip) => {
+    if (!refs.some((r) => r.id === ref.id) && refs.length >= MAX_MESSAGE_REFS) {
+      pushToast("info", `每条消息最多引用 ${MAX_MESSAGE_REFS} 项，请先移除一个引用`);
+      return;
+    }
     setRefs((prev) => (prev.some((r) => r.id === ref.id) ? prev : [...prev, ref]));
     setInput((prev) => prev.replace(/@[^@\s]*$/, ""));
     setAtOpen(false);
@@ -426,6 +425,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
   };
 
   const takeoverPausedRef = useRef(false);
+  const adoptedTakeoverRef = useRef<{ generation: number; jobId: string } | null>(null);
   const resumeTakeoverRef = useRef<(generation: number, jobId: string) => Promise<void>>(async () => undefined);
 
   const updateTakeoverPaused = (jobId: string | null, paused: boolean) => {
@@ -554,8 +554,19 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     stream.bindJob(generation, restored.jobId);
     stream.resumeFromNextEvent(generation);
     takeoverPausedRef.current = true;
+    adoptedTakeoverRef.current = { generation, jobId: restored.jobId };
     setBusy(true);
   }, [active, activeRunRef, restoreGenerationRef, runControl, runSequenceRef, setActiveRun, setBusy, stream, tabId, tabKey, takeoverState]);
+
+  // An adopted paused takeover has no channel or conversation to report its end; once the
+  // takeover state is cleared (reclaimed from the banner) or replaced, the run is over.
+  useEffect(() => {
+    const adopted = adoptedTakeoverRef.current;
+    if (!adopted || takeoverState?.jobId === adopted.jobId) return;
+    adoptedTakeoverRef.current = null;
+    const current = activeRunRef.current;
+    if (isCurrentAiRun(current, adopted.generation) && !current.settled) settleRestoredRun(adopted.generation);
+  }, [takeoverState, activeRunRef, settleRestoredRun]);
 
   const runTakeover = async () => {
     if (!tabId) {
