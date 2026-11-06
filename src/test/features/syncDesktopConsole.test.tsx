@@ -83,7 +83,7 @@ function withClient(node: React.ReactElement): MountedView {
 async function waitForConsole(extraText?: string): Promise<void> {
   await flushUntil(() =>
     document.body.textContent?.includes("立即同步") === true &&
-    document.body.textContent?.includes("已开启 2 / 9 项") === true &&
+    document.body.textContent?.includes("已开启 1 / 8 项") === true &&
     document.body.textContent?.includes("服务端共 0 项数据") === true &&
     (!extraText || document.body.textContent.includes(extraText)),
   );
@@ -187,7 +187,7 @@ describe("Desktop account sync console", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("自动同步");
     expect(text).toContain("每 60 秒");
-    expect(text).toContain("已开启 2 / 9 项，未开启：AI 模型档案、AI 授权、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
+    expect(text).toContain("已开启 1 / 8 项，未开启：AI 模型档案、AI 权限（部分）、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
     openOptInDialog();
 
     const consoleCard = [...document.querySelectorAll("section.nx-card")].find((c) => c.textContent?.includes("立即同步"));
@@ -218,7 +218,7 @@ describe("Desktop account sync console", () => {
     click(knownHost);
     await flushUntil(() =>
       mocks.kindOptInSet.mock.calls.length === 1 &&
-      document.body.textContent?.includes("已开启 1 / 9 项") === true && !knownHost.disabled,
+      document.body.textContent?.includes("已开启 0 / 8 项") === true && !knownHost.disabled,
     );
     expect(mocks.kindOptInSet).toHaveBeenCalledWith({ knownHost: false });
   });

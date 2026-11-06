@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { describeError } from "../../ui/errorText";
+import { setTerminalPortDiscovery, useTerminalPrefs, type TerminalPortDiscovery } from "../../app/preferences";
+import { SyncScopeBadge } from "../settings/SyncScopeBadge";
 import {
   DEFAULT_FORWARD_RECOVERY_SETTINGS,
   isAutoStartEligible,
@@ -8,6 +10,39 @@ import {
   type ForwardRuleSettings,
   type ForwardSettingsApi,
 } from "./forwardSettingsApi";
+
+const PORT_DISCOVERY_OPTIONS: { value: TerminalPortDiscovery; label: string }[] = [
+  { value: "off", label: "关闭" },
+  { value: "on", label: "开启" },
+];
+
+// PortDiscoverySetting is the account preference that offers a one-click forward for ports a connected host starts
+// listening on. It is a forwarding feature, shown with the forward settings and in the settings view.
+export function PortDiscoverySetting() {
+  const { portDiscovery } = useTerminalPrefs();
+  return (
+    <div data-setting="terminal-port-discovery">
+      <div className="nx-setting-label mb-1.5 flex items-center gap-2">
+        端口发现
+        <SyncScopeBadge scope="sync" />
+      </div>
+      <div className="nx-segment" role="group" aria-label="端口发现">
+        {PORT_DISCOVERY_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`nx-segment-item ${portDiscovery === option.value ? "is-active" : ""}`}
+            aria-pressed={portDiscovery === option.value}
+            onClick={() => setTerminalPortDiscovery(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      <p className="nx-hint mt-1.5">每 10 秒在远端运行 ss/netstat（会留在审计记录中），发现新端口后提示一键转发。</p>
+    </div>
+  );
+}
 
 interface SettingsSnapshot {
   api: ForwardSettingsApi;
@@ -139,6 +174,8 @@ export function ForwardSettingsPanel() {
 
   return (
     <section aria-label="转发设置" className="flex flex-col gap-3 text-[12px]">
+      <PortDiscoverySetting />
+
       <div>
         <div className="mb-1 font-medium text-neutral-200">自动启动规则</div>
         <div className="nx-hint mb-2">

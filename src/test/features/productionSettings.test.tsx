@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { deferred, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
+import { click, deferred, flush, flushMacrotask, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   call: vi.fn(),
@@ -67,6 +67,22 @@ async function clickAndFlush(element: Element): Promise<void> {
     element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await flushMacrotask();
   });
+}
+
+function connectSelect(label: string): HTMLButtonElement {
+  const select = mounted?.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}：自动连接"][aria-haspopup="listbox"]`);
+  if (!select) throw new Error(`connect choice not found: ${label}`);
+  return select;
+}
+
+// Picks a choice inside an act scope that spans a macrotask, so the save's state updates land inside act.
+async function chooseAndFlush(label: string, choice: string): Promise<void> {
+  click(connectSelect(label));
+  const option = [...mounted!.container.querySelectorAll<HTMLElement>('[role="listbox"] [role="option"]')].find((item) =>
+    item.textContent?.includes(choice),
+  );
+  if (!option) throw new Error(`choice not found: ${choice}`);
+  await clickAndFlush(option);
 }
 
 beforeEach(() => {
@@ -185,49 +201,62 @@ describe("ProductionSettingsPanel", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("live") === true);
 
     expect(mocks.call).toHaveBeenCalledWith("production_settings_get");
-    const toggles = [...mounted.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(toggles).toHaveLength(8);
-    expect(toggles.every((toggle) => !toggle.checked)).toBe(true);
+    for (const label of ["定时任务", "广播", "目标集批量执行", "AI 打开终端"]) {
+      expect(connectSelect(label).textContent).toContain("不自动连接");
+    }
+    expect(mounted.container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
   });
 
-  it("keeps the production column disabled until auto-connect is on", async () => {
+  it("maps the two stored flags of each feature to one choice", async () => {
+    settingsGet({
+      ...DEFAULT_DTO,
+      cronConnectOptIn: true,
+      broadcastConnectOptIn: true,
+      broadcastConnectProductionOptIn: true,
+      targetSetConnectProductionOptIn: true,
+    });
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
-    await flushUntil(() => mounted!.container.querySelector('input[aria-label="广播：也自动连接生产环境主机"]') !== null);
-    const production = mounted.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]');
-    expect(production?.disabled).toBe(true);
+    await flushUntil(() => !connectSelect("广播").disabled);
+    expect(connectSelect("定时任务").textContent).toContain("仅非生产主机");
+    expect(connectSelect("广播").textContent).toContain("包括生产主机");
+    // The production flag only counts while auto-connect is on.
+    expect(connectSelect("目标集批量执行").textContent).toContain("不自动连接");
+    expect(mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set")).toBe(false);
   });
 
-  it("saves an opt-in as an explicit patch and reflects the returned settings", async () => {
-    settingsGet({ ...DEFAULT_DTO, broadcastConnectOptIn: true });
+  it("leaves a stored production flag without auto-connect untouched until the user picks another choice", async () => {
+    settingsGet({ ...DEFAULT_DTO, targetSetConnectProductionOptIn: true });
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
-    await flushUntil(() => mounted!.container.querySelector('input[aria-label="广播：也自动连接生产环境主机"]') !== null);
+    await flushUntil(() => !connectSelect("目标集批量执行").disabled);
 
-    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]');
-    if (!toggle) throw new Error("opt-in toggle not found");
-    await clickAndFlush(toggle);
-    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
-    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { broadcastConnectProductionOptIn: true });
-    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="广播：也自动连接生产环境主机"]')?.checked === true);
+    await chooseAndFlush("目标集批量执行", "不自动连接");
+    expect(mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set")).toBe(false);
+
+    await chooseAndFlush("目标集批量执行", "仅非生产主机");
+    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", {
+      targetSetConnectOptIn: true,
+      targetSetConnectProductionOptIn: false,
+    });
+    await flushUntil(() => connectSelect("目标集批量执行").textContent?.includes("仅非生产主机") === true);
   });
 
-  it("saves the AI terminal connect opt-ins as explicit patches", async () => {
+  it("saves each choice as an explicit patch and reflects the returned settings", async () => {
     mounted = mount(createElement(ProductionSettingsPanel));
     await flush();
-    await flushUntil(() => mounted!.container.querySelector('input[aria-label="AI 打开终端：自动连接未连接的主机"]') !== null);
+    await flushUntil(() => !connectSelect("AI 打开终端").disabled);
 
-    const toggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：自动连接未连接的主机"]');
-    if (!toggle) throw new Error("AI terminal opt-in toggle not found");
-    await clickAndFlush(toggle);
-    await flushUntil(() => mocks.call.mock.calls.some(([cmd]) => cmd === "production_settings_set"));
-    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectOptIn: true });
-    await flushUntil(() => mounted!.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：自动连接未连接的主机"]')?.checked === true);
+    await chooseAndFlush("AI 打开终端", "包括生产主机");
+    expect(mocks.call).toHaveBeenLastCalledWith("production_settings_set", {
+      aiTerminalConnectOptIn: true,
+      aiTerminalConnectProductionOptIn: true,
+    });
+    await flushUntil(() => connectSelect("AI 打开终端").textContent?.includes("包括生产主机") === true);
 
-    const productionToggle = mounted.container.querySelector<HTMLInputElement>('input[aria-label="AI 打开终端：也自动连接生产环境主机"]');
-    if (!productionToggle) throw new Error("AI terminal production opt-in toggle not found");
-    await clickAndFlush(productionToggle);
-    expect(mocks.call).toHaveBeenCalledWith("production_settings_set", { aiTerminalConnectProductionOptIn: true });
+    await chooseAndFlush("AI 打开终端", "不自动连接");
+    expect(mocks.call).toHaveBeenLastCalledWith("production_settings_set", { aiTerminalConnectOptIn: false });
+    await flushUntil(() => connectSelect("AI 打开终端").textContent?.includes("不自动连接") === true);
   });
 
   it("saves the whole environment list on every add and remove", async () => {

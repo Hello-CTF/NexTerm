@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
+import { chooseSelectOption, click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 const mocks = vi.hoisted(() => {
   (window as unknown as Record<string, unknown>).__NEXTERM_TRANSPORT__ = "web";
@@ -119,30 +119,19 @@ describe("MemoryCard narrow-screen layout", () => {
     expect(pre?.textContent).toContain(LONG_TOKEN);
   });
 
-  it("makes both toggle rows full labels so clicking their text toggles them", async () => {
+  it("gives the memory choice the full width on narrow screens and keeps it usable after saving", async () => {
     mocks.memorySetSettings.mockResolvedValue({ injectionEnabled: true, toolsEnabled: false, version: 4 });
     mounted = mount(createElement(MemoryCard));
-    await flushUntil(() => {
-      const input = mounted!.container.querySelector<HTMLInputElement>(
-        'input[aria-label="在 AI 运行时使用记忆"]',
-      );
-      return !!input && !input.disabled;
-    });
-    for (const name of ["在 AI 运行时使用记忆", "允许模型使用记忆工具"]) {
-      const input = mounted.container.querySelector<HTMLInputElement>(
-        `input[aria-label="${name}"]`,
-      );
-      expect(input?.closest("label")).toBeTruthy();
-    }
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时使用记忆"]')!;
-    click(input.closest("label")!);
+    const select = () => mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="AI 使用记忆"][aria-haspopup="listbox"]');
+    await flushUntil(() => !!select() && !select()!.disabled);
+    expect(select()!.closest(".nx-select-root")?.className).toContain("w-full");
+    chooseSelectOption(mounted.container, "AI 使用记忆", "仅引用记忆");
     await act(async () => {
       await flush();
     });
-    expect(mocks.memorySetSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
-    const updated = mounted.container.querySelector<HTMLInputElement>('input[aria-label="在 AI 运行时使用记忆"]')!;
-    expect(updated.checked).toBe(true);
-    expect(updated.disabled).toBe(false);
+    expect(mocks.memorySetSettings).toHaveBeenCalledWith(3, { injectionEnabled: true, toolsEnabled: false });
+    expect(select()!.textContent).toContain("仅引用记忆");
+    expect(select()!.disabled).toBe(false);
   });
 });
 

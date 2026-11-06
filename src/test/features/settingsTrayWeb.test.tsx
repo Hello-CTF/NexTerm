@@ -43,6 +43,14 @@ import { useUi } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
+function openTerminalAdvanced(): void {
+  const toggle = [...(document.getElementById("settings-terminal")?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent?.trim() === "高级设置",
+  );
+  if (!toggle) throw new Error("terminal advanced toggle not found");
+  if (toggle.getAttribute("aria-expanded") === "false") click(toggle);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -111,6 +119,7 @@ describe("terminal GPU acceleration settings", () => {
     registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: put, deleteOverrides: async () => {} });
     mounted = mountWithClient(createElement(SettingsView));
     await flush();
+    openTerminalAdvanced();
     const group = mounted.container.querySelector('[aria-label="终端 GPU 加速"]');
     const buttons = [...(group?.querySelectorAll("button") ?? [])];
     expect(buttons.find((button) => button.textContent === "自动")?.getAttribute("aria-pressed")).toBe("true");
@@ -141,7 +150,6 @@ describe("terminal link activation settings", () => {
 
     expect(put).toHaveBeenCalledWith({ "terminal.linkActivation": "click" });
     expect(getTerminalPrefs().linkActivation).toBe("click");
-    expect(mounted.container.textContent).toContain("单击链接即打开");
   });
 });
 
@@ -155,21 +163,32 @@ describe("multi-line paste confirmation setting", () => {
     });
     mounted = mountWithClient(createElement(SettingsView));
     await flush();
-    const label = [...mounted.container.querySelectorAll("label")].find((node) => node.textContent?.trim() === "多行粘贴确认");
+    const label = mounted.container.querySelector<HTMLLabelElement>('label[data-setting="terminal-confirm-multiline-paste"]');
     const select = label ? mounted.container.querySelector<HTMLButtonElement>(`#${CSS.escape(label.htmlFor)}`) : null;
     if (!select) throw new Error("multi-line paste select not found");
     await waitForRendered(() => expect(select.textContent).toContain("从不确认"));
     click(select);
     expect([...mounted.container.querySelectorAll('[role="option"]')].map((option) => option.textContent)).toEqual([
-      "仅在程序未开启括号粘贴时确认",
+      "程序未开启括号粘贴时确认",
       "每次都确认",
       "从不确认",
     ]);
-    expect(mounted.container.textContent).toContain("多行文本直接粘贴，不再确认");
 
     click(mounted.container.querySelector('[role="option"]')!);
-    await waitForRendered(() => expect(select.textContent).toContain("仅在程序未开启括号粘贴时确认"));
+    await waitForRendered(() => expect(select.textContent).toContain("程序未开启括号粘贴时确认"));
     expect(put).toHaveBeenCalledWith({ "terminal.confirmMultilinePaste": "unbracketed" });
     expect(getTerminalPrefs().confirmMultilinePaste).toBe("unbracketed");
+  });
+});
+
+describe("durable terminal history limit", () => {
+  it("is shown under the terminal advanced settings once an account is signed in", async () => {
+    registerAccountPreferenceStore({ getView: async () => ({ defaults: {}, overrides: {} }), putOverrides: vi.fn().mockResolvedValue(undefined), deleteOverrides: async () => {} });
+    mounted = mountWithClient(createElement(SettingsView));
+    await flush();
+    openTerminalAdvanced();
+    await waitForRendered(() =>
+      expect(mounted!.container.querySelector('button[aria-label="持久终端历史上限"][aria-haspopup="listbox"]')).not.toBeNull(),
+    );
   });
 });

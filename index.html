@@ -36,8 +36,9 @@
           if (raw) {
             var o = JSON.parse(raw);
             if (o && typeof o === "object") {
-              if (o.uiFontPreset === 12 || o.uiFontPreset === 13 || o.uiFontPreset === 14.5) {
-                preset = o.uiFontPreset;
+              // Mirrors parsePreset and parseScale in src/app/preferences.ts.
+              if (typeof o.uiFontPreset === "number" && isFinite(o.uiFontPreset)) {
+                preset = Math.round(Math.min(32, Math.max(8, o.uiFontPreset)) * 2) / 2;
               }
               if (typeof o.uiFontScale === "number" && isFinite(o.uiFontScale)) {
                 var clamped = Math.min(2, Math.max(1, o.uiFontScale));
@@ -54,8 +55,6 @@
             }
           }
         } catch (e) {}
-        root.style.setProperty("--nx-ui-font-size", preset + "px");
-        root.style.setProperty("--nx-ui-scale", String(scale));
         root.style.setProperty("--nx-ui-text-factor", String((scale * preset) / 13));
         root.dataset.nxTermTheme = termTheme === "interface" ? resolved : termTheme;
       })();

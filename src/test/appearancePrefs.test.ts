@@ -22,8 +22,7 @@ beforeEach(() => {
   localStorage.clear();
   document.documentElement.removeAttribute("data-nx-theme");
   document.documentElement.removeAttribute("data-nx-term-theme");
-  document.documentElement.style.removeProperty("--nx-ui-font-size");
-  document.documentElement.style.removeProperty("--nx-ui-scale");
+  document.documentElement.style.removeProperty("--nx-ui-text-factor");
 });
 
 describe("appearance prefs defaults", () => {
@@ -38,8 +37,6 @@ describe("appearance prefs defaults", () => {
       terminalContrast: "standard",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
-    expect(rootStyle("--nx-ui-font-size")).toBe("13px");
-    expect(rootStyle("--nx-ui-scale")).toBe("1");
     expect(textFactor()).toBe(1);
     expect(document.documentElement.dataset.nxTermTheme).toBe("dark");
     expect(prefs.getResolvedTerminalTheme()).toBe("dark");
@@ -130,29 +127,26 @@ describe("terminal font stacks", () => {
 describe("appearance prefs persistence", () => {
   it("persists every setter and restores after a module reload", async () => {
     const { prefs } = await loadPrefs();
-    prefs.setUiFontPreset(14.5);
-    prefs.setUiFontScale(1.5);
+    prefs.setUiFontSize(14.5);
     prefs.setTerminalFontSize(16);
     prefs.setTerminalFontFamily("jetbrains-mono");
     prefs.setTerminalTheme("light");
     prefs.setTerminalContrast("high");
     expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({
       uiFontPreset: 14.5,
-      uiFontScale: 1.5,
+      uiFontScale: 1,
       terminalFontSize: 16,
       terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
       terminalContrast: "high",
     });
-    expect(rootStyle("--nx-ui-font-size")).toBe("14.5px");
-    expect(rootStyle("--nx-ui-scale")).toBe("1.5");
-    expect(textFactor()).toBeCloseTo((1.5 * 14.5) / 13, 10);
+    expect(textFactor()).toBeCloseTo(14.5 / 13, 10);
     expect(document.documentElement.dataset.nxTermTheme).toBe("light");
 
     const reloaded = await loadPrefs();
     expect(reloaded.prefs.getAppearancePrefs()).toEqual({
       uiFontPreset: 14.5,
-      uiFontScale: 1.5,
+      uiFontScale: 1,
       terminalFontSize: 16,
       terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
@@ -170,45 +164,56 @@ describe("appearance prefs persistence", () => {
 
   it("persists a custom interface font size at 0.5 steps", async () => {
     const { prefs } = await loadPrefs();
-    prefs.setUiFontPreset(15.5);
+    prefs.setUiFontSize(15.5);
     expect(prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
-    expect(rootStyle("--nx-ui-font-size")).toBe("15.5px");
+    expect(textFactor()).toBeCloseTo(15.5 / 13, 10);
 
     const reloaded = await loadPrefs();
     expect(reloaded.prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
 
-    prefs.setUiFontPreset(99);
+    prefs.setUiFontSize(99);
     expect(prefs.getAppearancePrefs().uiFontPreset).toBe(32);
-    prefs.setUiFontPreset(15.26);
+    prefs.setUiFontSize(15.26);
     expect(prefs.getAppearancePrefs().uiFontPreset).toBe(15.5);
+  });
+
+  it("loads a legacy preset and scale pair as its product and folds it into the size on the next choice", async () => {
+    localStorage.setItem(KEY, JSON.stringify({ uiFontPreset: 14.5, uiFontScale: 1.5 }));
+    const { prefs } = await loadPrefs();
+    expect(prefs.getAppearancePrefs()).toMatchObject({ uiFontPreset: 14.5, uiFontScale: 1.5 });
+    expect(prefs.uiFontSize()).toBeCloseTo(21.75, 10);
+    expect(textFactor()).toBeCloseTo((1.5 * 14.5) / 13, 10);
+
+    prefs.setUiFontSize(16);
+    expect(prefs.getAppearancePrefs()).toMatchObject({ uiFontPreset: 16, uiFontScale: 1 });
+    expect(textFactor()).toBeCloseTo(16 / 13, 10);
   });
 
   it("notifies subscribers on change and stays silent on no-op sets", async () => {
     const { prefs } = await loadPrefs();
     const seen: unknown[] = [];
     const unsubscribe = prefs.subscribeAppearancePrefs(() => seen.push(prefs.getAppearancePrefs()));
-    prefs.setUiFontScale(2);
-    prefs.setUiFontScale(2);
+    prefs.setUiFontSize(26);
+    prefs.setUiFontSize(26);
     prefs.setTerminalFontSize(13);
     prefs.setTerminalFontFamily("cascadia");
     prefs.setTerminalContrast("standard");
     expect(seen).toEqual([{
-      uiFontPreset: 13,
-      uiFontScale: 2,
+      uiFontPreset: 26,
+      uiFontScale: 1,
       terminalFontSize: 13,
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
     }]);
     unsubscribe();
-    prefs.setUiFontScale(1);
+    prefs.setUiFontSize(13);
     expect(seen).toHaveLength(1);
   });
 
   it("reset restores defaults, removes the key and notifies", async () => {
     const { prefs } = await loadPrefs();
-    prefs.setUiFontPreset(12);
-    prefs.setUiFontScale(1.75);
+    prefs.setUiFontSize(21);
     prefs.setTerminalFontSize(17);
     prefs.setTerminalFontFamily("source-code-pro");
     prefs.setTerminalTheme("interface");
@@ -227,8 +232,6 @@ describe("appearance prefs persistence", () => {
       terminalContrast: "standard",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
-    expect(rootStyle("--nx-ui-font-size")).toBe("13px");
-    expect(rootStyle("--nx-ui-scale")).toBe("1");
     expect(textFactor()).toBe(1);
     expect(seen).toEqual([1]);
     unsubscribe();
@@ -236,27 +239,21 @@ describe("appearance prefs persistence", () => {
 });
 
 describe("text factor composition", () => {
-  it("multiplies the preset and the scale into one unitless factor", async () => {
+  it("derives one unitless factor from the effective size", async () => {
     const { prefs } = await loadPrefs();
     expect(prefs.uiTextFactor()).toBe(1);
 
-    prefs.setUiFontPreset(14.5);
+    prefs.setUiFontSize(14.5);
     expect(prefs.uiTextFactor()).toBeCloseTo(14.5 / 13, 10);
     expect(textFactor()).toBeCloseTo(14.5 / 13, 10);
 
-    prefs.setUiFontScale(2);
-    expect(prefs.uiTextFactor()).toBeCloseTo((2 * 14.5) / 13, 10);
-    expect(textFactor()).toBeCloseTo((2 * 14.5) / 13, 10);
-
-    prefs.setUiFontPreset(12);
-    expect(prefs.uiTextFactor()).toBeCloseTo((2 * 12) / 13, 10);
+    expect(prefs.uiTextFactor({ ...prefs.getAppearancePrefs(), uiFontPreset: 12, uiFontScale: 2 })).toBeCloseTo((2 * 12) / 13, 10);
   });
 
   it("tracks the factor through reset", async () => {
     const { prefs } = await loadPrefs();
-    prefs.setUiFontPreset(12);
-    prefs.setUiFontScale(1.75);
-    expect(textFactor()).toBeCloseTo((1.75 * 12) / 13, 10);
+    prefs.setUiFontSize(21);
+    expect(textFactor()).toBeCloseTo(21 / 13, 10);
     prefs.resetAppearancePrefs();
     expect(textFactor()).toBe(1);
   });

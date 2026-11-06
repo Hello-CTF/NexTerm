@@ -4,6 +4,7 @@ import { forgetLocalDurableReadiness, useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { refreshLocalHelperStatus, useLocalHelperStatus } from "../terminal/localHelperStatus";
+import { SyncScopeBadge } from "./SyncScopeBadge";
 
 const LOCAL_MODE_OPTIONS: { value: LocalTerminalMode; label: string }[] = [
   { value: "durable", label: "持久终端" },
@@ -95,9 +96,10 @@ export function LocalHelperSettings() {
   const badge = status.state === "ready" ? "nx-badge nx-badge-green" : status.state === "starting" || status.state === "idle" ? "nx-badge" : "nx-badge nx-badge-amber";
   const restartable = status.consentToken && (status.state === "outdated" || status.updateAvailable);
   return (
-    <div className="mb-3.5" data-local-helper-state={status.state}>
-      <div className="nx-setting-label mb-1.5 flex items-center gap-2">
-        本机终端
+    <div data-local-helper-state={status.state}>
+      <div className="nx-setting-label mb-1.5 flex flex-wrap items-center gap-2">
+        本机终端模式
+        <SyncScopeBadge scope="local" />
         <span className={badge}>持久终端组件{STATE_TEXT[status.state] ?? status.state}</span>
         {status.updateAvailable && <span className="nx-badge nx-badge-blue">可更新</span>}
       </div>
@@ -117,9 +119,8 @@ export function LocalHelperSettings() {
       </div>
       <p className="nx-hint mt-1.5">
         {mode === "regular"
-          ? "本机临时终端随 NexTerm 退出而结束；已在后台运行的本机终端仍可接管。"
-          : "本机持久终端运行在独立的持久终端组件中，关闭标签页或退出 NexTerm 后继续运行，可在「后台会话」中接管或终止。"}
-        仅影响本机新建的终端，包括 AI 和定时任务打开的终端。
+          ? "本机新建的终端随 NexTerm 退出而结束，含 AI 和定时任务打开的。"
+          : "本机新建的终端在退出 NexTerm 后继续运行，含 AI 和定时任务打开的。"}
       </p>
       {status.reason && status.state !== "idle" && <p className="nx-hint mt-1.5 text-amber-300">{status.reason}</p>}
       {status.warning && <p className="nx-hint mt-1.5 text-amber-300">{status.warning}</p>}

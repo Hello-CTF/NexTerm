@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
+import { IconChevronDown, IconChevronRight } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
 import { setNotificationPrefs, useNotificationPrefs, type NotificationPrefs } from "./notificationPrefs";
 import { refreshNotificationStatus } from "./inboxNotifications";
@@ -27,6 +28,8 @@ export function NotificationSettings() {
   const [status, setStatus] = useState<SystemNotificationStatus | null>(() => systemNotifier().knownStatus?.() ?? null);
   const [error, setError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const categoriesId = useId();
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
 
   useEffect(() => {
     if (systemNotifier().knownStatus) return;
@@ -56,13 +59,11 @@ export function NotificationSettings() {
 
   const usable = status?.available === true;
   return (
-    <div className="mt-3.5" data-setting="system-notifications">
+    <div data-setting="system-notifications">
       <label className="flex cursor-pointer items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-[12.5px] text-neutral-200">在本机显示系统通知</div>
-          <p className="nx-hint mt-0.5">
-            其他工作区或主机的会话需要处理时显示系统通知，单击通知可返回该终端；正在查看的终端不显示通知。关闭或系统不支持时改为应用内提示，顶栏铃铛始终列出这些会话。仅影响本机。
-          </p>
+          <p className="nx-hint mt-0.5">其他会话需要处理时弹出系统通知，单击可跳转。</p>
           <p className="nx-hint mt-0.5" role="status">
             {statusText(status)}
           </p>
@@ -80,23 +81,35 @@ export function NotificationSettings() {
           {requesting ? "正在请求权限…" : "允许系统通知"}
         </button>
       )}
-      <div className="mt-2 flex flex-col gap-1.5 pl-1" aria-disabled={!prefs.system}>
-        {CATEGORIES.map((category) => (
-          <label key={category.key} className="flex cursor-pointer items-start gap-2.5">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-3.5 w-3.5 shrink-0"
-              disabled={!prefs.system}
-              checked={prefs[category.key]}
-              onChange={(e) => setNotificationPrefs({ [category.key]: e.target.checked })}
-            />
-            <span className="min-w-0">
-              <span className="text-[12px] text-neutral-200">{category.label}</span>
-              <span className="nx-hint ml-1.5">{category.hint}</span>
-            </span>
-          </label>
-        ))}
-      </div>
+      <button
+        type="button"
+        className="mt-3 flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+        aria-expanded={categoriesOpen}
+        aria-controls={categoriesId}
+        onClick={() => setCategoriesOpen((open) => !open)}
+      >
+        {categoriesOpen ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />}
+        通知类别
+      </button>
+      {categoriesOpen && (
+        <div id={categoriesId} className="mt-2 flex flex-col gap-1.5 pl-1" aria-disabled={!prefs.system}>
+          {CATEGORIES.map((category) => (
+            <label key={category.key} className="flex cursor-pointer items-start gap-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                disabled={!prefs.system}
+                checked={prefs[category.key]}
+                onChange={(e) => setNotificationPrefs({ [category.key]: e.target.checked })}
+              />
+              <span className="min-w-0">
+                <span className="text-[12px] text-neutral-200">{category.label}</span>
+                <span className="nx-hint ml-1.5">{category.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

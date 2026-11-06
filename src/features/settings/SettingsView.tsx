@@ -7,7 +7,6 @@ import {
   setTerminalGpuAcceleration,
   setTerminalLinkActivation,
   setTerminalLinkOpenMode,
-  setTerminalPortDiscovery,
   setTerminalConfirmMultilinePaste,
   setTerminalDurableHistoryMiB,
   setTerminalScrollback,
@@ -19,12 +18,13 @@ import {
   useTerminalPrefs,
   useCtrlVPaste,
   setCtrlVPaste,
+  setSelectionAutoCopy,
+  useInputPrefs,
   type TerminalCloseAction,
   type TerminalDefaultMode,
   type TerminalGpuAcceleration,
   type TerminalLinkActivation,
   type TerminalLinkOpenMode,
-  type TerminalPortDiscovery,
   type TerminalMultilinePasteConfirm,
 } from "../../app/preferences";
 import { ask } from "../../ui/dialogs";
@@ -36,6 +36,7 @@ import "./settingsSearch.css";
 import { isEditableTarget } from "../../ui/DialogHost";
 import { isWindows } from "../../app/platform";
 import { isTouchShell } from "../../app/shell";
+import { isMobileShell } from "../../app/shell/shellMode";
 import { ModelManager } from "../ai/ModelPanel";
 import { PrivacyCard } from "./PrivacyCard";
 import { AiRulesCard } from "./AiRulesCard";
@@ -57,12 +58,15 @@ import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { DiagnosticsCard } from "./DiagnosticsCard";
 import { QuickCommandsEditor } from "../terminal/QuickCommandsEditor";
+import { PortDiscoverySetting } from "../forward/ForwardSettingsPanel";
+import { SyncScopeBadge } from "./SyncScopeBadge";
 import { describeError } from "../../ui/errorText";
 import { DESKTOP } from "../../ipc/env";
 import {
   IconActivity,
   IconAlert,
   IconArchive,
+  IconBell,
   IconBot,
   IconCheckCircle,
   IconChevronDown,
@@ -72,6 +76,7 @@ import {
   IconDownload,
   IconFlag,
   IconGlobe,
+  IconInfo,
   IconLayers,
   IconLock,
   IconMonitor,
@@ -90,23 +95,30 @@ import {
 // Settings are split into a few groups shown one at a time; each group lists
 // its sections in the navigation. Hidden groups stay mounted, so switching
 // groups never drops an open form.
-type SettingsGroupId = "general" | "ai" | "security" | "account" | "app";
+type SettingsGroupId = "appearance" | "terminal" | "notifications" | "shortcuts" | "ai" | "security" | "account" | "app";
 
 const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: typeof IconMonitor }[] = [
-  { id: "general", label: "界面与终端", icon: IconMonitor },
+  { id: "appearance", label: "外观", icon: IconMonitor },
+  { id: "terminal", label: "终端", icon: IconTerminal },
+  { id: "notifications", label: "通知", icon: IconBell },
+  { id: "shortcuts", label: "快捷键与快捷命令", icon: IconCommand },
   { id: "ai", label: "AI", icon: IconSparkles },
   { id: "security", label: "安全", icon: IconLock },
   { id: "account", label: "账号与数据", icon: IconServer },
-  { id: "app", label: "更新与诊断", icon: IconSettings },
+  { id: "app", label: "关于", icon: IconInfo },
 ];
+
+const DEFAULT_GROUP: SettingsGroupId = "appearance";
 
 type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
 
 const ALL_SETTINGS_SECTIONS = [
-  { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "general" },
-  { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "general" },
-  { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "general" },
-  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "general" },
+  { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "appearance" },
+  { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "terminal" },
+  { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "terminal" },
+  { id: "settings-notifications", label: "通知", icon: IconBell, group: "notifications" },
+  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "shortcuts" },
+  { id: "settings-quick-commands", label: "快捷命令", icon: IconCommand, group: "shortcuts" },
   { id: "settings-update", label: "软件更新", icon: IconDownload, group: "app" },
   { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "app" },
   { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
@@ -128,7 +140,7 @@ const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.f
 });
 
 function groupOfSection(id: string): SettingsGroupId {
-  return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? "general";
+  return SETTINGS_SECTIONS.find((section) => section.id === id)?.group ?? DEFAULT_GROUP;
 }
 
 const GROUP_KEY = "nexterm.settingsGroup.v1";
@@ -136,9 +148,9 @@ const GROUP_KEY = "nexterm.settingsGroup.v1";
 function loadGroup(): SettingsGroupId {
   try {
     const saved = localStorage.getItem(GROUP_KEY);
-    return SETTINGS_GROUPS.some((group) => group.id === saved) ? (saved as SettingsGroupId) : "general";
+    return SETTINGS_GROUPS.some((group) => group.id === saved) ? (saved as SettingsGroupId) : DEFAULT_GROUP;
   } catch {
-    return "general";
+    return DEFAULT_GROUP;
   }
 }
 
@@ -185,16 +197,35 @@ const LINK_OPEN_MODE_OPTIONS: { value: TerminalLinkOpenMode; label: string }[] =
   { value: "ask", label: "每次询问" },
 ];
 
-const PORT_DISCOVERY_OPTIONS: { value: TerminalPortDiscovery; label: string }[] = [
-  { value: "off", label: "关闭（默认）" },
-  { value: "on", label: "开启" },
-];
-
 const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: string }[] = [
-  { value: "unbracketed", label: "仅在程序未开启括号粘贴时确认" },
+  { value: "unbracketed", label: "程序未开启括号粘贴时确认" },
   { value: "always", label: "每次都确认" },
   { value: "never", label: "从不确认" },
 ];
+
+const CLOSE_ACTION_HINTS: Record<TerminalCloseAction, string> = {
+  ask: "关闭前询问转到后台还是结束进程。",
+  kill: "直接结束进程。",
+  detach: "进程转入后台，可在「后台会话」接管。",
+};
+
+const GPU_ACCELERATION_HINTS: Record<TerminalGpuAcceleration, string> = {
+  auto: "检测到软件渲染（如虚拟机、远程桌面）时改用兼容渲染。",
+  on: "软件渲染环境也尝试 WebGL，多次失效时回退。",
+  off: "始终使用兼容渲染，不占用 GPU。",
+};
+
+const OSC52_CONFIRM =
+  "确定要允许远程主机直接写入剪贴板吗？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。请仅在可信的主机与网络中开启。";
+
+function Subsection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
+      <h3 className="mb-2.5 text-[11.5px] font-medium text-neutral-500">{title}</h3>
+      <div className="flex flex-col gap-3.5">{children}</div>
+    </div>
+  );
+}
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
   { value: "durable", label: "持久终端（推荐）" },
@@ -217,6 +248,10 @@ function saveNavOpen(open: boolean): void {
 }
 
 export function SettingsView({ active = true }: { active?: boolean }) {
+  const inputPrefs = useInputPrefs();
+  const showLinkOpenMode = !isMobileShell();
+  const terminalAdvancedId = useId();
+  const [terminalAdvancedOpen, setTerminalAdvancedOpen] = useState(false);
   const pushToast = useUi((s) => s.pushToast);
   const terminalOsc52 = useUi((s) => s.terminalOsc52);
   const ctrlVPaste = useCtrlVPaste();
@@ -344,6 +379,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
     setActiveSection(result.sectionId);
     const n = Date.now() + Math.random();
     if (result.kind === "item" && result.panel) setReveal({ panel: result.panel, n });
+    if (result.kind === "item" && result.panel === "terminal-advanced") setTerminalAdvancedOpen(true);
     setFocusRequest({ result, n });
   };
   // Runs after the group is shown and any collapsed panel holding the setting
@@ -532,7 +568,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                       {g.label}
                     </button>
                     {g.id === group &&
-                      SETTINGS_SECTIONS.filter((section) => section.group === g.id).map((section) => (
+                      groupSections.length > 1 &&
+                      groupSections.map((section) => (
                         <button
                           key={section.id}
                           type="button"
@@ -579,298 +616,329 @@ export function SettingsView({ active = true }: { active?: boolean }) {
 
         <div className="min-w-0 flex-1 overflow-y-auto" ref={contentRef}>
           <div className="mx-auto flex w-full max-w-[720px] flex-col gap-3 p-3 sm:gap-4 sm:p-5">
-        <div className="flex flex-col gap-4" hidden={group !== "general"} data-settings-group="general">
+        <div className="flex flex-col gap-4" hidden={group !== "appearance"} data-settings-group="appearance">
         <div id="settings-appearance" className="scroll-mt-12">
           <AppearanceCard reveal={reveal} />
         </div>
+        </div>
 
+        <div className="flex flex-col gap-4" hidden={group !== "terminal"} data-settings-group="terminal">
         <section id="settings-terminal" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconTerminal size={15} className="text-neutral-400" />
             <span className="nx-card-title">终端</span>
-            <span className={`nx-badge ${terminalOsc52 ? "nx-badge-amber" : ""}`}>
-              {terminalOsc52 ? "OSC 52 已开启" : "OSC 52 已关闭"}
-            </span>
           </div>
-          <div className="mb-3.5 mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="default-terminal-mode">默认终端模式</div>
-            <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
-              {DEFAULT_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.defaultMode === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.defaultMode === option.value}
-                  disabled={terminalModeSaving}
-                  onClick={() => void saveTerminalMode(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              {terminalPrefs.defaultMode === "durable"
-                ? "持久终端在连接断开后继续运行，可在「后台会话」中接管。打开主机时在后台准备持久终端组件，组件就绪前新建的为临时终端，标签页会标明原因。"
-                : "临时终端随连接断开而结束，打开主机时不准备持久终端组件。"}
-              资产自身的设置优先，仅影响新建的终端。
-            </p>
-          </div>
-          <LocalHelperSettings />
-          <LocalHelperExposureSettings />
-          <label className="flex cursor-pointer items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] text-neutral-200" data-setting="osc52">允许远程主机写入剪贴板（OSC 52）</div>
-              <p className="nx-hint mt-0.5">
-                {terminalOsc52
-                  ? "开启后，远程主机可通过转义序列直接改写系统剪贴板，且不再逐次询问。请仅在可信的主机与网络环境中开启。"
-                  : "默认关闭。远程主机每次请求写入剪贴板时都会先询问，可选择允许本次、允许本会话或拒绝。"}
+
+          <Subsection title="新建终端">
+            <div>
+              <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="default-terminal-mode">
+                默认终端模式
+                <SyncScopeBadge scope={durableHistoryAccount ? "sync" : "local"} />
+              </div>
+              <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
+                {DEFAULT_MODE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`nx-segment-item ${terminalPrefs.defaultMode === option.value ? "is-active" : ""}`}
+                    aria-pressed={terminalPrefs.defaultMode === option.value}
+                    disabled={terminalModeSaving}
+                    onClick={() => void saveTerminalMode(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="nx-hint mt-1.5">
+                断线后继续运行，可在「后台会话」接管；持久终端组件就绪前新建的为临时终端。仅影响新建终端，资产设置优先。
               </p>
             </div>
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 shrink-0"
-              checked={terminalOsc52}
-              onChange={(e) => {
-                const enable = e.target.checked;
-                if (!enable) {
-                  setTerminalOsc52(false);
-                  return;
-                }
-                void ask("确定要允许远程主机直接写入剪贴板吗？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。请仅在可信的主机与网络中开启。", {
-                  title: "开启剪贴板写入",
-                  kind: "warning",
-                }).then((ok) => {
-                  if (ok) setTerminalOsc52(true);
-                });
-              }}
-            />
-          </label>
-          {isWindows() && (
-            <label className="mt-3.5 flex cursor-pointer items-start gap-3">
+            <LocalHelperSettings />
+          </Subsection>
+
+          <Subsection title="关闭">
+            <div>
+              <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="close-action">
+                关闭运行中的终端标签页时
+                <SyncScopeBadge scope="sync" />
+              </div>
+              <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签页时">
+                {CLOSE_ACTION_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`nx-segment-item ${terminalPrefs.closeAction === option.value ? "is-active" : ""}`}
+                    aria-pressed={terminalPrefs.closeAction === option.value}
+                    onClick={() => setTerminalCloseAction(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="nx-hint mt-1.5">{CLOSE_ACTION_HINTS[terminalPrefs.closeAction]}</p>
+            </div>
+            {showCloseToTray && (
+              <label className="flex cursor-pointer items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="close-to-tray">
+                    关闭时保留后台运行（最小化到托盘）
+                    <SyncScopeBadge scope="local" />
+                  </div>
+                  <p className="nx-hint mt-0.5">关闭窗口后留在托盘，会话保持连接；右键托盘图标可退出。</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={closeToTray}
+                  disabled={closeToTrayLoading || closeToTraySaving}
+                  onChange={(e) => changeCloseToTray(e.target.checked)}
+                />
+              </label>
+            )}
+          </Subsection>
+
+          <Subsection title="剪贴板与粘贴">
+            <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200" data-setting="ctrl-v-paste">Ctrl+V 粘贴</div>
-                <p className="nx-hint mt-0.5">
-                  关闭后 Ctrl+V 发送 ^V 给终端程序；Ctrl+Shift+V 始终可粘贴。仅保存在本机，不随账号同步。
-                </p>
+                <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="osc52">
+                  允许远程主机写入剪贴板（OSC 52）
+                  <SyncScopeBadge scope="local" />
+                </div>
+                <p className="nx-hint mt-0.5">开启后不再逐次询问，请仅对可信主机开启。</p>
               </div>
               <input
                 type="checkbox"
-                aria-label="Ctrl+V 粘贴"
                 className="mt-0.5 h-4 w-4 shrink-0"
-                checked={ctrlVPaste}
-                onChange={(e) => setCtrlVPaste(e.target.checked)}
+                checked={terminalOsc52}
+                onChange={(e) => {
+                  const enable = e.target.checked;
+                  if (!enable) {
+                    setTerminalOsc52(false);
+                    return;
+                  }
+                  void ask(OSC52_CONFIRM, {
+                    title: "开启剪贴板写入",
+                    kind: "warning",
+                  }).then((ok) => {
+                    if (ok) setTerminalOsc52(true);
+                  });
+                }}
               />
             </label>
-          )}
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="close-action">关闭运行中的终端标签页时</div>
-            <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签页时">
-              {CLOSE_ACTION_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.closeAction === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.closeAction === option.value}
-                  onClick={() => setTerminalCloseAction(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              {terminalPrefs.closeAction === "ask" &&
-                "每次关闭前询问：转到后台运行（可在「后台会话」中接管）或直接关闭并结束进程。在对话框中勾选「以后都按此选择」可记住该选择。"}
-              {terminalPrefs.closeAction === "kill" && "直接结束进程并关闭标签页，不再询问。"}
-              {terminalPrefs.closeAction === "detach" && "进程转入后台继续运行，可随时在「后台会话」中接管。"}
-            </p>
-            <p className="nx-hint mt-1.5">
-              以上策略适用于支持后台运行的交互终端。本机后台终端仅在应用运行期间保留，不等同于持久 SSH 终端。
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="terminal-gpu-acceleration">终端 GPU 加速</div>
-            <div className="nx-segment" role="group" aria-label="终端 GPU 加速">
-              {GPU_ACCELERATION_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.gpuAcceleration === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.gpuAcceleration === option.value}
-                  onClick={() => setTerminalGpuAcceleration(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              {terminalPrefs.gpuAcceleration === "auto" &&
-                "使用 WebGL 渲染终端；检测到软件渲染（如虚拟机或远程桌面）时改用兼容渲染。GPU 多次失效时自动回退。"}
-              {terminalPrefs.gpuAcceleration === "on" && "始终尝试 WebGL 渲染，包括软件渲染环境。GPU 多次失效时仍会回退。"}
-              {terminalPrefs.gpuAcceleration === "off" && "始终使用兼容渲染（DOM），不占用 GPU。"}
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <label className="nx-setting-label mb-1.5 block" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
-              终端回滚行数
-            </label>
-            <Select
-              id={scrollbackSelectId}
-              ariaLabel="终端回滚行数"
-              className="w-full sm:w-auto"
-              value={terminalPrefs.scrollback.toString()}
-              options={TERMINAL_SCROLLBACK_OPTIONS.map((lines) => ({
-                value: lines.toString(),
-                label: `${formatScrollbackLines(lines)}${lines === 10_000 ? "（默认）" : ""}`,
-              }))}
-              onChange={(value) => setTerminalScrollback(normalizeTerminalScrollback(Number(value)))}
-            />
-            <p className="nx-hint mt-1.5">
-              历史仅保存在本机；调小后将丢弃最早的行。持久终端的更早输出由下方的上限单独控制。
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <label className="nx-setting-label mb-1.5 block" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
-              持久终端历史上限
-            </label>
-            <div aria-busy={durableHistorySaving}>
+            {isWindows() && (
+              <label className="flex cursor-pointer items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="ctrl-v-paste">
+                    Ctrl+V 粘贴
+                    <SyncScopeBadge scope="local" />
+                  </div>
+                  <p className="nx-hint mt-0.5">关闭后 Ctrl+V 发送 ^V；Ctrl+Shift+V 始终可粘贴。</p>
+                </div>
+                <input
+                  type="checkbox"
+                  aria-label="Ctrl+V 粘贴"
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                  checked={ctrlVPaste}
+                  onChange={(e) => setCtrlVPaste(e.target.checked)}
+                />
+              </label>
+            )}
+            <div>
+              <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
+                多行粘贴确认
+                <SyncScopeBadge scope="sync" />
+              </label>
               <Select
-                id={durableHistorySelectId}
-                ariaLabel="持久终端历史上限"
+                id={multilinePasteSelectId}
+                ariaLabel="多行粘贴确认"
                 className="w-full sm:w-auto"
-                value={terminalPrefs.durableHistoryMiB?.toString() ?? ""}
-                disabled={durableHistorySaving || !durableHistoryAccount}
-                options={[
-                  { value: "", label: `默认（${DEFAULT_DURABLE_HISTORY_MIB} MB）` },
-                  ...(terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB)
-                    ? [{ value: terminalPrefs.durableHistoryMiB.toString(), label: `${terminalPrefs.durableHistoryMiB} MB` }]
-                    : []),
-                  ...DURABLE_HISTORY_OPTIONS_MIB.map((mib) => ({ value: mib.toString(), label: `${mib} MB` })),
-                ]}
-                onChange={(value) => void saveDurableHistory(value === "" ? null : Number(value))}
+                value={terminalPrefs.confirmMultilinePaste}
+                options={MULTILINE_PASTE_OPTIONS}
+                onChange={(value) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(value))}
               />
+              <p className="nx-hint mt-1.5">防止多行内容被 shell 逐行执行。</p>
             </div>
-            <p className="nx-hint mt-1.5">
-              超出后丢弃最早的输出，只影响新开的持久终端，随账号同步。
-              {!durableHistoryAccount && "当前未登录账号，使用默认上限。"}
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="terminal-link-activation">链接打开方式</div>
-            <div className="nx-segment" role="group" aria-label="链接打开方式">
-              {LINK_ACTIVATION_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.linkActivation === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.linkActivation === option.value}
-                  onClick={() => setTerminalLinkActivation(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              {terminalPrefs.linkActivation === "modifier"
-                ? "按住 Ctrl（macOS 为 Cmd）并单击链接可打开；触屏设备可长按。"
-                : "单击链接即打开。"}
-              终端程序捕获鼠标时需同时按住 Shift。悬停链接会显示完整地址和打开方式；不方便按键或终端程序捕获鼠标时，可以右键选择「打开链接」；选「单击打开」后单击链接即直接打开。
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="terminal-link-open-mode">链接打开位置</div>
-            <div className="nx-segment" role="group" aria-label="链接打开位置">
-              {LINK_OPEN_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.linkOpenMode === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.linkOpenMode === option.value}
-                  onClick={() => setTerminalLinkOpenMode(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              只影响 http/https 链接；右键菜单和链接面板中的「在 NexTerm 中打开」不受此设置影响。NexTerm 内打开用于开发预览和文档页，不是通用浏览器：浏览器模式只能嵌入 https 页面，网站拒绝嵌入时会改用系统浏览器打开。移动端始终使用系统浏览器。
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="terminal-port-discovery">端口发现</div>
-            <div className="nx-segment" role="group" aria-label="端口发现">
-              {PORT_DISCOVERY_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  className={`nx-segment-item ${terminalPrefs.portDiscovery === option.value ? "is-active" : ""}`}
-                  aria-pressed={terminalPrefs.portDiscovery === option.value}
-                  onClick={() => setTerminalPortDiscovery(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-            <p className="nx-hint mt-1.5">
-              开启后每 10 秒在远端执行 ss/netstat（仅终端连接期间），该设置随账号同步。命令会出现在远端的进程记录和审计日志中，所以默认关闭，生产主机请谨慎开启。只在终端输出静止 2 秒以上时执行；检测到新端口会在终端上方提示，点击后才建立临时转发（仅绑定 127.0.0.1，会话关闭时自动移除）。
-            </p>
-          </div>
-          <div className="mt-3.5">
-            <label className="nx-setting-label mb-1.5 block" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
-              多行粘贴确认
-            </label>
-            <Select
-              id={multilinePasteSelectId}
-              ariaLabel="多行粘贴确认"
-              className="w-full sm:w-auto"
-              value={terminalPrefs.confirmMultilinePaste}
-              options={MULTILINE_PASTE_OPTIONS}
-              onChange={(value) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(value))}
-            />
-            <p className="nx-hint mt-1.5">
-              {terminalPrefs.confirmMultilinePaste === "unbracketed" && "仅在多行内容可能被逐行执行时先确认。"}
-              {terminalPrefs.confirmMultilinePaste === "always" && "每次粘贴多行文本前先预览并确认。"}
-              {terminalPrefs.confirmMultilinePaste === "never" && "多行文本直接粘贴，不再确认。"}
-              登录后随账号同步。
-            </p>
-          </div>
-          {showCloseToTray && (
-            <label className="mt-3.5 flex cursor-pointer items-start gap-3">
+            <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
-                <div className="text-[12.5px] text-neutral-200" data-setting="close-to-tray">关闭时保留后台运行（最小化到托盘）</div>
-                <p className="nx-hint mt-0.5">
-                  {closeToTray
-                    ? "关闭窗口后 NexTerm 保留在系统托盘中，终端会话保持连接；右键单击托盘图标可完全退出。"
-                    : "关闭窗口后直接退出 NexTerm，所有本机会话随之结束。"}
-                </p>
+                <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="copy-on-select">
+                  选中自动复制
+                  <SyncScopeBadge scope="sync" />
+                </div>
+                <p className="nx-hint mt-0.5">在终端选中文字后立即复制到剪贴板。</p>
               </div>
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 shrink-0"
-                checked={closeToTray}
-                disabled={closeToTrayLoading || closeToTraySaving}
-                onChange={(e) => changeCloseToTray(e.target.checked)}
+                aria-label="选中自动复制"
+                checked={inputPrefs.selectionAutoCopy}
+                onChange={(event) => setSelectionAutoCopy(event.target.checked)}
               />
             </label>
-          )}
-          <div className="mt-3.5">
-            <div className="nx-setting-label mb-1.5" data-setting="quick-commands">快捷命令</div>
-            <p className="nx-hint mb-2">
-              常用命令可在终端按键条的「命令」中发送；登录账号后在桌面与移动设备间同步。终端开启括号粘贴时按粘贴方式发送，多行内容发送前将要求确认。
-            </p>
-            <QuickCommandsEditor />
+          </Subsection>
+
+          <Subsection title="链接">
+            <div>
+              <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-link-activation">
+                链接打开方式
+                <SyncScopeBadge scope="sync" />
+              </div>
+              <div className="nx-segment" role="group" aria-label="链接打开方式">
+                {LINK_ACTIVATION_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`nx-segment-item ${terminalPrefs.linkActivation === option.value ? "is-active" : ""}`}
+                    aria-pressed={terminalPrefs.linkActivation === option.value}
+                    onClick={() => setTerminalLinkActivation(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="nx-hint mt-1.5">终端程序捕获鼠标时按住 Shift，或右键选择「打开链接」。</p>
+            </div>
+            {showLinkOpenMode && (
+              <div>
+                <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-link-open-mode">
+                  链接打开位置
+                  <SyncScopeBadge scope="sync" />
+                </div>
+                <div className="nx-segment" role="group" aria-label="链接打开位置">
+                  {LINK_OPEN_MODE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`nx-segment-item ${terminalPrefs.linkOpenMode === option.value ? "is-active" : ""}`}
+                      aria-pressed={terminalPrefs.linkOpenMode === option.value}
+                      onClick={() => setTerminalLinkOpenMode(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="nx-hint mt-1.5">仅影响 http/https 链接；无法嵌入时改用系统浏览器。</p>
+              </div>
+            )}
+          </Subsection>
+
+          <Subsection title="端口转发">
+            <PortDiscoverySetting />
+          </Subsection>
+
+          <div className="mt-4 border-t border-neutral-800/60 pt-3.5">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
+              aria-expanded={terminalAdvancedOpen}
+              aria-controls={terminalAdvancedId}
+              onClick={() => setTerminalAdvancedOpen((open) => !open)}
+            >
+              {terminalAdvancedOpen ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />}
+              高级设置
+            </button>
+            {terminalAdvancedOpen && (
+              <div id={terminalAdvancedId} className="mt-3 flex flex-col gap-3.5">
+                <div>
+                  <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-gpu-acceleration">
+                    终端 GPU 加速
+                    <SyncScopeBadge scope="sync" />
+                  </div>
+                  <div className="nx-segment" role="group" aria-label="终端 GPU 加速">
+                    {GPU_ACCELERATION_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`nx-segment-item ${terminalPrefs.gpuAcceleration === option.value ? "is-active" : ""}`}
+                        aria-pressed={terminalPrefs.gpuAcceleration === option.value}
+                        onClick={() => setTerminalGpuAcceleration(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="nx-hint mt-1.5">{GPU_ACCELERATION_HINTS[terminalPrefs.gpuAcceleration]}</p>
+                </div>
+                <div>
+                  <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
+                    终端回滚行数
+                    <SyncScopeBadge scope="local" />
+                  </label>
+                  <Select
+                    id={scrollbackSelectId}
+                    ariaLabel="终端回滚行数"
+                    className="w-full sm:w-auto"
+                    value={terminalPrefs.scrollback.toString()}
+                    options={TERMINAL_SCROLLBACK_OPTIONS.map((lines) => ({
+                      value: lines.toString(),
+                      label: `${formatScrollbackLines(lines)}${lines === 10_000 ? "（默认）" : ""}`,
+                    }))}
+                    onChange={(value) => setTerminalScrollback(normalizeTerminalScrollback(Number(value)))}
+                  />
+                  <p className="nx-hint mt-1.5">调小后丢弃最早的行。</p>
+                </div>
+                {durableHistoryAccount && (
+                  <div>
+                    <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
+                      持久终端历史上限
+                      <SyncScopeBadge scope="sync" />
+                    </label>
+                    <div aria-busy={durableHistorySaving}>
+                      <Select
+                        id={durableHistorySelectId}
+                        ariaLabel="持久终端历史上限"
+                        className="w-full sm:w-auto"
+                        value={terminalPrefs.durableHistoryMiB?.toString() ?? ""}
+                        disabled={durableHistorySaving}
+                        options={[
+                          { value: "", label: `默认（${DEFAULT_DURABLE_HISTORY_MIB} MB）` },
+                          ...(terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB)
+                            ? [{ value: terminalPrefs.durableHistoryMiB.toString(), label: `${terminalPrefs.durableHistoryMiB} MB` }]
+                            : []),
+                          ...DURABLE_HISTORY_OPTIONS_MIB.map((mib) => ({ value: mib.toString(), label: `${mib} MB` })),
+                        ]}
+                        onChange={(value) => void saveDurableHistory(value === "" ? null : Number(value))}
+                      />
+                    </div>
+                    <p className="nx-hint mt-1.5">超出后丢弃最早的输出，只影响新开的持久终端。</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <NotificationSettings />
         </section>
 
         <div id="settings-state-rules" className="scroll-mt-12">
           <SessionRulesCard />
         </div>
+        </div>
 
+        <div className="flex flex-col gap-4" hidden={group !== "notifications"} data-settings-group="notifications">
+        <section id="settings-notifications" className="nx-card scroll-mt-12">
+          <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <IconBell size={15} className="text-neutral-400" />
+            <span className="nx-card-title">通知</span>
+            <SyncScopeBadge scope="local" />
+          </div>
+          <NotificationSettings />
+        </section>
+        </div>
+
+        <div className="flex flex-col gap-4" hidden={group !== "shortcuts"} data-settings-group="shortcuts">
         <div id="settings-shortcuts" className="scroll-mt-12">
-          <ShortcutsCard reveal={reveal} />
+          <ShortcutsCard />
         </div>
 
+        <section id="settings-quick-commands" className="nx-card scroll-mt-12">
+          <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+            <IconCommand size={15} className="text-neutral-400" />
+            <span className="nx-card-title" data-setting="quick-commands">快捷命令</span>
+            <SyncScopeBadge scope="sync" />
+          </div>
+          <p className="nx-hint mb-2">在终端按键条的「命令」中发送。</p>
+          <QuickCommandsEditor />
+        </section>
         </div>
+
         <div className="flex flex-col gap-4" hidden={group !== "app"} data-settings-group="app">
         {DESKTOP && (
           <div id="settings-update" className="scroll-mt-12">
@@ -972,8 +1040,9 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <ProductionSettingsPanel />
         </div>
         <div className="flex flex-col gap-4" hidden={group !== "account"} data-settings-group="account">
-        <div id="settings-account" className="scroll-mt-12">
+        <div id="settings-account" className="flex scroll-mt-12 flex-col gap-4">
           <SyncCard />
+          <LocalHelperExposureSettings />
         </div>
 
         <div id="settings-bundle" className="scroll-mt-12">

@@ -16,10 +16,9 @@ import {
   matchAppKeybinding,
   resetAllKeybindings,
 } from "../../app/keybindings";
-import { getInputPrefs, setSelectionAutoCopy } from "../../app/preferences";
+import { setSelectionAutoCopy } from "../../app/preferences";
 
 const STORAGE_KEY = "nexterm.keybindings.v1";
-const PREFS_KEY = "nexterm.inputPrefs.v1";
 
 let mounted: MountedView | undefined;
 
@@ -187,65 +186,6 @@ describe("shortcuts editor", () => {
     expect(kbdText("newTerminal")).toBe("Ctrl+T");
     expect(kbdText("toggleSidebar")).toBe("Ctrl+B");
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
-  });
-
-  it("auto-copy preference is off by default and persists toggles", () => {
-    const advanced = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (b) => b.textContent?.trim() === "高级设置",
-    );
-    expect(advanced?.getAttribute("aria-expanded")).toBe("false");
-    expect(
-      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
-    ).toBeNull();
-    click(advanced as HTMLButtonElement);
-    const checkbox = mounted?.container.querySelector<HTMLInputElement>(
-      'input[aria-label="选中自动复制"]',
-    );
-    expect(checkbox?.checked).toBe(false);
-    expect(getInputPrefs().selectionAutoCopy).toBe(false);
-    click(checkbox as HTMLInputElement);
-    expect(getInputPrefs().selectionAutoCopy).toBe(true);
-    const stored = JSON.parse(localStorage.getItem(PREFS_KEY) ?? "{}") as Record<string, unknown>;
-    expect(stored.selectionAutoCopy).toBe(true);
-    const after = mounted?.container.querySelector<HTMLInputElement>(
-      'input[aria-label="选中自动复制"]',
-    );
-    expect(after?.checked).toBe(true);
-  });
-
-  it("keeps advanced settings collapsed by default when auto-copy is enabled and reveals them on manual expansion", () => {
-    mounted?.unmount();
-    act(() => setSelectionAutoCopy(true));
-    mounted = mount(createElement(ShortcutsCard));
-    const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (b) => b.textContent?.trim() === "高级设置",
-    );
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-    expect(
-      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
-    ).toBeNull();
-
-    click(toggle as HTMLButtonElement);
-    const checkbox = mounted?.container.querySelector<HTMLInputElement>(
-      'input[aria-label="选中自动复制"]',
-    );
-    expect(checkbox?.checked).toBe(true);
-  });
-
-  it("does not force advanced settings open after external writes following a manual collapse", () => {
-    const toggle = [...(mounted?.container.querySelectorAll("button") ?? [])].find(
-      (b) => b.textContent?.trim() === "高级设置",
-    );
-    click(toggle as HTMLButtonElement);
-    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
-    click(toggle as HTMLButtonElement);
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-
-    act(() => setSelectionAutoCopy(true));
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-    expect(
-      mounted?.container.querySelector('input[aria-label="选中自动复制"]'),
-    ).toBeNull();
   });
 
   it("captures switchTab digits as the full 1-9 range and they trigger tabs 1/2/9", () => {

@@ -76,8 +76,6 @@
   --nx-host-4: #a78bfa;
   --nx-host-5: #e879f9;
   --nx-host-6: #fb923c;
-  --nx-ui-font-size: 13px;
-  --nx-ui-scale: 1;
   --nx-ui-text-factor: 1;
 
   --text-xs: calc(0.75rem * var(--nx-ui-text-factor));
