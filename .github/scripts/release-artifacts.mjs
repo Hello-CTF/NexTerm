@@ -38,10 +38,10 @@ export function releaseArtifacts(version) {
   const artifacts = desktopNativeMatrix().map((entry) => desktopArtifact(entry, version));
   artifacts.push(
     [releaseAssetName("desktop", "android", "arm64", version, "apk"), "mobile-android"],
-    [releaseAssetName("agent", "windows", "amd64", version, "zip"), "agent-zip-windows-amd64"],
   );
   for (const arch of ["amd64", "arm64"]) {
     artifacts.push(
+      [releaseAssetName("agent", "windows", arch, version, "zip"), `agent-zip-windows-${arch}`],
       [releaseAssetName("server", "linux", arch, version, "tar.gz"), `server-archive-linux-${arch}`],
       [releaseAssetName("agent", "linux", arch, version, "tar.gz"), `agent-archive-linux-${arch}`],
       [releaseAssetName("agent", "darwin", arch, version, "tar.gz"), `agent-archive-darwin-${arch}`],
