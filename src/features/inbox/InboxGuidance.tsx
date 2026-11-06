@@ -38,7 +38,7 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
 
   const openSettings = useCallback(() => {
     useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
-    showSettingsSection("settings-terminal");
+    showSettingsSection("settings-notifications");
     dismissInboxGuidance();
     onNavigate();
   }, [onNavigate]);
@@ -51,10 +51,8 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
       aria-label="收件箱说明"
     >
       <p className="text-neutral-200">收件箱说明</p>
-      <p className="nx-hint mt-1">
-        终端标签页上的圆点表示该会话需要处理（响铃、程序通知或停在提问处），或刚结束了一条长命令。顶栏铃铛汇总所有工作区的此类会话，选择即可跳转。
-      </p>
-      <p className="nx-hint mt-1">允许系统通知后，窗口不在前台时也会收到提醒；仅影响本机。</p>
+      <p className="nx-hint mt-1">标签页圆点表示会话需要处理或长命令已结束，铃铛汇总全部。</p>
+      {canEnable && <p className="nx-hint mt-1">开启系统通知，窗口在后台也能提醒。</p>}
       {error && <p className="mt-1 text-[11.5px] text-red-400">{error}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {canEnable && (

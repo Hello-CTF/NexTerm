@@ -440,7 +440,7 @@ func (r *productionScopeResolver) liveSessionForAsset(ctx context.Context, asset
 			return info.ID, nil
 		}
 	}
-	return "", ipc.NewError(ipc.CodeDisconnected, "AI 终端范围对应的主机没有当前用户可用的健康在线会话；请先手动连接主机，不会自动连接或恢复旧标签")
+	return "", ipc.NewError(ipc.CodeDisconnected, "目标主机未连接，请先手动连接；不会自动连接或恢复旧标签")
 }
 
 func (r *productionScopeResolver) validateScopeAsset(ctx context.Context, assetID string) error {

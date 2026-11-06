@@ -260,7 +260,7 @@ func TestUpgradeRejectsChecksumMismatch(t *testing.T) {
 		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), version)
-	if err == nil || !strings.Contains(err.Error(), "SHA256") {
+	if err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("Upgrade = %v, want checksum failure", err)
 	}
 	if len(replaced) != 0 {

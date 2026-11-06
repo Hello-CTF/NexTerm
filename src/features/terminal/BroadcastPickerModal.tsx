@@ -120,7 +120,7 @@ export function BroadcastPickerModal(props: {
           <p className="nx-hint mb-3 flex items-start gap-1.5">
             <IconAlert size={13} className="mt-0.5 shrink-0 text-amber-300" />
             <span>
-              只广播来源终端的输入。目标是所有已打开工作区中的已连接终端；失效、已退出、未连接和非交互终端会自动跳过
+              只广播来源终端的输入；未连接或非交互的终端会自动跳过。
             </span>
           </p>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">

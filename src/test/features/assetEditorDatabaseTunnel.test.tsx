@@ -191,7 +191,7 @@ describe("AssetEditor database SSH tunnel", () => {
     expect(labels[0]).toContain("直连");
     expect(labels[1]).toContain("gateway-a");
     expect(labels[2]).toContain("gateway-b");
-    expect(mounted!.container.textContent).toContain("保存时会检查所选资产是否可用");
+    expect(mounted!.container.textContent).toContain("不会自动连接");
     chooseVia("gateway-b");
     fillRequiredFields();
     await save();

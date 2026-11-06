@@ -172,7 +172,7 @@ export function GroupDefaultsFields({
         连接默认值
       </button>
       <div className="nx-hint mt-1">
-        ↳ 本分组及子分组内的资产在对应字段留空时继承这里的值；资产自己填写的值优先，离资产最近的分组优先。端口、主机和协议选项不继承。
+        ↳ 资产字段留空时继承最近分组的值；端口、主机和协议选项不继承。
       </div>
       {open && (
         <div id={`${ids}-panel`} className="mt-2.5">

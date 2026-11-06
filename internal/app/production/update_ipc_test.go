@@ -293,7 +293,7 @@ func TestUpdateInstallIPCPreservesKnownUserErrors(t *testing.T) {
 		{name: "download write failure", kind: update.UserErrorIO, message: "写入 NexTerm.deb 失败: disk full", code: ipc.CodeIO},
 		{name: "digest failure", kind: update.UserErrorIO, message: "计算 NexTerm.deb 摘要失败: read failed", code: ipc.CodeIO},
 		{name: "checksum missing", kind: update.UserErrorIO, message: "SHA256SUMS 缺少 NexTerm.deb 的校验和", code: ipc.CodeIO},
-		{name: "checksum mismatch", kind: update.UserErrorIO, message: "NexTerm.deb 的 SHA256 校验失败：期望 expected，实际 actual", code: ipc.CodeIO},
+		{name: "checksum mismatch", kind: update.UserErrorIO, message: "NexTerm.deb 的 SHA-256 校验失败：期望 expected，实际 actual", code: ipc.CodeIO},
 		{name: "linux read failure", kind: update.UserErrorIO, message: "读取 NexTerm.deb 失败: unexpected EOF", code: ipc.CodeIO},
 		{name: "linux replace failure", kind: update.UserErrorIO, message: "替换当前可执行文件失败: permission denied", code: ipc.CodeIO},
 		{name: "darwin attach failure", kind: update.UserErrorIO, message: "hdiutil attach 失败: exit status 1 (invalid image)", code: ipc.CodeIO},

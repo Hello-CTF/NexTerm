@@ -17,7 +17,7 @@ export { goTrimSpace } from "./goFold";
 export const MANAGED_DEVICE_ENVIRONMENT = "managed-device";
 export const MANAGED_DEVICE_ENVIRONMENT_LABEL = "受管设备（无环境标签，按生产环境处理）";
 export const MANAGED_DEVICE_ENVIRONMENT_HINT =
-  "受管设备没有环境标签，因此一律按生产环境处理，每台主机都需要输入确认；请在对应输入框输入 managed-device。";
+  "受管设备没有环境标签，一律按生产环境处理，请在对应输入框输入 managed-device。";
 
 export function isManagedDeviceEnvironment(environment: string): boolean {
   return matchesEnvironmentName(environment, MANAGED_DEVICE_ENVIRONMENT);

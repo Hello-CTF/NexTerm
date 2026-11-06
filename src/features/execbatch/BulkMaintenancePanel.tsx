@@ -667,7 +667,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
             <label className="flex flex-col gap-1 text-[11px] text-neutral-500">authorized_keys 路径
               <input className="nx-input font-mono text-xs" aria-label="authorized_keys 路径" value={authorizedKeysPath} onChange={(event) => { setAuthorizedKeysPath(event.target.value); setProduction(null); }} />
             </label>
-            <div className="text-[10px] text-neutral-500">先读取并检查完整行；已存在则不修改。新增前备份原文件并去除备份写权限。每个资产复用一个现有会话，不会自动连接。</div>
+            <div className="text-[10px] text-neutral-500">已存在的公钥不重复添加，写入前备份原文件；只使用已连接的会话。</div>
             <button type="button" className="nx-btn nx-btn-primary self-start" disabled={busy !== null} onClick={deploy}>
               <IconPlay size={12} />{busy === "deploy" ? "正在部署…" : "部署公钥"}
             </button>
@@ -678,9 +678,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         <details className="rounded border border-neutral-800/70 p-2.5">
           <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />连接测试</summary>
           <div className="mt-2 text-[10px] text-neutral-500">
-            SSH 主机：核对主机指纹和账号凭据，不打开终端、不执行命令。遇到尚未信任的主机指纹时不会自动信任，请先在终端中核对并确认，再重新测试。
-            MySQL、PostgreSQL、Redis：用资产绑定的凭据连接并做一次连通检查，不执行任何 SQL，也不保存连接；TLS 证书校验按资产设置进行，不会自动信任。
-            其他类型只确认端口能连通，会标记为「仅端口连通」，表示尚未验证账号和密码。
+            只验证能否登录，不执行命令或 SQL；未信任的主机指纹需先在终端中确认。其他类型只检查端口，标记为「仅端口连通」。
           </div>
           <div className="mt-2" data-testid="login-test-targets">
             <TargetSetPicker

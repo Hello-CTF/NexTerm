@@ -279,7 +279,7 @@ func TestProductionRestoreRebindsScopeOrReportsNoLiveSessionR2(t *testing.T) {
 			answer := agent.Answer{JobID: response.JobID, CallID: question.ID, Nonce: question.Nonce, Text: "继续"}
 			err = second.Agent.AnswerStream(ctx, answer, agent.StaticStream(resumed))
 			if !test.replacement {
-				if err == nil || !strings.Contains(err.Error(), "没有当前用户可用的健康在线会话") ||
+				if err == nil || !strings.Contains(err.Error(), "目标主机未连接") ||
 					!strings.Contains(err.Error(), "手动连接") {
 					t.Fatalf("restore without live session error = %v", err)
 				}

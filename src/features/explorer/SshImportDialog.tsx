@@ -356,8 +356,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     />
                     <span className="nx-hint mt-1.5 block">
                       {WEB
-                        ? "留空使用服务器上的 ~/.ssh/config。选择「预览」时读取服务器文件，不做后台扫描，也不会读取浏览器所在电脑的文件；导入时会重新读取并校验。"
-                        : "留空使用默认路径。选择「预览」时读取，不做后台扫描；导入时会重新读取并校验。"}
+                        ? "留空使用服务器上的 ~/.ssh/config，不会读取浏览器所在电脑的文件。"
+                        : "留空使用默认路径。"}
                     </span>
                   </div>
                 )}
@@ -366,9 +366,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   <div className="nx-form-row">
                     <span className="nx-hint block">
                       {WEB ? "将扫描服务器上的 ~/.ssh 目录" : "将扫描 ~/.ssh 目录"}
-                      ：自动发现受支持的私钥，并解析 config 把 Host 与
-                      IdentityFile 关联到对应密钥。只读取、不修改任何原始文件；跳过 .pub、
-                      known_hosts、authorized_keys 等无关文件；私钥内容不会显示或写入日志。
+                      ：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。
                     </span>
                   </div>
                 )}

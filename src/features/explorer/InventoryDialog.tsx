@@ -214,7 +214,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <p className="nx-hint mb-3">
-            让资产树跟随外部来源更新：来源里添加、修改或删除的主机，会同步到下面选择的分组。和「导入」不同，同步来的主机由来源管理，来源里删掉后这里也会移除；手动添加的主机不受影响。
+            来源里的增删改会同步到所选分组，来源删除的主机这里也会移除；手动添加的主机不受影响。
           </p>
           <div className="nx-segment mb-3" aria-label="清单来源">
             {SOURCE_ORDER.map((item) => (
@@ -278,7 +278,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">正在跟随 {watchQuery.data.path}</span>}
               </div>
               <div className="nx-hint mt-1.5">
-                开启后每 2 秒检查一次文件，有改动即同步。文件暂时无法读取时保留上次结果；文件被删除时，将移除由其同步的主机。
+                每 2 秒检查文件并同步改动；文件被删除时会移除由它同步的主机。
               </div>
               {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">后台同步失败：{watchQuery.data.lastError}</div>}
             </div>

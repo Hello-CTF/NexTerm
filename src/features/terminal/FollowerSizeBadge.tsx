@@ -75,7 +75,7 @@ export function FollowerSizeBadge({ scale, ownedElsewhere, zoom, onZoom, onTakeS
           className="pointer-events-auto max-w-[320px] rounded bg-neutral-900/90 px-2 py-1 text-right text-[11px] text-neutral-300"
           data-follower-why=""
         >
-          终端尺寸跟随最后输入的设备。在此输入或选择「用本机尺寸」即改用本设备尺寸，另一台设备随后按比例显示。
+          终端尺寸跟随最后输入的设备；在此输入或选择「用本机尺寸」即改用本设备尺寸。
         </p>
       )}
       {small && (

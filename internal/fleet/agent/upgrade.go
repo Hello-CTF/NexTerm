@@ -223,7 +223,7 @@ func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
 		return err
 	}
 	if actual != expected {
-		return fmt.Errorf("SHA256 校验失败 (%s): 期望 %s, 实际 %s, 拒绝升级", asset, expected, actual)
+		return fmt.Errorf("SHA-256 校验失败 (%s): 期望 %s, 实际 %s, 拒绝升级", asset, expected, actual)
 	}
 	target := u.Executable
 	staged := filepath.Join(filepath.Dir(target), "."+filepath.Base(target)+".nexterm-new")

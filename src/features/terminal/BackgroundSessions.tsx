@@ -69,13 +69,13 @@ const TAKEOVER_HELP = "「接管」会回到原来的终端，并补上离开期
 
 function persistenceFootnote(scope: "remote" | "local" | "all"): string {
   if (scope === "local") {
-    return `本机的后台终端只在应用运行期间保留，退出应用后会结束。${TAKEOVER_HELP}`;
+    return `本机的后台会话只在应用运行期间保留，退出应用后会结束。${TAKEOVER_HELP}`;
   }
   if (TRANSPORT === "web") {
     return `持久终端在目标主机上运行，关闭页面或换一台设备后仍能找到。${TAKEOVER_HELP}`;
   }
   if (scope === "all") {
-    return `SSH 和受管设备的持久终端由目标主机保持运行，退出应用后仍在；本机的后台终端会随应用退出而结束。${TAKEOVER_HELP}`;
+    return `SSH 和受管设备的持久终端由目标主机保持运行，退出应用后仍在；本机的后台会话会随应用退出而结束。${TAKEOVER_HELP}`;
   }
   return `持久终端由目标主机保持运行，退出应用或换一台设备后仍能找到。${TAKEOVER_HELP}`;
 }
@@ -642,7 +642,7 @@ export function BackgroundSessions({
       const st = useUi.getState();
       st.setSessions([...st.sessions.filter((session) => session.id !== fresh.id), fresh]);
       if (currentTarget.sessionId !== fresh.id) st.updateWorkspaceSession(currentTarget.id, fresh.id);
-      pushToast("success", `已连接「${fresh.name}」，正在查找后台终端`);
+      pushToast("success", `已连接「${fresh.name}」，正在查找后台会话`);
     } catch (cause) {
       if (ownerGeneration === ownerGenerationRef.current) {
         pushToast("error", `重新连接失败：${describeError(cause)}`);
@@ -935,11 +935,11 @@ export function BackgroundSessions({
               <tr>
                 <td colSpan={COLUMN_COUNT} className="nx-table-empty text-[var(--nx-fg-soft)]">
                   {needsReconnect
-                    ? "主机未连接，连接后才能查看后台终端"
+                    ? "主机未连接，连接后才能查看后台会话"
                     : noHostConnected
                       ? `有 ${unconnectedSessions.length} 台主机未连接，连接后才能查看`
                     : showAll
-                      ? "没有可恢复的后台终端"
+                      ? "没有可恢复的后台会话"
                       : hostScope === "local"
                         ? "本机没有在后台运行的终端"
                         : "该主机上没有在后台运行的终端"}
@@ -949,9 +949,9 @@ export function BackgroundSessions({
                       : noHostConnected
                         ? "终端可能仍在这些主机上运行，连接成功后列表会自动更新"
                       : showAll
-                        ? "请先从资产树打开目标主机，才能查看它上面的后台终端"
+                        ? "请先从资产树打开目标主机，才能查看它上面的后台会话"
                         : hostScope === "local"
-                          ? "关闭标签页时选择「转到后台运行」，或由 AI 在后台创建的本机终端，会列在这里；退出应用后它们会结束"
+                          ? "转到后台运行或由 AI 在后台创建的本机终端会列在这里，退出应用后结束"
                           : ownerWorkspace?.assetKind === "ssh"
                             ? "持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
                             : "关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}

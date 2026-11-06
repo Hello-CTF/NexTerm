@@ -4,6 +4,7 @@ import { connectAsset, reopenRemoteDesktopTab, useUi, openTerminalTab } from "..
 import { formatBinding, useKeybindings } from "../keybindings";
 import { useShell } from "../shell";
 import { sessionApi } from "../../ipc/commands";
+import { WEB } from "../../ipc/env";
 import { assetApi, type Asset } from "../../ipc/commands";
 import { useAssetVisibility } from "../../features/explorer/assetVisibility";
 import { useConnectHistory } from "../../features/explorer/connectHistory";
@@ -72,12 +73,11 @@ export function WorkspaceEmpty({ onNew, workspaceId, paneId }: { onNew: () => vo
     );
   }
   return (
-    <EmptyCard title="暂无终端" subtitle="创建一个新的终端会话">
+    <EmptyCard title="暂无终端">
       <button className="nx-btn nx-btn-primary" onClick={onNew}>
         <IconPlus size={14} />
         新建终端
       </button>
-      <div className="nx-hint">在左侧栏的文件树中双击文件，可打开编辑器标签页。</div>
     </EmptyCard>
   );
 }
@@ -136,9 +136,6 @@ export function EmptyState({ onLocal, onPalette }: { onLocal?: () => void; onPal
             {label}
           </span>
         ))}
-      </div>
-      <div className="nx-hint max-w-md text-center">
-        双击左侧栏中的资产可打开其工作区（「当前设备」即本机）。主机工作区的左侧栏默认显示该主机的文件树，其中的容器、端口转发和日志按钮作用于当前主机；选择「资产」或「凭据」可临时切换侧栏。主机工作区不会自动新建终端，请选择「新建终端」。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台。
       </div>
     </div>
   );
@@ -243,11 +240,9 @@ export function WelcomePage({
         {firstRun ? (
           <section aria-label="开始使用" className="w-full rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-4 py-3.5">
             <div className="text-[12.5px] font-semibold text-neutral-100">开始使用</div>
-            <ol className="mt-2 list-decimal space-y-1 pl-4 text-[12px] text-neutral-400">
-              <li>点击「新建资产」，填写主机地址与登录方式，支持 SSH、WinRM、RDP、VNC、Docker 和数据库。</li>
-              <li>保存后会立即连接；之后双击侧栏中的资产即可再次打开。</li>
-              <li>{mobile ? "点击「快速连接」输入 user@host 临时连接。" : "按快速连接快捷键输入 user@host 可临时连接，不必先保存。"}</li>
-            </ol>
+            <p className="mt-2 text-[12px] text-neutral-400">
+              {onQuickConnect && !WEB ? "新建资产后立即连接；临时连接可用「快速连接」输入 user@host。" : "新建资产后立即连接。"}
+            </p>
           </section>
         ) : (
           <section aria-label="最近连接" className="w-full">
@@ -273,10 +268,6 @@ export function WelcomePage({
             )}
           </section>
         )}
-
-        <div className="nx-hint max-w-md text-center">
-          双击左侧栏中的资产可打开其工作区。容器资产打开容器面板，MySQL / PostgreSQL / Redis 资产打开数据库工作台，RDP / VNC 资产打开远程桌面。
-        </div>
 
         {!mobile && (
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-neutral-500">

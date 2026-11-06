@@ -1441,7 +1441,7 @@ describe("Device management view - remote terminal switch and version note", () 
     await flushUntil(() => mocks.ask.mock.calls.length === 1);
     const message = String(mocks.ask.mock.calls[0]?.[0]);
     expect(message).toContain("拒绝新的远程终端");
-    expect(message).toContain("不会被强制断开");
+    expect(message).toContain("已有连接保留");
     await flush();
     expect(calls.some((c) => c.url.endsWith("/terminal-access"))).toBe(false);
 

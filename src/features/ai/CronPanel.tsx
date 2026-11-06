@@ -455,9 +455,7 @@ export function CronPanel({
           所属主机：{hostName}
         </div>
       )}
-      <p className="nx-hint mb-2 text-[11px]">
-        到达设定时间后，AI 将基于当前会话自动执行任务。需要确认或被禁止的操作会被拒绝，原因会显示在「上次错误」中。无人值守时不会新建终端；需要运行命令时，请在任务内容中明确要求 AI 直接运行命令。
-      </p>
+      <p className="nx-hint mb-2 text-[11px]">到点后 AI 自动执行，需确认的操作会被拒绝；不会新建终端，需要时请明确要求 AI 直接运行命令。</p>
 
       {registerOpen && draft ? (
         <div className="mb-2 flex flex-col gap-2 border-b border-neutral-800/60 pb-2">
@@ -584,10 +582,8 @@ export function CronPanel({
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            cron 表达式为 5 段（分、时、日、月、周），时区默认为 UTC，超时默认为 60 秒。重新启用后从现在起计算执行时间，不会补做停用期间错过的任务。
-            {editingJob
-              ? " 保存时会重新创建任务，原来的执行记录不会保留，执行时间从现在起重新计算。"
-              : ""}
+            cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。
+            {editingJob ? " 保存会重新创建任务，原来的执行记录不会保留。" : ""}
           </p>
           {registerError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">

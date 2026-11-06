@@ -162,7 +162,7 @@ describe("MultiHostLogTail", () => {
     mounted = mountPanel();
     expect(target("s5").disabled).toBe(false);
     expect(panel().container.textContent).toContain("edge-device");
-    expect(panel().container.querySelector('[aria-label*="Windows 设备暂不支持"]')).not.toBeNull();
+    expect(panel().container.querySelector('[aria-label*="非 Windows 受管设备"]')).not.toBeNull();
   });
 
   it("preselects connected initial targets and drops local or offline ones", () => {

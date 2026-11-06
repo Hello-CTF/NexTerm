@@ -301,7 +301,7 @@ describe("BackgroundSessions with no connected host", () => {
     try {
       await flush();
       await waitForRendered(() => expect(view.container.textContent).toContain("有 2 台主机未连接，连接后才能查看"));
-      expect(view.container.textContent).not.toContain("没有可恢复的后台终端");
+      expect(view.container.textContent).not.toContain("没有可恢复的后台会话");
       expect(button(view.container, "连接并查找")).toBeTruthy();
     } finally {
       view.unmount();

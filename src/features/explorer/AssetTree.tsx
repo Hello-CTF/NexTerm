@@ -1258,7 +1258,7 @@ export function AssetTree() {
 
       <button
         className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
-        title="打开命令片段：保存常用命令，插入或在当前终端执行"
+        title="打开命令片段"
         onClick={() => setSnippetsOpen(true)}
       >
         <IconCommand size={14} className="shrink-0 text-neutral-500" />
@@ -2872,7 +2872,7 @@ export function AssetEditor({
         >
           {managed && (
             <div className="mb-3 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] text-blue-300" role="note">
-              由 {inventorySourceLabel(managed.source)} 同步。名称、分组、地址、认证方式和来源选项随来源更新，不能在这里修改；图标、标签、备注和其他选项可以编辑。
+              由 {inventorySourceLabel(managed.source)} 同步。名称、分组、地址和认证方式随来源更新，不能在这里修改。
             </div>
           )}
           {kind === "asset" && (
@@ -3199,7 +3199,7 @@ export function AssetEditor({
                   />
                   <div className="nx-hint mt-1.5">
                     {kindFields.via === "ssh"
-                      ? "↳ 默认直连；选择后使用该资产已建立的 SSH 连接，不会自动连接 SSH。保存时会检查所选资产是否可用。"
+                      ? "↳ 默认直连；选择后复用该资产已建立的 SSH 连接，不会自动连接。"
                       : "↳ 默认直连；选择 SSH 资产或受管设备后，经它转发到目标主机。"}
                   </div>
                   <InheritanceHint view={inheritance} field="jump" empty={viaAssetId === ""} />
@@ -3280,8 +3280,8 @@ export function AssetEditor({
                       )}
                       <div className="nx-hint mt-1.5">
                         {webFiles
-                          ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
-                          : "↳ 仅保存路径并与系统 ssh 共用私钥文件，私钥内容不存入凭据库；文件移动或删除后，请更新此路径。"}
+                          ? "↳ Web 模式只能填服务器上的私钥路径；浏览器侧的私钥请用「存入凭据库」。"
+                          : "↳ 仅保存路径，私钥不存入凭据库；文件移动后需更新路径。"}
                       </div>
                     </>
                   ) : (
@@ -3378,7 +3378,7 @@ export function AssetEditor({
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。</div>
+                            <div className="nx-hint mt-1.5">↳ 修改该凭据会影响所有使用它的资产。</div>
                           )}
                         </>
                       )}
@@ -3456,7 +3456,7 @@ export function AssetEditor({
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。</div>
+                    <div className="nx-hint mt-1">↳ 修改该凭据会影响所有使用它的资产。</div>
                   ) : null}
                   {groupKind !== "ssh" && groupKind !== "docker" && (
                     <InheritanceHint
@@ -3501,9 +3501,7 @@ export function AssetEditor({
                               { value: "regular", label: "临时终端（随连接断开结束）" },
                             ]}
                           />
-                          <div className="nx-hint mt-1.5">
-                            首次连接会自动安装持久终端组件，安装期间先使用临时终端，完成后新建的标签页生效。只影响新开的终端；已有后台会话仍可在「后台会话」接管。
-                          </div>
+                          <div className="nx-hint mt-1.5">首次连接会自动安装持久终端组件，期间使用临时终端；只影响新开的终端。</div>
                         </div>
                       )}
                       <div className="nx-form-row">
@@ -3540,9 +3538,7 @@ export function AssetEditor({
                             onClear={proxyCommand ? () => { setProxyCommand(""); setDirty(true); } : undefined}
                           />
                         )}
-                        <div className="nx-hint mt-1.5">
-                          ↳ 选填。使用外部命令建立连接；%h 为主机，%p 为端口，%% 为百分号。
-                        </div>
+                        <div className="nx-hint mt-1.5">↳ 选填。%h 为主机，%p 为端口，%% 为百分号。</div>
                       </div>
 
                       <div className="nx-form-row">
@@ -3550,7 +3546,7 @@ export function AssetEditor({
                           <div className="min-w-0 flex-1">
                             <div className="text-[12.5px] text-neutral-200">ssh-agent 转发</div>
                             <p className="nx-hint mt-0.5">
-                              默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。
+                              远端可借本机 ssh-agent 登录其他主机，私钥不离开本机；仅对可信主机开启。
                             </p>
                           </div>
                           <input
@@ -3598,9 +3594,7 @@ export function AssetEditor({
                               onClear={certPath ? () => { setCertPath(""); setDirty(true); } : undefined}
                             />
                           )}
-                          <div className="nx-hint mt-1.5">
-                            ↳ 选填。与私钥配对的证书文件路径；不填则按普通私钥登录。
-                          </div>
+                          <div className="nx-hint mt-1.5">↳ 选填。与私钥配对的证书文件。</div>
                         </div>
                       )}
 
@@ -3613,10 +3607,7 @@ export function AssetEditor({
                             onChange={(e) => setStartupCommand(e.target.value)}
                             placeholder="连接成功后在该终端自动执行"
                           />
-                          <div className="nx-hint mt-1.5">
-                            ↳ 选填。相当于连接成功后手动输入并回车；输出与报错直接显示在终端里，执行失败不影响连接本身。仅 SSH/Docker
-                            资产支持，WinRM 与本地终端不执行。
-                          </div>
+                          <div className="nx-hint mt-1.5">↳ 选填。相当于连接后手动输入并回车，失败不影响连接；仅 SSH/Docker 资产执行。</div>
                         </div>
 
                         <div className="nx-form-row">
@@ -3627,9 +3618,7 @@ export function AssetEditor({
                             onChange={setEncoding}
                             options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
                           />
-                          <div className="nx-hint mt-1.5">
-                            ↳ 该资产终端的默认字符编码，连接成功后自动应用；也可在终端「更多终端操作」菜单里临时切换。
-                          </div>
+                          <div className="nx-hint mt-1.5">↳ 连接后自动应用；也可在终端「更多终端操作」中临时切换。</div>
                         </div>
 
                         <div className="nx-form-row">
@@ -3641,9 +3630,7 @@ export function AssetEditor({
                             onChange={(e) => setEnvText(e.target.value)}
                             placeholder={"每行一个 KEY=VALUE\n例如：\nLANG=en_US.UTF-8"}
                           />
-                          <div className="nx-hint mt-1.5">
-                            ↳ 选填。连接时通过 SSH 请求设置这些环境变量；需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。
-                          </div>
+                          <div className="nx-hint mt-1.5">↳ 选填。需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。</div>
                         </div>
 
                         <div className="nx-form-row">
@@ -3651,7 +3638,7 @@ export function AssetEditor({
                             <div className="min-w-0 flex-1">
                               <div className="text-[12.5px] text-neutral-200">覆盖文件前在主机上保留 .nexterm-bak 备份</div>
                               <p className="nx-hint mt-0.5">
-                                默认关闭。开启后，AI 写文件/编辑文件覆盖已有文件、容器 Compose 重新部署覆盖 compose 文件时，会在主机上同目录保留 .nexterm-bak 备份；无需重新连接即可生效。
+                                AI 写入文件或 Compose 重新部署覆盖文件前，在同目录保留备份。
                               </p>
                             </div>
                             <input
@@ -3691,8 +3678,7 @@ export function AssetEditor({
                               placeholder="与上传目录相同"
                             />
                             <div className="nx-hint mt-1.5">
-                              ↳ 选填。粘贴或拖入终端的文件经 SFTP 上传到该目录，插入终端的链接改用对应路径；适用于 chroot 的
-                              SFTP 账号（如上传目录填 /，终端中的对应路径填 /tmp）。填写对应路径时必须同时填写上传目录。
+                              ↳ 选填。用于 chroot 的 SFTP 账号（如上传目录填 /，此处填 /tmp），需同时填写上传目录。
                             </div>
                           </div>
                           <div className="nx-form-row">
@@ -3700,7 +3686,7 @@ export function AssetEditor({
                               <div className="min-w-0 flex-1">
                                 <div className="text-[12.5px] text-neutral-200">不使用随机目录</div>
                                 <p className="nx-hint mt-0.5">
-                                  默认关闭：每次粘贴先在上传目录下创建仅当前用户可访问的随机目录。开启后文件直接放在上传目录中，文件名附带随机后缀；能列出该目录的其他用户可以读取这些文件。
+                                  文件直接放入上传目录（文件名加随机后缀），能列出该目录的其他用户可以读取。
                                 </p>
                               </div>
                               <input

@@ -776,7 +776,7 @@ export function ModelManager({
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title="将全部高级参数恢复默认，名称、地址、密钥和模型名保持不变；选择「保存」后生效。"
+              title="只恢复高级参数，保存后生效"
               disabled={busy || paramsAtDefaults}
               onClick={resetParams}
             >

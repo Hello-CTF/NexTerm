@@ -38,7 +38,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             {otherNotes.length > 0 ? (
               <span
                 className="text-neutral-500"
-                title="另有未在打开的工作区中使用的连接。空闲：关闭工作区后留下、没有终端的连接，空闲 30 分钟后自动断开。后台：仍有后台终端等用途的连接"
+                title="空闲：无终端，30 分钟后断开；后台：仍有后台会话"
               >
                 （另有 {otherNotes.join("、")}）
               </span>

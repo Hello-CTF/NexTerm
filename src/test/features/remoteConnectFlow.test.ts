@@ -209,7 +209,7 @@ describe("runConnectFlow", () => {
     const text = describeCertificate(status);
     expect(text.body).toContain("OLD");
     expect(text.body).toContain("NEW");
-    expect(text.body).toContain("警告");
+    expect(text.body).toContain("冒充");
     expect(api.trust).toHaveBeenCalledWith("asset-1", "NEW");
   });
 

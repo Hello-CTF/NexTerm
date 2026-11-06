@@ -883,7 +883,7 @@ describe("App empty states", () => {
     );
   });
 
-  it("keeps the palette action when onPalette is provided and mentions PostgreSQL", async () => {
+  it("keeps the palette action when onPalette is provided", async () => {
     mounted = mountApp();
     await flush();
 
@@ -893,7 +893,7 @@ describe("App empty states", () => {
         (button) => button.textContent?.trim() === "跳转面板",
       ),
     ).toBe(true);
-    expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");
+    expect(main?.textContent).toContain("数据库和 AI，集中在一个工作台");
   });
 
   it("hides the palette action without onPalette and uses stable keys for duplicate bindings", async () => {
@@ -919,7 +919,7 @@ describe("App empty states", () => {
           (button) => button.textContent?.trim() === "跳转面板",
         ),
       ).toBe(false);
-      expect(main?.textContent).toContain("MySQL / PostgreSQL / Redis");
+      expect(main?.textContent).toContain("数据库和 AI，集中在一个工作台");
       const duplicateKeyWarnings = errorSpy.mock.calls.filter((args) =>
         args.some((arg) => String(arg).includes("same key")),
       );
