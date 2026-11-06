@@ -19,8 +19,7 @@ import {
   setTerminalFontFamily,
   setTerminalFontSize,
   setTerminalTheme,
-  setUiFontPreset,
-  setUiFontScale,
+  setUiFontSize,
 } from "../app/preferences";
 import { click, clickButton, mount, setInputValue, type MountedView } from "./features/reactTestUtils";
 
@@ -50,6 +49,10 @@ function advancedToggle(container: ParentNode): HTMLButtonElement {
   return button as HTMLButtonElement;
 }
 
+function textFactor(): number {
+  return Number(document.documentElement.style.getPropertyValue("--nx-ui-text-factor"));
+}
+
 function ensureAdvancedOpen(container: ParentNode): void {
   const toggle = advancedToggle(container);
   if (toggle.getAttribute("aria-expanded") === "false") click(toggle);
@@ -74,7 +77,7 @@ describe("AppearanceCard appearance preferences", () => {
     const c = mounted.container;
     ensureAdvancedOpen(c);
     expect(groupButton(c, "界面字号", "13").getAttribute("aria-pressed")).toBe("true");
-    expect(groupButton(c, "界面文字倍率", "100%").getAttribute("aria-pressed")).toBe("true");
+    expect(c.querySelector('[aria-label="界面文字倍率"]')).toBeNull();
     expect(groupButton(c, "终端与编辑器主题", "深色").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "终端对比度", "标准").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "界面主题", "深色").getAttribute("aria-pressed")).toBe("true");
@@ -90,8 +93,7 @@ describe("AppearanceCard appearance preferences", () => {
       "Menlo",
       "Consolas",
     ]);
-    expect(c.textContent).toContain("未安装时回退到系统等宽字体");
-    expect(c.textContent).toContain("不下载字体");
+    expect(c.textContent).toContain("未安装时用系统等宽字体");
     expect(c.querySelector('[aria-label="减小终端字号"]')).not.toBeNull();
     expect(c.textContent).toContain("13px");
   });
@@ -123,7 +125,7 @@ describe("AppearanceCard appearance preferences", () => {
 
     expect(getAppearancePrefs().uiFontPreset).toBe(14.5);
     expect(JSON.parse(localStorage.getItem(KEY) ?? "{}").uiFontPreset).toBe(14.5);
-    expect(document.documentElement.style.getPropertyValue("--nx-ui-font-size")).toBe("14.5px");
+    expect(textFactor()).toBeCloseTo(14.5 / 13, 10);
     expect(groupButton(mounted.container, "界面字号", "14.5").getAttribute("aria-pressed")).toBe("true");
   });
 
@@ -144,7 +146,7 @@ describe("AppearanceCard appearance preferences", () => {
     act(() => input!.blur());
     expect(getAppearancePrefs().uiFontPreset).toBe(15.5);
     expect(JSON.parse(localStorage.getItem(KEY) ?? "{}").uiFontPreset).toBe(15.5);
-    expect(document.documentElement.style.getPropertyValue("--nx-ui-font-size")).toBe("15.5px");
+    expect(textFactor()).toBeCloseTo(15.5 / 13, 10);
     expect(groupButton(c, "界面字号", "自定义").getAttribute("aria-pressed")).toBe("true");
     expect(groupButton(c, "界面字号", "13").getAttribute("aria-pressed")).toBe("false");
 
@@ -153,14 +155,41 @@ describe("AppearanceCard appearance preferences", () => {
     expect(c.querySelector('input[aria-label="自定义界面字号"]')).toBeNull();
   });
 
-  it("applies the multiplier on top of the preset", () => {
-    mounted = mount(createElement(AppearanceCard));
-    ensureAdvancedOpen(mounted.container);
-    click(groupButton(mounted.container, "界面文字倍率", "150%"));
+  it("shows a stored legacy preset and scale pair as its effective size without rewriting it", async () => {
+    vi.resetModules();
+    localStorage.setItem(KEY, JSON.stringify({ uiFontPreset: 14.5, uiFontScale: 1.5 }));
+    const prefs = await import("../app/preferences");
+    const { AppearanceCard: FreshCard } = await import("../features/settings/AppearanceCard");
+    expect(textFactor()).toBeCloseTo((14.5 * 1.5) / 13, 10);
 
-    expect(getAppearancePrefs().uiFontScale).toBe(1.5);
-    expect(document.documentElement.style.getPropertyValue("--nx-ui-scale")).toBe("1.5");
-    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}").uiFontScale).toBe(1.5);
+    mounted = mount(createElement(FreshCard));
+    const c = mounted.container;
+    expect(groupButton(c, "界面字号", "自定义").getAttribute("aria-pressed")).toBe("true");
+    const input = c.querySelector<HTMLInputElement>('input[aria-label="自定义界面字号"]')!;
+    expect(input.value).toBe("21.75");
+
+    act(() => input.focus());
+    act(() => input.blur());
+    expect(prefs.getAppearancePrefs()).toMatchObject({ uiFontPreset: 14.5, uiFontScale: 1.5 });
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({ uiFontPreset: 14.5, uiFontScale: 1.5 });
+    expect(textFactor()).toBeCloseTo((14.5 * 1.5) / 13, 10);
+
+    act(() => input.focus());
+    setInputValue(input, "20");
+    act(() => input.blur());
+    expect(prefs.getAppearancePrefs()).toMatchObject({ uiFontPreset: 20, uiFontScale: 1 });
+    expect(textFactor()).toBeCloseTo(20 / 13, 10);
+  });
+
+  it("marks the preset matching a legacy pair's effective size", async () => {
+    vi.resetModules();
+    localStorage.setItem(KEY, JSON.stringify({ uiFontPreset: 12, uiFontScale: 1.5 }));
+    const { AppearanceCard: FreshCard } = await import("../features/settings/AppearanceCard");
+    mounted = mount(createElement(FreshCard));
+    expect(groupButton(mounted.container, "界面字号", "18").getAttribute("aria-pressed")).toBe("true");
+    expect(groupButton(mounted.container, "界面字号", "自定义").getAttribute("aria-pressed")).toBe("false");
+    expect(mounted.container.querySelector('input[aria-label="自定义界面字号"]')).toBeNull();
+    expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).toEqual({ uiFontPreset: 12, uiFontScale: 1.5 });
   });
 
   it("switches the terminal theme without touching the interface theme", () => {
@@ -197,8 +226,7 @@ describe("AppearanceCard appearance preferences", () => {
 
   it("reset restores theme and appearance defaults and spares unrelated keys", () => {
     localStorage.setItem("nexterm.layout.v1", JSON.stringify({ leftWidth: 300, rightWidth: 400 }));
-    setUiFontPreset(12);
-    setUiFontScale(2);
+    setUiFontSize(24);
     setTerminalFontSize(17);
     setTerminalFontFamily("menlo");
     setTerminalTheme("light");
@@ -227,7 +255,7 @@ describe("AppearanceCard appearance preferences", () => {
     expect(localStorage.getItem("nexterm.layout.v1")).toBe(
       JSON.stringify({ leftWidth: 300, rightWidth: 400 }),
     );
-    expect(document.documentElement.style.getPropertyValue("--nx-ui-scale")).toBe("1");
+    expect(textFactor()).toBe(1);
     expect(document.documentElement.dataset.nxTermTheme).toBe("dark");
   });
 
@@ -269,40 +297,32 @@ describe("AppearanceCard appearance preferences", () => {
 
   it("clickButton helper still finds the reset control by its visible label", () => {
     mounted = mount(createElement(AppearanceCard));
-    act(() => setUiFontScale(1.25));
+    act(() => setUiFontSize(16.5));
     ensureAdvancedOpen(mounted.container);
     clickButton(mounted.container, "恢复默认");
-    expect(getAppearancePrefs().uiFontScale).toBe(1);
+    expect(getAppearancePrefs().uiFontPreset).toBe(13);
   });
 
-  it("advanced settings are collapsed by default and can be toggled manually; non-default preferences no longer auto-expand them", () => {
+  it("shows the everyday controls directly and keeps only contrast and reset in the collapsed advanced panel", () => {
     act(() => resetAppearancePrefs());
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;
     const toggle = advancedToggle(c);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(c.querySelector('[aria-label="界面字号"]')).toBeNull();
+    expect(c.querySelector('[aria-label="界面字号"]')).not.toBeNull();
+    expect(c.querySelector('[aria-label="终端与编辑器主题"]')).not.toBeNull();
+    expect(c.querySelector('button[aria-label="终端字体"]')).not.toBeNull();
+    expect(c.querySelector('[aria-label="终端对比度"]')).toBeNull();
 
     click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(c.querySelector('[aria-label="界面字号"]')).not.toBeNull();
+    expect(c.querySelector('[aria-label="终端对比度"]')).not.toBeNull();
 
     click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(c.querySelector('[aria-label="界面字号"]')).toBeNull();
+    expect(c.querySelector('[aria-label="终端对比度"]')).toBeNull();
 
-    act(() => setUiFontPreset(14.5));
+    act(() => setTerminalContrast("high"));
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(c.querySelector('[aria-label="界面字号"]')).toBeNull();
-
-    mounted.unmount();
-    mounted = mount(createElement(AppearanceCard));
-    const remountedToggle = advancedToggle(mounted.container);
-    expect(remountedToggle.getAttribute("aria-expanded")).toBe("false");
-    expect(mounted.container.querySelector('[aria-label="界面字号"]')).toBeNull();
-
-    click(remountedToggle);
-    expect(remountedToggle.getAttribute("aria-expanded")).toBe("true");
-    expect(groupButton(mounted.container, "界面字号", "14.5").getAttribute("aria-pressed")).toBe("true");
   });
 });

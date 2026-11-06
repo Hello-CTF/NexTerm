@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import {
+  chooseSelectOption,
   click,
   clickButton,
   deferred,
@@ -83,6 +84,12 @@ function iconButton(container: ParentNode, label: string): HTMLButtonElement {
   return button;
 }
 
+function memorySelect(container: ParentNode): HTMLButtonElement {
+  const select = container.querySelector<HTMLButtonElement>('button[aria-label="AI 使用记忆"][aria-haspopup="listbox"]');
+  if (!select) throw new Error("memory choice not found");
+  return select;
+}
+
 function inputByLabel(container: ParentNode, label: string): HTMLInputElement {
   const input = container.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
   if (!input) throw new Error(`Input not found: ${label}`);
@@ -141,15 +148,43 @@ describe("MemoryCard", () => {
     expect(mocks.index).toHaveBeenCalledTimes(2);
   });
 
-  it("toggles the injection opt-in with the read version (CAS)", async () => {
-    mocks.setSettings.mockResolvedValue({ injectionEnabled: true, toolsEnabled: false, version: 4 });
+  it("shows each stored combination of the two switches as one choice", async () => {
+    const cases = [
+      [{ injectionEnabled: false, toolsEnabled: false }, "关闭"],
+      [{ injectionEnabled: true, toolsEnabled: false }, "仅引用记忆"],
+      [{ injectionEnabled: false, toolsEnabled: true }, "仅允许记忆工具"],
+      [{ injectionEnabled: true, toolsEnabled: true }, "引用并允许管理"],
+    ] as const;
+    for (const [stored, label] of cases) {
+      mocks.settings.mockResolvedValue({ ...stored, version: 3 });
+      mounted = mount(createElement(MemoryCard));
+      await flush();
+      expect(memorySelect(mounted.container).textContent).toContain(label);
+      mounted.unmount();
+      mounted = undefined;
+    }
+    expect(mocks.setSettings).not.toHaveBeenCalled();
+  });
+
+  it("writes both switches with the read version (CAS) for every choice", async () => {
+    const choices = [
+      ["仅引用记忆", { injectionEnabled: true, toolsEnabled: false }],
+      ["仅允许记忆工具", { injectionEnabled: false, toolsEnabled: true }],
+      ["引用并允许管理", { injectionEnabled: true, toolsEnabled: true }],
+      ["关闭", { injectionEnabled: false, toolsEnabled: false }],
+    ] as const;
+    let version = 3;
+    mocks.setSettings.mockImplementation(async (_expected: number, patch: object) => ({ ...patch, version: ++version }));
     mounted = mount(createElement(MemoryCard));
     await flush();
-
-    click(inputByLabel(mounted.container, "在 AI 运行时使用记忆"));
-    await flush();
-    expect(mocks.setSettings).toHaveBeenCalledWith(3, { injectionEnabled: true });
-    expect((inputByLabel(mounted.container, "在 AI 运行时使用记忆") as HTMLInputElement).checked).toBe(true);
+    for (const [label, patch] of choices) {
+      const expected = version;
+      chooseSelectOption(mounted.container, "AI 使用记忆", label);
+      await flush();
+      expect(mocks.setSettings).toHaveBeenLastCalledWith(expected, patch);
+      expect(memorySelect(mounted.container).textContent).toContain(label);
+    }
+    expect(mocks.setSettings).toHaveBeenCalledTimes(choices.length);
   });
 
   it("reloads and says so when the settings toggle hits a version conflict", async () => {
@@ -161,7 +196,7 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    click(inputByLabel(mounted.container, "允许模型使用记忆工具"));
+    chooseSelectOption(mounted.container, "AI 使用记忆", "仅允许记忆工具");
     await flush();
     expect(mocks.toast).toHaveBeenCalledWith(
       "error",
@@ -312,7 +347,7 @@ describe("MemoryCard", () => {
     mounted = mount(createElement(MemoryCard));
     await flush();
 
-    const expander = mounted.container.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    const expander = mounted.container.querySelector<HTMLButtonElement>('button[aria-expanded][title="展开正文"]');
     if (!expander) throw new Error("expander not found");
     click(expander);
     await flush();
@@ -419,6 +454,6 @@ describe("MemoryCard", () => {
     expect(text).not.toContain("旧全局记忆在升级时");
     expect(text).not.toContain("其他属主无法读取或修改");
     expect(text).not.toContain("开启了的运行");
-    expect(text).toContain("将选中的记忆加入模型输入，不写入会话历史");
+    expect(text).toContain("AI 不读取也不管理记忆");
   });
 });

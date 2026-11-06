@@ -15,7 +15,9 @@ const SYNC_OPT_IN_GROUPS: { id: SyncOptInGroup; title: string }[] = [
 ];
 
 interface SyncOptInItem {
-  key: keyof SyncKindOptIn;
+  id: string;
+  // Every key the item writes; an item with several keys reads as partly on when the stored values differ.
+  keys: readonly (keyof SyncKindOptIn)[];
   group: SyncOptInGroup;
   summary: string;
   label: string;
@@ -24,75 +26,86 @@ interface SyncOptInItem {
 
 export const SYNC_OPT_IN_ITEMS: SyncOptInItem[] = [
   {
-    key: "knownHost",
+    id: "knownHost",
+    keys: ["knownHost"],
     group: "base",
     summary: "已知主机",
     label: "同步已知主机（主机信任）",
-    hint: "默认开启。关闭后不再同步主机信任，也不会删除服务端已有副本。",
+    hint: "关闭后不再同步，服务端已有副本保留。",
   },
   {
-    key: "aiProfile",
+    id: "aiProfile",
+    keys: ["aiProfile"],
     group: "ai",
     summary: "AI 模型档案",
     label: "同步 AI 模型档案",
-    hint: "默认开启。关闭后不再同步模型档案；含 API 密钥的档案仅在凭据库解锁时同步。",
+    hint: "含 API 密钥的档案仅在凭据库解锁时同步。",
   },
   {
-    key: "aiPermission",
+    id: "aiPermission",
+    keys: ["aiPermission", "aiGrant"],
     group: "ai",
     summary: "AI 权限",
-    label: "同步 AI 权限与拦截规则",
-    hint: "默认开启。关闭后不再同步全局权限模式和危险命令拦截规则。",
+    label: "AI 权限、授权与拦截规则",
+    hint: "权限模式、设备与路径授权、危险命令规则；会话内临时授权不同步。",
   },
   {
-    key: "aiGrant",
-    group: "ai",
-    summary: "AI 授权",
-    label: "同步 AI 授权与权限模式",
-    hint: "默认开启。设备授权、路径授权规则与设备权限模式加密同步；会话内临时授权不同步。",
-  },
-  {
-    key: "preferences",
+    id: "preferences",
+    keys: ["preferences"],
     group: "base",
     summary: "外观快捷键",
     label: "同步外观与快捷键",
-    hint: "默认开启。关闭后不再同步界面外观和快捷键覆盖；定时任务由单独的开关控制。",
+    hint: "界面外观、终端偏好和快捷键覆盖。",
   },
   {
-    key: "stateRules",
+    id: "stateRules",
+    keys: ["stateRules"],
     group: "base",
     summary: "状态规则",
     label: "同步会话状态规则",
-    hint: "默认开启。同步后的规则将应用到本机的会话助手；规则顺序取决于各设备收到的先后。",
+    hint: "规则顺序取决于各设备收到的先后。",
   },
   {
-    key: "skills",
+    id: "skills",
+    keys: ["skills"],
     group: "ai",
     summary: "AI 技能",
     label: "同步自定义 AI 技能与内置技能的修改",
-    hint: "默认开启。仅同步自定义技能，以及对内置技能的修改和禁用；内置技能本身随应用提供。",
+    hint: "内置技能本身随应用提供。",
   },
   {
-    key: "memory",
+    id: "memory",
+    keys: ["memory"],
     group: "ai",
     summary: "AI 记忆",
     label: "同步 AI 记忆",
-    hint: "默认关闭。记忆内容加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
+    hint: "加密同步，离开本机前和写入前都会再次脱敏疑似密钥。",
   },
   {
-    key: "cron",
+    id: "cron",
+    keys: ["cron"],
     group: "automation",
     summary: "定时任务",
     label: "同步 AI 定时任务",
-    hint: "默认关闭。每个任务只在它绑定的设备上运行；其他设备仅显示该任务，可在此改由本机运行或删除。",
+    hint: "任务只在绑定的设备上运行，其他设备可改由本机运行或删除。",
   },
 ];
 
+type SyncOptInState = "on" | "off" | "partial";
+
+export function syncOptInState(item: SyncOptInItem, optIn: SyncKindOptIn): SyncOptInState {
+  const on = item.keys.filter((key) => optIn[key]).length;
+  if (on === item.keys.length) return "on";
+  return on === 0 ? "off" : "partial";
+}
+
 export function syncOptInSummary(optIn: SyncKindOptIn): string {
-  const off = SYNC_OPT_IN_ITEMS.filter((item) => !optIn[item.key]);
-  const on = SYNC_OPT_IN_ITEMS.length - off.length;
+  const notOn = SYNC_OPT_IN_ITEMS.filter((item) => syncOptInState(item, optIn) !== "on");
+  const on = SYNC_OPT_IN_ITEMS.length - notOn.length;
   const base = `已开启 ${on} / ${SYNC_OPT_IN_ITEMS.length} 项`;
-  return off.length === 0 ? base : `${base}，未开启：${off.map((item) => item.summary).join("、")}`;
+  if (notOn.length === 0) return base;
+  const names = notOn.map((item) => (syncOptInState(item, optIn) === "partial" ? `${item.summary}（部分）` : item.summary));
+  return `${base}，未开启：${names.join("、")}`;
 }
 
 export function SyncOptInSection({
@@ -115,21 +128,27 @@ export function SyncOptInSection({
         {SYNC_OPT_IN_GROUPS.map((group) => (
           <fieldset key={group.id} className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0">
             <legend className="mb-1 p-0 text-[11.5px] font-medium text-neutral-500">{group.title}</legend>
-            {SYNC_OPT_IN_ITEMS.filter((item) => item.group === group.id).map((item) => (
-              <label key={item.key} className="flex items-start gap-2">
+            {SYNC_OPT_IN_ITEMS.filter((item) => item.group === group.id).map((item) => {
+              const state = syncOptInState(item, value);
+              return (
+              <label key={item.id} className="flex items-start gap-2">
                 <input
                   type="checkbox"
                   className="mt-0.5 h-4 w-4 shrink-0"
-                  checked={value[item.key]}
+                  checked={state === "on"}
+                  ref={(input) => {
+                    if (input) input.indeterminate = state === "partial";
+                  }}
                   disabled={busy}
-                  onChange={(e) => onChange({ [item.key]: e.target.checked })}
+                  onChange={(e) => onChange(Object.fromEntries(item.keys.map((key) => [key, e.target.checked])) as Partial<SyncKindOptIn>)}
                 />
                 <span className="text-[12px] text-neutral-300">
                   {item.label}
                   <span className="nx-hint block">{item.hint}</span>
                 </span>
               </label>
-            ))}
+              );
+            })}
           </fieldset>
         ))}
       </SummaryDialog>

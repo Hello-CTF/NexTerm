@@ -444,7 +444,7 @@ describe("M166 AI permission and preference sync", () => {
     openDetails();
     await flushUntil(() => text().includes("全局 AI 权限") && text().includes("keybinding.newTerminal"));
     expect(text()).toContain("待推送 2 项");
-    expect(text()).toContain("同步 AI 权限与拦截规则");
+    expect(text()).toContain("AI 权限、授权与拦截规则");
     expect(text()).toContain("同步外观与快捷键");
 
     await runAutoSync();
@@ -469,7 +469,7 @@ describe("M166 AI permission and preference sync", () => {
     openDetails();
     await flushUntil(() => text().includes("dev-1 write_file /var/log/**"));
     expect(text()).toContain("待推送 3 项");
-    expect(text()).toContain("同步 AI 授权与权限模式");
+    expect(text()).toContain("AI 权限、授权与拦截规则");
 
     await runAutoSync();
     await flushUntil(() => mocks.syncPush.mock.calls.length > 0);

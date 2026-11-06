@@ -49,6 +49,21 @@ const CREATE_DRAFT = (): EntryDraft => ({
   secrets: "reject",
 });
 
+// The two stored switches are independent, so all four combinations are offered as one choice.
+type MemoryMode = "off" | "inject" | "tools" | "both";
+
+const MEMORY_MODES: { value: MemoryMode; label: string; description: string; injectionEnabled: boolean; toolsEnabled: boolean }[] = [
+  { value: "off", label: "关闭", description: "AI 不读取也不管理记忆", injectionEnabled: false, toolsEnabled: false },
+  { value: "inject", label: "仅引用记忆", description: "把相关记忆加入模型输入，模型不能修改", injectionEnabled: true, toolsEnabled: false },
+  { value: "tools", label: "仅允许记忆工具", description: "模型可用工具保存、查找和删除记忆", injectionEnabled: false, toolsEnabled: true },
+  { value: "both", label: "引用并允许管理", description: "引用相关记忆，并允许模型保存、查找和删除", injectionEnabled: true, toolsEnabled: true },
+];
+
+function memoryMode(settings: Pick<MemorySettings, "injectionEnabled" | "toolsEnabled">): MemoryMode {
+  if (settings.injectionEnabled) return settings.toolsEnabled ? "both" : "inject";
+  return settings.toolsEnabled ? "tools" : "off";
+}
+
 export function MemoryCard() {
   const pushToast = useUi((s) => s.pushToast);
 
@@ -101,21 +116,24 @@ export function MemoryCard() {
     void reload();
   }, [reload]);
 
-  const toggleSetting = async (key: "injectionEnabled" | "toolsEnabled", next: boolean) => {
+  const chooseMode = async (mode: MemoryMode) => {
     if (!settings || settingsBusy) return;
+    const next = MEMORY_MODES.find((option) => option.value === mode);
+    if (!next || memoryMode(settings) === mode) return;
     setSettingsBusy(true);
     try {
       const updated = await memoryApi.setSettings(settings.version, {
-        [key]: next,
+        injectionEnabled: next.injectionEnabled,
+        toolsEnabled: next.toolsEnabled,
       });
       if (aliveRef.current) setSettings(updated);
     } catch (e) {
       const conflict = versionConflict(e);
       if (conflict && aliveRef.current) {
-        pushToast("error", `开关已在其他位置被修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
+        pushToast("error", `记忆设置已在其他位置被修改（版本 ${conflict.expected} → ${conflict.actual}），已重新读取`);
         await reload();
       } else {
-        pushToast("error", `保存开关失败：${describeError(e)}`);
+        pushToast("error", `保存记忆设置失败：${describeError(e)}`);
         if (aliveRef.current) await reload();
       }
     } finally {
@@ -257,35 +275,21 @@ export function MemoryCard() {
       </div>
       <p className="nx-hint mb-3.5">让 AI 跨会话记住长期事实，例如「重启安排在 02:00」。</p>
 
-      <div className="mb-3 flex flex-col gap-2 border-b border-neutral-800/60 pb-3">
-        <label className="flex cursor-pointer items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] text-neutral-200">在 AI 运行时使用记忆</div>
-            <p className="nx-hint mt-0.5">将选中的记忆加入模型输入，不写入会话历史。</p>
-          </div>
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 shrink-0"
-            aria-label="在 AI 运行时使用记忆"
-            disabled={!settings || settingsBusy}
-            checked={settings?.injectionEnabled ?? false}
-            onChange={(e) => void toggleSetting("injectionEnabled", e.target.checked)}
-          />
-        </label>
-        <label className="flex cursor-pointer items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[12.5px] text-neutral-200">允许模型使用记忆工具</div>
-            <p className="nx-hint mt-0.5">模型可保存、查找和删除记忆；计划模式与子代理不可用。</p>
-          </div>
-          <input
-            type="checkbox"
-            className="mt-0.5 h-4 w-4 shrink-0"
-            aria-label="允许模型使用记忆工具"
-            disabled={!settings || settingsBusy}
-            checked={settings?.toolsEnabled ?? false}
-            onChange={(e) => void toggleSetting("toolsEnabled", e.target.checked)}
-          />
-        </label>
+      <div className="mb-3 border-b border-neutral-800/60 pb-3">
+        <div className="nx-setting-label mb-1.5" data-setting="memory-mode">AI 使用记忆</div>
+        <Select
+          ariaLabel="AI 使用记忆"
+          className="w-full sm:w-auto"
+          value={settings ? memoryMode(settings) : ""}
+          placeholder="正在加载…"
+          options={MEMORY_MODES.map(({ value, label, description }) => ({ value, label, description }))}
+          disabled={!settings || settingsBusy}
+          onChange={(value) => void chooseMode(value as MemoryMode)}
+        />
+        <p className="nx-hint mt-1.5">
+          {settings ? MEMORY_MODES.find((mode) => mode.value === memoryMode(settings))?.description : ""}
+          {settings?.toolsEnabled ? "；计划模式与子代理不可用记忆工具。" : ""}
+        </p>
       </div>
 
       {draft === null ? (

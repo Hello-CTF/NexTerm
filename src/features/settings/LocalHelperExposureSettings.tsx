@@ -85,23 +85,25 @@ export function LocalHelperExposureSettings() {
 
   const badge = status.state === "online" ? "nx-badge nx-badge-green" : status.state === "off" ? "nx-badge" : "nx-badge nx-badge-amber";
   return (
-    <label className="mb-3.5 flex cursor-pointer items-start gap-3" data-local-helper-exposure={status.state}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-[12.5px] text-neutral-200">
-          向服务器账号开放本机终端
-          <span className={badge}>{STATE_TEXT[status.state] ?? status.state}</span>
+    <section className="nx-card" data-setting="local-helper-exposure">
+      <label className="flex cursor-pointer items-start gap-3" data-local-helper-exposure={status.state}>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-[12.5px] text-neutral-200">
+            向服务器账号开放本机终端
+            <span className={badge}>{STATE_TEXT[status.state] ?? status.state}</span>
+          </div>
+          <p className="nx-hint mt-1">{EXPOSE_HINT}</p>
+          {status.reason && <p className="nx-hint mt-1 text-amber-300">{status.reason}</p>}
         </div>
-        <p className="nx-hint mt-1">{EXPOSE_HINT}</p>
-        {status.reason && <p className="nx-hint mt-1 text-amber-300">{status.reason}</p>}
-      </div>
-      <input
-        type="checkbox"
-        className="mt-0.5 h-4 w-4 shrink-0"
-        aria-label="向服务器账号开放本机终端"
-        checked={status.enabled}
-        disabled={busy}
-        onChange={() => void toggle()}
-      />
-    </label>
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4 shrink-0"
+          aria-label="向服务器账号开放本机终端"
+          checked={status.enabled}
+          disabled={busy}
+          onChange={() => void toggle()}
+        />
+      </label>
+    </section>
   );
 }

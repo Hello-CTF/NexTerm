@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import { readFileSync } from "node:fs";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { declared, installCompiledCSS, styleRules } from "./lib/cssom";
 
 let installed: HTMLStyleElement[];
@@ -92,8 +92,34 @@ describe("unified text factor wiring", () => {
   it("bootstraps appearance before first paint in index.html", () => {
     expect(html).toContain("nexterm.appearance.v1");
     expect(html).toContain("--nx-ui-text-factor");
-    expect(html).toContain("--nx-ui-font-size");
     expect(html).toContain("nxTermTheme");
     expect(html.indexOf("nexterm.appearance.v1")).toBeLessThan(html.indexOf('src="/src/main.tsx"'));
   });
+
+  it("bootstraps the same factor as the preferences module for custom and legacy sizes", async () => {
+    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1];
+    expect(script).toBeTruthy();
+    const cases = [
+      { uiFontPreset: 13, uiFontScale: 1 },
+      { uiFontPreset: 15.5, uiFontScale: 1 },
+      { uiFontPreset: 14.5, uiFontScale: 1.5 },
+      { uiFontPreset: 12, uiFontScale: 1.3 },
+      { uiFontPreset: 99, uiFontScale: 0.2 },
+    ];
+    const root = document.documentElement;
+    try {
+      for (const stored of cases) {
+        localStorage.setItem("nexterm.appearance.v1", JSON.stringify(stored));
+        vi.resetModules();
+        const expected = (await import("../app/preferences")).uiTextFactor();
+        root.style.removeProperty("--nx-ui-text-factor");
+        new Function(script!)();
+        expect(Number(root.style.getPropertyValue("--nx-ui-text-factor")), JSON.stringify(stored)).toBeCloseTo(expected, 10);
+      }
+    } finally {
+      localStorage.removeItem("nexterm.appearance.v1");
+      root.style.removeProperty("--nx-ui-text-factor");
+    }
+  });
+
 });

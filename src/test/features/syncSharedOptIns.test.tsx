@@ -39,8 +39,8 @@ function openDialog() {
 
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const dialogBoxes = () => [...(dialog()?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? [])];
-const boxFor = (key: string) => {
-  const item = SYNC_OPT_IN_ITEMS.find((candidate) => candidate.key === key)!;
+const boxFor = (id: string) => {
+  const item = SYNC_OPT_IN_ITEMS.find((candidate) => candidate.id === id)!;
   return dialogBoxes().find((box) => box.closest("label")?.textContent === item.label + item.hint)!;
 };
 
@@ -50,7 +50,7 @@ describe("Shared SyncOptInSection toggles", () => {
     await flush();
     expect(mounted!.container.querySelectorAll('input[type="checkbox"]').length).toBe(0);
     expect(dialog()).toBeNull();
-    expect(mounted!.container.textContent).toContain("已开启 2 / 9 项，未开启：AI 模型档案、AI 授权、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
+    expect(mounted!.container.textContent).toContain("已开启 1 / 8 项，未开启：AI 模型档案、AI 权限（部分）、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
   });
 
   it("renders the canonical title and description copy for every toggle, grouped, inside the dialog", async () => {
@@ -68,16 +68,16 @@ describe("Shared SyncOptInSection toggles", () => {
     // Safety notes must survive the move into the dialog
     // Runbook templates are no longer a switch; they were folded into multi-step snippets.
     expect(dialog()!.textContent).not.toMatch(/Runbook|执行流程/);
-    expect(SYNC_OPT_IN_ITEMS.map((item) => item.key)).not.toContain("runbookTemplates");
+    expect(SYNC_OPT_IN_ITEMS.flatMap((item) => item.keys)).not.toContain("runbookTemplates");
     expect(dialog()!.textContent).toContain("含 API 密钥的档案仅在凭据库解锁时同步");
     expect(dialog()!.textContent).toContain("离开本机前和写入前都会再次脱敏疑似密钥");
     expect([...dialog()!.querySelectorAll("legend")].map((l) => l.textContent)).toEqual(["基础", "AI", "自动化"]);
   });
 
   it("builds the summary from the on/off state", () => {
-    expect(syncOptInSummary(ALL_ON)).toBe("已开启 9 / 9 项");
-    expect(syncOptInSummary(ALL_OFF)).toBe("已开启 0 / 9 项，未开启：已知主机、AI 模型档案、AI 权限、AI 授权、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
-    expect(syncOptInSummary(MIXED)).toContain("已开启 2 / 9 项");
+    expect(syncOptInSummary(ALL_ON)).toBe("已开启 8 / 8 项");
+    expect(syncOptInSummary(ALL_OFF)).toBe("已开启 0 / 8 项，未开启：已知主机、AI 模型档案、AI 权限、外观快捷键、状态规则、AI 技能、AI 记忆、定时任务");
+    expect(syncOptInSummary(MIXED)).toContain("已开启 1 / 8 项");
   });
 
   it("derives checked state from value and reports the corresponding key patch through onChange", async () => {
@@ -87,10 +87,36 @@ describe("Shared SyncOptInSection toggles", () => {
     await flush();
     expect(boxFor("knownHost").checked).toBe(true);
     expect(boxFor("aiProfile").checked).toBe(false);
-    for (const [key, next] of [["knownHost", false], ["aiProfile", true], ["aiPermission", false], ["aiGrant", true], ["preferences", true], ["stateRules", true], ["skills", true], ["memory", true], ["cron", true]] as const) {
+    for (const [key, next] of [["knownHost", false], ["aiProfile", true], ["preferences", true], ["stateRules", true], ["skills", true], ["memory", true], ["cron", true]] as const) {
       click(boxFor(key));
       expect(onChange).toHaveBeenLastCalledWith({ [key]: next });
     }
+  });
+
+  it("shows AI permission and grant sync as one item that writes both keys", async () => {
+    const onChange = mountSection({ ...ALL_OFF });
+    await flush();
+    openDialog();
+    await flush();
+    const box = boxFor("aiPermission");
+    expect(box.closest("label")?.textContent).toContain("AI 权限、授权与拦截规则");
+    expect(box.checked).toBe(false);
+    expect(box.indeterminate).toBe(false);
+    click(box);
+    expect(onChange).toHaveBeenLastCalledWith({ aiPermission: true, aiGrant: true });
+  });
+
+  it("shows the merged item as partly on when the two stored keys differ, and turns both on from there", async () => {
+    const onChange = mountSection({ ...ALL_OFF, aiPermission: true, aiGrant: false });
+    await flush();
+    expect(mounted!.container.textContent).toContain("AI 权限（部分）");
+    openDialog();
+    await flush();
+    const box = boxFor("aiPermission");
+    expect(box.indeterminate).toBe(true);
+    expect(box.checked).toBe(false);
+    click(box);
+    expect(onChange).toHaveBeenLastCalledWith({ aiPermission: true, aiGrant: true });
   });
 
   it("updates the summary after the dialog closes and keeps focus handling via Escape", async () => {
@@ -104,7 +130,7 @@ describe("Shared SyncOptInSection toggles", () => {
     click(done);
     await flush();
     expect(dialog()).toBeNull();
-    expect(mounted!.container.textContent).toContain("已开启 3 / 9 项");
+    expect(mounted!.container.textContent).toContain("已开启 2 / 8 项");
     openDialog();
     await flush();
     act(() => {

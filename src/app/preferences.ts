@@ -587,7 +587,7 @@ export interface AppearancePrefs {
   terminalContrast: TerminalContrast;
 }
 
-export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5];
+export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5, 16, 18, 20];
 export const UI_FONT_SCALE_STEPS: readonly number[] = [1, 1.25, 1.5, 1.75, 2];
 export const UI_FONT_SIZE_MIN = 8;
 export const UI_FONT_SIZE_MAX = 32;
@@ -722,8 +722,14 @@ export function getResolvedTerminalTheme(): ResolvedTerminalTheme {
     : appearance.terminalTheme;
 }
 
+// The stored preset and scale only ever combine into one effective interface text size; new choices are saved as
+// that size with scale 1, while an older preset/scale pair keeps rendering as its product.
+export function uiFontSize(prefs: AppearancePrefs = appearance): number {
+  return prefs.uiFontScale * prefs.uiFontPreset;
+}
+
 export function uiTextFactor(prefs: AppearancePrefs = appearance): number {
-  return (prefs.uiFontScale * prefs.uiFontPreset) / 13;
+  return uiFontSize(prefs) / 13;
 }
 
 // mirrorAppearanceOverrides overwrites this device's appearance values with the synced account overrides: the device
@@ -748,8 +754,6 @@ function mirrorAppearanceOverrides(): void {
 function applyAppearance(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.style.setProperty("--nx-ui-font-size", `${appearance.uiFontPreset}px`);
-  root.style.setProperty("--nx-ui-scale", String(appearance.uiFontScale));
   root.style.setProperty("--nx-ui-text-factor", String(uiTextFactor()));
   root.dataset.nxTermTheme = getResolvedTerminalTheme();
 }
@@ -789,16 +793,10 @@ function commitAppearance(next: AppearancePrefs): void {
   if (changedFields.length > 0) notifyAppearance();
 }
 
-export function setUiFontPreset(value: UiFontPreset): void {
+export function setUiFontSize(value: number): void {
   const next = parsePreset(value);
-  if (appearance.uiFontPreset === next) return;
-  commitAppearance({ ...appearance, uiFontPreset: next });
-}
-
-export function setUiFontScale(value: number): void {
-  const next = parseScale(value);
-  if (appearance.uiFontScale === next) return;
-  commitAppearance({ ...appearance, uiFontScale: next });
+  if (appearance.uiFontPreset === next && appearance.uiFontScale === 1) return;
+  commitAppearance({ ...appearance, uiFontPreset: next, uiFontScale: 1 });
 }
 
 export function setTerminalFontSize(value: number): void {

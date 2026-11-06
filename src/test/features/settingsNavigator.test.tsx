@@ -40,6 +40,7 @@ vi.mock("../../features/settings/KnownHostsCard", () => ({ KnownHostsCard: () =>
 vi.mock("../../features/ai/ModelPanel", () => ({ ModelManager: () => null }));
 
 import { SettingsView } from "../../features/settings/SettingsView";
+import { showSettingsSection } from "../../features/settings/settingsNavigation";
 import { useAuth } from "../../features/auth/store";
 import { useUi } from "../../app/store";
 
@@ -80,8 +81,9 @@ function tocToggle(): HTMLButtonElement {
   return el;
 }
 
-const GROUP_LABELS = ["界面与终端", "AI", "安全", "账号与数据", "更新与诊断"];
-const GENERAL_TOC = ["界面与终端", "外观", "终端", "状态规则", "快捷键", "AI", "安全", "账号与数据", "更新与诊断"];
+const GROUP_LABELS = ["外观", "终端", "通知", "快捷键与快捷命令", "AI", "安全", "账号与数据", "关于"];
+// A group with a single section lists no sub-entries.
+const APPEARANCE_TOC = GROUP_LABELS;
 
 function groupShown(id: string): boolean {
   return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;
@@ -125,12 +127,13 @@ describe("Settings section navigation", () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     expect(chips().map((c) => c.textContent?.trim())).toEqual(GROUP_LABELS);
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(GENERAL_TOC);
-    expect(groupShown("general")).toBe(true);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(APPEARANCE_TOC);
+    expect(groupShown("appearance")).toBe(true);
     expect(groupShown("ai")).toBe(false);
     // Hidden groups stay mounted, so every section keeps a real target.
     for (const id of [
-      "settings-appearance", "settings-terminal", "settings-state-rules", "settings-shortcuts", "settings-ai-model", "settings-ai-rules",
+      "settings-appearance", "settings-terminal", "settings-state-rules", "settings-notifications", "settings-shortcuts",
+      "settings-quick-commands", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-vault", "settings-known-hosts", "settings-production",
       "settings-account", "settings-bundle", "settings-share",
     ]) {
@@ -147,14 +150,30 @@ describe("Settings section navigation", () => {
     click(chips().find((c) => c.textContent?.trim() === "安全")!);
     await flush();
     expect(groupShown("security")).toBe(true);
-    expect(groupShown("general")).toBe(false);
+    expect(groupShown("appearance")).toBe(false);
     expect(localStorage.getItem("nexterm.settingsGroup.v1")).toBe("security");
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["界面与终端", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与数据", "更新与诊断"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与数据", "关于"]);
 
     mounted.unmount();
     mounted = withClient(createElement(SettingsView));
     await flush();
     expect(groupShown("security")).toBe(true);
+  });
+
+  it("opens the first group when the remembered group no longer exists", async () => {
+    localStorage.setItem("nexterm.settingsGroup.v1", "general");
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    expect(groupShown("appearance")).toBe(true);
+  });
+
+  it("keeps existing deep links working: a link to the terminal section opens the terminal group", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    act(() => showSettingsSection("settings-terminal"));
+    await flush();
+    expect(groupShown("terminal")).toBe(true);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "终端", "状态规则", "通知", "快捷键与快捷命令", "AI", "安全", "账号与数据", "关于"]);
   });
 
   it("scrolls to a section of the open group from the TOC and marks it current", async () => {
@@ -183,13 +202,13 @@ describe("Settings section navigation", () => {
     expect(tocToggle().getAttribute("aria-expanded")).toBe("false");
     const icons = tocButtons();
     expect(icons.map((b) => b.getAttribute("aria-label"))).toEqual(GROUP_LABELS);
-    expect(icons.find((b) => b.getAttribute("aria-current") === "true")?.getAttribute("aria-label")).toBe("界面与终端");
+    expect(icons.find((b) => b.getAttribute("aria-current") === "true")?.getAttribute("aria-label")).toBe("外观");
     click(icons.find((b) => b.getAttribute("aria-label") === "AI")!);
     await flush();
     expect(groupShown("ai")).toBe(true);
     click(tocToggle());
     await flush();
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["界面与终端", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "技能", "记忆", "安全", "账号与数据", "更新与诊断"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "模型", "AI 信息脱敏", "AI 拦截规则", "技能", "记忆", "安全", "账号与数据", "关于"]);
   });
 
   it("persists TOC expansion state to local storage", async () => {

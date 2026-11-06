@@ -48,7 +48,7 @@ import { SettingsView } from "../../features/settings/SettingsView";
 import { AuditView } from "../../features/settings/AuditView";
 import { useUi } from "../../app/store";
 import { KEYBINDING_ACTIONS } from "../../app/keybindings";
-import { UI_FONT_SCALE_STEPS } from "../../app/preferences";
+import { UI_FONT_PRESETS, getInputPrefs, setSelectionAutoCopy } from "../../app/preferences";
 import { setWindowsPlatform } from "../../app/platform";
 
 const PERMISSIONS = { mode: "read_write" as const, dangerRules: ["kubectl delete"] };
@@ -119,24 +119,23 @@ describe("SettingsView responsive structure", () => {
     expect(grid!.querySelectorAll(".nx-kbd").length).toBe(KEYBINDING_ACTIONS.length);
   });
 
-  it("allows the UI font scale segment to wrap while other segments stay on one line", async () => {
+  it("offers the interface font sizes in one wrapping segment with a custom entry", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
     const container = mounted.container;
-    clickButton(document.getElementById("settings-appearance")!, "高级设置");
     const segmentByLabel = (label: string) =>
       [...container.querySelectorAll(".nx-segment")].find(
         (s) => s.getAttribute("aria-label") === label,
       );
-    const scale = segmentByLabel("界面文字倍率");
-    expect(scale).toBeTruthy();
-    expect(scale!.className).toContain("flex-wrap");
-    const items = scale!.querySelectorAll(".nx-segment-item");
-    expect(items.length).toBe(UI_FONT_SCALE_STEPS.length);
-    expect([...items].map((it) => it.textContent)).toEqual(
-      UI_FONT_SCALE_STEPS.map((step) => `${Math.round(step * 100)}%`),
-    );
-    for (const label of ["界面主题", "界面字号", "终端与编辑器主题"]) {
+    expect(segmentByLabel("界面文字倍率")).toBeUndefined();
+    const size = segmentByLabel("界面字号");
+    expect(size).toBeTruthy();
+    expect(size!.className).toContain("flex-wrap");
+    expect([...size!.querySelectorAll(".nx-segment-item")].map((it) => it.textContent)).toEqual([
+      ...UI_FONT_PRESETS.map(String),
+      "自定义",
+    ]);
+    for (const label of ["界面主题", "终端与编辑器主题"]) {
       expect(segmentByLabel(label)?.className ?? "").not.toContain("flex-wrap");
     }
   });
@@ -149,9 +148,20 @@ describe("SettingsView responsive structure", () => {
       (b) => b.textContent?.trim() === "高级设置",
     )!;
     expect(appearanceToggle.getAttribute("aria-expanded")).toBe("false");
-    expect(appearance.querySelector('[aria-label="界面字号"]')).toBeNull();
+    expect(appearance.querySelector('[aria-label="终端对比度"]')).toBeNull();
     click(appearanceToggle);
-    expect(appearance.querySelector('[aria-label="界面字号"]')).not.toBeNull();
+    expect(appearance.querySelector('[aria-label="终端对比度"]')).not.toBeNull();
+
+    const terminal = document.getElementById("settings-terminal")!;
+    const terminalToggle = [...terminal.querySelectorAll("button")].find(
+      (b) => b.textContent?.trim() === "高级设置",
+    )!;
+    expect(terminalToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(terminal.querySelector('[aria-label="终端 GPU 加速"]')).toBeNull();
+    expect(terminal.querySelector('button[aria-label="终端回滚行数"]')).toBeNull();
+    click(terminalToggle);
+    expect(terminal.querySelector('[aria-label="终端 GPU 加速"]')).not.toBeNull();
+    expect(terminal.querySelector('button[aria-label="终端回滚行数"]')).not.toBeNull();
 
     const aiModel = document.getElementById("settings-ai-model")!;
     const connToggle = [...aiModel.querySelectorAll("button")].find(
@@ -313,13 +323,35 @@ describe("SettingsView responsive structure", () => {
     }
   });
 
-  it("explains the host-lifetime limit of local background terminals", async () => {
+  it("hides the durable history limit without a signed-in account instead of disabling it", async () => {
     mounted = withClient(createElement(SettingsView));
     await flush();
-    const terminal = document.getElementById("settings-terminal");
-    expect(terminal?.textContent).toContain("支持后台运行的交互终端");
-    expect(terminal?.textContent).toContain("本机后台终端仅在应用运行期间保留");
-    expect(terminal?.textContent).toContain("不等同于持久 SSH 终端");
+    const terminal = document.getElementById("settings-terminal")!;
+    clickButton(terminal, "高级设置");
+    expect(terminal.querySelector('[aria-label="终端 GPU 加速"]')).not.toBeNull();
+    expect(terminal.querySelector('[aria-label="持久终端历史上限"]')).toBeNull();
+    expect(terminal.textContent).not.toContain("持久终端历史上限");
+  });
+
+  it("groups clipboard and paste settings, including copy on select, in the terminal card", async () => {
+    mounted = withClient(createElement(SettingsView));
+    await flush();
+    const terminal = document.getElementById("settings-terminal")!;
+    const clipboard = [...terminal.querySelectorAll("h3")].find((h) => h.textContent === "剪贴板与粘贴")?.parentElement;
+    expect(clipboard).toBeTruthy();
+    expect(clipboard!.querySelector('[data-setting="osc52"]')).not.toBeNull();
+    expect(clipboard!.querySelector('[data-setting="terminal-confirm-multiline-paste"]')).not.toBeNull();
+    expect(clipboard!.querySelector('input[aria-label="选中自动复制"]')).not.toBeNull();
+    expect(terminal.querySelector(".nx-card-title")?.parentElement?.textContent).not.toContain("OSC 52");
+    expect(document.getElementById("settings-shortcuts")!.querySelector('input[aria-label="选中自动复制"]')).toBeNull();
+
+    const copy = clipboard!.querySelector<HTMLInputElement>('input[aria-label="选中自动复制"]')!;
+    expect(copy.checked).toBe(false);
+    click(copy);
+    expect(getInputPrefs().selectionAutoCopy).toBe(true);
+    expect(JSON.parse(localStorage.getItem("nexterm.inputPrefs.v1") ?? "{}").selectionAutoCopy).toBe(true);
+    expect(clipboard!.querySelector<HTMLInputElement>('input[aria-label="选中自动复制"]')!.checked).toBe(true);
+    act(() => setSelectionAutoCopy(false));
   });
 });
 

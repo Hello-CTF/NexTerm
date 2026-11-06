@@ -73,6 +73,10 @@ function key(k: string): void {
   });
 }
 
+function optionStartingWith(label: string): HTMLElement | undefined {
+  return [...mounted!.container.querySelectorAll<HTMLElement>('[role="option"]')].find((o) => o.textContent?.startsWith(label));
+}
+
 function groupShown(id: string): boolean {
   return mounted!.container.querySelector<HTMLElement>(`[data-settings-group="${id}"]`)?.hidden === false;
 }
@@ -146,7 +150,7 @@ describe("Settings search", () => {
     click(option!);
     await flush();
     expect(groupShown("security")).toBe(true);
-    expect(groupShown("general")).toBe(false);
+    expect(groupShown("appearance")).toBe(false);
     expect(searchInput().value).toBe("");
     // The fixture vault is not password-protected, so the setting itself is not rendered
     // and the section is the only possible target.
@@ -168,22 +172,44 @@ describe("Settings search", () => {
   });
 
   it("opens the collapsed advanced panel that holds a setting before highlighting it", async () => {
-    expect(mounted!.container.querySelector('[data-setting="terminal-font-family"]')).toBeNull();
-    search("终端字体");
-    click(mounted!.container.querySelector<HTMLElement>('[role="option"]')!);
+    expect(mounted!.container.querySelector('[data-setting="terminal-contrast"]')).toBeNull();
+    search("对比度");
+    click(optionStartingWith("终端对比度")!);
     await flush();
-    const target = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-font-family"]');
+    const target = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-contrast"]');
     expect(target).not.toBeNull();
     expect(mounted!.container.querySelectorAll(".nx-setting-flash")).toHaveLength(1);
     expect(target!.classList.contains("nx-setting-flash")).toBe(true);
     expect(document.activeElement).toBe(target);
 
-    search("选中自动复制");
-    click(mounted!.container.querySelector<HTMLElement>('[role="option"]')!);
+    expect(mounted!.container.querySelector('[data-setting="terminal-scrollback"]')).toBeNull();
+    search("回滚行数");
+    click(optionStartingWith("终端回滚行数")!);
     await flush();
-    const copy = mounted!.container.querySelector<HTMLElement>('[data-setting="copy-on-select"]');
-    expect(copy).not.toBeNull();
-    expect(copy!.classList.contains("nx-setting-flash")).toBe(true);
+    expect(groupShown("terminal")).toBe(true);
+    const scrollback = mounted!.container.querySelector<HTMLElement>('[data-setting="terminal-scrollback"]');
+    expect(scrollback).not.toBeNull();
+    expect(scrollback!.classList.contains("nx-setting-flash")).toBe(true);
+  });
+
+  it("finds moved settings in their new places", async () => {
+    const sectionOf = optionStartingWith;
+    search("选中自动复制");
+    expect(sectionOf("选中自动复制")?.textContent).toContain("终端");
+    search("快捷命令");
+    expect(sectionOf("快捷命令")?.textContent).toContain("快捷命令");
+    search("系统通知");
+    const notifications = sectionOf("系统通知");
+    expect(notifications?.textContent).toContain("通知");
+    click(notifications!);
+    await flush();
+    expect(groupShown("notifications")).toBe(true);
+    const target = mounted!.container.querySelector<HTMLElement>('[data-setting="system-notifications"]');
+    expect(target?.classList.contains("nx-setting-flash")).toBe(true);
+    search("倍率");
+    expect(resultLabels()).toContain("界面字号");
+    search("端口发现");
+    expect(sectionOf("端口发现")?.textContent).toContain("终端");
   });
 
   it("finds the terminal link activation setting and highlights its anchor", async () => {
@@ -336,8 +362,9 @@ describe("Settings search focus and anchors", () => {
       click(toggle);
     }
     await flush();
+    // MemoryCard is mocked in this file, so its setting has no anchor here.
     const missing = SETTINGS_ITEMS.filter(
-      (item) => (item.available?.() ?? true) && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
+      (item) => item.id !== "memory-mode" && (item.available?.() ?? true) && !mounted!.container.querySelector(`[data-setting="${item.id}"]`),
     ).map((item) => item.id);
     expect(missing).toEqual([]);
     expect(SETTINGS_ITEMS.find((item) => item.id === "ctrl-v-paste")?.available?.()).toBe(true);
