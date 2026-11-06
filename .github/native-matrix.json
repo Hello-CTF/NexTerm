@@ -142,5 +142,11 @@
     "os": "windows",
     "arch": "amd64",
     "kind": "agent"
+  },
+  {
+    "runner": "windows-11-arm",
+    "os": "windows",
+    "arch": "arm64",
+    "kind": "agent"
   }
 ]

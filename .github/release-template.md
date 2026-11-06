@@ -39,6 +39,7 @@ Windows 安装器不含 Authenticode 签名，首次运行可能显示未知发�
 | Linux amd64 / ARM64 | `nexterm-agent_linux_amd64_*.tar.gz` / `nexterm-agent_linux_arm64_*.tar.gz` |
 | macOS（Apple Silicon / Intel） | `nexterm-agent_macos_arm64_*.tar.gz` / `nexterm-agent_macos_amd64_*.tar.gz` |
 | Windows 10/11 x64 | `nexterm-agent_windows_amd64_*.zip` |
+| Windows 10/11 ARM64 | `nexterm-agent_windows_arm64_*.zip` |
 
 tar.gz 内只有 `nexterm-agent`、zip 内只有 `nexterm-agent.exe` 单个可执行文件；接入主机请使用 `install-device.sh`（Linux/macOS）或 `install-device.ps1`（Windows PowerShell），脚本自动下载对应资产并完成设备接入。已接入且版本不低于 1.3.0 的设备代理可在设备上执行 `nexterm-agent update`（别名 `upgrade`；`--check` 仅检查，`--yes` 跳过确认，`--force` 允许重装或降级）从官方 release 升级；1.2.x 的设备代理没有该命令，需再执行一次 install-device 脚本。
 

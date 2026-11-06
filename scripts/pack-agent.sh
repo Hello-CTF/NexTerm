@@ -17,9 +17,9 @@ while [ $# -gt 0 ]; do
       cat <<'PACK_HELP_EOF'
 Usage: scripts/pack-agent.sh [options]
 
-Package the five device-agent release archives from verified CI binaries:
+Package the six device-agent release archives from verified CI binaries:
 nexterm-agent_<linux|macos>_<arch>_<version>.tar.gz (tar root: nexterm-agent)
-and nexterm-agent_windows_amd64_<version>.zip (zip root: nexterm-agent.exe).
+and nexterm-agent_windows_<arch>_<version>.zip (zip root: nexterm-agent.exe).
 scripts/build.mjs owns compilation/versioning.
 
 Options:
@@ -62,7 +62,7 @@ sha256_of() {
 }
 
 mkdir -p "$OUT"
-for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+for spec in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
   os="${spec%-*}"
   arch="${spec#*-}"
   suffix=""
