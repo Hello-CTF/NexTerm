@@ -174,8 +174,6 @@ export function ForwardSettingsPanel() {
 
   return (
     <section aria-label="转发设置" className="flex flex-col gap-3 text-[12px]">
-      <PortDiscoverySetting />
-
       <div>
         <div className="mb-1 font-medium text-neutral-200">自动启动规则</div>
         <div className="nx-hint mb-2">
