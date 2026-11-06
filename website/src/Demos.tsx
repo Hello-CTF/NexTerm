@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, type ComponentType, type KeyboardEvent } from "react";
+import { lazy, Suspense, useEffect, useRef, type ComponentType, type KeyboardEvent } from "react";
 
 export type Language = "zh" | "en";
 export const DEMO_MODES = ["terminal", "ai", "background", "history", "files", "docker", "diagnostics", "database"] as const;
@@ -6,17 +6,45 @@ export type DemoMode = (typeof DEMO_MODES)[number];
 
 type DemoComponent = ComponentType<{ language: Language }>;
 
-// Each demo loads on first activation; only the history and background demos pull in xterm.
-const demos: Record<DemoMode, DemoComponent> = {
-  terminal: lazy(() => import("./demos/TerminalDemo")),
-  ai: lazy(() => import("./demos/AiDemo")),
-  background: lazy(() => import("./demos/BackgroundDemo")),
-  history: lazy(() => import("./demos/HistoryDemo")),
-  files: lazy(() => import("./demos/FilesDemo")),
-  docker: lazy(() => import("./demos/DockerDemo")),
-  diagnostics: lazy(() => import("./demos/DiagnosticsDemo")),
-  database: lazy(() => import("./demos/DatabaseDemo")),
+// Each demo is its own chunk; only the history and background demos pull in xterm.
+const loaders: Record<DemoMode, () => Promise<{ default: DemoComponent }>> = {
+  terminal: () => import("./demos/TerminalDemo"),
+  ai: () => import("./demos/AiDemo"),
+  background: () => import("./demos/BackgroundDemo"),
+  history: () => import("./demos/HistoryDemo"),
+  files: () => import("./demos/FilesDemo"),
+  docker: () => import("./demos/DockerDemo"),
+  diagnostics: () => import("./demos/DiagnosticsDemo"),
+  database: () => import("./demos/DatabaseDemo"),
 };
+
+const demos: Record<DemoMode, DemoComponent> = {
+  terminal: lazy(loaders.terminal),
+  ai: lazy(loaders.ai),
+  background: lazy(loaders.background),
+  history: lazy(loaders.history),
+  files: lazy(loaders.files),
+  docker: lazy(loaders.docker),
+  diagnostics: lazy(loaders.diagnostics),
+  database: lazy(loaders.database),
+};
+
+// preloadDemo starts fetching a demo chunk; the module cache makes repeated calls free.
+function preloadDemo(mode: DemoMode): void {
+  void loaders[mode]().catch(() => undefined);
+}
+
+// preloadAllDemos fetches every demo once the page is idle after first paint, so switching tabs never waits on the
+// network; a tab hovered or focused earlier is fetched at once by preloadDemo.
+function preloadAllDemos(): () => void {
+  const run = () => DEMO_MODES.forEach(preloadDemo);
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(run, { timeout: 3000 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(run, 1500);
+  return () => window.clearTimeout(id);
+}
 
 // [tab label, window title, one sentence on what the demo shows]
 type DemoCopy = Record<DemoMode, [label: string, title: string, caption: string]>;
@@ -57,6 +85,8 @@ export function FeatureDemos({ language, mode, onChange }: { language: Language;
   const [, title, caption] = t.demos[mode];
   const Demo = demos[mode];
 
+  useEffect(() => preloadAllDemos(), []);
+
   const select = (next: DemoMode, focus: boolean) => {
     onChange(next);
     const tab = tabRefs.current[next];
@@ -91,6 +121,8 @@ export function FeatureDemos({ language, mode, onChange }: { language: Language;
         className={name === mode ? "active" : ""}
         onClick={() => select(name, false)}
         onKeyDown={onKeyDown}
+        onPointerEnter={() => preloadDemo(name)}
+        onFocus={() => preloadDemo(name)}
       >{t.demos[name][0]}</button>)}
     </div>
     <div className="window demo-window">
