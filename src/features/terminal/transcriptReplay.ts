@@ -4,6 +4,16 @@ export const TRANSCRIPT_KIND_OUTPUT = 0;
 export const TRANSCRIPT_KIND_INPUT = 1;
 export const TRANSCRIPT_KIND_RESIZE = 2;
 
+// Playback speeds the replay view offers; the website demo offers the same.
+export const REPLAY_SPEEDS = [1, 2, 5, 10] as const;
+export const REPLAY_TICK_MS = 50;
+export const REPLAY_THEME = {
+  background: "#101217",
+  foreground: "#c6cbd6",
+  cursor: "#101217",
+  selectionBackground: "#2c3e5d",
+};
+
 export interface ReplayChunk {
   seq: number;
   ts: number;

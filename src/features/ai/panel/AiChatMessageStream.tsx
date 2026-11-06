@@ -3,6 +3,7 @@ import { modelApi } from "../../../ipc/commands";
 import { IconAlert, IconRefresh, IconBot, IconShield, IconInfo, IconList } from "../../../ui/icons";
 import { useUi } from "../../../app/store";
 import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, permanentScopeText, interceptionRuleFromCard } from "./aiSidebarShared";
+import { CONFIRM_ACTION_LABELS, CONFIRM_ALWAYS_BLOCK_LABEL } from "./aiConfirmLabels";
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
 import type { AiChatCtx } from "./aiChatCtx";
 
@@ -169,7 +170,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                   disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow")}
                 >
-                  允许一次
+                  {CONFIRM_ACTION_LABELS.allow}
                 </button>
                 {confirmCard.sessionScope && (
                   <button
@@ -178,7 +179,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_session")}
                   >
-                    本会话允许
+                    {CONFIRM_ACTION_LABELS.allow_session}
                   </button>
                 )}
                 {confirmCard.permanentScope && (
@@ -188,7 +189,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_persistent")}
                   >
-                    永久允许
+                    {CONFIRM_ACTION_LABELS.allow_persistent}
                   </button>
                 )}
                 <button
@@ -197,7 +198,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
-                  拒绝
+                  {CONFIRM_ACTION_LABELS.deny}
                 </button>
                 <span className="nx-spacer" />
                 {interceptionRuleFromCard(confirmCard) && (
@@ -212,7 +213,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                       ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
                     }}
                   >
-                    始终拦截
+                    {CONFIRM_ALWAYS_BLOCK_LABEL}
                   </button>
                 )}
               </div>

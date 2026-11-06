@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
-import { Bot, CalendarClock, Container, Download, History, ListChecks, Moon, Network, Search, Server, Share2, SquareTerminal, Sun } from "lucide-react";
-import { FeatureDemo, type DemoMode } from "./Demos";
+import { useState } from "react";
+import { Bot, CalendarClock, Container, Download, History, ListChecks, Moon, Network, Play, Search, Server, Share2, SquareTerminal, Sun } from "lucide-react";
+import { FeatureDemos, type DemoMode } from "./Demos";
 import { DownloadPicker } from "./Download";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
@@ -9,7 +9,6 @@ const readme = { zh: `${repository}#readme`, en: `${repository}/blob/master/READ
 type Language = "zh" | "en";
 type Theme = "dark" | "light";
 type Item = [title: string, text: string];
-type View = [name: DemoMode, label: string, title: string, alt: string];
 
 const featureIcons = [SquareTerminal, Bot, Container, Network, Share2, Server];
 
@@ -20,7 +19,6 @@ const copy = {
     heroLead: "一个工作台", heroAccent: "管好每一台服务器",
     intro: "断线不丢的持久终端，能动手排查的 AI 助手，文件、容器和数据库都在同一个窗口里。",
     download: "下载 NexTerm", source: "GitHub 源码",
-    views: [["shell", "终端", "deploy@web-01 — 终端与命令块", "NexTerm 的终端与命令块界面"], ["files", "文件", "web-01 — 远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["docker", "Docker", "web-01 — 容器", "NexTerm 的 Docker 容器列表、日志与启停界面"], ["db", "数据库", "app — SQL 查询", "NexTerm 的数据库表浏览与 SQL 查询界面"]] as View[],
     featuresKicker: "功能", featuresTitle: "日常运维需要的，都在一个窗口里",
     features: [
       ["持久终端", "关闭窗口或网络中断后，持久终端在后台继续运行，回来就能接管并补回错过的输出。持久终端组件不可用时，新标签会标明是临时终端。"],
@@ -30,7 +28,7 @@ const copy = {
       ["设备与协作", "一行命令接入设备，查看指标并接收告警。同一终端可多端同时查看，也可分享为限时链接，默认只读。"],
       ["自托管", "支持多用户、双因素认证和审计日志，凭据加密保存。数据库可选 SQLite、PostgreSQL、MySQL 或 MariaDB。"],
     ] as Item[],
-    aiWindow: "AI 助手 — 排查 API 延迟", replayWindow: "终端历史 — 时间轴回放",
+    seeDemo: "在演示中查看",
     aiKicker: "AI 助手", aiTitle: "不止给出建议，还能动手排查", aiText: "AI 读取当前主机的上下文，执行排查与修复，每一步都可查看。",
     aiPoints: [["先确认，再执行", "命令和文件改动先给你看；也可按主机和路径限时授权。"], ["计划、定时与记忆", "计划模式先出方案，可按 cron 定时巡检，长期记忆保存环境约定。"], ["任意模型", "OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设。"]] as Item[],
     replayKicker: "命令块与回放", replayTitle: "回看任意时刻的终端输出", replayText: "每条命令和输出折叠成块，完整录制可以搜索并按时间轴回放。",
@@ -51,7 +49,6 @@ const copy = {
     heroLead: "One workbench for", heroAccent: "every server you run",
     intro: "Persistent terminals that survive disconnects, an AI assistant that investigates and fixes, and files, containers, and databases in one window.",
     download: "Download NexTerm", source: "View on GitHub",
-    views: [["shell", "Terminal", "deploy@web-01 — terminal and command blocks", "NexTerm terminal and command blocks"], ["files", "Files", "web-01 — remote files", "NexTerm SFTP file tree and remote editor"], ["docker", "Docker", "web-01 — containers", "NexTerm Docker container list, logs and controls"], ["db", "Database", "app — SQL query", "NexTerm database table browser and SQL query"]] as View[],
     featuresKicker: "Features", featuresTitle: "Everything day-to-day ops needs, in one window",
     features: [
       ["Persistent terminals", "When the window closes or the network drops, persistent terminals keep running in the background; come back, take over, and catch up on missed output. When the persistent terminal helper is unavailable, new tabs are marked as temporary terminals."],
@@ -61,7 +58,7 @@ const copy = {
       ["Devices and collaboration", "Enroll a device with one command, watch its metrics, and get alerts. Several devices can view one terminal at once, or share it as a time-limited link, read-only by default."],
       ["Self-hosted", "Multi-user accounts, two-factor authentication, and audit logs, with credentials stored encrypted. Choose SQLite, PostgreSQL, MySQL, or MariaDB."],
     ] as Item[],
-    aiWindow: "AI assistant — investigating API latency", replayWindow: "Terminal history — timeline replay",
+    seeDemo: "See it in the demo",
     aiKicker: "AI assistant", aiTitle: "Not just advice. It investigates.", aiText: "The assistant reads the current host's context, then investigates and fixes, with every step visible.",
     aiPoints: [["Approve, then run", "Commands and file changes are shown to you first, or granted per host and path for a set time."], ["Plans, schedules, memory", "Plan mode proposes first, cron jobs run checks, and long-term memory keeps your conventions."], ["Bring any model", "Any OpenAI-compatible endpoint, with DeepSeek, Kimi, GLM, and Ollama presets."]] as Item[],
     replayKicker: "Command blocks and replay", replayTitle: "See the terminal at any moment", replayText: "Each command and its output fold into a block, and full recordings can be searched and replayed on a timeline.",
@@ -82,13 +79,6 @@ function GithubIcon({ size = 19 }: { size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.42-2.7 5.4-5.27 5.68.41.36.78 1.06.78 2.14 0 1.55-.01 2.79-.01 3.17 0 .31.21.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" /></svg>;
 }
 
-function Window({ title, children, className = "" }: { title: string; children: ReactNode; className?: string }) {
-  return <div className={`window ${className}`}>
-    <div className="window-bar" aria-hidden="true"><span /><span /><span /><div>{title}</div></div>
-    {children}
-  </div>;
-}
-
 function SectionHeading({ kicker, title, text }: { kicker: string; title: string; text?: string }) {
   return <div className="section-heading">
     <span className="kicker">{kicker}</span>
@@ -101,9 +91,16 @@ function App() {
   const browserLanguage = typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("en") ? "en" : "zh";
   const [language, setLanguage] = useState<Language>(() => (localStorage.getItem("nexterm.site.language") as Language) || browserLanguage);
   const [theme, setTheme] = useState<Theme>(document.documentElement.dataset.theme === "light" ? "light" : "dark");
-  const [view, setView] = useState(0);
+  const [view, setView] = useState<DemoMode>("terminal");
   const t = copy[language];
-  const current = t.views[view];
+
+  // showDemo switches the hero demo and brings it into view, with the selected tab focused.
+  const showDemo = (mode: DemoMode) => {
+    setView(mode);
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+    document.getElementById("demo")?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    window.requestAnimationFrame(() => document.getElementById(`demo-tab-${mode}`)?.focus({ preventScroll: true }));
+  };
 
   const toggleTheme = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -145,12 +142,7 @@ function App() {
             <a className="button button-primary" href="#download"><Download size={17} />{t.download}</a>
             <a className="button button-secondary" href={repository} target="_blank" rel="noreferrer"><GithubIcon size={17} />{t.source}</a>
           </div>
-          <div className="view-tabs" role="tablist" aria-label={t.nav[0]}>
-            {t.views.map(([name, label], index) => <button key={name} type="button" role="tab" aria-selected={index === view} className={index === view ? "active" : ""} onClick={(event) => { setView(index); event.currentTarget.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); }}>{label}</button>)}
-          </div>
-          <Window title={current[2]} className="hero-window">
-            <div role="tabpanel" aria-label={current[3]}><FeatureDemo mode={current[0]} language={language} /></div>
-          </Window>
+          <FeatureDemos language={language} mode={view} onChange={setView} />
         </div>
       </section>
 
@@ -170,29 +162,29 @@ function App() {
         <div className="container split">
           <div>
             <SectionHeading kicker={t.aiKicker} title={t.aiTitle} text={t.aiText} />
-            <div className="point-grid point-grid-single">
-              {t.aiPoints.map(([title, text], index) => {
-                const Icon = [ListChecks, CalendarClock, Bot][index];
-                return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
-              })}
-            </div>
+            <button type="button" className="button button-secondary" onClick={() => showDemo("ai")}><Play size={16} />{t.seeDemo}</button>
           </div>
-          <Window title={t.aiWindow} className="split-window"><FeatureDemo mode="ai" language={language} /></Window>
+          <div className="point-grid point-grid-single">
+            {t.aiPoints.map(([title, text], index) => {
+              const Icon = [ListChecks, CalendarClock, Bot][index];
+              return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
+            })}
+          </div>
         </div>
       </section>
 
       <section className="section" id="replay">
-        <div className="container split split-reverse">
+        <div className="container split">
           <div>
             <SectionHeading kicker={t.replayKicker} title={t.replayTitle} text={t.replayText} />
-            <div className="point-grid point-grid-single">
-              {t.replayPoints.map(([title, text], index) => {
-                const Icon = [SquareTerminal, History, Search][index];
-                return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
-              })}
-            </div>
+            <button type="button" className="button button-secondary" onClick={() => showDemo("history")}><Play size={16} />{t.seeDemo}</button>
           </div>
-          <Window title={t.replayWindow} className="split-window"><FeatureDemo mode="replay" language={language} /></Window>
+          <div className="point-grid point-grid-single">
+            {t.replayPoints.map(([title, text], index) => {
+              const Icon = [SquareTerminal, History, Search][index];
+              return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
+            })}
+          </div>
         </div>
       </section>
 

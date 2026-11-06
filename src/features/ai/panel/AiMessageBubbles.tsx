@@ -7,6 +7,7 @@ import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
 import { toolLabel, extractUrls } from "./aiSidebarShared";
+import { TOOL_USER_DENIED } from "./aiConfirmLabels";
 
 
 export const ChatBubble = memo(function ChatBubble({
@@ -202,7 +203,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const preview = item.summary ?? "";
   const output = full || preview;
   const blocked = !running && !item.ok && !item.panic ? blockedOutcome(output) : null;
-  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : "已拒绝本次操作，未执行。") : output;
+  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : TOOL_USER_DENIED.body) : output;
   const headline = !running && !item.ok ? firstLine(body) : "";
   return (
     <div
@@ -222,13 +223,13 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           <span className="min-w-0 flex-1 truncate font-mono text-neutral-400">{item.display}</span>
         </button>
         <span className="sr-only">
-          {running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : blocked ? (blocked.by === "policy" ? "已被权限策略拦截" : "你已拒绝") : "工具执行失败"}
+          {running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : blocked ? (blocked.by === "policy" ? "已被权限策略拦截" : TOOL_USER_DENIED.status) : "工具执行失败"}
         </span>
         {item.panic && !running ? <span className="nx-badge nx-badge-red">出错</span> : null}
         {blocked ? (
           <span className={blocked.by === "policy" ? "nx-badge nx-badge-amber" : "nx-badge"}>
             <IconShield size={10} className="mr-0.5 inline" />
-            {blocked.by === "policy" ? "已拦截" : "已拒绝"}
+            {blocked.by === "policy" ? "已拦截" : TOOL_USER_DENIED.badge}
           </span>
         ) : running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />

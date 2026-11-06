@@ -246,4 +246,4 @@ export const ASSET_ICON_COMPONENTS: Record<string, LucideIcon> = {
   Disc3,
 };
 
-export const ASSET_ICON_NAMES = Object.keys(ASSET_ICON_COMPONENTS);
+export const ASSET_ICON_NAMES = /* @__PURE__ */ Object.keys(ASSET_ICON_COMPONENTS);
