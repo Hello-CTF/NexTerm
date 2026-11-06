@@ -203,13 +203,17 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     }
     const restoreGeneration = ++restoreGenerationRef.current;
     const generation = activeRunRef.current?.generation ?? null;
+    let runsFailed = false;
     try {
       const [msgs, runs] = await Promise.all([
         aiApi.messages(id),
         aiApi
           .runs(id, RUN_RESTORE_LIMIT)
           .then((rows) => rows.slice(0, RUN_RESTORE_LIMIT))
-          .catch((): AiRunDto[] => []),
+          .catch((): AiRunDto[] => {
+            runsFailed = true;
+            return [];
+          }),
       ]);
       if (
         !isRestoreActive(restoreGeneration) ||
@@ -223,7 +227,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
       setConversationError(null);
       setEditing(null);
       setHistoryOpen(false);
-      void restoreConversationRuns(id, restoreGeneration, runs);
+      void restoreConversationRuns(id, restoreGeneration, runs, !runsFailed);
     } catch (e) {
       if (isRestoreActive(restoreGeneration)) {
         pushToast("error", `未能打开会话：${describeError(e)}`);
@@ -396,6 +400,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
   const pickRef = (ref: RefChip) => {
     if (!refs.some((r) => r.id === ref.id) && refs.length >= MAX_MESSAGE_REFS) {
       pushToast("info", `每条消息最多引用 ${MAX_MESSAGE_REFS} 项，请先移除一个引用`);
+      setAtOpen(false);
       return;
     }
     setRefs((prev) => (prev.some((r) => r.id === ref.id) ? prev : [...prev, ref]));

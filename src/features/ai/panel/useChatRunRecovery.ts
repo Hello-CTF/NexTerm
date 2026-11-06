@@ -12,7 +12,7 @@ import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 
 export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut) {
-  const { isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef } = p;
+  const { tabId, isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef } = p;
 
 
   const replayHitl = useCallback(async (generation: number, jobId: string) => {
@@ -407,6 +407,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
     id: string,
     restoreGeneration: number,
     preloaded?: AiRunDto[],
+    preloadedKnown = true,
   ) => {
     let runs: AiRunDto[];
     if (preloaded) {
@@ -422,8 +423,13 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
     setConversationRuns(runs);
     // A tab unmounted mid-run leaves its busy entry and run control behind; nothing in the old
     // instance can clear them any more, so the restoring instance either adopts the run or releases them.
+    // Only a successfully fetched run list proves nothing is running; a takeover is not a
+    // conversation run, so a live one on this panel's terminal keeps its busy entry.
     const releaseOrphanedBusy = () => {
+      if (!preloadedKnown) return;
       if (activeRunRef.current && !activeRunRef.current.settled) return;
+      const takeover = useUi.getState().takeover;
+      if (takeover && takeover.tabId === tabId) return;
       if (aiTabBusyIds.has(tabKey) && aiTabRunControls.get(tabKey) !== runControl) clearAiTabRun(tabKey);
     };
     if (runs.length === 0) {
@@ -521,7 +527,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
     setActiveRun(bindAiRunJob(createAiRun(generation), resumable.run.id));
     setBusy(true);
     void replayHitl(generation, resumable.run.id);
-  }, [isRestoreActive, setConversationRuns, activeRunRef, disposeRestoredChannel, restoredChannelRef, scheduleExpiryWatch, tabKey, runControl, setActiveRun, setBusy, replayHitl, runSequenceRef, stream, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, clearResyncState]);
+  }, [tabId, isRestoreActive, setConversationRuns, activeRunRef, disposeRestoredChannel, restoredChannelRef, scheduleExpiryWatch, tabKey, runControl, setActiveRun, setBusy, replayHitl, runSequenceRef, stream, pushAgentEvent, resyncRun, maybeOpenAiCreatedTerminal, settleRestoredRun, pushToast, clearResyncState]);
 
   const restoreConversation = useCallback(
     async (id: string) => {
@@ -546,13 +552,17 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       }
       let msgs: MessageDto[];
       let runs: AiRunDto[];
+      let runsFailed = false;
       try {
         [msgs, runs] = await Promise.all([
           aiApi.messages(id),
           aiApi
             .runs(id, RUN_RESTORE_LIMIT)
             .then((rows) => rows.slice(0, RUN_RESTORE_LIMIT))
-            .catch((): AiRunDto[] => []),
+            .catch((): AiRunDto[] => {
+              runsFailed = true;
+              return [];
+            }),
         ]);
       } catch (e) {
         if (!isRestoreActive(restoreGeneration, id)) return;
@@ -563,7 +573,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       setConversationError(null);
       resetMessageHistory(id, msgs, runs);
       if (!isRestoreActive(restoreGeneration, id) || runSequenceRef.current !== startSeq) return;
-      void restoreConversationRuns(id, restoreGeneration, runs);
+      void restoreConversationRuns(id, restoreGeneration, runs, !runsFailed);
     },
     [clearMessageHistory, isLifecycleActive, isRestoreActive, resetMessageHistory, restoreConversationRuns, restoreGenerationRef, runSequenceRef, setConversationError, stream, updateConversationId],
   );

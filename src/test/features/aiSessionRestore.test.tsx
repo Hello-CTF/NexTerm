@@ -222,6 +222,33 @@ describe("AiSidebar session restore", () => {
     expect(view!.container.querySelector('[aria-label="AI 正在回答"]')).toBeNull();
   });
 
+  it("keeps the busy entry when the run list could not be fetched", async () => {
+    bindConversation("conv-1", "Investigate 502");
+    setAiTabBusy("tab-bound", true);
+    aiTabRunControls.set("tab-bound", () => Promise.resolve(false));
+    mocks.runs.mockRejectedValue(new Error("offline"));
+    mountSidebar();
+    await flushUntil(() => textOf(view!).includes("旧回答"));
+    await flushReplay();
+
+    expect(aiTabBusyIds.has("tab-bound")).toBe(true);
+  });
+
+  it("keeps the busy entry of a live takeover on this panel's terminal", async () => {
+    bindConversation("conv-1", "Investigate 502");
+    setAiTabBusy("tab-bound", true);
+    aiTabRunControls.set("tab-bound", () => Promise.resolve(false));
+    useUi.setState({
+      takeover: { tabId: "t1", jobId: "job-t", token: "tok-2", task: "Install nginx", allowWrite: true, startedAt: Date.now() },
+    });
+    mocks.runs.mockResolvedValue([runOf({ status: "completed", finishedAt: 2000 })]);
+    mountSidebar();
+    await flushUntil(() => mocks.runs.mock.calls.length > 0);
+    await flushReplay();
+
+    expect(aiTabBusyIds.has("tab-bound")).toBe(true);
+  });
+
   it("adopts a still-running run left by an unmounted tab so it can be stopped", async () => {
     bindConversation("conv-1", "Investigate 502");
     const foreign = () => Promise.resolve(false);
