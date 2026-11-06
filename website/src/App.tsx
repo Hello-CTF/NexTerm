@@ -121,7 +121,6 @@ function App() {
         <a className="brand" href="#top" aria-label={t.home}><img src="/brand/nexterm-mark-128.png" alt="" /><span>NexTerm</span></a>
         <nav className="nav-links" aria-label="Site navigation">
           {["features", "download", "faq"].map((id, index) => <a key={id} href={`#${id}`}>{t.nav[index]}</a>)}
-          <a href={repository} target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="header-actions">
           <a className="icon-link" href={repository} target="_blank" rel="noreferrer" aria-label="GitHub"><GithubIcon size={19} /></a>
