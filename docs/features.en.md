@@ -1,0 +1,33 @@
+# Features
+
+**English** | [中文](features.md) · [Back to README](../README_EN.md)
+
+The images use sample data; try the live demos on the [website](https://nexterm.work/). The app UI is in Chinese; Chinese labels are shown in parentheses.
+
+## Terminals
+
+- **Persistent terminals**: they keep running after you close the tab, quit the app, or lose the network, can be taken over or ended from Background sessions (后台会话), and can be re-attached from any signed-in device with missed output replayed. Supported for desktop local terminals and, once enabled, SSH and managed-device sessions; a terminal opened while the persistent terminal helper is not ready is a temporary terminal with the reason shown, and a temporary terminal ends on disconnect. WinRM non-interactive terminals end when closed. Mobile has no local terminals.
+- **Session status**: badges, the header inbox, and desktop notifications point at the sessions that need you, based on terminal bells, program notifications, and rules you save; NexTerm does not guess from the screen. The rail's session overview (会话总览) is a status wall (shown at launch on mobile).
+- **Many devices**: several devices can watch and type into one terminal at once, and the size follows the last device that typed; a following device can also choose "Use this device's size" (用本机尺寸). To see a desktop's local terminals from a phone, turn on "Expose local terminals to the server account" (向服务器账号开放本机终端) in Settings: this hands that computer's command line, as the current user, to the server account's administrators, so enable it only for a server you trust.
+- **Terminal tools**: command blocks, searchable history and replay (recordings export as asciicast), broadcast, snippets (multi-step with parameters; in the current terminal the steps are sent in turn without waiting for the previous one to finish), nestable splits, and a jump palette (Ctrl/Cmd+Shift+P) that ranks sessions by how much they need you and also searches command history. Links broken across lines or box borders are still detected and collected in a link panel; links open in the system browser by default, or inside NexTerm if you choose (browser mode can only embed https pages, and mobile always uses the system browser). The session sidebar (Ctrl/Cmd+Shift+B) lists the current host's ports, recent files, and commands; terminals and tabs of hosts whose environment is marked production are outlined in red.
+
+## AI assistant
+
+20+ tools for commands, files, Docker, and terminal output; writes show the command or diff before they run, with plan mode, per-host and per-path grants, scheduled tasks, and long-term memory. Works with any OpenAI-compatible API, with DeepSeek, Kimi, GLM, and Ollama presets. For optional local redaction, see [AI privacy redaction](ai-privacy.en.md).
+
+## Everyday operations
+
+- **Files, containers, and databases**: SFTP, WinRM, and device file browsing with in-place editing (a per-asset option keeps a `.nexterm-bak` backup before AI file writes and Compose redeploys overwrite a file); Docker containers, logs, and images, with logs of several containers merged by time, Compose redeploys that show the exact command and directory and run only after you confirm, and forwarding and opening of published container ports on SSH hosts; MySQL/MariaDB, PostgreSQL, and Redis; local forwarding and SOCKS5; host import from `~/.ssh/config` or Termius (macOS only).
+- **Remote desktop**: RDP and VNC assets open inside NexTerm, directly or through an SSH host or managed device. A server's TLS certificate is pinned after you confirm its fingerprint on first connect, and a changed certificate is refused until you confirm it again. Text clipboard can be sent and fetched by hand (and turned off per asset), and read-only viewing and key combinations are supported; RDP can change the resolution during a connection when the server allows it, and connections are recorded in the audit log. A VNC connection is unencrypted when the server offers no X.509 TLS, so route it through an SSH host.
+- **Host diagnostics**: host details list listening ports and processes (searchable and paged; ports filter to exposed or loopback-only and link to their processes and back; processes have a tree view; ending a process asks first and is audited), run TCP or HTTP connectivity tests from the host, and search the host's recorded terminal output. Port discovery is off by default; when on, it runs `ss`/`netstat` on the remote host periodically while a terminal is connected, points out new ports, and only on your click creates a temporary forward bound to 127.0.0.1 that is removed with the session; in browser mode the forward lives on the server and only the server machine can reach it.
+
+## Devices, sharing, and self-hosting
+
+- **Devices and sharing**: enroll the device agent with one command (see [Device enrollment](device-agent.en.md)); devices connect outward and report metrics. Share a terminal as a time-limited public link or with registered users (terminal only), read-only by default and revocable. The server can alert on managed devices by CPU, memory, and disk usage thresholds and by time offline; alerts show in the inbox and desktop notifications, and no email or webhook is sent.
+- **Self-hosted**: multi-user accounts with TOTP; encrypted sync (state rules and AI skills sync by default; AI memory and scheduled jobs are separate opt-ins under Settings → Account and sync (账号与同步); see [Security](security.en.md) for what the encryption covers); a credential vault; audit logs, with an audit timeline that merges audit, command, and device online/offline records and can be filtered and exported as CSV or JSON; SQLite, PostgreSQL, MySQL, or MariaDB. In browser mode, terminals and workspaces live on the server.
+
+## Screenshots
+
+| AI assistant | Remote files | Terminal replay |
+| --- | --- | --- |
+| ![AI assistant chat with command confirmation](../website/public/images/ai-dark.jpg) | ![SFTP file tree and remote editing](../website/public/images/files-dark.jpg) | ![Terminal history timeline replay](../website/public/images/replay-dark.jpg) |

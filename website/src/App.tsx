@@ -1,60 +1,80 @@
 import { useState, type ReactNode } from "react";
-import {
-  Activity, Bell, BellRing, Bot, CalendarClock, Container, Database, Download, Eye, FolderTree, Gauge, History,
-  KeyRound, Layers, Link, ListChecks, Lock, Monitor, Moon, Network, Radio, ScrollText, Share2, ShieldCheck, Smartphone,
-  SquareTerminal, Sun, Users, Workflow,
-} from "lucide-react";
+import { Bot, CalendarClock, Container, Download, History, ListChecks, Moon, Network, Search, Server, Share2, SquareTerminal, Sun } from "lucide-react";
 import { FeatureDemo, type DemoMode } from "./Demos";
 import { DownloadPicker } from "./Download";
 
 const repository = "https://github.com/Hello-CTF/NexTerm";
 const releases = `${repository}/releases/latest`;
+const readme = { zh: `${repository}#readme`, en: `${repository}/blob/master/README_EN.md` };
 type Language = "zh" | "en";
 type Theme = "dark" | "light";
 type Item = [title: string, text: string];
 type View = [name: DemoMode, label: string, title: string, alt: string];
 
-const toolboxIcons = [FolderTree, Container, Database, Network, Activity, Share2, Layers, SquareTerminal, Monitor, Gauge, ListChecks, BellRing];
-const trustIcons = [Lock, KeyRound, Users, ScrollText, ShieldCheck, Database];
+const featureIcons = [SquareTerminal, Bot, Container, Network, Share2, Server];
 
 const copy = {
   zh: {
-    nav: ["AI 助手", "持久终端", "工具箱", "安全", "下载"], home: "NexTerm 首页", themeDark: "切换到浅色主题", themeLight: "切换到深色主题", language: "EN",
-    eyebrow: "开源 · 跨平台 · 可自托管",
+    nav: ["功能", "下载", "FAQ"], home: "NexTerm 首页", themeDark: "切换到浅色主题", themeLight: "切换到深色主题", language: "EN",
+    eyebrow: "开源 · 可自托管",
     heroLead: "一个工作台", heroAccent: "管好每一台服务器",
-    intro: "可接管的持久终端、可执行操作的 AI 助手，加上文件、容器、数据库与设备管理。桌面端安装即可使用，也可部署为团队服务端。",
+    intro: "断线不丢的持久终端，能动手排查的 AI 助手，文件、容器和数据库都在同一个窗口里。",
     download: "下载 NexTerm", source: "GitHub 源码",
-    views: [["shell", "终端", "deploy@web-01 — 终端与命令块", "NexTerm 的 Shell 终端与命令块界面"], ["files", "文件", "web-01 — 远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["docker", "Docker", "web-01 — 容器", "NexTerm 的 Docker 容器列表、日志与启停界面"], ["db", "数据库", "app — SQL 查询", "NexTerm 的数据库表浏览与 SQL 查询界面"]] as View[],
+    views: [["shell", "终端", "deploy@web-01 — 终端与命令块", "NexTerm 的终端与命令块界面"], ["files", "文件", "web-01 — 远程文件", "NexTerm 的 SFTP 文件树与远程编辑界面"], ["docker", "Docker", "web-01 — 容器", "NexTerm 的 Docker 容器列表、日志与启停界面"], ["db", "数据库", "app — SQL 查询", "NexTerm 的数据库表浏览与 SQL 查询界面"]] as View[],
+    featuresKicker: "功能", featuresTitle: "日常运维需要的，都在一个窗口里",
+    features: [
+      ["持久终端", "关闭窗口或网络中断后，持久终端在后台继续运行，回来就能接管并补回错过的输出。持久终端组件不可用时，新标签会标明是临时终端。"],
+      ["AI 助手", "读取终端、文件和容器上下文，直接排查和修复问题。写操作默认先展示命令或 diff，你确认后才执行。支持任意 OpenAI 兼容模型。"],
+      ["日常运维", "远程文件编辑、Docker 容器与日志、MySQL / PostgreSQL / Redis、端口转发，不用在多个工具之间来回切换。"],
+      ["所有连接", "SSH、WinRM、本机终端、Docker 容器、受管设备，以及 RDP / VNC 远程桌面。"],
+      ["设备与协作", "一行命令接入设备，查看指标并接收告警。同一终端可多端同时查看，也可分享为限时链接，默认只读。"],
+      ["自托管", "支持多用户、双因素认证和审计日志，凭据加密保存。数据库可选 SQLite、PostgreSQL、MySQL 或 MariaDB。"],
+    ] as Item[],
     aiWindow: "AI 助手 — 排查 API 延迟", replayWindow: "终端历史 — 时间轴回放",
-    aiKicker: "AI 助手", aiTitle: "不止给出建议，还能执行操作", aiText: "AI 读取当前主机的终端、文件和容器上下文，直接执行排查与修复。每一步均可查看，写入类操作需经你确认。",
-    aiPoints: [["20+ 内置工具", "执行命令、读写和编辑文件、查看 Docker 容器与日志、读取终端输出，可派生子任务并行处理。"], ["先计划，再执行", "计划模式先给出方案；写操作展示命令或文件 diff，可允许一次、本会话允许或拒绝，高危操作始终询问。"], ["按主机授权", "按资产授予执行命令、写文件、发送按键等权限，可限定路径（如 /etc/nginx/**），有效期 1 小时到 30 天。"], ["接管你的终端", "AI 可以在你正在使用的终端里直接输入，按 Esc 随时收回控制。"], ["定时任务与长期记忆", "用 cron 表达式让 AI 定时巡检；长期记忆保存环境约定，拒绝写入密钥类内容。"], ["任意模型", "OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设，支持回退模型和代理；本地模型无需 API Key。"]] as Item[],
-    sessionKicker: "持久终端", sessionTitle: "关闭窗口，持久终端继续运行", sessionText: "桌面端的本机终端默认运行在本机持久终端组件里，成功启用持久终端的 SSH shell 和受管设备 shell 也在后台持续运行。App 重启、网络中断或换一台设备，都能重新接管并补回错过的输出（主机端每个持久终端保留最近约 8 MB 输出）；WinRM 非交互终端随关闭结束。",
-    sessionPoints: [["后台会话与接管", "关闭标签或断线后，持久会话转入后台，可在后台会话接管或终止。标签上的图标说明是否持久；组件准备中或不可用时新建的是临时终端并标明原因，临时终端关闭或断开后无法恢复。替换旧组件会结束其中的会话，替换前需确认。移动端没有本机终端。"], ["先看哪个会话需要处理", "徽章、顶栏收件箱和桌面系统通知指出需要你的会话，来源是终端响铃、程序通知和你保存的规则，不会从屏幕内容猜测。左侧导航栏的「会话总览」是状态墙（手机启动时默认显示）。可直接标记并保存规则，规则可由 AI 起草（尽力脱敏、不保证全部识别），并按设置同步。"], ["多设备协同", "多台设备同时观看并输入同一终端，没有接管步骤；尺寸跟随最后输入的设备，其他设备显示缩放后的画面，也可点「用本机尺寸」改用自己的尺寸。手机只在桌面端运行（托盘常驻也算）并开启「向服务器账号开放本机终端」时能看到本机终端，这会把该电脑当前用户的命令行权限交给该服务器账号的管理方；纯 SSH 主机只能通过手机自己的 SSH 会话或已接入的设备代理看到。"], ["命令块与回放", "每条命令和输出折叠成块；完整录制支持搜索和时间轴回放，可导出为 asciicast。录制包含原始键盘输入，默认仅存本地。跳转面板可搜索命令历史，主机详情页可搜索该主机已录制的输出。本机滚动默认 10000 行，持久终端可「加载更早历史」。"], ["跳转、分屏与重连", "跳转面板（Ctrl/Cmd+Shift+P）按需要程度排序并支持 Alt+数字直开；嵌套分屏，关闭窗格会并入相邻窗格；终端内搜索在非 macOS 为 Ctrl+Shift+F。工作区可直接重新连接，连接存疑时可手动重连；一次输入可广播到多个终端。会话侧栏（Ctrl/Cmd+Shift+B）列出当前主机的端口、最近文件和命令；环境设为生产的主机，终端窗格和标签以红色标出。"], ["链接", "被换行、边框或行首前缀折断的链接也能识别，并汇总到链接面板和跳转面板。默认用系统浏览器打开，可改为在 NexTerm 内打开，用于开发预览和文档页；浏览器模式只能嵌入 https 页面，网站拒绝嵌入时改用系统浏览器，移动端始终用系统浏览器。"]] as Item[],
-    toolboxKicker: "工具箱", toolboxTitle: "日常运维，无需在多个工具间切换",
-    toolbox: [["远程文件", "SFTP、WinRM 与设备文件浏览；内置编辑器直接保存（可按资产开启覆盖前 .nexterm-bak 备份，作用于 AI 写文件与 Compose 重新部署），大日志分页查看，可跟随终端目录。"], ["Docker", "容器启停、实时日志、资源统计、镜像拉取，可直接 exec 进入容器；多个容器的日志可按时间合并查看，Compose 重新部署前显示要执行的命令和目录，确认后才执行；SSH 主机上可转发并打开容器发布的端口。"], ["数据库", "MySQL / MariaDB、PostgreSQL 的 SQL 编辑器与表结构浏览；Redis 键浏览，危险命令有提醒。"], ["端口转发", "本地转发和 SOCKS5 代理，断线后自动重连。"], ["设备管理", "一行命令安装设备代理，设备主动连回服务端；查看 CPU、内存、磁盘曲线并直接打开终端。"], ["终端分享", "为实时会话生成限时公开链接，或把主机终端分享给其他注册用户；默认只读，浏览器模式可授权写入（桌面端创建的公开链接只读），随时吊销，无需交出密码或私钥。"], ["导入主机", "从 ~/.ssh/config 或 Termius（仅 macOS）导入主机与密钥，导入前预览冲突，支持单跳 ProxyJump，多跳条目需手动添加。"], ["多种连接", "SSH（单跳跳板、代理、证书）、WinRM、本机终端、Docker 容器、受管设备，以及 RDP 和 VNC 远程桌面。"], ["远程桌面", "RDP 和 VNC 在 NexTerm 内打开，可经 SSH 主机或受管设备中转；TLS 证书首次连接时确认指纹后固定，变化时拒绝连接。可手动收发文本剪贴板（可按资产关闭），支持只读查看和组合键，RDP 服务器支持时可临时调整分辨率，连接记录写入审计。VNC 服务器不提供 X.509 TLS 时连接不加密，建议经 SSH 主机中转。"], ["主机诊断", "在主机详情页查看监听端口和进程（搜索、树状视图，结束进程需确认并写入审计），从主机发起 TCP / HTTP 连通性测试。端口发现默认关闭，开启后发现新端口时提示，点击才建立只绑定 127.0.0.1 的临时转发；浏览器模式下转发建在服务器上，只有服务器本机能访问。"], ["多步片段", "片段可包含多个步骤和共用参数，单步可要求执行前确认，可在当前终端或多台主机上运行；在当前终端运行时依次发送各步，不等待上一步结束。"], ["设备告警", "服务端按 CPU、内存、磁盘使用率阈值和离线时长为受管设备告警，告警显示在收件箱和桌面通知中，不发送邮件或 Webhook，恢复后自动确认。"]] as Item[],
-    trustKicker: "安全与自托管", trustTitle: "数据留在你自己的机器上",
-    trust: [["加密同步", "桌面端的资产、片段和凭据在客户端加密后跨设备同步，服务端只保存密文、不持久化明文。这不是端到端加密：登录时密码会发给服务端，服务端运营者能据此解开同步数据，请只登录可信的服务端并使用 HTTPS。"], ["凭据保险库", "桌面和移动端使用主密码或系统级保护（DPAPI / Keychain），移动端支持生物识别，支持空闲自动锁定；浏览器模式凭据由服务端 master key 保护的凭据库加密，服务端可解密以建立连接。"], ["多用户与双因素", "服务端多账号、TOTP 双因素认证、登录设备管理。"], ["审计日志", "用户与 AI 的命令、文件写入、设备上下线都有记录；审计时间线合并这些记录，可按主机、来源和时间筛选并导出 CSV 或 JSON。"], ["AI 护栏", "命令分级、输出脱敏、只读或可执行模式。可在设置中下载 astrlink-guard 并开启 AI 信息脱敏，默认关闭；同一会话占位稳定，回复和工具参数自动还原；图片不脱敏，原样发送。识别可能遗漏敏感信息。"], ["选择你的数据库", "默认 SQLite，服务端支持 PostgreSQL、MySQL 和 MariaDB。"]] as Item[],
-    platformKicker: "下载", platformTitle: "桌面安装、服务器部署，也可在手机上继续使用",
-    footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
+    aiKicker: "AI 助手", aiTitle: "不止给出建议，还能动手排查", aiText: "AI 读取当前主机的上下文，执行排查与修复，每一步都可查看。",
+    aiPoints: [["先确认，再执行", "命令和文件改动先给你看；也可按主机和路径限时授权。"], ["计划、定时与记忆", "计划模式先出方案，可按 cron 定时巡检，长期记忆保存环境约定。"], ["任意模型", "OpenAI 兼容接口，内置 DeepSeek、Kimi、GLM、Ollama 预设。"]] as Item[],
+    replayKicker: "命令块与回放", replayTitle: "回看任意时刻的终端输出", replayText: "每条命令和输出折叠成块，完整录制可以搜索并按时间轴回放。",
+    replayPoints: [["命令块", "按命令查看输出，快速定位哪一步出了问题。"], ["时间轴回放", "拖动时间轴，回到任意时刻的终端画面。"], ["历史搜索", "跨会话搜索命令历史和主机上已录制的输出。"]] as Item[],
+    platformKicker: "下载", platformTitle: "桌面安装、服务器部署，也可在手机上预览",
+    faqKicker: "FAQ", faqTitle: "常见问题",
+    faq: [
+      ["关闭 App 后终端还在吗？", "持久终端还在：桌面本机终端，以及已启用持久终端的 SSH 主机和受管设备，会在后台继续运行，重新打开后可在「后台会话」接管并补回输出。持久终端组件不可用时新建的是临时终端，标签会标明，断开即结束；WinRM 终端随关闭结束。"],
+      ["AI 会擅自改动服务器吗？", "不会。执行命令、写文件等操作默认先展示命令或 diff，由你允许或拒绝；只有你按主机和路径授予的权限，在有效期内才免于逐次确认。"],
+      ["同步是端到端加密吗？", "不是。同步数据在客户端加密后上传，服务端只保存密文；但登录时密码会发送给服务端，服务端运营者可以据此解开同步数据。请只登录你信任的服务端，并使用 HTTPS。"],
+      ["支持手机吗？", "Android（arm64）和 iOS / iPadOS（TestFlight）目前是预览版，完成真机签名验收前不作为正式支持平台。手机上没有本机终端，可以连接 SSH 主机和受管设备。"],
+    ] as Item[],
+    footerDocs: "完整功能说明", footerIssue: "问题反馈", privacy: "隐私政策", license: "MIT License",
   },
   en: {
-    nav: ["AI", "Sessions", "Toolbox", "Security", "Download"], home: "NexTerm home", themeDark: "Switch to light theme", themeLight: "Switch to dark theme", language: "中",
-    eyebrow: "Open source · Cross-platform · Self-hostable",
+    nav: ["Features", "Download", "FAQ"], home: "NexTerm home", themeDark: "Switch to light theme", themeLight: "Switch to dark theme", language: "中",
+    eyebrow: "Open source · Self-hostable",
     heroLead: "One workbench for", heroAccent: "every server you run",
-    intro: "Re-attachable persistent terminals and an AI assistant that does the work, plus files, containers, databases, and devices. Ready on your desktop, or deploy it as a server for your team.",
+    intro: "Persistent terminals that survive disconnects, an AI assistant that investigates and fixes, and files, containers, and databases in one window.",
     download: "Download NexTerm", source: "View on GitHub",
-    views: [["shell", "Terminal", "deploy@web-01 — terminal and command blocks", "NexTerm shell terminal and command blocks"], ["files", "Files", "web-01 — remote files", "NexTerm SFTP file tree and remote editor"], ["docker", "Docker", "web-01 — containers", "NexTerm Docker container list, logs and controls"], ["db", "Database", "app — SQL query", "NexTerm database table browser and SQL query"]] as View[],
+    views: [["shell", "Terminal", "deploy@web-01 — terminal and command blocks", "NexTerm terminal and command blocks"], ["files", "Files", "web-01 — remote files", "NexTerm SFTP file tree and remote editor"], ["docker", "Docker", "web-01 — containers", "NexTerm Docker container list, logs and controls"], ["db", "Database", "app — SQL query", "NexTerm database table browser and SQL query"]] as View[],
+    featuresKicker: "Features", featuresTitle: "Everything day-to-day ops needs, in one window",
+    features: [
+      ["Persistent terminals", "When the window closes or the network drops, persistent terminals keep running in the background; come back, take over, and catch up on missed output. When the persistent terminal helper is unavailable, new tabs are marked as temporary terminals."],
+      ["AI assistant", "Reads terminal, file, and container context to investigate and fix problems. Writes show the command or diff first and run only after you approve by default. Works with any OpenAI-compatible model."],
+      ["Everyday ops", "Remote file editing, Docker containers and logs, MySQL / PostgreSQL / Redis, and port forwarding, without switching between tools."],
+      ["Every connection", "SSH, WinRM, local shells, Docker containers, managed devices, and RDP / VNC remote desktops."],
+      ["Devices and collaboration", "Enroll a device with one command, watch its metrics, and get alerts. Several devices can view one terminal at once, or share it as a time-limited link, read-only by default."],
+      ["Self-hosted", "Multi-user accounts, two-factor authentication, and audit logs, with credentials stored encrypted. Choose SQLite, PostgreSQL, MySQL, or MariaDB."],
+    ] as Item[],
     aiWindow: "AI assistant — investigating API latency", replayWindow: "Terminal history — timeline replay",
-    aiKicker: "AI assistant", aiTitle: "Not just advice. It does the work.", aiText: "The assistant reads the terminal, files, and containers of the current host, then investigates and fixes. Every step is visible, and writes wait for your approval.",
-    aiPoints: [["20+ built-in tools", "Run commands, read and edit files, inspect Docker containers and logs, read terminal output, and spawn sub-tasks to work in parallel."], ["Plan, then execute", "Plan mode proposes first. Writes show the command or file diff: allow once, allow for this conversation, or deny. High-risk actions always ask."], ["Per-host grants", "Grant command, file-write, or keystroke permissions per asset, scoped to paths like /etc/nginx/**, for 1 hour to 30 days."], ["Drives your live terminal", "The assistant can type into the terminal you are using. Press Esc to take control back at any time."], ["Scheduled jobs and memory", "Run AI checks on a cron schedule. Long-term memory keeps your environment conventions and rejects secrets."], ["Bring any model", "Any OpenAI-compatible endpoint, with DeepSeek, Kimi, GLM, and Ollama presets, fallback models, and proxies. Local models need no API key."]] as Item[],
-    sessionKicker: "Persistent sessions", sessionTitle: "Close the window. Persistent shells stay.", sessionText: "On desktop, local terminals run by default in a local persistent helper, and SSH shells with persistent terminals enabled and managed-device shells keep running in the background too. After an app restart, a dropped network, or a device switch, take them over and catch up on missed output (the host keeps the most recent 8 MB or so per persistent terminal); WinRM non-interactive terminals end when closed.",
-    sessionPoints: [["Background sessions", "Closed or disconnected persistent tabs move to the background, where you can take them over or end them. A tab icon shows whether a terminal is persistent; one opened while the helper is preparing or unavailable is a temporary terminal with the reason shown, and a temporary terminal cannot be recovered after closing or disconnecting. Replacing an older helper ends its sessions and asks first. Mobile has no local terminals."], ["See which session needs me", "Badges, the header inbox, and desktop system notifications point to sessions that need you, based on terminal bells, program notifications, and rules you save; NexTerm does not guess from screen content. The rail's session overview is a status wall (shown at launch on mobile). Mark a tab once to save a rule, optionally AI-drafted (redacted on a best-effort basis, not guaranteed) and synced per your settings."], ["Multi-device", "Several devices watch and type into one terminal at once, with no take-control step; the size follows the last device that typed and the others show a scaled view or take the size back with one click. The phone sees a desktop's local terminals only while the desktop app runs (the tray counts) and Expose local terminals to the server account is on, which hands that computer's command line, as the current user, to the account's server operators; SSH-only hosts show on the phone only through its own SSH session or enrolled agents."], ["Command blocks and replay", "Each command and its output fold into a block. Full recordings support search and timeline replay. Recordings export as asciicast, include raw keystrokes, and stay local by default. The jump palette searches command history, and host details search a host's recorded output. Local scrollback defaults to 10,000 lines, and persistent terminals can load earlier history."], ["Jump, splits, reconnect", "The jump palette (Ctrl/Cmd+Shift+P) ranks sessions by need and opens the Nth with Alt+digit. Nested splits merge tabs into the adjacent pane when a pane closes; terminal search is Ctrl+Shift+F on non-macOS. Reconnect a whole workspace in one step, or manually while a connection is only suspect; broadcast one input to many terminals. The session sidebar (Ctrl/Cmd+Shift+B) lists the current host's ports, recent files, and commands; terminals and tabs of hosts whose environment is marked production are outlined in red."], ["Links", "Links broken across lines, box borders, or line prefixes are still detected and collected in the link panel and the jump palette. They open in the system browser by default, or inside NexTerm for dev previews and docs if you choose; browser mode can only embed https pages and falls back to the system browser when a site refuses embedding, and mobile always uses the system browser."]] as Item[],
-    toolboxKicker: "Toolbox", toolboxTitle: "Everyday ops without switching tools",
-    toolbox: [["Remote files", "Browse over SFTP, WinRM, or the device agent. The built-in editor backs up before saving, large logs page in, and the browser can follow the terminal directory."], ["Docker", "Start and stop containers, follow logs, view stats, pull images, and exec into a container in one click. Merge logs of several containers by time; Compose redeploys show the exact command and directory and run only after you confirm; forward and open published container ports on SSH hosts."], ["Databases", "SQL editor and schema browser for MySQL, MariaDB, and PostgreSQL. Redis key browser with warnings on dangerous commands."], ["Port forwarding", "Local forwards and SOCKS5 proxies that reconnect automatically."], ["Device fleet", "Install the agent with one command; devices connect out to your server. Watch CPU, memory, and disk charts and open a terminal directly."], ["Terminal sharing", "Share a live session as a time-limited public link, or share a host's terminal with registered users. Read-only by default, writable in browser mode on request (public links created on desktop are read-only), revocable anytime, no passwords or keys handed over."], ["One-click import", "Import hosts and keys from ~/.ssh/config or Termius (macOS only) with a conflict preview and single-hop ProxyJump; add multi-hop entries manually."], ["Every connection", "SSH with a single jump host, proxies, and certificates; WinRM; local shells; Docker containers; managed devices; and RDP and VNC remote desktops."], ["Remote desktop", "RDP and VNC open inside NexTerm, directly or through an SSH host or managed device. TLS certificates are pinned once you confirm the fingerprint, and a changed one is refused. Text clipboard can be sent and fetched by hand (and turned off per asset), with read-only viewing and key combinations; RDP can change resolution mid-session when the server allows it. Connections are audited. A VNC connection is unencrypted when the server offers no X.509 TLS, so route it through an SSH host."], ["Host diagnostics", "Host details list listening ports and processes (search, tree view, and a confirmed, audited kill) and run TCP or HTTP connectivity tests from the host. Port discovery is off by default; when on, it points out new ports and only on your click creates a temporary forward bound to 127.0.0.1; in browser mode the forward lives on the server and only the server machine can reach it."], ["Multi-step snippets", "Snippets can hold several steps with shared parameters, a step can ask before it runs, and they run in the current terminal or across hosts; in the current terminal the steps are sent in turn without waiting for the previous one to finish."], ["Device alerts", "The server alerts on managed devices by CPU, memory, and disk usage thresholds and by time offline. Alerts show in the inbox and desktop notifications, no email or webhook is sent, and they are acknowledged automatically when they recover."]] as Item[],
-    trustKicker: "Security and self-hosting", trustTitle: "Your data stays on your machines",
-    trust: [["Encrypted sync", "Desktop assets, snippets, and credentials are encrypted on the client and synced across devices; the server stores only ciphertext and never persists plaintext. This is not end-to-end encryption: the password is sent to the server at sign-in, so the server operator can use it to decrypt synced data. Sign in only to servers you trust, over HTTPS."], ["Credential vault", "Desktop and mobile use a master password or OS-level protection (DPAPI / Keychain), with biometric unlock on mobile and idle auto-lock. Browser-mode credentials are instead encrypted by the server-side vault protected by its master key, and the server can decrypt them to connect."], ["Multi-user and 2FA", "Server accounts, TOTP two-factor authentication, and signed-in device management."], ["Audit log", "Commands, file writes, and device online events from both users and the AI are recorded. The audit timeline merges them, filters by host, origin, and time, and exports CSV or JSON."], ["AI guardrails", "Command risk classification, output redaction, and read-only or execute modes. Optional AI privacy redaction downloads astrlink-guard in Settings; it is off by default, keeps conversation placeholders stable, and restores responses and tool arguments; images are sent unchanged, not redacted. Detection can miss sensitive information."], ["Your database", "SQLite by default; the server also supports PostgreSQL, MySQL, and MariaDB."]] as Item[],
-    platformKicker: "Download", platformTitle: "On your desktop, on your server, or on your phone",
-    footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
+    aiKicker: "AI assistant", aiTitle: "Not just advice. It investigates.", aiText: "The assistant reads the current host's context, then investigates and fixes, with every step visible.",
+    aiPoints: [["Approve, then run", "Commands and file changes are shown to you first, or granted per host and path for a set time."], ["Plans, schedules, memory", "Plan mode proposes first, cron jobs run checks, and long-term memory keeps your conventions."], ["Bring any model", "Any OpenAI-compatible endpoint, with DeepSeek, Kimi, GLM, and Ollama presets."]] as Item[],
+    replayKicker: "Command blocks and replay", replayTitle: "See the terminal at any moment", replayText: "Each command and its output fold into a block, and full recordings can be searched and replayed on a timeline.",
+    replayPoints: [["Command blocks", "Read output command by command to find the step that failed."], ["Timeline replay", "Drag the timeline back to any moment of the session."], ["History search", "Search command history and a host's recorded output across sessions."]] as Item[],
+    platformKicker: "Download", platformTitle: "On your desktop, on your server, and in preview on your phone",
+    faqKicker: "FAQ", faqTitle: "Frequently asked questions",
+    faq: [
+      ["Do terminals survive closing the app?", "Persistent terminals do: desktop local terminals, and SSH hosts and managed devices with persistent terminals enabled, keep running in the background, and you take them over from Background sessions with missed output replayed. When the persistent terminal helper is unavailable, new tabs are temporary terminals, marked as such, that end on disconnect; WinRM terminals end when closed."],
+      ["Will the AI change my servers on its own?", "No. Running commands, writing files, and similar actions show the command or diff first and wait for you to allow or deny them; only permissions you grant per host and path skip that prompt, and only until they expire."],
+      ["Is sync end-to-end encrypted?", "No. Synced data is encrypted on the client and the server stores only ciphertext, but the password reaches the server at sign-in, so the server operator can use it to decrypt synced data. Sign in only to servers you trust, over HTTPS."],
+      ["Does it run on phones?", "Android (arm64) and iOS / iPadOS (TestFlight) are previews and are not officially supported until real-device signing is verified. Phones have no local terminals; they connect to SSH hosts and managed devices."],
+    ] as Item[],
+    footerDocs: "Full feature details", footerIssue: "Issues", privacy: "Privacy Policy", license: "MIT License",
   },
 };
 
@@ -103,7 +123,8 @@ function App() {
       <div className="container header-inner">
         <a className="brand" href="#top" aria-label={t.home}><img src="/brand/nexterm-mark-128.png" alt="" /><span>NexTerm</span></a>
         <nav className="nav-links" aria-label="Site navigation">
-          {["ai", "sessions", "toolbox", "security", "download"].map((id, index) => <a key={id} href={`#${id}`}>{t.nav[index]}</a>)}
+          {["features", "download", "faq"].map((id, index) => <a key={id} href={`#${id}`}>{t.nav[index]}</a>)}
+          <a href={repository} target="_blank" rel="noreferrer">GitHub</a>
         </nav>
         <div className="header-actions">
           <a className="icon-link" href={repository} target="_blank" rel="noreferrer" aria-label="GitHub"><GithubIcon size={19} /></a>
@@ -133,14 +154,25 @@ function App() {
         </div>
       </section>
 
+      <section className="section" id="features">
+        <div className="container">
+          <SectionHeading kicker={t.featuresKicker} title={t.featuresTitle} />
+          <div className="tool-grid">
+            {t.features.map(([title, text], index) => {
+              const Icon = featureIcons[index];
+              return <article className="tool-card" key={title}><span className="tool-icon">{Icon && <Icon size={18} />}</span><h3>{title}</h3><p>{text}</p></article>;
+            })}
+          </div>
+        </div>
+      </section>
 
-      <section className="section" id="ai">
+      <section className="section section-muted" id="ai">
         <div className="container split">
           <div>
             <SectionHeading kicker={t.aiKicker} title={t.aiTitle} text={t.aiText} />
-            <div className="point-grid">
+            <div className="point-grid point-grid-single">
               {t.aiPoints.map(([title, text], index) => {
-                const Icon = [Bot, Workflow, KeyRound, Eye, CalendarClock, Radio][index];
+                const Icon = [ListChecks, CalendarClock, Bot][index];
                 return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
               })}
             </div>
@@ -149,13 +181,13 @@ function App() {
         </div>
       </section>
 
-      <section className="section section-muted" id="sessions">
+      <section className="section" id="replay">
         <div className="container split split-reverse">
           <div>
-            <SectionHeading kicker={t.sessionKicker} title={t.sessionTitle} text={t.sessionText} />
+            <SectionHeading kicker={t.replayKicker} title={t.replayTitle} text={t.replayText} />
             <div className="point-grid point-grid-single">
-              {t.sessionPoints.map(([title, text], index) => {
-                const Icon = [SquareTerminal, Bell, Smartphone, History, Layers, Link][index];
+              {t.replayPoints.map(([title, text], index) => {
+                const Icon = [SquareTerminal, History, Search][index];
                 return <article className="point" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
               })}
             </div>
@@ -164,34 +196,19 @@ function App() {
         </div>
       </section>
 
-      <section className="section" id="toolbox">
-        <div className="container">
-          <SectionHeading kicker={t.toolboxKicker} title={t.toolboxTitle} />
-          <div className="tool-grid">
-            {t.toolbox.map(([title, text], index) => {
-              const Icon = toolboxIcons[index];
-              return <article className="tool-card" key={title}><span className="tool-icon">{Icon && <Icon size={18} />}</span><h3>{title}</h3><p>{text}</p></article>;
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="section section-muted" id="security">
-        <div className="container">
-          <SectionHeading kicker={t.trustKicker} title={t.trustTitle} />
-          <div className="trust-grid">
-            {t.trust.map(([title, text], index) => {
-              const Icon = trustIcons[index];
-              return <article className="trust-item" key={title}>{Icon && <Icon size={18} />}<div><h3>{title}</h3><p>{text}</p></div></article>;
-            })}
-          </div>
-        </div>
-      </section>
-
-      <section className="section" id="download">
+      <section className="section section-muted" id="download">
         <div className="container">
           <SectionHeading kicker={t.platformKicker} title={t.platformTitle} />
           <DownloadPicker language={language} />
+        </div>
+      </section>
+
+      <section className="section" id="faq">
+        <div className="container">
+          <SectionHeading kicker={t.faqKicker} title={t.faqTitle} />
+          <div className="faq-list">
+            {t.faq.map(([question, answer]) => <details className="faq-item" key={question}><summary>{question}</summary><p>{answer}</p></details>)}
+          </div>
         </div>
       </section>
     </main>
@@ -200,6 +217,7 @@ function App() {
       <div className="container footer-inner">
         <a className="brand" href="#top"><img src="/brand/nexterm-mark-128.png" alt="" /><span>NexTerm</span></a>
         <div className="footer-links">
+          <a href={readme[language]} target="_blank" rel="noreferrer">{t.footerDocs}</a>
           <a href={repository} target="_blank" rel="noreferrer">GitHub</a>
           <a href={releases} target="_blank" rel="noreferrer">Releases</a>
           <a href={`${repository}/issues`} target="_blank" rel="noreferrer">{t.footerIssue}</a>

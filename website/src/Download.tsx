@@ -6,6 +6,8 @@ const latestRelease = `${repository}/releases/latest`;
 const releasesPage = `${repository}/releases`;
 const installCommand = "curl -fsSL https://nexterm.work/install.sh | sudo bash";
 const testFlightLink = "https://testflight.apple.com/join/ds62pzPz";
+const quarantineCommand = "xattr -dr com.apple.quarantine /Applications/NexTerm.app";
+const serverGuide = { zh: `${repository}#部署服务端`, en: `${repository}/blob/master/README_EN.md#deploy-the-server` };
 
 type Language = "zh" | "en";
 type Arch = "amd64" | "arm64";
@@ -34,21 +36,15 @@ const text = {
     names: { windows: "Windows", macos: "macOS", linux: "Linux 桌面", server: "Linux 服务端", android: "Android", ios: "iOS / iPadOS", lazycat: "懒猫微服" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "已识别当前设备", choose: "选择其他系统",
-    serverGuide: [
-      ["安装", "创建 nexterm 用户与目录，生成 master key，创建超级管理员 admin 并在安装输出中打印一次初始密码（请立即记下，首次登录需修改），然后启动服务。"],
-      ["访问", "默认只监听 127.0.0.1:8080。在本机执行 ssh -L 8080:127.0.0.1:8080 用户@服务器，再打开 http://localhost:8080；公网访问请前置带 TLS 的反向代理。"],
-      ["配置", "/etc/nexterm/nexterm.env，修改后执行 systemctl restart nexterm-server。默认 SQLite，也可切换 PostgreSQL / MySQL / MariaDB。请备份 /var/lib/nexterm 和 /etc/nexterm/master.key。"],
-      ["升级", "再次执行同一条命令即可升级，服务会短暂重启，配置和数据都会保留；如需撤销，请添加 --rollback。"],
-    ],
     download: "下载", testflight: "加入 TestFlight 测试", version: "最新版本", loading: "正在读取最新版本…", unavailable: "无法读取最新版本，请前往 Releases 下载。",
-    copy: "复制", copied: "已复制",
+    copy: "复制", copied: "已复制", serverGuide: "访问、升级与配置说明",
     notes: {
       windows: "运行安装器即可。安装包没有代码签名，提示未知发布者时选择「更多信息 → 仍要运行」。",
-      macos: "打开后拖入「应用程序」。浏览器无法识别 Mac 芯片，Intel 机型请选择上方的「Intel」。",
-      linux: "需要 GTK 4.14+ 与 WebKitGTK 6.0；安装包声明了所需的最低 glibc，系统不满足时 apt 会拒绝安装。下载后执行：",
-      server: "在带 systemd 的 Linux 服务器（amd64 / arm64；服务端可在任意基于 glibc 的 Linux 上运行，不支持 Alpine 等 musl 发行版；可选的本地 AI 脱敏运行库另需 glibc 2.27 或更新）上执行（需要 root 权限）：",
-      android: "预览版，适用于 arm64 设备。",
-      ios: "预览版通过 TestFlight 安装：在 iPhone 或 iPad 上打开下面的链接，按提示安装 TestFlight 后加入测试。",
+      macos: "打开后拖入「应用程序」。浏览器无法识别 Mac 芯片，Intel 机型请选择上方的「Intel」。提示无法验证开发者时，在「系统设置 → 隐私与安全性」选择「仍要打开」；提示已损坏时执行：",
+      linux: "需要 GTK 4.14+ 与 WebKitGTK 6.0。下载后执行：",
+      server: "在带 systemd 的 Linux 服务器（amd64 / arm64，不支持 Alpine 等 musl 发行版）上以 root 权限执行。服务默认只监听 127.0.0.1:8080。",
+      android: "预览版，适用于 arm64 设备，尚未作为正式支持平台。",
+      ios: "预览版，尚未作为正式支持平台。在 iPhone 或 iPad 上打开下面的链接，按提示安装 TestFlight 后加入测试。",
       lazycat: "在懒猫微服的应用中心搜索 NexTerm 安装，目前仅支持 amd64 机型。",
     },
   },
@@ -56,21 +52,15 @@ const text = {
     names: { windows: "Windows", macos: "macOS", linux: "Linux desktop", server: "Linux server", android: "Android", ios: "iOS / iPadOS", lazycat: "LazyCat" },
     archNames: { amd64: "x64", arm64: "ARM64" }, macArchNames: { amd64: "Intel", arm64: "Apple Silicon" },
     detected: "Detected your device", choose: "Choose another system",
-    serverGuide: [
-      ["Install", "Creates the nexterm user and directories, generates the master key, creates the admin super-admin and prints its initial password once in the installer output (write it down and change it at first login), then starts the service."],
-      ["Access", "Listens on 127.0.0.1:8080 by default. On your computer run ssh -L 8080:127.0.0.1:8080 user@server and open http://localhost:8080; for public access, put a TLS reverse proxy in front."],
-      ["Configure", "/etc/nexterm/nexterm.env, then systemctl restart nexterm-server. SQLite by default; PostgreSQL, MySQL, and MariaDB are supported. Back up /var/lib/nexterm and /etc/nexterm/master.key."],
-      ["Upgrade", "Run the same command again; the service restarts briefly and configuration and data are kept. Add --rollback to undo the last upgrade."],
-    ],
     download: "Download", testflight: "Join the TestFlight beta", version: "Latest version", loading: "Loading the latest version…", unavailable: "The latest version could not be loaded; download it from Releases.",
-    copy: "Copy", copied: "Copied",
+    copy: "Copy", copied: "Copied", serverGuide: "Access, upgrade, and configuration guide",
     notes: {
       windows: "Run the installer. It is not code-signed; if Windows reports an unknown publisher, choose More info → Run anyway.",
-      macos: "Open it and drag NexTerm into Applications. Browsers cannot tell Mac chips apart, so on an Intel Mac pick Intel above.",
-      linux: "Needs GTK 4.14+ and WebKitGTK 6.0; the package declares the minimum glibc it requires, and apt refuses older systems. After downloading, run:",
-      server: "On a Linux server with systemd (amd64 / arm64; the server runs on any glibc-based Linux, musl distributions such as Alpine are not supported, and the optional local AI redaction library additionally needs glibc 2.27 or newer), run with root privileges:",
-      android: "Preview build for arm64 devices.",
-      ios: "The preview installs through TestFlight: open the link below on your iPhone or iPad and follow the prompts.",
+      macos: "Open it and drag NexTerm into Applications. Browsers cannot tell Mac chips apart, so on an Intel Mac pick Intel above. If macOS cannot verify the developer, choose Open Anyway in System Settings → Privacy & Security; if it reports the app is damaged, run:",
+      linux: "Needs GTK 4.14+ and WebKitGTK 6.0. After downloading, run:",
+      server: "On a Linux server with systemd (amd64 / arm64; musl distributions such as Alpine are not supported), run as root. The service listens on 127.0.0.1:8080 by default.",
+      android: "Preview build for arm64 devices, not yet officially supported.",
+      ios: "Preview, not yet officially supported. Open the link below on your iPhone or iPad and follow the prompts to join through TestFlight.",
       lazycat: "Search for NexTerm in the LazyCat app center; amd64 devices only for now.",
     },
   },
@@ -194,13 +184,8 @@ export function DownloadPicker({ language }: { language: Language }) {
 
         <p className="download-note">{t.notes[platform.id]}</p>
         {platform.id === "server" && <CopyCommand command={installCommand} language={language} />}
-        {platform.id === "server" && (
-          <dl className="download-steps">
-            {t.serverGuide.map(([term, description]) => (
-              <div key={term}><dt>{term}</dt><dd>{description}</dd></div>
-            ))}
-          </dl>
-        )}
+        {platform.id === "server" && <a className="download-link" href={serverGuide[language]} target="_blank" rel="noreferrer">{t.serverGuide}</a>}
+        {platform.id === "macos" && <CopyCommand command={quarantineCommand} language={language} />}
         {platform.id === "linux" && <CopyCommand command={`sudo apt install ./${assetName ?? `nexterm-desktop_linux_${effectiveArch}_<version>.deb`}`} language={language} />}
 
         {platform.asset && (
