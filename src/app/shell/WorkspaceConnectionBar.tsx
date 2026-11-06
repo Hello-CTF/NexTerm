@@ -8,42 +8,13 @@ import {
   useUi,
   workspaceConnectionState,
   type AppTab,
-  type SessionRuntimeInfo,
   type Workspace,
 } from "../store";
 import { sessionApi } from "../../ipc/commands";
 import { reattachLostTabs } from "../../features/terminal/backgroundSessionsAccess";
 import { IconRefresh } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
-
-function retryDeadline(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined): number | null {
-  const value = session?.nextRetryAt;
-  if (value === undefined || value === null || value === "") return null;
-  const ms = typeof value === "number" ? value : Date.parse(value);
-  return Number.isFinite(ms) && ms > 0 ? ms : null;
-}
-
-// reconnectDialing reports that the next attempt is running: its scheduled time has passed, or the user asked to
-// retry now and no newer status has arrived.
-function reconnectDialing(session: Pick<SessionRuntimeInfo, "nextRetryAt"> | undefined, now: number, retrying: boolean): boolean {
-  const deadline = retryDeadline(session);
-  return retrying || (deadline !== null && deadline <= now);
-}
-
-// reconnectingText names the attempt and, once the backend has scheduled one, the seconds until the next try; while
-// an attempt is dialing it says so instead of counting down to zero.
-export function reconnectingText(
-  session: Pick<SessionRuntimeInfo, "attempt" | "nextRetryAt"> | undefined,
-  now: number,
-  retrying = false,
-): string {
-  const attempt = Math.max(1, Math.floor(session?.attempt ?? 0));
-  const deadline = retryDeadline(session);
-  if (reconnectDialing(session, now, retrying)) return `正在重新连接（第 ${attempt + (deadline === null ? 0 : 1)} 次尝试中…）`;
-  if (deadline === null) return `正在重新连接（第 ${attempt} 次）`;
-  const seconds = Math.max(0, Math.ceil((deadline - now) / 1000));
-  return `正在重新连接（第 ${attempt} 次，${seconds} 秒后重试）`;
-}
+import { reconnectDialing, reconnectingText, RETRY_DIALING_LABEL, RETRY_NOW_LABEL } from "./reconnectText";
 
 // WorkspaceConnectionBar is the workspace-level connection notice: it follows the host session of the active
 // workspace whatever tab is open, and is the only reconnect surface when the workspace has no terminal.
@@ -188,7 +159,7 @@ export function WorkspaceConnectionBar({
           onClick={retryNow}
         >
           <IconRefresh size={13} className={dialing ? "animate-spin" : undefined} />
-          {dialing ? "连接中" : "立即重试"}
+          {dialing ? RETRY_DIALING_LABEL : RETRY_NOW_LABEL}
         </button>
       )}
       {!reconnecting && (

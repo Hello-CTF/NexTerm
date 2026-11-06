@@ -22,6 +22,7 @@ import { WorkspaceProblems } from "../problems/WorkspaceProblems";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { copyText } from "../../ui/clipboard";
+import { tableSelectSql } from "./tableSelectSql";
 import {
   IconChevronUp,
   IconDatabase,
@@ -511,11 +512,7 @@ function SqlView({
   };
 
   const fillQuery = async (t: string) => {
-    const quote = dialect === "postgres" ? '"' : "`";
-    const table = [schema, t]
-      .map((part) => `${quote}${part.replaceAll(quote, quote + quote)}${quote}`)
-      .join(".");
-    await replaceDraft(`SELECT * FROM ${table} LIMIT 200;`, true);
+    await replaceDraft(tableSelectSql(dialect, schema, t), true);
   };
 
   const loadProblemSql = async (problem: WorkspaceProblem) => {

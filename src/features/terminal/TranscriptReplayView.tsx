@@ -10,15 +10,16 @@ import { KeyframeBuilder } from "./transcriptKeyframes";
 import { loadCachedKeyframes, saveCachedKeyframes, transcriptFingerprint } from "./transcriptKeyframeCache";
 import {
   formatReplayClock,
+  REPLAY_SPEEDS as SPEEDS,
+  REPLAY_THEME,
+  REPLAY_TICK_MS as TICK_MS,
   toReplayChunk,
   TranscriptReplay,
   type ReplaySink,
 } from "./transcriptReplay";
 
-const TICK_MS = 50;
 // Small pages keep each JSON parse short; a 4 MiB page is a 5+ MB payload that blocks the UI thread for a noticeable time.
 const READ_PAGE_BYTES = 1024 * 1024;
-const SPEEDS = [1, 2, 5, 10];
 // A seek that lands beyond the indexed range replays from the start, so dragging waits for a pause before starting one.
 const UNINDEXED_SEEK_DEBOUNCE_MS = 250;
 // Short seeks finish before this and never flash the busy overlay.
@@ -36,13 +37,6 @@ const NO_FIT: FitState = { scale: 1, width: 0, height: 0 };
 
 // Phone-width viewports (<= 560px) use a smaller font so a recorded 80-column screen needs less horizontal scrolling.
 const NARROW_VIEWPORT_PX = 560;
-
-const REPLAY_THEME = {
-  background: "#101217",
-  foreground: "#c6cbd6",
-  cursor: "#101217",
-  selectionBackground: "#2c3e5d",
-};
 
 function terminalSink(terminal: Terminal): ReplaySink {
   return {

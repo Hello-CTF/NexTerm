@@ -33,6 +33,7 @@ import { DockerDiskPanel } from "./DockerDiskPanel";
 import { DockerLogStream } from "./DockerLogStream";
 import { DockerMergedLogs } from "./DockerMergedLogs";
 import { MERGED_LOG_MAX_CONTAINERS } from "./mergedLogs";
+import { containerStateLabel } from "./containerState";
 export { createLogLineDecoder } from "./DockerLogStream";
 
 interface LogAttach {
@@ -806,7 +807,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                     <span className="line-clamp-2 min-w-0 break-all text-[12.5px] font-medium text-neutral-100" title={c.name}>{c.name}</span>
                     <span className={`nx-badge shrink-0 ${c.state === "running" ? "nx-badge-green" : "nx-badge-red"}`}>
                       <span className="nx-dot" />
-                      {c.state === "running" ? "运行中" : c.state === "exited" ? "已停止" : c.state}
+                      {containerStateLabel(c.state)}
                     </span>
                   </div>
                   <div className="nx-mono mt-0.5 line-clamp-2 break-all text-[10.5px] text-neutral-500" title={`${c.image}${c.ports ? ` · ${c.ports}` : ""}`}>
@@ -1102,7 +1103,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
                         }`}
                       >
                         <span className="nx-dot" />
-                        {c.state === "running" ? "运行中" : c.state === "exited" ? "已停止" : c.state}
+                        {containerStateLabel(c.state)}
                       </span>
                       <span
                         className={`truncate text-[11px] ${

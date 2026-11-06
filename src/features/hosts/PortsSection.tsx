@@ -9,20 +9,7 @@ import { ConnectivityTest } from "./ConnectivityTest";
 import { HostSection, SectionHint } from "./HostSections";
 import { ListToolbar, Pager, useListFocus, usePaging, type ListFocus } from "./listControls";
 
-type PortScope = "all" | "exposed" | "loopback";
-
-const SCOPE_LABELS: Record<PortScope, string> = { all: "全部", exposed: "对外", loopback: "仅本机" };
-const SCOPE_TITLES: Record<PortScope, string> = {
-  all: "所有监听端口",
-  exposed: "绑定在通配地址或具体网卡地址上，其他机器可能访问到",
-  loopback: "只绑定在 127.0.0.1 或 ::1 上，只有本机能访问",
-};
-
-// isLoopback reports a listener only this host can reach.
-export function isLoopback(address: string): boolean {
-  const bare = address.replace(/^\[|\]$/g, "").replace(/%.*$/, "").toLowerCase();
-  return bare === "localhost" || bare === "::1" || bare.startsWith("127.") || bare === "::ffff:127.0.0.1";
-}
+import { isLoopback, PORT_SCOPES, SCOPE_LABELS, SCOPE_TITLES, type PortScope } from "./portScope";
 
 // matchesListener tests a listener against every whitespace-separated term of the search, each of which may hit the
 // port, protocol, bound address, process name or PID.
@@ -137,7 +124,7 @@ export function PortsSection({
                 unit="个"
               >
                 <div className="nx-segment" role="group" aria-label="端口范围">
-                  {(["all", "exposed", "loopback"] as const).map((key) => (
+                  {PORT_SCOPES.map((key) => (
                     <button
                       key={key}
                       type="button"
