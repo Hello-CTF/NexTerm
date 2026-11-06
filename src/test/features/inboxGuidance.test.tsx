@@ -144,7 +144,7 @@ describe("inbox first-run guidance", () => {
     const off = onSettingsSection((id) => sections.push(id));
     click(view.container.querySelector('[data-guidance="settings"]') as Element);
     off();
-    expect(sections).toEqual(["settings-terminal"]);
+    expect(sections).toEqual(["settings-notifications"]);
     expect(view.container.querySelector('[role="dialog"]')).toBeNull();
     expect(guidance(view)).toBeNull();
   });

@@ -313,7 +313,7 @@ func TestInstallChecksumMismatchKeepsOldBinary(t *testing.T) {
 		ExePath: executable, APIURL: server.URL + "/releases",
 		Emit: func(_ context.Context, event Progress) { progress = append(progress, event) },
 	}
-	if _, err := manager.Install(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "SHA256 校验失败") {
+	if _, err := manager.Install(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "SHA-256 校验失败") {
 		t.Fatalf("install error = %v", err)
 	}
 	content, err := os.ReadFile(executable)

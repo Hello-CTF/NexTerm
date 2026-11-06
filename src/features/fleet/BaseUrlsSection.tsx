@@ -138,7 +138,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       {open && status === "ready" && (
         <>
           <p className="nx-hint mb-3 mt-1">
-            接入地址用于设备连接此 NexTerm 服务器（如 https://nexterm.example.com）。新设备按列表顺序获取地址；保存仅影响之后接入的设备，已接入设备仍使用原列表。
+            设备连接此服务器的地址（如 https://nexterm.example.com），修改只影响之后接入的设备。
             {!isAdmin && " 仅超级管理员可修改。"}
           </p>
 

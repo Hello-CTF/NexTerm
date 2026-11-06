@@ -125,6 +125,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               tabIndex={-1}
               role="group"
               aria-label={`${confirmTitle(confirmCard.risk)}：${toolLabel(confirmCard.tool)}`}
+              aria-describedby={`ai-confirm-help-${confirmCard.id}`}
               className={`${confirmCard.risk === "danger" ? "nx-alert nx-alert-danger" : "nx-alert"} mt-2.5 outline-none`}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
@@ -144,10 +145,13 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 <span
                   className="shrink-0 cursor-help text-neutral-500"
                   title={CONFIRM_HELP}
-                  aria-label={CONFIRM_HELP}
+                  aria-label="授权说明"
                   role="img"
                 >
                   <IconInfo size={12} />
+                </span>
+                <span id={`ai-confirm-help-${confirmCard.id}`} hidden>
+                  {CONFIRM_HELP}
                 </span>
               </div>
               <ConfirmBody card={confirmCard} />
@@ -180,7 +184,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 {confirmCard.permanentScope && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
-                    title={`${permanentScopeText(confirmCard)}；只读模式和定时任务中不生效，高危、无法判断和生产环境的操作仍会询问，可随时在授权管理中撤销`}
+                    title={`${permanentScopeText(confirmCard)}；只读模式和定时任务中不生效，可随时在授权管理中撤销`}
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_persistent")}
                   >

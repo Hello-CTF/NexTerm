@@ -730,7 +730,7 @@ describe("asset editor shared credential hint", () => {
 
     chooseSelectOption(mounted!.container, "密码", "生产密码");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 修改该凭据会影响所有使用它的资产。");
   });
 
   it("does not imply that an unused password credential is already shared by multiple assets", async () => {
@@ -742,7 +742,7 @@ describe("asset editor shared credential hint", () => {
 
     chooseSelectOption(mounted!.container, "密码", "生产密码");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 修改该凭据会影响所有使用它的资产。");
     expect(mounted!.container.textContent).not.toContain("被多个资产共用");
   });
 
@@ -761,7 +761,7 @@ describe("asset editor shared credential hint", () => {
 
     chooseSelectOption(mounted!.container, "选择私钥凭据", "部署密钥");
     await flush();
-    expect(mounted!.container.textContent).toContain("↳ 该凭据可由多个资产共用；修改后，所有使用该凭据的资产均会生效。");
+    expect(mounted!.container.textContent).toContain("↳ 修改该凭据会影响所有使用它的资产。");
   });
 });
 

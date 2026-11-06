@@ -84,7 +84,7 @@ function allSourcesTerminal(
 }
 
 const INFO_TEXT =
-  "只读：仅执行只读的日志命令，不会修改主机，无需生产确认。仅支持当前已连接的 SSH / 受管设备（Windows 设备暂不支持），不会自动连接。";
+  "只执行只读日志命令，无需生产确认；仅支持已连接的 SSH 和非 Windows 受管设备。";
 
 const SOURCE_KIND_LABELS: Record<LogTailSourceKind, string> = {
   file: "文件",

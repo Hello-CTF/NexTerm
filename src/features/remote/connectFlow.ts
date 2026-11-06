@@ -292,12 +292,12 @@ export function describeCertificate(status: RemoteDesktopCertificateStatus): { t
     lines.push(`新指纹（SHA-256）：${status.fingerprint}`);
     return {
       title: "服务器证书已变更",
-      body: `${lines.join("\n")}\n\n警告：该服务器的证书与此前信任的不同。如果此次变更不符合预期，可能有人在冒充该主机。仅在已核实新指纹后才继续。\n信任新证书并继续？`,
+      body: `${lines.join("\n")}\n\n仅在确认服务器更换过证书时继续，否则可能连到冒充的主机。\n信任新证书并继续？`,
     };
   }
   lines.push(`指纹（SHA-256）：${status.fingerprint}`);
   return {
     title: "确认服务器证书",
-    body: `${lines.join("\n")}\n\n首次连接该主机。信任并继续？指纹将被记住，之后证书变化时会再次提示。`,
+    body: `${lines.join("\n")}\n\n首次连接该主机。信任并继续？之后会自动核对指纹。`,
   };
 }

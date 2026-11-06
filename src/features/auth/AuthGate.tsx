@@ -158,10 +158,7 @@ function SetupForm() {
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">初始化 NexTerm</span>
       </div>
-      <p className="nx-hint">
-        该服务器暂无任何账号。输入服务器控制台打印的一次性初始化码，创建超级管理员。
-        初始化码只能使用一次，成功后即失效。
-      </p>
+      <p className="nx-hint">输入服务器控制台打印的一次性初始化码，创建超级管理员。</p>
       <Field label="初始化码" value={code} onChange={setCode} mono placeholder="控制台输出的初始化码" autoComplete="off" />
       <Field label="用户名" value={username} onChange={setUsername} placeholder="超级管理员用户名" autoComplete="username" />
       <Field label="密码" value={password} onChange={setPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
@@ -267,9 +264,7 @@ function TotpChallengeForm() {
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">两步验证</span>
       </div>
-      <p className="nx-hint">
-        此账号已开启 TOTP 两步验证。请输入认证器 App 中的 6 位动态码；手机丢失时，也可输入未使用的恢复码。
-      </p>
+      <p className="nx-hint">输入认证器中的 6 位动态码，或一个未使用的恢复码。</p>
       <Field label="动态码 / 恢复码" value={code} onChange={setCode} mono placeholder="6 位数字或恢复码" autoComplete="one-time-code" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim()}>
@@ -372,9 +367,7 @@ function MfaEnrollForm() {
           <IconShield size={15} className="text-amber-300" />
           <span className="nx-card-title">保存恢复码</span>
         </div>
-        <p className="nx-hint">
-          恢复码可在无法使用认证器时代替动态码，每个只能使用一次。服务端不保存明文，关闭后无法再次查看，请妥善保存。
-        </p>
+        <p className="nx-hint">无法使用认证器时可用恢复码登录，每个限用一次。关闭后无法再次查看。</p>
         <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
             {recoveryCodes.map((recoveryCode) => (
@@ -427,10 +420,7 @@ function MfaEnrollForm() {
         <IconShield size={15} className="text-amber-300" />
         <span className="nx-card-title">必须启用两步验证</span>
       </div>
-      <p className="nx-hint">
-        管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。
-        用认证器 App（如 Google Authenticator、1Password）导入绑定链接，或手动输入密钥。
-      </p>
+      <p className="nx-hint">完成绑定前无法使用其他功能；在认证器 App 中导入绑定链接或手动输入密钥。</p>
       <div className="nx-alert nx-alert-info mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
@@ -561,9 +551,7 @@ function ResetRequiredForm() {
         <IconShield size={15} className="text-amber-300" />
         <span className="nx-card-title">必须先设置新密码</span>
       </div>
-      <p className="nx-hint">
-        当前临时密码仅用于本次验证；数据密钥、所有会话和两步验证绑定已清除。设置新密码后会签发新的数据密钥，服务端密文需从仍持有数据的设备重新同步。
-      </p>
+      <p className="nx-hint">当前临时密码仅用于本次验证。数据密钥、会话和两步验证已清除，需从仍持有数据的设备重新同步。</p>
       <Field label="当前临时密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
       <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
       <Field label="确认新密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
@@ -660,9 +648,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
         <IconShield size={15} className="text-amber-300" />
         <span className="nx-card-title">恢复密钥（仅显示一次）</span>
       </div>
-      <p className="nx-hint">
-        这是找回账号的唯一凭据，服务端不保存明文，关闭后无法再次查看。请复制并妥善保存（如密码管理器或离线介质）。
-      </p>
+      <p className="nx-hint">找回账号的唯一凭据，关闭后无法再次查看，请存入密码管理器。</p>
       <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
         <code className="nx-code break-all font-mono text-[13px]">{revealed ? issue.formatted : "•".repeat(39)}</code>
         <div className="flex flex-wrap items-center gap-2">

@@ -538,8 +538,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         </div>
 
         <div className="text-[11px] leading-relaxed text-neutral-500">
-          无变量命令在全部目标预检通过后启动；含变量命令按逐目标渲染结果分组顺序执行。非零退出与连接错误分别显示。
-          输出过长时会被截断；结果只保留在当前面板，审计记录不包含命令输出。
+          输出过长会被截断；结果只保留在当前面板，审计记录不含命令输出。
         </div>
         {error && (
           <div role="alert" className="rounded border border-red-900/60 bg-red-950/20 px-2 py-1.5 text-[11px] text-red-300">

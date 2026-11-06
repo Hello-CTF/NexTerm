@@ -21,7 +21,7 @@ export async function restoreClosedTab(key?: string): Promise<boolean> {
   if (reattach) {
     const session = useUi.getState().sessions.find((s) => s.id === entry.sessionId);
     if (!session || session.status !== "connected") {
-      useUi.getState().pushToast("error", "原会话未连接，请重新连接后再恢复后台终端");
+      useUi.getState().pushToast("error", "原会话未连接，请重新连接后再恢复后台会话");
       return false;
     }
   }

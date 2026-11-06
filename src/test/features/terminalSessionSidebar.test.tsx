@@ -465,7 +465,7 @@ describe("session sidebar placement", () => {
     await mountPane();
     await pressFromTerminal("B", SIDEBAR);
     expect(sidebar()).toBeNull();
-    expect(pushToast).toHaveBeenCalledWith("info", "窗格太窄，无法显示侧栏");
+    expect(pushToast).toHaveBeenCalledWith("info", "窗格太窄，无法显示会话侧栏");
     expect(localStorage.getItem(SESSION_SIDEBAR_STORAGE_KEY)).not.toBe("1");
   });
 

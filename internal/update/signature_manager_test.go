@@ -131,7 +131,7 @@ func TestInstallSignedChecksumMismatchKeepsOldBinary(t *testing.T) {
 		CurrentVersion: "0.2.2", GOOS: "linux", GOARCH: "amd64", CanInstall: true,
 		ExePath: executable, APIURL: server.URL + "/releases", MinisignPublicKey: key.PublicKeyFile(),
 	}
-	if _, err := manager.Install(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "SHA256") {
+	if _, err := manager.Install(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("install error = %v", err)
 	}
 	content, err := os.ReadFile(executable)

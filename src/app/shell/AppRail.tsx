@@ -78,8 +78,8 @@ export function AppRail({
       key: "assets",
       label: "资产",
       hint: hasHost
-        ? "临时切换到资产树，双击资产连接后自动回到文件树；再次单击回到文件树；双击本按钮收起侧栏"
-        : "打开资产树：管理主机和数据库，双击资产直接连接；双击本按钮收起侧栏",
+        ? "临时切换到资产树；双击收起左侧栏"
+        : "管理主机和数据库；双击收起左侧栏",
       icon: IconServer,
       onClick: () => {
         if (showLeftPanel("assets", leftDockOpen)) setLeftOpen(true);
@@ -88,7 +88,7 @@ export function AppRail({
     {
       key: "credentials",
       label: "凭据",
-      hint: "打开凭据侧栏：集中保存密码和私钥，连接资产时引用；双击本按钮收起侧栏",
+      hint: "管理密码和私钥；双击收起左侧栏",
       icon: IconKey,
       onClick: () => {
         if (showLeftPanel("credentials", leftDockOpen)) setLeftOpen(true);
@@ -108,8 +108,8 @@ export function AppRail({
       key: "background",
       label: "后台会话",
       hint: backgroundCount
-        ? `${backgroundCount} 个终端在该主机后台运行，单击查看`
-        : "查看该主机上在后台运行的终端，并重新接管到标签页",
+        ? `该主机有 ${backgroundCount} 个后台会话`
+        : "查看并接管该主机的后台会话",
       icon: IconActivity,
       onClick: openBackground,
       badge: backgroundCount ?? undefined,
@@ -119,7 +119,7 @@ export function AppRail({
           {
             key: "host-detail",
             label: "主机详情",
-            hint: "打开当前主机的详情：会话、容器、端口、进程和指标",
+            hint: "当前主机的会话、容器、端口、进程和指标",
             icon: IconInfo,
             onClick: () => openHostDetail(hostAssetId),
           },
@@ -137,7 +137,7 @@ export function AppRail({
           {
             key: "docker",
             label: "容器",
-            hint: "打开 Docker 面板：查看容器状态与日志，进入容器终端",
+            hint: "查看容器状态与日志，进入容器终端",
             icon: IconBox,
             onClick: openDocker,
           },
@@ -148,7 +148,7 @@ export function AppRail({
           {
             key: "db",
             label: "数据库",
-            hint: "打开数据库工作台：查询 MySQL / PostgreSQL / Redis 资产",
+            hint: "查询 MySQL / PostgreSQL / Redis 资产",
             icon: IconDatabase,
             onClick: () => void openDatabase(),
           },
@@ -175,7 +175,7 @@ export function AppRail({
           {
             key: "logs",
             label: "日志",
-            hint: "实时查看日志文件、journalctl 或容器日志：默认选中当前主机，可合并多台主机（仅 SSH 与非 Windows 受管设备）",
+            hint: "实时查看日志文件、journalctl 或容器日志",
             icon: IconList,
             onClick: openLogs,
           },
@@ -184,9 +184,9 @@ export function AppRail({
   ];
 
   const railBottom = [
-    { key: "devices", label: "设备管理", hint: "打开设备管理：查看已安装设备代理的设备并远程打开终端", icon: IconMonitor, onClick: actions.openDevices },
+    { key: "devices", label: "设备管理", hint: "管理已接入的设备并打开远程终端", icon: IconMonitor, onClick: actions.openDevices },
     { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: actions.openAudit },
-    { key: "settings", label: "设置", hint: "打开设置：外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: actions.openSettings },
+    { key: "settings", label: "设置", hint: "外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: actions.openSettings },
   ];
 
   return (
@@ -209,7 +209,7 @@ export function AppRail({
       ))}
       <button
         className={`nx-rail-btn ${homeOpen ? "is-active" : ""}`}
-        data-tip={needsMe > 0 ? `会话总览：${needsMe} 个会话需要处理；所有终端的状态一览，点击卡片直达` : "会话总览：所有终端的状态一览（需要处理、运行中、已结束），点击卡片直达；再次单击或点击右上角关闭按钮返回"}
+        data-tip={needsMe > 0 ? `所有终端的状态一览（${needsMe} 个需要处理）` : "所有终端的状态一览"}
         aria-label="会话总览"
         aria-pressed={homeOpen}
         onClick={() => {

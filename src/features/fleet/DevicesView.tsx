@@ -76,9 +76,7 @@ function FleetUnsupported() {
             <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">
               登录服务端账号后可用
             </div>
-            <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">
-              设备接入与远程终端依赖服务端账号体系。在「设置 → 账号同步」登录服务端账号后，即可管理接入的设备、生成接入码并打开远程终端。
-            </div>
+            <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">登录服务端账号后可管理设备。</div>
           </div>
           <button
             type="button"
@@ -210,7 +208,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const enabled = !agent.terminal_enabled;
     if (!enabled) {
       const ok = await ask(
-        `确定要关闭「${device.name}」的远程终端吗？\n\n关闭后，该设备将拒绝新的远程终端、文件和端口转发连接，「打开工作区」也不可用。已打开的连接不会被强制断开，将保持到手动关闭为止。之后可随时重新开启。${online ? "" : "\n\n设备当前离线，设备将在下次连接服务器后同步此设置。"}`,
+        `确定要关闭「${device.name}」的远程终端吗？\n\n关闭后设备拒绝新的远程终端、文件和转发连接，已有连接保留，可随时重新开启。${online ? "" : "\n\n设备当前离线，将在下次连接服务器后生效。"}`,
         { title: "关闭远程终端", kind: "warning" },
       );
       if (!ok) return;

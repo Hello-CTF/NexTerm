@@ -442,7 +442,7 @@ describe("AiSidebar agent production mounting", () => {
     await flushUntil(() => textOf(view!).includes("需要你确认"));
     const text = textOf(view!);
     expect(text).toContain("受管设备（无环境标签，按生产环境处理）");
-    expect(text).toContain("每台主机都需要输入确认");
+    expect(text).toContain("请在对应输入框输入 managed-device");
     const envInput = view!.container.querySelector<HTMLInputElement>('input[aria-label="输入环境名 managed-device"]');
     if (!envInput) throw new Error("environment input not found");
     setInputValue(envInput, "managed-device");

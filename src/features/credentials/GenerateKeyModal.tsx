@@ -164,7 +164,7 @@ export function GenerateKeyModal({
           ) : (
             <div role="status">
               <div className="nx-form-row">
-                <span className="nx-label">SHA256 指纹</span>
+                <span className="nx-label">SHA-256 指纹</span>
                 <div className="flex items-start gap-2">
                   <code className="min-w-0 flex-1 break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[11.5px] text-neutral-300">
                     {generated.fingerprint}

@@ -119,11 +119,11 @@ export function BrowserPane({ url }: { url: string }) {
         </button>
       </div>
       <p className="nx-hint px-3 py-1.5">
-        该窗格用于开发预览和文档页，不是通用浏览器。浏览器模式只能嵌入 https 页面；网站拒绝嵌入时会改用系统浏览器打开。
+        用于开发预览和文档页；网站拒绝嵌入时改用系统浏览器打开。
       </p>
       {WEB && (
         <p className="nx-hint flex flex-wrap items-center gap-2 px-3 pb-1.5">
-          若页面空白，该网站可能不允许嵌入。
+          只能嵌入 https 页面；若页面空白，该网站可能不允许嵌入。
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={openInSystem}>
             在系统浏览器打开
           </button>

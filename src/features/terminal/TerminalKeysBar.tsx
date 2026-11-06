@@ -297,7 +297,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
     >
       <div ref={configBodyRef}>
         <p className="nx-hint mb-3">
-          勾选要在辅助按键条中显示的按键；已启用的按键可上下移动调整顺序。登录账号后，按键布局随账号同步到其他设备。
+          勾选要显示的按键，可上下调整顺序；登录后随账号同步。
         </p>
         <div role="group" aria-label="已启用按键" className="mb-1 text-[11px] text-neutral-400">
           已启用

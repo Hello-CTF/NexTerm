@@ -70,8 +70,7 @@ export function WakeFields({
         </p>
       )}
       <p className="nx-hint mt-1">
-        填写后，资产右键菜单会出现「唤醒」。广播地址默认 {DEFAULT_WAKE_BROADCAST}，主机在其他子网时填写该子网的广播地址。目标主机需要在 BIOS 和网卡中启用 Wake-on-LAN。
-        若通过受管设备连接，唤醒包由该设备发出；否则由运行 NexTerm 的这台机器发出。
+        填写后可在右键菜单「唤醒」；跨子网时填写该子网的广播地址，主机需在 BIOS 和网卡中启用 Wake-on-LAN。
       </p>
     </div>
   );

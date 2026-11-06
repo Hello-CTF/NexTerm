@@ -203,7 +203,7 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		// unless ending the task's job would also terminate a replace script that stayed inside it.
 		inJob, jobErr := cliProcessInJob()
 		if !upgrader.LastReplaceDetached() && (inJob || jobErr != nil) {
-			fmt.Fprintln(stderr, "agent update: 本次更新运行在设备代理的计划任务进程树内（例如由代理拉起的终端），结束计划任务会连同替换脚本一起终止，已跳过自动结束；请换一个不经过设备代理的终端重新执行 agent update，或在替换完成后手动重启计划任务")
+			fmt.Fprintln(stderr, "agent update: 当前终端由设备代理的计划任务拉起，结束任务会一并终止替换脚本，已跳过；请在不经过设备代理的终端重新执行 agent update，或替换完成后手动重启计划任务")
 			fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
 			break
 		}

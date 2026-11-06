@@ -35,7 +35,7 @@ export function AppBanners({ ws, onOpenSettings, onPickOtherAsset }: AppBannersP
       {newerLayout !== null && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
           <span>
-            账号布局由更新版本的 NexTerm 保存（格式 v{newerLayout}）。本机不会读取或覆盖它，布局同步已暂停；请升级 NexTerm 后再同步布局。
+            账号布局由更新版本保存（格式 v{newerLayout}），布局同步已暂停；请升级 NexTerm。
           </span>
         </div>
       )}

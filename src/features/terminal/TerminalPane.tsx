@@ -1049,7 +1049,7 @@ export function TerminalPane({
       e.preventDefault();
       e.stopPropagation();
       if (paneNarrowRef.current) {
-        pushToast("info", "窗格太窄，无法显示侧栏");
+        pushToast("info", "窗格太窄，无法显示会话侧栏");
         return;
       }
       toggleSidebarHere();
@@ -2355,7 +2355,7 @@ export function TerminalPane({
         {containerId && (
           <span
             className={`nx-badge ${execInterrupted ? "nx-badge-amber" : "nx-badge-purple"}`}
-            title="在容器内执行命令的终端（docker exec）：关闭标签页将结束该进程，不能转入后台"
+            title="docker exec 终端：关闭标签页即结束，不能转入后台"
           >
             {execInterrupted ? "容器命令已结束" : "容器内命令"}
           </span>
@@ -2417,7 +2417,7 @@ export function TerminalPane({
         {encoding !== "utf-8" && (
           <span
             className="nx-badge nx-badge-amber font-mono @max-[560px]:order-1"
-            title="当前终端字符编码（对之后的输出生效），在「更多终端操作」菜单中切换"
+            title="终端字符编码"
           >
             {encoding}
           </span>
@@ -2458,7 +2458,7 @@ export function TerminalPane({
         <button
           className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
           aria-pressed={sidebarShown}
-          title={`会话侧栏：端口、最近文件、命令记录 (${formatBinding(bindings.sessionSidebar)})`}
+          title={`会话侧栏 (${formatBinding(bindings.sessionSidebar)})`}
           onClick={toggleSidebarHere}
         >
           <IconPanelRight size={13} />
@@ -2885,8 +2885,8 @@ export function TerminalPane({
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 {ordinaryStarting
-                  ? "正在新建临时终端。原持久终端未恢复，其中的进程状态未知；完成后该标签页将换成新终端"
-                  : "该终端所属的连接已不存在。重新连接将先尝试恢复原终端；无法恢复时，可选择新建临时终端。此前的输出可在「终端历史」中查看"}
+                  ? "正在新建临时终端。原持久终端未恢复，其中的进程状态未知。"
+                  : "连接已不存在。重新连接会先尝试恢复原终端，历史输出见「终端历史」。"}
               </span>
               <div className="flex items-center gap-2">
                 <button

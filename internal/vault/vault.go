@@ -460,9 +460,9 @@ var secretEnvelopePattern = regexp.MustCompile(regexp.QuoteMeta(store.SecretEnve
 
 func errKeyMismatch(mode Mode) error {
 	if mode == ModeDPAPI {
-		return ipc.NewError(ipc.CodeCrypto, "加密错误：系统保护的数据密钥与本凭据库不匹配（macOS 上可能是钥匙串条目被其他数据目录覆盖），已拒绝解锁；如无法找回原数据密钥，请删除无法解密的凭据和 AI Key 后重新初始化")
+		return ipc.NewError(ipc.CodeCrypto, "加密错误：系统保护的数据密钥与本凭据库不匹配（macOS 上可能是钥匙串条目被其他数据目录覆盖），已拒绝解锁；找不回原密钥时，请删除无法解密的凭据和 AI Key 后重新初始化")
 	}
-	return ipc.NewError(ipc.CodeCrypto, "加密错误：数据密钥与本凭据库的密钥校验值不匹配（数据库可能被部分恢复或修改），已拒绝解锁")
+	return ipc.NewError(ipc.CodeCrypto, "加密错误：数据密钥与本凭据库不匹配，数据库可能被部分恢复或修改，已拒绝解锁")
 }
 
 // verifyOrAdoptKeyCheckLocked proves dek belongs to this database. It destroys dek when it

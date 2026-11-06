@@ -132,8 +132,8 @@ function TypedEnvironmentConfirmationDialog({
         <div className="nx-modal-body">
           <p className="mb-3 text-[12px] leading-relaxed text-amber-300">
             {variant === "broadcast"
-              ? "服务端资产元数据将以下目标标记为生产环境。请逐目标输入实际环境名完成确认；取消不会发送待确认输入。"
-              : "服务端资产元数据将以下目标标记为生产环境。请逐目标输入实际环境名完成确认；取消不会执行任何命令。"}
+              ? "以下目标是生产环境，请逐个输入环境名确认；取消则不发送输入。"
+              : "以下目标是生产环境，请逐个输入环境名确认；取消则不执行任何命令。"}
           </p>
           {hasManagedDevice && (
             <p role="note" className="mb-3 text-[11px] leading-relaxed text-neutral-300">

@@ -222,7 +222,7 @@ describe("AssetEditor SSH connectivity", () => {
     await flush();
     expandAdvanced();
     expect(mounted!.container.textContent).toContain(
-      "默认关闭；开启后，远端进程可请求本机 ssh-agent 签名并继续连接其他主机，私钥不会离开本机。仅对可信主机开启。",
+      "远端可借本机 ssh-agent 登录其他主机，私钥不离开本机；仅对可信主机开启。",
     );
     const checkbox = mounted!.container.querySelector('input[aria-label="ssh-agent 转发"]') as HTMLInputElement;
     expect(checkbox.checked).toBe(false);

@@ -207,7 +207,7 @@ func TestCronWithoutLiveSessionRecordsClearLastError(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if !strings.Contains(finished.LastError, "没有当前用户可用的健康在线会话") ||
+	if !strings.Contains(finished.LastError, "目标主机未连接") ||
 		!strings.Contains(finished.LastError, "手动连接") {
 		t.Fatalf("cron lastError = %q", finished.LastError)
 	}

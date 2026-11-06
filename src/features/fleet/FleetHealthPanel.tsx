@@ -345,7 +345,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         )}
       </div>
       <div className="border-t border-neutral-800/70 px-3 py-1.5 text-[10px] text-neutral-500">
-        完整指标需要已连接 SSH；未连接的主机只检查能否连通。运行时长、负载、磁盘、内存和 Docker 占用在一次只读命令中读取。
+        完整指标需要已连接 SSH；未连接的主机只检查能否连通。
       </div>
     </section>
   );

@@ -173,7 +173,7 @@ export function ScriptDirectiveHelp() {
     <details className="mb-3 rounded border border-neutral-800 p-2 text-[11px] text-neutral-400" data-testid="runbook-directive-help">
       <summary className="cursor-pointer text-neutral-300">脚本交互指令说明</summary>
       <div className="mt-2 flex flex-col gap-1.5">
-        <p>在步骤下勾选「启用脚本交互指令」后（默认关闭），该步骤的脚本向标准输出打印以 <code className="nx-mono">@NEXTERM:</code> 开头的单独一行，即可在运行界面显示进度、提问或提示。指令行不会出现在普通输出中。</p>
+        <p>勾选「启用脚本交互指令」后，脚本打印以 <code className="nx-mono">@NEXTERM:</code> 开头的单独一行即可显示进度或向操作员提问（提问仅 SSH）。</p>
         <ul className="list-disc pl-4">
           <li><code className="nx-mono">@NEXTERM:STEP 标题</code>：标记当前子步骤</li>
           <li><code className="nx-mono">@NEXTERM:PROGRESS 0-100</code>：更新进度</li>
@@ -183,10 +183,21 @@ export function ScriptDirectiveHelp() {
           <li><code className="nx-mono">@NEXTERM:MESSAGE info|warn|error 文本</code>：显示一条消息</li>
         </ul>
         <p>多主机执行时每步命令是单行的，多条语句可用 <code className="nx-mono">sh -c '...'</code> 包装；下面的示例用 <code className="nx-mono">printf</code> 打印指令，Tab 写作 <code className="nx-mono">{"\\t"}</code>。</p>
-        <p>变量名只能包含字母、数字和下划线，且不以数字开头。指令行最长 1024 字节，提示语、标题和消息最长 200 个字符，不能包含控制字符。格式错误的指令会作为普通输出显示并给出警告，不会中断运行。</p>
-        <p>未勾选时，步骤输出原样显示，不解释任何 <code className="nx-mono">@NEXTERM:</code> 行，标准输入照常立即关闭。勾选后标准输入保持打开直到脚本结束，请只读取脚本自己请求的行，不要读到输入结束。只有 SSH 连接支持提问；受管设备及其他连接类型仍支持 STEP、PROGRESS 和 MESSAGE，提问会显示警告并被忽略。输入、保密输入和确认请求不受频率限制（每台主机最多 32 次，超出则该主机失败）；步骤、进度和消息有频率限制，进度只保留最新值。每台主机分别提问、分别回答，等待回答期间不计入命令超时，但超过 5 分钟没有回答会使该主机失败。</p>
-        <p>脚本的输出和提问内容来自远端主机，界面只会以纯文本显示并标明来源主机。保密输入不会回显；请不要在脚本中把它打印出来。</p>
         <pre className="nx-pre whitespace-pre-wrap break-all text-[11px]">{HELP_EXAMPLE}</pre>
+        <details>
+          <summary className="cursor-pointer text-neutral-300">规则与限制</summary>
+          <ul className="mt-1.5 list-disc pl-4">
+            <li>指令行不会出现在普通输出中；未勾选时输出原样显示，标准输入照常立即关闭。</li>
+            <li>勾选后标准输入保持打开直到脚本结束，只读取脚本自己请求的行，不要读到输入结束。</li>
+            <li>变量名只能包含字母、数字和下划线，且不以数字开头。</li>
+            <li>指令行最长 1024 字节；提示语、标题和消息最长 200 个字符，不能包含控制字符。</li>
+            <li>格式错误的指令作为普通输出显示并给出警告，不中断运行。</li>
+            <li>受管设备和其他连接类型只支持 STEP、PROGRESS 和 MESSAGE，提问会显示警告并被忽略。</li>
+            <li>每台主机最多提问 32 次，超出则该主机失败；步骤、进度和消息有频率限制，进度只保留最新值。</li>
+            <li>每台主机分别提问、分别回答；等待回答不计入命令超时，超过 5 分钟没有回答则该主机失败。</li>
+            <li>输出和提问来自远端主机，只以纯文本显示并标明来源；保密输入不回显，不要在脚本中打印它。</li>
+          </ul>
+        </details>
       </div>
     </details>
   );

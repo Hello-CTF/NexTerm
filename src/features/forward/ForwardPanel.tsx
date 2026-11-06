@@ -25,7 +25,7 @@ type Kind = "local" | "socks" | "remote";
 const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080", remote: "18080" };
 
 const LAZYCAT_UNAVAILABLE =
-  "检测到懒猫微服，端口转发在此平台上不可用：平台暴露的端口是不带鉴权的裸 TCP，应用侧无法补上鉴权。需要把端口开放给外部时，请改用微服平台自带的转发功能或 SSH 隧道。";
+  "懒猫微服上不支持端口转发，请改用平台转发或 SSH 隧道。";
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
@@ -298,8 +298,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         const remote = kind === "remote";
         const ok = await ask(
           remote
-            ? `远端监听 ${confirmedHost}:${port} 会把${remoteService} ${targetHost.trim()}:${targetPort.trim()} 暴露给远端网络。\n\n远程转发本身没有认证，任何能连接该地址的人都可访问该目标服务。请确认已了解并愿意承担该风险。`
-            : `监听 ${confirmedHost}:${port} 将创建一个无认证的开放 SOCKS5 代理。\n\n任何能连接该端口的人都可借助当前 SSH 会话访问远端网络。请确认已了解并愿意承担该风险。`,
+            ? `远端监听 ${confirmedHost}:${port} 将对远端网络开放。\n\n任何能连到该端口的人都能访问${remoteService} ${targetHost.trim()}:${targetPort.trim()}，请确认目标服务有鉴权。`
+            : `监听 ${confirmedHost}:${port} 将创建无认证的开放 SOCKS5 代理。\n\n任何能连到该端口的人都能经当前 SSH 会话访问远端网络。`,
           { title: remote ? "确认远程转发风险" : "确认开放代理风险", kind: "warning" },
         );
         if (ok) {
@@ -859,10 +859,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
 
             <div className="nx-hint mt-2">
               {localSession ? (
-                <>
-                  当前工作区是内置的「当前设备」：出口必须是另一台主机的 SSH 连接。
-                  要访问内网服务（数据库 / 后台面板），请先新建并连接一台 SSH 资产，再新建转发。
-                </>
+                "「当前设备」不能作为转发出口，请先连接一台 SSH 资产再新建转发。"
               ) : sessionId && !env.data ? (
                 "转发环境检查成功后才会显示监听地址并允许创建。"
               ) : sessionId ? (
@@ -873,12 +870,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       {bindHost}:{listenPort}
                     </span>{" "}
                     （绑定在远端主机上
-                    {isLoopbackHost(bindHost)
-                      ? "，只有远端本机能连，不对远端网络暴露"
-                      : WEB
-                        ? "，这个端口对远端网络开放，能连上它的任何人都会到达 NexTerm 所在主机上的目标服务。请确认目标服务自身有鉴权，不需要时及时停止"
-                        : "，这个端口对远端网络开放，能连上它的任何人都会到达本地目标服务。请确认目标服务自身有鉴权，不需要时及时停止"}
-                    ）。远程转发绑定在当前 SSH 连接上，重新连接后会自动尝试恢复；失败时可在列表中重试。
+                    {isLoopbackHost(bindHost) ? "，只有远端本机能连" : "，对远端网络开放，创建前会确认风险"}
+                    ）。重新连接后会自动尝试恢复。
                   </>
                 ) : (
                 <>
@@ -886,16 +879,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   <span className="nx-code">
                     {listenHost}:{listenPort}
                   </span>
-                  {exposed
-                    ? "，这个端口对外可访问，能连上它的任何人都会到达目标服务。请确认目标服务自身有鉴权，不需要时及时停止。"
-                    : `，只有${localMachine}能连，不对外暴露。`}
+                  {!exposed
+                    ? `，只有${localMachine}能连。`
+                    : kind === "socks"
+                      ? "，对外开放，创建前会确认风险。"
+                      : "。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。"}
                   会话断开后转发自动停止。
-                  {exposed && kind === "socks" && (
-                    <>
-                      <br />
-                      SOCKS5 代理本身没有认证，暴露在服务端上等同于开放代理：任何能连接该端口的人都可借助该 SSH 会话访问远端网络。
-                    </>
-                  )}
                 </>
                 )
               ) : (

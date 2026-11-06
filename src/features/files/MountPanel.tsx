@@ -415,7 +415,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
           ) : (
             <>
-              目标默认为当前资产{asset.data?.name ? `「${asset.data.name}」` : ""}的主机；用户名和密码仅用于本次挂载，不会保存。未填写时，Linux 使用本机密钥或 SSH 代理（ssh-agent），Windows 使用当前登录凭据
+              用户名和密码仅用于本次挂载，不会保存；留空时 Linux 用本机密钥或 ssh-agent，Windows 用当前登录凭据。
             </>
           )}
         </div>

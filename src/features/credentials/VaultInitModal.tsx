@@ -77,10 +77,7 @@ export function VaultInitModal({
               autoComplete="off"
               onChange={(e) => setPassword(e.target.value)}
             />
-            <div className="nx-hint mt-1.5">
-              保存密码或私钥前，需要先初始化凭据库。保护密码只在本机使用，不会上传；
-              留空则不设置密码，凭据仍可正常保存与使用，但任何获得数据目录的人均可解密。设置后若遗忘将无法找回，已保存的凭据将无法解密。
-            </div>
+            <div className="nx-hint mt-1.5">仅在本机使用，忘记无法找回。留空也能保存凭据，但拿到数据目录的人可以解密。</div>
           </div>
         </div>
         <div className="nx-modal-footer shrink-0">

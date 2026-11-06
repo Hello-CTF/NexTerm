@@ -131,7 +131,7 @@ describe("M134 AI copy", () => {
     return textarea;
   }
 
-  it("points the confirm-card guidance at the real interception-rule setting", async () => {
+  it("names the confirm-card help icon and exposes the help as the card description", async () => {
     setInputValue(composer(), "Run a command");
     click(view!.container.querySelector('button[title="发送 (Enter)"]')!);
     await flush();
@@ -149,7 +149,11 @@ describe("M134 AI copy", () => {
     expect(allow).not.toBeNull();
     const alert = allow!.closest(".nx-alert");
     expect(alert).not.toBeNull();
-    expect(alert!.querySelector('[role="img"]')?.getAttribute("title")).toContain("「设置 → AI 拦截规则」");
+    const info = alert!.querySelector('[role="img"]');
+    expect(info?.getAttribute("aria-label")).toBe("授权说明");
+    expect(info?.getAttribute("title")).toContain("永久允许");
+    const describedBy = alert!.getAttribute("aria-describedby");
+    expect(describedBy && document.getElementById(describedBy)?.textContent).toBe(info?.getAttribute("title"));
     expect(alert!.textContent).not.toContain("自定义危险操作");
   });
 
