@@ -95,10 +95,11 @@ func (p *stallingProxy) thaw()   { p.stall.Store(false) }
 
 func (p *stallingProxy) socket() string { return p.listener.Addr().String() }
 
-// Real-supervisor A/B: with the ack path partitioned, a tab write must
-// return the caller's context error instead of parking in the ack wait, the
-// stream is terminated (only a reattach recovers), and the unconfirmed
-// input is never replayed by the client.
+// Real-supervisor A/B: with the ack path partitioned, a keystroke write goes
+// out without waiting for its acknowledgement, while an acknowledged write
+// (paste) returns the caller's context error instead of parking in the ack
+// wait; that cancellation terminates the stream (only a reattach recovers),
+// and the unconfirmed input is never replayed by the client.
 func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "supervisor")
 	instance, err := supervisor.New(supervisor.Config{StateDir: stateDir, CommandTimeout: 5 * time.Second})
@@ -126,7 +127,7 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	tabID := ids.New()
-	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Durable: provider})
+	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Durable: provider, OpenAccess: true})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(ctx, Asset{ID: "cancel-local", Kind: KindLocal})
 	if err != nil {
@@ -148,14 +149,21 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	}
 	waitForTabOutput(t, manager, tabID, "before-partition-marker")
 
-	// Partition the ack path, then write with a deadline: the in-progress
-	// write must return the context error instead of parking in the ack wait.
+	// Partition the ack path. A keystroke is pipelined: it returns once on
+	// the wire, without waiting for the acknowledgement that never comes.
 	proxy.freeze()
+	keyCtx, keyCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer keyCancel()
+	if err := manager.Write(keyCtx, tabID, "client-a", []byte("pipelined-keystroke-marker\n")); err != nil {
+		t.Fatalf("partitioned keystroke Write = %v, want it sent without waiting for its acknowledgement", err)
+	}
+	// An acknowledged write with a deadline must return the context error
+	// instead of parking in the ack wait.
 	writeCtx, writeCancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer writeCancel()
-	err = manager.Write(writeCtx, tabID, "client-a", []byte("unconfirmed-input-marker\n"))
+	err = manager.WritePasteFor(writeCtx, tabID, "unconfirmed-input-marker\n")
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("partitioned Write = %v, want context deadline exceeded", err)
+		t.Fatalf("partitioned paste = %v, want context deadline exceeded", err)
 	}
 
 	// The stream is terminated: a later write on the same tab fails with the
@@ -202,8 +210,10 @@ func TestSupervisorDurableWriteCancelDuringAckWait(t *testing.T) {
 	// The unconfirmed input is never replayed: the client sent it at most
 	// once, so cat's echo of it appears at most once in the recovered
 	// output, and the post-termination marker was never delivered.
-	if count := strings.Count(output, "unconfirmed-input-marker"); count > 1 {
-		t.Fatalf("unconfirmed input replayed %d times: %q", count, output)
+	for _, marker := range []string{"pipelined-keystroke-marker", "unconfirmed-input-marker"} {
+		if count := strings.Count(output, marker); count > 1 {
+			t.Fatalf("unconfirmed input %s replayed %d times: %q", marker, count, output)
+		}
 	}
 	if strings.Contains(output, "after-dead-marker") {
 		t.Fatalf("input written after the stream died was delivered: %q", output)
