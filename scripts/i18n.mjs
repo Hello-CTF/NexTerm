@@ -8,6 +8,9 @@
 //   node scripts/i18n.mjs missing <locale> <kind> [--offset N] [--limit N] [--out file]
 //                                                     untranslated source keys as a JSON array
 //   node scripts/i18n.mjs merge <locale> <kind> <file> merge a JSON object of translations after validating it
+//   node scripts/i18n.mjs validate <locale> <kind> <file>  report the problems of a translation file
+//   node scripts/i18n.mjs chunks <kind> <size> <dir> [--locale <locale>]
+//                                                     untranslated keys with a file that uses each, in numbered files
 //   node scripts/i18n.mjs wrap [--dry] <file|dir>...  wrap Chinese JSX text and string literals in t()
 //
 // Kinds: ui is the frontend's t() keys; server is the backend's Chinese string literals (Go format strings).
@@ -282,6 +285,42 @@ function missing(args) {
   if (out) console.log(`i18n: ${keys.length} keys written to ${out}`);
 }
 
+// chunks writes the untranslated keys of a kind, each with a file that uses it, into numbered files of size keys.
+function chunks(args) {
+  const [kind, sizeText, dir] = args;
+  if (!KINDS.includes(kind) || !dir) die("usage: chunks <kind> <size> <dir> [--locale <locale>]");
+  const locale = option(args, "--locale", null);
+  const catalog = locale ? readCatalog(locale, kind) : {};
+  const size = Number(sizeText) || 300;
+  const entries = [...sourceKeys(kind).entries()].filter(([key]) => !(key in catalog)).sort(([a], [b]) => (a < b ? -1 : 1));
+  fs.mkdirSync(dir, { recursive: true });
+  let count = 0;
+  for (let i = 0; i < entries.length; i += size) {
+    const part = entries.slice(i, i + size).map(([key, file]) => ({ key, file }));
+    fs.writeFileSync(path.join(dir, `${kind}-${String(++count).padStart(3, "0")}.json`), `${JSON.stringify(part, null, 1)}\n`);
+  }
+  console.log(`i18n: ${entries.length} ${kind} keys in ${count} chunks under ${dir}`);
+}
+
+// validate reports the problems of a translation file without merging it.
+function validate(args) {
+  const [locale, kind, file] = args;
+  requireTarget(locale, kind);
+  if (!file) die("validate needs a file");
+  const additions = JSON.parse(fs.readFileSync(file, "utf8"));
+  const keys = sourceKeys(kind);
+  let problems = 0;
+  for (const [key, value] of Object.entries(additions)) {
+    const found = keys.has(key) ? entryProblems(kind, key, value) : ["not a source key"];
+    for (const problem of found) {
+      console.error(`${JSON.stringify(key)}: ${problem}`);
+      problems++;
+    }
+  }
+  console.log(`i18n: ${Object.keys(additions).length} entries, ${problems} problems`);
+  if (problems > 0) process.exitCode = 2;
+}
+
 function merge(args) {
   const [locale, kind, file] = args;
   requireTarget(locale, kind);
@@ -322,6 +361,7 @@ const COMPARISON = new Set([
   ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.InKeyword,
 ]);
 const SKIPPED_CALLEES = new Set(["console", "RegExp", "describe", "it", "test"]);
+const REVIEW_REASONS = new Set(["comparison", "matching", "case", "index", "key", "enum", "type"]);
 
 function calleeRoot(expression) {
   let node = expression;
@@ -401,19 +441,27 @@ function importPath(file) {
 
 function wrapFile(file, dry) {
   const text = fs.readFileSync(file, "utf8");
-  if (!CJK.test(text)) return { file, count: 0, skipped: {} };
+  if (!CJK.test(text)) return { file, count: 0, skipped: {}, review: [] };
   const sf = parse(file, text);
   const existing = translatorNames(sf);
   let fn = [...existing][0];
   let needsImport = false;
   if (!fn) {
     fn = bindsName(sf, "t") ? "tr" : "t";
-    if (fn === "tr" && bindsName(sf, "tr")) return { file, count: 0, skipped: { "name conflict": 1 } };
+    if (fn === "tr" && bindsName(sf, "tr")) return { file, count: 0, skipped: { "name conflict": 1 }, review: [`${path.relative(ROOT, file)}: binds both t and tr; not wrapped`] };
     needsImport = true;
   }
   const names = new Set([...existing, fn]);
   const edits = [];
   const skipped = {};
+  const review = [];
+  const note = (reason, node) => {
+    skipped[reason] = (skipped[reason] ?? 0) + 1;
+    if (REVIEW_REASONS.has(reason)) {
+      const { line } = sf.getLineAndCharacterOfPosition(node.getStart());
+      review.push(`${path.relative(ROOT, file)}:${line + 1}: ${reason}: ${node.getText().slice(0, 60)}`);
+    }
+  };
   const call = (key, params) => `${fn}(${JSON.stringify(key)}${params ? `, ${params}` : ""})`;
   const take = (start, end) => {
     // Edits inside a range that is being rewritten are folded into the new text and leave the list.
@@ -443,7 +491,7 @@ function wrapFile(file, dry) {
       if (ts.isTaggedTemplateExpression(node.parent)) return;
       const reason = skipReason(node, names);
       if (reason) {
-        skipped[reason] = (skipped[reason] ?? 0) + 1;
+        note(reason, node);
         return;
       }
       edits.push({ start: node.getStart(), end: node.getEnd(), text: call(node.text) });
@@ -454,7 +502,7 @@ function wrapFile(file, dry) {
       if (!CJK.test(literal) || ts.isTaggedTemplateExpression(node.parent)) return;
       const reason = skipReason(node, names);
       if (reason) {
-        skipped[reason] = (skipped[reason] ?? 0) + 1;
+        note(reason, node);
         return;
       }
       const used = new Set();
@@ -470,7 +518,7 @@ function wrapFile(file, dry) {
     }
   };
   visit(sf);
-  if (edits.length === 0) return { file, count: 0, skipped };
+  if (edits.length === 0) return { file, count: 0, skipped, review };
 
   let out = applyEdits(text, 0, edits);
   if (needsImport) {
@@ -486,7 +534,7 @@ function wrapFile(file, dry) {
     }
   }
   if (!dry) fs.writeFileSync(file, out);
-  return { file, count: edits.length, skipped };
+  return { file, count: edits.length, skipped, review };
 }
 
 function wrap(args) {
@@ -499,8 +547,10 @@ function wrap(args) {
   });
   let total = 0;
   const skippedTotal = {};
+  const reviewTotal = [];
   for (const file of files) {
-    const { count, skipped } = wrapFile(file, dry);
+    const { count, skipped, review } = wrapFile(file, dry);
+    reviewTotal.push(...review);
     total += count;
     for (const [reason, n] of Object.entries(skipped)) skippedTotal[reason] = (skippedTotal[reason] ?? 0) + n;
     if (count > 0 || Object.keys(skipped).length > 0) {
@@ -509,6 +559,10 @@ function wrap(args) {
     }
   }
   console.log(`i18n: ${dry ? "would wrap" : "wrapped"} ${total} in ${files.length} files; left: ${JSON.stringify(skippedTotal)}`);
+  if (reviewTotal.length > 0) {
+    console.log("\nCompared or matched Chinese text left as is; check that the text it is compared with is not translated:");
+    for (const line of reviewTotal) console.log(`  ${line}`);
+  }
 }
 
 export { wrapFile, entryProblems };
@@ -521,6 +575,8 @@ if (isMain) switch (commandName) {
   case "sync": sync(); break;
   case "missing": missing(rest); break;
   case "merge": merge(rest); break;
+  case "chunks": chunks(rest); break;
+  case "validate": validate(rest); break;
   case "wrap": wrap(rest); break;
   default: die("usage: node scripts/i18n.mjs check|status|sync|missing|merge|wrap (see the header)");
 }
