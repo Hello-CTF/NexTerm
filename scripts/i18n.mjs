@@ -202,7 +202,7 @@ function entryProblems(kind, key, value) {
     else if (typeof text !== "string" || text.trim() === "") problems.push(`empty ${form}`);
     else if (placeholders(kind, text) !== want) problems.push(`placeholders ${placeholders(kind, text) || "none"} != ${want || "none"}`);
   }
-  if (kind === "ui" && typeof value !== "string" && !/\{count\}/.test(key)) problems.push("plural forms need a {count} key");
+  if (kind === "ui" && typeof value !== "string" && !/\{\w+\}/.test(key)) problems.push("plural forms need a key with a placeholder");
   return problems;
 }
 

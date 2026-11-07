@@ -73,14 +73,23 @@ function interpolate(text: string, params: TranslateParams | undefined): string 
   return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? `${params[name] as string}` : whole));
 }
 
+// pluralCount is the number that chooses a plural form: params.count, or else the first numeric parameter.
+function pluralCount(params: TranslateParams | undefined): number | null {
+  if (!params) return null;
+  if (typeof params.count === "number") return params.count;
+  for (const value of Object.values(params)) if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+}
+
 function pick(entry: CatalogEntry, params: TranslateParams | undefined): string {
   if (typeof entry === "string") return entry;
-  const count = Number(params?.count);
-  return (Number.isFinite(count) ? entry[plurals.select(count)] : undefined) ?? entry.other;
+  const count = pluralCount(params);
+  return (count === null ? undefined : entry[plurals.select(count)]) ?? entry.other;
 }
 
 // t translates interface text. The key is the Simplified Chinese text itself, with {name} placeholders filled from
-// params; a catalog entry may give plural forms, chosen by params.count. A key missing from the catalog shows as is.
+// params; a catalog entry may give plural forms, chosen by params.count or else the first numeric parameter. A key
+// missing from the catalog shows as is.
 export function t(source: string, params?: TranslateParams): string {
   const entry = ui[source];
   return interpolate(entry === undefined ? source : pick(entry, params), params);

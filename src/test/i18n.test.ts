@@ -44,6 +44,12 @@ describe("t", () => {
     expect(t("未翻译")).toBe("未翻译");
   });
 
+  it("chooses plural forms by the first numeric parameter when there is no count", () => {
+    applyLocale("en", { "已恢复 {successCount} 个工作区": { one: "Restored {successCount} workspace", other: "Restored {successCount} workspaces" } }, {});
+    expect(t("已恢复 {successCount} 个工作区", { successCount: 1 })).toBe("Restored 1 workspace");
+    expect(t("已恢复 {successCount} 个工作区", { successCount: 3 })).toBe("Restored 3 workspaces");
+  });
+
   it("formats numbers for the interface language", () => {
     applyLocale("de", {}, {});
     expect(formatNumber(1234.5)).toBe("1.234,5");
