@@ -205,7 +205,13 @@ export type AssetInputRequest = {
   options?: unknown;
   tags?: string;
   note?: string;
-  sort?: number;
+  sort?: number | null;
+};
+
+export type AssetMoveRequest = {
+  id: string;
+  groupId: string | null;
+  beforeId?: string;
 };
 
 export type AssetPatchRequest = {
@@ -1503,6 +1509,11 @@ export type GroupDefaultsRequest = {
   keyPath?: string | null;
   credId?: string | null;
   jumpAssetId?: string | null;
+};
+
+export type GroupMoveRequest = {
+  id: string;
+  beforeId?: string;
 };
 
 export type HelperOfflineDTO = {

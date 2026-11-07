@@ -790,10 +790,12 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		{name: "asset_probe_batch", scope: "asset", nested: true, output: "AssetProbeBatchDTO"},
 		{name: "asset_inheritance_preview", scope: "asset", output: "AssetInheritanceDTO"},
 		{name: "asset_credential_required", scope: "asset", output: "AssetCredentialRequiredDTO"},
+		{name: "asset_move", scope: "asset", output: "AssetDTO"},
 		{name: "group_list", scope: "group", output: "AssetGroupDTO[]"},
 		{name: "group_create", scope: "group", output: "AssetGroupDTO"},
 		{name: "group_update", scope: "group", output: "AssetGroupDTO"},
 		{name: "group_delete", scope: "group", output: "unknown"},
+		{name: "group_move", scope: "group", output: "AssetGroupDTO"},
 		{name: "known_host_list", scope: "known-host", output: "unknown"},
 		{name: "known_host_accept", scope: "known-host", output: "unknown"},
 		{name: "known_host_remove", scope: "known-host", output: "unknown"},
@@ -828,8 +830,8 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 18 {
-		t.Fatalf("selected asset/group/known-host command count = %d, want 18", len(selected))
+	if len(selected) != 20 {
+		t.Fatalf("selected asset/group/known-host command count = %d, want 20", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "asset" || command.Scope == "group" || command.Scope == "known-host") && !selected[name] {
@@ -849,7 +851,7 @@ func TestAssetGroupKnownHostVerticalContracts(t *testing.T) {
 		want    []string
 	}{
 		{command: "asset_get", output: true, want: []string{"options: unknown;"}},
-		{command: "asset_create", want: []string{"kind: string;", "name: string;", "groupId?: string | null;", "options?: unknown;", "tags?: string;", "sort?: number;"}},
+		{command: "asset_create", want: []string{"kind: string;", "name: string;", "groupId?: string | null;", "options?: unknown;", "tags?: string;", "sort?: number | null;"}},
 		{command: "asset_update", want: []string{"id: string;", "groupId?: string | null;", "name?: string | null;", "options?: unknown;", "tags?: string | null;"}},
 		{command: "asset_get", want: []string{"id?: string;", "q?: string;", "path?: string;"}},
 		{command: "asset_search_meta", output: true, want: []string{"assets: AssetDTO[];", "total: number;", "truncated: boolean;"}},

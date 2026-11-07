@@ -71,14 +71,15 @@ export function call<T>(cmd: IPCCommandName, args?: Record<string, unknown>): Pr
 // desktop wakes a sync round, so the edit reaches other devices in moments
 // instead of on the next periodic round.
 const SYNCED_WRITES = new Set([
-  "asset_create", "asset_update", "asset_delete",
-  "group_create", "group_update", "group_delete",
+  "asset_create", "asset_update", "asset_delete", "asset_move",
+  "group_create", "group_update", "group_delete", "group_move",
   "snippet_create", "snippet_update", "snippet_delete",
   "credential_update", "vault_set_credential", "vault_delete_credential",
   "known_host_accept", "known_host_remove",
   "ai_set_permission", "ai_model_save", "ai_model_delete", "ai_model_activate",
   "ai_grant_set", "ai_grant_revoke", "ai_grant_rule_set", "ai_grant_rule_revoke",
   "sync_preferences_set", "inventory_sync", "transcript_sync_opt_in", "transcript_delete",
+  "transcript_purge",
 ]);
 export const SYNC_WAKE_DELAY_MS = 2000;
 let syncWakeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -964,6 +965,12 @@ export const assetApi = {
       args: storedAssetPatch(args) as unknown as import("./generated/types").AssetPatchRequest,
     })) as Asset)),
   readKeyFile: (path: string) => call("asset_read_key_file", { path }),
+  // Places an asset in a group (null for the root) in front of beforeId, or last without one.
+  move: (id: string, groupId: string | null, beforeId?: string) =>
+    assetWrite(() => call("asset_move", beforeId ? { id, groupId, beforeId } : { id, groupId }) as Promise<Asset>),
+  // Places a group in front of a sibling group, or last without one.
+  groupMove: (id: string, beforeId?: string) =>
+    assetWrite(() => call("group_move", beforeId ? { id, beforeId } : { id }) as Promise<AssetGroup>),
   delete: (id: string) => assetWrite(() => call("asset_delete", { id }) as Promise<void>),
   search: async (q: string) => (((await call("asset_search", { q })) as Asset[] | null) ?? []).map(shownAsset),
   searchMeta: async (q: string) => {

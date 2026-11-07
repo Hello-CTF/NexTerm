@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => ({
   probe: vi.fn(),
   write: vi.fn(),
   assetDelete: vi.fn(),
+  move: vi.fn(),
+  groupMove: vi.fn(),
   disconnect: vi.fn(),
   ask: vi.fn(),
   realAsk: null as null | ((message: string, options?: { title?: string; kind?: "info" | "warning" | "error" }) => Promise<boolean>),
@@ -63,6 +65,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       update: mocks.update,
       create: mocks.createAsset,
       delete: mocks.assetDelete,
+      move: mocks.move,
+      groupMove: mocks.groupMove,
       groupList: mocks.groupList,
       groupCreate: mocks.groupCreate,
       groupUpdate: mocks.groupUpdate,
@@ -1426,5 +1430,111 @@ describe("asset bulk maintenance entry", () => {
     if (!close) throw new Error("bulk maintenance close button not found");
     click(close);
     await waitFor(() => expect(document.body.querySelector('[role="dialog"][aria-label="批量主机维护"]')).toBeNull());
+  });
+});
+
+describe("asset order", () => {
+  const rootAsset = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
+    id, groupId: null, kind: "ssh", name, host: `${name}.lan`, port: 22, username: "root", authKind: "password",
+    keyPath: null, credId: null, options: {}, tags: "", note: "", sort: 0, createdAt: 1, updatedAt: 1, deletedAt: null,
+    builtin: false, ...extra,
+  });
+  const LOCAL = rootAsset("local", "当前设备", { kind: "local", host: null, port: null, username: null, builtin: true, sort: -1 });
+
+  function rowOf(name: string): HTMLElement {
+    const row = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"]:not([aria-expanded])')].find((item) =>
+      item.textContent?.includes(name),
+    );
+    if (!row) throw new Error(`row not found: ${name}`);
+    return row;
+  }
+
+  function dragOnto(target: Element, type: string, id: string, half: "top" | "bottom", extraTypes: string[] = []) {
+    const dataTransfer = { types: [type, ...extraTypes], getData: (wanted: string) => (wanted === type ? id : "") };
+    // jsdom lays nothing out, so a row spans y = 0; a negative clientY is its top half.
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: dataTransfer });
+    Object.defineProperty(over, "clientY", { value: half === "top" ? -1 : 1 });
+    act(() => {
+      target.dispatchEvent(over);
+    });
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: dataTransfer });
+    act(() => {
+      target.dispatchEvent(drop);
+    });
+  }
+
+  it("keeps the built-in local asset first even when another asset sorts lower", async () => {
+    mocks.list.mockResolvedValue([rootAsset("a", "alpha", { sort: -5 }), LOCAL]);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("alpha"));
+    const names = [...mounted!.container.querySelectorAll('[role="treeitem"]:not([aria-expanded])')].map((row) => row.textContent ?? "");
+    expect(names[0]).toContain("当前设备");
+  });
+
+  it("places a dropped asset before or after the row it lands on", async () => {
+    mocks.list.mockResolvedValue([LOCAL, rootAsset("a", "alpha"), rootAsset("b", "bravo"), rootAsset("c", "charlie")]);
+    mocks.move.mockResolvedValue(undefined);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("charlie"));
+
+    dragOnto(rowOf("alpha"), "application/x-nexterm-asset", "c", "top");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("c", null, "a"));
+
+    dragOnto(rowOf("bravo"), "application/x-nexterm-asset", "a", "bottom");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("a", null, "c"));
+
+    dragOnto(rowOf("charlie"), "application/x-nexterm-asset", "a", "bottom");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("a", null, undefined));
+
+    // Dropping on the local asset places the dragged one first, right below it.
+    dragOnto(rowOf("当前设备"), "application/x-nexterm-asset", "c", "top");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("c", null, "a"));
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it("moves an asset up, down and to the top from its menu", async () => {
+    mocks.list.mockResolvedValue([rootAsset("a", "alpha"), rootAsset("b", "bravo"), rootAsset("c", "charlie")]);
+    mocks.move.mockResolvedValue(undefined);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("charlie"));
+    const choose = (name: string, label: string) => {
+      click(rowOf(name).querySelector<HTMLButtonElement>('button[aria-label^="更多操作 "]')!);
+      const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((button) => button.textContent?.includes(label));
+      if (!item) throw new Error(`menu item not found: ${label}`);
+      click(item);
+    };
+
+    choose("charlie", "上移");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("c", null, "b"));
+    choose("charlie", "移到顶部");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("c", null, "a"));
+    choose("alpha", "下移");
+    await waitFor(() => expect(mocks.move).toHaveBeenLastCalledWith("a", null, "c"));
+  });
+
+  it("reorders groups only among groups with the same parent", async () => {
+    mocks.groupList.mockResolvedValue([
+      { ...GROUP, id: "g1", name: "生产" },
+      { ...GROUP, id: "g2", name: "测试" },
+      { ...GROUP, id: "g3", name: "子组", parentId: "g1" },
+    ]);
+    mocks.groupMove.mockResolvedValue(undefined);
+    mounted = mountWithClient(createElement(AssetTree));
+    await waitFor(() => expect(mounted!.container.textContent).toContain("测试"));
+    const header = (name: string) => {
+      const node = [...mounted!.container.querySelectorAll<HTMLElement>('[role="treeitem"][aria-expanded] > .nx-row')].find((row) =>
+        row.textContent?.includes(name),
+      );
+      if (!node) throw new Error(`group header not found: ${name}`);
+      return node;
+    };
+
+    dragOnto(header("生产"), "application/x-nexterm-group", "g2", "top", ["application/x-nexterm-group-parent-root"]);
+    await waitFor(() => expect(mocks.groupMove).toHaveBeenLastCalledWith("g2", "g1"));
+
+    dragOnto(header("生产"), "application/x-nexterm-group", "g3", "top", ["application/x-nexterm-group-parent-g1"]);
+    expect(mocks.groupMove).toHaveBeenCalledTimes(1);
   });
 });

@@ -79,6 +79,9 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 		"GroupID": true, "Host": true, "Port": true, "Username": true, "AuthKind": true,
 		"KeyPath": true, "CredID": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.assetMoveRequest": {
+		"BeforeID": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.assetPatchRequest": {
 		"Kind": true, "Name": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
 	},
@@ -93,6 +96,9 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.groupInputRequest": {
 		"ParentID": true, "Sort": true,
+	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.groupMoveRequest": {
+		"BeforeID": true,
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.groupPatchRequest": {
 		"Name": true, "Sort": true,

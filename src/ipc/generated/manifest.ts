@@ -508,6 +508,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO[]" },
     },
+    "asset_move": {
+      scope: "asset",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetMoveRequest", ts: "AssetMoveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.assetDTO", ts: "AssetDTO" },
+    },
     "asset_probe_batch": {
       scope: "asset",
       nested: true,
@@ -1375,6 +1383,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO[]" },
+    },
+    "group_move": {
+      scope: "group",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupMoveRequest", ts: "GroupMoveRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.groupDTO", ts: "AssetGroupDTO" },
     },
     "group_update": {
       scope: "group",
@@ -3353,6 +3369,10 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.AssetDTO[];
   };
+  "asset_move": {
+    input: contractTypes.AssetMoveRequest;
+    output: contractTypes.AssetDTO;
+  };
   "asset_probe_batch": {
     input: contractTypes.AssetProbeBatchRequest;
     output: contractTypes.AssetProbeBatchDTO;
@@ -3928,6 +3948,10 @@ export interface IPCCommandTypeMap {
   "group_list": {
     input: Record<string, never>;
     output: contractTypes.AssetGroupDTO[];
+  };
+  "group_move": {
+    input: contractTypes.GroupMoveRequest;
+    output: contractTypes.AssetGroupDTO;
   };
   "group_update": {
     input: contractTypes.AssetGroupPatchRequest;

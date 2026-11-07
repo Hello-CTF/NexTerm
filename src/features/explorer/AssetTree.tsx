@@ -59,6 +59,8 @@ import {
   IconTerminal,
   IconTrash,
   IconXCircle,
+  IconArrowUp,
+  IconArrowDown,
 } from "../../ui/icons";
 import { SnippetsPanel } from "./SnippetsPanel";
 import { SshImportDialog } from "./SshImportDialog";
@@ -164,6 +166,10 @@ const KIND_LABEL: Record<string, string> = {
 
 
 const DRAG_ASSET = "application/x-nexterm-asset";
+const DRAG_GROUP = "application/x-nexterm-group";
+// A dragged group also carries its parent in a type name, because a drop target can read the types but not the
+// data while the drag is over it; groups reorder only among the groups that share their parent.
+const dragGroupParentType = (parentId: string | null) => `application/x-nexterm-group-parent-${(parentId ?? "root").toLowerCase()}`;
 
 const ASSET_FIELD_IDLE_VALIDATION_MS = 500;
 
@@ -557,9 +563,9 @@ export function AssetTree() {
       : [];
     const orphanedIds = new Set(orphaned.map((asset) => asset.id));
     const ungrouped = [...(byGroup.get(null) ?? []), ...orphaned];
-    const localIndex = ungrouped.findIndex((a) => a.builtin && a.kind === "local");
-    const headAssets = localIndex >= 0 ? ungrouped.slice(0, localIndex + 1) : [];
-    const afterHead = localIndex >= 0 ? ungrouped.slice(localIndex + 1) : ungrouped;
+    // The built-in local asset always leads; assets placed first in the root follow it.
+    const headAssets = ungrouped.filter((a) => a.builtin && a.kind === "local");
+    const afterHead = ungrouped.filter((a) => !(a.builtin && a.kind === "local"));
     // Ungrouped devices sit right after the local terminal, ahead of other assets.
     const restAssets = [...afterHead.filter((a) => a.kind === "device"), ...afterHead.filter((a) => a.kind !== "device")];
     for (const asset of headAssets) items.push({ key: `asset:${asset.id}`, kind: "asset", asset, orphaned: orphanedIds.has(asset.id) });
@@ -813,6 +819,86 @@ export function AssetTree() {
     }
   };
 
+  // The assets of one group (null for the root) in the order the tree shows them; the built-in local asset, fleet
+  // devices and orphans have no place in that order.
+  const orderedSiblings = (groupId: string | null) =>
+    (byGroup.get(groupId) ?? []).filter((a) => !a.builtin && a.kind !== "device");
+  const canReorder = (asset: Asset) =>
+    !query.trim() && !asset.builtin && asset.kind !== "device" && (asset.groupId === null || groupPaths.has(asset.groupId));
+
+  // placeAsset puts an asset in a group in front of beforeId ("" for last). The backend computes the order from every
+  // asset of the group, so assets this view hides keep their relative places.
+  const placeAsset = async (asset: Asset, groupId: string | null, beforeId: string) => {
+    if (pendingMovesRef.current.has(asset.id)) return;
+    const groupName = (id: string | null) => id === null ? tr("根目录") : groupPaths.get(id) ?? tr("未知分组");
+    if (asset.groupId !== groupId) {
+      const changes = await inheritanceChangesOnMove(asset, groupId);
+      if (changes.length > 0 && !(await ask(moveConfirmationText([{ name: asset.name, targetName: groupName(groupId), changes }]), { kind: "warning" }))) {
+        return;
+      }
+    }
+    pendingMovesRef.current.add(asset.id);
+    try {
+      await assetApi.move(asset.id, groupId, beforeId || undefined);
+      void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["asset-search"] });
+    } catch (e) {
+      pushToast("error", tr("无法调整「{name}」的位置：{error}", { name: asset.name, error: describeError(e) }));
+    } finally {
+      pendingMovesRef.current.delete(asset.id);
+    }
+  };
+
+  // reorderAsset handles a drop on a row: the dragged asset goes before or after that row, in the row's group.
+  const reorderAsset = (draggedId: string, target: Asset, position: "before" | "after") => {
+    const dragged = (assets.data ?? []).find((a) => a.id === draggedId);
+    if (!dragged || !canReorder(dragged) || dragged.id === target.id) return;
+    const groupId = target.builtin ? null : target.groupId;
+    if (groupId !== null && !groupPaths.has(groupId)) return;
+    const siblings = orderedSiblings(groupId).filter((a) => a.id !== dragged.id);
+    let beforeId = "";
+    if (target.builtin) {
+      beforeId = siblings[0]?.id ?? "";
+    } else if (position === "before") {
+      beforeId = target.id;
+    } else {
+      const index = siblings.findIndex((a) => a.id === target.id);
+      beforeId = siblings[index + 1]?.id ?? "";
+    }
+    void placeAsset(dragged, groupId, beforeId);
+  };
+
+  // reorderGroup handles a group dropped on a sibling group's header: it goes before or after that group.
+  const reorderGroup = (draggedId: string, target: AssetGroup, position: "before" | "after") => {
+    const dragged = (groups.data ?? []).find((g) => g.id === draggedId);
+    if (!dragged || dragged.id === target.id || (dragged.parentId ?? null) !== (target.parentId ?? null)) return;
+    const siblings = (groups.data ?? []).filter((g) => (g.parentId ?? null) === (target.parentId ?? null) && g.id !== dragged.id);
+    const index = siblings.findIndex((g) => g.id === target.id);
+    const beforeId = position === "before" ? target.id : siblings[index + 1]?.id ?? "";
+    void assetApi.groupMove(dragged.id, beforeId || undefined).then(
+      () => void qc.invalidateQueries({ queryKey: ["groups"] }),
+      (e: unknown) => pushToast("error", tr("无法调整分组「{name}」的位置：{error}", { name: dragged.name, error: describeError(e) })),
+    );
+  };
+
+  const orderMenuItems = (asset: Asset): MenuItem[] => {
+    if (!canReorder(asset)) return [];
+    const siblings = orderedSiblings(asset.groupId);
+    const index = siblings.findIndex((a) => a.id === asset.id);
+    if (index < 0 || siblings.length < 2) return [];
+    const items: MenuItem[] = [];
+    if (index > 0) {
+      items.push(
+        { kind: "item", label: tr("移到顶部"), icon: <IconArrowUp size={13} />, onSelect: () => void placeAsset(asset, asset.groupId, siblings[0]!.id) },
+        { kind: "item", label: tr("上移"), icon: <IconArrowUp size={13} />, onSelect: () => void placeAsset(asset, asset.groupId, siblings[index - 1]!.id) },
+      );
+    }
+    if (index < siblings.length - 1) {
+      items.push({ kind: "item", label: tr("下移"), icon: <IconArrowDown size={13} />, onSelect: () => void placeAsset(asset, asset.groupId, siblings[index + 2]?.id ?? "") });
+    }
+    return items;
+  };
+
   const dismissMoveError = (assetId: string) => setMoveErrors((prev) => {
     const next = { ...prev };
     delete next[assetId];
@@ -1014,7 +1100,8 @@ export function AssetTree() {
             onSelect: () => void onDelete(asset),
           }]),
     ];
-    return [...main, { kind: "separator" }, ...share, { kind: "separator" }, ...careful];
+    const order = orderMenuItems(asset);
+    return [...main, ...(order.length > 0 ? [{ kind: "separator" as const }, ...order] : []), { kind: "separator" }, ...share, { kind: "separator" }, ...careful];
   };
 
   const registerAssetRow = (asset: Asset, node: HTMLDivElement | null) => {
@@ -1062,6 +1149,9 @@ export function AssetTree() {
         if (failure) void moveAsset(asset.id, failure.targetGroupId);
       }}
       onCancelMove={() => dismissMoveError(asset.id)}
+      onReorderDrop={!query.trim() && (asset.builtin || asset.groupId === null || groupPaths.has(asset.groupId))
+        ? (draggedId, position) => reorderAsset(draggedId, asset, position)
+        : undefined}
     />
   );
 
@@ -1092,6 +1182,8 @@ export function AssetTree() {
         onMore={(asset, x, y) => setRowMenu({ x, y, asset })}
         renderDeviceRow={renderDeviceRow}
         onMoveAsset={(assetId, groupId) => void moveAsset(assetId, groupId)}
+        onReorderAsset={query.trim() ? undefined : reorderAsset}
+        onReorderGroup={query.trim() || node.issue ? undefined : reorderGroup}
         onCreateIn={() => {
           setPresetGroup(group.id);
           setEditing("asset");
@@ -1401,6 +1493,7 @@ function AssetRow({
   movingTarget,
   onRetryMove,
   onCancelMove,
+  onReorderDrop,
 }: {
   asset: Asset;
   level: number;
@@ -1416,8 +1509,11 @@ function AssetRow({
   movingTarget?: string;
   onRetryMove?: () => void;
   onCancelMove?: () => void;
+  // Set when another asset may be dropped on this row to be placed before or after it.
+  onReorderDrop?: (draggedId: string, position: "before" | "after") => void;
 }) {
   const coarse = useCoarsePointer();
+  const [dropAt, setDropAt] = useState<"before" | "after" | null>(null);
   const Icon = assetIcon(asset.kind, typeof asset.options?.icon === "string" ? asset.options.icon : undefined);
   const connecting = useUi((s) => s.connectingAssetIds.includes(asset.id));
   const connectionProblem = useRecentProblem(useConnectionProblem(assetConnectionProblemKey(asset.id)));
@@ -1467,7 +1563,7 @@ function AssetRow({
     asset.builtin ? tr("本机资产 · 不能删除") : "",
     hidden ? tr("已隐藏") : "",
     connectionProblem ? tr("连接失败：{summary}", { summary: connectionProblem.summary }) : "",
-    inventoryOnly ? tr("仅作清单记录 · 暂不能打开终端") : tr("双击连接 · 可拖入分组"),
+    inventoryOnly ? tr("仅作清单记录 · 暂不能打开终端") : tr("双击连接 · 可拖动排序或拖入分组"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1478,7 +1574,10 @@ function AssetRow({
       role="treeitem"
       aria-level={level}
       tabIndex={0}
-      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-asset-row ${hidden ? "opacity-55" : ""}`}
+      className={`nx-row nx-row-oneline nx-row-reserve-actions nx-asset-row ${hidden ? "opacity-55" : ""} ${
+        dropAt === "before" ? "shadow-[inset_0_2px_0_0_rgb(59_130_246)]" : dropAt === "after" ? "shadow-[inset_0_-2px_0_0_rgb(59_130_246)]" : ""
+      }`}
+      data-drop-position={dropAt ?? undefined}
       onFocusCapture={onFocus}
       draggable={!movingTarget && !managed}
       onDragStart={(e) => {
@@ -1489,6 +1588,26 @@ function AssetRow({
         e.dataTransfer.setData(DRAG_ASSET, asset.id);
         e.dataTransfer.effectAllowed = "move";
       }}
+      onDragOver={onReorderDrop ? (e) => {
+        if (!e.dataTransfer.types.includes(DRAG_ASSET)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        // Nothing goes above the built-in local asset.
+        setDropAt(asset.builtin || e.clientY >= rect.top + rect.height / 2 ? "after" : "before");
+      } : undefined}
+      onDragLeave={onReorderDrop ? (e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropAt(null);
+      } : undefined}
+      onDrop={onReorderDrop ? (e) => {
+        if (!e.dataTransfer.types.includes(DRAG_ASSET)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const position = dropAt ?? "after";
+        setDropAt(null);
+        const id = e.dataTransfer.getData(DRAG_ASSET);
+        if (id && id !== asset.id) onReorderDrop(id, position);
+      } : undefined}
       onDoubleClick={() => {
         if (!inventoryOnly) void connectAsset(asset);
       }}
@@ -1650,6 +1769,8 @@ function GroupNode({
   detailedIdentity,
   onMore,
   onMoveAsset,
+  onReorderAsset,
+  onReorderGroup,
   onCreateIn,
   onCreateChild,
   busy,
@@ -1691,6 +1812,8 @@ function GroupNode({
   detailedIdentity: boolean;
   onMore: (a: Asset, x: number, y: number) => void;
   onMoveAsset: (assetId: string, groupId: string | null) => void;
+  onReorderAsset?: (draggedId: string, target: Asset, position: "before" | "after") => void;
+  onReorderGroup?: (draggedId: string, target: AssetGroup, position: "before" | "after") => void;
   onCreateIn: () => void;
   onCreateChild: () => void;
   busy: boolean;
@@ -1715,6 +1838,7 @@ function GroupNode({
   const toggleCollapsed = useGroupCollapse((s) => s.toggle);
   const open = !collapsed;
   const [over, setOver] = useState(false);
+  const [groupDropAt, setGroupDropAt] = useState<"before" | "after" | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const coarse = useCoarsePointer();
   const assetsRef = useRef<HTMLDivElement>(null);
@@ -1773,6 +1897,7 @@ function GroupNode({
       movingTarget={movingTargets[a.id]}
       onRetryMove={() => onRetryMove(a)}
       onCancelMove={() => onCancelMove(a)}
+      onReorderDrop={onReorderAsset ? (draggedId, position) => onReorderAsset(draggedId, a, position) : undefined}
     />
   );
   return (
@@ -1828,7 +1953,38 @@ function GroupNode({
         if (id) onMoveAsset(id, group.id);
       }}
     >
-      <div className="nx-row nx-row-oneline nx-row-reserve-actions w-full text-neutral-400">
+      <div
+        className={`nx-row nx-row-oneline nx-row-reserve-actions w-full text-neutral-400 ${
+          groupDropAt === "before" ? "shadow-[inset_0_2px_0_0_rgb(59_130_246)]" : groupDropAt === "after" ? "shadow-[inset_0_-2px_0_0_rgb(59_130_246)]" : ""
+        }`}
+        data-drop-position={groupDropAt ?? undefined}
+        draggable={onReorderGroup !== undefined}
+        onDragStart={onReorderGroup ? (e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData(DRAG_GROUP, group.id);
+          e.dataTransfer.setData(dragGroupParentType(group.parentId), "");
+          e.dataTransfer.effectAllowed = "move";
+        } : undefined}
+        onDragOver={onReorderGroup ? (e) => {
+          if (!e.dataTransfer.types.includes(DRAG_GROUP) || !e.dataTransfer.types.includes(dragGroupParentType(group.parentId))) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          setGroupDropAt(e.clientY >= rect.top + rect.height / 2 ? "after" : "before");
+        } : undefined}
+        onDragLeave={onReorderGroup ? (e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setGroupDropAt(null);
+        } : undefined}
+        onDrop={onReorderGroup ? (e) => {
+          if (!e.dataTransfer.types.includes(DRAG_GROUP)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const position = groupDropAt ?? "after";
+          setGroupDropAt(null);
+          const id = e.dataTransfer.getData(DRAG_GROUP);
+          if (id && id !== group.id) onReorderGroup(id, group, position);
+        } : undefined}
+      >
         <button
           className="flex min-w-0 flex-auto items-center gap-1 text-left"
           onClick={() => toggleCollapsed(group.id)}

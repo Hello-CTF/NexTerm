@@ -23,7 +23,8 @@ func (s *Store) AssetList(ctx context.Context, includeDeleted bool) ([]AssetRow,
 		q = q.Where(asset.DeletedAt.IsNull())
 	}
 	result := []AssetRow{}
-	if err := q.Order(asset.Sort, asset.Name).Scan(&result); err != nil {
+	// The built-in local asset leads the list whatever the sort values of assets placed first after it.
+	if err := q.Order(asset.Builtin.Desc(), asset.Sort, asset.Name).Scan(&result); err != nil {
 		return nil, dbError(err)
 	}
 	return result, nil

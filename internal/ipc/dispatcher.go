@@ -9,8 +9,8 @@ import (
 )
 
 var syncObjectWriteCommands = map[string]bool{
-	"asset_create": true, "asset_update": true, "asset_delete": true,
-	"group_create": true, "group_update": true, "group_delete": true,
+	"asset_create": true, "asset_update": true, "asset_delete": true, "asset_move": true,
+	"group_create": true, "group_update": true, "group_delete": true, "group_move": true,
 	"snippet_create": true, "snippet_update": true, "snippet_delete": true,
 	"vault_set_credential": true, "credential_update": true, "vault_delete_credential": true,
 	"known_host_accept": true, "known_host_remove": true,

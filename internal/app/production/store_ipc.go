@@ -93,7 +93,20 @@ type assetInputRequest struct {
 	Options  json.RawMessage `json:"options"`
 	Tags     string          `json:"tags"`
 	Note     string          `json:"note"`
-	Sort     int64           `json:"sort"`
+	// Sort places the asset; when absent the asset goes first in its group.
+	Sort *int64 `json:"sort"`
+}
+
+type assetMoveRequest struct {
+	ID      string  `json:"id"`
+	GroupID *string `json:"groupId"`
+	// BeforeID is the asset to place this one in front of; empty places it last.
+	BeforeID string `json:"beforeId"`
+}
+
+type groupMoveRequest struct {
+	ID       string `json:"id"`
+	BeforeID string `json:"beforeId"`
 }
 
 type assetPatchRequest struct {
@@ -417,10 +430,20 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 		},
 		func() error {
 			return ipc.RegisterNested(dispatcher, "asset_create", func(ctx context.Context, _ *ipc.Call, input assetInputRequest) (assetDTO, error) {
+				var sort int64
+				if input.Sort != nil {
+					sort = *input.Sort
+				} else {
+					top, err := database.AssetTopSort(ctx, input.GroupID)
+					if err != nil {
+						return assetDTO{}, err
+					}
+					sort = top
+				}
 				row, err := database.AssetCreate(ctx, store.AssetInput{
 					GroupID: input.GroupID, Kind: input.Kind, Name: input.Name, Host: input.Host, Port: input.Port,
 					Username: input.Username, AuthKind: input.AuthKind, KeyPath: input.KeyPath, CredID: input.CredID,
-					OptionsJSON: productionJSONText(input.Options, "{}"), Tags: input.Tags, Note: input.Note, Sort: input.Sort,
+					OptionsJSON: productionJSONText(input.Options, "{}"), Tags: input.Tags, Note: input.Note, Sort: sort,
 				})
 				return assetFromRow(row), err
 			})
@@ -438,6 +461,18 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 				}
 				row, err := database.AssetUpdate(ctx, input.ID, patch)
 				return assetFromRow(row), err
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "asset_move", func(ctx context.Context, _ *ipc.Call, input assetMoveRequest) (assetDTO, error) {
+				row, err := database.AssetMove(ctx, input.ID, input.GroupID, input.BeforeID)
+				return assetFromRow(row), err
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "group_move", func(ctx context.Context, _ *ipc.Call, input groupMoveRequest) (groupDTO, error) {
+				row, err := database.GroupMove(ctx, input.ID, input.BeforeID)
+				return productionGroupDTO(row), err
 			})
 		},
 		func() error {
