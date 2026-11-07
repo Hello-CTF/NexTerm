@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -508,11 +509,21 @@ func TestSharePreviewAbsentInSyncOnly(t *testing.T) {
 }
 
 // awaitPreviewControl reads frames until a control frame appears (binary output frames may interleave), returning the decoded frame.
+// previewHeldOutput keeps the terminal output awaitPreviewControl read past, per connection: the echo of guest input
+// can arrive before the control frame, and expectPreviewBinaryMarker must still see it.
+var previewHeldOutput sync.Map
+
 func awaitPreviewControl(t *testing.T, conn *websocket.Conn, timeout time.Duration) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		frame := readPreviewFrame(t, conn, timeout)
+		if frame.kind == websocket.MessageBinary {
+			held, _ := previewHeldOutput.Load(conn)
+			previous, _ := held.([]byte)
+			previewHeldOutput.Store(conn, append(previous, frame.data...))
+			continue
+		}
 		if frame.kind != websocket.MessageText {
 			continue
 		}
@@ -537,6 +548,15 @@ func expectPreviewBinaryMarker(t *testing.T, conn *websocket.Conn, marker, forbi
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	var output []byte
+	if held, ok := previewHeldOutput.LoadAndDelete(conn); ok {
+		output, _ = held.([]byte)
+		if forbidden != "" && bytes.Contains(output, []byte(forbidden)) {
+			t.Fatalf("rejected input reached terminal output: %q", output)
+		}
+		if bytes.Contains(output, []byte(marker)) {
+			return
+		}
+	}
 	for time.Now().Before(deadline) {
 		frame := readPreviewFrame(t, conn, timeout)
 		if frame.kind == websocket.MessageBinary {
