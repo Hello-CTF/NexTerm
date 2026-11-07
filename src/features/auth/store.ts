@@ -533,7 +533,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 }));
 
-// On session expiry (401), notify the gate to re-login; mounted and listened to by AuthGate in main.tsx.
+// On session expiry (401), notify the gate to re-login; mounted and listened to by AuthGate in appMain.tsx.
 if (typeof window !== "undefined") {
   window.addEventListener(SESSION_IDENTITY_CHANGED_EVENT, (event) => {
     const session = (event as CustomEvent<AccountSession>).detail;

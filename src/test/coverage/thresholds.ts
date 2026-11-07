@@ -19,6 +19,7 @@ export const COVERAGE_GATE: CoverageOptions = {
   exclude: [
     "src/test/**",
     "src/main.tsx",
+    "src/appMain.tsx",
     "src/ipc/bindings/**",
     "src/ipc/generated/**",
     // Files with no real tests yet (measured 2026-10-20: 0% on at least one

@@ -4,6 +4,7 @@ import {
   setThemeMode as persistThemeMode,
 } from "../theme";
 import { saveThemeModePreference } from "../preferences";
+import { translateMessage } from "../../i18n";
 import {
   clampWidth,
   initialLayout,
@@ -105,7 +106,9 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       set({ terminalOsc52: v });
       saveTerminalPrefs({ osc52: v });
     },
-    pushToast: (kind, text, action) => {
+    pushToast: (kind, rawText, action) => {
+      // Toasts often carry a backend message as is; it shows in the interface language when a catalog has it.
+      const text = translateMessage(rawText);
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;

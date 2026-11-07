@@ -130,6 +130,7 @@ export interface SettingsItem {
 export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
+  { id: "ui-language", section: "settings-appearance", label: "界面语言", description: "简体中文、繁體中文、English、日本語等", keywords: ["language", "locale", "i18n", "语言", "語言", "English", "日本語", "한국어", "Deutsch", "Français", "Español", "Русский"] },
   { id: "ui-theme", section: "settings-appearance", label: "界面主题", description: "跟随系统、浅色或深色", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"] },
   { id: "ui-font-size", section: "settings-appearance", label: "界面字号", description: "界面文字大小，可自定义", keywords: ["font size", "scale", "zoom", "字体", "字号", "缩放", "倍率", "文字大小"] },
   { id: "terminal-theme", section: "settings-appearance", label: "终端与编辑器主题", keywords: ["theme", "color scheme", "配色", "主题"] },

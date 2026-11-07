@@ -1,3 +1,5 @@
+import { translateMessage } from "../i18n";
+
 // Plain-language text per error code: what failed and what to do next. The raw technical text stays available through
 // describeErrorDetail for a 「详情」 disclosure.
 const ERROR_CODE_TEXT: Record<string, string> = {
@@ -96,7 +98,8 @@ export function detailForText(text: string): string | null {
 }
 
 export function describeError(e: unknown): string {
-  return remember(describeErrorText(e), e);
+  // Backend messages arrive in Chinese; they show in the interface language when the server catalog has them.
+  return remember(translateMessage(describeErrorText(e)), e);
 }
 
 function describeErrorText(e: unknown): string {

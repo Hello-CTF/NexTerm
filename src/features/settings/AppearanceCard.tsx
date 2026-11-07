@@ -25,6 +25,9 @@ import {
 import { IconChevronDown, IconChevronRight, IconMinus, IconMonitor, IconPlus, IconRefresh } from "../../ui/icons";
 import { Select } from "../../ui/Select";
 import { SyncScopeBadge } from "./SyncScopeBadge";
+import { LOCALE_NAMES, LOCALES, setLocale, storedLocale, t, type Locale } from "../../i18n";
+
+const FOLLOW_SYSTEM = "system";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
   { value: "system", label: "跟随系统" },
@@ -114,6 +117,23 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
         <SyncScopeBadge scope="sync" />
       </div>
       <p className="nx-hint mb-3.5">终端与代码编辑器的主题和字号独立于界面设置。</p>
+      <div className="mb-3.5">
+        <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="ui-language">
+          {t("界面语言")}
+          <SyncScopeBadge scope="local" />
+        </div>
+        <Select
+          className="w-full"
+          ariaLabel={t("界面语言")}
+          value={storedLocale() ?? FOLLOW_SYSTEM}
+          options={[
+            { value: FOLLOW_SYSTEM, label: t("跟随系统") },
+            ...LOCALES.map((locale) => ({ value: locale, label: LOCALE_NAMES[locale] })),
+          ]}
+          onChange={(value) => setLocale(value === FOLLOW_SYSTEM ? null : (value as Locale))}
+        />
+        <div className="nx-hint mt-1.5">{t("切换后界面会重新加载；终端会话不受影响。")}</div>
+      </div>
       <div className="nx-setting-label mb-1.5">界面主题</div>
       <div className="nx-segment" role="group" aria-label="界面主题" data-setting="ui-theme">
         {THEME_OPTIONS.map((option) => (
