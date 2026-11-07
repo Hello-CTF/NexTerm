@@ -160,9 +160,11 @@ describe("host detail links", () => {
     expect(mocks.connectAsset).not.toHaveBeenCalled();
     expect(mocks.get).not.toHaveBeenCalled();
 
-    // A second link retargets the one detail tab.
+    // A second host opens its own detail tab; reopening the first focuses it instead of adding another.
     await openDeepLink(hostDeepLink("a-2"));
-    expect(hostTabs().map((t) => t.assetId)).toEqual(["a-2"]);
+    expect(hostTabs().map((t) => t.assetId)).toEqual(["device/d-1", "a-2"]);
+    await openDeepLink(hostDeepLink("device/d-1"));
+    expect(hostTabs().map((t) => t.assetId)).toEqual(["device/d-1", "a-2"]);
     expect(useUi.getState().workspaces.every((w) => w.kind === "tools")).toBe(true);
   });
 

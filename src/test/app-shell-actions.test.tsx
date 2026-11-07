@@ -486,14 +486,15 @@ describe("App workspace actions", () => {
     await flush();
 
     await clickRail("主机详情");
-    const detail = () =>
-      useUi.getState().workspaces.flatMap((workspace) => workspace.panes).flatMap((pane) => pane.tabs).find((tab) => tab.kind === "host");
-    expect(detail()).toEqual(expect.objectContaining({ assetId: "device/d-1" }));
+    const detailHosts = () =>
+      useUi.getState().workspaces.flatMap((workspace) => workspace.panes).flatMap((pane) => pane.tabs).filter((tab) => tab.kind === "host").map((tab) => tab.assetId);
+    expect(detailHosts()).toEqual(["device/d-1"]);
 
+    // Another host opens its own detail tab next to the first.
     act(() => useUi.getState().setActiveWorkspace(ssh.id));
     await flush();
     await clickRail("主机详情");
-    expect(detail()).toEqual(expect.objectContaining({ assetId: "asset-ssh" }));
+    expect(detailHosts()).toEqual(["device/d-1", "asset-ssh"]);
   });
 
   it("opens files, mount, docker and forward in the explicit current host and logs in the tools workspace", async () => {

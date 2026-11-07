@@ -579,18 +579,22 @@ describe("tool tab routing", () => {
     expect(tools?.panes[0].tabs.map((tab) => tab.id)).toEqual(["exec-batch"]);
   });
 
-  it("keeps one host detail tab in Tools that follows the last opened host and survives a layout round trip", () => {
-    useUi.getState().addTab({ id: "host-detail", kind: "host", title: "主机详情", assetId: "a-1", closable: true });
-    useUi.getState().addTab({ id: "host-detail", kind: "host", title: "主机详情", assetId: "device/d-1", closable: true });
+  it("keeps one host detail tab per host in Tools and survives a layout round trip", () => {
+    useUi.getState().addTab({ id: "host-detail:a-1", kind: "host", title: "主机详情", assetId: "a-1", closable: true });
+    useUi.getState().addTab({ id: "host-detail:device/d-1", kind: "host", title: "主机详情", assetId: "device/d-1", closable: true });
+    useUi.getState().addTab({ id: "host-detail:a-1", kind: "host", title: "主机详情", assetId: "a-1", closable: true });
 
     const state = useUi.getState();
     expect(state.workspaces.find((w) => w.id === "ws-host")?.panes[0].tabs.map((t) => t.kind)).toEqual(["terminal"]);
     const hostTabs = state.workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).filter((t) => t.kind === "host");
-    expect(hostTabs.map((t) => t.assetId)).toEqual(["device/d-1"]);
+    expect(hostTabs.map((t) => t.assetId)).toEqual(["a-1", "device/d-1"]);
 
     const restored = sanitizeLayout(JSON.parse(JSON.stringify(serializeLayout(useUi.getState()))));
     const tools = restored?.workspaces.find((workspace) => workspace.kind === "tools");
-    expect(tools?.panes[0].tabs.map((tab) => [tab.kind, tab.assetId])).toEqual([["host", "device/d-1"]]);
+    expect(tools?.panes[0].tabs.map((tab) => [tab.kind, tab.assetId])).toEqual([
+      ["host", "a-1"],
+      ["host", "device/d-1"],
+    ]);
   });
 });
 

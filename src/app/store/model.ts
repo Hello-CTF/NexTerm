@@ -50,6 +50,11 @@ export function isWorkspaceToolTab(tab: { id?: string; kind: PaneKind; sessionId
   );
 }
 
+// toolTabKey identifies a workspace tool tab: one tab per kind, except host detail tabs, one per host.
+export function toolTabKey(tab: { id?: string; kind: PaneKind; assetId?: string }): string {
+  return tab.kind === "host" ? `host:${tab.assetId ?? tab.id ?? ""}` : tab.kind;
+}
+
 // The history tab of one host workspace, scoped to that host; null selects the global tools view.
 export function hostHistoryTab(
   workspace: { kind: string; sessionId?: string; assetId?: string } | null | undefined,
@@ -297,13 +302,14 @@ export function migrateToolTabs(
       w !== sourceTools &&
       w.panes.some((pane) => pane.tabs.some((tab) => isWorkspaceToolTab(tab))),
   );
-  const kinds = new Set<PaneKind>();
+  const keys = new Set<string>();
   let hasDuplicateToolTabs = false;
   for (const pane of sourceTools?.panes ?? []) {
     for (const tab of pane.tabs) {
       if (!isWorkspaceToolTab(tab)) continue;
-      if (kinds.has(tab.kind)) hasDuplicateToolTabs = true;
-      kinds.add(tab.kind);
+      const key = toolTabKey(tab);
+      if (keys.has(key)) hasDuplicateToolTabs = true;
+      keys.add(key);
     }
   }
   if (sourceTools && !multipleTools && !hasExternalToolTabs && !hasDuplicateToolTabs) {
@@ -326,7 +332,7 @@ export function migrateToolTabs(
     };
   }
 
-  const selected = new Map<PaneKind, AppTab>();
+  const selected = new Map<string, AppTab>();
   const collect = (w: Workspace) => {
     for (const pane of w.panes) {
       for (const tab of pane.tabs) {
@@ -339,16 +345,17 @@ export function migrateToolTabs(
                 assetId: tab.assetId ?? w.assetId,
               }
             : tab;
-        const existing = selected.get(tab.kind);
+        const key = toolTabKey(tab);
+        const existing = selected.get(key);
         if (!existing) {
-          selected.set(tab.kind, candidate);
+          selected.set(key, candidate);
           continue;
         }
         if (tab.kind !== "history") continue;
         const sessionId = existing.sessionId ?? candidate.sessionId;
         const assetId = existing.assetId ?? candidate.assetId;
         if (sessionId !== existing.sessionId || assetId !== existing.assetId) {
-          selected.set(tab.kind, { ...existing, sessionId, assetId });
+          selected.set(key, { ...existing, sessionId, assetId });
         }
       }
     }
@@ -363,7 +370,7 @@ export function migrateToolTabs(
     ...pane,
     tabs: pane.tabs.filter((tab) => {
       if (!isWorkspaceToolTab(tab)) return true;
-      if (selected.get(tab.kind) !== tab) return false;
+      if (selected.get(toolTabKey(tab)) !== tab) return false;
       kept.add(tab);
       return true;
     }),
@@ -439,7 +446,7 @@ export function sameTab(t: AppTab, tab: AppTab, caseInsensitive = false): boolea
   if (t.id === tab.id) return true;
   if (t.tabId && tab.tabId && t.tabId === tab.tabId) return true;
   if (tab.kind === "background" && t.kind === "background") return true;
-  if (isWorkspaceToolTab(tab) && t.kind === tab.kind) return true;
+  if (isWorkspaceToolTab(tab) && t.kind === tab.kind) return toolTabKey(t) === toolTabKey(tab);
   if ((tab.kind === "files" || tab.kind === "log") && tab.path && t.path) {
     return (
       t.kind === tab.kind &&

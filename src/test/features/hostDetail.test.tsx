@@ -38,7 +38,7 @@ vi.mock("../../app/store", async (importOriginal) => {
 });
 
 import { HostDetailView } from "../../features/hosts/HostDetailView";
-import { deviceIdOfHost, HOST_DETAIL_TAB_ID, hostAddress, hostDetailLabel, openHostDetail, relatedDatabases } from "../../features/hosts/hostDetail";
+import { deviceIdOfHost, hostAddress, hostDetailLabel, openHostDetail, relatedDatabases } from "../../features/hosts/hostDetail";
 import { useAuth } from "../../features/auth/store";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
@@ -260,6 +260,9 @@ describe("host detail page for an asset", () => {
     expect(databases).toContain("orders");
     expect(databases).toContain("cache");
     expect(databases).not.toContain("elsewhere");
+    // Summary cards stack two to a column, so short cards do not leave empty space beside a taller one.
+    expect(section("host-containers").parentElement).toBe(section("host-sessions").parentElement);
+    expect(section("host-databases").parentElement).not.toBe(section("host-sessions").parentElement);
 
     // Selecting a tab in the session list switches to it in the host workspace.
     clickButton(section("host-sessions"), "bash终端");
@@ -359,7 +362,7 @@ describe("host detail page for an asset", () => {
   it("titles the tab after the host once it resolves", async () => {
     openHostDetail("a-web");
     const title = () =>
-      useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).find((t) => t.id === HOST_DETAIL_TAB_ID)?.title;
+      useUi.getState().workspaces.flatMap((w) => w.panes.flatMap((p) => p.tabs)).find((t) => t.kind === "host" && t.assetId === "a-web")?.title;
     expect(title()).toBe("主机详情");
     mountView("a-web");
     await flushUntil(() => title() === "主机详情 · web-01");

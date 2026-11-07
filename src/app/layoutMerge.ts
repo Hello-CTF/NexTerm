@@ -101,6 +101,7 @@ export function tabLogicalKey(tab: AppTab): string {
     return `terminal:id:${tab.id}`;
   }
   if (tab.kind === "background") return "background";
+  if (tab.kind === "host") return `tool:host:${tab.assetId ?? tab.id}`;
   if ((tab.kind === "forward" && !tab.sessionId) || TOOL_TAB_KINDS.has(tab.kind)) return `tool:${tab.kind}`;
   if ((tab.kind === "files" || tab.kind === "log") && tab.path) {
     return `${tab.kind}:path:${tab.path}`;

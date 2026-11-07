@@ -50,10 +50,21 @@ const ASSET_KIND_LABEL: Record<string, string> = {
 // Short cards share rows; the tables (metrics, ports, processes) follow at full width so their columns stay legible.
 const SECTION_GRID = "grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] items-start gap-3";
 
-function Overview({ cards, wide }: { cards: ReactNode; wide: ReactNode }) {
+// Overview stacks the summary cards two to a column, so short cards share a column instead of leaving empty space
+// beside a taller neighbour. Columns wrap onto their own rows when the pane is narrow.
+function Overview({ cards, wide }: { cards: ReactNode[]; wide: ReactNode }) {
+  const present = cards.filter(Boolean);
+  const columns: ReactNode[][] = [];
+  for (let index = 0; index < present.length; index += 2) columns.push(present.slice(index, index + 2));
   return (
     <div className="flex flex-col gap-3">
-      <div className={SECTION_GRID}>{cards}</div>
+      <div className={SECTION_GRID}>
+        {columns.map((column, index) => (
+          <div key={index} className="flex min-w-0 flex-col gap-3">
+            {column}
+          </div>
+        ))}
+      </div>
       {wide}
     </div>
   );
@@ -230,25 +241,24 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
         assetId={asset.id}
         overview={
           <Overview
-            cards={
-              <>
-                <SessionsSection workspace={workspace} />
-                {dockerCapable && <ContainersSection workspace={workspace} visible={visible} />}
-                <DatabasesSection
-                  databases={databases}
-                  relations={relations}
-                  visible={visible}
-                  emptyHint="无经由该主机或指向其地址的数据库资产。"
-                />
-                {asset.kind === "ssh" ? (
-                  <SshHealthSection assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
-                ) : (
-                  <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-                    <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
-                  </HostSection>
-                )}
-              </>
-            }
+            cards={[
+              <SessionsSection key="sessions" workspace={workspace} />,
+              dockerCapable && <ContainersSection key="containers" workspace={workspace} visible={visible} />,
+              <DatabasesSection
+                key="databases"
+                databases={databases}
+                relations={relations}
+                visible={visible}
+                emptyHint="无经由该主机或指向其地址的数据库资产。"
+              />,
+              asset.kind === "ssh" ? (
+                <SshHealthSection key="health" assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
+              ) : (
+                <HostSection key="metrics" title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+                  <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
+                </HostSection>
+              ),
+            ]}
             wide={
               <>
                 <PortsSection
@@ -452,15 +462,13 @@ function DeviceHostDetail({
         assetId={assetId}
         overview={
           <Overview
-            cards={
-              <>
-                <SessionsSection workspace={workspace} />
-                <ContainersSection workspace={workspace} visible={visible} />
-                <HostSection title="告警" icon={<IconBell size={14} />} testId="host-alerts">
-                  {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
-                </HostSection>
-              </>
-            }
+            cards={[
+              <SessionsSection key="sessions" workspace={workspace} />,
+              <ContainersSection key="containers" workspace={workspace} visible={visible} />,
+              <HostSection key="alerts" title="告警" icon={<IconBell size={14} />} testId="host-alerts">
+                {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
+              </HostSection>,
+            ]}
             wide={
               <>
                 <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">

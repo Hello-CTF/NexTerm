@@ -1,8 +1,10 @@
 import { dbKindOf, deviceAssetId, useUi, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
 
-// One host detail tab exists at a time; opening another host retargets it.
-export const HOST_DETAIL_TAB_ID = "host-detail";
+// Each host gets its own detail tab; opening a host that already has one focuses it.
+export function hostDetailTabId(assetId: string): string {
+  return `host-detail:${assetId}`;
+}
 export const HOST_DETAIL_TITLE = "主机详情";
 export const DATABASE_DETAIL_TITLE = "数据库详情";
 
@@ -38,32 +40,32 @@ export function deviceIdOfHost(assetId: string): string | null {
 // terminal: the page offers that as an explicit action.
 export function openHostDetail(assetId: string): void {
   if (!assetId) return;
-  // Reopening the page that is already showing this host keeps its resolved title.
-  const current = findHostDetailTab();
+  // Reopening a host whose page is already open keeps its resolved title.
+  const current = findHostDetailTab(assetId);
   useUi.getState().addTab({
-    id: HOST_DETAIL_TAB_ID,
+    id: current?.id ?? hostDetailTabId(assetId),
     kind: "host",
-    title: current?.assetId === assetId ? current.title : HOST_DETAIL_TITLE,
+    title: current?.title ?? HOST_DETAIL_TITLE,
     assetId,
     closable: true,
   });
 }
 
-function findHostDetailTab(): { assetId?: string; title: string } | undefined {
+function findHostDetailTab(assetId: string): { id: string; title: string } | undefined {
   for (const workspace of useUi.getState().workspaces) {
     for (const pane of workspace.panes) {
-      const tab = pane.tabs.find((item) => item.id === HOST_DETAIL_TAB_ID);
+      const tab = pane.tabs.find((item) => item.kind === "host" && item.assetId === assetId);
       if (tab) return tab;
     }
   }
   return undefined;
 }
 
-// setHostDetailTitle names the open detail tab after the host it shows, once the asset or device has resolved.
+// setHostDetailTitle names a host's detail tab after the host, once the asset or device has resolved.
 export function setHostDetailTitle(assetId: string, title: string): void {
-  const tab = findHostDetailTab();
-  if (!tab || tab.assetId !== assetId || tab.title === title) return;
-  useUi.getState().updateTab(HOST_DETAIL_TAB_ID, { title });
+  const tab = findHostDetailTab(assetId);
+  if (!tab || tab.title === title) return;
+  useUi.getState().updateTab(tab.id, { title });
 }
 
 // hostWorkspaceOf finds the open host workspace of an asset; database workspaces are not host workspaces.

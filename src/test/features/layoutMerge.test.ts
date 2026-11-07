@@ -77,6 +77,25 @@ describe("three-way shared layout merge", () => {
     expect(sharedLayoutKey(fromA)).toBe(sharedLayoutKey(fromB));
   });
 
+  it("keeps the detail tabs of different hosts opened on two clients", () => {
+    const hostTab = (assetId: string): AppTab => ({ id: `host-detail:${assetId}`, kind: "host", title: assetId, assetId, closable: true });
+    const tools = (tabs: AppTab[]): Workspace => ({
+      id: "ws-tools",
+      kind: "tools",
+      title: "工具",
+      panes: [pane("pane-tools", tabs)],
+      activePaneId: "pane-tools",
+      closable: true,
+    });
+    const base = layout([tools([hostTab("a-1")])]);
+    const local = layout([tools([hostTab("a-1"), hostTab("a-2")])]);
+    const remote = layout([tools([hostTab("a-1"), hostTab("a-3")])]);
+
+    const merged = mergeLayout(base, local, remote);
+
+    expect(merged.workspaces[0].panes.flatMap((item) => item.tabs).map((tab) => tab.assetId)).toEqual(["a-1", "a-2", "a-3"]);
+  });
+
   function titled(title: string, extra: Partial<AppTab> = {}): PersistedLayout {
     return layout([workspace("ws", "asset", [pane("pane", [{ ...terminal("tab"), title, ...extra }])])]);
   }
