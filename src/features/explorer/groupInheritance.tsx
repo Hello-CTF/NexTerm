@@ -4,6 +4,7 @@ import { assetApi, vaultApi, type Asset, type AssetGroup, type AssetInheritance,
 import { Select } from "../../ui/Select";
 import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
 import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
+import { t } from "../../i18n";
 
 // Kinds that read group connection defaults. The backend decides what each kind really inherits; this only
 // avoids asking for a preview that can never show anything.
@@ -82,12 +83,12 @@ export function InheritanceHint({ view, field, empty }: { view: InheritanceView;
     <>
       {applied && (
         <div className="nx-hint mt-1.5" data-testid={`inherit-${field}`}>
-          ↳ 留空则继承自 {applied.groupName}{applied.value ? `：${applied.value}` : ""}
+          {t("↳ 留空则继承自")} {applied.groupName}{applied.value ? `：${applied.value}` : ""}
         </div>
       )}
       {!applied && skipped && (
         <div className="nx-hint mt-1.5 text-amber-300" data-testid={`inherit-skipped-${field}`}>
-          ↳ 已跳过 {skipped.groupName} 的默认值：{skipped.reason}
+          {t("↳ 已跳过")} {skipped.groupName} {t("的默认值：")}{skipped.reason}
         </div>
       )}
       {!applied && !skipped && view.error && (
@@ -99,7 +100,7 @@ export function InheritanceHint({ view, field, empty }: { view: InheritanceView;
 
 export function inheritedPlaceholder(view: InheritanceView, field: "username" | "auth" | "jump", fallback?: string): string | undefined {
   const applied = view.applied(field);
-  if (applied) return `${applied.value}（继承自 ${applied.groupName}）`;
+  if (applied) return t("{value}（继承自 {groupName}）", { value: applied.value, groupName: applied.groupName });
   return fallback;
 }
 
@@ -161,7 +162,7 @@ export function GroupDefaultsFields({
   void groupId;
   return (
     <fieldset className="mt-3 border-t border-neutral-800/60 pt-2.5">
-      <legend className="sr-only">连接默认值</legend>
+      <legend className="sr-only">{t("连接默认值")}</legend>
       <button
         type="button"
         className="flex items-center gap-1.5 text-[12px] text-neutral-400 transition-colors hover:text-neutral-100"
@@ -169,45 +170,45 @@ export function GroupDefaultsFields({
         aria-controls={`${ids}-panel`}
         onClick={() => setOpen((v) => !v)}
       >
-        连接默认值
+        {t("连接默认值")}
       </button>
       <div className="nx-hint mt-1">
-        ↳ 资产字段留空时继承最近分组的值；端口、主机和协议选项不继承。
+        {t("↳ 资产字段留空时继承最近分组的值；端口、主机和协议选项不继承。")}
       </div>
       {open && (
         <div id={`${ids}-panel`} className="mt-2.5">
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor={`${ids}-user`}>默认用户名</label>
+            <label className="nx-label" htmlFor={`${ids}-user`}>{t("默认用户名")}</label>
             <input
               id={`${ids}-user`}
               className="nx-input"
               value={value.username}
               onChange={(e) => patch({ username: e.target.value })}
-              placeholder="留空则不设置"
+              placeholder={t("留空则不设置")}
             />
           </div>
           <div className="nx-form-row">
-            <label className="nx-label">默认认证</label>
+            <label className="nx-label">{t("默认认证")}</label>
             <Select
-              ariaLabel="默认认证"
+              ariaLabel={t("默认认证")}
               value={value.authKind}
               onChange={(next) => patch({ authKind: next, credId: next === "agent" ? "" : value.credId, keyPath: next === "key" ? value.keyPath : "" })}
               options={[
-                { value: "", label: "（不设置）" },
-                { value: "password", label: "密码" },
-                { value: "keyboard-interactive", label: "键盘交互（密码）" },
-                { value: "key", label: "私钥" },
-                { value: "agent", label: serverLimited ? "SSH Agent（多用户服务端不可用）" : "SSH Agent", disabled: serverLimited },
+                { value: "", label: t("（不设置）") },
+                { value: "password", label: t("密码") },
+                { value: "keyboard-interactive", label: t("键盘交互（密码）") },
+                { value: "key", label: t("私钥") },
+                { value: "agent", label: serverLimited ? t("SSH Agent（多用户服务端不可用）") : "SSH Agent", disabled: serverLimited },
               ]}
             />
             {value.authKind === "key" && (
               <input
                 className="nx-input mt-1.5 font-mono text-[12px]"
-                aria-label="默认私钥路径"
+                aria-label={t("默认私钥路径")}
                 disabled={serverLimited}
                 value={value.keyPath}
                 onChange={(e) => patch({ keyPath: e.target.value })}
-                placeholder="私钥文件路径（或在下方选择私钥凭据）"
+                placeholder={t("私钥文件路径（或在下方选择私钥凭据）")}
               />
             )}
             {serverLimited && value.authKind === "agent" && <ServerRestrictionNote text={serverText.agentAuth} />}
@@ -220,39 +221,39 @@ export function GroupDefaultsFields({
             {value.authKind !== "" && value.authKind !== "agent" && (
               <Select
                 className="mt-1.5"
-                ariaLabel="默认凭据"
+                ariaLabel={t("默认凭据")}
                 value={value.credId}
                 onChange={(next) => patch({ credId: next })}
                 options={[
-                  { value: "", label: wantsKey ? "（不使用凭据）" : "选择密码凭据…" },
-                  ...(missingCred ? [{ value: value.credId, label: "当前凭据（不在可选列表）" }] : []),
+                  { value: "", label: wantsKey ? t("（不使用凭据）") : t("选择密码凭据…") },
+                  ...(missingCred ? [{ value: value.credId, label: t("当前凭据（不在可选列表）") }] : []),
                   ...credOptions.map((c) => ({ value: c.id, label: c.name })),
                 ]}
               />
             )}
             {value.authKind !== "" && (
               <div className="nx-hint mt-1.5">
-                ↳ 认证是一个整体：资产自己设置了任何认证项，就不会继承这里的认证。RDP、VNC 和 WinRM 只使用密码凭据，私钥与 Agent 默认会被它们跳过。
+                {t("↳ 认证是一个整体：资产自己设置了任何认证项，就不会继承这里的认证。RDP、VNC 和 WinRM 只使用密码凭据，私钥与 Agent 默认会被它们跳过。")}
               </div>
             )}
           </div>
           <div className="nx-form-row">
-            <label className="nx-label">默认跳板机</label>
+            <label className="nx-label">{t("默认跳板机")}</label>
             <Select
-              ariaLabel="默认跳板机"
+              ariaLabel={t("默认跳板机")}
               value={value.jumpAssetId}
               onChange={(next) => patch({ jumpAssetId: next })}
               options={[
-                { value: "", label: "（不设置）" },
-                ...(missingJump ? [{ value: value.jumpAssetId, label: "当前跳板机（已删除或不可用）" }] : []),
+                { value: "", label: t("（不设置）") },
+                ...(missingJump ? [{ value: value.jumpAssetId, label: t("当前跳板机（已删除或不可用）") }] : []),
                 ...jumpCandidates.map((a) => ({ value: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
               ]}
             />
             <div className="nx-hint mt-1.5">
-              ↳ SSH 与 Docker 资产用作跳板机，RDP 与 VNC 资产经它转发；跳板机自己所在的资产不会再经由自己跳转。
+              {t("↳ SSH 与 Docker 资产用作跳板机，RDP 与 VNC 资产经它转发；跳板机自己所在的资产不会再经由自己跳转。")}
             </div>
-            {missingJump && <div className="mt-1.5 text-[11px] text-red-400" role="alert">↳ 该跳板机已删除，连接会报错，请重新选择。</div>}
-            {missingCred && <div className="mt-1.5 text-[11px] text-red-400" role="alert">↳ 默认凭据不存在，连接会报错，请重新选择。</div>}
+            {missingJump && <div className="mt-1.5 text-[11px] text-red-400" role="alert">{t("↳ 该跳板机已删除，连接会报错，请重新选择。")}</div>}
+            {missingCred && <div className="mt-1.5 text-[11px] text-red-400" role="alert">{t("↳ 默认凭据不存在，连接会报错，请重新选择。")}</div>}
           </div>
         </div>
       )}
@@ -260,7 +261,7 @@ export function GroupDefaultsFields({
   );
 }
 
-const FIELD_LABEL: Record<string, string> = { auth: "认证方式", jump: "跳板机" };
+const FIELD_LABEL: Record<string, string> = { auth: t("认证方式"), jump: t("跳板机") };
 
 function previewRequest(asset: Asset, groupId: string | null): AssetInheritanceRequest {
   const options = asset.options ?? {};
@@ -294,9 +295,9 @@ export async function inheritanceChangesOnMove(asset: Asset, targetGroupId: stri
       const next = after?.fields.find((item) => item.field === field && item.applied);
       const previous = before?.fields.find((item) => item.field === field && item.applied);
       if (next && (!previous || previous.groupId !== next.groupId || previous.value !== next.value)) {
-        changes.push(`${FIELD_LABEL[field]}改为「${next.value || "继承值"}」（来自 ${next.groupName}）`);
+        changes.push(t("{value}改为「{value2}」（来自 {groupName}）", { value: FIELD_LABEL[field], value2: next.value || t("继承值"), groupName: next.groupName }));
       } else if (!next && previous) {
-        changes.push(`${FIELD_LABEL[field]}不再继承自 ${previous.groupName}`);
+        changes.push(t("{value}不再继承自 {groupName}", { value: FIELD_LABEL[field], groupName: previous.groupName }));
       }
     }
     return changes;
@@ -307,6 +308,6 @@ export async function inheritanceChangesOnMove(asset: Asset, targetGroupId: stri
 }
 
 export function moveConfirmationText(lines: { name: string; targetName: string; changes: string[] }[]): string {
-  const body = lines.map((line) => `「${line.name}」移入 ${line.targetName} 后：${line.changes.join("；")}`).join("\n");
-  return `移动会改变这些资产实际使用的连接方式：\n\n${body}\n\n仍要移动吗？`;
+  const body = lines.map((line) => t("「{name}」移入 {targetName} 后：{join}", { name: line.name, targetName: line.targetName, join: line.changes.join("；") })).join("\n");
+  return t("移动会改变这些资产实际使用的连接方式：\n\n{body}\n\n仍要移动吗？", { body });
 }

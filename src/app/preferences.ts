@@ -3,6 +3,7 @@ import { getResolvedTheme, setThemePreferenceLayers, subscribeTheme, type ThemeM
 import { DESKTOP } from "../ipc/env";
 import { syncApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
+import { t } from "../i18n";
 
 const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 
@@ -511,7 +512,7 @@ export function setTerminalScrollback(value: TerminalScrollback): void {
 // helper default. The server reads it from the account, so without one there is nowhere to save it.
 export async function setTerminalDurableHistoryMiB(value: number | null): Promise<void> {
   const store = terminalDefaultUsesAccount() ? accountStore : null;
-  if (!store) throw new Error("持久终端历史上限保存在账号中，当前没有可用的账号");
+  if (!store) throw new Error(t("持久终端历史上限保存在账号中，当前没有可用的账号"));
   const generation = registerGeneration;
   if (value === null) {
     await store.deleteOverrides([TERMINAL_DURABLE_HISTORY_KEY]);

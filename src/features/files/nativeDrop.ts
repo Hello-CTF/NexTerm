@@ -11,6 +11,7 @@ import type { FileEntryDto } from "../../ipc/types";
 import { baseName } from "./pathUtils";
 import { dropNativeFolderUpload } from "./folderUpload";
 import { enqueueUploadWithConflicts } from "./transferActions";
+import { t } from "../../i18n";
 
 // WebView2 delivers one OS drop twice: the DOM drop (HTML5 fallback) and the wails
 // WindowFilesDropped event. The HTML5 handler always runs first, so a native event
@@ -68,7 +69,7 @@ async function handleNativeDrop(
         refreshDir: dir,
       });
     } catch (e) {
-      useUi.getState().pushToast("error", `上传失败：${describeError(e)}`);
+      useUi.getState().pushToast("error", t("上传失败：{value}", { value: describeError(e) }));
     }
   }
   for (const folder of paths.filter((p) => p.dir)) {

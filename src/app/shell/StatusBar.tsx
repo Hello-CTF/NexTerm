@@ -1,6 +1,7 @@
 import { useSessionSummary } from "../store";
 import { IconLock, IconNetwork, IconServer } from "../../ui/icons";
 import { type SyncStatusSummary, type VaultStatusSummary } from "./useStatusBarState";
+import { t } from "../../i18n";
 
 export interface StatusBarProps {
   vaultStatus: VaultStatusSummary;
@@ -16,15 +17,15 @@ const ITEM = "nx-statusbar-truncate flex items-center gap-1.5 text-amber-300 hov
 export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSyncSettings, onRetryVaultStatus }: StatusBarProps) {
   const { total: sessionCount, connected: connectedSessions, idle: idleSessions, background: backgroundSessions, detail } = useSessionSummary();
   const otherNotes = [
-    idleSessions > 0 ? `${idleSessions} 个空闲` : "",
-    backgroundSessions > 0 ? `${backgroundSessions} 个后台` : "",
+    idleSessions > 0 ? t("{idleSessions} 个空闲", { idleSessions }) : "",
+    backgroundSessions > 0 ? t("{backgroundSessions} 个后台", { backgroundSessions }) : "",
   ].filter(Boolean);
   return (
     <footer className="nx-statusbar flex h-[25px] shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950 px-3 text-[11px] text-neutral-500">
       <div className="nx-statusbar-info">
         <span className="flex items-center gap-1.5" title={detail || undefined}>
           <IconServer size={11} />
-          <strong className="font-medium text-neutral-300">{sessionCount}</strong> 个会话
+          <strong className="font-medium text-neutral-300">{sessionCount}</strong> {t("个会话")}
           <span className="text-neutral-700">·</span>
           <span
             className={
@@ -34,31 +35,31 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             }
           >
             <span className="nx-dot" />
-            <strong className="font-medium">{connectedSessions}</strong> 已连接
+            <strong className="font-medium">{connectedSessions}</strong> {t("已连接")}
             {otherNotes.length > 0 ? (
               <span
                 className="text-neutral-500"
-                title="空闲：无终端，30 分钟后断开；后台：仍有后台会话"
+                title={t("空闲：无终端，30 分钟后断开；后台：仍有后台会话")}
               >
-                （另有 {otherNotes.join("、")}）
+                {t("（另有")} {otherNotes.join("、")}）
               </span>
             ) : null}
           </span>
         </span>
         {vaultStatus.attention === "uninitialized" ? (
-          <button type="button" className={ITEM} title="在「设置 → 凭据保护」中开启密码保护" onClick={onOpenVaultProtection}>
+          <button type="button" className={ITEM} title={t("在「设置 → 凭据保护」中开启密码保护")} onClick={onOpenVaultProtection}>
             <IconLock size={11} />
-            凭据库未初始化 · 开启保护
+            {t("凭据库未初始化 · 开启保护")}
           </button>
         ) : vaultStatus.attention === "locked" ? (
-          <button type="button" className={ITEM} title="输入保护密码后才能使用已保存的凭据" onClick={onOpenVaultProtection}>
+          <button type="button" className={ITEM} title={t("输入保护密码后才能使用已保存的凭据")} onClick={onOpenVaultProtection}>
             <IconLock size={11} />
-            凭据库已锁定 · 解锁
+            {t("凭据库已锁定 · 解锁")}
           </button>
         ) : vaultStatus.attention === "unknown" && onRetryVaultStatus ? (
-          <button type="button" className={ITEM} title="未能读取凭据库状态，选择后重试" onClick={onRetryVaultStatus}>
+          <button type="button" className={ITEM} title={t("未能读取凭据库状态，选择后重试")} onClick={onRetryVaultStatus}>
             <IconLock size={11} />
-            凭据库状态未知 · 重试
+            {t("凭据库状态未知 · 重试")}
           </button>
         ) : null}
       </div>
@@ -71,7 +72,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             onClick={onOpenSyncSettings}
           >
             <IconNetwork size={11} />
-            同步失败 · 查看
+            {t("同步失败 · 查看")}
           </button>
         ) : null}
         {sync.showWarnings && (
@@ -81,7 +82,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             title={sync.warnings.join("\n")}
             onClick={onOpenSyncSettings}
           >
-            同步警告 {sync.warnings.length}
+            {t("同步警告")} {sync.warnings.length}
           </button>
         )}
       </div>

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 const NXBM_HEADER_SIZE = 64;
 const NXBM_FLAG_ENCRYPTED = 1;
 
@@ -28,10 +29,10 @@ export function parseNxbmContainer(buffer: ArrayBuffer): ParsedNxbm {
     bytes[2] !== 0x42 ||
     bytes[3] !== 0x4d
   ) {
-    return { kind: "invalid", error: "只支持 .nxbm 资产包文件" };
+    return { kind: "invalid", error: t("只支持 .nxbm 资产包文件") };
   }
   if (bytes[4] !== 1) {
-    return { kind: "invalid", error: `不支持的资产包版本（${bytes[4]}）` };
+    return { kind: "invalid", error: t("不支持的资产包版本（{value}）", { value: bytes[4] }) };
   }
   if ((bytes[5] & NXBM_FLAG_ENCRYPTED) !== 0) {
     return { kind: "encrypted" };
@@ -39,7 +40,7 @@ export function parseNxbmContainer(buffer: ArrayBuffer): ParsedNxbm {
   const plainLen = Number(new DataView(buffer).getBigUint64(48, false));
   const body = bytes.subarray(NXBM_HEADER_SIZE);
   if (body.length !== plainLen) {
-    return { kind: "invalid", error: "资产包长度字段不一致" };
+    return { kind: "invalid", error: t("资产包长度字段不一致") };
   }
   return { kind: "plaintext", payload: new TextDecoder().decode(body) };
 }

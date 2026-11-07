@@ -16,6 +16,7 @@ import { workspaceLayoutTree } from "../paneLayout";
 import { paneIdsInOrder, paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
 import type { DropRegion } from "../tabDropZone";
 import { TabDropLayer } from "./TabDropLayer";
+import { t } from "../../i18n";
 
 // Divider thickness in pixels; each pane gives up half of it on every inner edge.
 export const SPLIT_HANDLE_SIZE = 6;
@@ -339,14 +340,14 @@ function SplitHandle({
     window.dispatchEvent(new Event(RESIZE_END_EVENT));
   };
   const share = Math.round(currentRatio * 100);
-  const first = row ? "左栏" : "上栏";
+  const first = row ? t("左栏") : t("上栏");
 
   return (
     <div
       role="separator"
       tabIndex={0}
       aria-orientation={row ? "vertical" : "horizontal"}
-      aria-label={row ? "调整左右分屏比例" : "调整上下分屏比例"}
+      aria-label={row ? t("调整左右分屏比例") : t("调整上下分屏比例")}
       aria-valuemin={15}
       aria-valuemax={85}
       aria-valuenow={share}
@@ -354,7 +355,7 @@ function SplitHandle({
       data-split-id={handle.id}
       className={`nx-split-handle ${row ? "is-row" : "is-col"} ${active ? "is-dragging" : ""}`}
       style={{ position: "absolute", ...handleStyle(handle) }}
-      title={`拖动调整${row ? "左右" : "上下"}比例（双击或回车复位，方向键微调）`}
+      title={t("拖动调整{value}比例（双击或回车复位，方向键微调）", { value: row ? t("左右") : t("上下") })}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();

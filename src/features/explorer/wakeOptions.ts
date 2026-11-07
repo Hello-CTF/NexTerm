@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 // Wake-on-LAN options stored on a network asset. The backend validates the same rules when the asset is saved and
 // again when a packet is sent; this module only gives the form early feedback.
 
@@ -16,9 +17,9 @@ const MAC_PATTERN = /^[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(\1[0-9A-Fa-f]{2}){4}$/;
 export function validateWakeMac(value: string): string | null {
   const text = value.trim();
   if (!text) return null;
-  if (!MAC_PATTERN.test(text)) return "MAC 地址格式无效，请使用 AA:BB:CC:DD:EE:FF 或 AA-BB-CC-DD-EE-FF";
+  if (!MAC_PATTERN.test(text)) return t("MAC 地址格式无效，请使用 AA:BB:CC:DD:EE:FF 或 AA-BB-CC-DD-EE-FF");
   const digits = text.replace(/[:-]/g, "").toLowerCase();
-  if (/^0+$/.test(digits) || /^f+$/.test(digits)) return "MAC 地址不能是全 0 或全 F";
+  if (/^0+$/.test(digits) || /^f+$/.test(digits)) return t("MAC 地址不能是全 0 或全 F");
   return null;
 }
 
@@ -28,7 +29,7 @@ export function validateWakeBroadcast(value: string): string | null {
   const parts = text.split(".");
   // No leading zeros: "010" is ambiguous (octal in some tools) and the backend refuses it.
   const octets = parts.map((part) => (/^(0|[1-9]\d{0,2})$/.test(part) ? Number(part) : NaN));
-  if (parts.length !== 4 || octets.some((n) => !(n >= 0 && n <= 255))) return "广播地址必须是 IPv4 地址（例如 192.168.1.255）";
+  if (parts.length !== 4 || octets.some((n) => !(n >= 0 && n <= 255))) return t("广播地址必须是 IPv4 地址（例如 192.168.1.255）");
   const [a, b, c, d] = octets;
   if (a === 255 && b === 255 && c === 255 && d === 255) return null;
   if (
@@ -38,7 +39,7 @@ export function validateWakeBroadcast(value: string): string | null {
     (a === 100 && b >= 64 && b <= 127) ||
     a >= 224
   ) {
-    return "广播地址不能是 0.0.0.0/8、回环、链路本地、组播、100.64.0.0/10 或 240.0.0.0/4 地址";
+    return t("广播地址不能是 0.0.0.0/8、回环、链路本地、组播、100.64.0.0/10 或 240.0.0.0/4 地址");
   }
   return null;
 }
@@ -47,7 +48,7 @@ export function validateWakePort(value: string): string | null {
   const text = value.trim();
   if (!text) return null;
   const port = Number(text);
-  if (!/^\d+$/.test(text) || port < 1 || port > 65535) return "唤醒端口必须在 1 到 65535 之间";
+  if (!/^\d+$/.test(text) || port < 1 || port > 65535) return t("唤醒端口必须在 1 到 65535 之间");
   return null;
 }
 

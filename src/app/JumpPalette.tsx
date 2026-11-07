@@ -50,6 +50,7 @@ import {
 import { useJumpCommands, type JumpCommand } from "./jump/useJumpCommands";
 import { CommandHistorySearch, type CommandHistoryKeyHandler } from "./jump/CommandHistorySearch";
 import { historyQueryText } from "./jump/commandHistorySearch";
+import { t } from "../i18n";
 
 const PROBE_DEBOUNCE_MS = 250;
 const PROBE_VISIBLE_LIMIT = 24;
@@ -83,32 +84,32 @@ function sectionLabel(row: JumpRow): string {
   switch (row.kind) {
     case "quick":
     case "asset":
-      return "主机";
+      return t("主机");
     case "session":
-      return "会话";
+      return t("会话");
     case "command":
-      return row.command.section ?? "命令";
+      return row.command.section ?? t("命令");
   }
 }
 
 const SCOPE_TEXT: Record<JumpScope, { title: string; input: string; placeholder: string; list: string }> = {
   all: {
-    title: "跳转面板",
-    input: "搜索会话、主机或命令",
-    placeholder: "搜索会话、主机或命令，或输入 user@host:port",
-    list: "跳转结果",
+    title: t("跳转面板"),
+    input: t("搜索会话、主机或命令"),
+    placeholder: t("搜索会话、主机或命令，或输入 user@host:port"),
+    list: t("跳转结果"),
   },
   hosts: {
-    title: "快速连接",
-    input: "资产搜索",
-    placeholder: "搜索资产，或输入 user@host:port 快速连接",
-    list: "资产连接",
+    title: t("快速连接"),
+    input: t("资产搜索"),
+    placeholder: t("搜索资产，或输入 user@host:port 快速连接"),
+    list: t("资产连接"),
   },
   database: {
-    title: "选择数据库",
-    input: "数据库资产搜索",
-    placeholder: "搜索数据库资产",
-    list: "数据库资产连接",
+    title: t("选择数据库"),
+    input: t("数据库资产搜索"),
+    placeholder: t("搜索数据库资产"),
+    list: t("数据库资产连接"),
   },
 };
 
@@ -192,7 +193,7 @@ export function JumpPalette({
   const changeScope = useCallback((next: JumpScope) => {
     setScope(next);
     setConnectError(null);
-    setAnnouncement(next === "hosts" ? "只看主机" : "显示全部会话、主机和命令");
+    setAnnouncement(next === "hosts" ? t("只看主机") : t("显示全部会话、主机和命令"));
   }, []);
   const showHosts = useCallback(() => {
     changeScope("hosts");
@@ -359,11 +360,11 @@ export function JumpPalette({
 
   const connect = async (asset: ConnectAssetInput) => {
     if (databaseOnly && dbKindOf(asset.kind) === null) {
-      useUi.getState().pushToast("info", "这里只能连接数据库资产");
+      useUi.getState().pushToast("info", t("这里只能连接数据库资产"));
       return;
     }
     if (mobile && asset.kind === "local") {
-      useUi.getState().pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
+      useUi.getState().pushToast("info", t("移动端不支持本地终端，请双击资产连接远程主机"));
       return;
     }
     if (useUi.getState().connectingAssetIds.includes(asset.id)) return;
@@ -381,7 +382,7 @@ export function JumpPalette({
     if (outcome.canceled) return;
     setConnectError({
       label: asset.name,
-      message: outcome.error ?? "连接失败",
+      message: outcome.error ?? t("连接失败"),
       retry: () => void connect(asset),
     });
   };
@@ -428,7 +429,7 @@ export function JumpPalette({
       if (outcome.canceled) return;
       setConnectError({
         label: row.label,
-        message: outcome.error ?? "连接失败",
+        message: outcome.error ?? t("连接失败"),
         retry: () => retryAsset ? void connect(retryAsset) : void runQuick(row),
       });
     } finally {
@@ -494,7 +495,7 @@ export function JumpPalette({
       return;
     }
     if (row.kind === "session" || row.kind === "asset") {
-      st.pushToast("info", "只能把当前工作区的会话或同一主机拆到右侧，已直接打开");
+      st.pushToast("info", t("只能把当前工作区的会话或同一主机拆到右侧，已直接打开"));
     }
     activate(row);
   };
@@ -612,16 +613,16 @@ export function JumpPalette({
         <button {...optionProps}>
           <Icon size={15} className="shrink-0 text-neutral-400" />
           <span className="min-w-0 flex-1 truncate">
-            {row.mode === "temporary" ? `临时连接 ${row.label}` : `保存为资产并连接 ${row.label}`}
+            {row.mode === "temporary" ? t("临时连接 {label}", { label: row.label }) : t("保存为资产并连接 {label}", { label: row.label })}
           </span>
           {pending ? (
             <span className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
               <IconLoader size={11} className="animate-spin" />
-              连接中…
+              {t("连接中…")}
             </span>
           ) : (
             <span className="nx-command-hint shrink-0 text-[11px]">
-              {row.mode === "temporary" ? "不保存资产" : "存入资产树"}
+              {row.mode === "temporary" ? t("不保存资产") : t("存入资产树")}
             </span>
           )}
           {numberHint}
@@ -665,14 +666,14 @@ export function JumpPalette({
           {identity && <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>}
         </span>
         {asset.kind === "local" || asset.builtin ? (
-          <span className="nx-badge nx-badge-blue shrink-0">本机</span>
+          <span className="nx-badge nx-badge-blue shrink-0">{t("本机")}</span>
         ) : (
           <ReachabilityDot entry={reachEntries[asset.id]} />
         )}
         {connecting ? (
           <span className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-400">
             <IconLoader size={11} className="animate-spin" />
-            连接中…
+            {t("连接中…")}
           </span>
         ) : null}
         {numberHint}
@@ -691,7 +692,7 @@ export function JumpPalette({
           onRetry();
         }}
       >
-        重试
+        {t("重试")}
       </button>
     </div>
   );
@@ -730,7 +731,7 @@ export function JumpPalette({
             }}
           />
           {!databaseOnly && (
-            <div className="flex shrink-0 items-center gap-1" role="group" aria-label="跳转范围">
+            <div className="flex shrink-0 items-center gap-1" role="group" aria-label={t("跳转范围")}>
               {(["all", "hosts"] as const).map((value) => (
                 <button
                   key={value}
@@ -744,7 +745,7 @@ export function JumpPalette({
                     inputRef.current?.focus({ preventScroll: true });
                   }}
                 >
-                  {value === "all" ? "全部" : "主机"}
+                  {value === "all" ? t("全部") : t("主机")}
                 </button>
               ))}
             </div>
@@ -781,18 +782,18 @@ export function JumpPalette({
             <div className="nx-command-empty px-4 py-8 text-center text-xs">
               <div role="status">
                 {firstConnect
-                  ? "暂无远程资产，请选择一种方式开始"
+                  ? t("暂无远程资产，请选择一种方式开始")
                   : databaseOnly
                     ? query.trim()
-                      ? "没有匹配的数据库资产"
+                      ? t("没有匹配的数据库资产")
                       : hiddenDatabaseCount > 0 && !showHidden
-                        ? "数据库资产已隐藏"
-                        : "暂无数据库资产，请先在资产树中新建一个"
+                        ? t("数据库资产已隐藏")
+                        : t("暂无数据库资产，请先在资产树中新建一个")
                   : showAll
-                    ? "没有匹配的会话、主机或命令"
+                    ? t("没有匹配的会话、主机或命令")
                   : query.trim()
-                    ? "没有匹配的资产"
-                    : "暂无可连接的资产"}
+                    ? t("没有匹配的资产")
+                    : t("暂无可连接的资产")}
               </div>
               {databaseOnly && hiddenDatabaseCount > 0 && (
                 <button
@@ -800,18 +801,18 @@ export function JumpPalette({
                   className="nx-btn nx-btn-outline nx-btn-sm mt-4"
                   onClick={() => setShowHidden(!showHidden)}
                 >
-                  {showHidden ? "隐藏已隐藏资产" : `显示隐藏资产（${hiddenDatabaseCount}）`}
+                  {showHidden ? t("隐藏已隐藏资产") : t("显示隐藏资产（{hiddenDatabaseCount}）", { hiddenDatabaseCount })}
                 </button>
               )}
               {scope === "hosts" && (
-              <div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="group" aria-label="连接操作">
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2" role="group" aria-label={t("连接操作")}>
                 <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setCreating(true)}>
                   <IconPlus size={13} />
-                  新建连接
+                  {t("新建连接")}
                 </button>
                 <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setImporting(true)}>
                   <IconDownload size={13} />
-                  导入 SSH 配置
+                  {t("导入 SSH 配置")}
                 </button>
                 {localAsset && (
                   <button
@@ -825,7 +826,7 @@ export function JumpPalette({
                     ) : (
                       <IconTerminal size={13} />
                     )}
-                    {connectingIds.includes(localAsset.id) ? "连接中…" : "打开本机终端"}
+                    {connectingIds.includes(localAsset.id) ? t("连接中…") : t("打开本机终端")}
                   </button>
                 )}
               </div>
@@ -837,14 +838,14 @@ export function JumpPalette({
         {connectError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={connectError.message}>
-              「{connectError.label}」连接失败：{connectError.message}
+              「{connectError.label}{t("」连接失败：")}{connectError.message}
             </span>
             <button
               type="button"
               className="nx-link shrink-0"
               onClick={() => void connectError.retry()}
             >
-              重试
+              {t("重试")}
             </button>
           </div>
         )}
@@ -856,15 +857,15 @@ export function JumpPalette({
           />
         )}
         {!connectError && batchError &&
-          errorBanner(`可达性检测失败：${batchError}`, () => void useAssetReachability.getState().probe(probeKey.split("\n")))}
+          errorBanner(t("可达性检测失败：{batchError}", { batchError }), () => void useAssetReachability.getState().probe(probeKey.split("\n")))}
         {assetsQuery.isError &&
-          errorBanner(`资产列表加载失败：${describeError(assetsQuery.error)}`, () => void assetsQuery.refetch())}
+          errorBanner(t("资产列表加载失败：{value}", { value: describeError(assetsQuery.error) }), () => void assetsQuery.refetch())}
         {showAll && snippetsQuery.isError &&
-          errorBanner(`片段列表加载失败：${describeError(snippetsQuery.error)}`, () => void snippetsQuery.refetch())}
+          errorBanner(t("片段列表加载失败：{value}", { value: describeError(snippetsQuery.error) }), () => void snippetsQuery.refetch())}
         {showAll && background.unlisted > 0 && (
           <div className="nx-command-error" role="status">
             <span className="min-w-0 flex-1 truncate">
-              有 {background.unlisted} 处后台会话未能列出，原因见「后台会话」页
+              {t("有")} {background.unlisted} {t("处后台会话未能列出，原因见「后台会话」页")}
             </span>
           </div>
         )}
@@ -873,30 +874,30 @@ export function JumpPalette({
         <div id={helpId} className="nx-command-help flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/70 bg-neutral-950/40 px-4 py-2 text-[10.5px]">
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">↑</span>
-            <span className="nx-kbd">↓</span> 选择
+            <span className="nx-kbd">↓</span> {t("选择")}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="nx-kbd">Enter</span> {showAll ? "打开" : "连接"}
+            <span className="nx-kbd">Enter</span> {showAll ? t("打开") : t("连接")}
           </span>
           {tabSwitchesScope && (
             <span className="flex items-center gap-1.5">
-              <span className="nx-kbd">Tab</span> {showAll ? "只看主机" : "全部"}
+              <span className="nx-kbd">Tab</span> {showAll ? t("只看主机") : t("全部")}
             </span>
           )}
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">Alt</span>
-            <span className="nx-kbd">1-9</span> 直达
+            <span className="nx-kbd">1-9</span> {t("直达")}
           </span>
           <span className="flex items-center gap-1.5">
             <span className="nx-kbd">Shift</span>
-            <span className="nx-kbd">Enter</span> 右侧分屏
+            <span className="nx-kbd">Enter</span> {t("右侧分屏")}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="nx-kbd">Esc</span> 关闭
+            <span className="nx-kbd">Esc</span> {t("关闭")}
           </span>
           {showAll && (
             <span className="flex items-center gap-1.5">
-              <span className="nx-kbd">&gt;</span> 搜索命令历史
+              <span className="nx-kbd">&gt;</span> {t("搜索命令历史")}
             </span>
           )}
         </div>

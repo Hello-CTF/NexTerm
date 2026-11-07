@@ -25,6 +25,7 @@ import type {
   AgentPresence,
   AgentRosterEntry,
 } from "./agentTypes";
+import { t } from "../../i18n";
 
 export interface AgentProductionIdentity {
   ownerId: string;
@@ -75,15 +76,15 @@ function rosterEntryEvidence(
   observedAt: number,
 ): AgentEvidence | null {
   if (presence === "gone" && entry.state === "released" && entry.releasedAt !== null) {
-    return { kind: "release", observedAt: entry.releasedAt, summary: "已确认释放" };
+    return { kind: "release", observedAt: entry.releasedAt, summary: t("已确认释放") };
   }
   const label =
-    presence === "gone" ? "已不存在" : presence === "replaced" ? "已被替换" : presence === "exited" ? "已退出" : null;
+    presence === "gone" ? t("已不存在") : presence === "replaced" ? t("已被替换") : presence === "exited" ? t("已退出") : null;
   if (label === null) return null;
   if (PERSISTED_TERMINAL_STATES.has(entry.state)) {
-    return { kind: "reconcile", observedAt: entry.updatedAt, summary: `${label}（已记录）` };
+    return { kind: "reconcile", observedAt: entry.updatedAt, summary: t("{label}（已记录）", { label }) };
   }
-  return { kind: "reconcile", observedAt, summary: `${label}（已检测确认）` };
+  return { kind: "reconcile", observedAt, summary: t("{label}（已检测确认）", { label }) };
 }
 
 interface RosterMappingContext {
@@ -132,7 +133,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
   const rawEntry = (handle: string): RosterListEntry => {
     const row = rawByHandle.get(handle);
     if (!row) {
-      throw unsupported(`找不到子代理 ${handle}，请先刷新列表`);
+      throw unsupported(t("找不到子代理 {handle}，请先刷新列表", { handle }));
     }
     return row;
   };
@@ -174,7 +175,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
     async open(handle: string): Promise<{ tabId: string }> {
       const row = rawEntry(handle);
       if (row.entry.tabId === "") {
-        throw unsupported(`子代理 ${handle} 无可打开的终端标签页`);
+        throw unsupported(t("子代理 {handle} 无可打开的终端标签页", { handle }));
       }
       return { tabId: row.entry.tabId };
     },
@@ -194,24 +195,24 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
           });
         }
         if (attachment.entry.tabId === "") {
-          throw unsupported(`子代理 ${handle} 已连接，但无可打开的终端标签页`);
+          throw unsupported(t("子代理 {handle} 已连接，但无可打开的终端标签页", { handle }));
         }
         return { tabId: attachment.entry.tabId };
       }
       if (resolution === "nonpersistent") {
-        throw unsupported(`子代理 ${handle} 不在持久终端中，无法附加`);
+        throw unsupported(t("子代理 {handle} 不在持久终端中，无法附加", { handle }));
       }
       const text =
         resolution === "disconnected"
-          ? "终端已断开"
+          ? t("终端已断开")
           : resolution === "gone"
-            ? "终端已不存在"
+            ? t("终端已不存在")
             : resolution === "replaced"
-              ? "终端已被新会话替换"
+              ? t("终端已被新会话替换")
               : resolution === "exited"
-                ? "终端已退出"
-                : "无法确认终端状态";
-      throw unsupported(`未能附加子代理 ${handle}：${text}`);
+                ? t("终端已退出")
+                : t("无法确认终端状态");
+      throw unsupported(t("未能附加子代理 {handle}：{text}", { handle, text }));
     },
 
     // Alias-only rename through the real command: the permanent handle and
@@ -230,7 +231,7 @@ export function createAgentRosterApi(deps: AgentRosterProductionDeps): AgentRost
       rawByHandle.set(handle, merged);
       const ctx = lastCtx;
       if (!ctx) {
-        throw unsupported("列表已过期，请刷新后重试");
+        throw unsupported(t("列表已过期，请刷新后重试"));
       }
       return toRosterEntryView(merged, ctx);
     },

@@ -7,7 +7,7 @@ import type {
   SshImportKeyDto,
   SshImportPreviewDto,
 } from "../../ipc/types";
-import { describeError } from "../../ui/errorText";
+import { describeError, describeErrorSource } from "../../ui/errorText";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import { WEB } from "../../ipc/env";
 import { isMac } from "../../app/platform";
@@ -20,29 +20,30 @@ import { normalizeAssetTags } from "./assetSearch";
 import { Select } from "../../ui/Select";
 import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
 import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
+import { t } from "../../i18n";
 
 type Phase = "form" | "loading" | "preview" | "applying" | "done";
 
 const ACTION_LABELS: Record<string, string> = {
-  add: "新增",
-  "skip-duplicate": "重复 · 跳过",
-  "conflict-alias": "别名冲突",
-  "conflict-endpoint": "地址冲突",
-  "blocked-jump": "跳板配置不可导入",
+  add: t("新增"),
+  "skip-duplicate": t("重复 · 跳过"),
+  "conflict-alias": t("别名冲突"),
+  "conflict-endpoint": t("地址冲突"),
+  "blocked-jump": t("跳板配置不可导入"),
 };
 
 const DIAGNOSTIC_LABELS: Record<string, string> = {
-  "host-pattern-skipped": "通配 Host 已跳过",
-  "match-skipped": "Match 块已跳过",
-  "key-unreadable": "文件无法读取",
-  "symlink-unresolved": "符号链接无法解析",
-  "symlink-escape": "符号链接指向扫描目录外",
-  "limit-truncated": "超出数量上限",
-  "home-missing": "SSH 目录不存在",
-  "config-unparsed": "配置文件解析失败",
-  "termius-key-unparsed": "Termius 密钥无法解析",
-  "unsupported-file": "不支持的文件类型",
-  "encrypted-key-unreadable": "加密私钥无法读取",
+  "host-pattern-skipped": t("通配 Host 已跳过"),
+  "match-skipped": t("Match 块已跳过"),
+  "key-unreadable": t("文件无法读取"),
+  "symlink-unresolved": t("符号链接无法解析"),
+  "symlink-escape": t("符号链接指向扫描目录外"),
+  "limit-truncated": t("超出数量上限"),
+  "home-missing": t("SSH 目录不存在"),
+  "config-unparsed": t("配置文件解析失败"),
+  "termius-key-unparsed": t("Termius 密钥无法解析"),
+  "unsupported-file": t("不支持的文件类型"),
+  "encrypted-key-unreadable": t("加密私钥无法读取"),
 };
 
 function defaultAction(action: string): SshImportItemAction {
@@ -112,7 +113,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   const runPreview = async () => {
     if (serverLimited) return;
     if (termius && !termiusSupported) {
-      setError("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。");
+      setError(t("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。"));
       return;
     }
     setPhase("loading");
@@ -187,12 +188,12 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       notifyAssetDataChanged();
       pushToast(
         "success",
-        `导入完成 · 新增 ${result.assetsCreated} 台主机 / ${result.credentialsCreated} 条密钥`,
+        t("导入完成 · 新增 {assetsCreated} 台主机 / {credentialsCreated} 条密钥", { assetsCreated: result.assetsCreated, credentialsCreated: result.credentialsCreated }),
       );
     } catch (e) {
       const message = describeError(e);
-      setError(`导入失败：${message}`);
-      if (message.includes("重新预览")) {
+      setError(t("导入失败：{message}", { message }));
+      if (describeErrorSource(e).includes("重新预览")) {
         setPreview(null);
         setHostActions({});
         setKeyActions({});
@@ -254,7 +255,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
         >
           <div className="nx-modal-header shrink-0">
             <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-              导入 SSH 主机与密钥
+              {t("导入 SSH 主机与密钥")}
             </span>
           </div>
           <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
@@ -263,7 +264,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 <IconXCircle size={14} className="mt-0.5 shrink-0" />
                 <span className="min-w-0 flex-1">{error}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={backToForm}>
-                  返回
+                  {t("返回")}
                 </button>
               </div>
             )}
@@ -271,7 +272,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {phase === "form" && (
               <>
                 <div className="nx-form-row">
-                  <span className="nx-label">来源</span>
+                  <span className="nx-label">{t("来源")}</span>
                   <div className="nx-segment mb-2">
                     <button
                       type="button"
@@ -280,7 +281,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       title={serverLimited ? serverText.importSshServerPath : undefined}
                       onClick={() => setSource("ssh-config")}
                     >
-                      OpenSSH 配置
+                      {t("OpenSSH 配置")}
                     </button>
                     <button
                       type="button"
@@ -289,14 +290,14 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       title={serverLimited ? serverText.importSshServerPath : undefined}
                       onClick={() => setSource("ssh-home")}
                     >
-                      ~/.ssh 目录
+                      {t("~/.ssh 目录")}
                     </button>
                     {!WEB && !mobile && (
                       <button
                         type="button"
                         className={`nx-segment-item ${source === "termius" ? "is-active" : ""}`}
                         disabled={!termiusSupported}
-                        title={termiusSupported ? "从本机 Termius 导入" : "Termius 导入目前仅支持 macOS"}
+                        title={termiusSupported ? t("从本机 Termius 导入") : t("Termius 导入目前仅支持 macOS")}
                         onClick={() => {
                           if (termiusSupported) setSource("termius");
                         }}
@@ -308,41 +309,41 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   {serverLimited && <ServerRestrictionNote text={serverText.importSshServerPath} />}
                   {termiusUnsupported && (
                     <div className="nx-hint mt-1.5" role="note">
-                      当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。
+                      {t("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。")}
                     </div>
                   )}
                 </div>
 
                 <div className="nx-form-row">
-                  <label className="nx-label" htmlFor="ssh-import-group">导入到分组</label>
+                  <label className="nx-label" htmlFor="ssh-import-group">{t("导入到分组")}</label>
                   <Select
                     id="ssh-import-group"
-                    ariaLabel="导入到分组"
+                    ariaLabel={t("导入到分组")}
                     value={groupId}
                     options={[
-                      { value: "", label: "不指定（新资产不分组，覆盖保留原分组）" },
+                      { value: "", label: t("不指定（新资产不分组，覆盖保留原分组）") },
                       ...(groups.data ?? []).map((group) => ({ value: group.id, label: group.name })),
                     ]}
                     onChange={setGroupId}
                   />
                 </div>
                 <div className="nx-form-row">
-                  <label className="nx-label" htmlFor="ssh-import-tags">统一标签</label>
+                  <label className="nx-label" htmlFor="ssh-import-tags">{t("统一标签")}</label>
                   <input
                     key="ssh-import-tags"
                     id="ssh-import-tags"
                     className="nx-input"
                     value={tags}
                     onChange={(e) => setTags(e.target.value)}
-                    placeholder="可选，用逗号分隔"
+                    placeholder={t("可选，用逗号分隔")}
                   />
-                  <div className="nx-hint mt-1.5">仅为本次导入的主机添加统一标签；不读取来源分组信息。</div>
+                  <div className="nx-hint mt-1.5">{t("仅为本次导入的主机添加统一标签；不读取来源分组信息。")}</div>
                 </div>
 
                 {source === "ssh-config" && (
                   <div className="nx-form-row">
                     <label className="nx-label" htmlFor={pathId}>
-                      {WEB ? "服务器 SSH 配置文件路径" : "配置文件路径"}
+                      {WEB ? t("服务器 SSH 配置文件路径") : t("配置文件路径")}
                     </label>
                     <input
                       key="ssh-config-path"
@@ -356,8 +357,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     />
                     <span className="nx-hint mt-1.5 block">
                       {WEB
-                        ? "留空使用服务器上的 ~/.ssh/config，不会读取浏览器所在电脑的文件。"
-                        : "留空使用默认路径。"}
+                        ? t("留空使用服务器上的 ~/.ssh/config，不会读取浏览器所在电脑的文件。")
+                        : t("留空使用默认路径。")}
                     </span>
                   </div>
                 )}
@@ -365,8 +366,8 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 {source === "ssh-home" && (
                   <div className="nx-form-row">
                     <span className="nx-hint block">
-                      {WEB ? "将扫描服务器上的 ~/.ssh 目录" : "将扫描 ~/.ssh 目录"}
-                      ：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。
+                      {WEB ? t("将扫描服务器上的 ~/.ssh 目录") : t("将扫描 ~/.ssh 目录")}
+                      {t("：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。")}
                     </span>
                   </div>
                 )}
@@ -382,11 +383,11 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                         onChange={(e) => setConfirmed(e.target.checked)}
                       />
                       <span>
-                        我确认允许 NexTerm 在本次导入流程中读取本机 Termius 数据（先展示预览；选择导入前不会写入资产或凭据）
+                        {t("我确认允许 NexTerm 在本次导入流程中读取本机 Termius 数据（先展示预览；选择导入前不会写入资产或凭据）")}
                       </span>
                     </label>
                     <span className="nx-hint mt-1.5 block">
-                      需要从系统钥匙串读取解密密钥，目前仅支持 macOS；私钥与密码内容不会显示在预览中。
+                      {t("需要从系统钥匙串读取解密密钥，目前仅支持 macOS；私钥与密码内容不会显示在预览中。")}
                     </span>
                   </div>
                 )}
@@ -396,10 +397,10 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {(phase === "loading" || phase === "applying") && (
               <div className="nx-empty" role="status">
                 <div className="text-[12.5px] text-neutral-400">
-                  {phase === "loading" ? "正在读取并生成预览…" : "正在导入…"}
+                  {phase === "loading" ? t("正在读取并生成预览…") : t("正在导入…")}
                 </div>
                 <div className="nx-hint mt-1">
-                  {phase === "loading" ? "仅生成预览，不会写入资产或凭据" : "写入资产库与凭据库"}
+                  {phase === "loading" ? t("仅生成预览，不会写入资产或凭据") : t("写入资产库与凭据库")}
                 </div>
               </div>
             )}
@@ -421,11 +422,11 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {phase === "done" && applyResult !== null && (
               <div role="status">
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  <span className="nx-badge nx-badge-green">新增主机 {applyResult.assetsCreated}</span>
-                  <span className="nx-badge">覆盖主机 {applyResult.assetsUpdated}</span>
-                  <span className="nx-badge nx-badge-green">新增密钥 {applyResult.credentialsCreated}</span>
-                  <span className="nx-badge">覆盖密钥 {applyResult.credentialsUpdated}</span>
-                  <span className="nx-badge">跳过 {applyResult.skipped}</span>
+                  <span className="nx-badge nx-badge-green">{t("新增主机")} {applyResult.assetsCreated}</span>
+                  <span className="nx-badge">{t("覆盖主机")} {applyResult.assetsUpdated}</span>
+                  <span className="nx-badge nx-badge-green">{t("新增密钥")} {applyResult.credentialsCreated}</span>
+                  <span className="nx-badge">{t("覆盖密钥")} {applyResult.credentialsUpdated}</span>
+                  <span className="nx-badge">{t("跳过")} {applyResult.skipped}</span>
                 </div>
                 {applyResult.warnings.length > 0 && (
                   <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
@@ -435,7 +436,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
                 <div className="nx-hint mt-3">
-                  可在资产树与凭据列表中查看导入结果。
+                  {t("可在资产树与凭据列表中查看导入结果。")}
                 </div>
               </div>
             )}
@@ -443,13 +444,13 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
           <div className="nx-modal-footer shrink-0">
             {phase === "preview" && (
               <button className="nx-btn nx-btn-ghost" onClick={backToForm}>
-                返回
+                {t("返回")}
               </button>
             )}
             <div className="nx-spacer" />
             {phase !== "done" && phase !== "applying" && (
               <button className="nx-btn nx-btn-ghost" onClick={onClose}>
-                取消
+                {t("取消")}
               </button>
             )}
             {phase === "form" && (
@@ -458,12 +459,12 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 disabled={serverLimited || (termius && !confirmed)}
                 onClick={() => void runPreview()}
               >
-                预览
+                {t("预览")}
               </button>
             )}
             {phase === "preview" && importableCount > 0 && (
               <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
-                导入已勾选的新增项（{importableCount}）
+                {t("导入已勾选的新增项（")}{importableCount}）
               </button>
             )}
             {phase === "preview" && (
@@ -472,12 +473,12 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 disabled={!canApply}
                 onClick={runApplySelection}
               >
-                导入选中项
+                {t("导入选中项")}
               </button>
             )}
             {phase === "done" && (
               <button className="nx-btn nx-btn-primary" onClick={onClose}>
-                完成
+                {t("完成")}
               </button>
             )}
           </div>
@@ -509,7 +510,7 @@ function PreviewBody({
         <div className="nx-empty-icon">
           <IconServer size={18} />
         </div>
-        <div className="text-[12.5px] text-neutral-400">没有发现可导入的主机或密钥</div>
+        <div className="text-[12.5px] text-neutral-400">{t("没有发现可导入的主机或密钥")}</div>
       </div>
     );
   }
@@ -517,16 +518,16 @@ function PreviewBody({
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11.5px] text-neutral-500">
         <span>
-          {preview.hosts.length} 台主机（{importableHosts} 台可新增）· {preview.keys.length} 个密钥（
-          {importableKeys} 个可新增）
+          {preview.hosts.length} {t("台主机（")}{importableHosts} {t("台可新增）·")} {preview.keys.length} {t("个密钥（")}
+          {importableKeys} {t("个可新增）")}
         </span>
         {preview.truncated && (
-          <span className="nx-badge nx-badge-amber">数量超限已截断</span>
+          <span className="nx-badge nx-badge-amber">{t("数量超限已截断")}</span>
         )}
       </div>
 
       {preview.hosts.length > 0 && (
-        <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">主机</div>
+        <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">{t("主机")}</div>
       )}
       <div className="mb-3 flex flex-col gap-1.5">
         {preview.hosts.map((host) => (
@@ -540,7 +541,7 @@ function PreviewBody({
       </div>
 
       {preview.keys.length > 0 && (
-        <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">密钥</div>
+        <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">{t("密钥")}</div>
       )}
       <div className="mb-3 flex flex-col gap-1.5">
         {preview.keys.map((key) => (
@@ -555,7 +556,7 @@ function PreviewBody({
 
       {preview.diagnostics.length > 0 && (
         <>
-          <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">诊断</div>
+          <div className="mb-1 text-[11.5px] font-medium tracking-wide text-neutral-400">{t("诊断")}</div>
           <div className="flex flex-col gap-1 rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2">
             {preview.diagnostics.map((diagnostic, index) => (
               <div key={index} className="flex items-start gap-2 text-[11.5px] text-neutral-500">
@@ -588,8 +589,8 @@ function StrategySelect({
       ariaLabel={label}
       value={action}
       options={[
-        { value: "skip", label: "跳过" },
-        { value: "overwrite", label: "覆盖同名项" },
+        { value: "skip", label: t("跳过") },
+        { value: "overwrite", label: t("覆盖同名项") },
       ]}
       onChange={(value) => onAction(value as SshImportItemAction)}
     />
@@ -629,7 +630,7 @@ function HostRow({
           <input
             type="checkbox"
             className="shrink-0"
-            aria-label={`导入主机 ${host.alias}`}
+            aria-label={t("导入主机 {alias}", { alias: host.alias })}
             checked={action === "import"}
             onChange={(e) => onAction(e.target.checked ? "import" : "skip")}
           />
@@ -645,12 +646,12 @@ function HostRow({
         </span>
         {host.proxyJump && (
           <span className="nx-badge shrink-0" title={`ProxyJump ${host.proxyJump}`}>
-            跳板 {host.proxyJump}
+            {t("跳板")} {host.proxyJump}
           </span>
         )}
         {host.authMethod && (
           <span className="nx-badge shrink-0">
-            {host.authMethod === "key" ? "密钥" : host.authMethod === "password" ? "密码" : "ssh-agent"}
+            {host.authMethod === "key" ? t("密钥") : host.authMethod === "password" ? t("密码") : "ssh-agent"}
           </span>
         )}
         <ActionBadge action={host.action} />
@@ -658,7 +659,7 @@ function HostRow({
           <StrategySelect
             action={action}
             onAction={onAction}
-            label={`主机 ${host.alias} 的冲突处理`}
+            label={t("主机 {alias} 的冲突处理", { alias: host.alias })}
           />
         )}
       </div>
@@ -686,7 +687,7 @@ function KeyRow({
           <input
             type="checkbox"
             className="shrink-0"
-            aria-label={`导入密钥 ${name}`}
+            aria-label={t("导入密钥 {name}", { name })}
             checked={action === "import"}
             onChange={(e) => onAction(e.target.checked ? "import" : "skip")}
           />
@@ -710,7 +711,7 @@ function KeyRow({
           <StrategySelect
             action={action}
             onAction={onAction}
-            label={`密钥 ${name} 的冲突处理`}
+            label={t("密钥 {name} 的冲突处理", { name })}
           />
         )}
       </div>

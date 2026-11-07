@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { createSyncedPreference } from "../../app/syncedPreference";
 import { ask } from "../../ui/dialogs";
 import { multilinePasteLines } from "./terminalPaste";
+import { t } from "../../i18n";
 
 export { quickCommandBytes } from "./terminalPaste";
 
@@ -28,26 +29,26 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Returns why a command cannot be saved, or null when it is valid. */
 export function quickCommandError(command: QuickCommand): string | null {
-  if (!command.label.trim()) return "请填写名称";
+  if (!command.label.trim()) return t("请填写名称");
   if ([...command.label].length > QUICK_COMMAND_LIMITS.labelChars) {
-    return `名称最多 ${QUICK_COMMAND_LIMITS.labelChars} 个字符`;
+    return t("名称最多 {labelChars} 个字符", { labelChars: QUICK_COMMAND_LIMITS.labelChars });
   }
-  if (CONTROL_CHARS.test(command.label)) return "名称不能包含换行或控制字符";
-  if (!command.text) return "请填写要发送的内容";
-  if (command.text.includes("\0")) return "内容不能包含 NUL 字符";
-  if (encoder.encode(command.text).length > QUICK_COMMAND_LIMITS.textBytes) return "内容不能超过 4 KiB";
+  if (CONTROL_CHARS.test(command.label)) return t("名称不能包含换行或控制字符");
+  if (!command.text) return t("请填写要发送的内容");
+  if (command.text.includes("\0")) return t("内容不能包含 NUL 字符");
+  if (encoder.encode(command.text).length > QUICK_COMMAND_LIMITS.textBytes) return t("内容不能超过 4 KiB");
   return null;
 }
 
 /** Returns why the whole list cannot be saved, or null when it is valid. */
 export function quickCommandListError(commands: readonly QuickCommand[]): string | null {
-  if (commands.length > QUICK_COMMAND_LIMITS.count) return `最多保存 ${QUICK_COMMAND_LIMITS.count} 条快捷命令`;
+  if (commands.length > QUICK_COMMAND_LIMITS.count) return t("最多保存 {count} 条快捷命令", { count: QUICK_COMMAND_LIMITS.count });
   for (const command of commands) {
     const error = quickCommandError(command);
     if (error) return `「${command.label}」：${error}`;
   }
   if (encoder.encode(JSON.stringify(commands)).length > QUICK_COMMAND_LIMITS.totalBytes) {
-    return "快捷命令总大小超过 48 KiB，请删减内容";
+    return t("快捷命令总大小超过 48 KiB，请删减内容");
   }
   return null;
 }
@@ -96,9 +97,9 @@ export async function confirmQuickCommand(command: QuickCommand): Promise<boolea
   const preview = lines
     .slice(0, 5)
     .map((line) => (line.length > 120 ? `${line.slice(0, 120)}…` : line));
-  const suffix = lines.length > preview.length ? `\n…（共 ${lines.length} 行）` : "";
+  const suffix = lines.length > preview.length ? t("\n…（共 {length} 行）", { length: lines.length }) : "";
   return ask(
-    `快捷命令「${command.label}」包含 ${lines.length} 行文本。多行内容可能包含多条命令，部分程序会立即逐行执行，请确认内容。\n\n${preview.join("\n")}${suffix}`,
-    { title: "发送多行快捷命令", kind: "warning" },
+    t("快捷命令「{label}」包含 {length} 行文本。多行内容可能包含多条命令，部分程序会立即逐行执行，请确认内容。\n\n{join}{suffix}", { label: command.label, length: lines.length, join: preview.join("\n"), suffix }),
+    { title: t("发送多行快捷命令"), kind: "warning" },
   );
 }

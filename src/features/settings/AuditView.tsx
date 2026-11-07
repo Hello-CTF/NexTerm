@@ -11,6 +11,7 @@ import { KIND_LABELS } from "./auditLabels";
 import { AuditTimelineView } from "./AuditTimelineView";
 import { CommandLogView } from "./CommandLogView";
 import { useCompactWidth } from "./useCompactWidth";
+import { t } from "../../i18n";
 
 interface AuditEntry {
   id: number;
@@ -27,16 +28,16 @@ interface AuditEntry {
 type SourceFilter = "" | "user" | "ai" | "fleet";
 
 const FILTERS: { value: SourceFilter; label: string }[] = [
-  { value: "", label: "全部" },
-  { value: "user", label: "用户" },
+  { value: "", label: t("全部") },
+  { value: "user", label: t("用户") },
   { value: "ai", label: "AI" },
-  { value: "fleet", label: "设备" },
+  { value: "fleet", label: t("设备") },
 ];
 
 function sourceLabel(source: string): string {
   if (source === "ai") return "AI";
-  if (source === "fleet") return "设备";
-  return "用户";
+  if (source === "fleet") return t("设备");
+  return t("用户");
 }
 
 const PAGE_SIZE = 100;
@@ -209,36 +210,36 @@ export function AuditView() {
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconHistory size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">审计日志</span>
+        <span className="nx-toolbar-title">{t("审计日志")}</span>
         <div className="nx-segment">
           <button className="nx-segment-item is-active" disabled>
-            审计
+            {t("审计")}
           </button>
           <button className="nx-segment-item" onClick={() => setView("command")}>
-            命令
+            {t("命令")}
           </button>
           <button className="nx-segment-item" onClick={() => setView("timeline")}>
-            时间线
+            {t("时间线")}
           </button>
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
-            ? "未能加载审计记录"
+            ? t("未能加载审计记录")
             : knownTotal !== null
-              ? `共 ${knownTotal} 条`
-              : `已加载 ${entries.length} 条`}
+              ? t("共 {knownTotal} 条", { knownTotal })
+              : t("已加载 {length} 条", { length: entries.length })}
         </span>
         {error && entries.length > 0 && (
-          <span className="nx-hint text-red-300">刷新失败：{error}</span>
+          <span className="nx-hint text-red-300">{t("刷新失败：")}{error}</span>
         )}
         <div className="nx-spacer" />
         {devices !== null && devices.length > 0 && (
           <Select
             className="w-[140px] shrink-0"
-            ariaLabel="按设备过滤"
+            ariaLabel={t("按设备过滤")}
             value={deviceId}
             onChange={setDeviceId}
-            options={[{ value: "", label: "全部设备" }, ...devices.map((d) => ({ value: d.id, label: d.name }))]}
+            options={[{ value: "", label: t("全部设备") }, ...devices.map((d) => ({ value: d.id, label: d.name }))]}
           />
         )}
         <div className="nx-segment">
@@ -248,7 +249,7 @@ export function AuditView() {
               className={`nx-segment-item ${source === f.value ? "is-active" : ""}`}
               onClick={() => setSource(f.value)}
               disabled={deviceId !== ""}
-              title={deviceId !== "" ? "按设备过滤时将忽略来源筛选" : undefined}
+              title={deviceId !== "" ? t("按设备过滤时将忽略来源筛选") : undefined}
             >
               {f.label}
             </button>
@@ -260,13 +261,13 @@ export function AuditView() {
           disabled={loading}
         >
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
         {compact ? (
-        <ul className="m-0 flex list-none flex-col p-0" aria-label="审计记录" data-testid="audit-cards">
+        <ul className="m-0 flex list-none flex-col p-0" aria-label={t("审计记录")} data-testid="audit-cards">
           {entries.map((e) => (
             <li key={e.id} className="flex flex-col gap-1 border-b border-neutral-800/60 px-3 py-2.5">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -277,7 +278,7 @@ export function AuditView() {
                   {KIND_LABELS[e.kind] ?? e.kind}
                 </span>
                 {e.exitCode !== null && (
-                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? "成功" : "失败"}>
+                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? t("成功") : t("失败")}>
                     {e.exitCode === 0 ? "✓ 0" : `✗ ${e.exitCode}`}
                   </span>
                 )}
@@ -289,33 +290,33 @@ export function AuditView() {
               </div>
             </li>
           ))}
-          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">正在加载…</li>}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">{t("正在加载…")}</li>}
           {entries.length === 0 && !loading && error && (
             <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
-              <span className="min-w-0 break-words text-red-300">未能加载审计记录：{error}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载审计记录：")}{error}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(source, deviceId)} disabled={loading}>
                 <IconRefresh size={12} />
-                重试
+                {t("重试")}
               </button>
             </li>
           )}
           {entries.length === 0 && !loading && !error && (
-            <li className="nx-hint px-3 py-4 text-center">暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。</li>
+            <li className="nx-hint px-3 py-4 text-center">{t("暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。")}</li>
           )}
         </ul>
         ) : (
         <table className="nx-table nx-table-fixed">
           <thead>
             <tr>
-              <th style={{ width: 168 }}>时间</th>
-              <th style={{ width: 72 }}>来源</th>
-              <th style={{ width: 140 }}>操作</th>
-              <th>详情</th>
+              <th style={{ width: 168 }}>{t("时间")}</th>
+              <th style={{ width: 72 }}>{t("来源")}</th>
+              <th style={{ width: 140 }}>{t("操作")}</th>
+              <th>{t("详情")}</th>
               <th style={{ width: 84 }} className="nx-right">
-                退出码
+                {t("退出码")}
               </th>
               <th style={{ width: 84 }} className="nx-right">
-                耗时
+                {t("耗时")}
               </th>
             </tr>
           </thead>
@@ -338,11 +339,11 @@ export function AuditView() {
                   {e.exitCode === null ? (
                     <span className="text-neutral-600">—</span>
                   ) : e.exitCode === 0 ? (
-                    <span className="text-green-300" title="成功">
+                    <span className="text-green-300" title={t("成功")}>
                       ✓ 0
                     </span>
                   ) : (
-                    <span className="text-red-300" title="失败">
+                    <span className="text-red-300" title={t("失败")}>
                       ✗ {e.exitCode}
                     </span>
                   )}
@@ -357,21 +358,21 @@ export function AuditView() {
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">未能加载审计记录：{error}</span>
+                  <span className="text-red-300">{t("未能加载审计记录：")}{error}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void loadFirstPage(source, deviceId)}
                     disabled={loading}
                   >
                     <IconRefresh size={12} />
-                    重试
+                    {t("重试")}
                   </button>
                 </td>
               </tr>
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。
+                  {t("暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。")}
                 </td>
               </tr>
             ) : null}
@@ -383,19 +384,19 @@ export function AuditView() {
       {entries.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
           <span className="nx-hint min-w-0 truncate">
-            {knownTotal !== null ? `已显示 ${entries.length} / ${knownTotal} 条` : `已显示 ${entries.length} 条`}
+            {knownTotal !== null ? t("已显示 {length} / {knownTotal} 条", { length: entries.length, knownTotal }) : t("已显示 {length} 条", { length: entries.length })}
           </span>
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">未能加载更多：{moreError}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：")}{moreError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}
                 disabled={loadingMore}
               >
                 {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-                重试
+                {t("重试")}
               </button>
             </>
           ) : hasMore ? (
@@ -405,16 +406,16 @@ export function AuditView() {
               disabled={loadingMore}
             >
               {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-              加载更多
+              {t("加载更多")}
             </button>
           ) : (
-            <span>已加载全部</span>
+            <span>{t("已加载全部")}</span>
           )}
         </div>
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-        <span>会话命令、AI 操作、文件写入和设备上线与离线均会记录并标注来源；退出码和耗时随记录显示。</span>
+        <span>{t("会话命令、AI 操作、文件写入和设备上线与离线均会记录并标注来源；退出码和耗时随记录显示。")}</span>
       </div>
     </div>
   );

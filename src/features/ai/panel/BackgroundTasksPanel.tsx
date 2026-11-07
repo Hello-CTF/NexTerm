@@ -4,6 +4,7 @@ import { AgentRosterPanel } from "../AgentRosterPanel";
 import { WatchPanel } from "../WatchPanel";
 import { watchPanelApi } from "../../../ipc/watchApi";
 import type { AiChatCtx } from "./aiChatCtx";
+import { t } from "../../../i18n";
 
 // BackgroundTasksPanel is the one place to see and stop what the AI left
 // running: scheduled jobs, armed watches and sub-agent terminals. A section is
@@ -39,12 +40,12 @@ export function BackgroundTasksPanel({ ctx }: { ctx: AiChatCtx }) {
   const showAgents = (shown.agents || backgroundTasks.agents > 0) && Boolean(conversationId) && Boolean(agentRosterApi);
   return (
     <section
-      aria-label="后台任务"
+      aria-label={t("后台任务")}
       className="max-h-[60%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60"
     >
       {!showCron && !showWatch && !showAgents && (
         <div className="nx-hint px-3 py-3 text-center text-[11.5px]">
-          暂无后台任务。AI 设置的定时任务、监视和子代理会显示在这里。
+          {t("暂无后台任务。AI 设置的定时任务、监视和子代理会显示在这里。")}
         </div>
       )}
       {showCron && conversationId && (

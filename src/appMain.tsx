@@ -24,6 +24,7 @@ import { forceResolvedTheme } from "./app/theme";
 import { startUnlessFramed } from "./app/frameGuard";
 import { Lazy } from "./ui/LazyBoundary";
 import { notifyAi } from "./features/inbox/inboxNotifications";
+import { t } from "./i18n";
 
 // Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
 const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
@@ -74,7 +75,7 @@ function wireDesktopShell(): void {
     // process still runs on the host, so the tab (and its reattach actions) stays until the user closes it.
     const { pushToast } = useUi.getState();
     if (p.exitCode !== null && p.exitCode !== 0) {
-      pushToast("info", `终端进程退出（exit ${p.exitCode}）`);
+      pushToast("info", t("终端进程退出（exit {exitCode}）", { exitCode: p.exitCode }));
     }
   });
 
@@ -83,7 +84,7 @@ function wireDesktopShell(): void {
   });
 
   void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
-    useUi.getState().pushToast("info", `AI 通知：${p.text}`);
+    useUi.getState().pushToast("info", t("AI 通知：{text}", { text: p.text }));
     notifyAi(p.text);
   });
 
@@ -103,11 +104,11 @@ function wireDesktopShell(): void {
   setInputFailureHandler(({ error, connectionLost }) => {
     const { pushToast } = useUi.getState();
     if (connectionLost) {
-      pushToast("error", "连接已断开，正在重连");
+      pushToast("error", t("连接已断开，正在重连"));
       void probeForegroundSessions();
       return;
     }
-    pushToast("error", `终端输入失败：${describeError(error)}`);
+    pushToast("error", t("终端输入失败：{value}", { value: describeError(error) }));
   });
 
   onEventsResync(() => {

@@ -17,13 +17,14 @@ import {
   type SkillOverrideInput,
 } from "./skillsApi";
 import { skillSummary } from "./skillText";
+import { t } from "../../i18n";
 
 type Draft =
   | { kind: "create"; name: string; description: string; body: string }
   | { kind: "edit-loading"; entry: SkillEntry }
   | { kind: "edit"; entry: SkillEntry; description: string; body: string; disabled: boolean };
 
-const BODY_PLACEHOLDER = "使用 Markdown 编写步骤和注意事项，例如：\n1. 先运行 nginx -t 检查配置\n2. 检查通过后再执行 systemctl reload nginx\n3. 失败时提供报错信息，不要强制重启";
+const BODY_PLACEHOLDER = t("使用 Markdown 编写步骤和注意事项，例如：\n1. 先运行 nginx -t 检查配置\n2. 检查通过后再执行 systemctl reload nginx\n3. 失败时提供报错信息，不要强制重启");
 
 export function SkillsCard({ api }: { api: SkillsApi }) {
   const pushToast = useUi((s) => s.pushToast);
@@ -139,7 +140,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     } catch (e) {
       if (!aliveRef.current || gen !== editGenRef.current || epoch !== epochRef.current || apiRef.current !== api) return;
       setDraft(null);
-      pushToast("error", `读取技能内容失败：${describeError(e)}`);
+      pushToast("error", t("读取技能内容失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -149,17 +150,17 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     if (draft.kind === "create") {
       const name = draft.name.trim();
       if (!isValidSkillName(name)) {
-        setFormError("名称仅支持小写字母、数字和连字符，最多 64 个字符，例如 nginx-check");
+        setFormError(t("名称仅支持小写字母、数字和连字符，最多 64 个字符，例如 nginx-check"));
         return;
       }
       if (!draft.description.trim() || !draft.body.trim()) {
-        setFormError("请填写「适用场景」和「内容」");
+        setFormError(t("请填写「适用场景」和「内容」"));
         return;
       }
       input = { name, description: draft.description.trim(), body: draft.body };
     } else {
       if (!draft.description.trim() || !draft.body.trim()) {
-        setFormError("请填写「适用场景」和「内容」");
+        setFormError(t("请填写「适用场景」和「内容」"));
         return;
       }
       input = { name: draft.entry.name, description: draft.description.trim(), body: draft.body, disabled: draft.disabled };
@@ -175,7 +176,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     try {
       await api.saveOverride(input);
       if (epoch !== epochRef.current) return;
-      pushToast("success", draft.kind === "create" ? "技能已创建" : "技能已保存");
+      pushToast("success", draft.kind === "create" ? t("技能已创建") : t("技能已保存"));
       setDraft(null);
       await reload();
     } catch (e) {
@@ -204,7 +205,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           await api.deleteOverride(entry.name);
         }
         if (epoch !== epochRef.current || apiRef.current !== api) return;
-        pushToast("success", `已启用技能 ${entry.name}`);
+        pushToast("success", t("已启用技能 {name}", { name: entry.name }));
       } else {
         await api.saveOverride({
           name: entry.name,
@@ -213,12 +214,12 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           disabled: true,
         });
         if (epoch !== epochRef.current || apiRef.current !== api) return;
-        pushToast("success", `已停用技能 ${entry.name}，AI 将不再使用`);
+        pushToast("success", t("已停用技能 {name}，AI 将不再使用", { name: entry.name }));
       }
       await reload();
     } catch (e) {
       if (epoch !== epochRef.current || apiRef.current !== api) return;
-      pushToast("error", `${entry.disabled ? "启用" : "停用"}失败：${describeError(e)}`);
+      pushToast("error", t("{value}失败：{value2}", { value: entry.disabled ? t("启用") : t("停用"), value2: describeError(e) }));
     } finally {
       if (aliveRef.current && epoch === epochRef.current && apiRef.current === api) setBusyName(null);
     }
@@ -229,18 +230,18 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     const epoch = epochRef.current;
     const builtin = entry.source === "embedded";
     const ok = builtin
-      ? await ask(`确定要恢复内置技能 ${entry.name} 的默认内容吗？\n\n对它的修改和停用设置将被丢弃，技能将恢复为内置版本并重新启用。内置技能本身不会被删除。`, { title: "恢复默认", kind: "warning" })
-      : await ask(`确定要删除技能 ${entry.name} 吗？\n\n删除后，AI 将无法使用该技能，且无法恢复。`, { title: "删除技能", kind: "warning" });
+      ? await ask(t("确定要恢复内置技能 {name} 的默认内容吗？\n\n对它的修改和停用设置将被丢弃，技能将恢复为内置版本并重新启用。内置技能本身不会被删除。", { name: entry.name }), { title: t("恢复默认"), kind: "warning" })
+      : await ask(t("确定要删除技能 {name} 吗？\n\n删除后，AI 将无法使用该技能，且无法恢复。", { name: entry.name }), { title: t("删除技能"), kind: "warning" });
     if (!ok || epoch !== epochRef.current || apiRef.current !== api) return;
     setBusyName(entry.name);
     try {
       await api.deleteOverride(entry.name);
       if (epoch !== epochRef.current || apiRef.current !== api) return;
-      pushToast("success", builtin ? `已恢复技能 ${entry.name} 的默认内容` : `已删除技能 ${entry.name}`);
+      pushToast("success", builtin ? t("已恢复技能 {name} 的默认内容", { name: entry.name }) : t("已删除技能 {name}", { name: entry.name }));
       await reload();
     } catch (e) {
       if (epoch !== epochRef.current || apiRef.current !== api) return;
-      pushToast("error", `${builtin ? "恢复默认" : "删除"}失败：${describeError(e)}`);
+      pushToast("error", t("{value}失败：{value2}", { value: builtin ? t("恢复默认") : t("删除"), value2: describeError(e) }));
     } finally {
       if (aliveRef.current && epoch === epochRef.current && apiRef.current === api) setBusyName(null);
     }
@@ -250,69 +251,69 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconBot size={15} className="text-purple-300" />
-        <span className="nx-card-title">AI 技能</span>
-        {visibleEntries && <span className="nx-badge">{visibleEntries.length} 个</span>}
+        <span className="nx-card-title">{t("AI 技能")}</span>
+        {visibleEntries && <span className="nx-badge">{visibleEntries.length} {t("个")}</span>}
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        技能是提供给 AI 的操作手册。AI 将根据「适用场景」自动判断是否使用，也可以在 AI 对话框中输入 <code>/</code> 直接选择技能。
+        {t("技能是提供给 AI 的操作手册。AI 将根据「适用场景」自动判断是否使用，也可以在 AI 对话框中输入")} <code>/</code> {t("直接选择技能。")}
       </p>
 
       {draft === null ? (
         <div className="mb-3">
           <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={openCreate}>
             <IconPlus size={11} />
-            新建技能
+            {t("新建技能")}
           </button>
         </div>
       ) : draft.kind === "edit-loading" ? (
         <div className="mb-3 flex items-center gap-2 border-b border-neutral-800/60 pb-3" aria-busy="true">
-          <span className="text-[12.5px] text-neutral-200">正在读取技能内容…</span>
+          <span className="text-[12.5px] text-neutral-200">{t("正在读取技能内容…")}</span>
           <IconRefresh size={11} className="animate-spin text-neutral-500" />
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={closeDraft}>
-            取消
+            {t("取消")}
           </button>
         </div>
       ) : (
         <div className="mb-3 flex flex-col gap-2.5 rounded-md border border-neutral-800/70 p-3">
           <div className="text-[12.5px] font-semibold text-neutral-200">
-            {draft.kind === "create" ? "新建技能" : `编辑技能 ${draft.entry.name}`}
+            {draft.kind === "create" ? t("新建技能") : t("编辑技能 {name}", { name: draft.entry.name })}
           </div>
           {draft.kind === "create" && (
             <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
-              名称
+              {t("名称")}
               <input
                 className="nx-input nx-input-sm"
-                placeholder="例如 nginx-check"
-                aria-label="技能名称"
+                placeholder={t("例如 nginx-check")}
+                aria-label={t("技能名称")}
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
-              <span className="nx-hint text-[11px]">小写字母、数字和连字符；在对话中输入 /{draft.name.trim() || "名称"} 即可使用</span>
+              <span className="nx-hint text-[11px]">{t("小写字母、数字和连字符；在对话中输入 /")}{draft.name.trim() || t("名称")} {t("即可使用")}</span>
             </label>
           )}
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
-            适用场景
+            {t("适用场景")}
             <input
               className="nx-input nx-input-sm"
-              placeholder="例如：检查 nginx 配置并安全地重载"
-              aria-label="适用场景"
+              placeholder={t("例如：检查 nginx 配置并安全地重载")}
+              aria-label={t("适用场景")}
               value={draft.description}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
             />
-            <span className="nx-hint text-[11px]">AI 据此判断是否使用该技能，请写明适用场景</span>
+            <span className="nx-hint text-[11px]">{t("AI 据此判断是否使用该技能，请写明适用场景")}</span>
           </label>
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">
-            内容
+            {t("内容")}
             <textarea
               className="nx-input min-h-[200px] font-mono text-[12px] leading-relaxed"
               placeholder={BODY_PLACEHOLDER}
-              aria-label="技能内容"
+              aria-label={t("技能内容")}
               value={draft.body}
               onChange={(e) => setDraft({ ...draft, body: e.target.value })}
             />
@@ -326,10 +327,10 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
           <div className="flex flex-wrap items-center gap-2">
             <div className="nx-spacer" />
             <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={saving} onClick={closeDraft}>
-              取消
+              {t("取消")}
             </button>
             <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={saving} onClick={() => void saveDraft()}>
-              {saving ? "正在保存…" : "保存"}
+              {saving ? t("正在保存…") : t("保存")}
             </button>
           </div>
         </div>
@@ -343,17 +344,17 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               <div className="break-words">{error}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
-                重试
+                {t("重试")}
               </button>
             </div>
           </div>
         ) : (
           <div className="nx-hint py-2 text-[12px]" aria-busy="true">
-            正在读取…
+            {t("正在读取…")}
           </div>
         )
       ) : visibleEntries.length === 0 ? (
-        draft === null && <div className="nx-hint py-2 text-[12px]">暂无技能。可将常用的排查或运维步骤写成技能，AI 遇到类似任务时将按其执行。</div>
+        draft === null && <div className="nx-hint py-2 text-[12px]">{t("暂无技能。可将常用的排查或运维步骤写成技能，AI 遇到类似任务时将按其执行。")}</div>
       ) : (
         <div className="flex flex-col gap-1.5">
           {visibleEntries.map((entry) => (
@@ -361,8 +362,8 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               <input
                 type="checkbox"
                 className="mt-0.5 h-3.5 w-3.5 shrink-0"
-                aria-label={entry.disabled ? `启用技能 ${entry.name}` : `停用技能 ${entry.name}`}
-                title={entry.disabled ? "已停用，AI 不会使用" : "已启用"}
+                aria-label={entry.disabled ? t("启用技能 {name}", { name: entry.name }) : t("停用技能 {name}", { name: entry.name })}
+                title={entry.disabled ? t("已停用，AI 不会使用") : t("已启用")}
                 checked={!entry.disabled}
                 disabled={busyName !== null}
                 onChange={() => void toggleDisable(entry)}
@@ -376,15 +377,15 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
                 </div>
                 <div
                   className={`break-words text-[12px] ${entry.disabled ? "text-neutral-500" : "text-neutral-400"}`}
-                  title={skillSummary(entry) === entry.description ? undefined : `AI 读取的描述：${entry.description}`}
+                  title={skillSummary(entry) === entry.description ? undefined : t("AI 读取的描述：{description}", { description: entry.description })}
                 >
                   {skillSummary(entry)}
                 </div>
               </div>
               <button
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                title="编辑该技能"
-                aria-label={`编辑技能 ${entry.name}`}
+                title={t("编辑该技能")}
+                aria-label={t("编辑技能 {name}", { name: entry.name })}
                 onClick={() => void openEdit(entry)}
               >
                 <IconEdit size={11} />
@@ -393,8 +394,8 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
                 entry.override !== undefined && (
                   <button
                     className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                    title="恢复为内置默认内容"
-                    aria-label={`恢复默认技能 ${entry.name}`}
+                    title={t("恢复为内置默认内容")}
+                    aria-label={t("恢复默认技能 {name}", { name: entry.name })}
                     disabled={busyName !== null}
                     onClick={() => void remove(entry)}
                   >
@@ -404,8 +405,8 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
               ) : (
                 <button
                   className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
-                  title="删除该技能"
-                  aria-label={`删除技能 ${entry.name}`}
+                  title={t("删除该技能")}
+                  aria-label={t("删除技能 {name}", { name: entry.name })}
                   disabled={busyName !== null}
                   onClick={() => void remove(entry)}
                 >

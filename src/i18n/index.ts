@@ -8,25 +8,36 @@ export type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>> & { other
 export type CatalogEntry = string | PluralForms;
 export type Catalog = Record<string, CatalogEntry>;
 
+type CatalogModule = { default: Catalog };
+
 // One file per language and kind: ui holds the frontend's text, server the backend's messages (Go format templates).
-const catalogFiles = import.meta.glob<{ default: Catalog }>("./locales/*/*.json");
+// Each loads as its own chunk, only for the language in use.
+const catalogFiles: Record<Exclude<Locale, "zh-CN">, [() => Promise<CatalogModule>, () => Promise<CatalogModule>]> = {
+  "zh-TW": [() => import("./locales/zh-TW/ui.json"), () => import("./locales/zh-TW/server.json")],
+  "en": [() => import("./locales/en/ui.json"), () => import("./locales/en/server.json")],
+  "ja": [() => import("./locales/ja/ui.json"), () => import("./locales/ja/server.json")],
+  "ko": [() => import("./locales/ko/ui.json"), () => import("./locales/ko/server.json")],
+  "de": [() => import("./locales/de/ui.json"), () => import("./locales/de/server.json")],
+  "fr": [() => import("./locales/fr/ui.json"), () => import("./locales/fr/server.json")],
+  "es": [() => import("./locales/es/ui.json"), () => import("./locales/es/server.json")],
+  "ru": [() => import("./locales/ru/ui.json"), () => import("./locales/ru/server.json")],
+};
 
 let current: Locale = SOURCE_LOCALE;
 let ui: Catalog = {};
 let server: ServerCatalog = compileServerCatalog({});
 let plurals = new Intl.PluralRules(SOURCE_LOCALE);
 
-async function loadCatalog(locale: Locale, kind: "ui" | "server"): Promise<Catalog> {
-  const load = catalogFiles[`./locales/${locale}/${kind}.json`];
-  if (!load) return {};
-  return (await load()).default;
+async function loadCatalog(locale: Exclude<Locale, "zh-CN">, kind: "ui" | "server"): Promise<Catalog> {
+  const [ui, server] = catalogFiles[locale];
+  return (await (kind === "ui" ? ui : server)()).default;
 }
 
 // initI18n loads the language's catalogs. It runs before the interface modules load, so text built when a module
 // loads is already translated. A catalog that fails to load leaves the interface in the source language.
 export async function initI18n(locale: Locale = resolveLocale()): Promise<void> {
   applyLocale(locale, {}, {});
-  if (locale === SOURCE_LOCALE) return;
+  if (locale === "zh-CN") return;
   try {
     const [uiCatalog, serverCatalog] = await Promise.all([loadCatalog(locale, "ui"), loadCatalog(locale, "server")]);
     applyLocale(locale, uiCatalog, serverCatalog);

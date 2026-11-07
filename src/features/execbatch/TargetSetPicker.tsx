@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { IconSearch } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export interface TargetSetPickerTarget {
   id: string;
@@ -36,9 +37,9 @@ export function TargetSetPicker({
   disabled = false,
   maxTargets,
   metadataError,
-  legend = "目标会话",
-  emptyMessage = "没有已连接的 SSH 或受管设备会话。请先手动连接目标，批量执行不会自动连接。",
-  searchAriaLabel = "搜索批量执行目标",
+  legend = t("目标会话"),
+  emptyMessage = t("没有已连接的 SSH 或受管设备会话。请先手动连接目标，批量执行不会自动连接。"),
+  searchAriaLabel = t("搜索批量执行目标"),
 }: {
   targets: readonly TargetSetPickerTarget[];
   selectedIds: readonly string[];
@@ -66,7 +67,7 @@ export function TargetSetPicker({
 
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-1.5 text-[11px] text-neutral-500">{legend}（已选 {selectedIds.length}）</legend>
+      <legend className="mb-1.5 text-[11px] text-neutral-500">{legend}{t("（已选")} {selectedIds.length}）</legend>
       {targets.length === 0 ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500">
           {emptyMessage}
@@ -80,7 +81,7 @@ export function TargetSetPicker({
             <input
               className="nx-input nx-input-sm"
               value={query}
-              placeholder="搜索名称 / 主机 / 标签"
+              placeholder={t("搜索名称 / 主机 / 标签")}
               aria-label={searchAriaLabel}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -92,13 +93,13 @@ export function TargetSetPicker({
           )}
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
             <button type="button" className="nx-link" disabled={filtered.length === 0} onClick={selectFiltered}>
-              全选筛选结果
+              {t("全选筛选结果")}
             </button>
             <button type="button" className="nx-link" disabled={selectedIds.length === 0} onClick={() => onChange([])}>
-              清空
+              {t("清空")}
             </button>
             <span className="nx-hint">
-              显示 {filtered.length} / {targets.length} · 每批最多 {maxTargets} 个
+              {t("显示")} {filtered.length} / {targets.length} {t("· 每批最多")} {maxTargets} {t("个")}
             </span>
           </div>
           <div className="grid max-h-56 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2 xl:grid-cols-2">
@@ -113,7 +114,7 @@ export function TargetSetPicker({
                   type="checkbox"
                   className="mt-0.5 shrink-0 accent-blue-500"
                   value={target.id}
-                  aria-label={`选择目标 ${target.label}`}
+                  aria-label={t("选择目标 {label}", { label: target.label })}
                   checked={selected.has(target.id)}
                   onChange={() => toggle(target.id)}
                 />
@@ -123,14 +124,14 @@ export function TargetSetPicker({
                       {target.label}
                     </span>
                     {target.envCount > 0 && (
-                      <span className="nx-badge nx-badge-amber shrink-0" title={`${target.envCount} 个环境变量`}>
+                      <span className="nx-badge nx-badge-amber shrink-0" title={t("{envCount} 个环境变量", { envCount: target.envCount })}>
                         env {target.envCount}
                       </span>
                     )}
                   </span>
                   {target.sessionName !== target.label && (
                     <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                      会话：{target.sessionName}
+                      {t("会话：")}{target.sessionName}
                     </span>
                   )}
                   {target.endpoint && (
@@ -139,11 +140,11 @@ export function TargetSetPicker({
                     </span>
                   )}
                   <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                    工作区：{target.workspaceNames.length > 0 ? target.workspaceNames.join("、") : "未关联"}
+                    {t("工作区：")}{target.workspaceNames.length > 0 ? target.workspaceNames.join("、") : t("未关联")}
                   </span>
                   {target.tags.length > 0 && (
                     <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                      标签：{target.tags.join("、")}
+                      {t("标签：")}{target.tags.join("、")}
                     </span>
                   )}
                 </span>
@@ -151,7 +152,7 @@ export function TargetSetPicker({
             ))}
             {filtered.length === 0 && (
               <div className="col-span-full px-2 py-3 text-[11px] text-neutral-500">
-                没有匹配当前搜索的已连接会话。
+                {t("没有匹配当前搜索的已连接会话。")}
               </div>
             )}
           </div>

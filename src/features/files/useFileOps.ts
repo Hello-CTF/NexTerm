@@ -25,13 +25,14 @@ import {
   unknownFileEditorRenameForRename,
 } from "./editorGuards";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
+import { t as tr } from "../../i18n";
 
 export type FileOpKind = "rename" | "chmod" | "checksum";
 
 const OP_LABEL: Record<FileOpKind, string> = {
-  rename: "重命名",
-  chmod: "修改权限",
-  checksum: "计算校验值",
+  rename: tr("重命名"),
+  chmod: tr("修改权限"),
+  checksum: tr("计算校验值"),
 };
 
 function editorTabsOf(
@@ -99,7 +100,7 @@ export function useFileOps(sessionId: string) {
 
   const begin = (op: FileOpKind, path: string): number | null => {
     if (busyRef.current) {
-      pushToast("info", `上一个文件操作（${OP_LABEL[busyRef.current.op]}）仍在进行，请等待其完成`);
+      pushToast("info", tr("上一个文件操作（{value}）仍在进行，请等待其完成", { value: OP_LABEL[busyRef.current.op] }));
       return null;
     }
     busyRef.current = { op, path };
@@ -122,20 +123,20 @@ export function useFileOps(sessionId: string) {
     const operation = unknownFileEditorRenameByToken(token);
     if (!operation) return null;
     const choice = await askChoice(
-      `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前文件路径：${path}`,
+      tr("重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前文件路径：{path}", { path }),
       {
-        title: "确认文件位置",
+        title: tr("确认文件位置"),
         level: "warning",
         choices: [
           {
             key: "not-renamed",
-            label: "重命名未发生",
-            hint: "确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存",
+            label: tr("重命名未发生"),
+            hint: tr("确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存"),
           },
           {
             key: "renamed",
-            label: "重命名已发生",
-            hint: "确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名",
+            label: tr("重命名已发生"),
+            hint: tr("确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名"),
           },
         ],
       },
@@ -149,7 +150,7 @@ export function useFileOps(sessionId: string) {
         useUi.getState().setActiveTab(target.id);
         pushToast(
           "error",
-          `无法确认重命名已发生：目标 ${current.to} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。`,
+          tr("无法确认重命名已发生：目标 {to} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。", { to: current.to }),
         );
         return null;
       }
@@ -176,21 +177,21 @@ export function useFileOps(sessionId: string) {
       const notes: string[] = [];
       if (entry.kind === "symlink") {
         notes.push(
-          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。重命名只改链接本身的名字，不影响它指向的目标。`,
+          tr("「{name}」是符号链接（→ {value}）。重命名只改链接本身的名字，不影响它指向的目标。", { name: entry.name, value: entry.symlinkTarget ?? tr("未知目标") }),
         );
       }
       if (notes.length) {
-        const go = await ask(`${notes.join("\n\n")}\n\n继续重命名？`, {
-          title: "重命名",
+        const go = await ask(tr("{join}\n\n继续重命名？", { join: notes.join("\n\n") }), {
+          title: tr("重命名"),
           kind: "warning",
         });
         if (!go || !alive(seq)) return;
       }
-      const name = await promptText(`重命名 ${entry.path}`, entry.name);
+      const name = await promptText(tr("重命名 {path}", { path: entry.path }), entry.name);
       if (name === null || !alive(seq)) return;
       const problem = validateEntryName(name);
       if (problem) {
-        pushToast("error", `无法重命名：${problem}`);
+        pushToast("error", tr("无法重命名：{problem}", { problem }));
         return;
       }
       if (name === entry.name) return;
@@ -205,7 +206,7 @@ export function useFileOps(sessionId: string) {
         );
         if (!target) return false;
         useUi.getState().setActiveTab(target.id);
-        pushToast("error", `无法重命名：目标 ${to} 已有打开的编辑器，请先处理该标签页，未执行覆盖或合并。`);
+        pushToast("error", tr("无法重命名：目标 {to} 已有打开的编辑器，请先处理该标签页，未执行覆盖或合并。", { to }));
         return true;
       };
       if (rejectOpenTarget()) return;
@@ -216,15 +217,15 @@ export function useFileOps(sessionId: string) {
       );
       if (conflict) {
         const go = await ask(
-          `「${name}」已存在。继续将替换原有内容，且无法恢复。\n\n替换「${name}」？`,
-          { title: "覆盖确认", kind: "warning" },
+          tr("「{name}」已存在。继续将替换原有内容，且无法恢复。\n\n替换「{name2}」？", { name, name2: name }),
+          { title: tr("覆盖确认"), kind: "warning" },
         );
         if (!go || !alive(seq)) return;
         if (rejectOpenTarget()) return;
       }
       const guard = beginFileEditorRename(sessionId, entry.path, to, entry.kind, caseInsensitive);
       if (guard === "unknown") {
-        pushToast("error", "无法重命名：上一次重命名结果未知，请先确认远端旧路径和新路径，不会自动重试。");
+        pushToast("error", tr("无法重命名：上一次重命名结果未知，请先确认远端旧路径和新路径，不会自动重试。"));
         const operation = unknownFileEditorRenameForRename(
           sessionId,
           entry.path,
@@ -241,7 +242,7 @@ export function useFileOps(sessionId: string) {
         return;
       }
       if (guard === "busy") {
-        pushToast("error", "无法重命名：相关编辑器正在保存、读取或重命名，请等待完成后重试。");
+        pushToast("error", tr("无法重命名：相关编辑器正在保存、读取或重命名，请等待完成后重试。"));
         return;
       }
       renameToken = guard;
@@ -252,7 +253,7 @@ export function useFileOps(sessionId: string) {
       invalidateAfterRename(listKey, entry.path);
       if (!alive(seq)) return;
       onRenamed?.(entry.path, to);
-      pushToast("success", `已重命名：${entry.name} → ${name}`);
+      pushToast("success", tr("已重命名：{name} → {name2}", { name: entry.name, name2: name }));
     } catch (e) {
       const unknownToken = renameToken !== null && renameResultUnknown(e) ? renameToken : null;
       if (renameToken !== null) finishFileEditorRename(renameToken, unknownToken !== null);
@@ -261,7 +262,7 @@ export function useFileOps(sessionId: string) {
         if (alive(seq)) {
           pushToast(
             "error",
-            "重命名结果未知：请重新连接后确认远端旧路径和新路径；确认前已禁止向旧路径保存，不会自动重试。",
+            tr("重命名结果未知：请重新连接后确认远端旧路径和新路径；确认前已禁止向旧路径保存，不会自动重试。"),
           );
         }
         const resolved = await confirmUnknownRename(unknownToken, entry.path);
@@ -269,7 +270,7 @@ export function useFileOps(sessionId: string) {
           onRenamed?.(resolved.operation.from, resolved.operation.to);
         }
       } else if (alive(seq)) {
-        pushToast("error", `重命名失败：${describeError(e)}`);
+        pushToast("error", tr("重命名失败：{value}", { value: describeError(e) }));
       }
     } finally {
       end(seq);
@@ -282,39 +283,35 @@ export function useFileOps(sessionId: string) {
     try {
       if (entry.kind === "symlink") {
         const go = await ask(
-          `「${entry.name}」是符号链接（→ ${entry.symlinkTarget ?? "未知目标"}）。chmod 会跟随链接，修改链接目标的权限。\n\n继续？`,
-          { title: "权限", kind: "warning" },
+          tr("「{name}」是符号链接（→ {value}）。chmod 会跟随链接，修改链接目标的权限。\n\n继续？", { name: entry.name, value: entry.symlinkTarget ?? tr("未知目标") }),
+          { title: tr("权限"), kind: "warning" },
         );
         if (!go || !alive(seq)) return;
       }
       const current = octalDefaultFromEntry(entry.mode);
       const input = await promptText(
-        `权限（八进制 000-777，当前 ${entry.mode || "未知"}）· ${entry.path}`,
+        tr("权限（八进制 000-777，当前 {value}）· {path}", { value: entry.mode || tr("未知"), path: entry.path }),
         current,
       );
       if (input === null || !alive(seq)) return;
       const parsed = parseOctalMode(input);
       if (!parsed.ok) {
-        pushToast("error", `无法修改权限：${parsed.reason}`);
+        pushToast("error", tr("无法修改权限：{reason}", { reason: parsed.reason }));
         return;
       }
       const next = parsed.mode;
       const cur = current ? parseOctalMode(current) : null;
       const curMode = cur && cur.ok ? cur.mode : null;
       const danger = curMode !== null && losesOwnerAccess(curMode, next);
-      const confirmText = `把 ${entry.path} 的权限从 ${
-        curMode !== null ? formatMode(curMode) : (entry.mode || "未知")
-      } 改为 ${formatMode(next)}？${
-        danger ? "\n\n新权限会移除所有者的读取或写入权限，之后可能无法再打开或保存它" : ""
-      }`;
-      const go = await ask(confirmText, { title: "权限", kind: danger ? "warning" : "info" });
+      const confirmText = tr("把 {path} 的权限从 {value} 改为 {value2}？{value3}", { path: entry.path, value: curMode !== null ? formatMode(curMode) : (entry.mode || tr("未知")), value2: formatMode(next), value3: danger ? tr("\n\n新权限会移除所有者的读取或写入权限，之后可能无法再打开或保存它") : "" });
+      const go = await ask(confirmText, { title: tr("权限"), kind: danger ? "warning" : "info" });
       if (!go || !alive(seq)) return;
       await fsApi.chmod(sessionId, entry.path, next);
       if (!alive(seq)) return;
       void qc.invalidateQueries({ queryKey: ["fs", sessionId, listKey] });
-      pushToast("success", `权限已更新：${entry.path} → ${formatMode(next)}`);
+      pushToast("success", tr("权限已更新：{path} → {value}", { path: entry.path, value: formatMode(next) }));
     } catch (e) {
-      if (alive(seq)) pushToast("error", `修改权限失败：${describeError(e)}`);
+      if (alive(seq)) pushToast("error", tr("修改权限失败：{value}", { value: describeError(e) }));
     } finally {
       end(seq);
     }
@@ -324,8 +321,8 @@ export function useFileOps(sessionId: string) {
     const seq = begin("checksum", entry.path);
     if (seq === null) return;
     try {
-      const algo = await askChoice(`计算 ${entry.path} 的校验值：`, {
-        title: "校验",
+      const algo = await askChoice(tr("计算 {path} 的校验值：", { path: entry.path }), {
+        title: tr("校验"),
         level: "info",
         choices: CHECKSUM_ALGOS.map((a) => ({
           key: a.key,
@@ -336,16 +333,16 @@ export function useFileOps(sessionId: string) {
       });
       if (algo === null || !alive(seq)) return;
       const label = CHECKSUM_ALGOS.find((a) => a.key === algo)?.label ?? algo;
-      pushToast("info", `正在计算 ${label}…`);
+      pushToast("info", tr("正在计算 {label}…", { label }));
       const hash = await fsApi.checksum(sessionId, entry.path, algo);
       if (!alive(seq)) return;
-      await promptText(`${label} · ${entry.path}（已全选，可直接复制）`, hash, {
+      await promptText(tr("{label} · {path}（已全选，可直接复制）", { label, path: entry.path }), hash, {
         multiLine: false,
       });
       if (!alive(seq)) return;
-      pushToast("success", `校验完成：${entry.name}`);
+      pushToast("success", tr("校验完成：{name}", { name: entry.name }));
     } catch (e) {
-      if (alive(seq)) pushToast("error", `计算校验值失败：${describeError(e)}`);
+      if (alive(seq)) pushToast("error", tr("计算校验值失败：{value}", { value: describeError(e) }));
     } finally {
       end(seq);
     }

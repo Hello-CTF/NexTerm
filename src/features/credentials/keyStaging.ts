@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pickKeyFile } from "../../ui/dialogs";
 import { browserFilesAvailable, pickBrowserFile } from "../../ipc/webFiles";
+import { t } from "../../i18n";
 
 export interface InlineKeySelection {
   path: string;
@@ -11,7 +12,7 @@ export async function pickInlineKeyFile(): Promise<InlineKeySelection | null> {
   if (browserFilesAvailable()) {
     const picked = await pickBrowserFile();
     if (!picked) return null;
-    if (picked.size > 64 * 1024) throw new Error("私钥文件不能超过 64 KB");
+    if (picked.size > 64 * 1024) throw new Error(t("私钥文件不能超过 64 KB"));
     return { path: picked.name, content: await picked.text() };
   }
   const path = await pickKeyFile();

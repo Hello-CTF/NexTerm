@@ -13,6 +13,7 @@ import { type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
 import { IconClose, IconHistory } from "../../ui/icons";
 import { workspaceIcon } from "./AppHeader";
 import { hideMobileHome } from "./mobileHome";
+import { t } from "../../i18n";
 
 // useWorkspaceSwitcher builds the header's workspace switcher menu.
 export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWorkspaces: () => Promise<void>) {
@@ -36,10 +37,10 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
           label: w.title,
           icon: <Icon size={12} />,
           hint: [
-            w.kind === "tools" ? "工具" : null,
-            w.panes.length > 1 ? "已分屏" : null,
+            w.kind === "tools" ? t("工具") : null,
+            w.panes.length > 1 ? t("已分屏") : null,
             sessionReconnectStatusText(session) || (session ? sessionStatusText(session.status, session.liveness) : null),
-            `${tabCount} 个标签页`,
+            t("{tabCount} 个标签页", { tabCount }),
           ]
             .filter(Boolean)
             .join(" · "),
@@ -48,7 +49,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
             setActiveWorkspace(w.id);
           },
           trailingAction: {
-            label: `关闭工作区 ${w.title}`,
+            label: t("关闭工作区 {title}", { title: w.title }),
             icon: <IconClose size={12} />,
             disabled: !w.closable,
             keepOpen: true,
@@ -60,9 +61,9 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
       if (workspaces.length > 0) {
         items.push({
           kind: "item",
-          label: "关闭所有工作区",
+          label: t("关闭所有工作区"),
           icon: <IconClose size={12} />,
-          hint: `${workspaces.filter((workspace) => workspace.closable).length} 个可关闭`,
+          hint: t("{length} 个可关闭", { length: workspaces.filter((workspace) => workspace.closable).length }),
           danger: true,
           disabled: !workspaces.some((workspace) => workspace.closable),
           onSelect: () => void closeAllWorkspaces(),
@@ -72,7 +73,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
       const latestClosed = closedTabEntries[0];
       items.push({
         kind: "item",
-        label: "恢复关闭的标签页",
+        label: t("恢复关闭的标签页"),
         icon: <IconHistory size={12} />,
         hint: latestClosed?.title,
         accel: restoreBinding === null ? undefined : formatBinding(restoreBinding),
@@ -88,7 +89,7 @@ export function useWorkspaceSwitcher(visibleWorkspaces: Workspace[], closeAllWor
   const openWorkspaceSwitcher = useCallback(
     (anchor: HTMLElement) => {
       const rect = anchor.getBoundingClientRect();
-      setWsMenu({ x: rect.left, y: rect.bottom + 4, title: "工作区", items: buildWorkspaceMenuItems() });
+      setWsMenu({ x: rect.left, y: rect.bottom + 4, title: t("工作区"), items: buildWorkspaceMenuItems() });
     },
     [buildWorkspaceMenuItems],
   );

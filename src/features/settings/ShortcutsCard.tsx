@@ -20,9 +20,10 @@ import { terminalShortcutConflicts, type TerminalShortcutConflict } from "../ter
 import { ask } from "../../ui/dialogs";
 import { IconClose, IconCommand, IconEdit, IconRefresh } from "../../ui/icons";
 import { SyncScopeBadge } from "./SyncScopeBadge";
+import { t } from "../../i18n";
 
 function describeWithheldInput(conflict: TerminalShortcutConflict): string {
-  if (conflict.bytes === null) return conflict.meaning ?? "无（终端默认不发送）";
+  if (conflict.bytes === null) return conflict.meaning ?? t("无（终端默认不发送）");
   const bytes = formatKeySequence(conflict.bytes);
   return conflict.meaning ? `${bytes}（${conflict.meaning}）` : bytes;
 }
@@ -57,7 +58,7 @@ export function ShortcutsCard() {
   };
 
   const resetAll = async () => {
-    const ok = await ask("确定要恢复全部快捷键的默认设置吗？\n所有自定义快捷键将被重置。", { title: "全部恢复默认", kind: "warning" });
+    const ok = await ask(t("确定要恢复全部快捷键的默认设置吗？\n所有自定义快捷键将被重置。"), { title: t("全部恢复默认"), kind: "warning" });
     if (ok) resetAllKeybindings();
   };
 
@@ -97,8 +98,8 @@ export function ShortcutsCard() {
             autoFocus
             readOnly
             className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-            placeholder={`按下新快捷键（当前 ${formatBinding(bindings[action.id])}）`}
-            aria-label={`捕获快捷键：${action.label}`}
+            placeholder={t("按下新快捷键（当前 {value}）", { value: formatBinding(bindings[action.id]) })}
+            aria-label={t("捕获快捷键：{label}", { label: action.label })}
             aria-invalid={captureError ? true : undefined}
             onKeyDown={(event) => handleCaptureKey(action.id, event)}
             onBlur={finishCapture}
@@ -121,15 +122,15 @@ export function ShortcutsCard() {
         <span className="nx-kbd shrink-0">{formatBinding(bindings[action.id])}</span>
         <span className="min-w-0 flex-1 truncate @max-[479px]:order-first @max-[479px]:basis-full @max-[479px]:whitespace-normal @max-[479px]:break-words" title={action.label}>{action.label}</span>
         {peers && (
-          <span className="nx-badge nx-badge-amber shrink-0" title={`与${peers}的快捷键冲突`}>
-            冲突
+          <span className="nx-badge nx-badge-amber shrink-0" title={t("与{peers}的快捷键冲突", { peers })}>
+            {t("冲突")}
           </span>
         )}
         <button
           type="button"
           className="nx-icon-btn nx-icon-btn-sm shrink-0 @max-[479px]:ml-auto"
-          aria-label={`修改快捷键：${action.label}`}
-          title="修改快捷键"
+          aria-label={t("修改快捷键：{label}", { label: action.label })}
+          title={t("修改快捷键")}
           onClick={() => startCapture(action.id)}
         >
           <IconEdit size={11} />
@@ -138,8 +139,8 @@ export function ShortcutsCard() {
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm shrink-0"
-            aria-label={`清除快捷键：${action.label}`}
-            title="清除快捷键"
+            aria-label={t("清除快捷键：{label}", { label: action.label })}
+            title={t("清除快捷键")}
             onClick={() => setKeybinding(action.id, null)}
           >
             <IconClose size={11} />
@@ -149,8 +150,8 @@ export function ShortcutsCard() {
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm shrink-0"
-            aria-label={`恢复默认快捷键：${action.label}`}
-            title="恢复默认"
+            aria-label={t("恢复默认快捷键：{label}", { label: action.label })}
+            title={t("恢复默认")}
             onClick={() => resetKeybinding(action.id)}
           >
             <IconRefresh size={11} />
@@ -164,45 +165,45 @@ export function ShortcutsCard() {
     <section className="nx-card @container">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconCommand size={15} className="text-neutral-400" />
-        <span className="nx-card-title">快捷键</span>
+        <span className="nx-card-title">{t("快捷键")}</span>
         <SyncScopeBadge scope="sync" />
         <div className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void resetAll()}>
           <IconRefresh size={11} />
-          全部恢复默认
+          {t("全部恢复默认")}
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        单击编辑图标后按下组合键，Esc 取消，Backspace 清除。网页版无法拦截浏览器保留的组合键。
+        {t("单击编辑图标后按下组合键，Esc 取消，Backspace 清除。网页版无法拦截浏览器保留的组合键。")}
       </p>
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 @min-[640px]:grid-cols-2">
         {KEYBINDING_ACTIONS.map(renderRow)}
       </div>
       {conflicts.length > 0 && (
         <p className="mt-2 text-[11px] text-amber-300">
-          检测到 {conflicts.length} 组冲突：
+          {t("检测到")} {conflicts.length} {t("组冲突：")}
           {conflicts
             .map(
               (conflict) =>
-                `${conflict.actions[0].label}（${formatBinding(conflict.bindings[0])}）与 ${conflict.actions[1].label}（${formatBinding(conflict.bindings[1])}）重叠`,
+                t("{label}（{value}）与 {label2}（{value2}）重叠", { label: conflict.actions[0].label, value: formatBinding(conflict.bindings[0]), label2: conflict.actions[1].label, value2: formatBinding(conflict.bindings[1]) }),
             )
             .join("；")}
-          。使用相同快捷键时，排在前面的操作生效。
+          {t("。使用相同快捷键时，排在前面的操作生效。")}
         </p>
       )}
       {terminalConflicts.length > 0 && (
         <div className="mt-4 border-t border-neutral-800/60 pt-3.5" data-testid="terminal-shortcut-conflicts">
-          <div className="text-[12.5px] text-neutral-200">与终端按键的冲突</div>
+          <div className="text-[12.5px] text-neutral-200">{t("与终端按键的冲突")}</div>
           <p className="nx-hint mt-0.5 mb-2">
-            终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。
+            {t("终端获得焦点时，下列组合键由应用处理，终端中运行的程序将无法接收；如需将按键保留给终端程序，请清除或修改对应的快捷键。")}
           </p>
           <div className="overflow-x-auto">
-            <table className="nx-table text-[11.5px]" aria-label="与终端按键的冲突">
+            <table className="nx-table text-[11.5px]" aria-label={t("与终端按键的冲突")}>
               <thead>
                 <tr>
-                  <th scope="col">按键</th>
-                  <th scope="col">应用操作</th>
-                  <th scope="col">终端程序默认接收</th>
+                  <th scope="col">{t("按键")}</th>
+                  <th scope="col">{t("应用操作")}</th>
+                  <th scope="col">{t("终端程序默认接收")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +220,7 @@ export function ShortcutsCard() {
         </div>
       )}
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        SQL 编辑器中的运行快捷键固定为 Ctrl+Enter，不在此列。
+        {t("SQL 编辑器中的运行快捷键固定为 Ctrl+Enter，不在此列。")}
       </p>
     </section>
   );

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { createSyncedPreference } from "../../app/syncedPreference";
 import { KEY_BYTES, ctrlByte, encodeWithModifiers, type KeyModifiers } from "./terminalInput/keyEncoding";
+import { t } from "../../i18n";
 
 export { SHIFT_ENTER_SEQUENCE, isShiftEnter, terminalKeyOverride } from "./terminalInput/keyEncoding";
 
@@ -17,32 +18,32 @@ const ctrl = (char: string): string => ctrlByte(char) ?? char;
 
 export const TERMINAL_KEY_CATALOG: TerminalKeySpec[] = [
   { id: "escape", label: "Esc", title: "Escape", data: KEY_BYTES.Escape },
-  { id: "tab", label: "Tab", title: "制表符", data: KEY_BYTES.Tab },
-  { id: "up", label: "↑", title: "上方向键", data: KEY_BYTES.ArrowUp },
-  { id: "down", label: "↓", title: "下方向键", data: KEY_BYTES.ArrowDown },
-  { id: "right", label: "→", title: "右方向键", data: KEY_BYTES.ArrowRight },
-  { id: "left", label: "←", title: "左方向键", data: KEY_BYTES.ArrowLeft },
-  { id: "home", label: "Home", title: "行首", data: KEY_BYTES.Home },
-  { id: "end", label: "End", title: "行尾", data: KEY_BYTES.End },
-  { id: "pageup", label: "PgUp", title: "向上翻页", data: KEY_BYTES.PageUp },
-  { id: "pagedown", label: "PgDn", title: "向下翻页", data: KEY_BYTES.PageDown },
-  { id: "c", label: "C", title: "字母 C；Ctrl 激活时为 Ctrl+C", data: "c" },
-  { id: "d", label: "D", title: "字母 D；Ctrl 激活时为 Ctrl+D", data: "d" },
-  { id: "z", label: "Z", title: "字母 Z；Ctrl 激活时为 Ctrl+Z", data: "z" },
-  { id: "ctrl-a", label: "^A", title: "Ctrl+A（移到行首）", data: ctrl("a") },
-  { id: "ctrl-e", label: "^E", title: "Ctrl+E（移到行尾）", data: ctrl("e") },
-  { id: "ctrl-k", label: "^K", title: "Ctrl+K（删除到行尾）", data: ctrl("k") },
-  { id: "ctrl-l", label: "^L", title: "Ctrl+L（清屏）", data: ctrl("l") },
-  { id: "ctrl-r", label: "^R", title: "Ctrl+R（历史搜索）", data: ctrl("r") },
-  { id: "ctrl-u", label: "^U", title: "Ctrl+U（删除到行首）", data: ctrl("u") },
-  { id: "ctrl-w", label: "^W", title: "Ctrl+W（删除前一个词）", data: ctrl("w") },
+  { id: "tab", label: "Tab", title: t("制表符"), data: KEY_BYTES.Tab },
+  { id: "up", label: "↑", title: t("上方向键"), data: KEY_BYTES.ArrowUp },
+  { id: "down", label: "↓", title: t("下方向键"), data: KEY_BYTES.ArrowDown },
+  { id: "right", label: "→", title: t("右方向键"), data: KEY_BYTES.ArrowRight },
+  { id: "left", label: "←", title: t("左方向键"), data: KEY_BYTES.ArrowLeft },
+  { id: "home", label: "Home", title: t("行首"), data: KEY_BYTES.Home },
+  { id: "end", label: "End", title: t("行尾"), data: KEY_BYTES.End },
+  { id: "pageup", label: "PgUp", title: t("向上翻页"), data: KEY_BYTES.PageUp },
+  { id: "pagedown", label: "PgDn", title: t("向下翻页"), data: KEY_BYTES.PageDown },
+  { id: "c", label: "C", title: t("字母 C；Ctrl 激活时为 Ctrl+C"), data: "c" },
+  { id: "d", label: "D", title: t("字母 D；Ctrl 激活时为 Ctrl+D"), data: "d" },
+  { id: "z", label: "Z", title: t("字母 Z；Ctrl 激活时为 Ctrl+Z"), data: "z" },
+  { id: "ctrl-a", label: "^A", title: t("Ctrl+A（移到行首）"), data: ctrl("a") },
+  { id: "ctrl-e", label: "^E", title: t("Ctrl+E（移到行尾）"), data: ctrl("e") },
+  { id: "ctrl-k", label: "^K", title: t("Ctrl+K（删除到行尾）"), data: ctrl("k") },
+  { id: "ctrl-l", label: "^L", title: t("Ctrl+L（清屏）"), data: ctrl("l") },
+  { id: "ctrl-r", label: "^R", title: t("Ctrl+R（历史搜索）"), data: ctrl("r") },
+  { id: "ctrl-u", label: "^U", title: t("Ctrl+U（删除到行首）"), data: ctrl("u") },
+  { id: "ctrl-w", label: "^W", title: t("Ctrl+W（删除前一个词）"), data: ctrl("w") },
   // Answer keys for prompts and numbered menus of any program; they send plain characters, no per-program rules.
-  { id: "digit-1", label: "1", title: "数字 1（选择第 1 项）", data: "1" },
-  { id: "digit-2", label: "2", title: "数字 2（选择第 2 项）", data: "2" },
-  { id: "digit-3", label: "3", title: "数字 3（选择第 3 项）", data: "3" },
-  { id: "y", label: "y", title: "字母 y（确认）", data: "y" },
-  { id: "n", label: "n", title: "字母 n（拒绝）", data: "n" },
-  { id: "enter", label: "⏎", title: "回车", data: KEY_BYTES.Enter },
+  { id: "digit-1", label: "1", title: t("数字 1（选择第 1 项）"), data: "1" },
+  { id: "digit-2", label: "2", title: t("数字 2（选择第 2 项）"), data: "2" },
+  { id: "digit-3", label: "3", title: t("数字 3（选择第 3 项）"), data: "3" },
+  { id: "y", label: "y", title: t("字母 y（确认）"), data: "y" },
+  { id: "n", label: "n", title: t("字母 n（拒绝）"), data: "n" },
+  { id: "enter", label: "⏎", title: t("回车"), data: KEY_BYTES.Enter },
 ];
 
 export const DEFAULT_TERMINAL_KEY_IDS: string[] = [

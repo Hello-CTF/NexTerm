@@ -1,13 +1,14 @@
 import { useEffect, useState, type CSSProperties, type DragEvent as ReactDragEvent } from "react";
 import { dropPreviewRect, dropRegionAt, type DropRegion } from "../tabDropZone";
 import { endTabDrag, tabDragFrom, useTabDrag } from "./tabDrag";
+import { t } from "../../i18n";
 
 const REGION_LABEL: Record<DropRegion, string> = {
-  left: "放下以在左侧新建窗格",
-  right: "放下以在右侧新建窗格",
-  top: "放下以在上方新建窗格",
-  bottom: "放下以在下方新建窗格",
-  center: "放下以移到该窗格",
+  left: t("放下以在左侧新建窗格"),
+  right: t("放下以在右侧新建窗格"),
+  top: t("放下以在上方新建窗格"),
+  bottom: t("放下以在下方新建窗格"),
+  center: t("放下以移到该窗格"),
 };
 
 function percent(value: number): string {

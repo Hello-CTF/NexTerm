@@ -5,6 +5,7 @@ import {
 } from "../../ipc/execBatchApi";
 import { getProductionChallenge, type ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 export interface OperationRequest {
   batchId: string;
@@ -95,7 +96,7 @@ export function useExecOperation<Request extends OperationRequest, Result>(
     try {
       await execBatchApi.cancel(active);
     } catch (cause) {
-      if (activeRef.current === active) setCancelError(`取消失败：${describeError(cause)}`);
+      if (activeRef.current === active) setCancelError(t("取消失败：{value}", { value: describeError(cause) }));
     } finally {
       if (activeRef.current === active) setCanceling(false);
     }

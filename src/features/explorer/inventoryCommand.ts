@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 // Parse quoting and escapes only; execution remains an argv call without shell expansion.
 export function parseInventoryCommand(input: string): string[] {
   const args: string[] = [];
@@ -11,7 +12,7 @@ export function parseInventoryCommand(input: string): string[] {
       else word += char;
     } else if (char === "\\") {
       const next = input[index + 1];
-      if (next === undefined) throw new Error("命令末尾的转义符不完整");
+      if (next === undefined) throw new Error(t("命令末尾的转义符不完整"));
       if (next === "\n") {
         index++;
         continue;
@@ -38,7 +39,7 @@ export function parseInventoryCommand(input: string): string[] {
       present = true;
     }
   }
-  if (quote !== null) throw new Error("命令中的引号未闭合");
+  if (quote !== null) throw new Error(t("命令中的引号未闭合"));
   if (present) args.push(word);
   return args;
 }

@@ -1,5 +1,6 @@
 import { Component, Suspense, isValidElement, type ReactNode } from "react";
 import { PanelFallback } from "./PanelFallback";
+import { t } from "../i18n";
 
 const CHUNK_ERROR_PATTERN =
   /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|Loading (CSS )?chunk [^ ]+ failed|ChunkLoadError/i;
@@ -58,16 +59,16 @@ export class ChunkLoadBoundary extends Component<ChunkBoundaryProps, ChunkBounda
     if (this.props.silent) return null;
     const alert = (
       <div role="alert" className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <div className="text-[13px] font-semibold text-neutral-100">未能加载界面模块</div>
+        <div className="text-[13px] font-semibold text-neutral-100">{t("未能加载界面模块")}</div>
         <div className="max-w-md text-xs leading-relaxed text-neutral-500">
-          网络中断或应用已更新，无法下载该模块。请重新加载页面后重试。
+          {t("网络中断或应用已更新，无法下载该模块。请重新加载页面后重试。")}
         </div>
         <button
           type="button"
           className="nx-btn nx-btn-primary nx-btn-sm"
           onClick={() => (this.props.onReload ? this.props.onReload() : window.location.reload())}
         >
-          重新加载
+          {t("重新加载")}
         </button>
       </div>
     );

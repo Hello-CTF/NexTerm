@@ -4,6 +4,7 @@ import { fleetClient } from "../fleet/clients";
 import { useFleetAccount } from "../fleet/useFleetAccount";
 import { assetApi, type Asset } from "../../ipc/commands";
 import { deviceIdOfHost } from "./hostDetail";
+import { t } from "../../i18n";
 
 export const BUILTIN_LOCAL_HOST_ID = "01J0NEXTERMLOCALDEVICE0001";
 
@@ -21,17 +22,17 @@ export function resolveHostLabel(id: string | undefined, src: HostLabelSources):
   const asset = src.assets?.find((item) => item.id === id);
   if (asset) {
     const name = asset.name.trim();
-    if (asset.deletedAt) return name ? `${name}（已删除）` : "已删除的主机";
+    if (asset.deletedAt) return name ? t("{name}（已删除）", { name }) : t("已删除的主机");
     if (name) return name;
   }
-  if (id === BUILTIN_LOCAL_HOST_ID) return "本机";
+  if (id === BUILTIN_LOCAL_HOST_ID) return t("本机");
   const deviceId = deviceIdOfHost(id);
   if (deviceId) {
     const name = src.devices?.find((item) => item.id === deviceId)?.name.trim();
     if (name) return name;
   }
   if (src.loading) return "";
-  return `未命名主机 …${id.slice(-4)}`;
+  return t("未命名主机 …{slice}", { slice: id.slice(-4) });
 }
 
 // useHostLabeler resolves host ids against assets and, when signed in, managed devices (shared fleet-devices cache).

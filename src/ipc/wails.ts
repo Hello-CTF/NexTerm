@@ -1,4 +1,5 @@
 import { clientId } from "./env";
+import { t } from "../i18n";
 
 const CHANNEL_TOPIC_PREFIX = "channel://";
 const DESKTOP_BINARY_TYPE = "nexterm.desktop-binary";
@@ -67,7 +68,7 @@ export async function callDesktop<T>(cmd: string, args?: Record<string, unknown>
   const { Call } = await bindings();
   const response = (await Call(request(cmd, args))) as WailsResponse | null;
   if (!response || response.ok !== true) {
-    throw response?.error ?? { code: "internal", message: "应用返回了无效响应" };
+    throw response?.error ?? { code: "internal", message: t("应用返回了无效响应") };
   }
   return response.data as T;
 }
@@ -151,20 +152,22 @@ export async function askWails(
         : options.kind === "info"
           ? Dialogs.Info
           : Dialogs.Question;
+  // The native dialog answers with the label of the button pressed.
+  const ok = t("确定");
   const selected = await dialog({
     Title: options.title,
     Message: message,
     Buttons: [
-      { Label: "取消", IsCancel: true },
-      { Label: "确定", IsDefault: true },
+      { Label: t("取消"), IsCancel: true },
+      { Label: ok, IsDefault: true },
     ],
   });
-  return selected === "确定";
+  return selected === ok;
 }
 
 export async function messageWails(message: string): Promise<void> {
   const { Dialogs } = await runtime();
-  await Dialogs.Info({ Message: message, Buttons: [{ Label: "确定", IsDefault: true }] });
+  await Dialogs.Info({ Message: message, Buttons: [{ Label: t("确定"), IsDefault: true }] });
 }
 
 export async function openWailsFile(

@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { describeError } from "./errorText";
+import { t } from "../i18n";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -31,7 +32,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         className="flex h-full flex-col items-center justify-center gap-3 bg-neutral-900 px-6 text-center"
       >
         <div className="text-[13px] font-semibold text-neutral-100">
-          {this.props.title ?? "面板发生错误"}
+          {this.props.title ?? t("面板发生错误")}
         </div>
         <div className="max-w-md text-xs leading-relaxed text-neutral-500">
           {describeError(error)}
@@ -42,7 +43,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             className="nx-btn nx-btn-primary nx-btn-sm"
             onClick={() => this.setState({ error: null })}
           >
-            重试
+            {t("重试")}
           </button>
           {this.props.onClose && (
             <button
@@ -50,7 +51,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               className="nx-btn nx-btn-ghost nx-btn-sm"
               onClick={this.props.onClose}
             >
-              关闭标签页
+              {t("关闭标签页")}
             </button>
           )}
         </div>

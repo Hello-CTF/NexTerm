@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { isTouchShell } from "../app/shell";
 import { IconCheck, IconChevronDown } from "./icons";
+import { t } from "../i18n";
 
 export interface SelectOption {
   value: string;
@@ -45,7 +46,7 @@ function popupPlacement(trigger: HTMLElement): CSSProperties {
   };
 }
 
-export function Select({ id, ariaLabel, value, options, onChange, disabled, className = "", placeholder = "请选择", title, triggerClassName, ariaInvalid, ariaDescribedBy }: SelectProps) {
+export function Select({ id, ariaLabel, value, options, onChange, disabled, className = "", placeholder = t("请选择"), title, triggerClassName, ariaInvalid, ariaDescribedBy }: SelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);

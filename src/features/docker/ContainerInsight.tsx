@@ -22,6 +22,7 @@ import {
   redactPathInText,
 } from "./dockerRedact";
 import { parseStatsOutput } from "./statsParse";
+import { t } from "../../i18n";
 
 interface InsightProps {
   sessionId: string;
@@ -41,14 +42,14 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
       <div className="nx-toolbar flex-wrap">
         <button className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9" onClick={onClose}>
           <IconArrowLeft size={13} />
-          返回
+          {t("返回")}
         </button>
         <span className="nx-toolbar-title min-w-0 max-w-full truncate" title={container.name}>{container.name}</span>
         <span className={`nx-badge ${running ? "nx-badge-green" : "nx-badge-red"}`}>
           <span className="nx-dot" />
-          {running ? "运行中" : container.state === "exited" ? "已停止" : container.state}
+          {running ? t("运行中") : container.state === "exited" ? t("已停止") : container.state}
         </span>
-        {!running && <span className="nx-hint">启动容器后可浏览文件</span>}
+        {!running && <span className="nx-hint">{t("启动容器后可浏览文件")}</span>}
         <div className="nx-spacer" />
         <div className="nx-segment">
           <button
@@ -56,23 +57,23 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
             onClick={() => setTab("inspect")}
           >
             <IconMonitor size={12} />
-            详情
+            {t("详情")}
           </button>
           <button
             className={`nx-segment-item ${tab === "stats" ? "is-active" : ""}`}
             onClick={() => setTab("stats")}
           >
             <IconTable size={12} />
-            统计
+            {t("统计")}
           </button>
           <button
             className={`nx-segment-item ${tab === "files" ? "is-active" : ""}`}
             onClick={() => setTab("files")}
             disabled={!running}
-            title={running ? "浏览容器文件" : "容器已停止，启动后可浏览文件"}
+            title={running ? t("浏览容器文件") : t("容器已停止，启动后可浏览文件")}
           >
             <IconFolder size={12} />
-            文件
+            {t("文件")}
           </button>
         </div>
       </div>
@@ -90,7 +91,7 @@ export function ContainerInsight({ sessionId, container, visible, onClose }: Ins
         (running ? (
           <FilesView sessionId={sessionId} containerId={container.id} />
         ) : (
-          <div className="nx-empty">容器已停止，启动后可浏览文件</div>
+          <div className="nx-empty">{t("容器已停止，启动后可浏览文件")}</div>
         ))}
     </div>
   );
@@ -103,7 +104,7 @@ function InsightLoading({ text }: { text: string }) {
 function InsightError({
   error,
   onRetry,
-  retryText = "重试",
+  retryText = t("重试"),
   extra,
 }: {
   error: unknown;
@@ -127,7 +128,7 @@ function RedactHint() {
   return (
     <span className="nx-hint inline-flex min-w-0 items-center gap-1">
       <IconShield size={11} />
-      已根据变量名和连接字符串中的凭据自动脱敏敏感值
+      {t("已根据变量名和连接字符串中的凭据自动脱敏敏感值")}
     </span>
   );
 }
@@ -138,7 +139,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
     queryFn: () => dockerApi.inspect(sessionId, containerId),
   });
 
-  if (q.isPending) return <InsightLoading text="读取容器配置…" />;
+  if (q.isPending) return <InsightLoading text={t("读取容器配置…")} />;
   if (q.isError) {
     return <InsightError error={q.error} onRetry={() => void q.refetch()} />;
   }
@@ -150,31 +151,31 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <RedactHint />
         <div className="nx-spacer" />
-        {q.isFetching && <span className="nx-hint">正在刷新…</span>}
+        {q.isFetching && <span className="nx-hint">{t("正在刷新…")}</span>}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void q.refetch()}>
           <IconRefresh size={12} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 px-3 py-3 md:grid-cols-3">
-        <Field label="名称" value={vm.name} />
-        <Field label="镜像" value={vm.image} mono />
-        <Field label="状态" value={vm.state} />
-        <Field label="启动时间" value={vm.startedAt} mono />
-        <Field label="重启次数" value={vm.restartCount} />
+        <Field label={t("名称")} value={vm.name} />
+        <Field label={t("镜像")} value={vm.image} mono />
+        <Field label={t("状态")} value={vm.state} />
+        <Field label={t("启动时间")} value={vm.startedAt} mono />
+        <Field label={t("重启次数")} value={vm.restartCount} />
         <Field label="ID" value={containerId} mono />
       </div>
 
-      <Section title={`环境变量（${vm.env.length}）`}>
+      <Section title={t("环境变量（{length}）", { length: vm.env.length })}>
         {vm.env.length === 0 ? (
-          <span className="nx-hint">没有环境变量</span>
+          <span className="nx-hint">{t("没有环境变量")}</span>
         ) : (
           <table className="nx-table nx-table-fixed">
             <thead>
               <tr>
-                <th style={{ width: 240 }}>键</th>
-                <th>值</th>
+                <th style={{ width: 240 }}>{t("键")}</th>
+                <th>{t("值")}</th>
               </tr>
             </thead>
             <tbody>
@@ -193,15 +194,15 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title={`标签（${vm.labels.length}）`}>
+      <Section title={t("标签（{length}）", { length: vm.labels.length })}>
         {vm.labels.length === 0 ? (
-          <span className="nx-hint">没有标签</span>
+          <span className="nx-hint">{t("没有标签")}</span>
         ) : (
           <table className="nx-table nx-table-fixed">
             <thead>
               <tr>
-                <th style={{ width: 280 }}>键</th>
-                <th>值</th>
+                <th style={{ width: 280 }}>{t("键")}</th>
+                <th>{t("值")}</th>
               </tr>
             </thead>
             <tbody>
@@ -220,18 +221,18 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title={`挂载（${vm.mounts.length}）`}>
+      <Section title={t("挂载（{length}）", { length: vm.mounts.length })}>
         {vm.mounts.length === 0 ? (
-          <span className="nx-hint">没有挂载</span>
+          <span className="nx-hint">{t("没有挂载")}</span>
         ) : (
           <table className="nx-table nx-table-fixed">
             <thead>
               <tr>
-                <th style={{ width: 80 }}>类型</th>
-                <th style={{ width: 180 }}>名称</th>
-                <th>源</th>
-                <th>目标</th>
-                <th style={{ width: 56 }}>读写</th>
+                <th style={{ width: 80 }}>{t("类型")}</th>
+                <th style={{ width: 180 }}>{t("名称")}</th>
+                <th>{t("源")}</th>
+                <th>{t("目标")}</th>
+                <th style={{ width: 56 }}>{t("读写")}</th>
               </tr>
             </thead>
             <tbody>
@@ -255,7 +256,7 @@ function InspectView({ sessionId, containerId }: { sessionId: string; containerI
         )}
       </Section>
 
-      <Section title="完整配置（已脱敏）">
+      <Section title={t("完整配置（已脱敏）")}>
         <pre className="nx-pre m-3 whitespace-pre-wrap break-all">{vm.json}</pre>
       </Section>
     </div>
@@ -305,7 +306,7 @@ function StatsView({
     queryFn: () => dockerApi.ps(sessionId),
   });
 
-  if (stats.isPending) return <InsightLoading text="读取容器统计…" />;
+  if (stats.isPending) return <InsightLoading text={t("读取容器统计…")} />;
   if (stats.isError) {
     return <InsightError error={stats.error} onRetry={() => void stats.refetch()} />;
   }
@@ -318,20 +319,20 @@ function StatsView({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <span className="nx-hint">
-          每 3 秒自动刷新 · 离开此页后停止 · 共 {rows.length} 个运行中容器
+          {t("每 3 秒自动刷新 · 离开此页后停止 · 共")} {rows.length} {t("个运行中容器")}
         </span>
-        {!containerRunning && <span className="nx-badge nx-badge-amber">当前容器已停止</span>}
+        {!containerRunning && <span className="nx-badge nx-badge-amber">{t("当前容器已停止")}</span>}
         <div className="nx-spacer" />
-        {stats.isFetching && <span className="nx-hint">正在刷新…</span>}
+        {stats.isFetching && <span className="nx-hint">{t("正在刷新…")}</span>}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void stats.refetch()}>
           <IconRefresh size={12} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       {rows.length === 0 ? (
         <div className="nx-empty">
-          {containerRunning ? "暂无统计数据（每 3 秒刷新）" : "当前容器已停止，只有运行中的容器才有统计"}
+          {containerRunning ? t("暂无统计数据（每 3 秒刷新）") : t("当前容器已停止，只有运行中的容器才有统计")}
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
@@ -339,13 +340,13 @@ function StatsView({
             <thead>
               <tr>
                 <th style={{ width: 160 }} className="left-0 z-[2] shadow-[inset_-1px_0_0_var(--nx-border)]">
-                  容器
+                  {t("容器")}
                 </th>
                 <th>CPU %</th>
-                <th>内存用量</th>
-                <th>内存 %</th>
-                <th>网络 IO</th>
-                <th>块 IO</th>
+                <th>{t("内存用量")}</th>
+                <th>{t("内存 %")}</th>
+                <th>{t("网络 IO")}</th>
+                <th>{t("块 IO")}</th>
                 <th>PIDs</th>
               </tr>
             </thead>
@@ -360,7 +361,7 @@ function StatsView({
                     >
                       {isCurrent && <IconBox size={12} className="mr-1.5 inline align-[-2px] text-green-400" />}
                       {r.name || r.id}
-                      {isCurrent && <span className="nx-badge nx-badge-green ml-1.5">当前</span>}
+                      {isCurrent && <span className="nx-badge nx-badge-green ml-1.5">{t("当前")}</span>}
                     </td>
                     <td className="nx-mono">{r.cpuPerc || "—"}</td>
                     <td className="nx-mono truncate" title={r.memUsage}>
@@ -445,7 +446,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
       <div className="nx-pathbar">
         <button
           className="nx-tree-caret"
-          title={up ? `上级：${redactContainerPath(up)}` : "已经在根目录"}
+          title={up ? t("上级：{value}", { value: redactContainerPath(up) }) : t("已经在根目录")}
           disabled={!up || q.isFetching}
           onClick={() => up && setPath(up)}
         >
@@ -458,7 +459,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
               <button
                 className={`nx-path-crumb ${i === all.length - 1 ? "is-current" : ""}`}
                 onClick={() => setPath(c.path)}
-                title={c.sensitive ? "已脱敏" : redactContainerPath(c.path)}
+                title={c.sensitive ? t("已脱敏") : redactContainerPath(c.path)}
               >
                 {c.label}
               </button>
@@ -467,7 +468,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
         </div>
         <button
           className="nx-tree-caret"
-          title="刷新"
+          title={t("刷新")}
           disabled={q.isFetching}
           onClick={() => void q.refetch()}
         >
@@ -477,7 +478,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
 
       <div className="min-h-0 flex-1 overflow-auto">
         {q.isPending ? (
-          <InsightLoading text="读取容器目录…" />
+          <InsightLoading text={t("读取容器目录…")} />
         ) : q.isError ? (
           <InsightError
             error={redactPathInText(describeDockerError(q.error), path)}
@@ -485,13 +486,13 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
             extra={
               up ? (
                 <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setPath(up)}>
-                  返回上级
+                  {t("返回上级")}
                 </button>
               ) : undefined
             }
           />
         ) : sorted.length === 0 ? (
-          <div className="nx-empty">该目录是空的</div>
+          <div className="nx-empty">{t("该目录是空的")}</div>
         ) : (
           <table className="nx-table nx-table-fixed">
             <tbody>
@@ -504,10 +505,10 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                     className={isDir ? "cursor-pointer" : undefined}
                     title={
                       sensitive
-                        ? "已脱敏"
+                        ? t("已脱敏")
                         : isDir
                           ? redactContainerPath(joinContainerPath(path, name))
-                          : `${redactContainerPath(joinContainerPath(path, name))}（仅列出目录内容，不读取文件）`
+                          : t("{value}（仅列出目录内容，不读取文件）", { value: redactContainerPath(joinContainerPath(path, name)) })
                     }
                     onClick={isDir ? () => setPath(joinContainerPath(path, name)) : undefined}
                   >
@@ -519,13 +520,13 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
                       )}
                       {display}
                       {sensitive && (
-                        <span className="nx-badge nx-badge-amber ml-1.5" title="疑似敏感文件：名称已脱敏，不提供内容读取">
-                          敏感
+                        <span className="nx-badge nx-badge-amber ml-1.5" title={t("疑似敏感文件：名称已脱敏，不提供内容读取")}>
+                          {t("敏感")}
                         </span>
                       )}
                     </td>
                     <td style={{ width: 130 }} className="nx-hint nx-right">
-                      {isDir ? "目录" : "文件"}
+                      {isDir ? t("目录") : t("文件")}
                     </td>
                   </tr>
                 );
@@ -536,7 +537,7 @@ function FilesView({ sessionId, containerId }: { sessionId: string; containerId:
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-1.5">
-        <span className="nx-hint">仅列出容器目录内容，不读取文件</span>
+        <span className="nx-hint">{t("仅列出容器目录内容，不读取文件")}</span>
       </div>
     </div>
   );

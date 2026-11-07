@@ -4,6 +4,7 @@ import { vaultApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { t } from "../../i18n";
 
 export function VaultInitModal({
   onClose,
@@ -31,7 +32,7 @@ export function VaultInitModal({
       await vaultApi.initMaster(password);
       void qc.invalidateQueries({ queryKey: ["vault-status"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
-      pushToast("success", password === "" ? "已完成初始化，未设置密码" : "已开启密码保护");
+      pushToast("success", password === "" ? t("已完成初始化，未设置密码") : t("已开启密码保护"));
       onInitialized();
     } catch (e) {
       pushToast("error", describeError(e));
@@ -62,34 +63,34 @@ export function VaultInitModal({
         }}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">初始化凭据保护</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("初始化凭据保护")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor={passwordId}>保护密码</label>
+            <label className="nx-label" htmlFor={passwordId}>{t("保护密码")}</label>
             <input
               id={passwordId}
               ref={inputRef}
               type="password"
               className="nx-input"
-              placeholder="设置保护密码（留空则不设置）"
+              placeholder={t("设置保护密码（留空则不设置）")}
               value={password}
               autoComplete="off"
               onChange={(e) => setPassword(e.target.value)}
             />
-            <div className="nx-hint mt-1.5">仅在本机使用，忘记无法找回。留空也能保存凭据，但拿到数据目录的人可以解密。</div>
+            <div className="nx-hint mt-1.5">{t("仅在本机使用，忘记无法找回。留空也能保存凭据，但拿到数据目录的人可以解密。")}</div>
           </div>
         </div>
         <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose} disabled={submitting}>
-            取消
+            {t("取消")}
           </button>
           <button
             className="nx-btn nx-btn-primary"
             disabled={(password.length > 0 && password.length < 8) || submitting}
             onClick={() => void submit()}
           >
-            {submitting ? "正在启用…" : "启用保护"}
+            {submitting ? t("正在启用…") : t("启用保护")}
           </button>
         </div>
       </div>

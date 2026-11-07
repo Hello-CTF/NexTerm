@@ -6,6 +6,7 @@ import {
   type KeybindingSnapshot,
 } from "../../../app/keybindings";
 import { ESC, KEY_BYTES, ctrlByte } from "./keyEncoding";
+import { t } from "../../../i18n";
 
 export interface TerminalShortcutConflict {
   action: KeybindingAction;
@@ -19,36 +20,36 @@ export interface TerminalShortcutConflict {
 }
 
 const CONTROL_MEANINGS: Record<string, string> = {
-  "\x01": "行首；screen 前缀",
-  "\x02": "后退一个字符；tmux 前缀",
-  "\x03": "中断 SIGINT",
-  "\x04": "EOF / 退出",
-  "\x05": "行尾",
-  "\x06": "前进一个字符",
-  "\x07": "取消",
-  "\x08": "退格",
-  "\t": "补全",
-  "\n": "换行",
-  "\x0b": "删除到行尾",
-  "\x0c": "清屏",
-  "\r": "回车",
-  "\x0e": "下一条历史",
-  "\x0f": "执行并取下一条历史",
-  "\x10": "上一条历史",
-  "\x11": "恢复输出 XON",
-  "\x12": "反向搜索历史",
-  "\x13": "暂停输出 XOFF",
-  "\x14": "交换字符",
-  "\x15": "删除到行首",
-  "\x16": "按字面输入下一个键",
-  "\x17": "删除前一个词",
-  "\x18": "Emacs 前缀",
-  "\x19": "粘贴已删除文本",
-  "\x1a": "挂起 SIGTSTP",
+  "\x01": t("行首；screen 前缀"),
+  "\x02": t("后退一个字符；tmux 前缀"),
+  "\x03": t("中断 SIGINT"),
+  "\x04": t("EOF / 退出"),
+  "\x05": t("行尾"),
+  "\x06": t("前进一个字符"),
+  "\x07": t("取消"),
+  "\x08": t("退格"),
+  "\t": t("补全"),
+  "\n": t("换行"),
+  "\x0b": t("删除到行尾"),
+  "\x0c": t("清屏"),
+  "\r": t("回车"),
+  "\x0e": t("下一条历史"),
+  "\x0f": t("执行并取下一条历史"),
+  "\x10": t("上一条历史"),
+  "\x11": t("恢复输出 XON"),
+  "\x12": t("反向搜索历史"),
+  "\x13": t("暂停输出 XOFF"),
+  "\x14": t("交换字符"),
+  "\x15": t("删除到行首"),
+  "\x16": t("按字面输入下一个键"),
+  "\x17": t("删除前一个词"),
+  "\x18": t("Emacs 前缀"),
+  "\x19": t("粘贴已删除文本"),
+  "\x1a": t("挂起 SIGTSTP"),
   "\x1b": "Esc",
-  "\x1c": "退出并转储 SIGQUIT",
-  "\x1d": "telnet 转义",
-  "\x7f": "退格",
+  "\x1c": t("退出并转储 SIGQUIT"),
+  "\x1d": t("telnet 转义"),
+  "\x7f": t("退格"),
 };
 
 const ARROW_FINAL: Record<string, string> = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D" };
@@ -124,7 +125,7 @@ function terminalChord(binding: string, mac: boolean): TerminalChord | null {
 
 function describeDigitRange(chord: TerminalChord): Pick<TerminalShortcutConflict, "bytes" | "meaning"> {
   if (chord.ctrl && !chord.shift && !chord.alt) {
-    return { bytes: null, meaning: "Ctrl+3…7 原为 ^[…^_（含 Ctrl+4 = SIGQUIT），Ctrl+8 原为退格" };
+    return { bytes: null, meaning: t("Ctrl+3…7 原为 ^[…^_（含 Ctrl+4 = SIGQUIT），Ctrl+8 原为退格") };
   }
   return { bytes: null, meaning: null };
 }

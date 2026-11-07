@@ -1,4 +1,5 @@
 import type { Asset } from "../../ipc/commands";
+import { t } from "../../i18n";
 
 export interface AssetInventoryMetadata {
   source: string;
@@ -29,7 +30,7 @@ export function assetInventoryMetadata(asset?: Pick<Asset, "options"> | null): A
 export function inventorySourceLabel(source: string): string {
   switch (source) {
     case "ssh-config":
-      return "SSH 配置文件";
+      return t("SSH 配置文件");
     case "docker-context":
       return "Docker context";
     case "kubernetes":

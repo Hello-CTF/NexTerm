@@ -71,6 +71,7 @@ import {
   IconUpload,
   IconXCircle,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 // localeCompare with locale options builds a collator per comparison, which costs hundreds of milliseconds on
 // directories with thousands of entries; one shared collator gives the same order.
@@ -196,13 +197,13 @@ const TreeRow = memo(function TreeRow({
         <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
           <div className="break-words">
             {error.gone
-              ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览"
+              ? t("会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览")
               : error.message}
           </div>
           <div className="flex gap-2">
             {!error.gone && (
               <button className="nx-link mt-0.5 text-[11px]" onClick={() => actions.retryDir(dir)}>
-                重试
+                {t("重试")}
               </button>
             )}
             {error.gone && (
@@ -211,7 +212,7 @@ const TreeRow = memo(function TreeRow({
                 disabled={reconnecting}
                 onClick={() => actions.reconnect()}
               >
-                {reconnecting ? "正在重新连接…" : "重新连接该主机"}
+                {reconnecting ? t("正在重新连接…") : t("重新连接该主机")}
               </button>
             )}
           </div>
@@ -326,7 +327,7 @@ const TreeRow = memo(function TreeRow({
           className="shrink-0"
           checked={isSel}
           tabIndex={-1}
-          aria-label={`选择 ${entry.name}`}
+          aria-label={t("选择 {name}", { name: entry.name })}
           onChange={() => {}}
         />
       )}
@@ -337,8 +338,8 @@ const TreeRow = memo(function TreeRow({
             e.stopPropagation();
             actions.toggle(entry.path);
           }}
-          title={open ? "收起" : "展开"}
-          aria-label={`${open ? "收起" : "展开"} ${entry.name}`}
+          title={open ? t("收起") : t("展开")}
+          aria-label={`${open ? t("收起") : t("展开")} ${entry.name}`}
           aria-expanded={open}
         >
           {open ? <IconChevronDown size={11} /> : <IconChevronRight size={11} />}
@@ -355,8 +356,8 @@ const TreeRow = memo(function TreeRow({
       {coarse ? (
         multiMode ? null : <button
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-          title={`更多操作 ${entry.name}`}
-          aria-label={`更多操作 ${entry.name}`}
+          title={t("更多操作 {name}", { name: entry.name })}
+          aria-label={t("更多操作 {name}", { name: entry.name })}
           onClick={(e) => {
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
@@ -371,8 +372,8 @@ const TreeRow = memo(function TreeRow({
           {!isDir && (
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="下载"
-              aria-label={`下载 ${entry.name}`}
+              title={t("下载")}
+              aria-label={t("下载 {name}", { name: entry.name })}
               onClick={(e) => {
                 e.stopPropagation();
                 void actions.download(entry.path);
@@ -384,8 +385,8 @@ const TreeRow = memo(function TreeRow({
           {!rootEntry && (
             <button
               className="nx-icon-btn nx-icon-btn-sm is-danger"
-              title="删除"
-              aria-label={`删除 ${entry.name}`}
+              title={t("删除")}
+              aria-label={t("删除 {name}", { name: entry.name })}
               onClick={(e) => {
                 e.stopPropagation();
                 void actions.remove(entry.path);
@@ -396,8 +397,8 @@ const TreeRow = memo(function TreeRow({
           )}
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title={`更多操作 ${entry.name}`}
-            aria-label={`更多操作 ${entry.name}`}
+            title={t("更多操作 {name}", { name: entry.name })}
+            aria-label={t("更多操作 {name}", { name: entry.name })}
             onClick={(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
@@ -506,7 +507,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     const next = normalizeTypedPath(draft, pathStyle);
     if (!next) {
       if (draft.trim()) {
-        pushToast("error", "Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）");
+        pushToast("error", t("Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）"));
       }
       setEditing(false);
       return;
@@ -582,20 +583,20 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const sessionGone =
     rootsSessionGone || results.some((result) => fsErrorResource(result.error) === "session");
-  const goneHint = "会话已在服务端删除，请重新连接该主机";
+  const goneHint = t("会话已在服务端删除，请重新连接该主机");
   const [reconnecting, setReconnecting] = useState(false);
 
   const reconnectHost = useCallback(async () => {
     const ws = useUi.getState().workspaces.find((w) => w.sessionId === sessionId);
     if (!ws) {
-      pushToast("error", "找不到该工作区的主机信息，请在左侧资产树中手动连接");
+      pushToast("error", t("找不到该工作区的主机信息，请在左侧资产树中手动连接"));
       return;
     }
     setReconnecting(true);
     try {
       const s = await reconnectDeadHost(ws);
       if (!s) {
-        pushToast("info", "已取消重新连接");
+        pushToast("info", t("已取消重新连接"));
         return;
       }
       const list = useUi.getState().sessions;
@@ -604,9 +605,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         s,
       ]);
       useUi.getState().updateWorkspaceSession(ws.id, s.id);
-      pushToast("info", "已重新连接，正在重新加载文件列表");
+      pushToast("info", t("已重新连接，正在重新加载文件列表"));
     } catch (e) {
-      pushToast("error", `重新连接失败：${describeError(e)}`);
+      pushToast("error", t("重新连接失败：{value}", { value: describeError(e) }));
     } finally {
       setReconnecting(false);
     }
@@ -735,7 +736,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const openFile = (entry: FileEntryDto) => {
     if (!isEditableFile(entry.name)) {
-      pushToast("info", `「${entry.name}」不是文本文件，不能在线编辑；可以下载到本机后打开`);
+      pushToast("info", t("「{name}」不是文本文件，不能在线编辑；可以下载到本机后打开", { name: entry.name }));
       return;
     }
     openFileTab(sessionId, entry.path);
@@ -758,29 +759,29 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   });
 
   const newFileIn = async (dir: string) => {
-    const name = await promptText("新建文件名", "");
+    const name = await promptText(t("新建文件名"), "");
     if (name === null) return;
     const problem = validateEntryName(name);
     if (problem) {
-      pushToast("error", `无法创建：${problem}`);
+      pushToast("error", t("无法创建：{problem}", { problem }));
       return;
     }
     const path = joinPath(dir, name);
     try {
       await fsApi.write(sessionId, path, "", false);
       refresh();
-      pushToast("success", `已创建 ${path}`);
+      pushToast("success", t("已创建 {path}", { path }));
     } catch (e) {
-      pushToast("error", `创建失败：${describeError(e)}`);
+      pushToast("error", t("创建失败：{value}", { value: describeError(e) }));
     }
   };
 
   const newDirIn = async (dir: string) => {
-    const name = await promptText("新建目录名", "");
+    const name = await promptText(t("新建目录名"), "");
     if (name === null) return;
     const problem = validateEntryName(name);
     if (problem) {
-      pushToast("error", `无法创建：${problem}`);
+      pushToast("error", t("无法创建：{problem}", { problem }));
       return;
     }
     const path = joinPath(dir, name);
@@ -788,9 +789,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       await fsApi.mkdir(sessionId, path);
       refresh();
       if (dir !== root && !expanded.includes(dir)) toggle(dir);
-      pushToast("success", `已创建 ${path}`);
+      pushToast("success", t("已创建 {path}", { path }));
     } catch (e) {
-      pushToast("error", `创建失败：${describeError(e)}`);
+      pushToast("error", t("创建失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -802,14 +803,14 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     try {
       const check = await checkUploadOverwrite(sessionId, dir, remote);
       if (check === "cancelled") {
-        pushToast("info", `已取消上传，${remote} 保持原样`);
+        pushToast("info", t("已取消上传，{remote} 保持原样", { remote }));
         return;
       }
-      pushToast("info", "开始上传…");
+      pushToast("info", t("开始上传…"));
       handed = true;
       enqueueUploads(sessionId, [{ localPath: file, remotePath: remote }], dir);
     } catch (e) {
-      pushToast("error", `上传失败：${describeError(e)}`);
+      pushToast("error", t("上传失败：{value}", { value: describeError(e) }));
     } finally {
       if (!handed) await discardStaged(file);
     }
@@ -829,7 +830,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     try {
       return await pickDownloadTarget(name);
     } catch (e) {
-      pushToast("error", `无法选择保存位置：${describeError(e)}`);
+      pushToast("error", t("无法选择保存位置：{value}", { value: describeError(e) }));
       return null;
     }
   };
@@ -837,7 +838,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const download = async (path: string) => {
     const target = await pickTarget(baseName(path));
     if (!target) return;
-    pushToast("info", "开始下载…");
+    pushToast("info", t("开始下载…"));
     enqueueDownload(sessionId, { remotePath: path, localPath: target });
   };
 
@@ -848,7 +849,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-drop-path]");
     const dir = row?.dataset.dropPath ?? targetDir();
     if (!dir) {
-      pushToast("info", "请先选择实际目录再上传");
+      pushToast("info", t("请先选择实际目录再上传"));
       return;
     }
     void dropFolderUpload({
@@ -863,16 +864,16 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const remove = async (path: string) => {
     const entry = findEntry(path);
     const isDir = entry?.kind === "dir";
-    const tip = isDir ? "\n\n目录会被递归删除，不可恢复。" : "";
-    if (!(await ask(`删除 ${path}？${tip}`, { kind: "warning" }))) return;
+    const tip = isDir ? t("\n\n目录会被递归删除，不可恢复。") : "";
+    if (!(await ask(t("删除 {path}？{tip}", { path, tip }), { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, path, isDir);
       multi.drop([path]);
       setExpanded((prev) => prev.filter((p) => p !== path));
       refresh();
-      pushToast("success", "已删除");
+      pushToast("success", t("已删除"));
     } catch (e) {
-      pushToast("error", `删除失败：${describeError(e)}`);
+      pushToast("error", t("删除失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -888,11 +889,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         queued += 1;
       }
       const skipped = files.length - queued;
-      if (queued === 0) pushToast("info", "没有加入任何下载任务");
+      if (queued === 0) pushToast("info", t("没有加入任何下载任务"));
       else
         pushToast(
           "success",
-          skipped > 0 ? `已加入 ${queued} 个下载任务，${skipped} 个已取消` : `已加入 ${queued} 个下载任务`,
+          skipped > 0 ? t("已加入 {queued} 个下载任务，{skipped} 个已取消", { queued, skipped }) : t("已加入 {queued} 个下载任务", { queued }),
         );
     } finally {
       batchBusy.current = false;
@@ -902,8 +903,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const batchDelete = async (items: FileEntryDto[]) => {
     if (batchBusy.current || items.length === 0) return;
     const hasDir = items.some((x) => x.kind === "dir");
-    const tip = hasDir ? "\n\n其中包含目录，目录会被递归删除，不可恢复。" : "";
-    if (!(await ask(`删除选中的 ${items.length} 项？${tip}`, { kind: "warning" }))) return;
+    const tip = hasDir ? t("\n\n其中包含目录，目录会被递归删除，不可恢复。") : "";
+    if (!(await ask(t("删除选中的 {length} 项？{tip}", { length: items.length, tip }), { kind: "warning" }))) return;
     batchBusy.current = true;
     const deleted: string[] = [];
     const failed: string[] = [];
@@ -919,8 +920,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       multi.drop(deleted);
       setExpanded((prev) => prev.filter((p) => !deleted.includes(p)));
       refresh();
-      if (failed.length === 0) pushToast("success", `已删除 ${deleted.length} 项`);
-      else pushToast("error", `已删除 ${deleted.length} 项，${failed.length} 项失败：${failed.join("；")}`);
+      if (failed.length === 0) pushToast("success", t("已删除 {length} 项", { length: deleted.length }));
+      else pushToast("error", t("已删除 {length} 项，{length2} 项失败：{join}", { length: deleted.length, length2: failed.length, join: failed.join("；") }));
     } finally {
       batchBusy.current = false;
     }
@@ -937,12 +938,12 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const packDownload = async (dir: string) => {
     const target = await pickTarget(`${baseName(dir)}.tar.gz`);
     if (!target) return;
-    pushToast("info", "开始远端打包下载…");
+    pushToast("info", t("开始远端打包下载…"));
     enqueuePackDownload(sessionId, { remotePath: dir, localPath: target });
   };
 
   const extractHere = async (archive: string) => {
-    pushToast("info", "正在解压…");
+    pushToast("info", t("正在解压…"));
     try {
       const target = await fsApi.extract(sessionId, archive);
       const parent = parentOf(target) ?? root ?? HOME;
@@ -951,30 +952,30 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       }
       void qc.invalidateQueries({ queryKey: ["fs", sessionId, parent] });
       void qc.invalidateQueries({ queryKey: ["fs", sessionId, target] });
-      pushToast("success", `已解压到 ${target}`);
+      pushToast("success", t("已解压到 {target}", { target }));
     } catch (e) {
-      pushToast("error", `解压失败：${describeError(e)}`);
+      pushToast("error", t("解压失败：{value}", { value: describeError(e) }));
     }
   };
 
   const notifyDirectoryFailure = (dir: string, failure: DirectoryCommandFailure | null) => {
     const reason =
       failure === "control"
-        ? "目录包含控制字符"
+        ? t("目录包含控制字符")
         : failure === "unsupported"
-          ? "当前终端 Shell 暂不支持自动切换目录"
-          : "无法确认当前终端 Shell";
+          ? t("当前终端 Shell 暂不支持自动切换目录")
+          : t("无法确认当前终端 Shell");
     void copyText(dir)
       .then(() => {
         pushToast(
           failure === "control" ? "error" : "info",
-          `${reason}，未发送命令；路径已复制，请手动切换`,
+          t("{reason}，未发送命令；路径已复制，请手动切换", { reason }),
         );
       })
       .catch((e) => {
         pushToast(
           "error",
-          `${reason}，未发送命令；复制路径失败：${describeError(e)}。路径：${dir}`,
+          t("{reason}，未发送命令；复制路径失败：{value}。路径：{dir}", { reason, value: describeError(e), dir }),
         );
       });
   };
@@ -982,7 +983,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const openTerminalAt = (dir: string) => {
     const session = useUi.getState().sessions.find((s) => s.id === sessionId);
     if (!session) {
-      pushToast("error", "当前会话已断开，无法打开终端");
+      pushToast("error", t("当前会话已断开，无法打开终端"));
       return;
     }
     if (sessionKind !== "winrm") {
@@ -1013,7 +1014,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
               tab.kind === "terminal" && tab.sessionId === sessionId && !previous.has(tab.id),
           );
         if (!created) {
-          pushToast("error", "新终端创建失败，无法切换目录");
+          pushToast("error", t("新终端创建失败，无法切换目录"));
           return;
         }
         let finished = false;
@@ -1031,24 +1032,24 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           unsubscribe();
           void sessionApi
             .lineExec(tab.tabId, command)
-            .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+            .catch((e) => pushToast("error", t("切换目录失败：{value}", { value: describeError(e) })));
         };
         const timeout = window.setTimeout(() => {
           if (finished) return;
           finished = true;
           unsubscribe();
-          pushToast("error", "新终端尚未就绪，无法切换目录");
+          pushToast("error", t("新终端尚未就绪，无法切换目录"));
         }, 10000);
         unsubscribe = useUi.subscribe(execute);
         execute();
       })
-      .catch((e) => pushToast("error", `打开终端失败：${describeError(e)}`));
+      .catch((e) => pushToast("error", t("打开终端失败：{value}", { value: describeError(e) })));
   };
 
   const cdTerminalTo = (dir: string) => {
     const target = findWritableTerminal(sessionId);
     if (!target) {
-      pushToast("info", "当前工作区没有可用终端，已新建一个");
+      pushToast("info", t("当前工作区没有可用终端，已新建一个"));
       openTerminalAt(dir);
       return;
     }
@@ -1063,12 +1064,12 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     if (sessionKind === "winrm") {
       void sessionApi
         .lineExec(target.tabId, command)
-        .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+        .catch((e) => pushToast("error", t("切换目录失败：{value}", { value: describeError(e) })));
       return;
     }
     void terminalApi
       .write(target.tabId, new TextEncoder().encode(`${command}\n`))
-      .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+      .catch((e) => pushToast("error", t("切换目录失败：{value}", { value: describeError(e) })));
   };
 
   const remapAfterRename = (from: string, to: string) => {
@@ -1096,29 +1097,29 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     setMenu({
       x,
       y,
-      title: `已选 ${items.length} 项`,
+      title: t("已选 {length} 项", { length: items.length }),
       items: [
-        { kind: "group", label: `已选 ${items.length} 项` },
+        { kind: "group", label: t("已选 {length} 项", { length: items.length }) },
         {
           kind: "item",
-          label: `下载 ${items.length} 个文件`,
+          label: t("下载 {length} 个文件", { length: items.length }),
           icon: <IconDownload size={13} />,
-          hint: hasDir ? "目录请单独打包下载" : undefined,
+          hint: hasDir ? t("目录请单独打包下载") : undefined,
           disabled: hasDir || sessionGone,
           onSelect: () => void batchDownload(items),
         },
         { kind: "separator" },
-        { kind: "group", label: "危险操作" },
+        { kind: "group", label: t("危险操作") },
         {
           kind: "item",
-          label: `删除 ${items.length} 项…`,
+          label: t("删除 {length} 项…", { length: items.length }),
           icon: <IconTrash size={13} />,
           danger: true,
           disabled: sessionGone,
           onSelect: () => void batchDelete(items),
         },
         { kind: "separator" },
-        { kind: "item", label: "取消选择", onSelect: multi.clear },
+        { kind: "item", label: t("取消选择"), onSelect: multi.clear },
       ],
     });
   };
@@ -1141,8 +1142,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         y,
         title: entry.path,
         items: [
-          { kind: "group", label: "磁盘" },
-          { kind: "item", label: "打开此磁盘", onSelect: () => enterDir(entry.path) },
+          { kind: "group", label: t("磁盘") },
+          { kind: "item", label: t("打开此磁盘"), onSelect: () => enterDir(entry.path) },
         ],
       });
       return;
@@ -1150,29 +1151,29 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     const isDir = entry.kind === "dir";
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? root ?? HOME);
     const items: MenuItem[] = [
-      { kind: "group", label: "终端" },
+      { kind: "group", label: t("终端") },
       {
         kind: "item",
-        label: "在当前终端打开",
+        label: t("在当前终端打开"),
         icon: <IconTerminal size={13} />,
-        hint: "已有终端",
+        hint: t("已有终端"),
         onSelect: () => cdTerminalTo(dir),
       },
       {
         kind: "item",
-        label: "在新终端打开",
+        label: t("在新终端打开"),
         icon: <IconTerminal size={13} />,
-        hint: "新标签页",
+        hint: t("新标签页"),
         onSelect: () => openTerminalAt(dir),
       },
       { kind: "separator" },
-      { kind: "group", label: isDir ? "目录" : "文件" },
+      { kind: "group", label: isDir ? t("目录") : t("文件") },
     ];
     if (isDir) {
       if (!packHidden) {
         items.push({
           kind: "item",
-          label: "打包下载当前目录",
+          label: t("打包下载当前目录"),
           icon: <IconArchive size={13} />,
           hint: "tar.gz",
           onSelect: () => void packDownload(entry.path),
@@ -1181,31 +1182,31 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     } else {
       items.push({
         kind: "item",
-        label: "在下方编辑",
+        label: t("在下方编辑"),
         icon: <IconEdit size={13} />,
         disabled: !isEditableFile(entry.name),
         onSelect: () => openFileTabInSplit(sessionId, entry.path),
       });
       items.push({
         kind: "item",
-        label: "查看日志",
+        label: t("查看日志"),
         icon: <IconEye size={13} />,
-        hint: "只读分块",
+        hint: t("只读分块"),
         disabled: !isEditableFile(entry.name),
         onSelect: () => openLogTab(sessionId, entry.path),
       });
       if (isExtractableArchive(entry.name)) {
         items.push({
           kind: "item",
-          label: "解压",
+          label: t("解压"),
           icon: <IconArchive size={13} />,
-          hint: "到同名目录",
+          hint: t("到同名目录"),
           onSelect: () => void extractHere(entry.path),
         });
       }
       items.push({
         kind: "item",
-        label: "下载当前文件",
+        label: t("下载当前文件"),
         icon: <IconDownload size={13} />,
         onSelect: () => void download(entry.path),
       });
@@ -1213,7 +1214,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     items.push(
       {
         kind: "item",
-        label: "重命名",
+        label: t("重命名"),
         icon: <IconEdit size={13} />,
         disabled: fileOps.busy !== null,
         onSelect: () =>
@@ -1221,7 +1222,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: "权限…",
+        label: t("权限…"),
         icon: <IconLock size={13} />,
         hint: "chmod",
         disabled: fileOps.busy !== null,
@@ -1231,7 +1232,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     if (!isDir) {
       items.push({
         kind: "item",
-        label: "校验值…",
+        label: t("校验值…"),
         icon: <IconShieldCheck size={13} />,
         hint: "md5/sha256",
         disabled: fileOps.busy !== null,
@@ -1240,10 +1241,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     }
     items.push(
       { kind: "separator" },
-      { kind: "group", label: "危险操作" },
+      { kind: "group", label: t("危险操作") },
       {
         kind: "item",
-        label: "删除",
+        label: t("删除"),
         icon: <IconTrash size={13} />,
         danger: true,
         onSelect: () => void remove(entry.path),
@@ -1271,12 +1272,12 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       setMenu({
         x: e.clientX,
         y: e.clientY,
-        title: windowsComputer ? "此电脑" : "文件",
+        title: windowsComputer ? t("此电脑") : t("文件"),
         items: [
-          { kind: "group", label: windowsComputer ? "此电脑" : "文件" },
+          { kind: "group", label: windowsComputer ? t("此电脑") : t("文件") },
           {
             kind: "item",
-            label: "刷新",
+            label: t("刷新"),
             icon: <IconRefresh size={13} />,
             onSelect: refresh,
           },
@@ -1285,13 +1286,13 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       return;
     }
     const gone = sessionGone
-      ? { hint: "会话已删除" as const, disabled: true }
+      ? { hint: t("会话已删除"), disabled: true }
       : { hint: undefined, disabled: false };
     const items: MenuItem[] = [
-      { kind: "group", label: "当前目录" },
+      { kind: "group", label: t("当前目录") },
       {
         kind: "item",
-        label: "上传到当前目录",
+        label: t("上传到当前目录"),
         icon: <IconUpload size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1299,7 +1300,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: "上传文件夹到当前目录",
+        label: t("上传文件夹到当前目录"),
         icon: <IconFolderPlus size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1307,7 +1308,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: "新建目录",
+        label: t("新建目录"),
         icon: <IconFolderPlus size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1315,7 +1316,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: "新建空白文件",
+        label: t("新建空白文件"),
         icon: <IconFilePlus size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1323,7 +1324,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       },
       {
         kind: "item",
-        label: "刷新",
+        label: t("刷新"),
         icon: <IconRefresh size={13} />,
         hint: gone.hint,
         disabled: gone.disabled,
@@ -1538,7 +1539,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const crumbs = root ? crumbsOf(root) : [];
   const parent = root ? parentOf(root) : null;
   const upToComputer = root !== null && parent === null && windowsComputer && isRoot(root);
-  const up = parent ?? (upToComputer ? "此电脑" : null);
+  const up = parent ?? (upToComputer ? t("此电脑") : null);
   const loading = !environmentSettled || dirs.some((_, i) => results[i]?.isLoading);
 
   return (
@@ -1550,12 +1551,12 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     >
       <div className="nx-files-bar flex h-[34px] shrink-0 items-center gap-0.5 overflow-x-auto px-2">
         <span className="mr-1 shrink-0 text-xs font-semibold tracking-wide text-neutral-200">
-          文件
+          {t("文件")}
         </span>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "新建文件"}
-          aria-label="新建文件"
+          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("新建文件")}
+          aria-label={t("新建文件")}
           disabled={sessionGone || computer}
           onClick={() => void newFileIn(targetDir())}
         >
@@ -1563,8 +1564,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "新建目录"}
-          aria-label="新建目录"
+          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("新建目录")}
+          aria-label={t("新建目录")}
           disabled={sessionGone || computer}
           onClick={() => void newDirIn(targetDir())}
         >
@@ -1572,8 +1573,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : "刷新"}
-          aria-label="刷新文件列表"
+          title={sessionGone ? goneHint : t("刷新")}
+          aria-label={t("刷新文件列表")}
           disabled={sessionGone}
           onClick={refresh}
         >
@@ -1581,8 +1582,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="折叠全部"
-          aria-label="折叠全部目录"
+          title={t("折叠全部")}
+          aria-label={t("折叠全部目录")}
           onClick={() => {
             setExpanded([]);
             setSelected(null);
@@ -1595,10 +1596,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             className={`nx-icon-btn nx-icon-btn-sm${follow.enabled ? " is-active" : ""}`}
             title={
               follow.enabled
-                ? "跟随终端目录：开。终端切换目录时，文件树自动跟随"
-                : "跟随终端目录：关。单击可开启自动跟随"
+                ? t("跟随终端目录：开。终端切换目录时，文件树自动跟随")
+                : t("跟随终端目录：关。单击可开启自动跟随")
             }
-            aria-label="跟随终端目录"
+            aria-label={t("跟随终端目录")}
             aria-pressed={follow.enabled}
             onClick={follow.toggle}
           >
@@ -1608,8 +1609,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传到当前目录"}
-          aria-label="上传到当前目录"
+          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("上传到当前目录")}
+          aria-label={t("上传到当前目录")}
           disabled={sessionGone || computer}
           onClick={() => void uploadTo(targetDir())}
         >
@@ -1617,8 +1618,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={sessionGone ? goneHint : computer ? "请选择实际目录" : "上传文件夹到当前目录"}
-          aria-label="上传文件夹到当前目录"
+          title={sessionGone ? goneHint : computer ? t("请选择实际目录") : t("上传文件夹到当前目录")}
+          aria-label={t("上传文件夹到当前目录")}
           disabled={sessionGone || computer}
           onClick={() => void uploadFolderTo(targetDir())}
         >
@@ -1629,8 +1630,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       <div className="nx-pathbar">
         <button
           className="nx-tree-caret"
-          title={up ? `上级：${up}` : computer ? "已经在此电脑" : "已经在根目录"}
-          aria-label={up ? `上级目录 ${up}` : computer ? "已经在此电脑" : "已经在根目录"}
+          title={up ? t("上级：{up}", { up }) : computer ? t("已经在此电脑") : t("已经在根目录")}
+          aria-label={up ? t("上级目录 {up}", { up }) : computer ? t("已经在此电脑") : t("已经在根目录")}
           disabled={!up}
           onClick={() => {
             if (parent) navigateRoot(parent);
@@ -1645,7 +1646,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             autoFocus
             spellCheck={false}
             value={draft}
-            placeholder="输入路径后回车（支持 ~ 与 C:/）"
+            placeholder={t("输入路径后回车（支持 ~ 与 C:/）")}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !isImeKeyEvent(e)) {
@@ -1665,18 +1666,18 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             onClick={(e) => {
               if (e.target === e.currentTarget) beginEdit();
             }}
-            title="单击空白处可直接输入路径"
+            title={t("单击空白处可直接输入路径")}
           >
             {computer ? (
               <span className="nx-path-crumb is-current" aria-current="location">
-                此电脑
+                {t("此电脑")}
               </span>
             ) : (
               <>
                 {windowsComputer && (
                   <span className="flex shrink-0 items-center gap-0.5">
                     <button className="nx-path-crumb" onClick={() => navigateRoot(null)}>
-                      此电脑
+                      {t("此电脑")}
                     </button>
                     <span className="text-neutral-600">/</span>
                   </span>
@@ -1702,16 +1703,16 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         )}
         <button
           className="nx-tree-caret"
-          title={editing ? "取消编辑（Esc）" : "输入路径跳转"}
-          aria-label={editing ? "取消编辑路径" : "输入路径跳转"}
+          title={editing ? t("取消编辑（Esc）") : t("输入路径跳转")}
+          aria-label={editing ? t("取消编辑路径") : t("输入路径跳转")}
           onClick={() => (editing ? setEditing(false) : beginEdit())}
         >
           {editing ? <IconClose size={11} /> : <IconEdit size={11} />}
         </button>
         <button
           className="nx-tree-caret"
-          title={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
-          aria-label={homeSupported ? "回到家目录 (~)" : "WinRM 后端不支持 ~ 展开"}
+          title={homeSupported ? t("回到家目录 (~)") : t("WinRM 后端不支持 ~ 展开")}
+          aria-label={homeSupported ? t("回到家目录 (~)") : t("WinRM 后端不支持 ~ 展开")}
           disabled={!homeSupported || root === homeTarget}
           onClick={() => {
             if (homeSupported) navigateRoot(homeTarget);
@@ -1725,40 +1726,40 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         <div
           className="flex shrink-0 flex-wrap items-center gap-1 border-b border-neutral-800/60 bg-blue-500/[0.08] px-2 py-1 text-[12px]"
           role="toolbar"
-          aria-label="多选操作"
+          aria-label={t("多选操作")}
         >
-          <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+          <span className="shrink-0 whitespace-nowrap">{t("已选")} {pickedEntries.length} {t("项")}</span>
           <span className="flex-1" />
           <button className="nx-btn nx-btn-sm" onClick={() => multi.selectAll(orderedPaths)}>
-            全选
+            {t("全选")}
           </button>
           <button
             className="nx-btn nx-btn-sm"
             disabled={pickedHasDir || sessionGone || pickedEntries.length === 0}
-            title={pickedHasDir ? "目录请单独打包下载" : "下载选中的文件"}
+            title={pickedHasDir ? t("目录请单独打包下载") : t("下载选中的文件")}
             onClick={() => void batchDownload(pickedEntries)}
           >
             <IconDownload size={13} />
-            下载
+            {t("下载")}
           </button>
           <button
             className="nx-btn nx-btn-danger nx-btn-sm"
             disabled={sessionGone || pickedEntries.length === 0}
-            title="删除选中项"
+            title={t("删除选中项")}
             onClick={() => void batchDelete(pickedEntries)}
           >
             <IconTrash size={13} />
-            删除
+            {t("删除")}
           </button>
           <button className="nx-btn nx-btn-sm" onClick={multi.clear}>
-            取消
+            {t("取消")}
           </button>
         </div>
       )}
 
       <div
         role="tree"
-        aria-label="文件"
+        aria-label={t("文件")}
         ref={treeDropRef}
         className="relative min-h-0 flex-1 overflow-y-auto px-1 py-1"
         data-file-drop-target={computer ? undefined : ""}
@@ -1776,8 +1777,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
             <div className="min-w-0 flex-1 text-[11px] leading-relaxed text-red-200">
               <div className="break-words">
                 {rootsSessionGone
-                  ? "会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览"
-                  : `无法读取磁盘根信息：${describeError(rootsQuery.error)}`}
+                  ? t("会话已在服务端删除，重试不会恢复；重新连接该主机后在此继续浏览")
+                  : t("无法读取磁盘根信息：{value}", { value: describeError(rootsQuery.error) })}
               </div>
               <div className="flex gap-2">
                 {!rootsSessionGone && (
@@ -1785,7 +1786,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
                     className="nx-link mt-0.5 text-[11px]"
                     onClick={() => void qc.invalidateQueries({ queryKey: ["fsRoots", sessionId] })}
                   >
-                    重试
+                    {t("重试")}
                   </button>
                 )}
                 {rootsSessionGone && (
@@ -1794,7 +1795,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
                     disabled={reconnecting}
                     onClick={() => void reconnectHost()}
                   >
-                    {reconnecting ? "正在重新连接…" : "重新连接该主机"}
+                    {reconnecting ? t("正在重新连接…") : t("重新连接该主机")}
                   </button>
                 )}
               </div>
@@ -1828,34 +1829,34 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         )}
 
         {loading && rows.length === 0 && (
-          <div role="status" aria-label="加载中">
+          <div role="status" aria-label={t("加载中")}>
             {Array.from({ length: 8 }, (_, i) => (
               <div key={i} className="nx-skeleton-row" aria-hidden="true">
                 <span className="nx-skeleton nx-skeleton-icon" />
                 <span className="nx-skeleton min-w-0 flex-1" />
               </div>
             ))}
-            <span className="nx-sr-only">正在加载…</span>
+            <span className="nx-sr-only">{t("正在加载…")}</span>
           </div>
         )}
         {!loading && rows.length === 0 && dirErrors.size === 0 && !rootsQuery.isError && (
-          <div className="nx-hint px-2 py-6 text-center">{computer ? "没有可用磁盘" : "该目录是空的"}</div>
+          <div className="nx-hint px-2 py-6 text-center">{computer ? t("没有可用磁盘") : t("该目录是空的")}</div>
         )}
       </div>
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
-        <span>{entryCount} 项</span>
+        <span>{entryCount} {t("项")}</span>
         {pickedEntries.length > 1 && (
           <>
             <span className="text-neutral-700">|</span>
-            <span className="shrink-0 whitespace-nowrap">已选 {pickedEntries.length} 项</span>
+            <span className="shrink-0 whitespace-nowrap">{t("已选")} {pickedEntries.length} {t("项")}</span>
           </>
         )}
         {pickedEntries.length <= 1 && selectedEntry && (
           <>
             <span className="text-neutral-700">|</span>
             <span className="min-w-0 flex-1 truncate" title={selectedEntry.path}>
-              {selectedEntry.kind === "dir" ? "目录" : formatSize(selectedEntry.size)}
+              {selectedEntry.kind === "dir" ? t("目录") : formatSize(selectedEntry.size)}
             </span>
           </>
         )}

@@ -3,6 +3,7 @@ import { vaultApi } from "../../ipc/commands";
 import { promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
+import { t } from "../../i18n";
 
 export function useVaultUnlock(): (reason?: string) => Promise<boolean> {
   const qc = useQueryClient();
@@ -21,23 +22,23 @@ export function useVaultUnlock(): (reason?: string) => Promise<boolean> {
         await vaultApi.unlock("");
         void qc.invalidateQueries({ queryKey: ["vault-status"] });
         void qc.invalidateQueries({ queryKey: ["credentials"] });
-        pushToast("success", "已解锁");
+        pushToast("success", t("已解锁"));
         return true;
       } catch (e) {
-        pushToast("error", `解锁失败：${describeError(e)}`);
+        pushToast("error", t("解锁失败：{value}", { value: describeError(e) }));
         return false;
       }
     }
-    const pwd = await promptText(reason ?? "输入保护密码解锁凭据库", "", { secret: true });
+    const pwd = await promptText(reason ?? t("输入保护密码解锁凭据库"), "", { secret: true });
     if (pwd === null) return false;
     try {
       await vaultApi.unlock(pwd);
       void qc.invalidateQueries({ queryKey: ["vault-status"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
-      pushToast("success", "已解锁");
+      pushToast("success", t("已解锁"));
       return true;
     } catch (e) {
-      pushToast("error", `解锁失败：${describeError(e)}`);
+      pushToast("error", t("解锁失败：{value}", { value: describeError(e) }));
       return false;
     }
   };

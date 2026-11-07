@@ -12,11 +12,12 @@ import { useUi } from "../app/store";
 import { IconAlert, IconInfo } from "./icons";
 import { isImeKeyEvent } from "./imeKeyEvent";
 import "./a11y.css";
+import { t } from "../i18n";
 
 const DEFAULT_TITLE = {
-  ask: "确认",
-  confirm: "确认",
-  message: "提示",
+  ask: t("确认"),
+  confirm: t("确认"),
+  message: t("提示"),
 } as const;
 
 const FOCUSABLE = [
@@ -445,7 +446,7 @@ export function DialogHost() {
               className="nx-btn nx-btn-ghost"
               onClick={cancelActive}
             >
-              取消
+              {t("取消")}
             </button>
           </div>
         </div>
@@ -489,7 +490,7 @@ export function DialogHost() {
                   if (useUi.getState().appDialog === dialog) close(false);
                 }}
               >
-                取消
+                {t("取消")}
               </button>
             )}
             <button
@@ -500,7 +501,7 @@ export function DialogHost() {
                 if (useUi.getState().appDialog === dialog) close(true);
               }}
             >
-              确定
+              {t("确定")}
             </button>
           </div>
         </div>

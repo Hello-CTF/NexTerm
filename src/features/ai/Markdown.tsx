@@ -12,6 +12,7 @@ import {
   spanClasses,
 } from "./codeHighlight";
 import { ensureHighlightTheme } from "./highlightTheme";
+import { t as tr } from "../../i18n";
 
 type Block =
   | { kind: "code"; lang: string; code: string }
@@ -269,12 +270,12 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
         <span className="nx-md-pre-lang">{lang || "text"}</span>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="复制代码"
-          aria-label="复制代码"
+          title={tr("复制代码")}
+          aria-label={tr("复制代码")}
           onClick={() => {
             void copyText(code).then(
-              () => pushToast("success", "已复制到剪贴板"),
-              () => pushToast("error", "未能复制：剪贴板不可用，请手动选中代码复制"),
+              () => pushToast("success", tr("已复制到剪贴板")),
+              () => pushToast("error", tr("未能复制：剪贴板不可用，请手动选中代码复制")),
             );
           }}
         >

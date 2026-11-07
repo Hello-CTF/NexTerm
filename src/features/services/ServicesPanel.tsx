@@ -15,6 +15,7 @@ import { ServiceJournal } from "./ServiceJournal";
 import { ServiceOperationResults } from "./ServiceOperationResults";
 import { filterServiceUnits, SERVICE_ACTION_LABELS, serviceResultMessage, type ServiceStateFilter } from "./model";
 import { useExecOperation } from "./useExecOperation";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 const ROW_ACTIONS = ["status", "start", "stop", "restart", "reload", "enable", "disable"] as const;
@@ -83,10 +84,10 @@ export function ServicesPanel({
     }, `systemctl ${action} -- ${unit.trim()}`);
   };
 
-  const selectionError = selectedIds.length === 0 ? "请至少选择一个已连接的 SSH 或受管设备会话" : null;
+  const selectionError = selectedIds.length === 0 ? t("请至少选择一个已连接的 SSH 或受管设备会话") : null;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col" aria-label="systemd 服务管理" data-testid="services-panel">
+    <section className="flex min-h-0 flex-1 flex-col" aria-label={t("systemd 服务管理")} data-testid="services-panel">
       <div className="flex max-h-[52%] min-h-[220px] flex-col gap-3 overflow-y-auto border-b border-neutral-800/70 px-3 py-3">
         <TargetSetPicker
           targets={targets}
@@ -98,17 +99,17 @@ export function ServicesPanel({
           disabled={operation.running}
           maxTargets={MAX_TARGETS}
           metadataError={metadataError}
-          legend="服务管理目标"
-          searchAriaLabel="搜索服务管理目标"
+          legend={t("服务管理目标")}
+          searchAriaLabel={t("搜索服务管理目标")}
         />
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex min-w-52 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-            跨目标 unit
+            {t("跨目标 unit")}
             <input
               className="nx-input font-mono text-xs"
               value={unitName}
               disabled={operation.running}
-              aria-label="批量服务 unit"
+              aria-label={t("批量服务 unit")}
               placeholder="nginx.service"
               onChange={(event) => {
                 setUnitName(event.target.value);
@@ -117,8 +118,8 @@ export function ServicesPanel({
             />
           </label>
           <div className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            操作
-            <Select className="w-28" value={bulkAction} disabled={operation.running} ariaLabel="批量服务操作" onChange={(value) => {
+            {t("操作")}
+            <Select className="w-28" value={bulkAction} disabled={operation.running} ariaLabel={t("批量服务操作")} onChange={(value) => {
               setBulkAction(value);
               operation.clearProduction();
             }} options={Object.entries(SERVICE_ACTION_LABELS).map(([action, label]) => ({ value: action, label }))} />
@@ -128,7 +129,7 @@ export function ServicesPanel({
               setSudo(event.target.checked);
               operation.clearProduction();
             }} />
-            需要权限时使用 sudo -n
+            {t("需要权限时使用 sudo -n")}
           </label>
           <span className="nx-spacer" />
           <button type="button" className="nx-btn" disabled={operation.running || targets.length === 0} onClick={() => {
@@ -138,14 +139,14 @@ export function ServicesPanel({
             }
             load();
           }}>
-            <IconRefresh size={13} />加载服务
+            <IconRefresh size={13} />{t("加载服务")}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={operation.running || targets.length === 0 || !unitName.trim()} onClick={() => runAction(bulkAction, unitName, selectedIds)}>
-            <IconPlay size={13} />应用到已选目标
+            <IconPlay size={13} />{t("应用到已选目标")}
           </button>
         </div>
         <div className="text-[11px] leading-relaxed text-neutral-500">
-          sudo 仅非交互执行；需要密码或不可用时会显示在对应主机结果中。status 与 journal 为只读，写操作受批量执行的生产环境保护。
+          {t("sudo 仅非交互执行；需要密码或不可用时会显示在对应主机结果中。status 与 journal 为只读，写操作受批量执行的生产环境保护。")}
         </div>
         {selectionError && <div className="text-[11px] text-amber-300" role="status">{selectionError}</div>}
       </div>
@@ -156,12 +157,12 @@ export function ServicesPanel({
       {!journal && listBatch && (
         <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
           <IconServer size={13} className="text-neutral-500" />
-          <input className="nx-input nx-input-sm w-full sm:w-64" value={filter} placeholder="过滤 unit / 描述 / 状态" aria-label="过滤服务" onChange={(event) => setFilter(event.target.value)} />
-          <Select className="w-32" value={stateFilter} ariaLabel="服务状态过滤" onChange={(value) => setStateFilter(value as ServiceStateFilter)} options={[
-            { value: "all", label: "全部状态" }, { value: "running", label: "运行中" }, { value: "failed", label: "失败" },
-            { value: "inactive", label: "未运行" }, { value: "other", label: "其他" },
+          <input className="nx-input nx-input-sm w-full sm:w-64" value={filter} placeholder={t("过滤 unit / 描述 / 状态")} aria-label={t("过滤服务")} onChange={(event) => setFilter(event.target.value)} />
+          <Select className="w-32" value={stateFilter} ariaLabel={t("服务状态过滤")} onChange={(value) => setStateFilter(value as ServiceStateFilter)} options={[
+            { value: "all", label: t("全部状态") }, { value: "running", label: t("运行中") }, { value: "failed", label: t("失败") },
+            { value: "inactive", label: t("未运行") }, { value: "other", label: t("其他") },
           ]} />
-          <span className="nx-hint">批次 {listBatch.batchId}</span>
+          <span className="nx-hint">{t("批次")} {listBatch.batchId}</span>
         </div>
       )}
 
@@ -175,7 +176,7 @@ export function ServicesPanel({
       ) : (
         <div className="min-h-0 flex-1 overflow-auto">
           {!listBatch ? (
-            <div className="px-3 py-8 text-center text-[11px] text-neutral-500">选择主机并加载 systemd services；未使用 systemd 的主机将标记为「不支持」。</div>
+            <div className="px-3 py-8 text-center text-[11px] text-neutral-500">{t("选择主机并加载 systemd services；未使用 systemd 的主机将标记为「不支持」。")}</div>
           ) : listBatch.hosts.map((host) => {
             const units = filterServiceUnits(host.units, filter, stateFilter);
             const hostName = host.result.sessionName || host.result.sessionId;
@@ -183,28 +184,28 @@ export function ServicesPanel({
               <article key={host.result.sessionId} className="border-b border-neutral-800/70 px-3 py-3" data-session-id={host.result.sessionId}>
                 <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
                   <h3 className="font-medium text-neutral-200">{hostName}</h3>
-                  {host.systemd === "unsupported" ? <span className="nx-badge nx-badge-amber">unsupported：无 systemd</span> : (
-                    <span className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>{host.result.status === "success" ? `${host.units.length} 个 unit` : "加载失败"}</span>
+                  {host.systemd === "unsupported" ? <span className="nx-badge nx-badge-amber">{t("unsupported：无 systemd")}</span> : (
+                    <span className={host.result.status === "success" ? "text-green-300" : "text-red-300"}>{host.result.status === "success" ? t("{length} 个 unit", { length: host.units.length }) : t("加载失败")}</span>
                   )}
-                  {host.result.truncated && <span className="nx-badge nx-badge-amber">输出截断，列表可能不完整</span>}
+                  {host.result.truncated && <span className="nx-badge nx-badge-amber">{t("输出截断，列表可能不完整")}</span>}
                   <span className="nx-hint">{host.result.sessionId}</span>
                 </div>
                 {host.result.status !== "success" && (
                   <div role="alert" className="mb-2 whitespace-pre-wrap break-all text-[11px] text-red-300">{serviceResultMessage(host)}</div>
                 )}
                 {host.result.status === "success" && units.length === 0 && (
-                  <div className="py-2 text-[11px] text-neutral-500">没有匹配当前过滤条件的 service unit。</div>
+                  <div className="py-2 text-[11px] text-neutral-500">{t("没有匹配当前过滤条件的 service unit。")}</div>
                 )}
                 {units.length > 0 && (
                   <div className="nx-cards-wrap overflow-x-auto">
                     <table className="nx-table nx-table-cards nx-table-fixed min-w-[1120px]">
-                      <thead><tr><th className="w-1/4">Unit</th><th className="w-20">LOAD</th><th className="w-20">ACTIVE</th><th className="w-24">SUB</th><th>描述</th><th className="w-[490px]">操作</th></tr></thead>
+                      <thead><tr><th className="w-1/4">Unit</th><th className="w-20">LOAD</th><th className="w-20">ACTIVE</th><th className="w-24">SUB</th><th>{t("描述")}</th><th className="w-[490px]">{t("操作")}</th></tr></thead>
                       <tbody>
                         {units.map((unit) => (
                           <tr key={unit.name} data-unit={unit.name}>
                             <td data-label="" className="truncate font-mono text-neutral-200" title={unit.name}>{unit.name}</td>
                             <td data-label="LOAD">{unit.load}</td><td data-label="ACTIVE" className={unit.active === "failed" ? "text-red-300" : unit.active === "active" ? "text-green-300" : "text-neutral-400"}>{unit.active}</td><td data-label="SUB">{unit.sub}</td>
-                            <td data-label="描述" className="truncate text-neutral-400" title={unit.description}>{unit.description}</td>
+                            <td data-label={t("描述")} className="truncate text-neutral-400" title={unit.description}>{unit.description}</td>
                             <td data-label="">
                               <div className="flex flex-nowrap gap-1 @max-[640px]:flex-wrap">
                                 {ROW_ACTIONS.map((action) => (
@@ -222,7 +223,7 @@ export function ServicesPanel({
               </article>
             );
           })}
-          {actionBatch && <ServiceOperationResults batch={actionBatch} title="服务操作逐目标结果" />}
+          {actionBatch && <ServiceOperationResults batch={actionBatch} title={t("服务操作逐目标结果")} />}
         </div>
       )}
     </section>

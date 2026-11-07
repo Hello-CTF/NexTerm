@@ -1,4 +1,5 @@
 import { assetTagValues } from "./assetSearch";
+import { t } from "../../i18n";
 
 export interface SnippetVariable {
   name: string;
@@ -71,16 +72,16 @@ function parseToken(source: string): ParsedToken | null {
     } else if (option === "multiline") {
       multiline = true;
     } else if (option.startsWith("default=")) {
-      if (defaultValue !== undefined) throw new Error(`变量「${name}」重复定义默认值`);
+      if (defaultValue !== undefined) throw new Error(t("变量「{name}」重复定义默认值", { name }));
       defaultValue = option.slice("default=".length).trim();
     } else {
-      throw new Error(`变量「${name}」包含未知选项「${option}」`);
+      throw new Error(t("变量「{name}」包含未知选项「{option}」", { name, option }));
     }
   }
 
   const builtin = builtinKind(name);
   if (builtin && (defaultValue !== undefined || sections.length > 1)) {
-    throw new Error(`内建变量「${name}」不支持默认值或选项`);
+    throw new Error(t("内建变量「{name}」不支持默认值或选项", { name }));
   }
   return { variable: { name, required, defaultValue, multiline, builtin } };
 }
@@ -108,7 +109,7 @@ function parseTemplates(templates: readonly string[]): { tokens: ParsedToken[]; 
           existing.required !== variable.required ||
           existing.defaultValue !== variable.defaultValue
         ) {
-          throw new Error(`变量「${variable.name}」的必填或默认值定义不一致`);
+          throw new Error(t("变量「{name}」的必填或默认值定义不一致", { name: variable.name }));
         }
         existing.multiline ||= variable.multiline;
       } else {
@@ -146,26 +147,26 @@ export function analyzeSnippetSteps(commands: readonly string[]): SnippetTemplat
 }
 
 function assetValue(variable: ParsedVariable, asset: SnippetAsset | undefined): string {
-  if (!asset) throw new Error(`缺少目标资产信息，无法解析内建变量「${variable.name}」`);
+  if (!asset) throw new Error(t("缺少目标资产信息，无法解析内建变量「{name}」", { name: variable.name }));
   if (variable.builtin === "name") return asset.name;
   if (variable.builtin === "host") {
-    if (!asset.host) throw new Error(`目标资产缺少主机地址，无法解析内建变量「${variable.name}」`);
+    if (!asset.host) throw new Error(t("目标资产缺少主机地址，无法解析内建变量「{name}」", { name: variable.name }));
     return asset.host;
   }
   if (variable.builtin === "tags") return assetTagValues(asset.tags).join(", ");
-  throw new Error(`未知变量「${variable.name}」`);
+  throw new Error(t("未知变量「{name}」", { name: variable.name }));
 }
 
 function customValue(variable: ParsedVariable, values: SnippetVariableValues): string {
   const provided = Object.prototype.hasOwnProperty.call(values, variable.name);
   const value = provided ? values[variable.name] : variable.defaultValue;
   if (value === undefined) {
-    if (variable.required) throw new Error(`缺少必填变量「${variable.name}」`);
+    if (variable.required) throw new Error(t("缺少必填变量「{name}」", { name: variable.name }));
     return "";
   }
-  if (variable.required && value.length === 0) throw new Error(`必填变量「${variable.name}」不能为空`);
+  if (variable.required && value.length === 0) throw new Error(t("必填变量「{name}」不能为空", { name: variable.name }));
   if (!variable.multiline && /[\r\n]/.test(value)) {
-    throw new Error(`变量「${variable.name}」是单行变量，值不能包含换行`);
+    throw new Error(t("变量「{name}」是单行变量，值不能包含换行", { name: variable.name }));
   }
   return value;
 }
@@ -178,7 +179,7 @@ export function renderSnippetTemplate(
   const parsed = parseTemplate(template);
   if (parsed.tokens.length === 0) return template;
   if (parsed.unknownVariables.length > 0) {
-    throw new Error(`未知变量：${parsed.unknownVariables.map((name) => `「${name}」`).join("、")}`);
+    throw new Error(t("未知变量：{join}", { join: parsed.unknownVariables.map((name) => `「${name}」`).join("、") }));
   }
   const definitions = new Map(parsed.variables.map((variable) => [variable.name, variable]));
   return template.replace(TOKEN_PATTERN, (raw, source: string) => {
@@ -187,7 +188,7 @@ export function renderSnippetTemplate(
     const { variable } = token;
     if (variable.builtin) return assetValue(variable, asset);
     const definition = definitions.get(variable.name);
-    if (!definition) throw new Error(`未知变量「${variable.name}」`);
+    if (!definition) throw new Error(t("未知变量「{name}」", { name: variable.name }));
     return customValue({ ...variable, ...definition, builtin: null }, values);
   });
 }
@@ -202,7 +203,7 @@ export function renderSnippetForTargets(
       return { id: target.id, command: renderSnippetTemplate(template, values, target.asset) };
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      throw new Error(`目标「${target.label ?? target.id}」：${message}`);
+      throw new Error(t("目标「{value}」：{message}", { value: target.label ?? target.id, message }));
     }
   });
 }

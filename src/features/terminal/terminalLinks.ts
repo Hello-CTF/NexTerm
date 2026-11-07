@@ -1,5 +1,6 @@
 import type { ILinkHandler } from "@xterm/xterm";
 import type { DetectedTarget } from "./terminalLinkProvider";
+import { t } from "../../i18n";
 
 // One link policy for URLs detected in the text (terminalLinkProvider) and OSC 8
 // hyperlinks (xterm's linkHandler). Links open with Ctrl+click (Cmd+click on
@@ -81,7 +82,7 @@ export function shouldOpenLink(
 
 export function linkOpenHint(activation: TerminalLinkActivation, mac = isMacPlatform(), mouseTracking = false): string {
   const keys = [...(activation === "modifier" ? [linkModifierLabel(mac)] : []), ...(mouseTracking ? ["Shift"] : [])];
-  return keys.length ? `${keys.join("+")}+单击打开` : "单击打开";
+  return keys.length ? t("{join}+单击打开", { join: keys.join("+") }) : t("单击打开");
 }
 
 function mailtoForOpening(url: URL): string {
@@ -128,25 +129,25 @@ export function displayTerminalLink(uri: string): string {
 }
 
 export function planTerminalLink(uri: string): TerminalLinkPlan {
-  if (new RegExp(UNSAFE_CHARS.source).test(uri)) return { kind: "blocked", reason: "链接包含控制字符" };
+  if (new RegExp(UNSAFE_CHARS.source).test(uri)) return { kind: "blocked", reason: t("链接包含控制字符") };
   let url: URL;
   try {
     url = new URL(uri);
   } catch {
-    return { kind: "blocked", reason: "不是有效的链接" };
+    return { kind: "blocked", reason: t("不是有效的链接") };
   }
   const scheme = url.protocol.toLowerCase();
   if (DANGEROUS_SCHEMES.has(scheme) || DENIED_HANDLER_SCHEMES.has(scheme)) {
-    return { kind: "blocked", reason: `不允许打开 ${scheme} 链接` };
+    return { kind: "blocked", reason: t("不允许打开 {scheme} 链接", { scheme }) };
   }
   if (scheme === "http:" || scheme === "https:") {
-    return url.hostname ? { kind: "external", url: url.href } : { kind: "blocked", reason: "链接缺少主机名" };
+    return url.hostname ? { kind: "external", url: url.href } : { kind: "blocked", reason: t("链接缺少主机名") };
   }
   if (scheme === "mailto:") return { kind: "external", url: mailtoForOpening(url) };
   if (scheme === "file:") {
     const decoded = safeDecode(url.pathname);
     if (decoded === null || new RegExp(UNSAFE_CHARS.source).test(decoded)) {
-      return { kind: "blocked", reason: "文件路径无效" };
+      return { kind: "blocked", reason: t("文件路径无效") };
     }
     // file:///C:/dir is a Windows drive path.
     const path = /^\/[A-Za-z]:(\/|$)/.test(decoded) ? decoded.slice(1) : decoded;
@@ -223,12 +224,12 @@ async function openFileLink(path: string, deps: TerminalLinkDeps): Promise<void>
   try {
     entries = await deps.listDirectory(deps.sessionId, parent);
   } catch (error) {
-    deps.notify("error", `无法打开 ${path}：${deps.describeError(error)}`);
+    deps.notify("error", t("无法打开 {path}：{describeError}", { path, describeError: deps.describeError(error) }));
     return;
   }
   const entry = entries.find((candidate) => candidate.name === name);
   if (!entry) {
-    deps.notify("error", `找不到 ${path}`);
+    deps.notify("error", t("找不到 {path}", { path }));
     return;
   }
   if (entry.kind === "dir") {
@@ -236,7 +237,7 @@ async function openFileLink(path: string, deps: TerminalLinkDeps): Promise<void>
     return;
   }
   if (!deps.isEditableFile(name)) {
-    deps.notify("info", `「${name}」不是文本文件，不能在线编辑；可以下载到本机后打开`);
+    deps.notify("info", t("「{name}」不是文本文件，不能在线编辑；可以下载到本机后打开", { name }));
     return;
   }
   deps.openFile(deps.sessionId, entry.path || trimmed);
@@ -247,7 +248,7 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
   const plan = planTerminalLink(uri);
   switch (plan.kind) {
     case "blocked":
-      deps.notify("error", `已阻止打开链接（${plan.reason}）：${shown}`);
+      deps.notify("error", t("已阻止打开链接（{reason}）：{shown}", { reason: plan.reason, shown }));
       return;
     case "external": {
       if (deps.openInApp && /^https?:/i.test(plan.url)) {
@@ -263,37 +264,37 @@ export async function openTerminalLink(uri: string, deps: TerminalLinkDeps): Pro
       try {
         await deps.openExternal(plan.url);
       } catch (error) {
-        deps.notify("error", `无法打开链接 ${shown}：${deps.describeError(error)}`);
+        deps.notify("error", t("无法打开链接 {shown}：{describeError}", { shown, describeError: deps.describeError(error) }));
       }
       return;
     }
     case "confirm": {
       const ok = await deps.confirm(
-        `终端中的链接使用 ${plan.scheme}: 协议，将交给系统中注册的程序处理。请仅在信任来源时打开。\n\n${shown}`,
-        "打开外部链接",
+        t("终端中的链接使用 {scheme}: 协议，将交给系统中注册的程序处理。请仅在信任来源时打开。\n\n{shown}", { scheme: plan.scheme, shown }),
+        t("打开外部链接"),
       );
       if (!ok) return;
       try {
         await deps.openExternal(plan.url);
       } catch (error) {
-        deps.notify("error", `无法打开链接 ${shown}：${deps.describeError(error)}`);
+        deps.notify("error", t("无法打开链接 {shown}：{describeError}", { shown, describeError: deps.describeError(error) }));
       }
       return;
     }
     case "file": {
       if (deps.containerId) {
-        deps.notify("info", `容器终端中的文件链接无法在文件面板打开：${shown}`);
+        deps.notify("info", t("容器终端中的文件链接无法在文件面板打开：{shown}", { shown }));
         return;
       }
       const matches = fileLinkHostMatches(plan.host, await deps.sessionHost());
       if (matches === false) {
-        deps.notify("info", `链接指向其他主机 ${plan.host}，未打开：${shown}`);
+        deps.notify("info", t("链接指向其他主机 {host}，未打开：{shown}", { host: plan.host, shown }));
         return;
       }
       if (matches === null) {
         const ok = await deps.confirm(
-          `链接指向主机 ${plan.host}，无法确认它就是当前会话的主机。\n\n${shown}\n\n要在当前会话中打开 ${plan.path} 吗？`,
-          "打开文件链接",
+          t("链接指向主机 {host}，无法确认它就是当前会话的主机。\n\n{shown}\n\n要在当前会话中打开 {path} 吗？", { host: plan.host, shown, path: plan.path }),
+          t("打开文件链接"),
         );
         if (!ok) return;
       }
@@ -345,8 +346,8 @@ export const INACTIVE_CLICK_INTERVAL_MS = 10_000;
 export function inactiveClickMessage(activation: TerminalLinkActivation, mac: boolean, mouseTracking: boolean): string {
   const hint = linkOpenHint(activation, mac, mouseTracking).replace(/打开$/, "");
   return mouseTracking
-    ? `终端程序正在捕获鼠标，需 ${hint}打开链接，或右键选择「打开链接」`
-    : `需要 ${hint}打开链接，也可以右键选择「打开链接」`;
+    ? t("终端程序正在捕获鼠标，需 {hint}打开链接，或右键选择「打开链接」", { hint })
+    : t("需要 {hint}打开链接，也可以右键选择「打开链接」", { hint });
 }
 
 export function createTerminalLinkController(options: TerminalLinkControllerOptions): TerminalLinkController {
@@ -393,7 +394,7 @@ export function createTerminalLinkController(options: TerminalLinkControllerOpti
     target.textContent = displayTerminalLink(hoveredUri);
     const mouseTracking = tracking();
     hint.textContent =
-      linkOpenHint(options.activation(), mac, mouseTracking) + (mouseTracking ? "，或右键选择「打开链接」" : "");
+      linkOpenHint(options.activation(), mac, mouseTracking) + (mouseTracking ? t("，或右键选择「打开链接」") : "");
     const rect = host.getBoundingClientRect();
     tooltip.style.left = `${Math.max(0, pointer.x - rect.left + 8)}px`;
     tooltip.style.top = `${Math.max(0, pointer.y - rect.top + 16)}px`;

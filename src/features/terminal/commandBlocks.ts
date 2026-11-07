@@ -1,4 +1,5 @@
 import type { IDisposable, IMarker, Terminal } from "@xterm/xterm";
+import { t } from "../../i18n";
 
 export interface CommandBlock {
   index: number;
@@ -142,7 +143,7 @@ export class CommandBlockManager {
     switch (phase) {
       case "C": {
         this.closeLast(now);
-        const command = this.submitted || this.echoLine() || "（命令）";
+        const command = this.submitted || this.echoLine() || t("（命令）");
         this.submitted = "";
         const marker = this.term.registerMarker(this.commandLineOffset()) ?? this.term.registerMarker(0);
         if (!marker) {

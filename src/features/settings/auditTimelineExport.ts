@@ -1,9 +1,10 @@
 import type { AuditTimelineItem, AuditTimelinePage, AuditTimelineRequest } from "../../ipc/auditTimelineApi";
+import { t } from "../../i18n";
 
 export const TIMELINE_EXPORT_MAX = 10000;
 const EXPORT_PAGE_SIZE = 500;
 
-const HEADER = ["时间", "来源", "主机", "类型", "命令/操作", "退出码", "耗时 ms", "会话", "详情 JSON"];
+const HEADER = [t("时间"), t("来源"), t("主机"), t("类型"), t("命令/操作"), t("退出码"), t("耗时 ms"), t("会话"), t("详情 JSON")];
 
 function cell(value: string): string {
   // Spreadsheet apps evaluate cells that start with these characters as formulas.

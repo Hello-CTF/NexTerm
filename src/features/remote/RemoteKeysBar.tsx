@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { MODIFIER_LABEL } from "./keys";
 import { MODIFIER_KEYS, type ModifierKey } from "./remoteTypes";
+import { t } from "../../i18n";
 
 const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
 
@@ -39,7 +40,7 @@ export function RemoteKeysBar({
 }) {
   const [functionOpen, setFunctionOpen] = useState(false);
   return (
-    <div className="nx-terminal-keys" role="toolbar" aria-label="远程桌面辅助按键" data-testid="remote-keys-bar">
+    <div className="nx-terminal-keys" role="toolbar" aria-label={t("远程桌面辅助按键")} data-testid="remote-keys-bar">
       {MODIFIER_KEYS.map((key) => (
         <button
           key={key}
@@ -75,11 +76,11 @@ export function RemoteKeysBar({
       <button
         type="button"
         className={`nx-terminal-key nx-terminal-keyboard ${keyboardActive ? "is-active" : ""}`}
-        aria-label="键盘"
+        aria-label={t("键盘")}
         onMouseDown={keepFocus}
         onClick={onKeyboard}
       >
-        键盘
+        {t("键盘")}
       </button>
     </div>
   );

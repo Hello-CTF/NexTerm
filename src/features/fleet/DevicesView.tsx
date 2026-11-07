@@ -44,6 +44,7 @@ import { MetricsPanel } from "./MetricsPanel";
 import { EnrollPanel, ENROLL_TTL_OPTIONS, type IssuedEnrollCode } from "./EnrollPanel";
 import { releaseOrNull, shellQuote } from "./installCommand";
 import { showSettingsSection } from "../settings/settingsNavigation";
+import { t } from "../../i18n";
 
 
 function enrollCommand(baseUrl: string, insecure: boolean, code: string): string {
@@ -56,8 +57,8 @@ function installCommand(): string {
 
 function copyText(text: string, pushToast: (kind: "info" | "error" | "success", text: string) => void, what: string): void {
   void copyToClipboard(text)
-    .then(() => pushToast("success", `${what}已复制`))
-    .catch(() => pushToast("error", "复制失败，请手动复制"));
+    .then(() => pushToast("success", t("{what}已复制", { what })))
+    .catch(() => pushToast("error", t("复制失败，请手动复制")));
 }
 
 function FleetUnsupported() {
@@ -65,7 +66,7 @@ function FleetUnsupported() {
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">设备管理</span>
+        <span className="nx-toolbar-title">{t("设备管理")}</span>
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
         <div className="flex w-full max-w-[340px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -74,16 +75,16 @@ function FleetUnsupported() {
           </div>
           <div>
             <div className="text-[13.5px] font-semibold tracking-tight text-neutral-100">
-              登录服务端账号后可用
+              {t("登录服务端账号后可用")}
             </div>
-            <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">登录服务端账号后可管理设备。</div>
+            <div className="mt-1 text-[11.5px] leading-relaxed text-neutral-500">{t("登录服务端账号后可管理设备。")}</div>
           </div>
           <button
             type="button"
             className="nx-btn nx-btn-outline nx-btn-sm"
             onClick={() => openAccountSyncSettings()}
           >
-            前往「设置 → 账号同步」登录
+            {t("前往「设置 → 账号同步」登录")}
           </button>
         </div>
       </div>
@@ -93,7 +94,7 @@ function FleetUnsupported() {
 
 // openAccountSyncSettings opens the settings tab on the "account sync" section.
 function openAccountSyncSettings(): void {
-  useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+  useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
   showSettingsSection("settings-account");
 }
 
@@ -165,14 +166,14 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
   const revoke = async () => {
     const ok = await ask(
-      `确定要撤销设备「${device.name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开，且无法恢复。设备上的文件和程序不会被删除；如需再次使用，请重新生成接入码并接入。`,
-      { title: "撤销接入", kind: "warning" },
+      t("确定要撤销设备「{name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开，且无法恢复。设备上的文件和程序不会被删除；如需再次使用，请重新生成接入码并接入。", { name: device.name }),
+      { title: t("撤销接入"), kind: "warning" },
     );
     if (!ok) return;
     setBusy(true);
     try {
       await fleetClient().revoke(device.id);
-      pushToast("success", `已撤销「${device.name}」的接入`);
+      pushToast("success", t("已撤销「{name}」的接入", { name: device.name }));
       onRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -186,8 +187,8 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const desired = !agent.desired_autostart;
     if (!online) {
       const ok = await ask(
-        `设备「${device.name}」当前离线。\n\n设置已保存，设备下次连接服务器后生效。`,
-        { title: "设备离线", kind: "info" },
+        t("设备「{name}」当前离线。\n\n设置已保存，设备下次连接服务器后生效。", { name: device.name }),
+        { title: t("设备离线"), kind: "info" },
       );
       if (!ok) return;
     }
@@ -195,7 +196,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     try {
       const r = await fleetClient().setAutostart(device.id, desired);
       onPatch(device.id, { agent: { ...agent, desired_autostart: r.desired_autostart } });
-      pushToast("success", `已${r.desired_autostart ? "开启" : "关闭"}「${device.name}」的随登录自动启动`);
+      pushToast("success", t("已{value}「{name}」的随登录自动启动", { value: r.desired_autostart ? t("开启") : t("关闭"), name: device.name }));
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -208,14 +209,14 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const enabled = !agent.terminal_enabled;
     if (!enabled) {
       const ok = await ask(
-        `确定要关闭「${device.name}」的远程终端吗？\n\n关闭后设备拒绝新的远程终端、文件和转发连接，已有连接保留，可随时重新开启。${online ? "" : "\n\n设备当前离线，将在下次连接服务器后生效。"}`,
-        { title: "关闭远程终端", kind: "warning" },
+        t("确定要关闭「{name}」的远程终端吗？\n\n关闭后设备拒绝新的远程终端、文件和转发连接，已有连接保留，可随时重新开启。{value}", { name: device.name, value: online ? "" : t("\n\n设备当前离线，将在下次连接服务器后生效。") }),
+        { title: t("关闭远程终端"), kind: "warning" },
       );
       if (!ok) return;
     } else if (!online) {
       const ok = await ask(
-        `设备「${device.name}」当前离线。\n\n此次修改会先保存在服务器上，设备下次连接服务器后生效。`,
-        { title: "设备离线", kind: "info" },
+        t("设备「{name}」当前离线。\n\n此次修改会先保存在服务器上，设备下次连接服务器后生效。", { name: device.name }),
+        { title: t("设备离线"), kind: "info" },
       );
       if (!ok) return;
     }
@@ -223,7 +224,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     try {
       const r = await fleetClient().setTerminalAccess(device.id, enabled);
       onPatch(device.id, { agent: { ...agent, terminal_enabled: r.terminal_enabled } });
-      pushToast("success", `已${r.terminal_enabled ? "开启" : "关闭"}「${device.name}」的远程终端`);
+      pushToast("success", t("已{value}「{name}」的远程终端", { value: r.terminal_enabled ? t("开启") : t("关闭"), name: device.name }));
     } catch (e) {
       pushToast("error", describeError(e));
     } finally {
@@ -242,7 +243,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const serviceState = agent?.service_state;
   const hasServiceReport = Boolean(serviceState && (serviceState.installed || serviceState.enabled || serviceState.active || serviceState.last_reconcile_at));
   const autostartActual = Boolean(serviceState?.installed && serviceState?.enabled);
-  const runningText = !hasServiceReport ? "未上报" : serviceState?.active ? "运行中" : "未运行";
+  const runningText = !hasServiceReport ? t("未上报") : serviceState?.active ? t("运行中") : t("未运行");
   // A desktop exposing its local terminals runs inside the desktop app and has no autostart service.
   const localHelper = device.kind === "local-helper";
   const autostartDrift = Boolean(agent && hasServiceReport && agent.desired_autostart !== autostartActual && !revoked && !localHelper);
@@ -251,31 +252,31 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const openMenu = (e: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const items: MenuItem[] = [];
-    items.push({ kind: "item", label: "主机详情", hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) });
-    items.push({ kind: "item", label: "复制设备名称", onSelect: () => copyText(device.name, pushToast, "设备名称") });
+    items.push({ kind: "item", label: t("主机详情"), hint: t("会话、容器和指标"), onSelect: () => openHostDetail(deviceAssetId(device.id)) });
+    items.push({ kind: "item", label: t("复制设备名称"), onSelect: () => copyText(device.name, pushToast, t("设备名称")) });
     if (agent?.current_url) {
       const url = agent.current_url;
-      items.push({ kind: "item", label: "复制接入地址", onSelect: () => copyText(url, pushToast, "接入地址") });
+      items.push({ kind: "item", label: t("复制接入地址"), onSelect: () => copyText(url, pushToast, t("接入地址")) });
     }
     items.push({ kind: "separator" });
-    items.push({ kind: "item", label: "撤销接入…", icon: <IconTrash size={12} />, danger: true, disabled: busy, onSelect: () => void revoke() });
+    items.push({ kind: "item", label: t("撤销接入…"), icon: <IconTrash size={12} />, danger: true, disabled: busy, onSelect: () => void revoke() });
     setMenu({ x: rect.left, y: rect.bottom + 4, items, title: device.name });
   };
 
-  const statusLabel = revoked ? "已撤销接入" : agent ? (online ? "在线" : "离线") : "未安装设备代理";
+  const statusLabel = revoked ? t("已撤销接入") : agent ? (online ? t("在线") : t("离线")) : t("未安装设备代理");
   const statusTone = revoked ? "text-red-300" : online ? "text-green-300" : "text-neutral-300";
   const statusTitle = !agent || revoked
     ? undefined
     : online
-      ? heartbeatOnline ? "最近 3 分钟内与服务器有联系" : "与服务器保持连接"
-      : `最近一次上报：${lastSeenAt ? formatTime(lastSeenAt) : "从未"}`;
+      ? heartbeatOnline ? t("最近 3 分钟内与服务器有联系") : t("与服务器保持连接")
+      : t("最近一次上报：{value}", { value: lastSeenAt ? formatTime(lastSeenAt) : t("从未") });
 
   const lastSeenText = lastSeenAt ? (
     <time dateTime={new Date(lastSeenAt).toISOString()} title={formatTime(lastSeenAt)}>
-      {relativeTime(lastSeenAt, now)}上报
+      {relativeTime(lastSeenAt, now)}{t("上报")}
     </time>
   ) : (
-    <span>尚未上报</span>
+    <span>{t("尚未上报")}</span>
   );
 
   return (
@@ -290,11 +291,11 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         {agent?.platform && <span className="nx-hint shrink-0">{platformLabel(agent.platform)}</span>}
         {!revoked && alertCount > 0 && (
           <span className="nx-badge nx-badge-amber shrink-0" data-testid="device-alert-badge">
-            {alertCount} 条告警
+            {alertCount} {t("条告警")}
           </span>
         )}
         {isAdmin && device.owner && (
-          <span className="nx-badge nx-badge-blue shrink-0" title={`所有者 ${device.owner.username}`}>
+          <span className="nx-badge nx-badge-blue shrink-0" title={t("所有者 {username}", { username: device.owner.username })}>
             {device.owner.username}
           </span>
         )}
@@ -303,11 +304,11 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
           <button
             type="button"
             className="nx-btn nx-btn-primary nx-btn-sm shrink-0"
-            title="在该设备上打开工作区"
+            title={t("在该设备上打开工作区")}
             onClick={() => void connectDevice(device)}
           >
             <IconTerminal size={11} />
-            打开工作区
+            {t("打开工作区")}
           </button>
         )}
         {!revoked && agent && !online && (
@@ -317,14 +318,14 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             aria-expanded={reasonOpen}
             onClick={() => setReasonOpen(!reasonOpen)}
           >
-            离线原因
+            {t("离线原因")}
           </button>
         )}
         {!revoked && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-            aria-label="更多操作"
+            aria-label={t("更多操作")}
             aria-haspopup="menu"
             onClick={openMenu}
           >
@@ -335,36 +336,36 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-neutral-400">
         {revoked ? (
-          <span className="text-red-300">撤销于 {formatTime(device.revoked_at)}</span>
+          <span className="text-red-300">{t("撤销于")} {formatTime(device.revoked_at)}</span>
         ) : agent ? (
           <>
             {lastSeenText}
             {agent.app_version && <span>· v{agent.app_version.replace(/^v/i, "")}</span>}
             <span className={agent.terminal_enabled ? "" : "text-amber-300"}>
-              · 远程终端{agent.terminal_enabled ? "已开启" : "已关闭"}
+              {t("· 远程终端")}{agent.terminal_enabled ? t("已开启") : t("已关闭")}
             </span>
             {sharedHelper && (
-              <span title="两个设备连接同一个持久终端组件，会话只列出一份（经代理设备）；各自的设置仍然独立。">· {sharedHelper}</span>
+              <span title={t("两个设备连接同一个持久终端组件，会话只列出一份（经代理设备）；各自的设置仍然独立。")}>· {sharedHelper}</span>
             )}
           </>
         ) : (
-          <span>{device.kind === "browser" ? "浏览器设备" : device.kind === "local-helper" ? "桌面本机终端" : device.kind} · 创建于 {formatTime(device.created_at)}</span>
+          <span>{device.kind === "browser" ? t("浏览器设备") : device.kind === "local-helper" ? t("桌面本机终端") : device.kind} {t("· 创建于")} {formatTime(device.created_at)}</span>
         )}
       </div>
 
       {versionBehind && (
         <div className="nx-hint mt-1 text-[11px]" role="note">
-          设备代理版本过旧（设备 {agentRelease}，服务端 {serverRelease}）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需使用安装脚本重新安装一次）。
+          {t("设备代理版本过旧（设备")} {agentRelease}{t("，服务端")} {serverRelease}{t("）。请重新安装，或在设备上运行 nexterm-agent update（1.2.x 需使用安装脚本重新安装一次）。")}
         </div>
       )}
 
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
           <div>
-            设备{lastSeenAt ? `自 ${formatTime(lastSeenAt)} 起未再联系服务器` : "尚未联系过服务器"}。常见原因：设备关机或断网，或后台服务未运行。
+            {t("设备")}{lastSeenAt ? t("自 {value} 起未再联系服务器", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务器")}{t("。常见原因：设备关机或断网，或后台服务未运行。")}
           </div>
           <div className="mt-1 text-neutral-400">
-            请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行 <code className="nx-code font-mono">nexterm-agent install</code>。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。
+            {t("请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行")} <code className="nx-code font-mono">nexterm-agent install</code>{t("。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。")}
           </div>
         </div>
       )}
@@ -373,22 +374,22 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-amber-300" role="status">
           <span>
             {agent?.desired_autostart
-              ? "已设置随用户登录自动启动，但当前未生效"
-              : "已设置不自动启动，但后台服务当前仍会随登录启动"}
+              ? t("已设置随用户登录自动启动，但当前未生效")
+              : t("已设置不自动启动，但后台服务当前仍会随登录启动")}
           </span>
-          {!online && <span className="nx-hint">设备离线，上线后生效</span>}
+          {!online && <span className="nx-hint">{t("设备离线，上线后生效")}</span>}
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
             onClick={() => setDetailsOpen(true)}
           >
-            查看详情
+            {t("查看详情")}
           </button>
         </div>
       )}
       {!revoked && serviceError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
-          后台服务出错：{serviceError}
+          {t("后台服务出错：")}{serviceError}
         </div>
       )}
 
@@ -401,65 +402,65 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
             aria-expanded={detailsOpen}
           >
             {detailsOpen ? <IconChevronUp size={11} /> : <IconChevronDown size={11} />}
-            详情
+            {t("详情")}
           </button>
         </div>
       )}
 
       {!revoked && agent && detailsOpen && (
         <dl className="m-0 mt-2 flex flex-col gap-1.5">
-          <DetailRow label="创建时间">{formatTime(device.created_at)}</DetailRow>
-          <DetailRow label="设备代理版本">{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : "未上报"}</DetailRow>
-          {agent.platform && <DetailRow label="系统平台">{platformLabel(agent.platform)}</DetailRow>}
-          <DetailRow label="接入地址">
+          <DetailRow label={t("创建时间")}>{formatTime(device.created_at)}</DetailRow>
+          <DetailRow label={t("设备代理版本")}>{agent.app_version ? `v${agent.app_version.replace(/^v/i, "")}` : t("未上报")}</DetailRow>
+          {agent.platform && <DetailRow label={t("系统平台")}>{platformLabel(agent.platform)}</DetailRow>}
+          <DetailRow label={t("接入地址")}>
             {agent.current_url ? (
               <span className="flex flex-wrap items-center gap-2">
                 <code className="nx-code min-w-0 break-all font-mono text-[11.5px]">{agent.current_url}</code>
                 <button
                   type="button"
                   className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-                  aria-label="复制接入地址"
-                  onClick={() => copyText(agent.current_url, pushToast, "接入地址")}
+                  aria-label={t("复制接入地址")}
+                  onClick={() => copyText(agent.current_url, pushToast, t("接入地址"))}
                 >
                   <IconCopy size={11} />
-                  复制
+                  {t("复制")}
                 </button>
               </span>
             ) : (
-              <span className="nx-hint">未上报</span>
+              <span className="nx-hint">{t("未上报")}</span>
             )}
           </DetailRow>
-          <DetailRow label="远程终端">
+          <DetailRow label={t("远程终端")}>
             <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
-                aria-label="远程终端"
+                aria-label={t("远程终端")}
                 checked={agent.terminal_enabled}
                 disabled={busy}
                 onChange={() => void toggleTerminal()}
               />
-              <span>{agent.terminal_enabled ? "已开启" : "已关闭"}</span>
-              <span className="nx-hint">· {agent.terminal_enabled ? "允许新建终端、文件和端口转发连接" : "拒绝新建远程连接，已打开的连接不受影响"}</span>
+              <span>{agent.terminal_enabled ? t("已开启") : t("已关闭")}</span>
+              <span className="nx-hint">· {agent.terminal_enabled ? t("允许新建终端、文件和端口转发连接") : t("拒绝新建远程连接，已打开的连接不受影响")}</span>
             </label>
-            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：服务器立即按新设置处理连接请求，设备上线后同步</div>}
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：服务器立即按新设置处理连接请求，设备上线后同步")}</div>}
           </DetailRow>
-          {!localHelper && <DetailRow label="随登录自动启动">
+          {!localHelper && <DetailRow label={t("随登录自动启动")}>
             <label className="flex flex-wrap items-center gap-1.5">
               <input
                 type="checkbox"
-                aria-label="随登录自动启动"
+                aria-label={t("随登录自动启动")}
                 checked={agent.desired_autostart}
                 disabled={busy}
                 onChange={() => void toggleAutostart()}
               />
-              <span>{agent.desired_autostart ? "已设置自动启动" : "未设置自动启动"}</span>
+              <span>{agent.desired_autostart ? t("已设置自动启动") : t("未设置自动启动")}</span>
               <span className="nx-hint">
-                · 当前{hasServiceReport ? (autostartActual ? "已生效" : "未生效") : "未上报"}
+                {t("· 当前")}{hasServiceReport ? (autostartActual ? t("已生效") : t("未生效")) : t("未上报")}
               </span>
             </label>
-            {!online && <div className="nx-hint mt-0.5 text-[11px]">设备离线：设置已保存，设备上线后生效</div>}
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：设置已保存，设备上线后生效")}</div>}
           </DetailRow>}
-          <DetailRow label="后台服务">{runningText}</DetailRow>
+          <DetailRow label={t("后台服务")}>{runningText}</DetailRow>
         </dl>
       )}
 
@@ -471,7 +472,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       {!agent && !revoked && (
         <div className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
-          该设备未安装设备代理，无运行状态和指标。
+          {t("该设备未安装设备代理，无运行状态和指标。")}
         </div>
       )}
       {createPortal(<ContextMenu state={menu} onClose={() => setMenu(null)} />, document.body)}
@@ -773,8 +774,8 @@ export function DevicesView() {
       <div className="nx-pane">
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
-          <span className="nx-toolbar-title">设备管理</span>
-          <span className="nx-hint">正在读取账号状态…</span>
+          <span className="nx-toolbar-title">{t("设备管理")}</span>
+          <span className="nx-hint">{t("正在读取账号状态…")}</span>
         </div>
       </div>
     );
@@ -790,7 +791,7 @@ export function DevicesView() {
       <div className="nx-pane">
         <div className="nx-toolbar flex-wrap">
           <IconMonitor size={14} className="text-neutral-500" />
-          <span className="nx-toolbar-title">设备管理</span>
+          <span className="nx-toolbar-title">{t("设备管理")}</span>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6">
           <div className="flex w-full max-w-[320px] flex-col items-center gap-3 rounded-xl border border-neutral-800/70 bg-neutral-950/45 px-6 py-7 text-center">
@@ -799,9 +800,9 @@ export function DevicesView() {
             </div>
             <div>
               <div className="text-[13px] text-neutral-300">
-                {authOff ? "该服务器已关闭账号功能，设备管理不可用。" : "登录后方可查看与管理设备。"}
+                {authOff ? t("该服务器已关闭账号功能，设备管理不可用。") : t("登录后方可查看与管理设备。")}
               </div>
-              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">登录入口位于「设置 → 账号同步」的「账号」卡片。</div>}
+              {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">{t("登录入口位于「设置 → 账号同步」的「账号」卡片。")}</div>}
             </div>
           </div>
         </div>
@@ -815,23 +816,23 @@ export function DevicesView() {
 
   const jumpToBaseUrls = () => {
     document.getElementById("fleet-base-urls")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    document.querySelector<HTMLInputElement>('input[aria-label="新接入地址"]')?.focus({ preventScroll: true });
+    document.querySelector<HTMLInputElement>(t("input[aria-label=\"新接入地址\"]"))?.focus({ preventScroll: true });
   };
 
   const manualRows = (code: string) => ({
     enroll: baseUrls.map((entry) => ({
       key: `enroll:${entry.url}`,
-      label: baseUrls.length > 1 ? `接入：${entry.url}` : "接入",
-      what: `${entry.url} 的接入命令`,
+      label: baseUrls.length > 1 ? t("接入：{url}", { url: entry.url }) : t("接入"),
+      what: t("{url} 的接入命令", { url: entry.url }),
       command: enrollCommand(entry.url, Boolean(entry.insecure), code),
     })),
-    install: { key: "install", label: "安装后台服务", what: "安装命令", command: installCommand() },
+    install: { key: "install", label: t("安装后台服务"), what: t("安装命令"), command: installCommand() },
   });
   const outdatedNote = (d: FleetDevice): string | null => {
     const agentRelease = releaseVersion(d.agent?.app_version);
     const serverRelease = releaseVersion(listServerVersion ?? serverVersion);
     if (!agentRelease || !serverRelease || !olderRelease(agentRelease, serverRelease)) return null;
-    return `设备代理版本较旧（v${agentRelease}，服务器为 v${serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。`;
+    return t("设备代理版本较旧（v{agentRelease}，服务器为 v{serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
   };
   const closeEnroll = () => {
     setEnrollOpen(false);
@@ -860,11 +861,11 @@ export function DevicesView() {
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconMonitor size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">设备管理</span>
+        <span className="nx-toolbar-title">{t("设备管理")}</span>
         <span className="nx-hint">
-          {error && devices === null ? "未能加载设备列表" : devices === null ? "正在加载…" : `共 ${devices.length} 台`}
+          {error && devices === null ? t("未能加载设备列表") : devices === null ? t("正在加载…") : t("共 {length} 台", { length: devices.length })}
         </span>
-        {error && devices !== null && <span className="nx-hint text-red-300">未能刷新设备列表：{error}</span>}
+        {error && devices !== null && <span className="nx-hint text-red-300">{t("未能刷新设备列表：")}{error}</span>}
         <div className="nx-spacer" />
         <button
           ref={enrollButtonRef}
@@ -875,11 +876,11 @@ export function DevicesView() {
           aria-expanded={enrollOpen}
         >
           <IconPlus size={12} />
-          接入新设备
+          {t("接入新设备")}
         </button>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={load} disabled={loading}>
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
@@ -891,29 +892,29 @@ export function DevicesView() {
               className="nx-input min-w-[180px] flex-1"
               style={{ maxWidth: 360 }}
               value={deviceQuery}
-              aria-label="搜索设备"
-              placeholder="按名称、平台或地址搜索"
+              aria-label={t("搜索设备")}
+              placeholder={t("按名称、平台或地址搜索")}
               onChange={(e) => setDeviceQuery(e.target.value)}
             />
             <Select
               className="w-[132px] shrink-0"
               value={deviceFilter}
-              ariaLabel="设备状态过滤"
+              ariaLabel={t("设备状态过滤")}
               onChange={(value) => setDeviceFilter(value as typeof deviceFilter)}
               options={[
-                { value: "all", label: "全部" },
-                { value: "online", label: "在线" },
-                { value: "offline", label: "离线" },
-                { value: "revoked", label: "已撤销接入" },
+                { value: "all", label: t("全部") },
+                { value: "online", label: t("在线") },
+                { value: "offline", label: t("离线") },
+                { value: "revoked", label: t("已撤销接入") },
               ]}
             />
             {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
               <span className="nx-hint text-[11px]">
-                显示 {visibleDevices?.length ?? 0} / {devices.length} 台
+                {t("显示")} {visibleDevices?.length ?? 0} / {devices.length} {t("台")}
               </span>
             )}
             {deviceFilter !== "revoked" && hiddenRevokedCount > 0 && (
-              <span className="nx-hint text-[11px]">已隐藏 {hiddenRevokedCount} 台已撤销接入的设备（选择「已撤销接入」过滤项可查看）</span>
+              <span className="nx-hint text-[11px]">{t("已隐藏")} {hiddenRevokedCount} {t("台已撤销接入的设备（选择「已撤销接入」过滤项可查看）")}</span>
             )}
           </div>
         )}
@@ -945,27 +946,27 @@ export function DevicesView() {
         {error && devices === null && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">未能加载设备列表：{error}</span>
+            <span className="min-w-0 flex-1 break-words">{t("未能加载设备列表：")}{error}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={load} disabled={loading}>
               <IconRefresh size={12} />
-              重试
+              {t("重试")}
             </button>
           </div>
         )}
 
         {devices !== null && devices.length === 0 && !error && (
           <div className="flex flex-col items-center gap-2 py-4 text-center">
-            <div className="nx-hint text-[12px]">暂无已接入的设备。选择「接入新设备」开始接入。</div>
+            <div className="nx-hint text-[12px]">{t("暂无已接入的设备。选择「接入新设备」开始接入。")}</div>
             {!enrollOpen && (
               <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setEnrollOpen(true)}>
                 <IconPlus size={12} />
-                接入新设备
+                {t("接入新设备")}
               </button>
             )}
           </div>
         )}
         {devices !== null && devices.length > 0 && visibleDevices?.length === 0 && (
-          <div className="nx-hint py-2 text-center text-[12px]">无符合当前搜索或过滤条件的设备。</div>
+          <div className="nx-hint py-2 text-center text-[12px]">{t("无符合当前搜索或过滤条件的设备。")}</div>
         )}
 
         {visibleDevices && visibleDevices.length > 0 && (devicesVirtualized ? (
@@ -1009,7 +1010,7 @@ export function DevicesView() {
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
           <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          普通用户仅可查看自己接入的设备；超级管理员可查看所有设备。
+          {t("普通用户仅可查看自己接入的设备；超级管理员可查看所有设备。")}
         </span>
       </div>
     </div>

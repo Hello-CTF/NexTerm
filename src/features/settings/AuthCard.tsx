@@ -29,6 +29,7 @@ import {
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 const desktopPendingRecoveryKeys = new Map<string, { formatted: string; canonical: string }>();
 
@@ -176,13 +177,13 @@ export function AuthCard() {
     }
     if (!stillCurrent()) return;
     setPwdOpen(false);
-    pushToast("success", "密码已修改，其他设备上的会话已退出");
+    pushToast("success", t("密码已修改，其他设备上的会话已退出"));
   };
 
   const revokeDevice = async (device: AccountDevice) => {
     const actionAccount = accountKey;
-    const ok = await ask(`确定要吊销设备「${device.name}」吗？\n\n吊销后，该设备将立即退出登录，且无法恢复。`, {
-      title: "吊销设备",
+    const ok = await ask(t("确定要吊销设备「{name}」吗？\n\n吊销后，该设备将立即退出登录，且无法恢复。", { name: device.name }), {
+      title: t("吊销设备"),
       kind: "warning",
     });
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
@@ -194,10 +195,10 @@ export function AuthCard() {
           await authApi.deviceRevoke(device.id);
         }
         if (accountKeyRef.current !== actionAccount) return;
-        pushToast("success", `已吊销「${device.name}」，该设备已退出登录`);
+        pushToast("success", t("已吊销「{name}」，该设备已退出登录", { name: device.name }));
         void loadDevices();
       } catch (e) {
-        if (accountKeyRef.current === actionAccount) pushToast("error", `吊销失败：${describeError(e)}。请重试。`);
+        if (accountKeyRef.current === actionAccount) pushToast("error", t("吊销失败：{value}。请重试。", { value: describeError(e) }));
       }
     });
   };
@@ -205,8 +206,8 @@ export function AuthCard() {
   const revokeSession = async (session: AccountLoginSession) => {
     const actionAccount = accountKey;
     const ok = await ask(
-      `确定要退出登录会话「${session.name}」吗？${session.current ? "\n\n当前浏览器将立即退出登录。" : "\n\n该会话将立即失效。"}`,
-      { title: "退出登录会话", kind: "warning" },
+      t("确定要退出登录会话「{name}」吗？{value}", { name: session.name, value: session.current ? t("\n\n当前浏览器将立即退出登录。") : t("\n\n该会话将立即失效。") }),
+      { title: t("退出登录会话"), kind: "warning" },
     );
     if (!ok || !actionAccount || accountKeyRef.current !== actionAccount) return;
     await guarded(`session:${session.id}`, async () => {
@@ -220,10 +221,10 @@ export function AuthCard() {
           setSessionResult((current) => current?.accountKey === actionAccount
             ? { accountKey: actionAccount, sessions: current.sessions.filter((item) => item.id !== session.id) }
             : current);
-          pushToast("success", `已退出「${session.name}」，对方需重新登录`);
+          pushToast("success", t("已退出「{name}」，对方需重新登录", { name: session.name }));
         }
       } catch (e) {
-        if (accountKeyRef.current === actionAccount) pushToast("error", `退出失败：${describeError(e)}。请重试。`);
+        if (accountKeyRef.current === actionAccount) pushToast("error", t("退出失败：{value}。请重试。", { value: describeError(e) }));
       }
     });
   };
@@ -232,7 +233,7 @@ export function AuthCard() {
     // The desktop has no account gate; a login button would only open a gate that does not exist: the whole card does not render, and the login entry is in SyncCard.
     if (!authAvailable()) return null;
     if (gate === "loading") {
-      return <section className="nx-card"><p role="status" className="nx-hint">正在检查登录状态…</p></section>;
+      return <section className="nx-card"><p role="status" className="nx-hint">{t("正在检查登录状态…")}</p></section>;
     }
     if (status?.auth === "platform") {
       // Nothing to fill in under platform-hosted mode: the account is auto-established with the platform login. Reaching here means the platform session was not established
@@ -241,11 +242,10 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
-            <span className="nx-card-title">账号</span>
+            <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            本实例部署在懒猫平台上，账号随平台登录自动建立，无需填写初始化码或密码。
-            若看到此提示，请改用平台访问地址重新打开。
+            {t("本实例部署在懒猫平台上，账号随平台登录自动建立，无需填写初始化码或密码。 若看到此提示，请改用平台访问地址重新打开。")}
           </p>
         </section>
       );
@@ -256,10 +256,10 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
-            <span className="nx-card-title">账号</span>
+            <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            此服务器已关闭账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。
+            {t("此服务器已关闭账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。")}
           </p>
         </section>
       );
@@ -270,19 +270,17 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconKey size={15} className="text-neutral-400" />
-            <span className="nx-card-title">账号</span>
+            <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            此服务器尚未创建任何账号{status.auth === "loopback" ? "，当前允许匿名使用" : ""}。
-            初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用；
-            也可以继续匿名使用本地功能。
+            {t("此服务器尚未创建任何账号")}{status.auth === "loopback" ? t("，当前允许匿名使用") : ""}{t("。 初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用； 也可以继续匿名使用本地功能。")}
           </p>
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
             onClick={() => useAuth.setState({ gate: "setup" })}
           >
             <IconShield size={12} />
-            初始化账号
+            {t("初始化账号")}
           </button>
         </section>
       );
@@ -291,18 +289,17 @@ export function AuthCard() {
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconKey size={15} className="text-neutral-400" />
-          <span className="nx-card-title">账号</span>
+          <span className="nx-card-title">{t("账号")}</span>
         </div>
         <p className="nx-hint mb-3">
-          当前未登录{status?.auth === "loopback" ? "（此服务器允许匿名使用）" : ""}。
-          登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。
+          {t("当前未登录")}{status?.auth === "loopback" ? t("（此服务器允许匿名使用）") : ""}{t("。 登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。")}
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
           onClick={() => useAuth.setState({ gate: "login" })}
         >
           <IconLock size={12} />
-          登录
+          {t("登录")}
         </button>
       </section>
     );
@@ -313,19 +310,19 @@ export function AuthCard() {
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconKey size={15} className="text-neutral-400" />
-          <span className="nx-card-title">账号</span>
+          <span className="nx-card-title">{t("账号")}</span>
           <span className={`nx-badge ${user.role === "superadmin" ? "nx-badge-blue" : ""}`}>
-            {user.role === "superadmin" ? "超级管理员" : "普通用户"}
+            {user.role === "superadmin" ? t("超级管理员") : t("普通用户")}
           </span>
-          {user.state === "reset_required" && <span className="nx-badge nx-badge-amber">待重置密码</span>}
+          {user.state === "reset_required" && <span className="nx-badge nx-badge-amber">{t("待重置密码")}</span>}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-[12.5px] text-neutral-200">
           <span>
-            用户名 <b>{user.username}</b>
+            {t("用户名")} <b>{user.username}</b>
           </span>
-          {user.display_name && <span>显示名 {user.display_name}</span>}
-          {user.last_login_at > 0 && <span className="nx-hint">最近登录 {formatTime(user.last_login_at)}</span>}
+          {user.display_name && <span>{t("显示名")} {user.display_name}</span>}
+          {user.last_login_at > 0 && <span className="nx-hint">{t("最近登录")} {formatTime(user.last_login_at)}</span>}
         </div>
 
         {visibleAccountError && (
@@ -341,22 +338,20 @@ export function AuthCard() {
                 else clearCleanupError();
               }}
             >
-              知道了
+              {t("知道了")}
             </button>
           </div>
         )}
 
         {platformManaged && (
           <p className="nx-hint mt-2">
-            本实例部署在懒猫平台上，登录由平台负责，打开地址即使用当前账号，无需在此登录或退出。
-            账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。
+            {t("本实例部署在懒猫平台上，登录由平台负责，打开地址即使用当前账号，无需在此登录或退出。 账号随平台登录自动建立，用于承载设备、分享等需要归属的功能。")}
           </p>
         )}
 
         {DESKTOP && (
           <p className="nx-hint mt-2">
-            本账号由「服务端连接」管理，登出后可切换账号。
-            两步验证管理请在浏览器中打开服务端 Web 界面。
+            {t("本账号由「服务端连接」管理，登出后可切换账号。 两步验证管理请在浏览器中打开服务端 Web 界面。")}
           </p>
         )}
 
@@ -368,20 +363,20 @@ export function AuthCard() {
               aria-busy={pending === "logout"}
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("确定要退出当前账号吗？\n\n本机浏览器的会话将立即失效。", { title: "退出登录" });
+                  const ok = await ask(t("确定要退出当前账号吗？\n\n本机浏览器的会话将立即失效。"), { title: t("退出登录") });
                   if (!ok) return;
                   await guarded("logout", async () => {
                     try {
                       await logout();
                       void qc.invalidateQueries();
                     } catch (e) {
-                      pushToast("error", `退出失败：${describeError(e)}。请重试。`);
+                      pushToast("error", t("退出失败：{value}。请重试。", { value: describeError(e) }));
                     }
                   });
                 })()
               }
             >
-              {pending === "logout" ? "正在退出…" : "退出登录"}
+              {pending === "logout" ? t("正在退出…") : t("退出登录")}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -389,8 +384,8 @@ export function AuthCard() {
               aria-busy={pending === "logout-all"}
               onClick={() =>
                 void (async () => {
-                  const ok = await ask("确定要退出所有设备上的会话吗？\n\n包括当前浏览器，退出后需重新登录。", {
-                    title: "退出全部会话",
+                  const ok = await ask(t("确定要退出所有设备上的会话吗？\n\n包括当前浏览器，退出后需重新登录。"), {
+                    title: t("退出全部会话"),
                     kind: "warning",
                   });
                   if (!ok) return;
@@ -399,13 +394,13 @@ export function AuthCard() {
                       await logout({ all: true });
                       void qc.invalidateQueries();
                     } catch (e) {
-                      pushToast("error", `退出失败：${describeError(e)}。请重试。`);
+                      pushToast("error", t("退出失败：{value}。请重试。", { value: describeError(e) }));
                     }
                   });
                 })()
               }
             >
-              {pending === "logout-all" ? "正在退出…" : "退出全部会话"}
+              {pending === "logout-all" ? t("正在退出…") : t("退出全部会话")}
             </button>
           </div>
         )}
@@ -415,21 +410,21 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconLock size={15} className="text-neutral-400" />
-            <span className="nx-card-title">修改密码</span>
+            <span className="nx-card-title">{t("修改密码")}</span>
           </div>
           <p className="nx-hint mb-3">
-            修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后将生成新的恢复密钥（旧密钥立即作废），并退出其他设备上的登录。
+            {t("修改密码后，数据将改用新密码保护，服务端已保存的内容不受影响。修改成功后将生成新的恢复密钥（旧密钥立即作废），并退出其他设备上的登录。")}
           </p>
           {pwdOpen ? (
             <PasswordChangeForm
               requireCurrent
-              submitLabel="确认修改"
+              submitLabel={t("确认修改")}
               onSubmit={submitPassword}
               onCancel={() => setPwdOpen(false)}
             />
           ) : (
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => setPwdOpen(true)}>
-              修改密码
+              {t("修改密码")}
             </button>
           )}
         </section>
@@ -439,10 +434,10 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconShield size={15} className="text-neutral-400" />
-            <span className="nx-card-title">两步验证（TOTP）</span>
+            <span className="nx-card-title">{t("两步验证（TOTP）")}</span>
           </div>
           <p className="nx-hint">
-            两步验证的绑定、换绑与关闭暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理；开启后对桌面端登录同样生效。
+            {t("两步验证的绑定、换绑与关闭暂未接入桌面端，请在浏览器中打开服务端 Web 界面管理；开启后对桌面端登录同样生效。")}
           </p>
           <ServerSecurityLink />
         </section>
@@ -454,7 +449,7 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconShield size={15} className="text-amber-300" />
-            <span className="nx-card-title">新的恢复密钥（仅显示一次）</span>
+            <span className="nx-card-title">{t("新的恢复密钥（仅显示一次）")}</span>
           </div>
           <div className="nx-alert nx-alert-danger flex flex-col gap-2">
             <code className="nx-code break-all font-mono text-[12.5px]">{visibleRecoveryKey.formatted}</code>
@@ -465,15 +460,15 @@ export function AuthCard() {
                   void (async () => {
                     try {
                       await copyToClipboard(visibleRecoveryKey.formatted);
-                      pushToast("success", "恢复密钥已复制");
+                      pushToast("success", t("恢复密钥已复制"));
                     } catch {
-                      pushToast("error", "复制失败，请手动复制");
+                      pushToast("error", t("复制失败，请手动复制"));
                     }
                   })()
                 }
               >
                 <IconCopy size={12} />
-                复制
+                {t("复制")}
               </button>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => {
                 if (DESKTOP && accountKey) {
@@ -483,7 +478,7 @@ export function AuthCard() {
                   clearPendingRecoveryKey();
                 }
               }}>
-                我已保存
+                {t("我已保存")}
               </button>
             </div>
           </div>
@@ -494,41 +489,41 @@ export function AuthCard() {
         <section className="nx-card">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconShield size={15} className="text-neutral-400" />
-            <span className="nx-card-title">登录会话</span>
+            <span className="nx-card-title">{t("登录会话")}</span>
             <div className="nx-spacer" />
             <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadSessions()}>
               <IconRefresh size={12} />
-              刷新
+              {t("刷新")}
             </button>
           </div>
-          <p className="nx-hint mb-3">列出当前有效的服务端登录会话，包括浏览器和桌面客户端。退出其他会话后，对应设备需重新登录。</p>
+          <p className="nx-hint mb-3">{t("列出当前有效的服务端登录会话，包括浏览器和桌面客户端。退出其他会话后，对应设备需重新登录。")}</p>
           {sessionsError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span className="min-w-0 flex-1 break-words">未能读取登录会话：{sessionsError}。请选择「重试」。</span>
+              <span className="min-w-0 flex-1 break-words">{t("未能读取登录会话：")}{sessionsError}{t("。请选择「重试」。")}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadSessions()}>
-                <IconRefresh size={12} />重试
+                <IconRefresh size={12} />{t("重试")}
               </button>
             </div>
           )}
-          {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">暂无有效的登录会话。</div>}
+          {sessions && sessions.length === 0 && <div className="nx-hint py-1 text-[12px]">{t("暂无有效的登录会话。")}</div>}
           {sessions && sessions.length > 0 && (
             <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
               {sessionPager.pageItems.map((session) => (
                 <div key={session.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800/40 px-2.5 py-1.5 last:border-b-0">
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={session.name}>{session.name}</span>
                   <span className="nx-hint text-[11px]">{session.origin}</span>
-                  {session.current && <span className="nx-badge nx-badge-green">当前会话</span>}
-                  <span className="nx-hint text-[11px]">最近活动 {formatTime(session.last_seen_at)}</span>
-                  <span className="nx-hint text-[11px]">到期 {formatTime(session.expires_at)}</span>
+                  {session.current && <span className="nx-badge nx-badge-green">{t("当前会话")}</span>}
+                  <span className="nx-hint text-[11px]">{t("最近活动")} {formatTime(session.last_seen_at)}</span>
+                  <span className="nx-hint text-[11px]">{t("到期")} {formatTime(session.expires_at)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm"
                     disabled={pending !== null}
                     aria-busy={pending === `session:${session.id}`}
-                    title={pending !== null && pending !== `session:${session.id}` ? "正在处理另一项操作，请稍候" : undefined}
+                    title={pending !== null && pending !== `session:${session.id}` ? t("正在处理另一项操作，请稍候") : undefined}
                     onClick={() => void revokeSession(session)}
                   >
-                    <IconTrash size={11} />{pending === `session:${session.id}` ? "正在退出…" : "退出会话"}
+                    <IconTrash size={11} />{pending === `session:${session.id}` ? t("正在退出…") : t("退出会话")}
                   </button>
                 </div>
               ))}
@@ -537,7 +532,7 @@ export function AuthCard() {
           )}
           <p className="nx-hint mt-2 border-t border-neutral-800/60 pt-2 text-[11px]">
             <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-            登录后 12 小时内有操作会自动延长，最长 7 天；修改密码或被管理员重置密码后，所有登录立即失效。
+            {t("登录后 12 小时内有操作会自动延长，最长 7 天；修改密码或被管理员重置密码后，所有登录立即失效。")}
           </p>
         </section>
       )}
@@ -545,36 +540,36 @@ export function AuthCard() {
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <IconShield size={15} className="text-neutral-400" />
-          <span className="nx-card-title">已登记设备</span>
+          <span className="nx-card-title">{t("已登记设备")}</span>
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadDevices()}>
             <IconRefresh size={12} />
-            刷新
+            {t("刷新")}
           </button>
         </div>
         <p className="nx-hint mb-3">
-          列出已登记的受管设备。吊销设备将使其关联的登录会话失效。
+          {t("列出已登记的受管设备。吊销设备将使其关联的登录会话失效。")}
         </p>
 
         {devicesError && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">未能读取设备列表：{devicesError}。请选择「重试」。</span>
+            <span className="min-w-0 flex-1 break-words">{t("未能读取设备列表：")}{devicesError}{t("。请选择「重试」。")}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadDevices()}>
               <IconRefresh size={12} />
-              重试
+              {t("重试")}
             </button>
           </div>
         )}
 
         {devices && visibleDevices.length === 0 && (
-          <div className="nx-hint py-1 text-[12px]">{devices.length === 0 ? "尚未登记设备。" : "没有生效中的设备。"}</div>
+          <div className="nx-hint py-1 text-[12px]">{devices.length === 0 ? t("尚未登记设备。") : t("没有生效中的设备。")}</div>
         )}
 
         {devices && revokedCount > 0 && (
           <label className="nx-hint mb-2 flex items-center gap-1.5 text-[11px]">
             <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
-            显示已吊销（{revokedCount}）
+            {t("显示已吊销（")}{revokedCount}）
           </label>
         )}
 
@@ -592,18 +587,18 @@ export function AuthCard() {
                   </span>
                   <span className="nx-hint shrink-0 text-[11px]">{d.kind}</span>
                   <span className={`nx-badge shrink-0 ${revoked ? "nx-badge-red" : "nx-badge-green"}`}>
-                    {revoked ? "已吊销" : "生效中"}
+                    {revoked ? t("已吊销") : t("生效中")}
                   </span>
-                  <span className="nx-hint shrink-0 text-[11px]">最近活动 {formatTime(d.last_seen_at)}</span>
+                  <span className="nx-hint shrink-0 text-[11px]">{t("最近活动")} {formatTime(d.last_seen_at)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
                     disabled={revoked || pending !== null}
                     aria-busy={pending === `device:${d.id}`}
-                    title={revoked ? "已吊销" : pending !== null && pending !== `device:${d.id}` ? "正在处理另一项操作，请稍候" : "吊销后该设备立即退出登录"}
+                    title={revoked ? t("已吊销") : pending !== null && pending !== `device:${d.id}` ? t("正在处理另一项操作，请稍候") : t("吊销后该设备立即退出登录")}
                     onClick={() => void revokeDevice(d)}
                   >
                     <IconTrash size={11} />
-                    {pending === `device:${d.id}` ? "正在吊销…" : "吊销"}
+                    {pending === `device:${d.id}` ? t("正在吊销…") : t("吊销")}
                   </button>
                 </div>
               );
@@ -650,10 +645,10 @@ function TotpCard() {
   const copyText = async (text: string, label: string): Promise<boolean> => {
     try {
       await copyToClipboard(text);
-      pushToast("success", `${label}已复制`);
+      pushToast("success", t("{label}已复制", { label }));
       return true;
     } catch {
-      pushToast("error", "复制失败，请手动复制");
+      pushToast("error", t("复制失败，请手动复制"));
       return false;
     }
   };
@@ -676,7 +671,7 @@ function TotpCard() {
   const submitConfirm = async (e: FormEvent) => {
     e.preventDefault();
     if (confirmCode.trim().length !== 6) {
-      setError("请输入认证器中的 6 位动态码");
+      setError(t("请输入认证器中的 6 位动态码"));
       return;
     }
     setBusy(true);
@@ -688,7 +683,7 @@ function TotpCard() {
       setSetup(null);
       setConfirmCode("");
       await load();
-      pushToast("success", "两步验证已开启");
+      pushToast("success", t("两步验证已开启"));
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -705,7 +700,7 @@ function TotpCard() {
       setDisableOpen(false);
       setDisableCode("");
       await load();
-      pushToast("success", "两步验证已关闭");
+      pushToast("success", t("两步验证已关闭"));
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -716,7 +711,7 @@ function TotpCard() {
   const submitRebind = async (e: FormEvent) => {
     e.preventDefault();
     if (!reverify.trim()) {
-      setError("请输入当前动态码、恢复码或登录密码");
+      setError(t("请输入当前动态码、恢复码或登录密码"));
       return;
     }
     await startSetup(reverify.trim());
@@ -726,26 +721,26 @@ function TotpCard() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">两步验证（TOTP）</span>
-        {status?.enabled && <span className="nx-badge nx-badge-green">已开启</span>}
+        <span className="nx-card-title">{t("两步验证（TOTP）")}</span>
+        {status?.enabled && <span className="nx-badge nx-badge-green">{t("已开启")}</span>}
         <div className="nx-spacer" />
         {status && !loadError && (
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void load()}>
             <IconRefresh size={12} />
-            刷新
+            {t("刷新")}
           </button>
         )}
       </div>
 
-      <p className="nx-hint mb-3">两步验证绑定在服务端账号上，换设备登录仍使用同一认证器，无需重新绑定。</p>
+      <p className="nx-hint mb-3">{t("两步验证绑定在服务端账号上，换设备登录仍使用同一认证器，无需重新绑定。")}</p>
 
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">未能读取两步验证状态：{loadError}。请选择「重试」。</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能读取两步验证状态：")}{loadError}{t("。请选择「重试」。")}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
-            重试
+            {t("重试")}
           </button>
         </div>
       )}
@@ -754,7 +749,7 @@ function TotpCard() {
         <div className="nx-alert nx-alert-info mb-3 flex items-start gap-2">
           <IconInfo size={14} className="mt-0.5 shrink-0" />
           <div>
-            管理员要求所有账号启用两步验证。完成绑定前，仅可使用绑定功能。
+            {t("管理员要求所有账号启用两步验证。完成绑定前，仅可使用绑定功能。")}
           </div>
         </div>
       )}
@@ -764,7 +759,7 @@ function TotpCard() {
           <div className="flex items-start gap-2">
             <IconInfo size={14} className="mt-0.5 shrink-0" />
             <div>
-              恢复码仅显示一次。无法使用认证器时，可用任一恢复码代替动态码登录，每个恢复码仅可使用一次。服务端仅保存校验值，不保存原文，此后无法再次查看。
+              {t("恢复码仅显示一次。无法使用认证器时，可用任一恢复码代替动态码登录，每个恢复码仅可使用一次。服务端仅保存校验值，不保存原文，此后无法再次查看。")}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
@@ -778,13 +773,13 @@ function TotpCard() {
               onClick={() =>
                 void (async () => {
                   setCopied(false);
-                  setCopied(await copyText(recoveryCodes.join("\n"), "恢复码"));
+                  setCopied(await copyText(recoveryCodes.join("\n"), t("恢复码")));
                   setConfirmed(true);
                 })()
               }
             >
               <IconCopy size={12} />
-              {copied ? "已复制" : "复制全部"}
+              {copied ? t("已复制") : t("复制全部")}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -792,38 +787,38 @@ function TotpCard() {
               onClick={() => setRecoveryCodes(null)}
             >
               <IconCheckCircle size={12} />
-              {copied ? "我已保存" : "已手动保存"}
+              {copied ? t("我已保存") : t("已手动保存")}
             </button>
           </div>
-          {!confirmed && <p className="nx-hint text-[11px]">请先复制或手动保存恢复码，再关闭此面板</p>}
+          {!confirmed && <p className="nx-hint text-[11px]">{t("请先复制或手动保存恢复码，再关闭此面板")}</p>}
         </div>
       )}
 
       {!recoveryCodes && setup && (
         <div>
           <p className="nx-hint mb-3">
-            用认证器 App（如 Google Authenticator、1Password）导入绑定链接，或手动输入密钥。
+            {t("用认证器 App（如 Google Authenticator、1Password）导入绑定链接，或手动输入密钥。")}
           </p>
           <div className="nx-alert nx-alert-info mb-3 flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.otpauth_uri, "绑定链接")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.otpauth_uri, t("绑定链接"))}>
                 <IconCopy size={12} />
-                复制
+                {t("复制")}
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <code className="nx-code font-mono text-[12.5px]">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>
-              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.secret, "密钥")}>
+              <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copyText(setup.secret, t("密钥"))}>
                 <IconCopy size={12} />
-                复制
+                {t("复制")}
               </button>
             </div>
           </div>
           <form onSubmit={(e) => void submitConfirm(e)} className="flex flex-col gap-2">
             <input
               className="nx-input max-w-[280px] font-mono"
-              placeholder="输入 6 位动态码完成绑定"
+              placeholder={t("输入 6 位动态码完成绑定")}
               value={confirmCode}
               autoComplete="one-time-code"
               onChange={(e) => setConfirmCode(e.target.value)}
@@ -836,10 +831,10 @@ function TotpCard() {
             )}
             <div className="flex flex-wrap items-center gap-2">
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || confirmCode.trim().length === 0}>
-                {busy ? "正在确认…" : "确认绑定"}
+                {busy ? t("正在确认…") : t("确认绑定")}
               </button>
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setSetup(null)}>
-                取消
+                {t("取消")}
               </button>
             </div>
           </form>
@@ -851,13 +846,13 @@ function TotpCard() {
           {status.enabled ? (
             <div className="flex flex-col gap-2">
               <p className="nx-hint">
-                登录时除密码外，还需输入认证器中的 6 位动态码。剩余恢复码 <b>{status.recovery_codes_left}</b> 个。
+                {t("登录时除密码外，还需输入认证器中的 6 位动态码。剩余恢复码")} <b>{status.recovery_codes_left}</b> {t("个。")}
               </p>
               {disableOpen ? (
                 <form onSubmit={(e) => void submitDisable(e)} className="flex flex-col gap-2">
                   <input
                     className="nx-input max-w-[280px] font-mono"
-                    placeholder="当前动态码或恢复码"
+                    placeholder={t("当前动态码或恢复码")}
                     value={disableCode}
                     autoComplete="one-time-code"
                     onChange={(e) => setDisableCode(e.target.value)}
@@ -870,10 +865,10 @@ function TotpCard() {
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !disableCode.trim()}>
-                      {busy ? "正在关闭…" : "确认关闭"}
+                      {busy ? t("正在关闭…") : t("确认关闭")}
                     </button>
                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setDisableOpen(false)}>
-                      取消
+                      {t("取消")}
                     </button>
                   </div>
                 </form>
@@ -881,7 +876,7 @@ function TotpCard() {
                 <form onSubmit={(e) => void submitRebind(e)} className="flex flex-col gap-2">
                   <input
                     className="nx-input max-w-[280px]"
-                    placeholder="当前动态码、恢复码或登录密码"
+                    placeholder={t("当前动态码、恢复码或登录密码")}
                     value={reverify}
                     autoComplete="off"
                     onChange={(e) => setReverify(e.target.value)}
@@ -894,10 +889,10 @@ function TotpCard() {
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy || !reverify.trim()}>
-                      {busy ? "正在验证…" : "验证并换绑"}
+                      {busy ? t("正在验证…") : t("验证并换绑")}
                     </button>
                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setRebindOpen(false)}>
-                      取消
+                      {t("取消")}
                     </button>
                   </div>
                 </form>
@@ -905,16 +900,16 @@ function TotpCard() {
                 <div>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm"
-                    title="换绑需要当前动态码、恢复码或登录密码验证"
+                    title={t("换绑需要当前动态码、恢复码或登录密码验证")}
                     onClick={() => { setError(null); setRebindOpen(true); }}
                   >
-                    换绑认证器
+                    {t("换绑认证器")}
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm ml-2"
                     onClick={() => { setError(null); setDisableOpen(true); }}
                   >
-                    关闭两步验证
+                    {t("关闭两步验证")}
                   </button>
                   {error && (
                     <div className="nx-alert nx-alert-danger mt-2 flex items-center gap-2">
@@ -928,10 +923,10 @@ function TotpCard() {
           ) : (
             <div>
               <p className="nx-hint mb-2">
-                开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号仍受到额外保护。服务端加密保存认证密钥，恢复码只保存校验值。
+                {t("开启后，登录时除密码外还需输入认证器 App 中的 6 位动态码。即使密码泄露，账号仍受到额外保护。服务端加密保存认证密钥，恢复码只保存校验值。")}
               </p>
               <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void startSetup()}>
-                {busy ? "正在生成…" : status.pending ? "继续绑定" : "开启两步验证"}
+                {busy ? t("正在生成…") : status.pending ? t("继续绑定") : t("开启两步验证")}
               </button>
               {error && (
                 <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">

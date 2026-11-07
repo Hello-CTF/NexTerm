@@ -30,26 +30,26 @@ import { LOCALE_NAMES, LOCALES, setLocale, storedLocale, t, type Locale } from "
 const FOLLOW_SYSTEM = "system";
 
 const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: "system", label: "跟随系统" },
-  { value: "light", label: "浅色" },
-  { value: "dark", label: "深色" },
+  { value: "system", label: t("跟随系统") },
+  { value: "light", label: t("浅色") },
+  { value: "dark", label: t("深色") },
 ];
 
 const TERM_THEME_OPTIONS: { value: TerminalThemePref; label: string }[] = [
-  { value: "dark", label: "深色" },
-  { value: "light", label: "浅色" },
-  { value: "interface", label: "跟随界面" },
+  { value: "dark", label: t("深色") },
+  { value: "light", label: t("浅色") },
+  { value: "interface", label: t("跟随界面") },
 ];
 
 const TERM_CONTRAST_OPTIONS: { value: TerminalContrast; label: string }[] = [
-  { value: "standard", label: "标准" },
-  { value: "high", label: "高" },
-  { value: "maximum", label: "极高" },
+  { value: "standard", label: t("标准") },
+  { value: "high", label: t("高") },
+  { value: "maximum", label: t("极高") },
 ];
 
 const TERM_FONT_LABELS: Record<TerminalFontFamily, string> = {
-  cascadia: "Cascadia（默认）",
-  system: "系统等宽",
+  cascadia: t("Cascadia（默认）"),
+  system: t("系统等宽"),
   "jetbrains-mono": "JetBrains Mono",
   "fira-code": "Fira Code",
   "source-code-pro": "Source Code Pro",
@@ -69,10 +69,10 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
 
   const current =
     themeMode === "system"
-      ? `跟随系统 · 当前${resolvedTheme === "dark" ? "深色" : "浅色"}`
+      ? t("跟随系统 · 当前{value}", { value: resolvedTheme === "dark" ? t("深色") : t("浅色") })
       : themeMode === "light"
-        ? "浅色"
-        : "深色";
+        ? t("浅色")
+        : t("深色");
 
   const resolvedTermTheme = useResolvedTerminalTheme();
   const appearanceIsDefault =
@@ -112,11 +112,11 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconMonitor size={15} className="text-neutral-400" />
-        <span className="nx-card-title">外观</span>
+        <span className="nx-card-title">{t("外观")}</span>
         <span className="nx-badge">{current}</span>
         <SyncScopeBadge scope="sync" />
       </div>
-      <p className="nx-hint mb-3.5">终端与代码编辑器的主题和字号独立于界面设置。</p>
+      <p className="nx-hint mb-3.5">{t("终端与代码编辑器的主题和字号独立于界面设置。")}</p>
       <div className="mb-3.5">
         <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="ui-language">
           {t("界面语言")}
@@ -134,8 +134,8 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
         />
         <div className="nx-hint mt-1.5">{t("切换后界面会重新加载；终端会话不受影响。")}</div>
       </div>
-      <div className="nx-setting-label mb-1.5">界面主题</div>
-      <div className="nx-segment" role="group" aria-label="界面主题" data-setting="ui-theme">
+      <div className="nx-setting-label mb-1.5">{t("界面主题")}</div>
+      <div className="nx-segment" role="group" aria-label={t("界面主题")} data-setting="ui-theme">
         {THEME_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -150,8 +150,8 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
       </div>
 
       <div className="mt-3.5">
-        <div className="nx-setting-label mb-1.5" data-setting="ui-font-size">界面字号（像素）</div>
-        <div className="nx-segment flex-wrap" role="group" aria-label="界面字号">
+        <div className="nx-setting-label mb-1.5" data-setting="ui-font-size">{t("界面字号（像素）")}</div>
+        <div className="nx-segment flex-wrap" role="group" aria-label={t("界面字号")}>
           {UI_FONT_PRESETS.map((preset) => {
             const active = !showCustomFont && formatFontSize(preset) === effectiveFontSize;
             return (
@@ -175,14 +175,14 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
             aria-pressed={showCustomFont}
             onClick={() => setCustomFontOpen(true)}
           >
-            自定义
+            {t("自定义")}
           </button>
         </div>
         {showCustomFont && (
           <input
             type="number"
             className="nx-input nx-input-sm mt-1.5 w-[96px] font-mono"
-            aria-label="自定义界面字号"
+            aria-label={t("自定义界面字号")}
             min={UI_FONT_SIZE_MIN}
             max={UI_FONT_SIZE_MAX}
             step={0.5}
@@ -198,12 +198,12 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
 
       <div className="mt-3.5">
         <div className="mb-1.5 flex items-center gap-2">
-          <span className="nx-setting-label" data-setting="terminal-theme">终端与编辑器主题</span>
+          <span className="nx-setting-label" data-setting="terminal-theme">{t("终端与编辑器主题")}</span>
           {prefs.terminalTheme === "interface" && (
-            <span className="nx-badge">当前{resolvedTermTheme === "dark" ? "深色" : "浅色"}</span>
+            <span className="nx-badge">{t("当前")}{resolvedTermTheme === "dark" ? t("深色") : t("浅色")}</span>
           )}
         </div>
-        <div className="nx-segment" role="group" aria-label="终端与编辑器主题">
+        <div className="nx-segment" role="group" aria-label={t("终端与编辑器主题")}>
           {TERM_THEME_OPTIONS.map((option) => (
             <button
               key={option.value}
@@ -219,12 +219,12 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
       </div>
 
       <div className="mt-3.5">
-        <div className="nx-setting-label mb-1.5" data-setting="terminal-font-size">终端字号</div>
+        <div className="nx-setting-label mb-1.5" data-setting="terminal-font-size">{t("终端字号")}</div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            aria-label="减小终端字号"
+            aria-label={t("减小终端字号")}
             disabled={prefs.terminalFontSize <= TERMINAL_FONT_SIZE_MIN}
             onClick={() => setTerminalFontSize(prefs.terminalFontSize - 1)}
           >
@@ -234,7 +234,7 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            aria-label="增大终端字号"
+            aria-label={t("增大终端字号")}
             disabled={prefs.terminalFontSize >= TERMINAL_FONT_SIZE_MAX}
             onClick={() => setTerminalFontSize(prefs.terminalFontSize + 1)}
           >
@@ -244,15 +244,15 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
       </div>
 
       <div className="mt-3.5">
-        <div className="nx-setting-label mb-1.5" data-setting="terminal-font-family">终端字体</div>
+        <div className="nx-setting-label mb-1.5" data-setting="terminal-font-family">{t("终端字体")}</div>
         <Select
           className="w-full"
-          ariaLabel="终端字体"
+          ariaLabel={t("终端字体")}
           value={prefs.terminalFontFamily}
           options={TERMINAL_FONT_FAMILIES.map((family) => ({ value: family, label: TERM_FONT_LABELS[family] }))}
           onChange={(value) => setTerminalFontFamily(value as TerminalFontFamily)}
         />
-        <div className="nx-hint mt-1.5">只用本机已安装的字体，未安装时用系统等宽字体。</div>
+        <div className="nx-hint mt-1.5">{t("只用本机已安装的字体，未安装时用系统等宽字体。")}</div>
       </div>
 
       <div className="mt-4">
@@ -268,13 +268,13 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
           ) : (
             <IconChevronRight size={12} className="shrink-0" />
           )}
-          高级设置
+          {t("高级设置")}
         </button>
         {advancedOpen && (
           <div id={advancedPanelId}>
             <div className="mt-3">
-              <div className="nx-setting-label mb-1.5" data-setting="terminal-contrast">终端对比度</div>
-              <div className="nx-segment" role="group" aria-label="终端对比度">
+              <div className="nx-setting-label mb-1.5" data-setting="terminal-contrast">{t("终端对比度")}</div>
+              <div className="nx-segment" role="group" aria-label={t("终端对比度")}>
                 {TERM_CONTRAST_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -293,15 +293,15 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-sm"
-                title="恢复默认主题与外观（跟随系统、深色终端、标准对比度、Cascadia、13px）"
-                aria-label="恢复默认主题与外观"
+                title={t("恢复默认主题与外观（跟随系统、深色终端、标准对比度、Cascadia、13px）")}
+                aria-label={t("恢复默认主题与外观")}
                 disabled={themeMode === "system" && appearanceIsDefault}
                 onClick={resetAll}
               >
                 <IconRefresh size={11} />
-                恢复默认
+                {t("恢复默认")}
               </button>
-              <span className="nx-hint min-w-0 text-[10.5px]">只重置主题与外观。</span>
+              <span className="nx-hint min-w-0 text-[10.5px]">{t("只重置主题与外观。")}</span>
             </div>
           </div>
         )}

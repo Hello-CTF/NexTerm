@@ -1,4 +1,5 @@
 import { formatBytes } from "./format";
+import { t } from "../i18n";
 
 interface ProgressBarProps {
   label: string;
@@ -35,9 +36,9 @@ export function DownloadProgress({ label, transferred, total, onCancel, cancelDi
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="shrink-0 text-neutral-400">
-          {determinate ? `${percent}% · ${formatBytes(transferred)} / ${formatBytes(total)}` : "请稍候"}
+          {determinate ? `${percent}% · ${formatBytes(transferred)} / ${formatBytes(total)}` : t("请稍候")}
         </span>
-        {onCancel && <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={cancelDisabled} onClick={onCancel}>取消</button>}
+        {onCancel && <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={cancelDisabled} onClick={onCancel}>{t("取消")}</button>}
       </div>
       <ProgressBar label={label} transferred={transferred} total={total} />
     </div>

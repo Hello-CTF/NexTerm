@@ -15,17 +15,18 @@ import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { useAuth } from "../auth/store";
 import { IconChevronRight, IconClose, IconLoader, IconPlus, IconSearch } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 const KIND_LABEL: Record<AiGrantKind, string> = {
-  terminal_write: "终端输入",
-  session_exec: "执行命令",
-  db_query: "数据库查询",
+  terminal_write: tr("终端输入"),
+  session_exec: tr("执行命令"),
+  db_query: tr("数据库查询"),
 };
 
 const KIND_HINT: Record<AiGrantKind, string> = {
-  terminal_write: "AI 在终端中输入普通内容时不再询问",
-  session_exec: "AI 执行普通命令时不再询问",
-  db_query: "AI 查询此数据库时不再询问",
+  terminal_write: tr("AI 在终端中输入普通内容时不再询问"),
+  session_exec: tr("AI 执行普通命令时不再询问"),
+  db_query: tr("AI 查询此数据库时不再询问"),
 };
 
 // Database assets support exactly one grant kind: db_query covers the AI
@@ -35,30 +36,30 @@ const TERMINAL_KINDS: AiGrantKind[] = ["session_exec", "terminal_write"];
 const DB_KINDS: AiGrantKind[] = ["db_query"];
 
 const RULE_ACTION_OPTIONS: { value: AiGrantRuleAction; label: string; needsPath: boolean }[] = [
-  { value: "edit_file", label: "修改文件", needsPath: true },
-  { value: "write_file", label: "写入文件", needsPath: true },
+  { value: "edit_file", label: tr("修改文件"), needsPath: true },
+  { value: "write_file", label: tr("写入文件"), needsPath: true },
 ];
 
 const RULE_ACTION_LABEL: Record<AiGrantRuleAction, string> = {
-  write_file: "写入文件",
-  edit_file: "修改文件",
-  exec_commands: "执行命令",
-  send_keys: "发送按键",
+  write_file: tr("写入文件"),
+  edit_file: tr("修改文件"),
+  exec_commands: tr("执行命令"),
+  send_keys: tr("发送按键"),
 };
 
 // Mirrors the backend labels for command-rule kinds; unknown kinds render as-is.
 const COMMAND_KIND_LABEL: Record<string, string> = {
-  sudo: "sudo 提权",
-  write_fs: "文件写入",
-  service: "服务与系统设置变更",
-  docker_mutate: "Docker 容器变更",
-  package: "软件包安装与卸载",
-  process: "新建终端",
-  db_write: "数据库写入",
-  shell_pipe: "管道执行",
-  schedule: "定时提醒",
-  perm: "权限与属主变更",
-  shell_history: "读取 shell 历史",
+  sudo: tr("sudo 提权"),
+  write_fs: tr("文件写入"),
+  service: tr("服务与系统设置变更"),
+  docker_mutate: tr("Docker 容器变更"),
+  package: tr("软件包安装与卸载"),
+  process: tr("新建终端"),
+  db_write: tr("数据库写入"),
+  shell_pipe: tr("管道执行"),
+  schedule: tr("定时提醒"),
+  perm: tr("权限与属主变更"),
+  shell_history: tr("读取 shell 历史"),
 };
 
 function isCommandRule(rule: AiGrantRule): boolean {
@@ -72,22 +73,22 @@ function isLegacyRule(rule: AiGrantRule): boolean {
 }
 
 const RULE_EXPIRY_OPTIONS: { value: string; label: string; millis: number }[] = [
-  { value: "1d", label: "1 天", millis: 86_400_000 },
-  { value: "1h", label: "1 小时", millis: 3600_000 },
-  { value: "7d", label: "7 天", millis: 7 * 86_400_000 },
-  { value: "30d", label: "30 天", millis: 30 * 86_400_000 },
-  { value: "0", label: "永久", millis: 0 },
+  { value: "1d", label: tr("1 天"), millis: 86_400_000 },
+  { value: "1h", label: tr("1 小时"), millis: 3600_000 },
+  { value: "7d", label: tr("7 天"), millis: 7 * 86_400_000 },
+  { value: "30d", label: tr("30 天"), millis: 30 * 86_400_000 },
+  { value: "0", label: tr("永久"), millis: 0 },
 ];
 
 const ASSET_KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
   winrm: "WinRM",
-  local: "本地终端",
+  local: tr("本地终端"),
   docker: "Docker",
   mysql: "MySQL",
   postgres: "PostgreSQL",
   redis: "Redis",
-  device: "设备",
+  device: tr("设备"),
 };
 
 const DB_ASSET_KINDS = new Set(["mysql", "postgres", "redis"]);
@@ -101,16 +102,16 @@ function ruleScopeText(rule: AiGrantRule): string {
   const action = RULE_ACTION_LABEL[rule.action as AiGrantRuleAction] ?? rule.action;
   if (rule.path) return `${action} ${rule.path}`;
   const parts = (rule.kinds ?? []).map((kind) =>
-    kind === "program" ? `${(rule.programs ?? []).join("、")} 命令` : (COMMAND_KIND_LABEL[kind] ?? kind),
+    kind === "program" ? tr("{join} 命令", { join: (rule.programs ?? []).join("、") }) : (COMMAND_KIND_LABEL[kind] ?? kind),
   );
   return parts.length > 0 ? `${action}：${parts.join("、")}` : action;
 }
 
 function ruleExpiryText(rule: AiGrantRule, now: number): string {
   const expiresAt = rule.expiresAt ?? 0;
-  if (expiresAt === 0) return "永久";
-  if (expiresAt <= now) return "已过期";
-  return `${new Date(expiresAt).toLocaleDateString()} 到期`;
+  if (expiresAt === 0) return tr("永久");
+  if (expiresAt <= now) return tr("已过期");
+  return tr("{toLocaleDateString} 到期", { toLocaleDateString: new Date(expiresAt).toLocaleDateString() });
 }
 
 function kindsOf(target: GrantTarget): AiGrantKind[] {
@@ -137,9 +138,9 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   // instance-wide grant state.
   const account = useAuth((s) => s.user);
   const scopeNote = account
-    ? "授权只对当前账号生效。"
-    : "授权对当前 NexTerm 实例的所有会话生效，请仅用于可信主机。";
-  const storeName = account ? "当前账号" : "当前 NexTerm 实例";
+    ? tr("授权只对当前账号生效。")
+    : tr("授权对当前 NexTerm 实例的所有会话生效，请仅用于可信主机。");
+  const storeName = account ? tr("当前账号") : tr("当前 NexTerm 实例");
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [devices, setDevices] = useState<FleetDevice[]>([]);
   const [grants, setGrants] = useState<Record<string, AiDeviceGrant>>({});
@@ -196,8 +197,8 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const next = on ? [...new Set([...current, kind])] : current.filter((k) => k !== kind);
     if (on) {
       const confirmed = await ask(
-        `确定要让 AI 在「${target.name}」上${KIND_LABEL[kind]}时不再询问吗？\n\n只读模式、定时任务和生产环境中不生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在${storeName}，可随时关闭。`,
-        { title: "开启免确认授权", kind: "warning" },
+        tr("确定要让 AI 在「{name}」上{value}时不再询问吗？\n\n只读模式、定时任务和生产环境中不生效；高危和无法判断的操作仍会询问，禁止的操作始终拒绝。授权保存在{storeName}，可随时关闭。", { name: target.name, value: KIND_LABEL[kind], storeName }),
+        { title: tr("开启免确认授权"), kind: "warning" },
       );
       if (!confirmed) return;
     }
@@ -214,9 +215,9 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
         const saved = await grantApi.set(target.id, next as AiGrantKind[]);
         setGrants((prev) => ({ ...prev, [target.id]: saved }));
       }
-      pushToast("success", on ? `「${target.name}」${KIND_LABEL[kind]}已免确认` : `「${target.name}」${KIND_LABEL[kind]}恢复为逐次确认`);
+      pushToast("success", on ? tr("「{name}」{value}已免确认", { name: target.name, value: KIND_LABEL[kind] }) : tr("「{name}」{value}恢复为逐次确认", { name: target.name, value: KIND_LABEL[kind] }));
     } catch (e) {
-      pushToast("error", `未能${on ? "开启" : "关闭"}授权：${describeError(e)}`);
+      pushToast("error", tr("未能{value}授权：{value2}", { value: on ? tr("开启") : tr("关闭"), value2: describeError(e) }));
     } finally {
       setBusy(null);
     }
@@ -229,18 +230,18 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     const option = RULE_EXPIRY_OPTIONS.find((o) => o.value === expiry) ?? RULE_EXPIRY_OPTIONS[0];
     const scope = needsPath ? `${RULE_ACTION_LABEL[action]} ${pattern}` : RULE_ACTION_LABEL[action];
     const confirmed = await ask(
-      `确定要为「${target.name}」添加授权规则吗？\n\n范围：${scope}\n有效期：${option.label}\n\n匹配的普通操作不再询问；只读模式和生产环境中不生效，高危和无法判断的操作仍会询问。${unattended ? "\n\n定时任务运行时也会自动放行匹配的操作。" : ""}`,
-      { title: "添加授权规则", kind: "warning" },
+      tr("确定要为「{name}」添加授权规则吗？\n\n范围：{scope}\n有效期：{label}\n\n匹配的普通操作不再询问；只读模式和生产环境中不生效，高危和无法判断的操作仍会询问。{value}", { name: target.name, scope, label: option.label, value: unattended ? tr("\n\n定时任务运行时也会自动放行匹配的操作。") : "" }),
+      { title: tr("添加授权规则"), kind: "warning" },
     );
     if (!confirmed) return false;
     setBusy(target.id);
     try {
       const saved = await grantApi.ruleSet(target.id, action, needsPath ? pattern : "", option.millis === 0 ? 0 : Date.now() + option.millis, unattended);
       setRules((prev) => [...prev.filter((r) => r.id !== saved.id), saved]);
-      pushToast("success", `已添加规则：${target.name} ${scope}`);
+      pushToast("success", tr("已添加规则：{name} {scope}", { name: target.name, scope }));
       return true;
     } catch (e) {
-      pushToast("error", `未能添加规则：${describeError(e)}`);
+      pushToast("error", tr("未能添加规则：{value}", { value: describeError(e) }));
       return false;
     } finally {
       setBusy(null);
@@ -252,9 +253,9 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     try {
       await grantApi.ruleRevoke(rule.id);
       setRules((prev) => prev.filter((r) => r.id !== rule.id));
-      pushToast("success", `已撤销规则：${ruleScopeText(rule)}`);
+      pushToast("success", tr("已撤销规则：{value}", { value: ruleScopeText(rule) }));
     } catch (e) {
-      pushToast("error", `未能撤销规则：${describeError(e)}`);
+      pushToast("error", tr("未能撤销规则：{value}", { value: describeError(e) }));
     } finally {
       setBusy(null);
     }
@@ -272,9 +273,9 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
         return copy;
       });
       setRules((prev) => prev.filter((r) => r.deviceId !== target.id));
-      pushToast("success", `已撤销「${target.name}」的全部授权`);
+      pushToast("success", tr("已撤销「{name}」的全部授权", { name: target.name }));
     } catch (e) {
-      pushToast("error", `未能撤销授权：${describeError(e)}`);
+      pushToast("error", tr("未能撤销授权：{value}", { value: describeError(e) }));
       void reload();
     } finally {
       setBusy(null);
@@ -286,9 +287,9 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   if (loadError) {
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-red-400">
-        <span className="min-w-0 flex-1">未能读取授权：{loadError}。请检查网络后重试</span>
+        <span className="min-w-0 flex-1">{tr("未能读取授权：")}{loadError}{tr("。请检查网络后重试")}</span>
         <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
-          重试
+          {tr("重试")}
         </button>
       </div>
     );
@@ -297,7 +298,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
     return (
       <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
         <IconLoader size={12} />
-        正在读取授权…
+        {tr("正在读取授权…")}
       </div>
     );
   }
@@ -316,7 +317,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
       {current && (
         <div className="rounded-lg border border-neutral-800/60 px-2 py-1.5">
           <div className="mb-1 flex items-center gap-1.5">
-            <span className="text-[10.5px] text-neutral-500">当前主机</span>
+            <span className="text-[10.5px] text-neutral-500">{tr("当前主机")}</span>
             <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{current.name}</span>
             <span className="nx-count">{ASSET_KIND_LABEL[current.kind] ?? current.kind}</span>
           </div>
@@ -326,17 +327,17 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
 
       <div>
         <div className="mb-1 flex items-center gap-1.5 text-[11px] text-neutral-300">
-          {current ? "其他已授权主机" : "已授权主机"}
+          {current ? tr("其他已授权主机") : tr("已授权主机")}
           <span className="nx-count">{authorized.length}</span>
         </div>
-        {authorized.length === 0 && <div className="nx-hint text-[10.5px]">暂无其他主机开启免确认授权。</div>}
+        {authorized.length === 0 && <div className="nx-hint text-[10.5px]">{tr("暂无其他主机开启免确认授权。")}</div>}
         {authorized.map((target) => {
           const open = expanded === target.id;
           const grant = grants[target.id];
           const ruleCount = rules.filter((r) => r.deviceId === target.id).length;
           const summary = [
             ...(grant?.kinds ?? []).map((k) => KIND_LABEL[k as AiGrantKind] ?? k),
-            ...(ruleCount > 0 ? [`${ruleCount} 条规则`] : []),
+            ...(ruleCount > 0 ? [tr("{ruleCount} 条规则", { ruleCount })] : []),
           ].join("、");
           return (
             <div key={target.id} className="mb-1 rounded-lg border border-neutral-800/60">
@@ -354,11 +355,11 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                   disabled={busy === target.id}
-                  title="撤销当前主机的全部免确认授权和规则"
-                  aria-label={`撤销「${target.name}」的全部免确认授权和规则`}
+                  title={tr("撤销当前主机的全部免确认授权和规则")}
+                  aria-label={tr("撤销「{name}」的全部免确认授权和规则", { name: target.name })}
                   onClick={() => void revokeAll(target)}
                 >
-                  {busy === target.id ? "处理中…" : "撤销"}
+                  {busy === target.id ? tr("处理中…") : tr("撤销")}
                 </button>
               </div>
               {open && (
@@ -376,8 +377,8 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
           <IconSearch size={11} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
           <input
             className="nx-input w-full py-0.5 pl-6 text-[11px]"
-            placeholder="为其他主机授权：搜索主机名"
-            aria-label="搜索要授权的主机"
+            placeholder={tr("为其他主机授权：搜索主机名")}
+            aria-label={tr("搜索要授权的主机")}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -386,7 +387,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
           />
         </div>
         {matches.length > 0 && !pickedTarget && (
-          <div className="mt-1 flex flex-col" role="group" aria-label="匹配的主机">
+          <div className="mt-1 flex flex-col" role="group" aria-label={tr("匹配的主机")}>
             {matches.map((target) => (
               <button
                 key={target.id}
@@ -400,13 +401,13 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
             ))}
           </div>
         )}
-        {needle && matches.length === 0 && !pickedTarget && <div className="nx-hint mt-1 text-[10.5px]">无匹配的未授权主机。</div>}
+        {needle && matches.length === 0 && !pickedTarget && <div className="nx-hint mt-1 text-[10.5px]">{tr("无匹配的未授权主机。")}</div>}
         {pickedTarget && (
           <div className="mt-1 rounded-lg border border-neutral-800/60 px-2 py-1.5">
             <div className="mb-1 flex items-center gap-1.5">
               <span className="min-w-0 flex-1 truncate text-[11.5px] text-neutral-200">{pickedTarget.name}</span>
               <span className="nx-count">{ASSET_KIND_LABEL[pickedTarget.kind] ?? pickedTarget.kind}</span>
-              <button className="nx-icon-btn nx-icon-btn-sm" title="取消" aria-label={`取消选择 ${pickedTarget.name}`} onClick={() => setPicked(null)}>
+              <button className="nx-icon-btn nx-icon-btn-sm" title={tr("取消")} aria-label={tr("取消选择 {name}", { name: pickedTarget.name })} onClick={() => setPicked(null)}>
                 <IconClose size={10} />
               </button>
             </div>
@@ -436,7 +437,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-[10.5px] text-neutral-500">免确认</span>
+        <span className="text-[10.5px] text-neutral-500">{tr("免确认")}</span>
         {kindsOf(target).map((kind) => {
           const on = grant?.kinds.includes(kind) ?? false;
           return (
@@ -444,7 +445,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               <input
                 type="checkbox"
                 className="h-3.5 w-3.5"
-                aria-label={`${target.name}：${KIND_LABEL[kind]}免确认`}
+                aria-label={tr("{name}：{value}免确认", { name: target.name, value: KIND_LABEL[kind] })}
                 checked={on}
                 disabled={busy}
                 onChange={(event) => void state.setGrant(target, kind, event.target.checked)}
@@ -464,14 +465,14 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               {isLegacyRule(rule) && (
                 <span
                   className="nx-count shrink-0 text-red-300"
-                  title="旧版整机规则已不再自动放行，相关操作会重新询问；可撤销后在确认卡上按范围重新永久允许"
+                  title={tr("旧版整机规则已不再自动放行，相关操作会重新询问；可撤销后在确认卡上按范围重新永久允许")}
                 >
-                  已停用
+                  {tr("已停用")}
                 </span>
               )}
               {rule.unattended && (
-                <span className="nx-count shrink-0" title="定时任务运行时也会自动放行匹配的操作">
-                  定时任务可用
+                <span className="nx-count shrink-0" title={tr("定时任务运行时也会自动放行匹配的操作")}>
+                  {tr("定时任务可用")}
                 </span>
               )}
               <span className={`shrink-0 text-[10.5px] ${(rule.expiresAt ?? 0) !== 0 && (rule.expiresAt ?? 0) <= now ? "text-red-300" : "text-neutral-500"}`}>
@@ -479,8 +480,8 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               </span>
               <button
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                title={`撤销规则：${ruleScopeText(rule)}`}
-                aria-label={`撤销规则：${ruleScopeText(rule)}`}
+                title={tr("撤销规则：{value}", { value: ruleScopeText(rule) })}
+                aria-label={tr("撤销规则：{value}", { value: ruleScopeText(rule) })}
                 disabled={busy}
                 onClick={() => void state.revokeRule(rule)}
               >
@@ -493,7 +494,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               <Select
                 className="w-32 shrink-0"
                 triggerClassName="nx-input nx-select-trigger py-0.5 text-[11px]"
-                ariaLabel="规则操作"
+                ariaLabel={tr("规则操作")}
                 value={action}
                 onChange={(value) => setAction(value as AiGrantRuleAction)}
                 options={RULE_ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
@@ -502,7 +503,7 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
                 <input
                   className="nx-input min-w-28 flex-1 py-0.5 font-mono text-[11px]"
                   placeholder="/etc/nginx/**"
-                  aria-label="规则路径范围"
+                  aria-label={tr("规则路径范围")}
                   value={path}
                   onChange={(event) => setPath(event.target.value)}
                 />
@@ -510,20 +511,20 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
               <Select
                 className="w-28 shrink-0"
                 triggerClassName="nx-input nx-select-trigger py-0.5 text-[11px]"
-                ariaLabel="规则有效期"
+                ariaLabel={tr("规则有效期")}
                 value={expiry}
                 onChange={setExpiry}
                 options={RULE_EXPIRY_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
               />
-              <label className="flex cursor-pointer items-center gap-1 text-[10.5px] text-neutral-400" title="勾选后，定时任务运行时也会自动放行匹配的操作">
+              <label className="flex cursor-pointer items-center gap-1 text-[10.5px] text-neutral-400" title={tr("勾选后，定时任务运行时也会自动放行匹配的操作")}>
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5"
-                  aria-label="允许定时任务使用此规则"
+                  aria-label={tr("允许定时任务使用此规则")}
                   checked={unattended}
                   onChange={(event) => setUnattended(event.target.checked)}
                 />
-                允许定时任务使用
+                {tr("允许定时任务使用")}
               </label>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
@@ -538,21 +539,21 @@ function HostGrantEditor({ target, state }: { target: GrantTarget; state: GrantS
                   })
                 }
               >
-                添加
+                {tr("添加")}
               </button>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setFormOpen(false)}>
-                取消
+                {tr("取消")}
               </button>
             </div>
           ) : (
             <button
               type="button"
               className="flex w-fit items-center gap-1 text-[10.5px] text-neutral-500 hover:text-neutral-300"
-              title="只对匹配的路径或操作免确认，例如只允许修改 /etc/nginx/** 下的文件"
+              title={tr("只对匹配的路径或操作免确认，例如只允许修改 /etc/nginx/** 下的文件")}
               onClick={() => setFormOpen(true)}
             >
               <IconPlus size={10} />
-              添加路径规则
+              {tr("添加路径规则")}
             </button>
           )}
         </>

@@ -4,6 +4,7 @@ import { isSessionReconnectPending, reconnectWorkspaceSession } from "./reconnec
 import { reconnectRestoredWorkspace, workspaceSessionIsDead } from "./workspaceRestore";
 import type { SessionRuntimeInfo, Workspace } from "./types";
 import { useUi } from "./useUi";
+import { t } from "../../i18n";
 
 export type LiveSessionReconnect =
   | { kind: "reconnected"; session: SessionInfo }
@@ -69,7 +70,7 @@ export async function confirmSuspectReconnect(workspaceId: string | undefined): 
   const workspace = workspaceId ? useUi.getState().workspaces.find((item) => item.id === workspaceId) : undefined;
   if (!workspaceHasOrdinaryTerminals(workspace)) return true;
   const { confirmDialog } = await import("../../ui/dialogs");
-  return confirmDialog("临时终端会断开，正在运行的程序会结束");
+  return confirmDialog(t("临时终端会断开，正在运行的程序会结束"));
 }
 
 // reconnectWorkspaceConnection reconnects the host session of a workspace from outside any terminal pane: a live
@@ -85,7 +86,7 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
       const result = await reconnectLiveSession(workspace.sessionId, workspaceId);
       if (result.kind === "pending") return false;
       if (result.kind === "canceled") {
-        pushToast("info", "已取消重新连接");
+        pushToast("info", t("已取消重新连接"));
         return false;
       }
       if (result.kind === "reconnected") return true;
@@ -95,11 +96,11 @@ export async function reconnectWorkspaceConnection(workspaceId: string): Promise
     if (outcome.ok) return true;
     pushToast(
       outcome.canceled ? "info" : "error",
-      outcome.canceled ? "已取消重新连接" : `重新连接失败：${outcome.error ?? "未知错误"}`,
+      outcome.canceled ? t("已取消重新连接") : t("重新连接失败：{value}", { value: outcome.error ?? t("未知错误") }),
     );
     return false;
   } catch (error) {
-    pushToast("error", `重新连接失败：${describeError(error)}`);
+    pushToast("error", t("重新连接失败：{value}", { value: describeError(error) }));
     return false;
   }
 }

@@ -16,6 +16,7 @@ import {
   type MetricKind,
   type MetricRangeId,
 } from "./MetricsTrend";
+import { t } from "../../i18n";
 
 interface MetricsResult {
   deviceId: string;
@@ -85,16 +86,16 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   }, [latest, gapThreshold]);
   const loadingView = loading || (result !== null && result.deviceId !== deviceId);
   const refreshButton = (
-    <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" aria-label="刷新指标" onClick={load} disabled={loading}>
+    <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" aria-label={t("刷新指标")} onClick={load} disabled={loading}>
       <IconRefresh size={11} className={loading ? "animate-spin" : ""} />
-      {error || data?.seriesError ? "重试" : "刷新"}
+      {error || data?.seriesError ? t("重试") : t("刷新")}
     </button>
   );
 
   if (loadingView && !latest) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="nx-hint py-1">正在加载指标…</span>
+        <span className="nx-hint py-1">{t("正在加载指标…")}</span>
         {refreshButton}
       </div>
     );
@@ -102,7 +103,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   if (error) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="text-red-300">未能加载指标：{error}</span>
+        <span className="text-red-300">{t("未能加载指标：")}{error}</span>
         {refreshButton}
       </div>
     );
@@ -111,9 +112,9 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
         {data?.seriesError ? (
-          <span className="text-red-300">未能加载趋势：{data.seriesError}</span>
+          <span className="text-red-300">{t("未能加载趋势：")}{data.seriesError}</span>
         ) : (
-          <span className="nx-hint py-1">{online ? "设备尚未上报指标（默认每 60 秒一次）。" : "设备离线，暂无近期指标。"}</span>
+          <span className="nx-hint py-1">{online ? t("设备尚未上报指标（默认每 60 秒一次）。") : t("设备离线，暂无近期指标。")}</span>
         )}
         {refreshButton}
       </div>
@@ -123,17 +124,17 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   const referenceTime = Date.now();
   const age = referenceTime - latest.ts;
   const stale = age > gapThreshold;
-  const staleText = `${online ? "" : "设备离线，"}数据已 ${formatAge(age)}未更新`;
+  const staleText = t("{value}数据已 {value2}未更新", { value: online ? "" : t("设备离线，"), value2: formatAge(age) });
   const hasTrend = !data?.seriesError && samples.length > 0;
   const metricBlocks: { kind: MetricKind; label: string; value: string }[] = [
     { kind: "cpu", label: "CPU", value: `${latest.cpu_pct.toFixed(1)}%` },
-    { kind: "mem", label: "内存", value: `${formatBytes(latest.mem_used)} / ${formatBytes(latest.mem_total)}` },
-    { kind: "disk", label: "磁盘", value: `${formatBytes(latest.disk_used)} / ${formatBytes(latest.disk_total)}` },
+    { kind: "mem", label: t("内存"), value: `${formatBytes(latest.mem_used)} / ${formatBytes(latest.mem_total)}` },
+    { kind: "disk", label: t("磁盘"), value: `${formatBytes(latest.disk_used)} / ${formatBytes(latest.disk_total)}` },
   ];
 
   return (
     <div className="@container flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1" role="group" aria-label="时间范围">
+      <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t("时间范围")}>
         {METRIC_RANGES.map((r) => (
           <button
             key={r.id}
@@ -147,9 +148,9 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
         ))}
       </div>
       {data?.seriesError ? (
-        <div className="text-[11.5px] text-red-300">未能加载趋势：{data.seriesError}</div>
+        <div className="text-[11.5px] text-red-300">{t("未能加载趋势：")}{data.seriesError}</div>
       ) : !hasTrend ? (
-        <div className="nx-hint text-[11.5px]">所选时间范围内暂无数据。</div>
+        <div className="nx-hint text-[11.5px]">{t("所选时间范围内暂无数据。")}</div>
       ) : null}
       {/* Columns follow the panel's own width, not the window: a narrow card stacks the charts so their axis text stays legible. */}
       <div className={`grid grid-cols-1 gap-x-4 gap-y-3 text-[12px] @4xl:grid-cols-3 ${loading ? "opacity-60" : ""}`} aria-busy={loading} data-testid="metric-blocks">
@@ -171,12 +172,12 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
         ))}
       </div>
       <div className="text-[12px]">
-        <span className="nx-hint text-[11px]">运行时长 </span>
+        <span className="nx-hint text-[11px]">{t("运行时长")} </span>
         <span className="font-mono text-neutral-100">{formatUptime(latest.uptime_s)}</span>
       </div>
       <div className="flex items-center gap-2">
         <div className="nx-hint text-[11px]">
-          最新 {formatTime(latest.ts)}
+          {t("最新")} {formatTime(latest.ts)}
           {stale ? <span className="text-amber-300"> · {staleText}</span> : null}
         </div>
         <div className="nx-spacer" />

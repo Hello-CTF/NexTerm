@@ -12,6 +12,7 @@ import { formatSize } from "./fileTypes";
 import { joinPath } from "./pathUtils";
 import type { FolderFileEntry } from "./folderUpload";
 import { createTransferTaskId } from "./transferTaskId";
+import { t } from "../../i18n";
 
 export type { FolderFileEntry };
 
@@ -55,7 +56,7 @@ function splitTarName(full: Uint8Array): { name: Uint8Array; prefix: Uint8Array 
     const name = full.subarray(i + 1);
     if (prefix.length <= 155 && name.length > 0 && name.length <= 100) return { name, prefix };
   }
-  throw new Error(`路径过长，无法打包：${decoder.decode(full)}`);
+  throw new Error(t("路径过长，无法打包：{decode}", { decode: decoder.decode(full) }));
 }
 
 function writeHeader(
@@ -164,7 +165,7 @@ export function folderTarSource(
     size: plan.size,
     async read(offset, length) {
       if (offset !== position || length < 0 || offset + length > plan.size) {
-        throw new Error("打包读取偏移无效");
+        throw new Error(t("打包读取偏移无效"));
       }
       const out = new Uint8Array(length);
       let written = 0;
@@ -184,7 +185,7 @@ export function folderTarSource(
         pendingOffset += count;
         if (pendingOffset === pending.length) pending = null;
       }
-      if (written !== length) throw new Error("打包数据在读取期间提前结束");
+      if (written !== length) throw new Error(t("打包数据在读取期间提前结束"));
       position += written;
       return out;
     },
@@ -214,18 +215,18 @@ function tempArchiveName(): string {
 
 export async function packUploadAndExtract(args: PackUploadArgs): Promise<string> {
   const { sessionId, dir, folderName, files, emptyDirs, onProgress } = args;
-  if (files.length === 0) throw new Error("所选文件夹里没有可上传的文件");
+  if (files.length === 0) throw new Error(t("所选文件夹里没有可上传的文件"));
   if (!folderName || folderName.includes("/") || folderName === "." || folderName === "..") {
-    throw new Error(`文件夹名称无效：${folderName}`);
+    throw new Error(t("文件夹名称无效：{folderName}", { folderName }));
   }
   const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
   if (!packExtractSupported(kind)) {
-    throw new Error(`当前会话类型（${kind || "未知"}）不支持打包上传`);
+    throw new Error(t("当前会话类型（{value}）不支持打包上传", { value: kind || t("未知") }));
   }
   const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
   if (totalBytes > MAX_PACK_BYTES) {
     throw new Error(
-      `文件夹总大小 ${formatSize(totalBytes)} 超过打包上传上限 ${formatSize(MAX_PACK_BYTES)}，请改用普通上传逐文件传输`,
+      t("文件夹总大小 {value} 超过打包上传上限 {value2}，请改用普通上传逐文件传输", { value: formatSize(totalBytes), value2: formatSize(MAX_PACK_BYTES) }),
     );
   }
   // The two backends extract differently. ssh extracts into a directory derived from the
@@ -240,7 +241,7 @@ export async function packUploadAndExtract(args: PackUploadArgs): Promise<string
   if (sshDerived) {
     const siblings = await fsApi.list(sessionId, dir);
     if (siblings.some((e) => e.kind !== "dir" && e.name === archiveName)) {
-      throw new Error(`无法打包上传：目标目录已存在 ${archiveName}，请先移走或重命名它`);
+      throw new Error(t("无法打包上传：目标目录已存在 {archiveName}，请先移走或重命名它", { archiveName }));
     }
   }
   const tar = folderTarSource(files, sshDerived ? "" : folderName, emptyDirs);
@@ -250,12 +251,12 @@ export async function packUploadAndExtract(args: PackUploadArgs): Promise<string
     await uploadChunked({ sessionId, remotePath: remoteTemp, source: tar, taskId, attemptId, onProgress });
   } catch (e) {
     await fsApi.delete(sessionId, remoteTemp, false).catch(() => undefined);
-    throw new Error(`上传打包文件失败：${describeError(e)}`);
+    throw new Error(t("上传打包文件失败：{value}", { value: describeError(e) }));
   }
   try {
     await fsApi.extract(sessionId, remoteTemp);
   } catch (e) {
-    throw new Error(`远端解压失败：${describeError(e)}`);
+    throw new Error(t("远端解压失败：{value}", { value: describeError(e) }));
   } finally {
     await fsApi.delete(sessionId, remoteTemp, false).catch(() => undefined);
   }

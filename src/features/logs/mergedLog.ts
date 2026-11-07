@@ -1,4 +1,5 @@
 import type { LogTailSourceStatus } from "../../ipc/logTailApi";
+import { t } from "../../i18n";
 
 export interface MergedLogLine {
   sequence: number;
@@ -74,7 +75,7 @@ export class MergedLogBuffer {
   private dropped = 0;
 
   constructor(private readonly capacity: number) {
-    if (!Number.isInteger(capacity) || capacity < 1) throw new Error("日志行数上限必须是正整数");
+    if (!Number.isInteger(capacity) || capacity < 1) throw new Error(t("日志行数上限必须是正整数"));
   }
 
   append(line: MergedLogLine): void {
@@ -159,16 +160,16 @@ export function exportMergedLines(lines: readonly MergedLogLine[]): string {
 }
 
 export const LOG_STATUS_LABELS: Record<LogTailSourceStatus | "idle", string> = {
-  idle: "未启动",
-  queued: "排队等待",
-  starting: "启动中",
-  running: "跟随中",
-  exited: "已退出",
-  failed: "失败",
-  canceled: "已取消",
+  idle: t("未启动"),
+  queued: t("排队等待"),
+  starting: t("启动中"),
+  running: t("跟随中"),
+  exited: t("已退出"),
+  failed: t("失败"),
+  canceled: t("已取消"),
 };
 
 // regexErrorNotice states a filter problem in plain words; the engine's own message follows only as a detail.
 export function regexErrorNotice(detail: string): string {
-  return `正则表达式写法有误，当前显示未过滤的日志。请检查括号和转义符是否成对（技术详情：${detail}）`;
+  return t("正则表达式写法有误，当前显示未过滤的日志。请检查括号和转义符是否成对（技术详情：{detail}）", { detail });
 }

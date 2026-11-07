@@ -8,6 +8,7 @@ import {
   useQuickCommands,
   type QuickCommand,
 } from "./quickCommands";
+import { t } from "../../i18n";
 
 type Draft = QuickCommand & { index: number | null };
 
@@ -31,7 +32,7 @@ export function QuickCommandsEditor() {
       setError(null);
       return true;
     } catch (cause) {
-      setError(`保存失败：${describeError(cause)}`);
+      setError(t("保存失败：{value}", { value: describeError(cause) }));
       return false;
     } finally {
       setSaving(false);
@@ -70,10 +71,10 @@ export function QuickCommandsEditor() {
   return (
     <div className="flex flex-col gap-2" aria-busy={saving}>
       {commands.length === 0 && !draft && (
-        <p className="nx-hint">暂无快捷命令。添加常用命令后，可在终端按键条的「命令」中直接发送。</p>
+        <p className="nx-hint">{t("暂无快捷命令。添加常用命令后，可在终端按键条的「命令」中直接发送。")}</p>
       )}
       {commands.length > 0 && (
-        <ul className="flex flex-col gap-1" aria-label="快捷命令列表">
+        <ul className="flex flex-col gap-1" aria-label={t("快捷命令列表")}>
           {commands.map((command, index) => (
             <li
               key={`${index}:${command.label}`}
@@ -83,7 +84,7 @@ export function QuickCommandsEditor() {
                 <button
                   type="button"
                   className="nx-icon-btn nx-icon-btn-sm"
-                  aria-label={`上移 ${command.label}`}
+                  aria-label={t("上移 {label}", { label: command.label })}
                   disabled={index === 0 || saving}
                   onClick={() => move(index, -1)}
                 >
@@ -92,7 +93,7 @@ export function QuickCommandsEditor() {
                 <button
                   type="button"
                   className="nx-icon-btn nx-icon-btn-sm"
-                  aria-label={`下移 ${command.label}`}
+                  aria-label={t("下移 {label}", { label: command.label })}
                   disabled={index === commands.length - 1 || saving}
                   onClick={() => move(index, 1)}
                 >
@@ -103,11 +104,11 @@ export function QuickCommandsEditor() {
                 <span className="truncate text-[12.5px] text-neutral-200">{command.label}</span>
                 <span className="truncate font-mono text-[11px] text-neutral-500">{previewText(command.text)}</span>
               </span>
-              {command.appendEnter && <span className="nx-badge shrink-0">回车</span>}
+              {command.appendEnter && <span className="nx-badge shrink-0">{t("回车")}</span>}
               <button
                 type="button"
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                aria-label={`编辑 ${command.label}`}
+                aria-label={t("编辑 {label}", { label: command.label })}
                 disabled={saving}
                 onClick={() => {
                   setError(null);
@@ -119,7 +120,7 @@ export function QuickCommandsEditor() {
               <button
                 type="button"
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                aria-label={`删除 ${command.label}`}
+                aria-label={t("删除 {label}", { label: command.label })}
                 disabled={saving}
                 onClick={() => remove(index)}
               >
@@ -132,24 +133,24 @@ export function QuickCommandsEditor() {
       {draft ? (
         <form
           className="flex flex-col gap-2 rounded-md border border-neutral-800/60 p-2"
-          aria-label={draft.index === null ? "添加快捷命令" : "编辑快捷命令"}
+          aria-label={draft.index === null ? t("添加快捷命令") : t("编辑快捷命令")}
           onSubmit={(event) => {
             event.preventDefault();
             void submitDraft();
           }}
         >
           <label className="flex flex-col gap-1">
-            <span className="nx-setting-label">名称</span>
+            <span className="nx-setting-label">{t("名称")}</span>
             <input
               className="nx-input"
               value={draft.label}
               maxLength={QUICK_COMMAND_LIMITS.labelChars * 2}
-              placeholder="例如：查看状态"
+              placeholder={t("例如：查看状态")}
               onChange={(event) => setDraft({ ...draft, label: event.target.value })}
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="nx-setting-label">发送内容</span>
+            <span className="nx-setting-label">{t("发送内容")}</span>
             <textarea
               className="nx-textarea font-mono"
               rows={3}
@@ -157,7 +158,7 @@ export function QuickCommandsEditor() {
               spellCheck={false}
               autoCapitalize="off"
               autoCorrect="off"
-              placeholder="例如：git status"
+              placeholder={t("例如：git status")}
               onChange={(event) => setDraft({ ...draft, text: event.target.value })}
             />
           </label>
@@ -168,9 +169,9 @@ export function QuickCommandsEditor() {
               checked={draft.appendEnter}
               onChange={(event) => setDraft({ ...draft, appendEnter: event.target.checked })}
             />
-            发送后自动回车
+            {t("发送后自动回车")}
           </label>
-          <p className="nx-hint">内容包含多行时，发送前会先确认。</p>
+          <p className="nx-hint">{t("内容包含多行时，发送前会先确认。")}</p>
           <div className="flex justify-end gap-2">
             <button
               type="button"
@@ -180,10 +181,10 @@ export function QuickCommandsEditor() {
                 setDraft(null);
               }}
             >
-              取消
+              {t("取消")}
             </button>
             <button type="submit" className="nx-btn nx-btn-primary" disabled={saving}>
-              保存
+              {t("保存")}
             </button>
           </div>
         </form>
@@ -198,10 +199,10 @@ export function QuickCommandsEditor() {
           }}
         >
           <IconPlus size={12} />
-          添加快捷命令
+          {t("添加快捷命令")}
         </button>
       )}
-      {full && !draft && <p className="nx-hint">最多保存 {QUICK_COMMAND_LIMITS.count} 条快捷命令。</p>}
+      {full && !draft && <p className="nx-hint">{t("最多保存")} {QUICK_COMMAND_LIMITS.count} {t("条快捷命令。")}</p>}
       {error && (
         <p role="alert" className="text-[12px] text-red-400">
           {error}

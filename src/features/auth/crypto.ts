@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 // Account DEK envelope and sync object encryption/decryption, interoperating with internal/vault (userdek.go) and internal/sync (object.go).
 // DEK plaintext exists only in caller memory: never persisted, never uploaded; the server stores only envelopes and ciphertext.
 
@@ -38,7 +39,7 @@ export class CryptoError extends Error {
 
 function requireSubtle(): SubtleCrypto {
   if (typeof crypto === "undefined" || !crypto.subtle) {
-    throw new CryptoError("crypto", "当前环境不支持 Web Crypto（需要 HTTPS 或 localhost）");
+    throw new CryptoError("crypto", t("当前环境不支持 Web Crypto（需要 HTTPS 或 localhost）"));
   }
   return crypto.subtle;
 }
@@ -84,7 +85,7 @@ export async function aesGcmSeal(key: Uint8Array, plaintext: Uint8Array, aad: Ui
 
 export async function aesGcmOpen(key: Uint8Array, blob: Uint8Array, aad: Uint8Array): Promise<Uint8Array> {
   if (blob.length <= NONCE_LENGTH) {
-    throw new CryptoError("decrypt", "解密失败：加密数据格式无效");
+    throw new CryptoError("decrypt", t("解密失败：加密数据格式无效"));
   }
   const subtle = requireSubtle();
   const cryptoKey = await importAesKey(key, "decrypt");
@@ -96,7 +97,7 @@ export async function aesGcmOpen(key: Uint8Array, blob: Uint8Array, aad: Uint8Ar
     );
     return new Uint8Array(pt);
   } catch {
-    throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
+    throw new CryptoError("decrypt", t("解密失败（密钥不匹配或数据损坏）"));
   }
 }
 
@@ -118,7 +119,7 @@ export function parseKdfParams(raw: string): KdfParams {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new CryptoError("bad_param", "参数错误：密钥派生参数格式无效");
+    throw new CryptoError("bad_param", t("参数错误：密钥派生参数格式无效"));
   }
   const params = parsed as Partial<KdfParams>;
   if (
@@ -127,14 +128,14 @@ export function parseKdfParams(raw: string): KdfParams {
     params.m < KDF_LIMITS.minMemoryKiB || params.m > KDF_LIMITS.maxMemoryKiB ||
     params.p === 0 || params.p > KDF_LIMITS.maxThreads
   ) {
-    throw new CryptoError("bad_param", "参数错误：密钥派生参数超出允许范围");
+    throw new CryptoError("bad_param", t("参数错误：密钥派生参数超出允许范围"));
   }
   return { t: params.t, m: params.m, p: params.p };
 }
 
 async function deriveUserKEK(password: string, salt: Uint8Array, params: KdfParams): Promise<Uint8Array> {
   if (salt.length < 16) {
-    throw new CryptoError("crypto", "加密失败：盐值长度不足");
+    throw new CryptoError("crypto", t("加密失败：盐值长度不足"));
   }
   // The Argon2 implementation is only needed when a password is actually derived, so it stays out of the entry chunk.
   const { argon2idKey } = await import("./argon2");
@@ -157,7 +158,7 @@ export function generateDEK(): Uint8Array {
 
 export async function wrapDEKWithPassword(password: string, dek: Uint8Array): Promise<{ envelope: Uint8Array; salt: Uint8Array; params: string }> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+    throw new CryptoError("crypto", t("加密失败：数据密钥长度无效"));
   }
   const salt = randomBytes(16);
   const kek = await deriveUserKEK(password, salt, KDF_DEFAULTS);
@@ -169,11 +170,11 @@ export async function unwrapDEKWithPassword(password: string, envelope: Uint8Arr
   const params = parseKdfParams(paramsRaw);
   const kek = await deriveUserKEK(password, salt, params);
   if (envelope.length !== NONCE_LENGTH + DEK_LENGTH + TAG_LENGTH) {
-    throw new CryptoError("decrypt", "解密失败：数据密钥格式无效");
+    throw new CryptoError("decrypt", t("解密失败：数据密钥格式无效"));
   }
   const dek = await aesGcmOpen(kek, envelope, utf8Bytes(userDEKAAD));
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("decrypt", "解密失败：数据密钥长度无效");
+    throw new CryptoError("decrypt", t("解密失败：数据密钥长度无效"));
   }
   return dek;
 }
@@ -194,7 +195,7 @@ function recoveryKeyMaterial(canonical: string): Uint8Array {
 
 export async function wrapDEKWithRecovery(canonicalRecoveryKey: string, dek: Uint8Array): Promise<Uint8Array> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+    throw new CryptoError("crypto", t("加密失败：数据密钥长度无效"));
   }
   const kek = recoveryKeyMaterial(canonicalRecoveryKey);
   return aesGcmSeal(kek, dek, utf8Bytes(userDEKRecoveryAAD));
@@ -202,12 +203,12 @@ export async function wrapDEKWithRecovery(canonicalRecoveryKey: string, dek: Uin
 
 export async function unwrapDEKWithRecovery(canonicalRecoveryKey: string, envelope: Uint8Array): Promise<Uint8Array> {
   if (envelope.length !== NONCE_LENGTH + DEK_LENGTH + TAG_LENGTH) {
-    throw new CryptoError("decrypt", "解密失败：恢复数据格式无效");
+    throw new CryptoError("decrypt", t("解密失败：恢复数据格式无效"));
   }
   const kek = recoveryKeyMaterial(canonicalRecoveryKey);
   const dek = await aesGcmOpen(kek, envelope, utf8Bytes(userDEKRecoveryAAD));
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("decrypt", "解密失败：数据密钥长度无效");
+    throw new CryptoError("decrypt", t("解密失败：数据密钥长度无效"));
   }
   return dek;
 }
@@ -279,7 +280,7 @@ function objectAAD(id: string, kind: string): Uint8Array {
 
 export async function sealSyncObject(dek: Uint8Array, plaintext: Uint8Array, id: string, kind: SyncObjectKind): Promise<Uint8Array> {
   if (dek.length !== DEK_LENGTH) {
-    throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+    throw new CryptoError("crypto", t("加密失败：数据密钥长度无效"));
   }
   return aesGcmSeal(dek, plaintext, objectAAD(id, kind));
 }
@@ -304,7 +305,7 @@ const MAX_ZSTD_WINDOW_BYTES = 64 << 20;
 const PACK_SLOT = utf8Bytes(`"data":"`);
 const QUOTE = 0x22;
 
-const badCompressed = () => new CryptoError("decrypt", "同步数据的压缩内容无效");
+const badCompressed = () => new CryptoError("decrypt", t("同步数据的压缩内容无效"));
 
 function compressedDeclaredSize(packed: Uint8Array, maxDecoded: number): number {
   if (packed.length <= COMPRESSED_HEADER_BYTES) throw badCompressed();
@@ -321,7 +322,7 @@ export async function inflateTranscriptPlaintext(packed: Uint8Array, maxDecoded 
   const bad = badCompressed;
   const declared = compressedDeclaredSize(packed, maxDecoded);
   if (typeof DecompressionStream === "undefined") {
-    throw new CryptoError("crypto", "当前浏览器不支持解压同步数据");
+    throw new CryptoError("crypto", t("当前浏览器不支持解压同步数据"));
   }
   const inflater = new DecompressionStream("gzip");
   const writer = inflater.writable.getWriter();
@@ -492,7 +493,7 @@ const COMPRESS_MIN_BYTES = 1 << 10;
 
 async function gzipTranscriptPlaintext(plaintext: Uint8Array): Promise<Uint8Array | null> {
   if (typeof CompressionStream === "undefined") {
-    throw new CryptoError("crypto", "当前浏览器不支持压缩同步数据");
+    throw new CryptoError("crypto", t("当前浏览器不支持压缩同步数据"));
   }
   const deflater = new CompressionStream("gzip");
   const writer = deflater.writable.getWriter();
@@ -528,7 +529,7 @@ export async function sealSyncObjectWire(dek: Uint8Array, plaintext: Uint8Array,
     const packed = await gzipTranscriptPlaintext(plaintext);
     if (packed) {
       if (dek.length !== DEK_LENGTH) {
-        throw new CryptoError("crypto", "加密失败：数据密钥长度无效");
+        throw new CryptoError("crypto", t("加密失败：数据密钥长度无效"));
       }
       return aesGcmSeal(dek, packed, objectAAD(id, COMPRESSED_TRANSCRIPT_LABEL));
     }
@@ -567,7 +568,7 @@ export async function tryOpenSyncObject(
   if (gzipped) {
     return { kind: "transcript", plaintext: await inflateTranscriptPlaintext(gzipped) };
   }
-  throw new CryptoError("decrypt", "解密失败（密钥不匹配或数据损坏）");
+  throw new CryptoError("decrypt", t("解密失败（密钥不匹配或数据损坏）"));
 }
 
 export async function objectPayloadHash(plaintext: Uint8Array): Promise<string> {

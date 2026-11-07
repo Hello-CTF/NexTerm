@@ -1,4 +1,5 @@
 import type { Asset } from "../../ipc/commands";
+import { t } from "../../i18n";
 
 export const COMMAND_SEARCH_PAGE = 100;
 export const COMMAND_SEARCH_DEBOUNCE_MS = 200;
@@ -6,10 +7,10 @@ export const COMMAND_SEARCH_DEBOUNCE_MS = 200;
 export type CommandRange = "all" | "24h" | "7d" | "30d";
 
 export const COMMAND_RANGE_OPTIONS: { value: CommandRange; label: string }[] = [
-  { value: "all", label: "全部时间" },
-  { value: "24h", label: "最近 24 小时" },
-  { value: "7d", label: "最近 7 天" },
-  { value: "30d", label: "最近 30 天" },
+  { value: "all", label: t("全部时间") },
+  { value: "24h", label: t("最近 24 小时") },
+  { value: "7d", label: t("最近 7 天") },
+  { value: "30d", label: t("最近 30 天") },
 ];
 
 const RANGE_MS: Record<Exclude<CommandRange, "all">, number> = {
@@ -32,6 +33,6 @@ export function historyQueryText(input: string): string | null {
 export function hostLabelFor(assetId: string, assets: Pick<Asset, "id" | "name">[]): string {
   const asset = assets.find((candidate) => candidate.id === assetId);
   if (asset) return asset.name;
-  if (assetId.startsWith("device/")) return "设备";
-  return "已删除的主机";
+  if (assetId.startsWith("device/")) return t("设备");
+  return t("已删除的主机");
 }

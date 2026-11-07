@@ -37,6 +37,7 @@ import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
 import { isTouchShell } from "../shell/shellMode";
 import { stateMarkItems } from "../../features/session/stateMarkMenu";
+import { t as tr } from "../../i18n";
 
 function handleTablistKeyDown(
   event: ReactKeyboardEvent<HTMLElement>,
@@ -159,7 +160,7 @@ export function PaneGroup({
     let draft = title;
     let failure = "";
     for (;;) {
-      const next = await promptText(failure || "重命名标签页（留空恢复自动标题）：", draft);
+      const next = await promptText(failure || tr("重命名标签页（留空恢复自动标题）："), draft);
       if (next === null) return;
       const trimmed = sanitizeRemoteTabTitle(next);
       const current = pane.tabs.find((t) => t.id === id);
@@ -182,7 +183,7 @@ export function PaneGroup({
         return;
       } catch (error) {
         draft = trimmed;
-        failure = `重命名失败：${describeError(error)}`;
+        failure = tr("重命名失败：{value}", { value: describeError(error) });
       }
     }
   };
@@ -192,7 +193,7 @@ export function PaneGroup({
     if (t.kind === "terminal") {
       items.push({
         kind: "item",
-        label: "重命名",
+        label: tr("重命名"),
         icon: <IconEdit size={12} />,
         onSelect: () => void renameTab(t.id, t.title),
       });
@@ -200,7 +201,7 @@ export function PaneGroup({
     const running = t.kind === "terminal" && Boolean(t.tabId) && !t.dead && !t.exited;
     items.push({
       kind: "item",
-      label: "关闭标签页",
+      label: tr("关闭标签页"),
       icon: <IconClose size={12} />,
       hint: closeActionHint(t),
       disabled: !t.closable,
@@ -209,7 +210,7 @@ export function PaneGroup({
     const tabIndex = pane.tabs.findIndex((candidate) => candidate.id === t.id);
     items.push({
       kind: "item",
-      label: "左移标签页",
+      label: tr("左移标签页"),
       icon: <IconChevronLeft size={12} />,
       accel: "Ctrl+Shift+←",
       disabled: tabIndex <= 0,
@@ -217,7 +218,7 @@ export function PaneGroup({
     });
     items.push({
       kind: "item",
-      label: "右移标签页",
+      label: tr("右移标签页"),
       icon: <IconChevronRight size={12} />,
       accel: "Ctrl+Shift+→",
       disabled: tabIndex < 0 || tabIndex >= pane.tabs.length - 1,
@@ -227,14 +228,14 @@ export function PaneGroup({
     const closableRight = pane.tabs.slice(tabIndex + 1).filter((candidate) => candidate.closable);
     items.push({
       kind: "item",
-      label: "关闭左侧全部标签页",
+      label: tr("关闭左侧全部标签页"),
       icon: <IconClose size={12} />,
       disabled: closableLeft.length === 0,
       onSelect: () => void requestCloseTabs(closableLeft.map((candidate) => candidate.id)),
     });
     items.push({
       kind: "item",
-      label: "关闭右侧全部标签页",
+      label: tr("关闭右侧全部标签页"),
       icon: <IconClose size={12} />,
       disabled: closableRight.length === 0,
       onSelect: () => void requestCloseTabs(closableRight.map((candidate) => candidate.id)),
@@ -243,7 +244,7 @@ export function PaneGroup({
     for (const target of moveTargets) {
       items.push({
         kind: "item",
-        label: `移到${target.label}`,
+        label: tr("移到{label}", { label: target.label }),
         icon: <IconChevronRight size={12} />,
         onSelect: () => moveTabToPane(t.id, target.paneId),
       });
@@ -252,14 +253,14 @@ export function PaneGroup({
       // Keyboard equivalent of dropping the tab on this pane's right or bottom edge.
       const alone = pane.tabs.length < 2;
       for (const { edge, label, Icon } of [
-        { edge: "right", label: "移到右侧新窗格", Icon: IconSplitV },
-        { edge: "bottom", label: "移到下方新窗格", Icon: IconSplitH },
+        { edge: "right", label: tr("移到右侧新窗格"), Icon: IconSplitV },
+        { edge: "bottom", label: tr("移到下方新窗格"), Icon: IconSplitH },
       ] as const) {
         items.push({
           kind: "item",
           label,
           icon: <Icon size={12} />,
-          hint: alone ? "窗格中只有一个标签页" : undefined,
+          hint: alone ? tr("窗格中只有一个标签页") : undefined,
           disabled: alone,
           onSelect: () => void splitPaneWithTab(t.id, pane.id, edge),
         });
@@ -273,9 +274,9 @@ export function PaneGroup({
       items.push({ kind: "separator" });
       items.push({
         kind: "item",
-        label: "结束进程…",
+        label: tr("结束进程…"),
         icon: <IconStop size={12} />,
-        hint: "终止进程，无法恢复",
+        hint: tr("终止进程，无法恢复"),
         danger: true,
         onSelect: () => void requestKillTab(t.id),
       });
@@ -325,9 +326,9 @@ export function PaneGroup({
           }}
         >
         {pane.tabs.length === 0 && (
-          <span className="px-1 text-xs text-neutral-500">该窗格暂无标签页</span>
+          <span className="px-1 text-xs text-neutral-500">{tr("该窗格暂无标签页")}</span>
         )}
-        <div role="tablist" aria-label="标签页" className="flex items-center gap-[3px]">
+        <div role="tablist" aria-label={tr("标签页")} className="flex items-center gap-[3px]">
           {pane.tabs.map((t) => {
             const Icon = tabIcon(t);
             const isActive = t.id === activeTabId;
@@ -424,7 +425,7 @@ export function PaneGroup({
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (
-                  <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={`关闭失败：${t.closeError}`}>
+                  <span className="flex shrink-0 items-center text-red-400" role="img" aria-label={tr("关闭失败：{closeError}", { closeError: t.closeError })}>
                     <IconAlert size={11} />
                   </span>
                 )}
@@ -433,14 +434,14 @@ export function PaneGroup({
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400"
                     role="img"
-                    aria-label="有新输出"
+                    aria-label={tr("有新输出")}
                   />
                 )}
                 {t.closable && (
                   <button
                     type="button"
                     className="nx-tab-close"
-                    aria-label={`关闭标签页 ${t.title}`}
+                    aria-label={tr("关闭标签页 {title}", { title: t.title })}
                     title={closeTabHint(t)}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -460,8 +461,8 @@ export function PaneGroup({
         {canNewTerminal && (
           <button
             className="nx-tab-new"
-            title={`新建终端标签页 (${kbLabel("newTerminal")})`}
-            aria-label="新建终端标签页"
+            title={tr("新建终端标签页 ({value})", { value: kbLabel("newTerminal") })}
+            aria-label={tr("新建终端标签页")}
             onClick={onNewTerminal}
           >
             <IconPlus size={13} />
@@ -469,24 +470,24 @@ export function PaneGroup({
         )}
         <div className="nx-spacer" />
         {singlePane && paneCount > 1 && (
-          <span className="flex items-center" role="group" aria-label="切换窗格">
+          <span className="flex items-center" role="group" aria-label={tr("切换窗格")}>
             <button
               type="button"
               className="nx-icon-btn nx-icon-btn-sm"
-              title="上一个窗格"
-              aria-label="上一个窗格"
+              title={tr("上一个窗格")}
+              aria-label={tr("上一个窗格")}
               onClick={() => onCyclePane(-1)}
             >
               <IconChevronLeft size={13} />
             </button>
             <span className="px-0.5 text-[11px] tabular-nums text-neutral-400" aria-live="polite">
-              窗格 {paneNumber}/{paneCount}
+              {tr("窗格")} {paneNumber}/{paneCount}
             </span>
             <button
               type="button"
               className="nx-icon-btn nx-icon-btn-sm"
-              title="下一个窗格"
-              aria-label="下一个窗格"
+              title={tr("下一个窗格")}
+              aria-label={tr("下一个窗格")}
               onClick={() => onCyclePane(1)}
             >
               <IconChevronRight size={13} />
@@ -498,8 +499,8 @@ export function PaneGroup({
             <button
               type="button"
               className="nx-icon-btn nx-icon-btn-sm"
-              title={`向右分屏 (${kbLabel("splitRight")})`}
-              aria-label="向右分屏"
+              title={tr("向右分屏 ({value})", { value: kbLabel("splitRight") })}
+              aria-label={tr("向右分屏")}
               onClick={() => onSplit("right")}
             >
               <IconSplitV size={14} />
@@ -508,8 +509,8 @@ export function PaneGroup({
               type="button"
               className="nx-icon-btn nx-icon-btn-sm"
               disabled={!splitAllowed}
-              title={splitAllowed ? `向下分屏 (${kbLabel("splitDown")})` : "窗口高度不足，无法向下分屏"}
-              aria-label="向下分屏"
+              title={splitAllowed ? tr("向下分屏 ({value})", { value: kbLabel("splitDown") }) : tr("窗口高度不足，无法向下分屏")}
+              aria-label={tr("向下分屏")}
               onClick={() => onSplit("down")}
             >
               <IconSplitH size={14} />
@@ -520,8 +521,8 @@ export function PaneGroup({
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm"
-            title={`关闭窗格，标签页移到相邻窗格 (${kbLabel("closePane")})`}
-            aria-label="关闭窗格（保留标签页）"
+            title={tr("关闭窗格，标签页移到相邻窗格 ({value})", { value: kbLabel("closePane") })}
+            aria-label={tr("关闭窗格（保留标签页）")}
             onClick={onClosePane}
           >
             <IconMergeH size={14} />
@@ -529,8 +530,8 @@ export function PaneGroup({
         )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={leftOpen ? `收起左侧栏 (${kbLabel("toggleSidebar")})` : `展开左侧栏 (${kbLabel("toggleSidebar")})`}
-          aria-label={leftOpen ? "收起左侧栏" : "展开左侧栏"}
+          title={leftOpen ? tr("收起左侧栏 ({value})", { value: kbLabel("toggleSidebar") }) : tr("展开左侧栏 ({value})", { value: kbLabel("toggleSidebar") })}
+          aria-label={leftOpen ? tr("收起左侧栏") : tr("展开左侧栏")}
           onClick={onToggleLeft}
         >
           <IconChevronLeft size={15} className={leftOpen ? "" : "rotate-180"} />

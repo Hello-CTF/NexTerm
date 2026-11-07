@@ -16,12 +16,13 @@ import { nextTabId } from "./model";
 import { assetConnectionProblemKey, quickConnectionProblemKey } from "./problems";
 import type { ConnectAssetOptions, ConnectOutcome, SaveQuickConnectOutcome } from "./types";
 import { useUi } from "./useUi";
+import { t } from "../../i18n";
 
 const inflightQuickConnects = new Map<string, Promise<ConnectOutcome>>();
 
 export async function promptQuickConnectPassword(display: string): Promise<string | null> {
   const { promptText } = await import("../../ui/dialogs");
-  return promptText(`输入 ${display} 的登录密码（留空则使用 ssh-agent）`, "", {
+  return promptText(t("输入 {display} 的登录密码（留空则使用 ssh-agent）", { display }), "", {
     secret: true,
   });
 }
@@ -68,7 +69,7 @@ async function runQuickConnectTarget(
     );
     if (!currentConnectionEpoch(epoch)) return info ? discardStaleSession(info) : { ok: false, canceled: true };
     if (!info) {
-      pushToast("info", "已取消连接");
+      pushToast("info", t("已取消连接"));
       return { ok: false, canceled: true };
     }
     await openConnectedAssetSession(info, { id: "", name: info.name, kind: "ssh" }, options, {
@@ -157,7 +158,7 @@ async function runSaveQuickConnectAsset(
     if (!currentConnectionEpoch(epoch)) return finish({ ok: false, canceled: true });
     let credId: string | null = null;
     if (password) {
-      if (!(await ensureVaultUnlocked("保存凭据前需要解锁凭据库", epoch)) || !currentConnectionEpoch(epoch)) {
+      if (!(await ensureVaultUnlocked(t("保存凭据前需要解锁凭据库"), epoch)) || !currentConnectionEpoch(epoch)) {
         return finish({ ok: false, canceled: true });
       }
       const res = await vaultApi.setCredential(display, "password", password);

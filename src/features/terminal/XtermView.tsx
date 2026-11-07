@@ -62,6 +62,7 @@ import { attachTouchScroll } from "./touchScroll";
 import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
 import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
+import { t as tr } from "../../i18n";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -84,7 +85,7 @@ function showWebglFallbackNotice(): void {
   webglFallbackNoticeShown = true;
   useUi
     .getState()
-    .pushToast("info", "GPU 渲染多次失效，部分终端已改用兼容渲染。可在设置 > 终端 > GPU 加速中调整。");
+    .pushToast("info", tr("GPU 渲染多次失效，部分终端已改用兼容渲染。可在设置 > 终端 > GPU 加速中调整。"));
 }
 
 function sameGrid(
@@ -193,11 +194,11 @@ function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void 
     <button
       type="button"
       className="nx-btn nx-btn-sm pointer-coarse:min-h-11 pointer-coarse:px-3 absolute bottom-1.5 right-3 z-10 border border-neutral-700/80 bg-neutral-800/95 text-neutral-100 shadow-lg"
-      aria-label={`回到底部，下方还有 ${linesBelow} 行`}
+      aria-label={tr("回到底部，下方还有 {linesBelow} 行", { linesBelow })}
       onClick={onJump}
     >
       <IconArrowDown size={12} />
-      回到底部 · {linesBelow} 行
+      {tr("回到底部 ·")} {linesBelow} {tr("行")}
     </button>
   );
 }
@@ -744,7 +745,7 @@ export function XtermView(props: XtermViewProps) {
           const code = (e as { code?: string } | null)?.code;
           if (code === "not_found" || code === "unsupported") {
             // No retry will help: surface the accurate terminal state.
-            useUi.getState().pushToast("error", "终端输出流恢复失败，画面可能停滞，请重新连接");
+            useUi.getState().pushToast("error", tr("终端输出流恢复失败，画面可能停滞，请重新连接"));
             return;
           }
           if (code === "forbidden") {
@@ -802,7 +803,7 @@ export function XtermView(props: XtermViewProps) {
       const delay = exhausted ? 5000 : resumeRetryDelays[resumeAttempts];
       resumeAttempts += 1;
       if (exhausted && resumeAttempts === resumeRetryDelays.length + 1) {
-        useUi.getState().pushToast("error", "终端输出流恢复失败，画面可能停滞，正在尝试恢复");
+        useUi.getState().pushToast("error", tr("终端输出流恢复失败，画面可能停滞，正在尝试恢复"));
       }
       resumeRetryTimer = window.setTimeout(() => {
         resumeRetryTimer = undefined;
@@ -881,7 +882,7 @@ export function XtermView(props: XtermViewProps) {
           // window): the view is missing output and cannot silently
           // resync, so surface the accurate state instead of a false
           // "recovering" notice.
-          useUi.getState().pushToast("error", "终端输出积压过长，早期输出无法恢复，画面可能不完整");
+          useUi.getState().pushToast("error", tr("终端输出积压过长，早期输出无法恢复，画面可能不完整"));
         });
     };
     const refuseStream = () => {
@@ -915,8 +916,8 @@ export function XtermView(props: XtermViewProps) {
           .pushToast(
             replayable ? "info" : "error",
             replayable
-              ? "终端输出积压，正在重新同步，画面将自动恢复"
-              : "终端输出积压，正在重新同步，画面将自动恢复",
+              ? tr("终端输出积压，正在重新同步，画面将自动恢复")
+              : tr("终端输出积压，正在重新同步，画面将自动恢复"),
           );
       }
     };
@@ -1032,7 +1033,7 @@ export function XtermView(props: XtermViewProps) {
     };
     let expiredNoticePending = false;
     const writeExpiredNotice = () => {
-      streamWriter.writeLocalText("\x1b[33m[输出历史已过期，已刷新屏幕]\x1b[0m\n");
+      streamWriter.writeLocalText(tr("\u001b[33m[输出历史已过期，已刷新屏幕]\u001b[0m\n"));
     };
     const channel = createBinaryChannel(
       (bytes) => {
@@ -1245,7 +1246,7 @@ export function XtermView(props: XtermViewProps) {
                 const asset = current.assetId ? await assetApi.get(current.assetId) : null;
                 regular = asset?.options?.terminalMode !== "durable";
               } catch (error) {
-                if (!disposed) useUi.getState().pushToast("error", `无法读取资产终端模式，本次按持久终端打开：${describeError(error)}`);
+                if (!disposed) useUi.getState().pushToast("error", tr("无法读取资产终端模式，本次按持久终端打开：{value}", { value: describeError(error) }));
               }
             }
           }
@@ -1299,10 +1300,10 @@ export function XtermView(props: XtermViewProps) {
         const code = (e as { code?: string } | null)?.code;
         if (code === "not_found") {
           if (!disposed) onAttachFailedRef.current?.(code);
-          streamWriter.writeLocalText("\r\n\x1b[33m[连接已失效] 该终端所属的连接已在服务端删除\x1b[0m\n");
+          streamWriter.writeLocalText(tr("\r\n\u001b[33m[连接已失效] 该终端所属的连接已在服务端删除\u001b[0m\n"));
         } else {
           if (!disposed) onAttachFailedRef.current?.(code ?? "internal");
-          streamWriter.writeLocalText(`\r\n\x1b[31m[连接失败] ${describeError(e)}\x1b[0m\n`);
+          streamWriter.writeLocalText(tr("\r\n\u001b[31m[连接失败] {value}\u001b[0m\n", { value: describeError(e) }));
         }
       } finally {
         attaching = false;

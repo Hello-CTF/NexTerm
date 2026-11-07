@@ -6,6 +6,7 @@ import { TakeoverBanner } from "../TakeoverBanner";
 import { UpdateBanner } from "../UpdateBanner";
 import { DekUnlockBanner } from "../DekUnlockBanner";
 import { WorkspaceRestoreBanner } from "../../features/terminal/WorkspaceRestoreBanner";
+import { t } from "../../i18n";
 
 export interface AppBannersProps {
   ws: Workspace | null | undefined;
@@ -26,28 +27,28 @@ export function AppBanners({ ws, onOpenSettings, onPickOtherAsset }: AppBannersP
       <DekUnlockBanner />
       {layoutRestore.pending && !layoutRestore.preview && (
         <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-blue-500/30 bg-blue-950/30 px-4 py-2 text-xs text-blue-100">
-          <span>账号中有 {layoutRestore.count} 个工作区待确认恢复；本机暂不覆盖服务端布局。</span>
+          <span>{t("账号中有")} {layoutRestore.count} {t("个工作区待确认恢复；本机暂不覆盖服务端布局。")}</span>
           <button type="button" className="nx-btn-ghost" onClick={() => void reviewPendingLayoutRestore()}>
-            查看并恢复
+            {t("查看并恢复")}
           </button>
         </div>
       )}
       {newerLayout !== null && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
           <span>
-            账号布局由更新版本保存（格式 v{newerLayout}），布局同步已暂停；请升级 NexTerm。
+            {t("账号布局由更新版本保存（格式 v")}{newerLayout}{t("），布局同步已暂停；请升级 NexTerm。")}
           </span>
         </div>
       )}
       <WorkspaceRestoreBanner />
       {ws?.deletedTarget && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/30 bg-amber-950/30 px-4 py-2 text-xs text-amber-300">
-          <span>「{ws.title}」的资产已删除。现有标签页可继续查看，但此工作区无法重新连接。</span>
+          <span>「{ws.title}{t("」的资产已删除。现有标签页可继续查看，但此工作区无法重新连接。")}</span>
           <button type="button" className="nx-btn-ghost" onClick={onPickOtherAsset}>
-            选择其他资产
+            {t("选择其他资产")}
           </button>
           <button type="button" className="nx-btn-ghost" onClick={() => void closeWorkspace(ws.id)}>
-            关闭工作区
+            {t("关闭工作区")}
           </button>
         </div>
       )}

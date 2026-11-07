@@ -9,6 +9,7 @@ import type { AccountLink } from "./types";
 import type { FleetBaseURLEntry, FleetDeviceList, FleetEnrollCode, FleetMetricsResponse } from "./fleetApi";
 import type { HostShareView } from "./sharingApi";
 import type { AccountDevice, AccountUser } from "./authApi";
+import { t } from "../i18n";
 
 // RemoteLinkResult is the return of sync_link_set / sync_link_mfa / sync_link_reset_password:
 // beyond the AccountLink view it carries the three-state connect status; the MFA branch carries a ticket, forced password change completion carries a one-time recovery key.
@@ -183,7 +184,7 @@ export type { RemoteHostShareIdentity };
 export const remoteHostShareApi = {
   identity: async (): Promise<RemoteHostShareIdentity> => {
     const identity = await call("host_share_identity");
-    if (identity === null) throw new Error("主机分享身份信息不可用");
+    if (identity === null) throw new Error(t("主机分享身份信息不可用"));
     return identity;
   },
 

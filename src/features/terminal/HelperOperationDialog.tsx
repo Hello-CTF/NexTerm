@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconClose } from "../../ui/icons";
 import { HelperOperationView, type HelperOperationViewProps } from "./HelperOperationView";
+import { t } from "../../i18n";
 
 export function HelperOperationDialog({ onClose, ...props }: HelperOperationViewProps & { onClose: () => void }) {
   const modalRef = useRef<HTMLDivElement>(null);
@@ -25,7 +26,7 @@ export function HelperOperationDialog({ onClose, ...props }: HelperOperationView
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label="持久终端组件"
+        aria-label={t("持久终端组件")}
         tabIndex={-1}
         className="nx-modal relative nx-modal-sm"
         onClick={(event) => event.stopPropagation()}
@@ -34,7 +35,7 @@ export function HelperOperationDialog({ onClose, ...props }: HelperOperationView
           if (layer.isTopmost()) trapOverlayTab(event, modalRef.current);
         }}
       >
-        <button ref={closeRef} type="button" aria-label="关闭持久终端组件窗口" className="nx-icon-btn absolute top-2 right-2" onClick={onClose}>
+        <button ref={closeRef} type="button" aria-label={t("关闭持久终端组件窗口")} className="nx-icon-btn absolute top-2 right-2" onClick={onClose}>
           <IconClose size={14} />
         </button>
         <HelperOperationView {...props} />

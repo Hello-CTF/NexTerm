@@ -12,6 +12,7 @@ import { StatusBar, type StatusBarProps } from "./StatusBar";
 import { ToastStack } from "./ToastStack";
 import { type ShellLayout } from "./useShell";
 import { WorkspaceBody, type WorkspaceBodyProps } from "./WorkspaceBody";
+import { t } from "../../i18n";
 
 // ShellParts is everything the app controller hands to a shell; each shell decides the chrome around it.
 export interface ShellParts {
@@ -61,7 +62,7 @@ export function ShellFrame({
         href="#nx-main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[100] focus:rounded focus:bg-neutral-800 focus:px-3 focus:py-2 focus:text-xs focus:text-neutral-100"
       >
-        跳转到主内容
+        {t("跳转到主内容")}
       </a>
       <DeviceSessionBoundary />
       <Lazy fallback="none" silent>

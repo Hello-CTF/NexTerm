@@ -1,6 +1,7 @@
 import { pruneBroadcastToWorkspaces, useUi, type AppTab, type Workspace } from "../../app/store";
 import { dbApi, sessionApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 export const DEVICE_SESSION_CLEANUP_TIMEOUT_MS = 8000;
 
@@ -120,7 +121,7 @@ function timeoutFailures(operations: TrackedOperation[]): DeviceSessionCleanupFa
 		return {
 			operation: operation.operation,
 			id: operation.id,
-			error: { code: "timeout", message: `关闭设备连接超过 ${DEVICE_SESSION_CLEANUP_TIMEOUT_MS / 1000} 秒仍未完成` },
+			error: { code: "timeout", message: t("关闭设备连接超过 {value} 秒仍未完成", { value: DEVICE_SESSION_CLEANUP_TIMEOUT_MS / 1000 }) },
 		};
 	}).filter((result): result is DeviceSessionCleanupFailure => result !== null);
 }
@@ -165,10 +166,10 @@ export function cleanupDeviceSessions(): Promise<DeviceSessionCleanupFailure[]> 
 
 export function deviceSessionCleanupMessage(failures: DeviceSessionCleanupFailure[]): string {
 	const details = failures.map((failure) => {
-		const operation = failure.operation === "kill" ? `终端 ${failure.id} 关闭失败` : `会话 ${failure.id} 断开失败`;
+		const operation = failure.operation === "kill" ? t("终端 {id} 关闭失败", { id: failure.id }) : t("会话 {id} 断开失败", { id: failure.id });
 		return failure.error === undefined ? operation : `${operation}（${describeError(failure.error)}）`;
 	});
-	return `设备连接未能全部关闭：${details.join("；")}`;
+	return t("设备连接未能全部关闭：{join}", { join: details.join("；") });
 }
 
 export function reportDeviceSessionCleanup(failures: DeviceSessionCleanupFailure[]): void {

@@ -10,6 +10,7 @@ import { useRefreshCredentials, useVaultUnlock } from "./useVaultUnlock";
 import { useVaultInitGate } from "./useVaultInitGate";
 import { LoadError } from "../../ui/LoadError";
 import { IconLock, IconPlus, IconSearch } from "../../ui/icons";
+import { t } from "../../i18n";
 
 function closeOverlayDockAfterNav() {
   if (isWidthOverlayViewport()) {
@@ -74,19 +75,19 @@ export function CredentialsSidebar() {
       style={{ width: leftWidth }}
     >
       <div className="flex h-[34px] shrink-0 items-center gap-1.5 px-2.5">
-        <span className="text-xs font-semibold tracking-wide text-neutral-200">凭据</span>
+        <span className="text-xs font-semibold tracking-wide text-neutral-200">{t("凭据")}</span>
         <span className="nx-count">{all.length}</span>
         <div className="nx-spacer" />
         {protectionOn && !locked && (
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title="立即锁定凭据库（之后需输入保护密码才能使用凭据）"
-            aria-label="锁定凭据库"
+            title={t("立即锁定凭据库（之后需输入保护密码才能使用凭据）")}
+            aria-label={t("锁定凭据库")}
             onClick={() =>
               void vaultApi
                 .lock()
                 .then(refresh)
-                .catch(() => pushToast("error", "无法锁定凭据库。请重试。"))
+                .catch(() => pushToast("error", t("无法锁定凭据库。请重试。")))
             }
           >
             <IconLock size={14} />
@@ -94,8 +95,8 @@ export function CredentialsSidebar() {
         )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="新建凭据"
-          aria-label="新建凭据"
+          title={t("新建凭据")}
+          aria-label={t("新建凭据")}
           onClick={startCreate}
         >
           <IconPlus size={14} />
@@ -105,9 +106,9 @@ export function CredentialsSidebar() {
       {locked && (
         <div className="mx-2 mb-2 flex shrink-0 items-center gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
           <IconLock size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">凭据库已锁定，解锁后才能查看</span>
+          <span className="min-w-0 flex-1 truncate">{t("凭据库已锁定，解锁后才能查看")}</span>
           <button className="nx-btn nx-btn-xs nx-btn-outline" onClick={() => void unlock()}>
-            解锁
+            {t("解锁")}
           </button>
         </div>
       )}
@@ -119,8 +120,8 @@ export function CredentialsSidebar() {
           </span>
           <input
             className="nx-input nx-input-sm"
-            placeholder="搜索凭据"
-            aria-label="搜索凭据"
+            placeholder={t("搜索凭据")}
+            aria-label={t("搜索凭据")}
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
@@ -134,7 +135,7 @@ export function CredentialsSidebar() {
         <div className="flex shrink-0 flex-wrap gap-1 px-2.5 pb-2">
           <FilterChip
             active={activeKind === null}
-            label="全部"
+            label={t("全部")}
             count={all.length}
             onClick={() => {
               setKindFilter(null);
@@ -159,26 +160,25 @@ export function CredentialsSidebar() {
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
         {credentials.isLoading ? (
           <div className="nx-hint px-2 py-6 text-center" role="status">
-            正在加载…
+            {t("正在加载…")}
           </div>
         ) : credentials.isError && !credentials.data ? (
-          <LoadError title="未能加载凭据列表" error={credentials.error} onRetry={() => void credentials.refetch()} />
+          <LoadError title={t("未能加载凭据列表")} error={credentials.error} onRetry={() => void credentials.refetch()} />
         ) : list.length === 0 ? (
           <div className="nx-hint px-2 py-8 text-center">
             {all.length === 0 ? (
               <>
-                暂无任何凭据
+                {t("暂无任何凭据")}
                 <br />
-                新建资产时填写的密码会自动保存到凭据库，
-                也可以直接新建。
+                {t("新建资产时填写的密码会自动保存到凭据库， 也可以直接新建。")}
                 <br />
                 <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-3" onClick={startCreate}>
                   <IconPlus size={12} />
-                  新建凭据
+                  {t("新建凭据")}
                 </button>
               </>
             ) : (
-              "没有匹配的凭据"
+              t("没有匹配的凭据")
             )}
           </div>
         ) : (
@@ -206,9 +206,9 @@ export function CredentialsSidebar() {
                     {meta.label}
                     {" · "}
                     {c.usedBy.length > 0 ? (
-                      `${c.usedBy.length} 个资产在用`
+                      t("{length} 个资产在用", { length: c.usedBy.length })
                     ) : (
-                      <span className="text-[var(--nx-fg-warning)]">未使用</span>
+                      <span className="text-[var(--nx-fg-warning)]">{t("未使用")}</span>
                     )}
                   </span>
                 </span>
@@ -222,26 +222,26 @@ export function CredentialsSidebar() {
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
             {unused > 0 && (
-              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} 条未被资产使用</span>
+              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} {t("条未被资产使用")}</span>
             )}
             <div className="nx-spacer" />
             <span className="truncate">
               {protectionOn
                 ? locked
-                  ? "已锁定"
-                  : "已解锁"
+                  ? t("已锁定")
+                  : t("已解锁")
                 : st?.mode === "not_init"
-                  ? "凭据库尚未设置"
+                  ? t("凭据库尚未设置")
                   : st?.mode === "master"
-                    ? "已启用，未设保护密码"
-                    : "未启用密码保护"}
+                    ? t("已启用，未设保护密码")
+                    : t("未启用密码保护")}
             </span>
           </div>
         )}
         {list.length > pageSize && (
           <div className="flex items-center gap-2 text-[11px] text-neutral-500">
             <span>
-              第 {currentPage + 1} / {pageCount} 页
+              {t("第")} {currentPage + 1} / {pageCount} {t("页")}
             </span>
             <div className="nx-spacer" />
             <button
@@ -249,14 +249,14 @@ export function CredentialsSidebar() {
               disabled={currentPage === 0}
               onClick={() => setPage((p) => Math.max(0, p - 1))}
             >
-              上一页
+              {t("上一页")}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs"
               disabled={currentPage >= pageCount - 1}
               onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             >
-              下一页
+              {t("下一页")}
             </button>
           </div>
         )}

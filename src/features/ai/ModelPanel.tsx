@@ -44,6 +44,7 @@ import {
   IconSparkles,
   IconTrash,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 interface ModelPreset {
   id: string;
@@ -195,8 +196,8 @@ export function ModelManager({
 
   const guardDiscard = async (what: string): Promise<boolean> => {
     if (!dirty) return true;
-    return ask(`存在未保存的修改，${what}将丢弃这些修改。确定要继续吗？`, {
-      title: "放弃未保存的修改",
+    return ask(t("存在未保存的修改，{what}将丢弃这些修改。确定要继续吗？", { what }), {
+      title: t("放弃未保存的修改"),
       kind: "warning",
     });
   };
@@ -204,7 +205,7 @@ export function ModelManager({
   const selectProfile = async (id: string) => {
     const p = view?.profiles.find((x) => x.id === id);
     if (!p) return;
-    if (!(await guardDiscard("切换档案"))) return;
+    if (!(await guardDiscard(t("切换档案")))) return;
     setDraft({ ...p });
     setModels([]);
     setModelsOpen(false);
@@ -212,7 +213,7 @@ export function ModelManager({
   };
 
   const newProfile = async () => {
-    if (!(await guardDiscard("新增档案"))) return;
+    if (!(await guardDiscard(t("新增档案")))) return;
     setDraft(blankProfile());
     setModels([]);
     setModelsOpen(false);
@@ -247,10 +248,10 @@ export function ModelManager({
             : [...prev.profiles, saved],
         };
       });
-      pushToast("info", `已保存模型档案「${saved.name}」`);
+      pushToast("info", t("已保存模型档案「{name}」", { name: saved.name }));
       setTestResult(null);
     } catch (e) {
-      pushToast("error", `未能保存：${describeError(e)}。请检查填写内容后重试`);
+      pushToast("error", t("未能保存：{value}。请检查填写内容后重试", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -258,15 +259,15 @@ export function ModelManager({
 
   const activate = async () => {
     if (!draft || !savedProfile) return;
-    if (!(await guardDiscard("设为当前"))) return;
+    if (!(await guardDiscard(t("设为当前")))) return;
     const target = savedProfile;
     setBusy(true);
     try {
       await modelApi.activate(target.id);
       useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", `当前模型已切换为「${target.name}」`);
+      pushToast("info", t("当前模型已切换为「{name}」", { name: target.name }));
     } catch (e) {
-      pushToast("error", `未能切换模型：${describeError(e)}`);
+      pushToast("error", t("未能切换模型：{value}", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -274,8 +275,8 @@ export function ModelManager({
 
   const remove = async () => {
     if (!draft || !draft.id) return;
-    const ok = await ask(`确定要删除模型档案「${draft.name || draft.model}」吗？此操作不可撤销。`, {
-      title: "删除档案",
+    const ok = await ask(t("确定要删除模型档案「{value}」吗？此操作不可撤销。", { value: draft.name || draft.model }), {
+      title: t("删除档案"),
       kind: "warning",
     });
     if (!ok) return;
@@ -283,11 +284,11 @@ export function ModelManager({
     try {
       await modelApi.remove(draft.id);
       useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", `已删除档案「${draft.name || draft.model}」`);
+      pushToast("info", t("已删除档案「{value}」", { value: draft.name || draft.model }));
       setModels([]);
       setModelsOpen(false);
     } catch (e) {
-      pushToast("error", `未能删除：${describeError(e)}`);
+      pushToast("error", t("未能删除：{value}", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -301,12 +302,12 @@ export function ModelManager({
       setModels(list.models);
       setModelsOpen(true);
       if (list.malformed > 0) {
-        pushToast("info", `模型列表中有 ${list.malformed} 项无法识别，已忽略`);
+        pushToast("info", t("模型列表中有 {malformed} 项无法识别，已忽略", { malformed: list.malformed }));
       } else if (list.models.length === 0) {
-        pushToast("info", "该地址未返回任何模型。请检查接口地址和密钥，或手动填写模型名");
+        pushToast("info", t("该地址未返回任何模型。请检查接口地址和密钥，或手动填写模型名"));
       }
     } catch (e) {
-      pushToast("error", `未能获取模型列表：${describeError(e)}。请检查接口地址、密钥和网络`);
+      pushToast("error", t("未能获取模型列表：{value}。请检查接口地址、密钥和网络", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -320,7 +321,7 @@ export function ModelManager({
       setTestResult(await modelApi.test(draft.id));
       setCircuitNonce((n) => n + 1);
     } catch (e) {
-      pushToast("error", `未能完成连接测试：${describeError(e)}`);
+      pushToast("error", t("未能完成连接测试：{value}", { value: describeError(e) }));
     } finally {
       setTesting(false);
     }
@@ -342,7 +343,7 @@ export function ModelManager({
         };
       });
     } catch (e) {
-      pushToast("error", `未能读取预设：${describeError(e)}`);
+      pushToast("error", t("未能读取预设：{value}", { value: describeError(e) }));
     }
   };
 
@@ -351,12 +352,12 @@ export function ModelManager({
       <div className="flex flex-col gap-4 min-[560px]:flex-row">
         <div className={`flex flex-col ${listWidthClassName}`}>
           <div className="mb-1.5 flex items-center gap-1">
-            <span className="text-[11px] font-medium text-neutral-300">模型档案</span>
+            <span className="text-[11px] font-medium text-neutral-300">{t("模型档案")}</span>
             <div className="nx-spacer" />
             <button
               className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6"
-              title="新增档案"
-              aria-label="新增档案"
+              title={t("新增档案")}
+              aria-label={t("新增档案")}
               onClick={() => void newProfile()}
             >
               <IconPlus size={13} />
@@ -366,29 +367,29 @@ export function ModelManager({
             {!view ? (
               loadError ? (
                 <div className="px-2 py-3 text-center">
-                  <div className="nx-hint text-red-300">未能读取档案列表：{loadError}</div>
+                  <div className="nx-hint text-red-300">{t("未能读取档案列表：")}{loadError}</div>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                     onClick={() => void reload()}
                   >
                     <IconRefresh size={11} />
-                    重试
+                    {t("重试")}
                   </button>
                 </div>
               ) : (
-                <div className="nx-hint px-2 py-3 text-center text-[11px]">正在读取模型档案…</div>
+                <div className="nx-hint px-2 py-3 text-center text-[11px]">{t("正在读取模型档案…")}</div>
               )
             ) : (
               <>
                 {loadError && (
                   <div className="mb-1 border-b border-neutral-800/60 px-2 pb-2 pt-1 text-center">
-                    <div className="nx-hint text-red-300">未能刷新档案列表：{loadError}</div>
+                    <div className="nx-hint text-red-300">{t("未能刷新档案列表：")}{loadError}</div>
                     <button
                       className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                       onClick={() => void reload()}
                     >
                       <IconRefresh size={11} />
-                      重试
+                      {t("重试")}
                     </button>
                   </div>
                 )}
@@ -409,24 +410,24 @@ export function ModelManager({
                       </span>
                       <span className="nx-menu-label">{p.name}</span>
                       {view.activeId === p.id && (
-                        <span className="nx-menu-hint text-green-400/80">当前</span>
+                        <span className="nx-menu-hint text-green-400/80">{t("当前")}</span>
                       )}
                     </button>
                   ))
                 ) : (
-                  <div className="nx-hint px-2 py-3 text-center text-[11px]">暂无模型档案。选择上方「+」添加，或从预设开始。</div>
+                  <div className="nx-hint px-2 py-3 text-center text-[11px]">{t("暂无模型档案。选择上方「+」添加，或从预设开始。")}</div>
                 )}
               </>
             )}
           </div>
           <div className="mt-2">
-            <div className="mb-1 text-[10.5px] text-neutral-500">快速填充（预设）</div>
+            <div className="mb-1 text-[10.5px] text-neutral-500">{t("快速填充（预设）")}</div>
             <div className="flex flex-wrap gap-1">
               {MODEL_PRESETS.map((p) => (
                 <button
                   key={p.id}
                   className="nx-chip pointer-coarse:min-h-6"
-                  title={`使用 ${p.id} 的默认地址与模型填充表单`}
+                  title={t("使用 {id} 的默认地址与模型填充表单", { id: p.id })}
                   onClick={() => void applyPreset(p.id)}
                 >
                   <IconSparkles size={10} />
@@ -440,11 +441,11 @@ export function ModelManager({
         <div className="min-w-0 flex-1">
           {draft ? (
             <div className="flex flex-col gap-2.5">
-              <Field label="显示名称" htmlFor={`${fieldId}-name`}>
+              <Field label={t("显示名称")} htmlFor={`${fieldId}-name`}>
                 <input
                   id={`${fieldId}-name`}
                   className="nx-input"
-                  placeholder="例如 公司 DeepSeek"
+                  placeholder={t("例如 公司 DeepSeek")}
                   value={draft.name}
                   onChange={(e) => patch({ name: e.target.value })}
                 />
@@ -478,10 +479,10 @@ export function ModelManager({
                     className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 absolute top-1/2 right-1 -translate-y-1/2 disabled:opacity-40"
                     title={
                       profileKeyUnavailable(draft)
-                        ? "已保存的密钥不可查看，只能替换为新密钥"
+                        ? t("已保存的密钥不可查看，只能替换为新密钥")
                         : showKey
-                          ? "隐藏密钥"
-                          : "显示密钥"
+                          ? t("隐藏密钥")
+                          : t("显示密钥")
                     }
                     disabled={profileKeyUnavailable(draft)}
                     onClick={() => setShowKey((v) => !v)}
@@ -491,7 +492,7 @@ export function ModelManager({
                 </div>
               </Field>
 
-              <Field label="模型名" htmlFor={`${fieldId}-model`}>
+              <Field label={t("模型名")} htmlFor={`${fieldId}-model`}>
                 <div className="relative flex gap-1">
                   <input
                     id={`${fieldId}-model`}
@@ -502,16 +503,16 @@ export function ModelManager({
                   />
                   <button
                     className="nx-btn nx-btn-outline shrink-0"
-                    title="使用当前地址和密钥获取模型列表"
+                    title={t("使用当前地址和密钥获取模型列表")}
                     disabled={busy}
                     onClick={() => void refreshModels()}
                   >
                     {busy ? <IconLoader size={12} className="animate-spin" /> : <IconRefresh size={12} />}
-                    刷新模型列表
+                    {t("刷新模型列表")}
                   </button>
                   {modelsOpen && models.length > 0 && (
                     <div className="absolute top-full right-0 z-10 mt-1 max-h-52 w-[min(280px,calc(100vw-64px))] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg">
-                      <div className="nx-menu-title">选择一项填入模型名</div>
+                      <div className="nx-menu-title">{t("选择一项填入模型名")}</div>
                       {models.map((m) => (
                         <button
                           key={m}
@@ -546,25 +547,25 @@ export function ModelManager({
                   ) : (
                     <IconChevronRight size={12} className="shrink-0" />
                   )}
-                  高级参数
+                  {t("高级参数")}
                 </button>
                 {advancedOpen && (
                   <div id={advancedPanelId} className="mt-2.5 flex flex-col gap-2.5">
-                    <div className="nx-setting-label text-neutral-500">生成与上下文</div>
-                    <Field label="回退模型（可选）" htmlFor={`${fieldId}-fallback`}>
+                    <div className="nx-setting-label text-neutral-500">{t("生成与上下文")}</div>
+                    <Field label={t("回退模型（可选）")} htmlFor={`${fieldId}-fallback`}>
                       <input
                         id={`${fieldId}-fallback`}
                         className="nx-input font-mono"
-                        placeholder="主模型失败时改用的模型名"
+                        placeholder={t("主模型失败时改用的模型名")}
                         value={fallbackModelLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ fallbackModel: fallbackModelFromInput(e.target.value) })}
                       />
-                      {!isNew && <div className="nx-hint mt-1 text-[10.5px]">清空后保存将移除回退模型。</div>}
+                      {!isNew && <div className="nx-hint mt-1 text-[10.5px]">{t("清空后保存将移除回退模型。")}</div>}
                     </Field>
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="温度" htmlFor={`${fieldId}-temperature`}>
+                        <Field label={t("温度")} htmlFor={`${fieldId}-temperature`}>
                           <input
                             id={`${fieldId}-temperature`}
                             className="nx-input font-mono"
@@ -572,7 +573,7 @@ export function ModelManager({
                             min={0}
                             max={2}
                             step={0.1}
-                            placeholder="接口地址默认（0–2）"
+                            placeholder={t("接口地址默认（0–2）")}
                             value={draft.temperature ?? ""}
                             onChange={(e) =>
                               patch({ temperature: e.target.value === "" ? null : Number(e.target.value) })
@@ -581,12 +582,12 @@ export function ModelManager({
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="上下文窗口" htmlFor={`${fieldId}-context`}>
+                        <Field label={t("上下文窗口")} htmlFor={`${fieldId}-context`}>
                           <Combobox
                             id={`${fieldId}-context`}
-                            ariaLabel="上下文窗口"
+                            ariaLabel={t("上下文窗口")}
                             className="font-mono"
-                            placeholder="默认（256K tokens）"
+                            placeholder={t("默认（256K tokens）")}
                             inputMode="numeric"
                             value={draft.contextWindow?.toString() ?? ""}
                             options={CONTEXT_WINDOW_PRESETS.map((value) => ({
@@ -597,25 +598,25 @@ export function ModelManager({
                               if (value === "" || /^\d+$/.test(value)) patch({ contextWindow: value === "" ? null : Number(value) });
                             }}
                           />
-                          <div className="nx-hint mt-1 text-[10.5px]">用于估算上下文用量，也可输入自定义值。</div>
+                          <div className="nx-hint mt-1 text-[10.5px]">{t("用于估算上下文用量，也可输入自定义值。")}</div>
                         </Field>
                       </div>
                     </div>
 
-                    <Field label="思考强度" htmlFor={`${fieldId}-reasoning-effort`}>
+                    <Field label={t("思考强度")} htmlFor={`${fieldId}-reasoning-effort`}>
                       <Combobox
                         id={`${fieldId}-reasoning-effort`}
-                        ariaLabel="思考强度"
+                        ariaLabel={t("思考强度")}
                         className="font-mono"
-                        placeholder="接口地址默认"
+                        placeholder={t("接口地址默认")}
                         value={draft.reasoningEffort ?? ""}
                         options={REASONING_EFFORT_PRESETS.map((value) => ({ value }))}
                         onChange={(value) => patch({ reasoningEffort: value })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">仅对支持的 OpenAI 兼容端点生效，可输入自定义值。</div>
+                      <div className="nx-hint mt-1 text-[10.5px]">{t("仅对支持的 OpenAI 兼容端点生效，可输入自定义值。")}</div>
                     </Field>
 
-                    <Field label="最大输出" htmlFor={`${fieldId}-max-tokens`}>
+                    <Field label={t("最大输出")} htmlFor={`${fieldId}-max-tokens`}>
                       <input
                         id={`${fieldId}-max-tokens`}
                         className="nx-input font-mono"
@@ -623,19 +624,19 @@ export function ModelManager({
                         min={1}
                         max={MAX_TOKENS_HARD_LIMIT}
                         step={1}
-                        placeholder="接口地址默认（tokens）"
+                        placeholder={t("接口地址默认（tokens）")}
                         value={maxTokensLabel(draft as ModelProfile)}
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        上限为上下文窗口的一半，且不超过 {MAX_TOKENS_HARD_LIMIT} tokens。
+                        {t("上限为上下文窗口的一半，且不超过")} {MAX_TOKENS_HARD_LIMIT} tokens。
                       </div>
                     </Field>
 
-                    <div className="nx-setting-label mt-1 text-neutral-500">网络与容错</div>
+                    <div className="nx-setting-label mt-1 text-neutral-500">{t("网络与容错")}</div>
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="请求超时（秒）" htmlFor={`${fieldId}-request-timeout`}>
+                        <Field label={t("请求超时（秒）")} htmlFor={`${fieldId}-request-timeout`}>
                           <input
                             id={`${fieldId}-request-timeout`}
                             className="nx-input font-mono"
@@ -643,14 +644,14 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder="接口地址默认"
+                            placeholder={t("接口地址默认")}
                             value={requestTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ requestTimeoutSeconds: timeoutSecondsFromInput(e.target.value, false) })}
                           />
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="响应空闲超时（秒）" htmlFor={`${fieldId}-idle-timeout`}>
+                        <Field label={t("响应空闲超时（秒）")} htmlFor={`${fieldId}-idle-timeout`}>
                           <input
                             id={`${fieldId}-idle-timeout`}
                             className="nx-input font-mono"
@@ -658,7 +659,7 @@ export function ModelManager({
                             min={0}
                             max={3600}
                             step={1}
-                            placeholder="接口地址默认；0 为关闭"
+                            placeholder={t("接口地址默认；0 为关闭")}
                             value={idleTimeoutLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ idleTimeoutSeconds: timeoutSecondsFromInput(e.target.value, true) })}
                           />
@@ -668,7 +669,7 @@ export function ModelManager({
 
                     <div className="flex flex-col gap-3 min-[400px]:flex-row">
                       <div className="flex-1">
-                        <Field label="自动暂停阈值（次）" htmlFor={`${fieldId}-circuit-threshold`}>
+                        <Field label={t("自动暂停阈值（次）")} htmlFor={`${fieldId}-circuit-threshold`}>
                           <input
                             id={`${fieldId}-circuit-threshold`}
                             className="nx-input font-mono"
@@ -676,14 +677,14 @@ export function ModelManager({
                             min={1}
                             max={100}
                             step={1}
-                            placeholder={`默认 ${CIRCUIT_DEFAULT_THRESHOLD}`}
+                            placeholder={t("默认 {CIRCUIT_DEFAULT_THRESHOLD}", { CIRCUIT_DEFAULT_THRESHOLD })}
                             value={circuitThresholdLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ circuitFailureThreshold: circuitThresholdFromInput(e.target.value) })}
                           />
                         </Field>
                       </div>
                       <div className="flex-1">
-                        <Field label="自动暂停时长（秒）" htmlFor={`${fieldId}-circuit-cooldown`}>
+                        <Field label={t("自动暂停时长（秒）")} htmlFor={`${fieldId}-circuit-cooldown`}>
                           <input
                             id={`${fieldId}-circuit-cooldown`}
                             className="nx-input font-mono"
@@ -691,21 +692,21 @@ export function ModelManager({
                             min={1}
                             max={3600}
                             step={1}
-                            placeholder={`默认 ${CIRCUIT_DEFAULT_COOLDOWN_SECONDS}`}
+                            placeholder={t("默认 {CIRCUIT_DEFAULT_COOLDOWN_SECONDS}", { CIRCUIT_DEFAULT_COOLDOWN_SECONDS })}
                             value={circuitCooldownLabel(draft as ModelProfile)}
                             onChange={(e) => patch({ circuitCooldownSeconds: circuitCooldownFromInput(e.target.value) })}
                           />
                         </Field>
                       </div>
                     </div>
-                    <div className="nx-hint mt-0.5 text-[10.5px]">网络或服务端连续失败达到阈值后暂停请求，到时自动恢复。</div>
+                    <div className="nx-hint mt-0.5 text-[10.5px]">{t("网络或服务端连续失败达到阈值后暂停请求，到时自动恢复。")}</div>
                     {isNew ? (
-                      <div className="nx-hint mt-0.5 text-[10.5px]">保存后可查看暂停状态</div>
+                      <div className="nx-hint mt-0.5 text-[10.5px]">{t("保存后可查看暂停状态")}</div>
                     ) : (
                       <CircuitRuntimeStatus key={draft.id} profileId={draft.id} nonce={circuitNonce} />
                     )}
 
-                    <Field label="代理" htmlFor={`${fieldId}-proxy`}>
+                    <Field label={t("代理")} htmlFor={`${fieldId}-proxy`}>
                       <input
                         id={`${fieldId}-proxy`}
                         className="nx-input font-mono"
@@ -713,7 +714,7 @@ export function ModelManager({
                         value={draft.proxy ?? ""}
                         onChange={(e) => patch({ proxy: e.target.value || null })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">留空则使用系统代理。</div>
+                      <div className="nx-hint mt-1 text-[10.5px]">{t("留空则使用系统代理。")}</div>
                     </Field>
 
                     <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">
@@ -723,25 +724,25 @@ export function ModelManager({
                         checked={draft.stream}
                         onChange={(e) => patch({ stream: e.target.checked })}
                       />
-                      流式输出
+                      {t("流式输出")}
                     </label>
                   </div>
                 )}
               </div>
 
               <div className="nx-hint mt-0.5">
-                API 密钥由当前 NexTerm 实例加密保存；模型请求仅发送到所填写的接口地址。
+                {t("API 密钥由当前 NexTerm 实例加密保存；模型请求仅发送到所填写的接口地址。")}
               </div>
             </div>
           ) : (
             <div className="flex h-full min-h-[240px] flex-col items-center justify-center gap-2 text-center">
               <IconKey size={20} className="text-[var(--nx-fg-tertiary)]" />
               <div className="nx-hint max-w-[280px]">
-                从左侧选择档案进行编辑，或新增档案；亦可使用预设快速填写。
+                {t("从左侧选择档案进行编辑，或新增档案；亦可使用预设快速填写。")}
               </div>
               <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void newProfile()}>
                 <IconPlus size={12} />
-                新增档案
+                {t("新增档案")}
               </button>
             </div>
           )}
@@ -757,11 +758,11 @@ export function ModelManager({
           }`}
         >
           {testResult.modelsOk && testResult.chatOk ? (
-            "连接正常，可以使用"
+            t("连接正常，可以使用")
           ) : (
             <div className="flex flex-col gap-0.5">
-              {!testResult.modelsOk && <span>未能获取模型列表：{testResult.modelsError || "原因未知"}</span>}
-              {!testResult.chatOk && <span>未能发起对话：{testResult.chatError || "原因未知"}。请检查接口地址、密钥和模型名后重试</span>}
+              {!testResult.modelsOk && <span>{t("未能获取模型列表：")}{testResult.modelsError || t("原因未知")}</span>}
+              {!testResult.chatOk && <span>{t("未能发起对话：")}{testResult.chatError || t("原因未知")}{t("。请检查接口地址、密钥和模型名后重试")}</span>}
             </div>
           )}
         </div>
@@ -771,41 +772,41 @@ export function ModelManager({
         {draft ? (
           <>
             <span className="nx-hint mr-auto self-center text-[10.5px]">
-              {isNew ? "新档案（尚未保存）" : isActive ? "当前" : `${draft.name}`}
-              {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">· 有未保存的修改</span>}
+              {isNew ? t("新档案（尚未保存）") : isActive ? t("当前") : `${draft.name}`}
+              {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">{t("· 有未保存的修改")}</span>}
             </span>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title="只恢复高级参数，保存后生效"
+              title={t("只恢复高级参数，保存后生效")}
               disabled={busy || paramsAtDefaults}
               onClick={resetParams}
             >
               <IconRefresh size={12} />
-              恢复默认参数
+              {t("恢复默认参数")}
             </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
               title={
                 isNew
-                  ? "保存后才能测试连接"
+                  ? t("保存后才能测试连接")
                   : dirty
-                    ? "存在未保存的修改，保存后才能测试此档案"
-                    : "使用已保存的档案测试连接"
+                    ? t("存在未保存的修改，保存后才能测试此档案")
+                    : t("使用已保存的档案测试连接")
               }
               disabled={busy || testing || isNew || dirty}
               onClick={() => void testConnection()}
             >
               {testing ? <IconLoader size={12} className="animate-spin" /> : <IconRefresh size={12} />}
-              {testing ? "正在测试…" : "测试连接"}
+              {testing ? t("正在测试…") : t("测试连接")}
             </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title={isNew ? "保存后才能设为当前" : isActive ? "已是当前档案" : "切换为此档案"}
+              title={isNew ? t("保存后才能设为当前") : isActive ? t("已是当前档案") : t("切换为此档案")}
               disabled={busy || isNew || isActive}
               onClick={() => void activate()}
             >
               <IconCheck size={12} />
-              设为当前
+              {t("设为当前")}
             </button>
             <button
               className="nx-btn nx-btn-danger nx-btn-sm"
@@ -813,17 +814,17 @@ export function ModelManager({
               onClick={() => void remove()}
             >
               <IconTrash size={12} />
-              删除档案
+              {t("删除档案")}
             </button>
             <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={busy} onClick={() => void save()}>
               {busy ? <IconLoader size={12} className="animate-spin" /> : <IconSave size={12} />}
-              保存
+              {t("保存")}
             </button>
           </>
         ) : (
           onRequestClose && (
             <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onRequestClose}>
-              关闭
+              {t("关闭")}
             </button>
           )
         )}
@@ -864,9 +865,9 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
     <div className="mt-0.5 flex items-start gap-1.5">
       <span className="nx-hint flex-1 text-[10.5px]">
         {error ? (
-          <span className="text-red-300">未能读取暂停状态：{error}</span>
+          <span className="text-red-300">{t("未能读取暂停状态：")}{error}</span>
         ) : !status ? (
-          "暂停状态加载中…"
+          t("暂停状态加载中…")
         ) : (
           <span
             className={
@@ -883,7 +884,7 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
       </span>
       <button
         className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6 shrink-0"
-        title="重新读取暂停状态"
+        title={t("重新读取暂停状态")}
         onClick={() => void load()}
       >
         <IconRefresh size={11} />
@@ -895,11 +896,11 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
 function sceneLabel(source: string): string {
   switch (source) {
     case "cron":
-      return "定时任务";
+      return t("定时任务");
     case "subagent":
-      return "子任务";
+      return t("子任务");
     default:
-      return "对话";
+      return t("对话");
   }
 }
 
@@ -940,25 +941,25 @@ export function UsageSummarySection() {
 
   return (
     <div className="border-t border-neutral-800/60 pt-3">
-      <div className="mb-1.5 text-[11px] font-medium text-neutral-300">用量汇总（按场景 / 档案）</div>
+      <div className="mb-1.5 text-[11px] font-medium text-neutral-300">{t("用量汇总（按场景 / 档案）")}</div>
       {error ? (
-        <div className="nx-hint text-red-300">未能加载用量：{error}</div>
+        <div className="nx-hint text-red-300">{t("未能加载用量：")}{error}</div>
       ) : !rows ? (
-        <div className="nx-hint text-[11px]">用量加载中…</div>
+        <div className="nx-hint text-[11px]">{t("用量加载中…")}</div>
       ) : rows.length === 0 ? (
-        <div className="nx-hint text-[11px]">暂无已完成的 AI 任务</div>
+        <div className="nx-hint text-[11px]">{t("暂无已完成的 AI 任务")}</div>
       ) : (
         <div className="max-h-40 overflow-y-auto rounded-md border border-neutral-800/70">
           <table className="w-full text-[11px]">
             <thead>
               <tr className="border-b border-neutral-800/70 text-neutral-500">
-                <th className="px-2 py-1 text-left font-medium">场景</th>
-                <th className="px-2 py-1 text-left font-medium">档案</th>
-                <th className="px-2 py-1 text-right font-medium">运行</th>
-                <th className="px-2 py-1 text-right font-medium">输入</th>
-                <th className="px-2 py-1 text-right font-medium">输出</th>
-                <th className="px-2 py-1 text-right font-medium">缓存写入</th>
-                <th className="px-2 py-1 text-right font-medium">平均延迟</th>
+                <th className="px-2 py-1 text-left font-medium">{t("场景")}</th>
+                <th className="px-2 py-1 text-left font-medium">{t("档案")}</th>
+                <th className="px-2 py-1 text-right font-medium">{t("运行")}</th>
+                <th className="px-2 py-1 text-right font-medium">{t("输入")}</th>
+                <th className="px-2 py-1 text-right font-medium">{t("输出")}</th>
+                <th className="px-2 py-1 text-right font-medium">{t("缓存写入")}</th>
+                <th className="px-2 py-1 text-right font-medium">{t("平均延迟")}</th>
               </tr>
             </thead>
             <tbody>
@@ -966,7 +967,7 @@ export function UsageSummarySection() {
                 <tr key={`${row.source}/${row.profileId}`} className="border-b border-neutral-800/40 last:border-b-0">
                   <td className="px-2 py-1 text-neutral-300">{sceneLabel(row.source)}</td>
                   <td className="max-w-[140px] truncate px-2 py-1 text-neutral-300" title={row.profileId}>
-                    {row.profileId ? (names[row.profileId] ?? row.profileId) : "未记录"}
+                    {row.profileId ? (names[row.profileId] ?? row.profileId) : t("未记录")}
                   </td>
                   <td className="px-2 py-1 text-right font-mono text-neutral-400">{row.runs}</td>
                   <td className="px-2 py-1 text-right font-mono text-neutral-400">{formatTokens(row.tokensIn)}</td>
@@ -992,8 +993,8 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
   const requestClose = async () => {
     if (
       dirty &&
-      !(await ask("存在未保存的修改，关闭面板将丢弃这些修改。确定要继续吗？", {
-        title: "放弃未保存的修改",
+      !(await ask(t("存在未保存的修改，关闭面板将丢弃这些修改。确定要继续吗？"), {
+        title: t("放弃未保存的修改"),
         kind: "warning",
       }))
     ) {
@@ -1025,10 +1026,10 @@ export function ModelPanel({ onClose }: { onClose: () => void }) {
       >
         <div className="nx-modal-header">
           <IconKey size={14} className="text-neutral-400" />
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">模型配置</span>
-          <span className="nx-hint ml-1 text-[10.5px]">多份档案 · 密钥由当前实例加密保存</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("模型配置")}</span>
+          <span className="nx-hint ml-1 text-[10.5px]">{t("多份档案 · 密钥由当前实例加密保存")}</span>
           <div className="nx-spacer" />
-          <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title="关闭模型配置" aria-label="关闭模型配置" onClick={() => void requestClose()}>
+          <button className="nx-icon-btn nx-icon-btn-sm pointer-coarse:min-h-6 pointer-coarse:min-w-6" title={t("关闭模型配置")} aria-label={t("关闭模型配置")} onClick={() => void requestClose()}>
             <IconClose size={13} />
           </button>
         </div>

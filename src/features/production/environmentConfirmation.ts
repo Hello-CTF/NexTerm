@@ -8,6 +8,7 @@
 // final authorization boundary.
 
 import { goEqualFold, goToLowerString, goTrimSpace } from "./goFold";
+import { t } from "../../i18n";
 
 export { goTrimSpace } from "./goFold";
 
@@ -15,9 +16,9 @@ export { goTrimSpace } from "./goFold";
 // managed devices, which carry no environment tag. The wire value never changes;
 // only its display is translated.
 export const MANAGED_DEVICE_ENVIRONMENT = "managed-device";
-export const MANAGED_DEVICE_ENVIRONMENT_LABEL = "受管设备（无环境标签，按生产环境处理）";
+export const MANAGED_DEVICE_ENVIRONMENT_LABEL = t("受管设备（无环境标签，按生产环境处理）");
 export const MANAGED_DEVICE_ENVIRONMENT_HINT =
-  "受管设备没有环境标签，一律按生产环境处理，请在对应输入框输入 managed-device。";
+  t("受管设备没有环境标签，一律按生产环境处理，请在对应输入框输入 managed-device。");
 
 export function isManagedDeviceEnvironment(environment: string): boolean {
   return matchesEnvironmentName(environment, MANAGED_DEVICE_ENVIRONMENT);

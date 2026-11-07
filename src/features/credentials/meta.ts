@@ -1,4 +1,5 @@
 import { IconCode, IconKey, IconLock } from "../../ui/icons";
+import { t } from "../../i18n";
 
 type Icon = typeof IconKey;
 
@@ -10,8 +11,8 @@ export interface KindMeta {
 }
 
 export const KIND_META: Record<string, KindMeta> = {
-  password: { label: "密码", Icon: IconLock, tone: "text-blue-400", bg: "bg-blue-500/12" },
-  private_key: { label: "私钥", Icon: IconKey, tone: "text-purple-400", bg: "bg-purple-500/12" },
+  password: { label: t("密码"), Icon: IconLock, tone: "text-blue-400", bg: "bg-blue-500/12" },
+  private_key: { label: t("私钥"), Icon: IconKey, tone: "text-purple-400", bg: "bg-purple-500/12" },
   api_key: { label: "API Key", Icon: IconCode, tone: "text-neutral-400", bg: "bg-white/[.06]" },
 };
 

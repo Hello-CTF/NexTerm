@@ -25,6 +25,7 @@ import {
   IconXCircle,
   assetIcon,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export function workspaceIcon(w: Workspace) {
   if (w.kind === "db") return w.dbKind === "redis" ? IconLayers : IconDatabase;
@@ -59,10 +60,10 @@ function HeaderProductionMarker({ tab }: { tab: AppTab | null }) {
   const assetId = useUi((s) => (sessionId ? s.sessions.find((x) => x.id === sessionId)?.assetId : undefined));
   const classification = useAssetProductionClassification(assetId);
   if (!classification?.production) return null;
-  const label = `生产环境：${classification.environment}`;
+  const label = t("生产环境：{environment}", { environment: classification.environment });
   return (
     <span className="nx-badge nx-badge-red shrink-0" title={label} aria-label={label} role="img">
-      生产环境
+      {t("生产环境")}
     </span>
   );
 }
@@ -110,8 +111,8 @@ export function AppHeader({
             className="nx-ws-switch"
             style={wailsNoDragRegionStyle}
             aria-haspopup="menu"
-            aria-label={`切换工作区，当前 ${ws.title}`}
-            title="切换工作区"
+            aria-label={t("切换工作区，当前 {title}", { title: ws.title })}
+            title={t("切换工作区")}
             onClick={(event) => onOpenWorkspaceSwitcher(event.currentTarget)}
           >
             {ActiveWsIcon ? <ActiveWsIcon size={13} /> : null}
@@ -130,7 +131,7 @@ export function AppHeader({
               className="truncate font-medium text-neutral-300"
               data-wails-drag-region style={wailsDragRegionStyle}
             >
-              {activeTab?.title ?? "工作区"}
+              {activeTab?.title ?? t("工作区")}
             </span>
             <HeaderProductionMarker tab={activeTab} />
           </span>
@@ -140,15 +141,15 @@ export function AppHeader({
           className="nx-header-hint text-xs text-neutral-500"
           data-wails-drag-region style={wailsDragRegionStyle}
         >
-          暂无工作区，双击左侧资产连接主机
+          {t("暂无工作区，双击左侧资产连接主机")}
         </span>
       )}
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
       <InboxButton />
       <button
         className={`nx-icon-btn ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
-        title="AI 助手"
-        aria-label="AI 助手"
+        title={t("AI 助手")}
+        aria-label={t("AI 助手")}
         aria-pressed={rightDockOpen}
         onClick={onToggleRight}
       >
@@ -156,8 +157,8 @@ export function AppHeader({
       </button>
       <button
         className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title={`跳转面板 (${commandPaletteLabel})`}
-        aria-label={`跳转面板 (${commandPaletteLabel})`}
+        title={t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel })}
+        aria-label={t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel })}
         onClick={onOpenPalette}
       >
         <IconCommand size={15} />

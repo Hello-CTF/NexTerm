@@ -4,6 +4,7 @@ import { DESKTOP } from "../ipc/env";
 import { EVENTS, listenEvent, type UpdateProgressEvent } from "../ipc/events";
 import { describeError } from "../ui/errorText";
 import type { UpdateReleaseChannel, UpdateStatusDto } from "../ipc/types";
+import { t } from "../i18n";
 
 export type UpdateVerdict =
   | "idle"
@@ -132,7 +133,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
           install: { ...idleInstall },
         });
       } else {
-        set({ install: { ...idleInstall, error: result.unavailableReason || "安装未完成" } });
+        set({ install: { ...idleInstall, error: result.unavailableReason || t("安装未完成") } });
       }
     } catch (e) {
       set({ install: { ...idleInstall, error: describeError(e) } });
@@ -147,7 +148,7 @@ export const useUpdateStore = create<UpdateState & UpdateActions>()((set, get) =
     try {
       const result = await appUpdateApi.restart();
       if (result.restarted) return;
-      set({ restarting: false, restartError: result.unavailableReason || "重启失败" });
+      set({ restarting: false, restartError: result.unavailableReason || t("重启失败") });
     } catch (e) {
       set({ restarting: false, restartError: describeError(e) });
     }

@@ -5,6 +5,7 @@ import { captureConnectionAttempt, currentConnectionEpoch, settleWorkspaceConnec
 import { sessionStatusEvidence, sessionStatusText } from "./sessionStatus";
 import type { SessionReconnectError, SessionRuntimeInfo, Workspace } from "./types";
 import { useUi } from "./useUi";
+import { t } from "../../i18n";
 
 const inflightReconnects = new Map<string, Promise<SessionInfo | null>>();
 
@@ -61,7 +62,7 @@ export function reconnectSessionAndWait(
 function reconnectPollingError(
   session: Pick<SessionRuntimeInfo, "status" | "error" | "errorCode" | "attempt" | "nextRetryAt">,
 ): SessionReconnectError {
-  const error = new Error(session.error || `会话${sessionStatusText(session.status)}`) as SessionReconnectError;
+  const error = new Error(session.error || t("会话{value}", { value: sessionStatusText(session.status) })) as SessionReconnectError;
   if (session.errorCode) error.code = session.errorCode;
   if (session.attempt !== undefined) error.attempt = session.attempt;
   if (session.nextRetryAt !== undefined) error.nextRetryAt = session.nextRetryAt;
@@ -113,7 +114,7 @@ async function runReconnectAndWait(
     throw error;
   }
   if (!isCurrent()) return null;
-  if (!started) throw new Error("重新连接未能启动");
+  if (!started) throw new Error(t("重新连接未能启动"));
   const deadline = Date.now() + timeoutMs;
   // session_reconnect returns first and the backend goroutine sets reconnecting afterwards, so the first list may read the pre-start
   // stale disconnected/failed; only a terminal state seen after connecting/reconnecting counts as failure.
@@ -143,7 +144,7 @@ async function runReconnectAndWait(
     } else if (current && current.status !== "connecting" && current.status !== "reconnecting" && enteredReconnect) {
       throw reconnectPollingError(current);
     }
-    if (Date.now() >= deadline) throw new Error("重新连接超时，请检查网络后重试");
+    if (Date.now() >= deadline) throw new Error(t("重新连接超时，请检查网络后重试"));
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
     if (!isCurrent()) return null;
   }

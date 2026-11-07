@@ -1,5 +1,6 @@
 import type { ExecBatchResult } from "../../ipc/execBatchApi";
 import { diffLineText, type DiffLine } from "../ai/diff";
+import { t } from "../../i18n";
 
 export interface DriftGroup {
   id: string;
@@ -69,7 +70,7 @@ function sameDriftLine(left: DriftSourceLine, right: DriftSourceLine): boolean {
 }
 
 function driftDisplayLine(line: DriftSourceLine): string {
-  return line.hasNewline ? line.text : `${line.text} [末行无换行]`;
+  return line.hasNewline ? line.text : t("{text} [末行无换行]", { text: line.text });
 }
 
 export function driftTextDiff(before: string, after: string): DiffLine[] {
@@ -107,7 +108,7 @@ export function shellSingleQuote(value: string): string {
 export function driftFileCommand(path: string): string {
   const trimmed = path.trim();
   if (!trimmed || trimmed === "~" || trimmed === "~/" || /[\r\n\0]/.test(trimmed)) {
-    throw new Error("请输入有效的单行文件路径");
+    throw new Error(t("请输入有效的单行文件路径"));
   }
   let expression: string;
   if (trimmed.startsWith("~/") && trimmed.length > 2) {

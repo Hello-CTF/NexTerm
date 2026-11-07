@@ -20,6 +20,7 @@ import { IconActivity, IconBox, IconDatabase, IconPlay, IconRefresh, IconTermina
 import { useBackgroundSessionsAccess } from "../terminal/backgroundSessionsAccess";
 import { formatUptime } from "../fleet/format";
 import { databaseWorkspaceOf, hostAddress } from "./hostDetail";
+import { t } from "../../i18n";
 
 const MAX_CONTAINERS = 12;
 const MAX_SCHEMAS = 24;
@@ -63,13 +64,13 @@ function isConnected(status: string | undefined): boolean {
 }
 
 const TAB_KIND_LABEL: Record<string, string> = {
-  terminal: "终端",
-  files: "文件",
-  log: "日志",
-  mount: "挂载",
-  forward: "端口转发",
-  docker: "容器",
-  background: "后台会话",
+  terminal: t("终端"),
+  files: t("文件"),
+  log: t("日志"),
+  mount: t("挂载"),
+  forward: t("端口转发"),
+  docker: t("容器"),
+  background: t("后台会话"),
 };
 
 // SessionsSection lists the host workspace's tabs; selecting one switches to it.
@@ -83,39 +84,39 @@ export function SessionsSection({ workspace }: { workspace: Workspace | undefine
     useUi.getState().addTab({
       id: `background-${workspace.id}`,
       kind: "background",
-      title: "后台会话",
+      title: t("后台会话"),
       sessionId: workspace.sessionId,
       closable: true,
     });
   };
-  const status = workspace?.restorePending ? "未连接" : workspace?.sessionId ? sessionStatusText(session?.status) : "未连接";
+  const status = workspace?.restorePending ? t("未连接") : workspace?.sessionId ? sessionStatusText(session?.status) : t("未连接");
   return (
     <HostSection
-      title="会话"
+      title={t("会话")}
       icon={<IconTerminal size={14} />}
       testId="host-sessions"
       actions={
         backgroundAvailable && workspace?.sessionId ? (
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={openBackground}>
-            后台会话
+            {t("后台会话")}
           </button>
         ) : null
       }
     >
       {!workspace ? (
-        <SectionHint>尚未打开该主机的工作区。</SectionHint>
+        <SectionHint>{t("尚未打开该主机的工作区。")}</SectionHint>
       ) : (
         <>
           <div className="flex min-w-0 items-baseline gap-1 text-[12px] text-neutral-400">
             <span className="min-w-0 truncate" title={workspace.title}>
-              工作区「{workspace.title}」
+              {t("工作区「")}{workspace.title}」
             </span>
             <span className="shrink-0">
               · <span data-testid="host-session-status">{status}</span>
             </span>
           </div>
           {tabs.length === 0 ? (
-            <SectionHint>工作区中暂无标签页。</SectionHint>
+            <SectionHint>{t("工作区中暂无标签页。")}</SectionHint>
           ) : (
             <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
               {tabs.map((tab) => (
@@ -153,12 +154,12 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
   });
   const openDocker = () => {
     if (!sessionId) return;
-    useUi.getState().addTab({ id: nextTabId(`docker-${sessionId}`), kind: "docker", title: "容器", sessionId, closable: true });
+    useUi.getState().addTab({ id: nextTabId(`docker-${sessionId}`), kind: "docker", title: t("容器"), sessionId, closable: true });
   };
   const containers = query.data ?? [];
   return (
     <HostSection
-      title="容器"
+      title={t("容器")}
       icon={<IconBox size={14} />}
       testId="host-containers"
       actions={
@@ -167,27 +168,27 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-xs"
-              aria-label="刷新容器"
+              aria-label={t("刷新容器")}
               disabled={query.isFetching}
               onClick={() => void query.refetch()}
             >
               <IconRefresh size={11} className={query.isFetching ? "animate-spin" : ""} />
             </button>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={openDocker}>
-              容器管理
+              {t("容器管理")}
             </button>
           </>
         ) : null
       }
     >
       {!connected ? (
-        <SectionHint>打开并连接工作区后可查看容器。</SectionHint>
+        <SectionHint>{t("打开并连接工作区后可查看容器。")}</SectionHint>
       ) : query.isError ? (
-        <p className="m-0 text-[12px] text-red-300">未能读取容器：{describeError(query.error)}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("未能读取容器：")}{describeError(query.error)}</p>
       ) : query.isPending ? (
-        <SectionHint>正在读取容器…</SectionHint>
+        <SectionHint>{t("正在读取容器…")}</SectionHint>
       ) : containers.length === 0 ? (
-        <SectionHint>暂无容器。</SectionHint>
+        <SectionHint>{t("暂无容器。")}</SectionHint>
       ) : (
         <>
           <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px]">
@@ -208,7 +209,7 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
             ))}
           </ul>
           {containers.length > MAX_CONTAINERS && (
-            <SectionHint>另有 {containers.length - MAX_CONTAINERS} 个容器，在容器管理中查看。</SectionHint>
+            <SectionHint>{t("另有")} {containers.length - MAX_CONTAINERS} {t("个容器，在容器管理中查看。")}</SectionHint>
           )}
         </>
       )}
@@ -225,18 +226,18 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
     retry: false,
     staleTime: 30_000,
   });
-  if (query.isError) return <div className="text-[11.5px] text-red-300">未能读取数据库列表：{describeError(query.error)}</div>;
-  if (query.isPending) return <div className="nx-hint text-[11.5px]">正在读取数据库列表…</div>;
+  if (query.isError) return <div className="text-[11.5px] text-red-300">{t("未能读取数据库列表：")}{describeError(query.error)}</div>;
+  if (query.isPending) return <div className="nx-hint text-[11.5px]">{t("正在读取数据库列表…")}</div>;
   const schemas = query.data ?? [];
-  if (schemas.length === 0) return <div className="nx-hint text-[11.5px]">暂无可见的数据库。</div>;
+  if (schemas.length === 0) return <div className="nx-hint text-[11.5px]">{t("暂无可见的数据库。")}</div>;
   return (
-    <div className="flex flex-wrap gap-1" aria-label="数据库列表">
+    <div className="flex flex-wrap gap-1" aria-label={t("数据库列表")}>
       {schemas.slice(0, MAX_SCHEMAS).map((schema) => (
         <span key={schema} className="nx-badge max-w-full truncate" title={schema}>
           {schema}
         </span>
       ))}
-      {schemas.length > MAX_SCHEMAS && <span className="nx-hint text-[11px]">另有 {schemas.length - MAX_SCHEMAS} 个</span>}
+      {schemas.length > MAX_SCHEMAS && <span className="nx-hint text-[11px]">{t("另有")} {schemas.length - MAX_SCHEMAS} {t("个")}</span>}
     </div>
   );
 }
@@ -254,15 +255,15 @@ function DatabaseRow({ database, relation, visible }: { database: Asset; relatio
         {address && <span className="nx-hint min-w-0 max-w-full truncate text-[11px]" title={address}>{address}</span>}
         {relation && <span className="nx-badge shrink-0">{relation}</span>}
         <span className="nx-spacer" />
-        <span className={`shrink-0 text-[11px] ${open ? "text-green-300" : "text-neutral-500"}`}>{open ? "已连接" : "未连接"}</span>
+        <span className={`shrink-0 text-[11px] ${open ? "text-green-300" : "text-neutral-500"}`}>{open ? t("已连接") : t("未连接")}</span>
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
-          aria-label={`${open ? "切换到" : "打开"} ${database.name}`}
+          aria-label={`${open ? t("切换到") : t("打开")} ${database.name}`}
           onClick={() => void connectAsset(database)}
         >
           <IconPlay size={11} />
-          {open ? "切换" : "打开"}
+          {open ? t("切换") : t("打开")}
         </button>
       </div>
       {open && workspace?.connId && dbKind !== "redis" && <SchemaList connId={workspace.connId} visible={visible} />}
@@ -284,7 +285,7 @@ export function DatabasesSection({
   emptyHint: string;
 }) {
   return (
-    <HostSection title="数据库" icon={<IconDatabase size={14} />} testId="host-databases">
+    <HostSection title={t("数据库")} icon={<IconDatabase size={14} />} testId="host-databases">
       {databases.length === 0 ? (
         <SectionHint>{emptyHint}</SectionHint>
       ) : (
@@ -358,42 +359,42 @@ export function SshHealthSection({
 
   const rows: { label: string; value: string }[] = result
     ? [
-        { label: "负载", value: result.load1 == null ? "—" : `${result.load1.toFixed(2)} / ${result.load5?.toFixed(2) ?? "—"} / ${result.load15?.toFixed(2) ?? "—"}` },
-        { label: "内存", value: percent(result.memoryUsedPercent) },
-        { label: "磁盘", value: percent(result.diskUsedPercent) },
-        { label: "运行时长", value: result.uptimeSeconds == null ? "—" : formatUptime(result.uptimeSeconds) },
+        { label: t("负载"), value: result.load1 == null ? "—" : `${result.load1.toFixed(2)} / ${result.load5?.toFixed(2) ?? "—"} / ${result.load15?.toFixed(2) ?? "—"}` },
+        { label: t("内存"), value: percent(result.memoryUsedPercent) },
+        { label: t("磁盘"), value: percent(result.diskUsedPercent) },
+        { label: t("运行时长"), value: result.uptimeSeconds == null ? "—" : formatUptime(result.uptimeSeconds) },
       ]
     : [];
   return (
     <HostSection
-      title="指标"
+      title={t("指标")}
       icon={<IconActivity size={14} />}
       testId="host-metrics"
       actions={
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={running} onClick={() => void probe()}>
           <IconRefresh size={11} className={running ? "animate-spin" : ""} />
-          {result ? "重新检查" : "检查"}
+          {result ? t("重新检查") : t("检查")}
         </button>
       }
     >
       {error ? (
-        <p className="m-0 text-[12px] text-red-300">检查失败：{error}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("检查失败：")}{error}</p>
       ) : running && !result ? (
-        <SectionHint>正在检查…</SectionHint>
+        <SectionHint>{t("正在检查…")}</SectionHint>
       ) : !result ? (
         <>
           <SectionHint>
             {sessionId
-              ? "通过当前会话读取负载、内存、磁盘和运行时长。"
-              : "未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长。"}
+              ? t("通过当前会话读取负载、内存、磁盘和运行时长。")
+              : t("未连接时只检查可达性；打开工作区后可读取负载、内存、磁盘和运行时长。")}
           </SectionHint>
-          {viaJump && !sessionId && <SectionHint>该主机经跳板机连接，检查时将登录跳板机。</SectionHint>}
+          {viaJump && !sessionId && <SectionHint>{t("该主机经跳板机连接，检查时将登录跳板机。")}</SectionHint>}
         </>
       ) : !result.reachable ? (
-        <p className="m-0 text-[12px] text-red-300">主机不可达{result.error ? `：${result.error}` : ""}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("主机不可达")}{result.error ? `：${result.error}` : ""}</p>
       ) : result.error ? (
         <div className="flex flex-col gap-1 text-[12px]">
-          <span className="text-green-300">可达</span>
+          <span className="text-green-300">{t("可达")}</span>
           <span className="nx-hint">{result.error}</span>
         </div>
       ) : (

@@ -4,6 +4,7 @@ import type { SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { sessionStatusText } from "./sessionStatus";
 import { useUi } from "./useUi";
 import { useRemoteStatus } from "../../features/remote/remoteStatus";
+import { t } from "../../i18n";
 
 // Selector conventions. A component re-renders whenever its selector result changes identity, and the
 // session list is rebuilt on every status event and resync. Components therefore subscribe to the
@@ -122,14 +123,14 @@ export function useSessionSummary(): SessionSummary {
           total += 1;
           const status = remoteEntries[tab.id]?.status;
           if (status === "connected") connected += 1;
-          inUse.push(status === "connected" ? workspace.title : `${workspace.title}（${status === "connecting" ? "连接中" : "未连接"}）`);
+          inUse.push(status === "connected" ? workspace.title : `${workspace.title}（${status === "connecting" ? t("连接中") : t("未连接")}）`);
         }
       }
     }
     const lines = [
-      inUse.length > 0 ? `使用中：${inUse.join("、")}` : "",
-      idleNames.length > 0 ? `空闲：${idleNames.join("、")}` : "",
-      backgroundNames.length > 0 ? `后台：${backgroundNames.join("、")}` : "",
+      inUse.length > 0 ? t("使用中：{join}", { join: inUse.join("、") }) : "",
+      idleNames.length > 0 ? t("空闲：{join}", { join: idleNames.join("、") }) : "",
+      backgroundNames.length > 0 ? t("后台：{join}", { join: backgroundNames.join("、") }) : "",
     ].filter(Boolean);
     return { total, connected, idle, background, detail: lines.join("\n") };
   }));

@@ -1,12 +1,13 @@
 import { dbKindOf, deviceAssetId, useUi, type Workspace } from "../../app/store";
 import type { Asset } from "../../ipc/commands";
+import { t } from "../../i18n";
 
 // Each host gets its own detail tab; opening a host that already has one focuses it.
 export function hostDetailTabId(assetId: string): string {
   return `host-detail:${assetId}`;
 }
-export const HOST_DETAIL_TITLE = "主机详情";
-export const DATABASE_DETAIL_TITLE = "数据库详情";
+export const HOST_DETAIL_TITLE = t("主机详情");
+export const DATABASE_DETAIL_TITLE = t("数据库详情");
 
 // hostDetailTitle is the tab title once the page knows what it shows.
 export function hostDetailTitle(name: string, database: boolean): string {
@@ -24,8 +25,8 @@ export function isHostAssetKind(kind: string): boolean {
 
 // hostDetailLabel names the menu entry that opens the page for an asset, or null when the asset has no detail page.
 export function hostDetailLabel(kind: string): string | null {
-  if (isHostAssetKind(kind)) return "主机详情";
-  if (dbKindOf(kind)) return "数据库详情";
+  if (isHostAssetKind(kind)) return t("主机详情");
+  if (dbKindOf(kind)) return t("数据库详情");
   return null;
 }
 
@@ -108,8 +109,8 @@ function hasIndirectRoute(asset: Pick<Asset, "options">): boolean {
 export type DatabaseRelation = "via" | "address";
 
 export const DATABASE_RELATION_LABEL: Record<DatabaseRelation, string> = {
-  via: "经由此主机",
-  address: "同地址",
+  via: t("经由此主机"),
+  address: t("同地址"),
 };
 
 // databaseRelation says why a database belongs to a host, or null when it does not. Tunnelled databases belong to

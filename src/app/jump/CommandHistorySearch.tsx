@@ -19,6 +19,7 @@ import {
   rangeStart,
   type CommandRange,
 } from "./commandHistorySearch";
+import { t } from "../../i18n";
 
 const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm"]);
 
@@ -122,7 +123,7 @@ export function CommandHistorySearch({
 
   const openReplay = (entry: CommandSearchItem) => {
     if (!entry.transcriptId) {
-      useUi.getState().pushToast("info", "该命令没有对应的终端记录");
+      useUi.getState().pushToast("info", t("该命令没有对应的终端记录"));
       return;
     }
     openTranscriptFocus({ assetId: entry.assetId, transcriptId: entry.transcriptId, ts: entry.startedAt });
@@ -133,22 +134,22 @@ export function CommandHistorySearch({
     const pushToast = useUi.getState().pushToast;
     const target = terminalTarget();
     if ("blocked" in target) {
-      pushToast("info", `${target.blocked}，才能填入命令`);
+      pushToast("info", t("{blocked}，才能填入命令", { blocked: target.blocked }));
       return;
     }
     if (insertRisk(entry.command) !== "none") {
-      pushToast("info", "命令包含换行或控制字符，未填入终端", {
-        label: "复制命令",
+      pushToast("info", t("命令包含换行或控制字符，未填入终端"), {
+        label: t("复制命令"),
         onSelect: () => {
           void copyText(entry.command).catch((cause: unknown) => {
-            useUi.getState().pushToast("error", `复制失败：${describeError(cause)}`);
+            useUi.getState().pushToast("error", t("复制失败：{value}", { value: describeError(cause) }));
           });
         },
       });
       return;
     }
     void terminalApi.write(target.tabId, new TextEncoder().encode(entry.command)).catch((cause: unknown) => {
-      useUi.getState().pushToast("error", `填入终端失败：${describeError(cause)}`);
+      useUi.getState().pushToast("error", t("填入终端失败：{value}", { value: describeError(cause) }));
     });
     onClose();
   };
@@ -184,7 +185,7 @@ export function CommandHistorySearch({
   };
 
   const hostOptions = [
-    { value: "", label: "全部主机" },
+    { value: "", label: t("全部主机") },
     ...assets
       .filter((asset) => TERMINAL_ASSET_KINDS.has(asset.kind))
       .map((asset) => ({ value: asset.id, label: asset.name })),
@@ -195,20 +196,20 @@ export function CommandHistorySearch({
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
         <Select
           className="w-[180px] max-w-full"
-          ariaLabel="命令历史主机"
+          ariaLabel={t("命令历史主机")}
           value={hostId}
           options={hostOptions}
           onChange={setHostId}
         />
         <Select
           className="w-[150px] max-w-full"
-          ariaLabel="命令历史时间范围"
+          ariaLabel={t("命令历史时间范围")}
           value={range}
           options={COMMAND_RANGE_OPTIONS}
           onChange={(value) => setRange(value as CommandRange)}
         />
       </div>
-      <div ref={listRef} id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label="命令历史结果" tabIndex={-1}>
+      <div ref={listRef} id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={t("命令历史结果")} tabIndex={-1}>
         {items.map((entry, index) => (
           <button
             key={entry.id}
@@ -232,11 +233,11 @@ export function CommandHistorySearch({
             </span>
             <span className="nx-command-hint shrink-0 text-[11px]">{formatTranscriptTime(entry.startedAt)}</span>
             {entry.exitCode === null ? (
-              <span className="nx-command-hint w-6 shrink-0 text-center text-[11px]" title="没有记录退出码">—</span>
+              <span className="nx-command-hint w-6 shrink-0 text-center text-[11px]" title={t("没有记录退出码")}>—</span>
             ) : (
               <span
                 className={`shrink-0 text-center text-[11px] ${entry.exitCode === 0 ? "nx-command-hint w-6" : "nx-badge nx-badge-red"}`}
-                title={`退出码 ${entry.exitCode}`}
+                title={t("退出码 {exitCode}", { exitCode: entry.exitCode })}
               >
                 {entry.exitCode}
               </span>
@@ -246,23 +247,23 @@ export function CommandHistorySearch({
         {loading && (
           <div role="status" className="nx-command-empty flex items-center justify-center gap-2 px-4 py-6 text-xs">
             <IconLoader size={12} className="animate-spin" />
-            正在搜索命令历史…
+            {t("正在搜索命令历史…")}
           </div>
         )}
         {!loading && error && (
           <div role="alert" className="px-4 py-6 text-center text-xs text-red-300">
-            命令历史搜索失败：{error}
+            {t("命令历史搜索失败：")}{error}
           </div>
         )}
         {!loading && !error && items.length === 0 && (
           <div role="status" className="nx-command-empty px-4 py-6 text-center text-xs">
-            {text ? "没有匹配的命令" : "暂无命令历史"}
+            {text ? t("没有匹配的命令") : t("暂无命令历史")}
           </div>
         )}
         {!loading && hasMore && (
           <div className="flex justify-center py-2">
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={loadingMore} onClick={loadMore}>
-              {loadingMore ? "加载中…" : "加载更多"}
+              {loadingMore ? t("加载中…") : t("加载更多")}
             </button>
           </div>
         )}
@@ -270,17 +271,17 @@ export function CommandHistorySearch({
       <div id={helpId} className="nx-command-help flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/70 bg-neutral-950/40 px-4 py-2 text-[10.5px]">
         <span className="flex items-center gap-1.5">
           <span className="nx-kbd">↑</span>
-          <span className="nx-kbd">↓</span> 选择
+          <span className="nx-kbd">↓</span> {t("选择")}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="nx-kbd">Enter</span> 打开回放
+          <span className="nx-kbd">Enter</span> {t("打开回放")}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="nx-kbd">Shift</span>
-          <span className="nx-kbd">Enter</span> 填入终端
+          <span className="nx-kbd">Enter</span> {t("填入终端")}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="nx-kbd">Esc</span> 关闭
+          <span className="nx-kbd">Esc</span> {t("关闭")}
         </span>
       </div>
     </>

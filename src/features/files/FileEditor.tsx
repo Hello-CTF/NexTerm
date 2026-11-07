@@ -48,6 +48,7 @@ import {
 } from "./fileLanguages";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
+import { t } from "../../i18n";
 
 export interface FileEditorSaveChange {
   sessionId: string;
@@ -80,13 +81,13 @@ export async function loadFileEditorSaveChange({
   const current = await fsApi.read(sessionId, path);
   const currentText = decodeContent(bytesFromBase64(current.contentBase64), encoding).text;
   if (currentText !== editorBase) {
-    throw new Error("文件在打开后已被外部修改；请重新读取并合并改动后再保存");
+    throw new Error(t("文件在打开后已被外部修改；请重新读取并合并改动后再保存"));
   }
   return { sessionId, path, previous: currentText, baseContentBase64: current.contentBase64, content };
 }
 
 const ENC_LABEL: Record<EncChoice, string> = {
-  auto: "自动",
+  auto: t("自动"),
   "utf-8": "UTF-8",
   gbk: "GBK",
 };
@@ -206,7 +207,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     if (!lock) {
       const token = beginFileEditorLoad(initialLocator.sessionId, initialLocator.path, ci);
       if (token === null) {
-        pushToast("info", "文件读取或重命名进行中，完成后请重新读取");
+        pushToast("info", t("文件读取或重命名进行中，完成后请重新读取"));
         onCloseRef.current?.();
         return;
       }
@@ -228,17 +229,17 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (cancelled) return;
         let largeEditConfirmed = false;
         if (probedSize !== null && probedSize > 5 * 1024 * 1024) {
-          const choice = await askChoice("文件超过 5MB，整文件编辑可能响应缓慢。请选择打开方式。", {
-            title: "大文件",
+          const choice = await askChoice(t("文件超过 5MB，整文件编辑可能响应缓慢。请选择打开方式。"), {
+            title: t("大文件"),
             level: "info",
             choices: [
               {
                 key: "view",
-                label: "只读分块查看",
-                hint: "使用日志查看器按需读取，不加载整个文件",
+                label: t("只读分块查看"),
+                hint: t("使用日志查看器按需读取，不加载整个文件"),
                 primary: true,
               },
-              { key: "edit", label: "编辑整个文件", hint: "读取整个文件并启用编辑与保存" },
+              { key: "edit", label: t("编辑整个文件"), hint: t("读取整个文件并启用编辑与保存") },
             ],
           });
           if (cancelled) return;
@@ -261,7 +262,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (
           !largeEditConfirmed &&
           res.size > 5 * 1024 * 1024 &&
-          !(await ask("文件超过 5MB，确定要编辑？", { kind: "info" }))
+          !(await ask(t("文件超过 5MB，确定要编辑？"), { kind: "info" }))
         ) {
           onCloseRef.current?.();
           return;
@@ -308,7 +309,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         }
       } catch (e) {
         if (!cancelled) {
-          pushToast("error", `打开失败：${describeError(e)}`);
+          pushToast("error", t("打开失败：{value}", { value: describeError(e) }));
           onCloseRef.current?.();
         }
       } finally {
@@ -344,25 +345,25 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       if (guard === "unknown") {
         const operation = unknownFileEditorRename(initialLocator.sessionId, initialLocator.path);
         if (!operation) return;
-        pushToast("error", "重命名结果未知，已阻止向旧路径保存；请先确认远端文件位置。");
+        pushToast("error", t("重命名结果未知，已阻止向旧路径保存；请先确认远端文件位置。"));
         saveInFlightRef.current = true;
         setSaving(true);
         try {
           const choice = await askChoice(
-            `重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前标签页路径：${initialLocator.path}`,
+            t("重命名结果未知，不会自动重试。请先在文件列表确认旧路径和新路径，再选择实际结果。当前标签页路径：{path}", { path: initialLocator.path }),
             {
-              title: "确认文件位置",
+              title: t("确认文件位置"),
               level: "warning",
               choices: [
                 {
                   key: "not-renamed",
-                  label: "重命名未发生",
-                  hint: "确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存",
+                  label: t("重命名未发生"),
+                  hint: t("确认旧路径仍是要保存的位置，清除未知记录并恢复旧路径保存"),
                 },
                 {
                   key: "renamed",
-                  label: "重命名已发生",
-                  hint: "确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名",
+                  label: t("重命名已发生"),
+                  hint: t("确认服务端已完成重命名，迁移匹配的标签页和草稿，不重复执行重命名"),
                 },
               ],
             },
@@ -377,7 +378,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 state.setActiveTab(target.id);
                 pushToast(
                   "error",
-                  `无法确认重命名已发生：目标 ${target.path} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。`,
+                  t("无法确认重命名已发生：目标 {path} 已有打开的编辑器，请先处理该标签页，未迁移或合并草稿。", { path: target.path }),
                 );
                 return;
               }
@@ -396,7 +397,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       } else {
         pushToast(
           "info",
-          guard === "rename" ? "重命名进行中，完成后请再次保存" : "另一个读取或保存操作进行中，请等待完成",
+          guard === "rename" ? t("重命名进行中，完成后请再次保存") : t("另一个读取或保存操作进行中，请等待完成"),
         );
       }
       return;
@@ -406,8 +407,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     try {
       if (meta && meta.encoding !== "utf-8") {
         const ok = await ask(
-          `文件按原编码解码，保存后将转换为 UTF-8，使用原编码打开可能出现乱码。继续？`,
-          { title: "编码会改变", kind: "warning" },
+          t("文件按原编码解码，保存后将转换为 UTF-8，使用原编码打开可能出现乱码。继续？"),
+          { title: t("编码会改变"), kind: "warning" },
         );
         if (!ok) return;
       }
@@ -441,9 +442,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           setDirty(false);
         }
       }
-      pushToast("success", `已保存 ${writeLocator.path}`);
+      pushToast("success", t("已保存 {path}", { path: writeLocator.path }));
     } catch (e) {
-      pushToast("error", `保存失败：${describeError(e)}`);
+      pushToast("error", t("保存失败：{value}", { value: describeError(e) }));
     } finally {
       endFileEditorOperation(guard);
       saveInFlightRef.current = false;
@@ -486,17 +487,17 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       const next = eol === "LF" ? src.replace(/\r?\n/g, "\r\n") : src.replace(/\r\n/g, "\n");
       v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: next } });
       setEol(eol === "LF" ? "CRLF" : "LF");
-      pushToast("info", `换行符已转换为 ${eol === "LF" ? "CRLF" : "LF"}，尚未保存`);
+      pushToast("info", t("换行符已转换为 {value}，尚未保存", { value: eol === "LF" ? "CRLF" : "LF" }));
     });
   };
 
   const reloadFromDisk = () => {
     if (saveInFlightRef.current) {
-      pushToast("info", "保存进行中，完成后才能重新读取文件");
+      pushToast("info", t("保存进行中，完成后才能重新读取文件"));
       return;
     }
     if (fileEditorRenamePending(sessionId, path)) {
-      pushToast("info", "重命名进行中，完成后才能重新读取文件");
+      pushToast("info", t("重命名进行中，完成后才能重新读取文件"));
       return;
     }
     setReloadEnc(enc);
@@ -505,25 +506,25 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
   const switchEnc = async (next: EncChoice) => {
     if (saveInFlightRef.current) {
-      pushToast("info", "保存进行中，完成后才能切换编码");
+      pushToast("info", t("保存进行中，完成后才能切换编码"));
       return;
     }
     if (fileEditorRenamePending(sessionId, path)) {
-      pushToast("info", "重命名进行中，完成后才能切换编码");
+      pushToast("info", t("重命名进行中，完成后才能切换编码"));
       return;
     }
     if (
       dirtyRef.current &&
-      !(await ask("切换编码会重新读取文件，未保存的改动会丢失。继续？", { kind: "warning" }))
+      !(await ask(t("切换编码会重新读取文件，未保存的改动会丢失。继续？"), { kind: "warning" }))
     ) {
       return;
     }
     if (saveInFlightRef.current) {
-      pushToast("info", "保存进行中，完成后才能切换编码");
+      pushToast("info", t("保存进行中，完成后才能切换编码"));
       return;
     }
     if (fileEditorRenamePending(sessionId, path)) {
-      pushToast("info", "重命名进行中，完成后才能切换编码");
+      pushToast("info", t("重命名进行中，完成后才能切换编码"));
       return;
     }
     setEnc(next);
@@ -543,31 +544,31 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         {dirty && (
           <span className="nx-badge nx-badge-amber shrink-0">
             <span className="nx-dot" />
-            未保存
+            {t("未保存")}
           </span>
         )}
         <div className="nx-spacer" />
 
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={`撤销 (${modHint()}+Z)`}
-          aria-label="撤销"
+          title={t("撤销 ({value}+Z)", { value: modHint() })}
+          aria-label={t("撤销")}
           onClick={() => withView(undo)}
         >
           <IconUndo size={13} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={`重做 (${modHint()}+Shift+Z)`}
-          aria-label="重做"
+          title={t("重做 ({value}+Shift+Z)", { value: modHint() })}
+          aria-label={t("重做")}
           onClick={() => withView(redo)}
         >
           <IconRedo size={13} />
         </button>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title={`查找 / 替换 (${modHint()}+F)`}
-          aria-label="查找 / 替换"
+          title={t("查找 / 替换 ({value}+F)", { value: modHint() })}
+          aria-label={t("查找 / 替换")}
           onClick={() => withView(openSearchPanel)}
         >
           <IconSearch size={13} />
@@ -577,8 +578,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="缩小字号"
-          aria-label="缩小字号"
+          title={t("缩小字号")}
+          aria-label={t("缩小字号")}
           disabled={zoom <= 0}
           onClick={() => setZoom((z) => Math.max(0, z - 1))}
         >
@@ -586,14 +587,14 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         </button>
         <span
           className="w-[22px] shrink-0 text-center text-[10.5px] text-neutral-500"
-          title="当前字号"
+          title={t("当前字号")}
         >
           {fontPx}
         </span>
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="放大字号"
-          aria-label="放大字号"
+          title={t("放大字号")}
+          aria-label={t("放大字号")}
           disabled={zoom >= steps}
           onClick={() => setZoom((z) => Math.min(steps, z + 1))}
         >
@@ -604,7 +605,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
 
         <button
           className="nx-btn nx-btn-ghost nx-btn-xs font-mono"
-          title={`当前换行符 ${eol}，单击可转换`}
+          title={t("当前换行符 {eol}，单击可转换", { eol })}
           onClick={toggleEol}
         >
           {eol}
@@ -612,10 +613,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         <Select
           className="shrink-0"
           triggerClassName="nx-btn nx-btn-ghost nx-btn-xs font-mono"
-          ariaLabel="解码方式"
-          title={`解码方式：${ENC_LABEL[enc]}${
-            meta && enc === "auto" ? `（检测为 ${meta.encoding.toUpperCase()}）` : ""
-          }`}
+          ariaLabel={t("解码方式")}
+          title={t("解码方式：{value}{value2}", { value: ENC_LABEL[enc], value2: meta && enc === "auto" ? t("（检测为 {toUpperCase}）", { toUpperCase: meta.encoding.toUpperCase() }) : "" })}
           value={enc}
           disabled={saving}
           options={(Object.keys(ENC_LABEL) as EncChoice[]).map((k) =>
@@ -623,7 +622,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
               ? {
                   value: k,
                   label: enc === "auto" && meta ? meta.encoding.toUpperCase() : ENC_LABEL[k],
-                  description: "自动检测",
+                  description: t("自动检测"),
                 }
               : { value: k, label: ENC_LABEL[k] },
           )}
@@ -631,12 +630,12 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         />
         <Select
           className="w-[124px] shrink-0"
-          ariaLabel="语法高亮"
-          title="语法高亮（手动选择仅用于当前打开的文件）"
+          ariaLabel={t("语法高亮")}
+          title={t("语法高亮（手动选择仅用于当前打开的文件）")}
           value={languageChoice}
           options={[
-            { value: "auto", label: autoLanguage ? `自动（${fileLanguageLabel(autoLanguage)}）` : "自动" },
-            { value: "plain", label: "纯文本" },
+            { value: "auto", label: autoLanguage ? t("自动（{value}）", { value: fileLanguageLabel(autoLanguage) }) : t("自动") },
+            { value: "plain", label: t("纯文本") },
             ...FILE_LANGUAGE_OPTIONS.map((option) => ({ value: option.id, label: option.label })),
           ]}
           onChange={(value) =>
@@ -649,15 +648,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="重新读取（丢弃未保存改动）"
-          aria-label="重新读取"
+          title={t("重新读取（丢弃未保存改动）")}
+          aria-label={t("重新读取")}
           disabled={saving}
           onClick={() => {
             if (!dirtyRef.current) {
               reloadFromDisk();
               return;
             }
-            void ask("重新读取会丢弃未保存的改动。继续？").then((ok) => {
+            void ask(t("重新读取会丢弃未保存的改动。继续？")).then((ok) => {
               if (ok) reloadFromDisk();
             });
           }}
@@ -671,15 +670,15 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           className={`nx-btn nx-btn-sm max-[560px]:order-first ${dirty ? "nx-btn-primary" : "nx-btn-ghost"}`}
           disabled={!dirty || saving}
           onClick={() => void save()}
-          title="保存"
+          title={t("保存")}
         >
           <IconSave size={13} />
-          {saving ? "正在保存…" : "保存"}
+          {saving ? t("正在保存…") : t("保存")}
           <span className={`nx-kbd max-[560px]:hidden ${dirty ? "border-white/25 text-white" : ""}`}>{modHint()} S</span>
         </button>
         {onClose && (
-          <button className="nx-icon-btn" onClick={onClose} title="关闭编辑器"
-          aria-label="关闭编辑器">
+          <button className="nx-icon-btn" onClick={onClose} title={t("关闭编辑器")}
+          aria-label={t("关闭编辑器")}>
             <IconClose size={14} />
           </button>
         )}

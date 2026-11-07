@@ -6,6 +6,7 @@ import { confirmSuspectReconnect, reconnectWorkspaceConnection, workspaceConnect
 import { reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
 import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence, UiState } from "./types";
 import { useUi } from "./useUi";
+import { t } from "../../i18n";
 
 export const abnormalDisconnectNotices = new Set<string>();
 
@@ -51,9 +52,9 @@ export function sessionReconnectStatusText(
       ? Date.parse(session.nextRetryAt)
       : null;
   const next = retryAt !== null && Number.isFinite(retryAt) && retryAt > 0
-    ? `下次重新连接 ${formatTime(retryAt)}`
+    ? t("下次重新连接 {value}", { value: formatTime(retryAt) })
     : null;
-  return [attempt > 0 ? `重新连接尝试 ${attempt} 次` : "准备第 1 次重新连接", next]
+  return [attempt > 0 ? t("重新连接尝试 {attempt} 次", { attempt }) : t("准备第 1 次重新连接"), next]
     .filter(Boolean)
     .join(" · ");
 }
@@ -80,7 +81,7 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
       }
     : session));
   if (p.status === "connected" && current?.status === "reconnecting") {
-    state.pushToast("success", `会话「${current.name}」已重新连接`);
+    state.pushToast("success", t("会话「{name}」已重新连接", { name: current.name }));
   }
   if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
     state.setConnectProgress(current.assetId, null);
@@ -93,7 +94,7 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     // automatic second attempt (connectWithHostKeyConfirm), so a toast here would only be noise.
     const awaitingHostKeyDialog = (p.errorCode === "host_key_pending" || p.errorCode === "host_key_changed") &&
       current?.status !== "reconnecting" && current?.status !== "connected" && attempt === 0;
-    if (p.error && !awaitingHostKeyDialog) state.pushToast("error", `会话失败：${p.error}`);
+    if (p.error && !awaitingHostKeyDialog) state.pushToast("error", t("会话失败：{error}", { error: p.error }));
     return;
   }
   if (p.status !== "disconnected" && !retryableFailed) return;
@@ -105,10 +106,10 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
   abnormalDisconnectNotices.add(p.sessionId);
   const name = current?.name ?? p.sessionId;
   const message = retryableFailed
-    ? `会话「${name}」自动重新连接失败：${p.error ?? p.errorCode}`
-    : `会话「${name}」异常断开：${p.error ?? p.errorCode}`;
+    ? t("会话「{name}」自动重新连接失败：{value}", { name, value: p.error ?? p.errorCode })
+    : t("会话「{name}」异常断开：{value}", { name, value: p.error ?? p.errorCode });
   state.pushToast("error", message, {
-    label: "重新连接",
+    label: t("重新连接"),
     onSelect: () => void reconnectSessionAfterDisconnect(p.sessionId),
   });
 }
@@ -117,7 +118,7 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
   const state = useUi.getState();
   const session = state.sessions.find((item) => item.id === sessionId);
   if (!session) {
-    state.pushToast("error", "重新连接失败：会话已不存在，请刷新会话列表");
+    state.pushToast("error", t("重新连接失败：会话已不存在，请刷新会话列表"));
     return;
   }
   // Route through the target-aware workspace reconnect so the connection problem settles against
@@ -131,7 +132,7 @@ async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void>
     const latest = useUi.getState();
     latest.setSessions([...latest.sessions.filter((item) => item.id !== fresh.id), fresh]);
   } catch (error) {
-    useUi.getState().pushToast("error", `重新连接失败：${describeError(error)}`);
+    useUi.getState().pushToast("error", t("重新连接失败：{value}", { value: describeError(error) }));
   }
 }
 
@@ -141,25 +142,25 @@ export function isSessionSuspect(status: SessionInfo["status"] | undefined, live
 }
 
 export function sessionStatusText(status: SessionInfo["status"] | undefined, liveness?: string | null): string {
-  if (isSessionSuspect(status, liveness)) return "连接不稳定";
-  if (status === "connected") return "已连接";
-  if (status === "reconnecting") return "重新连接中";
-  if (status === "connecting") return "连接中";
-  if (status === "failed") return "连接失败";
-  return "已断开";
+  if (isSessionSuspect(status, liveness)) return t("连接不稳定");
+  if (status === "connected") return t("已连接");
+  if (status === "reconnecting") return t("重新连接中");
+  if (status === "connecting") return t("连接中");
+  if (status === "failed") return t("连接失败");
+  return t("已断开");
 }
 
 export function connectStageText(stage: string): string {
-  if (stage === "auth") return "准备认证";
-  if (stage === "dial") return "TCP 拨号";
-  if (stage === "channel") return "经跳板打开通道";
-  if (stage === "handshake") return "SSH 握手认证";
+  if (stage === "auth") return t("准备认证");
+  if (stage === "dial") return t("TCP 拨号");
+  if (stage === "channel") return t("经跳板打开通道");
+  if (stage === "handshake") return t("SSH 握手认证");
   return stage;
 }
 
 export function connectProgressText(progress: ConnectProgressEvent): string {
   const hop =
-    progress.hop > 0 ? `跳板 ${progress.hop}/${progress.hops}` : "目标主机";
+    progress.hop > 0 ? t("跳板 {hop}/{hops}", { hop: progress.hop, hops: progress.hops }) : t("目标主机");
   return `${hop} · ${connectStageText(progress.stage)}`;
 }
 

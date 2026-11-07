@@ -16,6 +16,7 @@ import {
   type AgentStateTone,
 } from "./agentState";
 import type { AgentApprovalDecision, AgentToolCall } from "./agentTypes";
+import { t } from "../../i18n";
 
 const TONE_BADGE: Record<AgentStateTone, string> = {
   ok: "nx-badge nx-badge-green",
@@ -26,10 +27,10 @@ const TONE_BADGE: Record<AgentStateTone, string> = {
 };
 
 const APPROVAL_LABEL: Record<AgentApprovalDecision, string> = {
-  approve_once: "已允许一次",
-  approve_session: "已在本会话允许",
-  approve_persistent: "已永久允许",
-  deny: "已拒绝",
+  approve_once: t("已允许一次"),
+  approve_session: t("已在本会话允许"),
+  approve_persistent: t("已永久允许"),
+  deny: t("已拒绝"),
 };
 
 export function AgentToolCard({
@@ -66,12 +67,12 @@ export function AgentToolCard({
         </span>
         <span className="sr-only">
           {running
-            ? "工具执行中"
+            ? t("工具执行中")
             : call.state === "unknown"
-              ? "工具状态未知"
+              ? t("工具状态未知")
               : call.state === "ok"
-                ? "工具执行成功"
-                : "工具执行失败"}
+                ? t("工具执行成功")
+                : t("工具执行失败")}
         </span>
         {running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
@@ -92,32 +93,32 @@ export function AgentToolCard({
           {run && (
             <span
               className={TONE_BADGE[run.tone]}
-              title={run.evidence ? formatEvidence(run.evidence) : "暂无依据"}
+              title={run.evidence ? formatEvidence(run.evidence) : t("暂无依据")}
             >
               {run.label}
             </span>
           )}
           {call.presence !== "attached" && (
-            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : "暂无依据"}>
+            <span className={TONE_BADGE[presence.tone]} title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无依据")}>
               {presence.label}
             </span>
           )}
-          {call.production && <span className="nx-badge nx-badge-red">生产环境</span>}
+          {call.production && <span className="nx-badge nx-badge-red">{t("生产环境")}</span>}
           {!call.isMine && (
-            <span className="nx-badge nx-badge-amber" title="仅所有者可审批">
-              所有者：{call.ownerName}
+            <span className="nx-badge nx-badge-amber" title={t("仅所有者可审批")}>
+              {t("所有者：")}{call.ownerName}
             </span>
           )}
-          {call.persistent === false && <span className="nx-count">非持久终端</span>}
+          {call.persistent === false && <span className="nx-count">{t("非持久终端")}</span>}
           {!autoWriteAllowed(call.presence) && (
-            <span className="text-[var(--nx-fg-warning)]">自动写入已禁止</span>
+            <span className="text-[var(--nx-fg-warning)]">{t("自动写入已禁止")}</span>
           )}
         </div>
       )}
 
       {run?.evidence && (
         <div className="mt-1 text-[10.5px] text-neutral-500">
-          依据：{formatEvidence(run.evidence)}
+          {t("依据：")}{formatEvidence(run.evidence)}
         </div>
       )}
 
@@ -125,41 +126,41 @@ export function AgentToolCard({
         (approval.decision === null ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-1 border-t border-neutral-800 pt-1.5">
             <IconShield size={11} className="shrink-0 text-amber-300" />
-            <span className="text-[10.5px] text-neutral-400" title={`请求 ${approval.requestId} · 第 ${approval.attempt} 次`}>
-              等待你确认
+            <span className="text-[10.5px] text-neutral-400" title={t("请求 {requestId} · 第 {attempt} 次", { requestId: approval.requestId, attempt: approval.attempt })}>
+              {t("等待你确认")}
             </span>
             <span className="nx-spacer" />
             <button
               className="nx-btn nx-btn-outline nx-btn-xs"
               disabled={approvalBusy || !call.isMine}
-              title={call.isMine ? "仅允许这一次调用" : "仅所有者可审批"}
+              title={call.isMine ? t("仅允许这一次调用") : t("仅所有者可审批")}
               onClick={() => onApproval?.(approval.requestId, "approve_once")}
             >
-              允许一次
+              {t("允许一次")}
             </button>
             {approval.sessionScope && (
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 disabled={approvalBusy || !call.isMine}
-                title={call.isMine ? `本次对话内不再询问：${approval.sessionScope}` : "仅所有者可审批"}
+                title={call.isMine ? t("本次对话内不再询问：{sessionScope}", { sessionScope: approval.sessionScope }) : t("仅所有者可审批")}
                 onClick={() => onApproval?.(approval.requestId, "approve_session")}
               >
-                本会话允许
+                {t("本会话允许")}
               </button>
             )}
             <button
               className="nx-btn nx-btn-outline nx-btn-xs"
               disabled={approvalBusy || !call.isMine}
-              title={call.isMine ? "拒绝此次调用" : "仅所有者可审批"}
+              title={call.isMine ? t("拒绝此次调用") : t("仅所有者可审批")}
               onClick={() => onApproval?.(approval.requestId, "deny")}
             >
-              拒绝
+              {t("拒绝")}
             </button>
           </div>
         ) : (
           <div className="mt-1.5 border-t border-neutral-800 pt-1.5 text-[10.5px] text-neutral-500">
             <IconShield size={10} className="mr-1 inline shrink-0" />
-            <span title={`请求 ${approval.requestId}`}>{APPROVAL_LABEL[approval.decision]}</span>
+            <span title={t("请求 {requestId}", { requestId: approval.requestId })}>{APPROVAL_LABEL[approval.decision]}</span>
           </div>
         ))}
 
@@ -180,7 +181,7 @@ export function AgentToolCard({
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
-          {open ? "收起" : `展开输出（${detail.length} 字）`}
+          {open ? t("收起") : t("展开输出（{length} 字）", { length: detail.length })}
         </button>
       )}
     </div>

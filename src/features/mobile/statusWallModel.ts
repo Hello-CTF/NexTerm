@@ -9,6 +9,7 @@ import {
 import type { AggregateRow, RemoteOverviewRow } from "../../app/sessionAggregate";
 import type { AggregateHost, AggregateHostStatus } from "../../ipc/generated/types";
 import { attentionDetail } from "../inbox/inbox";
+import { t } from "../../i18n";
 
 // The status wall is the mobile home: every session this client knows, from its own tabs and the cross-host listing,
 // grouped by what it asks of the user. The order of the groups is fixed.
@@ -16,19 +17,19 @@ export const WALL_GROUPS = ["needs_me", "running", "finished", "unknown"] as con
 export type WallGroup = (typeof WALL_GROUPS)[number];
 
 export const WALL_GROUP_LABELS: Record<WallGroup, string> = {
-  needs_me: "需要处理",
-  running: "运行中",
-  finished: "已结束",
-  unknown: "状态未知",
+  needs_me: t("需要处理"),
+  running: t("运行中"),
+  finished: t("已结束"),
+  unknown: t("状态未知"),
 };
 
 const STATE_LABELS: Record<AwarenessState, string> = {
-  needs_me: "需要处理",
-  running: "运行中",
-  idle: "空闲",
-  just_finished: "刚完成",
-  exited: "已退出",
-  unknown: "状态未知",
+  needs_me: t("需要处理"),
+  running: t("运行中"),
+  idle: t("空闲"),
+  just_finished: t("刚完成"),
+  exited: t("已退出"),
+  unknown: t("状态未知"),
 };
 
 export interface WallCard {
@@ -92,8 +93,8 @@ function wallBadge(awareness: SessionAwareness | undefined, state: AwarenessStat
     const code = awareness?.exitCode;
     if (typeof code !== "number") return null;
     return code === 0
-      ? { kind: "just_finished", label: "已退出，成功", outcome: "ok" }
-      : { kind: "just_finished", label: `已退出，退出码 ${code}`, outcome: "failed" };
+      ? { kind: "just_finished", label: t("已退出，成功"), outcome: "ok" }
+      : { kind: "just_finished", label: t("已退出，退出码 {code}", { code }), outcome: "failed" };
   }
   if (!awareness) return state === "unknown" ? awarenessBadge({ state, seen: false, notable: false, version: 0 }) : null;
   return awarenessBadge({ ...awareness, state, seen: false });
@@ -183,7 +184,7 @@ export function buildStatusWall(
     seen.add(session.tabId);
     cards.push(card({
       tabId: session.tabId,
-      title: session.title || "持久终端",
+      title: session.title || t("持久终端"),
       hostName: host.name,
       awareness: known(session.tabId),
       ended: session.dead === true,
@@ -204,7 +205,7 @@ export function buildStatusWall(
       hostName: row.hostName,
       state,
       group: wallGroupOf(state),
-      stateLabel: row.status === "connected" ? "已连接" : row.status === "connecting" ? "连接中" : "已断开",
+      stateLabel: row.status === "connected" ? t("已连接") : row.status === "connecting" ? t("连接中") : t("已断开"),
       badge: null,
       at: 0,
       stale: false,

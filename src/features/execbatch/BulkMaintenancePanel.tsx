@@ -24,6 +24,7 @@ import {
   type AssetProbeResultDTO,
   type DeployPublicKeyRequest,
 } from "./maintenanceApi";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 // Per-asset requests are issued by a small worker pool so a cancel can stop queueing between assets.
@@ -102,26 +103,26 @@ type LoginResult = {
 // Status label, tone and retry eligibility per backend result kind. The backend message
 // already carries the next step, so the label only names the outcome.
 const LOGIN_FAILURE_KINDS: Record<string, { status: string; tone: LoginTone; retryable: boolean }> = {
-  host_key_pending: { status: "需确认指纹", tone: "warn", retryable: true },
-  host_key_changed: { status: "指纹变了", tone: "warn", retryable: true },
-  auth: { status: "登录被拒绝", tone: "fail", retryable: true },
-  credential: { status: "凭据不可用", tone: "fail", retryable: true },
-  vault: { status: "凭据库未解锁", tone: "fail", retryable: true },
-  refused: { status: "端口不通", tone: "fail", retryable: true },
-  timeout: { status: "连接超时", tone: "fail", retryable: true },
-  dns: { status: "域名解析失败", tone: "fail", retryable: true },
-  unreachable: { status: "网络不通", tone: "fail", retryable: true },
-  network: { status: "网络不通", tone: "fail", retryable: true },
-  proxy: { status: "代理连接失败", tone: "fail", retryable: true },
-  handshake: { status: "协议握手失败", tone: "fail", retryable: true },
-  config: { status: "配置有误", tone: "fail", retryable: false },
-  tls: { status: "TLS 校验失败", tone: "fail", retryable: true },
-  database: { status: "数据库不可用", tone: "fail", retryable: true },
-  tunnel: { status: "跳板不可用", tone: "fail", retryable: true },
-  canceled: { status: "已取消", tone: "canceled", retryable: false },
-  not_found: { status: "资产不存在", tone: "fail", retryable: false },
-  unsupported: { status: "不支持测试", tone: "fail", retryable: false },
-  internal: { status: "测试出错", tone: "fail", retryable: true },
+  host_key_pending: { status: t("需确认指纹"), tone: "warn", retryable: true },
+  host_key_changed: { status: t("指纹变了"), tone: "warn", retryable: true },
+  auth: { status: t("登录被拒绝"), tone: "fail", retryable: true },
+  credential: { status: t("凭据不可用"), tone: "fail", retryable: true },
+  vault: { status: t("凭据库未解锁"), tone: "fail", retryable: true },
+  refused: { status: t("端口不通"), tone: "fail", retryable: true },
+  timeout: { status: t("连接超时"), tone: "fail", retryable: true },
+  dns: { status: t("域名解析失败"), tone: "fail", retryable: true },
+  unreachable: { status: t("网络不通"), tone: "fail", retryable: true },
+  network: { status: t("网络不通"), tone: "fail", retryable: true },
+  proxy: { status: t("代理连接失败"), tone: "fail", retryable: true },
+  handshake: { status: t("协议握手失败"), tone: "fail", retryable: true },
+  config: { status: t("配置有误"), tone: "fail", retryable: false },
+  tls: { status: t("TLS 校验失败"), tone: "fail", retryable: true },
+  database: { status: t("数据库不可用"), tone: "fail", retryable: true },
+  tunnel: { status: t("跳板不可用"), tone: "fail", retryable: true },
+  canceled: { status: t("已取消"), tone: "canceled", retryable: false },
+  not_found: { status: t("资产不存在"), tone: "fail", retryable: false },
+  unsupported: { status: t("不支持测试"), tone: "fail", retryable: false },
+  internal: { status: t("测试出错"), tone: "fail", retryable: true },
 };
 
 const LOGIN_TONE_CLASS: Record<LoginTone, string> = {
@@ -136,10 +137,10 @@ type LoginRun = { canceled: boolean; settled: Set<string>; inFlight: Set<string>
 
 function canceledLoginResult(assetId: string, label: string, inFlight: boolean): LoginResult {
   return {
-    assetId, label, tone: "canceled", status: "已取消", retryable: false,
+    assetId, label, tone: "canceled", status: t("已取消"), retryable: false,
     detail: inFlight
-      ? "已取消。该主机的检测请求已发出，结果不予采用，可稍后单独重新测试"
-      : "已取消，该主机尚未开始测试",
+      ? t("已取消。该主机的检测请求已发出，结果不予采用，可稍后单独重新测试")
+      : t("已取消，该主机尚未开始测试"),
   };
 }
 
@@ -154,43 +155,43 @@ export function describeLoginResult(
     const database = assetKind !== undefined && DATABASE_KINDS.has(assetKind);
     if (result.kind === "port_only" || (assetKind !== "ssh" && assetKind !== "docker" && assetKind !== "local" && !database)) {
       return {
-        ...base, tone: "partial", status: "仅端口通", retryable: false,
-        detail: `${result.error || "仅确认端口可以连通，没有验证账号和密码"}（${result.durationMs} ms）`,
+        ...base, tone: "partial", status: t("仅端口通"), retryable: false,
+        detail: `${result.error || t("仅确认端口可以连通，没有验证账号和密码")}（${result.durationMs} ms）`,
       };
     }
     if (assetKind === "local") {
-      return { ...base, tone: "ok", status: "本机可用", retryable: false, detail: "本机终端无需登录" };
+      return { ...base, tone: "ok", status: t("本机可用"), retryable: false, detail: t("本机终端无需登录") };
     }
     if (database) {
       return {
-        ...base, tone: "ok", status: "已登录数据库", retryable: false,
+        ...base, tone: "ok", status: t("已登录数据库"), retryable: false,
         detail: hasCredential
-          ? `已使用资产绑定的凭据登录数据库并通过连通检查，未执行任何 SQL（${result.durationMs} ms）`
-          : `已连接并通过连通检查；该资产未绑定凭据，已按无密码方式登录，未执行任何 SQL（${result.durationMs} ms）`,
+          ? t("已使用资产绑定的凭据登录数据库并通过连通检查，未执行任何 SQL（{durationMs} ms）", { durationMs: result.durationMs })
+          : t("已连接并通过连通检查；该资产未绑定凭据，已按无密码方式登录，未执行任何 SQL（{durationMs} ms）", { durationMs: result.durationMs }),
       };
     }
     return {
-      ...base, tone: "ok", status: "已验证登录", retryable: false,
-      detail: `连接成功，主机指纹和登录凭据均验证通过（${result.durationMs} ms）`,
+      ...base, tone: "ok", status: t("已验证登录"), retryable: false,
+      detail: t("连接成功，主机指纹和登录凭据均验证通过（{durationMs} ms）", { durationMs: result.durationMs }),
     };
   }
   const known = result.kind ? LOGIN_FAILURE_KINDS[result.kind] : undefined;
   return {
     ...base,
     tone: known?.tone ?? "fail",
-    status: known?.status ?? "连接失败",
+    status: known?.status ?? t("连接失败"),
     retryable: known?.retryable ?? true,
-    detail: result.error || "未获取到失败原因，请重试",
+    detail: result.error || t("未获取到失败原因，请重试"),
   };
 }
 
 export function summarizeLoginResults(results: readonly LoginResult[]): string {
   const count = (tone: LoginTone) => results.filter((result) => result.tone === tone).length;
-  const parts = [`共 ${results.length} 个`, `已验证 ${count("ok")}`];
-  if (count("partial") > 0) parts.push(`仅端口通 ${count("partial")}`);
-  if (count("warn") > 0) parts.push(`需确认指纹 ${count("warn")}`);
-  parts.push(`失败 ${count("fail")}`);
-  if (count("canceled") > 0) parts.push(`已取消 ${count("canceled")}`);
+  const parts = [t("共 {length} 个", { length: results.length }), t("已验证 {value}", { value: count("ok") })];
+  if (count("partial") > 0) parts.push(t("仅端口通 {value}", { value: count("partial") }));
+  if (count("warn") > 0) parts.push(t("需确认指纹 {value}", { value: count("warn") }));
+  parts.push(t("失败 {value}", { value: count("fail") }));
+  if (count("canceled") > 0) parts.push(t("已取消 {value}", { value: count("canceled") }));
   return parts.join(" · ");
 }
 
@@ -200,17 +201,17 @@ function loginResultsText(results: readonly LoginResult[]): string {
 
 function deployResult(result: ExecBatchResult): { ok: boolean; detail: string } {
   if (result.status !== "success") {
-    return { ok: false, detail: result.error || result.stderr || `执行失败（${result.status}）` };
+    return { ok: false, detail: result.error || result.stderr || t("执行失败（{status}）", { status: result.status }) };
   }
   const markers = markerLines(result);
-  if (markers.has("NEXTERM_PUBLIC_KEY_ALREADY_PRESENT")) return { ok: true, detail: "公钥已存在，未重复追加" };
+  if (markers.has("NEXTERM_PUBLIC_KEY_ALREADY_PRESENT")) return { ok: true, detail: t("公钥已存在，未重复追加") };
   if (markers.has("NEXTERM_PUBLIC_KEY_ADDED")) {
     return {
       ok: true,
-      detail: markers.has("NEXTERM_PUBLIC_KEY_BACKUP") ? "公钥已追加；原文件已创建只读备份" : "公钥已追加到新文件",
+      detail: markers.has("NEXTERM_PUBLIC_KEY_BACKUP") ? t("公钥已追加；原文件已创建只读备份") : t("公钥已追加到新文件"),
     };
   }
-  return { ok: false, detail: "远端未返回部署完成标记，请检查 authorized_keys" };
+  return { ok: false, detail: t("远端未返回部署完成标记，请检查 authorized_keys") };
 }
 
 function MaintenanceResults({ title, results }: { title: string; results: MaintenanceResult[] }) {
@@ -220,7 +221,7 @@ function MaintenanceResults({ title, results }: { title: string; results: Mainte
       {results.map((result) => (
         <div key={result.assetId} className="flex items-start gap-2 border-t border-neutral-800/50 py-1.5 text-[11px] first:border-t-0" data-asset-id={result.assetId}>
           <span className="w-36 shrink-0 truncate text-neutral-300" title={result.assetId}>{result.label}</span>
-          <span className={result.ok ? "shrink-0 text-green-300" : "shrink-0 text-red-300"}>{result.ok ? "成功" : "失败"}</span>
+          <span className={result.ok ? "shrink-0 text-green-300" : "shrink-0 text-red-300"}>{result.ok ? t("成功") : t("失败")}</span>
           <span className={`min-w-0 flex-1 whitespace-pre-wrap break-all ${result.ok ? "text-neutral-400" : "text-red-300"}`}>{result.detail}</span>
         </div>
       ))}
@@ -260,18 +261,18 @@ function LoginResults({
     }
   };
   return (
-    <div className="mt-2 rounded border border-neutral-800/70 px-2 py-1.5" aria-label="连接测试结果">
+    <div className="mt-2 rounded border border-neutral-800/70 px-2 py-1.5" aria-label={t("连接测试结果")}>
       <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px]">
         <span className="font-medium text-neutral-300" role="status">{summarizeLoginResults(results)}</span>
         <span className="flex-1" />
         {retryable > 0 && (
-          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>重试未通过项（{retryable}）</button>
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>{t("重试未通过项（")}{retryable}）</button>
         )}
         {canceled > 0 && (
-          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onResume}>测试已取消项（{canceled}）</button>
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onResume}>{t("测试已取消项（")}{canceled}）</button>
         )}
         <button type="button" className="nx-btn nx-btn-sm" onClick={() => void copy()}>
-          {copied === "ok" ? "已复制" : copied === "failed" ? "复制失败" : "复制结果"}
+          {copied === "ok" ? t("已复制") : copied === "failed" ? t("复制失败") : t("复制结果")}
         </button>
       </div>
       {results.map((result) => (
@@ -358,11 +359,11 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     setError(null);
     setEditResults([]);
     if (selectedAssets.length === 0) {
-      setError("请至少选择一个 SSH 资产");
+      setError(t("请至少选择一个 SSH 资产"));
       return;
     }
     if (selectedAssets.length > MAX_TARGETS) {
-      setError(`每次最多维护 ${MAX_TARGETS} 个资产`);
+      setError(t("每次最多维护 {MAX_TARGETS} 个资产", { MAX_TARGETS }));
       return;
     }
     const request: AssetBulkEditIPCRequest = {
@@ -378,14 +379,14 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     if (portEnabled) {
       const value = Number(port);
       if (!Number.isInteger(value) || value < 1 || value > 65535) {
-        setError("端口需在 1-65535 之间");
+        setError(t("端口需在 1-65535 之间"));
         return;
       }
       request.port = value;
     }
     if (request.groupId === undefined && request.jumpAssetId === undefined && request.credentialId === undefined
       && request.tags === undefined && request.port === undefined) {
-      setError("请至少选择一个要修改的字段");
+      setError(t("请至少选择一个要修改的字段"));
       return;
     }
     setBusy("edit");
@@ -395,7 +396,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         const target = groupId === "" ? null : groupId;
         const moved = await Promise.all(selectedAssets.map(async (asset) => ({
           name: asset.name,
-          targetName: target === null ? "根目录" : groupNames.get(target) ?? "目标分组",
+          targetName: target === null ? t("根目录") : groupNames.get(target) ?? t("目标分组"),
           changes: await inheritanceChangesOnMove(asset, target),
         })));
         const affected = moved.filter((line) => line.changes.length > 0);
@@ -406,7 +407,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         assetId: result.assetId,
         label: resultLabel(result.assetId),
         ok: !result.error,
-        detail: result.error || `已更新（版本 ${result.updatedAt}）`,
+        detail: result.error || t("已更新（版本 {updatedAt}）", { updatedAt: result.updatedAt }),
       })));
       await qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
@@ -430,7 +431,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
       return [sessionId, assetId] as const;
     }));
     const offline = selectedAssets.filter((asset) => !sessionByAsset.has(asset.id)).map((asset) => ({
-      assetId: asset.id, label: asset.name, ok: false, detail: "没有可复用的已连接 SSH 会话",
+      assetId: asset.id, label: asset.name, ok: false, detail: t("没有可复用的已连接 SSH 会话"),
     }));
     try {
       const batch = await maintenanceApi.deployPublicKey(request);
@@ -463,20 +464,20 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     if (busy) return;
     setError(null);
     if (selectedAssets.length === 0) {
-      setError("请至少选择一个 SSH 资产");
+      setError(t("请至少选择一个 SSH 资产"));
       return;
     }
     if (!publicKey.trim()) {
-      setError("请粘贴要部署的 OpenSSH 公钥");
+      setError(t("请粘贴要部署的 OpenSSH 公钥"));
       return;
     }
     if (selectedAssets.length > MAX_TARGETS) {
-      setError(`每次最多维护 ${MAX_TARGETS} 个资产`);
+      setError(t("每次最多维护 {MAX_TARGETS} 个资产", { MAX_TARGETS }));
       return;
     }
     const sessionIds = selectedAssets.map((asset) => sessionByAsset.get(asset.id)?.id).filter((id): id is string => id !== undefined);
     if (sessionIds.length === 0) {
-      setDeployResults(selectedAssets.map((asset) => ({ assetId: asset.id, label: asset.name, ok: false, detail: "没有可复用的已连接 SSH 会话" })));
+      setDeployResults(selectedAssets.map((asset) => ({ assetId: asset.id, label: asset.name, ok: false, detail: t("没有可复用的已连接 SSH 会话") })));
       return;
     }
     void runDeploy({
@@ -494,7 +495,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
     setError(null);
     if (ids.length === 0) return;
     if (ids.length > MAX_TARGETS) {
-      setError(`每次最多测试 ${MAX_TARGETS} 个资产`);
+      setError(t("每次最多测试 {MAX_TARGETS} 个资产", { MAX_TARGETS }));
       return;
     }
     const run: LoginRun = { canceled: false, settled: new Set(), inFlight: new Set() };
@@ -572,7 +573,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   const testLogin = () => {
     if (busy) return;
     if (loginSelected.length === 0) {
-      setError("请至少选择一个要测试的资产");
+      setError(t("请至少选择一个要测试的资产"));
       return;
     }
     startLoginTest(loginSelected, false);
@@ -582,15 +583,15 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
   const resumeCanceled = () => startLoginTest(loginResults.filter((result) => result.tone === "canceled").map((result) => result.assetId), true);
 
   return (
-    <section className="nx-pane" aria-label="批量主机维护" data-testid="bulk-maintenance-panel">
+    <section className="nx-pane" aria-label={t("批量主机维护")} data-testid="bulk-maintenance-panel">
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title">批量主机维护</h2>
-        <span className="nx-hint">按 SSH 资产选择 · 逐目标返回结果</span>
+        <h2 className="nx-toolbar-title">{t("批量主机维护")}</h2>
+        <span className="nx-hint">{t("按 SSH 资产选择 · 逐目标返回结果")}</span>
         {onClose && (
           <>
             <span className="nx-spacer" />
-            <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭批量维护" onClick={onClose}>
+            <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭批量维护")} onClick={onClose}>
               <IconClose size={13} />
             </button>
           </>
@@ -606,79 +607,79 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
           }}
           disabled={busy !== null || production !== null}
           maxTargets={MAX_TARGETS}
-          legend="SSH 资产"
-          emptyMessage="没有可维护的 SSH 资产。请先在资产树中创建资产。"
-          searchAriaLabel="搜索批量维护目标"
+          legend={t("SSH 资产")}
+          emptyMessage={t("没有可维护的 SSH 资产。请先在资产树中创建资产。")}
+          searchAriaLabel={t("搜索批量维护目标")}
           metadataError={assetsQuery.isError ? describeError(assetsQuery.error) : null}
         />
         {error && <div role="alert" className="mb-3 text-[11px] text-red-300">{error}</div>}
 
         <details className="mb-2 rounded border border-neutral-800/70 p-2.5" open>
-          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconEdit size={12} className="mr-1 inline" />批量编辑</summary>
+          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconEdit size={12} className="mr-1 inline" />{t("批量编辑")}</summary>
           <div className="mt-3 grid gap-2 md:grid-cols-2">
-            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">分组
-              <Select ariaLabel="批量编辑分组" value={groupChoice} onChange={setGroupChoice} options={[
-                { value: "keep", label: "不修改" }, { value: "clear", label: "移到未分组" },
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("分组")}
+              <Select ariaLabel={t("批量编辑分组")} value={groupChoice} onChange={setGroupChoice} options={[
+                { value: "keep", label: t("不修改") }, { value: "clear", label: t("移到未分组") },
                 ...(groupsQuery.data ?? []).map((group) => ({ value: `id:${group.id}`, label: group.name })),
               ]} />
             </div>
-            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">跳板机
-              <Select ariaLabel="批量编辑跳板机" value={jumpChoice} onChange={setJumpChoice} options={[
-                { value: "keep", label: "不修改" }, { value: "clear", label: "不使用跳板机" },
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("跳板机")}
+              <Select ariaLabel={t("批量编辑跳板机")} value={jumpChoice} onChange={setJumpChoice} options={[
+                { value: "keep", label: t("不修改") }, { value: "clear", label: t("不使用跳板机") },
                 ...assets.filter((asset) => asset.kind === "ssh" || asset.kind === "docker").map((asset) => ({
                   value: `id:${asset.id}`, label: `${asset.name}（${asset.host ?? asset.id}）`,
                 })),
               ]} />
             </div>
-            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">凭据标识（不展示明文）
-              <Select ariaLabel="批量编辑凭据" value={credentialChoice} onChange={setCredentialChoice} options={[
-                { value: "keep", label: "不修改" }, { value: "clear", label: "清除凭据绑定" },
+            <div className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("凭据标识（不展示明文）")}
+              <Select ariaLabel={t("批量编辑凭据")} value={credentialChoice} onChange={setCredentialChoice} options={[
+                { value: "keep", label: t("不修改") }, { value: "clear", label: t("清除凭据绑定") },
                 ...(credentialsQuery.data ?? []).map((credential) => ({
                   value: `id:${credential.id}`, label: `${credential.name}（${credential.kind} · ${credential.id}）`,
                 })),
               ]} />
             </div>
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">端口
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("端口")}
               <span className="flex items-center gap-2">
-                <input type="checkbox" aria-label="修改端口" checked={portEnabled} onChange={(event) => setPortEnabled(event.target.checked)} />
-                <input className="nx-input" type="number" aria-label="批量编辑端口" min={1} max={65535} value={port} disabled={!portEnabled} onChange={(event) => setPort(event.target.value)} />
+                <input type="checkbox" aria-label={t("修改端口")} checked={portEnabled} onChange={(event) => setPortEnabled(event.target.checked)} />
+                <input className="nx-input" type="number" aria-label={t("批量编辑端口")} min={1} max={65535} value={port} disabled={!portEnabled} onChange={(event) => setPort(event.target.value)} />
               </span>
             </label>
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500 md:col-span-2">标签（逗号分隔，批量替换）
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500 md:col-span-2">{t("标签（逗号分隔，批量替换）")}
               <span className="flex items-center gap-2">
-                <input type="checkbox" aria-label="修改标签" checked={tagsEnabled} onChange={(event) => setTagsEnabled(event.target.checked)} />
-                <input className="nx-input" aria-label="批量编辑标签" value={tags} disabled={!tagsEnabled} onChange={(event) => setTags(event.target.value)} />
+                <input type="checkbox" aria-label={t("修改标签")} checked={tagsEnabled} onChange={(event) => setTagsEnabled(event.target.checked)} />
+                <input className="nx-input" aria-label={t("批量编辑标签")} value={tags} disabled={!tagsEnabled} onChange={(event) => setTags(event.target.value)} />
               </span>
             </label>
           </div>
-          <div className="mt-2 text-[10px] text-neutral-500">仅显示凭据名称、类型和 ID，不返回或记录明文内容；发生并发修改冲突的目标可刷新后单独重试。</div>
+          <div className="mt-2 text-[10px] text-neutral-500">{t("仅显示凭据名称、类型和 ID，不返回或记录明文内容；发生并发修改冲突的目标可刷新后单独重试。")}</div>
           <button type="button" className="nx-btn nx-btn-primary mt-3" disabled={busy !== null} onClick={() => void applyBulkEdit()}>
-            {busy === "edit" ? "正在编辑…" : "应用批量编辑"}
+            {busy === "edit" ? t("正在编辑…") : t("应用批量编辑")}
           </button>
-          {editResults.length > 0 && <MaintenanceResults title="批量编辑逐目标结果" results={editResults} />}
+          {editResults.length > 0 && <MaintenanceResults title={t("批量编辑逐目标结果")} results={editResults} />}
         </details>
 
         <details className="mb-2 rounded border border-neutral-800/70 p-2.5">
-          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconKey size={12} className="mr-1 inline" />部署公钥</summary>
+          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconKey size={12} className="mr-1 inline" />{t("部署公钥")}</summary>
           <div className="mt-3 flex flex-col gap-2">
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">OpenSSH 公钥（单行）
-              <textarea className="nx-input min-h-20 font-mono text-xs" aria-label="部署公钥内容" value={publicKey} onChange={(event) => { setPublicKey(event.target.value); setProduction(null); }} />
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("OpenSSH 公钥（单行）")}
+              <textarea className="nx-input min-h-20 font-mono text-xs" aria-label={t("部署公钥内容")} value={publicKey} onChange={(event) => { setPublicKey(event.target.value); setProduction(null); }} />
             </label>
-            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">authorized_keys 路径
-              <input className="nx-input font-mono text-xs" aria-label="authorized_keys 路径" value={authorizedKeysPath} onChange={(event) => { setAuthorizedKeysPath(event.target.value); setProduction(null); }} />
+            <label className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("authorized_keys 路径")}
+              <input className="nx-input font-mono text-xs" aria-label={t("authorized_keys 路径")} value={authorizedKeysPath} onChange={(event) => { setAuthorizedKeysPath(event.target.value); setProduction(null); }} />
             </label>
-            <div className="text-[10px] text-neutral-500">已存在的公钥不重复添加，写入前备份原文件；只使用已连接的会话。</div>
+            <div className="text-[10px] text-neutral-500">{t("已存在的公钥不重复添加，写入前备份原文件；只使用已连接的会话。")}</div>
             <button type="button" className="nx-btn nx-btn-primary self-start" disabled={busy !== null} onClick={deploy}>
-              <IconPlay size={12} />{busy === "deploy" ? "正在部署…" : "部署公钥"}
+              <IconPlay size={12} />{busy === "deploy" ? t("正在部署…") : t("部署公钥")}
             </button>
           </div>
-          {deployResults.length > 0 && <MaintenanceResults title="公钥部署逐目标结果" results={deployResults} />}
+          {deployResults.length > 0 && <MaintenanceResults title={t("公钥部署逐目标结果")} results={deployResults} />}
         </details>
 
         <details className="rounded border border-neutral-800/70 p-2.5">
-          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />连接测试</summary>
+          <summary className="cursor-pointer text-[12px] font-medium text-neutral-200"><IconPlug size={12} className="mr-1 inline" />{t("连接测试")}</summary>
           <div className="mt-2 text-[10px] text-neutral-500">
-            只验证能否登录，不执行命令或 SQL；未信任的主机指纹需先在终端中确认。其他类型只检查端口，标记为「仅端口连通」。
+            {t("只验证能否登录，不执行命令或 SQL；未信任的主机指纹需先在终端中确认。其他类型只检查端口，标记为「仅端口连通」。")}
           </div>
           <div className="mt-2" data-testid="login-test-targets">
             <TargetSetPicker
@@ -687,9 +688,9 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
               onChange={setLoginSelected}
               disabled={busy !== null}
               maxTargets={MAX_TARGETS}
-              legend="测试主机"
-              emptyMessage="没有可测试的资产。"
-              searchAriaLabel="搜索要测试的主机"
+              legend={t("测试主机")}
+              emptyMessage={t("没有可测试的资产。")}
+              searchAriaLabel={t("搜索要测试的主机")}
               metadataError={assetsQuery.isError ? describeError(assetsQuery.error) : null}
             />
             {selected.length > 0 && (
@@ -698,17 +699,17 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
                 className="nx-btn nx-btn-sm mb-2"
                 disabled={busy !== null}
                 onClick={() => setLoginSelected(selected)}
-              >沿用上方已选的 {selected.length} 个 SSH 资产</button>
+              >{t("沿用上方已选的")} {selected.length} {t("个 SSH 资产")}</button>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="nx-btn" disabled={busy !== null} onClick={testLogin}>
-              {busy === "login" ? `正在测试 ${loginProgress?.done ?? 0}/${loginProgress?.total ?? 0}…` : "开始连接测试"}
+              {busy === "login" ? t("正在测试 {value}/{value2}…", { value: loginProgress?.done ?? 0, value2: loginProgress?.total ?? 0 }) : t("开始连接测试")}
             </button>
             {busy === "login" && (
-              <button type="button" className="nx-btn" onClick={cancelLoginTest}>取消测试</button>
+              <button type="button" className="nx-btn" onClick={cancelLoginTest}>{t("取消测试")}</button>
             )}
-            {busy === "login" && <span className="text-[10px] text-neutral-500">每台最多等待 10 秒；取消后已发出的请求结果不采用</span>}
+            {busy === "login" && <span className="text-[10px] text-neutral-500">{t("每台最多等待 10 秒；取消后已发出的请求结果不采用")}</span>}
           </div>
           {loginResults.length > 0 && (
             <LoginResults results={loginResults} busy={busy !== null} onRetry={retryLogin} onResume={resumeCanceled} />
@@ -720,7 +721,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
         <ProductionConfirmationDialog
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
-          command={`向 ${authorizedKeysPath} 追加公钥：\n${publicKey}`}
+          command={t("向 {authorizedKeysPath} 追加公钥：\n{publicKey}", { authorizedKeysPath, publicKey })}
           onCancel={() => setProduction(null)}
           onConfirm={(environmentNames) => void runDeploy({
             ...production.request,
@@ -747,7 +748,7 @@ export function BulkMaintenanceDialog({ sessions, onClose }: { sessions: Session
         className="nx-modal flex max-h-[88vh] nx-modal-lg flex-col"
         role="dialog"
         aria-modal="true"
-        aria-label="批量主机维护"
+        aria-label={t("批量主机维护")}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {

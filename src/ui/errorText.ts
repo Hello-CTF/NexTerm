@@ -1,42 +1,43 @@
 import { translateMessage } from "../i18n";
+import { t } from "../i18n";
 
 // Plain-language text per error code: what failed and what to do next. The raw technical text stays available through
 // describeErrorDetail for a 「详情」 disclosure.
 const ERROR_CODE_TEXT: Record<string, string> = {
-  internal: "应用内部出现错误，请稍后重试；仍然失败请查看详情",
-  bad_param: "输入内容不正确，请检查后重试",
-  io: "读写文件失败，请检查磁盘空间和文件权限后重试",
-  db: "读写本地数据失败，请重试；仍然失败请重启应用",
-  db_migrate: "升级本地数据失败，请重启应用后重试",
-  crypto: "加密处理失败，请重试",
-  decrypt: "无法解密已保存的凭据，请确认保护密码，或重新输入凭据",
-  bad_master_password: "保护密码不正确，请重新输入",
-  vault_locked: "凭据库已锁定，请先解锁",
-  vault_not_init: "凭据库尚未初始化，请先在「设置 → 凭据保护」中开启",
-  vault_already_init: "凭据库已初始化，无需重复操作",
-  host_key_pending: "请先确认主机指纹，核对无误后再选择信任",
-  not_found: "未找到对应内容，可能已被删除",
-  unsupported: "当前环境不支持该操作",
-  disconnected: "连接已断开，请重新连接后再试",
-  timeout: "等待超时，请检查网络后重试",
-  forbidden: "无权执行该操作",
-  conflict: "内容已被其他操作修改，请刷新后重试",
-  metadata_conflict: "名称已被其他操作修改，请刷新后重试",
-  mfa_enrollment_required: "需要先绑定二次验证，请在账号设置中完成绑定后再继续",
-  cancelled: "操作已取消",
-  needs_confirm: "该操作需要确认后才能继续",
-  ssh: "SSH 连接或操作失败，请检查主机地址、账号和网络后重试",
-  sftp: "文件传输失败，请检查连接和路径权限后重试",
-  winrm: "Windows 远程连接失败，请检查主机地址、账号和 WinRM 设置后重试",
-  docker_not_installed: "目标主机未安装 Docker",
-  docker_unavailable: "无法访问 Docker，请确认 Docker 服务已运行",
-  docker_forbidden: "当前账号无 Docker 权限，请使用有权限的账号或将其加入 docker 用户组",
+  internal: t("应用内部出现错误，请稍后重试；仍然失败请查看详情"),
+  bad_param: t("输入内容不正确，请检查后重试"),
+  io: t("读写文件失败，请检查磁盘空间和文件权限后重试"),
+  db: t("读写本地数据失败，请重试；仍然失败请重启应用"),
+  db_migrate: t("升级本地数据失败，请重启应用后重试"),
+  crypto: t("加密处理失败，请重试"),
+  decrypt: t("无法解密已保存的凭据，请确认保护密码，或重新输入凭据"),
+  bad_master_password: t("保护密码不正确，请重新输入"),
+  vault_locked: t("凭据库已锁定，请先解锁"),
+  vault_not_init: t("凭据库尚未初始化，请先在「设置 → 凭据保护」中开启"),
+  vault_already_init: t("凭据库已初始化，无需重复操作"),
+  host_key_pending: t("请先确认主机指纹，核对无误后再选择信任"),
+  not_found: t("未找到对应内容，可能已被删除"),
+  unsupported: t("当前环境不支持该操作"),
+  disconnected: t("连接已断开，请重新连接后再试"),
+  timeout: t("等待超时，请检查网络后重试"),
+  forbidden: t("无权执行该操作"),
+  conflict: t("内容已被其他操作修改，请刷新后重试"),
+  metadata_conflict: t("名称已被其他操作修改，请刷新后重试"),
+  mfa_enrollment_required: t("需要先绑定二次验证，请在账号设置中完成绑定后再继续"),
+  cancelled: t("操作已取消"),
+  needs_confirm: t("该操作需要确认后才能继续"),
+  ssh: t("SSH 连接或操作失败，请检查主机地址、账号和网络后重试"),
+  sftp: t("文件传输失败，请检查连接和路径权限后重试"),
+  winrm: t("Windows 远程连接失败，请检查主机地址、账号和 WinRM 设置后重试"),
+  docker_not_installed: t("目标主机未安装 Docker"),
+  docker_unavailable: t("无法访问 Docker，请确认 Docker 服务已运行"),
+  docker_forbidden: t("当前账号无 Docker 权限，请使用有权限的账号或将其加入 docker 用户组"),
 };
 
-const GENERIC_FAILURE = "操作未成功，请稍后重试；仍然失败请查看详情";
-const BAD_RESPONSE = "服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理";
-const DIAL_FAILURE = "无法连接到目标主机，请检查地址、端口和网络后重试";
-const NETWORK_FAILURE = "网络请求失败，请检查网络连接后重试";
+const GENERIC_FAILURE = t("操作未成功，请稍后重试；仍然失败请查看详情");
+const BAD_RESPONSE = t("服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理");
+const DIAL_FAILURE = t("无法连接到目标主机，请检查地址、端口和网络后重试");
+const NETWORK_FAILURE = t("网络请求失败，请检查网络连接后重试");
 
 const CJK = /[\u4e00-\u9fff]/;
 // A leading legacy "xx错误: " label is not itself an explanation.
@@ -64,7 +65,7 @@ function plain(code: string, message: string): string {
   if (DIAL_ERROR.test(message)) return DIAL_FAILURE;
   const text = ERROR_CODE_TEXT[code] ?? GENERIC_FAILURE;
   // A rejected input or an unsupported request carries the reason the user needs to correct it; keep it visible.
-  if (REASON_CODES.has(code) && shortReason(message)) return `${text}（原因：${message.trim()}）`;
+  if (REASON_CODES.has(code) && shortReason(message)) return t("{text}（原因：{trim}）", { text, trim: message.trim() });
   return text;
 }
 
@@ -97,13 +98,19 @@ export function detailForText(text: string): string | null {
   return null;
 }
 
+// describeErrorSource is the message before translation, for code that recognizes a backend message by its
+// Chinese text; what the user sees comes from describeError.
+export function describeErrorSource(e: unknown): string {
+  return describeErrorText(e);
+}
+
 export function describeError(e: unknown): string {
   // Backend messages arrive in Chinese; they show in the interface language when the server catalog has them.
   return remember(translateMessage(describeErrorText(e)), e);
 }
 
 function describeErrorText(e: unknown): string {
-  if (e == null) return "未知错误";
+  if (e == null) return t("未知错误");
   if (typeof e === "string") return e;
   if (typeof e === "number" || typeof e === "boolean") return String(e);
   if (e instanceof Error) {

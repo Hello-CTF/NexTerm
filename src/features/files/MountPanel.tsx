@@ -8,11 +8,12 @@ import { useSessionById, useUi } from "../../app/store";
 import { mountUnavailableReason } from "../../app/capabilities";
 import { DeviceSessionNotice } from "./DeviceSessionNotice";
 import { IconArrowLeft, IconChevronRight, IconDrive, IconRefresh, IconTrash } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
 function validateRequired(label: string, value: string): string | null {
-  if (!value.trim()) return `${label}不能为空`;
+  if (!value.trim()) return tr("{label}不能为空", { label });
   return null;
 }
 
@@ -37,17 +38,16 @@ function MountUnavailable({ reason }: { reason: string }) {
     <div className="nx-pane">
       <div className="nx-toolbar">
         <IconDrive size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">磁盘挂载</span>
-        <span className="nx-badge nx-badge-amber">暂不可用</span>
+        <span className="nx-toolbar-title">{tr("磁盘挂载")}</span>
+        <span className="nx-badge nx-badge-amber">{tr("暂不可用")}</span>
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
         <div className="max-w-[560px] text-center">
           <IconDrive size={30} className="mx-auto mb-3 text-neutral-600" />
-          <div className="text-[13px] font-semibold text-neutral-200">本平台暂不支持磁盘挂载</div>
+          <div className="text-[13px] font-semibold text-neutral-200">{tr("本平台暂不支持磁盘挂载")}</div>
           <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">{reason}</p>
           <p className="mt-2.5 text-[12px] leading-relaxed text-neutral-500">
-            远程文件读写请使用左侧栏的<span className="text-neutral-300">「文件」</span>按钮
-            （无需任何本机依赖）。
+            {tr("远程文件读写请使用左侧栏的")}<span className="text-neutral-300">{tr("「文件」")}</span>{tr("按钮 （无需任何本机依赖）。")}
           </p>
         </div>
       </div>
@@ -61,7 +61,7 @@ export function MountPanel({ sessionId }: { sessionId?: string }) {
     (s) => s.sessions.find((x) => x.id === sessionId)?.kind === "device",
   );
   if (reason) return <MountUnavailable reason={reason} />;
-  if (deviceSession) return <DeviceSessionNotice feature="磁盘挂载" />;
+  if (deviceSession) return <DeviceSessionNotice feature={tr("磁盘挂载")} />;
   return <MountPanelInner sessionId={sessionId} />;
 }
 
@@ -139,7 +139,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     if (localPointTimer.current !== null) window.clearTimeout(localPointTimer.current);
     localPointTimer.current = window.setTimeout(() => {
       localPointTimer.current = null;
-      setLocalPointError(validateRequired("挂载点", value));
+      setLocalPointError(validateRequired(tr("挂载点"), value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onLocalPointBlur = () => {
@@ -147,7 +147,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(localPointTimer.current);
       localPointTimer.current = null;
     }
-    setLocalPointError(validateRequired("挂载点", localPointValueRef.current));
+    setLocalPointError(validateRequired(tr("挂载点"), localPointValueRef.current));
   };
   const onRemotePathChange = (value: string) => {
     remotePathEdited.current = true;
@@ -155,7 +155,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     if (remotePathTimer.current !== null) window.clearTimeout(remotePathTimer.current);
     remotePathTimer.current = window.setTimeout(() => {
       remotePathTimer.current = null;
-      setRemotePathError(validateRequired("远端路径", value));
+      setRemotePathError(validateRequired(tr("远端路径"), value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onRemotePathBlur = () => {
@@ -163,7 +163,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(remotePathTimer.current);
       remotePathTimer.current = null;
     }
-    setRemotePathError(validateRequired("远端路径", remotePathValueRef.current));
+    setRemotePathError(validateRequired(tr("远端路径"), remotePathValueRef.current));
   };
 
   const mounts = useQuery({
@@ -178,11 +178,11 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
 
   const create = async () => {
     if (!sessionId || localSession) {
-      pushToast("info", "请先连接 SSH 资产后再挂载");
+      pushToast("info", tr("请先连接 SSH 资产后再挂载"));
       return;
     }
-    const pointErr = validateRequired("挂载点", localPoint);
-    const pathErr = validateRequired("远端路径", remotePath);
+    const pointErr = validateRequired(tr("挂载点"), localPoint);
+    const pathErr = validateRequired(tr("远端路径"), remotePath);
     setLocalPointError(pointErr);
     setRemotePathError(pathErr);
     if (pointErr || pathErr) {
@@ -199,7 +199,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
         username: username || undefined,
         password: password || undefined,
       });
-      pushToast("success", `已挂载 ${localPoint.trim()}。可在本机访问远端文件`);
+      pushToast("success", tr("已挂载 {trim}。可在本机访问远端文件", { trim: localPoint.trim() }));
       remotePathEdited.current = false;
       setRemotePath(assetPrefill);
       setUsername("");
@@ -207,7 +207,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       setCredsOpen(false);
       refresh();
     } catch (e) {
-      pushToast("error", `挂载失败：${describeError(e)}。请检查远端路径和凭据后重试。`);
+      pushToast("error", tr("挂载失败：{value}。请检查远端路径和凭据后重试。", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -215,15 +215,15 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
 
   const remove = async (point: string) => {
     if (removing.has(point)) return;
-    if (!(await ask(`断开挂载点 ${point}？\n\n断开后本机无法再通过该挂载点访问远端文件；远端文件不会被删除。`, { kind: "warning" }))) return;
+    if (!(await ask(tr("断开挂载点 {point}？\n\n断开后本机无法再通过该挂载点访问远端文件；远端文件不会被删除。", { point }), { kind: "warning" }))) return;
     if (removing.has(point)) return;
     setRemoving((prev) => new Set(prev).add(point));
     try {
       await mountApi.remove(point, sessionId);
       refresh();
-      pushToast("success", `已断开挂载点 ${point}`);
+      pushToast("success", tr("已断开挂载点 {point}", { point }));
     } catch (e) {
-      pushToast("error", `断开 ${point} 失败：${describeError(e)}。请确认没有程序正在使用该挂载点，然后重试。`);
+      pushToast("error", tr("断开 {point} 失败：{value}。请确认没有程序正在使用该挂载点，然后重试。", { point, value: describeError(e) }));
     } finally {
       setRemoving((prev) => {
         const next = new Set(prev);
@@ -243,12 +243,12 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
     <div className="nx-pane">
       <div className="nx-toolbar nx-wrap-toolbar">
         <IconDrive size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">磁盘挂载</span>
-        <span className="nx-hint">当前会话管理的挂载，每 15 秒自动刷新</span>
+        <span className="nx-toolbar-title">{tr("磁盘挂载")}</span>
+        <span className="nx-hint">{tr("当前会话管理的挂载，每 15 秒自动刷新")}</span>
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
           <IconRefresh size={13} />
-          重新扫描
+          {tr("重新扫描")}
         </button>
       </div>
 
@@ -256,8 +256,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
         <table className="nx-table">
           <thead>
             <tr>
-              <th style={{ width: 110 }}>本地挂载点</th>
-              <th>远端路径</th>
+              <th style={{ width: 110 }}>{tr("本地挂载点")}</th>
+              <th>{tr("远端路径")}</th>
               <th style={{ width: 90 }} />
             </tr>
           </thead>
@@ -265,32 +265,32 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             {!sessionId ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  请先连接 SSH 资产后查看挂载
+                  {tr("请先连接 SSH 资产后查看挂载")}
                 </td>
               </tr>
             ) : mounts.isPending ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  正在加载挂载列表…
+                  {tr("正在加载挂载列表…")}
                 </td>
               </tr>
             ) : mountsFailed ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  <span className="text-red-300">未能加载挂载列表：{describeError(mounts.error)}</span>
+                  <span className="text-red-300">{tr("未能加载挂载列表：")}{describeError(mounts.error)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void mounts.refetch()}
                   >
                     <IconRefresh size={12} />
-                    重试
+                    {tr("重试")}
                   </button>
                 </td>
               </tr>
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  当前会话暂无挂载点，可在下方新建
+                  {tr("当前会话暂无挂载点，可在下方新建")}
                 </td>
               </tr>
             ) : (
@@ -305,7 +305,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
                     onClick={() => void remove(m.localPoint)}
                   >
                     {removing.has(m.localPoint) ? <IconRefresh size={11} className="animate-spin" /> : <IconTrash size={11} />}
-                    {removing.has(m.localPoint) ? "正在断开…" : "断开"}
+                    {removing.has(m.localPoint) ? tr("正在断开…") : tr("断开")}
                   </button>
                 </td>
               </tr>
@@ -318,10 +318,10 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
-          新建挂载{asset.data?.name ? ` · 默认目标为当前资产「${asset.data.name}」` : ""} · Windows 用{' '}
-          <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>；Linux 用{' '}
+          {tr("新建挂载")}{asset.data?.name ? tr(" · 默认目标为当前资产「{name}」", { name: asset.data.name }) : ""} {tr("· Windows 用")}{' '}
+          <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>{tr("；Linux 用")}{' '}
           <span className="nx-code">user@host:/path</span> →{' '}
-          <span className="nx-code">/mnt/point</span>（需 sshfs）
+          <span className="nx-code">/mnt/point</span>{tr("（需 sshfs）")}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="w-[110px] shrink-0">
@@ -332,7 +332,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               onChange={(e) => onLocalPointChange(e.target.value)}
               onBlur={onLocalPointBlur}
               placeholder={windows ? "Z:" : "/mnt/point"}
-              aria-label="本地挂载点"
+              aria-label={tr("本地挂载点")}
               autoComplete="off"
               aria-invalid={localPointError ? true : undefined}
               aria-describedby={localPointError ? localPointErrorId : undefined}
@@ -352,7 +352,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               onChange={(e) => onRemotePathChange(e.target.value)}
               onBlur={onRemotePathBlur}
               placeholder={windows ? "\\\\10.0.0.8\\share" : "user@host:/data"}
-              aria-label="远端路径"
+              aria-label={tr("远端路径")}
               autoComplete="off"
               aria-invalid={remotePathError ? true : undefined}
               aria-describedby={remotePathError ? remotePathErrorId : undefined}
@@ -367,11 +367,11 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
             disabled={busy || !sessionId || localSession}
-            title={!sessionId || localSession ? "请先连接 SSH 资产" : undefined}
+            title={!sessionId || localSession ? tr("请先连接 SSH 资产") : undefined}
             onClick={() => void create()}
           >
             {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
-            {busy ? "正在挂载…" : "挂载"}
+            {busy ? tr("正在挂载…") : tr("挂载")}
           </button>
         </div>
         <button
@@ -382,9 +382,9 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
           onClick={() => setCredsOpen((v) => !v)}
         >
           <IconChevronRight size={11} className={credsOpen ? "rotate-90" : ""} />
-          使用其他凭据（可选）
+          {tr("使用其他凭据（可选）")}
           {!credsOpen && (username !== "" || password !== "") && (
-            <span className="nx-badge nx-badge-green">已配置</span>
+            <span className="nx-badge nx-badge-green">{tr("已配置")}</span>
           )}
         </button>
         {credsOpen && (
@@ -393,8 +393,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               className="nx-input nx-input-sm w-[150px]"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="用户名（可选）"
-              aria-label="挂载用户名（可选）"
+              placeholder={tr("用户名（可选）")}
+              aria-label={tr("挂载用户名（可选）")}
               autoComplete="off"
             />
             <input
@@ -402,20 +402,20 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
               className="nx-input nx-input-sm w-[150px]"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="密码（可选）"
-              aria-label="挂载密码（可选）"
+              placeholder={tr("密码（可选）")}
+              aria-label={tr("挂载密码（可选）")}
               autoComplete="off"
             />
           </div>
         )}
         <div className="nx-hint mt-2">
           {!sessionId ? (
-            "当前没有可用的 SSH 会话，请先连接 SSH 资产后再挂载。"
+            tr("当前没有可用的 SSH 会话，请先连接 SSH 资产后再挂载。")
           ) : localSession ? (
-            "当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。"
+            tr("当前是「当前设备」会话，不能建立 SSH 挂载；请先连接 SSH 资产。")
           ) : (
             <>
-              用户名和密码仅用于本次挂载，不会保存；留空时 Linux 用本机密钥或 ssh-agent，Windows 用当前登录凭据。
+              {tr("用户名和密码仅用于本次挂载，不会保存；留空时 Linux 用本机密钥或 ssh-agent，Windows 用当前登录凭据。")}
             </>
           )}
         </div>

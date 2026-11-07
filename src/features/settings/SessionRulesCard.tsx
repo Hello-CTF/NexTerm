@@ -38,6 +38,7 @@ import {
   stateLabel,
   type StateRuleDraftForm,
 } from "../session/stateRuleDraft";
+import { t } from "../../i18n";
 
 // A rules file holds at most 64 short rules; anything larger is not one.
 const IMPORT_MAX_BYTES = 1 << 20;
@@ -50,9 +51,9 @@ function decodeBase64Text(base64: string): string {
 // The built-in local device (store.BuiltinLocalAssetID), which runs the local helper.
 
 const STATUS_LABELS: Record<string, string> = {
-  applied: "已生效",
-  pending: "等待连接",
-  failed: "应用失败",
+  applied: t("已生效"),
+  pending: t("等待连接"),
+  failed: t("应用失败"),
 };
 
 interface TerminalChoice {
@@ -103,29 +104,29 @@ function RuleScreenPicker({ onScreen }: { onScreen: (screen: StateRuleScreenDTO 
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="nx-setting-label">在终端屏幕上测试</div>
+      <div className="nx-setting-label">{t("在终端屏幕上测试")}</div>
       <div className="flex flex-wrap items-center gap-2">
         <Select
           className="min-w-0 flex-1"
-          ariaLabel="选择要测试的终端"
+          ariaLabel={t("选择要测试的终端")}
           value={selected}
           onChange={(value) => {
             setSelected(value);
             onScreen(null);
           }}
           options={[
-            { value: "", label: choices.length === 0 ? "暂无已打开的终端" : "选择终端…" },
+            { value: "", label: choices.length === 0 ? t("暂无已打开的终端") : t("选择终端…") },
             ...choices.map((choice) => ({ value: choice.appTabId, label: choice.label })),
           ]}
         />
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={!chosen || busy} onClick={() => void read()}>
           {busy ? <IconRefresh size={11} className="animate-spin" /> : <IconRefresh size={11} />}
-          读取屏幕并测试
+          {t("读取屏幕并测试")}
         </button>
       </div>
       {error && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          无法读取屏幕：{error}
+          {t("无法读取屏幕：")}{error}
         </div>
       )}
     </div>
@@ -170,10 +171,10 @@ function RuleEditor({
       <RuleScreenPicker onScreen={setScreen} />
       <div className="flex justify-end gap-2">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={onCancel}>
-          取消
+          {t("取消")}
         </button>
         <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={!canSave} onClick={() => void save()}>
-          {saving ? "正在保存…" : "保存"}
+          {saving ? t("正在保存…") : t("保存")}
         </button>
       </div>
     </div>
@@ -242,7 +243,7 @@ export function SessionRulesCard() {
   };
 
   const toggle = (rule: StateRuleDTO) =>
-    void run(() => stateRuleApi.save(saveRequestFromForm({ ...formFromRule(rule), enabled: !rule.enabled })), "切换失败");
+    void run(() => stateRuleApi.save(saveRequestFromForm({ ...formFromRule(rule), enabled: !rule.enabled })), t("切换失败"));
 
   const move = (index: number, step: -1 | 1) => {
     if (!rules) return;
@@ -250,13 +251,13 @@ export function SessionRulesCard() {
     const target = index + step;
     if (target < 0 || target >= order.length) return;
     [order[index], order[target]] = [order[target], order[index]];
-    void run(() => stateRuleApi.reorder(order), "调整顺序失败");
+    void run(() => stateRuleApi.reorder(order), t("调整顺序失败"));
   };
 
   const remove = async (rule: StateRuleDTO) => {
-    const ok = await ask(`确定要删除状态规则「${rule.name}」吗？`, { title: "删除状态规则", kind: "warning" });
+    const ok = await ask(t("确定要删除状态规则「{name}」吗？", { name: rule.name }), { title: t("删除状态规则"), kind: "warning" });
     if (!ok) return;
-    await run(() => stateRuleApi.delete(rule.id), "删除失败");
+    await run(() => stateRuleApi.delete(rule.id), t("删除失败"));
   };
 
   const exportRules = async () => {
@@ -265,15 +266,15 @@ export function SessionRulesCard() {
       const text = `${JSON.stringify(file, null, 2)}\n`;
       if (WEB) {
         await saveBrowserBlob("nexterm-state-rules.json", new Blob([text], { type: "application/json" }));
-        pushToast("success", `已导出 ${file.rules.length} 条状态规则`);
+        pushToast("success", t("已导出 {length} 条状态规则", { length: file.rules.length }));
       } else {
         const path = await pickSavePath("nexterm-state-rules.json");
         if (!path) return;
         const saved = await logTailApi.save(path, text);
-        pushToast("success", `已导出 ${file.rules.length} 条状态规则到 ${saved.path}`);
+        pushToast("success", t("已导出 {length} 条状态规则到 {path}", { length: file.rules.length, path: saved.path }));
       }
     } catch (cause) {
-      setError(`导出失败：${describeError(cause)}`);
+      setError(t("导出失败：{value}", { value: describeError(cause) }));
     }
   };
 
@@ -288,7 +289,7 @@ export function SessionRulesCard() {
         text = path ? decodeBase64Text((await localFileApi.read(path, IMPORT_MAX_BYTES)).contentBase64) : null;
       }
     } catch (cause) {
-      setError(`导入失败：${describeError(cause)}`);
+      setError(t("导入失败：{value}", { value: describeError(cause) }));
       return;
     }
     if (!text?.trim()) return;
@@ -296,13 +297,13 @@ export function SessionRulesCard() {
     try {
       parsed = parseRuleFile(text);
     } catch (cause) {
-      setError(`导入失败：${describeError(cause)}`);
+      setError(t("导入失败：{value}", { value: describeError(cause) }));
       return;
     }
     await run(async () => {
       const result = await stateRuleApi.import(parsed);
-      pushToast("success", `导入完成：新增 ${result.created} 条，更新 ${result.updated} 条，未变更 ${result.unchanged} 条`);
-    }, "导入失败");
+      pushToast("success", t("导入完成：新增 {created} 条，更新 {updated} 条，未变更 {unchanged} 条", { created: result.created, updated: result.updated, unchanged: result.unchanged }));
+    }, t("导入失败"));
   };
 
   const q = query.trim().toLowerCase();
@@ -315,25 +316,25 @@ export function SessionRulesCard() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconFlag size={15} className="text-neutral-400" />
-        <span className="nx-card-title">状态规则</span>
-        {rules && <span className="nx-badge">{rules.length} 条</span>}
+        <span className="nx-card-title">{t("状态规则")}</span>
+        {rules && <span className="nx-badge">{rules.length} {t("条")}</span>}
         <div className="nx-spacer" />
         {rules && rules.length > 0 && (
           <input
             className="nx-input nx-input-sm w-full sm:w-40"
-            aria-label="搜索状态规则"
-            placeholder="搜索名称 / 模式"
+            aria-label={t("搜索状态规则")}
+            placeholder={t("搜索名称 / 模式")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
       <p className="nx-hint mb-3">
-        屏幕底部或窗口标题与规则匹配时，会话将显示为需要处理、运行中、空闲或刚结束。规则按顺序匹配，第一条匹配的规则生效，主机规则优先于全局规则；规则由持久终端在各主机上执行。在标签页菜单中选择「状态不对」或「这需要处理」，可根据当前屏幕起草规则。
+        {t("屏幕底部或窗口标题与规则匹配时，会话将显示为需要处理、运行中、空闲或刚结束。规则按顺序匹配，第一条匹配的规则生效，主机规则优先于全局规则；规则由持久终端在各主机上执行。在标签页菜单中选择「状态不对」或「这需要处理」，可根据当前屏幕起草规则。")}
       </p>
 
       {error && (
@@ -346,15 +347,15 @@ export function SessionRulesCard() {
       <div className="mb-3 flex flex-wrap gap-2" data-setting="state-rules-import">
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled={editing !== null} onClick={() => setEditing("new")}>
           <IconPlus size={11} />
-          新建规则
+          {t("新建规则")}
         </button>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy} onClick={() => void importRules()}>
           <IconUpload size={11} />
-          导入
+          {t("导入")}
         </button>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={!rules || rules.length === 0} onClick={() => void exportRules()}>
           <IconDownload size={11} />
-          导出
+          {t("导出")}
         </button>
       </div>
 
@@ -367,7 +368,7 @@ export function SessionRulesCard() {
             onCancel={() => setEditing(null)}
             onSaved={() => {
               setEditing(null);
-              pushToast("success", "已保存状态规则");
+              pushToast("success", t("已保存状态规则"));
               void reload();
             }}
           />
@@ -375,18 +376,18 @@ export function SessionRulesCard() {
       )}
 
       {rules === null ? (
-        !error && <div className="nx-hint py-2 text-[12px]">正在读取…</div>
+        !error && <div className="nx-hint py-2 text-[12px]">{t("正在读取…")}</div>
       ) : rules.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">暂无状态规则。</div>
+        <div className="nx-hint py-2 text-[12px]">{t("暂无状态规则。")}</div>
       ) : (
-        <ol className="flex flex-col gap-1.5" aria-label="状态规则">
+        <ol className="flex flex-col gap-1.5" aria-label={t("状态规则")}>
           {visible.map(({ rule, index }) => (
             <li key={rule.id} data-rule-id={rule.id}>
               <div className="flex items-start gap-2">
                 <input
                   type="checkbox"
                   className="mt-1 h-4 w-4 shrink-0"
-                  aria-label={`启用 ${rule.name}`}
+                  aria-label={t("启用 {name}", { name: rule.name })}
                   checked={rule.enabled}
                   disabled={busy}
                   onChange={() => toggle(rule)}
@@ -396,8 +397,8 @@ export function SessionRulesCard() {
                     <span className="min-w-0 truncate">{rule.name}</span>
                     <span className="nx-badge">{stateLabel(rule.state)}</span>
                     <span className="nx-hint shrink-0">
-                      {rule.scope === "host" ? `仅 ${hostName(rule.assetId)}` : "所有主机"} ·{" "}
-                      {rule.region === "title" ? "窗口标题" : `底部 ${rule.lines ?? 5} 行`}
+                      {rule.scope === "host" ? t("仅 {value}", { value: hostName(rule.assetId) }) : t("所有主机")} ·{" "}
+                      {rule.region === "title" ? t("窗口标题") : t("底部 {value} 行", { value: rule.lines ?? 5 })}
                     </span>
                   </div>
                   <div className="truncate font-mono text-[11px] text-neutral-500" title={rule.pattern}>
@@ -407,7 +408,7 @@ export function SessionRulesCard() {
                 <div className="flex shrink-0 items-center gap-0.5">
                   <button
                     className="nx-icon-btn"
-                    aria-label={`上移 ${rule.name}`}
+                    aria-label={t("上移 {name}", { name: rule.name })}
                     disabled={!sortable || busy || index === 0}
                     onClick={() => move(index, -1)}
                   >
@@ -415,7 +416,7 @@ export function SessionRulesCard() {
                   </button>
                   <button
                     className="nx-icon-btn"
-                    aria-label={`下移 ${rule.name}`}
+                    aria-label={t("下移 {name}", { name: rule.name })}
                     disabled={!sortable || busy || index === rules.length - 1}
                     onClick={() => move(index, 1)}
                   >
@@ -423,13 +424,13 @@ export function SessionRulesCard() {
                   </button>
                   <button
                     className="nx-icon-btn"
-                    aria-label={`编辑 ${rule.name}`}
+                    aria-label={t("编辑 {name}", { name: rule.name })}
                     disabled={editing !== null}
                     onClick={() => setEditing(rule.id)}
                   >
                     <IconEdit size={12} />
                   </button>
-                  <button className="nx-icon-btn" aria-label={`删除 ${rule.name}`} disabled={busy} onClick={() => void remove(rule)}>
+                  <button className="nx-icon-btn" aria-label={t("删除 {name}", { name: rule.name })} disabled={busy} onClick={() => void remove(rule)}>
                     <IconTrash size={12} />
                   </button>
                 </div>
@@ -443,7 +444,7 @@ export function SessionRulesCard() {
                     onCancel={() => setEditing(null)}
                     onSaved={() => {
                       setEditing(null);
-                      pushToast("success", "已保存状态规则");
+                      pushToast("success", t("已保存状态规则"));
                       void reload();
                     }}
                   />
@@ -451,17 +452,17 @@ export function SessionRulesCard() {
               )}
             </li>
           ))}
-          {visible.length === 0 && <li className="nx-hint py-2 text-[12px]">无匹配的规则。</li>}
+          {visible.length === 0 && <li className="nx-hint py-2 text-[12px]">{t("无匹配的规则。")}</li>}
         </ol>
       )}
-      {!sortable && rules && rules.length > 1 && <p className="nx-hint mt-2 text-[11.5px]">清空搜索后可调整顺序。</p>}
+      {!sortable && rules && rules.length > 1 && <p className="nx-hint mt-2 text-[11.5px]">{t("清空搜索后可调整顺序。")}</p>}
 
       <div className="mt-4">
-        <div className="nx-setting-label mb-1.5" data-setting="state-rules-status">各主机的规则状态</div>
+        <div className="nx-setting-label mb-1.5" data-setting="state-rules-status">{t("各主机的规则状态")}</div>
         {statuses.length === 0 ? (
-          <p className="nx-hint text-[12px]">尚无主机使用持久终端，暂无规则状态。</p>
+          <p className="nx-hint text-[12px]">{t("尚无主机使用持久终端，暂无规则状态。")}</p>
         ) : (
-          <ul className="flex flex-col gap-1" aria-label="各主机的规则状态">
+          <ul className="flex flex-col gap-1" aria-label={t("各主机的规则状态")}>
             {statuses.map((status) => (
               <li key={status.assetId} className="flex flex-wrap items-baseline gap-x-2 text-[12px]" data-status={status.status}>
                 <span className="text-neutral-200">{hostName(status.assetId)}</span>
@@ -470,7 +471,7 @@ export function SessionRulesCard() {
                 </span>
                 {status.skipped && status.skipped.length > 0 && (
                   <span className="text-[var(--nx-fg-warning)]">
-                    跳过无效规则：{status.skipped.map((id) => rules?.find((rule) => rule.id === id)?.name ?? id).join("、")}
+                    {t("跳过无效规则：")}{status.skipped.map((id) => rules?.find((rule) => rule.id === id)?.name ?? id).join("、")}
                   </span>
                 )}
                 {status.error && status.status !== "applied" && <span className="nx-hint break-all">{status.error}</span>}

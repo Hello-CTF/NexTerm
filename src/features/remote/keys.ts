@@ -1,4 +1,5 @@
 import type { ModifierKey } from "./remoteTypes";
+import { t } from "../../i18n";
 
 // Keys are named by KeyboardEvent.code. The VNC client maps them to X11 keysyms; the RDP client replays them as
 // keyboard events so the IronRDP component turns them into scancodes with its own table.
@@ -72,18 +73,18 @@ export interface KeyCombo {
 }
 
 export const KEY_COMBOS: readonly KeyCombo[] = [
-  { id: "cad", label: "Ctrl+Alt+Del", group: "系统", keys: ["ControlLeft", "AltLeft", "Delete"], hint: "安全选项或登录" },
-  { id: "taskmgr", label: "Ctrl+Shift+Esc", group: "系统", keys: ["ControlLeft", "ShiftLeft", "Escape"], hint: "任务管理器" },
-  { id: "win", label: "Win", group: "系统", keys: ["MetaLeft"], hint: "开始菜单" },
-  { id: "winl", label: "Win+L", group: "系统", keys: ["MetaLeft", "KeyL"], hint: "锁定远程会话" },
-  { id: "winr", label: "Win+R", group: "系统", keys: ["MetaLeft", "KeyR"], hint: "运行" },
-  { id: "wine", label: "Win+E", group: "系统", keys: ["MetaLeft", "KeyE"], hint: "资源管理器" },
-  { id: "wind", label: "Win+D", group: "窗口", keys: ["MetaLeft", "KeyD"], hint: "显示桌面" },
-  { id: "alttab", label: "Alt+Tab", group: "窗口", keys: ["AltLeft", "Tab"], hint: "切换窗口" },
-  { id: "altf4", label: "Alt+F4", group: "窗口", keys: ["AltLeft", "F4"], hint: "关闭窗口" },
-  { id: "altesc", label: "Alt+Esc", group: "窗口", keys: ["AltLeft", "Escape"] },
-  { id: "ctrlesc", label: "Ctrl+Esc", group: "窗口", keys: ["ControlLeft", "Escape"], hint: "开始菜单" },
-  { id: "prtsc", label: "PrintScreen", group: "其他", keys: ["PrintScreen"] },
+  { id: "cad", label: "Ctrl+Alt+Del", group: t("系统"), keys: ["ControlLeft", "AltLeft", "Delete"], hint: t("安全选项或登录") },
+  { id: "taskmgr", label: "Ctrl+Shift+Esc", group: t("系统"), keys: ["ControlLeft", "ShiftLeft", "Escape"], hint: t("任务管理器") },
+  { id: "win", label: "Win", group: t("系统"), keys: ["MetaLeft"], hint: t("开始菜单") },
+  { id: "winl", label: "Win+L", group: t("系统"), keys: ["MetaLeft", "KeyL"], hint: t("锁定远程会话") },
+  { id: "winr", label: "Win+R", group: t("系统"), keys: ["MetaLeft", "KeyR"], hint: t("运行") },
+  { id: "wine", label: "Win+E", group: t("系统"), keys: ["MetaLeft", "KeyE"], hint: t("资源管理器") },
+  { id: "wind", label: "Win+D", group: t("窗口"), keys: ["MetaLeft", "KeyD"], hint: t("显示桌面") },
+  { id: "alttab", label: "Alt+Tab", group: t("窗口"), keys: ["AltLeft", "Tab"], hint: t("切换窗口") },
+  { id: "altf4", label: "Alt+F4", group: t("窗口"), keys: ["AltLeft", "F4"], hint: t("关闭窗口") },
+  { id: "altesc", label: "Alt+Esc", group: t("窗口"), keys: ["AltLeft", "Escape"] },
+  { id: "ctrlesc", label: "Ctrl+Esc", group: t("窗口"), keys: ["ControlLeft", "Escape"], hint: t("开始菜单") },
+  { id: "prtsc", label: "PrintScreen", group: t("其他"), keys: ["PrintScreen"] },
 ];
 
 export function filterCombos(query: string): KeyCombo[] {

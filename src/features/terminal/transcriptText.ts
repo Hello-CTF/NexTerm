@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 const ANSI_PATTERN =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~])))/g;
 
@@ -194,12 +195,12 @@ export function formatTranscriptBytes(bytes: number): string {
 export function formatTranscriptDuration(startedAt: number, endedAt: number | null): string {
   const end = endedAt ?? Date.now();
   const seconds = Math.max(0, Math.round((end - startedAt) / 1000));
-  if (seconds < 60) return `${seconds} 秒`;
+  if (seconds < 60) return t("{seconds} 秒", { seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 60) return t("{minutes} 分钟", { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时`;
-  return `${Math.floor(hours / 24)} 天`;
+  if (hours < 24) return t("{hours} 小时", { hours });
+  return t("{floor} 天", { floor: Math.floor(hours / 24) });
 }
 
 export function formatTranscriptTime(ts: number): string {

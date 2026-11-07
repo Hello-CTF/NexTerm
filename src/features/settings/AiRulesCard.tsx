@@ -6,6 +6,7 @@ import { isImeKeyEvent } from "../../ui/DialogHost";
 import { describeError } from "../../ui/errorText";
 import { IconClose, IconPlus, IconShield } from "../../ui/icons";
 import { showSettingsSection } from "./settingsNavigation";
+import { t } from "../../i18n";
 
 const RULE_PAGE_SIZE = 8;
 
@@ -68,7 +69,7 @@ export function AiRulesCard() {
         pushToast("success", done);
         return true;
       } catch (e) {
-        pushToast("error", `保存拦截规则失败：${describeError(e)}。规则未改动，请重试。`);
+        pushToast("error", t("保存拦截规则失败：{value}。规则未改动，请重试。", { value: describeError(e) }));
         load();
         return false;
       }
@@ -97,9 +98,9 @@ export function AiRulesCard() {
         return null;
       }
       return [...cur, r];
-    }, `已添加拦截规则「${r}」`);
+    }, t("已添加拦截规则「{r}」", { r }));
     if (duplicate) {
-      pushToast("info", `规则「${r}」已存在，未重复添加`);
+      pushToast("info", t("规则「{r}」已存在，未重复添加", { r }));
       return;
     }
     if (ok) {
@@ -118,43 +119,43 @@ export function AiRulesCard() {
         return null;
       }
       return cur.map((x) => (x === orig ? r : x));
-    }, `已修改拦截规则「${r}」`);
-    if (duplicate) pushToast("info", `规则「${r}」已存在，未修改`);
+    }, t("已修改拦截规则「{r}」", { r }));
+    if (duplicate) pushToast("info", t("规则「{r}」已存在，未修改", { r }));
     return ok;
   };
 
   const removeRule = async (rule: string) => {
-    const confirmed = await ask(`确定要删除拦截规则「${rule}」吗？\n删除后，命中该规则的命令将不再需要确认或被拒绝。`, {
-      title: "删除拦截规则",
+    const confirmed = await ask(t("确定要删除拦截规则「{rule}」吗？\n删除后，命中该规则的命令将不再需要确认或被拒绝。", { rule }), {
+      title: t("删除拦截规则"),
       kind: "warning",
     });
     if (!confirmed) return;
-    await change((cur) => cur.filter((x) => x !== rule), `已删除拦截规则「${rule}」`);
+    await change((cur) => cur.filter((x) => x !== rule), t("已删除拦截规则「{rule}」", { rule }));
   };
 
   return (
     <section id="settings-ai-rules" className="nx-card scroll-mt-12">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">AI 拦截规则</span>
+        <span className="nx-card-title">{t("AI 拦截规则")}</span>
         {aiPerm && (
-          <span className={`nx-badge ${rules.length ? "nx-badge-amber" : ""}`}>{rules.length} 条</span>
+          <span className={`nx-badge ${rules.length ? "nx-badge-amber" : ""}`}>{rules.length} {t("条")}</span>
         )}
         {saving && (
           <span className="nx-hint" role="status">
-            正在保存…
+            {t("正在保存…")}
           </span>
         )}
       </div>
       <p className="nx-hint mb-3.5">
-        命中命令、路径或 SQL 时，读写和自动执行模式要求确认，只读和无人值守模式直接拒绝。按整词匹配，不区分大小写。修改后立即保存。
+        {t("命中命令、路径或 SQL 时，读写和自动执行模式要求确认，只读和无人值守模式直接拒绝。按整词匹配，不区分大小写。修改后立即保存。")}
       </p>
 
       {loadError && (
         <div role="alert" className="nx-alert nx-alert-danger mb-2 flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 break-words">读取拦截规则失败：{loadError}</span>
+          <span className="min-w-0 flex-1 break-words">{t("读取拦截规则失败：")}{loadError}</span>
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={load}>
-            重试
+            {t("重试")}
           </button>
         </div>
       )}
@@ -162,8 +163,8 @@ export function AiRulesCard() {
       {rules.length > 0 && (
         <input
           className="nx-input nx-input-sm mb-1.5 w-full font-mono"
-          aria-label="搜索拦截规则"
-          placeholder="搜索规则"
+          aria-label={t("搜索拦截规则")}
+          placeholder={t("搜索规则")}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -176,7 +177,7 @@ export function AiRulesCard() {
           <div key={r} className="flex items-center gap-1">
             <input
               className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-              aria-label={`拦截规则 ${r}`}
+              aria-label={t("拦截规则 {r}", { r })}
               defaultValue={r}
               title={r}
               disabled={saving}
@@ -196,8 +197,8 @@ export function AiRulesCard() {
             <button
               type="button"
               className="nx-icon-btn"
-              title="删除规则"
-              aria-label={`删除拦截规则 ${r}`}
+              title={t("删除规则")}
+              aria-label={t("删除拦截规则 {r}", { r })}
               disabled={saving}
               onClick={() => void removeRule(r)}
             >
@@ -209,8 +210,8 @@ export function AiRulesCard() {
           <input
             autoFocus
             className="nx-input nx-input-sm w-full font-mono"
-            aria-label="新拦截规则"
-            placeholder="例如 kubectl delete，Enter 保存，Esc 取消"
+            aria-label={t("新拦截规则")}
+            placeholder={t("例如 kubectl delete，Enter 保存，Esc 取消")}
             value={draft}
             disabled={saving}
             onChange={(e) => setDraft(e.target.value)}
@@ -226,15 +227,15 @@ export function AiRulesCard() {
             }}
           />
         )}
-        {aiPerm && rules.length === 0 && !draftOpen && <div className="nx-hint text-[11px]">暂无拦截规则</div>}
+        {aiPerm && rules.length === 0 && !draftOpen && <div className="nx-hint text-[11px]">{t("暂无拦截规则")}</div>}
         {aiPerm && rules.length > 0 && filtered.length === 0 && (
-          <div className="nx-hint text-[11px]">无匹配的规则</div>
+          <div className="nx-hint text-[11px]">{t("无匹配的规则")}</div>
         )}
       </div>
       {filtered.length > RULE_PAGE_SIZE && (
         <div className="mb-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
           <span>
-            第 {currentPage + 1} / {pageCount} 页
+            {t("第")} {currentPage + 1} / {pageCount} {t("页")}
           </span>
           <div className="nx-spacer" />
           <button
@@ -243,7 +244,7 @@ export function AiRulesCard() {
             disabled={currentPage === 0}
             onClick={() => setPage((p) => Math.max(0, p - 1))}
           >
-            上一页
+            {t("上一页")}
           </button>
           <button
             type="button"
@@ -251,7 +252,7 @@ export function AiRulesCard() {
             disabled={currentPage >= pageCount - 1}
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
           >
-            下一页
+            {t("下一页")}
           </button>
         </div>
       )}
@@ -262,11 +263,11 @@ export function AiRulesCard() {
         onClick={() => setDraftOpen(true)}
       >
         <IconPlus size={11} />
-        添加规则
+        {t("添加规则")}
       </button>
 
       <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-2 text-[11px]">
-        不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝。
+        {t("不可逆操作（格式化磁盘、清空系统目录、删除数据库）将被直接拒绝。")}
       </p>
     </section>
   );

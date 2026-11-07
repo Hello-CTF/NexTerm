@@ -3,6 +3,7 @@ import { terminalApi } from "../../ipc/commands";
 import { disposeChannel } from "../../ipc/events";
 import { IconClose } from "../../ui/icons";
 import { DockerLogStream, type DockerBinarySink } from "./DockerLogStream";
+import { t } from "../../i18n";
 
 export interface DockerOutputStream {
   id: string;
@@ -22,9 +23,9 @@ export function DockerStreamView({ stream, onClose }: { stream: DockerOutputStre
     <div className="flex h-[min(320px,60dvh)] min-h-0 flex-col border-t border-neutral-800/70 bg-term">
       <div className="nx-toolbar">
         <span className="nx-toolbar-title min-w-0 truncate" title={stream.title}>{stream.title}</span>
-        <span className="nx-badge shrink-0 max-[420px]:hidden">流式输出</span>
+        <span className="nx-badge shrink-0 max-[420px]:hidden">{t("流式输出")}</span>
         <div className="nx-spacer" />
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm shrink-0 pointer-coarse:h-9 pointer-coarse:w-9" aria-label="停止并关闭输出" title="停止并关闭输出" onClick={onClose}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm shrink-0 pointer-coarse:h-9 pointer-coarse:w-9" aria-label={t("停止并关闭输出")} title={t("停止并关闭输出")} onClick={onClose}>
           <IconClose size={12} />
         </button>
       </div>

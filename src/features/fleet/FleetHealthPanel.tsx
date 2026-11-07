@@ -23,18 +23,19 @@ import {
   writeFleetHealthSettings,
   type FleetHealthProjectSettings,
 } from "./healthSettings";
+import { t } from "../../i18n";
 
 const EMPTY_GROUPS: never[] = [];
 const MAX_TARGETS = 64;
 const HEALTH_TIMEOUT_MS = 30_000;
 
 const BATCH_STATUS_LABELS: Record<string, string> = {
-  success: "成功",
-  exit_error: "非零退出",
-  transport_error: "传输错误",
-  timeout: "超时",
-  canceled: "已取消",
-  failed: "失败",
+  success: t("成功"),
+  exit_error: t("非零退出"),
+  transport_error: t("传输错误"),
+  timeout: t("超时"),
+  canceled: t("已取消"),
+  failed: t("失败"),
 };
 
 const METRIC_LABELS: Record<string, string> = {
@@ -206,12 +207,12 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
   const overflow = new Set(hosts.slice(MAX_TARGETS).map((host) => host.asset.id));
 
   return (
-    <section className="nx-pane" aria-label="主机概览" data-testid="fleet-health-panel">
+    <section className="nx-pane" aria-label={t("主机概览")} data-testid="fleet-health-panel">
       <div className="nx-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title">主机概览</h2>
+        <h2 className="nx-toolbar-title">{t("主机概览")}</h2>
         <span className="nx-badge">{projectFocusLabel(activeProject, projectGroups)}</span>
-        <span className="nx-hint">只读 · 无告警 · 默认手动刷新</span>
+        <span className="nx-hint">{t("只读 · 无告警 · 默认手动刷新")}</span>
         <span className="nx-spacer" />
         <button
           type="button"
@@ -220,7 +221,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
           onClick={() => void refresh()}
         >
           <IconRefresh size={12} className={running ? "animate-spin" : undefined} />
-          {running ? "正在刷新" : "刷新"}
+          {running ? t("正在刷新") : t("刷新")}
         </button>
       </div>
 
@@ -229,18 +230,18 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
           <input
             type="checkbox"
             className="nx-check"
-            aria-label="按项目自动刷新"
+            aria-label={t("按项目自动刷新")}
             checked={settings.autoPoll}
             onChange={(event) => updateSettings({ autoPoll: event.target.checked })}
           />
-          此项目自动刷新
+          {t("此项目自动刷新")}
         </label>
         <label className="flex items-center gap-1.5 text-neutral-500">
-          间隔（分钟）
+          {t("间隔（分钟）")}
           <input
             type="number"
             className="nx-input nx-input-sm w-20"
-            aria-label="自动刷新间隔（分钟）"
+            aria-label={t("自动刷新间隔（分钟）")}
             min={FLEET_HEALTH_MIN_INTERVAL_MS / 60_000}
             max={FLEET_HEALTH_MAX_INTERVAL_MS / 60_000}
             step={1}
@@ -248,42 +249,42 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
             onChange={(event) => updateSettings({ intervalMs: Number(event.target.value) * 60_000 })}
           />
         </label>
-        <span className="nx-hint">仅在本页打开时自动刷新，切换到其他页面后停止</span>
-        {lastRefreshed !== null && <span className="nx-hint">上次刷新 {new Date(lastRefreshed).toLocaleTimeString()}</span>}
+        <span className="nx-hint">{t("仅在本页打开时自动刷新，切换到其他页面后停止")}</span>
+        {lastRefreshed !== null && <span className="nx-hint">{t("上次刷新")} {new Date(lastRefreshed).toLocaleTimeString()}</span>}
       </div>
 
       <div className="nx-cards-wrap min-h-0 flex-1 overflow-auto p-3">
-        {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">正在读取项目主机…</div>}
+        {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">{t("正在读取项目主机…")}</div>}
         {(assetsQuery.isError || groupsQuery.isError) && (
           <div role="alert" className="mb-2 text-[11px] text-red-300">
-            未能读取项目中的主机：{describeError(assetsQuery.error ?? groupsQuery.error)}
+            {t("未能读取项目中的主机：")}{describeError(assetsQuery.error ?? groupsQuery.error)}
           </div>
         )}
-        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">未能刷新：{error}</div>}
-        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">未能读取最近的批量执行记录：{historyError}</div>}
+        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能刷新：")}{error}</div>}
+        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能读取最近的批量执行记录：")}{historyError}</div>}
         {overflow.size > 0 && (
           <div role="status" className="mb-2 text-[11px] text-amber-300">
-            单批最多探测 {MAX_TARGETS} 台；超出的 {overflow.size} 台保留在网格中并标记为未探测。
+            {t("单批最多探测")} {MAX_TARGETS} {t("台；超出的")} {overflow.size} {t("台保留在网格中并标记为未探测。")}
           </div>
         )}
         {!assetsQuery.isPending && hosts.length === 0 && (
           <div className="rounded border border-dashed border-neutral-800 px-3 py-6 text-center text-[11px] text-neutral-500">
-            当前项目暂无 SSH 主机
+            {t("当前项目暂无 SSH 主机")}
           </div>
         )}
         {hosts.length > 0 && (
           <table className="nx-table nx-table-cards min-w-[1240px]">
             <thead>
               <tr>
-                <th>主机</th>
+                <th>{t("主机")}</th>
                 <th>Reachability</th>
                 <th>Latency</th>
                 <th>Uptime</th>
                 <th>Load 1 / 5 / 15</th>
                 <th>Disk</th>
                 <th>Memory</th>
-                <th>Docker 可回收</th>
-                <th>最近批量执行</th>
+                <th>{t("Docker 可回收")}</th>
+                <th>{t("最近批量执行")}</th>
               </tr>
             </thead>
             <tbody>
@@ -295,13 +296,13 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
                     <td data-label="">
                       <div className="font-medium text-neutral-200">{host.asset.name}</div>
                       <div className="font-mono text-[10px] text-neutral-500">{host.asset.host ?? host.asset.id}</div>
-                      {!host.target.sessionId && <div className="mt-1 text-[10px] text-neutral-500">未连接 SSH</div>}
+                      {!host.target.sessionId && <div className="mt-1 text-[10px] text-neutral-500">{t("未连接 SSH")}</div>}
                     </td>
                     <td data-label="Reachability">
                       <span className={result?.reachable ? "text-green-300" : result || skipped ? "text-red-300" : "text-neutral-500"}>
-                        {skipped ? "未探测" : running && !result ? "探测中…" : !result ? "未探测" : result.reachable ? "可达" : "不可达 / 失败"}
+                        {skipped ? t("未探测") : running && !result ? t("探测中…") : !result ? t("未探测") : result.reachable ? t("可达") : t("不可达 / 失败")}
                       </span>
-                      {skipped && <div className="mt-1 text-[10px] text-amber-300">超出单批上限</div>}
+                      {skipped && <div className="mt-1 text-[10px] text-amber-300">{t("超出单批上限")}</div>}
                       {result?.error && <div className="mt-1 max-w-52 whitespace-normal break-words text-[10px] text-red-300">{result.error}</div>}
                     </td>
                     <td data-label="Latency" className="nx-mono">{result ? `${result.latencyMs} ms` : "—"}</td>
@@ -321,11 +322,11 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
                       {percent(result?.memoryUsedPercent)}
                       <MetricError result={result} metric="memory" />
                     </td>
-                    <td data-label="Docker 可回收">
+                    <td data-label={t("Docker 可回收")}>
                       {result?.dockerReclaimableBytes != null ? formatDockerBytes(result.dockerReclaimableBytes) : "—"}
                       <MetricError result={result} metric="docker" />
                     </td>
-                    <td data-label="最近批量执行">
+                    <td data-label={t("最近批量执行")}>
                       {result?.lastBatch ? (
                         <>
                           <div className={result.lastBatch.status === "success" ? "text-green-300" : "text-red-300"}>
@@ -335,7 +336,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
                             {new Date(result.lastBatch.startedAt).toLocaleString()}
                           </div>
                         </>
-                      ) : result ? "暂无" : "—"}
+                      ) : result ? t("暂无") : "—"}
                     </td>
                   </tr>
                 );
@@ -345,7 +346,7 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
         )}
       </div>
       <div className="border-t border-neutral-800/70 px-3 py-1.5 text-[10px] text-neutral-500">
-        完整指标需要已连接 SSH；未连接的主机只检查能否连通。
+        {t("完整指标需要已连接 SSH；未连接的主机只检查能否连通。")}
       </div>
     </section>
   );

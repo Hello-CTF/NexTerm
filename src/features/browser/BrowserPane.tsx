@@ -7,9 +7,10 @@ import { openExternalURL } from "../../ipc/wails";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { currentEmbedEnv, planEmbed, sandboxFor } from "./embedPolicy";
+import { t } from "../../i18n";
 
 const LOAD_TIMEOUT_MS = 10_000;
-const BLOCKED_TOAST = "该网站不允许嵌入，已在系统浏览器打开";
+const BLOCKED_TOAST = t("该网站不允许嵌入，已在系统浏览器打开");
 
 async function openSystem(url: string): Promise<void> {
   if (WEB) {
@@ -59,7 +60,7 @@ export function BrowserPane({ url }: { url: string }) {
     if (!embedUrl) return;
     let alive = true;
     const timer = setTimeout(() => {
-      if (alive && loads.current === 0) fallback(embedUrl, { kind: "timeout" }, `${BLOCKED_TOAST}（加载超时）`);
+      if (alive && loads.current === 0) fallback(embedUrl, { kind: "timeout" }, t("{BLOCKED_TOAST}（加载超时）", { BLOCKED_TOAST }));
     }, LOAD_TIMEOUT_MS);
     if (!WEB) {
       void previewApi.embedCheck(embedUrl).then(
@@ -91,12 +92,12 @@ export function BrowserPane({ url }: { url: string }) {
   };
 
   const openInSystem = () => {
-    void openSystem(url).catch((e: unknown) => useUi.getState().pushToast("error", `无法打开链接：${describeError(e)}`));
+    void openSystem(url).catch((e: unknown) => useUi.getState().pushToast("error", t("无法打开链接：{value}", { value: describeError(e) })));
   };
   const copy = () => {
     void copyText(address).then(
-      () => useUi.getState().pushToast("success", "已复制地址"),
-      (e: unknown) => useUi.getState().pushToast("error", `复制失败：${describeError(e)}`),
+      () => useUi.getState().pushToast("success", t("已复制地址")),
+      (e: unknown) => useUi.getState().pushToast("error", t("复制失败：{value}", { value: describeError(e) })),
     );
   };
 
@@ -107,34 +108,34 @@ export function BrowserPane({ url }: { url: string }) {
       <div className="nx-toolbar flex flex-wrap items-center gap-2">
         <input
           className="nx-input nx-input-sm min-w-0 flex-1 font-mono"
-          aria-label="地址"
+          aria-label={t("地址")}
           readOnly
           value={address}
         />
-        <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" title={`打开初始地址：${url}`} onClick={openInSystem}>
-          在系统浏览器打开
+        <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" title={t("打开初始地址：{url}", { url })} onClick={openInSystem}>
+          {t("在系统浏览器打开")}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={copy}>
-          复制
+          {t("复制")}
         </button>
       </div>
       <p className="nx-hint px-3 py-1.5">
-        用于开发预览和文档页；网站拒绝嵌入时改用系统浏览器打开。
+        {t("用于开发预览和文档页；网站拒绝嵌入时改用系统浏览器打开。")}
       </p>
       {WEB && (
         <p className="nx-hint flex flex-wrap items-center gap-2 px-3 pb-1.5">
-          只能嵌入 https 页面；若页面空白，该网站可能不允许嵌入。
+          {t("只能嵌入 https 页面；若页面空白，该网站可能不允许嵌入。")}
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={openInSystem}>
-            在系统浏览器打开
+            {t("在系统浏览器打开")}
           </button>
         </p>
       )}
       {moved && !addressFollowed && (
-        <p className="nx-hint px-3 pb-1.5">页面已在框架内跳转，跨源页面无法读取当前地址。</p>
+        <p className="nx-hint px-3 pb-1.5">{t("页面已在框架内跳转，跨源页面无法读取当前地址。")}</p>
       )}
       {plan.kind !== "embed" && (
         <div className="px-3 py-3 text-sm text-neutral-400" role="status">
-          {plan.reason}。可以用系统浏览器打开。
+          {plan.reason}{t("。可以用系统浏览器打开。")}
         </div>
       )}
       {notice?.kind === "blocked" && (
@@ -144,12 +145,12 @@ export function BrowserPane({ url }: { url: string }) {
       )}
       {notice?.kind === "unreachable" && (
         <div className="px-3 py-3 text-sm text-neutral-400" role="status">
-          无法连接该地址{notice.reason ? `：${notice.reason}` : ""}
+          {t("无法连接该地址")}{notice.reason ? `：${notice.reason}` : ""}
         </div>
       )}
       {notice?.kind === "timeout" && (
         <div className="px-3 py-1.5 text-sm text-neutral-400" role="status">
-          加载超时，已尝试在系统浏览器打开。
+          {t("加载超时，已尝试在系统浏览器打开。")}
         </div>
       )}
       {!hideFrame && embedUrl && (
@@ -160,7 +161,7 @@ export function BrowserPane({ url }: { url: string }) {
           src={embedUrl}
           sandbox={sandboxFor(embedUrl, currentEmbedEnv(WEB, false).appOrigin)}
           referrerPolicy="no-referrer"
-          title={`预览：${url}`}
+          title={t("预览：{url}", { url })}
           onLoad={onLoad}
         />
       )}

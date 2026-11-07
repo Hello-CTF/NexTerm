@@ -7,6 +7,7 @@ import {
   requestMultilinePastePrompt,
   skipMultilinePasteForTab,
 } from "./multilinePastePrompt";
+import { t } from "../../i18n";
 
 export const BRACKETED_PASTE_START = "\x1b[200~";
 export const BRACKETED_PASTE_END = "\x1b[201~";
@@ -40,7 +41,7 @@ export function multilinePastePreview(lines: string[]): string[] {
     .map((line) => (line.length > PREVIEW_LINE_CHARS ? `${line.slice(0, PREVIEW_LINE_CHARS)}…` : line));
 }
 
-export const MULTILINE_PASTE_WARNING = "多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。";
+export const MULTILINE_PASTE_WARNING = t("多行内容可能包含多条命令，部分程序会立即逐行执行，请确认来源和内容。");
 
 /**
  * Asks before more than one line is pasted into a terminal. tabId is the workspace tab the paste goes to; the
@@ -58,9 +59,9 @@ export async function confirmMultilinePaste(text: string, tabId?: string, bracke
   if (tabId && multilinePasteSkippedForTab(tabId)) return true;
   const preview = multilinePastePreview(lines);
   if (!multilinePasteHostMounted()) {
-    const suffix = lines.length > preview.length ? `\n…（共 ${lines.length} 行）` : "";
-    return ask(`即将向终端粘贴 ${lines.length} 行文本。${MULTILINE_PASTE_WARNING}\n\n${preview.join("\n")}${suffix}`, {
-      title: "粘贴多行文本",
+    const suffix = lines.length > preview.length ? t("\n…（共 {length} 行）", { length: lines.length }) : "";
+    return ask(t("即将向终端粘贴 {length} 行文本。{MULTILINE_PASTE_WARNING}\n\n{join}{suffix}", { length: lines.length, MULTILINE_PASTE_WARNING, join: preview.join("\n"), suffix }), {
+      title: t("粘贴多行文本"),
       kind: "warning",
     });
   }

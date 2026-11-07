@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 // Pre-validation of base URLs, same rules as the server-side fleetserver.normalizeBaseURL:
 // explicit http/https, hostname required, no user info/query/fragment;
 // plain http is limited to local/private addresses, otherwise insecure must be checked.
@@ -35,25 +36,25 @@ export interface BaseURLValidation {
 // Returns the normalized URL or an error message; on success the URL has its trailing slash removed and scheme lowercased.
 export function validateBaseURL(raw: string, insecure: boolean): BaseURLValidation {
   const trimmed = raw.trim();
-  if (!trimmed) return { url: "", error: "接入地址不能为空" };
+  if (!trimmed) return { url: "", error: t("接入地址不能为空") };
   if (trimmed.length > MAX_BASE_URL_LENGTH) {
-    return { url: "", error: "接入地址不能超过 2048 个字符" };
+    return { url: "", error: t("接入地址不能超过 2048 个字符") };
   }
   let parsed: URL;
   try {
     parsed = new URL(trimmed);
   } catch {
-    return { url: "", error: "接入地址格式无效" };
+    return { url: "", error: t("接入地址格式无效") };
   }
   const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
   if ((scheme !== "http" && scheme !== "https") || !parsed.hostname) {
-    return { url: "", error: "接入地址必须以 http:// 或 https:// 开头，并包含主机名" };
+    return { url: "", error: t("接入地址必须以 http:// 或 https:// 开头，并包含主机名") };
   }
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-    return { url: "", error: "接入地址不能包含用户信息、查询参数或片段" };
+    return { url: "", error: t("接入地址不能包含用户信息、查询参数或片段") };
   }
   if (scheme === "http" && !insecure && !isLocalOrPrivate(parsed.hostname)) {
-    return { url: "", error: "公网地址必须使用 HTTPS；设备凭据不能通过明文 HTTP 传输" };
+    return { url: "", error: t("公网地址必须使用 HTTPS；设备凭据不能通过明文 HTTP 传输") };
   }
   // JS URL normalizes an empty path to "/"; here the trailing slash is manually stripped per Go semantics.
   const path = parsed.pathname.replace(/\/+$/, "");

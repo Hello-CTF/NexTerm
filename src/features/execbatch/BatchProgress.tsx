@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, us
 import { call, toAppError } from "../../ipc/commands";
 import type { ProductionConfirmation } from "../../ipc/generated/types";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 // Feature-local contracts for the batch progress view. The live API maps
 // them onto the typed exec_batch_progress / exec_batch_cancel /
@@ -199,7 +200,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
         const next = await api.progress(activeBatchId);
         if (stopped || current !== generation) return;
         if (!isProgressSnapshot(next)) {
-          setError("进度响应格式错误");
+          setError(t("进度响应格式错误"));
           stopped = true;
           return;
         }
@@ -337,7 +338,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
 
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-[11px] text-neutral-500">批次进度</legend>
+      <legend className="mb-1.5 text-[11px] text-neutral-500">{t("批次进度")}</legend>
       {error !== null && (
         <div className="mb-2 text-[11px] text-amber-300" role="alert">
           {error}
@@ -347,20 +348,20 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
             <span>
-              成功 {snapshot.batch.succeeded} · 失败 {snapshot.batch.failed} · 取消 {snapshot.batch.canceled} / 共{" "}
+              {t("成功")} {snapshot.batch.succeeded} {t("· 失败")} {snapshot.batch.failed} {t("· 取消")} {snapshot.batch.canceled} {t("/ 共")}{" "}
               {snapshot.batch.total}
             </span>
             {snapshot.batch.phase === "running" && (
               <button type="button" className="nx-link" disabled={busy} onClick={cancel}>
-                取消执行
+                {t("取消执行")}
               </button>
             )}
             {snapshot.batch.phase === "finished" && snapshot.batch.failed > 0 && !rerunDisabled && (
               <>
                 <button type="button" className="nx-link" disabled={busy} onClick={rerun}>
-                  重新执行失败目标
+                  {t("重新执行失败目标")}
                 </button>
-                <span className="nx-hint">{snapshot.batch.failed} 个失败目标将按原顺序重新执行，生产目标需要重新确认</span>
+                <span className="nx-hint">{snapshot.batch.failed} {t("个失败目标将按原顺序重新执行，生产目标需要重新确认")}</span>
               </>
             )}
           </div>
@@ -390,7 +391,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
       )}
       {visibleFinalBatch !== null && (
         <div className="flex flex-col gap-2">
-          <div className="text-[11px] text-neutral-400">批次 {visibleFinalBatch.batchId} 已结束</div>
+          <div className="text-[11px] text-neutral-400">{t("批次")} {visibleFinalBatch.batchId} {t("已结束")}</div>
           <ul className="grid max-h-64 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2">
             {visibleFinalBatch.results.map((result) => (
               <li key={result.sessionId} className="min-w-0 px-1.5 py-1 text-[11px]">
@@ -438,7 +439,7 @@ function OutputLine({ label, output }: { label: string; output: BatchOutputSnaps
     <div className="min-w-0 font-mono text-[10px] text-neutral-400">
       <span className="text-neutral-500">{label}:</span>{" "}
       <span className="whitespace-pre-wrap break-all">{output.head}</span>
-      {output.truncated && <span className="text-neutral-500">… 中间省略 {output.droppedBytes} 字节 …</span>}
+      {output.truncated && <span className="text-neutral-500">{t("… 中间省略")} {output.droppedBytes} {t("字节 …")}</span>}
       <span className="whitespace-pre-wrap break-all">{output.tail}</span>
     </div>
   );

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useUi } from "../../app/store";
 import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 const CWD_DISPLAY_LIMIT = 28;
 
@@ -16,14 +17,14 @@ export function Cwd({ cwd }: { cwd: string | null }) {
   const pushToast = useUi((s) => s.pushToast);
   const copy = useCallback(() => {
     void copyText(cwd ?? "")
-      .then(() => pushToast("success", "已复制工作目录"))
-      .catch((e) => pushToast("error", `复制工作目录失败：${describeError(e)}`));
+      .then(() => pushToast("success", t("已复制工作目录")))
+      .catch((e) => pushToast("error", t("复制工作目录失败：{value}", { value: describeError(e) })));
   }, [cwd, pushToast]);
   if (!cwd) return null;
   return (
     <button
       className="nx-badge max-w-[220px] truncate font-mono text-neutral-400 hover:text-neutral-100"
-      title={`工作目录：${cwd}\n单击复制完整路径`}
+      title={t("工作目录：{cwd}\n单击复制完整路径", { cwd })}
       onClick={copy}
     >
       {shortenCwd(cwd)}

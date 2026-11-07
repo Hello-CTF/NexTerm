@@ -1,6 +1,7 @@
 import type { Asset } from "../../ipc/commands";
 import type { MenuItem } from "../../ui/ContextMenu";
 import type { DetectedTarget } from "./terminalLinkProvider";
+import { t } from "../../i18n";
 
 export interface TargetMenuDeps {
   sessionId: string;
@@ -28,30 +29,30 @@ async function openExistingAsset(host: string, deps: TargetMenuDeps): Promise<vo
   try {
     assets = await deps.listAssets();
   } catch (error) {
-    deps.toast("error", `读取资产列表失败：${deps.describeError(error)}`);
+    deps.toast("error", t("读取资产列表失败：{describeError}", { describeError: deps.describeError(error) }));
     return;
   }
   const wanted = host.toLowerCase();
   const matches = assets.filter((asset) => (asset.host ?? "").toLowerCase() === wanted);
   if (matches.length === 0) {
-    deps.toast("info", `没有主机为 ${host} 的资产`);
+    deps.toast("info", t("没有主机为 {host} 的资产", { host }));
     return;
   }
   deps.openHostDetail(matches[0].id);
   if (matches.length > 1) {
-    deps.toast("info", `共有 ${matches.length} 个资产的主机为 ${host}，已打开第一个：${matches[0].name}`);
+    deps.toast("info", t("共有 {length} 个资产的主机为 {host}，已打开第一个：{name}", { length: matches.length, host, name: matches[0].name }));
   }
 }
 
 export function buildTargetMenu(target: DetectedTarget, deps: TargetMenuDeps): MenuItem[] {
-  const items: MenuItem[] = [{ kind: "group", label: `地址 ${target.text}` }];
+  const items: MenuItem[] = [{ kind: "group", label: t("地址 {text}", { text: target.text }) }];
   const bareHost = target.host.replace(/^\[|\]$/g, "");
   if (isIpAddress(target.host)) {
     items.push(
-      { kind: "item", label: "打开已有资产", onSelect: () => void openExistingAsset(bareHost, deps) },
+      { kind: "item", label: t("打开已有资产"), onSelect: () => void openExistingAsset(bareHost, deps) },
       {
         kind: "item",
-        label: "新建 SSH 资产",
+        label: t("新建 SSH 资产"),
         onSelect: () => deps.openAssetDraft({ kind: "ssh", name: bareHost, host: bareHost, port: 22 }),
       },
     );
@@ -60,26 +61,26 @@ export function buildTargetMenu(target: DetectedTarget, deps: TargetMenuDeps): M
     const port = target.port;
     items.push({
       kind: "item",
-      label: `建立本地转发 → ${bareHost}:${port}`,
+      label: t("建立本地转发 → {bareHost}:{port}", { bareHost, port }),
       onSelect: () => {
         if (deps.createLocalForward) {
           void Promise.resolve(deps.createLocalForward({ sessionId: deps.sessionId, host: bareHost, port })).catch(
-            (error: unknown) => deps.toast("error", `建立本地转发失败：${deps.describeError(error)}`),
+            (error: unknown) => deps.toast("error", t("建立本地转发失败：{describeError}", { describeError: deps.describeError(error) })),
           );
           return;
         }
         deps.openForwardTab(deps.sessionId);
-        deps.toast("info", `请在端口转发中填写目标 ${bareHost}:${port}`);
+        deps.toast("info", t("请在端口转发中填写目标 {bareHost}:{port}", { bareHost, port }));
       },
     });
   }
   items.push({
     kind: "item",
-    label: "复制地址",
+    label: t("复制地址"),
     onSelect: () =>
       void deps.copy(target.text).then(
-        () => deps.toast("success", "已复制地址"),
-        (error: unknown) => deps.toast("error", `复制地址失败：${deps.describeError(error)}`),
+        () => deps.toast("success", t("已复制地址")),
+        (error: unknown) => deps.toast("error", t("复制地址失败：{describeError}", { describeError: deps.describeError(error) })),
       ),
   });
   return items;

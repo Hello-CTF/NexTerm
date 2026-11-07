@@ -1,5 +1,6 @@
 import { useUi } from "../store";
 import { IconCheckCircle, IconClose, IconInfo, IconXCircle } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 export function ToastStack() {
   const toasts = useUi((s) => s.toasts);
@@ -40,7 +41,7 @@ export function ToastStack() {
                 <span>{t.text}</span>
                 {t.detail ? (
                   <details className="mt-1" onToggle={(event) => (event.currentTarget.open ? holdToast(t.id) : releaseToast(t.id))}>
-                    <summary className="cursor-pointer text-[11px] opacity-80">详情</summary>
+                    <summary className="cursor-pointer text-[11px] opacity-80">{tr("详情")}</summary>
                     <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[11px] opacity-80">{t.detail}</pre>
                   </details>
                 ) : null}
@@ -61,8 +62,8 @@ export function ToastStack() {
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
-              aria-label="关闭通知"
-              title="关闭"
+              aria-label={tr("关闭通知")}
+              title={tr("关闭")}
               onClick={() => dismissToast(t.id)}
             >
               <IconClose size={12} />

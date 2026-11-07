@@ -4,6 +4,7 @@ import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import { terminalLinkDeps } from "../terminal/terminalLinkActions";
 import { openTerminalLink } from "../terminal/terminalLinks";
+import { t } from "../../i18n";
 
 export interface ForwardTarget {
   sessionId: string;
@@ -67,13 +68,13 @@ export async function forwardAndOpen(target: ForwardTarget): Promise<void> {
     if (WEB && !isLoopbackHostname(window.location.hostname)) {
       pushToast(
         "info",
-        `已在服务器上建立转发 ${address} → ${dest}，浏览器模式下只有服务器本机能访问该地址。会话关闭时自动移除。`,
+        t("已在服务器上建立转发 {address} → {dest}，浏览器模式下只有服务器本机能访问该地址。会话关闭时自动移除。", { address, dest }),
       );
       return;
     }
-    pushToast("success", `已建立转发 ${address} → ${dest}，会话关闭时自动移除。`);
+    pushToast("success", t("已建立转发 {address} → {dest}，会话关闭时自动移除。", { address, dest }));
     await openTerminalLink(`http://${address}/`, terminalLinkDeps(target.sessionId, undefined, () => null));
   } catch (error) {
-    pushToast("error", `建立转发失败：${describeError(error)}`);
+    pushToast("error", t("建立转发失败：{value}", { value: describeError(error) }));
   }
 }

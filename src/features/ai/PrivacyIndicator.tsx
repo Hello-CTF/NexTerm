@@ -3,6 +3,7 @@ import { onPrivacyStatus, privacyApi, privacyBroken, type PrivacyStatus } from "
 import { useUi } from "../../app/store";
 import { IconAlert, IconShieldCheck } from "../../ui/icons";
 import { showSettingsSection } from "../settings/settingsNavigation";
+import { t } from "../../i18n";
 
 export interface PrivacyGuardState { enabled: boolean; broken: boolean }
 const OFF: PrivacyGuardState = { enabled: false, broken: false };
@@ -30,8 +31,8 @@ export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
       <span
         className="nx-cbar-icon nx-privacy-icon is-on"
         role="status"
-        title="脱敏已开启：文本中的敏感片段在发送前替换为占位符；图片不会脱敏"
-        aria-label="脱敏已开启"
+        title={t("脱敏已开启：文本中的敏感片段在发送前替换为占位符；图片不会脱敏")}
+        aria-label={t("脱敏已开启")}
       >
         <IconShieldCheck size={14} />
       </span>
@@ -41,10 +42,10 @@ export function PrivacyIndicator({ guard }: { guard: PrivacyGuardState }) {
     <button
       type="button"
       className="nx-cbar-icon nx-privacy-icon is-error"
-      aria-label="脱敏不可用"
-      title="脱敏不可用：本地脱敏模型不可用，AI 请求会被阻止。点击前往设置"
+      aria-label={t("脱敏不可用")}
+      title={t("脱敏不可用：本地脱敏模型不可用，AI 请求会被阻止。点击前往设置")}
       onClick={() => {
-        useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+        useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
         showSettingsSection("settings-ai-privacy");
       }}
     >

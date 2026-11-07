@@ -1,5 +1,6 @@
 import { fsApi, localFileApi } from "../../ipc/commands";
 import { bytesFromBase64, bytesToBase64 } from "./fileCodec";
+import { t } from "../../i18n";
 
 export const UPLOAD_CHUNK_SIZE = 1024 * 1024;
 const MAX_UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024;
@@ -15,7 +16,7 @@ export function fileChunkSource(file: File): ChunkReadSource {
     async read(offset, length) {
       const data = new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
       if (data.length !== length) {
-        throw new Error(`文件「${file.name}」的大小在读取期间发生了变化，请重新上传`);
+        throw new Error(t("文件「{name}」的大小在读取期间发生了变化，请重新上传", { name: file.name }));
       }
       return data;
     },
@@ -29,7 +30,7 @@ export function localPathChunkSource(localPath: string, size: number, displayPat
       const result = await localFileApi.readRange(localPath, offset, length);
       const data = bytesFromBase64(result.contentBase64);
       if (result.offset !== offset || result.size !== size || data.length !== length) {
-        throw new Error(`文件「${displayPath}」的大小在读取期间发生了变化，请重新上传`);
+        throw new Error(t("文件「{displayPath}」的大小在读取期间发生了变化，请重新上传", { displayPath }));
       }
       return data as Uint8Array<ArrayBuffer>;
     },
@@ -69,7 +70,7 @@ export async function uploadChunked(args: {
 }): Promise<void> {
   const { sessionId, remotePath, source, taskId, attemptId, onProgress } = args;
   if (!Number.isSafeInteger(source.size) || source.size < 0) {
-    throw new Error("上传文件大小无效");
+    throw new Error(t("上传文件大小无效"));
   }
   onProgress?.(0, source.size);
   let uploadId: string | undefined;
@@ -89,7 +90,7 @@ export async function uploadChunked(args: {
       begun.chunkSize <= 0 ||
       begun.chunkSize > MAX_UPLOAD_CHUNK_SIZE
     ) {
-      throw new Error(`服务端返回了无效的上传块大小：${begun.chunkSize}`);
+      throw new Error(t("服务端返回了无效的上传块大小：{chunkSize}", { chunkSize: begun.chunkSize }));
     }
     const totalChunks = Math.ceil(source.size / begun.chunkSize);
     for (let index = 0; index < totalChunks; index += 1) {
@@ -97,7 +98,7 @@ export async function uploadChunked(args: {
       const length = Math.min(begun.chunkSize, source.size - offset);
       const data = await source.read(offset, length);
       if (data.length !== length) {
-        throw new Error(`读取上传块 ${index} 时返回了 ${data.length} 字节，预期 ${length} 字节`);
+        throw new Error(t("读取上传块 {index} 时返回了 {length} 字节，预期 {length2} 字节", { index, length: data.length, length2: length }));
       }
       const contentBase64 = bytesToBase64(data);
       const sha256 = await sha256Hex(data);
@@ -115,7 +116,7 @@ export async function uploadChunked(args: {
             contentBase64,
           });
           if (progress.total !== source.size || progress.received < 0 || progress.received > source.size) {
-            throw new Error("服务端返回了无效的上传进度");
+            throw new Error(t("服务端返回了无效的上传进度"));
           }
           onProgress?.(progress.received, progress.total);
           lastError = undefined;

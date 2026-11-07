@@ -11,6 +11,7 @@ import {
   type StateRuleDraftForm,
   type StateRuleTarget,
 } from "./stateRuleDraft";
+import { t } from "../../i18n";
 
 // How long typing settles before the rule is checked again.
 export const RULE_VALIDATE_DELAY_MS = 250;
@@ -102,7 +103,7 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
     <div className="flex flex-col gap-3">
       <div>
         <label className="nx-setting-label mb-1 block" htmlFor={`${id}-pattern`}>
-          匹配模式（RE2 正则）
+          {t("匹配模式（RE2 正则）")}
         </label>
         <textarea
           id={`${id}-pattern`}
@@ -124,20 +125,20 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-region`}>
-            匹配区域
+            {t("匹配区域")}
           </label>
           <div className="flex gap-2">
             <Select
               id={`${id}-region`}
               className="min-w-0 flex-1"
-              ariaLabel="匹配区域"
+              ariaLabel={t("匹配区域")}
               ariaInvalid={Boolean(linesError)}
               ariaDescribedBy={describedBy(linesError, `${id}-lines-error`)}
               value={form.region}
               onChange={(value) => set({ region: value === "title" ? "title" : "bottom" })}
               options={[
-                { value: "bottom", label: "屏幕底部" },
-                { value: "title", label: "窗口标题" },
+                { value: "bottom", label: t("屏幕底部") },
+                { value: "title", label: t("窗口标题") },
               ]}
             />
             {form.region === "bottom" && (
@@ -146,7 +147,7 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
                 type="number"
                 min={1}
                 max={STATE_RULE_MAX_LINES}
-                aria-label="底部行数"
+                aria-label={t("底部行数")}
                 aria-invalid={linesError ? true : undefined}
                 aria-describedby={describedBy(linesError, `${id}-lines-error`)}
                 value={form.lines}
@@ -158,12 +159,12 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
         </div>
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-state`}>
-            匹配时视为
+            {t("匹配时视为")}
           </label>
           <Select
             id={`${id}-state`}
             className="w-full"
-            ariaLabel="匹配时视为"
+            ariaLabel={t("匹配时视为")}
             ariaInvalid={Boolean(stateError)}
             ariaDescribedBy={describedBy(stateError, `${id}-state-error`)}
             value={form.state}
@@ -174,12 +175,12 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
         </div>
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-scope`}>
-            适用范围
+            {t("适用范围")}
           </label>
           <Select
             id={`${id}-scope`}
             className="w-full"
-            ariaLabel="适用范围"
+            ariaLabel={t("适用范围")}
             ariaInvalid={Boolean(scopeError)}
             ariaDescribedBy={describedBy(scopeError, `${id}-scope-error`)}
             value={form.scope === "host" ? form.assetId || "host:" : "global"}
@@ -188,24 +189,24 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
               else set({ scope: "host", assetId: value === "host:" ? "" : value });
             }}
             options={[
-              { value: "global", label: "所有主机" },
-              ...(form.scope === "host" && !form.assetId ? [{ value: "host:", label: "选择主机…" }] : []),
+              { value: "global", label: t("所有主机") },
+              ...(form.scope === "host" && !form.assetId ? [{ value: "host:", label: t("选择主机…") }] : []),
               ...(form.scope === "host" && form.assetId && !hosts.some((host) => host.id === form.assetId)
                 ? [{ value: form.assetId, label: hostLabel?.(form.assetId) || fallbackHostLabel(form.assetId) }]
                 : []),
-              ...hosts.map((host) => ({ value: host.id, label: `仅 ${host.name}` })),
+              ...hosts.map((host) => ({ value: host.id, label: t("仅 {name}", { name: host.name }) })),
             ]}
           />
           <FieldError id={`${id}-scope-error`} message={scopeError} />
         </div>
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-name`}>
-            名称
+            {t("名称")}
           </label>
           <input
             id={`${id}-name`}
             className="nx-input w-full"
-            placeholder="留空时使用匹配模式"
+            placeholder={t("留空时使用匹配模式")}
             aria-invalid={nameError ? true : undefined}
             aria-describedby={describedBy(nameError, `${id}-name-error`)}
             value={form.name}
@@ -217,24 +218,24 @@ export function StateRuleForm({ form, onChange, hosts, hostLabel, validation, sa
       {form.state === "needs_me" && (
         <div>
           <label className="nx-setting-label mb-1 block" htmlFor={`${id}-keys`}>
-            回应按键（可选）
+            {t("回应按键（可选）")}
           </label>
           <input
             id={`${id}-keys`}
             className="nx-input nx-mono w-full"
-            placeholder="例如 y"
+            placeholder={t("例如 y")}
             aria-invalid={keysError ? true : undefined}
             aria-describedby={describedBy(keysError, `${id}-keys-error`, `${id}-keys-hint`)}
             value={form.keys}
             onChange={(event) => set({ keys: event.target.value })}
           />
-          <p id={`${id}-keys-hint`} className="nx-hint mt-1">状态为「需要处理」时显示为按钮，仅在单击后发送。</p>
+          <p id={`${id}-keys-hint`} className="nx-hint mt-1">{t("状态为「需要处理」时显示为按钮，仅在单击后发送。")}</p>
           <FieldError id={`${id}-keys-error`} message={keysError} />
         </div>
       )}
       <label className="flex items-center gap-2 text-[12.5px] text-neutral-200">
         <input type="checkbox" checked={form.enabled} onChange={(event) => set({ enabled: event.target.checked })} />
-        启用
+        {t("启用")}
       </label>
       <RuleCheckStatus
         validation={validation}
@@ -260,7 +261,7 @@ function RuleCheckStatus({
   const result = validation.result;
   return (
     <div className="flex flex-col gap-2" aria-live="polite">
-      {fieldMessage && <span className="sr-only">规则有误：{fieldMessage}</span>}
+      {fieldMessage && <span className="sr-only">{t("规则有误：")}{fieldMessage}</span>}
       {generalError && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
           {generalError}
@@ -268,23 +269,23 @@ function RuleCheckStatus({
       )}
       {validation.error && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          无法检查规则：{validation.error}
+          {t("无法检查规则：")}{validation.error}
         </div>
       )}
       {saveError && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          保存失败：{saveError}
+          {t("保存失败：")}{saveError}
         </div>
       )}
       {result?.valid && result.tested && (
         <div className={`nx-alert text-[12px] ${result.matched ? "nx-alert-success" : ""}`} data-rule-test={result.matched ? "match" : "miss"}>
-          <div>{result.matched ? "匹配当前屏幕。" : "不匹配当前屏幕。"}</div>
+          <div>{result.matched ? t("匹配当前屏幕。") : t("不匹配当前屏幕。")}</div>
           {result.region !== undefined && (
-            <pre className="nx-code mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.region || "（区域为空）"}</pre>
+            <pre className="nx-code mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.region || t("（区域为空）")}</pre>
           )}
         </div>
       )}
-      {validation.pending && <div className="nx-hint text-[11.5px]">正在检查…</div>}
+      {validation.pending && <div className="nx-hint text-[11.5px]">{t("正在检查…")}</div>}
     </div>
   );
 }

@@ -52,6 +52,7 @@ import {
   IconTerminal,
   IconTrash,
 } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 const POLL_MS = 5000;
 const COLUMN_COUNT = 5;
@@ -66,34 +67,34 @@ interface PendingTab {
   waitingForConnection?: boolean;
 }
 
-const TAKEOVER_HELP = "「接管」会回到原来的终端，并补上离开期间的输出，不会新开终端。";
+const TAKEOVER_HELP = tr("「接管」会回到原来的终端，并补上离开期间的输出，不会新开终端。");
 
 function persistenceFootnote(scope: "remote" | "local" | "all"): string {
   if (scope === "local") {
-    return `本机的后台会话只在应用运行期间保留，退出应用后会结束。${TAKEOVER_HELP}`;
+    return tr("本机的后台会话只在应用运行期间保留，退出应用后会结束。{TAKEOVER_HELP}", { TAKEOVER_HELP });
   }
   if (TRANSPORT === "web") {
-    return `持久终端在目标主机上运行，关闭页面或换一台设备后仍能找到。${TAKEOVER_HELP}`;
+    return tr("持久终端在目标主机上运行，关闭页面或换一台设备后仍能找到。{TAKEOVER_HELP}", { TAKEOVER_HELP });
   }
   if (scope === "all") {
-    return `SSH 和受管设备的持久终端由目标主机保持运行，退出应用后仍在；本机的后台会话会随应用退出而结束。${TAKEOVER_HELP}`;
+    return tr("SSH 和受管设备的持久终端由目标主机保持运行，退出应用后仍在；本机的后台会话会随应用退出而结束。{TAKEOVER_HELP}", { TAKEOVER_HELP });
   }
-  return `持久终端由目标主机保持运行，退出应用或换一台设备后仍能找到。${TAKEOVER_HELP}`;
+  return tr("持久终端由目标主机保持运行，退出应用或换一台设备后仍能找到。{TAKEOVER_HELP}", { TAKEOVER_HELP });
 }
 
 function summaryCopy(count: number): string {
-  return `${count} 个可恢复`;
+  return tr("{count} 个可恢复", { count });
 }
 
 function ago(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 1000) return "刚刚";
+  if (!Number.isFinite(ms) || ms < 1000) return tr("刚刚");
   const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s} 秒前`;
+  if (s < 60) return tr("{s} 秒前", { s });
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m} 分钟前`;
+  if (m < 60) return tr("{m} 分钟前", { m });
   const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  return `${Math.floor(h / 24)} 天前`;
+  if (h < 24) return tr("{h} 小时前", { h });
+  return tr("{floor} 天前", { floor: Math.floor(h / 24) });
 }
 
 interface StatusView {
@@ -112,13 +113,13 @@ function statusView(tab: BackgroundTab): StatusView {
     };
   }
   // A state a newer helper added is reported, just not understood here.
-  if (state) return { label: "—", hint: "未知状态", tone: "muted" };
+  if (state) return { label: "—", hint: tr("未知状态"), tone: "muted" };
   if (tab.exited) return { label: STATE_LABELS.exited, hint: STATE_HINTS.exited, tone: "muted" };
   return {
     label: "—",
     hint: tab.durable || tab.remote
-      ? "该主机上的 NexTerm 组件未开启状态检测"
-      : "临时终端不会报告状态",
+      ? tr("该主机上的 NexTerm 组件未开启状态检测")
+      : tr("临时终端不会报告状态"),
     tone: "muted",
   };
 }
@@ -128,14 +129,14 @@ function statusView(tab: BackgroundTab): StatusView {
 export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "exitCode">): AwarenessBadge | null {
   switch (tab.state) {
     case "needs_me":
-      return { kind: "needs_me", label: "需要处理" };
+      return { kind: "needs_me", label: tr("需要处理") };
     case "just_finished": {
       const code = tab.exitCode;
       const failed = typeof code === "number" && code !== 0;
-      return { kind: "just_finished", label: failed ? `命令刚结束，退出码 ${code}` : "命令刚结束", outcome: failed ? "failed" : "ok" };
+      return { kind: "just_finished", label: failed ? tr("命令刚结束，退出码 {code}", { code }) : tr("命令刚结束"), outcome: failed ? "failed" : "ok" };
     }
     case "running":
-      return { kind: "running", label: "运行中" };
+      return { kind: "running", label: tr("运行中") };
     default:
       return null;
   }
@@ -148,29 +149,29 @@ function hostStatusText(status: AggregateHostStatus | undefined): string | null 
     case "failed":
       return unknownHostText(status);
     case "pending":
-      return "正在查询…";
+      return tr("正在查询…");
     case "ok":
-      return status.stale ? "列表可能已过时" : null;
+      return status.stale ? tr("列表可能已过时") : null;
     default:
       return null;
   }
 }
 
 function terminateTitle(tab: BackgroundTab, sessions: readonly SessionInfo[]): string {
-  if (!tab.aggregateHost) return tab.sessionId ? "结束该终端里运行的程序，无法恢复" : "接管后才能在这里结束该终端";
+  if (!tab.aggregateHost) return tab.sessionId ? tr("结束该终端里运行的程序，无法恢复") : tr("接管后才能在这里结束该终端");
   switch (aggregateTerminatePath(tab.aggregateHost, sessions)) {
     case "direct":
-      return "结束该终端里运行的程序，无法恢复";
+      return tr("结束该终端里运行的程序，无法恢复");
     case "connect_device":
-      return "先连接该设备，再结束该终端里运行的程序，无法恢复";
+      return tr("先连接该设备，再结束该终端里运行的程序，无法恢复");
     default:
-      return "主机未连接：请先从资产树连接该主机再结束";
+      return tr("主机未连接：请先从资产树连接该主机再结束");
   }
 }
 
 // HostGroupHeader names a host in the all-hosts view, with its listing status when its sessions are not all known.
 function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
-  const detail = [group.tabs.length > 0 ? `${group.tabs.length} 个` : null, hostStatusText(group.status)]
+  const detail = [group.tabs.length > 0 ? tr("{length} 个", { length: group.tabs.length }) : null, hostStatusText(group.status)]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -190,7 +191,7 @@ function HostGroupHeader({ group }: { group: BackgroundHostGroup }) {
 }
 
 // Hover tooltips do not reach touch screens, so the gaps a tooltip explains are also stated once below the table.
-const NEEDS_ME_NOTE = "「需要处理」表示程序正在等待回应：响铃、发出通知或显示了需要选择的提示";
+const NEEDS_ME_NOTE = tr("「需要处理」表示程序正在等待回应：响铃、发出通知或显示了需要选择的提示");
 
 const STATUS_TONE_CLASS: Record<StatusView["tone"], string> = {
   accent: "font-medium text-blue-300",
@@ -208,7 +209,7 @@ function shortTabId(tabId: string): string {
 // sanitized the way the strip shows it. A helper listing carries only the custom title as `title`, so the window
 // title it reports separately names a session nobody renamed.
 export function backgroundTabName(tab: Pick<BackgroundTab, "tabId" | "title" | "windowTitle">): string {
-  return sanitizeRemoteTabTitle(tab.title ?? "") || sanitizeRemoteTabTitle(tab.windowTitle ?? "") || `终端 ${shortTabId(tab.tabId)}`;
+  return sanitizeRemoteTabTitle(tab.title ?? "") || sanitizeRemoteTabTitle(tab.windowTitle ?? "") || tr("终端 {value}", { value: shortTabId(tab.tabId) });
 }
 
 // backgroundWindowTitle is the program's window title shown under a name it does not already match, so a renamed
@@ -251,38 +252,38 @@ function moment(at: number | undefined, msAgo: number | undefined, fetchedAt: nu
 }
 
 function timeView(tab: BackgroundTab, now: number): TimeView {
-  const createdLabel = tab.createdOnHost ? "创建（主机时间）" : "创建";
+  const createdLabel = tab.createdOnHost ? tr("创建（主机时间）") : tr("创建");
   const created = tab.createdAt && tab.createdAt > 0 ? `${createdLabel}：${absoluteTime(tab.createdAt)}` : null;
   const noActivity =
     tab.lastOutputAt === undefined && tab.lastOutputMsAgo === undefined && !tab.attachedElsewhere &&
     tab.detachedAt === undefined && tab.detachedMsAgo === undefined;
   if (noActivity) return { output: "—", detached: "—", tooltip: created ?? "" };
   const fetchedAt = tab.fetchedAt ?? now;
-  const clock = tab.hostClock ? "（主机时间）" : "";
+  const clock = tab.hostClock ? tr("（主机时间）") : "";
   const lines: string[] = [];
   let output: string;
   if (tab.lastOutputAt !== undefined && tab.lastOutputAt <= 0) {
-    output = "暂无输出";
-    lines.push("最近输出：暂无");
+    output = tr("暂无输出");
+    lines.push(tr("最近输出：暂无"));
   } else {
     const last = moment(tab.lastOutputAt, tab.lastOutputMsAgo, fetchedAt, now);
-    output = `${ago(last?.age ?? 0)}有输出`;
-    if (last) lines.push(`最近输出${clock}：${absoluteTime(last.at)}`);
+    output = tr("{value}有输出", { value: ago(last?.age ?? 0) });
+    if (last) lines.push(tr("最近输出{clock}：{value}", { clock, value: absoluteTime(last.at) }));
   }
   let detached: string;
   const left = moment(tab.detachedAt, tab.detachedAt ? tab.detachedMsAgo : undefined, fetchedAt, now);
   if (tab.attachedElsewhere) {
-    detached = "仍有设备已连接";
-    lines.push("转入后台：仍有设备已连接该终端");
+    detached = tr("仍有设备已连接");
+    lines.push(tr("转入后台：仍有设备已连接该终端"));
   } else if (left && tab.detachedSinceOpen) {
-    detached = `至少 ${ago(left.age)}转入后台`;
-    lines.push(`转入后台：不晚于 ${absoluteTime(left.at)}（自本应用重新打开此终端起）`);
+    detached = tr("至少 {value}转入后台", { value: ago(left.age) });
+    lines.push(tr("转入后台：不晚于 {value}（自本应用重新打开此终端起）", { value: absoluteTime(left.at) }));
   } else if (left) {
-    detached = `${ago(left.age)}转入后台`;
-    lines.push(`转入后台${clock}：${absoluteTime(left.at)}`);
+    detached = tr("{value}转入后台", { value: ago(left.age) });
+    lines.push(tr("转入后台{clock}：{value}", { clock, value: absoluteTime(left.at) }));
   } else {
     detached = "—";
-    lines.push("转入后台：时间未知");
+    lines.push(tr("转入后台：时间未知"));
   }
   if (created) lines.push(created);
   return { output, detached, tooltip: lines.join("\n") };
@@ -510,7 +511,7 @@ export function BackgroundSessions({
       const session = sessionFor(workspace);
       const known = new Map<string, string>();
       for (const tab of memoryKnown[hostKey] ?? []) {
-        known.set(tab.id, tab.title || "持久终端");
+        known.set(tab.id, tab.title || tr("持久终端"));
       }
       for (const candidate of group) {
         for (const pane of candidate.panes) {
@@ -520,7 +521,7 @@ export function BackgroundSessions({
           }
         }
       }
-      if (known.size === 0) known.set("undiscovered", "尚未查找的终端");
+      if (known.size === 0) known.set("undiscovered", tr("尚未查找的终端"));
       for (const [id, title] of known) {
         rows.push({
           key: JSON.stringify([hostKey, id]), workspaceId: workspace.id, hostName: workspace.title, title,
@@ -564,15 +565,15 @@ export function BackgroundSessions({
           isCurrent: () => ownerGeneration === ownerGenerationRef.current,
           guard: (session) => {
             if (remoteOwner && (!ownerWorkspace || !workspaceSessionMatches(ownerWorkspace, session, verifiedQuickSessions))) {
-              throw new Error("该终端不属于当前主机，请重新连接后再接管");
+              throw new Error(tr("该终端不属于当前主机，请重新连接后再接管"));
             }
           },
         });
       if (result.ok) {
         setItems((prev) => (prev ? prev.filter((t) => backgroundTabKey(t) !== key) : prev));
-        pushToast("info", `已接管「${result.sessionName}」的终端`);
+        pushToast("info", tr("已接管「{sessionName}」的终端", { sessionName: result.sessionName }));
       } else if ("error" in result) {
-        pushToast("error", `接管失败：${result.error}`);
+        pushToast("error", tr("接管失败：{error}", { error: result.error }));
       }
     } finally {
       if (ownerGeneration === ownerGenerationRef.current) {
@@ -604,7 +605,7 @@ export function BackgroundSessions({
         : await reconnectDeadHost(target, { isCurrent });
       if (!isCurrent()) return;
       if (!fresh) {
-        pushToast("info", "已取消重新连接");
+        pushToast("info", tr("已取消重新连接"));
         return;
       }
       const currentTarget = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceIdToReconnect);
@@ -612,7 +613,7 @@ export function BackgroundSessions({
         ? fresh.kind === "ssh" && !fresh.assetId
         : Boolean(currentTarget && workspaceSessionMatches(currentTarget, fresh, verifiedQuickSessions));
       if (!currentTarget || workspaceHostKey(currentTarget) !== identity || !verifiedFresh) {
-        throw new Error("重新连接到的不是当前主机");
+        throw new Error(tr("重新连接到的不是当前主机"));
       }
       if (currentTarget.quickTarget && identity) {
         setQuickState((previous) => ({
@@ -627,10 +628,10 @@ export function BackgroundSessions({
       const st = useUi.getState();
       st.setSessions([...st.sessions.filter((session) => session.id !== fresh.id), fresh]);
       if (currentTarget.sessionId !== fresh.id) st.updateWorkspaceSession(currentTarget.id, fresh.id);
-      pushToast("success", `已连接「${fresh.name}」，正在查找后台会话`);
+      pushToast("success", tr("已连接「{name}」，正在查找后台会话", { name: fresh.name }));
     } catch (cause) {
       if (ownerGeneration === ownerGenerationRef.current) {
-        pushToast("error", `重新连接失败：${describeError(cause)}`);
+        pushToast("error", tr("重新连接失败：{value}", { value: describeError(cause) }));
       }
     } finally {
       if (ownerGeneration === ownerGenerationRef.current) setReconnecting(false);
@@ -643,10 +644,10 @@ export function BackgroundSessions({
     // Ending always asks: the process ends, unlike closing a tab, which leaves it running in the background.
     const path = info.aggregateHost ? aggregateTerminatePath(info.aggregateHost, useUi.getState().sessions) : "direct";
     if (path === null) return;
-    const connectFirst = path === "connect_device" ? `\n\n需要先连接设备「${info.sessionName}」，然后结束该终端。` : "";
+    const connectFirst = path === "connect_device" ? tr("\n\n需要先连接设备「{sessionName}」，然后结束该终端。", { sessionName: info.sessionName }) : "";
     const ok = await ask(
-      `结束「${info.sessionName}」上的终端「${backgroundTabName(info)}」？\n\n终端里运行的程序会被终止，进程结束后无法恢复。只想离开时不必结束，它会在后台继续运行。${connectFirst}`,
-      { title: "结束进程", kind: "warning" },
+      tr("结束「{sessionName}」上的终端「{value}」？\n\n终端里运行的程序会被终止，进程结束后无法恢复。只想离开时不必结束，它会在后台继续运行。{connectFirst}", { sessionName: info.sessionName, value: backgroundTabName(info), connectFirst }),
+      { title: tr("结束进程"), kind: "warning" },
     );
     if (!ok || ownerGeneration !== ownerGenerationRef.current) return;
     setBusy((b) => ({ ...b, [key]: "kill" }));
@@ -665,7 +666,7 @@ export function BackgroundSessions({
         if (!result.ok) {
           if (ownerGeneration === ownerGenerationRef.current) {
             restore();
-            if ("error" in result) pushToast("error", `无法结束终端中的程序：${result.error}`);
+            if ("error" in result) pushToast("error", tr("无法结束终端中的程序：{error}", { error: result.error }));
           }
           return;
         }
@@ -673,11 +674,11 @@ export function BackgroundSessions({
         await terminalApi.closeTab(info.tabId, "kill", info.sessionId);
       }
       forgetAggregateSession(info.tabId);
-      if (ownerGeneration === ownerGenerationRef.current) pushToast("success", "已结束终端中的程序");
+      if (ownerGeneration === ownerGenerationRef.current) pushToast("success", tr("已结束终端中的程序"));
     } catch (e) {
       if (ownerGeneration === ownerGenerationRef.current) {
         restore();
-        pushToast("error", `无法结束终端中的程序：${describeError(e)}`);
+        pushToast("error", tr("无法结束终端中的程序：{value}", { value: describeError(e) }));
       }
     } finally {
       void useUi.getState().resyncSessions({ silent: true });
@@ -696,10 +697,10 @@ export function BackgroundSessions({
       <div className="nx-pane" data-background-view="local">
         <div className="nx-toolbar nx-wrap-toolbar">
           <IconActivity size={14} className="text-neutral-500" />
-          <span className="nx-toolbar-title">后台会话</span>
+          <span className="nx-toolbar-title">{tr("后台会话")}</span>
         </div>
         <div className="flex min-h-0 flex-1 items-center justify-center text-[12px] text-neutral-500">
-          无法确定要查看的主机，请从目标主机重新打开后台会话
+          {tr("无法确定要查看的主机，请从目标主机重新打开后台会话")}
         </div>
       </div>
     );
@@ -727,13 +728,13 @@ export function BackgroundSessions({
       }
       try {
         const result = await reconnectLiveSession(item.id);
-        if (result.kind === "canceled") pushToast("info", "已取消重新连接");
+        if (result.kind === "canceled") pushToast("info", tr("已取消重新连接"));
       } catch (cause) {
-        pushToast("error", `重新连接失败：${describeError(cause)}`);
+        pushToast("error", tr("重新连接失败：{value}", { value: describeError(cause) }));
       }
     }
   };
-  const hostLabel = showAll ? "全部主机" : (hostName ?? "当前主机");
+  const hostLabel = showAll ? tr("全部主机") : (hostName ?? tr("当前主机"));
   const now = Date.now();
   const hostScope = showAll ? "all" : hostSession?.kind === "local" || (!remoteOwner && ownerWorkspace?.assetKind === "local") ? "local" : "remote";
   // The all-hosts view groups rows by host; hosts the cross-host listing could not list show as unknown.
@@ -766,7 +767,7 @@ export function BackgroundSessions({
             <span data-testid="background-status-label">{status.label}</span>
           </span>
         </td>
-        <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label="大小" data-testid="background-size">
+        <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg)]" data-label={tr("大小")} data-testid="background-size">
           {t.cols}×{t.rows}
         </td>
         <td className="nx-bg-time" title={time.tooltip} data-testid="background-time">
@@ -778,7 +779,7 @@ export function BackgroundSessions({
             <button
               className="nx-btn nx-btn-primary nx-btn-xs"
               disabled={rowBusy}
-              title="回到该终端，并补上离开期间的输出"
+              title={tr("回到该终端，并补上离开期间的输出")}
               onClick={() => void takeOver(t)}
             >
               {action === "takeover" ? (
@@ -786,7 +787,7 @@ export function BackgroundSessions({
               ) : (
                 <IconGamepad size={11} />
               )}
-              接管
+              {tr("接管")}
             </button>
             <button
               className="nx-btn nx-btn-danger nx-btn-xs"
@@ -799,7 +800,7 @@ export function BackgroundSessions({
               ) : (
                 <IconTrash size={11} />
               )}
-              结束进程
+              {tr("结束进程")}
             </button>
           </div>
         </td>
@@ -811,22 +812,22 @@ export function BackgroundSessions({
     <div className="nx-pane" data-background-view="local">
       <div className="nx-toolbar nx-wrap-toolbar">
         <IconActivity size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">后台会话</span>
+        <span className="nx-toolbar-title">{tr("后台会话")}</span>
         <span className="nx-hint" data-testid="background-host">
           {hostLabel}
         </span>
         <span className="nx-hint" data-testid="background-count">
-          {scopedItems === null && pendingTabs.length === 0 ? (scopedError ? "未能读取" : "正在加载…") : summaryCopy(count)}
+          {scopedItems === null && pendingTabs.length === 0 ? (scopedError ? tr("未能读取") : tr("正在加载…")) : summaryCopy(count)}
         </span>
         <div className="nx-spacer" />
         {needsReconnect && ownerWorkspace && (
           <button className="nx-btn nx-btn-primary nx-btn-sm" disabled={desktopChecking || reconnecting || hostSession?.status === "connecting" || hostSession?.status === "reconnecting"} onClick={() => void reconnectHost(ownerWorkspace.id)}>
-            {reconnecting ? "正在连接…" : "连接并查找"}
+            {reconnecting ? tr("正在连接…") : tr("连接并查找")}
           </button>
         )}
-        <button className="nx-btn nx-btn-ghost nx-btn-sm" title="列表会自动更新，也可以立即刷新" disabled={loading || (!hostSessionId && !showAll)} onClick={() => void load()}>
+        <button className="nx-btn nx-btn-ghost nx-btn-sm" title={tr("列表会自动更新，也可以立即刷新")} disabled={loading || (!hostSessionId && !showAll)} onClick={() => void load()}>
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
-          刷新
+          {tr("刷新")}
         </button>
       </div>
 
@@ -841,11 +842,11 @@ export function BackgroundSessions({
           </colgroup>
           <thead>
             <tr>
-              <th scope="col">名称</th>
-              <th scope="col">状态</th>
-              <th scope="col">大小</th>
-              <th scope="col">时间</th>
-              <th scope="col"><span className="sr-only">操作</span></th>
+              <th scope="col">{tr("名称")}</th>
+              <th scope="col">{tr("状态")}</th>
+              <th scope="col">{tr("大小")}</th>
+              <th scope="col">{tr("时间")}</th>
+              <th scope="col"><span className="sr-only">{tr("操作")}</span></th>
             </tr>
           </thead>
           <tbody>
@@ -894,25 +895,25 @@ export function BackgroundSessions({
                     </span>
                   )}
                 </td>
-                <td className="nx-bg-status text-[var(--nx-fg)]" title="连接主机后才能确认是否仍在运行" data-testid="background-status" data-state="pending">
-                  待核实
+                <td className="nx-bg-status text-[var(--nx-fg)]" title={tr("连接主机后才能确认是否仍在运行")} data-testid="background-status" data-state="pending">
+                  {tr("待核实")}
                 </td>
-                <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg-soft)]" data-label="大小">—</td>
-                <td className="nx-bg-time text-[var(--nx-fg-soft)]">连接主机后才能确认是否仍在运行</td>
+                <td className="nx-bg-size font-mono text-[11.5px] text-[var(--nx-fg-soft)]" data-label={tr("大小")}>—</td>
+                <td className="nx-bg-time text-[var(--nx-fg-soft)]">{tr("连接主机后才能确认是否仍在运行")}</td>
                 <td className="nx-right">
                   {tab.workspaceId ? (
                     <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={desktopChecking || reconnecting || tab.waitingForConnection} onClick={() => void reconnectHost(tab.workspaceId as string)}>
                       <IconRefresh size={11} className={reconnecting ? "animate-spin" : ""} />
-                      {reconnecting || tab.waitingForConnection ? "正在连接…" : "连接并查找"}
+                      {reconnecting || tab.waitingForConnection ? tr("正在连接…") : tr("连接并查找")}
                     </button>
-                  ) : <span className="text-[11px] text-[var(--nx-fg-soft)]">请先从资产树打开该主机</span>}
+                  ) : <span className="text-[11px] text-[var(--nx-fg-soft)]">{tr("请先从资产树打开该主机")}</span>}
                 </td>
               </tr>
             ))}
             {scopedError && (
               <tr>
                 <td colSpan={COLUMN_COUNT} className="nx-table-empty text-red-300">
-                  无法读取后台会话：{scopedError}
+                  {tr("无法读取后台会话：")}{scopedError}
                 </td>
               </tr>
             )}
@@ -920,30 +921,30 @@ export function BackgroundSessions({
               <tr>
                 <td colSpan={COLUMN_COUNT} className="nx-table-empty text-[var(--nx-fg-soft)]">
                   {needsReconnect
-                    ? "主机未连接，连接后才能查看后台会话"
+                    ? tr("主机未连接，连接后才能查看后台会话")
                     : noHostConnected
-                      ? `有 ${unconnectedSessions.length} 台主机未连接，连接后才能查看`
+                      ? tr("有 {length} 台主机未连接，连接后才能查看", { length: unconnectedSessions.length })
                     : showAll
-                      ? "没有可恢复的后台会话"
+                      ? tr("没有可恢复的后台会话")
                       : hostScope === "local"
-                        ? "本机没有在后台运行的终端"
-                        : "该主机上没有在后台运行的终端"}
+                        ? tr("本机没有在后台运行的终端")
+                        : tr("该主机上没有在后台运行的终端")}
                   <div className="mt-1.5 text-[11px] text-[var(--nx-fg-soft)]">
                     {needsReconnect
-                      ? "终端可能仍在主机上运行，连接成功后列表会自动更新"
+                      ? tr("终端可能仍在主机上运行，连接成功后列表会自动更新")
                       : noHostConnected
-                        ? "终端可能仍在这些主机上运行，连接成功后列表会自动更新"
+                        ? tr("终端可能仍在这些主机上运行，连接成功后列表会自动更新")
                       : showAll
-                        ? "请先从资产树打开目标主机，才能查看它上面的后台会话"
+                        ? tr("请先从资产树打开目标主机，才能查看它上面的后台会话")
                         : hostScope === "local"
-                          ? "转到后台运行或由 AI 在后台创建的本机终端会列在这里，退出应用后结束"
+                          ? tr("转到后台运行或由 AI 在后台创建的本机终端会列在这里，退出应用后结束")
                           : ownerWorkspace?.assetKind === "ssh"
-                            ? "持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束"
-                            : "关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里"}
+                            ? tr("持久终端关闭标签页后会继续在主机上运行并出现在这里；临时终端关闭后会结束")
+                            : tr("关闭标签页时选择「转到后台运行」，终端会继续在主机上运行并出现在这里")}
                   </div>
                   {noHostConnected && !needsReconnect && (
                     <button className="nx-btn nx-btn-primary nx-btn-sm mt-2" disabled={desktopChecking || reconnecting} onClick={() => void connectAll()}>
-                      {reconnecting ? "正在连接…" : "连接并查找"}
+                      {reconnecting ? tr("正在连接…") : tr("连接并查找")}
                     </button>
                   )}
                 </td>

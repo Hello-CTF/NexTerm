@@ -43,6 +43,7 @@ import {
   type SplitNode,
 } from "../splitTree";
 import type { SqlDraft, UiGet, UiSet, UiState, Workspace } from "./types";
+import { t } from "../../i18n";
 
 function windowHeight(): number {
   return typeof window === "undefined" ? Number.POSITIVE_INFINITY : window.innerHeight;
@@ -63,14 +64,14 @@ function paneSize(paneId: string, tree: SplitNode): { width: number; height: num
 // splitRefusal explains why `paneId` cannot be split now (window too short, pane too small), or null.
 // `label` names the direction in the message ("向右", "向上", ...).
 function splitRefusal(direction: "right" | "down", label: string, paneId: string, tree: SplitNode): string | null {
-  if (direction === "down" && !splitAllowedForHeight(windowHeight())) return `窗口高度不足，无法${label}分屏`;
+  if (direction === "down" && !splitAllowedForHeight(windowHeight())) return t("窗口高度不足，无法{label}分屏", { label });
   if (!splitFitsPane(direction, paneSize(paneId, tree))) {
-    return `窗格太小，无法${label}分屏（每侧至少需要 ${SPLIT_MIN_COLS} 列 × ${SPLIT_MIN_ROWS} 行）`;
+    return t("窗格太小，无法{label}分屏（每侧至少需要 {SPLIT_MIN_COLS} 列 × {SPLIT_MIN_ROWS} 行）", { label, SPLIT_MIN_COLS, SPLIT_MIN_ROWS });
   }
   return null;
 }
 
-const SPLIT_DEPTH_REFUSAL = `分屏最多嵌套 ${SPLIT_TREE_MAX_DEPTH} 层，已保持当前布局`;
+const SPLIT_DEPTH_REFUSAL = t("分屏最多嵌套 {SPLIT_TREE_MAX_DEPTH} 层，已保持当前布局", { SPLIT_TREE_MAX_DEPTH });
 
 // otherPaneFor picks where "open in the other pane" lands: the pane below the active one, else the
 // nearest pane in any direction, else none (the caller splits).
@@ -221,7 +222,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       if (mode === "detach" && closePlan.blocked.length > 0) {
         get().pushToast(
           "error",
-          `「${currentTarget.title}」有 ${closePlan.blocked.length} 个${closePlan.blockedKinds}终端不支持转入后台；工作区已保留，未结束任何进程`,
+          t("「{title}」有 {length} 个{blockedKinds}终端不支持转入后台；工作区已保留，未结束任何进程", { title: currentTarget.title, length: closePlan.blocked.length, blockedKinds: closePlan.blockedKinds }),
         );
         return false;
       }
@@ -230,7 +231,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       for (const tab of closePlan.runningAiTabs) {
         const cancelAndConfirm = aiTabRunControls.get(tab.id);
         if (!cancelAndConfirm) {
-          get().pushToast("error", "未能确认是否已停止，标签页已保留，请稍后重试");
+          get().pushToast("error", t("未能确认是否已停止，标签页已保留，请稍后重试"));
           return false;
         }
         if (!(await confirmAiRunCancellation(cancelAndConfirm))) return false;
@@ -247,7 +248,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       if (outcome.dbFailed > 0) {
         get().pushToast(
           "error",
-          `「${titleNow}」保持打开：${outcome.dbFailed}/${closePlan.dbConnIds.length} 个数据库断开失败：${outcome.dbError}`,
+          t("「{titleNow}」保持打开：{dbFailed}/{length} 个数据库断开失败：{dbError}", { titleNow, dbFailed: outcome.dbFailed, length: closePlan.dbConnIds.length, dbError: outcome.dbError }),
         );
       }
 
@@ -285,7 +286,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       if (hasNewContent) {
         get().pushToast(
           "info",
-          `「${target.title}」保持打开：关闭期间新增了未保存内容或其它标签页，请处理后再次关闭`,
+          t("「{title}」保持打开：关闭期间新增了未保存内容或其它标签页，请处理后再次关闭", { title: target.title }),
         );
       }
 
@@ -343,7 +344,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       const targetId = paneId ?? w.activePaneId;
       const tree = workspaceLayoutTree(w);
       if (!tree || !w.panes.some((pane) => pane.id === targetId)) return null;
-      const refusal = splitRefusal(direction, direction === "right" ? "向右" : "向下", targetId, tree);
+      const refusal = splitRefusal(direction, direction === "right" ? t("向右") : t("向下"), targetId, tree);
       if (refusal) {
         get().pushToast("info", refusal);
         return null;
@@ -379,12 +380,12 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         workspaceId !== undefined &&
         (!explicitWorkspace || !explicitWorkspaceMatchesTab(tab, explicitWorkspace))
       ) {
-        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
+        get().pushToast("info", t("该标签页不属于当前工作区，未执行操作"));
         return;
       }
       const id = resolveWorkspaceId(tab, st, workspaceId);
       if (workspaceId !== undefined && id !== workspaceId) {
-        get().pushToast("info", "该标签页不属于当前工作区，未执行操作");
+        get().pushToast("info", t("该标签页不属于当前工作区，未执行操作"));
         return;
       }
       const w = get().workspaces.find((x) => x.id === id);
@@ -396,7 +397,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       }
       if (!splitAllowedForHeight(windowHeight())) {
         get().addTab(tab, w.activePaneId ?? w.panes[0]?.id);
-        get().pushToast("info", "窗口高度不足，已在当前栏打开");
+        get().pushToast("info", t("窗口高度不足，已在当前栏打开"));
         return;
       }
       const tree = workspaceLayoutTree(w);
@@ -500,7 +501,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       const tree = workspaceLayoutTree(w);
       if (!tree || !w.panes.some((pane) => pane.id === paneId)) return null;
       if (hit.pane.id === paneId && hit.pane.tabs.length < 2) {
-        get().pushToast("info", "窗格中只有一个标签页，无需移到新窗格");
+        get().pushToast("info", t("窗格中只有一个标签页，无需移到新窗格"));
         return null;
       }
       const split = edgeSplit(edge);

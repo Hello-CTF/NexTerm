@@ -9,6 +9,7 @@ import { describeError } from "../../ui/errorText";
 import { IconArrowDown, IconArrowUp, IconChevronRight, IconGlobe, IconPlus, IconRefresh, IconSave, IconTrash, IconXCircle } from "../../ui/icons";
 import { MAX_BASE_URLS, validateBaseURL } from "./baseUrlValidation";
 import { fleetClient } from "./clients";
+import { t } from "../../i18n";
 
 interface BaseUrlsSectionProps {
   entries: FleetBaseURLEntry[];
@@ -49,11 +50,11 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       return;
     }
     if (draft.some((e) => e.url === result.url)) {
-      setInputError("该地址已在列表中");
+      setInputError(t("该地址已在列表中"));
       return;
     }
     if (draft.length >= MAX_BASE_URLS) {
-      setInputError(`接入地址最多 ${MAX_BASE_URLS} 个`);
+      setInputError(t("接入地址最多 {MAX_BASE_URLS} 个", { MAX_BASE_URLS }));
       return;
     }
     setDraft([...draft, { url: result.url, ...(insecure ? { insecure: true } : {}) }]);
@@ -86,7 +87,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       setDraft(saved.base_urls);
       setDirty(false);
       skipPropSync.current = true;
-      pushToast("success", "接入地址已保存");
+      pushToast("success", t("接入地址已保存"));
     } catch (e) {
       setSaveError(describeError(e));
     } finally {
@@ -98,23 +99,23 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
     <section className="nx-card">
       <div className="flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
-        <span className="nx-card-title">接入地址</span>
+        <span className="nx-card-title">{t("接入地址")}</span>
         <span className="nx-hint min-w-0 flex-1 truncate">
           {status === "loading"
-            ? "正在读取…"
+            ? t("正在读取…")
             : status === "error"
-              ? "未能读取"
+              ? t("未能读取")
               : draft.length === 0
                 ? isAdmin
-                  ? "未配置：新设备无法接入，展开以添加"
-                  : "未配置：新设备无法接入，请联系超级管理员"
-                : `${draft.length} 个地址 · ${draft[0].url}${draft.length > 1 ? " 等" : ""} · 按顺序尝试，以第一个可达地址为当前接入点`}
+                  ? t("未配置：新设备无法接入，展开以添加")
+                  : t("未配置：新设备无法接入，请联系超级管理员")
+                : t("{length} 个地址 · {url}{value} · 按顺序尝试，以第一个可达地址为当前接入点", { length: draft.length, url: draft[0].url, value: draft.length > 1 ? t(" 等") : "" })}
         </span>
-        {dirty && status === "ready" && <span className="nx-badge nx-badge-amber shrink-0">有未保存的修改</span>}
+        {dirty && status === "ready" && <span className="nx-badge nx-badge-amber shrink-0">{t("有未保存的修改")}</span>}
         {status === "error" && (
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={onRetry}>
             <IconRefresh size={11} />
-            重试
+            {t("重试")}
           </button>
         )}
         <button
@@ -124,27 +125,27 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={11} className={open ? "rotate-90" : ""} />
-          {open ? "收起" : isAdmin ? "展开编辑" : "展开"}
+          {open ? t("收起") : isAdmin ? t("展开编辑") : t("展开")}
         </button>
       </div>
 
-      {open && status === "loading" && <div className="nx-hint py-2 text-[12px]">正在读取接入地址…</div>}
+      {open && status === "loading" && <div className="nx-hint py-2 text-[12px]">{t("正在读取接入地址…")}</div>}
       {open && status === "error" && (
         <div className="nx-alert nx-alert-danger mt-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">未能读取接入地址：{loadError}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能读取接入地址：")}{loadError}</span>
         </div>
       )}
       {open && status === "ready" && (
         <>
           <p className="nx-hint mb-3 mt-1">
-            设备连接此服务器的地址（如 https://nexterm.example.com），修改只影响之后接入的设备。
-            {!isAdmin && " 仅超级管理员可修改。"}
+            {t("设备连接此服务器的地址（如 https://nexterm.example.com），修改只影响之后接入的设备。")}
+            {!isAdmin && t(" 仅超级管理员可修改。")}
           </p>
 
           {draft.length === 0 && (
             <div className="nx-hint py-1 text-[12px]">
-              {isAdmin ? "尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务器地址。" : "尚未配置接入地址，新设备无法接入。请联系超级管理员配置。"}
+              {isAdmin ? t("尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务器地址。") : t("尚未配置接入地址，新设备无法接入。请联系超级管理员配置。")}
             </div>
           )}
 
@@ -160,8 +161,8 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                     {entry.url}
                   </code>
                   {entry.insecure && (
-                    <span className="nx-badge nx-badge-amber shrink-0" title="允许明文 HTTP 或跳过 TLS 校验，仅限内网或自签名证书环境">
-                      不安全传输
+                    <span className="nx-badge nx-badge-amber shrink-0" title={t("允许明文 HTTP 或跳过 TLS 校验，仅限内网或自签名证书环境")}>
+                      {t("不安全传输")}
                     </span>
                   )}
                   {isAdmin && (
@@ -170,8 +171,8 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                         type="button"
                         className="nx-btn nx-btn-ghost nx-btn-xs"
                         disabled={saving || index === 0}
-                        title="上移"
-                        aria-label={`上移 ${entry.url}`}
+                        title={t("上移")}
+                        aria-label={t("上移 {url}", { url: entry.url })}
                         onClick={() => move(index, -1)}
                       >
                         <IconArrowUp size={11} />
@@ -180,8 +181,8 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                         type="button"
                         className="nx-btn nx-btn-ghost nx-btn-xs"
                         disabled={saving || index === draft.length - 1}
-                        title="下移"
-                        aria-label={`下移 ${entry.url}`}
+                        title={t("下移")}
+                        aria-label={t("下移 {url}", { url: entry.url })}
                         onClick={() => move(index, 1)}
                       >
                         <IconArrowDown size={11} />
@@ -190,8 +191,8 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                         type="button"
                         className="nx-btn nx-btn-ghost nx-btn-xs"
                         disabled={saving}
-                        title="删除"
-                        aria-label={`删除 ${entry.url}`}
+                        title={t("删除")}
+                        aria-label={t("删除 {url}", { url: entry.url })}
                         onClick={() => remove(index)}
                       >
                         <IconTrash size={11} />
@@ -211,7 +212,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                   style={{ maxWidth: 420 }}
                   placeholder="https://nexterm.example.com"
                   value={input}
-                  aria-label="新接入地址"
+                  aria-label={t("新接入地址")}
                   disabled={saving}
                   onChange={(e) => {
                     setInput(e.target.value);
@@ -234,7 +235,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                       setInputError(null);
                     }}
                   />
-                  允许明文 HTTP 或跳过 TLS 校验
+                  {t("允许明文 HTTP 或跳过 TLS 校验")}
                 </label>
                 <button
                   type="button"
@@ -243,7 +244,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                   onClick={add}
                 >
                   <IconPlus size={12} />
-                  添加
+                  {t("添加")}
                 </button>
               </div>
               {inputError && (
@@ -255,7 +256,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
               {saveError && (
                 <div className="nx-alert nx-alert-danger flex items-start gap-2">
                   <IconXCircle size={13} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">未能保存接入地址：{saveError}</span>
+                  <span className="min-w-0 flex-1 break-words">{t("未能保存接入地址：")}{saveError}</span>
                 </div>
               )}
               <div className="flex items-center gap-2">
@@ -266,9 +267,9 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
                   onClick={() => void save()}
                 >
                   <IconSave size={12} />
-                  {saving ? "正在保存…" : "保存修改"}
+                  {saving ? t("正在保存…") : t("保存修改")}
                 </button>
-                {!saving && dirty && <span className="nx-hint text-[11px]">有未保存的修改</span>}
+                {!saving && dirty && <span className="nx-hint text-[11px]">{t("有未保存的修改")}</span>}
               </div>
             </div>
           )}

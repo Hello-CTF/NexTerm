@@ -21,6 +21,7 @@ import type {
   WorkspaceRuntime,
   WorkspaceSpec,
 } from "./types";
+import { t as tr } from "../../i18n";
 
 const TOOL_TAB_KINDS = new Set<PaneKind>([
   "credentials",
@@ -63,7 +64,7 @@ export function hostHistoryTab(
   return {
     id: `history-${workspace.sessionId}`,
     kind: "hostHistory",
-    title: "终端历史",
+    title: tr("终端历史"),
     sessionId: workspace.sessionId,
     assetId: workspace.assetId,
     closable: true,
@@ -117,7 +118,7 @@ export function nextTabId(prefix: string): string {
 }
 
 export function makeAiDockTab(): AiDockTab {
-  return { id: nextTabId("ai"), title: "新会话" };
+  return { id: nextTabId("ai"), title: tr("新会话") };
 }
 
 export function makeAiBoard(): AiBoard {
@@ -140,7 +141,7 @@ export function omitWorkspaceRuntime(
   return next;
 }
 
-const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签"]);
+const PLACEHOLDER_WS_TITLES = new Set([tr("工作区"), tr("会话"), tr("标签")]);
 
 export function workspaceFieldPatch(
   w: Workspace,
@@ -313,19 +314,19 @@ export function migrateToolTabs(
     }
   }
   if (sourceTools && !multipleTools && !hasExternalToolTabs && !hasDuplicateToolTabs) {
-    if (sourceTools.title === "工具") return workspaces;
-    return workspaces.map((w) => (w === sourceTools ? { ...w, title: "工具" } : w));
+    if (sourceTools.title === tr("工具")) return workspaces;
+    return workspaces.map((w) => (w === sourceTools ? { ...w, title: tr("工具") } : w));
   }
 
   let tools: Workspace;
   if (sourceTools) {
-    tools = { ...sourceTools, title: "工具" };
+    tools = { ...sourceTools, title: tr("工具") };
   } else {
     const pane = makePane();
     tools = {
       id: nextTabId("ws-tools"),
       kind: "tools",
-      title: "工具",
+      title: tr("工具"),
       panes: [pane],
       activePaneId: pane.id,
       closable: true,

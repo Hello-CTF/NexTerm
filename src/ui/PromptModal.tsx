@@ -2,6 +2,7 @@ import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } fro
 import { useUi } from "../app/store";
 import { isMac } from "../app/platform";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "./DialogHost";
+import { t } from "../i18n";
 
 export function PromptModal() {
   const prompt = useUi((state) => state.textPrompt);
@@ -36,7 +37,7 @@ export function PromptModal() {
     if (!composingRef.current) settle(value);
   };
   const shortcut = isMac() ? "⌘+Enter" : "Ctrl+Enter";
-  const hint = multiLine ? `${shortcut} 提交，Esc 取消` : "Enter 提交，Esc 取消";
+  const hint = multiLine ? t("{shortcut} 提交，Esc 取消", { shortcut }) : t("Enter 提交，Esc 取消");
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (isImeKeyEvent(event)) return;
     if (
@@ -117,10 +118,10 @@ export function PromptModal() {
         </div>
         <div className="nx-modal-footer">
           <button type="button" className="nx-btn nx-btn-ghost" onClick={() => settle(null)}>
-            取消
+            {t("取消")}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" onClick={submit}>
-            确定
+            {t("确定")}
           </button>
         </div>
       </div>

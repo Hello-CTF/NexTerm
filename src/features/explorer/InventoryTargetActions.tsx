@@ -9,6 +9,7 @@ import type { LiveOperation } from "./inventoryLiveOperationStore";
 import { liveOperationStore } from "./inventoryLiveOperationStore";
 import { formatInventoryCommand, parseInventoryCommand } from "./inventoryCommand";
 import { Select } from "../../ui/Select";
+import { t } from "../../i18n";
 
 export interface InventoryTargetSession {
   id: string;
@@ -223,7 +224,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       if (exitFailure) {
         op.outcome = "failure";
         op.failure = {
-          message: `命令已执行但返回非零退出码（${exitFailure.exitCode}）`,
+          message: t("命令已执行但返回非零退出码（{exitCode}）", { exitCode: exitFailure.exitCode }),
           exitCode: exitFailure.exitCode,
           output: exitFailure.output,
         };
@@ -256,16 +257,16 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
       return;
     }
     if (argv.length === 0) {
-      setInputError("请输入要执行的命令");
+      setInputError(t("请输入要执行的命令"));
       return;
     }
     const resolvedContainer = container.trim();
     if (kind === "docker-context" && resolvedContainer === "") {
-      setInputError("请输入容器名");
+      setInputError(t("请输入容器名"));
       return;
     }
     if (requireSession && sessionId === "") {
-      setInputError("请选择受管会话");
+      setInputError(t("请选择受管会话"));
       return;
     }
     // Each launch freezes an immutable snapshot of the full request
@@ -318,7 +319,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
     try {
       await Promise.race([
         inventoryTargetApi.cancelExec(op.snapshot),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("取消请求超时，结果未知")), cancelTimeoutMs)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(t("取消请求超时，结果未知"))), cancelTimeoutMs)),
       ]);
     } catch (cause) {
       if (op.settled || op.cancelSeq !== seq) return;
@@ -355,29 +356,29 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
   return (
     <div className="flex flex-col gap-2">
       <div className="text-[11px] text-neutral-400">
-        目标 <span className="nx-badge nx-badge-purple">{targetText(kind, target)}</span>
+        {t("目标")} <span className="nx-badge nx-badge-purple">{targetText(kind, target)}</span>
       </div>
       {!executable && (
-        <div className="text-[11px] text-amber-300">该目标不支持执行命令</div>
+        <div className="text-[11px] text-amber-300">{t("该目标不支持执行命令")}</div>
       )}
       {executable && (
         <>
           <label className="flex items-center gap-2 text-[11px] text-neutral-400">
-            命令
+            {t("命令")}
             <input
-              aria-label="命令"
+              aria-label={t("命令")}
               className="nx-input flex-1"
               value={command}
               onChange={(event) => setCommand(event.target.value)}
-              placeholder="例如 uname -a"
+              placeholder={t("例如 uname -a")}
             />
           </label>
-          <div className="text-[11px] text-neutral-500">支持引号与转义；管道或重定向请使用 sh -c '…'。</div>
+          <div className="text-[11px] text-neutral-500">{t("支持引号与转义；管道或重定向请使用 sh -c '…'。")}</div>
           {isPod && containers.length > 0 && (
             <div className="flex items-center gap-2 text-[11px] text-neutral-400">
-              <span>容器</span>
+              <span>{t("容器")}</span>
               <Select
-                ariaLabel="容器"
+                ariaLabel={t("容器")}
                 className="flex-1"
                 value={container}
                 options={containers.map((name) => ({ value: name, label: name }))}
@@ -387,25 +388,25 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           )}
           {kind === "docker-context" && (
             <label className="flex items-center gap-2 text-[11px] text-neutral-400">
-              容器
+              {t("容器")}
               <input
-                aria-label="容器"
+                aria-label={t("容器")}
                 className="nx-input flex-1"
                 value={container}
                 onChange={(event) => setContainer(event.target.value)}
-                placeholder="容器名或 ID"
+                placeholder={t("容器名或 ID")}
               />
             </label>
           )}
           {requireSession && (
             <div className="flex items-center gap-2 text-[11px] text-neutral-400">
-              <span>受管会话</span>
+              <span>{t("受管会话")}</span>
               <Select
-                ariaLabel="受管会话"
+                ariaLabel={t("受管会话")}
                 className="flex-1"
                 value={sessionId}
                 options={[
-                  { value: "", label: "选择会话" },
+                  { value: "", label: t("选择会话") },
                   ...sessions.map((session) => ({ value: session.id, label: session.name })),
                 ]}
                 onChange={setSessionId}
@@ -414,54 +415,54 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           )}
           <div className="flex gap-2">
             <button type="button" className="nx-btn nx-btn-primary nx-btn-xs" disabled={liveOp !== null || ignoredDone} onClick={() => void run()}>
-              执行
+              {t("执行")}
             </button>
             {(isRunning || isCancelFailed) && canCancel && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void cancelExecution()}>
-                {isCancelFailed ? "重试取消" : "取消执行"}
+                {isCancelFailed ? t("重试取消") : t("取消执行")}
               </button>
             )}
             {isRunning && !isIgnored && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={ignoreResults}>
-                忽略结果
+                {t("忽略结果")}
               </button>
             )}
             {(result || failure || cancelled || ignoredDone || inputError) && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={clearSettled}>
-                清除
+                {t("清除")}
               </button>
             )}
           </div>
-          {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">正在执行…</div>}
+          {(isCancelPending || isCancelFailed || (isRunning && !isIgnored)) && <div className="text-[11px] text-neutral-400">{t("正在执行…")}</div>}
           {liveOp !== null && liveOp.ownerKey !== ownerKey && (
             <div role="note" className="text-[11px] text-amber-300">
-              操作仍在目标上执行；切换回发起该操作的账号后才能取消
+              {t("操作仍在目标上执行；切换回发起该操作的账号后才能取消")}
             </div>
           )}
           {isIgnored && !isCancelPending && !isCancelFailed && (
             <div role="note" className="text-[11px] text-amber-300">
-              命令仍在目标上执行；结果已忽略，不代表命令已停止
+              {t("命令仍在目标上执行；结果已忽略，不代表命令已停止")}
             </div>
           )}
           {isCancelFailed && (
             <div role="note" className="text-[11px] text-amber-300">
-              取消失败：{liveOp?.cancelError}；命令仍在目标上执行
+              {t("取消失败：")}{liveOp?.cancelError}{t("；命令仍在目标上执行")}
             </div>
           )}
           {isCancelPending && (
             <div role="note" className="text-[11px] text-amber-300">
-              命令仍在目标上执行<span>正在取消…</span>
+              {t("命令仍在目标上执行")}<span>{t("正在取消…")}</span>
             </div>
           )}
           {cancelled && (
-            <div role="note" className="text-[11px] text-neutral-300">执行已取消</div>
+            <div role="note" className="text-[11px] text-neutral-300">{t("执行已取消")}</div>
           )}
           {ignoredDone && (
-            <div role="note" className="text-[11px] text-neutral-300">命令已结束；结果已忽略</div>
+            <div role="note" className="text-[11px] text-neutral-300">{t("命令已结束；结果已忽略")}</div>
           )}
           {result && (
             <div role="status" className="text-[11px] text-neutral-300">
-              <div>退出码 {result.exitCode}</div>
+              <div>{t("退出码")} {result.exitCode}</div>
               <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.output}</pre>
             </div>
           )}
@@ -471,7 +472,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           {failure && (
             <div role="alert" className="text-[11px] text-red-300">
               <div>{failure.message}</div>
-              {failure.exitCode !== undefined && <div>退出码 {failure.exitCode}</div>}
+              {failure.exitCode !== undefined && <div>{t("退出码")} {failure.exitCode}</div>}
               {failure.output !== undefined && (
                 <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{failure.output}</pre>
               )}

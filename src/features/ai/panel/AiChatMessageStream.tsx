@@ -6,6 +6,7 @@ import { PLAN_EXECUTE_MESSAGE, confirmTitle, toolLabel, CONFIRM_HELP, permanentS
 import { CONFIRM_ACTION_LABELS, CONFIRM_ALWAYS_BLOCK_LABEL } from "./aiConfirmLabels";
 import { ChatBubble, ConfirmBody, ProductionEnvironmentChallenge } from "./AiMessageBubbles";
 import type { AiChatCtx } from "./aiChatCtx";
+import { t as tr } from "../../../i18n";
 
 // Onboarding: with no model profile the composer cannot work, so the empty
 // conversation says so and offers the next step.
@@ -27,9 +28,9 @@ function NoModelHint({ onConfigure }: { onConfigure: () => void }) {
   if (!none) return null;
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="text-xs text-amber-300">尚未配置模型，AI 暂时无法回答。</div>
+      <div className="text-xs text-amber-300">{tr("尚未配置模型，AI 暂时无法回答。")}</div>
       <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={onConfigure}>
-        添加模型
+        {tr("添加模型")}
       </button>
     </div>
   );
@@ -43,13 +44,13 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
         <div
           ref={setScrollEl}
           role="log"
-          aria-label="AI 对话记录"
+          aria-label={tr("AI 对话记录")}
           className="h-full overflow-y-auto p-3"
         >
           {messageWindowStart > 0 && (
             <div className="mb-2 flex justify-center">
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={loadOlderMessages}>
-                加载更早消息
+                {tr("加载更早消息")}
               </button>
             </div>
           )}
@@ -58,7 +59,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconAlert size={19} />
               </span>
-              <div className="text-xs text-red-300">未能打开此会话：{conversationError}。请检查网络后重试</div>
+              <div className="text-xs text-red-300">{tr("未能打开此会话：")}{conversationError}{tr("。请检查网络后重试")}</div>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 onClick={() => {
@@ -67,7 +68,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 }}
               >
                 <IconRefresh size={11} />
-                重试
+                {tr("重试")}
               </button>
             </div>
           )}
@@ -76,7 +77,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconBot size={19} />
               </span>
-              <div className="text-xs text-neutral-400">在下方输入内容，开始新的对话。</div>
+              <div className="text-xs text-neutral-400">{tr("在下方输入内容，开始新的对话。")}</div>
               <NoModelHint onConfigure={() => setModelPanelOpen(true)} />
             </div>
           )}
@@ -146,7 +147,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 <span
                   className="shrink-0 cursor-help text-neutral-500"
                   title={CONFIRM_HELP}
-                  aria-label="授权说明"
+                  aria-label={tr("授权说明")}
                   role="img"
                 >
                   <IconInfo size={12} />
@@ -166,7 +167,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
                   className={`nx-btn ${confirmCard.risk === "danger" ? "nx-btn-danger-solid" : "nx-btn-primary"} nx-btn-xs`}
-                  title="只允许这一次"
+                  title={tr("只允许这一次")}
                   disabled={submittingCardId === confirmCard.id || productionBlocked}
                   onClick={() => void confirm("allow")}
                 >
@@ -175,7 +176,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 {confirmCard.sessionScope && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
-                    title={`本次对话中不再询问：${confirmCard.sessionScope}`}
+                    title={tr("本次对话中不再询问：{sessionScope}", { sessionScope: confirmCard.sessionScope })}
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_session")}
                   >
@@ -185,7 +186,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 {confirmCard.permanentScope && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
-                    title={`${permanentScopeText(confirmCard)}；只读模式和定时任务中不生效，可随时在授权管理中撤销`}
+                    title={tr("{value}；只读模式和定时任务中不生效，可随时在授权管理中撤销", { value: permanentScopeText(confirmCard) })}
                     disabled={submittingCardId === confirmCard.id || productionBlocked}
                     onClick={() => void confirm("allow_persistent")}
                   >
@@ -194,7 +195,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 )}
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs"
-                  title="拒绝本次操作，AI 将收到拒绝通知（Esc）"
+                  title={tr("拒绝本次操作，AI 将收到拒绝通知（Esc）")}
                   disabled={submittingCardId === confirmCard.id}
                   onClick={() => void confirm("deny")}
                 >
@@ -204,13 +205,13 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                 {interceptionRuleFromCard(confirmCard) && (
                   <button
                     className="text-[10.5px] text-neutral-500 underline-offset-2 hover:text-neutral-300 hover:underline"
-                    title="打开设置中的拦截规则，并预填当前操作"
+                    title={tr("打开设置中的拦截规则，并预填当前操作")}
                     onClick={() => {
                       const rule = interceptionRuleFromCard(confirmCard);
                       if (!rule) return;
                       const ui = useUi.getState();
                       ui.setAiRulePrefill(rule);
-                      ui.addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+                      ui.addTab({ id: "settings", kind: "settings", title: tr("设置"), closable: true });
                     }}
                   >
                     {CONFIRM_ALWAYS_BLOCK_LABEL}
@@ -219,7 +220,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               </div>
               {confirmCard.sessionScope && (
                 <div className="mt-1.5 text-[10.5px] leading-relaxed text-neutral-500">
-                  「本会话允许」后，本次对话内不再询问：{confirmCard.sessionScope}
+                  {tr("「本会话允许」后，本次对话内不再询问：")}{confirmCard.sessionScope}
                 </div>
               )}
             </div>
@@ -235,7 +236,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
             >
               <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
                 <IconAlert size={13} />
-                AI 需要你回答
+                {tr("AI 需要你回答")}
               </div>
               <div className="mb-2 whitespace-pre-wrap text-[12px] leading-relaxed text-neutral-200">
                 {questionCard.question}
@@ -260,8 +261,8 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                   className="nx-textarea pointer-coarse:text-[16px] min-h-[36px] flex-1"
                   rows={2}
                   value={questionInput}
-                  placeholder="输入回答…"
-                  aria-label="回答 AI 的问题"
+                  placeholder={tr("输入回答…")}
+                  aria-label={tr("回答 AI 的问题")}
                   onChange={(event) => setQuestionInput(event.target.value)}
                 />
                 <button
@@ -269,7 +270,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
                   className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
                   disabled={!questionInput.trim() || submittingCardId === questionCard.id}
                 >
-                  回答
+                  {tr("回答")}
                 </button>
               </div>
             </form>
@@ -279,7 +280,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
             <div className="mt-2.5 rounded-lg border border-neutral-800/60 bg-neutral-900/50 px-2.5 py-2">
               <div className="mb-1 flex items-center gap-1.5 text-[10.5px] text-neutral-400">
                 <IconList size={11} />
-                任务清单
+                {tr("任务清单")}
                 <span className="text-[var(--nx-fg-tertiary)]">
                   {conv.todos.filter((t) => t.status === "completed").length}/{conv.todos.length}
                 </span>
@@ -317,10 +318,10 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
           <button
             type="button"
             className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700"
-            aria-label="回到最新输出"
+            aria-label={tr("回到最新输出")}
             onClick={follow.jumpToLatest}
           >
-            ↓ 新输出
+            {tr("↓ 新输出")}
           </button>
         )}
       </div>

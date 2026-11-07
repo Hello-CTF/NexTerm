@@ -24,6 +24,7 @@ import {
 } from "../../ui/icons";
 import { type OverlayDock } from "./useOverlayDocks";
 import { type WorkspaceActions } from "./useWorkspaceActions";
+import { t } from "../../i18n";
 
 export interface AppRailProps {
   overlaySidebars: boolean;
@@ -76,10 +77,10 @@ export function AppRail({
   }[] = [
     {
       key: "assets",
-      label: "资产",
+      label: t("资产"),
       hint: hasHost
-        ? "临时切换到资产树；双击收起左侧栏"
-        : "管理主机和数据库；双击收起左侧栏",
+        ? t("临时切换到资产树；双击收起左侧栏")
+        : t("管理主机和数据库；双击收起左侧栏"),
       icon: IconServer,
       onClick: () => {
         if (showLeftPanel("assets", leftDockOpen)) setLeftOpen(true);
@@ -87,8 +88,8 @@ export function AppRail({
     },
     {
       key: "credentials",
-      label: "凭据",
-      hint: "管理密码和私钥；双击收起左侧栏",
+      label: t("凭据"),
+      hint: t("管理密码和私钥；双击收起左侧栏"),
       icon: IconKey,
       onClick: () => {
         if (showLeftPanel("credentials", leftDockOpen)) setLeftOpen(true);
@@ -106,10 +107,10 @@ export function AppRail({
   }[  ] = [
     ...(backgroundAvailable ? [{
       key: "background",
-      label: "后台会话",
+      label: t("后台会话"),
       hint: backgroundCount
-        ? `该主机有 ${backgroundCount} 个后台会话`
-        : "查看并接管该主机的后台会话",
+        ? t("该主机有 {backgroundCount} 个后台会话", { backgroundCount })
+        : t("查看并接管该主机的后台会话"),
       icon: IconActivity,
       onClick: openBackground,
       badge: backgroundCount ?? undefined,
@@ -118,8 +119,8 @@ export function AppRail({
       ? [
           {
             key: "host-detail",
-            label: "主机详情",
-            hint: "当前主机的会话、容器、端口、进程和指标",
+            label: t("主机详情"),
+            hint: t("当前主机的会话、容器、端口、进程和指标"),
             icon: IconInfo,
             onClick: () => openHostDetail(hostAssetId),
           },
@@ -127,8 +128,8 @@ export function AppRail({
       : []),
     {
       key: "history",
-      label: "终端历史",
-      hint: hasHost && workspace?.assetId ? "回看和搜索当前主机的终端历史输出" : "回看和搜索终端的历史输出",
+      label: t("终端历史"),
+      hint: hasHost && workspace?.assetId ? t("回看和搜索当前主机的终端历史输出") : t("回看和搜索终端的历史输出"),
       icon: IconClock,
       onClick: openHistory,
     },
@@ -136,8 +137,8 @@ export function AppRail({
       ? [
           {
             key: "docker",
-            label: "容器",
-            hint: "查看容器状态与日志，进入容器终端",
+            label: t("容器"),
+            hint: t("查看容器状态与日志，进入容器终端"),
             icon: IconBox,
             onClick: openDocker,
           },
@@ -147,8 +148,8 @@ export function AppRail({
       ? [
           {
             key: "db",
-            label: "数据库",
-            hint: "查询 MySQL / PostgreSQL / Redis 资产",
+            label: t("数据库"),
+            hint: t("查询 MySQL / PostgreSQL / Redis 资产"),
             icon: IconDatabase,
             onClick: () => void openDatabase(),
           },
@@ -158,8 +159,8 @@ export function AppRail({
       ? []
       : [{
           key: "mount",
-          label: "磁盘挂载",
-          hint: "将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问",
+          label: t("磁盘挂载"),
+          hint: t("将 SSH 资产的远程目录挂载到本地，作为本地磁盘访问"),
           icon: IconDrive,
           onClick: openMount,
         }]),
@@ -167,15 +168,15 @@ export function AppRail({
       ? [
           {
             key: "forward",
-            label: "端口转发",
-            hint: "将远程端口转发到本地：本地端口映射或 SOCKS5 代理",
+            label: t("端口转发"),
+            hint: t("将远程端口转发到本地：本地端口映射或 SOCKS5 代理"),
             icon: IconNetwork,
             onClick: openForward,
           },
           {
             key: "logs",
-            label: "日志",
-            hint: "实时查看日志文件、journalctl 或容器日志",
+            label: t("日志"),
+            hint: t("实时查看日志文件、journalctl 或容器日志"),
             icon: IconList,
             onClick: openLogs,
           },
@@ -184,13 +185,13 @@ export function AppRail({
   ];
 
   const railBottom = [
-    { key: "devices", label: "设备管理", hint: "管理已接入的设备并打开远程终端", icon: IconMonitor, onClick: actions.openDevices },
-    { key: "audit", label: "审计日志", hint: "查看用户和 AI 的操作记录", icon: IconHistory, onClick: actions.openAudit },
-    { key: "settings", label: "设置", hint: "外观、快捷键、AI、凭据库与账号同步", icon: IconSettings, onClick: actions.openSettings },
+    { key: "devices", label: t("设备管理"), hint: t("管理已接入的设备并打开远程终端"), icon: IconMonitor, onClick: actions.openDevices },
+    { key: "audit", label: t("审计日志"), hint: t("查看用户和 AI 的操作记录"), icon: IconHistory, onClick: actions.openAudit },
+    { key: "settings", label: t("设置"), hint: t("外观、快捷键、AI、凭据库与账号同步"), icon: IconSettings, onClick: actions.openSettings },
   ];
 
   return (
-    <nav className="nx-rail" aria-label="主导航">
+    <nav className="nx-rail" aria-label={t("主导航")}>
       <div className="mb-2 flex items-center justify-center nx-rail-btn" data-tip="NexTerm">
         <Logo size={26} />
       </div>
@@ -209,8 +210,8 @@ export function AppRail({
       ))}
       <button
         className={`nx-rail-btn ${homeOpen ? "is-active" : ""}`}
-        data-tip={needsMe > 0 ? `所有终端的状态一览（${needsMe} 个需要处理）` : "所有终端的状态一览"}
-        aria-label="会话总览"
+        data-tip={needsMe > 0 ? t("所有终端的状态一览（{needsMe} 个需要处理）", { needsMe }) : t("所有终端的状态一览")}
+        aria-label={t("会话总览")}
         aria-pressed={homeOpen}
         onClick={() => {
           if (homeOpen) {

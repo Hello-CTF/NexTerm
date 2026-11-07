@@ -1,9 +1,10 @@
 import { validateResolution } from "../explorer/assetKindFields";
+import { t } from "../../i18n";
 
 // Reads "1600x900", "1600 x 900", "1600*900" or "1600×900". Returns the size, or the reason it is not usable.
 export function parseResolutionInput(text: string): { ok: true; width: number; height: number } | { ok: false; error: string } {
   const match = /^\s*(\d+)\s*[x×*X]\s*(\d+)\s*$/.exec(text);
-  if (!match) return { ok: false, error: "请输入“宽 x 高”，例如 1600 x 900" };
+  if (!match) return { ok: false, error: t("请输入“宽 x 高”，例如 1600 x 900") };
   const width = Number(match[1]);
   const height = Number(match[2]);
   const problem = validateResolution(width, height);

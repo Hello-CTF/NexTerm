@@ -5,6 +5,7 @@ import { showSettingsSection } from "../settings/settingsNavigation";
 import { dismissInboxGuidance } from "./firstRunGuidance";
 import { refreshNotificationStatus } from "./inboxNotifications";
 import { systemNotifier, type SystemNotificationStatus } from "./systemNotifications";
+import { t } from "../../i18n";
 
 // InboxGuidance is the one-time note shown the first time a session needs the user or finishes: what the
 // badges and the bell mean, a way to allow system notifications, and a link to the notification settings.
@@ -37,7 +38,7 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
   }, []);
 
   const openSettings = useCallback(() => {
-    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
     showSettingsSection("settings-notifications");
     dismissInboxGuidance();
     onNavigate();
@@ -48,23 +49,23 @@ export function InboxGuidance({ onNavigate }: { onNavigate: () => void }) {
     <section
       className="mb-1.5 rounded-md border border-neutral-800 bg-neutral-950/60 px-2.5 py-2 text-[12px] text-neutral-300"
       data-inbox-guidance
-      aria-label="收件箱说明"
+      aria-label={t("收件箱说明")}
     >
-      <p className="text-neutral-200">收件箱说明</p>
-      <p className="nx-hint mt-1">标签页圆点表示会话需要处理或长命令已结束，铃铛汇总全部。</p>
-      {canEnable && <p className="nx-hint mt-1">开启系统通知，窗口在后台也能提醒。</p>}
+      <p className="text-neutral-200">{t("收件箱说明")}</p>
+      <p className="nx-hint mt-1">{t("标签页圆点表示会话需要处理或长命令已结束，铃铛汇总全部。")}</p>
+      {canEnable && <p className="nx-hint mt-1">{t("开启系统通知，窗口在后台也能提醒。")}</p>}
       {error && <p className="mt-1 text-[11.5px] text-red-400">{error}</p>}
       <div className="mt-2 flex flex-wrap gap-1.5">
         {canEnable && (
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" data-guidance="enable" onClick={enable}>
-            允许系统通知
+            {t("允许系统通知")}
           </button>
         )}
         <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" data-guidance="settings" onClick={openSettings}>
-          通知设置
+          {t("通知设置")}
         </button>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" data-guidance="dismiss" onClick={dismissInboxGuidance}>
-          确定
+          {t("确定")}
         </button>
       </div>
     </section>

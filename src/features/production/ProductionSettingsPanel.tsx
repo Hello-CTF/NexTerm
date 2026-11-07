@@ -9,6 +9,7 @@ import {
   type ProductionSettingsDTO,
   type ProductionSettingsUpdateRequest,
 } from "./productionSettings";
+import { t } from "../../i18n";
 
 // R-01/R-07 per-owner production safety settings: the configurable production
 // environment list and the surface connect opt-in pairs (cron, broadcast,
@@ -40,10 +41,10 @@ interface ConnectRow {
 }
 
 const CONNECT_ROWS: ConnectRow[] = [
-  { label: "定时任务", hint: "运行时目标主机未连接", connect: "cronConnectOptIn", production: "cronConnectProductionOptIn" },
-  { label: "广播", hint: "广播目标的连接已断开", connect: "broadcastConnectOptIn", production: "broadcastConnectProductionOptIn" },
-  { label: "目标集批量执行", hint: "目标集中有未连接的主机", connect: "targetSetConnectOptIn", production: "targetSetConnectProductionOptIn" },
-  { label: "AI 打开终端", hint: "AI 要在未连接的主机上打开终端", connect: "aiTerminalConnectOptIn", production: "aiTerminalConnectProductionOptIn" },
+  { label: t("定时任务"), hint: t("运行时目标主机未连接"), connect: "cronConnectOptIn", production: "cronConnectProductionOptIn" },
+  { label: t("广播"), hint: t("广播目标的连接已断开"), connect: "broadcastConnectOptIn", production: "broadcastConnectProductionOptIn" },
+  { label: t("目标集批量执行"), hint: t("目标集中有未连接的主机"), connect: "targetSetConnectOptIn", production: "targetSetConnectProductionOptIn" },
+  { label: t("AI 打开终端"), hint: t("AI 要在未连接的主机上打开终端"), connect: "aiTerminalConnectOptIn", production: "aiTerminalConnectProductionOptIn" },
 ];
 
 // One choice covers both stored flags. The production flag counts only while connect is on, so a stored
@@ -51,9 +52,9 @@ const CONNECT_ROWS: ConnectRow[] = [
 type ConnectChoice = "off" | "non-production" | "all";
 
 const CONNECT_CHOICES: { value: ConnectChoice; label: string }[] = [
-  { value: "off", label: "不自动连接" },
-  { value: "non-production", label: "仅非生产主机" },
-  { value: "all", label: "包括生产主机" },
+  { value: "off", label: t("不自动连接") },
+  { value: "non-production", label: t("仅非生产主机") },
+  { value: "all", label: t("包括生产主机") },
 ];
 
 function connectChoice(connect: boolean, production: boolean): ConnectChoice {
@@ -113,7 +114,7 @@ export function ProductionSettingsPanel() {
     } catch (cause) {
       if (!aliveRef.current || gen !== loadGenRef.current) return false;
       if (useUi.getState().accountEpoch !== accountEpoch) return false;
-      pushToast("error", `保存失败：${describeError(cause)}`);
+      pushToast("error", t("保存失败：{value}", { value: describeError(cause) }));
       return false;
     }
   };
@@ -134,11 +135,11 @@ export function ProductionSettingsPanel() {
     const name = nameInput.trim();
     if (name === "") return;
     if (name.length > MAX_ENVIRONMENT_LENGTH) {
-      setError(`环境名最长 ${MAX_ENVIRONMENT_LENGTH} 个字符`);
+      setError(t("环境名最长 {MAX_ENVIRONMENT_LENGTH} 个字符", { MAX_ENVIRONMENT_LENGTH }));
       return;
     }
     if (names.length >= MAX_ENVIRONMENT_NAMES) {
-      setError(`最多添加 ${MAX_ENVIRONMENT_NAMES} 个环境名`);
+      setError(t("最多添加 {MAX_ENVIRONMENT_NAMES} 个环境名", { MAX_ENVIRONMENT_NAMES }));
       return;
     }
     setError(null);
@@ -146,11 +147,11 @@ export function ProductionSettingsPanel() {
       setNameInput("");
       return;
     }
-    if (await saveNames([...names, name], `已将 ${name} 设为生产环境`)) setNameInput("");
+    if (await saveNames([...names, name], t("已将 {name} 设为生产环境", { name }))) setNameInput("");
   };
 
   const removeName = (name: string) =>
-    void saveNames(names.filter((existing) => existing !== name), `已移除生产环境名 ${name}`);
+    void saveNames(names.filter((existing) => existing !== name), t("已移除生产环境名 {name}", { name }));
 
   const chooseConnect = async (row: ConnectRow, choice: ConnectChoice) => {
     if (!settings || connectChoice(settings[row.connect], settings[row.production]) === choice) return;
@@ -161,14 +162,14 @@ export function ProductionSettingsPanel() {
   };
 
   return (
-    <section id="settings-production" className="nx-card scroll-mt-12" aria-label="生产安全">
+    <section id="settings-production" className="nx-card scroll-mt-12" aria-label={t("生产安全")}>
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">生产安全</span>
-        <span className="nx-badge" title="这些设置仅对当前登录的账号生效，不影响其他账号">仅对当前账号生效</span>
+        <span className="nx-card-title">{t("生产安全")}</span>
+        <span className="nx-badge" title={t("这些设置仅对当前登录的账号生效，不影响其他账号")}>{t("仅对当前账号生效")}</span>
       </div>
       <p className="nx-hint mb-3">
-        对生产主机执行会改动系统的操作前，须手动输入环境名确认；带 <code>production</code>、<code>prod</code> 标签或下方环境名的主机按生产处理。
+        {t("对生产主机执行会改动系统的操作前，须手动输入环境名确认；带")} <code>production</code>、<code>prod</code> {t("标签或下方环境名的主机按生产处理。")}
       </p>
 
       {error && (
@@ -177,23 +178,23 @@ export function ProductionSettingsPanel() {
         </div>
       )}
 
-      <div className="mb-1 text-[12.5px] text-neutral-200">自定义生产环境名</div>
+      <div className="mb-1 text-[12.5px] text-neutral-200">{t("自定义生产环境名")}</div>
       <p className="nx-hint mb-2">
-        主机标签为 <code>env:live</code> 时添加 <code>live</code>，不区分大小写。
+        {t("主机标签为")} <code>env:live</code> {t("时添加")} <code>live</code>{t("，不区分大小写。")}
       </p>
       {settings === null && error === null ? (
-        <div className="nx-hint mb-2" role="status">正在加载…</div>
+        <div className="nx-hint mb-2" role="status">{t("正在加载…")}</div>
       ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
-            {names.length === 0 && <span className="nx-hint">暂无自定义名称。</span>}
+            {names.length === 0 && <span className="nx-hint">{t("暂无自定义名称。")}</span>}
             {names.map((name) => (
               <span key={name} className="nx-chip" title={name}>
                 <span className="truncate">{name}</span>
                 <button
                   type="button"
                   className="nx-chip-x"
-                  aria-label={`移除生产环境名 ${name}`}
+                  aria-label={t("移除生产环境名 {name}", { name })}
                   disabled={pendingKey !== null}
                   onClick={() => removeName(name)}
                 >
@@ -205,8 +206,8 @@ export function ProductionSettingsPanel() {
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <input
               className="nx-input max-w-56"
-              aria-label="新增生产环境名"
-              placeholder="例如 live"
+              aria-label={t("新增生产环境名")}
+              placeholder={t("例如 live")}
               value={nameInput}
               maxLength={MAX_ENVIRONMENT_LENGTH}
               disabled={settings === null || pendingKey !== null}
@@ -221,19 +222,19 @@ export function ProductionSettingsPanel() {
             <button
               type="button"
               className="nx-btn nx-btn-sm"
-              aria-label="添加生产环境名"
+              aria-label={t("添加生产环境名")}
               disabled={settings === null || pendingKey !== null || nameInput.trim() === ""}
               onClick={() => void addName()}
             >
               <IconPlus size={12} />
-              {pendingKey === "productionEnvironments" ? "正在保存…" : "添加"}
+              {pendingKey === "productionEnvironments" ? t("正在保存…") : t("添加")}
             </button>
           </div>
         </>
       )}
 
-      <div className="mb-1 mt-4 text-[12.5px] text-neutral-200">自动连接未连接的主机</div>
-      <p className="nx-hint mb-2">只连接已确认主机密钥的主机，且需先解锁凭据库。</p>
+      <div className="mb-1 mt-4 text-[12.5px] text-neutral-200">{t("自动连接未连接的主机")}</div>
+      <p className="nx-hint mb-2">{t("只连接已确认主机密钥的主机，且需先解锁凭据库。")}</p>
       <div className="flex flex-col gap-2">
         {CONNECT_ROWS.map((row) => {
           const choice = connectChoice(settings?.[row.connect] ?? false, settings?.[row.production] ?? false);
@@ -244,7 +245,7 @@ export function ProductionSettingsPanel() {
                 <span className="nx-hint block">{row.hint}</span>
               </div>
               <Select
-                ariaLabel={`${row.label}：自动连接`}
+                ariaLabel={t("{label}：自动连接", { label: row.label })}
                 className="w-full sm:w-44"
                 value={choice}
                 options={CONNECT_CHOICES}

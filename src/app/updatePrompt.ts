@@ -1,6 +1,7 @@
 import { DESKTOP } from "../ipc/env";
 import { askChoice } from "../ui/dialogs";
 import { getUpdateState, useUpdateStore } from "./useUpdate";
+import { t } from "../i18n";
 
 // Never prompt when the current version is not trustworthy: for dev builds (Version="dev") and the CI placeholder (0.0.0),
 // the backend isNewerVersion is always true, so without this guard every startup would prompt.
@@ -23,14 +24,14 @@ export async function promptUpdateIfNeeded(): Promise<void> {
   // Record before prompting: re-entry during await will not prompt twice for the same version; only one prompt per launch.
   useUpdateStore.setState({ remindedVersion: status.version });
   const choice = await askChoice(
-    `发现新版本 v${status.version}${status.prerelease ? "（RC 候选版本）" : ""}（当前 v${status.currentVersion}）`,
+    t("发现新版本 v{version}{value}（当前 v{currentVersion}）", { version: status.version, value: status.prerelease ? t("（RC 候选版本）") : "", currentVersion: status.currentVersion }),
     {
-      title: "软件更新",
+      title: t("软件更新"),
       level: "info",
       choices: [
-        { key: "update", label: "更新", hint: `下载并安装 v${status.version}`, primary: true },
-        { key: "skip", label: "跳过当前版本", hint: "不再提醒此版本" },
-        { key: "later", label: "稍后再说" },
+        { key: "update", label: t("更新"), hint: t("下载并安装 v{version}", { version: status.version }), primary: true },
+        { key: "skip", label: t("跳过当前版本"), hint: t("不再提醒此版本") },
+        { key: "later", label: t("稍后再说") },
       ],
     },
   );

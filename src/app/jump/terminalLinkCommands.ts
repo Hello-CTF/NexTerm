@@ -2,6 +2,7 @@ import type { TerminalLinkSource } from "../../features/terminal/terminalLinkReg
 import { cleanTerminalLink, displayTerminalLink } from "../../features/terminal/terminalLinks";
 import { IconTerminal } from "../../ui/icons";
 import type { JumpCommand } from "./useJumpCommands";
+import { t } from "../../i18n";
 
 const MAX_LINK_COMMANDS = 50;
 const HINT_LIMIT = 48;
@@ -13,7 +14,7 @@ export function terminalLinkCommands(source: TerminalLinkSource, bindingHint?: s
   const commands: JumpCommand[] = [
     {
       id: "terminal-links-panel",
-      label: "终端链接面板",
+      label: t("终端链接面板"),
       hint: bindingHint,
       icon: IconTerminal,
       run: () => source.openPanel(),
@@ -26,7 +27,7 @@ export function terminalLinkCommands(source: TerminalLinkSource, bindingHint?: s
       id: `terminal-link-${index}`,
       label: displayTerminalLink(link.url),
       hint: context || undefined,
-      section: "当前终端链接",
+      section: t("当前终端链接"),
       icon: IconTerminal,
       run: () => source.open(link.url),
     });

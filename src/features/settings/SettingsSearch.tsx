@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type KeyboardEvent, type RefObject } from "
 import { isImeKeyEvent } from "../../ui/DialogHost";
 import { IconSearch } from "../../ui/icons";
 import type { SettingsSearchResult } from "./settingsIndex";
+import { t } from "../../i18n";
 
 interface Props {
   query: string;
@@ -51,8 +52,8 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
           type="search"
           role="combobox"
           className="nx-input nx-input-sm w-full pl-7"
-          placeholder="搜索设置（按 / 聚焦）"
-          aria-label="搜索设置"
+          placeholder={t("搜索设置（按 / 聚焦）")}
+          aria-label={t("搜索设置")}
           aria-expanded={searching && results.length > 0}
           aria-autocomplete="list"
           aria-controls={searching ? listId : undefined}
@@ -64,18 +65,18 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
         />
       </div>
       <span className="nx-sr-only" role="status">
-        {searching ? `${results.length} 个结果` : ""}
+        {searching ? t("{length} 个结果", { length: results.length }) : ""}
       </span>
       {searching &&
         (results.length === 0 ? (
           <p className="nx-hint px-1 py-3">
-            未找到与「{query.trim()}」相关的设置
+            {t("未找到与「")}{query.trim()}{t("」相关的设置")}
           </p>
         ) : (
           <ul
             id={listId}
             role="listbox"
-            aria-label="设置搜索结果"
+            aria-label={t("设置搜索结果")}
             className="mt-1.5 flex max-h-64 flex-col gap-0.5 overflow-y-auto md:max-h-none"
           >
             {results.map((result, index) => (
@@ -93,7 +94,7 @@ export function SettingsSearch({ query, onQueryChange, results, onSelect, inputR
               >
                 <div className="text-[12.5px]">{result.label}</div>
                 <div className="nx-hint">
-                  {result.kind === "item" ? result.detail : `分区 · ${result.detail}`}
+                  {result.kind === "item" ? result.detail : t("分区 · {detail}", { detail: result.detail })}
                 </div>
               </li>
             ))}

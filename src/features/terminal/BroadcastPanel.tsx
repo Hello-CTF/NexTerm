@@ -1,12 +1,13 @@
 import { useUi, type BroadcastTargetStatus, useSessionList, useWorkspaceList } from "../../app/store";
 import { IconClose, IconZap } from "../../ui/icons";
 import { collectBroadcastCandidates } from "./broadcast";
+import { t } from "../../i18n";
 
 const STATUS_LABEL: Record<BroadcastTargetStatus, string> = {
-  pending: "发送中",
-  sent: "已发送",
-  skipped: "已跳过",
-  failed: "失败",
+  pending: t("发送中"),
+  sent: t("已发送"),
+  skipped: t("已跳过"),
+  failed: t("失败"),
 };
 
 export function BroadcastStrip(props: {
@@ -37,28 +38,28 @@ export function BroadcastStrip(props: {
       <div className="flex flex-wrap items-center gap-2">
         <IconZap size={13} className="shrink-0" />
         <span>
-          广播已开启：此来源终端的输入将发送到 {broadcast.targetIds.length} 个目标
+          {t("广播已开启：此来源终端的输入将发送到")} {broadcast.targetIds.length} {t("个目标")}
           {writable < broadcast.targetIds.length
-            ? `（${broadcast.targetIds.length - writable} 个当前不可写）`
+            ? t("（{value} 个当前不可写）", { value: broadcast.targetIds.length - writable })
             : ""}
         </span>
         <div className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={props.onManage}>
-          管理目标
+          {t("管理目标")}
         </button>
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm"
           onClick={() => {
             setBroadcast(null);
-            pushToast("info", "广播已关闭，输入只发送到当前终端");
+            pushToast("info", t("广播已关闭，输入只发送到当前终端"));
           }}
         >
           <IconClose size={12} />
-          关闭广播
+          {t("关闭广播")}
         </button>
       </div>
-      <div className="mt-1.5 flex max-h-24 flex-wrap gap-1 overflow-y-auto" aria-label="广播目标状态">
+      <div className="mt-1.5 flex max-h-24 flex-wrap gap-1 overflow-y-auto" aria-label={t("广播目标状态")}>
         {broadcast.targetIds.map((targetId) => {
           const candidate = candidateById.get(targetId);
           const report = broadcast.results[targetId];
@@ -74,7 +75,7 @@ export function BroadcastStrip(props: {
             >
               <span className="min-w-0 truncate">{label}</span>
               <span className="shrink-0 font-medium">
-                {report ? STATUS_LABEL[report.status] : "等待输入"}
+                {report ? STATUS_LABEL[report.status] : t("等待输入")}
               </span>
             </span>
           );

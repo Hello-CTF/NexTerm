@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 export { bytesToBase64 } from "../../ui/base64";
 
 // MAX_PASTE_FILE_BYTES is the per-file size limit for files pasted or dropped into the terminal.
@@ -41,12 +42,12 @@ export function pasteUploadFiles(data: DataTransfer | null): PasteUploadSelectio
       }
       if (entry?.isDirectory) {
         onlyImages = false;
-        skipped.push(`文件夹「${displayFileName(entry.name ?? "")}」`);
+        skipped.push(t("文件夹「{value}」", { value: displayFileName(entry.name ?? "") }));
         continue;
       }
       const file = item.getAsFile();
       if (file) files.push(file);
-      else skipped.push("无法读取的项目");
+      else skipped.push(t("无法读取的项目"));
     }
   } else {
     for (const file of data.files ?? []) {
@@ -154,7 +155,7 @@ export function randomizedPasteFileName(name: string, token: string): string {
 
 // displayFileName renders an untrusted name for status messages without control or format characters.
 export function displayFileName(name: string): string {
-  return name.replace(UNSAFE_TEXT, "") || "未命名";
+  return name.replace(UNSAFE_TEXT, "") || t("未命名");
 }
 
 // clipboardHasPlainText reports whether a mixed clipboard has usable plain text:

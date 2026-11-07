@@ -223,7 +223,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   const startedEpoch = currentAuthSessionEpoch();
   const ensureCurrent = () => {
     if (currentAuthSessionEpoch() !== startedEpoch) {
-      throw { code: "account_changed", message: "账号已切换，旧请求已取消" } satisfies AppError;
+      throw { code: "account_changed", message: t("账号已切换，旧请求已取消") } satisfies AppError;
     }
   };
   const { channel, clientId: stableClientId, ...requestBody } = args ?? {};
@@ -259,12 +259,12 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
   } catch {
     throw {
       code: "internal",
-      message: "服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理",
+      message: t("服务未返回有效结果，请稍后重试；若持续出现，请检查服务版本或网络代理"),
       detail: { httpStatus: res.status, body: text.slice(0, 200) },
     } satisfies AppError;
   }
   if (!body || body.ok !== true) {
-    throw (body?.error ?? { code: "internal", message: "服务未返回有效结果，请稍后重试", detail: { httpStatus: res.status } }) as AppError;
+    throw (body?.error ?? { code: "internal", message: t("服务未返回有效结果，请稍后重试"), detail: { httpStatus: res.status } }) as AppError;
   }
   return body.data as T;
 }
@@ -1542,6 +1542,7 @@ export const aiApi = {
 };
 
 import type { AiUsageSummaryRow, ModelProfile, ModelProfilesView, ProviderTestResult } from "./types";
+import { t } from "../i18n";
 export type { AiUsageSummaryRow, ModelProfile, ModelProfilesView, ProviderTestResult };
 
 export const modelApi = {

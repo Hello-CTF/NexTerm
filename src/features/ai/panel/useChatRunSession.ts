@@ -9,6 +9,7 @@ import { ToolHandleRegistry } from "../agentToolData";
 import { type IpcChannel, disposeChannel } from "../../../ipc/events";
 import { pendingInteraction } from "../conversation";
 import { type RefChip, aiScopeForWorkspace, currentAiBoardKey, AI_SYNC_NOTICE_DISMISS_MS, type AiChatBase } from "./aiSidebarShared";
+import { t } from "../../../i18n";
 
 
 export function useChatRunSession(p: AiChatBase) {
@@ -272,9 +273,9 @@ export function useChatRunSession(p: AiChatBase) {
       : null;
   const productionBlocked = productionNames !== undefined && currentProductionConfirm?.canConfirm !== true;
   const hitlWaiting = confirmCard
-    ? "等待你确认后继续…"
+    ? t("等待你确认后继续…")
     : questionCard
-      ? "等待你回答后继续…"
+      ? t("等待你回答后继续…")
       : null;
   useEffect(() => {
     setQuestionInput("");

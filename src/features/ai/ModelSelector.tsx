@@ -3,6 +3,7 @@ import { modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { IconCheck, IconChevronUp, IconLoader, IconPlus, IconSettings } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export function ModelSelector({ onManage }: { onManage: () => void }) {
   const pushToast = useUi((s) => s.pushToast);
@@ -66,9 +67,9 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
     try {
       await modelApi.activate(id);
       useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", `当前模型已切换为「${name}」`);
+      pushToast("info", t("当前模型已切换为「{name}」", { name }));
     } catch (e) {
-      pushToast("error", `切换失败：${describeError(e)}`);
+      pushToast("error", t("切换失败：{value}", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -81,7 +82,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
       <button
         ref={chipRef}
         className="nx-chip pointer-coarse:min-h-6 max-w-full min-w-0"
-        title="模型配置（可保存多份模型档案）"
+        title={t("模型配置（可保存多份模型档案）")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
@@ -94,7 +95,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           <IconPlus size={11} />
         )}
         <span className="min-w-0 truncate">
-          {active?.name || (loadError ? "未能读取模型档案" : "添加模型")}
+          {active?.name || (loadError ? t("未能读取模型档案") : t("添加模型"))}
         </span>
         <IconChevronUp size={10} className="shrink-0 opacity-60" />
       </button>
@@ -104,12 +105,12 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           className="absolute bottom-full left-0 z-[80] mb-1 max-h-[min(288px,calc(100dvh-24px))] overflow-y-auto rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg"
           style={{ width: dropdownWidth }}
         >
-          <div className="nx-menu-title">选择模型档案</div>
+          <div className="nx-menu-title">{t("选择模型档案")}</div>
           {loadError ? (
             <div className="px-2 py-2 text-center">
-              <div className="nx-hint text-red-300">未能读取模型档案：{loadError}</div>
+              <div className="nx-hint text-red-300">{t("未能读取模型档案：")}{loadError}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void refresh()}>
-                重试
+                {t("重试")}
               </button>
             </div>
           ) : view && view.profiles.length > 0 ? (
@@ -132,7 +133,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
               </button>
             ))
           ) : (
-            <div className="nx-hint px-2 py-2 text-[11px]">暂无模型档案</div>
+            <div className="nx-hint px-2 py-2 text-[11px]">{t("暂无模型档案")}</div>
           )}
           <div className="nx-menu-sep" />
           <button
@@ -145,7 +146,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
             <span className="nx-menu-icon">
               <IconSettings size={12} />
             </span>
-            <span className="nx-menu-label">管理模型…</span>
+            <span className="nx-menu-label">{t("管理模型…")}</span>
           </button>
         </div>
       )}

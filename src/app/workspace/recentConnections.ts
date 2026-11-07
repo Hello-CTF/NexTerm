@@ -1,6 +1,7 @@
 import type { Asset } from "../../ipc/commands";
 import type { ConnectHistoryEntries } from "../../features/explorer/connectHistory";
 import { isInventoryOnlyKind } from "../../features/explorer/inventory";
+import { t } from "../../i18n";
 
 export const RECENT_LIMIT = 5;
 
@@ -31,7 +32,7 @@ export function assetKindName(kind: string): string {
     case "winrm":
       return "WinRM";
     case "local":
-      return "本机";
+      return t("本机");
     case "docker":
     case "docker-context":
       return "Docker";

@@ -7,6 +7,7 @@ import { Select } from "../../ui/Select";
 import { openHostHistoryTab, openTranscriptFocus } from "../terminal/transcriptFocus";
 import { formatTranscriptBytes, formatTranscriptTime, stripAnsi } from "../terminal/transcriptText";
 import { HostSection } from "./HostSections";
+import { t } from "../../i18n";
 
 const MAX_QUERY_BYTES = 256;
 const MATCH_CAP = 50;
@@ -23,12 +24,12 @@ export type HostDetailTabId = "overview" | "search";
 export function HostDetailTabs({ assetId, overview }: { assetId: string; overview: ReactNode }) {
   const [tab, setTab] = useState<HostDetailTabId>("overview");
   const tabs: { id: HostDetailTabId; label: string }[] = [
-    { id: "overview", label: "概览" },
-    { id: "search", label: "搜索输出" },
+    { id: "overview", label: t("概览") },
+    { id: "search", label: t("搜索输出") },
   ];
   return (
     <>
-      <div className="flex gap-1 border-b border-neutral-800/60" role="tablist" aria-label="主机详情">
+      <div className="flex gap-1 border-b border-neutral-800/60" role="tablist" aria-label={t("主机详情")}>
         {tabs.map((item) => (
           <button
             key={item.id}
@@ -52,9 +53,9 @@ export function HostDetailTabs({ assetId, overview }: { assetId: string; overvie
 }
 
 function statusBadge(transcript: { active: boolean; endedAt: number | null }): { className: string; text: string } {
-  if (transcript.active) return { className: "nx-badge nx-badge-green", text: "进行中" };
-  if (transcript.endedAt === null) return { className: "nx-badge nx-badge-amber", text: "异常结束" };
-  return { className: "nx-badge nx-badge-blue", text: "已结束" };
+  if (transcript.active) return { className: "nx-badge nx-badge-green", text: t("进行中") };
+  if (transcript.endedAt === null) return { className: "nx-badge nx-badge-amber", text: t("异常结束") };
+  return { className: "nx-badge nx-badge-blue", text: t("已结束") };
 }
 
 export function HostOutputSearch({ assetId }: { assetId: string }) {
@@ -90,9 +91,9 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
     <div className="flex flex-col gap-3" data-testid="host-output-search">
       <div className="flex flex-wrap items-center gap-2 rounded border border-neutral-800/60 px-3 py-2 text-[12px] text-neutral-400">
         <IconHistory size={13} />
-        <span className="min-w-0 flex-1">终端记录以明文保存在数据库中，可在终端历史中逐条删除。</span>
+        <span className="min-w-0 flex-1">{t("终端记录以明文保存在数据库中，可在终端历史中逐条删除。")}</span>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => openHostHistoryTab(assetId)}>
-          打开终端历史
+          {t("打开终端历史")}
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -100,8 +101,8 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
           <input
             className="nx-input nx-input-sm w-full pl-7 pointer-coarse:min-h-11 pointer-coarse:text-[16px]"
-            placeholder="搜索这台主机的历史终端输出，回车开始"
-            aria-label="搜索终端输出"
+            placeholder={t("搜索这台主机的历史终端输出，回车开始")}
+            aria-label={t("搜索终端输出")}
             enterKeyHint="search"
             autoCapitalize="off"
             autoCorrect="off"
@@ -121,7 +122,7 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
         </div>
         <Select
           className="w-[150px] max-w-full"
-          ariaLabel="输出搜索时间范围"
+          ariaLabel={t("输出搜索时间范围")}
           value={range}
           options={COMMAND_RANGE_OPTIONS}
           onChange={(value) => setRange(value as CommandRange)}
@@ -133,14 +134,14 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           onClick={runSearch}
         >
           {loading ? <IconLoader size={12} className="animate-spin" /> : <IconSearch size={12} />}
-          搜索
+          {t("搜索")}
         </button>
       </div>
 
       {error && (
         <div role="alert" className="flex items-center gap-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          搜索失败：{error}
+          {t("搜索失败：")}{error}
         </div>
       )}
       {result?.truncated && (
@@ -150,12 +151,12 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           className="flex items-center gap-2 rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-300"
         >
           <IconAlert size={14} />
-          已扫描 {result.scannedSessions} 个会话 / {formatTranscriptBytes(result.scannedBytes)}，结果已截断，请缩小时间范围
+          {t("已扫描")} {result.scannedSessions} {t("个会话 /")} {formatTranscriptBytes(result.scannedBytes)}{t("，结果已截断，请缩小时间范围")}
         </div>
       )}
-      {loading && !result && <div role="status" className="text-[12px] text-neutral-500">正在搜索…</div>}
+      {loading && !result && <div role="status" className="text-[12px] text-neutral-500">{t("正在搜索…")}</div>}
       {result && result.sessions.length === 0 && !loading && (
-        <div role="status" className="text-[12px] text-neutral-500">没有匹配的输出</div>
+        <div role="status" className="text-[12px] text-neutral-500">{t("没有匹配的输出")}</div>
       )}
       {result?.sessions.map((session) => {
         const badge = statusBadge(session.transcript);
@@ -168,8 +169,8 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           >
             <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-neutral-500">
               <span className={badge.className}>{badge.text}</span>
-              <span>{session.matches.length} 条匹配</span>
-              {session.moreMatches && <span className="text-amber-300">仅显示前 {MATCH_CAP} 条</span>}
+              <span>{session.matches.length} {t("条匹配")}</span>
+              {session.moreMatches && <span className="text-amber-300">{t("仅显示前")} {MATCH_CAP} {t("条")}</span>}
             </div>
             <div className="flex flex-col">
               {session.matches.map((match) => (

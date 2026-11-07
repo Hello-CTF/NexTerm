@@ -16,6 +16,7 @@ import {
   useTransferStore,
   type ScopedTransferTask,
 } from "./transferStore";
+import { t as tr } from "../../i18n";
 
 function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarget: boolean }) {
   const name = baseName(task.remotePath);
@@ -31,7 +32,7 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
         <span
           className={task.direction === "upload" ? "shrink-0 text-blue-300" : "shrink-0 text-green-300"}
-          title={task.direction === "upload" ? "上传" : "下载"}
+          title={task.direction === "upload" ? tr("上传") : tr("下载")}
         >
           {task.direction === "upload" ? <IconUpload size={12} /> : <IconDownload size={12} />}
         </span>
@@ -56,7 +57,7 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
         >
           {task.status === "running"
             ? task.cancelling
-              ? "取消中"
+              ? tr("取消中")
               : `${percent}%`
             : TRANSFER_STATUS_LABEL[task.status]}
         </span>
@@ -64,23 +65,23 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
           <button
             type="button"
             className="nx-link shrink-0"
-            title={task.restartPreparing ? "正在准备全量重传" : "全量重传这个传输任务"}
-            aria-label={`全量重传 ${name}`}
+            title={task.restartPreparing ? tr("正在准备全量重传") : tr("全量重传这个传输任务")}
+            aria-label={tr("全量重传 {name}", { name })}
             disabled={task.restartPreparing}
             onClick={() => void restartTransferTask(task.id)}
           >
-            {task.restartPreparing ? "准备中" : "全量重传"}
+            {task.restartPreparing ? tr("准备中") : tr("全量重传")}
           </button>
         )}
         {canResumeTransfer(task) && (
           <button
             type="button"
             className="nx-link shrink-0"
-            title="续传这个传输任务"
-            aria-label={`续传 ${name}`}
+            title={tr("续传这个传输任务")}
+            aria-label={tr("续传 {name}", { name })}
             onClick={() => resumeTransferTask(task.id)}
           >
-            续传
+            {tr("续传")}
           </button>
         )}
         {(task.status === "queued" || task.status === "running") && (
@@ -89,12 +90,12 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
             className="nx-icon-btn nx-icon-btn-sm"
             title={
               task.status === "queued"
-                ? "取消这个排队任务"
+                ? tr("取消这个排队任务")
                 : task.cancelling
-                  ? "正在取消这个传输任务"
-                  : "取消这个传输任务"
+                  ? tr("正在取消这个传输任务")
+                  : tr("取消这个传输任务")
             }
-            aria-label={`取消 ${name}`}
+            aria-label={tr("取消 {name}", { name })}
             disabled={task.cancelling}
             onClick={() => cancelTransferTask(task.id)}
           >
@@ -105,7 +106,7 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
       {showTarget && (
         <div
           className="truncate pl-5 text-[10px] text-neutral-500"
-          title={`${task.targetName} · 会话 ${task.sessionId}`}
+          title={tr("{targetName} · 会话 {sessionId}", { targetName: task.targetName, sessionId: task.sessionId })}
         >
           {task.targetName}
         </div>
@@ -139,34 +140,34 @@ export function TransferPanel({ sessionId }: { sessionId: string }) {
       data-testid="transfer-panel"
     >
       <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] text-neutral-500">
-        <span className="shrink-0 font-semibold text-neutral-300">传输</span>
+        <span className="shrink-0 font-semibold text-neutral-300">{tr("传输")}</span>
         <span className="min-w-0 truncate">
-          {tasks.length === 0 ? "无任务" : active > 0 ? `${active} 进行中` : "已结束"}
+          {tasks.length === 0 ? tr("无任务") : active > 0 ? tr("{active} 进行中", { active }) : tr("已结束")}
         </span>
         <span className="nx-spacer" />
         <button
           type="button"
           className="nx-link shrink-0"
           aria-pressed={!showAll}
-          title={showAll ? "显示当前主机的传输任务" : "显示全部主机的传输任务"}
+          title={showAll ? tr("显示当前主机的传输任务") : tr("显示全部主机的传输任务")}
           onClick={() => setShowAll((current) => !current)}
         >
-          {showAll ? "全部" : "本机"}
+          {showAll ? tr("全部") : tr("本机")}
         </button>
         {active < tasks.length && (
           <button
             type="button"
             className="nx-link shrink-0"
-            title="清除已结束"
+            title={tr("清除已结束")}
             onClick={() => clearFinishedTransfers(showAll ? "global" : { sessionId, hostId })}
           >
-            清除
+            {tr("清除")}
           </button>
         )}
       </div>
       <div className="max-h-36 overflow-y-auto pb-1.5">
         {tasks.length === 0 ? (
-          <div className="px-3 py-2 text-[11px] text-neutral-500">没有传输任务</div>
+          <div className="px-3 py-2 text-[11px] text-neutral-500">{tr("没有传输任务")}</div>
         ) : (
           tasks.map((t) => <TransferRow key={t.id} task={t} showTarget={showAll} />)
         )}

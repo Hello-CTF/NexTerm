@@ -4,6 +4,7 @@
 import { useRef, useState, type MouseEvent } from "react";
 import type { FleetMetricsSample } from "../../ipc/fleetApi";
 import { formatBytes } from "./format";
+import { t as tr } from "../../i18n";
 
 // Samples further apart than this are a gap in reporting, not a line to draw.
 export function metricsGapThreshold(sampleIntervalMs?: number): number {
@@ -14,10 +15,10 @@ export function metricsGapThreshold(sampleIntervalMs?: number): number {
 // The server keeps raw samples for 48 hours (rawMetricsRetention) and clamps older since_ms values, so 48 hours is the
 // longest range the API can honour.
 export const METRIC_RANGES = [
-  { id: "1h", label: "1 小时", ms: 3600_000 },
-  { id: "6h", label: "6 小时", ms: 6 * 3600_000 },
-  { id: "24h", label: "24 小时", ms: 24 * 3600_000 },
-  { id: "48h", label: "48 小时", ms: 48 * 3600_000 },
+  { id: "1h", label: tr("1 小时"), ms: 3600_000 },
+  { id: "6h", label: tr("6 小时"), ms: 6 * 3600_000 },
+  { id: "24h", label: tr("24 小时"), ms: 24 * 3600_000 },
+  { id: "48h", label: tr("48 小时"), ms: 48 * 3600_000 },
 ] as const;
 export type MetricRangeId = (typeof METRIC_RANGES)[number]["id"];
 export const DEFAULT_METRIC_RANGE: MetricRangeId = "24h";
@@ -56,10 +57,10 @@ export function formatTick(ts: number, spanMs: number): string {
 
 export function formatAge(ms: number): string {
   const minutes = Math.max(1, Math.floor(ms / 60_000));
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 60) return tr("{minutes} 分钟", { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return `${hours} 小时`;
-  return `${Math.floor(hours / 24)} 天`;
+  if (hours < 48) return tr("{hours} 小时", { hours });
+  return tr("{floor} 天", { floor: Math.floor(hours / 24) });
 }
 
 function metricPct(kind: MetricKind, s: FleetMetricsSample): number {
@@ -71,8 +72,8 @@ function metricPct(kind: MetricKind, s: FleetMetricsSample): number {
 
 const KIND_META: Record<MetricKind, { name: string; stroke: string; fill: string }> = {
   cpu: { name: "CPU", stroke: "stroke-sky-400", fill: "fill-sky-400" },
-  mem: { name: "内存", stroke: "stroke-blue-400", fill: "fill-blue-400" },
-  disk: { name: "磁盘", stroke: "stroke-amber-400", fill: "fill-amber-400" },
+  mem: { name: tr("内存"), stroke: "stroke-blue-400", fill: "fill-blue-400" },
+  disk: { name: tr("磁盘"), stroke: "stroke-amber-400", fill: "fill-amber-400" },
 };
 
 interface Props {
@@ -142,7 +143,7 @@ export function MetricTrendChart({ kind, samples, latest, windowStart, windowEnd
     <svg
       ref={svgRef}
       role="img"
-      aria-label={`${meta.name} 趋势，最新 ${metricPct(kind, latest).toFixed(1)}%`}
+      aria-label={tr("{name} 趋势，最新 {toFixed}%", { name: meta.name, toFixed: metricPct(kind, latest).toFixed(1) })}
       viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
       className="mt-1 h-auto w-full"
       onMouseLeave={() => setHover(null)}

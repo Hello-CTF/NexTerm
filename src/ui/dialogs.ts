@@ -8,6 +8,7 @@ import {
   requestSaveTarget,
   stageFile,
 } from "../ipc/webFiles";
+import { t } from "../i18n";
 
 export { dropStaged as discardStaged };
 
@@ -169,10 +170,10 @@ export async function pickLocalFolder(): Promise<string | null> {
 export async function pickKeyFile(): Promise<string | null> {
   return openWailsFile([
     {
-      name: "私钥文件",
+      name: t("私钥文件"),
       extensions: ["pem", "key", "ppk", "id_rsa", "id_ed25519", "openssh"],
     },
-    { name: "所有文件", extensions: ["*"] },
+    { name: t("所有文件"), extensions: ["*"] },
   ]);
 }
 
@@ -199,7 +200,7 @@ export async function pickDownloadTarget(defaultName: string): Promise<string | 
 }
 
 export async function finishSave(target: string, name: string): Promise<string | null> {
-  if (target.startsWith(MOBILE_DOWNLOAD_PREFIX)) return `应用下载目录/${name}`;
+  if (target.startsWith(MOBILE_DOWNLOAD_PREFIX)) return t("应用下载目录/{name}", { name });
   if (TRANSPORT !== "web") return target;
   const outcome = await deliverStaged(target, name);
   if (outcome === "cancelled") return null;
@@ -210,7 +211,7 @@ export async function finishSave(target: string, name: string): Promise<string |
 }
 
 export function describeTarget(path: string, name: string): string {
-  if (path.startsWith(MOBILE_DOWNLOAD_PREFIX)) return `应用下载目录/${name}`;
+  if (path.startsWith(MOBILE_DOWNLOAD_PREFIX)) return t("应用下载目录/{name}", { name });
   return TRANSPORT === "web" && isStagedPath(path) ? name : path;
 }
 

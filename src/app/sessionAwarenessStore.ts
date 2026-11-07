@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { TerminalAttentionEvent } from "../ipc/events";
+import { t } from "../i18n";
 
 // The attention state of a terminal tab, as the backend reports it. Helper tabs carry the helper's state; other tabs
 // a state the backend derived from their output (source "observed"). "unknown" is never a guess: the tab is not
@@ -125,18 +126,18 @@ export function awarenessBadge(awareness: SessionAwareness | undefined): Awarene
   switch (awareness.state) {
     case "needs_me":
       if (awareness.seen) return null;
-      return { kind: "needs_me", label: "需要处理" };
+      return { kind: "needs_me", label: t("需要处理") };
     case "just_finished": {
       if (awareness.seen) return null;
       const code = awareness.exitCode;
-      const result = typeof code === "number" ? (code === 0 ? "，成功" : `，退出码 ${code}`) : "";
+      const result = typeof code === "number" ? (code === 0 ? t("，成功") : t("，退出码 {code}", { code })) : "";
       const outcome = typeof code === "number" && code !== 0 ? "failed" : "ok";
-      return { kind: "just_finished", label: `命令刚结束${result}`, outcome };
+      return { kind: "just_finished", label: t("命令刚结束{result}", { result }), outcome };
     }
     case "running":
-      return { kind: "running", label: "运行中" };
+      return { kind: "running", label: t("运行中") };
     case "unknown":
-      return { kind: "unknown", label: "状态未知：未连接或无法获取" };
+      return { kind: "unknown", label: t("状态未知：未连接或无法获取") };
     default:
       return null;
   }

@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 export type EncChoice = "auto" | "utf-8" | "gbk";
 
 export { bytesToBase64 } from "../../ui/base64";
@@ -13,7 +14,7 @@ function decodeFatal(bytes: Uint8Array, encoding: "utf-8" | "gbk"): string {
   try {
     return new TextDecoder(encoding, { fatal: true }).decode(bytes);
   } catch {
-    throw new Error(`文件包含无效的 ${encoding.toUpperCase()} 数据，已停止打开以避免保存时损坏内容`);
+    throw new Error(t("文件包含无效的 {toUpperCase} 数据，已停止打开以避免保存时损坏内容", { toUpperCase: encoding.toUpperCase() }));
   }
 }
 

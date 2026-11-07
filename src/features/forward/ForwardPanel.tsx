@@ -19,18 +19,19 @@ import {
   IconRefresh,
   IconTrash,
 } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 type Kind = "local" | "socks" | "remote";
 
 const DEFAULT_PORT: Record<Kind, string> = { local: "13306", socks: "1080", remote: "18080" };
 
 const LAZYCAT_UNAVAILABLE =
-  "懒猫微服上不支持端口转发，请改用平台转发或 SSH 隧道。";
+  tr("懒猫微服上不支持端口转发，请改用平台转发或 SSH 隧道。");
 
 const FIELD_IDLE_VALIDATION_MS = 500;
 
 function validateRequired(label: string, value: string): string | null {
-  if (!value.trim()) return `${label}不能为空`;
+  if (!value.trim()) return tr("{label}不能为空", { label });
   return null;
 }
 
@@ -41,7 +42,7 @@ function isValidPort(value: string): boolean {
 
 function validatePort(label: string, value: string): string | null {
   if (isValidPort(value)) return null;
-  return `${label}须为 1-65535 之间的整数`;
+  return tr("{label}须为 1-65535 之间的整数", { label });
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -77,9 +78,9 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
   const sessions = useSessionList();
   const visible = useForwardPanelVisible(sessionId);
   const localSession = sessions.find((s) => s.id === sessionId)?.kind === "local";
-  const localMachine = WEB ? "NexTerm 所在主机" : "本机";
-  const remoteTarget = WEB ? "NexTerm 所在主机" : "本地";
-  const remoteService = WEB ? "NexTerm 所在主机上的服务" : "本地服务";
+  const localMachine = WEB ? tr("NexTerm 所在主机") : tr("本机");
+  const remoteTarget = WEB ? tr("NexTerm 所在主机") : tr("本地");
+  const remoteService = WEB ? tr("NexTerm 所在主机上的服务") : tr("本地服务");
   const [kind, setKind] = useState<Kind>("local");
   const [listenPort, setListenPort] = useState(DEFAULT_PORT.local);
   const [bindHost, setBindHost] = useState("127.0.0.1");
@@ -119,7 +120,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
 
   const refresh = () => void qc.invalidateQueries({ queryKey: ["forwards"] });
 
-  const listenPortLabel = kind === "remote" ? "远端端口" : exposed ? "监听端口" : "本地端口";
+  const listenPortLabel = kind === "remote" ? tr("远端端口") : exposed ? tr("监听端口") : tr("本地端口");
   const listenPortErrorId = useId();
   const bindHostErrorId = useId();
   const targetHostErrorId = useId();
@@ -175,7 +176,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     if (bindHostTimer.current !== null) window.clearTimeout(bindHostTimer.current);
     bindHostTimer.current = window.setTimeout(() => {
       bindHostTimer.current = null;
-      setBindHostError(validateRequired("远端监听地址", value));
+      setBindHostError(validateRequired(tr("远端监听地址"), value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onBindHostBlur = () => {
@@ -183,14 +184,14 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(bindHostTimer.current);
       bindHostTimer.current = null;
     }
-    setBindHostError(validateRequired("远端监听地址", bindHostValueRef.current));
+    setBindHostError(validateRequired(tr("远端监听地址"), bindHostValueRef.current));
   };
   const onTargetHostChange = (value: string) => {
     setTargetHost(value);
     if (targetHostTimer.current !== null) window.clearTimeout(targetHostTimer.current);
     targetHostTimer.current = window.setTimeout(() => {
       targetHostTimer.current = null;
-      setTargetHostError(validateRequired("目标主机", value));
+      setTargetHostError(validateRequired(tr("目标主机"), value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onTargetHostBlur = () => {
@@ -198,14 +199,14 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(targetHostTimer.current);
       targetHostTimer.current = null;
     }
-    setTargetHostError(validateRequired("目标主机", targetHostValueRef.current));
+    setTargetHostError(validateRequired(tr("目标主机"), targetHostValueRef.current));
   };
   const onTargetPortChange = (value: string) => {
     setTargetPort(value);
     if (targetPortTimer.current !== null) window.clearTimeout(targetPortTimer.current);
     targetPortTimer.current = window.setTimeout(() => {
       targetPortTimer.current = null;
-      setTargetPortError(validatePort("目标端口", value));
+      setTargetPortError(validatePort(tr("目标端口"), value));
     }, FIELD_IDLE_VALIDATION_MS);
   };
   const onTargetPortBlur = () => {
@@ -213,7 +214,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       window.clearTimeout(targetPortTimer.current);
       targetPortTimer.current = null;
     }
-    setTargetPortError(validatePort("目标端口", targetPortValueRef.current));
+    setTargetPortError(validatePort(tr("目标端口"), targetPortValueRef.current));
   };
 
   const switchKind = (k: Kind) => {
@@ -235,24 +236,24 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       return;
     }
     if (!sessionId) {
-      pushToast("info", "请先连接一台主机。端口转发须通过主机的 SSH 连接建立。");
+      pushToast("info", tr("请先连接一台主机。端口转发须通过主机的 SSH 连接建立。"));
       return;
     }
     if (localSession) {
       pushToast(
         "info",
-        "当前是「当前设备」会话，本机即为目标主机，无需转发；如需访问内网其他主机，请先连接一台 SSH 资产",
+        tr("当前是「当前设备」会话，本机即为目标主机，无需转发；如需访问内网其他主机，请先连接一台 SSH 资产"),
       );
       return;
     }
     if (!env.data) {
-      pushToast("info", env.isError ? "转发环境检查失败，请重试" : "正在检查转发环境，请稍候");
+      pushToast("info", env.isError ? tr("转发环境检查失败，请重试") : tr("正在检查转发环境，请稍候"));
       return;
     }
     const portInvalid = !isValidPort(listenPort);
-    const bindHostErr = kind === "remote" ? validateRequired("远端监听地址", bindHost) : null;
-    const hostErr = kind === "socks" ? null : validateRequired("目标主机", targetHost);
-    const tPortErr = kind === "socks" ? null : validatePort("目标端口", targetPort);
+    const bindHostErr = kind === "remote" ? validateRequired(tr("远端监听地址"), bindHost) : null;
+    const hostErr = kind === "socks" ? null : validateRequired(tr("目标主机"), targetHost);
+    const tPortErr = kind === "socks" ? null : validatePort(tr("目标端口"), targetPort);
     setListenPortInvalid(portInvalid);
     setBindHostError(bindHostErr);
     setTargetHostError(hostErr);
@@ -270,12 +271,12 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     try {
       if (kind === "socks") {
         await forwardApi.createSocks(sessionId, port);
-        pushToast("success", `SOCKS5 代理已就绪 → ${listenHost}:${port}`);
+        pushToast("success", tr("SOCKS5 代理已就绪 → {listenHost}:{port}", { listenHost, port }));
       } else if (kind === "remote") {
         await forwardApi.createRemote(sessionId, bindHost.trim(), port, targetHost.trim(), Number(targetPort.trim()));
         pushToast(
           "success",
-          `远程转发已就绪 → 远端 ${bindHost.trim()}:${port} → ${remoteTarget} ${targetHost.trim()}:${targetPort.trim()}`,
+          tr("远程转发已就绪 → 远端 {trim}:{port} → {remoteTarget} {trim2}:{trim3}", { trim: bindHost.trim(), port, remoteTarget, trim2: targetHost.trim(), trim3: targetPort.trim() }),
         );
       } else {
         await forwardApi.create(
@@ -287,8 +288,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         pushToast(
           "success",
           exposed
-            ? `转发已就绪 → ${listenHost}:${port}（对外可访问）`
-            : `转发已就绪 → ${listenHost}:${port}（仅${localMachine}可访问）`,
+            ? tr("转发已就绪 → {listenHost}:{port}（对外可访问）", { listenHost, port })
+            : tr("转发已就绪 → {listenHost}:{port}（仅{localMachine}可访问）", { listenHost, port, localMachine }),
         );
       }
       refresh();
@@ -298,42 +299,42 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         const remote = kind === "remote";
         const ok = await ask(
           remote
-            ? `远端监听 ${confirmedHost}:${port} 将对远端网络开放。\n\n任何能连到该端口的人都能访问${remoteService} ${targetHost.trim()}:${targetPort.trim()}，请确认目标服务有鉴权。`
-            : `监听 ${confirmedHost}:${port} 将创建无认证的开放 SOCKS5 代理。\n\n任何能连到该端口的人都能经当前 SSH 会话访问远端网络。`,
-          { title: remote ? "确认远程转发风险" : "确认开放代理风险", kind: "warning" },
+            ? tr("远端监听 {confirmedHost}:{port} 将对远端网络开放。\n\n任何能连到该端口的人都能访问{remoteService} {trim}:{trim2}，请确认目标服务有鉴权。", { confirmedHost, port, remoteService, trim: targetHost.trim(), trim2: targetPort.trim() })
+            : tr("监听 {confirmedHost}:{port} 将创建无认证的开放 SOCKS5 代理。\n\n任何能连到该端口的人都能经当前 SSH 会话访问远端网络。", { confirmedHost, port }),
+          { title: remote ? tr("确认远程转发风险") : tr("确认开放代理风险"), kind: "warning" },
         );
         if (ok) {
           try {
             if (remote) {
               await forwardApi.createRemote(sessionId, bindHost.trim(), port, targetHost.trim(), Number(targetPort.trim()), true);
-              pushToast("success", `远程转发已就绪 → 远端 ${confirmedHost}:${port} → ${remoteTarget} ${targetHost.trim()}:${targetPort.trim()}`);
+              pushToast("success", tr("远程转发已就绪 → 远端 {confirmedHost}:{port} → {remoteTarget} {trim}:{trim2}", { confirmedHost, port, remoteTarget, trim: targetHost.trim(), trim2: targetPort.trim() }));
             } else {
               await forwardApi.createSocks(sessionId, port, true);
-              pushToast("success", `SOCKS5 代理已就绪 → ${confirmedHost}:${port}`);
+              pushToast("success", tr("SOCKS5 代理已就绪 → {confirmedHost}:{port}", { confirmedHost, port }));
             }
             refresh();
           } catch (retryError) {
-            pushToast("error", `无法创建转发：${describeForwardError(retryError, port)}`);
+            pushToast("error", tr("无法创建转发：{value}", { value: describeForwardError(retryError, port) }));
           }
         }
         return;
       }
-      pushToast("error", `无法创建转发：${describeForwardError(e, port)}`);
+      pushToast("error", tr("无法创建转发：{value}", { value: describeForwardError(e, port) }));
     } finally {
       setBusy(false);
     }
   };
 
   const remove = async (forward: ForwardSpec, label: string) => {
-    if ((forward.status ?? "active") === "active" && !(await ask(`停止转发 ${label}？\n\n已经建立的连接会被断开。`, { kind: "warning" }))) return;
+    if ((forward.status ?? "active") === "active" && !(await ask(tr("停止转发 {label}？\n\n已经建立的连接会被断开。", { label }), { kind: "warning" }))) return;
     setBusyForwardId(forward.id);
     try {
       await forwardApi.remove(forward.id);
       refresh();
-      pushToast("success", (forward.status ?? "active") === "active" ? "已停止" : "已移除转发记录");
+      pushToast("success", (forward.status ?? "active") === "active" ? tr("已停止") : tr("已移除转发记录"));
     } catch (e) {
       refresh();
-      pushToast("error", `停止失败：${describeError(e)}`);
+      pushToast("error", tr("停止失败：{value}", { value: describeError(e) }));
     } finally {
       setBusyForwardId(null);
     }
@@ -348,18 +349,18 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     const selected = exactSession ?? current ?? (candidates.length === 1 ? candidates[0] : undefined);
     if (!selected) {
       pushToast("info", candidates.length > 1
-        ? "同一资产有多个连接，请打开所属主机工作区后重试"
-        : "所属主机尚未连接，请先重新连接该 SSH 资产");
+        ? tr("同一资产有多个连接，请打开所属主机工作区后重试")
+        : tr("所属主机尚未连接，请先重新连接该 SSH 资产"));
       return;
     }
     setBusyForwardId(forward.id);
     try {
       await forwardApi.retry(forward.id, selected.id);
       refresh();
-      pushToast("success", "转发已恢复");
+      pushToast("success", tr("转发已恢复"));
     } catch (e) {
       refresh();
-      pushToast("error", `重试失败：${describeError(e)}`);
+      pushToast("error", tr("重试失败：{value}", { value: describeError(e) }));
     } finally {
       setBusyForwardId(null);
     }
@@ -394,17 +395,17 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         {isSocks ? (
           <>
             <IconGlobe size={11} />
-            SOCKS5 代理
+            {tr("SOCKS5 代理")}
           </>
         ) : isRemote ? (
           <>
             <IconDownload size={11} />
-            远程转发
+            {tr("远程转发")}
           </>
         ) : (
           <>
             <IconPlug size={11} />
-            静态转发
+            {tr("静态转发")}
           </>
         )}
       </span>
@@ -413,7 +414,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
 
   const statusText = (f: ForwardSpec) => (
     <span className={`shrink-0 ${f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}`}>
-      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重新连接中" : "运行中"}
+      {f.status === "failed" ? tr("失败") : f.status === "reconnecting" ? tr("重新连接中") : tr("运行中")}
     </span>
   );
 
@@ -421,8 +422,8 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     const isSocks = f.kind === "socks";
     const isRemote = f.kind === "remote";
     const host = f.listenHost ?? listenHost;
-    const label = `${host || "未知"}:${f.listenPort}`;
-    const target = isSocks ? "由客户端指定" : `${isRemote ? `${remoteTarget} ` : ""}${f.targetHost}:${f.targetPort}`;
+    const label = `${host || tr("未知")}:${f.listenPort}`;
+    const target = isSocks ? tr("由客户端指定") : `${isRemote ? `${remoteTarget} ` : ""}${f.targetHost}:${f.targetPort}`;
     const open = expandedCards.has(f.id);
     // Truncated text has no hover title on touch screens, so tapping the info block reveals it in full.
     const clip = open ? "break-all" : "truncate";
@@ -433,7 +434,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           role="button"
           tabIndex={0}
           aria-expanded={open}
-          aria-label={`${label} 详情`}
+          aria-label={tr("{label} 详情", { label })}
           onClick={() => toggleCard(f.id)}
           onKeyDown={(e) => {
             if (e.target !== e.currentTarget) return;
@@ -446,7 +447,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
             {typeBadge(f)}
             {f.temporary && (
-              <span className="nx-badge shrink-0" title="会话关闭时自动移除，仅监听 127.0.0.1">临时</span>
+              <span className="nx-badge shrink-0" title={tr("会话关闭时自动移除，仅监听 127.0.0.1")}>{tr("临时")}</span>
             )}
             <span className={`nx-mono min-w-0 text-[12px] font-semibold text-neutral-100 ${clip}`} title={label}>{label}</span>
             <span className="text-[11px]">{statusText(f)}</span>
@@ -459,7 +460,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           {f.status && f.status !== "active" && (
             <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
               <IconRefresh size={11} />
-              重试
+              {tr("重试")}
             </button>
           )}
           <button
@@ -468,7 +469,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             onClick={() => void remove(f, label)}
           >
             <IconTrash size={11} />
-            {f.status === "active" || !f.status ? "停止" : "移除"}
+            {f.status === "active" || !f.status ? tr("停止") : tr("移除")}
           </button>
         </div>
       </div>
@@ -479,55 +480,55 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
     <div ref={paneRef} className="nx-pane">
       <div className="nx-toolbar">
         <IconNetwork size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">端口转发</span>
+        <span className="nx-toolbar-title">{tr("端口转发")}</span>
         <span className="nx-hint hidden min-[560px]:inline">
           {forwards.data
-            ? `${localCount} 条静态转发 · ${remoteCount} 条远程转发 · ${socksCount} 条 SOCKS5 代理 · 5s 自动刷新`
+            ? tr("{localCount} 条静态转发 · {remoteCount} 条远程转发 · {socksCount} 条 SOCKS5 代理 · 5s 自动刷新", { localCount, remoteCount, socksCount })
             : forwardsFailed
-              ? "未能加载转发列表"
-              : "转发列表加载中"}
+              ? tr("未能加载转发列表")
+              : tr("转发列表加载中")}
         </span>
         <div className="nx-spacer" />
         {sessionId && (
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
             aria-pressed={!showAll}
-            title={showAll ? "当前显示全部会话的转发，单击仅查看当前会话" : "当前只显示当前会话的转发，单击可切换为全部"}
+            title={showAll ? tr("当前显示全部会话的转发，单击仅查看当前会话") : tr("当前只显示当前会话的转发，单击可切换为全部")}
             onClick={() => setShowAll((v) => !v)}
           >
-            {showAll ? "全部会话" : "仅当前会话"}
+            {showAll ? tr("全部会话") : tr("仅当前会话")}
           </button>
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={refresh}>
           <IconRefresh size={13} />
-          刷新
+          {tr("刷新")}
         </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
         {forwardsRefreshFailed && (
           <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2 text-[11px] text-amber-300" role="status">
-            <span>未能刷新转发列表：{describeError(forwards.error)}；已保留上次成功结果。</span>
+            <span>{tr("未能刷新转发列表：")}{describeError(forwards.error)}{tr("；已保留上次成功结果。")}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void forwards.refetch()}>
               <IconRefresh size={12} />
-              重试
+              {tr("重试")}
             </button>
           </div>
         )}
         {compact ? (
           <div>
             {forwards.isPending ? (
-              <div className="nx-table-empty">正在加载转发列表…</div>
+              <div className="nx-table-empty">{tr("正在加载转发列表…")}</div>
             ) : forwardsFailed ? (
               <div className="nx-table-empty">
-                <span className="text-red-300">未能加载转发列表：{describeError(forwards.error)}</span>
+                <span className="text-red-300">{tr("未能加载转发列表：")}{describeError(forwards.error)}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void forwards.refetch()}>
                   <IconRefresh size={12} />
-                  重试
+                  {tr("重试")}
                 </button>
               </div>
             ) : list.length === 0 ? (
-              <div className="nx-table-empty">{scoped && all.length > 0 ? "当前会话暂无转发" : "暂无任何转发"}</div>
+              <div className="nx-table-empty">{scoped && all.length > 0 ? tr("当前会话暂无转发") : tr("暂无任何转发")}</div>
             ) : (
               list.map(compactCard)
             )}
@@ -536,11 +537,11 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         <table className="nx-table">
           <thead>
             <tr>
-              <th style={{ width: 132 }}>类型</th>
-              <th style={{ width: 130 }}>监听地址</th>
-              <th>目标</th>
-              <th style={{ width: 150 }}>所属会话</th>
-              <th style={{ width: 110 }}>状态</th>
+              <th style={{ width: 132 }}>{tr("类型")}</th>
+              <th style={{ width: 130 }}>{tr("监听地址")}</th>
+              <th>{tr("目标")}</th>
+              <th style={{ width: 150 }}>{tr("所属会话")}</th>
+              <th style={{ width: 110 }}>{tr("状态")}</th>
               <th className="right-0 w-[150px] shadow-[inset_1px_0_0_var(--nx-border)]" />
             </tr>
           </thead>
@@ -548,26 +549,26 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             {forwards.isPending ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  正在加载转发列表…
+                  {tr("正在加载转发列表…")}
                 </td>
               </tr>
             ) : forwardsFailed ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">未能加载转发列表：{describeError(forwards.error)}</span>
+                  <span className="text-red-300">{tr("未能加载转发列表：")}{describeError(forwards.error)}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void forwards.refetch()}
                   >
                     <IconRefresh size={12} />
-                    重试
+                    {tr("重试")}
                   </button>
                 </td>
               </tr>
             ) : list.length === 0 ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  {scoped && all.length > 0 ? "当前会话暂无转发" : "暂无任何转发"}
+                  {scoped && all.length > 0 ? tr("当前会话暂无转发") : tr("暂无任何转发")}
                 </td>
               </tr>
             ) : (
@@ -575,7 +576,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               const isSocks = f.kind === "socks";
               const isRemote = f.kind === "remote";
               const host = f.listenHost ?? listenHost;
-              const label = `${host || "未知"}:${f.listenPort}`;
+              const label = `${host || tr("未知")}:${f.listenPort}`;
               return (
                 <tr key={f.id}>
                   <td>
@@ -583,29 +584,29 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       {isSocks ? (
                         <>
                           <IconGlobe size={11} />
-                          SOCKS5 代理
+                          {tr("SOCKS5 代理")}
                         </>
                       ) : isRemote ? (
                         <>
                           <IconDownload size={11} />
-                          远程转发
+                          {tr("远程转发")}
                         </>
                       ) : (
                         <>
                           <IconPlug size={11} />
-                          静态转发
+                          {tr("静态转发")}
                         </>
                       )}
                     </span>
                     {f.temporary && (
-                      <span className="nx-badge ml-1" title="会话关闭时自动移除，仅监听 127.0.0.1">临时</span>
+                      <span className="nx-badge ml-1" title={tr("会话关闭时自动移除，仅监听 127.0.0.1")}>{tr("临时")}</span>
                     )}
                   </td>
                   <td className="nx-mono font-semibold text-neutral-100">{label}</td>
                   <td className="nx-mono">
                     {isSocks ? (
                       <span className="text-neutral-500">
-                        由客户端指定（浏览器 / curl 里填 <span className="nx-code">{label}</span>）
+                        {tr("由客户端指定（浏览器 / curl 里填")} <span className="nx-code">{label}</span>）
                       </span>
                     ) : (
                       <span>
@@ -621,7 +622,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   </td>
                   <td>
                     <span className={f.status === "failed" ? "text-red-300" : f.status === "reconnecting" ? "text-amber-300" : "text-green-300"}>
-                      {f.status === "failed" ? "失败" : f.status === "reconnecting" ? "重新连接中" : "运行中"}
+                      {f.status === "failed" ? tr("失败") : f.status === "reconnecting" ? tr("重新连接中") : tr("运行中")}
                     </span>
                     {f.error && <div className="max-w-56 break-words text-[11px] text-red-300" role="alert">{f.error}</div>}
                   </td>
@@ -630,7 +631,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       {f.status && f.status !== "active" && (
                         <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busyForwardId === f.id} onClick={() => void retry(f)}>
                           <IconRefresh size={11} />
-                          重试
+                          {tr("重试")}
                         </button>
                       )}
                       <button
@@ -639,7 +640,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                         onClick={() => void remove(f, label)}
                       >
                         <IconTrash size={11} />
-                        {f.status === "active" || !f.status ? "停止" : "移除"}
+                        {f.status === "active" || !f.status ? tr("停止") : tr("移除")}
                       </button>
                     </div>
                   </td>
@@ -656,7 +657,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       {compact && !unavailable && (
         <div className="flex shrink-0 items-center border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-1">
           <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-expanded={formOpen} onClick={() => setFormOpen((v) => !v)}>
-            {formOpen ? "收起" : "+ 新建转发"}
+            {formOpen ? tr("收起") : tr("+ 新建转发")}
           </button>
         </div>
       )}
@@ -673,24 +674,24 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
           <>
             {env.isPending && (
               <div className="mb-2 text-[11px] text-neutral-500" role="status">
-                正在检查转发环境…
+                {tr("正在检查转发环境…")}
               </div>
             )}
             {envFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
-                <span>未能检查转发环境：{describeError(env.error)}</span>
+                <span>{tr("未能检查转发环境：")}{describeError(env.error)}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
-                  重试
+                  {tr("重试")}
                 </button>
               </div>
             )}
             {envRefreshFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
-                <span>未能刷新转发环境：{describeError(env.error)}；已保留上次成功结果。</span>
+                <span>{tr("未能刷新转发环境：")}{describeError(env.error)}{tr("；已保留上次成功结果。")}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
-                  重试
+                  {tr("重试")}
                 </button>
               </div>
             )}
@@ -700,32 +701,32 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 onClick={() => switchKind("local")}
               >
                 <IconPlug size={13} />
-                静态转发
+                {tr("静态转发")}
               </button>
               <button
                 className={`nx-btn nx-btn-sm ${kind === "remote" ? "nx-btn-primary" : "nx-btn-ghost"}`}
                 onClick={() => switchKind("remote")}
               >
                 <IconDownload size={13} />
-                远程转发
+                {tr("远程转发")}
               </button>
               <button
                 className={`nx-btn nx-btn-sm ${kind === "socks" ? "nx-btn-primary" : "nx-btn-ghost"}`}
                 onClick={() => switchKind("socks")}
               >
                 <IconGlobe size={13} />
-                SOCKS5 代理
+                {tr("SOCKS5 代理")}
               </button>
               <span className={compact ? "col-span-3 text-[11px] text-neutral-500" : "ml-1 text-[11px] text-neutral-500"}>
                 {kind === "local"
                   ? exposed
-                    ? "把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）"
-                    : `把远端某个固定端口映射到${localMachine}（适用于连接 MySQL / Redis）`
+                    ? tr("把远端某个固定端口映射到服务端（适用于连接 MySQL / Redis）")
+                    : tr("把远端某个固定端口映射到{localMachine}（适用于连接 MySQL / Redis）", { localMachine })
                   : kind === "remote"
-                    ? `在远端主机上监听一个端口，把连入的流量转回${remoteTarget}（让远端访问${WEB ? remoteService : "本机服务"}）`
+                    ? tr("在远端主机上监听一个端口，把连入的流量转回{remoteTarget}（让远端访问{value}）", { remoteTarget, value: WEB ? remoteService : tr("本机服务") })
                     : exposed
-                      ? "在服务端开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）"
-                      : `在${localMachine}开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）`}
+                      ? tr("在服务端开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）")
+                      : tr("在{localMachine}开一个 SOCKS5 代理，目标由客户端在连接时指定（适用于浏览器、curl、proxychains）", { localMachine })}
               </span>
             </div>
 
@@ -734,7 +735,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 <>
                   <div className={compact ? "order-none col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
                   <label className="text-[11.5px] text-neutral-400" htmlFor={bindHostId}>
-                    远端监听
+                    {tr("远端监听")}
                   </label>
                   <div className={compact ? "min-w-0" : "w-[150px] shrink-0"}>
                     <input
@@ -745,7 +746,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       onChange={(e) => onBindHostChange(e.target.value)}
                       onBlur={onBindHostBlur}
                       placeholder="127.0.0.1"
-                      aria-label="远端监听地址"
+                      aria-label={tr("远端监听地址")}
                       autoComplete="off"
                       aria-invalid={bindHostError ? true : undefined}
                       aria-describedby={bindHostError ? bindHostErrorId : undefined}
@@ -780,7 +781,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 />
                 {listenPortInvalid && (
                   <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                    {listenPortLabel}须为 1-65535 之间的整数
+                    {listenPortLabel}{tr("须为 1-65535 之间的整数")}
                   </p>
                 )}
               </div>
@@ -789,7 +790,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 <>
                   <span className={compact ? "hidden" : "text-neutral-600"}>→</span>
                   <div className={compact ? "order-3 col-span-2 flex min-w-0 flex-col gap-1" : "contents"}>
-                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">目标主机</span>}
+                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标主机")}</span>}
                   <div className={compact ? "min-w-0" : "min-w-[200px] flex-1"}>
                     <input
                       ref={targetHostRef}
@@ -800,11 +801,11 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       placeholder={
                         kind === "remote"
                           ? WEB
-                            ? "服务主机（在 NexTerm 所在主机解析，如 127.0.0.1）"
-                            : "本地服务主机（在本机解析，如 127.0.0.1）"
-                          : "目标主机（在远端主机上解析，如 172.17.0.5 / db.internal）"
+                            ? tr("服务主机（在 NexTerm 所在主机解析，如 127.0.0.1）")
+                            : tr("本地服务主机（在本机解析，如 127.0.0.1）")
+                          : tr("目标主机（在远端主机上解析，如 172.17.0.5 / db.internal）")
                       }
-                      aria-label="目标主机"
+                      aria-label={tr("目标主机")}
                       autoComplete="off"
                       aria-invalid={targetHostError ? true : undefined}
                       aria-describedby={targetHostError ? targetHostErrorId : undefined}
@@ -818,7 +819,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                   </div>
                   <span className={compact ? "hidden" : "text-neutral-600"}>:</span>
                   <div className={compact ? "order-2 flex min-w-0 flex-col gap-1" : "contents"}>
-                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">目标端口</span>}
+                  {compact && <span className="text-[11.5px] text-neutral-400" aria-hidden="true">{tr("目标端口")}</span>}
                   <div className={compact ? "min-w-0" : "w-[92px] shrink-0"}>
                     <input
                       ref={targetPortRef}
@@ -827,7 +828,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                       onChange={(e) => onTargetPortChange(e.target.value)}
                       onBlur={onTargetPortBlur}
                       placeholder="3306"
-                      aria-label="目标端口"
+                      aria-label={tr("目标端口")}
                       autoComplete="off"
                       inputMode="numeric"
                       aria-invalid={targetPortError ? true : undefined}
@@ -849,46 +850,46 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               <button
                 className={`nx-btn nx-btn-primary nx-btn-sm ${compact ? "order-4 col-span-2 w-full justify-center" : ""}`}
                 disabled={busy || !sessionId || localSession || !env.data}
-                title={!env.data ? "等待转发环境检查成功" : undefined}
+                title={!env.data ? tr("等待转发环境检查成功") : undefined}
                 onClick={() => void create()}
               >
                 {busy ? <IconRefresh size={13} className="animate-spin" /> : null}
-                创建
+                {tr("创建")}
               </button>
             </div>
 
             <div className="nx-hint mt-2">
               {localSession ? (
-                "「当前设备」不能作为转发出口，请先连接一台 SSH 资产再新建转发。"
+                tr("「当前设备」不能作为转发出口，请先连接一台 SSH 资产再新建转发。")
               ) : sessionId && !env.data ? (
-                "转发环境检查成功后才会显示监听地址并允许创建。"
+                tr("转发环境检查成功后才会显示监听地址并允许创建。")
               ) : sessionId ? (
                 kind === "remote" ? (
                   <>
-                    出口走当前会话（{sessionName(sessionId)}）的连接；远端监听地址为{" "}
+                    {tr("出口走当前会话（")}{sessionName(sessionId)}{tr("）的连接；远端监听地址为")}{" "}
                     <span className="nx-code">
                       {bindHost}:{listenPort}
                     </span>{" "}
-                    （绑定在远端主机上
-                    {isLoopbackHost(bindHost) ? "，只有远端本机能连" : "，对远端网络开放，创建前会确认风险"}
-                    ）。重新连接后会自动尝试恢复。
+                    {tr("（绑定在远端主机上")}
+                    {isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险")}
+                    {tr("）。重新连接后会自动尝试恢复。")}
                   </>
                 ) : (
                 <>
-                  出口走当前会话（{sessionName(sessionId)}）的连接；监听地址为{" "}
+                  {tr("出口走当前会话（")}{sessionName(sessionId)}{tr("）的连接；监听地址为")}{" "}
                   <span className="nx-code">
                     {listenHost}:{listenPort}
                   </span>
                   {!exposed
-                    ? `，只有${localMachine}能连。`
+                    ? tr("，只有{localMachine}能连。", { localMachine })
                     : kind === "socks"
-                      ? "，对外开放，创建前会确认风险。"
-                      : "。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。"}
-                  会话断开后转发自动停止。
+                      ? tr("，对外开放，创建前会确认风险。")
+                      : tr("。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。")}
+                  {tr("会话断开后转发自动停止。")}
                 </>
                 )
               ) : (
-                "当前没有可用的 SSH 会话，请先连接一台主机，再新建转发。"
+                tr("当前没有可用的 SSH 会话，请先连接一台主机，再新建转发。")
               )}
             </div>
           </>

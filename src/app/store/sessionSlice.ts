@@ -6,6 +6,7 @@ import { nextWorkspaceGeneration } from "./runtimeSlice";
 import { forgetDurableReadiness } from "./durableReadiness";
 import { abnormalDisconnectNotices, sessionStatusEvidenceMap } from "./sessionStatus";
 import type { UiGet, UiSet, UiState, WorkspaceRuntime } from "./types";
+import { t } from "../../i18n";
 
 let recordingRequestSeq = 0;
 let recordingsEpoch = 0;
@@ -61,7 +62,7 @@ export function createSessionSlice(set: UiSet, get: UiGet) {
         console.error("[NexTerm] Failed to refresh session list", e);
         if (get().sessionResyncFailed) return;
         set({ sessionResyncFailed: true });
-        get().pushToast("error", `刷新会话列表失败：${describeError(e)}`);
+        get().pushToast("error", t("刷新会话列表失败：{value}", { value: describeError(e) }));
       } finally {
         if (epoch === sessionsEpoch && seq === sessionsRequestSeq) set({ sessionResyncCompleted: true });
       }

@@ -3,6 +3,7 @@ import { prepareRdpTransport, remoteProxyAddress } from "./remoteSocket";
 import { RemoteEngineError, type ClientCallbacks, type ClientOptions, type EngineFailure, type RemoteClient, type RemoteSecret, type ScaleMode } from "./remoteTypes";
 import { stripBuildPaths } from "./rdpFailure";
 import { drawThumbnail } from "./thumbnail";
+import { t } from "../../i18n";
 
 type IronElement = HTMLElement & { module?: unknown };
 
@@ -66,7 +67,7 @@ export function engineFailureOf(error: unknown, secrets: readonly string[] = [])
   return {
     protocol: "rdp",
     stage: "connect",
-    message: (first || "RDP 连接失败").slice(0, 200),
+    message: (first || t("RDP 连接失败")).slice(0, 200),
     detail: detail.slice(0, 2000),
     rdpKind,
     httpStatus,
@@ -140,10 +141,10 @@ export class RdpClient implements RemoteClient {
       await import("@devolutions/iron-remote-desktop");
       const rdp = await import("@devolutions/iron-remote-desktop-rdp");
       await rdp.init("WARN");
-      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: "已取消" });
+      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: t("已取消") });
       const ui = await this.mount(rdp.Backend);
       this.ui = ui;
-      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: "已取消" });
+      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: t("已取消") });
       ui.setVisibility(true);
       ui.setScale(3);
       ui.setEnableClipboard(this.options.clipboard);
@@ -180,7 +181,7 @@ export class RdpClient implements RemoteClient {
       } finally {
         this.secret = null;
       }
-      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: "已取消" });
+      if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: t("已取消") });
       // The handshake is over: the password is no longer held; the ticket stays for later reports.
       this.redact = this.redact.slice(1);
       this.connected = true;
@@ -203,7 +204,7 @@ export class RdpClient implements RemoteClient {
         .then((info) => {
           if (this.closed) return;
           this.connected = false;
-          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: redactSecrets(info.reason(), this.redact) || "远程桌面已断开" });
+          this.callbacks.onDisconnected({ protocol: "rdp", stage: "closed", clean: true, wasConnected: true, message: redactSecrets(info.reason(), this.redact) || t("远程桌面已断开") });
         })
         .catch((error: unknown) => {
           if (this.closed) return;
@@ -226,7 +227,7 @@ export class RdpClient implements RemoteClient {
       element.setAttribute("flexcenter", "false");
       element.module = backend;
       element.style.display = "block";
-      const timer = window.setTimeout(() => reject(new Error("远程桌面组件加载超时")), 15000);
+      const timer = window.setTimeout(() => reject(new Error(t("远程桌面组件加载超时"))), 15000);
       element.addEventListener(
         "ready",
         (event) => {

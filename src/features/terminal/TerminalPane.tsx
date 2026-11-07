@@ -121,6 +121,7 @@ import {
   IconSplitV,
   IconZap,
 } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 export interface TerminalPaneProps {
   sessionId: string;
@@ -350,7 +351,7 @@ export function TerminalPane({
   const [forceRegular, setForceRegular] = useState(false);
   const [ordinaryStarting, setOrdinaryStarting] = useState(false);
   const [helperActionBusy, setHelperActionBusy] = useState(false);
-  const [helperActionLabel, setHelperActionLabel] = useState("正在处理…");
+  const [helperActionLabel, setHelperActionLabel] = useState(tr("正在处理…"));
   const [helperPanelOpen, setHelperPanelOpen] = useState(false);
   const [helperStatusLoading, setHelperStatusLoading] = useState(false);
   const [helperReady, setHelperReady] = useState(false);
@@ -407,7 +408,7 @@ export function TerminalPane({
     setReattaching(true);
     try {
       const outcome = await reattachLostTabs([storeTabId]);
-      if (outcome.failed > 0) useUi.getState().pushToast("error", `未能重新接管：${outcome.error ?? "未知错误"}`);
+      if (outcome.failed > 0) useUi.getState().pushToast("error", tr("未能重新接管：{value}", { value: outcome.error ?? tr("未知错误") }));
     } finally {
       setReattaching(false);
     }
@@ -418,7 +419,7 @@ export function TerminalPane({
     useUi.getState().addTab({
       id: `background-${found?.ws.id ?? sessionId}`,
       kind: "background",
-      title: "后台会话",
+      title: tr("后台会话"),
       sessionId,
       closable: true,
     });
@@ -543,14 +544,14 @@ export function TerminalPane({
       writeText: async (text) => copyText(text),
       authorize: async () => {
         const choice = await askChoice(
-          `「${sessionNameRef.current}」请求写入剪贴板（OSC 52）。允许该会话写剪贴板？`,
+          tr("「{current}」请求写入剪贴板（OSC 52）。允许该会话写剪贴板？", { current: sessionNameRef.current }),
           {
-            title: "剪贴板写入请求",
+            title: tr("剪贴板写入请求"),
             level: "warning",
             choices: [
-              { key: "once", label: "允许本次", hint: "只写入这一次，下次再询问", primary: true },
-              { key: "session", label: "本会话允许", hint: "该终端会话内不再询问" },
-              { key: "deny", label: "拒绝", hint: "本会话内一律静默丢弃", danger: true },
+              { key: "once", label: tr("允许本次"), hint: tr("只写入这一次，下次再询问"), primary: true },
+              { key: "session", label: tr("本会话允许"), hint: tr("该终端会话内不再询问") },
+              { key: "deny", label: tr("拒绝"), hint: tr("本会话内一律静默丢弃"), danger: true },
             ],
           },
         );
@@ -559,7 +560,7 @@ export function TerminalPane({
       onError: (e) =>
         pushToast(
           "error",
-          `「${sessionNameRef.current}」写入剪贴板失败：${describeError(e)}。剪贴板权限可能被浏览器或系统拒绝。`,
+          tr("「{current}」写入剪贴板失败：{value}。剪贴板权限可能被浏览器或系统拒绝。", { current: sessionNameRef.current, value: describeError(e) }),
         ),
     }),
   ).current;
@@ -621,7 +622,7 @@ export function TerminalPane({
       try {
         await terminalApi.takeSize(tabId);
       } catch (e) {
-        pushToast("error", `无法改用本机尺寸：${describeError(e)}`);
+        pushToast("error", tr("无法改用本机尺寸：{value}", { value: describeError(e) }));
       }
       await refreshControl(tabId);
     },
@@ -666,12 +667,12 @@ export function TerminalPane({
     pendingBroadcastConfirmations.current = [];
     broadcastConfirmationRef.current = null;
     setBroadcastConfirmation(null);
-    if (notify && hadPending) pushToast("info", "已取消生产广播，待确认输入未发送");
+    if (notify && hadPending) pushToast("info", tr("已取消生产广播，待确认输入未发送"));
   }, [pushToast]);
 
   useEffect(() => {
     if (broadcastConfirmationRef.current !== null || pendingBroadcastConfirmations.current.length > 0) {
-      pushToast("info", "广播目标已变化，待确认输入未发送");
+      pushToast("info", tr("广播目标已变化，待确认输入未发送"));
     }
     clearBroadcastConfirmations(false);
   }, [broadcastRevision, clearBroadcastConfirmations, pushToast]);
@@ -739,7 +740,7 @@ export function TerminalPane({
             const now = Date.now();
             if (opts?.fromCommand || now - writeErrorAt.current > 5000) {
               writeErrorAt.current = now;
-              pushToast("error", `广播写入失败：${describeError(cause)}`);
+              pushToast("error", tr("广播写入失败：{value}", { value: describeError(cause) }));
             }
           }
           return "failed";
@@ -753,7 +754,7 @@ export function TerminalPane({
         const now = Date.now();
         if (opts?.fromCommand || now - writeErrorAt.current > 5000) {
           writeErrorAt.current = now;
-          pushToast("error", `写入终端失败：${describeError(e)}`);
+          pushToast("error", tr("写入终端失败：{value}", { value: describeError(e) }));
         }
         return "failed";
       }
@@ -769,7 +770,7 @@ export function TerminalPane({
       try {
         const current = readBroadcastContext(useUi.getState(), storeTabId);
         if (current?.generation !== pending.generation) {
-          pushToast("info", "广播目标已变化，过期生产输入未发送");
+          pushToast("info", tr("广播目标已变化，过期生产输入未发送"));
           return;
         }
         await sendData(pending.data, undefined, {
@@ -826,14 +827,14 @@ export function TerminalPane({
         pushToast(
           "info",
           scope === "pane"
-            ? "当前分屏的可广播终端不足 2 个"
-            : "全部已打开工作区的可广播终端不足 2 个",
+            ? tr("当前分屏的可广播终端不足 2 个")
+            : tr("全部已打开工作区的可广播终端不足 2 个"),
         );
         return;
       }
       const mix = localRemoteMix(candidates.filter((candidate) => ids.includes(candidate.storeTabId)));
       const confirmed = await ask(broadcastRiskMessage(ids.length, mix), {
-        title: "开启命令广播",
+        title: tr("开启命令广播"),
         kind: "warning",
       });
       if (!confirmed) return;
@@ -841,14 +842,14 @@ export function TerminalPane({
         origin: { workspaceId: found.wsId, storeTabId },
         targetIds: ids,
       });
-      pushToast("info", `广播已开启：输入将发送到 ${ids.length} 个终端`);
+      pushToast("info", tr("广播已开启：输入将发送到 {length} 个终端", { length: ids.length }));
     },
     [storeTabId, pushToast],
   );
 
   const closeBroadcast = useCallback(() => {
     useUi.getState().setBroadcast(null);
-    pushToast("info", "广播已关闭，输入只发送到当前终端");
+    pushToast("info", tr("广播已关闭，输入只发送到当前终端"));
   }, [pushToast]);
 
   const controlVersions = useRef(new EventVersionGate());
@@ -1049,7 +1050,7 @@ export function TerminalPane({
       e.preventDefault();
       e.stopPropagation();
       if (paneNarrowRef.current) {
-        pushToast("info", "窗格太窄，无法显示会话侧栏");
+        pushToast("info", tr("窗格太窄，无法显示会话侧栏"));
         return;
       }
       toggleSidebarHere();
@@ -1174,16 +1175,16 @@ export function TerminalPane({
         if (other) {
           const target = other;
           void useUi.getState().closeTab(storeTabId).then(() => useUi.getState().setActiveTab(target.tabId));
-          pushToast("info", `该持久终端已在「${target.workspaceTitle}」工作区打开，已切换过去`);
+          pushToast("info", tr("该持久终端已在「{workspaceTitle}」工作区打开，已切换过去", { workspaceTitle: target.workspaceTitle }));
         } else {
-          pushToast("error", "该持久终端已在另一个窗口或设备代理工作区打开，请在那里继续使用，或先将其转入后台");
+          pushToast("error", tr("该持久终端已在另一个窗口或设备代理工作区打开，请在那里继续使用，或先将其转入后台"));
         }
         return;
       }
       if (code !== "not_found") {
         if (ordinaryStarting) {
           setOrdinaryStarting(false);
-          pushToast("error", "无法新建临时终端，原持久终端没有被改动。请稍后重试");
+          pushToast("error", tr("无法新建临时终端，原持久终端没有被改动。请稍后重试"));
         }
         return;
       }
@@ -1198,7 +1199,7 @@ export function TerminalPane({
         st.updateTab(storeTabId, { dead: true });
         setKernelTabId(null);
         setAttachDead(true);
-        pushToast("error", "无法新建临时终端：连接已不存在，原持久终端没有被改动。请先重新连接");
+        pushToast("error", tr("无法新建临时终端：连接已不存在，原持久终端没有被改动。请先重新连接"));
         return;
       }
       if (!containerId && !effectiveWinrm && session?.kind !== "ssh" && session?.kind !== "device" && tab?.tabId !== undefined && session?.status === "connected") {
@@ -1207,12 +1208,12 @@ export function TerminalPane({
         st.updateTab(storeTabId, { tabId: undefined });
         setKernelTabId(null);
         setEpoch((n) => n + 1);
-        pushToast("info", "原终端在服务端已不存在，已打开新终端");
+        pushToast("info", tr("原终端在服务端已不存在，已打开新终端"));
         return;
       }
       st.updateTab(storeTabId, { dead: true });
       if (session?.kind === "ssh" || session?.kind === "device") {
-        st.failHelperRestore(storeTabId, "原持久终端恢复失败；远端进程是否存活仍未知");
+        st.failHelperRestore(storeTabId, tr("原持久终端恢复失败；远端进程是否存活仍未知"));
       }
       setKernelTabId(null);
       setAttachDead(true);
@@ -1226,7 +1227,7 @@ export function TerminalPane({
       w.panes.some((p) => p.tabs.some((t) => t.id === storeTabId)),
     );
     if (!ws?.assetId) {
-      pushToast("error", "找不到该主机的资产信息，请在左侧资产树中手动连接");
+      pushToast("error", tr("找不到该主机的资产信息，请在左侧资产树中手动连接"));
       return;
     }
     if (reconnectBusyRef.current) return;
@@ -1236,7 +1237,7 @@ export function TerminalPane({
     try {
       const s = await reconnectDeadHost(ws);
       if (!s) {
-        pushToast("info", "已取消重新连接");
+        pushToast("info", tr("已取消重新连接"));
         return;
       }
       const list = useUi.getState().sessions;
@@ -1259,7 +1260,7 @@ export function TerminalPane({
       setKernelTabId(null);
       setEpoch((n) => n + 1);
     } catch (e) {
-      pushToast("error", `重新连接失败：${describeError(e)}。请检查网络后重试`);
+      pushToast("error", tr("重新连接失败：{value}。请检查网络后重试", { value: describeError(e) }));
     } finally {
       reconnectBusyRef.current = false;
       setReconnecting(false);
@@ -1269,16 +1270,16 @@ export function TerminalPane({
 
   const applyEncoding = async (v: string) => {
     if (!kernelTabId) {
-      pushToast("error", "终端尚未连接，无法切换编码");
+      pushToast("error", tr("终端尚未连接，无法切换编码"));
       return;
     }
     try {
       await terminalApi.switchEncoding(kernelTabId, v);
       encodingTouchedRef.current = true;
       setEncoding(v);
-      pushToast("info", `编码已切换为 ${v}（仅影响后续输出）`);
+      pushToast("info", tr("编码已切换为 {v}（仅影响后续输出）", { v }));
     } catch (e) {
-      pushToast("error", `编码切换失败：${describeError(e)}`);
+      pushToast("error", tr("编码切换失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -1288,18 +1289,18 @@ export function TerminalPane({
       const text = await readText();
       if (text && (await confirmMultilinePaste(text, storeTabId, handleRef.current?.bracketedPasteMode() ?? false))) handleRef.current?.paste(text);
     } catch (e) {
-      pushToast("error", `未能读取剪贴板：${describeError(e)}`);
+      pushToast("error", tr("未能读取剪贴板：{value}", { value: describeError(e) }));
     }
   };
 
   const handleSelectionCopy = (_text: string, error: unknown | null) => {
     if (error) {
       const name = (error as { name?: string } | null)?.name;
-      const reason = name === "NotAllowedError" ? "剪贴板权限被拒绝" : describeError(error);
-      pushToast("error", `复制选中内容失败：${reason}`);
+      const reason = name === "NotAllowedError" ? tr("剪贴板权限被拒绝") : describeError(error);
+      pushToast("error", tr("复制选中内容失败：{reason}", { reason }));
       return;
     }
-    pushToast("success", "已复制选中内容");
+    pushToast("success", tr("已复制选中内容"));
   };
 
   const disconnectSession = async () => {
@@ -1326,12 +1327,12 @@ export function TerminalPane({
       if (isSessionSuspect(sessionStatus, sessionLiveness) && !(await confirmSuspectReconnect(workspace?.id))) return;
       const result = await reconnectLiveSession(sessionId, workspace?.id);
       if (result.kind === "missing") {
-        pushToast("error", "原连接已不存在。请再次选择「重新连接」以重新连接该主机");
+        pushToast("error", tr("原连接已不存在。请再次选择「重新连接」以重新连接该主机"));
         return;
       }
       if (result.kind === "pending") return;
       if (result.kind === "canceled") {
-        pushToast("info", "已取消重新连接");
+        pushToast("info", tr("已取消重新连接"));
         return;
       }
       const current = useUi
@@ -1353,14 +1354,14 @@ export function TerminalPane({
       setEpoch((n) => n + 1);
     } catch (e) {
       if ((e as { code?: string } | null)?.code === "not_found") {
-        pushToast("error", "原连接已不存在。请再次选择「重新连接」以重新连接该主机");
+        pushToast("error", tr("原连接已不存在。请再次选择「重新连接」以重新连接该主机"));
         return;
       }
-      pushToast("error", `重新连接失败：${describeError(e)}。请检查网络后重试`);
+      pushToast("error", tr("重新连接失败：{value}。请检查网络后重试", { value: describeError(e) }));
     }
   };
 
-  const runHelperAction = async (action: () => Promise<void>, generation?: number, label = "正在处理…") => {
+  const runHelperAction = async (action: () => Promise<void>, generation?: number, label = tr("正在处理…")) => {
     if (helperActionBusy) return;
     setHelperActionBusy(true);
     setHelperStatusLoading(false);
@@ -1370,7 +1371,7 @@ export function TerminalPane({
     } catch (error) {
       if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
         setHelperPanelError(describeError(error));
-        pushToast("error", `持久终端组件操作失败：${describeError(error)}`);
+        pushToast("error", tr("持久终端组件操作失败：{value}", { value: describeError(error) }));
       }
     } finally {
       if (helperDetailsSessionRef.current === sessionId && (generation === undefined || helperRequestIsCurrent(generation, sessionId))) {
@@ -1431,7 +1432,7 @@ export function TerminalPane({
       if (!helperRequestIsCurrent(generation, sessionId)) return;
       const message = describeError(error);
       setHelperPanelError(message);
-      pushToast("error", `未能读取持久终端组件状态：${message}`);
+      pushToast("error", tr("未能读取持久终端组件状态：{message}", { message }));
     } finally {
       if (helperRequestIsCurrent(generation, sessionId)) setHelperStatusLoading(false);
     }
@@ -1500,8 +1501,8 @@ export function TerminalPane({
     // A toast instead of opening the dialog keeps focus with whatever the user is typing.
     pushToast(
       helperOperation.kind === "reattach" ? "error" : "info",
-      helperOperation.kind === "reattach" ? "未能恢复原持久终端，请选择重试或新建临时终端" : "暂时无法使用持久终端，该标签页已改用临时终端",
-      { label: "查看选项", onSelect: () => setHelperPanelOpen(true) },
+      helperOperation.kind === "reattach" ? tr("未能恢复原持久终端，请选择重试或新建临时终端") : tr("暂时无法使用持久终端，该标签页已改用临时终端"),
+      { label: tr("查看选项"), onSelect: () => setHelperPanelOpen(true) },
     );
   }, [helperOperation?.operationId, helperOperation?.status, helperOperation?.kind, pushToast]);
 
@@ -1515,7 +1516,7 @@ export function TerminalPane({
     else void refreshHelperDetails();
   };
   const openLocalHelperSettings = () => {
-    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: tr("设置"), closable: true });
     showSettingsSection("settings-terminal");
   };
   // Only sessions served by a durable helper can reopen as durable or manage the helper.
@@ -1528,7 +1529,7 @@ export function TerminalPane({
   const importOfflineHelper = async () => {
     if (helperActionBusy) return;
     const requestSessionId = sessionId;
-    const selected = await promptText("离线组件文件的本地路径（请先核对 SHA-256 与协议，确认前不会用于部署）", "");
+    const selected = await promptText(tr("离线组件文件的本地路径（请先核对 SHA-256 与协议，确认前不会用于部署）"), "");
     if (!selected?.trim() || helperDetailsSessionRef.current !== requestSessionId) return;
     const path = selected.trim();
     setHelperPanelOpen(true);
@@ -1553,7 +1554,7 @@ export function TerminalPane({
       setHelperDetails((current) => current ? { ...current, offline: result.offline } : result);
       if (result.offline?.trusted) {
         closeHelperPanel();
-        pushToast("success", "已信任所选的离线组件文件，后续连接将使用它");
+        pushToast("success", tr("已信任所选的离线组件文件，后续连接将使用它"));
       }
     }, generation);
   };
@@ -1564,8 +1565,8 @@ export function TerminalPane({
     return runHelperAction(async () => {
       try {
         if (interruptActive) {
-          const confirmed = await ask("更新将结束该主机上所有持久终端中运行的进程，且无法恢复。是否中断并更新？", {
-            title: "中断进程并更新", kind: "warning",
+          const confirmed = await ask(tr("更新将结束该主机上所有持久终端中运行的进程，且无法恢复。是否中断并更新？"), {
+            title: tr("中断进程并更新"), kind: "warning",
           });
           if (!confirmed || !helperRequestIsCurrent(generation, sessionId)) return;
         }
@@ -1576,16 +1577,16 @@ export function TerminalPane({
         const status = result.update?.status;
         if (status === "current" || status === "updated" || (status === "interrupted" && result.update?.updated)) {
           setHelperPanelOpen(false);
-          pushToast("success", status === "current" ? "持久终端组件已是最新版本" : "持久终端组件已更新");
+          pushToast("success", status === "current" ? tr("持久终端组件已是最新版本") : tr("持久终端组件已更新"));
         } else if (status === "deferred") {
           setHelperPanelOpen(false);
-          pushToast("info", "当前有进程在运行，组件更新已延后", {
-            label: "查看", onSelect: () => {
+          pushToast("info", tr("当前有进程在运行，组件更新已延后"), {
+            label: tr("查看"), onSelect: () => {
               if (helperRequestIsCurrent(generation, sessionId)) setHelperPanelOpen(true);
             },
           });
         } else {
-          setHelperPanelError(result.update?.detail || "暂时无法确认更新结果，请重新检查组件状态");
+          setHelperPanelError(result.update?.detail || tr("暂时无法确认更新结果，请重新检查组件状态"));
         }
       } catch (error) {
         if (!helperRequestIsCurrent(generation, sessionId)) return;
@@ -1594,7 +1595,7 @@ export function TerminalPane({
         setHelperDetails(rollback);
         setHelperPanelError(describeError(error));
       }
-    }, generation, "正在更新持久终端组件…");
+    }, generation, tr("正在更新持久终端组件…"));
   };
 
   // Ends the older helper the user agreed to in the helper window, with the sessions it showed.
@@ -1621,21 +1622,21 @@ export function TerminalPane({
       setHelperPanelError(null);
       if (result.update?.status === "replaced") {
         setHelperPanelOpen(false);
-        const forced = result.update.stopped === true && result.update.forced ? "；旧版组件被强制结束，部分后台进程可能仍在运行" : "";
+        const forced = result.update.stopped === true && result.update.forced ? tr("；旧版组件被强制结束，部分后台进程可能仍在运行") : "";
         pushToast(result.update.stopped !== true || result.update.forced ? "info" : "success", `${replacedText(result.update)}${forced}`);
       } else if (result.legacy?.stale) {
-        setHelperPanelError("旧版组件的状态已变化，请核对最新的会话数后重新确认");
+        setHelperPanelError(tr("旧版组件的状态已变化，请核对最新的会话数后重新确认"));
       }
-    }, generation, "正在终止旧版组件并升级…");
+    }, generation, tr("正在终止旧版组件并升级…"));
   };
 
   const deferHelperUpdate = () => {
     setHelperDetails((current) => current?.update ? {
       ...current,
-      update: { status: "deferred", detail: "已选择稍后更新" },
+      update: { status: "deferred", detail: tr("已选择稍后更新") },
     } : current);
     closeHelperPanel();
-    pushToast("info", "暂不更新，下次查看持久终端状态时仍会提示");
+    pushToast("info", tr("暂不更新，下次查看持久终端状态时仍会提示"));
   };
 
   const startRecording = async () => {
@@ -1646,7 +1647,7 @@ export function TerminalPane({
     try {
       await terminalApi.recordStart(kernelTabId, path);
     } catch (e) {
-      pushToast("error", `无法开始录制：${describeError(e)}`);
+      pushToast("error", tr("无法开始录制：{value}", { value: describeError(e) }));
     } finally {
       await useUi.getState().resyncRecording(kernelTabId);
     }
@@ -1657,7 +1658,7 @@ export function TerminalPane({
     try {
       await terminalApi.recordStop(kernelTabId);
     } catch (e) {
-      pushToast("error", `无法停止录制：${describeError(e)}`);
+      pushToast("error", tr("无法停止录制：{value}", { value: describeError(e) }));
     } finally {
       await useUi.getState().resyncRecording(kernelTabId);
     }
@@ -1673,10 +1674,10 @@ export function TerminalPane({
       const where = await finishSave(path, name);
       pushToast(
         where ? "success" : "info",
-        where ? `已导出到 ${where}` : "已取消保存",
+        where ? tr("已导出到 {where}", { where }) : tr("已取消保存"),
       );
     } catch (e) {
-      pushToast("error", `导出失败：${describeError(e)}。请更换保存位置后重试`);
+      pushToast("error", tr("导出失败：{value}。请更换保存位置后重试", { value: describeError(e) }));
     }
   };
 
@@ -1693,7 +1694,7 @@ export function TerminalPane({
       // /tmp and the file channel only make sense for POSIX hosts: WinRM has no /tmp and a 48 KiB write limit,
       // and a container terminal would receive files on the host instead of in the container.
       if (effectiveWinrm || sessionKind === "docker" || containerId) {
-        pushToast("info", "当前终端类型不支持粘贴上传文件，请在文件面板中上传");
+        pushToast("info", tr("当前终端类型不支持粘贴上传文件，请在文件面板中上传"));
         return;
       }
       if (!kernelTabId) return;
@@ -1701,14 +1702,14 @@ export function TerminalPane({
       const notes: string[] = [];
       if (skipped.length > 0) {
         notes.push(
-          `已跳过超过 ${MAX_PASTE_FILE_BYTES / 1024 / 1024} MB 的文件：${skipped.map((f) => displayFileName(f.name)).join("、")}`,
+          tr("已跳过超过 {value} MB 的文件：{join}", { value: MAX_PASTE_FILE_BYTES / 1024 / 1024, join: skipped.map((f) => displayFileName(f.name)).join("、") }),
         );
       }
-      if (skippedEntries.length > 0) notes.push(`已跳过无法上传的条目：${skippedEntries.join("、")}`);
+      if (skippedEntries.length > 0) notes.push(tr("已跳过无法上传的条目：{join}", { join: skippedEntries.join("、") }));
       const skippedNote = notes.join("；");
       if (skippedNote) pushToast("info", skippedNote);
       if (accepted.length === 0) {
-        setImagePaste({ phase: "error", message: skippedNote || "没有可上传的文件" });
+        setImagePaste({ phase: "error", message: skippedNote || tr("没有可上传的文件") });
         return;
       }
       // Hosts with Windows paths (a local session on a Windows desktop, OpenSSH on Windows) have no /tmp; the private
@@ -1720,7 +1721,7 @@ export function TerminalPane({
         pathStyle = undefined;
       }
       if (pathStyle === "windows") {
-        setImagePaste({ phase: "error", message: "该主机使用 Windows 路径，没有 /tmp；请改用文件面板上传" });
+        setImagePaste({ phase: "error", message: tr("该主机使用 Windows 路径，没有 /tmp；请改用文件面板上传") });
         return;
       }
       // The asset may map the upload directory (as the file channel sees it) to another path in the shell, for
@@ -1735,7 +1736,7 @@ export function TerminalPane({
         }
         const resolved = pasteDirSettings(options);
         if (!resolved.ok) {
-          setImagePaste({ phase: "error", message: `资产高级选项中的${resolved.error}；请在资产设置中修正` });
+          setImagePaste({ phase: "error", message: tr("资产高级选项中的{error}；请在资产设置中修正", { error: resolved.error }) });
           return;
         }
         pasteDirs = resolved.settings;
@@ -1744,7 +1745,7 @@ export function TerminalPane({
       pasteUploadRef.current = run;
       const totalBytes = accepted.reduce((sum, file) => sum + file.size, 0);
       const uploadingMessage = (done: number) =>
-        `正在上传 ${accepted.length} 个文件到该主机的 ${pasteDirs.terminalDir}…${totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : ""}`;
+        tr("正在上传 {length} 个文件到该主机的 {terminalDir}…{value}", { length: accepted.length, terminalDir: pasteDirs.terminalDir, value: totalBytes > 0 ? ` ${Math.min(100, Math.floor((done / totalBytes) * 100))}%` : "" });
       setImagePaste({ phase: "uploading", message: uploadingMessage(0), cancellable: true });
       // An unguessable, exclusively created 0700 directory: nobody else on the host can pre-create, link or read it.
       // With the asset option that skips it, files go straight into the upload directory under names with a random
@@ -1801,11 +1802,11 @@ export function TerminalPane({
         if (run.cancelled) throw new PasteUploadCancelled();
         const text = links.join(" ");
         // Last line of defence: the link goes straight to the shell, so no control byte may reach it.
-        if (TERMINAL_CONTROL.test(text)) throw new Error("生成的链接包含控制字符，已拒绝插入");
+        if (TERMINAL_CONTROL.test(text)) throw new Error(tr("生成的链接包含控制字符，已拒绝插入"));
         handleRef.current?.paste(text);
         setImagePaste({
           phase: "success",
-          message: `已上传 ${links.length} 个文件到该主机的 ${pasteDirs.terminalDir} 并插入链接${skippedNote ? `；${skippedNote}` : ""}`,
+          message: tr("已上传 {length} 个文件到该主机的 {terminalDir} 并插入链接{value}", { length: links.length, terminalDir: pasteDirs.terminalDir, value: skippedNote ? `；${skippedNote}` : "" }),
         });
       } catch (e) {
         let cleanupNote = "";
@@ -1813,7 +1814,7 @@ export function TerminalPane({
           try {
             await fsApi.delete(sessionId, dir, true);
           } catch {
-            cleanupNote = `；未能清理 ${dir}，请手动删除`;
+            cleanupNote = tr("；未能清理 {dir}，请手动删除", { dir });
           }
         }
         const leftover: string[] = [];
@@ -1825,16 +1826,16 @@ export function TerminalPane({
             if ((cleanupError as { code?: unknown } | null)?.code !== "not_found") leftover.push(path);
           }
         }
-        if (leftover.length > 0) cleanupNote = `；未能清理 ${leftover.join("、")}，请手动删除`;
+        if (leftover.length > 0) cleanupNote = tr("；未能清理 {join}，请手动删除", { join: leftover.join("、") });
         const message =
           e instanceof PasteUploadCancelled || run.cancelled
-            ? `已取消上传${cleanupNote}`
+            ? tr("已取消上传{cleanupNote}", { cleanupNote })
             : (e as { code?: unknown } | null)?.code === "not_found"
               ? pasteDirs.custom
-                ? `文件上传到 ${pasteDirs.uploadDir} 失败：该主机的 SFTP 中没有该目录，请检查资产高级选项中的粘贴上传目录${cleanupNote}`
+                ? tr("文件上传到 {uploadDir} 失败：该主机的 SFTP 中没有该目录，请检查资产高级选项中的粘贴上传目录{cleanupNote}", { uploadDir: pasteDirs.uploadDir, cleanupNote })
                 : // The SFTP view has no /tmp, typically a chrooted SFTP account.
-                  `文件上传到 /tmp 失败：该主机的 SFTP 中没有 /tmp（常见于受限的 chroot SFTP 账号），请改用文件面板上传到可写目录，或在资产高级选项中设置粘贴上传目录${cleanupNote}`
-              : `文件上传到 ${pasteDirs.uploadDir} 失败：${describeError(e)}${cleanupNote}`;
+                  tr("文件上传到 /tmp 失败：该主机的 SFTP 中没有 /tmp（常见于受限的 chroot SFTP 账号），请改用文件面板上传到可写目录，或在资产高级选项中设置粘贴上传目录{cleanupNote}", { cleanupNote })
+              : tr("文件上传到 {uploadDir} 失败：{value}{cleanupNote}", { uploadDir: pasteDirs.uploadDir, value: describeError(e), cleanupNote });
         setImagePaste({ phase: "error", message });
       } finally {
         if (pasteUploadRef.current === run) pasteUploadRef.current = null;
@@ -1847,17 +1848,17 @@ export function TerminalPane({
     const run = pasteUploadRef.current;
     if (!run) return;
     run.cancelled = true;
-    setImagePaste({ phase: "uploading", message: "正在取消上传…" });
+    setImagePaste({ phase: "uploading", message: tr("正在取消上传…") });
     if (run.transfer) void fsApi.cancel(run.transfer.taskId, run.transfer.attemptId).catch(() => undefined);
   };
 
   const pasteImagesFromClipboard = async () => {
     if (!kernelTabId) return;
     const pasteKey = pasteShortcutLabel(getCtrlVPaste());
-    const pasteHint = `请在终端内按 ${pasteKey} 粘贴文件，或将文件拖入终端`;
+    const pasteHint = tr("请在终端内按 {pasteKey} 粘贴文件，或将文件拖入终端", { pasteKey });
     if (typeof navigator.clipboard?.read !== "function") {
       handleRef.current?.focus();
-      pushToast("info", `当前环境不支持直接读取剪贴板图片；${pasteHint}`);
+      pushToast("info", tr("当前环境不支持直接读取剪贴板图片；{pasteHint}", { pasteHint }));
       return;
     }
     const files: File[] = [];
@@ -1873,14 +1874,14 @@ export function TerminalPane({
       const name = (e as { name?: string } | null)?.name;
       if (name === "NotAllowedError" || name === "SecurityError") {
         handleRef.current?.focus();
-        pushToast("info", `当前环境未允许直接读取剪贴板图片；${pasteHint}`);
+        pushToast("info", tr("当前环境未允许直接读取剪贴板图片；{pasteHint}", { pasteHint }));
       } else {
-        pushToast("error", `未能读取剪贴板图片：${describeError(e)}`);
+        pushToast("error", tr("未能读取剪贴板图片：{value}", { value: describeError(e) }));
       }
       return;
     }
     if (files.length === 0) {
-      pushToast("info", `剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 ${pasteKey} 或拖入`);
+      pushToast("info", tr("剪贴板中没有图片：请先截图或复制图片文件，再在终端中按 {pasteKey} 或拖入", { pasteKey }));
       return;
     }
     await handlePasteFiles(files);
@@ -1895,13 +1896,13 @@ export function TerminalPane({
 
   const inputCommand = async () => {
     if (!kernelTabId) return;
-    const cmd = await promptText("要发送到终端的命令（可多行，回车换行）", "", {
+    const cmd = await promptText(tr("要发送到终端的命令（可多行，回车换行）"), "", {
       multiLine: true,
     });
     if (!cmd) return;
     const body = cmd.endsWith("\n") ? cmd : `${cmd}\n`;
     const result = await sendData(body, { fromCommand: true });
-    if (result === "sent") pushToast("success", "命令已发送");
+    if (result === "sent") pushToast("success", tr("命令已发送"));
   };
 
   const toggleBlocksPanel = () => {
@@ -1913,36 +1914,36 @@ export function TerminalPane({
   const narrowStatusItems: MenuItem[] = [
     ...(staleConfig
       ? ([
-          { kind: "item", label: "配置已修改，重连后生效", disabled: true },
+          { kind: "item", label: tr("配置已修改，重连后生效"), disabled: true },
           {
             kind: "item",
-            label: "使用当前配置重连",
+            label: tr("使用当前配置重连"),
             disabled: !canReconnect,
             onSelect: () => void reconnectSession(),
           },
         ] satisfies MenuItem[])
       : []),
-    ...(effectiveWinrm ? ([{ kind: "item", label: "非交互模式（WinRM）", disabled: true }] satisfies MenuItem[]) : []),
+    ...(effectiveWinrm ? ([{ kind: "item", label: tr("非交互模式（WinRM）"), disabled: true }] satisfies MenuItem[]) : []),
     ...(containerId
-      ? ([{ kind: "item", label: execInterrupted ? "容器 exec 已结束" : "容器内 exec", disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: execInterrupted ? tr("容器 exec 已结束") : tr("容器内 exec"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.active
-      ? ([{ kind: "item", label: "输出积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("输出积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(throttleNow?.resyncing
-      ? ([{ kind: "item", label: "输出过快，正在重新同步", disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("输出过快，正在重新同步"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(streamBacklog
-      ? ([{ kind: "item", label: "解析积压，画面可能有延迟", disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("解析积压，画面可能有延迟"), disabled: true }] satisfies MenuItem[])
       : []),
     ...(recording?.state === "failed"
-      ? ([{ kind: "item", label: "录制失败", hint: recording.safeError || undefined, disabled: true }] satisfies MenuItem[])
+      ? ([{ kind: "item", label: tr("录制失败"), hint: recording.safeError || undefined, disabled: true }] satisfies MenuItem[])
       : []),
     ...(cwd
       ? ([
           {
             kind: "item",
-            label: "复制当前目录",
+            label: tr("复制当前目录"),
             hint: cwd,
             onSelect: () => void copyText(cwd).catch(() => undefined),
           },
@@ -1958,12 +1959,12 @@ export function TerminalPane({
 
   const buildToolbarOverflowMenu = (): MenuItem[] => [
     ...(narrowStatusItems.length > 0
-      ? ([{ kind: "group", label: "状态" }, ...narrowStatusItems, { kind: "separator" }] satisfies MenuItem[])
+      ? ([{ kind: "group", label: tr("状态") }, ...narrowStatusItems, { kind: "separator" }] satisfies MenuItem[])
       : []),
-    { kind: "group", label: "操作" },
+    { kind: "group", label: tr("操作") },
     {
       kind: "item",
-      label: "搜索终端内容",
+      label: tr("搜索终端内容"),
       icon: <IconSearch size={13} />,
       accel: searchBindingLabel,
       onSelect: () => {
@@ -1976,9 +1977,9 @@ export function TerminalPane({
       ? ([
           {
             kind: "item",
-            label: "预览链接",
+            label: tr("预览链接"),
             icon: <IconGlobe size={13} />,
-            hint: previewActive ? "分享中" : "创建 / 管理",
+            hint: previewActive ? tr("分享中") : tr("创建 / 管理"),
             onSelect: () => setPreviewOpenRequest((n) => n + 1),
           },
         ] satisfies MenuItem[])
@@ -1986,79 +1987,79 @@ export function TerminalPane({
     ...(blocksSupported
       ? ([
           { kind: "separator" },
-          { kind: "group", label: "命令列表" },
+          { kind: "group", label: tr("命令列表") },
           {
             kind: "item",
-            label: "上一条命令",
+            label: tr("上一条命令"),
             icon: <IconArrowUp size={13} />,
             disabled: !blocks.length,
             onSelect: () => handleRef.current?.navigateBlock("prev"),
           },
           {
             kind: "item",
-            label: "下一条命令",
+            label: tr("下一条命令"),
             icon: <IconArrowDown size={13} />,
             disabled: !blocks.length,
             onSelect: () => handleRef.current?.navigateBlock("next"),
           },
           {
             kind: "item",
-            label: "命令列表",
+            label: tr("命令列表"),
             icon: <IconList size={13} />,
-            hint: blocks.length > 0 ? `${blocks.length} 条` : "折叠输出 / 复制 / 定位",
+            hint: blocks.length > 0 ? tr("{length} 条", { length: blocks.length }) : tr("折叠输出 / 复制 / 定位"),
             onSelect: toggleBlocksPanel,
           },
         ] satisfies MenuItem[])
       : []),
     { kind: "separator" },
-    { kind: "group", label: "命令广播" },
+    { kind: "group", label: tr("命令广播") },
     {
       kind: "item",
-      label: "广播到当前分屏",
+      label: tr("广播到当前分屏"),
       icon: <IconZap size={13} />,
-      hint: "同面板全部终端",
+      hint: tr("同面板全部终端"),
       onSelect: () => void enableBroadcastScope("pane"),
     },
     {
       kind: "item",
-      label: "广播到全部终端",
-      hint: "全部已打开工作区",
+      label: tr("广播到全部终端"),
+      hint: tr("全部已打开工作区"),
       onSelect: () => void enableBroadcastScope("all"),
     },
     {
       kind: "item",
-      label: "选择广播目标…",
-      hint: broadcastCount > 0 ? `已选 ${broadcastCount} 个` : "逐个勾选",
+      label: tr("选择广播目标…"),
+      hint: broadcastCount > 0 ? tr("已选 {broadcastCount} 个", { broadcastCount }) : tr("逐个勾选"),
       onSelect: () => setBroadcastPickerOpen(true),
     },
     ...(broadcastCount > 0
       ? ([
           {
             kind: "item",
-            label: "关闭广播",
+            label: tr("关闭广播"),
             danger: true,
             onSelect: closeBroadcast,
           },
         ] satisfies MenuItem[])
       : []),
     { kind: "separator" },
-    { kind: "group", label: "录制" },
+    { kind: "group", label: tr("录制") },
     {
       kind: "item",
-      label: recording?.state === "running" ? "停止录制" : recording?.state === "failed" ? "重新开始录制…" : "开始录制…",
+      label: recording?.state === "running" ? tr("停止录制") : recording?.state === "failed" ? tr("重新开始录制…") : tr("开始录制…"),
       icon: <IconSave size={13} />,
-      hint: recording?.state === "running" ? "停止并保存当前录制" : "录制后续终端输出",
+      hint: recording?.state === "running" ? tr("停止并保存当前录制") : tr("录制后续终端输出"),
       disabled: !kernelTabId,
       onSelect: () => void (recording?.state === "running" ? stopRecording() : startRecording()),
     },
     { kind: "separator" },
     {
       kind: "item",
-      label: "字符编码",
+      label: tr("字符编码"),
       submenu: ENCODINGS.map((enc) => ({
         kind: "item",
         label: enc,
-        hint: enc === encoding ? "当前" : undefined,
+        hint: enc === encoding ? tr("当前") : undefined,
         onSelect: () => void applyEncoding(enc),
       })),
     },
@@ -2067,11 +2068,11 @@ export function TerminalPane({
           { kind: "separator" },
           {
             kind: "item",
-            label: "持久终端组件…",
+            label: tr("持久终端组件…"),
             onSelect: () => void refreshHelperDetails(),
           },
           ...(!WEB
-            ? ([{ kind: "item", label: "导入离线组件文件…", onSelect: () => void importOfflineHelper() }] satisfies MenuItem[])
+            ? ([{ kind: "item", label: tr("导入离线组件文件…"), onSelect: () => void importOfflineHelper() }] satisfies MenuItem[])
             : []),
         ] satisfies MenuItem[])
       : []),
@@ -2080,7 +2081,7 @@ export function TerminalPane({
   const openToolbarOverflow = (e: ReactMouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    setMenu({ x: r.left, y: r.bottom, title: "终端操作", items: buildToolbarOverflowMenu() });
+    setMenu({ x: r.left, y: r.bottom, title: tr("终端操作"), items: buildToolbarOverflowMenu() });
   };
 
   // Link actions for the terminal menu: right-click on a hovered link, or a
@@ -2090,24 +2091,24 @@ export function TerminalPane({
     const plan = planTerminalLink(uri);
     const webUrl = plan.kind === "external" && /^https?:/i.test(plan.url) ? plan.url : null;
     return [
-    { kind: "group", label: "链接" },
+    { kind: "group", label: tr("链接") },
     {
       kind: "item",
-      label: "打开链接",
-      hint: "不受修饰键和鼠标捕获影响",
+      label: tr("打开链接"),
+      hint: tr("不受修饰键和鼠标捕获影响"),
       onSelect: () => handleRef.current?.openLink(uri),
     },
     ...(inApp && webUrl
-      ? [{ kind: "item" as const, label: "在 NexTerm 中打开", onSelect: () => inApp(webUrl) }]
+      ? [{ kind: "item" as const, label: tr("在 NexTerm 中打开"), onSelect: () => inApp(webUrl) }]
       : []),
     {
       kind: "item",
-      label: "复制链接",
+      label: tr("复制链接"),
       icon: <IconCopy size={13} />,
       onSelect: () =>
         void copyText(cleanTerminalLink(uri)).then(
-          () => pushToast("success", "已复制链接"),
-          (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
+          () => pushToast("success", tr("已复制链接")),
+          (e: unknown) => pushToast("error", tr("复制链接失败：{value}", { value: describeError(e) })),
         ),
     },
     ];
@@ -2122,7 +2123,7 @@ export function TerminalPane({
       openAssetDraft: setAssetDraft,
       createLocalForward: terminalIntegrations().createLocalForward,
       openForwardTab: (id) =>
-        useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: "端口转发", sessionId: id, closable: true }),
+        useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: tr("端口转发"), sessionId: id, closable: true }),
       copy: copyText,
       toast: pushToast,
       describeError,
@@ -2145,38 +2146,38 @@ export function TerminalPane({
     const staleSession = sessionStatus === undefined || isStoreTabDead(storeTabId);
 
     return [
-      { kind: "group", label: "操作" },
+      { kind: "group", label: tr("操作") },
       {
         kind: "item",
-        label: "复制",
+        label: tr("复制"),
         icon: <IconCopy size={13} />,
         disabled: !hasSel,
         onSelect: () => void copyText(selected).catch(() => undefined),
       },
       {
         kind: "item",
-        label: "粘贴",
+        label: tr("粘贴"),
         disabled: !kernelTabId,
         onSelect: () => void pasteIntoTerminal(),
       },
       {
         kind: "item",
-        label: "粘贴图片",
-        hint: "上传到该主机的 /tmp，插入链接",
+        label: tr("粘贴图片"),
+        hint: tr("上传到该主机的 /tmp，插入链接"),
         disabled: !kernelTabId,
         onSelect: () => void pasteImagesFromClipboard(),
       },
       {
         kind: "item",
-        label: "粘贴选中文本",
+        label: tr("粘贴选中文本"),
         icon: <IconEdit size={13} />,
-        hint: "不修改剪贴板",
+        hint: tr("不修改剪贴板"),
         disabled: !hasSel || !kernelTabId,
         onSelect: () => void pasteSelectionBack(),
       },
       {
         kind: "item",
-        label: "搜索选中内容的首行",
+        label: tr("搜索选中内容的首行"),
         icon: <IconSearch size={13} />,
         accel: searchBindingLabel,
         disabled: !hasSel,
@@ -2188,47 +2189,47 @@ export function TerminalPane({
       },
       {
         kind: "item",
-        label: "命令输入",
+        label: tr("命令输入"),
         icon: <IconCommand size={13} />,
-        hint: "多行，直接执行",
+        hint: tr("多行，直接执行"),
         disabled: !kernelTabId,
         onSelect: () => void inputCommand(),
       },
       { kind: "separator" },
-      { kind: "group", label: "终端" },
+      { kind: "group", label: tr("终端") },
       {
         kind: "item",
-        label: "清屏",
+        label: tr("清屏"),
         disabled: !kernelTabId,
         onSelect: () => handleRef.current?.clear(),
       },
       {
         kind: "item",
-        label: recording?.state === "running" ? "停止录制" : recording?.state === "failed" ? "重新开始录制…" : "开始录制…",
+        label: recording?.state === "running" ? tr("停止录制") : recording?.state === "failed" ? tr("重新开始录制…") : tr("开始录制…"),
         icon: <IconSave size={13} />,
-        hint: recording?.state === "running" ? "停止并保存当前录制" : "录制后续终端输出",
+        hint: recording?.state === "running" ? tr("停止并保存当前录制") : tr("录制后续终端输出"),
         disabled: !kernelTabId,
         onSelect: () => void (recording?.state === "running" ? stopRecording() : startRecording()),
       },
       {
         kind: "item",
-        label: "导出当前输出…",
+        label: tr("导出当前输出…"),
         icon: <IconSave size={13} />,
-        hint: "屏幕与滚动历史",
+        hint: tr("屏幕与滚动历史"),
         disabled: !kernelTabId,
         onSelect: () => void saveLogToFile(),
       },
       {
         kind: "item",
-        label: "重新连接",
+        label: tr("重新连接"),
         icon: <IconRefresh size={13} />,
-        hint: staleSession ? "连接已失效，该标签页将换成新终端" : reconnecting ? "正在重新连接…" : statusText,
+        hint: staleSession ? tr("连接已失效，该标签页将换成新终端") : reconnecting ? tr("正在重新连接…") : statusText,
         disabled: reconnecting || (!staleSession && !canReconnect),
         onSelect: () => void (staleSession ? reconnectNow() : reconnectSession()),
       },
       {
         kind: "item",
-        label: "断开连接",
+        label: tr("断开连接"),
         icon: <IconPlug size={13} />,
         danger: true,
         disabled: !canDisconnect,
@@ -2236,10 +2237,10 @@ export function TerminalPane({
         onSelect: () => void disconnectSession(),
       },
       { kind: "separator" },
-      { kind: "group", label: "分屏" },
+      { kind: "group", label: tr("分屏") },
       ...([
-        { direction: "right", label: "向右分屏", icon: <IconSplitV size={13} />, binding: bindings.splitRight },
-        { direction: "down", label: "向下分屏", icon: <IconSplitH size={13} />, binding: bindings.splitDown },
+        { direction: "right", label: tr("向右分屏"), icon: <IconSplitV size={13} />, binding: bindings.splitRight },
+        { direction: "down", label: tr("向下分屏"), icon: <IconSplitH size={13} />, binding: bindings.splitDown },
       ] as const).map(({ direction, label, icon, binding }): MenuItem => {
         const tooShort = direction === "down" && !splitAllowedForHeight(window.innerHeight);
         return {
@@ -2248,7 +2249,7 @@ export function TerminalPane({
           icon,
           accel: formatBinding(binding),
           disabled: !ws || !pane || tooShort,
-          hint: tooShort ? "窗口高度不足" : undefined,
+          hint: tooShort ? tr("窗口高度不足") : undefined,
           onSelect: () => {
             if (ws && pane) useUi.getState().splitPane(direction, pane.id, ws.id);
           },
@@ -2256,11 +2257,11 @@ export function TerminalPane({
       }),
       {
         kind: "item",
-        label: "关闭窗格（保留标签页）",
+        label: tr("关闭窗格（保留标签页）"),
         icon: <IconMergeH size={13} />,
         disabled: !isSplit || !pane,
         accel: formatBinding(bindings.closePane),
-        hint: isSplit ? "标签页移到相邻窗格" : undefined,
+        hint: isSplit ? tr("标签页移到相邻窗格") : undefined,
         onSelect: () => {
           if (ws && pane) useUi.getState().closePane(pane.id, ws.id);
         },
@@ -2318,7 +2319,7 @@ export function TerminalPane({
               ? `${connectProgress.host}:${connectProgress.port}`
               : statusText
           }
-          aria-label={`连接状态：${statusText}`}
+          aria-label={tr("连接状态：{statusText}", { statusText })}
         >
           <span className="nx-dot" />
           <span className="nx-term-status-text">
@@ -2331,65 +2332,65 @@ export function TerminalPane({
         {staleConfig && (
           <>
             <span className="nx-badge nx-badge-amber" role="status">
-              资产配置已修改，重新连接后生效
+              {tr("资产配置已修改，重新连接后生效")}
             </span>
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
               disabled={!canReconnect || reconnecting}
-              title="使用新的资产配置重新连接，保留当前终端"
+              title={tr("使用新的资产配置重新连接，保留当前终端")}
               onClick={() => void reconnectSession()}
             >
-              重新连接
+              {tr("重新连接")}
             </button>
           </>
         )}
         {effectiveWinrm && (
           <span
             className="nx-badge nx-badge-amber"
-            title="WinRM 非交互模式：每条命令在新的 Shell 中执行，不支持 vim/top 等交互界面"
+            title={tr("WinRM 非交互模式：每条命令在新的 Shell 中执行，不支持 vim/top 等交互界面")}
           >
-            非交互模式
+            {tr("非交互模式")}
           </span>
         )}
         {containerId && (
           <span
             className={`nx-badge ${execInterrupted ? "nx-badge-amber" : "nx-badge-purple"}`}
-            title="docker exec 终端：关闭标签页即结束，不能转入后台"
+            title={tr("docker exec 终端：关闭标签页即结束，不能转入后台")}
           >
-            {execInterrupted ? "容器命令已结束" : "容器内命令"}
+            {execInterrupted ? tr("容器命令已结束") : tr("容器内命令")}
           </span>
         )}
         {throttleNow?.active && (
           <span
             className="nx-badge nx-badge-amber"
-            title={`终端输出积压（${throttleNow.inflightBytes} 字节待发送），画面可能有延迟`}
+            title={tr("终端输出积压（{inflightBytes} 字节待发送），画面可能有延迟", { inflightBytes: throttleNow.inflightBytes })}
           >
-            输出积压
+            {tr("输出积压")}
           </span>
         )}
         {throttleNow?.resyncing && (
-          <span className="nx-badge" role="status" title="输出速度较快，画面将自动同步，无需操作">
-            正在同步输出
+          <span className="nx-badge" role="status" title={tr("输出速度较快，画面将自动同步，无需操作")}>
+            {tr("正在同步输出")}
           </span>
         )}
         {throttleNow?.recovered && (
-          <span className="nx-badge nx-badge-green" title="终端输出积压已消退，画面恢复实时">
-            输出已恢复
+          <span className="nx-badge nx-badge-green" title={tr("终端输出积压已消退，画面恢复实时")}>
+            {tr("输出已恢复")}
           </span>
         )}
         {streamBacklog && (
           <span
             className="nx-badge nx-badge-amber"
-            title={`终端输出解析积压（${streamBacklog.pendingBytes} 字节待解析），画面可能有延迟`}
+            title={tr("终端输出解析积压（{pendingBytes} 字节待解析），画面可能有延迟", { pendingBytes: streamBacklog.pendingBytes })}
           >
-            解析积压
+            {tr("解析积压")}
           </span>
         )}
         {recording?.state === "running" && (
-          <span className="nx-badge nx-badge-red" title={recording.path || "正在录制"}>
+          <span className="nx-badge nx-badge-red" title={recording.path || tr("正在录制")}>
             <span className="nx-dot nx-dot-pulse" />
-            录制中
+            {tr("录制中")}
           </span>
         )}
         <Cwd cwd={cwd} />
@@ -2406,18 +2407,18 @@ export function TerminalPane({
 
         <button
           className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
-          title={`搜索终端内容 (${searchBindingLabel})`}
+          title={tr("搜索终端内容 ({searchBindingLabel})", { searchBindingLabel })}
           aria-pressed={searchOpen}
           onClick={() => setSearchOpen((v) => !v)}
         >
           <IconSearch size={13} />
-          搜索
+          {tr("搜索")}
         </button>
 
         {encoding !== "utf-8" && (
           <span
             className="nx-badge nx-badge-amber font-mono @max-[560px]:order-1"
-            title="终端字符编码"
+            title={tr("终端字符编码")}
           >
             {encoding}
           </span>
@@ -2429,8 +2430,8 @@ export function TerminalPane({
             <button
               className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
-              aria-label="上一条命令"
-              title="上一条命令"
+              aria-label={tr("上一条命令")}
+              title={tr("上一条命令")}
               onClick={() => handleRef.current?.navigateBlock("prev")}
             >
               <IconArrowUp size={13} />
@@ -2438,19 +2439,19 @@ export function TerminalPane({
             <button
               className="nx-icon-btn nx-icon-btn-sm @max-[560px]:hidden"
               disabled={!blocks.length}
-              aria-label="下一条命令"
-              title="下一条命令"
+              aria-label={tr("下一条命令")}
+              title={tr("下一条命令")}
               onClick={() => handleRef.current?.navigateBlock("next")}
             >
               <IconArrowDown size={13} />
             </button>
             <button
               className={`nx-btn nx-btn-sm @max-[560px]:hidden ${blocksOpen ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
-              title="命令列表：按命令查看、复制或定位输出"
+              title={tr("命令列表：按命令查看、复制或定位输出")}
               onClick={toggleBlocksPanel}
             >
               <IconList size={13} />
-              命令列表
+              {tr("命令列表")}
               {blocks.length > 0 && <span className="nx-count">{blocks.length}</span>}
             </button>
           </>
@@ -2458,28 +2459,28 @@ export function TerminalPane({
         <button
           className={`nx-btn nx-btn-sm @max-[560px]:hidden ${sidebarShown ? "nx-btn-ghost bg-neutral-800 text-neutral-100" : "nx-btn-ghost"}`}
           aria-pressed={sidebarShown}
-          title={`会话侧栏 (${formatBinding(bindings.sessionSidebar)})`}
+          title={tr("会话侧栏 ({value})", { value: formatBinding(bindings.sessionSidebar) })}
           onClick={toggleSidebarHere}
         >
           <IconPanelRight size={13} />
-          侧栏
+          {tr("侧栏")}
         </button>
         {broadcastCount > 0 && (
           <button
             type="button"
             className="nx-badge nx-badge-red shrink-0 cursor-pointer @max-[560px]:order-1"
-            title={`命令广播已开启：目标共 ${broadcastCount} 个，不可写目标会跳过；单击可关闭广播`}
-            aria-label="关闭命令广播"
+            title={tr("命令广播已开启：目标共 {broadcastCount} 个，不可写目标会跳过；单击可关闭广播", { broadcastCount })}
+            aria-label={tr("关闭命令广播")}
             onClick={closeBroadcast}
           >
             <span className="nx-dot nx-dot-pulse" />
-            广播 {broadcastCount}
+            {tr("广播")} {broadcastCount}
           </button>
         )}
         <button
           className="nx-icon-btn nx-icon-btn-sm nx-term-more"
-          title="更多终端操作（搜索 / 编码 / 命令列表）"
-          aria-label="更多终端操作"
+          title={tr("更多终端操作（搜索 / 编码 / 命令列表）")}
+          aria-label={tr("更多终端操作")}
           onClick={openToolbarOverflow}
         >
           ⋯
@@ -2487,7 +2488,7 @@ export function TerminalPane({
             <span
               className="nx-dot ml-0.5 inline-block align-middle @min-[561px]:hidden"
               role="img"
-              aria-label="预览链接分享中"
+              aria-label={tr("预览链接分享中")}
               data-testid="preview-active-dot"
             />
           )}
@@ -2495,7 +2496,7 @@ export function TerminalPane({
             <span
               className="nx-dot nx-dot-pulse ml-0.5 inline-block align-middle @min-[561px]:hidden"
               role="img"
-              aria-label="有状态需要查看，点开菜单"
+              aria-label={tr("有状态需要查看，点开菜单")}
               data-testid="toolbar-status-dot"
             />
           )}
@@ -2504,39 +2505,39 @@ export function TerminalPane({
 
       {containerId && execInterrupted && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-800/50 bg-amber-950/30 px-2.5 py-1.5 text-xs text-amber-300">
-          <span>容器内的命令已中断，原进程和输入无法恢复。重新打开将启动新的命令。</span>
+          <span>{tr("容器内的命令已中断，原进程和输入无法恢复。重新打开将启动新的命令。")}</span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
             disabled={sessionStatus !== "connected" || !execTargetMatches}
             onClick={restartExec}
           >
-            {sessionStatus === "connected" ? "重新打开" : "等待主机重新连接"}
+            {sessionStatus === "connected" ? tr("重新打开") : tr("等待主机重新连接")}
           </button>
-          {!execTargetMatches && <span>原主机已改变，请从容器列表重新打开。</span>}
+          {!execTargetMatches && <span>{tr("原主机已改变，请从容器列表重新打开。")}</span>}
         </div>
       )}
 
       {recording?.state === "failed" && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-red-900/50 bg-red-950/30 px-2.5 py-1.5 text-xs text-red-200">
-          <span>录制失败：{recording.safeError || "原因未知"}</span>
-          {recording.path && <span className="font-mono break-all">路径：{recording.path}</span>}
+          <span>{tr("录制失败：")}{recording.safeError || tr("原因未知")}</span>
+          {recording.path && <span className="font-mono break-all">{tr("路径：")}{recording.path}</span>}
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            title="复制录制错误"
-            onClick={() => void copyText(recording.safeError || "未知错误").catch(() => undefined)}
+            title={tr("复制录制错误")}
+            onClick={() => void copyText(recording.safeError || tr("未知错误")).catch(() => undefined)}
           >
-            复制错误
+            {tr("复制错误")}
           </button>
           {recording.path && (
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
-              title="复制录制路径"
+              title={tr("复制录制路径")}
               onClick={() => void copyText(recording.path || "").catch(() => undefined)}
             >
-              复制路径
+              {tr("复制路径")}
             </button>
           )}
         </div>
@@ -2547,7 +2548,7 @@ export function TerminalPane({
           <ProductionWriteRiskNotice
             environment={productionClassification.environment}
             production
-            operation="终端"
+            operation={tr("终端")}
           />
         </div>
       )}
@@ -2570,7 +2571,7 @@ export function TerminalPane({
               autoFocus
               ref={searchInputRef}
               className="nx-input nx-input-sm"
-              placeholder="搜索终端内容…"
+              placeholder={tr("搜索终端内容…")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -2582,22 +2583,22 @@ export function TerminalPane({
           </div>
           <button
             className="nx-icon-btn"
-            aria-label="上一个匹配"
-            title="上一个"
+            aria-label={tr("上一个匹配")}
+            title={tr("上一个")}
             onClick={() => searchApi.current?.findPrevious(query)}
           >
             <IconArrowUp size={13} />
           </button>
           <button
             className="nx-icon-btn"
-            aria-label="下一个匹配"
-            title="下一个"
+            aria-label={tr("下一个匹配")}
+            title={tr("下一个")}
             onClick={() => searchApi.current?.findNext(query)}
           >
             <IconArrowDown size={13} />
           </button>
           <div className="nx-spacer @max-[560px]:hidden" />
-          <button className="nx-icon-btn" aria-label="关闭搜索" title="关闭搜索" onClick={() => setSearchOpen(false)}>
+          <button className="nx-icon-btn" aria-label={tr("关闭搜索")} title={tr("关闭搜索")} onClick={() => setSearchOpen(false)}>
             <IconClose size={12} />
           </button>
         </div>
@@ -2717,25 +2718,25 @@ export function TerminalPane({
                   if (command) {
                     void terminalApi
                       .write(id, new TextEncoder().encode(`${command}\n`))
-                      .catch((e) => pushToast("error", `切换目录失败：${describeError(e)}`));
+                      .catch((e) => pushToast("error", tr("切换目录失败：{value}", { value: describeError(e) })));
                   } else {
                     const reason =
                       failure === "control"
-                        ? "目录包含控制字符"
+                        ? tr("目录包含控制字符")
                         : failure === "unsupported"
-                          ? "当前终端 Shell 暂不支持自动切换目录"
-                          : "无法确认当前终端 Shell";
+                          ? tr("当前终端 Shell 暂不支持自动切换目录")
+                          : tr("无法确认当前终端 Shell");
                     void copyText(pending)
                       .then(() => {
                         pushToast(
                           failure === "control" ? "error" : "info",
-                          `${reason}，未发送命令；路径已复制，请手动切换`,
+                          tr("{reason}，未发送命令；路径已复制，请手动切换", { reason }),
                         );
                       })
                       .catch((e) => {
                         pushToast(
                           "error",
-                          `${reason}，未发送命令；复制路径失败：${describeError(e)}。路径：${pending}`,
+                          tr("{reason}，未发送命令；复制路径失败：{value}。路径：{pending}", { reason, value: describeError(e), pending }),
                         );
                       });
                   }
@@ -2794,7 +2795,7 @@ export function TerminalPane({
               className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-neutral-950/45 px-6 text-center backdrop-blur-[1px]"
             >
               <span className="rounded-md border border-blue-400/30 bg-neutral-950/75 px-3 py-2 text-xs text-blue-100 shadow-lg">
-                正在切换终端…
+                {tr("正在切换终端…")}
               </span>
             </div>
           )}
@@ -2806,12 +2807,12 @@ export function TerminalPane({
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconEye size={15} className="nx-term-overlay-warn text-amber-300" />
-                {exitedMayRun ? "终端连接已中断" : "终端进程已结束"}
+                {exitedMayRun ? tr("终端连接已中断") : tr("终端进程已结束")}
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 {exitedMayRun
-                  ? "主机上的进程可能仍在运行。可重新接管该终端，或在后台会话中查看"
-                  : "只能查看最后的终端输出。请新建终端继续操作"}
+                  ? tr("主机上的进程可能仍在运行。可重新接管该终端，或在后台会话中查看")
+                  : tr("只能查看最后的终端输出。请新建终端继续操作")}
               </span>
               <div className="flex flex-wrap items-center justify-center gap-2">
                 {exitedMayRun && (
@@ -2822,10 +2823,10 @@ export function TerminalPane({
                       onClick={() => void reattachExited()}
                     >
                       <IconRefresh size={13} className={reattaching ? "animate-spin" : undefined} />
-                      重新接管
+                      {tr("重新接管")}
                     </button>
                     <button className="nx-btn nx-btn-ghost nx-btn-sm pointer-events-auto" onClick={openBackgroundSessions}>
-                      在后台会话中查看
+                      {tr("在后台会话中查看")}
                     </button>
                   </>
                 )}
@@ -2835,7 +2836,7 @@ export function TerminalPane({
                   onClick={() => void requestCloseTab(storeTabId)}
                 >
                   <IconClose size={13} />
-                  关闭标签页
+                  {tr("关闭标签页")}
                 </button>
               </div>
             </div>
@@ -2859,14 +2860,14 @@ export function TerminalPane({
               <span className="min-w-0 break-all">{imagePaste.message}</span>
               {imagePaste.phase === "uploading" && imagePaste.cancellable && (
                 <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={cancelPasteUpload}>
-                  取消
+                  {tr("取消")}
                 </button>
               )}
               <button
                 type="button"
                 className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                aria-label="关闭文件粘贴提示"
-                title="关闭"
+                aria-label={tr("关闭文件粘贴提示")}
+                title={tr("关闭")}
                 onClick={() => setImagePaste(null)}
               >
                 <IconClose size={12} />
@@ -2881,12 +2882,12 @@ export function TerminalPane({
             >
               <span className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-100">
                 <IconRefresh size={15} className="nx-term-overlay-warn text-amber-300" />
-                该终端已失效
+                {tr("该终端已失效")}
               </span>
               <span className="max-w-[440px] text-[11.5px] leading-relaxed text-neutral-200">
                 {ordinaryStarting
-                  ? "正在新建临时终端。原持久终端未恢复，其中的进程状态未知。"
-                  : "连接已不存在。重新连接会先尝试恢复原终端，历史输出见「终端历史」。"}
+                  ? tr("正在新建临时终端。原持久终端未恢复，其中的进程状态未知。")
+                  : tr("连接已不存在。重新连接会先尝试恢复原终端，历史输出见「终端历史」。")}
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -2900,14 +2901,14 @@ export function TerminalPane({
                   ) : (
                     <IconRefresh size={13} />
                   )}
-                  {reconnecting ? "正在重新连接…" : "重新连接"}
+                  {reconnecting ? tr("正在重新连接…") : tr("重新连接")}
                 </button>
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-sm"
                   onClick={() => void requestCloseTab(storeTabId)}
                 >
                   <IconClose size={13} />
-                  关闭标签页
+                  {tr("关闭标签页")}
                 </button>
               </div>
             </div>
@@ -2954,7 +2955,7 @@ export function TerminalPane({
               ? () => void replaceLegacyHelper(helperDetails.legacy?.consentToken ?? "")
               : undefined}
             restoreFailure={helperOperation?.kind === "reattach" && helperOperation.originalSession === "not_restored"}
-            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? "正在检查持久终端组件…" : helperRetryPending ? "正在重试…" : ordinaryStarting ? "正在打开临时终端…" : undefined}
+            busyLabel={helperActionBusy ? helperActionLabel : helperStatusLoading ? tr("正在检查持久终端组件…") : helperRetryPending ? tr("正在重试…") : ordinaryStarting ? tr("正在打开临时终端…") : undefined}
             controlsDisabled={helperActionBusy || helperRetryPending || ordinaryStarting}
             onRetryPersistent={helperOperation?.status === "awaiting_choice" ? () => void retryPersistent() : undefined}
             onContinueOrdinary={helperOperation?.status === "awaiting_choice" ? () => void continueOrdinary() : undefined}
@@ -2992,7 +2993,7 @@ export function TerminalPane({
             onClose={() => setAssetDraft(null)}
             onSaved={() => {
               setAssetDraft(null);
-              pushToast("success", "已创建资产");
+              pushToast("success", tr("已创建资产"));
             }}
           />
         </Lazy>

@@ -6,6 +6,7 @@ import { useUi } from "./store";
 import { describeError } from "../ui/errorText";
 import { IconLock, IconXCircle } from "../ui/icons";
 import { biometricApi, systemApi, vaultApi } from "../ipc/commands";
+import { t } from "../i18n";
 
 export function DekUnlockBanner() {
   if (WEB) return <WebDekUnlockBanner />;
@@ -33,7 +34,7 @@ function WebDekUnlockBanner() {
     try {
       await unlockDEK(password);
       setPassword("");
-      useUi.getState().pushToast("success", "已解锁，正在恢复同步");
+      useUi.getState().pushToast("success", t("已解锁，正在恢复同步"));
     } catch (e) {
       setError(describeError(e));
       setPassword("");
@@ -46,11 +47,11 @@ function WebDekUnlockBanner() {
     <div
       className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
       role="region"
-      aria-label="数据密钥未解锁"
+      aria-label={t("数据密钥未解锁")}
     >
       <IconLock size={13} className="shrink-0 text-amber-300" />
       <span className="min-w-0 truncate">
-        数据密钥未解锁，同步已暂停；输入账号密码即可恢复同步与加密内容
+        {t("数据密钥未解锁，同步已暂停；输入账号密码即可恢复同步与加密内容")}
       </span>
       <div className="nx-spacer" />
       {error && (
@@ -64,8 +65,8 @@ function WebDekUnlockBanner() {
       <input
         className="nx-input nx-input-sm w-40 shrink-0"
         type="password"
-        placeholder="账号密码"
-        aria-label="账号密码"
+        placeholder={t("账号密码")}
+        aria-label={t("账号密码")}
         autoComplete="current-password"
         value={password}
         disabled={busy}
@@ -80,14 +81,14 @@ function WebDekUnlockBanner() {
         disabled={busy || !password}
         onClick={() => void submit()}
       >
-        {busy ? "解锁中…" : "解锁"}
+        {busy ? t("解锁中…") : t("解锁")}
       </button>
       <button
         type="button"
         className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
         onClick={() => setDismissedFor(user.id)}
       >
-        稍后
+        {t("稍后")}
       </button>
     </div>
   );
@@ -115,7 +116,7 @@ function NativeVaultUnlockBanner() {
   const mobile = platform.data === "ios" || platform.data === "android";
   const supported =
     mobile || platform.data === "darwin" || platform.data === "windows" || platform.data === "linux";
-  const bioLabel = platform.data === "ios" ? "面容 ID" : "生物识别";
+  const bioLabel = platform.data === "ios" ? t("面容 ID") : t("生物识别");
   const vault = useQuery({ queryKey: ["vault-status"], queryFn: () => vaultApi.status(), enabled: supported });
   const bio = useQuery({
     queryKey: ["biometric-status"],
@@ -155,7 +156,7 @@ function NativeVaultUnlockBanner() {
       if (b?.canEvaluate && !b.hasMaterial && !dontAskBiometricAgain()) {
         setOfferEnable(pw);
       } else {
-        pushToast("success", "已解锁，正在恢复同步");
+        pushToast("success", t("已解锁，正在恢复同步"));
       }
     } catch (e) {
       setError(describeError(e));
@@ -173,12 +174,12 @@ function NativeVaultUnlockBanner() {
     try {
       const r = await biometricApi.unlock();
       if (!r.ok || !r.password) {
-        setNotice(r.message ?? "验证未通过，请使用密码解锁");
+        setNotice(r.message ?? t("验证未通过，请使用密码解锁"));
         return;
       }
       await vaultApi.unlock(r.password);
       await refreshUnlocked();
-      pushToast("success", "已解锁，正在恢复同步");
+      pushToast("success", t("已解锁，正在恢复同步"));
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -194,7 +195,7 @@ function NativeVaultUnlockBanner() {
       await biometricApi.enable(offerEnable);
       setOfferEnable(null);
       void qc.invalidateQueries({ queryKey: ["biometric-status"] });
-      pushToast("success", `已启用${bioLabel}快捷解锁`);
+      pushToast("success", t("已启用{bioLabel}快捷解锁", { bioLabel }));
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -210,7 +211,7 @@ function NativeVaultUnlockBanner() {
       await biometricApi.disable();
       setConfirmDisable(false);
       void qc.invalidateQueries({ queryKey: ["biometric-status"] });
-      pushToast("success", `已关闭${bioLabel}快捷解锁`);
+      pushToast("success", t("已关闭{bioLabel}快捷解锁", { bioLabel }));
     } catch (e) {
       setError(describeError(e));
     } finally {
@@ -223,10 +224,10 @@ function NativeVaultUnlockBanner() {
       <div
         className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
         role="region"
-        aria-label={`启用${bioLabel}快捷解锁`}
+        aria-label={t("启用{bioLabel}快捷解锁", { bioLabel })}
       >
         <IconLock size={13} className="shrink-0 text-amber-300" />
-        <span className="min-w-0 truncate">已解锁。启用{bioLabel}快捷解锁？验证通过后即可免输密码</span>
+        <span className="min-w-0 truncate">{t("已解锁。启用")}{bioLabel}{t("快捷解锁？验证通过后即可免输密码")}</span>
         <div className="nx-spacer" />
         {error && (
           <span className="flex min-w-0 shrink items-center gap-1 text-red-300" role="alert">
@@ -242,7 +243,7 @@ function NativeVaultUnlockBanner() {
           disabled={busy}
           onClick={() => void enableBiometric()}
         >
-          启用{bioLabel}
+          {t("启用")}{bioLabel}
         </button>
         <button
           type="button"
@@ -250,7 +251,7 @@ function NativeVaultUnlockBanner() {
           disabled={busy}
           onClick={() => setOfferEnable(null)}
         >
-          暂不
+          {t("暂不")}
         </button>
         <button
           type="button"
@@ -265,7 +266,7 @@ function NativeVaultUnlockBanner() {
             setOfferEnable(null);
           }}
         >
-          不再提示
+          {t("不再提示")}
         </button>
       </div>
     );
@@ -277,13 +278,13 @@ function NativeVaultUnlockBanner() {
     <div
       className="flex h-[34px] shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 text-xs text-amber-300"
       role="region"
-      aria-label="凭据库已锁定"
+      aria-label={t("凭据库已锁定")}
     >
       <IconLock size={13} className="shrink-0 text-amber-300" />
       <span className="min-w-0 truncate">
         {mobile
-          ? `凭据库已锁定，同步已暂停；输入保护密码或使用${bioLabel}解锁`
-          : "凭据库已锁定，同步已暂停；输入保护密码即可恢复同步并使用凭据"}
+          ? t("凭据库已锁定，同步已暂停；输入保护密码或使用{bioLabel}解锁", { bioLabel })
+          : t("凭据库已锁定，同步已暂停；输入保护密码即可恢复同步并使用凭据")}
       </span>
       <div className="nx-spacer" />
       {error && (
@@ -302,14 +303,14 @@ function NativeVaultUnlockBanner() {
       {canFaceUnlock &&
         (confirmDisable ? (
           <>
-            <span className="min-w-0 shrink truncate text-amber-300">关闭后下次需输入保护密码解锁</span>
+            <span className="min-w-0 shrink truncate text-amber-300">{t("关闭后下次需输入保护密码解锁")}</span>
             <button
               type="button"
               className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
               disabled={busy}
               onClick={() => void disableBiometric()}
             >
-              确认关闭
+              {t("确认关闭")}
             </button>
             <button
               type="button"
@@ -317,7 +318,7 @@ function NativeVaultUnlockBanner() {
               disabled={busy}
               onClick={() => setConfirmDisable(false)}
             >
-              取消
+              {t("取消")}
             </button>
           </>
         ) : (
@@ -328,24 +329,24 @@ function NativeVaultUnlockBanner() {
               disabled={busy}
               onClick={() => void faceUnlock()}
             >
-              {busy ? "验证中…" : `用${bioLabel}解锁`}
+              {busy ? t("验证中…") : t("用{bioLabel}解锁", { bioLabel })}
             </button>
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
               disabled={busy}
-              title="删除本机保存的解锁材料"
+              title={t("删除本机保存的解锁材料")}
               onClick={() => setConfirmDisable(true)}
             >
-              关闭{bioLabel}
+              {t("关闭")}{bioLabel}
             </button>
           </>
         ))}
       <input
         className="nx-input nx-input-sm w-40 shrink-0"
         type="password"
-        placeholder="保护密码"
-        aria-label="保护密码"
+        placeholder={t("保护密码")}
+        aria-label={t("保护密码")}
         autoComplete="current-password"
         value={password}
         disabled={busy}
@@ -360,7 +361,7 @@ function NativeVaultUnlockBanner() {
         disabled={busy || !password}
         onClick={() => void submit()}
       >
-        解锁
+        {t("解锁")}
       </button>
       <button
         type="button"
@@ -368,7 +369,7 @@ function NativeVaultUnlockBanner() {
         disabled={busy}
         onClick={() => setDismissed(true)}
       >
-        稍后
+        {t("稍后")}
       </button>
     </div>
   );

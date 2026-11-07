@@ -68,6 +68,7 @@ export function systemLocale(languages: readonly string[] | undefined = globalTh
 // resolveLocale is the language the interface starts in. Tests always run in the source language, so assertions on
 // interface text do not depend on the machine running them.
 export function resolveLocale(): Locale {
-  if (import.meta.env?.MODE === "test") return SOURCE_LOCALE;
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  if (env?.VITEST) return SOURCE_LOCALE;
   return storedLocale() ?? systemLocale();
 }

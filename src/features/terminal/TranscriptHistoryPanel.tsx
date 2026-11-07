@@ -33,6 +33,7 @@ import {
 import { TranscriptReplayView } from "./TranscriptReplayView";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { useTranscriptFocus } from "./transcriptFocus";
+import { t } from "../../i18n";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
@@ -53,7 +54,7 @@ interface HostOption {
 }
 
 function hostLabel(host: HostOption): string {
-  const suffix = host.deleted ? "（已删除）" : "";
+  const suffix = host.deleted ? t("（已删除）") : "";
   return `${host.name}${suffix}`;
 }
 
@@ -64,9 +65,9 @@ function badgeClass(summary: TranscriptSummary): string {
 }
 
 function badgeText(summary: TranscriptSummary): string {
-  if (summary.active) return "进行中";
-  if (summary.endedAt === null) return "异常结束";
-  return "已结束";
+  if (summary.active) return t("进行中");
+  if (summary.endedAt === null) return t("异常结束");
+  return t("已结束");
 }
 
 function normalizeRead(result: {
@@ -387,9 +388,9 @@ export function TranscriptHistoryPanel({
   const copyLoaded = async () => {
     try {
       await copyText(chunks.map((chunk) => chunk.text).join(""));
-      pushToast("success", done ? "已复制输出" : "已复制已加载的输出（尚未加载全部）");
+      pushToast("success", done ? t("已复制输出") : t("已复制已加载的输出（尚未加载全部）"));
     } catch (error) {
-      pushToast("error", `复制失败：${describeError(error)}`);
+      pushToast("error", t("复制失败：{value}", { value: describeError(error) }));
     }
   };
 
@@ -400,17 +401,17 @@ export function TranscriptHistoryPanel({
 
   const removeTranscript = async (summary: TranscriptSummary) => {
     const ok = await ask(
-      `删除「${summary.assetName}」在 ${formatTranscriptTime(summary.startedAt)} 的终端记录？\n\n删除后无法恢复。`,
-      { title: "删除终端记录", kind: "warning" },
+      t("删除「{assetName}」在 {value} 的终端记录？\n\n删除后无法恢复。", { assetName: summary.assetName, value: formatTranscriptTime(summary.startedAt) }),
+      { title: t("删除终端记录"), kind: "warning" },
     );
     if (!ok) return;
     try {
       await transcriptApi.remove(summary.id);
-      pushToast("success", "已删除终端记录");
+      pushToast("success", t("已删除终端记录"));
       if (selectedId === summary.id) setSelectedId(null);
       await loadSessions();
     } catch (error) {
-      pushToast("error", `删除失败：${describeError(error)}`);
+      pushToast("error", t("删除失败：{value}", { value: describeError(error) }));
     }
   };
 
@@ -423,18 +424,18 @@ export function TranscriptHistoryPanel({
     try {
       const result = await transcriptApi.exportCast(summary.id, path);
       const where = await finishSave(path, name);
-      const estimated = result.timingEstimated ? "。部分时间戳缺失，已按固定间隔估算" : "";
-      pushToast(where ? "success" : "info", where ? `已导出到 ${where}${estimated}` : "已取消保存");
+      const estimated = result.timingEstimated ? t("。部分时间戳缺失，已按固定间隔估算") : "";
+      pushToast(where ? "success" : "info", where ? t("已导出到 {where}{estimated}", { where, estimated }) : t("已取消保存"));
     } catch (error) {
-      pushToast("error", `导出失败：${describeError(error)}。请更换保存位置后重试`);
+      pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
     }
   };
 
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
     if (summary.syncOptIn) {
       const ok = await ask(
-        "关闭该记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。",
-        { title: "关闭账号同步", kind: "warning" },
+        t("关闭该记录的账号同步？\n\n其他设备上的同步副本将被删除，本机记录保留。"),
+        { title: t("关闭账号同步"), kind: "warning" },
       );
       if (!ok) return;
     }
@@ -442,7 +443,7 @@ export function TranscriptHistoryPanel({
     try {
       await transcriptApi.syncOptIn(summary.id, optIn);
       setSyncToggleError(null);
-      pushToast("success", optIn ? "已开启该记录的同步" : "已关闭该记录的同步");
+      pushToast("success", optIn ? t("已开启该记录的同步") : t("已关闭该记录的同步"));
       await loadSessions();
     } catch (error) {
       setSyncToggleError(describeError(error));
@@ -493,7 +494,7 @@ export function TranscriptHistoryPanel({
         return;
       }
       setPendingFocus(null);
-      pushToast("info", "未找到对应的终端记录，可能已被删除");
+      pushToast("info", t("未找到对应的终端记录，可能已被删除"));
       return;
     }
     setSelectedId(target.id);
@@ -529,13 +530,13 @@ export function TranscriptHistoryPanel({
     <div className="nx-pane" data-testid="transcript-history">
       <div className="nx-toolbar nx-wrap-toolbar">
         <IconHistory size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">终端历史</span>
+        <span className="nx-toolbar-title">{t("终端历史")}</span>
         {!fixedHost && <Select
           className="w-[280px] max-w-full max-[640px]:order-9 max-[640px]:w-auto max-[640px]:basis-full"
-          ariaLabel="选择主机"
+          ariaLabel={t("选择主机")}
           value={assetId ?? ""}
           disabled={hostOptions.length === 0}
-          placeholder={hostOptions.length === 0 ? "无可用主机" : "请选择主机"}
+          placeholder={hostOptions.length === 0 ? t("无可用主机") : t("请选择主机")}
           options={hostOptions.map((host) => ({ value: host.assetId, label: hostLabel(host) }))}
           onChange={(value) => switchAsset(value || null)}
         />}
@@ -546,16 +547,16 @@ export function TranscriptHistoryPanel({
           onClick={refresh}
         >
           <IconRefresh size={13} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       {hostsError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          未能读取主机列表：{hostsError}
+          {t("未能读取主机列表：")}{hostsError}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadHosts()}>
-            重试
+            {t("重试")}
           </button>
         </div>
       )}
@@ -563,9 +564,9 @@ export function TranscriptHistoryPanel({
       {syncToggleError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          切换同步失败：{syncToggleError}
+          {t("切换同步失败：")}{syncToggleError}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setSyncToggleError(null)}>
-            关闭
+            {t("关闭")}
           </button>
         </div>
       )}
@@ -581,7 +582,7 @@ export function TranscriptHistoryPanel({
             <table className="nx-table nx-table-cards">
               <thead>
                 <tr>
-                  <th>终端记录</th>
+                  <th>{t("终端记录")}</th>
                   <th style={{ width: 132 }} />
                 </tr>
               </thead>
@@ -602,9 +603,9 @@ export function TranscriptHistoryPanel({
                       <div className="mt-0.5 text-[11px] text-neutral-500">
                         {formatTranscriptDuration(summary.startedAt, summary.endedAt)} ·{" "}
                         {formatTranscriptBytes(summary.storedBytes || summary.bytes)}
-                        {summary.truncated && " · 已截断"}
-                        {summary.contentOmitted && " · 仅保留记录信息，没有输出内容"}
-                        {summary.assetDeleted && " · 主机已删除"}
+                        {summary.truncated && t(" · 已截断")}
+                        {summary.contentOmitted && t(" · 仅保留记录信息，没有输出内容")}
+                        {summary.assetDeleted && t(" · 主机已删除")}
                       </div>
                     </td>
                     <td className="nx-right">
@@ -614,16 +615,16 @@ export function TranscriptHistoryPanel({
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
                             title={
                               summary.syncOptIn
-                                ? "此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留"
-                                : "通过账号将此记录同步到其他设备（客户端加密，服务端只保存密文）"
+                                ? t("此记录已开启账号同步。关闭后，其他设备上的同步副本将被删除，本机记录保留")
+                                : t("通过账号将此记录同步到其他设备（客户端加密，服务端只保存密文）")
                             }
-                            aria-label={summary.syncOptIn ? "关闭该记录的同步" : "开启该记录的同步"}
+                            aria-label={summary.syncOptIn ? t("关闭该记录的同步") : t("开启该记录的同步")}
                             onClick={(event) => {
                               event.stopPropagation();
                               void toggleTranscriptSync(summary);
                             }}
                           >
-                            {summary.syncOptIn ? "已开启同步" : "同步"}
+                            {summary.syncOptIn ? t("已开启同步") : t("同步")}
                           </button>
                         ) : (
                           <button
@@ -631,12 +632,12 @@ export function TranscriptHistoryPanel({
                             disabled
                             title={
                               summary.active
-                                ? "进行中的记录在结束后才能开启同步"
-                                : "该记录没有结束时间，不能开启同步"
+                                ? t("进行中的记录在结束后才能开启同步")
+                                : t("该记录没有结束时间，不能开启同步")
                             }
-                            aria-label="同步不可用"
+                            aria-label={t("同步不可用")}
                           >
-                            同步
+                            {t("同步")}
                           </button>
                         )}
                         <span className={badgeClass(summary)}>
@@ -645,8 +646,8 @@ export function TranscriptHistoryPanel({
                         </span>
                         <button
                           className="nx-btn nx-btn-ghost nx-btn-xs"
-                          title="删除该记录"
-                          aria-label="删除该记录"
+                          title={t("删除该记录")}
+                          aria-label={t("删除该记录")}
                           onClick={(event) => {
                             event.stopPropagation();
                             void removeTranscript(summary);
@@ -661,16 +662,16 @@ export function TranscriptHistoryPanel({
                 {sessionsError && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty text-red-300">
-                      未能读取终端历史：{sessionsError}
+                      {t("未能读取终端历史：")}{sessionsError}
                     </td>
                   </tr>
                 )}
                 {!sessionsError && sessions !== null && sessionList.length === 0 && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      该主机暂无终端历史
+                      {t("该主机暂无终端历史")}
                       <div className="mt-1.5 text-[11px] text-neutral-500">
-                        连接该主机并产生终端输出后，记录会自动保存在这里。
+                        {t("连接该主机并产生终端输出后，记录会自动保存在这里。")}
                       </div>
                     </td>
                   </tr>
@@ -678,18 +679,18 @@ export function TranscriptHistoryPanel({
                 {!sessionsError && sessions === null && assetId && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      正在加载…
+                      {t("正在加载…")}
                     </td>
                   </tr>
                 )}
                 {!sessionsError && !assetId && hosts !== null && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      {hostOptions.length === 0 ? "暂无可查看的主机" : "请选择主机查看终端历史"}
+                      {hostOptions.length === 0 ? t("暂无可查看的主机") : t("请选择主机查看终端历史")}
                       <div className="mt-1.5 text-[11px] text-neutral-500">
                         {hostOptions.length === 0
-                          ? "请先添加主机并连接终端。"
-                          : "请从上方列表选择要查看的主机，以免查看到其他主机的记录。"}
+                          ? t("请先添加主机并连接终端。")
+                          : t("请从上方列表选择要查看的主机，以免查看到其他主机的记录。")}
                       </div>
                     </td>
                   </tr>
@@ -717,11 +718,11 @@ export function TranscriptHistoryPanel({
           <div className="flex items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5 md:hidden">
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
-              aria-label="返回记录列表"
+              aria-label={t("返回记录列表")}
               onClick={() => setSelectedId(null)}
             >
               <IconArrowLeft size={13} />
-              记录列表
+              {t("记录列表")}
             </button>
             {selected && (
               <span className="min-w-0 flex-1 truncate text-right text-[11px] text-neutral-500">
@@ -736,8 +737,8 @@ export function TranscriptHistoryPanel({
                   <IconSearch size={12} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-neutral-500" />
                   <input
                     className="nx-input nx-input-sm w-full pl-7 pointer-coarse:min-h-11 pointer-coarse:text-[16px]"
-                    placeholder="在选中的记录里搜索…"
-                    aria-label="搜索终端记录"
+                    placeholder={t("在选中的记录里搜索…")}
+                    aria-label={t("搜索终端记录")}
                     enterKeyHint="search"
                     autoCapitalize="off"
                     autoCorrect="off"
@@ -760,28 +761,28 @@ export function TranscriptHistoryPanel({
                   onClick={() => void runSearch()}
                 >
                   {searching ? <IconRefresh size={12} className="animate-spin" /> : <IconSearch size={12} />}
-                  搜索
+                  {t("搜索")}
                 </button>
               </>
             ) : (
               <span className="flex-1 text-[11px] text-neutral-500">
-                按录制时间轴回放终端输出，期间不可输入
+                {t("按录制时间轴回放终端输出，期间不可输入")}
               </span>
             )}
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
-              aria-label="导出 asciicast"
+              aria-label={t("导出 asciicast")}
               disabled={!selected || selected.contentOmitted}
               title={
                 selected?.contentOmitted
-                  ? "该记录只同步了元数据，没有输出内容，无法导出"
-                  : "只导出终端输出，不含键盘输入；可用 asciinema 播放"
+                  ? t("该记录只同步了元数据，没有输出内容，无法导出")
+                  : t("只导出终端输出，不含键盘输入；可用 asciinema 播放")
               }
               onClick={() => selected && void exportCast(selected)}
             >
-              导出 asciicast
+              {t("导出 asciicast")}
             </button>
-            <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label="记录视图">
+            <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label={t("记录视图")}>
               {(["text", "replay"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -797,7 +798,7 @@ export function TranscriptHistoryPanel({
                     setViewMode(mode);
                   }}
                 >
-                  {mode === "text" ? "文本" : "回放"}
+                  {mode === "text" ? t("文本") : t("回放")}
                 </button>
               ))}
             </div>
@@ -815,10 +816,10 @@ export function TranscriptHistoryPanel({
           {(matches !== null || searchError) && (
             <div className="max-h-[140px] shrink-0 overflow-auto overscroll-contain border-b max-[560px]:max-h-[35%] border-neutral-800/60">
               {searchError && (
-                <div className="px-3 py-2 text-[12px] text-red-300">搜索失败：{searchError}</div>
+                <div className="px-3 py-2 text-[12px] text-red-300">{t("搜索失败：")}{searchError}</div>
               )}
               {!searchError && matches !== null && matches.length === 0 && (
-                <div className="px-3 py-2 text-[12px] text-neutral-500">没有匹配的内容</div>
+                <div className="px-3 py-2 text-[12px] text-neutral-500">{t("没有匹配的内容")}</div>
               )}
               {!searchError &&
                 matches !== null &&
@@ -839,23 +840,23 @@ export function TranscriptHistoryPanel({
           <div ref={readerRef} className="min-h-0 flex-1 overflow-auto overscroll-contain px-3 py-2">
             {!selected && !readerLoading && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                选择左侧的终端记录查看输出
+                {t("选择左侧的终端记录查看输出")}
               </div>
             )}
             {readerLoading && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                正在加载…
+                {t("正在加载…")}
               </div>
             )}
             {readerError && (
               <div className="flex h-full items-center justify-center gap-2 text-[12px] text-red-300">
                 <IconAlert size={13} />
-                未能读取终端记录：{readerError}
+                {t("未能读取终端记录：")}{readerError}
               </div>
             )}
             {selected?.contentOmitted && !readerLoading && !readerError && (
               <div className="flex h-full items-center justify-center text-[12px] text-neutral-500">
-                仅保留记录信息，没有输出内容
+                {t("仅保留记录信息，没有输出内容")}
               </div>
             )}
             {selected && !selected.contentOmitted && !readerLoading && !readerError && (
@@ -865,7 +866,7 @@ export function TranscriptHistoryPanel({
                     {chunk.text}
                   </span>
                 ))}
-                {chunks.length === 0 && done && "（该记录没有任何输出）"}
+                {chunks.length === 0 && done && t("（该记录没有任何输出）")}
               </pre>
             )}
           </div>
@@ -876,22 +877,22 @@ export function TranscriptHistoryPanel({
             <IconClock size={11} />
             {selected ? (
               <>
-                {formatTranscriptTime(selected.startedAt)} 开始 ·{" "}
-                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} 段输出
-                {selected.truncated && " · 已达到大小上限，后续输出未记录"}
+                {formatTranscriptTime(selected.startedAt)} {t("开始 ·")}{" "}
+                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} {t("段输出")}
+                {selected.truncated && t(" · 已达到大小上限，后续输出未记录")}
               </>
             ) : (
-              "终端会话会自动记录（含键盘输入），按会话留存"
+              t("终端会话会自动记录（含键盘输入），按会话留存")
             )}
             <div className="nx-spacer" />
             {selected && !selected.contentOmitted && viewMode === "text" && chunks.length > 0 && (
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:min-h-11"
-                aria-label="复制已加载的输出"
+                aria-label={t("复制已加载的输出")}
                 onClick={() => void copyLoaded()}
               >
                 <IconCopy size={11} />
-                复制
+                {t("复制")}
               </button>
             )}
             {selected && !done && viewMode === "text" && (
@@ -901,7 +902,7 @@ export function TranscriptHistoryPanel({
                 onClick={() => void loadMore()}
               >
                 {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-                加载更多
+                {t("加载更多")}
               </button>
             )}
           </div>

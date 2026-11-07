@@ -36,6 +36,7 @@ import {
   reportDeviceSessionCleanup,
   type DeviceSessionCleanupFailure,
 } from "../fleet/deviceSessionCleanup";
+import { t } from "../../i18n";
 
 // syncPreferenceStore registers the account preference store (M140 /auth/preferences) after login/refresh, and unregisters on logout.
 function syncPreferenceStore(loggedIn: boolean): void {
@@ -152,13 +153,13 @@ function logoutFailure(cleanupFailures: DeviceSessionCleanupFailure[], revocatio
   if (revocationError) {
     return {
       code: "logout_failed",
-      message: `本地已退出登录，但服务端退出请求失败：${toAppError(revocationError).message}${cleanupMessage ? `；${cleanupMessage}` : ""}`,
+      message: t("本地已退出登录，但服务端退出请求失败：{message}{value}", { message: toAppError(revocationError).message, value: cleanupMessage ? `；${cleanupMessage}` : "" }),
     };
   }
   if (cleanupMessage) {
     return {
       code: "cleanup_failed",
-      message: `已退出登录；${cleanupMessage}。服务端已收到退出请求，并将按原会话补充清理。`,
+      message: t("已退出登录；{cleanupMessage}。服务端已收到退出请求，并将按原会话补充清理。", { cleanupMessage }),
     };
   }
   return null;

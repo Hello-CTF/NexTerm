@@ -2,6 +2,7 @@ import { assetApi, type Asset } from "../ipc/commands";
 import { copyText } from "../ui/clipboard";
 import { openHostDetail } from "../features/hosts/hostDetail";
 import { connectAsset, useUi } from "./store";
+import { t } from "../i18n";
 
 const DEEP_LINK_PATTERN = /^nexterm:\/\/connect\/([^/?#]+)\/?$/;
 const HOST_LINK_PREFIX = "nexterm://host/";
@@ -47,23 +48,23 @@ export async function openDeepLink(url: string): Promise<void> {
     return;
   }
   if (url.trim().startsWith(HOST_LINK_PREFIX)) {
-    pushToast("error", "无效的主机链接");
+    pushToast("error", t("无效的主机链接"));
     return;
   }
   const assetId = parseDeepLinkAssetId(url);
   if (!assetId) {
-    pushToast("error", "无法识别的 NexTerm 链接");
+    pushToast("error", t("无法识别的 NexTerm 链接"));
     return;
   }
   let asset: Asset;
   try {
     asset = await assetApi.get(assetId);
   } catch {
-    pushToast("error", "打开链接对应的资产失败，请确认资产仍存在后重试");
+    pushToast("error", t("打开链接对应的资产失败，请确认资产仍存在后重试"));
     return;
   }
   if (!asset || asset.deletedAt) {
-    pushToast("error", "打开链接对应的资产失败，请确认资产仍存在后重试");
+    pushToast("error", t("打开链接对应的资产失败，请确认资产仍存在后重试"));
     return;
   }
   await connectAsset({ id: asset.id, name: asset.name, kind: asset.kind, credId: asset.credId });
@@ -80,6 +81,6 @@ export function copyHostDeepLink(assetId: string): void {
 function copyLink(link: string): void {
   const { pushToast } = useUi.getState();
   void copyText(link)
-    .then(() => pushToast("success", "链接已复制"))
-    .catch(() => pushToast("error", "复制失败，请重试"));
+    .then(() => pushToast("success", t("链接已复制")))
+    .catch(() => pushToast("error", t("复制失败，请重试")));
 }

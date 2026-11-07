@@ -13,7 +13,7 @@ async function mountPublicEntry(pathname: string): Promise<void> {
   document.body.innerHTML = '<div id="root"></div>';
   vi.resetModules();
   await act(async () => {
-    await import("../main");
+    await import("../appMain");
   });
   await flush();
 }

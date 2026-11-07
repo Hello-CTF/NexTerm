@@ -13,6 +13,7 @@ import {
   nextLocalHelperOperationID,
 } from "./helperOperations";
 import type { UiGet, UiSet, UiState } from "./types";
+import { t } from "../../i18n";
 
 let helperOperationIntentSeq = 0;
 
@@ -169,7 +170,7 @@ export function createHelperSlice(set: UiSet, get: UiGet) {
       const operation = st.helperOperations.operations[tabId];
       if (!operation || !helperOperationLive(operation)) return;
       const context = helperTabContext(st, tabId);
-      if (!context) throw new Error("终端所属会话已不存在");
+      if (!context) throw new Error(t("终端所属会话已不存在"));
       if (operation.status === "running" && !operation.operationId.startsWith("local-restore-")) {
         await terminalApi.helperOperation(context.sessionId, operation.operationId, "cancel");
       }
@@ -184,9 +185,9 @@ export function createHelperSlice(set: UiSet, get: UiGet) {
     retryHelperOperation: async (tabId) => {
       const st = get();
       const operation = st.helperOperations.operations[tabId];
-      if (!operation || operation.status !== "awaiting_choice") throw new Error("当前持久终端操作不能重试");
+      if (!operation || operation.status !== "awaiting_choice") throw new Error(t("当前持久终端操作不能重试"));
       const context = helperTabContext(st, tabId);
-      if (!context) throw new Error("终端所属会话已不存在");
+      if (!context) throw new Error(t("终端所属会话已不存在"));
       if (operation.operationId.startsWith("local-restore-")) {
         const now = Date.now();
         set((current) => ({
@@ -253,7 +254,7 @@ export function createHelperSlice(set: UiSet, get: UiGet) {
               operationId: existing.operationId,
               attempt: existing.attempt,
               now: Date.now(),
-              reason: { kind: "restore_failed", code: "restore_failed", message: message ?? "原持久终端恢复失败" },
+              reason: { kind: "restore_failed", code: "restore_failed", message: message ?? t("原持久终端恢复失败") },
             }),
           };
         }
@@ -277,7 +278,7 @@ export function createHelperSlice(set: UiSet, get: UiGet) {
           operationId,
           attempt: 1,
           now,
-          reason: { kind: "restore_failed", code: "restore_failed", message: message ?? "原持久终端恢复失败" },
+          reason: { kind: "restore_failed", code: "restore_failed", message: message ?? t("原持久终端恢复失败") },
         });
         return { helperOperations: operations };
       });
