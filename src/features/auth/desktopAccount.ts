@@ -9,7 +9,9 @@ import { remoteAccountApi } from "../../ipc/remoteApi";
 import { DESKTOP } from "../../ipc/env";
 import type { AccountUser } from "../../ipc/authApi";
 
-async function fetchDesktopAccount(): Promise<AccountUser | null> {
+// Shared by every observer of the ["sync-link", "identity"] query (also useFleetAccount): one key must have one fetcher,
+// or whichever observer refetches decides which endpoints run.
+export async function fetchDesktopAccount(): Promise<AccountUser | null> {
 	const status = await syncApi.status();
 	if (!status.loggedIn || !status.username) return null;
 	try {
