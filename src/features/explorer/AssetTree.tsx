@@ -69,6 +69,7 @@ import { BulkMaintenanceDialog } from "../execbatch/BulkMaintenancePanel";
 import { ProjectSelector } from "./ProjectSelector";
 import {
   assetKindFields,
+  defaultCommandAsCtrl,
   isRemoteDesktopKind,
   readRemoteDesktopOptions,
   validateResolution,
@@ -2184,7 +2185,15 @@ export function AssetEditor({
   const [remoteOptions, setRemoteOptions] = useState<RemoteDesktopOptions>(() =>
     readRemoteDesktopOptions(initial?.kind ?? "", initial?.options),
   );
-  const patchRemote = (patch: Partial<RemoteDesktopOptions>) => setRemoteOptions((current) => ({ ...current, ...patch }));
+  // Command-as-Ctrl follows the chosen kind's default until the user sets it, so a new RDP asset starts with it on.
+  const [commandAsCtrlChoice, setCommandAsCtrlChoice] = useState<boolean | null>(() =>
+    typeof initial?.options?.commandAsCtrl === "boolean" ? initial.options.commandAsCtrl : null,
+  );
+  const remoteValues: RemoteDesktopOptions = { ...remoteOptions, commandAsCtrl: commandAsCtrlChoice ?? defaultCommandAsCtrl(groupKind) };
+  const patchRemote = (patch: Partial<RemoteDesktopOptions>) => {
+    if (patch.commandAsCtrl !== undefined) setCommandAsCtrlChoice(patch.commandAsCtrl);
+    setRemoteOptions((current) => ({ ...current, ...patch }));
+  };
   const [resolutionError, setResolutionError] = useState<string | null>(null);
   const [wakeOptions, setWakeOptions] = useState<WakeOptions>(() => readWakeOptions(initial?.options));
   const [wakeShowErrors, setWakeShowErrors] = useState(false);
@@ -2700,7 +2709,7 @@ export function AssetEditor({
       if (icon.trim()) baseOptions.icon = icon.trim();
       else delete baseOptions.icon;
       const remoteWritten = isRemoteDesktopKind(groupKind)
-        ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteOptions)
+        ? writeRemoteDesktopOptions(groupKind, baseOptions, remoteValues)
         : baseOptions;
       const options = kindFields.wake ? writeWakeOptions(remoteWritten, wakeOptions) : remoteWritten;
       // The editor never invents a username: an empty field stays empty, so a group default (or the connector's
@@ -3209,7 +3218,7 @@ export function AssetEditor({
               {kindFields.remote && (
                 <RemoteDesktopFields
                   protocol={kindFields.remote}
-                  values={remoteOptions}
+                  values={remoteValues}
                   onChange={patchRemote}
                   resolutionError={resolutionError}
                 />

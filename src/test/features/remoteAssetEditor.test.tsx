@@ -169,6 +169,8 @@ describe("AssetEditor remote desktop kinds", () => {
     expect(field("域")).toBeTruthy();
     expect(field("每次连接时输入密码")).toBeTruthy();
     expect(field("启用剪贴板").checked).toBe(true);
+    expect(field("自动同步剪贴板").checked).toBe(true);
+    expect(field("在 Mac 上将 Command 当作 Ctrl").checked).toBe(true);
     expect(mounted!.container.querySelector('button[aria-label="认证方式"]')).toBeNull();
     expect(mounted!.container.textContent).not.toContain("高级选项");
     expect(mounted!.container.querySelector('button[aria-label="分辨率"]')).not.toBeNull();
@@ -182,6 +184,22 @@ describe("AssetEditor remote desktop kinds", () => {
     expect(mounted!.container.querySelector('input[aria-label="域"]')).toBeNull();
     expect(mounted!.container.textContent).not.toContain("用户名");
     expect(field("默认只读").checked).toBe(false);
+    expect(field("在 Mac 上将 Command 当作 Ctrl").checked).toBe(false);
+    // Automatic sync is offered only while the clipboard is on.
+    click(field("启用剪贴板"));
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="自动同步剪贴板"]')).toBeNull();
+  });
+
+  it("stores the clipboard sync and Command settings only when they differ from the defaults", async () => {
+    mountEditor();
+    chooseKind("RDP");
+    await flush();
+    fillRequiredFields("win-02");
+    click(field("自动同步剪贴板"));
+    click(field("在 Mac 上将 Command 当作 Ctrl"));
+    await save();
+    expect(createdPayload()).toMatchObject({ kind: "rdp", options: { clipboardAutoSync: false, commandAsCtrl: false } });
   });
 
   it("saves an RDP asset with its domain, fixed resolution and options", async () => {

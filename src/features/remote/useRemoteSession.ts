@@ -220,6 +220,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
                 secret,
                 viewOnly: parsed.viewOnly,
                 clipboard: parsed.clipboard,
+                clipboardAutoSync: parsed.clipboardAutoSync,
                 initialSize: { width, height },
               },
               callbacks,

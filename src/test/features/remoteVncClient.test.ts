@@ -89,6 +89,7 @@ const options = (patch: Partial<ClientOptions> = {}): ClientOptions => ({
   secret: null,
   viewOnly: false,
   clipboard: true,
+  clipboardAutoSync: true,
   initialSize: null,
   ...patch,
 });
@@ -374,10 +375,26 @@ describe("VncClient clipboard", () => {
     expect(await off.fetchClipboard()).toBe(false);
   });
 
-  it("keeps the text the remote copied and writes it to the local clipboard only when fetched", async () => {
+  it("writes a remote copy to the local clipboard only while the tab is in front and the window has focus", async () => {
     const writeText = vi.fn(async () => undefined);
     stubClipboard({ writeText });
-    const { client, cb } = await connected();
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { client } = await connected();
+    rfb().emit("clipboard", { text: "first" });
+    expect(writeText).toHaveBeenCalledWith("first");
+    client.setForeground(false);
+    rfb().emit("clipboard", { text: "background" });
+    client.setForeground(true);
+    focus.mockReturnValue(false);
+    rfb().emit("clipboard", { text: "unfocused" });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    focus.mockRestore();
+  });
+
+  it("keeps the text the remote copied and writes it to the local clipboard only when fetched with sync off", async () => {
+    const writeText = vi.fn(async () => undefined);
+    stubClipboard({ writeText });
+    const { client, cb } = await connected(options({ clipboardAutoSync: false }));
     expect(await client.fetchClipboard()).toBe(false);
     rfb().emit("clipboard", { text: "from remote" });
     expect(cb.onRemoteClipboard).toHaveBeenCalledWith("from remote");

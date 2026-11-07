@@ -23,6 +23,7 @@ export class VncClient implements RemoteClient {
   private connected = false;
   private closed = false;
   private remoteClipboard = "";
+  private foreground = true;
   private scale: ScaleMode = "fit";
   private readonly abort = new AbortController();
 
@@ -95,6 +96,9 @@ export class VncClient implements RemoteClient {
       rfb.addEventListener("clipboard", (event) => {
         this.remoteClipboard = (event as CustomEvent<{ text: string }>).detail.text;
         this.callbacks.onRemoteClipboard?.(this.remoteClipboard);
+        if (this.options.clipboard && this.options.clipboardAutoSync && this.foreground && document.hasFocus()) {
+          void navigator.clipboard?.writeText(this.remoteClipboard).catch(() => undefined);
+        }
       });
       rfb.addEventListener("desktopsize" as string, () => {
         const size = this.desktopSize();
@@ -192,6 +196,10 @@ export class VncClient implements RemoteClient {
     } catch {
       return false;
     }
+  }
+
+  setForeground(foreground: boolean): void {
+    this.foreground = foreground;
   }
 
   async fetchClipboard(): Promise<boolean> {

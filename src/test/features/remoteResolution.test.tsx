@@ -70,6 +70,7 @@ function fakeClient(protocol: "rdp" | "vnc", options: ClientOptions, callbacks: 
     releaseAllKeys: vi.fn(),
     sendClipboard: vi.fn(async () => true),
     fetchClipboard: vi.fn(async () => true),
+    setForeground: vi.fn(),
     inputElement: () => null,
     thumbnail: () => null,
     desktopSize: () => size,

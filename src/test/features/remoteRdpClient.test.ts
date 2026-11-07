@@ -58,6 +58,7 @@ function newScenario(): Scenario {
     "shutdown",
     "sendClipboardData",
     "saveRemoteClipboardData",
+    "onClipboardRemoteUpdateCallback",
   ]) {
     ui[name] = vi.fn();
   }
@@ -99,6 +100,7 @@ const options = (patch: Partial<ClientOptions> = {}): ClientOptions => ({
   secret,
   viewOnly: false,
   clipboard: true,
+  clipboardAutoSync: true,
   initialSize: { width: 1280, height: 720 },
   ...patch,
 });
@@ -648,6 +650,32 @@ describe("RdpClient clipboard", () => {
     expect(await client.fetchClipboard()).toBe(true);
     expect(scenario.ui.sendClipboardData).toHaveBeenCalledTimes(1);
     expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes a remote copy to the local clipboard only while the tab is in front and the window has focus", async () => {
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { client } = await connected();
+    const onUpdate = scenario.ui.onClipboardRemoteUpdateCallback.mock.calls[0]?.[0] as () => void;
+    expect(onUpdate).toBeTypeOf("function");
+    const flush = async () => {
+      for (let i = 0; i < 3; i += 1) await Promise.resolve();
+    };
+    onUpdate();
+    await flush();
+    expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
+    client.setForeground(false);
+    onUpdate();
+    client.setForeground(true);
+    focus.mockReturnValue(false);
+    onUpdate();
+    await flush();
+    expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
+    focus.mockRestore();
+  });
+
+  it("leaves remote copies for a manual fetch when automatic sync is off", async () => {
+    await connected(options({ clipboardAutoSync: false }));
+    expect(scenario.ui.onClipboardRemoteUpdateCallback).not.toHaveBeenCalled();
   });
 
   it("reports false when the component or browser refuses", async () => {

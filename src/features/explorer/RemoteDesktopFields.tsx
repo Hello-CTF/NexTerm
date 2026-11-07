@@ -141,9 +141,23 @@ export function RemoteDesktopFields({
       />
       <ToggleRow
         label="启用剪贴板"
-        hint="允许在本机与远程桌面之间同步文本剪贴板。"
+        hint={protocol === "rdp" ? "允许在本机与远程桌面之间同步剪贴板中的文本和图片。" : "允许在本机与远程桌面之间同步文本剪贴板。"}
         checked={values.clipboard}
         onChange={(clipboard) => onChange({ clipboard })}
+      />
+      {values.clipboard && (
+        <ToggleRow
+          label="自动同步剪贴板"
+          hint="在远程桌面中粘贴时先发送本机剪贴板；远程复制的内容在该标签页位于前台时写入本机剪贴板。关闭后只能从工具栏手动同步。"
+          checked={values.clipboardAutoSync}
+          onChange={(clipboardAutoSync) => onChange({ clipboardAutoSync })}
+        />
+      )}
+      <ToggleRow
+        label="在 Mac 上将 Command 当作 Ctrl"
+        hint="仅在本机为 Mac 时生效：Command 键按 Ctrl 发送，例如 Command+C 在远程执行 Ctrl+C。远程也是 Mac 时请关闭。"
+        checked={values.commandAsCtrl}
+        onChange={(commandAsCtrl) => onChange({ commandAsCtrl })}
       />
       {protocol === "vnc" && (
         <ToggleRow

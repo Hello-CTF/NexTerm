@@ -72,11 +72,15 @@ export function isRemoteDesktopKind(kind: string): kind is "rdp" | "vnc" {
 }
 
 // Options the remote desktop form edits. The backend reads viaAssetId, promptPassword, domain, width and height;
-// clipboard and viewOnly are read by the client.
+// clipboard, clipboardAutoSync, commandAsCtrl and viewOnly are read by the client.
 export interface RemoteDesktopOptions {
   domain: string;
   promptPassword: boolean;
   clipboard: boolean;
+  // Paste sends the local clipboard first, and a remote copy reaches the local clipboard while the tab is in front.
+  clipboardAutoSync: boolean;
+  // On a Mac, Command is sent as Ctrl; see defaultCommandAsCtrl.
+  commandAsCtrl: boolean;
   viewOnly: boolean;
   resolution: "follow" | "fixed";
   width: number;
@@ -84,6 +88,12 @@ export interface RemoteDesktopOptions {
 }
 
 export const DEFAULT_RESOLUTION = { width: 1920, height: 1080 };
+
+// defaultCommandAsCtrl is the Command-as-Ctrl setting an asset has until it is changed: on for RDP, whose remote
+// side is Windows, and off for VNC, whose remote side may be a Mac.
+export function defaultCommandAsCtrl(kind: string): boolean {
+  return kind === "rdp";
+}
 
 function positiveInt(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0;
@@ -98,6 +108,8 @@ export function readRemoteDesktopOptions(kind: string, options: Record<string, u
     domain: typeof raw.domain === "string" ? raw.domain : "",
     promptPassword: raw.promptPassword === true,
     clipboard: raw.clipboard !== false,
+    clipboardAutoSync: raw.clipboardAutoSync !== false,
+    commandAsCtrl: typeof raw.commandAsCtrl === "boolean" ? raw.commandAsCtrl : defaultCommandAsCtrl(kind),
     // A VNC session starts read-only only when asked; the default is a normal session.
     viewOnly: raw.viewOnly === true,
     resolution: kind === "rdp" && fixed ? "fixed" : "follow",
@@ -119,9 +131,13 @@ export function writeRemoteDesktopOptions(
   delete options.height;
   delete options.promptPassword;
   delete options.clipboard;
+  delete options.clipboardAutoSync;
+  delete options.commandAsCtrl;
   delete options.viewOnly;
   if (values.promptPassword) options.promptPassword = true;
   if (!values.clipboard) options.clipboard = false;
+  if (!values.clipboardAutoSync) options.clipboardAutoSync = false;
+  if (values.commandAsCtrl !== defaultCommandAsCtrl(kind)) options.commandAsCtrl = values.commandAsCtrl;
   if (kind === "rdp") {
     if (values.domain.trim()) options.domain = values.domain.trim();
     if (values.resolution === "fixed") {

@@ -73,6 +73,7 @@ function fakeClient(options: ClientOptions, callbacks: ClientCallbacks): FakeCli
     releaseAllKeys: vi.fn(),
     sendClipboard: vi.fn(async () => true),
     fetchClipboard: vi.fn(async () => true),
+    setForeground: vi.fn(),
     inputElement: () => null,
     thumbnail: () => null,
     desktopSize: () => ({ width: 800, height: 600 }),
@@ -340,6 +341,56 @@ describe("RemoteDesktopPane", () => {
     });
     expect(isKeyboardCaptured()).toBe(false);
     expect(reachedRemote).not.toHaveBeenCalled();
+  });
+
+  async function focusedScreen(): Promise<{ client: FakeClient; canvas: HTMLCanvasElement }> {
+    await mountPane();
+    const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
+    const canvas = document.createElement("canvas");
+    canvas.tabIndex = 0;
+    pane().querySelector("[data-captured]")!.querySelector("div > div")!.append(canvas);
+    act(() => canvas.focus());
+    return { client, canvas };
+  }
+
+  it("sends the local clipboard before pasting, without handing the paste chord to the remote", async () => {
+    const { client, canvas } = await focusedScreen();
+    const reachedRemote = vi.fn();
+    canvas.addEventListener("keydown", reachedRemote);
+    act(() => {
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyV", key: "v", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(reachedRemote).not.toHaveBeenCalled();
+    expect(client.sendClipboard).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(client.sendKey).mock.calls.map((call) => `${call[0]}:${call[1]}`)).toEqual([
+      "ControlLeft:true",
+      "KeyV:true",
+      "KeyV:false",
+      "ControlLeft:false",
+    ]);
+  });
+
+  it("hands the paste chord to the remote untouched when automatic clipboard sync is off", async () => {
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { clipboardAutoSync: false } });
+    const { client, canvas } = await focusedScreen();
+    const reachedRemote = vi.fn();
+    canvas.addEventListener("keydown", reachedRemote);
+    act(() => {
+      canvas.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyV", key: "v", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(reachedRemote).toHaveBeenCalledTimes(1);
+    expect(client.sendClipboard).not.toHaveBeenCalled();
+  });
+
+  it("tells the client whether its tab is in front", async () => {
+    await mountPane();
+    const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
+    expect(client.setForeground).toHaveBeenLastCalledWith(true);
+    act(() => view!.root.render(createElement(RemoteDesktopPane, { tabId: "tab-1", assetId: "asset-1", visible: false })));
+    await flush();
+    expect(client.setForeground).toHaveBeenLastCalledWith(false);
   });
 
   it("counts down and reconnects with a new ticket after a network drop", async () => {

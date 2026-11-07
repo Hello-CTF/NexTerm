@@ -112,6 +112,7 @@ export class RdpClient implements RemoteClient {
   private connected = false;
   private closed = false;
   private viewOnly: boolean;
+  private foreground = true;
   // The login secret lives here only while connecting; it is dropped as soon as the handshake has used it.
   private secret: RemoteSecret | null;
   private focusAllowed = false;
@@ -146,7 +147,16 @@ export class RdpClient implements RemoteClient {
       ui.setVisibility(true);
       ui.setScale(3);
       ui.setEnableClipboard(this.options.clipboard);
+      // The component's own auto mode polls the local clipboard and sends every change; paste sends it instead.
       ui.setEnableAutoClipboard(false);
+      if (this.options.clipboard && this.options.clipboardAutoSync) {
+        ui.onClipboardRemoteUpdateCallback(() => {
+          if (!this.foreground || !document.hasFocus()) return;
+          void Promise.resolve()
+            .then(() => ui.saveRemoteClipboardData())
+            .catch(() => undefined);
+        });
+      }
       ui.onWarningCallback((message) => {
         this.lastWarning = message;
         console.warn("rdp:", message);
@@ -496,6 +506,10 @@ export class RdpClient implements RemoteClient {
     } catch {
       return false;
     }
+  }
+
+  setForeground(foreground: boolean): void {
+    this.foreground = foreground;
   }
 
   async fetchClipboard(): Promise<boolean> {

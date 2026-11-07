@@ -56,6 +56,16 @@ describe("remote desktop options", () => {
     });
   });
 
+  it("defaults clipboard sync on and Command-as-Ctrl by protocol, and stores only changes", () => {
+    expect(readRemoteDesktopOptions("rdp", undefined)).toMatchObject({ clipboardAutoSync: true, commandAsCtrl: true });
+    expect(readRemoteDesktopOptions("vnc", undefined)).toMatchObject({ clipboardAutoSync: true, commandAsCtrl: false });
+    const rdp = writeRemoteDesktopOptions("rdp", {}, { ...readRemoteDesktopOptions("rdp", undefined), clipboardAutoSync: false, commandAsCtrl: false });
+    expect(rdp).toEqual({ clipboardAutoSync: false, commandAsCtrl: false });
+    expect(readRemoteDesktopOptions("rdp", rdp)).toMatchObject({ clipboardAutoSync: false, commandAsCtrl: false });
+    expect(writeRemoteDesktopOptions("vnc", {}, { ...readRemoteDesktopOptions("vnc", undefined), commandAsCtrl: true })).toEqual({ commandAsCtrl: true });
+    expect(writeRemoteDesktopOptions("rdp", { clipboardAutoSync: false, commandAsCtrl: false }, readRemoteDesktopOptions("rdp", undefined))).toEqual({});
+  });
+
   it("reads a fixed resolution only when both sides are set", () => {
     expect(readRemoteDesktopOptions("rdp", { width: 1280, height: 720 })).toMatchObject({ resolution: "fixed", width: 1280, height: 720 });
     expect(readRemoteDesktopOptions("rdp", { width: 1280 }).resolution).toBe("follow");

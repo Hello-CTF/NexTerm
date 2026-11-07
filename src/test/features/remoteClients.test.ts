@@ -42,7 +42,7 @@ import { classifyFailure, mayAutoReconnect } from "../../features/remote/connect
 import type { ClientCallbacks, ClientOptions } from "../../features/remote/remoteTypes";
 
 const prepared = { ticket: "t", protocol: "vnc", assetId: "a", name: "n", host: "h", port: 1, username: "", domain: "", promptPassword: false, hasPassword: true, expiresAtMs: 1 };
-const options = (patch: Partial<ClientOptions> = {}): ClientOptions => ({ prepared, secret: null, viewOnly: false, clipboard: true, initialSize: { width: 800, height: 600 }, ...patch });
+const options = (patch: Partial<ClientOptions> = {}): ClientOptions => ({ prepared, secret: null, viewOnly: false, clipboard: true, clipboardAutoSync: true, initialSize: { width: 800, height: 600 }, ...patch });
 const callbacks = (): ClientCallbacks => ({ onConnected: vi.fn(), onDisconnected: vi.fn() });
 
 class FakeObserver {
@@ -107,7 +107,7 @@ describe("RdpClient", () => {
     canvas.width = 800;
     canvas.height = 600;
     const ui = {
-      setVisibility: vi.fn(), setScale: vi.fn(), setEnableClipboard: vi.fn(), setEnableAutoClipboard: vi.fn(), onWarningCallback: vi.fn(),
+      setVisibility: vi.fn(), setScale: vi.fn(), setEnableClipboard: vi.fn(), setEnableAutoClipboard: vi.fn(), onClipboardRemoteUpdateCallback: vi.fn(), onWarningCallback: vi.fn(),
       setKeyboardUnicodeMode: vi.fn(), resize: vi.fn(), shutdown: mocks.uiShutdown,
       configBuilder: () => {
         const builder: Record<string, unknown> = {};

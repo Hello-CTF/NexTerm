@@ -75,6 +75,8 @@ export interface ClientOptions {
   secret: RemoteSecret | null;
   viewOnly: boolean;
   clipboard: boolean;
+  // A remote copy is written to the local clipboard while the tab is in front and the window has focus.
+  clipboardAutoSync: boolean;
   // The size the desktop should start with (RDP).
   initialSize: { width: number; height: number } | null;
 }
@@ -96,10 +98,12 @@ export interface RemoteClient {
   sendCombo(codes: readonly string[]): Promise<void>;
   sendText(text: string): void;
   releaseAllKeys(): void;
-  // Both move text through the local clipboard; they resolve to false when there was nothing to move or the browser
-  // refused clipboard access.
+  // Both move the local clipboard (text, and PNG images over RDP); they resolve to false when there was nothing to
+  // move or the browser refused clipboard access.
   sendClipboard(): Promise<boolean>;
   fetchClipboard(): Promise<boolean>;
+  // Whether the tab is the one shown; a tab in the background never writes the local clipboard.
+  setForeground(foreground: boolean): void;
   // The element that receives pointer events, for the touch layer.
   inputElement(): HTMLElement | null;
   // A small JPEG data URL of the current picture, or null when there is none yet.

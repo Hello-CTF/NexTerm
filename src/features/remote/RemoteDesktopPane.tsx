@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { requestCloseTab } from "../../app/store";
 import { captureKeyboard, isReleaseChord, RELEASE_CHORD_LABEL, releaseKeyboard } from "../../app/inputCapture";
 import { isTouchShell } from "../../app/shell/shellMode";
+import { isMac } from "../../app/platform";
 import { promptText } from "../../ui/dialogs";
 import { IconLoader } from "../../ui/icons";
 import { parseResolutionInput } from "./resolution";
@@ -10,6 +11,7 @@ import { RemoteKeysBar } from "./RemoteKeysBar";
 import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
+import { RemoteKeyboard } from "./remoteKeyboard";
 import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
 import { AUTO_RECONNECT_WINDOW_MS, MAX_AUTO_RECONNECTS, type Failure } from "./connectFlow";
 import type { ModifierKey, ScaleMode } from "./remoteTypes";
@@ -171,6 +173,17 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     [resolution, options.resolution, options.width, options.height],
   );
   const connected = session.status === "connected";
+  // RDP takes a new clipboard on its own channel, so the paste keys wait briefly; VNC keeps both on one stream.
+  const keyboardOptionsRef = useRef({ commandAsCtrl: false, syncPaste: false, pasteDelayMs: 0 });
+  keyboardOptionsRef.current = {
+    commandAsCtrl: options.commandAsCtrl && isMac(),
+    syncPaste: options.clipboard && options.clipboardAutoSync,
+    pasteDelayMs: protocol === "rdp" ? 150 : 0,
+  };
+  const keyboard = useMemo(
+    () => new RemoteKeyboard(() => clientRef.current, () => keyboardOptionsRef.current),
+    [clientRef],
+  );
 
   // The client is created after the first render, so a setting made before it exists is applied once it does.
   useEffect(() => {
@@ -204,10 +217,11 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   }, [pinned, armHide]);
 
   const releaseHeld = useCallback(() => {
+    keyboard.reset();
     clientRef.current?.releaseAllKeys();
     setHeld(new Set());
     setLatched(new Set());
-  }, [clientRef]);
+  }, [clientRef, keyboard]);
 
   const releaseKeyboardNow = useCallback(() => {
     releaseHeld();
@@ -234,34 +248,47 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     };
     const onFocusOut = (event: FocusEvent) => {
       if (!inside(event.target) || inside(event.relatedTarget)) return;
+      keyboard.reset();
       clientRef.current?.releaseAllKeys();
       setHeld(new Set());
       releaseKeyboard(tabId);
       setCaptured(false);
       setHint(false);
     };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isReleaseChord(event)) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.type === "keydown" && isReleaseChord(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        releaseKeyboardNow();
+        return;
+      }
+      if (!inside(event.target) || effectiveViewOnly || !connected) return;
+      if (!keyboard.handle(event)) return;
       event.preventDefault();
       event.stopPropagation();
-      releaseKeyboardNow();
     };
     wrap.addEventListener("focusin", onFocusIn);
     wrap.addEventListener("focusout", onFocusOut);
-    // Capture phase: the chord must be seen before the remote client's own key handling.
-    wrap.addEventListener("keydown", onKeyDown, true);
+    // Capture phase: the chord, the Command mapping and paste must be seen before the remote client's own key handling.
+    wrap.addEventListener("keydown", onKey, true);
+    wrap.addEventListener("keyup", onKey, true);
     return () => {
       wrap.removeEventListener("focusin", onFocusIn);
       wrap.removeEventListener("focusout", onFocusOut);
-      wrap.removeEventListener("keydown", onKeyDown, true);
+      wrap.removeEventListener("keydown", onKey, true);
+      wrap.removeEventListener("keyup", onKey, true);
     };
-  }, [tabId, effectiveViewOnly, connected, clientRef, releaseKeyboardNow]);
+  }, [tabId, effectiveViewOnly, connected, clientRef, releaseKeyboardNow, keyboard]);
 
   useEffect(() => {
     const onBlur = () => releaseHeld();
     window.addEventListener("blur", onBlur);
     return () => window.removeEventListener("blur", onBlur);
   }, [releaseHeld]);
+
+  useEffect(() => {
+    clientRef.current?.setForeground(visible);
+  }, [visible, connected, clientRef]);
 
   // A tab that is not shown, or whose connection is gone, cannot own the keyboard: the app shortcuts come back.
   useEffect(() => {
