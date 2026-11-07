@@ -59,6 +59,7 @@ vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
 import { AuthCard } from "../features/settings/AuthCard";
 import { AccountCard } from "../features/settings/AccountCard";
 import { useUi } from "../app/store";
+import { useFleetAccount } from "../features/fleet/useFleetAccount";
 
 const ADMIN = {
   id: "u-admin",
@@ -435,5 +436,30 @@ describe("desktop account card superadmin", () => {
     expect(question).toContain("数据密钥");
     expect(question).toContain("两步验证绑定");
     expect(mocks.adminSetUserState).toHaveBeenCalledWith("u-alice", "reset_required");
+  });
+});
+
+describe("fleet account identity", () => {
+  function FleetProbe() {
+    const account = useFleetAccount();
+    return createElement("span", null, account.loading ? "loading" : `${account.userId ?? "none"}:${account.isAdmin ? "admin" : "user"}`);
+  }
+
+  it("resolves the role through remote_account_me without listing every user", async () => {
+    seedAdmin();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(createElement(QueryClientProvider, { client }, createElement(FleetProbe)));
+    await flushUntil(() => (mounted!.container.textContent ?? "") === "u-admin:admin");
+    expect(mocks.me).toHaveBeenCalled();
+    expect(mocks.adminUsers).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the admin probe when remote_account_me is unavailable", async () => {
+    seedAdmin();
+    mocks.me.mockRejectedValue({ code: "not_found", message: "not found" });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mounted = mount(createElement(QueryClientProvider, { client }, createElement(FleetProbe)));
+    await flushUntil(() => (mounted!.container.textContent ?? "") === "u-admin:admin");
+    expect(mocks.adminUsers).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,13 +1,11 @@
 // Unified account signal for device/share views: WEB takes the auth store session, desktop takes the server session
-// established by the "account sync" link (same queryKey and semantics as features/auth/desktopAccount.ts,
+// established by the "account sync" link (same queryKey and fetcher as features/auth/desktopAccount.ts,
 // sharing the cache; SyncCard's invalidate of ["sync-link"] after login/disconnect auto-refreshes this signal).
 
 import { useQuery } from "@tanstack/react-query";
-import { syncApi } from "../../ipc/commands";
-import { remoteAccountApi } from "../../ipc/remoteApi";
 import { WEB } from "../../ipc/env";
 import { useAuth } from "../auth/store";
-import type { AccountUser } from "../../ipc/authApi";
+import { fetchDesktopAccount } from "../auth/desktopAccount";
 
 export interface FleetAccount {
   // loading is true only during the desktop first fetch (WEB gets it synchronously); a non-empty userId means logged in.
@@ -16,37 +14,11 @@ export interface FleetAccount {
   isAdmin: boolean;
 }
 
-// Same semantics as desktopAccount.ts fetchDesktopAccount: the role is probed via adminUsers
-// (superadmin-only); a miss falls back to the minimal regular-user view. Semantic changes must be synced on both sides.
-async function fetchDesktopIdentity(): Promise<AccountUser | null> {
-  const status = await syncApi.status();
-  if (!status.loggedIn || !status.username) return null;
-  const minimal: AccountUser = {
-    id: status.userId ?? "",
-    username: status.username,
-    display_name: "",
-    role: "user",
-    state: "active",
-    must_change_password: false,
-    mfa_enabled: false,
-    created_at: 0,
-    updated_at: 0,
-    last_login_at: 0,
-  };
-  try {
-    const r = await remoteAccountApi.adminUsers();
-    const me = r.users.find((u) => u.username === status.username);
-    return me ?? { ...minimal, role: "superadmin" };
-  } catch {
-    return minimal;
-  }
-}
-
 export function useFleetAccount(): FleetAccount {
   const webUser = useAuth((s) => s.user);
   const query = useQuery({
     queryKey: ["sync-link", "identity"],
-    queryFn: fetchDesktopIdentity,
+    queryFn: fetchDesktopAccount,
     enabled: !WEB,
     staleTime: 30_000,
   });
