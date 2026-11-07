@@ -27,12 +27,13 @@ func setupTray(app *application.App, window *application.WebviewWindow, icon []b
 	}
 	tray.SetTooltip("NexTerm")
 
+	text := systemNativeText()
 	menu := application.NewMenu()
-	menu.Add("打开界面").OnClick(func(_ *application.Context) {
+	menu.Add(text.TrayOpen).OnClick(func(_ *application.Context) {
 		showWindow(window)
 	})
 	menu.AddSeparator()
-	menu.Add("退出 NexTerm").OnClick(func(_ *application.Context) {
+	menu.Add(text.TrayQuit).OnClick(func(_ *application.Context) {
 		trayQuitting.Store(true)
 		app.Quit()
 	})

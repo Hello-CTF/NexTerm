@@ -1,0 +1,3 @@
+/* Permission prompts shown by iOS in the system language. */
+"NSFaceIDUsageDescription" = "Use Face ID to quickly unlock the NexTerm data key";
+"NSLocationWhenInUseUsageDescription" = "The built-in web view may request location access; NexTerm never collects your location on its own";

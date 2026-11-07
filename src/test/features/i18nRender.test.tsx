@@ -41,3 +41,34 @@ describe("interface language", () => {
     expect(shown).not.toMatch(/[一-鿿]/);
   });
 });
+
+const LOCAL_ID = "01J0NEXTERMLOCALDEVICE0001";
+
+describe("built-in local asset name", () => {
+  it("shows the stored default name in the interface language and keeps it when saved unchanged", async () => {
+    vi.resetModules();
+    const calls: Array<[string, unknown]> = [];
+    vi.doMock("../../ipc/wails", () => ({
+      callDesktop: async (command: string, args: unknown) => {
+        calls.push([command, args]);
+        if (command === "asset_list") return [{ id: LOCAL_ID, kind: "local", name: "当前设备", builtin: true }, { id: "a", kind: "ssh", name: "当前设备", builtin: false }];
+        return { id: LOCAL_ID, kind: "local", name: "当前设备", builtin: true };
+      },
+    }));
+    vi.doMock("../../ipc/env", async (original) => ({ ...(await original<typeof import("../../ipc/env")>()), WEB: false }));
+    const i18n = await import("../../i18n");
+    i18n.applyLocale("en", { 当前设备: "This device" }, {});
+    const { assetApi } = await import("../../ipc/commands");
+    const [builtin, other] = await assetApi.list();
+    expect(builtin.name).toBe("This device");
+    expect(other.name).toBe("当前设备");
+    const saved = await assetApi.update({ id: LOCAL_ID, name: "This device" });
+    expect(calls.find(([command]) => command === "asset_update")?.[1]).toEqual({ args: { id: LOCAL_ID, name: "当前设备" } });
+    expect(saved.name).toBe("This device");
+    // Another asset the user names "This device" keeps that name.
+    await assetApi.update({ id: "a", name: "This device" });
+    expect(calls.filter(([command]) => command === "asset_update")[1]?.[1]).toEqual({ args: { id: "a", name: "This device" } });
+    vi.doUnmock("../../ipc/wails");
+    vi.doUnmock("../../ipc/env");
+  });
+});

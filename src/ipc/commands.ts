@@ -921,6 +921,20 @@ export interface AssetSearchResponse {
   truncated: boolean;
 }
 
+// The built-in local asset is stored under its Chinese default name (store.BuiltinLocalAssetName). Until the user
+// renames it, it shows in the interface language, and saving it unchanged keeps the stored name.
+const BUILTIN_LOCAL_ASSET_NAME = "当前设备";
+const BUILTIN_LOCAL_ASSET_ID = "01J0NEXTERMLOCALDEVICE0001";
+
+function shownAsset(asset: Asset): Asset {
+  return asset?.builtin && asset.name === BUILTIN_LOCAL_ASSET_NAME ? { ...asset, name: t("当前设备") } : asset;
+}
+
+function storedAssetPatch<T extends Record<string, unknown>>(args: T): T {
+  const unchanged = args.id === BUILTIN_LOCAL_ASSET_ID && args.name === t("当前设备") && args.name !== BUILTIN_LOCAL_ASSET_NAME;
+  return unchanged ? { ...args, name: BUILTIN_LOCAL_ASSET_NAME } : args;
+}
+
 async function assetWrite<T>(operation: () => Promise<T>): Promise<T> {
   const result = await operation();
   notifyAssetDataChanged();
@@ -929,19 +943,22 @@ async function assetWrite<T>(operation: () => Promise<T>): Promise<T> {
 
 export const assetApi = {
   // Device rows only record which group a fleet device sits in; they are not hosts, so the plain list leaves them out.
-  list: async () => (((await call("asset_list")) as Asset[] | null) ?? []).filter((asset) => asset.kind !== "device"),
+  list: async () => (((await call("asset_list")) as Asset[] | null) ?? []).filter((asset) => asset.kind !== "device").map(shownAsset),
   deviceRefs: async () => (((await call("asset_list")) as Asset[] | null) ?? []).filter((asset) => asset.kind === "device"),
-  get: (id: string) => call("asset_get", { id }) as Promise<Asset>,
+  get: async (id: string) => shownAsset((await call("asset_get", { id })) as Asset),
   create: (args: Partial<Asset> & { kind: string; name: string }) =>
     assetWrite(() => call("asset_create", { args }) as Promise<Asset>),
   update: (args: { id: string } & Record<string, unknown>) =>
-    assetWrite(() => call("asset_update", {
-      args: args as unknown as import("./generated/types").AssetPatchRequest,
-    }) as Promise<Asset>),
+    assetWrite(async () => shownAsset((await call("asset_update", {
+      args: storedAssetPatch(args) as unknown as import("./generated/types").AssetPatchRequest,
+    })) as Asset)),
   readKeyFile: (path: string) => call("asset_read_key_file", { path }),
   delete: (id: string) => assetWrite(() => call("asset_delete", { id }) as Promise<void>),
-  search: (q: string) => call("asset_search", { q }) as Promise<Asset[]>,
-  searchMeta: (q: string) => call("asset_search_meta", { q }) as Promise<AssetSearchResponse>,
+  search: async (q: string) => (((await call("asset_search", { q })) as Asset[] | null) ?? []).map(shownAsset),
+  searchMeta: async (q: string) => {
+    const response = (await call("asset_search_meta", { q })) as AssetSearchResponse;
+    return response?.assets ? { ...response, assets: response.assets.map(shownAsset) } : response;
+  },
   groupList: () => call("group_list") as Promise<AssetGroup[]>,
   groupCreate: (name: string, parentId?: string, defaults?: GroupDefaults) =>
     assetWrite(() => call("group_create", defaults ? { name, parentId, defaults } : { name, parentId }) as Promise<AssetGroup>),

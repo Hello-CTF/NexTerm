@@ -31,6 +31,8 @@ const CJK = /[一-鿿]/;
 const PLURAL_FORMS = new Set(["zero", "one", "two", "few", "many", "other"]);
 const SKIP_DIRS = new Set(["test", "bindings", "generated", "i18n", "node_modules"]);
 const GO_DIRS = ["internal", "cmd"];
+// Go files whose Chinese text never reaches the web interface: the desktop shell's own translated text.
+const GO_SKIP_FILES = new Set(["cmd/nexterm-desktop/native_text.go"]);
 
 function die(message) {
   console.error(`i18n: ${message}`);
@@ -148,6 +150,7 @@ function serverKeys() {
   for (const dir of GO_DIRS) {
     const files = walk(path.join(ROOT, dir), (name) => name.endsWith(".go") && !name.endsWith("_test.go"));
     for (const file of files) {
+      if (GO_SKIP_FILES.has(path.relative(ROOT, file).split(path.sep).join("/"))) continue;
       const text = stripGoComments(fs.readFileSync(file, "utf8"));
       for (const match of text.matchAll(/"((?:[^"\\\n]|\\.)*)"/g)) {
         const value = unquoteGo(match[1]);
