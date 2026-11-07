@@ -54,11 +54,12 @@ export function setLocale(locale: Locale | null): void {
   globalThis.location?.reload();
 }
 
-export type TranslateParams = Record<string, string | number>;
+// Values are converted the way a template literal converts them, so wrapping a template in t() keeps its output.
+export type TranslateParams = Record<string, unknown>;
 
 function interpolate(text: string, params: TranslateParams | undefined): string {
   if (!params) return text;
-  return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? String(params[name]) : whole));
+  return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in params ? `${params[name] as string}` : whole));
 }
 
 function pick(entry: CatalogEntry, params: TranslateParams | undefined): string {
