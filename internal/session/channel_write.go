@@ -19,6 +19,36 @@ type channelContextWriter interface {
 	WriteContext(context.Context, []byte) (int, error)
 }
 
+// channelWindowedWriter is the optional capability of a channel that can put
+// input on the wire without waiting for the host's acknowledgement
+// (supervisor streams). A rejection of earlier input is reported by the next
+// write instead.
+type channelWindowedWriter interface {
+	WriteWindowed(context.Context, []byte) (int, error)
+}
+
+// writeChannelInput sends interactive keystrokes. Waiting for the host to
+// acknowledge each batch would hold the next keystroke for a full round trip
+// behind the previous one, so pipelining channels only wait for window space;
+// other channels fall back to writeChannelContext.
+func writeChannelInput(ctx context.Context, channel *channelHandle, data []byte) error {
+	writer, ok := channel.Channel.(channelWindowedWriter)
+	if !ok {
+		return writeChannelContext(ctx, channel, data)
+	}
+	for len(data) > 0 {
+		written, err := writer.WriteWindowed(ctx, data)
+		if err != nil {
+			return convertChannelWriteError(err)
+		}
+		if written <= 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
 // writeChannelContext writes data to the channel honoring ctx when the
 // channel supports context writes; channels without the capability keep the
 // plain blocking write. A cancelled context write terminates the underlying

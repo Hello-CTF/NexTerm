@@ -1754,7 +1754,7 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 			data = append(data, input.data...)
 		}
 	}
-	if err := writeChannelContext(ctx, channel, data); err != nil {
+	if err := writeChannelInput(ctx, channel, data); err != nil {
 		finish(accepted, err)
 		return
 	}
