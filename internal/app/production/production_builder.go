@@ -160,6 +160,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	transcriptWriter := newTranscriptWriter(transcriptWriterConfig{
 		Database: database, Logger: config.Config.Logger,
 		RequireOwner: !(config.Desktop || owner.OpenAccess(ctx)),
+		BatchLinger:  transcriptBatchLinger,
 	})
 	var durableResolver session.DurableResolver
 	var sshResolver *sshdaemon.Resolver

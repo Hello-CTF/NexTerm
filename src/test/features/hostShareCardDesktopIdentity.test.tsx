@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => {
     hostShares: vi.fn(),
     links: vi.fn(),
     adminUsers: vi.fn(),
+    // remote_account_me unavailable: identity falls back to the adminUsers role probe these tests exercise.
+    me: vi.fn(() => Promise.reject(new Error("remote_account_me unavailable"))),
     active: null as null | { deviceId: string; onClose: () => void },
     closed: vi.fn(),
   };
@@ -31,7 +33,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
     remoteFleetApi: { ...actual.remoteFleetApi, devices: mocks.devices },
     remoteSharingApi: { ...actual.remoteSharingApi, hostShares: mocks.hostShares, links: mocks.links },
     remoteHostShareApi: { ...actual.remoteHostShareApi, identity: mocks.identity },
-    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers },
+    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers, me: mocks.me },
   };
 });
 

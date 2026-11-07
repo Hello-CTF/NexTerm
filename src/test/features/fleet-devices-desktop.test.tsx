@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => {
     putBaseUrls: vi.fn(),
     serverVersion: vi.fn(),
     adminUsers: vi.fn(),
+    // remote_account_me unavailable: identity falls back to the adminUsers role probe these tests exercise.
+    me: vi.fn(() => Promise.reject(new Error("remote_account_me unavailable"))),
     ask: vi.fn(),
     listenEvent: vi.fn(),
     fetch: vi.fn(),
@@ -73,7 +75,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       putBaseUrls: mocks.putBaseUrls,
     },
     remoteHealthApi: { serverVersion: mocks.serverVersion },
-    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers },
+    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers, me: mocks.me },
   };
 });
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));

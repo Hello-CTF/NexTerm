@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => {
     createHostShare: vi.fn(),
     revokeHostShare: vi.fn(),
     adminUsers: vi.fn(),
+    // remote_account_me unavailable: identity falls back to the adminUsers role probe these tests exercise.
+    me: vi.fn(() => Promise.reject(new Error("remote_account_me unavailable"))),
     ask: vi.fn(),
     fetch: vi.fn(),
   };
@@ -40,7 +42,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
       revokeHostShare: mocks.revokeHostShare,
     },
     remoteHostShareApi: { ...actual.remoteHostShareApi, identity: mocks.identity },
-    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers },
+    remoteAccountApi: { ...actual.remoteAccountApi, adminUsers: mocks.adminUsers, me: mocks.me },
   };
 });
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask }));
