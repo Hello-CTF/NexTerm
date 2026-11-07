@@ -30,6 +30,10 @@ const (
 	transcriptDefaultRetentionMaxCount = core.TranscriptDefaultRetentionMaxCount
 )
 
+// transcriptBatchLinger lets a busy terminal's output chunks share one append transaction instead of
+// committing each chunk on its own; a full batch or shutdown flushes without waiting.
+const transcriptBatchLinger = 250 * time.Millisecond
+
 var transcriptTruncationMarker = []byte("\r\n\x1b[33m[NexTerm] transcript size limit reached; further output not recorded\x1b[0m\r\n")
 
 type transcriptStore interface {
@@ -49,6 +53,9 @@ type transcriptWriterConfig struct {
 	// Desktop and open-access deployments leave it false, so ownerless
 	// sessions keep the legacy shared-store behavior.
 	RequireOwner bool
+	// BatchLinger is how long the writer waits after the first queued item for more to join its batch.
+	// Zero flushes as soon as an item is queued.
+	BatchLinger time.Duration
 }
 
 type transcriptItemKind int
@@ -151,6 +158,7 @@ type transcriptWriter struct {
 	queueMaxBytes     int64
 	retentionInterval time.Duration
 	requireOwner      bool
+	batchLinger       time.Duration
 
 	queueMu        sync.Mutex
 	queue          []transcriptItem
@@ -195,6 +203,7 @@ func newTranscriptWriter(config transcriptWriterConfig) *transcriptWriter {
 		queueMaxBytes:     config.QueueMaxBytes,
 		retentionInterval: config.RetentionInterval,
 		requireOwner:      config.RequireOwner,
+		batchLinger:       config.BatchLinger,
 		activeDrops:       make(map[string]int),
 		signalCh:          make(chan struct{}, 1),
 		spaceCh:           make(chan struct{}),
@@ -474,6 +483,7 @@ func (w *transcriptWriter) run() {
 }
 
 func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
+	var lingerUntil time.Time
 	for {
 		w.queueMu.Lock()
 		if len(w.queue) == 0 {
@@ -484,6 +494,21 @@ func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 			w.queueMu.Unlock()
 			<-w.signalCh
 			continue
+		}
+		if w.batchLinger > 0 && !w.closed && len(w.queue) < transcriptBatchMaxItems && w.queuedBytes < transcriptBatchMaxBytes {
+			if lingerUntil.IsZero() {
+				lingerUntil = time.Now().Add(w.batchLinger)
+			}
+			if wait := time.Until(lingerUntil); wait > 0 {
+				w.queueMu.Unlock()
+				timer := time.NewTimer(wait)
+				select {
+				case <-w.signalCh:
+				case <-timer.C:
+				}
+				timer.Stop()
+				continue
+			}
 		}
 		count := 0
 		batchBytes := 0
