@@ -127,6 +127,9 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 	"github.com/Hello-CTF/NexTerm/internal/app/production.sshImportApplyRequest": {
 		"Path": true, "Confirmed": true, "GroupID": true, "Tags": true,
 	},
+	"github.com/Hello-CTF/NexTerm/internal/app/production.transcriptListRequest": {
+		"StarredOnly": true,
+	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadRequest": {
 		"MaxBytes": true,
 	},

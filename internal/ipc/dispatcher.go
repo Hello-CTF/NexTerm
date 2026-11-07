@@ -15,7 +15,7 @@ var syncObjectWriteCommands = map[string]bool{
 	"vault_set_credential": true, "credential_update": true, "vault_delete_credential": true,
 	"known_host_accept": true, "known_host_remove": true,
 	"ai_model_save": true, "ai_model_delete": true, "ai_set_permission": true, "sync_preferences_set": true,
-	"terminal_record_stop": true, "transcript_delete": true, "transcript_sync_opt_in": true,
+	"terminal_record_stop": true, "transcript_delete": true, "transcript_purge": true, "transcript_sync_opt_in": true,
 	"sync_link_set": true, "sync_kind_opt_in_set": true, "sync_import": true, "ssh_import_apply": true,
 	"sync_repair_undecryptable": true,
 }

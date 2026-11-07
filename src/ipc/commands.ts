@@ -779,6 +779,8 @@ export interface TranscriptSummary {
   active: boolean;
   syncOptIn?: boolean;
   contentOmitted?: boolean;
+  // Starred transcripts are kept by automatic and manual cleanup.
+  starred?: boolean;
 }
 
 export interface TranscriptChunk {
@@ -813,8 +815,9 @@ export interface TranscriptHost {
 
 export const transcriptApi = {
   hosts: () => call("transcript_hosts") as Promise<TranscriptHost[]>,
-  list: async (assetId: string): Promise<TranscriptSummary[]> => {
-    const summaries = await call("transcript_list", { assetId });
+  // starredOnly lists every starred transcript of the host instead of the most recent ones.
+  list: async (assetId: string, starredOnly = false): Promise<TranscriptSummary[]> => {
+    const summaries = await call("transcript_list", starredOnly ? { assetId, starredOnly } : { assetId });
     return summaries.map((summary) => ({
       id: summary.id,
       sessionId: summary.sessionId,
@@ -831,6 +834,7 @@ export const transcriptApi = {
       active: summary.active,
       syncOptIn: summary.syncOptIn,
       contentOmitted: summary.contentOmitted,
+      starred: summary.starred,
     }));
   },
   read: async (id: string, afterSeq = 0, maxBytes?: number): Promise<TranscriptReadResult> => {
@@ -855,6 +859,13 @@ export const transcriptApi = {
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
   exportCast: (id: string, path: string) =>
     call("transcript_export_cast", { id, path }) as Promise<import("./generated/types").TranscriptExportCastResult>,
+  star: (id: string, starred: boolean) => call("transcript_star", { id, starred }) as unknown as Promise<void>,
+  // What a purge of the transcripts that ended before endedBefore (ms) would delete, plus overall usage.
+  usage: (endedBefore: number) => call("transcript_usage", { endedBefore }),
+  purge: (endedBefore: number) => call("transcript_purge", { endedBefore }),
+  retention: () => call("transcript_retention_get"),
+  setRetention: (settings: { enabled: boolean; maxAgeMs: number; maxCount: number; unlimitedCount: boolean }) =>
+    call("transcript_retention_set", settings) as unknown as Promise<void>,
 };
 
 export interface LayoutDto {

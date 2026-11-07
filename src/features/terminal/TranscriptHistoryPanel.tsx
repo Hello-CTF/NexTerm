@@ -20,6 +20,7 @@ import {
   IconHistory,
   IconRefresh,
   IconSearch,
+  IconStar,
   IconTrash,
 } from "../../ui/icons";
 import {
@@ -112,6 +113,8 @@ export function TranscriptHistoryPanel({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
+  // Lists every starred transcript of the host instead of the most recent ones.
+  const [starredOnly, setStarredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
   const [listWidth, setListWidth] = useState(300);
   const [loadedId, setLoadedId] = useState<string | null>(null);
@@ -189,14 +192,14 @@ export function TranscriptHistoryPanel({
     if (!assetId) return;
     const generation = ++sessionsGenerationRef.current;
     try {
-      const list = await transcriptApi.list(assetId);
+      const list = await (starredOnly ? transcriptApi.list(assetId, true) : transcriptApi.list(assetId));
       if (generation !== sessionsGenerationRef.current) return;
       setSessions(Array.isArray(list) ? list : []);
       setSessionsError(null);
     } catch (error) {
       if (generation === sessionsGenerationRef.current) setSessionsError(describeError(error));
     }
-  }, [assetId]);
+  }, [assetId, starredOnly]);
 
   useEffect(() => {
     if (!assetId) return;
@@ -450,6 +453,16 @@ export function TranscriptHistoryPanel({
     }
   };
 
+  const toggleStar = async (summary: TranscriptSummary) => {
+    const starred = !summary.starred;
+    try {
+      await transcriptApi.star(summary.id, starred);
+      await loadSessions();
+    } catch (error) {
+      pushToast("error", t("无法更新星标：{error}", { error: describeError(error) }));
+    }
+  };
+
   const switchAsset = (nextAssetId: string | null) => {
     appliedSourceAssetIdRef.current = nextAssetId ?? undefined;
     sessionsGenerationRef.current += 1;
@@ -542,6 +555,20 @@ export function TranscriptHistoryPanel({
         />}
         <div className="nx-spacer" />
         <button
+          className={`nx-btn nx-btn-ghost ${starredOnly ? "text-amber-300" : ""}`}
+          aria-pressed={starredOnly}
+          disabled={!assetId}
+          title={t("只显示加了星标的记录。星标记录不会被自动或手动清理")}
+          onClick={() => {
+            sessionsGenerationRef.current += 1;
+            setSessions(null);
+            setStarredOnly((current) => !current);
+          }}
+        >
+          <IconStar size={13} fill={starredOnly ? "currentColor" : "none"} />
+          {t("只看星标")}
+        </button>
+        <button
           className="nx-btn nx-btn-ghost"
           disabled={!assetId}
           onClick={refresh}
@@ -610,6 +637,18 @@ export function TranscriptHistoryPanel({
                     </td>
                     <td className="nx-right">
                       <div className="flex flex-wrap items-center justify-end gap-1.5 max-[640px]:justify-start">
+                        <button
+                          className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.starred ? "text-amber-300" : ""}`}
+                          aria-pressed={Boolean(summary.starred)}
+                          title={summary.starred ? t("取消星标") : t("加星标：不会被自动或手动清理")}
+                          aria-label={summary.starred ? t("取消该记录的星标") : t("为该记录加星标")}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void toggleStar(summary);
+                          }}
+                        >
+                          <IconStar size={11} fill={summary.starred ? "currentColor" : "none"} />
+                        </button>
                         {summary.endedAt !== null ? (
                           <button
                             className={`nx-btn nx-btn-ghost nx-btn-xs ${summary.syncOptIn ? "text-green-400" : ""}`}
@@ -669,7 +708,7 @@ export function TranscriptHistoryPanel({
                 {!sessionsError && sessions !== null && sessionList.length === 0 && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty">
-                      {t("该主机暂无终端历史")}
+                      {starredOnly ? t("该主机没有加星标的记录") : t("该主机暂无终端历史")}
                       <div className="mt-1.5 text-[11px] text-neutral-500">
                         {t("连接该主机并产生终端输出后，记录会自动保存在这里。")}
                       </div>

@@ -2909,6 +2909,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptListRequest", ts: "TranscriptListRequest" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptSummaryDTO", ts: "TranscriptSummaryDTO[]" },
     },
+    "transcript_purge": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptCutoffRequest", ts: "TranscriptCutoffRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptPurgeResult", ts: "TranscriptPurgeResult" },
+    },
     "transcript_read": {
       scope: "transcript",
       nested: false,
@@ -2916,6 +2924,22 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadRequest", ts: "TranscriptReadRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptReadResult", ts: "TranscriptReadResult" },
+    },
+    "transcript_retention_get": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptRetentionDTO", ts: "TranscriptRetentionDTO" },
+    },
+    "transcript_retention_set": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptRetentionRequest", ts: "TranscriptRetentionRequest" },
+      output: { go: "any", ts: "unknown" },
     },
     "transcript_search": {
       scope: "transcript",
@@ -2933,6 +2957,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostSearchRequest", ts: "TranscriptHostSearchRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostSearchResult", ts: "TranscriptHostSearchResult" },
     },
+    "transcript_star": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptStarRequest", ts: "TranscriptStarRequest" },
+      output: { go: "any", ts: "unknown" },
+    },
     "transcript_sync_opt_in": {
       scope: "transcript",
       nested: false,
@@ -2940,6 +2972,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/sync.TranscriptSyncOptInRequest", ts: "TranscriptSyncOptInRequest" },
       output: { go: "struct{}", ts: "Record<string, never>" },
+    },
+    "transcript_usage": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptCutoffRequest", ts: "TranscriptCutoffRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptUsageDTO", ts: "TranscriptUsageDTO" },
     },
     "vault_change_password": {
       scope: "vault",
@@ -4583,9 +4623,21 @@ export interface IPCCommandTypeMap {
     input: contractTypes.TranscriptListRequest;
     output: contractTypes.TranscriptSummaryDTO[];
   };
+  "transcript_purge": {
+    input: contractTypes.TranscriptCutoffRequest;
+    output: contractTypes.TranscriptPurgeResult;
+  };
   "transcript_read": {
     input: contractTypes.TranscriptReadRequest;
     output: contractTypes.TranscriptReadResult;
+  };
+  "transcript_retention_get": {
+    input: Record<string, never>;
+    output: contractTypes.TranscriptRetentionDTO;
+  };
+  "transcript_retention_set": {
+    input: contractTypes.TranscriptRetentionRequest;
+    output: unknown;
   };
   "transcript_search": {
     input: contractTypes.TranscriptSearchRequest;
@@ -4595,9 +4647,17 @@ export interface IPCCommandTypeMap {
     input: contractTypes.TranscriptHostSearchRequest;
     output: contractTypes.TranscriptHostSearchResult;
   };
+  "transcript_star": {
+    input: contractTypes.TranscriptStarRequest;
+    output: unknown;
+  };
   "transcript_sync_opt_in": {
     input: contractTypes.TranscriptSyncOptInRequest;
     output: Record<string, never>;
+  };
+  "transcript_usage": {
+    input: contractTypes.TranscriptCutoffRequest;
+    output: contractTypes.TranscriptUsageDTO;
   };
   "vault_change_password": {
     input: contractTypes.VaultPasswordRequest;

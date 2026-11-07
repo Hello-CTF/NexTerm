@@ -84,36 +84,70 @@ type retentionSettings struct {
 	CommandFollowTranscript bool  `json:"commandFollowTranscript"`
 }
 
+// TranscriptRetentionSettings is the stored transcript retention setting. Absent or zero fields mean the defaults;
+// Enabled defaults to true, and UnlimitedCount turns off only the count limit.
+type TranscriptRetentionSettings struct {
+	Enabled        *bool `json:"enabled,omitempty"`
+	MaxAgeMS       int64 `json:"maxAgeMs"`
+	MaxCount       int64 `json:"maxCount"`
+	UnlimitedCount bool  `json:"unlimitedCount,omitempty"`
+}
+
+func (settings TranscriptRetentionSettings) validate() error {
+	if settings.MaxAgeMS < 0 || settings.MaxCount < 0 {
+		return fmt.Errorf("%s must not be negative", TranscriptRetentionSettingKey)
+	}
+	if settings.MaxAgeMS > math.MaxInt64/int64(time.Millisecond) {
+		return fmt.Errorf("%s maxAgeMs is too large", TranscriptRetentionSettingKey)
+	}
+	return nil
+}
+
+// ReadTranscriptRetentionSettings returns the stored setting, or the zero value (all defaults) when none is stored.
+func ReadTranscriptRetentionSettings(ctx context.Context, database *store.Store) (TranscriptRetentionSettings, error) {
+	var settings TranscriptRetentionSettings
+	raw, found, err := database.SettingGet(ctx, TranscriptRetentionSettingKey)
+	if err != nil || !found || strings.TrimSpace(raw) == "" {
+		return settings, err
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return TranscriptRetentionSettings{}, fmt.Errorf("decode %s: %w", TranscriptRetentionSettingKey, err)
+	}
+	return settings, settings.validate()
+}
+
+// WriteTranscriptRetentionSettings validates and stores the setting.
+func WriteTranscriptRetentionSettings(ctx context.Context, database *store.Store, settings TranscriptRetentionSettings) error {
+	if err := settings.validate(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return database.SettingSet(ctx, TranscriptRetentionSettingKey, string(raw))
+}
+
 // TranscriptRetentionPolicy reads the transcript retention setting; unset or zero fields fall back to the default retention (consistent with the production transcript writer's effective semantics).
+// A disabled setting yields the zero policy, which deletes nothing.
 func TranscriptRetentionPolicy(ctx context.Context, database *store.Store) (store.TranscriptRetentionPolicy, error) {
 	policy := store.TranscriptRetentionPolicy{
 		MaxAge:   TranscriptDefaultRetentionMaxAge,
 		MaxCount: TranscriptDefaultRetentionMaxCount,
 	}
-	raw, found, err := database.SettingGet(ctx, TranscriptRetentionSettingKey)
+	settings, err := ReadTranscriptRetentionSettings(ctx, database)
 	if err != nil {
 		return policy, err
 	}
-	if !found || strings.TrimSpace(raw) == "" {
-		return policy, nil
-	}
-	var settings struct {
-		MaxAgeMS int64 `json:"maxAgeMs"`
-		MaxCount int64 `json:"maxCount"`
-	}
-	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
-		return policy, fmt.Errorf("decode %s: %w", TranscriptRetentionSettingKey, err)
-	}
-	if settings.MaxAgeMS < 0 || settings.MaxCount < 0 {
-		return policy, fmt.Errorf("%s must not be negative", TranscriptRetentionSettingKey)
-	}
-	if settings.MaxAgeMS > math.MaxInt64/int64(time.Millisecond) {
-		return policy, fmt.Errorf("%s maxAgeMs is too large", TranscriptRetentionSettingKey)
+	if settings.Enabled != nil && !*settings.Enabled {
+		return store.TranscriptRetentionPolicy{}, nil
 	}
 	if settings.MaxAgeMS > 0 {
 		policy.MaxAge = time.Duration(settings.MaxAgeMS) * time.Millisecond
 	}
-	if settings.MaxCount > 0 {
+	if settings.UnlimitedCount {
+		policy.MaxCount = 0
+	} else if settings.MaxCount > 0 {
 		policy.MaxCount = settings.MaxCount
 	}
 	return policy, nil

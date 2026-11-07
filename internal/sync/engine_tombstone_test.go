@@ -133,3 +133,51 @@ func TestEngineNewerObjectClearsStaleTombstone(t *testing.T) {
 		t.Fatalf("deviceB must be quiescent: %+v", reportB)
 	}
 }
+
+// A synced transcript starred on one device survives another device's cleanup: the remote tombstone leaves the
+// starred copy in place as a local-only record, and the next rounds neither delete it nor push it again.
+func TestEngineTranscriptTombstoneKeepsStarredLocalCopy(t *testing.T) {
+	server := newTestSyncServer(t)
+	server.createUser(t, "alice", "alice-pw-123")
+	deviceA := newTestDevice(t)
+	deviceB := newTestDevice(t)
+	ctx := context.Background()
+
+	endedAt := ids.NowMS() - 1000
+	transcriptID := ids.New()
+	putDeviceTranscript(t, deviceA, transcriptID, endedAt-500, &endedAt, []byte("output"), true)
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if err := deviceB.db.TranscriptSetStarred(ctx, transcriptID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// A cleans the transcript up; its tombstone reaches B.
+	if _, err := deviceA.db.TranscriptPurgeEndedBefore(ctx, ids.NowMS()); err != nil {
+		t.Fatal(err)
+	}
+	syncDevice(t, deviceA, server, "alice", "alice-pw-123")
+	syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+
+	row, err := deviceB.db.TranscriptGet(ctx, transcriptID)
+	if err != nil {
+		t.Fatalf("starred transcript deleted on B: %v", err)
+	}
+	if !row.Starred || row.SyncOptIn {
+		t.Fatalf("starred copy must stay as a local-only record: %+v", row)
+	}
+	chunks, err := deviceB.db.TranscriptChunks(ctx, transcriptID, 0, 1<<20)
+	if err != nil || len(chunks) != 1 || string(chunks[0].Data) != "output" {
+		t.Fatalf("starred copy lost its content: %+v err=%v", chunks, err)
+	}
+	reportB := syncDevice(t, deviceB, server, "alice", "alice-pw-123")
+	if reportB.Pushed != 0 {
+		t.Fatalf("the kept copy must not be pushed back: %+v", reportB)
+	}
+	if _, err := deviceB.db.TranscriptGet(ctx, transcriptID); err != nil {
+		t.Fatalf("starred transcript deleted on a later round: %v", err)
+	}
+	if _, err := deviceA.db.TranscriptGet(ctx, transcriptID); !isNotFound(err) {
+		t.Fatalf("A's cleanup must stand: %v", err)
+	}
+}

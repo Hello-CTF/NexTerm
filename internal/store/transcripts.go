@@ -817,25 +817,7 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 		return result, err
 	}
 	if policy.MaxAge > 0 {
-		cutoff := time.Now().Add(-policy.MaxAge).UnixMilli()
-		deleted, err := retentionDeleteBatches(ctx, s, "transcript", "age",
-			func(tx *gorm.DB) ([]TranscriptRow, error) {
-				transcript := query.Use(tx).TranscriptRow
-				rows := make([]TranscriptRow, 0, retentionBatchSize)
-				err := transcript.WithContext(ctx).
-					Where(transcript.EndedAt.IsNotNull(), transcript.EndedAt.Lt(cutoff)).
-					Where(ownerConditions(ctx, transcript.TableName())...).
-					Order(transcript.ID.Asc()).
-					Limit(retentionBatchSize).
-					Scan(&rows)
-				return rows, err
-			},
-			func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
-				return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
-					return query.Where("ended_at < ?", cutoff)
-				})
-			},
-		)
+		deleted, err := s.transcriptDeleteEndedBefore(ctx, "age", time.Now().Add(-policy.MaxAge).UnixMilli())
 		result.Deleted += deleted
 		if err != nil {
 			return result, dbError(err)
@@ -847,7 +829,7 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				transcript := query.Use(tx).TranscriptRow
 				rows := make([]TranscriptRow, 0, retentionBatchSize)
 				err := transcript.WithContext(ctx).
-					Where(transcript.EndedAt.IsNotNull()).
+					Where(transcript.EndedAt.IsNotNull(), transcript.Starred.Is(false)).
 					Where(ownerConditions(ctx, transcript.TableName())...).
 					Order(transcript.EndedAt.Desc(), transcript.ID.Desc()).
 					Limit(retentionBatchSize).
@@ -861,9 +843,10 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 				// instead of a separately read boundary a concurrent refresh
 				// can stale. The derived-table wrapper keeps MySQL and MariaDB
 				// from rejecting the same-table LIMIT subquery.
+				// Starred transcripts are never deleted, so they do not take places in the kept count either.
 				keepSet := tx.WithContext(ctx).Model(&TranscriptRow{}).
 					Select("id").
-					Where("ended_at IS NOT NULL").
+					Where("ended_at IS NOT NULL AND starred = ?", false).
 					Order("ended_at DESC, id DESC").
 					Limit(int(policy.MaxCount))
 				for _, condition := range ownerConditions(ctx, "transcript") {
@@ -880,6 +863,37 @@ func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy Transcrip
 		}
 	}
 	return result, nil
+}
+
+// TranscriptPurgeEndedBefore deletes the caller's ended, unstarred transcripts that ended before the cutoff (milliseconds).
+func (s *Store) TranscriptPurgeEndedBefore(ctx context.Context, cutoff int64) (int64, error) {
+	deleted, err := s.transcriptDeleteEndedBefore(ctx, "manual", cutoff)
+	if err != nil {
+		return deleted, dbError(err)
+	}
+	return deleted, nil
+}
+
+// transcriptDeleteEndedBefore deletes ended, unstarred transcripts that ended before the cutoff, in retention batches.
+func (s *Store) transcriptDeleteEndedBefore(ctx context.Context, operation string, cutoff int64) (int64, error) {
+	return retentionDeleteBatches(ctx, s, "transcript", operation,
+		func(tx *gorm.DB) ([]TranscriptRow, error) {
+			transcript := query.Use(tx).TranscriptRow
+			rows := make([]TranscriptRow, 0, retentionBatchSize)
+			err := transcript.WithContext(ctx).
+				Where(transcript.EndedAt.IsNotNull(), transcript.EndedAt.Lt(cutoff), transcript.Starred.Is(false)).
+				Where(ownerConditions(ctx, transcript.TableName())...).
+				Order(transcript.ID.Asc()).
+				Limit(retentionBatchSize).
+				Scan(&rows)
+			return rows, err
+		},
+		func(tx *gorm.DB, rows []TranscriptRow) (int64, error) {
+			return s.transcriptRetentionDeleteRows(ctx, tx, rows, func(query *gorm.DB, _ TranscriptRow) *gorm.DB {
+				return query.Where("ended_at < ?", cutoff)
+			})
+		},
+	)
 }
 
 // transcriptRetentionRowGuard narrows a selected row's delete to rows that are
@@ -906,7 +920,7 @@ func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, 
 	var deleted int64
 	for _, row := range rows {
 		info := guard(tx.WithContext(ctx).
-			Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL AND sync_opt_in = ?", row.ID, row.OwnerID, row.SyncOptIn), row).
+			Where("id = ? AND owner_id = ? AND ended_at IS NOT NULL AND sync_opt_in = ? AND starred = ?", row.ID, row.OwnerID, row.SyncOptIn, false), row).
 			Delete(&TranscriptRow{})
 		if info.Error != nil {
 			return 0, info.Error

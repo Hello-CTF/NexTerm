@@ -29,6 +29,7 @@ export type SettingsSectionId =
   | "settings-known-hosts"
   | "settings-production"
   | "settings-account"
+  | "settings-history"
   | "settings-bundle"
   | "settings-share";
 
@@ -105,6 +106,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-account": {
     description: t("账号、用户管理、多端同步与本机终端开放"),
     keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "expose", t("账号"), t("同步"), t("用户"), t("登录"), t("两步验证"), t("代理"), t("服务器"), t("开放")],
+  },
+  "settings-history": {
+    description: t("终端历史的自动清理、手动清理与占用空间"),
+    keywords: ["history", "transcript", "cleanup", "retention", "purge", "star", t("历史"), t("会话"), t("清理"), t("保留"), t("星标"), t("缓存"), t("空间")],
   },
   "settings-bundle": {
     description: t("资产包导入与导出"),

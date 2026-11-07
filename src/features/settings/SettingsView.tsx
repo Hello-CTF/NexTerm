@@ -54,6 +54,7 @@ import { SkillsCard } from "./SkillsCard";
 import { productionSkillsApi } from "./skillsApi";
 import { SyncCard } from "./SyncCard";
 import { SyncBundleCard } from "./SyncBundleCard";
+import { TranscriptCleanupCard } from "./TranscriptCleanupCard";
 import { ShareCard } from "./ShareCard";
 import { UpdateCard } from "./UpdateCard";
 import { DiagnosticsCard } from "./DiagnosticsCard";
@@ -90,6 +91,7 @@ import {
   IconTerminal,
   IconXCircle,
   IconZap,
+  IconHistory,
 } from "../../ui/icons";
 import { formatNumber, getLocale, t } from "../../i18n";
 
@@ -131,6 +133,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
   { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
   { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
+  { id: "settings-history", label: t("历史会话"), icon: IconHistory, group: "account" },
   { id: "settings-bundle", label: t("资产包"), icon: IconArchive, group: "account" },
   { id: "settings-share", label: t("分享"), icon: IconGlobe, group: "account" },
 ] as const satisfies readonly SettingsSectionDef[];
@@ -1046,6 +1049,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <div id="settings-account" className="flex scroll-mt-12 flex-col gap-4">
           <SyncCard />
           <LocalHelperExposureSettings />
+        </div>
+
+        <div id="settings-history" className="scroll-mt-12">
+          <TranscriptCleanupCard />
         </div>
 
         <div id="settings-bundle" className="scroll-mt-12">

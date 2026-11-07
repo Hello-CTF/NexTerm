@@ -3375,6 +3375,10 @@ export type TranscriptChunkDTO = {
   dataBase64: string;
 };
 
+export type TranscriptCutoffRequest = {
+  endedBefore: number;
+};
+
 export type TranscriptExportCastRequest = {
   id: string;
   path: string;
@@ -3423,12 +3427,17 @@ export type TranscriptIDRequest = {
 
 export type TranscriptListRequest = {
   assetId: string;
+  starredOnly?: boolean;
 };
 
 export type TranscriptMatchDTO = {
   seq: number;
   ts: number;
   preview: string;
+};
+
+export type TranscriptPurgeResult = {
+  deleted: number;
 };
 
 export type TranscriptReadRequest = {
@@ -3444,9 +3453,29 @@ export type TranscriptReadResult = {
   totalBytes: number;
 };
 
+export type TranscriptRetentionDTO = {
+  enabled: boolean;
+  maxAgeMs: number;
+  maxCount: number;
+  unlimitedCount: boolean;
+  editable: boolean;
+};
+
+export type TranscriptRetentionRequest = {
+  enabled: boolean;
+  maxAgeMs: number;
+  maxCount: number;
+  unlimitedCount: boolean;
+};
+
 export type TranscriptSearchRequest = {
   id: string;
   query: string;
+};
+
+export type TranscriptStarRequest = {
+  id: string;
+  starred: boolean;
 };
 
 export type TranscriptSummaryDTO = {
@@ -3465,11 +3494,20 @@ export type TranscriptSummaryDTO = {
   active: boolean;
   syncOptIn: boolean;
   contentOmitted: boolean;
+  starred: boolean;
 };
 
 export type TranscriptSyncOptInRequest = {
   id: string;
   optIn: boolean;
+};
+
+export type TranscriptUsageDTO = {
+  total: number;
+  starred: number;
+  storedBytes: number;
+  purgeable: number;
+  purgeableBytes: number;
 };
 
 export type UpdateChannelRequest = {

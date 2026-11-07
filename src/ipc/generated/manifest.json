@@ -2270,7 +2270,25 @@
       "channel": false,
       "stream": "none"
     },
+    "transcript_purge": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "transcript_read": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_retention_get": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_retention_set": {
       "scope": "transcript",
       "nested": false,
       "channel": false,
@@ -2288,7 +2306,19 @@
       "channel": false,
       "stream": "none"
     },
+    "transcript_star": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "transcript_sync_opt_in": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_usage": {
       "scope": "transcript",
       "nested": false,
       "channel": false,

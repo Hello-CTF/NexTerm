@@ -462,6 +462,12 @@ export const IconClock = (p: IconProps) => (
   </Svg>
 );
 
+export const IconStar = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9Z" />
+  </Svg>
+);
+
 export const IconHistory = (p: IconProps) => (
   <Svg {...p}>
     <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1" />

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   transcriptRemove: vi.fn(),
   transcriptSyncOptIn: vi.fn(),
   transcriptExportCast: vi.fn(),
+  transcriptStar: vi.fn(),
   pickSavePath: vi.fn(),
   finishSave: vi.fn(),
   ask: vi.fn(),
@@ -48,6 +49,7 @@ vi.mock("../../ipc/commands", () => ({
     remove: mocks.transcriptRemove,
     syncOptIn: mocks.transcriptSyncOptIn,
     exportCast: mocks.transcriptExportCast,
+    star: mocks.transcriptStar,
   },
   sessionApi: {},
   terminalApi: {},
@@ -438,6 +440,35 @@ describe("TranscriptHistoryPanel", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(mocks.transcriptList.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(mocks.toast).toHaveBeenCalledWith("success", "已开启该记录的同步");
+  });
+
+  it("stars a recording and reloads the list", async () => {
+    const plain = summary();
+    mocks.transcriptList.mockResolvedValueOnce([plain]).mockResolvedValue([summary({ starred: true })]);
+    mocks.transcriptStar.mockResolvedValue(undefined);
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="为该记录加星标"]') !== null);
+
+    click(mounted.container.querySelector<HTMLButtonElement>('button[aria-label="为该记录加星标"]')!);
+
+    await waitFor(() => expect(mocks.transcriptStar).toHaveBeenCalledWith(plain.id, true));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="取消该记录的星标"]') !== null);
+    expect(mounted.container.querySelector('button[aria-label="取消该记录的星标"]')?.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("lists only starred recordings when the filter is on", async () => {
+    mocks.transcriptList.mockImplementation(async (_assetId: string, starredOnly?: boolean) =>
+      starredOnly ? [] : [summary()],
+    );
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => mounted!.container.querySelector('button[aria-label="为该记录加星标"]') !== null);
+    const filter = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("只看星标"))!;
+
+    click(filter);
+
+    await waitFor(() => expect(mocks.transcriptList).toHaveBeenLastCalledWith(ASSET.id, true));
+    await flushUntil(() => mounted!.container.textContent?.includes("该主机没有加星标的记录") === true);
+    expect(filter.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("disables sync and reloads only after confirmation", async () => {

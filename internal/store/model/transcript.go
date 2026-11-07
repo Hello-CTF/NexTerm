@@ -14,6 +14,8 @@ type TranscriptRow struct {
 	Truncated      bool   `gorm:"column:truncated;not null;default:0" json:"truncated"`
 	SyncOptIn      bool   `gorm:"column:sync_opt_in;not null;default:0" json:"syncOptIn"`
 	ContentOmitted bool   `gorm:"column:content_omitted;not null;default:0" json:"contentOmitted"`
+	// Starred keeps the transcript out of automatic and manual cleanup. It is a local mark and does not sync.
+	Starred bool `gorm:"column:starred;not null;default:0" json:"starred"`
 	// ContentGen is the transcript's content generation: it bumps on every
 	// whole-content replacement (sync apply, replace) so timestamp-index
 	// rows written for an older content generation are recognizable as

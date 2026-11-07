@@ -27,10 +27,13 @@ type transcriptSummaryDTO struct {
 	Active         bool   `json:"active"`
 	SyncOptIn      bool   `json:"syncOptIn"`
 	ContentOmitted bool   `json:"contentOmitted"`
+	Starred        bool   `json:"starred"`
 }
 
 type transcriptListRequest struct {
 	AssetID string `json:"assetId"`
+	// StarredOnly lists every starred transcript of the asset instead of the most recent ones.
+	StarredOnly bool `json:"starredOnly"`
 }
 
 type transcriptReadRequest struct {
@@ -105,7 +108,13 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 				if err := ensureTranscriptAssetID(input.AssetID); err != nil {
 					return nil, err
 				}
-				rows, err := s.database.TranscriptListByAsset(ctx, input.AssetID, 0)
+				var rows []store.TranscriptRow
+				var err error
+				if input.StarredOnly {
+					rows, err = s.database.TranscriptListStarredByAsset(ctx, input.AssetID)
+				} else {
+					rows, err = s.database.TranscriptListByAsset(ctx, input.AssetID, 0)
+				}
 				if err != nil {
 					return nil, err
 				}
@@ -189,7 +198,10 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 	}
-	registrations = append(registrations, func() error { return s.registerSearch(dispatcher) })
+	registrations = append(registrations,
+		func() error { return s.registerSearch(dispatcher) },
+		func() error { return s.registerTranscriptCleanup(dispatcher) },
+	)
 	for _, register := range registrations {
 		if err := register(); err != nil {
 			return err
@@ -249,5 +261,6 @@ func (s *terminalCommandService) transcriptSummary(ctx context.Context, row stor
 		Active:         active,
 		SyncOptIn:      row.SyncOptIn,
 		ContentOmitted: row.ContentOmitted,
+		Starred:        row.Starred,
 	}
 }

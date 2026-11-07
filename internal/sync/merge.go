@@ -1050,6 +1050,18 @@ func (e *Engine) applyTranscriptTombstone(ctx context.Context, objectID string, 
 		// Local opt-out record is kept: treated as reconciled with the remote tombstone; the local copy does not participate in pushes.
 		return false, true
 	}
+	if exists && local.Starred {
+		// Another device deleted its copy (often by its own cleanup); the star keeps this one, now as a local-only record.
+		if err := e.store.TranscriptKeepLocal(ctx, objectID); err != nil {
+			report.warnf("会话记录 %s 已加星标，保留本机副本失败：%v", objectID, err)
+			return false, false
+		}
+		if err := e.syncTombstonePut(ctx, objectID, KindTranscript, deletedAt); err != nil {
+			report.warnf("会话记录 %s 的删除标记记录失败：%v", objectID, err)
+			return false, false
+		}
+		return false, true
+	}
 	if err := e.syncTombstonePut(ctx, objectID, KindTranscript, deletedAt); err != nil {
 		report.warnf("会话记录 %s 的删除标记记录失败：%v", objectID, err)
 		return false, false
