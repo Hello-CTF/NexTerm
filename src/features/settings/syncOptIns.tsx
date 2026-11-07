@@ -121,7 +121,7 @@ export function SyncOptInSection({
   return (
     <div className="mb-3">
       <SummaryDialog
-        summary={<>{t("同步内容：")}{syncOptInSummary(value)}</>}
+        summary={<>{t("同步内容：{value}", { value: syncOptInSummary(value) })}</>}
         buttonLabel={t("管理同步项")}
         title={t("管理同步项")}
         description={t("选择哪些内容参与账号同步。关闭某一项不会删除服务端已有的副本。")}

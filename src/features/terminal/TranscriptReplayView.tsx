@@ -404,7 +404,7 @@ export function TranscriptReplayView({
         {loadError && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-neutral-900/80 text-[12px] text-red-300">
             <IconAlert size={13} />
-            {t("未能加载回放数据：")}{loadError}
+            {t("未能加载回放数据：{loadError}", { loadError })}
           </div>
         )}
         {emptyRecording && !loadError && (

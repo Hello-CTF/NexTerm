@@ -266,10 +266,10 @@ function LoginResults({
         <span className="font-medium text-neutral-300" role="status">{summarizeLoginResults(results)}</span>
         <span className="flex-1" />
         {retryable > 0 && (
-          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>{t("重试未通过项（")}{retryable}）</button>
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onRetry}>{t("重试未通过项（{retryable}）", { retryable })}</button>
         )}
         {canceled > 0 && (
-          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onResume}>{t("测试已取消项（")}{canceled}）</button>
+          <button type="button" className="nx-btn nx-btn-sm" disabled={busy} onClick={onResume}>{t("测试已取消项（{canceled}）", { canceled })}</button>
         )}
         <button type="button" className="nx-btn nx-btn-sm" onClick={() => void copy()}>
           {copied === "ok" ? t("已复制") : copied === "failed" ? t("复制失败") : t("复制结果")}
@@ -699,7 +699,7 @@ export function BulkMaintenancePanel({ sessions, onClose }: { sessions: SessionI
                 className="nx-btn nx-btn-sm mb-2"
                 disabled={busy !== null}
                 onClick={() => setLoginSelected(selected)}
-              >{t("沿用上方已选的")} {selected.length} {t("个 SSH 资产")}</button>
+              >{t("沿用上方已选的 {length} 个 SSH 资产", { length: selected.length })}</button>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -107,8 +107,7 @@ export function PasswordChangeForm({ requireCurrent, submitLabel, allowEmpty = f
       />
       {removing ? (
         <div id={checksId} className="text-[11px] text-amber-300">
-          {t("两个新密码都留空，将")}{emptyLabel ?? t("移除密码")}。
-        </div>
+          {t("两个新密码都留空，将{value}。", { value: emptyLabel ?? t("移除密码") })}</div>
       ) : (
         <ul id={checksId} className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
           <Check ok={longEnough}>{t("至少 {MIN_PASSWORD_LENGTH} 位", { MIN_PASSWORD_LENGTH })}</Check>

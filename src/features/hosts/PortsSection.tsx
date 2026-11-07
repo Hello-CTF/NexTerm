@@ -87,7 +87,7 @@ export function PortsSection({
         connected && visible ? (
           <>
             {query.dataUpdatedAt > 0 && (
-              <span className="nx-hint text-[11px]">{t("读取于")} {new Date(query.dataUpdatedAt).toLocaleTimeString()}</span>
+              <span className="nx-hint text-[11px]">{t("读取于 {toLocaleTimeString}", { toLocaleTimeString: new Date(query.dataUpdatedAt).toLocaleTimeString() })}</span>
             )}
             <button
               type="button"
@@ -108,7 +108,7 @@ export function PortsSection({
       ) : (
         <>
           {query.isError ? (
-            <p className="m-0 text-[12px] text-red-300">{t("未能读取端口：")}{describeError(query.error)}</p>
+            <p className="m-0 text-[12px] text-red-300">{t("未能读取端口：{value}", { value: describeError(query.error) })}</p>
           ) : !query.data ? (
             <SectionHint>{query.isFetching ? t("正在读取监听端口…") : t("点击「读取」查看监听端口（会在主机上执行 ss 或 netstat）。")}</SectionHint>
           ) : listeners.length === 0 ? (

@@ -91,7 +91,7 @@ import {
   IconXCircle,
   IconZap,
 } from "../../ui/icons";
-import { t } from "../../i18n";
+import { formatNumber, getLocale, t } from "../../i18n";
 
 // Settings are split into a few groups shown one at a time; each group lists
 // its sections in the navigation. Hidden groups stay mounted, so switching
@@ -183,8 +183,10 @@ const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string 
 
 const DURABLE_HISTORY_OPTIONS_MIB = [4, 8, 16, 32, 64, 128, 256];
 
+// Chinese counts large numbers in 万; other languages group the digits their own way. count chooses the plural form.
 function formatScrollbackLines(lines: number): string {
-  return lines >= 10_000 ? t("{value} 万行", { value: lines / 10_000 }) : t("{toLocaleString} 行", { toLocaleString: lines.toLocaleString("zh-CN") });
+  if (lines >= 10_000 && getLocale().startsWith("zh")) return t("{value} 万行", { value: lines / 10_000 });
+  return t("{lines} 行", { lines: formatNumber(lines), count: lines });
 }
 
 const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [

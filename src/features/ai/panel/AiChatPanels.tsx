@@ -28,7 +28,7 @@ export function AiChatPanels({ ctx }: { ctx: AiChatCtx }) {
 
           {permError ? (
             <div className="px-2 py-3 text-center" role="alert">
-              <div className="nx-hint text-red-300">{t("未能读取权限设置：")}{permError}</div>
+              <div className="nx-hint text-red-300">{t("未能读取权限设置：{permError}", { permError })}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void loadPermission()}>
                 <IconRefresh size={11} />
                 {t("重试")}

@@ -214,7 +214,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] @max-[560px]:fixed @max-[560px]:inset-x-3 @max-[560px]:top-14 @max-[560px]:w-auto rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
-            {t("为「")}{sessionName || t("当前终端")}{t("」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。")}
+            {t("为「{value}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。", { value: sessionName || t("当前终端") })}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Select
@@ -265,7 +265,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
                 const permission = previewPermission(link);
                 return (
                   <div key={link.id} className="mt-1 flex flex-wrap items-center justify-between gap-1 text-xs">
-                    <span className="text-neutral-400">{t("有效期至")} {new Date(link.expires_at).toLocaleString()}</span>
+                    <span className="text-neutral-400">{t("有效期至 {toLocaleString}", { toLocaleString: new Date(link.expires_at).toLocaleString() })}</span>
                     <span className="flex items-center gap-2">
                       <span
                         className={

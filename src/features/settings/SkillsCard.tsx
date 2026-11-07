@@ -252,7 +252,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconBot size={15} className="text-purple-300" />
         <span className="nx-card-title">{t("AI 技能")}</span>
-        {visibleEntries && <span className="nx-badge">{visibleEntries.length} {t("个")}</span>}
+        {visibleEntries && <span className="nx-badge">{t("{length} 个", { length: visibleEntries.length })}</span>}
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
@@ -294,7 +294,7 @@ export function SkillsCard({ api }: { api: SkillsApi }) {
                 value={draft.name}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
-              <span className="nx-hint text-[11px]">{t("小写字母、数字和连字符；在对话中输入 /")}{draft.name.trim() || t("名称")} {t("即可使用")}</span>
+              <span className="nx-hint text-[11px]">{t("小写字母、数字和连字符；在对话中输入 /{value} 即可使用", { value: draft.name.trim() || t("名称") })}</span>
             </label>
           )}
           <label className="flex flex-col gap-1 text-[11.5px] text-neutral-400">

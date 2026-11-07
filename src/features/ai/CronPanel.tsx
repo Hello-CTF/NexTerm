@@ -433,7 +433,7 @@ export function CronPanel({
       <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
         <IconClock size={12} />
         {t("定时任务")}
-        {jobs && <span className="nx-badge">{jobs.length} {t("个")}</span>}
+        {jobs && <span className="nx-badge">{t("{length} 个", { length: jobs.length })}</span>}
         <span className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
@@ -453,7 +453,7 @@ export function CronPanel({
       </div>
       {hostName && (
         <div className="nx-hint mb-1.5 truncate text-[11px]" title={hostName}>
-          {t("所属主机：")}{hostName}
+          {t("所属主机：{hostName}", { hostName })}
         </div>
       )}
       <p className="nx-hint mb-2 text-[11px]">{t("到点后 AI 自动执行，需确认的操作会被拒绝；不会新建终端，需要时请明确要求 AI 直接运行命令。")}</p>
@@ -502,7 +502,7 @@ export function CronPanel({
           </div>
           {profilesError && (
             <div className="nx-hint text-[11px] text-red-300" role="alert">
-              {t("未能读取模型列表：")}{profilesError}{t("。列表可能不完整，「跟随当前档案」不受影响。")}
+              {t("未能读取模型列表：{profilesError}。列表可能不完整，「跟随当前档案」不受影响。", { profilesError })}
             </div>
           )}
           {editingJob &&
@@ -583,8 +583,7 @@ export function CronPanel({
             </button>
           </div>
           <p className="nx-hint text-[11px]">
-            {t("cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。")}
-            {editingJob ? t(" 保存会重新创建任务，原来的执行记录不会保留。") : ""}
+            {t("cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}", { value: editingJob ? t(" 保存会重新创建任务，原来的执行记录不会保留。") : "" })}
           </p>
           {registerError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2 text-[12px]" role="alert">
@@ -610,11 +609,10 @@ export function CronPanel({
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="break-words">
-              「{replaceConflict.label}{t("」未保存成功：原任务仍然保留，新建的副本（已停用）也未能自动删除（")}
-              {replaceConflict.error}{t("）。两个任务不会同时运行，请手动删除其中一个。")}
+              {t("「{label}」未保存成功：原任务仍然保留，新建的副本（已停用）也未能自动删除（{error}）。两个任务不会同时运行，请手动删除其中一个。", { label: replaceConflict.label, error: replaceConflict.error })}
             </div>
             <div className="mt-1 break-words font-mono text-[11px]">
-              {t("旧")} {replaceConflict.oldKey} {t("· 新")} {replaceConflict.newKey}
+              {t("旧 {oldKey} · 新 {newKey}", { oldKey: replaceConflict.oldKey, newKey: replaceConflict.newKey })}
             </div>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm mt-2"
@@ -632,7 +630,7 @@ export function CronPanel({
           <div className="nx-alert nx-alert-danger flex items-start gap-2" role="alert">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">{t("未能读取定时任务：")}{error}</div>
+              <div className="break-words">{t("未能读取定时任务：{error}", { error })}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 {t("重试")}
@@ -674,7 +672,7 @@ export function CronPanel({
                       <span className={`nx-badge ${status.cls}`}>{status.label}</span>
                       {job.consecutiveFailures ? (
                         <span className="nx-badge nx-badge-red">
-                          {t("连续失败")} {job.consecutiveFailures} {t("次")}
+                          {t("连续失败 {consecutiveFailures} 次", { consecutiveFailures: job.consecutiveFailures })}
                         </span>
                       ) : null}
                       {profileUnknown && <span className="nx-badge nx-badge-red">{t("档案已删除")}</span>}
@@ -683,16 +681,15 @@ export function CronPanel({
                     <div className="nx-hint mt-0.5 text-[11px]">
                       <span className="font-mono">
                         {job.schedule}（{job.timezone}）
-                      </span>{" "}
-                      {t("· 超时")} {Math.round(cronTimeoutMs(job) / 1000)}s ·{" "}
+                      </span>{t("{value}· 超时 {round}s ·{value2}", { value: " ", round: Math.round(cronTimeoutMs(job) / 1000), value2: " " })}
                       {jobProfile ? (
-                        <>{t("档案「")}{jobProfile.name}」</>
+                        <>{t("档案「{name}」", { name: jobProfile.name })}</>
                       ) : jobProfileId ? (
                         <span className="break-words font-mono" title={jobProfileId}>
-                          {t("档案")} {jobProfileId}
+                          {t("档案 {jobProfileId}", { jobProfileId })}
                         </span>
                       ) : (
-                        <>{t("跟随当前档案")}{activeProfile ? `「${activeProfile.name}」` : ""}</>
+                        <>{t("跟随当前档案{value}", { value: activeProfile ? `「${activeProfile.name}」` : "" })}</>
                       )}
                     </div>
                     <div className="nx-hint text-[11px]">
@@ -704,7 +701,7 @@ export function CronPanel({
                         className="mt-0.5 break-words font-mono text-[11px] text-red-300"
                         title={job.lastError}
                       >
-                        {t("上次错误：")}{job.lastError}
+                        {t("上次错误：{lastError}", { lastError: job.lastError })}
                       </div>
                     )}
                   </div>

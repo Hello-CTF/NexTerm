@@ -53,7 +53,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300">
             <IconList size={10} className="shrink-0" />
-            <span className="truncate">{t("计划模式 ·")} {PLAN_MODE_HINT}</span>
+            <span className="truncate">{t("计划模式 · {PLAN_MODE_HINT}", { PLAN_MODE_HINT })}</span>
           </div>
         )}
         {editing && (

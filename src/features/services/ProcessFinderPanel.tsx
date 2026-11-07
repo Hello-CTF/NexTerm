@@ -256,7 +256,7 @@ export function ProcessFinderPanel({
           event.preventDefault();
           void saveForward();
         }}>
-          <span className="pb-2 text-[11px] text-neutral-400">{forwardDraft.host} {t("· 目标")} {forwardDraft.address}:{forwardDraft.port}</span>
+          <span className="pb-2 text-[11px] text-neutral-400">{t("{host} · 目标 {address}:{port}", { host: forwardDraft.host, address: forwardDraft.address, port: forwardDraft.port })}</span>
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">{t("本地监听端口")}
             <input className="nx-input nx-input-sm w-28 font-mono" value={forwardDraft.listenPort} aria-label={t("finder 本地监听端口")} inputMode="numeric" onChange={(event) => setForwardDraft({ ...forwardDraft, listenPort: event.target.value })} />
           </label>
@@ -272,8 +272,8 @@ export function ProcessFinderPanel({
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2 text-[11px]">
-              <span className="font-medium text-neutral-200">{matchCount} {t("个匹配")}</span>
-              <span className="nx-hint">{t("批次")} {result.batchId}</span>
+              <span className="font-medium text-neutral-200">{t("{matchCount} 个匹配", { matchCount })}</span>
+              <span className="nx-hint">{t("批次 {batchId}", { batchId: result.batchId })}</span>
               {result.hosts.some((host) => host.result.truncated) && <span className="nx-badge nx-badge-amber">{t("部分输出截断，匹配可能不完整")}</span>}
             </div>
             {result.hosts.map((host) => {
@@ -283,12 +283,12 @@ export function ProcessFinderPanel({
                 <section key={host.result.sessionId} className="border-b border-neutral-800/70" data-session-id={host.result.sessionId}>
                   <div className="flex flex-wrap items-center gap-2 bg-neutral-900/20 px-3 py-2 text-[11px]">
                     <h3 className="font-medium text-neutral-200">{hostName}</h3>
-                    <span className="nx-hint">{t("监听器：")}{host.listenerTool || t("不可用")} · {host.matches.length} {t("个匹配")}</span>
+                    <span className="nx-hint">{t("监听器：{value} · {length} 个匹配", { value: host.listenerTool || t("不可用"), length: host.matches.length })}</span>
                     {host.result.truncated && <span className="nx-badge nx-badge-amber">{t("输出截断：该主机结果不完整")}</span>}
                     <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void openTerminal(host.result.sessionId)}><IconTerminal size={11} />{t("终端")}</button>
                   </div>
-                  {host.listenerError && <div role="alert" className="whitespace-pre-wrap break-all px-3 py-1 text-[11px] text-red-300">{t("监听查询失败：")}{host.listenerError}</div>}
-                  {host.processError && <div role="alert" className="whitespace-pre-wrap break-all px-3 py-1 text-[11px] text-red-300">{t("进程查询失败：")}{host.processError}</div>}
+                  {host.listenerError && <div role="alert" className="whitespace-pre-wrap break-all px-3 py-1 text-[11px] text-red-300">{t("监听查询失败：{listenerError}", { listenerError: host.listenerError })}</div>}
+                  {host.processError && <div role="alert" className="whitespace-pre-wrap break-all px-3 py-1 text-[11px] text-red-300">{t("进程查询失败：{processError}", { processError: host.processError })}</div>}
                   {host.result.status !== "success" && !host.listenerError && !host.processError && (
                     <div role="alert" className="px-3 py-1 text-[11px] text-red-300">{host.result.error || host.result.stderr || host.result.status}</div>
                   )}

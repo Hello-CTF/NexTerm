@@ -807,8 +807,7 @@ function SqlExecutionHistory({
                     <span className={outcomeClass}>{outcomeLabel}</span>
                   </span>
                   <span className="text-[11px] text-neutral-500">
-                    schema {record.schema || tr("默认")} {tr("· 耗时")} {record.durationMs}ms ·{" "}
-                    {record.rowsAffected === null ? tr("影响行数未知") : tr("{rowsAffected} 行受影响", { rowsAffected: record.rowsAffected })}
+                    {tr("schema {value} · 耗时 {durationMs}ms ·{value2}{value3}", { value: record.schema || tr("默认"), durationMs: record.durationMs, value2: " ", value3: record.rowsAffected === null ? tr("影响行数未知") : tr("{rowsAffected} 行受影响", { rowsAffected: record.rowsAffected }) })}
                   </span>
                   <span className="w-full truncate font-mono text-xs text-neutral-300" title={record.sql}>
                     {record.sql}
@@ -955,16 +954,14 @@ function ResultTable({
     return (
       <div className="p-3 text-xs text-neutral-400">
         <span className="nx-badge nx-badge-green mr-2">{tr("运行成功")}</span>
-        {result.rowsAffected} {tr("行受影响，耗时")} {result.durationMs}ms
-      </div>
+        {tr("{rowsAffected} 行受影响，耗时 {durationMs}ms", { rowsAffected: result.rowsAffected, durationMs: result.durationMs })}</div>
     );
   }
   if (result.rows.length === 0) {
     return (
       <div className="p-3 text-xs text-neutral-400">
         <span className="nx-badge nx-badge-green mr-2">{tr("运行成功")}</span>
-        {tr("查询未返回数据（")}{result.columns.length} {tr("列，0 行），耗时")} {result.durationMs}ms
-      </div>
+        {tr("查询未返回数据（{length} 列，0 行），耗时 {durationMs}ms", { length: result.columns.length, durationMs: result.durationMs })}</div>
     );
   }
   const copyCsv = async () => {
@@ -999,8 +996,7 @@ function ResultTable({
       </table>
       <div className="flex items-center gap-3 px-3 py-2 text-[11px] text-neutral-500">
         <span>
-          {result.rows.length} {tr("行，耗时")} {result.durationMs}ms
-        </span>
+          {tr("{length} 行，耗时 {durationMs}ms", { length: result.rows.length, durationMs: result.durationMs })}</span>
         {result.truncated && <span className="text-amber-300">{tr("结果超过 5000 行，仅显示前 5000 行。可添加 LIMIT 缩小范围")}</span>}
         <span className="nx-spacer" />
         <button className="nx-link" onClick={() => void copyCsv()}>
@@ -1219,7 +1215,7 @@ function RedisView({ connId }: { connId: string }) {
         {pageError && (
           <div className="flex shrink-0 items-center gap-1.5 border-t border-neutral-800/60 px-2.5 py-1.5">
             <span className="nx-hint min-w-0 flex-1 truncate text-red-300">
-              {tr("未能加载下一页：")}{pageError}
+              {tr("未能加载下一页：{pageError}", { pageError })}
             </span>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
@@ -1265,7 +1261,7 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-empty-icon">
                 <IconXCircle size={18} />
               </span>
-              <div className="text-[12.5px] text-red-300">{tr("未能加载键内容：")}{viewError}</div>
+              <div className="text-[12.5px] text-red-300">{tr("未能加载键内容：{viewError}", { viewError })}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-sm"
                 onClick={() => void inspect(selected)}

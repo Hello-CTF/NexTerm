@@ -276,12 +276,12 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                   {busy === "watch" ? <IconLoader size={12} className="animate-spin" /> : null}
                   {watching ? t("关闭自动同步") : t("立即同步并开启自动同步")}
                 </button>
-                {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">{t("正在跟随")} {watchQuery.data.path}</span>}
+                {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">{t("正在跟随 {path}", { path: watchQuery.data.path })}</span>}
               </div>
               <div className="nx-hint mt-1.5">
                 {t("每 2 秒检查文件并同步改动；文件被删除时会移除由它同步的主机。")}
               </div>
-              {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">{t("后台同步失败：")}{watchQuery.data.lastError}</div>}
+              {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">{t("后台同步失败：{lastError}", { lastError: watchQuery.data.lastError })}</div>}
             </div>
           )}
 
@@ -303,7 +303,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           {discovery && busy !== "discover" && (
             <section aria-label={t("{value} 中找到的主机", { value: inventorySourceLabel(source) })}>
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px] text-neutral-400">
-                <span>{t("找到")} {items.length} {t("个 · 将同步")} {selectedCount} {t("个")}</span>
+                <span>{t("找到 {length} 个 · 将同步 {selectedCount} 个", { length: items.length, selectedCount })}</span>
                 {source !== "ssh-config" && items.length > 0 && (
                   <>
                     <button type="button" className="nx-link" onClick={() => setSelected(new Set(items.map((item) => item.key)))}>{t("全选")}</button>
@@ -381,10 +381,10 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           {result && (
             <div className="mt-3" role="status">
               <div className="flex flex-wrap gap-1.5">
-                <span className="nx-badge nx-badge-green">{t("新增")} {result.created}</span>
-                <span className="nx-badge">{t("更新")} {result.updated}</span>
-                <span className="nx-badge nx-badge-amber">{t("移除")} {result.removed}</span>
-                <span className="nx-badge">{t("未变化")} {result.unchanged}</span>
+                <span className="nx-badge nx-badge-green">{t("新增 {created}", { created: result.created })}</span>
+                <span className="nx-badge">{t("更新 {updated}", { updated: result.updated })}</span>
+                <span className="nx-badge nx-badge-amber">{t("移除 {removed}", { removed: result.removed })}</span>
+                <span className="nx-badge">{t("未变化 {unchanged}", { unchanged: result.unchanged })}</span>
               </div>
             </div>
           )}

@@ -106,7 +106,7 @@ export function AgentToolCard({
           {call.production && <span className="nx-badge nx-badge-red">{t("生产环境")}</span>}
           {!call.isMine && (
             <span className="nx-badge nx-badge-amber" title={t("仅所有者可审批")}>
-              {t("所有者：")}{call.ownerName}
+              {t("所有者：{ownerName}", { ownerName: call.ownerName })}
             </span>
           )}
           {call.persistent === false && <span className="nx-count">{t("非持久终端")}</span>}
@@ -118,7 +118,7 @@ export function AgentToolCard({
 
       {run?.evidence && (
         <div className="mt-1 text-[10.5px] text-neutral-500">
-          {t("依据：")}{formatEvidence(run.evidence)}
+          {t("依据：{value}", { value: formatEvidence(run.evidence) })}
         </div>
       )}
 

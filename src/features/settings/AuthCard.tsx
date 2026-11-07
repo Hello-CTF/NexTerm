@@ -273,7 +273,7 @@ export function AuthCard() {
             <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            {t("此服务器尚未创建任何账号")}{status.auth === "loopback" ? t("，当前允许匿名使用") : ""}{t("。 初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用； 也可以继续匿名使用本地功能。")}
+            {t("此服务器尚未创建任何账号{value}。 初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用； 也可以继续匿名使用本地功能。", { value: status.auth === "loopback" ? t("，当前允许匿名使用") : "" })}
           </p>
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
@@ -292,7 +292,7 @@ export function AuthCard() {
           <span className="nx-card-title">{t("账号")}</span>
         </div>
         <p className="nx-hint mb-3">
-          {t("当前未登录")}{status?.auth === "loopback" ? t("（此服务器允许匿名使用）") : ""}{t("。 登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。")}
+          {t("当前未登录{value}。 登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。", { value: status?.auth === "loopback" ? t("（此服务器允许匿名使用）") : "" })}
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"
@@ -321,8 +321,8 @@ export function AuthCard() {
           <span>
             {t("用户名")} <b>{user.username}</b>
           </span>
-          {user.display_name && <span>{t("显示名")} {user.display_name}</span>}
-          {user.last_login_at > 0 && <span className="nx-hint">{t("最近登录")} {formatTime(user.last_login_at)}</span>}
+          {user.display_name && <span>{t("显示名 {display_name}", { display_name: user.display_name })}</span>}
+          {user.last_login_at > 0 && <span className="nx-hint">{t("最近登录 {value}", { value: formatTime(user.last_login_at) })}</span>}
         </div>
 
         {visibleAccountError && (
@@ -500,7 +500,7 @@ export function AuthCard() {
           {sessionsError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
               <IconXCircle size={13} className="mt-0.5 shrink-0" />
-              <span className="min-w-0 flex-1 break-words">{t("未能读取登录会话：")}{sessionsError}{t("。请选择「重试」。")}</span>
+              <span className="min-w-0 flex-1 break-words">{t("未能读取登录会话：{sessionsError}。请选择「重试」。", { sessionsError })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadSessions()}>
                 <IconRefresh size={12} />{t("重试")}
               </button>
@@ -514,8 +514,8 @@ export function AuthCard() {
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-neutral-200" title={session.name}>{session.name}</span>
                   <span className="nx-hint text-[11px]">{session.origin}</span>
                   {session.current && <span className="nx-badge nx-badge-green">{t("当前会话")}</span>}
-                  <span className="nx-hint text-[11px]">{t("最近活动")} {formatTime(session.last_seen_at)}</span>
-                  <span className="nx-hint text-[11px]">{t("到期")} {formatTime(session.expires_at)}</span>
+                  <span className="nx-hint text-[11px]">{t("最近活动 {value}", { value: formatTime(session.last_seen_at) })}</span>
+                  <span className="nx-hint text-[11px]">{t("到期 {value}", { value: formatTime(session.expires_at) })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm"
                     disabled={pending !== null}
@@ -554,7 +554,7 @@ export function AuthCard() {
         {devicesError && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">{t("未能读取设备列表：")}{devicesError}{t("。请选择「重试」。")}</span>
+            <span className="min-w-0 flex-1 break-words">{t("未能读取设备列表：{devicesError}。请选择「重试」。", { devicesError })}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadDevices()}>
               <IconRefresh size={12} />
               {t("重试")}
@@ -569,8 +569,7 @@ export function AuthCard() {
         {devices && revokedCount > 0 && (
           <label className="nx-hint mb-2 flex items-center gap-1.5 text-[11px]">
             <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
-            {t("显示已吊销（")}{revokedCount}）
-          </label>
+            {t("显示已吊销（{revokedCount}）", { revokedCount })}</label>
         )}
 
         {devices && visibleDevices.length > 0 && (
@@ -589,7 +588,7 @@ export function AuthCard() {
                   <span className={`nx-badge shrink-0 ${revoked ? "nx-badge-red" : "nx-badge-green"}`}>
                     {revoked ? t("已吊销") : t("生效中")}
                   </span>
-                  <span className="nx-hint shrink-0 text-[11px]">{t("最近活动")} {formatTime(d.last_seen_at)}</span>
+                  <span className="nx-hint shrink-0 text-[11px]">{t("最近活动 {value}", { value: formatTime(d.last_seen_at) })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
                     disabled={revoked || pending !== null}
@@ -737,7 +736,7 @@ function TotpCard() {
       {loadError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("未能读取两步验证状态：")}{loadError}{t("。请选择「重试」。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能读取两步验证状态：{loadError}。请选择「重试」。", { loadError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             {t("重试")}

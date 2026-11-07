@@ -50,7 +50,7 @@ export const ChatBubble = memo(function ChatBubble({
         {item.imageCount ? (
           <div className="mb-1 flex items-center gap-1 text-[11px] text-[var(--nx-fg-soft)]">
             <IconImage size={11} />
-            {item.imageCount} {t("张图片")}
+            {t("{imageCount} 张图片", { imageCount: item.imageCount })}
           </div>
         ) : null}
         {refs.length > 0 ? (
@@ -93,7 +93,7 @@ export const ChatBubble = memo(function ChatBubble({
         open={streaming}
       >
         <summary className="cursor-pointer select-none text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
-          {t("思考过程（")}{item.text.length} {t("字）")}{streaming ? t(" · 进行中") : ""}
+          {t("思考过程（{length} 字）{value}", { length: item.text.length, value: streaming ? t(" · 进行中") : "" })}
         </summary>
         <div className="mt-1 whitespace-pre-wrap italic">{item.text}</div>
       </details>
@@ -106,7 +106,7 @@ export const ChatBubble = memo(function ChatBubble({
     return (
       <details className="rounded-lg border border-dashed border-neutral-800 px-2.5 py-1.5 text-[11px] text-neutral-500">
         <summary className="cursor-pointer select-none">
-          {t("已压缩上下文")}{item.messages > 0 ? t("（{messages} 条消息）", { messages: item.messages }) : ""}{t("，之后的回答基于下方摘要")}
+          {t("已压缩上下文{value}，之后的回答基于下方摘要", { value: item.messages > 0 ? t("（{messages} 条消息）", { messages: item.messages }) : "" })}
         </summary>
         <div className="mt-1.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-neutral-400">{item.text}</div>
       </details>
@@ -123,7 +123,7 @@ export const ChatBubble = memo(function ChatBubble({
           {item.maxIterations ? (
             <span className="nx-badge nx-badge-amber shrink-0">{t("已达到最大步数")}</span>
           ) : null}
-          <span className="whitespace-pre-wrap">{t("本次回答失败：")}{item.text}</span>
+          <span className="whitespace-pre-wrap">{t("本次回答失败：{text}", { text: item.text })}</span>
           {item.retryable ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
@@ -314,7 +314,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
         <IconBot size={11} className="shrink-0 text-neutral-500" />
         <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         <span className="shrink-0 text-neutral-500">
-          {timeline.text.length} {t("字 ·")} {timeline.tools.length} {t("个工具")}
+          {t("{length} 字 · {length2} 个工具", { length: timeline.text.length, length2: timeline.tools.length })}
         </span>
         <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
       </button>

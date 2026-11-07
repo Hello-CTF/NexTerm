@@ -335,7 +335,7 @@ function DesktopLinkCard() {
       {loadError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("未能读取同步配置：")}{loadError}{tr("。请重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("未能读取同步配置：{loadError}。请重试。", { loadError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             {tr("重试")}
@@ -351,7 +351,7 @@ function DesktopLinkCard() {
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void logout()}>
             {busy === "logout" ? tr("正在退出…") : tr("退出登录")}
           </button>
-          {status.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次同步失败：")}{status.lastError}</span>}
+          {status.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次同步失败：{lastError}", { lastError: status.lastError })}</span>}
         </div>
       )}
 
@@ -441,7 +441,7 @@ function DesktopLinkCard() {
               {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
               {busy === "login" ? tr("正在登录…") : tr("登录")}
             </button>
-            {status?.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次失败：")}{status.lastError}</span>}
+            {status?.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次失败：{lastError}", { lastError: status.lastError })}</span>}
           </div>
         </>
       )}
@@ -800,7 +800,7 @@ function DesktopSyncConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        {compareRemote !== null && <span className="nx-hint">{tr("服务端共")} {compareRemote} {tr("项数据")}</span>}
+        {compareRemote !== null && <span className="nx-hint">{tr("服务端共 {compareRemote} 项数据", { compareRemote })}</span>}
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
         <button
@@ -842,7 +842,7 @@ function DesktopSyncConsole() {
       {status?.lastError && !status.paused && !status.vaultLocked && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("上次同步失败：")}{status.lastError}{tr("，将在下个自动同步周期重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("上次同步失败：{lastError}，将在下个自动同步周期重试。", { lastError: status.lastError })}</span>
         </div>
       )}
 
@@ -856,7 +856,7 @@ function DesktopSyncConsole() {
       {compareError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("对比读取失败：")}{compareError}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("对比读取失败：{compareError}", { compareError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void loadCompare()}>
             <IconRefresh size={12} />
             {tr("重试")}
@@ -867,7 +867,7 @@ function DesktopSyncConsole() {
       {repairError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("操作失败：")}{repairError}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("操作失败：{repairError}", { repairError })}</span>
         </div>
       )}
 
@@ -1976,7 +1976,7 @@ function CompareConsole() {
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
         <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
-        <span className="nx-hint">{tr("服务端共")} {remote ? remote.length + undecryptableIds.length : "…"} {tr("项数据")}</span>
+        <span className="nx-hint">{tr("服务端共 {value} 项数据", { value: remote ? remote.length + undecryptableIds.length : "…" })}</span>
         <div className="nx-spacer" />
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <button className="nx-btn nx-btn-outline nx-btn-sm" disabled={refreshBusy || repairBusyId !== null || !kindOptIn}
@@ -2001,14 +2001,14 @@ function CompareConsole() {
       {error && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("同步失败：")}{error}{tr("，将在下个自动同步周期重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("同步失败：{error}，将在下个自动同步周期重试。", { error })}</span>
         </div>
       )}
 
       {repairError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{tr("操作失败：")}{repairError}</span>
+          <span className="min-w-0 flex-1 break-words">{tr("操作失败：{repairError}", { repairError })}</span>
         </div>
       )}
 

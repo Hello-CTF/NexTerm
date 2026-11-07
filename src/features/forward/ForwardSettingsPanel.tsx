@@ -236,7 +236,7 @@ export function ForwardSettingsPanel() {
         </div>
         <ul className="nx-hint list-inside list-disc space-y-0.5">
           <li>{t("仅恢复标记为自动启动的规则")}</li>
-          <li>{t("最多同时建立")} {recovery?.maxConcurrentConnections ?? DEFAULT_FORWARD_RECOVERY_SETTINGS.maxConcurrentConnections} {t("个设备连接")}</li>
+          <li>{t("最多同时建立 {value} 个设备连接", { value: recovery?.maxConcurrentConnections ?? DEFAULT_FORWARD_RECOVERY_SETTINGS.maxConcurrentConnections })}</li>
           <li>{t("自动跳过生产项目资产")}</li>
         </ul>
         {recovery?.enabled && (

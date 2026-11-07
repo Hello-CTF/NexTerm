@@ -304,11 +304,10 @@ function DatabaseAssetDetail({ asset, assets, visible }: { asset: Asset; assets:
         subtitle={
           tunnel ? (
             <span>
-              {t("经由")}{" "}
+              {t("经由{value}", { value: " " })}
               <button type="button" className="nx-link" onClick={() => openHostDetail(tunnel.id)}>
                 {tunnel.name}
-              </button>{" "}
-              {t("连接")}
+              </button>{t("{value}连接", { value: " " })}
             </span>
           ) : viaAssetId ? (
             <span className="text-amber-300">{t("经由的主机已删除")}</span>

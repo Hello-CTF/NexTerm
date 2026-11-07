@@ -270,8 +270,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
               {hasData ? (
                 <>
                   <span className="block font-medium text-neutral-100">
-                    {t("上下文占用")} {used.toFixed(0)}%
-                  </span>
+                    {t("上下文占用 {toFixed}%", { toFixed: used.toFixed(0) })}</span>
                   <span className="block font-mono text-[10.5px] text-neutral-400">
                     {formatTokens(prompt)} / {formatTokens(window)} tokens
                   </span>
@@ -280,19 +279,16 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
                       hit > 0 ? "text-green-400" : "text-neutral-500"
                     }`}
                   >
-                    {t("缓存命中")} {hit.toFixed(0)}%
-                  </span>
+                    {t("缓存命中 {toFixed}%", { toFixed: hit.toFixed(0) })}</span>
                 </>
               ) : null}
               {hasMainTokens ? (
                 <span className="block">
-                  {t("对话请求 输入")} {formatTokens(prompt)} {t("· 输出")} {formatTokens(completion)} tokens
-                </span>
+                  {t("对话请求 输入 {value} · 输出 {value2} tokens", { value: formatTokens(prompt), value2: formatTokens(completion) })}</span>
               ) : null}
               {hasSummary ? (
                 <span className="block">
-                  {t("上下文上下文摘要 输入")} {formatTokens(summaryPrompt)} {t("· 输出")} {formatTokens(summaryCompletion)} tokens
-                </span>
+                  {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
               ) : null}
             </>
           ) : (
@@ -335,40 +331,33 @@ function UsageDetails({
       <span className="mb-0.5 block font-medium text-neutral-100">{t("用量明细")}</span>
       {hasMainTokens ? (
         <span className="block text-neutral-300">
-          {t("对话请求 输入")} {formatTokens(prompt)} {t("· 输出")} {formatTokens(completion)} tokens
-        </span>
+          {t("对话请求 输入 {value} · 输出 {value2} tokens", { value: formatTokens(prompt), value2: formatTokens(completion) })}</span>
       ) : null}
       {hasSummary ? (
         <span className="block text-neutral-300">
-          {t("上下文上下文摘要 输入")} {formatTokens(summaryPrompt)} {t("· 输出")} {formatTokens(summaryCompletion)} tokens
-        </span>
+          {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          {t("本会话")} {errorStats.runs} {t("次回答 · 可重试错误")} {errorStats.retries}（{percentText(errorStats.retryRate)}{t("） · 失败")} {errorStats.failures}（{percentText(errorStats.failureRate)}）
-        </span>
+          {t("本会话 {runs} 次回答 · 可重试错误 {retries}（{value}） · 失败 {failures}（{value2}）", { runs: errorStats.runs, retries: errorStats.retries, value: percentText(errorStats.retryRate), failures: errorStats.failures, value2: percentText(errorStats.failureRate) })}</span>
       ) : null}
       {scenes ? (
         <>
           <span className="block text-neutral-300">
-            {t("对话")} {scenes.chat.runs} {t("次 · 输入")} {formatTokens(scenes.chat.tokensIn)} {t("· 输出")}{" "}
-            {formatTokens(scenes.chat.tokensOut)}{t("（全部会话）")}
+            {t("对话 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.chat.runs, value: formatTokens(scenes.chat.tokensIn), value2: " ", value3: formatTokens(scenes.chat.tokensOut) })}
           </span>
           {scenes.cron.runs > 0 ? (
             <span className="block text-neutral-300">
-              {t("定时任务")} {scenes.cron.runs} {t("次 · 输入")} {formatTokens(scenes.cron.tokensIn)} {t("· 输出")}{" "}
-              {formatTokens(scenes.cron.tokensOut)}{t("（全部会话）")}
+              {t("定时任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.cron.runs, value: formatTokens(scenes.cron.tokensIn), value2: " ", value3: formatTokens(scenes.cron.tokensOut) })}
             </span>
           ) : null}
           {scenes.subagent.runs > 0 ? (
             <span className="block text-neutral-300">
-              {t("子任务")} {scenes.subagent.runs} {t("次 · 输入")} {formatTokens(scenes.subagent.tokensIn)} {t("· 输出")}{" "}
-              {formatTokens(scenes.subagent.tokensOut)}{t("（全部会话）")}
+              {t("子任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.subagent.runs, value: formatTokens(scenes.subagent.tokensIn), value2: " ", value3: formatTokens(scenes.subagent.tokensOut) })}
             </span>
           ) : null}
           <span className="block text-neutral-500">
-            {t("标题")} {scenes.title.runs} {t("次 · 输入")} {formatTokens(scenes.title.tokensIn)} {t("· 输出")}{" "}
-            {formatTokens(scenes.title.tokensOut)}{t("（单独统计）")}
+            {t("标题 {runs} 次 · 输入 {value} · 输出{value2}{value3}（单独统计）", { runs: scenes.title.runs, value: formatTokens(scenes.title.tokensIn), value2: " ", value3: formatTokens(scenes.title.tokensOut) })}
           </span>
         </>
       ) : null}

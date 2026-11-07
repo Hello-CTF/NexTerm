@@ -224,7 +224,7 @@ export function ProcessesSection({
         connected && visible ? (
           <>
             {query.dataUpdatedAt > 0 && (
-              <span className="nx-hint text-[11px]">{t("读取于")} {new Date(query.dataUpdatedAt).toLocaleTimeString()}</span>
+              <span className="nx-hint text-[11px]">{t("读取于 {toLocaleTimeString}", { toLocaleTimeString: new Date(query.dataUpdatedAt).toLocaleTimeString() })}</span>
             )}
             <label className="flex items-center gap-1 text-[12px] text-neutral-400">
               <input
@@ -254,7 +254,7 @@ export function ProcessesSection({
       ) : (
         <>
           {query.isError ? (
-            <p className="m-0 text-[12px] text-red-300">{t("未能读取进程：")}{describeError(query.error)}</p>
+            <p className="m-0 text-[12px] text-red-300">{t("未能读取进程：{value}", { value: describeError(query.error) })}</p>
           ) : !query.data ? (
             <SectionHint>{fetching ? t("正在读取进程列表…") : t("点击「读取」查看进程列表（会在主机上执行 ps 或等效命令）。")}</SectionHint>
           ) : (
@@ -288,10 +288,10 @@ export function ProcessesSection({
               </ListToolbar>
               {partial.size > 0 && (
                 <SectionHint>
-                  {t("该主机未提供：")}{[...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、")}
+                  {t("该主机未提供：{join}", { join: [...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、") })}
                 </SectionHint>
               )}
-              {skippedRows > 0 && <SectionHint>{t("有")} {skippedRows} {t("行无法解析，已跳过。")}</SectionHint>}
+              {skippedRows > 0 && <SectionHint>{t("有 {skippedRows} 行无法解析，已跳过。", { skippedRows })}</SectionHint>}
               {rows.length === 0 ? (
                 <SectionHint>{queryText ? t("没有匹配的进程。") : t("未发现进程。")}</SectionHint>
               ) : (

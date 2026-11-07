@@ -745,8 +745,7 @@ export function MultiHostLogTail({
       {runSources.length > 0 && (
         <details className="shrink-0 border-t border-neutral-800/70 px-3 py-1" open={failedSources > 0}>
           <summary className="flex cursor-pointer select-none items-center text-[11px] text-neutral-400 pointer-coarse:min-h-10">
-            {t("来源状态（")}{runSources.length}{failedSources > 0 ? t("，{failedSources} 个失败", { failedSources }) : ""}）
-          </summary>
+            {t("来源状态（{length}{value}）", { length: runSources.length, value: failedSources > 0 ? t("，{failedSources} 个失败", { failedSources }) : "" })}</summary>
           <div className="mt-1 grid max-h-32 grid-cols-1 gap-1 overflow-y-auto xl:grid-cols-2">
             {runSources.map((source) => {
               const state = statuses[source.sourceId] ?? { status: "idle" as const };
@@ -764,7 +763,7 @@ export function MultiHostLogTail({
       )}
       <div className="flex-none border-t border-neutral-800/70 px-3 py-1">
         <span className="nx-hint" role="status">
-          {t("显示")} {visibleLines.length} {t("· 保留")} {retained} / {capacity} {t("· 已丢弃")} {bufferRef.current.droppedCount}
+          {t("显示 {length} · 保留 {retained} / {capacity} · 已丢弃 {droppedCount}", { length: visibleLines.length, retained, capacity, droppedCount: bufferRef.current.droppedCount })}
         </span>
       </div>
     </section>

@@ -143,8 +143,7 @@ function WatchPanelContent({
     >
       <span className="font-medium">{watch.name}</span>
       <span className="min-w-0 flex-1 truncate text-neutral-500" title={watch.condition.pattern}>
-        {targetLabel(watch.targetId)}
-        {conditionLabels[watch.condition.type]}「{watch.condition.pattern}{tr("」时通知 AI")}
+        {tr("{value}{value2}「{pattern}」时通知 AI", { value: targetLabel(watch.targetId), value2: conditionLabels[watch.condition.type], pattern: watch.condition.pattern })}
       </span>
       <span className={`nx-badge ${statusClasses[watch.status]}`}>{statusLabels[watch.status]}</span>
       {watch.repeat && <span className="nx-badge">{tr("重复")}</span>}
@@ -168,7 +167,7 @@ function WatchPanelContent({
     <div className="flex flex-col gap-1.5 p-2.5">
       <header className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
         {tr("监视")}
-        {watches && <span className="nx-badge">{active.length} {tr("个进行中")}</span>}
+        {watches && <span className="nx-badge">{tr("{length} 个进行中", { length: active.length })}</span>}
         <span className="nx-spacer" />
         <button
           type="button"
@@ -211,7 +210,7 @@ function WatchPanelContent({
       {active.map((w) => row(w, true))}
       {ended.length > 0 && (
         <details className="text-[11px] text-neutral-500">
-          <summary className="cursor-pointer py-0.5">{tr("已结束（")}{ended.length}）</summary>
+          <summary className="cursor-pointer py-0.5">{tr("已结束（{length}）", { length: ended.length })}</summary>
           <div className="mt-1 flex flex-col gap-1">{ended.map((w) => row(w, false))}</div>
         </details>
       )}

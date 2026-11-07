@@ -192,11 +192,11 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
           <p className="nx-hint mb-2.5">{t("插入：只写入不回车；执行：写入并回车。含换行或控制字符的片段会先确认。")}</p>
           {unmigrated > 0 && (
             <p className="nx-hint mb-2.5" role="status" data-testid="snippet-migration-notice">
-              {t("有")} {unmigrated} {t("个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中。")}
+              {t("有 {unmigrated} 个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中。", { unmigrated })}
             </p>
           )}
           {blockedReason && (snippets.data?.length ?? 0) > 0 && (
-            <p className="nx-hint mb-2.5" role="status">{blockedReason}{t("，才能插入或执行片段。仍可新建、编辑或删除片段。")}</p>
+            <p className="nx-hint mb-2.5" role="status">{t("{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。", { blockedReason })}</p>
           )}
           {(snippets.data?.length ?? 0) > 6 && (
             <input
@@ -243,7 +243,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-[12.5px] text-neutral-200">{s.name}</span>
-                      {multi && <span className="nx-badge shrink-0">{s.steps?.length ?? 0} {t("步")}</span>}
+                      {multi && <span className="nx-badge shrink-0">{t("{value} 步", { value: s.steps?.length ?? 0 })}</span>}
                     </div>
                     {s.description && <div className="truncate text-[11px] text-neutral-400" title={s.description}>{s.description}</div>}
                     <div className="truncate font-mono text-[11px] text-neutral-500" title={s.body}>

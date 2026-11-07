@@ -108,7 +108,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
           <div className="nx-menu-title">{t("选择模型档案")}</div>
           {loadError ? (
             <div className="px-2 py-2 text-center">
-              <div className="nx-hint text-red-300">{t("未能读取模型档案：")}{loadError}</div>
+              <div className="nx-hint text-red-300">{t("未能读取模型档案：{loadError}", { loadError })}</div>
               <button className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5" onClick={() => void refresh()}>
                 {t("重试")}
               </button>

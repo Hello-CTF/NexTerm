@@ -200,7 +200,7 @@ export function AppearanceCard({ reveal }: { reveal?: { panel: SettingsPanelId; 
         <div className="mb-1.5 flex items-center gap-2">
           <span className="nx-setting-label" data-setting="terminal-theme">{t("终端与编辑器主题")}</span>
           {prefs.terminalTheme === "interface" && (
-            <span className="nx-badge">{t("当前")}{resolvedTermTheme === "dark" ? t("深色") : t("浅色")}</span>
+            <span className="nx-badge">{t("当前{value}", { value: resolvedTermTheme === "dark" ? t("深色") : t("浅色") })}</span>
           )}
         </div>
         <div className="nx-segment" role="group" aria-label={t("终端与编辑器主题")}>

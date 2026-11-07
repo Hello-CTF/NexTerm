@@ -198,7 +198,7 @@ export function DockerMergedLogs({
         }}
       >
         <div className="nx-modal-header">
-          <span className="min-w-0 truncate">{t("合并日志 ·")} {containers.length} {t("个容器 · 仅保留最近")} {MERGED_LOG_LINE_LIMIT} {t("行")}</span>
+          <span className="min-w-0 truncate">{t("合并日志 · {length} 个容器 · 仅保留最近 {MERGED_LOG_LINE_LIMIT} 行", { length: containers.length, MERGED_LOG_LINE_LIMIT })}</span>
           <div className="nx-spacer" />
           <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label={t("关闭合并日志")} onClick={onClose}>
             <IconClose size={12} />

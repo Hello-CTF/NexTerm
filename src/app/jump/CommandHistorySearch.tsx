@@ -252,7 +252,7 @@ export function CommandHistorySearch({
         )}
         {!loading && error && (
           <div role="alert" className="px-4 py-6 text-center text-xs text-red-300">
-            {t("命令历史搜索失败：")}{error}
+            {t("命令历史搜索失败：{error}", { error })}
           </div>
         )}
         {!loading && !error && items.length === 0 && (

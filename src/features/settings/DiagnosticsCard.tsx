@@ -213,7 +213,7 @@ export function DiagnosticsCard() {
       </div>
       {error && (
         <div className="nx-alert nx-alert-danger mt-3" role="alert">
-          {t("未能完成：")}{error}{t("。请稍后重试。")}
+          {t("未能完成：{error}。请稍后重试。", { error })}
         </div>
       )}
 

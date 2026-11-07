@@ -141,7 +141,7 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
       {error && (
         <div role="alert" className="flex items-center gap-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          {t("搜索失败：")}{error}
+          {t("搜索失败：{error}", { error })}
         </div>
       )}
       {result?.truncated && (
@@ -151,7 +151,7 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           className="flex items-center gap-2 rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-300"
         >
           <IconAlert size={14} />
-          {t("已扫描")} {result.scannedSessions} {t("个会话 /")} {formatTranscriptBytes(result.scannedBytes)}{t("，结果已截断，请缩小时间范围")}
+          {t("已扫描 {scannedSessions} 个会话 / {value}，结果已截断，请缩小时间范围", { scannedSessions: result.scannedSessions, value: formatTranscriptBytes(result.scannedBytes) })}
         </div>
       )}
       {loading && !result && <div role="status" className="text-[12px] text-neutral-500">{t("正在搜索…")}</div>}
@@ -169,8 +169,8 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           >
             <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[11.5px] text-neutral-500">
               <span className={badge.className}>{badge.text}</span>
-              <span>{session.matches.length} {t("条匹配")}</span>
-              {session.moreMatches && <span className="text-amber-300">{t("仅显示前")} {MATCH_CAP} {t("条")}</span>}
+              <span>{t("{length} 条匹配", { length: session.matches.length })}</span>
+              {session.moreMatches && <span className="text-amber-300">{t("仅显示前 {MATCH_CAP} 条", { MATCH_CAP })}</span>}
             </div>
             <div className="flex flex-col">
               {session.matches.map((match) => (

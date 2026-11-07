@@ -227,7 +227,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
     body = issueError ? (
       <div className="nx-alert nx-alert-danger flex flex-wrap items-center gap-2" role="alert">
         <IconXCircle size={13} className="shrink-0" />
-        <span className="min-w-0 flex-1 break-words">{t("接入码生成失败：")}{issueError}{t("。请检查网络后重试。")}</span>
+        <span className="min-w-0 flex-1 break-words">{t("接入码生成失败：{issueError}。请检查网络后重试。", { issueError })}</span>
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm shrink-0" disabled={issuing} onClick={onIssue}>
           {t("重试")}
         </button>
@@ -245,14 +245,14 @@ export function EnrollPanel(props: EnrollPanelProps) {
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2 text-[13px] text-green-300" role="status" aria-live="polite">
           <IconCheckCircle size={14} className="shrink-0" />
-          <span className="min-w-0 break-all">{t("已接入：")}{joined.name}</span>
+          <span className="min-w-0 break-all">{t("已接入：{name}", { name: joined.name })}</span>
         </div>
         {!canOpen && (
           <p className="nx-hint">{online ? t("该设备已关闭远程终端，开启后才能打开工作区。") : t("设备正在启动，上线后即可打开工作区。")}</p>
         )}
         {issueError && (
           <p className="text-[12px] text-red-300" role="alert">
-            {t("接入码生成失败：")}{issueError}{t("。请重试。")}
+            {t("接入码生成失败：{issueError}。请重试。", { issueError })}
           </p>
         )}
         {note && (
@@ -282,7 +282,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
         <p className="nx-hint">{t("接入码超过有效期后无法再使用。请重新生成，并使用新的命令。")}</p>
         {issueError && (
           <p className="text-[12px] text-red-300" role="alert">
-            {t("接入码生成失败：")}{issueError}{t("。请重试。")}
+            {t("接入码生成失败：{issueError}。请重试。", { issueError })}
           </p>
         )}
         <div>

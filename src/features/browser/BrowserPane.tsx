@@ -135,7 +135,7 @@ export function BrowserPane({ url }: { url: string }) {
       )}
       {plan.kind !== "embed" && (
         <div className="px-3 py-3 text-sm text-neutral-400" role="status">
-          {plan.reason}{t("。可以用系统浏览器打开。")}
+          {t("{reason}。可以用系统浏览器打开。", { reason: plan.reason })}
         </div>
       )}
       {notice?.kind === "blocked" && (
@@ -145,7 +145,7 @@ export function BrowserPane({ url }: { url: string }) {
       )}
       {notice?.kind === "unreachable" && (
         <div className="px-3 py-3 text-sm text-neutral-400" role="status">
-          {t("无法连接该地址")}{notice.reason ? `：${notice.reason}` : ""}
+          {t("无法连接该地址{value}", { value: notice.reason ? `：${notice.reason}` : "" })}
         </div>
       )}
       {notice?.kind === "timeout" && (

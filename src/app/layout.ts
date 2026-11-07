@@ -117,7 +117,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
   return {
     id,
     kind: kind as PaneKind,
-    title: typeof raw.title === "string" ? raw.title : tr("标签"),
+    title: typeof raw.title === "string" ? raw.title : tr("标签页"),
     sessionId: optStr(raw.sessionId),
     assetId: optStr(raw.assetId),
     tabId,

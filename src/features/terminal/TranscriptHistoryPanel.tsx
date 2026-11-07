@@ -554,7 +554,7 @@ export function TranscriptHistoryPanel({
       {hostsError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          {t("未能读取主机列表：")}{hostsError}
+          {t("未能读取主机列表：{hostsError}", { hostsError })}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadHosts()}>
             {t("重试")}
           </button>
@@ -564,7 +564,7 @@ export function TranscriptHistoryPanel({
       {syncToggleError && (
         <div className="flex items-center gap-2 border-b border-red-900/50 bg-red-950/40 px-3 py-2 text-[12px] text-red-300">
           <IconAlert size={13} />
-          {t("切换同步失败：")}{syncToggleError}
+          {t("切换同步失败：{syncToggleError}", { syncToggleError })}
           <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => setSyncToggleError(null)}>
             {t("关闭")}
           </button>
@@ -662,7 +662,7 @@ export function TranscriptHistoryPanel({
                 {sessionsError && (
                   <tr>
                     <td colSpan={2} className="nx-table-empty text-red-300">
-                      {t("未能读取终端历史：")}{sessionsError}
+                      {t("未能读取终端历史：{sessionsError}", { sessionsError })}
                     </td>
                   </tr>
                 )}
@@ -816,7 +816,7 @@ export function TranscriptHistoryPanel({
           {(matches !== null || searchError) && (
             <div className="max-h-[140px] shrink-0 overflow-auto overscroll-contain border-b max-[560px]:max-h-[35%] border-neutral-800/60">
               {searchError && (
-                <div className="px-3 py-2 text-[12px] text-red-300">{t("搜索失败：")}{searchError}</div>
+                <div className="px-3 py-2 text-[12px] text-red-300">{t("搜索失败：{searchError}", { searchError })}</div>
               )}
               {!searchError && matches !== null && matches.length === 0 && (
                 <div className="px-3 py-2 text-[12px] text-neutral-500">{t("没有匹配的内容")}</div>
@@ -851,7 +851,7 @@ export function TranscriptHistoryPanel({
             {readerError && (
               <div className="flex h-full items-center justify-center gap-2 text-[12px] text-red-300">
                 <IconAlert size={13} />
-                {t("未能读取终端记录：")}{readerError}
+                {t("未能读取终端记录：{readerError}", { readerError })}
               </div>
             )}
             {selected?.contentOmitted && !readerLoading && !readerError && (
@@ -877,8 +877,7 @@ export function TranscriptHistoryPanel({
             <IconClock size={11} />
             {selected ? (
               <>
-                {formatTranscriptTime(selected.startedAt)} {t("开始 ·")}{" "}
-                {formatTranscriptBytes(selected.storedBytes || selected.bytes)} · {selected.chunks} {t("段输出")}
+                {t("{value} 开始 ·{value2}{value3} · {chunks} 段输出", { value: formatTranscriptTime(selected.startedAt), value2: " ", value3: formatTranscriptBytes(selected.storedBytes || selected.bytes), chunks: selected.chunks })}
                 {selected.truncated && t(" · 已达到大小上限，后续输出未记录")}
               </>
             ) : (

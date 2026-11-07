@@ -49,14 +49,9 @@ export function ImportReportView({
     <div className={`mt-3 nx-alert ${touched > 0 ? "" : "nx-alert-danger"}`}>
       <div className="mb-1 font-semibold">{title}</div>
       <div className="font-mono text-[11px]">
-        {t("资产：新建")} {data.assetsCreated} {t("/ 更新")} {data.assetsUpdated}{t("；凭据：新建")} {data.credsCreated} {t("/ 更新")}{" "}
-        {data.credsUpdated}
-        {data.credsDeleted > 0 ? t(" / 删除 {credsDeleted}", { credsDeleted: data.credsDeleted }) : ""}{t("；分组：新建")} {data.groupsCreated} {t("/ 更新")}{" "}
-        {data.groupsUpdated}
-        {data.snippetsCreated + data.snippetsUpdated > 0
+        {t("资产：新建 {assetsCreated} / 更新 {assetsUpdated}；凭据：新建 {credsCreated} / 更新{value}{credsUpdated}{value2}；分组：新建 {groupsCreated} / 更新{value3}{groupsUpdated}{value4}；跳过（{value5}） {skippedNewer}；已拒绝 {refused}", { assetsCreated: data.assetsCreated, assetsUpdated: data.assetsUpdated, credsCreated: data.credsCreated, value: " ", credsUpdated: data.credsUpdated, value2: data.credsDeleted > 0 ? t(" / 删除 {credsDeleted}", { credsDeleted: data.credsDeleted }) : "", groupsCreated: data.groupsCreated, value3: " ", groupsUpdated: data.groupsUpdated, value4: data.snippetsCreated + data.snippetsUpdated > 0
           ? t("；片段：新建 {snippetsCreated} / 更新 {snippetsUpdated}", { snippetsCreated: data.snippetsCreated, snippetsUpdated: data.snippetsUpdated })
-          : ""}
-        {t("；跳过（")}{dir === "push" ? t("对端较新") : t("本机较新")}） {data.skippedNewer}{t("；已拒绝")} {data.refused}
+          : "", value5: dir === "push" ? t("对端较新") : t("本机较新"), skippedNewer: data.skippedNewer, refused: data.refused })}
       </div>
       {details.length > 0 && (
         <ul className="mt-2 list-disc pl-4 text-[11.5px] text-neutral-300">

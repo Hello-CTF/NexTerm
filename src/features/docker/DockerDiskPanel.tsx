@@ -122,7 +122,7 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
       {query.isPending && <div className="nx-hint py-8 text-center">{t("正在读取 Docker 磁盘占用…")}</div>}
       {query.isError && !data && (
         <div role="alert" className="rounded border border-red-900/60 bg-red-950/20 px-3 py-3 text-xs text-red-300">
-          {t("未能加载磁盘信息：")}{describeDockerError(query.error)}
+          {t("未能加载磁盘信息：{value}", { value: describeDockerError(query.error) })}
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void query.refetch()}>{t("重试")}</button>
         </div>
       )}
@@ -133,8 +133,8 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
               <div key={category.kind} className="rounded border border-neutral-800/70 bg-neutral-950/30 p-3">
                 <div className="text-xs text-neutral-400">{CATEGORY_LABELS[category.kind]}</div>
                 <div className="mt-1 text-lg text-neutral-100">{formatDockerBytes(category.sizeBytes)}</div>
-                <div className="mt-1 text-[11px] text-neutral-500">{category.active} {t("活跃 / 共")} {category.total}</div>
-                <div className="mt-1 text-[11px] text-amber-300">{t("可回收")} {formatDockerBytes(category.reclaimableBytes)}</div>
+                <div className="mt-1 text-[11px] text-neutral-500">{t("{active} 活跃 / 共 {total}", { active: category.active, total: category.total })}</div>
+                <div className="mt-1 text-[11px] text-amber-300">{t("可回收 {value}", { value: formatDockerBytes(category.reclaimableBytes) })}</div>
               </div>
             ))}
           </div>
@@ -209,8 +209,8 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
         {preview && (
           <div className="mt-3 rounded border border-amber-900/60 bg-amber-950/10 p-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-amber-300">{t("将删除")} {preview.items.length} {t("项 · 释放")} {formatDockerBytes(preview.totalBytes)}</span>
-              <span className="nx-hint">{t("预览过期时间")} {new Date(preview.expiresAt).toLocaleTimeString()}</span>
+              <span className="text-xs font-medium text-amber-300">{t("将删除 {length} 项 · 释放 {value}", { length: preview.items.length, value: formatDockerBytes(preview.totalBytes) })}</span>
+              <span className="nx-hint">{t("预览过期时间 {toLocaleTimeString}", { toLocaleTimeString: new Date(preview.expiresAt).toLocaleTimeString() })}</span>
               <div className="nx-spacer" />
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => setPreview(null)}>{t("取消")}</button>
               <button type="button" className="nx-btn nx-btn-danger nx-btn-sm" disabled={busy !== null || preview.items.length === 0} onClick={() => void execute(preview)}>
@@ -234,7 +234,7 @@ export function DockerDiskPanel({ sessionId, visible }: { sessionId: string; vis
         )}
         {result && (
           <div className="mt-3 rounded border border-neutral-800/70 p-3" role="status">
-            <div className="text-xs text-green-300">{t("已处理")} {result.items.length} {t("项 · 成功项释放")} {formatDockerBytes(result.freedBytes)}</div>
+            <div className="text-xs text-green-300">{t("已处理 {length} 项 · 成功项释放 {value}", { length: result.items.length, value: formatDockerBytes(result.freedBytes) })}</div>
             <ul className="mt-2 max-h-56 overflow-auto">
               {result.items.map((entry) => (
                 <li key={`${entry.item.kind}:${entry.item.id}`} className={`py-1 text-[11px] ${entry.error ? "text-red-300" : "text-neutral-400"}`}>

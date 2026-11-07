@@ -430,6 +430,24 @@ function decodeJsxEntities(text) {
   });
 }
 
+// jsxCookedText is the text React renders for a JSX text node (Babel's cleanJSXElementLiteralChild): whitespace next to
+// a line break goes, the first line keeps its leading spaces and the last line its trailing ones.
+function jsxCookedText(raw) {
+  const lines = raw.split(/\r\n|\n|\r/);
+  let lastNonEmpty = 0;
+  lines.forEach((line, index) => {
+    if (/[^ \t]/.test(line)) lastNonEmpty = index;
+  });
+  let out = "";
+  lines.forEach((line, index) => {
+    let text = line.replace(/\t/g, " ");
+    if (index !== 0) text = text.replace(/^[ ]+/, "");
+    if (index !== lines.length - 1) text = text.replace(/[ ]+$/, "");
+    if (text) out += index !== lastNonEmpty ? `${text} ` : text;
+  });
+  return out;
+}
+
 function jsxDisplayText(raw) {
   // JSX joins the lines of a text node with single spaces and drops lines that are only whitespace.
   const lines = raw.split(/\r?\n/);
@@ -578,12 +596,16 @@ function joinJsxFile(sf, checker, dry) {
   const classify = (child) => {
     if (ts.isJsxText(child)) {
       const raw = child.getFullText();
-      return { kind: "text", node: child, value: decodeJsxEntities(/\n/.test(raw) ? jsxDisplayText(raw) : raw) };
+      return { kind: "text", node: child, value: decodeJsxEntities(jsxCookedText(raw)) };
     }
     if (ts.isJsxExpression(child)) {
       if (!child.expression) return { kind: "skip", node: child };
       const literal = literalCall(child.expression);
       if (literal !== null) return { kind: "t", node: child, value: literal };
+      // A t() call with placeholders is already a sentence of its own.
+      if (ts.isCallExpression(child.expression) && ts.isIdentifier(child.expression.expression) && names.has(child.expression.expression.text)) {
+        return { kind: "break", node: child };
+      }
       if (ts.isCallExpression(child.expression) || ts.isJsxElement(child.expression) || ts.isJsxSelfClosingElement(child.expression)) {
         if (!isTextType(checker.getTypeAtLocation(child.expression))) return { kind: "break", node: child };
       }
@@ -593,8 +615,10 @@ function joinJsxFile(sf, checker, dry) {
   };
 
   const flush = (run) => {
-    while (run.length > 0 && (run[0].kind === "text" || run[0].kind === "skip")) run.shift();
-    while (run.length > 0 && (run[run.length - 1].kind === "text" || run[run.length - 1].kind === "skip")) run.pop();
+    // Whitespace at the ends of a run stays outside it; punctuation such as 」 or ） belongs to the sentence.
+    const blank = (item) => item.kind === "skip" || (item.kind === "text" && item.value.trim() === "");
+    while (run.length > 0 && blank(run[0])) run.shift();
+    while (run.length > 0 && blank(run[run.length - 1])) run.pop();
     const ts_ = run.filter((item) => item.kind === "t").length;
     const values = run.filter((item) => item.kind === "value").length;
     if (ts_ === 0 || (values === 0 && ts_ < 2)) return;

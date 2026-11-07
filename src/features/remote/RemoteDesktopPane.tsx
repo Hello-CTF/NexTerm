@@ -103,12 +103,12 @@ function DisconnectOverlay({
       {failure.detail && <FailureDetail text={failure.detail} />}
       {retryIn !== null && (
         <div className="text-[12.5px] text-neutral-300" role="status" data-testid="remote-retry-countdown">
-          {retryIn} {t("秒后自动重新连接（第")} {attempt + 1} {t("次）")}
+          {t("{retryIn} 秒后自动重新连接（第 {value} 次）", { retryIn, value: attempt + 1 })}
         </div>
       )}
       {reconnectPaused && (
         <div className="max-w-md text-[12.5px] text-amber-300" role="status" data-testid="remote-reconnect-paused">
-          {AUTO_RECONNECT_WINDOW_MS / 60_000} {t("分钟内已自动重新连接")} {MAX_AUTO_RECONNECTS} {t("次，已暂停自动重连。可能有另一台设备正在使用同一个远程桌面，确认后请手动重新连接。")}
+          {t("{value} 分钟内已自动重新连接 {MAX_AUTO_RECONNECTS} 次，已暂停自动重连。可能有另一台设备正在使用同一个远程桌面，确认后请手动重新连接。", { value: AUTO_RECONNECT_WINDOW_MS / 60_000, MAX_AUTO_RECONNECTS })}
         </div>
       )}
       {never && <div className="text-[11.5px] text-neutral-400">{t("这类失败不会自动重试，请处理后手动重新连接。")}</div>}
@@ -631,7 +631,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
             className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-neutral-800/90 px-3 py-1 text-[12px] text-neutral-100"
             data-testid="remote-capture-hint"
           >
-            {t("键盘已交给远程桌面，按")} {RELEASE_CHORD_LABEL} {t("释放")}
+            {t("键盘已交给远程桌面，按 {RELEASE_CHORD_LABEL} 释放", { RELEASE_CHORD_LABEL })}
           </div>
         )}
         {effectiveViewOnly && connected && (

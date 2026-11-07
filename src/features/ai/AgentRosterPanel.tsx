@@ -242,7 +242,7 @@ export function AgentRosterPanel({
 
       {loadError && (
         <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-red-400">
-          <span className="min-w-0 flex-1 truncate">{t("未能加载子代理列表：")}{loadError}</span>
+          <span className="min-w-0 flex-1 truncate">{t("未能加载子代理列表：{loadError}", { loadError })}</span>
           <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
             {t("重试")}
           </button>
@@ -297,12 +297,12 @@ export function AgentRosterPanel({
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px]">
               {entry.alias !== entry.handle && (
                 <span className="nx-count" title={t("子代理编号 {handle} 不会改变，此处仅显示别名", { handle: entry.handle })}>
-                  {t("别名")} {entry.alias}
+                  {t("别名 {alias}", { alias: entry.alias })}
                 </span>
               )}
               {!entry.isMine && (
                 <span className="nx-badge nx-badge-amber" title={t("仅所有者可重命名和释放")}>
-                  {t("所有者：")}{entry.ownerName}
+                  {t("所有者：{ownerName}", { ownerName: entry.ownerName })}
                 </span>
               )}
               {entry.production && <span className="nx-badge nx-badge-red">{t("生产环境")}</span>}
@@ -345,7 +345,7 @@ export function AgentRosterPanel({
                   </button>
                 </div>
                 <div className="mt-0.5 text-[10.5px] text-neutral-500">
-                  {t("仅修改显示别名，子代理编号")} {entry.handle} {t("不会改变")}
+                  {t("仅修改显示别名，子代理编号 {handle} 不会改变", { handle: entry.handle })}
                 </div>
               </div>
             ) : (

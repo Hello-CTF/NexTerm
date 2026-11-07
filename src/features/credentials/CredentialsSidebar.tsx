@@ -222,7 +222,7 @@ export function CredentialsSidebar() {
         {all.length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
             {unused > 0 && (
-              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{unused} {t("条未被资产使用")}</span>
+              <span className="whitespace-nowrap text-[var(--nx-fg-warning)]">{t("{unused} 条未被资产使用", { unused })}</span>
             )}
             <div className="nx-spacer" />
             <span className="truncate">
@@ -241,7 +241,7 @@ export function CredentialsSidebar() {
         {list.length > pageSize && (
           <div className="flex items-center gap-2 text-[11px] text-neutral-500">
             <span>
-              {t("第")} {currentPage + 1} / {pageCount} {t("页")}
+              {t("第 {value} / {pageCount} 页", { value: currentPage + 1, pageCount })}
             </span>
             <div className="nx-spacer" />
             <button

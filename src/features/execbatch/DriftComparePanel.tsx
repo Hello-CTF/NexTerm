@@ -46,7 +46,7 @@ function GroupHosts({ group, onPin }: { group: DriftGroup; onPin: (sessionId: st
       </div>
       {group.results.filter((result) => result.stderr).map((result) => (
         <details key={result.sessionId} className="mt-1 text-[11px]">
-          <summary className="cursor-pointer text-neutral-500">{resultName(result)} {t("的错误输出")}</summary>
+          <summary className="cursor-pointer text-neutral-500">{t("{value} 的错误输出", { value: resultName(result) })}</summary>
           <pre className="nx-pre mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{result.stderr}</pre>
         </details>
       ))}
@@ -266,7 +266,7 @@ export function DriftComparePanel({
           <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
             <span className="font-medium text-neutral-300">{t("内容分组")}</span>
             <span className="nx-hint">
-              {groups.length} {t("组 ·")} {analysis.failures.length} {t("个失败目标")}
+              {t("{length} 组 · {length2} 个失败目标", { length: groups.length, length2: analysis.failures.length })}
             </span>
             {baselineResult && <span className="nx-badge nx-badge-blue">baseline：{resultName(baselineResult)}</span>}
           </div>
@@ -275,7 +275,7 @@ export function DriftComparePanel({
             {groups.map((group, index) => (
               <article key={group.id} className="rounded border border-neutral-800/70 p-2.5" data-group-id={group.id}>
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="font-medium text-neutral-200">{t("组")} {index + 1} · {group.results.length} {t("台")}</span>
+                  <span className="font-medium text-neutral-200">{t("组 {value} · {length} 台", { value: index + 1, length: group.results.length })}</span>
                   <span className="nx-mono text-[10px] text-neutral-500" title={group.hash}>SHA-256 {group.hash.slice(0, 12)}…</span>
                   {group.truncated && <span className="nx-badge nx-badge-amber">{t("输出截断，仅返回部分可比较")}</span>}
                   {group.binary && <span className="nx-badge nx-badge-amber">{t("二进制，不做文本差异")}</span>}
@@ -307,7 +307,7 @@ export function DriftComparePanel({
                   if (compareGroupId === group.id) setCompareGroupId(groups.find((item) => item.id !== group.id)?.id ?? null);
                 }} />
                 {group.binary ? (
-                  <div className="mt-2 text-[11px] text-neutral-500">{t("二进制输出")} {group.content.length} {t("个字符；仅提供分组。")}</div>
+                  <div className="mt-2 text-[11px] text-neutral-500">{t("二进制输出 {length} 个字符；仅提供分组。", { length: group.content.length })}</div>
                 ) : (
                   <details className="mt-2">
                     <summary className="cursor-pointer text-[11px] text-neutral-500">{t("查看本组输出")}</summary>
@@ -323,7 +323,7 @@ export function DriftComparePanel({
           {baselineGroup && compareGroup && (
             <div className="mt-4 border-t border-neutral-800/70 pt-3" data-testid="drift-diff">
               <div className="mb-2 text-[11px] font-medium text-neutral-300">
-                {t("组间差异：")}{baselineResult ? resultName(baselineResult) : t("基准组")} {t("→ 对比组")}
+                {t("组间差异：{value} → 对比组", { value: baselineResult ? resultName(baselineResult) : t("基准组") })}
               </div>
               {baselineGroup.truncated || compareGroup.truncated ? (
                 <div className="text-[11px] text-amber-300">{t("至少一组输出被截断，不能据此判断完整内容差异。")}</div>
@@ -339,7 +339,7 @@ export function DriftComparePanel({
                     ))}
                   </div>
                   {diff.length > MAX_DIFF_LINES && (
-                    <div className="mt-1 text-[10px] text-neutral-500">{t("仅显示前")} {MAX_DIFF_LINES} {t("行差异，共")} {diff.length} {t("行。")}</div>
+                    <div className="mt-1 text-[10px] text-neutral-500">{t("仅显示前 {MAX_DIFF_LINES} 行差异，共 {length} 行。", { MAX_DIFF_LINES, length: diff.length })}</div>
                   )}
                 </>
               )}

@@ -26,6 +26,7 @@
 - **日常运维**：远程文件、Docker、MySQL / PostgreSQL / Redis、端口转发
 - **所有连接**：SSH、WinRM、本机终端、受管设备、RDP / VNC
 - **自托管**：多用户、双因素认证、审计日志、加密同步
+- **多语言界面**：简体中文、繁體中文、English、日本語、한국어、Deutsch、Français、Español、Русский
 
 同步不是端到端加密：登录时密码会发送给服务端，请只登录你信任的服务端并使用 HTTPS（详见[安全说明](docs/security.md)）。完整功能见[功能说明](docs/features.md)。
 

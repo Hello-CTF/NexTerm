@@ -123,7 +123,7 @@ function TypedEnvironmentConfirmationDialog({
         <div className="nx-modal-header">
           <span className="flex items-center gap-1.5 truncate">
             <IconAlert size={14} className="text-amber-300" />
-            {t("确认生产环境")}{action}
+            {t("确认生产环境{action}", { action })}
           </span>
           <div className="nx-spacer" />
           <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭生产确认")} onClick={onCancel}>
@@ -178,8 +178,7 @@ function TypedEnvironmentConfirmationDialog({
           </ul>
           {state.extraInputs.length > 0 && (
             <div role="alert" className="mb-3 rounded border border-red-900/60 bg-red-950/20 px-2.5 py-2 text-[11px] text-red-300">
-              {t("存在不属于当前目标集合的输入，确认已锁定：")}
-              {state.extraInputs.map((extra) => `「${extra.key}」`).join("、")}
+              {t("存在不属于当前目标集合的输入，确认已锁定：{join}", { join: state.extraInputs.map((extra) => `「${extra.key}」`).join("、") })}
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-xs ml-2"
@@ -193,7 +192,7 @@ function TypedEnvironmentConfirmationDialog({
           <div className="mb-1 text-[11px] text-neutral-500">{variant === "broadcast" ? t("待广播输入") : t("待执行命令")}</div>
           <pre className="nx-pre mb-3 max-h-28 overflow-auto whitespace-pre-wrap break-all text-[11px]">{command}</pre>
           <div className="mb-3 text-[10px] text-neutral-500" title={t("目标集合 {targetSetHash}；{contentLabel} {contentHash}", { targetSetHash: challenge.targetSetHash, contentLabel, contentHash })}>
-            {t("确认将绑定当前目标集合与")}{contentLabel}{t("摘要；任一变化都需要重新确认。本会话不会记住授权。")}
+            {t("确认将绑定当前目标集合与{contentLabel}摘要；任一变化都需要重新确认。本会话不会记住授权。", { contentLabel })}
           </div>
         </div>
         <div className="nx-modal-footer">
@@ -206,8 +205,7 @@ function TypedEnvironmentConfirmationDialog({
             disabled={missingEnvironmentNames || !state.canConfirm}
             onClick={() => onConfirm(state.submittedNames)}
           >
-            {t("确认")}{action}（{challenge.productionTargets.length}）
-          </button>
+            {t("确认{action}（{length}）", { action, length: challenge.productionTargets.length })}</button>
         </div>
       </div>
     </div>,

@@ -137,7 +137,7 @@ export function ServiceJournal({
           setRevision((current) => current + 1);
         }}>{paused ? t("继续显示") : t("暂停显示")}</button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={wrap} onClick={() => setWrap((current) => !current)}>{t("自动换行")}</button>
-        <span className="nx-hint">{t("保留")} {bufferRef.current.retainedLines().length} / {JOURNAL_CAPACITY} {t("· 丢弃")} {bufferRef.current.droppedCount}</span>
+        <span className="nx-hint">{t("保留 {length} / {JOURNAL_CAPACITY} · 丢弃 {droppedCount}", { length: bufferRef.current.retainedLines().length, JOURNAL_CAPACITY, droppedCount: bufferRef.current.droppedCount })}</span>
       </div>
       {filters.error && <div role="alert" className="px-3 py-1 text-[11px] text-amber-300">{regexErrorNotice(filters.error)}</div>}
       {error && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{error}</div>}

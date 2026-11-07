@@ -508,7 +508,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="min-h-0 flex-1 overflow-auto">
         {forwardsRefreshFailed && (
           <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2 text-[11px] text-amber-300" role="status">
-            <span>{tr("未能刷新转发列表：")}{describeError(forwards.error)}{tr("；已保留上次成功结果。")}</span>
+            <span>{tr("未能刷新转发列表：{value}；已保留上次成功结果。", { value: describeError(forwards.error) })}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void forwards.refetch()}>
               <IconRefresh size={12} />
               {tr("重试")}
@@ -521,7 +521,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               <div className="nx-table-empty">{tr("正在加载转发列表…")}</div>
             ) : forwardsFailed ? (
               <div className="nx-table-empty">
-                <span className="text-red-300">{tr("未能加载转发列表：")}{describeError(forwards.error)}</span>
+                <span className="text-red-300">{tr("未能加载转发列表：{value}", { value: describeError(forwards.error) })}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void forwards.refetch()}>
                   <IconRefresh size={12} />
                   {tr("重试")}
@@ -555,7 +555,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             ) : forwardsFailed ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">{tr("未能加载转发列表：")}{describeError(forwards.error)}</span>
+                  <span className="text-red-300">{tr("未能加载转发列表：{value}", { value: describeError(forwards.error) })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void forwards.refetch()}
@@ -679,7 +679,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             )}
             {envFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-red-300" role="alert">
-                <span>{tr("未能检查转发环境：")}{describeError(env.error)}</span>
+                <span>{tr("未能检查转发环境：{value}", { value: describeError(env.error) })}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
                   {tr("重试")}
@@ -688,7 +688,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
             )}
             {envRefreshFailed && (
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-amber-300" role="status">
-                <span>{tr("未能刷新转发环境：")}{describeError(env.error)}{tr("；已保留上次成功结果。")}</span>
+                <span>{tr("未能刷新转发环境：{value}；已保留上次成功结果。", { value: describeError(env.error) })}</span>
                 <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void env.refetch()}>
                   <IconRefresh size={12} />
                   {tr("重试")}
@@ -781,7 +781,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
                 />
                 {listenPortInvalid && (
                   <p id={listenPortErrorId} role="alert" className="mt-1 break-words text-[11px] text-red-400">
-                    {listenPortLabel}{tr("须为 1-65535 之间的整数")}
+                    {tr("{listenPortLabel}须为 1-65535 之间的整数", { listenPortLabel })}
                   </p>
                 )}
               </div>
@@ -866,26 +866,22 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
               ) : sessionId ? (
                 kind === "remote" ? (
                   <>
-                    {tr("出口走当前会话（")}{sessionName(sessionId)}{tr("）的连接；远端监听地址为")}{" "}
+                    {tr("出口走当前会话（{value}）的连接；远端监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
                     <span className="nx-code">
                       {bindHost}:{listenPort}
-                    </span>{" "}
-                    {tr("（绑定在远端主机上")}
-                    {isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险")}
-                    {tr("）。重新连接后会自动尝试恢复。")}
+                    </span>{tr("{value}（绑定在远端主机上{value2}）。重新连接后会自动尝试恢复。", { value: " ", value2: isLoopbackHost(bindHost) ? tr("，只有远端本机能连") : tr("，对远端网络开放，创建前会确认风险") })}
                   </>
                 ) : (
                 <>
-                  {tr("出口走当前会话（")}{sessionName(sessionId)}{tr("）的连接；监听地址为")}{" "}
+                  {tr("出口走当前会话（{value}）的连接；监听地址为{value2}", { value: sessionName(sessionId), value2: " " })}
                   <span className="nx-code">
                     {listenHost}:{listenPort}
                   </span>
-                  {!exposed
+                  {tr("{value}会话断开后转发自动停止。", { value: !exposed
                     ? tr("，只有{localMachine}能连。", { localMachine })
                     : kind === "socks"
                       ? tr("，对外开放，创建前会确认风险。")
-                      : tr("。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。")}
-                  {tr("会话断开后转发自动停止。")}
+                      : tr("。任何能连到该端口的人都能访问目标服务，请确认目标服务有鉴权。") })}
                 </>
                 )
               ) : (

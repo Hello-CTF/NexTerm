@@ -319,7 +319,7 @@ function StatsView({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-2">
         <span className="nx-hint">
-          {t("每 3 秒自动刷新 · 离开此页后停止 · 共")} {rows.length} {t("个运行中容器")}
+          {t("每 3 秒自动刷新 · 离开此页后停止 · 共 {length} 个运行中容器", { length: rows.length })}
         </span>
         {!containerRunning && <span className="nx-badge nx-badge-amber">{t("当前容器已停止")}</span>}
         <div className="nx-spacer" />

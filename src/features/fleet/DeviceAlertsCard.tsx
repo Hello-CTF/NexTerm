@@ -187,8 +187,7 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
         <ul className="m-0 flex list-none flex-col gap-1 p-0" aria-label={t("当前活动告警")}>
           {active.map((alert) => (
             <li key={`${alert.rule}`} className="text-[12px] text-amber-300" data-testid="device-active-alert">
-              {ruleName(alert.rule)}{t("告警 · 自")} {formatTime(alert.since)}
-              {alert.value !== undefined && alert.rule !== "offline" ? t(" · 当前 {value}%", { value: Math.round(alert.value * 10) / 10 }) : ""}
+              {t("{value}告警 · 自 {value2}{value3}", { value: ruleName(alert.rule), value2: formatTime(alert.since), value3: alert.value !== undefined && alert.rule !== "offline" ? t(" · 当前 {value}%", { value: Math.round(alert.value * 10) / 10 }) : "" })}
             </li>
           ))}
         </ul>
@@ -218,7 +217,7 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
                   disabled={disabled}
                   onChange={(e) => set(r.enabled, e.target.checked)}
                 />
-                <span className="text-neutral-200">{r.label}{t("超过")}</span>
+                <span className="text-neutral-200">{t("{label}超过", { label: r.label })}</span>
               </label>
               <input
                 type="number"
@@ -231,7 +230,7 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
                 onChange={(e) => set(r.threshold, e.target.value)}
               />
               <span className="text-neutral-400">%</span>
-              <span className="nx-hint">{t("持续")} {RULE_SUSTAIN_MINUTES[r.rule]} {t("分钟")}</span>
+              <span className="nx-hint">{t("持续 {value} 分钟", { value: RULE_SUSTAIN_MINUTES[r.rule] })}</span>
             </div>
           ))}
           <div className="flex flex-col gap-1">
@@ -259,7 +258,7 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
               <span className="text-neutral-400">{t("分钟告警")}</span>
             </div>
             <p className="nx-hint m-0">
-              {t("连续约")} {data?.suspect_after_minutes ?? 5} {t("分钟未收到上报视为疑似离线，满")} {form.offline_minutes || "X"} {t("分钟告警。")}
+              {t("连续约 {value} 分钟未收到上报视为疑似离线，满 {value2} 分钟告警。", { value: data?.suspect_after_minutes ?? 5, value2: form.offline_minutes || "X" })}
             </p>
           </div>
           <label className="inline-flex items-center gap-2 text-[12.5px]">
@@ -303,7 +302,7 @@ export function DeviceAlertsCard({ device }: { device: FleetDevice }) {
                 onChange={(e) => set("quiet_end", e.target.value)}
               />
             </div>
-            <p className="nx-hint m-0">{t("静音时段内离线不发告警，按")} {tzShown} {t("计算，跨午夜有效。")}</p>
+            <p className="nx-hint m-0">{t("静音时段内离线不发告警，按 {tzShown} 计算，跨午夜有效。", { tzShown })}</p>
             {suggestQuiet && <p className="nx-hint m-0" data-testid="quiet-suggestion">{t("笔记本或开发机建议开启静音时段（例如 19:00-09:00）")}</p>}
           </div>
           {error && (

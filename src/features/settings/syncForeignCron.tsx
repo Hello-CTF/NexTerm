@@ -59,7 +59,7 @@ export function ForeignCronSection() {
     }
   };
 
-  if (error) return <p className="nx-hint mb-3 text-[12px]">{t("未能读取其他设备的定时任务：")}{error}</p>;
+  if (error) return <p className="nx-hint mb-3 text-[12px]">{t("未能读取其他设备的定时任务：{error}", { error })}</p>;
   if (!jobs || jobs.length === 0) return null;
   return (
     <div className="mb-3">
@@ -70,7 +70,7 @@ export function ForeignCronSection() {
             <span className="min-w-0 flex-1 truncate" title={job.prompt}>
               {job.name || job.prompt}
               <span className="nx-hint ml-2">
-                {job.schedule} · {job.enabled ? t("已启用") : t("已停用")} {t("· 运行于")} {job.deviceName || job.deviceId}
+                {t("{schedule} · {value} · 运行于 {value2}", { schedule: job.schedule, value: job.enabled ? t("已启用") : t("已停用"), value2: job.deviceName || job.deviceId })}
               </span>
             </span>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={busy !== null} onClick={() => void adopt(job)}>

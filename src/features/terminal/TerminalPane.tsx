@@ -2474,7 +2474,7 @@ export function TerminalPane({
             onClick={closeBroadcast}
           >
             <span className="nx-dot nx-dot-pulse" />
-            {tr("广播")} {broadcastCount}
+            {tr("广播 {broadcastCount}", { broadcastCount })}
           </button>
         )}
         <button
@@ -2520,8 +2520,8 @@ export function TerminalPane({
 
       {recording?.state === "failed" && (
         <div role="alert" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-red-900/50 bg-red-950/30 px-2.5 py-1.5 text-xs text-red-200">
-          <span>{tr("录制失败：")}{recording.safeError || tr("原因未知")}</span>
-          {recording.path && <span className="font-mono break-all">{tr("路径：")}{recording.path}</span>}
+          <span>{tr("录制失败：{value}", { value: recording.safeError || tr("原因未知") })}</span>
+          {recording.path && <span className="font-mono break-all">{tr("路径：{path}", { path: recording.path })}</span>}
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"

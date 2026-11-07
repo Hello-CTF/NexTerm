@@ -40,8 +40,7 @@ export function ProductionWriteRiskNotice({
       </span>
       <span className="mt-1 block text-neutral-200">
         {t("当前目标环境为")} <code className="text-amber-300">{environment}</code>
-        {operation ? t("，{operation}写入将需要逐次输入实际环境名确认", { operation }) : t("，写入将需要逐次输入实际环境名确认")}
-        {t("；本会话不会记住授权。")}
+        {t("{value}；本会话不会记住授权。", { value: operation ? t("，{operation}写入将需要逐次输入实际环境名确认", { operation }) : t("，写入将需要逐次输入实际环境名确认") })}
       </span>
     </div>
   );

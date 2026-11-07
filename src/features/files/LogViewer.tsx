@@ -283,7 +283,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           onFocus={(e) => e.currentTarget.select()}
         />
       </form>
-      <span className="shrink-0 text-[11px] text-neutral-500">/ {pages} {t("页")}</span>
+      <span className="shrink-0 text-[11px] text-neutral-500">{t("/ {pages} 页", { pages })}</span>
       <button
         className="nx-icon-btn"
         disabled={loading || page >= pages}
@@ -358,7 +358,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         </div>
         {filtered && (
           <span className="shrink-0 text-[11px] text-neutral-500" role="status">
-            {filtered.length} {t("行匹配")}
+            {t("{length} 行匹配", { length: filtered.length })}
           </span>
         )}
         <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[12px] text-neutral-300 pointer-coarse:min-h-11">
@@ -457,16 +457,11 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <span>{t("只读，不修改远端文件")}</span>
           <span className="text-neutral-700">|</span>
           <span>
-            {t("字节")} {chunk.offset.toLocaleString()}–
-            {(chunk.offset + Math.max(chunk.bytes - 1, 0)).toLocaleString()} /{" "}
-            {formatSize(chunk.size)}
+            {t("字节 {toLocaleString}–{toLocaleString2} /{value}{value2}", { toLocaleString: chunk.offset.toLocaleString(), toLocaleString2: (chunk.offset + Math.max(chunk.bytes - 1, 0)).toLocaleString(), value: " ", value2: formatSize(chunk.size) })}
           </span>
           <span className="text-neutral-700">|</span>
           <span>
-            {t("分块")} {page} / {pages}{t("（每页")} {formatSize(CHUNK_SIZE)}{t("，行号为分块内序号")}
-            {chunk.offset > 0 ? t("，首行可能不完整") : ""}
-            {chunk.truncated ? t("，末行延续到下一页") : ""}）
-          </span>
+            {t("分块 {page} / {pages}（每页 {value}，行号为分块内序号{value2}{value3}）", { page, pages, value: formatSize(CHUNK_SIZE), value2: chunk.offset > 0 ? t("，首行可能不完整") : "", value3: chunk.truncated ? t("，末行延续到下一页") : "" })}</span>
           <div className="nx-spacer" />
           <span className="max-[560px]:hidden">{t("搜索仅过滤当前已加载分块")}</span>
         </div>

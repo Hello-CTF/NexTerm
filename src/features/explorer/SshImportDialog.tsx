@@ -366,8 +366,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 {source === "ssh-home" && (
                   <div className="nx-form-row">
                     <span className="nx-hint block">
-                      {WEB ? t("将扫描服务器上的 ~/.ssh 目录") : t("将扫描 ~/.ssh 目录")}
-                      {t("：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。")}
+                      {t("{value}：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。", { value: WEB ? t("将扫描服务器上的 ~/.ssh 目录") : t("将扫描 ~/.ssh 目录") })}
                     </span>
                   </div>
                 )}
@@ -422,11 +421,11 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {phase === "done" && applyResult !== null && (
               <div role="status">
                 <div className="mb-3 flex flex-wrap gap-1.5">
-                  <span className="nx-badge nx-badge-green">{t("新增主机")} {applyResult.assetsCreated}</span>
-                  <span className="nx-badge">{t("覆盖主机")} {applyResult.assetsUpdated}</span>
-                  <span className="nx-badge nx-badge-green">{t("新增密钥")} {applyResult.credentialsCreated}</span>
-                  <span className="nx-badge">{t("覆盖密钥")} {applyResult.credentialsUpdated}</span>
-                  <span className="nx-badge">{t("跳过")} {applyResult.skipped}</span>
+                  <span className="nx-badge nx-badge-green">{t("新增主机 {assetsCreated}", { assetsCreated: applyResult.assetsCreated })}</span>
+                  <span className="nx-badge">{t("覆盖主机 {assetsUpdated}", { assetsUpdated: applyResult.assetsUpdated })}</span>
+                  <span className="nx-badge nx-badge-green">{t("新增密钥 {credentialsCreated}", { credentialsCreated: applyResult.credentialsCreated })}</span>
+                  <span className="nx-badge">{t("覆盖密钥 {credentialsUpdated}", { credentialsUpdated: applyResult.credentialsUpdated })}</span>
+                  <span className="nx-badge">{t("跳过 {skipped}", { skipped: applyResult.skipped })}</span>
                 </div>
                 {applyResult.warnings.length > 0 && (
                   <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
@@ -464,8 +463,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             )}
             {phase === "preview" && importableCount > 0 && (
               <button className="nx-btn nx-btn-ghost" onClick={runQuickImport}>
-                {t("导入已勾选的新增项（")}{importableCount}）
-              </button>
+                {t("导入已勾选的新增项（{importableCount}）", { importableCount })}</button>
             )}
             {phase === "preview" && (
               <button
@@ -518,8 +516,7 @@ function PreviewBody({
     <div>
       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11.5px] text-neutral-500">
         <span>
-          {preview.hosts.length} {t("台主机（")}{importableHosts} {t("台可新增）·")} {preview.keys.length} {t("个密钥（")}
-          {importableKeys} {t("个可新增）")}
+          {t("{length} 台主机（{importableHosts} 台可新增）· {length2} 个密钥（{importableKeys} 个可新增）", { length: preview.hosts.length, importableHosts, length2: preview.keys.length, importableKeys })}
         </span>
         {preview.truncated && (
           <span className="nx-badge nx-badge-amber">{t("数量超限已截断")}</span>
@@ -646,7 +643,7 @@ function HostRow({
         </span>
         {host.proxyJump && (
           <span className="nx-badge shrink-0" title={`ProxyJump ${host.proxyJump}`}>
-            {t("跳板")} {host.proxyJump}
+            {t("跳板 {proxyJump}", { proxyJump: host.proxyJump })}
           </span>
         )}
         {host.authMethod && (

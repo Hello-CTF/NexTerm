@@ -130,7 +130,7 @@ function TableQueryBody({
       <tr>
         <td colSpan={colSpan} className="nx-table-empty">
           <span className="text-red-300">
-            {tr("未能加载")}{errorPrefix}：{describeDockerError(error)}
+            {tr("未能加载{errorPrefix}：{value}", { errorPrefix, value: describeDockerError(error) })}
           </span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
             <IconRefresh size={12} />
@@ -177,7 +177,7 @@ function PortForwardButtons({ sessionId, container }: { sessionId: string; conta
               void forwardAndOpen({ sessionId, host, port: p.hostPort });
             }}
           >
-            {tr("转发并打开 :")}{p.hostPort}
+            {tr("转发并打开 :{hostPort}", { hostPort: p.hostPort })}
           </button>
         );
       })}
@@ -238,7 +238,7 @@ function CompactNotice({
     return (
       <div className="nx-table-empty">
         {dockerHostUnavailableText(error) ?? (
-          <span className="text-red-300">{tr("未能加载")}{errorPrefix}：{describeDockerError(error)}</span>
+          <span className="text-red-300">{tr("未能加载{errorPrefix}：{value}", { errorPrefix, value: describeDockerError(error) })}</span>
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={onRetry}>
           <IconRefresh size={12} />
@@ -941,7 +941,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
         <div className="nx-spacer" />
         {picked.size > 0 && (
           <>
-            <span className="nx-hint">{tr("已选")} {picked.size}</span>
+            <span className="nx-hint">{tr("已选 {size}", { size: picked.size })}</span>
             <button
               className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9"
               onClick={() => setPicked(new Set())}
@@ -966,8 +966,7 @@ export function DockerPanel({ sessionId, visible = true }: { sessionId: string; 
               disabled={bulkBusy}
             >
               {bulkBusy ? <IconRefresh size={13} className="animate-spin" /> : <IconTrash size={13} />}
-              {tr("删除选中（")}{picked.size}）
-            </button>
+              {tr("删除选中（{size}）", { size: picked.size })}</button>
           </>
         )}
         {tab !== "disk" && (

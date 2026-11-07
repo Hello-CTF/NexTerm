@@ -913,7 +913,7 @@ export function BackgroundSessions({
             {scopedError && (
               <tr>
                 <td colSpan={COLUMN_COUNT} className="nx-table-empty text-red-300">
-                  {tr("无法读取后台会话：")}{scopedError}
+                  {tr("无法读取后台会话：{scopedError}", { scopedError })}
                 </td>
               </tr>
             )}

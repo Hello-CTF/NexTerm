@@ -162,7 +162,7 @@ export function ServicesPanel({
             { value: "all", label: t("全部状态") }, { value: "running", label: t("运行中") }, { value: "failed", label: t("失败") },
             { value: "inactive", label: t("未运行") }, { value: "other", label: t("其他") },
           ]} />
-          <span className="nx-hint">{t("批次")} {listBatch.batchId}</span>
+          <span className="nx-hint">{t("批次 {batchId}", { batchId: listBatch.batchId })}</span>
         </div>
       )}
 

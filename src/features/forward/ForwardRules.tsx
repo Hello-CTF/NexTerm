@@ -243,14 +243,14 @@ export function ForwardRules({
             <div className="py-3 text-[11px] text-neutral-500">{t("正在加载规则…")}</div>
           ) : rules.isError && !rules.data ? (
             <div className="flex flex-wrap items-center gap-2 py-2 text-[11px] text-red-300" role="alert">
-              <span>{t("未能加载规则：")}{describeError(rules.error)}</span>
+              <span>{t("未能加载规则：{value}", { value: describeError(rules.error) })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void rules.refetch()}>{t("重试")}</button>
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {rules.isError && (
                 <div className="text-[11px] text-amber-300" role="status">
-                  {t("未能刷新规则：")}{describeError(rules.error)}{t("；已保留上次结果。")}
+                  {t("未能刷新规则：{value}；已保留上次结果。", { value: describeError(rules.error) })}
                 </div>
               )}
               {(rules.data ?? []).length === 0 ? (

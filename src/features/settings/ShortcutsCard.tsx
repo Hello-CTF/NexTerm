@@ -181,14 +181,12 @@ export function ShortcutsCard() {
       </div>
       {conflicts.length > 0 && (
         <p className="mt-2 text-[11px] text-amber-300">
-          {t("检测到")} {conflicts.length} {t("组冲突：")}
-          {conflicts
+          {t("检测到 {length} 组冲突：{join}。使用相同快捷键时，排在前面的操作生效。", { length: conflicts.length, join: conflicts
             .map(
               (conflict) =>
                 t("{label}（{value}）与 {label2}（{value2}）重叠", { label: conflict.actions[0].label, value: formatBinding(conflict.bindings[0]), label2: conflict.actions[1].label, value2: formatBinding(conflict.bindings[1]) }),
             )
-            .join("；")}
-          {t("。使用相同快捷键时，排在前面的操作生效。")}
+            .join("；") })}
         </p>
       )}
       {terminalConflicts.length > 0 && (

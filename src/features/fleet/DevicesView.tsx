@@ -273,7 +273,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
   const lastSeenText = lastSeenAt ? (
     <time dateTime={new Date(lastSeenAt).toISOString()} title={formatTime(lastSeenAt)}>
-      {relativeTime(lastSeenAt, now)}{t("上报")}
+      {t("{value}上报", { value: relativeTime(lastSeenAt, now) })}
     </time>
   ) : (
     <span>{t("尚未上报")}</span>
@@ -291,7 +291,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
         {agent?.platform && <span className="nx-hint shrink-0">{platformLabel(agent.platform)}</span>}
         {!revoked && alertCount > 0 && (
           <span className="nx-badge nx-badge-amber shrink-0" data-testid="device-alert-badge">
-            {alertCount} {t("条告警")}
+            {t("{alertCount} 条告警", { alertCount })}
           </span>
         )}
         {isAdmin && device.owner && (
@@ -336,20 +336,20 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
 
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-neutral-400">
         {revoked ? (
-          <span className="text-red-300">{t("撤销于")} {formatTime(device.revoked_at)}</span>
+          <span className="text-red-300">{t("撤销于 {value}", { value: formatTime(device.revoked_at) })}</span>
         ) : agent ? (
           <>
             {lastSeenText}
             {agent.app_version && <span>· v{agent.app_version.replace(/^v/i, "")}</span>}
             <span className={agent.terminal_enabled ? "" : "text-amber-300"}>
-              {t("· 远程终端")}{agent.terminal_enabled ? t("已开启") : t("已关闭")}
+              {t("· 远程终端{value}", { value: agent.terminal_enabled ? t("已开启") : t("已关闭") })}
             </span>
             {sharedHelper && (
               <span title={t("两个设备连接同一个持久终端组件，会话只列出一份（经代理设备）；各自的设置仍然独立。")}>· {sharedHelper}</span>
             )}
           </>
         ) : (
-          <span>{device.kind === "browser" ? t("浏览器设备") : device.kind === "local-helper" ? t("桌面本机终端") : device.kind} {t("· 创建于")} {formatTime(device.created_at)}</span>
+          <span>{t("{value} · 创建于 {value2}", { value: device.kind === "browser" ? t("浏览器设备") : device.kind === "local-helper" ? t("桌面本机终端") : device.kind, value2: formatTime(device.created_at) })}</span>
         )}
       </div>
 
@@ -362,7 +362,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
           <div>
-            {t("设备")}{lastSeenAt ? t("自 {value} 起未再联系服务器", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务器")}{t("。常见原因：设备关机或断网，或后台服务未运行。")}
+            {t("设备{value}。常见原因：设备关机或断网，或后台服务未运行。", { value: lastSeenAt ? t("自 {value} 起未再联系服务器", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务器") })}
           </div>
           <div className="mt-1 text-neutral-400">
             {t("请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行")} <code className="nx-code font-mono">nexterm-agent install</code>{t("。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。")}
@@ -389,7 +389,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       )}
       {!revoked && serviceError && (
         <div className="mt-1 min-w-0 break-all text-[12px] text-red-300" title={serviceError}>
-          {t("后台服务出错：")}{serviceError}
+          {t("后台服务出错：{serviceError}", { serviceError })}
         </div>
       )}
 
@@ -455,7 +455,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               />
               <span>{agent.desired_autostart ? t("已设置自动启动") : t("未设置自动启动")}</span>
               <span className="nx-hint">
-                {t("· 当前")}{hasServiceReport ? (autostartActual ? t("已生效") : t("未生效")) : t("未上报")}
+                {t("· 当前{value}", { value: hasServiceReport ? (autostartActual ? t("已生效") : t("未生效")) : t("未上报") })}
               </span>
             </label>
             {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：设置已保存，设备上线后生效")}</div>}
@@ -816,7 +816,7 @@ export function DevicesView() {
 
   const jumpToBaseUrls = () => {
     document.getElementById("fleet-base-urls")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    document.querySelector<HTMLInputElement>(t("input[aria-label=\"新接入地址\"]"))?.focus({ preventScroll: true });
+    document.querySelector<HTMLInputElement>(`input[aria-label="${CSS.escape(t("新接入地址"))}"]`)?.focus({ preventScroll: true });
   };
 
   const manualRows = (code: string) => ({
@@ -865,7 +865,7 @@ export function DevicesView() {
         <span className="nx-hint">
           {error && devices === null ? t("未能加载设备列表") : devices === null ? t("正在加载…") : t("共 {length} 台", { length: devices.length })}
         </span>
-        {error && devices !== null && <span className="nx-hint text-red-300">{t("未能刷新设备列表：")}{error}</span>}
+        {error && devices !== null && <span className="nx-hint text-red-300">{t("未能刷新设备列表：{error}", { error })}</span>}
         <div className="nx-spacer" />
         <button
           ref={enrollButtonRef}
@@ -910,11 +910,11 @@ export function DevicesView() {
             />
             {(deviceQuery.trim() !== "" || deviceFilter !== "all") && (
               <span className="nx-hint text-[11px]">
-                {t("显示")} {visibleDevices?.length ?? 0} / {devices.length} {t("台")}
+                {t("显示 {value} / {length} 台", { value: visibleDevices?.length ?? 0, length: devices.length })}
               </span>
             )}
             {deviceFilter !== "revoked" && hiddenRevokedCount > 0 && (
-              <span className="nx-hint text-[11px]">{t("已隐藏")} {hiddenRevokedCount} {t("台已撤销接入的设备（选择「已撤销接入」过滤项可查看）")}</span>
+              <span className="nx-hint text-[11px]">{t("已隐藏 {hiddenRevokedCount} 台已撤销接入的设备（选择「已撤销接入」过滤项可查看）", { hiddenRevokedCount })}</span>
             )}
           </div>
         )}
@@ -946,7 +946,7 @@ export function DevicesView() {
         {error && devices === null && (
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">{t("未能加载设备列表：")}{error}</span>
+            <span className="min-w-0 flex-1 break-words">{t("未能加载设备列表：{error}", { error })}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={load} disabled={loading}>
               <IconRefresh size={12} />
               {t("重试")}

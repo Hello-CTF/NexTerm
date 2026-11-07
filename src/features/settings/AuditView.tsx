@@ -230,7 +230,7 @@ export function AuditView() {
               : t("已加载 {length} 条", { length: entries.length })}
         </span>
         {error && entries.length > 0 && (
-          <span className="nx-hint text-red-300">{t("刷新失败：")}{error}</span>
+          <span className="nx-hint text-red-300">{t("刷新失败：{error}", { error })}</span>
         )}
         <div className="nx-spacer" />
         {devices !== null && devices.length > 0 && (
@@ -293,7 +293,7 @@ export function AuditView() {
           {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">{t("正在加载…")}</li>}
           {entries.length === 0 && !loading && error && (
             <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
-              <span className="min-w-0 break-words text-red-300">{t("未能加载审计记录：")}{error}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载审计记录：{error}", { error })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(source, deviceId)} disabled={loading}>
                 <IconRefresh size={12} />
                 {t("重试")}
@@ -358,7 +358,7 @@ export function AuditView() {
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={6} className="nx-table-empty">
-                  <span className="text-red-300">{t("未能加载审计记录：")}{error}</span>
+                  <span className="text-red-300">{t("未能加载审计记录：{error}", { error })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void loadFirstPage(source, deviceId)}
@@ -389,7 +389,7 @@ export function AuditView() {
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：")}{moreError}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：{moreError}", { moreError })}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}

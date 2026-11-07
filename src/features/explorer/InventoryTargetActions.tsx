@@ -462,7 +462,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           )}
           {result && (
             <div role="status" className="text-[11px] text-neutral-300">
-              <div>{t("退出码")} {result.exitCode}</div>
+              <div>{t("退出码 {exitCode}", { exitCode: result.exitCode })}</div>
               <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{result.output}</pre>
             </div>
           )}
@@ -472,7 +472,7 @@ export function InventoryTargetActions({ kind, target, ownerKey, sessions = [], 
           {failure && (
             <div role="alert" className="text-[11px] text-red-300">
               <div>{failure.message}</div>
-              {failure.exitCode !== undefined && <div>{t("退出码")} {failure.exitCode}</div>}
+              {failure.exitCode !== undefined && <div>{t("退出码 {exitCode}", { exitCode: failure.exitCode })}</div>}
               {failure.output !== undefined && (
                 <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all text-[11px]">{failure.output}</pre>
               )}

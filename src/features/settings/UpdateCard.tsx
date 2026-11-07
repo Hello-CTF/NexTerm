@@ -92,10 +92,7 @@ export function UpdateCard() {
       </div>
 
       <p className="nx-hint mb-3">
-        {t("当前版本")} {status?.currentVersion ? `v${status.currentVersion}` : "…"}
-        {verdict === "uptodate" ? t(" · 已是最新版本") : ""}
-      
-        {" · "}
+        {t("当前版本 {value}{value2}{value3}", { value: status?.currentVersion ? `v${status.currentVersion}` : "…", value2: verdict === "uptodate" ? t(" · 已是最新版本") : "", value3: " · " })}
         <a href="/THIRD_PARTY_NOTICES.txt" target="_blank" rel="noreferrer" className="underline">{t("第三方许可")}</a>
       </p>
 
@@ -129,16 +126,14 @@ export function UpdateCard() {
             </p>
           )}
           {update.channelError && (
-            <p className="mt-1 text-[12px] text-red-300">{t("更新通道保存失败：")}{update.channelError}</p>
+            <p className="mt-1 text-[12px] text-red-300">{t("更新通道保存失败：{channelError}", { channelError: update.channelError })}</p>
           )}
         </div>
       )}
 
       {verdict === "available" && status && (
         <p className="mb-2 text-[12.5px] text-neutral-200">
-          {t("发现新版本 v")}{status.version}
-          {status.assetSize > 0 ? t(" · 安装包 {value}", { value: formatBytes(status.assetSize) }) : ""}
-          {status.prerelease ? t(" · RC 候选版本") : ""}
+          {t("发现新版本 v{version}{value}{value2}", { version: status.version, value: status.assetSize > 0 ? t(" · 安装包 {value}", { value: formatBytes(status.assetSize) }) : "", value2: status.prerelease ? t(" · RC 候选版本") : "" })}
         </p>
       )}
       {verdict === "external" && (
@@ -150,7 +145,7 @@ export function UpdateCard() {
       {verdict === "check-failed" && (
         <div className="nx-alert nx-alert-danger mb-2 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("未能检查更新：")}{failReason}{t("。请检查网络后选择「立即检查」。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能检查更新：{failReason}。请检查网络后选择「立即检查」。", { failReason })}</span>
         </div>
       )}
 
@@ -192,7 +187,7 @@ export function UpdateCard() {
       {install.error && (
         <div className="nx-alert nx-alert-danger mt-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("安装失败：")}{install.error}{t("。可选择「重试」，仍失败，请前往 Releases 页面手动下载。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("安装失败：{error}。可选择「重试」，仍失败，请前往 Releases 页面手动下载。", { error: install.error })}</span>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -207,8 +202,8 @@ export function UpdateCard() {
         <div className="nx-alert nx-alert-success mt-3 flex items-start gap-2">
           <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
           <span className="min-w-0 flex-1">
-            {t("已安装 v")}{installedVersion}{t("，重启应用后生效。")}
-            {restartError && <span className="mt-0.5 block text-red-300">{t("重启失败：")}{restartError}{t("。请手动退出并重新打开应用。")}</span>}
+            {t("已安装 v{installedVersion}，重启应用后生效。", { installedVersion })}
+            {restartError && <span className="mt-0.5 block text-red-300">{t("重启失败：{restartError}。请手动退出并重新打开应用。", { restartError })}</span>}
           </span>
           {DESKTOP && (
             <button

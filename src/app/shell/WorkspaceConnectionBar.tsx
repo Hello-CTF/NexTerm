@@ -83,7 +83,7 @@ export function WorkspaceConnectionBar({
         className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--nx-border)] bg-[color-mix(in_srgb,var(--nx-bg-raised)_55%,var(--nx-bg-pane))] py-1 pr-1 pl-2.5 text-xs text-[var(--nx-fg)] pointer-coarse:py-1.5"
       >
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
-        <span className="min-w-[min(12rem,70%)] flex-1 break-words">{lost.length} {t("个终端连接丢失，主机上的进程可能仍在运行")}</span>
+        <span className="min-w-[min(12rem,70%)] flex-1 break-words">{t("{length} 个终端连接丢失，主机上的进程可能仍在运行", { length: lost.length })}</span>
         <button
           type="button"
           className="nx-btn nx-btn-primary nx-btn-sm shrink-0 pointer-coarse:min-h-11 pointer-coarse:px-4"
@@ -142,7 +142,7 @@ export function WorkspaceConnectionBar({
           t("连接不稳定")
         ) : (
           <>
-            {t("与")} {ws.title} {t("的连接已断开")}
+            {t("与 {title} 的连接已断开", { title: ws.title })}
             {reason ? (
               <details className="text-[var(--nx-fg-tertiary)]">
                 <summary className="cursor-pointer">{t("查看详情")}</summary>

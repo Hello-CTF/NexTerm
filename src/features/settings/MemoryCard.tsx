@@ -267,7 +267,7 @@ export function MemoryCard() {
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconBot size={15} className="text-purple-300" />
         <span className="nx-card-title">{tr("AI 长期记忆")}</span>
-        {topics && <span className="nx-badge">{entryCount} {tr("条")}</span>}
+        {topics && <span className="nx-badge">{tr("{entryCount} 条", { entryCount })}</span>}
         <div className="nx-spacer" />
         <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />

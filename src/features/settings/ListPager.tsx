@@ -19,7 +19,7 @@ export function ListPager({ currentPage, pageCount, setPage }: { currentPage: nu
   return (
     <div className="mt-1 flex items-center gap-2 px-2.5 py-1 text-[11px] text-neutral-500">
       <span>
-        {t("第")} {currentPage + 1} / {pageCount} {t("页")}
+        {t("第 {value} / {pageCount} 页", { value: currentPage + 1, pageCount })}
       </span>
       <div className="nx-spacer" />
       <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>

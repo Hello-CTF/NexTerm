@@ -154,7 +154,7 @@ export function SavedTargetSets({
 
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-1.5 text-[11px] text-neutral-500">{t("保存的目标集（已选")} {selectedIds.length}）</legend>
+      <legend className="mb-1.5 text-[11px] text-neutral-500">{t("保存的目标集（已选 {length}）", { length: selectedIds.length })}</legend>
       {error !== null && (
         <div className="mb-2 text-[11px] text-amber-300" role="alert">
           {error}
@@ -218,7 +218,7 @@ export function SavedTargetSets({
                     {set.name}
                   </span>
                   <span className="nx-hint">
-                    {t("在线")} {set.sessionIds.filter((id) => available.has(id)).length}/{set.sessionIds.length}
+                    {t("在线 {length}/{length2}", { length: set.sessionIds.filter((id) => available.has(id)).length, length2: set.sessionIds.length })}
                   </span>
                   <button
                     type="button"

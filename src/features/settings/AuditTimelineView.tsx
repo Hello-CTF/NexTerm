@@ -370,7 +370,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
             {items.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">{t("正在加载…")}</li>}
             {items.length === 0 && !loading && error && (
               <li className="px-3 py-4 text-center text-[12px]">
-                <span className="break-words text-red-300">{t("未能加载时间线：")}{error}</span>
+                <span className="break-words text-red-300">{t("未能加载时间线：{error}", { error })}</span>
                 {retry}
               </li>
             )}
@@ -412,7 +412,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
               ) : items.length === 0 && error ? (
                 <tr>
                   <td colSpan={7} className="nx-table-empty">
-                    <span className="text-red-300">{t("未能加载时间线：")}{error}</span>
+                    <span className="text-red-300">{t("未能加载时间线：{error}", { error })}</span>
                     {retry}
                   </td>
                 </tr>
@@ -428,11 +428,11 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
 
       {items.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-          <span className="nx-hint min-w-0 truncate">{t("已显示")} {items.length} {t("条")}</span>
+          <span className="nx-hint min-w-0 truncate">{t("已显示 {length} 条", { length: items.length })}</span>
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：")}{moreError}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：{moreError}", { moreError })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadMore()} disabled={loadingMore}>
                 {t("重试")}
               </button>
@@ -461,7 +461,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span className="min-w-0 break-words">
-          {t("时间线合并审计、命令和设备上下线记录，")}{scopeText}{t("。命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户。")}
+          {t("时间线合并审计、命令和设备上下线记录，{scopeText}。命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户。", { scopeText })}
         </span>
       </div>
     </div>

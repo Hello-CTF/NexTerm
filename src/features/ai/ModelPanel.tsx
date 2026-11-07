@@ -367,7 +367,7 @@ export function ModelManager({
             {!view ? (
               loadError ? (
                 <div className="px-2 py-3 text-center">
-                  <div className="nx-hint text-red-300">{t("未能读取档案列表：")}{loadError}</div>
+                  <div className="nx-hint text-red-300">{t("未能读取档案列表：{loadError}", { loadError })}</div>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                     onClick={() => void reload()}
@@ -383,7 +383,7 @@ export function ModelManager({
               <>
                 {loadError && (
                   <div className="mb-1 border-b border-neutral-800/60 px-2 pb-2 pt-1 text-center">
-                    <div className="nx-hint text-red-300">{t("未能刷新档案列表：")}{loadError}</div>
+                    <div className="nx-hint text-red-300">{t("未能刷新档案列表：{loadError}", { loadError })}</div>
                     <button
                       className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                       onClick={() => void reload()}
@@ -629,8 +629,7 @@ export function ModelManager({
                         onChange={(e) => patch({ maxTokens: maxTokensFromInput(e.target.value) })}
                       />
                       <div className="nx-hint mt-1 text-[10.5px]">
-                        {t("上限为上下文窗口的一半，且不超过")} {MAX_TOKENS_HARD_LIMIT} tokens。
-                      </div>
+                        {t("上限为上下文窗口的一半，且不超过 {MAX_TOKENS_HARD_LIMIT} tokens。", { MAX_TOKENS_HARD_LIMIT })}</div>
                     </Field>
 
                     <div className="nx-setting-label mt-1 text-neutral-500">{t("网络与容错")}</div>
@@ -761,8 +760,8 @@ export function ModelManager({
             t("连接正常，可以使用")
           ) : (
             <div className="flex flex-col gap-0.5">
-              {!testResult.modelsOk && <span>{t("未能获取模型列表：")}{testResult.modelsError || t("原因未知")}</span>}
-              {!testResult.chatOk && <span>{t("未能发起对话：")}{testResult.chatError || t("原因未知")}{t("。请检查接口地址、密钥和模型名后重试")}</span>}
+              {!testResult.modelsOk && <span>{t("未能获取模型列表：{value}", { value: testResult.modelsError || t("原因未知") })}</span>}
+              {!testResult.chatOk && <span>{t("未能发起对话：{value}。请检查接口地址、密钥和模型名后重试", { value: testResult.chatError || t("原因未知") })}</span>}
             </div>
           )}
         </div>
@@ -865,7 +864,7 @@ function CircuitRuntimeStatus({ profileId, nonce }: { profileId: string; nonce: 
     <div className="mt-0.5 flex items-start gap-1.5">
       <span className="nx-hint flex-1 text-[10.5px]">
         {error ? (
-          <span className="text-red-300">{t("未能读取暂停状态：")}{error}</span>
+          <span className="text-red-300">{t("未能读取暂停状态：{error}", { error })}</span>
         ) : !status ? (
           t("暂停状态加载中…")
         ) : (
@@ -943,7 +942,7 @@ export function UsageSummarySection() {
     <div className="border-t border-neutral-800/60 pt-3">
       <div className="mb-1.5 text-[11px] font-medium text-neutral-300">{t("用量汇总（按场景 / 档案）")}</div>
       {error ? (
-        <div className="nx-hint text-red-300">{t("未能加载用量：")}{error}</div>
+        <div className="nx-hint text-red-300">{t("未能加载用量：{error}", { error })}</div>
       ) : !rows ? (
         <div className="nx-hint text-[11px]">{t("用量加载中…")}</div>
       ) : rows.length === 0 ? (

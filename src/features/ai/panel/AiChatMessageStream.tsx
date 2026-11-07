@@ -59,7 +59,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               <span className="nx-empty-icon">
                 <IconAlert size={19} />
               </span>
-              <div className="text-xs text-red-300">{tr("未能打开此会话：")}{conversationError}{tr("。请检查网络后重试")}</div>
+              <div className="text-xs text-red-300">{tr("未能打开此会话：{conversationError}。请检查网络后重试", { conversationError })}</div>
               <button
                 className="nx-btn nx-btn-outline nx-btn-xs"
                 onClick={() => {
@@ -220,7 +220,7 @@ export function AiChatMessageStream({ ctx }: { ctx: AiChatCtx }) {
               </div>
               {confirmCard.sessionScope && (
                 <div className="mt-1.5 text-[10.5px] leading-relaxed text-neutral-500">
-                  {tr("「本会话允许」后，本次对话内不再询问：")}{confirmCard.sessionScope}
+                  {tr("「本会话允许」后，本次对话内不再询问：{sessionScope}", { sessionScope: confirmCard.sessionScope })}
                 </div>
               )}
             </div>

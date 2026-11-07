@@ -1197,8 +1197,7 @@ export function AssetTree() {
 
       {searchSummary && !listError && (
         <div className="px-2 pb-1 text-[11px] text-neutral-500" role="status">
-          {tr("找到")} {searchSummary.total} {tr("个匹配")}
-          {searchSummary.truncated ? tr("，仅显示前 {returned} 个。请输入更具体的关键字", { returned: searchSummary.returned }) : ""}
+          {tr("找到 {total} 个匹配{value}", { total: searchSummary.total, value: searchSummary.truncated ? tr("，仅显示前 {returned} 个。请输入更具体的关键字", { returned: searchSummary.returned }) : "" })}
         </div>
       )}
 
@@ -1600,7 +1599,7 @@ function AssetRow({
       <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
         <IconXCircle size={12} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate" title={error}>
-          {tr("删除失败：")}{error}
+          {tr("删除失败：{error}", { error })}
         </span>
         <button className="nx-link shrink-0" onClick={onRetry}>
           {tr("重试")}
@@ -1614,7 +1613,7 @@ function AssetRow({
       <div role="alert" className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
         <IconXCircle size={12} className="shrink-0" />
         <span className="min-w-0 flex-1" title={moveError.message}>
-          {tr("未能移动，仍在「")}{moveError.sourceName}{tr("」（目标：「")}{moveError.targetName}{tr("」）。原因：")}{moveError.message}
+          {tr("未能移动，仍在「{sourceName}」（目标：「{targetName}」）。原因：{message}", { sourceName: moveError.sourceName, targetName: moveError.targetName, message: moveError.message })}
         </span>
         <button className="nx-link shrink-0" onClick={onRetryMove}>{tr("重试移动")}</button>
         <button className="nx-link shrink-0" onClick={onCancelMove}>{tr("取消移动")}</button>
@@ -1622,8 +1621,7 @@ function AssetRow({
     )}
     {movingTarget && (
       <div role="status" className="nx-alert nx-alert-info mx-1 mb-1 px-2 py-1.5 text-[11.5px]">
-        {tr("正在移动到「")}{movingTarget}」…
-      </div>
+        {tr("正在移动到「{movingTarget}」…", { movingTarget })}</div>
     )}
     </>
   );
@@ -2882,7 +2880,7 @@ export function AssetEditor({
         >
           {managed && (
             <div className="mb-3 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] text-blue-300" role="note">
-              {tr("由")} {inventorySourceLabel(managed.source)} {tr("同步。名称、分组、地址和认证方式随来源更新，不能在这里修改。")}
+              {tr("由 {value} 同步。名称、分组、地址和认证方式随来源更新，不能在这里修改。", { value: inventorySourceLabel(managed.source) })}
             </div>
           )}
           {kind === "asset" && (
@@ -3411,10 +3409,9 @@ export function AssetEditor({
                       }
                     />
                     <div className="nx-hint mt-1.5">
-                      {tr("↳ 私钥设有口令时填写，连接时自动使用。")}
-                      {keyOrigin === "ref" && !passphrase
+                      {tr("↳ 私钥设有口令时填写，连接时自动使用。{value}", { value: keyOrigin === "ref" && !passphrase
                         ? tr(" 留空时仅引用本地文件，不保存私钥内容。")
-                        : ""}
+                        : "" })}
                     </div>
                   </div>
                 </div>

@@ -154,7 +154,7 @@ function RunHistoryView({ history }: { history: RunbookHistory }) {
     <div className="mt-3 border-t border-neutral-800 pt-3" data-testid="runbook-history">
       <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-neutral-400">
         <span title={t("片段 {runbookId} · 运行 {runId}", { runbookId: history.runbookId, runId: history.runId })}>{t("本次运行")}</span>
-        <span>{t("执行到第")} {history.reachedStep} / {history.stepCount} {t("步")}</span>
+        <span>{t("执行到第 {reachedStep} / {stepCount} 步", { reachedStep: history.reachedStep, stepCount: history.stepCount })}</span>
         <span className={statusClass(history.status)}>{RUN_STATUS_LABELS[history.status] ?? history.status}</span>
       </div>
       {history.batches.map((batch) => (
@@ -515,7 +515,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
               {t("← 命令片段")}
             </button>
           )}
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("在多台主机执行 ·")} {snippet.name}</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("在多台主机执行 · {name}", { name: snippet.name })}</span>
           <span className="nx-hint hidden sm:inline">{t("按顺序在多台主机上执行片段的每一步，默认每一步都先确认")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
@@ -575,7 +575,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="font-medium text-neutral-200">{run.runbookName}</span>
                 <span className={statusClass(run.status)}>{RUN_STATUS_LABELS[run.status] ?? run.status}</span>
-                <span className="nx-hint">{t("第")} {run.currentStep} / {run.stepCount} {t("步 ·")} {run.stopOnFailure ? t("失败即停") : t("失败后继续")}</span>
+                <span className="nx-hint">{t("第 {currentStep} / {stepCount} 步 · {value}", { currentStep: run.currentStep, stepCount: run.stepCount, value: run.stopOnFailure ? t("失败即停") : t("失败后继续") })}</span>
               </div>
               <div className="flex flex-col gap-2">
                 {run.steps.map((step) => (
@@ -608,10 +608,10 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
               )}
               {run.status === "awaiting_confirmation" && (
                 <button type="button" className="nx-btn nx-btn-primary mt-3" disabled={busy || canceling} onClick={confirmStep}>
-                  <IconPlay size={13} />{t("确认并执行第")} {run.currentStep} {t("步")}
+                  <IconPlay size={13} />{t("确认并执行第 {currentStep} 步", { currentStep: run.currentStep })}
                 </button>
               )}
-              {run.status === "running" && <div role="status" className="mt-3 text-[11px] text-blue-300" title={run.activeBatchId ? t("批次 {activeBatchId}", { activeBatchId: run.activeBatchId }) : undefined}>{t("正在执行第")} {run.currentStep} {t("步…")}</div>}
+              {run.status === "running" && <div role="status" className="mt-3 text-[11px] text-blue-300" title={run.activeBatchId ? t("批次 {activeBatchId}", { activeBatchId: run.activeBatchId }) : undefined}>{t("正在执行第 {currentStep} 步…", { currentStep: run.currentStep })}</div>}
               {terminalRun(run.status) && run.steps.some((step) => step.batchIds.length > 0) && (
                 <button type="button" className="nx-btn mt-3" disabled={historyLoading} onClick={() => void loadHistory()}>
                   {historyLoading ? t("正在读取历史…") : t("查看本次运行历史")}

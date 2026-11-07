@@ -147,7 +147,7 @@ export function BroadcastPickerModal(props: {
               {t("清空")}
             </button>
             <div className="nx-spacer" />
-            <span className="text-[11.5px] text-neutral-400">{t("已选")} {chosen.length} {t("个")}</span>
+            <span className="text-[11.5px] text-neutral-400">{t("已选 {length} 个", { length: chosen.length })}</span>
           </div>
           <div className="flex max-h-[320px] flex-col gap-3 overflow-y-auto">
             {groups.map((host) => (
@@ -155,13 +155,13 @@ export function BroadcastPickerModal(props: {
                 <div className="mb-1 flex items-center gap-2 px-1 text-[12px] font-medium text-neutral-200">
                   <span className="truncate">{host.hostName}</span>
                   <span className="text-[11px] font-normal text-neutral-500">
-                    {host.workspaces.reduce((count, workspace) => count + workspace.candidates.length, 0)} {t("个终端")}
+                    {t("{reduce} 个终端", { reduce: host.workspaces.reduce((count, workspace) => count + workspace.candidates.length, 0) })}
                   </span>
                 </div>
                 {host.workspaces.map((workspace) => (
                   <div key={workspace.workspaceId} className="mb-1.5 last:mb-0">
                     <div className="px-1 py-0.5 text-[11px] text-neutral-500">
-                      {t("工作区：")}{workspace.workspaceTitle}
+                      {t("工作区：{workspaceTitle}", { workspaceTitle: workspace.workspaceTitle })}
                     </div>
                     <div className="flex flex-col gap-1">
                       {workspace.candidates.map((candidate) => (
@@ -201,7 +201,7 @@ export function BroadcastPickerModal(props: {
           </div>
           {mix.mixed && (
             <p className="mt-2 text-[11.5px] text-amber-300">
-              {t("选中目标同时包含本地终端（")}{mix.local} {t("个）与远程终端（")}{mix.remote} {t("个）。")}
+              {t("选中目标同时包含本地终端（{local} 个）与远程终端（{remote} 个）。", { local: mix.local, remote: mix.remote })}
             </p>
           )}
         </div>

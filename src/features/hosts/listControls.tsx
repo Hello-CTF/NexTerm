@@ -71,7 +71,7 @@ export function Pager({ label, page, pages, onPage }: { label: string; page: num
         {t("上一页")}
       </button>
       <span className="nx-hint" aria-live="polite">
-        {t("第")} {page + 1} / {pages} {t("页")}
+        {t("第 {value} / {pages} 页", { value: page + 1, pages })}
       </span>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>
         {t("下一页")}

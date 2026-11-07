@@ -277,7 +277,7 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
             ) : mountsFailed ? (
               <tr>
                 <td colSpan={3} className="nx-table-empty">
-                  <span className="text-red-300">{tr("未能加载挂载列表：")}{describeError(mounts.error)}</span>
+                  <span className="text-red-300">{tr("未能加载挂载列表：{value}", { value: describeError(mounts.error) })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void mounts.refetch()}
@@ -318,8 +318,8 @@ function MountPanelInner({ sessionId }: { sessionId?: string }) {
       <div className="shrink-0 border-t border-neutral-800/60 bg-neutral-950/40 p-3">
         <div className="mb-2.5 flex flex-wrap items-center gap-2 text-[11px] text-neutral-500">
           <IconArrowLeft size={12} />
-          {tr("新建挂载")}{asset.data?.name ? tr(" · 默认目标为当前资产「{name}」", { name: asset.data.name }) : ""} {tr("· Windows 用")}{' '}
-          <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>{tr("；Linux 用")}{' '}
+          {tr("新建挂载{value} · Windows 用{value2}", { value: asset.data?.name ? tr(" · 默认目标为当前资产「{name}」", { name: asset.data.name }) : "", value2: ' ' })}
+          <span className="nx-code">\\host\share</span> → <span className="nx-code">Z:</span>{tr("；Linux 用{value}", { value: ' ' })}
           <span className="nx-code">user@host:/path</span> →{' '}
           <span className="nx-code">/mnt/point</span>{tr("（需 sshfs）")}
         </div>

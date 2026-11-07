@@ -22,8 +22,8 @@ export function ScriptActivity({ live, answers }: { live: readonly HostLive[]; a
       {live.map((host) => (
         <div key={host.sessionId} className="mb-2 last:mb-0" data-testid={`runbook-script-host-${host.sessionId}`}>
           <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-            <span className="text-neutral-300" title={host.sessionId}>{t("主机")} {host.hostName}</span>
-            {host.subStep && <span className="text-neutral-400">{t("· 脚本步骤：")}{host.subStep}</span>}
+            <span className="text-neutral-300" title={host.sessionId}>{t("主机 {hostName}", { hostName: host.hostName })}</span>
+            {host.subStep && <span className="text-neutral-400">{t("· 脚本步骤：{subStep}", { subStep: host.subStep })}</span>}
           </div>
           {host.progress >= 0 && (
             <div className="mt-1 flex items-center gap-2">
@@ -52,8 +52,7 @@ export function ScriptActivity({ live, answers }: { live: readonly HostLive[]; a
           <div className="mb-1 text-[11px] text-neutral-500">{t("已提供的输入（不含保密输入）")}</div>
           {answers.map((answer, index) => (
             <div key={index} className="whitespace-pre-wrap break-all text-[11px] text-neutral-400">
-              {t("主机")} {answer.hostName} · {answer.variable || (answer.kind === "confirm" ? t("确认") : t("输入"))} = {answer.value}
-              {answer.auto ? t("（沿用应用到全部）") : ""}
+              {t("主机 {hostName} · {value} = {value2}{value3}", { hostName: answer.hostName, value: answer.variable || (answer.kind === "confirm" ? t("确认") : t("输入")), value2: answer.value, value3: answer.auto ? t("（沿用应用到全部）") : "" })}
             </div>
           ))}
         </div>
@@ -124,12 +123,11 @@ function ScriptPromptCard({
       data-testid={`runbook-script-prompt-${prompt.id}`}
     >
       <div className="mb-1 text-[10.5px] text-amber-300">
-        {t("以下内容由主机「")}{prompt.hostName}{t("」上运行的脚本提供，不是 NexTerm 的系统提示")}
-        {secret ? t(" · 保密输入：不会被保存或记录") : ""}
+        {t("以下内容由主机「{hostName}」上运行的脚本提供，不是 NexTerm 的系统提示{value}", { hostName: prompt.hostName, value: secret ? t(" · 保密输入：不会被保存或记录") : "" })}
       </div>
       <div className="whitespace-pre-wrap break-all text-[12px] text-neutral-100" data-testid="runbook-script-prompt-text">{prompt.text}</div>
       <div className="mt-0.5 text-[10.5px] text-neutral-500">
-        {prompt.variable ? t("变量 {variable} · ", { variable: prompt.variable }) : ""}{t("将在")} {new Date(prompt.expiresAt).toLocaleTimeString()} {t("超时并使该主机的执行失败")}
+        {t("{value}将在 {toLocaleTimeString} 超时并使该主机的执行失败", { value: prompt.variable ? t("变量 {variable} · ", { variable: prompt.variable }) : "", toLocaleTimeString: new Date(prompt.expiresAt).toLocaleTimeString() })}
       </div>
       {confirm ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">

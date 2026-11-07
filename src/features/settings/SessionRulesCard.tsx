@@ -126,7 +126,7 @@ function RuleScreenPicker({ onScreen }: { onScreen: (screen: StateRuleScreenDTO 
       </div>
       {error && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          {t("无法读取屏幕：")}{error}
+          {t("无法读取屏幕：{error}", { error })}
         </div>
       )}
     </div>
@@ -317,7 +317,7 @@ export function SessionRulesCard() {
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconFlag size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("状态规则")}</span>
-        {rules && <span className="nx-badge">{rules.length} {t("条")}</span>}
+        {rules && <span className="nx-badge">{t("{length} 条", { length: rules.length })}</span>}
         <div className="nx-spacer" />
         {rules && rules.length > 0 && (
           <input
@@ -471,7 +471,7 @@ export function SessionRulesCard() {
                 </span>
                 {status.skipped && status.skipped.length > 0 && (
                   <span className="text-[var(--nx-fg-warning)]">
-                    {t("跳过无效规则：")}{status.skipped.map((id) => rules?.find((rule) => rule.id === id)?.name ?? id).join("、")}
+                    {t("跳过无效规则：{join}", { join: status.skipped.map((id) => rules?.find((rule) => rule.id === id)?.name ?? id).join("、") })}
                   </span>
                 )}
                 {status.error && status.status !== "applied" && <span className="nx-hint break-all">{status.error}</span>}

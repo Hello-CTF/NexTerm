@@ -287,7 +287,7 @@ export function GrantPanel({ currentAssetId }: { currentAssetId?: string }) {
   if (loadError) {
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-red-400">
-        <span className="min-w-0 flex-1">{tr("未能读取授权：")}{loadError}{tr("。请检查网络后重试")}</span>
+        <span className="min-w-0 flex-1">{tr("未能读取授权：{loadError}。请检查网络后重试", { loadError })}</span>
         <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
           {tr("重试")}
         </button>

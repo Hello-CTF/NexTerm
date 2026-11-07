@@ -198,7 +198,7 @@ function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void 
       onClick={onJump}
     >
       <IconArrowDown size={12} />
-      {tr("回到底部 ·")} {linesBelow} {tr("行")}
+      {tr("回到底部 · {linesBelow} 行", { linesBelow })}
     </button>
   );
 }

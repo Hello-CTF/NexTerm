@@ -124,8 +124,8 @@ export function HostShareTerminalApp({ deviceId, deviceName, ownerUsername, onCl
   return (
     <div className="nx-fullscreen-safe-bottom fixed inset-0 z-50 flex flex-col bg-[#101217] text-neutral-200" role="dialog" aria-modal="true" aria-label={t("共享主机终端")}>
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800 px-3 py-2">
-        <span className="min-w-0 truncate text-sm font-medium text-neutral-100">{t("共享终端 ·")} {deviceName}</span>
-        <span className="nx-hint text-xs">{t("来自")} {ownerUsername}</span>
+        <span className="min-w-0 truncate text-sm font-medium text-neutral-100">{t("共享终端 · {deviceName}", { deviceName })}</span>
+        <span className="nx-hint text-xs">{t("来自 {ownerUsername}", { ownerUsername })}</span>
         {phase.kind === "live" && (
           <span className={`nx-badge shrink-0 ${writable ? "nx-badge-green" : ""}`}>{writable ? t("可读写") : t("只读")}</span>
         )}

@@ -308,7 +308,7 @@ export function SyncBundleCard() {
       {digestError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("未能读取本机资产摘要：")}{digestError}{t("。请重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能读取本机资产摘要：{digestError}。请重试。", { digestError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void refreshDigest()}>
             <IconRefresh size={12} />
             {t("重试")}
@@ -490,8 +490,7 @@ export function SyncBundleCard() {
             <IconCheckCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
               <div>
-                {exportSummary.encrypted ? t("已加密导出") : t("已导出")}{t("（.nxbm 容器）：资产")} {exportSummary.assets} {t("· 分组")}{" "}
-                {exportSummary.groups} {t("· 凭据")} {exportSummary.creds}
+                {t("{value}（.nxbm 容器）：资产 {assets} · 分组{value2}{groups} · 凭据 {creds}", { value: exportSummary.encrypted ? t("已加密导出") : t("已导出"), assets: exportSummary.assets, value2: " ", groups: exportSummary.groups, creds: exportSummary.creds })}
               </div>
               {exportSummary.warnings.length > 0 && (
                 <ul className="mt-1 list-disc pl-4 text-[11.5px]">
@@ -535,7 +534,7 @@ export function SyncBundleCard() {
               <div className="mb-1 font-semibold text-neutral-200">{preview.fileName}</div>
               <BundleProvenance origin={preview.bundle.origin} exportedAt={preview.bundle.exportedAt} />
               <div className="mt-1">
-                {t("资产")} {preview.bundle.assets.length}{t("（其中")} {preview.existingAssetIds.size > 0 ? preview.bundle.assets.filter((a) => preview.existingAssetIds.has(a.id)).length : 0} {t("条本机已存在） · 分组")} {preview.bundle.groups.length} {t("· 凭据")} {preview.bundle.creds.length}
+                {t("资产 {length}（其中 {value} 条本机已存在） · 分组 {length2} · 凭据 {length3}", { length: preview.bundle.assets.length, value: preview.existingAssetIds.size > 0 ? preview.bundle.assets.filter((a) => preview.existingAssetIds.has(a.id)).length : 0, length2: preview.bundle.groups.length, length3: preview.bundle.creds.length })}
               </div>
             </div>
 
@@ -543,9 +542,7 @@ export function SyncBundleCard() {
               <div className="nx-alert nx-alert-danger flex items-start gap-2">
                 <IconLock size={14} className="mt-0.5 shrink-0" />
                 <div>
-                  <b>{t("包含")} {preview.bundle.creds.length} {t("条凭据")}</b>（
-                  {preview.bundle.creds.map((c) => c.name).join("、")}
-                  {t("），导入后将写入本机凭据库，凭据库需处于解锁状态；本机同 ID 的凭据将被覆盖。")}
+                  <b>{t("包含 {length} 条凭据", { length: preview.bundle.creds.length })}</b>{t("（{join}），导入后将写入本机凭据库，凭据库需处于解锁状态；本机同 ID 的凭据将被覆盖。", { join: preview.bundle.creds.map((c) => c.name).join("、") })}
                 </div>
               </div>
             )}
@@ -554,7 +551,7 @@ export function SyncBundleCard() {
               <div className="nx-alert nx-alert-info flex items-start gap-2">
                 <IconInfo size={14} className="mt-0.5 shrink-0" />
                 <div>
-                  {preview.danglingCredAssets} {t("条资产引用的凭据不在包内；若本机也没有同 ID 凭据，导入后引用将被清除，需重新关联凭据。")}
+                  {t("{danglingCredAssets} 条资产引用的凭据不在包内；若本机也没有同 ID 凭据，导入后引用将被清除，需重新关联凭据。", { danglingCredAssets: preview.danglingCredAssets })}
                 </div>
               </div>
             )}
@@ -563,7 +560,7 @@ export function SyncBundleCard() {
               <div className="nx-alert nx-alert-info flex items-start gap-2">
                 <IconInfo size={14} className="mt-0.5 shrink-0" />
                 <div>
-                  {t("包含")} {preview.tombstones} {t("条已删除记录，导入后本机对应资产将一并标记为已删除。")}
+                  {t("包含 {tombstones} 条已删除记录，导入后本机对应资产将一并标记为已删除。", { tombstones: preview.tombstones })}
                 </div>
               </div>
             )}

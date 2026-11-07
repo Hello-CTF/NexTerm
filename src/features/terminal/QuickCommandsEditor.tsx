@@ -202,7 +202,7 @@ export function QuickCommandsEditor() {
           {t("添加快捷命令")}
         </button>
       )}
-      {full && !draft && <p className="nx-hint">{t("最多保存")} {QUICK_COMMAND_LIMITS.count} {t("条快捷命令。")}</p>}
+      {full && !draft && <p className="nx-hint">{t("最多保存 {count} 条快捷命令。", { count: QUICK_COMMAND_LIMITS.count })}</p>}
       {error && (
         <p role="alert" className="text-[12px] text-red-400">
           {error}

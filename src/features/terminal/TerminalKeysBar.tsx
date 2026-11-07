@@ -411,7 +411,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             className="nx-badge nx-badge-red shrink-0"
             title={t("命令广播已开启：这里的按键将同时发送到多个终端")}
           >
-            {t("广播")} {broadcastCount}
+            {t("广播 {broadcastCount}", { broadcastCount })}
           </span>
         )}
         <button

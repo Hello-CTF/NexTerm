@@ -32,7 +32,7 @@ export function PortDiscoveryBanner({ sessionId }: { sessionId: string }) {
           {t("{port}，转发并打开", { port: l.port })}
         </button>
       ))}
-      {ports.length > shown.length && <span className="nx-hint">{t("另有")} {ports.length - shown.length} {t("个")}</span>}
+      {ports.length > shown.length && <span className="nx-hint">{t("另有 {value} 个", { value: ports.length - shown.length })}</span>}
       <button
         type="button"
         className="nx-icon-btn ml-auto"

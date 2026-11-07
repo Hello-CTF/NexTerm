@@ -109,8 +109,7 @@ export function SessionsSection({ workspace }: { workspace: Workspace | undefine
         <>
           <div className="flex min-w-0 items-baseline gap-1 text-[12px] text-neutral-400">
             <span className="min-w-0 truncate" title={workspace.title}>
-              {t("工作区「")}{workspace.title}」
-            </span>
+              {t("工作区「{title}」", { title: workspace.title })}</span>
             <span className="shrink-0">
               · <span data-testid="host-session-status">{status}</span>
             </span>
@@ -184,7 +183,7 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
       {!connected ? (
         <SectionHint>{t("打开并连接工作区后可查看容器。")}</SectionHint>
       ) : query.isError ? (
-        <p className="m-0 text-[12px] text-red-300">{t("未能读取容器：")}{describeError(query.error)}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("未能读取容器：{value}", { value: describeError(query.error) })}</p>
       ) : query.isPending ? (
         <SectionHint>{t("正在读取容器…")}</SectionHint>
       ) : containers.length === 0 ? (
@@ -209,7 +208,7 @@ export function ContainersSection({ workspace, visible }: { workspace: Workspace
             ))}
           </ul>
           {containers.length > MAX_CONTAINERS && (
-            <SectionHint>{t("另有")} {containers.length - MAX_CONTAINERS} {t("个容器，在容器管理中查看。")}</SectionHint>
+            <SectionHint>{t("另有 {value} 个容器，在容器管理中查看。", { value: containers.length - MAX_CONTAINERS })}</SectionHint>
           )}
         </>
       )}
@@ -226,7 +225,7 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
     retry: false,
     staleTime: 30_000,
   });
-  if (query.isError) return <div className="text-[11.5px] text-red-300">{t("未能读取数据库列表：")}{describeError(query.error)}</div>;
+  if (query.isError) return <div className="text-[11.5px] text-red-300">{t("未能读取数据库列表：{value}", { value: describeError(query.error) })}</div>;
   if (query.isPending) return <div className="nx-hint text-[11.5px]">{t("正在读取数据库列表…")}</div>;
   const schemas = query.data ?? [];
   if (schemas.length === 0) return <div className="nx-hint text-[11.5px]">{t("暂无可见的数据库。")}</div>;
@@ -237,7 +236,7 @@ function SchemaList({ connId, visible }: { connId: string; visible: boolean }) {
           {schema}
         </span>
       ))}
-      {schemas.length > MAX_SCHEMAS && <span className="nx-hint text-[11px]">{t("另有")} {schemas.length - MAX_SCHEMAS} {t("个")}</span>}
+      {schemas.length > MAX_SCHEMAS && <span className="nx-hint text-[11px]">{t("另有 {value} 个", { value: schemas.length - MAX_SCHEMAS })}</span>}
     </div>
   );
 }
@@ -378,7 +377,7 @@ export function SshHealthSection({
       }
     >
       {error ? (
-        <p className="m-0 text-[12px] text-red-300">{t("检查失败：")}{error}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("检查失败：{error}", { error })}</p>
       ) : running && !result ? (
         <SectionHint>{t("正在检查…")}</SectionHint>
       ) : !result ? (
@@ -391,7 +390,7 @@ export function SshHealthSection({
           {viaJump && !sessionId && <SectionHint>{t("该主机经跳板机连接，检查时将登录跳板机。")}</SectionHint>}
         </>
       ) : !result.reachable ? (
-        <p className="m-0 text-[12px] text-red-300">{t("主机不可达")}{result.error ? `：${result.error}` : ""}</p>
+        <p className="m-0 text-[12px] text-red-300">{t("主机不可达{value}", { value: result.error ? `：${result.error}` : "" })}</p>
       ) : result.error ? (
         <div className="flex flex-col gap-1 text-[12px]">
           <span className="text-green-300">{t("可达")}</span>

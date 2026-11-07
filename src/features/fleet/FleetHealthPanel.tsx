@@ -250,21 +250,21 @@ export function FleetHealthPanel({ sessions, visible }: { sessions: SessionInfo[
           />
         </label>
         <span className="nx-hint">{t("仅在本页打开时自动刷新，切换到其他页面后停止")}</span>
-        {lastRefreshed !== null && <span className="nx-hint">{t("上次刷新")} {new Date(lastRefreshed).toLocaleTimeString()}</span>}
+        {lastRefreshed !== null && <span className="nx-hint">{t("上次刷新 {toLocaleTimeString}", { toLocaleTimeString: new Date(lastRefreshed).toLocaleTimeString() })}</span>}
       </div>
 
       <div className="nx-cards-wrap min-h-0 flex-1 overflow-auto p-3">
         {(assetsQuery.isPending || groupsQuery.isPending) && <div className="nx-hint">{t("正在读取项目主机…")}</div>}
         {(assetsQuery.isError || groupsQuery.isError) && (
           <div role="alert" className="mb-2 text-[11px] text-red-300">
-            {t("未能读取项目中的主机：")}{describeError(assetsQuery.error ?? groupsQuery.error)}
+            {t("未能读取项目中的主机：{value}", { value: describeError(assetsQuery.error ?? groupsQuery.error) })}
           </div>
         )}
-        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能刷新：")}{error}</div>}
-        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能读取最近的批量执行记录：")}{historyError}</div>}
+        {error && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能刷新：{error}", { error })}</div>}
+        {historyError && <div role="alert" className="mb-2 text-[11px] text-red-300">{t("未能读取最近的批量执行记录：{historyError}", { historyError })}</div>}
         {overflow.size > 0 && (
           <div role="status" className="mb-2 text-[11px] text-amber-300">
-            {t("单批最多探测")} {MAX_TARGETS} {t("台；超出的")} {overflow.size} {t("台保留在网格中并标记为未探测。")}
+            {t("单批最多探测 {MAX_TARGETS} 台；超出的 {size} 台保留在网格中并标记为未探测。", { MAX_TARGETS, size: overflow.size })}
           </div>
         )}
         {!assetsQuery.isPending && hosts.length === 0 && (

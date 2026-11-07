@@ -41,8 +41,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
                 className="text-neutral-500"
                 title={t("空闲：无终端，30 分钟后断开；后台：仍有后台会话")}
               >
-                {t("（另有")} {otherNotes.join("、")}）
-              </span>
+                {t("（另有 {join}）", { join: otherNotes.join("、") })}</span>
             ) : null}
           </span>
         </span>
@@ -82,7 +81,7 @@ export function StatusBar({ vaultStatus, sync, onOpenVaultProtection, onOpenSync
             title={sync.warnings.join("\n")}
             onClick={onOpenSyncSettings}
           >
-            {t("同步警告")} {sync.warnings.length}
+            {t("同步警告 {length}", { length: sync.warnings.length })}
           </button>
         )}
       </div>

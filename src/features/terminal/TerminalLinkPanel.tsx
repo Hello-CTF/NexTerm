@@ -103,7 +103,7 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
         )}
       </div>
       <div className="nx-term-link-footer">
-        {t("↑↓ 选择 · Enter 打开 · C 复制")}{openInApp ? t(" · Shift+Enter 在 NexTerm 中打开") : ""} {t("· Esc 关闭")}
+        {t("↑↓ 选择 · Enter 打开 · C 复制{value} · Esc 关闭", { value: openInApp ? t(" · Shift+Enter 在 NexTerm 中打开") : "" })}
       </div>
     </div>
   );

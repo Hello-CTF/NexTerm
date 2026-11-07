@@ -141,7 +141,9 @@ export function omitWorkspaceRuntime(
   return next;
 }
 
-const PLACEHOLDER_WS_TITLES = new Set([tr("工作区"), tr("会话"), tr("标签")]);
+// Stored layouts keep the placeholder titles of the language they were saved in: the source text and the current
+// language's both count.
+const PLACEHOLDER_WS_TITLES = new Set(["工作区", "会话", "标签", tr("工作区"), tr("会话"), tr("标签页")]);
 
 export function workspaceFieldPatch(
   w: Workspace,

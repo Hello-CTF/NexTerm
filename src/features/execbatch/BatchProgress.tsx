@@ -348,8 +348,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-400">
             <span>
-              {t("成功")} {snapshot.batch.succeeded} {t("· 失败")} {snapshot.batch.failed} {t("· 取消")} {snapshot.batch.canceled} {t("/ 共")}{" "}
-              {snapshot.batch.total}
+              {t("成功 {succeeded} · 失败 {failed} · 取消 {canceled} / 共{value}{total}", { succeeded: snapshot.batch.succeeded, failed: snapshot.batch.failed, canceled: snapshot.batch.canceled, value: " ", total: snapshot.batch.total })}
             </span>
             {snapshot.batch.phase === "running" && (
               <button type="button" className="nx-link" disabled={busy} onClick={cancel}>
@@ -361,7 +360,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
                 <button type="button" className="nx-link" disabled={busy} onClick={rerun}>
                   {t("重新执行失败目标")}
                 </button>
-                <span className="nx-hint">{snapshot.batch.failed} {t("个失败目标将按原顺序重新执行，生产目标需要重新确认")}</span>
+                <span className="nx-hint">{t("{failed} 个失败目标将按原顺序重新执行，生产目标需要重新确认", { failed: snapshot.batch.failed })}</span>
               </>
             )}
           </div>
@@ -391,7 +390,7 @@ export const BatchProgressPanel = forwardRef<BatchProgressHandle, {
       )}
       {visibleFinalBatch !== null && (
         <div className="flex flex-col gap-2">
-          <div className="text-[11px] text-neutral-400">{t("批次")} {visibleFinalBatch.batchId} {t("已结束")}</div>
+          <div className="text-[11px] text-neutral-400">{t("批次 {batchId} 已结束", { batchId: visibleFinalBatch.batchId })}</div>
           <ul className="grid max-h-64 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2">
             {visibleFinalBatch.results.map((result) => (
               <li key={result.sessionId} className="min-w-0 px-1.5 py-1 text-[11px]">
@@ -439,7 +438,7 @@ function OutputLine({ label, output }: { label: string; output: BatchOutputSnaps
     <div className="min-w-0 font-mono text-[10px] text-neutral-400">
       <span className="text-neutral-500">{label}:</span>{" "}
       <span className="whitespace-pre-wrap break-all">{output.head}</span>
-      {output.truncated && <span className="text-neutral-500">{t("… 中间省略")} {output.droppedBytes} {t("字节 …")}</span>}
+      {output.truncated && <span className="text-neutral-500">{t("… 中间省略 {droppedBytes} 字节 …", { droppedBytes: output.droppedBytes })}</span>}
       <span className="whitespace-pre-wrap break-all">{output.tail}</span>
     </div>
   );

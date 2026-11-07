@@ -481,7 +481,7 @@ export function PaneGroup({
               <IconChevronLeft size={13} />
             </button>
             <span className="px-0.5 text-[11px] tabular-nums text-neutral-400" aria-live="polite">
-              {tr("窗格")} {paneNumber}/{paneCount}
+              {tr("窗格 {paneNumber}/{paneCount}", { paneNumber, paneCount })}
             </span>
             <button
               type="button"

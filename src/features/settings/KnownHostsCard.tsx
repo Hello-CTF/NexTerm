@@ -95,7 +95,7 @@ export function KnownHostsCard() {
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("已知主机")}</span>
-        {hosts && <span className="nx-badge">{filtered.length} {t("台")}</span>}
+        {hosts && <span className="nx-badge">{t("{length} 台", { length: filtered.length })}</span>}
         <div className="nx-spacer" />
         {hosts && hosts.length > 0 && (
           <input
@@ -123,7 +123,7 @@ export function KnownHostsCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">{t("未能读取：")}{error}</div>
+              <div className="break-words">{t("未能读取：{error}", { error })}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
                 {t("重试")}
@@ -140,7 +140,7 @@ export function KnownHostsCard() {
           {error && (
             <div className="nx-alert nx-alert-danger mb-1 flex items-center gap-2 text-[12px]">
               <IconXCircle size={13} className="shrink-0" />
-              <span className="min-w-0 break-words">{t("未能读取：")}{error}{t("。请选择「刷新」重试。")}</span>
+              <span className="min-w-0 break-words">{t("未能读取：{error}。请选择「刷新」重试。", { error })}</span>
             </div>
           )}
           {pageHosts.map((h) => (
@@ -175,7 +175,7 @@ export function KnownHostsCard() {
           {filtered.length > pageSize && (
             <div className="mt-1 flex items-center gap-2 text-[11px] text-neutral-500">
               <span>
-                {t("第")} {currentPage + 1} / {pageCount} {t("页")}
+                {t("第 {value} / {pageCount} 页", { value: currentPage + 1, pageCount })}
               </span>
               <div className="nx-spacer" />
               <button

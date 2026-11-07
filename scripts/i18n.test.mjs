@@ -65,6 +65,8 @@ test("joins JSX text and string values into one t() call, and stops at elements 
       "  return (",
       "    <div>",
       '      <p>{t("共")} {n} {t("台主机")}</p>',
+      '      <p>{t("输出")} {n} tokens',
+      "      </p>",
       '      <p>{t("主机")}{name}<b>{n}</b>{t("在线")}</p>',
       '      <p>{t("图标")}{icon as never}{t("结束")}</p>',
       '      <p>{t("可能")}{maybe}{t("为空")}</p>',
@@ -77,6 +79,7 @@ test("joins JSX text and string values into one t() call, and stops at elements 
   joinJsxFiles([file], path.join(dir, "tsconfig.json"), false);
   const text = fs.readFileSync(file, "utf8");
   assert.match(text, /<p>\{t\("共 \{n\} 台主机", \{ n \}\)\}<\/p>/);
+  assert.match(text, /\{t\("输出 \{n\} tokens", \{ n \}\)\}/);
   assert.match(text, /<p>\{t\("主机\{name\}", \{ name \}\)\}<b>/);
   assert.match(text, /\{t\("图标"\)\}\{icon as never\}\{t\("结束"\)\}/);
   assert.match(text, /\{t\("可能"\)\}\{maybe\}\{t\("为空"\)\}/);

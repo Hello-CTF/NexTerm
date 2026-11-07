@@ -83,12 +83,12 @@ export function InheritanceHint({ view, field, empty }: { view: InheritanceView;
     <>
       {applied && (
         <div className="nx-hint mt-1.5" data-testid={`inherit-${field}`}>
-          {t("↳ 留空则继承自")} {applied.groupName}{applied.value ? `：${applied.value}` : ""}
+          {t("↳ 留空则继承自 {groupName}{value}", { groupName: applied.groupName, value: applied.value ? `：${applied.value}` : "" })}
         </div>
       )}
       {!applied && skipped && (
         <div className="nx-hint mt-1.5 text-amber-300" data-testid={`inherit-skipped-${field}`}>
-          {t("↳ 已跳过")} {skipped.groupName} {t("的默认值：")}{skipped.reason}
+          {t("↳ 已跳过 {groupName} 的默认值：{reason}", { groupName: skipped.groupName, reason: skipped.reason })}
         </div>
       )}
       {!applied && !skipped && view.error && (

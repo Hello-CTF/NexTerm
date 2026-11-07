@@ -151,8 +151,7 @@ export function DeviceAlertInbox() {
             aria-expanded={mutedOpen}
             onClick={() => setMutedOpen((v) => !v)}
           >
-            {t("静音期间的离线记录（")}{muted.length}）
-          </button>
+            {t("静音期间的离线记录（{length}）", { length: muted.length })}</button>
           {mutedOpen && (
             <ul className="flex flex-col" data-testid="device-alert-muted-list">
               {muted.map((event) => (

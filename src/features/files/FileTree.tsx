@@ -1728,7 +1728,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           role="toolbar"
           aria-label={t("多选操作")}
         >
-          <span className="shrink-0 whitespace-nowrap">{t("已选")} {pickedEntries.length} {t("项")}</span>
+          <span className="shrink-0 whitespace-nowrap">{t("已选 {length} 项", { length: pickedEntries.length })}</span>
           <span className="flex-1" />
           <button className="nx-btn nx-btn-sm" onClick={() => multi.selectAll(orderedPaths)}>
             {t("全选")}
@@ -1845,11 +1845,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       </div>
 
       <div className="flex h-[24px] shrink-0 items-center gap-2 border-t border-neutral-800/60 px-2.5 text-[10.5px] text-neutral-500">
-        <span>{entryCount} {t("项")}</span>
+        <span>{t("{entryCount} 项", { entryCount })}</span>
         {pickedEntries.length > 1 && (
           <>
             <span className="text-neutral-700">|</span>
-            <span className="shrink-0 whitespace-nowrap">{t("已选")} {pickedEntries.length} {t("项")}</span>
+            <span className="shrink-0 whitespace-nowrap">{t("已选 {length} 项", { length: pickedEntries.length })}</span>
           </>
         )}
         {pickedEntries.length <= 1 && selectedEntry && (

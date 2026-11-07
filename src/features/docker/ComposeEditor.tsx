@@ -170,7 +170,7 @@ export function ComposeEditor({
           }}
         >
           <div className="nx-modal-header">
-            <span className="min-w-0 truncate" title={stack.project}>{t("编辑并重新部署 ·")} {stack.project}</span>
+            <span className="min-w-0 truncate" title={stack.project}>{t("编辑并重新部署 · {project}", { project: stack.project })}</span>
             <span className="nx-badge shrink-0 max-[560px]:hidden">{t("保存前先查看差异")}</span>
             <div className="nx-spacer" />
             <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label={t("关闭 Compose 编辑器")} onClick={onClose}>

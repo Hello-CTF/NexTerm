@@ -556,7 +556,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         )}
         {running && (
           <div className="text-[11px] text-blue-300" role="status">
-            {t("正在执行批次")} {runningId}{t("；取消请求与执行请求可并行，等待各目标返回。")}
+            {t("正在执行批次 {runningId}；取消请求与执行请求可并行，等待各目标返回。", { runningId })}
           </div>
         )}
       </form>
@@ -611,7 +611,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
             <span className="nx-hint">{resultSummary(batch.results)}</span>
             <span className="nx-spacer" />
             <span className="nx-hint" title={batch.batchId}>
-              {t("批次")} {batch.batchId.slice(0, 8)}
+              {t("批次 {slice}", { slice: batch.batchId.slice(0, 8) })}
             </span>
           </div>
           <div className="overflow-x-auto px-3 pb-3">

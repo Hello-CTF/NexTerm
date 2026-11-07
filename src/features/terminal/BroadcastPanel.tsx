@@ -38,10 +38,9 @@ export function BroadcastStrip(props: {
       <div className="flex flex-wrap items-center gap-2">
         <IconZap size={13} className="shrink-0" />
         <span>
-          {t("广播已开启：此来源终端的输入将发送到")} {broadcast.targetIds.length} {t("个目标")}
-          {writable < broadcast.targetIds.length
+          {t("广播已开启：此来源终端的输入将发送到 {length} 个目标{value}", { length: broadcast.targetIds.length, value: writable < broadcast.targetIds.length
             ? t("（{value} 个当前不可写）", { value: broadcast.targetIds.length - writable })
-            : ""}
+            : "" })}
         </span>
         <div className="nx-spacer" />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={props.onManage}>

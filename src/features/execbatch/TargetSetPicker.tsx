@@ -67,7 +67,7 @@ export function TargetSetPicker({
 
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-1.5 text-[11px] text-neutral-500">{legend}{t("（已选")} {selectedIds.length}）</legend>
+      <legend className="mb-1.5 text-[11px] text-neutral-500">{t("{legend}（已选 {length}）", { legend, length: selectedIds.length })}</legend>
       {targets.length === 0 ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500">
           {emptyMessage}
@@ -99,7 +99,7 @@ export function TargetSetPicker({
               {t("清空")}
             </button>
             <span className="nx-hint">
-              {t("显示")} {filtered.length} / {targets.length} {t("· 每批最多")} {maxTargets} {t("个")}
+              {t("显示 {length} / {length2} · 每批最多 {maxTargets} 个", { length: filtered.length, length2: targets.length, maxTargets })}
             </span>
           </div>
           <div className="grid max-h-56 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2 xl:grid-cols-2">
@@ -131,7 +131,7 @@ export function TargetSetPicker({
                   </span>
                   {target.sessionName !== target.label && (
                     <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                      {t("会话：")}{target.sessionName}
+                      {t("会话：{sessionName}", { sessionName: target.sessionName })}
                     </span>
                   )}
                   {target.endpoint && (
@@ -140,11 +140,11 @@ export function TargetSetPicker({
                     </span>
                   )}
                   <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                    {t("工作区：")}{target.workspaceNames.length > 0 ? target.workspaceNames.join("、") : t("未关联")}
+                    {t("工作区：{value}", { value: target.workspaceNames.length > 0 ? target.workspaceNames.join("、") : t("未关联") })}
                   </span>
                   {target.tags.length > 0 && (
                     <span className="mt-0.5 block truncate text-[10px] text-neutral-500">
-                      {t("标签：")}{target.tags.join("、")}
+                      {t("标签：{join}", { join: target.tags.join("、") })}
                     </span>
                   )}
                 </span>

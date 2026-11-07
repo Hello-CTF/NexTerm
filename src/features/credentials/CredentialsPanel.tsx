@@ -123,7 +123,7 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             <IconXCircle size={18} />
           </div>
           <div className="text-[12.5px] text-red-300">
-            {t("未能加载凭据列表：")}{describeError(credentials.error)}
+            {t("未能加载凭据列表：{value}", { value: describeError(credentials.error) })}
           </div>
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
@@ -392,7 +392,7 @@ function CredentialDetail({
               {revealed !== null && !isRef && (
                 <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[var(--nx-fg-warning)]">
                   <IconEye size={11} />
-                  {left} {t("秒后自动隐藏")}
+                  {t("{left} 秒后自动隐藏", { left })}
                 </div>
               )}
 
@@ -422,7 +422,7 @@ function CredentialDetail({
                 )}
                 {newSecret.length > 0 && cred.usedBy.length > 0 && (
                   <div className="nx-hint mt-1.5">
-                    {t("保存后，使用它的")} {cred.usedBy.length} {t("个资产下次连接时生效，无需逐个修改。")}
+                    {t("保存后，使用它的 {length} 个资产下次连接时生效，无需逐个修改。", { length: cred.usedBy.length })}
                   </div>
                 )}
               </div>
@@ -512,8 +512,8 @@ function CredentialDetail({
         </Section>
 
         <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-500">
-          <span>{t("创建于")} {formatTime(cred.createdAt)}</span>
-          <span>{t("最后修改")} {formatTime(cred.updatedAt)}</span>
+          <span>{t("创建于 {value}", { value: formatTime(cred.createdAt) })}</span>
+          <span>{t("最后修改 {value}", { value: formatTime(cred.updatedAt) })}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-4">

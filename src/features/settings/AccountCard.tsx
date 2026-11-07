@@ -277,7 +277,7 @@ export function AccountCard() {
       {listError && (
         <div className="nx-alert nx-alert-danger flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("未能读取用户列表：")}{listError}{t("。请重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能读取用户列表：{listError}。请重试。", { listError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()}>
             <IconRefresh size={12} />
             {t("重试")}
@@ -304,7 +304,7 @@ export function AccountCard() {
                 <span className={`nx-badge shrink-0 ${u.mfa_enabled ? "nx-badge-green" : "nx-badge-amber"}`}>
                   {u.mfa_enabled ? t("两步验证已开启") : t("两步验证未绑定")}
                 </span>
-                <span className="nx-hint shrink-0 text-[11px]">{t("最近登录")} {formatTime(u.last_login_at)}</span>
+                <span className="nx-hint shrink-0 text-[11px]">{t("最近登录 {value}", { value: formatTime(u.last_login_at) })}</span>
                 {!isSelf && u.state === "active" && (
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"

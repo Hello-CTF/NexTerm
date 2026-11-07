@@ -88,7 +88,7 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
         </div>
         <div className="nx-modal-body flex flex-col gap-3">
           <p id={descriptionId} className="text-[12.5px] leading-relaxed text-neutral-200">
-            {t("即将向终端粘贴")} {prompt.lineCount} {t("行文本。")}{MULTILINE_PASTE_WARNING}
+            {t("即将向终端粘贴 {lineCount} 行文本。{MULTILINE_PASTE_WARNING}", { lineCount: prompt.lineCount, MULTILINE_PASTE_WARNING })}
           </p>
           <pre
             aria-label={t("粘贴内容预览")}
@@ -118,7 +118,7 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
               />
               <span>
                 {t("以后都不再提示")}
-                <span className="nx-hint block">{t("可在 设置 &gt; 终端 &gt; 多行粘贴确认 中重新开启")}</span>
+                <span className="nx-hint block">{t("可在 设置 > 终端 > 多行粘贴确认 中重新开启")}</span>
               </span>
             </label>
           </div>

@@ -323,7 +323,7 @@ function LegacySection({
     <section aria-label={t("旧版组件")} className="flex flex-col gap-2 rounded border border-[var(--nx-fg-warning)]/40 p-2">
       <h3 className="font-medium text-neutral-200">{t("旧版组件")}</h3>
       <p>
-        {t("主机上仍在运行旧版持久终端组件（")}{identity}{t("），当前版本无法接入其中的终端；不升级时它们继续在旧版组件中运行。")}
+        {t("主机上仍在运行旧版持久终端组件（{identity}），当前版本无法接入其中的终端；不升级时它们继续在旧版组件中运行。", { identity })}
       </p>
       <p>{legacySessionText(legacy)}</p>
       {legacy.stale && <p role="alert" className="text-[var(--nx-fg-warning)]">{t("旧版组件的状态已变化，请核对上面最新的会话数后重新确认。")}</p>}
@@ -432,7 +432,7 @@ function IdenticalVersion({ version }: { version: HelperVersionPresentation }) {
   const sha256 = versionValue(version, "sha256");
   return (
     <section aria-label={t("组件版本")} className="flex flex-col gap-1">
-      <p className="text-neutral-300">{versionSummary(version)}{t("（本地与主机一致）")}</p>
+      <p className="text-neutral-300">{t("{value}（本地与主机一致）", { value: versionSummary(version) })}</p>
       {(commit || sha256) && (
         <details>
           <summary tabIndex={0} className="cursor-pointer text-[11px] text-neutral-500">{t("完整提交与 SHA-256")}</summary>

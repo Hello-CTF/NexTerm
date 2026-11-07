@@ -50,7 +50,7 @@ export function UpdateBanner({ onOpenSettings }: { onOpenSettings: () => void })
         <span className="min-w-0 truncate">
           {t("已安装")} <span className="font-medium text-neutral-100">v{installedVersion}</span>{t("，重启应用后生效")}
         </span>
-        {restartError && <span className="shrink-0 text-red-300">{t("重启失败：")}{restartError}</span>}
+        {restartError && <span className="shrink-0 text-red-300">{t("重启失败：{restartError}", { restartError })}</span>}
         <div className="nx-spacer" />
         <button
           type="button"

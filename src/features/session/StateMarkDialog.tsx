@@ -170,12 +170,12 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
           {screenState.status === "loading" && <div className="nx-hint">{t("读取屏幕…")}</div>}
           {screenState.status === "error" && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-              {t("无法读取屏幕：")}{screenState.message}{t("。仍可手动填写规则。")}
+              {t("无法读取屏幕：{message}。仍可手动填写规则。", { message: screenState.message })}
             </div>
           )}
           {screen && (
             <details>
-              <summary className="cursor-pointer text-[12px] text-neutral-300">{t("AI 起草会发送的内容（屏幕末尾")} {STATE_RULE_DRAFT_ROWS} {t("行和标题）")}</summary>
+              <summary className="cursor-pointer text-[12px] text-neutral-300">{t("AI 起草会发送的内容（屏幕末尾 {STATE_RULE_DRAFT_ROWS} 行和标题）", { STATE_RULE_DRAFT_ROWS })}</summary>
               <div className="nx-hint mt-1.5 text-[11.5px]">{t("窗口标题")}</div>
               <pre className="nx-code mt-1 max-h-12 overflow-auto whitespace-pre text-[11px]" data-ai-sent-title>
                 {sent?.title || t("（空）")}
@@ -200,7 +200,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
           </div>
           {aiState.error && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert" data-ai-draft-error>
-              {t("AI 起草失败：")}{aiState.error}
+              {t("AI 起草失败：{error}", { error: aiState.error })}
             </div>
           )}
           {draftNote && <p className="nx-hint text-[11.5px]">{draftNote}</p>}

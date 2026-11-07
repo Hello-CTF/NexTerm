@@ -110,8 +110,7 @@ export function ConnectivityTest({
         <div className="flex flex-col gap-1" data-testid="connectivity-result">
           <div className={`text-[12px] ${result.ok ? "text-green-300" : "text-red-300"}`}>
             {result.ok ? t("成功") : t("失败")}
-            {result.exitCode !== undefined && t("，退出码 {exitCode}", { exitCode: result.exitCode })}{t("，耗时")} {result.durationMs} ms
-          </div>
+            {result.exitCode !== undefined && t("，退出码 {exitCode}", { exitCode: result.exitCode })}{t("，耗时 {durationMs} ms", { durationMs: result.durationMs })}</div>
           {result.output && (
             <pre className="nx-mono m-0 max-h-40 overflow-auto whitespace-pre-wrap break-all text-[11px] text-neutral-300">
               {result.output}

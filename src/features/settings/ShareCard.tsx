@@ -299,7 +299,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("分享")}</span>
-        {shares !== null && <span className="nx-badge">{shares.length} {t("条主机分享")}</span>}
+        {shares !== null && <span className="nx-badge">{t("{length} 条主机分享", { length: shares.length })}</span>}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -374,7 +374,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       {listError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">{t("未能加载分享数据：")}{listError}{t("。请重试。")}</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能加载分享数据：{listError}。请重试。", { listError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()} disabled={loading}>
             <IconRefresh size={12} />
             {t("重试")}
@@ -407,7 +407,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
                 <span className="nx-hint min-w-0 break-words text-[11px]">{direction}</span>
                 <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
                 <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
-                <span className="nx-hint min-w-0 text-[11px]">{t("有效期至")} {formatTime(s.expires_at)}</span>
+                <span className="nx-hint min-w-0 text-[11px]">{t("有效期至 {value}", { value: formatTime(s.expires_at) })}</span>
                 {canOpen && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm shrink-0"

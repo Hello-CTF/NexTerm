@@ -261,7 +261,7 @@ function RuleCheckStatus({
   const result = validation.result;
   return (
     <div className="flex flex-col gap-2" aria-live="polite">
-      {fieldMessage && <span className="sr-only">{t("规则有误：")}{fieldMessage}</span>}
+      {fieldMessage && <span className="sr-only">{t("规则有误：{fieldMessage}", { fieldMessage })}</span>}
       {generalError && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
           {generalError}
@@ -269,12 +269,12 @@ function RuleCheckStatus({
       )}
       {validation.error && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          {t("无法检查规则：")}{validation.error}
+          {t("无法检查规则：{error}", { error: validation.error })}
         </div>
       )}
       {saveError && (
         <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-          {t("保存失败：")}{saveError}
+          {t("保存失败：{saveError}", { saveError })}
         </div>
       )}
       {result?.valid && result.tested && (

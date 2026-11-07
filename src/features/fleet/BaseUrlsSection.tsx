@@ -256,7 +256,7 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
               {saveError && (
                 <div className="nx-alert nx-alert-danger flex items-start gap-2">
                   <IconXCircle size={13} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">{t("未能保存接入地址：")}{saveError}</span>
+                  <span className="min-w-0 flex-1 break-words">{t("未能保存接入地址：{saveError}", { saveError })}</span>
                 </div>
               )}
               <div className="flex items-center gap-2">

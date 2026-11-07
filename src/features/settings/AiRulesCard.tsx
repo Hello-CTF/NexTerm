@@ -139,7 +139,7 @@ export function AiRulesCard() {
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("AI 拦截规则")}</span>
         {aiPerm && (
-          <span className={`nx-badge ${rules.length ? "nx-badge-amber" : ""}`}>{rules.length} {t("条")}</span>
+          <span className={`nx-badge ${rules.length ? "nx-badge-amber" : ""}`}>{t("{length} 条", { length: rules.length })}</span>
         )}
         {saving && (
           <span className="nx-hint" role="status">
@@ -153,7 +153,7 @@ export function AiRulesCard() {
 
       {loadError && (
         <div role="alert" className="nx-alert nx-alert-danger mb-2 flex flex-wrap items-center gap-2">
-          <span className="min-w-0 flex-1 break-words">{t("读取拦截规则失败：")}{loadError}</span>
+          <span className="min-w-0 flex-1 break-words">{t("读取拦截规则失败：{loadError}", { loadError })}</span>
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={load}>
             {t("重试")}
           </button>
@@ -235,7 +235,7 @@ export function AiRulesCard() {
       {filtered.length > RULE_PAGE_SIZE && (
         <div className="mb-1.5 flex items-center gap-2 text-[11px] text-neutral-500">
           <span>
-            {t("第")} {currentPage + 1} / {pageCount} {t("页")}
+            {t("第 {value} / {pageCount} 页", { value: currentPage + 1, pageCount })}
           </span>
           <div className="nx-spacer" />
           <button

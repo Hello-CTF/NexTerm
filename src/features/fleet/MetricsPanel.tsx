@@ -103,7 +103,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
   if (error) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-        <span className="text-red-300">{t("未能加载指标：")}{error}</span>
+        <span className="text-red-300">{t("未能加载指标：{error}", { error })}</span>
         {refreshButton}
       </div>
     );
@@ -112,7 +112,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
     return (
       <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
         {data?.seriesError ? (
-          <span className="text-red-300">{t("未能加载趋势：")}{data.seriesError}</span>
+          <span className="text-red-300">{t("未能加载趋势：{seriesError}", { seriesError: data.seriesError })}</span>
         ) : (
           <span className="nx-hint py-1">{online ? t("设备尚未上报指标（默认每 60 秒一次）。") : t("设备离线，暂无近期指标。")}</span>
         )}
@@ -148,7 +148,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
         ))}
       </div>
       {data?.seriesError ? (
-        <div className="text-[11.5px] text-red-300">{t("未能加载趋势：")}{data.seriesError}</div>
+        <div className="text-[11.5px] text-red-300">{t("未能加载趋势：{seriesError}", { seriesError: data.seriesError })}</div>
       ) : !hasTrend ? (
         <div className="nx-hint text-[11.5px]">{t("所选时间范围内暂无数据。")}</div>
       ) : null}
@@ -177,7 +177,7 @@ export function MetricsPanel({ deviceId, online }: { deviceId: string; online: b
       </div>
       <div className="flex items-center gap-2">
         <div className="nx-hint text-[11px]">
-          {t("最新")} {formatTime(latest.ts)}
+          {t("最新 {value}", { value: formatTime(latest.ts) })}
           {stale ? <span className="text-amber-300"> · {staleText}</span> : null}
         </div>
         <div className="nx-spacer" />

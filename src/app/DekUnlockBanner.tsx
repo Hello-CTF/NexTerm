@@ -227,7 +227,7 @@ function NativeVaultUnlockBanner() {
         aria-label={t("启用{bioLabel}快捷解锁", { bioLabel })}
       >
         <IconLock size={13} className="shrink-0 text-amber-300" />
-        <span className="min-w-0 truncate">{t("已解锁。启用")}{bioLabel}{t("快捷解锁？验证通过后即可免输密码")}</span>
+        <span className="min-w-0 truncate">{t("已解锁。启用{bioLabel}快捷解锁？验证通过后即可免输密码", { bioLabel })}</span>
         <div className="nx-spacer" />
         {error && (
           <span className="flex min-w-0 shrink items-center gap-1 text-red-300" role="alert">
@@ -243,7 +243,7 @@ function NativeVaultUnlockBanner() {
           disabled={busy}
           onClick={() => void enableBiometric()}
         >
-          {t("启用")}{bioLabel}
+          {t("启用{bioLabel}", { bioLabel })}
         </button>
         <button
           type="button"
@@ -338,7 +338,7 @@ function NativeVaultUnlockBanner() {
               title={t("删除本机保存的解锁材料")}
               onClick={() => setConfirmDisable(true)}
             >
-              {t("关闭")}{bioLabel}
+              {t("关闭{bioLabel}", { bioLabel })}
             </button>
           </>
         ))}

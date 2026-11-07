@@ -121,7 +121,7 @@ function PrivacyCardBody() {
         <span className="nx-badge">{t("本地处理")}</span>
       </div>
       <p className="nx-hint mb-1">
-        {t("发送给 AI 前，在")}{WEB ? t("当前 NexTerm 服务端") : t("本机")}{t("将敏感文本替换为占位符。")}
+        {t("发送给 AI 前，在{value}将敏感文本替换为占位符。", { value: WEB ? t("当前 NexTerm 服务端") : t("本机") })}
       </p>
       <p className="nx-hint mb-3">{t("仅处理文本；图片不会脱敏，将原样发送。")}</p>
       {error && <div role="alert" className="nx-alert nx-alert-danger mb-3 text-[12px]">{error}</div>}
@@ -131,10 +131,9 @@ function PrivacyCardBody() {
         <div className="flex flex-col gap-3">
           {broken ? (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">
-              {supported
+              {t("{value}在恢复或关闭脱敏前，所有 AI 请求都将被阻止。{value2}", { value: supported
                 ? t("已启用脱敏，但所选模型不可用：{value}。", { value: status.selection?.error ?? t("未知原因") })
-                : t("{value}的脱敏运行时不可用：{value2}。", { value: WEB ? t("服务端") : t("本机"), value2: status.runtime.reason ?? t("未知原因") })}
-              {t("在恢复或关闭脱敏前，所有 AI 请求都将被阻止。")}{supported && !status.canManage ? t("请联系管理员下载模型。") : ""}
+                : t("{value}的脱敏运行时不可用：{value2}。", { value: WEB ? t("服务端") : t("本机"), value2: status.runtime.reason ?? t("未知原因") }), value2: supported && !status.canManage ? t("请联系管理员下载模型。") : "" })}
             </div>
           ) : !supported && (
             <div role="alert" className="nx-alert nx-alert-danger text-[12px]">{t("本地脱敏当前不可用：")}{status.runtime.reason}。</div>
@@ -165,7 +164,7 @@ function PrivacyCardBody() {
                       : noModelHint}
                     {status.installed.length > 0 ? t(" · 已下载 {length} 个", { length: status.installed.length }) : ""}
                   </span>
-                  {status.latest && status.installed.length > 0 && !hasLatest && <span className="nx-badge nx-badge-green mt-1">{t("可更新至")} {status.latest.version}</span>}
+                  {status.latest && status.installed.length > 0 && !hasLatest && <span className="nx-badge nx-badge-green mt-1">{t("可更新至 {version}", { version: status.latest.version })}</span>}
                 </>
               }
             >
@@ -190,7 +189,7 @@ function PrivacyCardBody() {
                 ) : null}
                 {status.canManage ? (
                   <div className="flex flex-col gap-1.5">
-                    <div className="text-xs text-neutral-400">{t("下载")} {downloadTarget}</div>
+                    <div className="text-xs text-neutral-400">{t("下载 {downloadTarget}", { downloadTarget })}</div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Select className="min-w-48 flex-1 sm:flex-none" ariaLabel={t("下载模型精度")} value={precision}
                         disabled={busy || status.download.running || !supported}
@@ -216,7 +215,7 @@ function PrivacyCardBody() {
                 )}
                 {status.installed.length > 0 && (
                   <div className="flex flex-col gap-1 border-t border-neutral-800/60 pt-2">
-                    <div className="text-xs text-neutral-400">{t("已下载 · 共占用")} {formatBytes(status.diskUsage)}</div>
+                    <div className="text-xs text-neutral-400">{t("已下载 · 共占用 {value}", { value: formatBytes(status.diskUsage) })}</div>
                     {status.installed.map((item) => (
                       <div key={keyOf(item)} className="flex items-center justify-between gap-2 text-[11.5px]">
                         <span>{modelDisplayName(item)} · {item.precision.toUpperCase()} · {item.version} · {formatBytes(installationSize(item))}{keyOf(item) === selected ? t(" · 当前") : ""}</span>
@@ -232,9 +231,9 @@ function PrivacyCardBody() {
               </div>
             </SummaryDialog>
           </div>
-          {checkError && <p className="nx-hint text-[11.5px]">{t("暂时无法获取模型更新：")}{checkError}</p>}
+          {checkError && <p className="nx-hint text-[11.5px]">{t("暂时无法获取模型更新：{checkError}", { checkError })}</p>}
           {status.newerIncompatible && (
-            <p className="nx-hint text-[11.5px]">{t("新版本")} {status.newerIncompatible.version} {t("需要先更新 NexTerm。")}</p>
+            <p className="nx-hint text-[11.5px]">{t("新版本 {version} 需要先更新 NexTerm。", { version: status.newerIncompatible.version })}</p>
           )}
           {/* Download state stays on the main panel so progress, completion and failures are never hidden in the dialog. */}
           {status.download.running && (
@@ -244,7 +243,7 @@ function PrivacyCardBody() {
           )}
           {!status.download.running && completed && selected !== completedKey && (
             <div role="status" className="flex flex-wrap items-center gap-2 text-[12px] text-green-300">
-              <span>{t("已下载")} {modelDisplayName(completed)} {completed.version} {status.download.precision.toUpperCase()}</span>
+              <span>{t("已下载 {value} {version} {toUpperCase}", { value: modelDisplayName(completed), version: completed.version, toUpperCase: status.download.precision.toUpperCase() })}</span>
               <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" disabled={busy}
                 onClick={() => void run(() => configure({ ...config, ...completed, precision: status.download.precision }))}>{t("使用此模型")}</button>
             </div>

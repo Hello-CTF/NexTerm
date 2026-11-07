@@ -101,7 +101,7 @@ export function LocalHelperSettings() {
       <div className="nx-setting-label mb-1.5 flex flex-wrap items-center gap-2">
         {t("本机终端模式")}
         <SyncScopeBadge scope="local" />
-        <span className={badge}>{t("持久终端组件")}{STATE_TEXT[status.state] ?? status.state}</span>
+        <span className={badge}>{t("持久终端组件{value}", { value: STATE_TEXT[status.state] ?? status.state })}</span>
         {status.updateAvailable && <span className="nx-badge nx-badge-blue">{t("可更新")}</span>}
       </div>
       <div className="nx-segment" role="group" aria-label={t("本机终端模式")} aria-busy={busy}>
@@ -127,8 +127,7 @@ export function LocalHelperSettings() {
       {status.warning && <p className="nx-hint mt-1.5 text-amber-300">{status.warning}</p>}
       {restartable && (
         <button type="button" className="nx-btn nx-btn-danger nx-btn-sm mt-2" disabled={busy} onClick={() => void restart()}>
-          {t("重启持久终端组件（结束")} {sessionCount(status.activeSessions, status.activityKnown)}）
-        </button>
+          {t("重启持久终端组件（结束 {value}）", { value: sessionCount(status.activeSessions, status.activityKnown) })}</button>
       )}
       {status.state === "failed" && (
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-2" disabled={busy} onClick={() => void retry()}>

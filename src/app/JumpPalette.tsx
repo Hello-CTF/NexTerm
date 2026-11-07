@@ -838,7 +838,7 @@ export function JumpPalette({
         {connectError && (
           <div className="nx-command-error" role="alert">
             <span className="min-w-0 flex-1 truncate" title={connectError.message}>
-              「{connectError.label}{t("」连接失败：")}{connectError.message}
+              {t("「{label}」连接失败：{message}", { label: connectError.label, message: connectError.message })}
             </span>
             <button
               type="button"
@@ -865,7 +865,7 @@ export function JumpPalette({
         {showAll && background.unlisted > 0 && (
           <div className="nx-command-error" role="status">
             <span className="min-w-0 flex-1 truncate">
-              {t("有")} {background.unlisted} {t("处后台会话未能列出，原因见「后台会话」页")}
+              {t("有 {unlisted} 处后台会话未能列出，原因见「后台会话」页", { unlisted: background.unlisted })}
             </span>
           </div>
         )}

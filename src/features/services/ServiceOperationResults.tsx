@@ -7,7 +7,7 @@ export function ServiceOperationResults({ batch, title }: { batch: ServiceOperat
     <section className="border-t border-neutral-800/70 px-3 py-3" aria-label={title}>
       <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
         <h3 className="font-medium text-neutral-200">{title}</h3>
-        <span className="nx-hint">{t("批次")} {batch.batchId}</span>
+        <span className="nx-hint">{t("批次 {batchId}", { batchId: batch.batchId })}</span>
       </div>
       <div className="nx-cards-wrap overflow-x-auto">
         <table className="nx-table nx-table-cards min-w-[680px]">
