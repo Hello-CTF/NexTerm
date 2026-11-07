@@ -98,9 +98,10 @@ export interface RemoteClient {
   sendCombo(codes: readonly string[]): Promise<void>;
   sendText(text: string): void;
   releaseAllKeys(): void;
-  // Both move the local clipboard (text, and PNG images over RDP); they resolve to false when there was nothing to
-  // move or the browser refused clipboard access.
-  sendClipboard(): Promise<boolean>;
+  // Both move the local clipboard (text, and PNG images or files over RDP); they resolve to false when there was
+  // nothing to move or the browser refused clipboard access. When `data` is supplied from a native paste/drop event,
+  // its payload is sent directly without calling navigator.clipboard.read().
+  sendClipboard(data?: DataTransfer | null): Promise<boolean>;
   fetchClipboard(): Promise<boolean>;
   // Whether the tab is the one shown; a tab in the background never writes the local clipboard.
   setForeground(foreground: boolean): void;

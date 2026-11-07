@@ -231,4 +231,26 @@ describe("readText", () => {
     await expect(readText()).rejects.toThrow("剪贴板不可用");
     expect(mocks.text).not.toHaveBeenCalled();
   });
+
+  it("uses Wails clipboard on native WebKit desktop without calling navigator.clipboard.readText()", async () => {
+    mocks.env.WEB = false;
+    const uaSpy = vi
+      .spyOn(navigator, "userAgent", "get")
+      .mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)");
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const navigatorRead = vi.fn().mockResolvedValue("hello");
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText, readText: navigatorRead },
+      configurable: true,
+    });
+    mocks.text.mockResolvedValue("hello");
+    await copyText("hello");
+    expect(mocks.setText).toHaveBeenCalledWith("hello");
+    expect(navigatorRead).not.toHaveBeenCalled();
+
+    mocks.text.mockResolvedValue("from-wails");
+    await expect(readText()).resolves.toBe("from-wails");
+    expect(navigatorRead).not.toHaveBeenCalled();
+    uaSpy.mockRestore();
+  });
 });

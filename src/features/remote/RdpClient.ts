@@ -3,9 +3,59 @@ import { prepareRdpTransport, remoteProxyAddress } from "./remoteSocket";
 import { RemoteEngineError, type ClientCallbacks, type ClientOptions, type EngineFailure, type RemoteClient, type RemoteSecret, type ScaleMode } from "./remoteTypes";
 import { stripBuildPaths } from "./rdpFailure";
 import { drawThumbnail } from "./thumbnail";
+import { pasteUploadFiles } from "../terminal/imagePaste";
+import { copyText, isNativeWebKit, readText } from "../../ui/clipboard";
 import { t } from "../../i18n";
 
 type IronElement = HTMLElement & { module?: unknown };
+
+interface WasmClipboardItem {
+  mimeType(): string;
+  value(): string | Uint8Array;
+}
+
+interface WasmClipboardData {
+  addText(mimeType: string, text: string): void;
+  addBinary(mimeType: string, binary: Uint8Array): void;
+  items(): WasmClipboardItem[];
+  isEmpty(): boolean;
+}
+
+interface WasmSession {
+  onClipboardPaste(content: WasmClipboardData): Promise<void>;
+  invokeExtension?(ext: unknown): unknown;
+}
+
+interface FileTransferLike {
+  getBuilderExtensions(): unknown[];
+  setSession(session: unknown): void;
+  uploadFiles(files: File[]): unknown;
+  dispose?(): void;
+}
+
+export async function imageBlobToPngBytes(blob: Blob): Promise<Uint8Array> {
+  const raw = new Uint8Array(await blob.arrayBuffer());
+  const isPngMagic =
+    raw.length >= 8 && raw[0] === 0x89 && raw[1] === 0x50 && raw[2] === 0x4e && raw[3] === 0x47;
+  if (blob.type === "image/png" || isPngMagic || typeof createImageBitmap !== "function" || typeof document === "undefined") {
+    return raw;
+  }
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0);
+      const pngBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (pngBlob) return new Uint8Array(await pngBlob.arrayBuffer());
+    }
+  } finally {
+    bitmap.close?.();
+  }
+  return raw;
+}
 
 // The component sizes its own canvas against the window. These rules take that away so the pane controls the size:
 // the wrapper no longer clips or shrinks, and the component's own focus outline gives way to the pane's border.
@@ -95,6 +145,10 @@ export class RdpClient implements RemoteClient {
   readonly supportsResize = true;
   private element: IronElement | null = null;
   private ui: UserInteraction | null = null;
+  private wasmSession: WasmSession | null = null;
+  private clipboardDataCtor: (new () => WasmClipboardData) | null = null;
+  private remoteClipboard: WasmClipboardData | null = null;
+  private fileTransfer: FileTransferLike | null = null;
   private sizer: HTMLElement | null = null;
   private holder: HTMLElement | null = null;
   private observer: ResizeObserver | null = null;
@@ -142,7 +196,7 @@ export class RdpClient implements RemoteClient {
       const rdp = await import("@devolutions/iron-remote-desktop-rdp");
       await rdp.init("WARN");
       if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: t("已取消") });
-      const ui = await this.mount(rdp.Backend);
+      const ui = await this.mount(this.wrapBackend(rdp));
       this.ui = ui;
       if (this.closed) throw new RemoteEngineError({ protocol: "rdp", stage: "closed", clean: true, message: t("已取消") });
       ui.setVisibility(true);
@@ -154,7 +208,7 @@ export class RdpClient implements RemoteClient {
         ui.onClipboardRemoteUpdateCallback(() => {
           if (!this.foreground || !document.hasFocus()) return;
           void Promise.resolve()
-            .then(() => ui.saveRemoteClipboardData())
+            .then(() => this.writeRemoteClipboard())
             .catch(() => undefined);
         });
       }
@@ -219,19 +273,103 @@ export class RdpClient implements RemoteClient {
     }
   }
 
+  private wrapBackend(rdp: Record<string, unknown>): unknown {
+    const rawBackend = rdp.Backend as Record<string, unknown> | undefined;
+    const RawSessionBuilder = rawBackend?.SessionBuilder as (new () => Record<string, (...args: unknown[]) => unknown>) | undefined;
+    const RawClipboardData = rawBackend?.ClipboardData as (new () => WasmClipboardData) | undefined;
+    if (typeof RawSessionBuilder !== "function" || typeof RawClipboardData !== "function") {
+      return rawBackend;
+    }
+    this.clipboardDataCtor = RawClipboardData;
+    const FileTransferCtor = rdp.RdpFileTransferProvider as (new () => FileTransferLike) | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- needed inside the SessionBuilder constructor function
+    const client = this;
+    const WrappedSessionBuilder = function () {
+      const inner = new RawSessionBuilder();
+      const proxy: Record<string, unknown> = new Proxy(inner, {
+        get(target, prop) {
+          if (prop === "remoteClipboardChangedCallback") {
+            return (cb: (data: WasmClipboardData) => void) => {
+              inner.remoteClipboardChangedCallback((data: WasmClipboardData) => {
+                client.remoteClipboard = data;
+                cb(data);
+              });
+              return proxy;
+            };
+          }
+          if (prop === "connect") {
+            return async () => {
+              if (client.options.clipboard && typeof FileTransferCtor === "function") {
+                client.fileTransfer?.dispose?.();
+                const provider = new FileTransferCtor();
+                client.fileTransfer = provider;
+                for (const ext of provider.getBuilderExtensions()) inner.extension(ext);
+              }
+              const session = (await inner.connect()) as WasmSession;
+              client.wasmSession = session;
+              client.fileTransfer?.setSession(session);
+              return session;
+            };
+          }
+          const val = Reflect.get(target, prop, target);
+          if (typeof val !== "function") return val;
+          return (...args: unknown[]) => {
+            const out = (val as (...a: unknown[]) => unknown).apply(target, args);
+            return out instanceof RawSessionBuilder ? proxy : out;
+          };
+        },
+      });
+      return proxy;
+    };
+    return {
+      ...rawBackend,
+      SessionBuilder: WrappedSessionBuilder,
+    };
+  }
+
   private mount(backend: unknown): Promise<UserInteraction> {
     return new Promise<UserInteraction>((resolve, reject) => {
+      // On WebKit, iron-remote-desktop's initClipboard() queries the unsupported "clipboard-read" permission and, in
+      // its catch block, calls navigator.clipboard.read() on mount — which pops up WebKit's native Paste button and
+      // downgrades the component to text-only clipboard. Answering "prompt" during mount avoids both side effects.
+      const permissions = typeof navigator !== "undefined" ? navigator.permissions : undefined;
+      const origQuery = isNativeWebKit() && permissions && typeof permissions.query === "function" ? permissions.query.bind(permissions) : null;
+      const restorePermissions = () => {
+        if (origQuery && permissions) {
+          try {
+            permissions.query = origQuery;
+          } catch {
+            // Read-only permissions object in some environments.
+          }
+        }
+      };
+      if (origQuery && permissions) {
+        try {
+          permissions.query = ((desc: PermissionDescriptor) => {
+            if ((desc as { name?: string })?.name === "clipboard-read") {
+              return Promise.resolve({ state: "prompt" } as PermissionStatus);
+            }
+            return origQuery(desc);
+          }) as Permissions["query"];
+        } catch {
+          // Ignore if non-writable.
+        }
+      }
       const element = document.createElement("iron-remote-desktop") as IronElement;
       element.setAttribute("scale", "real");
       element.setAttribute("verbose", "false");
       element.setAttribute("flexcenter", "false");
       element.module = backend;
       element.style.display = "block";
-      const timer = window.setTimeout(() => reject(new Error(t("远程桌面组件加载超时"))), 15000);
+      const timer = window.setTimeout(() => {
+        restorePermissions();
+        reject(new Error(t("远程桌面组件加载超时")));
+      }, 15000);
       element.addEventListener(
         "ready",
         (event) => {
           window.clearTimeout(timer);
+          restorePermissions();
           resolve((event as CustomEvent<{ irgUserInteraction: UserInteraction }>).detail.irgUserInteraction);
         },
         { once: true },
@@ -348,6 +486,15 @@ export class RdpClient implements RemoteClient {
     this.canvasObserver = null;
     this.pendingResize = null;
     this.lastDesktopSize = { width: 0, height: 0 };
+    try {
+      this.fileTransfer?.dispose?.();
+    } catch {
+      // Best-effort cleanup.
+    }
+    this.fileTransfer = null;
+    this.wasmSession = null;
+    this.clipboardDataCtor = null;
+    this.remoteClipboard = null;
     try {
       this.ui?.shutdown();
     } catch {
@@ -499,9 +646,80 @@ export class RdpClient implements RemoteClient {
     this.releaseSessionInputs();
   }
 
-  async sendClipboard(): Promise<boolean> {
+  private async sendDataTransfer(data: DataTransfer): Promise<boolean> {
+    const { files } = pasteUploadFiles(data);
+    if (files.length > 0) {
+      if (files.some((file) => !file.type.startsWith("image/"))) {
+        if (!this.fileTransfer) return false;
+        this.fileTransfer.uploadFiles(files);
+        return true;
+      }
+      const image = files[0];
+      if (image && this.wasmSession && this.clipboardDataCtor) {
+        const png = await imageBlobToPngBytes(image);
+        const clip = new this.clipboardDataCtor();
+        clip.addBinary("image/png", png);
+        await this.wasmSession.onClipboardPaste(clip);
+        return true;
+      }
+    }
+    const plain = data.getData("text/plain");
+    const html = data.getData("text/html");
+    if (!plain && !html) return false;
+    if (this.wasmSession && this.clipboardDataCtor) {
+      const clip = new this.clipboardDataCtor();
+      if (plain) clip.addText("text/plain", plain);
+      if (html) clip.addText("text/html", html);
+      await this.wasmSession.onClipboardPaste(clip);
+      return true;
+    }
+    if (!this.ui) return false;
+    await this.ui.sendClipboardData();
+    return true;
+  }
+
+  private async writeRemoteClipboard(): Promise<void> {
+    if (this.remoteClipboard) {
+      const items = this.remoteClipboard.items();
+      let plain: string | null = null;
+      const blobs: Record<string, Blob> = {};
+      for (const item of items) {
+        const mime = item.mimeType();
+        const val = item.value();
+        if (mime === "text/plain" && typeof val === "string") plain = val;
+        blobs[mime] = new Blob([val as BlobPart], { type: mime });
+      }
+      if (Object.keys(blobs).length > 0) {
+        this.remoteClipboard = null;
+        if (typeof ClipboardItem === "function" && typeof navigator !== "undefined" && typeof navigator.clipboard?.write === "function" && ("image/png" in blobs || !isNativeWebKit())) {
+          try {
+            await navigator.clipboard.write([new ClipboardItem(blobs)]);
+            return;
+          } catch {
+            // Fall back to text write when ClipboardItem fails.
+          }
+        }
+        if (plain !== null) {
+          await copyText(plain);
+          return;
+        }
+      }
+    }
+    await this.ui?.saveRemoteClipboardData();
+  }
+
+  async sendClipboard(data?: DataTransfer | null): Promise<boolean> {
     if (!this.options.clipboard || !this.ui || this.viewOnly) return false;
     try {
+      if (data) return await this.sendDataTransfer(data);
+      if (isNativeWebKit() && this.wasmSession && this.clipboardDataCtor) {
+        const text = await readText();
+        if (!text) return false;
+        const clip = new this.clipboardDataCtor();
+        clip.addText("text/plain", text);
+        await this.wasmSession.onClipboardPaste(clip);
+        return true;
+      }
       await this.ui.sendClipboardData();
       return true;
     } catch {
@@ -516,7 +734,7 @@ export class RdpClient implements RemoteClient {
   async fetchClipboard(): Promise<boolean> {
     if (!this.options.clipboard || !this.ui) return false;
     try {
-      await this.ui.saveRemoteClipboardData();
+      await this.writeRemoteClipboard();
       return true;
     } catch {
       return false;

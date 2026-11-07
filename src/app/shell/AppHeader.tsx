@@ -76,7 +76,9 @@ export interface AppHeaderProps {
   onOpenWorkspaceSwitcher: (anchor: HTMLElement) => void;
   onToggleRight: () => void;
   onOpenPalette: () => void;
-  // windowControls is the desktop shell's minimise/maximise/close group; the mobile shell has none.
+  // leadingWindowControls is the macOS traffic-light group placed to the left of the NexTerm title.
+  leadingWindowControls?: ReactNode;
+  // windowControls is the Windows/Linux minimise/maximise/close group on the right; the mobile shell has none.
   windowControls?: ReactNode;
 }
 
@@ -88,6 +90,7 @@ export function AppHeader({
   onOpenWorkspaceSwitcher,
   onToggleRight,
   onOpenPalette,
+  leadingWindowControls,
   windowControls,
 }: AppHeaderProps) {
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
@@ -98,6 +101,7 @@ export function AppHeader({
       className="nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pl-2.5 pr-2.5"
       data-wails-drag-region style={wailsDragRegionStyle}
     >
+      {leadingWindowControls}
       <span
         className="nx-app-name text-[12.5px] font-semibold tracking-tight text-neutral-100"
         data-wails-drag-region style={wailsDragRegionStyle}

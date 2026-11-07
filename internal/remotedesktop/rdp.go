@@ -44,10 +44,11 @@ const (
 	protoHybrid    = 0x2
 	protoHybridEx  = 0x8
 
-	wsaConnRefused  = 10061
-	wsaTimedOut     = 10060
-	wsaHostNotFound = 11001
-	wsaGeneric      = 10050
+	wsaConnRefused     = 10061
+	wsaTimedOut        = 10060
+	wsaHostUnreachable = 10065
+	wsaHostNotFound    = 11001
+	wsaGeneric         = 10050
 )
 
 func readTPKT(r io.Reader) ([]byte, error) {
@@ -93,6 +94,8 @@ func wsaCode(err error) uint16 {
 		return wsaHostNotFound
 	case errors.Is(err, syscall.ECONNREFUSED):
 		return wsaConnRefused
+	case errors.Is(err, syscall.EHOSTUNREACH):
+		return wsaHostUnreachable
 	case errors.Is(err, context.DeadlineExceeded):
 		return wsaTimedOut
 	}

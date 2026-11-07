@@ -146,6 +146,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const paneRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const pasteInputRef = useRef<HTMLTextAreaElement>(null);
   const keyboardInputRef = useRef<HTMLInputElement>(null);
   const session = useRemoteSession(tabId, assetId, viewportRef);
   const { clientRef, protocol, options, desktopSize, setResolution: setSessionResolution } = session;
@@ -181,8 +182,22 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     syncPaste: options.clipboard && options.clipboardAutoSync,
     pasteDelayMs: protocol === "rdp" ? 150 : 0,
   };
+  const allowNativePasteRef = useRef(false);
   const keyboard = useMemo(
-    () => new RemoteKeyboard(() => clientRef.current, () => keyboardOptionsRef.current),
+    () =>
+      new RemoteKeyboard(
+        () => clientRef.current,
+        () => keyboardOptionsRef.current,
+        (event) => {
+          const nativeChord = isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+          const input = pasteInputRef.current;
+          if (!nativeChord || !input) return false;
+          allowNativePasteRef.current = true;
+          input.value = "";
+          input.focus({ preventScroll: true });
+          return true;
+        },
+      ),
     [clientRef],
   );
 
@@ -238,9 +253,11 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const inside = (node: EventTarget | null) => node instanceof Node && viewportRef.current?.contains(node) === true;
+    const inside = (node: EventTarget | null) =>
+      node instanceof Node && (viewportRef.current?.contains(node) === true || node === pasteInputRef.current);
     const onFocusIn = (event: FocusEvent) => {
       if (!inside(event.target) || effectiveViewOnly || !connected) return;
+      if (event.target === pasteInputRef.current) return;
       captureKeyboard(tabId);
       setCaptured(true);
       setHint(true);
@@ -264,22 +281,50 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
         return;
       }
       if (!inside(event.target) || effectiveViewOnly || !connected) return;
+      allowNativePasteRef.current = false;
       if (!keyboard.handle(event)) return;
+      if (!allowNativePasteRef.current) event.preventDefault();
+      event.stopPropagation();
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      if (!inside(event.target) || effectiveViewOnly || !connected) return;
+      if (!keyboard.handlePaste(event.clipboardData)) return;
       event.preventDefault();
       event.stopPropagation();
+      if (pasteInputRef.current) pasteInputRef.current.value = "";
+      clientRef.current?.focus();
+    };
+    const onDragOver = (event: DragEvent) => {
+      if (effectiveViewOnly || !connected || !options.clipboard) return;
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+    };
+    const onDrop = (event: DragEvent) => {
+      if (effectiveViewOnly || !connected || !options.clipboard) return;
+      if (!event.dataTransfer?.types.includes("Files")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clientRef.current?.focus();
+      keyboard.handlePaste(event.dataTransfer);
     };
     wrap.addEventListener("focusin", onFocusIn);
     wrap.addEventListener("focusout", onFocusOut);
     // Capture phase: the chord, the Command mapping and paste must be seen before the remote client's own key handling.
     wrap.addEventListener("keydown", onKey, true);
     wrap.addEventListener("keyup", onKey, true);
+    wrap.addEventListener("paste", onPaste, true);
+    wrap.addEventListener("dragover", onDragOver);
+    wrap.addEventListener("drop", onDrop, true);
     return () => {
       wrap.removeEventListener("focusin", onFocusIn);
       wrap.removeEventListener("focusout", onFocusOut);
       wrap.removeEventListener("keydown", onKey, true);
       wrap.removeEventListener("keyup", onKey, true);
+      wrap.removeEventListener("paste", onPaste, true);
+      wrap.removeEventListener("dragover", onDragOver);
+      wrap.removeEventListener("drop", onDrop, true);
     };
-  }, [tabId, effectiveViewOnly, connected, clientRef, releaseKeyboardNow, keyboard]);
+  }, [tabId, effectiveViewOnly, connected, options.clipboard, clientRef, releaseKeyboardNow, keyboard]);
 
   useEffect(() => {
     const onBlur = () => releaseHeld();
@@ -564,6 +609,17 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
         data-captured={captured ? "true" : "false"}
       >
         <div ref={viewportRef} className="absolute inset-0" onPointerDownCapture={focusScreen} />
+        <textarea
+          ref={pasteInputRef}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+          data-testid="remote-paste-target"
+        />
         {touch && connected && !effectiveViewOnly && (
           <RemoteTouchLayer
             mode={touchMode}

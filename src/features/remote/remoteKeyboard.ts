@@ -3,7 +3,7 @@
 
 export interface RemoteKeyboardTarget {
   sendKey(code: string, down: boolean): void;
-  sendClipboard(): Promise<boolean>;
+  sendClipboard(data?: DataTransfer | null): Promise<boolean>;
 }
 
 export interface RemoteKeyboardOptions {
@@ -27,10 +27,17 @@ export class RemoteKeyboard {
   // Keys pressed while Command is down. macOS sends no keyup for them, so they are released with Command.
   private readonly pressedWithCommand = new Set<string>();
   private pasting = false;
+  private pendingPaste: { modifier: string; viaCtrl: boolean; delayMs: number } | null = null;
+  private pendingPasteTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly target: () => RemoteKeyboardTarget | null,
     private readonly options: () => RemoteKeyboardOptions,
+    // Called on a paste keydown before the browser runs its default action. Returning true means the caller focused a
+    // hidden paste target and left preventDefault() off so a native ClipboardEvent("paste") will deliver clipboardData
+    // without triggering WebKit's programmatic paste confirmation menu; if no paste event arrives by the next macrotask
+    // (e.g. in synthetic keydown tests), the fallback still calls sendClipboard().
+    private readonly prepareNativePaste?: (event: KeyboardEvent) => boolean,
   ) {}
 
   // handle returns true when it consumed the event; the caller then keeps it from the remote client.
@@ -54,9 +61,22 @@ export class RemoteKeyboard {
       return true;
     }
     if (code === "KeyV" && options.syncPaste && !event.altKey && !event.shiftKey && (event.ctrlKey || event.metaKey)) {
-      if (down && !event.repeat && !this.pasting) {
+      if (down && !event.repeat && !this.pasting && this.pendingPasteTimer === null) {
         const viaCtrl = event.ctrlKey || options.commandAsCtrl;
-        void this.paste(viaCtrl ? "ControlLeft" : "MetaLeft", viaCtrl, options.pasteDelayMs);
+        const modifier = viaCtrl ? "ControlLeft" : "MetaLeft";
+        if (this.prepareNativePaste?.(event)) {
+          this.pendingPaste = { modifier, viaCtrl, delayMs: options.pasteDelayMs };
+          this.pendingPasteTimer = setTimeout(() => {
+            const pending = this.pendingPaste;
+            this.pendingPaste = null;
+            this.pendingPasteTimer = null;
+            if (pending && !this.pasting) {
+              void this.paste(pending.modifier, pending.viaCtrl, pending.delayMs);
+            }
+          }, 0);
+        } else {
+          void this.paste(modifier, viaCtrl, options.pasteDelayMs);
+        }
       }
       return true;
     }
@@ -67,8 +87,32 @@ export class RemoteKeyboard {
     return false;
   }
 
+  // handlePaste consumes a native DOM paste/drop DataTransfer, sending its text/image/file content directly to the
+  // remote clipboard and then pressing the paste shortcut on the remote side.
+  handlePaste(data: DataTransfer | null): boolean {
+    const options = this.options();
+    if (!options.syncPaste) return false;
+    if (this.pendingPasteTimer !== null) {
+      clearTimeout(this.pendingPasteTimer);
+      this.pendingPasteTimer = null;
+    }
+    const pending = this.pendingPaste;
+    this.pendingPaste = null;
+    if (this.pasting) return true;
+    const viaCtrl = pending ? pending.viaCtrl : this.ctrlDown.size > 0 || options.commandAsCtrl || this.commandDown.size === 0;
+    const modifier = pending ? pending.modifier : viaCtrl ? "ControlLeft" : "MetaLeft";
+    const delayMs = pending ? pending.delayMs : options.pasteDelayMs;
+    void this.paste(modifier, viaCtrl, delayMs, data);
+    return true;
+  }
+
   // reset forgets every held key, for focus loss and reconnects; the client releases its own keys.
   reset(): void {
+    if (this.pendingPasteTimer !== null) {
+      clearTimeout(this.pendingPasteTimer);
+      this.pendingPasteTimer = null;
+    }
+    this.pendingPaste = null;
     this.ctrlDown.clear();
     this.commandDown.clear();
     this.pressedWithCommand.clear();
@@ -85,10 +129,10 @@ export class RemoteKeyboard {
     return this.ctrlDown.size > 0 || (this.options().commandAsCtrl && this.commandDown.size > 0);
   }
 
-  private async paste(modifier: string, viaCtrl: boolean, delayMs: number): Promise<void> {
+  private async paste(modifier: string, viaCtrl: boolean, delayMs: number, data?: DataTransfer | null): Promise<void> {
     this.pasting = true;
     try {
-      const sent = (await this.target()?.sendClipboard().catch(() => false)) ?? false;
+      const sent = (await this.target()?.sendClipboard(data).catch(() => false)) ?? false;
       if (sent) await wait(delayMs);
       const target = this.target();
       if (!target) return;

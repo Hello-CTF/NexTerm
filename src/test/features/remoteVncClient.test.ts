@@ -347,10 +347,16 @@ describe("VncClient clipboard", () => {
   }
 
   it("sends the local clipboard text to the remote", async () => {
-    stubClipboard({ readText: vi.fn(async () => "from local") });
+    const readText = vi.fn(async () => "from local");
+    stubClipboard({ readText });
     const { client } = await connected();
     expect(await client.sendClipboard()).toBe(true);
     expect(rfb().pasted).toEqual(["from local"]);
+
+    const data = { getData: (type: string) => (type === "text/plain" ? "from event" : "") } as unknown as DataTransfer;
+    expect(await client.sendClipboard(data)).toBe(true);
+    expect(rfb().pasted).toEqual(["from local", "from event"]);
+    expect(readText).toHaveBeenCalledTimes(1);
   });
 
   it("reports false for an empty clipboard, a refusal, read-only, or clipboard turned off", async () => {

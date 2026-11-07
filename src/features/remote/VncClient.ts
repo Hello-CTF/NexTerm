@@ -9,6 +9,7 @@ import {
   type ScaleMode,
 } from "./remoteTypes";
 import { drawThumbnail } from "./thumbnail";
+import { copyText, isNativeWebKit, readText } from "../../ui/clipboard";
 import { t } from "../../i18n";
 
 type RfbCtor = typeof import("@novnc/novnc").default;
@@ -21,6 +22,8 @@ export class VncClient implements RemoteClient {
   readonly supportsResize = false;
   private rfb: RfbInstance | null = null;
   private channel: PreambleChannel | null = null;
+  private canvasObserver: MutationObserver | null = null;
+  private lastDesktopSize = { width: 0, height: 0 };
   private connected = false;
   private closed = false;
   private remoteClipboard = "";
@@ -58,11 +61,24 @@ export class VncClient implements RemoteClient {
       rfb.showDotCursor = true;
       rfb.viewOnly = this.options.viewOnly;
       this.applyScale();
+      const reportSize = (force = false) => {
+        const size = this.desktopSize();
+        if (!force && (size.width <= 0 || size.height <= 0)) return;
+        if (!force && this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
+        this.lastDesktopSize = size;
+        this.callbacks.onDesktopSize?.(size.width, size.height);
+      };
       let settled = false;
       rfb.addEventListener("connect", () => {
         this.connected = true;
         settled = true;
+        const canvas = this.stage.querySelector("canvas");
+        if (canvas) {
+          this.canvasObserver = new MutationObserver(() => reportSize(false));
+          this.canvasObserver.observe(canvas, { attributes: true, attributeFilter: ["width", "height"] });
+        }
         this.callbacks.onConnected();
+        reportSize(false);
         resolve();
       });
       rfb.addEventListener("securityfailure", (event) => {
@@ -75,6 +91,8 @@ export class VncClient implements RemoteClient {
       });
       rfb.addEventListener("disconnect", (event) => {
         const clean = (event as CustomEvent<{ clean?: boolean }>).detail?.clean === true;
+        this.canvasObserver?.disconnect();
+        this.canvasObserver = null;
         this.rfb = null;
         if (!settled) {
           settled = true;
@@ -98,12 +116,11 @@ export class VncClient implements RemoteClient {
         this.remoteClipboard = (event as CustomEvent<{ text: string }>).detail.text;
         this.callbacks.onRemoteClipboard?.(this.remoteClipboard);
         if (this.options.clipboard && this.options.clipboardAutoSync && this.foreground && document.hasFocus()) {
-          void navigator.clipboard?.writeText(this.remoteClipboard).catch(() => undefined);
+          void (isNativeWebKit() ? copyText(this.remoteClipboard) : navigator.clipboard?.writeText(this.remoteClipboard))?.catch(() => undefined);
         }
       });
       rfb.addEventListener("desktopsize" as string, () => {
-        const size = this.desktopSize();
-        this.callbacks.onDesktopSize?.(size.width, size.height);
+        reportSize(true);
       });
     });
   }
@@ -111,6 +128,8 @@ export class VncClient implements RemoteClient {
   disconnect(): void {
     this.closed = true;
     this.abort.abort();
+    this.canvasObserver?.disconnect();
+    this.canvasObserver = null;
     try {
       this.rfb?.disconnect();
     } catch {
@@ -187,10 +206,10 @@ export class VncClient implements RemoteClient {
     // noVNC releases its own held keys on blur; the modifiers this app latched are released by the pane.
   }
 
-  async sendClipboard(): Promise<boolean> {
+  async sendClipboard(data?: DataTransfer | null): Promise<boolean> {
     if (!this.options.clipboard || !this.rfb || this.rfb.viewOnly) return false;
     try {
-      const text = await navigator.clipboard.readText();
+      const text = data ? data.getData("text/plain") : isNativeWebKit() ? await readText() : await navigator.clipboard.readText();
       if (!text) return false;
       this.rfb.clipboardPasteFrom(text);
       return true;
@@ -206,7 +225,11 @@ export class VncClient implements RemoteClient {
   async fetchClipboard(): Promise<boolean> {
     if (!this.options.clipboard || !this.remoteClipboard) return false;
     try {
-      await navigator.clipboard.writeText(this.remoteClipboard);
+      if (isNativeWebKit()) {
+        await copyText(this.remoteClipboard);
+      } else {
+        await navigator.clipboard.writeText(this.remoteClipboard);
+      }
       return true;
     } catch {
       return false;

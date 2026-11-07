@@ -1312,21 +1312,32 @@ describe("App shell notification layout", () => {
     expectShellOrder(["header", "workspace-body"]);
   });
 
-  it("shows no window buttons on macOS and reserves no room for them", async () => {
+  it("places traffic-light window controls to the left of the NexTerm title on macOS", async () => {
     envState.transport = "desktop";
     setMacPlatform(true);
     try {
       mounted = mountApp();
       await flush();
 
-      // Wails hides the native traffic lights of the frameless window, so nothing stands in for them.
-      for (const label of ["关闭窗口", "最小化窗口", "最大化或还原窗口"]) {
-        expect(mounted.container.querySelector(`button[aria-label="${label}"]`)).toBeNull();
+      const header = mounted.container.querySelector<HTMLElement>(".nx-app-header");
+      const controls = header?.querySelector<HTMLElement>(".nx-mac-controls");
+      const title = header?.querySelector<HTMLElement>(".nx-app-name");
+      expect(controls).not.toBeNull();
+      expect(title).not.toBeNull();
+      // Traffic lights sit immediately before the NexTerm title in the header, and are not repeated on the right.
+      expect(controls?.nextElementSibling).toBe(title);
+      expect(header?.querySelector(".nx-window-controls")).toBeNull();
+      for (const [label, action] of [
+        ["关闭窗口", mocks.closeWindow],
+        ["最小化窗口", mocks.minimiseWindow],
+        ["最大化或还原窗口", mocks.toggleMaximiseWindow],
+      ] as const) {
+        const button = controls?.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+        if (!button) throw new Error(`Window control not found: ${label}`);
+        expect(button.style.getPropertyValue("--wails-draggable")).toBe("no-drag");
+        click(button);
+        expect(action).toHaveBeenCalledTimes(1);
       }
-      expect(mounted.container.querySelector(".nx-mac-controls")).toBeNull();
-      // The header and the rail start like they do on the other platforms.
-      expect(mounted.container.querySelector(".nx-app-header")?.className).not.toContain("pl-[");
-      expect(mounted.container.querySelector(".nx-rail")?.className).not.toContain("pt-[");
     } finally {
       setMacPlatform(false);
     }

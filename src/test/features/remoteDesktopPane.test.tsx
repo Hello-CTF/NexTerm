@@ -371,6 +371,21 @@ describe("RemoteDesktopPane", () => {
     ]);
   });
 
+  it("delivers a native paste ClipboardEvent payload directly to sendClipboard without triggering a fallback read", async () => {
+    const { client } = await focusedScreen();
+    const target = pane().querySelector<HTMLTextAreaElement>("[data-testid='remote-paste-target']")!;
+    const clipboardData = { getData: vi.fn(() => "hello"), types: ["text/plain"] } as unknown as DataTransfer;
+    act(() => {
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", { value: clipboardData });
+      target.dispatchEvent(pasteEvent);
+    });
+    await flush();
+    expect(client.sendClipboard).toHaveBeenCalledTimes(1);
+    expect(client.sendClipboard).toHaveBeenCalledWith(clipboardData);
+    expect(vi.mocked(client.focus)).toHaveBeenCalled();
+  });
+
   it("hands the paste chord to the remote untouched when automatic clipboard sync is off", async () => {
     mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "vnc", name: "box", options: { clipboardAutoSync: false } });
     const { client, canvas } = await focusedScreen();

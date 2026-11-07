@@ -10,6 +10,14 @@ function runtime(): Promise<WailsRuntime> {
   return runtimePromise;
 }
 
+// WebKit (macOS WKWebView, Safari, WebKitGTK) shows a native floating "Paste" menu whenever navigator.clipboard.read
+// or readText is called. On desktop (!WEB) the native Wails clipboard reads and writes without triggering that menu.
+export function isNativeWebKit(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent ?? "";
+  return /AppleWebKit\//.test(ua) && !/Chrome|Chromium|Android|jsdom/i.test(ua);
+}
+
 function copyViaExecCommand(text: string): boolean {
   if (typeof document === "undefined" || typeof document.execCommand !== "function") return false;
   const textarea = document.createElement("textarea");
@@ -31,7 +39,8 @@ function copyViaExecCommand(text: string): boolean {
 export async function copyText(text: string): Promise<void> {
   let firstError: unknown;
   const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-  if (clipboard && typeof clipboard.writeText === "function") {
+  const skipWebKitRead = !WEB && isNativeWebKit();
+  if (!skipWebKitRead && clipboard && typeof clipboard.writeText === "function") {
     try {
       await clipboard.writeText(text);
       if (WEB || (await clipboard.readText()) === text) return;
@@ -66,14 +75,23 @@ export async function copyText(text: string): Promise<void> {
 export async function readText(): Promise<string> {
   let firstError: unknown;
   const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-  if (clipboard && typeof clipboard.readText === "function") {
+  const preferWails = !WEB && isNativeWebKit();
+  if (preferWails) {
     try {
-      return await clipboard.readText();
+      const { Clipboard } = await runtime();
+      return await Clipboard.Text();
     } catch (e) {
       firstError = e;
     }
   }
-  if (!WEB) {
+  if (clipboard && typeof clipboard.readText === "function") {
+    try {
+      return await clipboard.readText();
+    } catch (e) {
+      firstError ??= e;
+    }
+  }
+  if (!WEB && !preferWails) {
     try {
       const { Clipboard } = await runtime();
       return await Clipboard.Text();

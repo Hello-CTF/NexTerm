@@ -701,6 +701,60 @@ describe("RdpClient clipboard", () => {
     expect(await off.fetchClipboard()).toBe(false);
     expect(scenario.ui.setEnableClipboard).toHaveBeenCalledWith(false);
   });
+
+  it("sends text and screenshot PNGs from a native paste DataTransfer without calling ui.sendClipboardData", async () => {
+    const { client } = await connected();
+    const pasted: Array<{ texts: Array<[string, string]>; binaries: Array<[string, Uint8Array]> }> = [];
+    class FakeClipboardData {
+      texts: Array<[string, string]> = [];
+      binaries: Array<[string, Uint8Array]> = [];
+      addText(mime: string, text: string) {
+        this.texts.push([mime, text]);
+      }
+      addBinary(mime: string, bytes: Uint8Array) {
+        this.binaries.push([mime, bytes]);
+      }
+      items() {
+        return [];
+      }
+      isEmpty() {
+        return this.texts.length === 0 && this.binaries.length === 0;
+      }
+    }
+    const clientInternal = client as unknown as {
+      wasmSession: { onClipboardPaste: (clip: FakeClipboardData) => Promise<void> };
+      clipboardDataCtor: typeof FakeClipboardData;
+    };
+    clientInternal.clipboardDataCtor = FakeClipboardData;
+    clientInternal.wasmSession = {
+      onClipboardPaste: vi.fn(async (clip: FakeClipboardData) => {
+        pasted.push({ texts: clip.texts, binaries: clip.binaries });
+      }),
+    };
+
+    const textData = {
+      items: [],
+      files: [],
+      getData: (type: string) => (type === "text/plain" ? "copied text" : type === "text/html" ? "<b>copied</b>" : ""),
+    } as unknown as DataTransfer;
+    expect(await client.sendClipboard(textData)).toBe(true);
+    expect(scenario.ui.sendClipboardData).not.toHaveBeenCalled();
+    expect(pasted[0]?.texts).toEqual([
+      ["text/plain", "copied text"],
+      ["text/html", "<b>copied</b>"],
+    ]);
+
+    const pngMagic = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const imageFile = new File([pngMagic], "screenshot.png", { type: "image/png" });
+    const imageData = {
+      items: [{ kind: "file", type: "image/png", getAsFile: () => imageFile }],
+      files: [imageFile],
+      getData: () => "",
+    } as unknown as DataTransfer;
+    expect(await client.sendClipboard(imageData)).toBe(true);
+    expect(scenario.ui.sendClipboardData).not.toHaveBeenCalled();
+    expect(pasted[1]?.binaries).toEqual([["image/png", pngMagic]]);
+  });
 });
 
 describe("RdpClient picture", () => {

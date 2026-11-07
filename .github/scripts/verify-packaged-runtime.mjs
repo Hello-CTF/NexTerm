@@ -95,6 +95,8 @@ function darwin(work) {
     run("hdiutil", ["detach", "-quiet", mountpoint]);
   }
   const app = path.join(work, "NexTerm.app");
+  const localNetworkUsage = must("/usr/libexec/PlistBuddy", ["-c", "Print :NSLocalNetworkUsageDescription", path.join(app, "Contents/Info.plist")]).stdout.trim();
+  if (!localNetworkUsage) throw new Error("NSLocalNetworkUsageDescription is empty in the packaged app");
   must("codesign", ["--verify", "--deep", "--strict", app]);
   const details = run("codesign", ["-dvv", app]);
   const info = `${details.stdout}${details.stderr}`;

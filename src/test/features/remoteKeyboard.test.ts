@@ -83,9 +83,33 @@ describe("RemoteKeyboard", () => {
   it("passes paste through when clipboard sync is off or the chord has other modifiers", () => {
     const off = setup({ syncPaste: false });
     expect(off.keyboard.handle(key("keydown", "KeyV", { ctrlKey: true }))).toBe(false);
+    expect(off.keyboard.handlePaste(null)).toBe(false);
     const on = setup();
     expect(on.keyboard.handle(key("keydown", "KeyV", { ctrlKey: true, shiftKey: true }))).toBe(false);
     expect(on.keyboard.handle(key("keydown", "KeyV"))).toBe(false);
     expect(on.target.sendClipboard).not.toHaveBeenCalled();
+  });
+
+  it("hands the native paste DataTransfer directly to sendClipboard and cancels the fallback timer", async () => {
+    const log: string[] = [];
+    const target = {
+      sendKey: vi.fn((code: string, down: boolean) => log.push(`${code}:${down ? "down" : "up"}`)),
+      sendClipboard: vi.fn(async (data?: DataTransfer | null) => {
+        log.push(`clipboard:${data ? "event" : "fallback"}`);
+        return true;
+      }),
+    };
+    const keyboard = new RemoteKeyboard(
+      () => target,
+      () => ({ commandAsCtrl: true, syncPaste: true, pasteDelayMs: 0 }),
+      () => true,
+    );
+    keyboard.handle(key("keydown", "MetaLeft", { metaKey: true }));
+    expect(keyboard.handle(key("keydown", "KeyV", { metaKey: true }))).toBe(true);
+    const fakeData = { getData: () => "pasted" } as unknown as DataTransfer;
+    expect(keyboard.handlePaste(fakeData)).toBe(true);
+    await settle();
+    expect(log).toEqual(["ControlLeft:down", "clipboard:event", "KeyV:down", "KeyV:up"]);
+    expect(target.sendClipboard).toHaveBeenCalledWith(fakeData);
   });
 });

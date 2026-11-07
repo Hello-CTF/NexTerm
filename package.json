@@ -30,7 +30,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.4",
     "@devolutions/iron-remote-desktop": "0.11.0",
-    "@devolutions/iron-remote-desktop-rdp": "https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.4/devolutions-iron-remote-desktop-rdp-0.7.0.tgz",
+    "@devolutions/iron-remote-desktop-rdp": "https://github.com/huangzheng2016/IronRDP/releases/download/v0.7.0-egfx.5/devolutions-iron-remote-desktop-rdp-0.7.0.tgz",
     "@novnc/novnc": "1.7.0",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-virtual": "^3.13.0",

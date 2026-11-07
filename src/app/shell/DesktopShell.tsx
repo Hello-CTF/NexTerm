@@ -14,11 +14,50 @@ function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   }
 }
 
+function MacWindowControls() {
+  return (
+    <div className="nx-mac-controls" style={wailsNoDragRegionStyle}>
+      <button
+        type="button"
+        className="nx-mac-control is-close"
+        style={wailsNoDragRegionStyle}
+        title={t("关闭")}
+        aria-label={t("关闭窗口")}
+        onClick={() => void closeWindow()}
+      >
+        <IconClose size={8} />
+      </button>
+      <button
+        type="button"
+        className="nx-mac-control is-minimise"
+        style={wailsNoDragRegionStyle}
+        title={t("最小化")}
+        aria-label={t("最小化窗口")}
+        onClick={() => void minimiseWindow()}
+      >
+        <IconMinus size={8} />
+      </button>
+      <button
+        type="button"
+        className="nx-mac-control is-zoom"
+        style={wailsNoDragRegionStyle}
+        title={t("最大化 / 还原（双击空白处亦可）")}
+        aria-label={t("最大化或还原窗口")}
+        onClick={() => void toggleMaximiseWindow()}
+      >
+        <IconMaximize size={8} />
+      </button>
+    </div>
+  );
+}
+
 function WindowControls() {
   return (
-    <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
+    <div className="nx-window-controls" style={wailsNoDragRegionStyle}>
       <button
-        className="nx-icon-btn" style={wailsNoDragRegionStyle}
+        type="button"
+        className="nx-window-control"
+        style={wailsNoDragRegionStyle}
         title={t("最小化")}
         aria-label={t("最小化窗口")}
         onClick={() => void minimiseWindow()}
@@ -26,7 +65,9 @@ function WindowControls() {
         <IconMinus size={13} />
       </button>
       <button
-        className="nx-icon-btn" style={wailsNoDragRegionStyle}
+        type="button"
+        className="nx-window-control"
+        style={wailsNoDragRegionStyle}
         title={t("最大化 / 还原（双击空白处亦可）")}
         aria-label={t("最大化或还原窗口")}
         onClick={() => void toggleMaximiseWindow()}
@@ -34,7 +75,9 @@ function WindowControls() {
         <IconMaximize size={12} />
       </button>
       <button
-        className="nx-icon-btn is-danger" style={wailsNoDragRegionStyle}
+        type="button"
+        className="nx-window-control is-close"
+        style={wailsNoDragRegionStyle}
         title={t("关闭")}
         aria-label={t("关闭窗口")}
         onClick={() => void closeWindow()}
@@ -46,15 +89,19 @@ function WindowControls() {
 }
 
 // DesktopShell serves the "desktop" and "compact" modes: a window with its own title bar. Compact windows get
-// overlay sidebars from the shared layout; the window chrome (custom controls off macOS, double-click to maximise on
-// the drag region) stays. The status wall opens from the rail's overview button on demand, never at launch. macOS shows no window buttons: Wails hides the native ones on a frameless window.
+// overlay sidebars from the shared layout; the window chrome (traffic lights to the left of the title on macOS,
+// caption buttons on the right on Windows/Linux, and double-click to maximise on the drag region) stays. The status
+// wall opens from the rail's overview button on demand, never at launch.
 export function DesktopShell(parts: ShellParts) {
-  const windowControls = TRANSPORT === "desktop" && !isMac() ? <WindowControls /> : null;
+  const desktop = TRANSPORT === "desktop";
+  const mac = desktop && isMac();
+  const leadingWindowControls = mac ? <MacWindowControls /> : null;
+  const windowControls = desktop && !mac ? <WindowControls /> : null;
   const home = useStatusHome(parts.body.docks);
   return (
     <ShellFrame
       {...parts}
-      header={{ ...parts.header, windowControls }}
+      header={{ ...parts.header, leadingWindowControls, windowControls }}
       body={{ ...parts.body, home }}
       onDoubleClick={onDragRegionDoubleClick}
     />
