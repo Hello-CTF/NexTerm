@@ -153,6 +153,9 @@ func (s *Store) AssetUpdateTx(ctx context.Context, tx *gorm.DB, id string, patch
 
 func (s *Store) assetUpdateValues(ctx context.Context, db *gorm.DB, id string, patch AssetPatch, updatedAt int64) (map[string]any, error) {
 	values := map[string]any{}
+	if patch.Kind != nil {
+		values["kind"] = *patch.Kind
+	}
 	if patch.GroupID.Set {
 		if patch.GroupID.Value != nil {
 			if _, err := s.groupReference(ctx, db, *patch.GroupID.Value); err != nil {
@@ -211,7 +214,11 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 		if err := validateInventoryPatch(current, patch); err != nil {
 			return AssetRow{}, err
 		}
-		if err := checkServerSSHAssetInput(ctx, current.Kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
+		kind, err := patchedAssetKind(ctx, current, patch.Kind)
+		if err != nil {
+			return AssetRow{}, err
+		}
+		if err := checkServerSSHAssetInput(ctx, kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
 			return AssetRow{}, err
 		}
 		if patch.OptionsJSON != nil {
@@ -251,6 +258,27 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 	return AssetRow{}, ErrWriteConflict
 }
 
+// patchedAssetKind returns the kind an update leaves the asset with. The editor may switch a host between protocols;
+// the built-in local asset and device rows keep their kind, and the multi-user server refuses a switch to local.
+func patchedAssetKind(ctx context.Context, current AssetRow, next *string) (string, error) {
+	if next == nil || *next == current.Kind {
+		return current.Kind, nil
+	}
+	kind := strings.TrimSpace(*next)
+	switch {
+	case kind == "" || kind != *next:
+		return "", badParam(errString("资产类型无效"))
+	case current.Builtin:
+		return "", badParam(errString("内置资产的类型不可更改"))
+	case current.Kind == AssetKindDevice || kind == AssetKindDevice:
+		return "", badParam(errString("设备记录的类型不可更改"))
+	}
+	if err := checkServerLocalAssetKind(ctx, kind); err != nil {
+		return "", err
+	}
+	return kind, nil
+}
+
 func (s *Store) AssetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expectedUpdatedAt int64, patch AssetPatch) (AssetRow, error) {
 	return s.assetUpdateCAS(ctx, db, id, expectedUpdatedAt, patch, false)
 }
@@ -267,8 +295,12 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 	if current.UpdatedAt != expectedUpdatedAt || current.DeletedAt != nil {
 		return AssetRow{}, ErrWriteConflict
 	}
+	kind, err := patchedAssetKind(ctx, current, patch.Kind)
+	if err != nil {
+		return AssetRow{}, err
+	}
 	// Inventory source sync is still a user-driven write on a multi-user server.
-	if err := checkServerSSHAssetInput(ctx, current.Kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
+	if err := checkServerSSHAssetInput(ctx, kind, patch.OptionsJSON, patchOptionalValue(patch.AuthKind), patchOptionalValue(patch.KeyPath)); err != nil {
 		return AssetRow{}, err
 	}
 	if !sourceSync {
@@ -902,6 +934,9 @@ func assetValuesUnchanged(current AssetRow, values map[string]any) bool {
 		case "port":
 			next, ok := value.(*int32)
 			same = ok && ((next == nil && current.Port == nil) || (next != nil && current.Port != nil && *next == *current.Port))
+		case "kind":
+			next, ok := value.(string)
+			same = ok && next == current.Kind
 		case "name":
 			next, ok := value.(string)
 			same = ok && next == current.Name

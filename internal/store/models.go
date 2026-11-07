@@ -104,6 +104,7 @@ type GroupPatch struct {
 }
 
 type AssetPatch struct {
+	Kind        *string
 	GroupID     Optional[string]
 	Name        *string
 	Host        Optional[string]

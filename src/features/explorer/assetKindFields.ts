@@ -157,3 +157,33 @@ export function validateResolution(width: number, height: number): string | null
   if (width > 8192 || height > 8192) return t("分辨率不能大于 8192 x 8192");
   return null;
 }
+
+// Options the SSH advanced section writes. They mean nothing to another protocol.
+const SSH_OPTION_KEYS = [
+  "jumpAssetId",
+  "proxyCommand",
+  "agentSocket",
+  "certPath",
+  "startupCommand",
+  "terminalMode",
+  "encoding",
+  "env",
+  "forwardAgent",
+  "pasteUploadDir",
+  "pasteTerminalDir",
+  "pasteNoRandomDir",
+  "backupBeforeOverwrite",
+];
+const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly"];
+
+// optionsForKindChange drops the options the previous kind's form wrote when an asset changes kind, so a host switched
+// from SSH to RDP (or back) does not keep hidden settings the new form can neither show nor clear.
+export function optionsForKindChange(from: string, to: string, options: Record<string, unknown>): Record<string, unknown> {
+  if (from === to) return { ...options };
+  const next = { ...options };
+  const fromFields = assetKindFields(from);
+  const toFields = assetKindFields(to);
+  if (fromFields.sshAdvanced && !toFields.sshAdvanced) for (const key of SSH_OPTION_KEYS) delete next[key];
+  if (fromFields.remote && !toFields.remote) for (const key of REMOTE_DESKTOP_OPTION_KEYS) delete next[key];
+  return next;
+}

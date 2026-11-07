@@ -210,6 +210,7 @@ export type AssetInputRequest = {
 
 export type AssetPatchRequest = {
   id: string;
+  kind?: string | null;
   groupId?: string | null;
   name?: string | null;
   host?: string | null;

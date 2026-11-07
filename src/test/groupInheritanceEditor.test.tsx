@@ -260,3 +260,41 @@ describe("asset editor never invents connection values", () => {
     }));
   });
 });
+
+describe("asset editor changing an asset's kind", () => {
+  it("an SSH asset switched to RDP saves the new kind without its SSH key and options", async () => {
+    const ssh = {
+      id: "s1", kind: "ssh", name: "win", groupId: null, host: "10.0.0.5", port: 22, username: "admin",
+      authKind: "key", keyPath: null, credId: "key-1",
+      options: { jumpAssetId: "jump-1", env: { A: "1" }, terminalMode: "persistent", icon: "windows" },
+      tags: "", note: "",
+    } as unknown as Asset;
+    mountEditor({ kind: "asset", initial: ssh });
+    await flush();
+    await flush();
+    chooseSelectOption(mounted!.container, "类型", "RDP");
+    clickButton(mounted!.container, "保存");
+    await flush();
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    const saved = mocks.update.mock.calls[0]![0] as Record<string, unknown>;
+    expect(saved).toMatchObject({ id: "s1", kind: "rdp", port: 3389, authKind: "password", keyPath: null, credId: null });
+    expect(saved.options).toEqual({ icon: "windows" });
+  });
+
+  it("an RDP asset switched to SSH drops its remote desktop options", async () => {
+    const rdp = {
+      id: "r1", kind: "rdp", name: "win", groupId: null, host: "10.0.0.5", port: 3389, username: "admin",
+      authKind: "password", keyPath: null, credId: "pw-1",
+      options: { domain: "CORP", width: 1280, height: 720, viaAssetId: "jump-1" }, tags: "", note: "",
+    } as unknown as Asset;
+    mountEditor({ kind: "asset", initial: rdp });
+    await flush();
+    await flush();
+    chooseSelectOption(mounted!.container, "类型", "SSH");
+    clickButton(mounted!.container, "保存");
+    await flush();
+    const saved = mocks.update.mock.calls[0]![0] as Record<string, unknown>;
+    expect(saved).toMatchObject({ id: "r1", kind: "ssh", port: 22, credId: "pw-1" });
+    expect(saved.options).toEqual({});
+  });
+});

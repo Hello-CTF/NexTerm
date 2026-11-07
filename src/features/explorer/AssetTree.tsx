@@ -72,6 +72,7 @@ import {
   defaultCommandAsCtrl,
   isRemoteDesktopKind,
   readRemoteDesktopOptions,
+  optionsForKindChange,
   validateResolution,
   writeRemoteDesktopOptions,
   type AssetFormKind,
@@ -2510,8 +2511,10 @@ export function AssetEditor({
     setInlineKeyContent(null);
   };
 
+  // The stored options without the ones only the asset's previous kind used.
+  const kindBaseOptions = () => optionsForKindChange(initial?.kind ?? groupKind, groupKind, initial?.options ?? {});
   const sshConnectivityOptions = () => {
-    const options: Record<string, unknown> = { ...(initial?.options ?? {}) };
+    const options: Record<string, unknown> = kindBaseOptions();
     const setOrDelete = (key: string, value: string) => {
       if (value.trim()) options[key] = value.trim();
       else delete options[key];
@@ -2691,7 +2694,8 @@ export function AssetEditor({
           if (stale()) return;
           credId = res.id;
         }
-      } else if (credChoice !== "none") {
+      } else if (credChoice !== "none" && (kindFields.password || kindFields.authMethod)) {
+        // A kind without credentials (local) does not keep the one the asset had under its previous kind.
         credId = credChoice;
       }
       const baseOptions =
@@ -2702,7 +2706,7 @@ export function AssetEditor({
             }
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
-            : { ...(initial?.options ?? {}) };
+            : kindBaseOptions();
       if (kindFields.via && viaAssetId) baseOptions.viaAssetId = viaAssetId;
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
@@ -2719,11 +2723,13 @@ export function AssetEditor({
       const savedUsername = unchangedEmpty(username, initial?.username) ? initial?.username ?? null : username;
       const passwordKind = groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm";
       // 不使用密码 is an explicit stored choice that no group default overrides.
+      // A host switched from SSH keeps its key or agent choice in state; these protocols authenticate only by password.
+      const ownAuthKind = passwordKind && authKind !== "" ? "password" : authKind;
       const savedAuthKind = groupKind === "local"
         ? "none"
         : passwordKind && credChoice === "none"
           ? "none"
-          : unchangedEmpty(authKind, initial?.authKind) ? initial?.authKind ?? null : authKind;
+          : unchangedEmpty(ownAuthKind, initial?.authKind) ? initial?.authKind ?? null : ownAuthKind;
       const fields = {
         kind: managed ? initial?.kind ?? groupKind : groupKind,
         name: managed ? initial?.name ?? name : name,
@@ -2908,6 +2914,10 @@ export function AssetEditor({
                   if (assetKindFields(v).via === null) setViaAssetId("");
                   // The SSH default user would be wrong for a Windows desktop.
                   if (v === "rdp" && username === "root") setUsername("");
+                  // A private key bound for SSH is not a password the new protocol could send.
+                  if (assetKindFields(v).password && credentials.data?.find((c) => c.id === credChoice)?.kind === "private_key") {
+                    setCredChoice("new");
+                  }
                 }}
               />
               {serverLimited && initial?.kind !== "local" && <ServerRestrictionNote text={serverText.local} />}

@@ -80,7 +80,7 @@ var consumerOptionalRequestFields = map[string]map[string]bool{
 		"KeyPath": true, "CredID": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.assetPatchRequest": {
-		"Name": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
+		"Kind": true, "Name": true, "Options": true, "Tags": true, "Note": true, "Sort": true,
 	},
 	"github.com/Hello-CTF/NexTerm/internal/app/production.assetProbeBatchRequest": {
 		"TimeoutMS": true, "MaxConcurrent": true,

@@ -98,6 +98,7 @@ type assetInputRequest struct {
 
 type assetPatchRequest struct {
 	ID       string                   `json:"id"`
+	Kind     *string                  `json:"kind"`
 	GroupID  optionalIPCValue[string] `json:"groupId"`
 	Name     *string                  `json:"name"`
 	Host     optionalIPCValue[string] `json:"host"`
@@ -427,7 +428,7 @@ func registerStoreCommandsWithHostKeyMode(dispatcher *ipc.Dispatcher, database *
 		func() error {
 			return ipc.RegisterNested(dispatcher, "asset_update", func(ctx context.Context, _ *ipc.Call, input assetPatchRequest) (assetDTO, error) {
 				patch := store.AssetPatch{
-					GroupID: input.GroupID.storeValue(), Name: input.Name, Host: input.Host.storeValue(), Port: input.Port.storeValue(),
+					Kind: input.Kind, GroupID: input.GroupID.storeValue(), Name: input.Name, Host: input.Host.storeValue(), Port: input.Port.storeValue(),
 					Username: input.Username.storeValue(), AuthKind: input.AuthKind.storeValue(), KeyPath: input.KeyPath.storeValue(), CredID: input.CredID.storeValue(),
 					Tags: input.Tags, Note: input.Note, Sort: input.Sort,
 				}

@@ -158,6 +158,7 @@ func validateInventoryPatch(current AssetRow, patch AssetPatch) error {
 		name    string
 		changed bool
 	}{
+		{name: "类型", changed: patch.Kind != nil && *patch.Kind != current.Kind},
 		{name: "分组", changed: inventoryOptionalChanged(current.GroupID, patch.GroupID)},
 		{name: "名称", changed: patch.Name != nil && strings.TrimSpace(*patch.Name) != current.Name},
 		{name: "主机", changed: inventoryOptionalChanged(current.Host, patch.Host)},
