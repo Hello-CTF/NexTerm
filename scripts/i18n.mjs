@@ -12,6 +12,8 @@
 //   node scripts/i18n.mjs chunks <kind> <size> <dir> [--locale <locale>]
 //                                                     untranslated keys with a file that uses each, in numbered files
 //   node scripts/i18n.mjs wrap [--dry] <file|dir>...  wrap Chinese JSX text and string literals in t()
+//   node scripts/i18n.mjs join [--dry] <file|dir>...  fold JSX runs of t() text and string or number values into
+//                                                     one t() call with placeholders
 //
 // Kinds: ui is the frontend's t() keys; server is the backend's Chinese string literals (Go format strings).
 import fs from "node:fs";
@@ -418,6 +420,16 @@ function paramName(expression, used) {
   return name;
 }
 
+const JSX_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0", hellip: "…", middot: "·", mdash: "—", ndash: "–", times: "×", rarr: "→", larr: "←" };
+
+// decodeJsxEntities turns the HTML entities JSX text may hold into the characters JSX shows.
+function decodeJsxEntities(text) {
+  return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (whole, name) => {
+    if (name[0] === "#") return String.fromCodePoint(name[1] === "x" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10));
+    return JSX_ENTITIES[name] ?? whole;
+  });
+}
+
 function jsxDisplayText(raw) {
   // JSX joins the lines of a text node with single spaces and drops lines that are only whitespace.
   const lines = raw.split(/\r?\n/);
@@ -475,7 +487,7 @@ function wrapFile(file, dry) {
     if (ts.isJsxText(node)) {
       if (!CJK.test(node.text)) return;
       const raw = node.getFullText();
-      const display = jsxDisplayText(raw);
+      const display = decodeJsxEntities(jsxDisplayText(raw));
       if (!display) return;
       const leading = raw.match(/^\s*/)[0];
       const trailing = raw.slice(leading.length).match(/\s*$/)[0];
@@ -537,6 +549,126 @@ function wrapFile(file, dry) {
   return { file, count: edits.length, skipped, review };
 }
 
+// ---------- join ----------
+
+// JSX that mixes text and values was wrapped one text node at a time, so a sentence became fragments. joinJsxFile
+// folds each run of t() text and string or number values inside one element into a single t() call with
+// placeholders. Values whose type may be anything else (an element, undefined) stop a run, since t() would print them.
+function loadProgram(files, configPath) {
+  const config = ts.readConfigFile(configPath, ts.sys.readFile);
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath));
+  return ts.createProgram({ rootNames: files, options: { ...parsed.options, noEmit: true } });
+}
+
+function isTextType(type) {
+  if (type.isUnion()) return type.types.every(isTextType);
+  return (type.flags & (ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) !== 0;
+}
+
+function joinJsxFile(sf, checker, dry) {
+  const names = translatorNames(sf);
+  if (names.size === 0) return 0;
+  const fn = [...names][0];
+  const text = sf.getFullText();
+  const edits = [];
+  const literalCall = (expression) =>
+    expression && ts.isCallExpression(expression) && ts.isIdentifier(expression.expression) && names.has(expression.expression.text) &&
+    expression.arguments.length === 1 && ts.isStringLiteral(expression.arguments[0]) ? expression.arguments[0].text : null;
+
+  const classify = (child) => {
+    if (ts.isJsxText(child)) {
+      const raw = child.getFullText();
+      return { kind: "text", node: child, value: decodeJsxEntities(/\n/.test(raw) ? jsxDisplayText(raw) : raw) };
+    }
+    if (ts.isJsxExpression(child)) {
+      if (!child.expression) return { kind: "skip", node: child };
+      const literal = literalCall(child.expression);
+      if (literal !== null) return { kind: "t", node: child, value: literal };
+      if (ts.isCallExpression(child.expression) || ts.isJsxElement(child.expression) || ts.isJsxSelfClosingElement(child.expression)) {
+        if (!isTextType(checker.getTypeAtLocation(child.expression))) return { kind: "break", node: child };
+      }
+      if (isTextType(checker.getTypeAtLocation(child.expression))) return { kind: "value", node: child };
+    }
+    return { kind: "break", node: child };
+  };
+
+  const flush = (run) => {
+    while (run.length > 0 && (run[0].kind === "text" || run[0].kind === "skip")) run.shift();
+    while (run.length > 0 && (run[run.length - 1].kind === "text" || run[run.length - 1].kind === "skip")) run.pop();
+    const ts_ = run.filter((item) => item.kind === "t").length;
+    const values = run.filter((item) => item.kind === "value").length;
+    if (ts_ === 0 || (values === 0 && ts_ < 2)) return;
+    if (run.some((item) => item.kind === "skip")) return;
+    const used = new Set();
+    let key = "";
+    const params = [];
+    for (const item of run) {
+      if (item.kind === "text" || item.kind === "t") key += item.value;
+      else {
+        const expression = item.node.expression;
+        const name = paramName(expression, used);
+        const source = expression.getText();
+        params.push(source === name ? name : `${name}: ${source}`);
+        key += `{${name}}`;
+      }
+    }
+    if (!CJK.test(key)) return;
+    const start = run[0].node.getStart();
+    const end = run[run.length - 1].node.getEnd();
+    const call = `${fn}(${JSON.stringify(key)}${params.length ? `, { ${params.join(", ")} }` : ""})`;
+    edits.push({ start, end, text: `{${call}}` });
+    if (process.env.I18N_JOIN_SHOW) console.log(`  ${call}`);
+  };
+
+  const visit = (node) => {
+    if (ts.isJsxElement(node) || ts.isJsxFragment(node)) {
+      let run = [];
+      for (const child of node.children) {
+        const item = classify(child);
+        if (item.kind === "break") {
+          flush(run);
+          run = [];
+        } else {
+          run.push(item);
+        }
+      }
+      flush(run);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (edits.length === 0) return 0;
+  // Runs never nest (a run holds no elements), so the edits do not overlap.
+  if (!dry) fs.writeFileSync(sf.fileName, applyEdits(text, 0, edits));
+  return edits.length;
+}
+
+function joinJsxFiles(files, configPath, dry) {
+  const program = loadProgram(files, configPath);
+  const checker = program.getTypeChecker();
+  let total = 0;
+  for (const file of files) {
+    const sf = program.getSourceFile(file);
+    if (!sf) continue;
+    const count = joinJsxFile(sf, checker, dry);
+    if (count > 0) console.log(`${path.relative(ROOT, file)}: ${count} joined`);
+    total += count;
+  }
+  console.log(`i18n: ${dry ? "would join" : "joined"} ${total} runs in ${files.length} files`);
+  return total;
+}
+
+function join(args) {
+  const dry = args.includes("--dry");
+  const targets = args.filter((arg) => arg !== "--dry");
+  if (targets.length === 0) die("join needs files or directories");
+  const files = targets.flatMap((target) => {
+    const full = path.resolve(target);
+    return fs.statSync(full).isDirectory() ? walk(full, isTsSource) : [full];
+  }).filter((file) => file.endsWith(".tsx"));
+  joinJsxFiles(files, path.join(ROOT, "tsconfig.json"), dry);
+}
+
 function wrap(args) {
   const dry = args.includes("--dry");
   const targets = args.filter((arg) => arg !== "--dry");
@@ -565,7 +697,7 @@ function wrap(args) {
   }
 }
 
-export { wrapFile, entryProblems };
+export { wrapFile, entryProblems, joinJsxFiles };
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 const [commandName, ...rest] = isMain ? process.argv.slice(2) : [null];
@@ -578,5 +710,6 @@ if (isMain) switch (commandName) {
   case "chunks": chunks(rest); break;
   case "validate": validate(rest); break;
   case "wrap": wrap(rest); break;
+  case "join": join(rest); break;
   default: die("usage: node scripts/i18n.mjs check|status|sync|missing|merge|wrap (see the header)");
 }
