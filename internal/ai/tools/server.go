@@ -708,7 +708,7 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if args.Cursor != "" && args.SinceSeq > 0 {
 		return Fail(invalid("cursor 与 since_seq 不能同时使用"))
 	}
-	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
+	tabID, err := r.resolveReadableTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}
@@ -1712,7 +1712,7 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		}
 		return r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
 	}
-	tabID, err := r.resolveTab(ctx, jobID, scope, args.TabID)
+	tabID, err := r.resolveReadableTab(ctx, jobID, scope, args.TabID)
 	if err != nil {
 		return Fail(err)
 	}

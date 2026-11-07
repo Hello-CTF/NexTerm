@@ -29,7 +29,7 @@ var (
 	ErrReadRequired         = errors.New("写入前必须先使用 read_file 成功读取目标；新文件需先用 read_file 确认不存在")
 	ErrFileChanged          = errors.New("文件在读取或确认后已变化，请重新读取并生成差异")
 	ErrInvalidToolCall      = errors.New("工具参数无效")
-	ErrCrossScope           = errors.New("终端目标不属于当前 AI 会话范围")
+	ErrCrossScope           = errors.New("终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取")
 	ErrTerminalInputChanged = errors.New("终端输入在确认后已变化，请重新评估")
 	ErrQuestionRequired     = errors.New("需要用户回答")
 	ErrDockerUnavailable    = errors.New("Docker 服务未配置")

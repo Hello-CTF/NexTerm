@@ -1,8 +1,12 @@
 import type { ChatItem } from "./conversation";
+import { splitUserRefs } from "./userRefs";
 
 export function searchableTextOf(item: ChatItem): string {
   switch (item.role) {
-    case "user":
+    case "user": {
+      const { refs, body } = splitUserRefs(item.text);
+      return [...refs, body].join("\n");
+    }
     case "assistant":
     case "reasoning":
     case "plan":

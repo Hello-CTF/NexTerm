@@ -48,6 +48,9 @@ type Runner struct {
 	// sessionMemory keeps "本会话允许" approvals across the runs of one
 	// conversation and one target; see conversationMemory.
 	sessionMemory sync.Map
+	// referencedTabs keeps each conversation's @-referenced terminals; see
+	// referencedTabSet.
+	referencedTabs sync.Map
 }
 
 // conversationMemory returns the session approvals shared by every run of the

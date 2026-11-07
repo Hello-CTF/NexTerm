@@ -36,9 +36,26 @@ type MessageDTO struct {
 	CreatedAt      int64  `json:"createdAt"`
 }
 
+// stripReferencePrefix drops the "[引用]" list the chat composer puts before
+// a message with @ references, so a title describes what the user asked.
+func stripReferencePrefix(message string) string {
+	lines := strings.Split(message, "\n")
+	if len(lines) < 3 || lines[0] != "[引用]" {
+		return message
+	}
+	index := 1
+	for index < len(lines) && strings.HasPrefix(lines[index], "- ") {
+		index++
+	}
+	if index == 1 || index >= len(lines) || lines[index] != "" {
+		return message
+	}
+	return strings.Join(lines[index+1:], "\n")
+}
+
 func AutoTitle(message string) string {
 	line := ""
-	for _, candidate := range strings.FieldsFunc(message, func(r rune) bool { return r == '\r' || r == '\n' }) {
+	for _, candidate := range strings.FieldsFunc(stripReferencePrefix(message), func(r rune) bool { return r == '\r' || r == '\n' }) {
 		if strings.TrimSpace(candidate) != "" {
 			line = candidate
 			break

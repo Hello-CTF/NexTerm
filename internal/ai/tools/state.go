@@ -26,7 +26,10 @@ type jobState struct {
 	todos        []TodoItem
 	plan         string
 	createdTabs  map[string]string
-	lastInput    map[string]terminalInputState
+	// referencedTabs maps tabs the user @-referenced to the session each was
+	// bound to when granted; they are read-only targets for this job.
+	referencedTabs map[string]string
+	lastInput      map[string]terminalInputState
 	// assetOperations maps a call ID to the asset identities it executed
 	// under and the session its explicit connect established: the stable
 	// operation→identity mapping a later retry adjudicates before
@@ -112,6 +115,22 @@ func (s *jobState) createdTab(tabID string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sessionID, ok := s.createdTabs[tabID]
+	return sessionID, ok
+}
+
+func (s *jobState) rememberReferencedTab(tabID, sessionID string) {
+	s.mu.Lock()
+	if s.referencedTabs == nil {
+		s.referencedTabs = make(map[string]string)
+	}
+	s.referencedTabs[tabID] = sessionID
+	s.mu.Unlock()
+}
+
+func (s *jobState) referencedTab(tabID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sessionID, ok := s.referencedTabs[tabID]
 	return sessionID, ok
 }
 

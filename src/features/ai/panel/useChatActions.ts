@@ -10,7 +10,7 @@ import type { AgentApprovalDecision, AgentRosterEntry, AgentToolCall } from "../
 import { createAgentRosterApi } from "../agentProduction";
 import { useAgentRosterSnapshot, refreshAgentRosterSnapshot } from "../agentRosterSnapshot";
 import { runSummaryFromAttempt, buildAgentToolCall, approvalFromConfirmCard } from "../agentToolData";
-import { type RefChip, latestPlanApproved, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
+import { type RefChip, splitUserRefs, latestPlanApproved, PLAN_EXECUTE_MESSAGE, CONFIRM_RESOLUTION, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
 import type { UseChatRunRecoveryOut } from "./useChatRunRecovery";
@@ -49,7 +49,7 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     setRefs([]);
     setAtOpen(false);
     setImages([]);
-    stream.appendUser(run.generation, message, sentImages.length);
+    stream.appendUser(run.generation, composeMessage(message, sentRefs), sentImages.length);
 
     let channelDisposed = false;
     const channel = createAiChannel((ev) => {
@@ -90,7 +90,8 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       const payloadRefs = sentRefs.map((r) => ({
         kind: r.kind,
         id: r.refId,
-        label: r.label,
+        // Terminal titles repeat across hosts; the detail names the host and workspace.
+        label: r.kind === "tab" ? `${r.label}（${r.detail}）` : r.label,
         path: r.path,
         sessionId: r.sessionId,
         text: r.text,
@@ -161,10 +162,14 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       pushToast("info", "终端接管期间不支持追加指令");
       return;
     }
+    if (refs.length > 0) {
+      pushToast("info", "回答过程中追加的指令不支持引用，请先移除引用，或在回答结束后发送");
+      return;
+    }
     if (permOpen) setPermOpen(false);
-    const text = composeMessage(message, refs);
+    const text = message;
     setInput("");
-    const itemId = stream.appendSteer(target.generation, message);
+    const itemId = stream.appendSteer(target.generation, text);
     try {
       await aiApi.steer(jobId, text);
     } catch (e) {
@@ -215,7 +220,9 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
       ? undefined
       : conv.attempts.find((attempt) => attempt.generation === item.attempt)?.jobId;
     const planMode = conversationRuns.find((run) => run.id === jobId)?.planMode ?? false;
-    void send({ message: source.text, images: [], refs: [], planMode });
+    const { refs: droppedRefs, body } = splitUserRefs(source.text);
+    if (droppedRefs.length > 0) pushToast("info", `原消息的 ${droppedRefs.length} 个引用无法自动恢复，如需引用请重新 @ 添加后发送`);
+    void send({ message: body, images: [], refs: [], planMode });
   };
   const retryRunRef = useRef(retryRun);
   retryRunRef.current = retryRun;
@@ -227,7 +234,9 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
   const startEditResend = (item: ChatItem) => {
     if (item.role !== "user" || !item.messageId) return;
     setEditing({ itemId: item.id, messageId: item.messageId });
-    setInput(item.text);
+    const { refs: droppedRefs, body } = splitUserRefs(item.text);
+    setInput(body);
+    if (droppedRefs.length > 0) pushToast("info", `原消息的 ${droppedRefs.length} 个引用不会随编辑保留，如需引用请重新 @ 添加`);
     setAtOpen(false);
     inputRef.current?.focus();
   };
@@ -256,10 +265,11 @@ export function useChatActions(p: AiChatBase & UseChatRunSessionOut & UseChatPan
     }
     try {
       const current = activeRunRef.current;
-      if (current && !current.settled) {
-        setActiveRun(settleAiRun(current));
-        stream.cancelRun(current.generation, false);
-        clearResyncState(current.generation);
+      if (current && (!current.settled || current.cancellation !== "idle")) {
+        // The edited message supersedes this run: settle it as finished so a pending stop
+        // request resolves now instead of timing out during the new run.
+        if (!current.settled) stream.cancelRun(current.generation, false);
+        settleRestoredRun(current.generation);
       }
       setBusy(false);
       const live = runChannelRef.current;

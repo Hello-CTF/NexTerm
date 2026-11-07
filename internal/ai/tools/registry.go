@@ -1130,7 +1130,7 @@ func (r *Registry) executeTool(ctx context.Context, jobID string, scope Scope, c
 	case "terminal_rename":
 		return r.terminalRename(ctx, jobID, scope, call.Args)
 	case "terminal_list":
-		return r.terminalList(ctx, scope, call.Args)
+		return r.terminalList(ctx, jobID, scope, call.Args)
 	case "operation_result":
 		return r.operationResult(ctx, scope, call.Args)
 	case "wait_for":

@@ -615,9 +615,9 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 var modelStaticText = map[string]string{
 	"写入前必须先使用 read_file 成功读取目标；新文件需先用 read_file 确认不存在": "before writing, read the target successfully with read_file; for a new file, first use read_file to confirm it does not exist",
 	"文件在读取或确认后已变化，请重新读取并生成差异":                          "file changed after it was read or confirmed; read it again and regenerate the diff",
-	"工具参数无效":                          "invalid tool arguments",
-	"终端目标不属于当前 AI 会话范围":               "terminal target is outside the current AI conversation scope",
-	"终端输入在确认后已变化，请重新评估":               "terminal input changed after confirmation; evaluate it again",
+	"工具参数无效": "invalid tool arguments",
+	"终端目标不属于当前 AI 会话范围：可读写当前标签页、terminal_list 中未标记的句柄和本轮 terminal_create 创建的终端；其他连接的终端需用户在输入框用 @ 引用，引用后只能用 read_screen/wait_for 读取": "terminal target is outside the current AI conversation scope: the current tab, unmarked handles from terminal_list, and terminals created by terminal_create in this run can be read and written; terminals on other connections must be @-referenced by the user in the input box and can then only be read with read_screen/wait_for",
+	"终端输入在确认后已变化，请重新评估": "terminal input changed after confirmation; evaluate it again",
 	"需要用户回答":                          "user answer required",
 	"Docker 服务未配置":                    "Docker service is not configured",
 	"操作失败（原因未记录），请重试":                 "operation failed for an unrecorded reason; try again",

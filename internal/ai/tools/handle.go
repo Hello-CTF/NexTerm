@@ -121,7 +121,11 @@ func (r *Registry) ResolveCallTarget(ctx context.Context, jobID string, scope Sc
 	default:
 		return TerminalHandle{}, false
 	}
-	tabID, err := r.resolveTab(ctx, jobID, scope, requested)
+	resolve := r.resolveTab
+	if readOnlyTerminalTool(call.Name) {
+		resolve = r.resolveReadableTab
+	}
+	tabID, err := resolve(ctx, jobID, scope, requested)
 	if err != nil {
 		return TerminalHandle{}, false
 	}
@@ -137,7 +141,7 @@ const (
 	terminalListMaxLimit     = 200
 )
 
-func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Output {
+func (r *Registry) terminalList(ctx context.Context, jobID string, scope Scope, raw []byte) Output {
 	var args struct {
 		Cursor string `json:"cursor"`
 		Limit  int    `json:"limit"`
@@ -195,6 +199,16 @@ func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Ou
 	if hidden > 0 {
 		fmt.Fprintf(&output, "\n另有 %d 个已退出标签页已隐藏，可用 include_exited=true 查看", hidden)
 	}
+	state := r.state(jobID)
+	outside := false
+	for _, tab := range page {
+		if access := terminalAccess(state, scope, tab); access == "outside_scope" {
+			outside = true
+		}
+	}
+	if outside {
+		output.WriteString("\n标记 outside_scope 的终端不在当前 AI 会话范围，无法读写；需用户在输入框用 @ 引用后才能读取。标记 read_only 的终端已被用户 @ 引用，只能用 read_screen/wait_for 读取")
+	}
 	for _, tab := range page {
 		line := "\n" + tab.Handle
 		fmt.Fprintf(&output, "%s kind=%s", line, orUnknown(tab.Kind))
@@ -213,8 +227,27 @@ func (r *Registry) terminalList(ctx context.Context, scope Scope, raw []byte) Ou
 		if tab.Exited {
 			output.WriteString(" exited")
 		}
+		if access := terminalAccess(state, scope, tab); access != "" {
+			output.WriteString(" " + access)
+		}
 	}
 	return Output{OK: true, Text: output.String(), Terminals: append([]TerminalBrief(nil), page...)}
+}
+
+// terminalAccess labels how the current job may address a listed tab: empty
+// for read-write targets (the current session or a tab this job created),
+// read_only for @-referenced tabs, outside_scope otherwise.
+func terminalAccess(state *jobState, scope Scope, tab TerminalBrief) string {
+	if scope.SessionID != "" && tab.SessionID == scope.SessionID {
+		return ""
+	}
+	if sessionID, ok := state.createdTab(tab.TabID); ok && sessionID == tab.SessionID {
+		return ""
+	}
+	if sessionID, ok := state.referencedTab(tab.TabID); ok && sessionID == tab.SessionID {
+		return "read_only"
+	}
+	return "outside_scope"
 }
 
 func orUnknown(value string) string {

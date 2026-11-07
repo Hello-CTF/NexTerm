@@ -15,7 +15,7 @@ import type { AiChatCtx } from "./aiChatCtx";
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const privacyGuard = usePrivacyGuard();
   const imageNoticeSeen = usePrivacyImageNoticeSeen();
-  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, refCandidates, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen } = ctx;
+  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen } = ctx;
   // Images are sent unchanged under the guard; tell the user once per device.
   const imageNoticeVisible = privacyGuard.enabled && images.length > 0 && !imageNoticeSeen;
   const sendMessage = () => {
@@ -229,18 +229,25 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           </div>
         )}
 
-        {atOpen && refCandidates.length > 0 && (
-          <div className="mb-1.5 max-h-40 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1">
-            {refCandidates.map((r) => (
-              <button
-                key={r.id}
-                className="nx-menu-item w-full"
-                onClick={() => pickRef(r)}
-              >
-                <span className="nx-menu-label">{r.label}</span>
-                <span className="nx-menu-hint">{r.detail}</span>
-              </button>
-            ))}
+        {atOpen && (
+          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label="引用">
+            {atItems.length === 0 ? (
+              <div className="px-2 py-1.5 text-[11.5px] text-neutral-500">无匹配的终端或文件</div>
+            ) : (
+              atItems.map((r, index) => (
+                <button
+                  key={r.id}
+                  role="option"
+                  aria-selected={index === atIndex}
+                  className={`nx-menu-item w-full ${index === atIndex ? "bg-neutral-800/70" : ""}`}
+                  onMouseEnter={() => setAtIndex(index)}
+                  onClick={() => pickRef(r)}
+                >
+                  <span className="nx-menu-label truncate">{r.label}</span>
+                  <span className="nx-menu-hint truncate">{r.detail}</span>
+                </button>
+              ))
+            )}
           </div>
         )}
 
@@ -272,6 +279,19 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               if ((e.key === "Enter" && !e.shiftKey && !isImeKeyEvent(e)) || e.key === "Tab") {
                 e.preventDefault();
                 slashItems[Math.min(slashIndex, slashItems.length - 1)].run();
+                return;
+              }
+            }
+            if (atOpen && atItems.length > 0) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setAtIndex((index) => (index + step + atItems.length) % atItems.length);
+                return;
+              }
+              if ((e.key === "Enter" && !e.shiftKey && !isImeKeyEvent(e)) || e.key === "Tab") {
+                e.preventDefault();
+                pickRef(atItems[Math.min(atIndex, atItems.length - 1)]);
                 return;
               }
             }
