@@ -39,6 +39,7 @@ type Options struct {
 	MutexFraction    int
 	BlockRate        time.Duration
 	Now              func() time.Time
+	HomeDir          string // rewritten to ~ in the log and args; empty uses the current user's home
 }
 
 func DefaultOptions() Options {
@@ -102,6 +103,9 @@ func Start(ctx context.Context, paths platform.Paths, logger *applog.Logger, inf
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	if o.HomeDir == "" {
+		o.HomeDir = userHome()
+	}
 	if markerErr != nil {
 		return nil, markerErr
 	}
@@ -142,7 +146,7 @@ func Start(ctx context.Context, paths platform.Paths, logger *applog.Logger, inf
 	s.events = newEventAggregator(s.eventFile, o.Now)
 	s.ipc = newIPCAggregator()
 	if logger != nil {
-		s.detachTee = logger.AttachDebugTee(&capWriter{s: s, w: s.logFile})
+		s.detachTee = logger.AttachDebugTee(&capWriter{s: s, w: newHomeScrubber(s.logFile, o.HomeDir)})
 	}
 	if o.MutexFraction > 0 {
 		s.prevMutex = runtime.SetMutexProfileFraction(o.MutexFraction)
@@ -215,7 +219,7 @@ func (s *Session) writeMeta(start time.Time, info Info) error {
 	fmt.Fprintf(&b, "num_cpu: %d\n", runtime.NumCPU())
 	fmt.Fprintf(&b, "start_utc: %s\n", start.Format(time.RFC3339))
 	fmt.Fprintf(&b, "trigger: %s\n", info.Source)
-	fmt.Fprintf(&b, "args: %s\n", strings.Join(sanitizeArgs(info.Args), " "))
+	fmt.Fprintf(&b, "args: %s\n", string(scrubHome(homePattern(s.opts.HomeDir), []byte(strings.Join(sanitizeArgs(info.Args), " ")))))
 	o := s.opts
 	fmt.Fprintf(&b, "settings: cpu_first=%s cpu_later_at=%s cpu_later=%s trace=%s goroutine_fast=%s/%s goroutine_slow=%s profile_every=%s stats_every=%s max_duration=%s max_bytes=%d mutex_fraction=%d block_rate=%s\n",
 		o.CPUFirst, o.CPULaterAt, o.CPULater, o.TraceFor, o.GoroutineFast, o.GoroutineFastFor, o.GoroutineSlow, o.ProfileEvery, o.StatsEvery, o.MaxDuration, o.MaxBytes, o.MutexFraction, o.BlockRate)
@@ -230,7 +234,7 @@ const filesLegend = `files:
   frontend-perf.jsonl: performance windows reported by the web view
   ipc-summary.json: written at stop; per IPC command count, errors, total/p50/p95/max ms, byte totals and the slowest calls
   cpu-*.pprof, trace-first-20s.out, profiles/, goroutines/: Go profiles and goroutine dumps
-  only names, counts, sizes and durations are recorded; never arguments, results, terminal bytes, commands, hosts or paths
+  only names, counts, sizes and durations are recorded; never arguments, results, terminal bytes, commands or hosts; the home directory in logged paths is written as ~
 `
 
 // sanitizeArgs masks connection strings and anything the log redactor recognises; the environment is never read.
