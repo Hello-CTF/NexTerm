@@ -3408,6 +3408,7 @@ export type TranscriptHostSearchResult = {
   scannedSessions: number;
   scannedBytes: number;
   truncated: boolean;
+  unreadableSessions: number;
 };
 
 export type TranscriptHostSessionDTO = {

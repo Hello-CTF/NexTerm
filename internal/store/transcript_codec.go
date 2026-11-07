@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -214,10 +215,14 @@ func transcriptWrite(writer io.Writer, data []byte) error {
 	return nil
 }
 
+// ErrTranscriptFormat marks a stored transcript block that cannot be decoded: a raw chunk written before
+// compression, or damaged data.
+var ErrTranscriptFormat = errors.New("transcript block format")
+
 func transcriptFormatError(err error) error {
 	const message = "会话记录格式不受支持或数据已损坏"
 	if err == nil {
-		return ipc.NewError(ipc.CodeUnsupported, message)
+		return ipc.WrapError(ipc.CodeUnsupported, message, ErrTranscriptFormat)
 	}
-	return ipc.WrapError(ipc.CodeUnsupported, message, err)
+	return ipc.WrapError(ipc.CodeUnsupported, message, errors.Join(ErrTranscriptFormat, err))
 }

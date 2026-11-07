@@ -154,6 +154,16 @@ export function HostOutputSearch({ assetId }: { assetId: string }) {
           {t("已扫描 {scannedSessions} 个会话 / {value}，结果已截断，请缩小时间范围", { scannedSessions: result.scannedSessions, value: formatTranscriptBytes(result.scannedBytes) })}
         </div>
       )}
+      {result !== null && result.unreadableSessions > 0 && (
+        <div
+          role="status"
+          data-testid="output-search-unreadable"
+          className="flex items-center gap-2 rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-[12.5px] text-amber-300"
+        >
+          <IconAlert size={14} />
+          {t("有 {count} 个会话的记录无法读取（早期版本格式或数据已损坏），已跳过", { count: result.unreadableSessions })}
+        </div>
+      )}
       {loading && !result && <div role="status" className="text-[12px] text-neutral-500">{t("正在搜索…")}</div>}
       {result && result.sessions.length === 0 && !loading && (
         <div role="status" className="text-[12px] text-neutral-500">{t("没有匹配的输出")}</div>

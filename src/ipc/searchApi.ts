@@ -52,6 +52,8 @@ export interface TranscriptHostSearchResult {
   scannedSessions: number;
   scannedBytes: number;
   truncated: boolean;
+  // Sessions skipped because their recorded output cannot be decoded.
+  unreadableSessions: number;
 }
 
 export const commandSearchApi = {
@@ -118,6 +120,7 @@ export const transcriptHostSearchApi = {
       scannedSessions: result.scannedSessions,
       scannedBytes: result.scannedBytes,
       truncated: Boolean(result.truncated),
+      unreadableSessions: result.unreadableSessions ?? 0,
     };
   },
 };

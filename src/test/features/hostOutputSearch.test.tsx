@@ -226,6 +226,15 @@ describe("host output search tab", () => {
     expect(warning?.textContent).toContain("结果已截断，请缩小时间范围");
   });
 
+  it("says how many sessions were skipped as unreadable", async () => {
+    mocks.hostSearch.mockResolvedValue(result({ unreadableSessions: 2 }));
+    await openSearchTab();
+    await submit("error");
+    const notice = view().querySelector('[data-testid="output-search-unreadable"]');
+    expect(notice?.textContent).toContain("有 2 个会话的记录无法读取");
+    expect(view().querySelectorAll('[data-testid="output-search-session"]').length).toBeGreaterThan(0);
+  });
+
   it("shows empty and error states", async () => {
     mocks.hostSearch.mockResolvedValueOnce(result({ sessions: [] }));
     await openSearchTab();

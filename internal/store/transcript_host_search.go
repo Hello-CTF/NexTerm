@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
@@ -34,6 +35,8 @@ type TranscriptHostSearchResult struct {
 	ScannedSessions int
 	ScannedBytes    int64
 	Truncated       bool
+	// UnreadableSessions counts sessions skipped because their stored output cannot be decoded.
+	UnreadableSessions int
 }
 
 func (s *Store) TranscriptSearchHost(ctx context.Context, input TranscriptHostSearch) (TranscriptHostSearchResult, error) {
@@ -71,6 +74,11 @@ func (s *Store) TranscriptSearchHost(ctx context.Context, input TranscriptHostSe
 			break
 		}
 		matches, scanned, stop, err := s.scanTranscriptOutput(ctx, row.ID, input.Text, transcriptHostSearchMaxMatches, int(remaining))
+		if errors.Is(err, ErrTranscriptFormat) {
+			// One unreadable session must not hide the matches in the others.
+			result.UnreadableSessions++
+			continue
+		}
 		if err != nil {
 			return result, err
 		}

@@ -63,3 +63,32 @@ func TestTranscriptSearchHostMatchCapIsNotTruncation(t *testing.T) {
 		t.Fatalf("session must report more matches: sessions=%d", len(res.Sessions))
 	}
 }
+
+func TestTranscriptSearchHostSkipsUnreadableSessions(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	for _, id := range []string{"legacy", "current"} {
+		if err := db.TranscriptStart(ctx, TranscriptRow{ID: id, SessionID: "s-" + id, AssetID: "a", StartedAt: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A raw chunk as written before transcripts were compressed.
+	legacy := TranscriptChunkRow{TranscriptID: "legacy", Seq: 0, TabID: "t", TS: 1, Kind: TranscriptChunkKindOutput, Data: []byte("needle")}
+	if err := db.db.WithContext(ctx).Create(&legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.TranscriptAppendChunks(ctx, "current", []TranscriptChunkRow{{Seq: 0, TabID: "t", TS: 1, Data: []byte("needle\r\n")}}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.TranscriptSearchHost(ctx, TranscriptHostSearch{AssetID: "a", Text: []byte("needle")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UnreadableSessions != 1 || res.ScannedSessions != 1 || len(res.Sessions) != 1 || res.Sessions[0].Transcript.ID != "current" {
+		t.Fatalf("the unreadable session must be skipped and counted: %+v", res)
+	}
+}

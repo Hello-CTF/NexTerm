@@ -2563,6 +2563,7 @@
   "已执行「{name}」 · 控制字符可能已改变终端状态": "Ran \"{name}\" · control characters may have changed the terminal state",
   "已执行，但审计记录写入失败：{auditError}": "Executed, but writing the audit record failed: {auditError}",
   "已扫描 {scannedSessions} 个会话 / {value}，结果已截断，请缩小时间范围": "Scanned {scannedSessions} sessions / {value}. Results were truncated; narrow the time range.",
+  "有 {count} 个会话的记录无法读取（早期版本格式或数据已损坏），已跳过": "Skipped {count} sessions whose recordings cannot be read (an early version's format or corrupted data)",
   "已批准": "Approved",
   "已拒绝": "Denied",
   "已拒绝本次操作，未执行。": "This action was denied and not run.",

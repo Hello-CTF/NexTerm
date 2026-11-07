@@ -2572,6 +2572,7 @@
   "已执行「{name}」 · 控制字符可能已改变终端状态": "«{name}» ejecutado · Los caracteres de control pueden haber cambiado el estado del terminal",
   "已执行，但审计记录写入失败：{auditError}": "Ejecutado, pero falló el registro de auditoría: {auditError}",
   "已扫描 {scannedSessions} 个会话 / {value}，结果已截断，请缩小时间范围": "Se analizaron {scannedSessions} sesiones / {value}; el resultado se truncó, reduzca el intervalo de tiempo",
+  "有 {count} 个会话的记录无法读取（早期版本格式或数据已损坏），已跳过": "Se omitieron {count} sesiones cuyo registro no se puede leer (formato de una versión anterior o datos dañados)",
   "已批准": "Aprobado",
   "已拒绝": "Rechazado",
   "已拒绝本次操作，未执行。": "Se ha rechazado esta operación y no se ha ejecutado.",

@@ -52,6 +52,8 @@ type transcriptHostSearchResult struct {
 	ScannedSessions int                        `json:"scannedSessions"`
 	ScannedBytes    int64                      `json:"scannedBytes"`
 	Truncated       bool                       `json:"truncated"`
+	// UnreadableSessions counts sessions skipped because their recorded output cannot be decoded.
+	UnreadableSessions int `json:"unreadableSessions"`
 }
 
 func (s *terminalCommandService) registerSearch(dispatcher *ipc.Dispatcher) error {
@@ -94,6 +96,8 @@ func (s *terminalCommandService) registerSearch(dispatcher *ipc.Dispatcher) erro
 			ScannedSessions: found.ScannedSessions,
 			ScannedBytes:    found.ScannedBytes,
 			Truncated:       found.Truncated,
+
+			UnreadableSessions: found.UnreadableSessions,
 		}
 		for _, session := range found.Sessions {
 			matches := make([]transcriptMatchDTO, 0, len(session.Matches))
