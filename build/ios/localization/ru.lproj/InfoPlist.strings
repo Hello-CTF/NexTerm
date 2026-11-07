@@ -1,0 +1,3 @@
+/* Permission prompts shown by iOS in the system language. */
+"NSFaceIDUsageDescription" = "Используйте Face ID для быстрой разблокировки ключа данных NexTerm";
+"NSLocationWhenInUseUsageDescription" = "Встроенный веб-компонент может запросить доступ к геолокации; NexTerm сам не получает данные о вашем местоположении";

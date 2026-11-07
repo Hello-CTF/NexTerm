@@ -7,6 +7,7 @@ import type { AggregateRow } from "../../app/sessionAggregate";
 import { hideMobileHome } from "../../app/shell/mobileHome";
 import { describeError } from "../../ui/errorText";
 import { getLocalHelperStatus, localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
+import { t as tr } from "../../i18n";
 
 const COUNT_REFRESH_MS = 10_000;
 
@@ -361,7 +362,7 @@ export async function takeOverBackgroundTab(
     if (!current()) return { ok: false, canceled: true };
     const session = list.find((item) => item.id === info.sessionId);
     if (!session || session.status !== "connected") {
-      throw new Error("主机未连接，请先重新连接再接管");
+      throw new Error(tr("主机未连接，请先重新连接再接管"));
     }
     opts.guard?.(session);
     const st = useUi.getState();
@@ -411,7 +412,7 @@ export async function reattachLostTabs(storeTabIds: string[]): Promise<ReattachO
   for (const sessionId of new Set(targets.map((tab) => tab.sessionId as string))) {
     const session = useUi.getState().sessions.find((item) => item.id === sessionId);
     if (!session || session.status !== "connected") {
-      listings.set(sessionId, new Error("主机未连接，请先重新连接再接管"));
+      listings.set(sessionId, new Error(tr("主机未连接，请先重新连接再接管")));
       continue;
     }
     try {
@@ -423,18 +424,18 @@ export async function reattachLostTabs(storeTabIds: string[]): Promise<ReattachO
   for (const tab of targets) {
     const listing = listings.get(tab.sessionId as string);
     if (!listing || listing instanceof Error) {
-      fail(listing?.message ?? "主机未连接，请先重新连接再接管");
+      fail(listing?.message ?? tr("主机未连接，请先重新连接再接管"));
       continue;
     }
     const descriptor = listing.find((item) => item.id === tab.tabId);
     if (!descriptor || descriptor.dead) {
       useUi.getState().updateTab(tab.id, { durableLost: true });
-      fail("主机上已找不到该终端，进程可能已结束");
+      fail(tr("主机上已找不到该终端，进程可能已结束"));
       continue;
     }
     const session = useUi.getState().sessions.find((item) => item.id === tab.sessionId);
     if (!(await useUi.getState().closeTab(tab.id, "detach", true))) {
-      fail("无法关闭旧的终端标签页");
+      fail(tr("无法关闭旧的终端标签页"));
       continue;
     }
     const result = await takeOverBackgroundTab({
@@ -451,7 +452,7 @@ export async function reattachLostTabs(storeTabIds: string[]): Promise<ReattachO
       title: tab.title,
     });
     if (result.ok) outcome.taken += 1;
-    else fail("canceled" in result ? "已取消接管" : result.error);
+    else fail("canceled" in result ? tr("已取消接管") : result.error);
   }
   return outcome;
 }
@@ -501,10 +502,10 @@ async function aggregateConnection(
   }
   if (!session && host.deviceId && allowDevice) {
     const outcome = await connectDevice({ id: host.deviceId, name: host.name }, deviceOptions);
-    if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? "无法连接设备" };
+    if (!outcome.ok) return outcome.canceled ? { ok: false, canceled: true } : { ok: false, error: outcome.error ?? tr("无法连接设备") };
     session = aggregateHostSession(host, useUi.getState().sessions);
   }
-  if (!session) return { ok: false, error: "主机未连接，请先从资产树打开该主机" };
+  if (!session) return { ok: false, error: tr("主机未连接，请先从资产树打开该主机") };
   return { ok: true, session };
 }
 
@@ -547,9 +548,9 @@ export async function terminateAggregateSession(
 // unknownHostText says why a host's sessions are unknown right now, for a host the cross-host listing reports offline
 // or failed. A host whose helper is not running is only listed once a terminal there starts it.
 export function unknownHostText(status: Pick<AggregateHostStatus, "status" | "error" | "errorCode">): string {
-  if (status.errorCode === "helper_not_ready") return "会话状态未知：持久终端组件未运行，在该主机上打开终端后即可显示";
-  if (status.status === "offline") return "未连接，会话状态未知";
-  return `无法读取，会话状态未知${status.error ? `：${status.error}` : ""}`;
+  if (status.errorCode === "helper_not_ready") return tr("会话状态未知：持久终端组件未运行，在该主机上打开终端后即可显示");
+  if (status.status === "offline") return tr("未连接，会话状态未知");
+  return tr("无法读取，会话状态未知{value}", { value: status.error ? `：${status.error}` : "" });
 }
 
 export interface BackgroundHostGroup {

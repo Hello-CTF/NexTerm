@@ -31,6 +31,7 @@ import {
 } from "../lazyPanels";
 import { BrowserPane } from "../../features/browser/BrowserPane";
 import { EmptyState } from "./EmptyStates";
+import { t } from "../../i18n";
 
 // LazyDevicesView loads device management lazily: it reaches env through the auth store, and lazy loading keeps it out of the desktop test module graph.
 function LazyDevicesView() {
@@ -79,7 +80,7 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
         setBusy(false);
         return;
       }
-      state.addTab({ id: `background-${workspaceId}`, kind: "background", title: "后台会话", sessionId: workspace.sessionId, closable: true });
+      state.addTab({ id: `background-${workspaceId}`, kind: "background", title: t("后台会话"), sessionId: workspace.sessionId, closable: true });
       setBusy(false);
     });
   };
@@ -88,17 +89,17 @@ function RestoredTabPlaceholder({ tab, workspaceId }: { tab: AppTab; workspaceId
       <span>
         {tab.kind === "terminal"
           ? durableHost
-            ? "该终端尚未连接。选择「新开终端」将打开新的终端；如原为持久终端，可在「后台会话」中接管。"
-            : "原终端已结束。选择「新开终端」将打开新的终端。"
-          : "连接主机后才能打开此标签页。"}
+            ? t("该终端尚未连接。选择「新开终端」将打开新的终端；如原为持久终端，可在「后台会话」中接管。")
+            : t("原终端已结束。选择「新开终端」将打开新的终端。")
+          : t("连接主机后才能打开此标签页。")}
       </span>
       <div className="flex flex-wrap items-center justify-center gap-2">
         <button type="button" className="nx-btn nx-btn-outline" disabled={busy} onClick={reopen}>
-          {busy ? "正在连接…" : tab.kind === "terminal" ? "新开终端" : "连接并打开"}
+          {busy ? t("正在连接…") : tab.kind === "terminal" ? t("新开终端") : t("连接并打开")}
         </button>
         {durableHost && (
           <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={openBackground}>
-            查看后台会话
+            {t("查看后台会话")}
           </button>
         )}
       </div>
@@ -124,14 +125,14 @@ function RestoredWorkspacePlaceholder({ workspaceId }: { workspaceId: string }) 
     <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
       <span>
         {workspace.deletedTarget
-          ? `「${workspace.title}」的资产已删除，无法重新连接。`
+          ? t("「{title}」的资产已删除，无法重新连接。", { title: workspace.title })
           : workspace.kind === "remote"
-            ? `「${workspace.title}」的远程桌面已断开。应用重新加载后不会自动连接，需要时请手动重新连接。`
-            : `「${workspace.title}」尚未连接。连接后可新建终端${durableHost ? "，原有持久终端可在「后台会话」中接管" : ""}。`}
+            ? t("「{title}」的远程桌面已断开。应用重新加载后不会自动连接，需要时请手动重新连接。", { title: workspace.title })
+            : t("「{title}」尚未连接。连接后可新建终端{value}。", { title: workspace.title, value: durableHost ? t("，原有持久终端可在「后台会话」中接管") : "" })}
       </span>
       {!workspace.deletedTarget && (
         <button type="button" className="nx-btn nx-btn-outline" disabled={connecting} onClick={connect}>
-          {connecting ? "正在连接…" : "连接"}
+          {connecting ? t("正在连接…") : t("连接")}
         </button>
       )}
     </div>
@@ -186,8 +187,8 @@ export const PaneForTab = memo(function PaneForTab({
   if (tab.kind === "terminal" && tab.containerId && tab.restorePending) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-neutral-400">
-        <span>容器终端不会自动重新打开，请从容器列表重新进入。</span>
-        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>关闭标签页</button>
+        <span>{t("容器终端不会自动重新打开，请从容器列表重新进入。")}</span>
+        <button type="button" className="nx-btn nx-btn-outline" onClick={close}>{t("关闭标签页")}</button>
       </div>
     );
   }

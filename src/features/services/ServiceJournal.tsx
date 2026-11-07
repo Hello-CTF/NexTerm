@@ -18,6 +18,7 @@ import {
   MergedLogBuffer,
   regexErrorNotice,
 } from "../logs/mergedLog";
+import { t } from "../../i18n";
 
 const JOURNAL_CAPACITY = 5000;
 
@@ -117,26 +118,26 @@ export function ServiceJournal({
   });
 
   return (
-    <section className="flex min-h-[320px] flex-1 flex-col border-t border-neutral-800/70" aria-label={`服务 journal ${unit}`}>
+    <section className="flex min-h-[320px] flex-1 flex-col border-t border-neutral-800/70" aria-label={t("服务 journal {unit}", { unit })}>
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
         <strong className="min-w-0 truncate text-[12px] text-neutral-200" title={unit}>journal：{unit}</strong>
         <span className={`text-[11px] ${status === "failed" ? "text-red-300" : "text-neutral-500"}`}>{LOG_STATUS_LABELS[status]}</span>
         <span className="nx-spacer" />
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭 journal" title="关闭 journal" onClick={onClose}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭 journal")} title={t("关闭 journal")} onClick={onClose}>
           <IconClose size={12} />
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800/70 px-3 py-2">
-        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-52 sm:flex-none" value={include} placeholder="只显示匹配的行（正则表达式）" aria-label="journal 包含正则" onChange={(event) => setInclude(event.target.value)} />
-        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-44 sm:flex-none" value={exclude} placeholder="隐藏匹配的行（正则表达式）" aria-label="journal 排除正则" onChange={(event) => setExclude(event.target.value)} />
+        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-52 sm:flex-none" value={include} placeholder={t("只显示匹配的行（正则表达式）")} aria-label={t("journal 包含正则")} onChange={(event) => setInclude(event.target.value)} />
+        <input className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono sm:w-44 sm:flex-none" value={exclude} placeholder={t("隐藏匹配的行（正则表达式）")} aria-label={t("journal 排除正则")} onChange={(event) => setExclude(event.target.value)} />
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={paused} onClick={() => {
           const next = !paused;
           bufferRef.current.setPaused(next);
           setPaused(next);
           setRevision((current) => current + 1);
-        }}>{paused ? "继续显示" : "暂停显示"}</button>
-        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={wrap} onClick={() => setWrap((current) => !current)}>自动换行</button>
-        <span className="nx-hint">保留 {bufferRef.current.retainedLines().length} / {JOURNAL_CAPACITY} · 丢弃 {bufferRef.current.droppedCount}</span>
+        }}>{paused ? t("继续显示") : t("暂停显示")}</button>
+        <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" aria-pressed={wrap} onClick={() => setWrap((current) => !current)}>{t("自动换行")}</button>
+        <span className="nx-hint">{t("保留 {length} / {JOURNAL_CAPACITY} · 丢弃 {droppedCount}", { length: bufferRef.current.retainedLines().length, JOURNAL_CAPACITY, droppedCount: bufferRef.current.droppedCount })}</span>
       </div>
       {filters.error && <div role="alert" className="px-3 py-1 text-[11px] text-amber-300">{regexErrorNotice(filters.error)}</div>}
       {error && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{error}</div>}
@@ -144,7 +145,7 @@ export function ServiceJournal({
         <div
           ref={logRef}
           role="log"
-          aria-label="服务 journal 内容"
+          aria-label={t("服务 journal 内容")}
           data-wrap={wrap ? "true" : "false"}
           className="min-h-0 flex-1 overflow-auto overscroll-contain bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]"
           onScroll={(event) => {
@@ -154,7 +155,7 @@ export function ServiceJournal({
           }}
         >
           {lines.length === 0 ? (
-            <div className="px-2 py-4 text-center text-[11px] text-neutral-500">等待 journal 输出…</div>
+            <div className="px-2 py-4 text-center text-[11px] text-neutral-500">{t("等待 journal 输出…")}</div>
           ) : lines.map((line) => (
             <div key={line.sequence} className={`flex gap-2 rounded px-1 ${wrap ? "min-w-0" : "min-w-max"}`}>
               <span className={`shrink-0 select-none ${hostColor(line.sessionId)}`}>[{line.host}]</span>
@@ -169,7 +170,7 @@ export function ServiceJournal({
         {!follow && lines.length > 0 && (
           <button type="button" className="nx-btn nx-btn-primary nx-btn-sm absolute right-3 bottom-3 min-h-9 shadow-lg" onClick={() => setFollow(true)}>
             <IconChevronDown size={13} />
-            跳到最新
+            {t("跳到最新")}
           </button>
         )}
       </div>

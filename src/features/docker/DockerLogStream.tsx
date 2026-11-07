@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { copyText } from "../../ui/clipboard";
 import { IconCopy, IconPlay, IconSearch } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export interface DockerBinarySink {
   onBytes: ((bytes: Uint8Array) => void) | null;
@@ -23,7 +24,7 @@ export function createLogLineDecoder() {
   };
 }
 
-export function DockerLogStream({ sink, ariaLabel = "容器日志" }: { sink: DockerBinarySink; ariaLabel?: string }) {
+export function DockerLogStream({ sink, ariaLabel = t("容器日志") }: { sink: DockerBinarySink; ariaLabel?: string }) {
   const [lines, setLines] = useState<string[]>([]);
   const [newOutput, setNewOutput] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
@@ -100,8 +101,8 @@ export function DockerLogStream({ sink, ariaLabel = "容器日志" }: { sink: Do
             className="nx-input nx-input-sm min-w-0 font-mono"
             type="search"
             enterKeyHint="search"
-            placeholder="过滤日志"
-            aria-label="过滤日志"
+            placeholder={t("过滤日志")}
+            aria-label={t("过滤日志")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -113,13 +114,13 @@ export function DockerLogStream({ sink, ariaLabel = "容器日志" }: { sink: Do
           onClick={() => setFrozen((cur) => (cur === null ? lines.length : null))}
         >
           {frozen !== null && <IconPlay size={11} />}
-          {frozen !== null ? "继续" : "暂停"}
+          {frozen !== null ? t("继续") : t("暂停")}
         </button>
         <button
           type="button"
           className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9"
-          title="复制当前显示的日志"
-          aria-label="复制日志"
+          title={t("复制当前显示的日志")}
+          aria-label={t("复制日志")}
           disabled={visibleLines.length === 0}
           onClick={copyVisible}
         >
@@ -133,9 +134,9 @@ export function DockerLogStream({ sink, ariaLabel = "容器日志" }: { sink: Do
         className="min-h-0 flex-1 overflow-auto overscroll-contain bg-term px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-300 [overflow-wrap:anywhere] [padding-bottom:calc(0.5rem+var(--nx-safe-bottom,0px))]"
       >
         {lines.length === 0 ? (
-          <span className="text-neutral-500">等待日志…</span>
+          <span className="text-neutral-500">{t("等待日志…")}</span>
         ) : visibleLines.length === 0 ? (
-          <span className="text-neutral-500">没有匹配的日志行</span>
+          <span className="text-neutral-500">{t("没有匹配的日志行")}</span>
         ) : (
           visibleLines.map((line, index) => (
             <div key={index} className="whitespace-pre-wrap">
@@ -148,10 +149,10 @@ export function DockerLogStream({ sink, ariaLabel = "容器日志" }: { sink: Do
         <button
           type="button"
           className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3.5 py-1 text-[11px] pointer-coarse:min-h-10 pointer-coarse:px-4 pointer-coarse:text-xs text-neutral-200 shadow-lg hover:bg-neutral-700"
-          aria-label="回到最新日志"
+          aria-label={t("回到最新日志")}
           onClick={jumpToLatest}
         >
-          ↓ 新输出
+          {t("↓ 新输出")}
         </button>
       )}
     </div>

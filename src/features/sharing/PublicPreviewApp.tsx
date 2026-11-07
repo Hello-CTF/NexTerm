@@ -7,6 +7,7 @@ import {
   type PreviewSnapshot,
 } from "./previewApi";
 import { PublicShareTerminal, type PublicShareTerminalHandle } from "./PublicShareTerminal";
+import { t } from "../../i18n";
 
 type PreviewPhase =
   | { kind: "connecting" }
@@ -22,25 +23,25 @@ interface ErrorCopy {
 }
 
 const CONNECT_FAILED_COPY: ErrorCopy = {
-  title: "无法连接预览终端",
-  detail: "链接可能无效、已过期或已吊销，也可能是网络异常。请核对链接是否完整后重试。",
+  title: t("无法连接预览终端"),
+  detail: t("链接可能无效、已过期或已吊销，也可能是网络异常。请核对链接是否完整后重试。"),
   retryable: true,
 };
 
 function errorCopy(failure: PreviewFailure): ErrorCopy {
   switch (failure.code) {
     case "expired":
-      return { title: "预览链接已过期", detail: "请让分享者重新生成链接后再打开。", retryable: false };
+      return { title: t("预览链接已过期"), detail: t("请让分享者重新生成链接后再打开。"), retryable: false };
     case "revoked":
-      return { title: "预览链接已吊销", detail: "分享者已停止本次分享，可向其确认是否重新分享。", retryable: false };
+      return { title: t("预览链接已吊销"), detail: t("分享者已停止本次分享，可向其确认是否重新分享。"), retryable: false };
     case "not_found":
-      return { title: "预览链接无效", detail: "请核对链接是否完整，或向分享者确认预览状态。", retryable: false };
+      return { title: t("预览链接无效"), detail: t("请核对链接是否完整，或向分享者确认预览状态。"), retryable: false };
     case "ended":
-      return { title: "预览已结束", detail: "会话已被分享者关闭或退出。", retryable: false };
+      return { title: t("预览已结束"), detail: t("会话已被分享者关闭或退出。"), retryable: false };
     default:
       return {
-        title: failure.message || "预览暂时不可用",
-        detail: "请稍后刷新页面重试。",
+        title: failure.message || t("预览暂时不可用"),
+        detail: t("请稍后刷新页面重试。"),
         retryable: false,
       };
   }
@@ -50,7 +51,7 @@ function formatExpiry(expiresAt: number): string | null {
   if (!Number.isFinite(expiresAt) || expiresAt <= 0) return null;
   const date = new Date(expiresAt);
   if (Number.isNaN(date.getTime())) return null;
-  return `有效期至 ${date.toLocaleString()}`;
+  return t("有效期至 {toLocaleString}", { toLocaleString: date.toLocaleString() });
 }
 
 // snapshotEscape renders the current screen snapshot into a blank terminal: text lines spread from the top-left, then
@@ -63,10 +64,10 @@ function snapshotEscape(snapshot: PreviewSnapshot): string {
 }
 
 function controlBadge(writable: boolean, controlState: PreviewControlState): { text: string; tone: string } {
-  if (!writable) return { text: "只读", tone: "bg-sky-900/60 text-sky-300" };
-  if (controlState === "guest") return { text: "可控制", tone: "bg-emerald-900/60 text-emerald-300" };
-  if (controlState === "owner") return { text: "分享者控制中", tone: "bg-amber-900/60 text-amber-300" };
-  return { text: "另一访客控制中", tone: "bg-amber-900/60 text-amber-300" };
+  if (!writable) return { text: t("只读"), tone: "bg-sky-900/60 text-sky-300" };
+  if (controlState === "guest") return { text: t("可控制"), tone: "bg-emerald-900/60 text-emerald-300" };
+  if (controlState === "owner") return { text: t("分享者控制中"), tone: "bg-amber-900/60 text-amber-300" };
+  return { text: t("另一访客控制中"), tone: "bg-amber-900/60 text-amber-300" };
 }
 
 export function PublicPreviewApp({ token }: { token: string }) {
@@ -86,7 +87,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
   const showReadOnlyHint = useCallback((message: string) => {
     if (readOnlyHintedRef.current) return;
     readOnlyHintedRef.current = true;
-    setReadOnlyHint(message || "输入未被接受：当前没有控制权");
+    setReadOnlyHint(message || t("输入未被接受：当前没有控制权"));
     readOnlyHintTimerRef.current = window.setTimeout(() => {
       readOnlyHintTimerRef.current = null;
       setReadOnlyHint(null);
@@ -159,7 +160,7 @@ export function PublicPreviewApp({ token }: { token: string }) {
 
   const handleSelectionCopy = useCallback((text: string, error: unknown | null) => {
     if (copyHintTimerRef.current !== null) window.clearTimeout(copyHintTimerRef.current);
-    setCopyHint(error ? "复制失败，请长按或右键手动复制" : `已复制 ${text.length} 个字符`);
+    setCopyHint(error ? t("复制失败，请长按或右键手动复制") : t("已复制 {length} 个字符", { length: text.length }));
     copyHintTimerRef.current = window.setTimeout(() => {
       copyHintTimerRef.current = null;
       setCopyHint(null);
@@ -182,15 +183,15 @@ export function PublicPreviewApp({ token }: { token: string }) {
   return (
     <div className="flex h-dvh w-full flex-col overflow-hidden bg-[#101217] text-neutral-200">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-neutral-800 px-3 py-2">
-        <span className="text-sm font-medium text-neutral-100">NexTerm 预览</span>
+        <span className="text-sm font-medium text-neutral-100">{t("NexTerm 预览")}</span>
         {badge && <span className={`rounded-full px-2 py-0.5 text-xs ${badge.tone}`}>{badge.text}</span>}
         {expiry && <span className="text-xs text-neutral-500">{expiry}</span>}
       </header>
       {phase.kind === "live" && writable && controlState !== "guest" && (
         <div className="border-b border-amber-900/50 bg-amber-950/70 px-3 py-1.5 text-xs text-amber-200">
           {controlState === "owner"
-            ? "分享者正在控制终端，控制权归还前仅可观看"
-            : "另一位访客正在控制终端，控制权归还前仅可观看"}
+            ? t("分享者正在控制终端，控制权归还前仅可观看")
+            : t("另一位访客正在控制终端，控制权归还前仅可观看")}
         </div>
       )}
       <main className="relative min-h-0 flex-1">
@@ -204,8 +205,8 @@ export function PublicPreviewApp({ token }: { token: string }) {
             <div className="w-full max-w-sm text-center">
               {phase.kind === "connecting" && (
                 <>
-                  <p className="text-sm text-neutral-400">正在连接预览终端…</p>
-                  <p className="mt-2 text-xs text-neutral-600">首次连接可能需要几秒</p>
+                  <p className="text-sm text-neutral-400">{t("正在连接预览终端…")}</p>
+                  <p className="mt-2 text-xs text-neutral-600">{t("首次连接可能需要几秒")}</p>
                 </>
               )}
               {phase.kind === "error" && (
@@ -218,27 +219,27 @@ export function PublicPreviewApp({ token }: { token: string }) {
                       className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm min-h-10 text-white hover:bg-indigo-500"
                       onClick={retry}
                     >
-                      重新连接
+                      {t("重新连接")}
                     </button>
                   )}
                 </>
               )}
               {phase.kind === "ended" && (
                 <>
-                  <p className="text-base font-medium text-neutral-100">预览已结束</p>
-                  <p className="mt-2 text-sm text-neutral-400">会话已被分享者关闭或退出。如需继续查看，请让分享者重新发起预览。</p>
+                  <p className="text-base font-medium text-neutral-100">{t("预览已结束")}</p>
+                  <p className="mt-2 text-sm text-neutral-400">{t("会话已被分享者关闭或退出。如需继续查看，请让分享者重新发起预览。")}</p>
                 </>
               )}
               {phase.kind === "disconnected" && (
                 <>
-                  <p className="text-base font-medium text-neutral-100">连接已断开</p>
-                  <p className="mt-2 text-sm text-neutral-400">网络波动导致连接中断，可尝试重新连接。</p>
+                  <p className="text-base font-medium text-neutral-100">{t("连接已断开")}</p>
+                  <p className="mt-2 text-sm text-neutral-400">{t("网络波动导致连接中断，可尝试重新连接。")}</p>
                   <button
                     type="button"
                     className="mt-4 rounded-md bg-indigo-600 px-4 py-2 text-sm min-h-10 text-white hover:bg-indigo-500"
                     onClick={retry}
                   >
-                    重新连接
+                    {t("重新连接")}
                   </button>
                 </>
               )}

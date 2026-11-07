@@ -1,4 +1,5 @@
 import { WEB } from "../ipc/env";
+import { t } from "../i18n";
 
 type WailsRuntime = typeof import("@wailsio/runtime");
 
@@ -34,7 +35,7 @@ export async function copyText(text: string): Promise<void> {
     try {
       await clipboard.writeText(text);
       if (WEB || (await clipboard.readText()) === text) return;
-      throw new Error("剪贴板写入失败");
+      throw new Error(t("剪贴板写入失败"));
     } catch (e) {
       firstError = e;
     }
@@ -44,7 +45,7 @@ export async function copyText(text: string): Promise<void> {
       const { Clipboard } = await runtime();
       await Clipboard.SetText(text);
       if (await Clipboard.Text() === text) return;
-      throw new Error("剪贴板写入失败");
+      throw new Error(t("剪贴板写入失败"));
     } catch (e) {
       firstError ??= e;
     }
@@ -54,12 +55,12 @@ export async function copyText(text: string): Promise<void> {
     try {
       const { Clipboard } = await runtime();
       if ((await Clipboard.Text()) === text) return;
-      throw new Error("剪贴板写入失败");
+      throw new Error(t("剪贴板写入失败"));
     } catch (e) {
       firstError ??= e;
     }
   }
-  throw firstError ?? new Error("剪贴板不可用");
+  throw firstError ?? new Error(t("剪贴板不可用"));
 }
 
 export async function readText(): Promise<string> {
@@ -80,5 +81,5 @@ export async function readText(): Promise<string> {
       firstError ??= e;
     }
   }
-  throw firstError ?? new Error("剪贴板不可用");
+  throw firstError ?? new Error(t("剪贴板不可用"));
 }

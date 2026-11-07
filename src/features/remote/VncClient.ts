@@ -9,6 +9,7 @@ import {
   type ScaleMode,
 } from "./remoteTypes";
 import { drawThumbnail } from "./thumbnail";
+import { t } from "../../i18n";
 
 type RfbCtor = typeof import("@novnc/novnc").default;
 type RfbInstance = InstanceType<RfbCtor>;
@@ -41,12 +42,12 @@ export class VncClient implements RemoteClient {
       throw new RemoteEngineError({
         protocol: "vnc",
         stage: "connect",
-        message: error instanceof Error ? error.message : "无法连接到远程桌面中继",
+        message: error instanceof Error ? error.message : t("无法连接到远程桌面中继"),
       });
     });
     if (this.closed) {
       channel.close();
-      throw new RemoteEngineError({ protocol: "vnc", stage: "closed", clean: true, message: "已取消" });
+      throw new RemoteEngineError({ protocol: "vnc", stage: "closed", clean: true, message: t("已取消") });
     }
     this.channel = channel;
     return new Promise<void>((resolve, reject) => {
@@ -66,7 +67,7 @@ export class VncClient implements RemoteClient {
       });
       rfb.addEventListener("securityfailure", (event) => {
         const detail = (event as CustomEvent<{ reason?: string; status?: number }>).detail;
-        const failure: EngineFailure = { protocol: "vnc", stage: "security", message: detail?.reason ?? "VNC 安全协商失败" };
+        const failure: EngineFailure = { protocol: "vnc", stage: "security", message: detail?.reason ?? t("VNC 安全协商失败") };
         if (!settled) {
           settled = true;
           reject(new RemoteEngineError(failure));
@@ -77,7 +78,7 @@ export class VncClient implements RemoteClient {
         this.rfb = null;
         if (!settled) {
           settled = true;
-          reject(new RemoteEngineError({ protocol: "vnc", stage: "closed", clean, wasConnected: false, message: "连接已关闭" }));
+          reject(new RemoteEngineError({ protocol: "vnc", stage: "closed", clean, wasConnected: false, message: t("连接已关闭") }));
           return;
         }
         // A session that never reached the connected state was already reported by the rejected connect().
@@ -89,7 +90,7 @@ export class VncClient implements RemoteClient {
             // client did not ask for is a drop, so it is retried.
             clean: false,
             wasConnected: this.connected,
-            message: "与远程桌面的连接已中断",
+            message: t("与远程桌面的连接已中断"),
           });
         }
       });

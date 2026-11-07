@@ -1,4 +1,5 @@
 import { DESKTOP, wsUrl } from "../../ipc/env";
+import { t } from "../../i18n";
 
 // The transport to the remote desktop relay.
 //   browser mode: wss://<origin>/ws/remotedesktop, with the ticket in the query (VNC) or in IronRDP's proxy_auth (RDP).
@@ -54,7 +55,7 @@ export class PreambleChannel {
     socket.addEventListener("message", (event) => this.deliver("message", event));
     socket.addEventListener("error", (event) => this.deliver("error", event));
     socket.addEventListener("close", (event) => {
-      this.ended = new Error("连接已关闭");
+      this.ended = new Error(t("连接已关闭"));
       for (const waiter of this.readyWaiters.splice(0)) waiter.reject(this.ended);
       this.deliver("close", event);
     });
@@ -202,7 +203,7 @@ export function setStreamFactory(factory: ((name: string) => unknown) | null): v
 }
 
 function lazyStream(): object {
-  if (!streamFactory) throw new Error("远程桌面传输尚未就绪");
+  if (!streamFactory) throw new Error(t("远程桌面传输尚未就绪"));
   return streamFactory(REMOTE_DESKTOP_STREAM) as object;
 }
 

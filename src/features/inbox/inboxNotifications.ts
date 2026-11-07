@@ -11,6 +11,7 @@ import {
   type SystemNotificationStatus,
   type SystemNotifier,
 } from "./systemNotifications";
+import { t as tr } from "../../i18n";
 
 // A state is notified only after it held this long. Every device receives the same state; a device whose user is
 // at the session marks it seen within this window, and the others then drop it instead of popping a notification
@@ -133,11 +134,11 @@ function deliver(tabId: string): void {
   const workspace = workspaces.find((w) => w.panes.some((p) => p.tabs.some((t) => t.id === uiTabId)));
   // The title leads with the workspace the user named; text a remote program controls (its notification, the tab
   // title it set) stays in the body.
-  const place = workspace?.title ?? "终端";
-  const title = `${place} · ${awareness.state === "needs_me" ? "需要处理" : "命令已结束"}`;
+  const place = workspace?.title ?? tr("终端");
+  const title = `${place} · ${awareness.state === "needs_me" ? tr("需要处理") : tr("命令已结束")}`;
   const detail = attentionDetail(awareness);
   const active = deps;
-  const fallbackToast = () => active.toast(`${title}：${detail}`, { label: "查看", onSelect: () => openInboxTab(tabId) });
+  const fallbackToast = () => active.toast(`${title}：${detail}`, { label: tr("查看"), onSelect: () => openInboxTab(tabId) });
   void (async () => {
     const usable = prefs.system && (await systemUsable(active.notifier));
     // The state may have been seen or replaced while the status was read.
@@ -148,7 +149,7 @@ function deliver(tabId: string): void {
     }
     shown.add(tabId);
     try {
-      await active.notifier.show({ id: notificationId(tabId), title, body: `来自 ${place}：${detail}`, tabId });
+      await active.notifier.show({ id: notificationId(tabId), title, body: tr("来自 {place}：{detail}", { place, detail }), tabId });
     } catch (error) {
       shown.delete(tabId);
       // The permission may have been refused behind the status read; read it again next time and do not lose this
@@ -170,7 +171,7 @@ export function notifyAi(text: string): void {
   const prefs = getNotificationPrefs();
   if (!prefs.system || !prefs.ai || active.appFocused()) return;
   void systemUsable(active.notifier).then((usable) => {
-    if (usable) return active.notifier.show({ id: "ai", title: "AI 通知", body: text });
+    if (usable) return active.notifier.show({ id: "ai", title: tr("AI 通知"), body: text });
   }).catch(() => {});
 }
 

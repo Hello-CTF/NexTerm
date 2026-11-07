@@ -17,6 +17,7 @@ import {
   IconStop,
   IconTrash,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 interface ForwardRuleDraft {
   listenPort: string;
@@ -89,9 +90,9 @@ export function ForwardRules({
       await forwardRuleApi.save(input);
       setEditing(null);
       refreshRules();
-      pushToast("success", input.id ? "规则已保存，运行配置未自动更改" : "规则已保存，启动后才会开始监听");
+      pushToast("success", input.id ? t("规则已保存，运行配置未自动更改") : t("规则已保存，启动后才会开始监听"));
     } catch (error) {
-      pushToast("error", `未能保存规则：${describeError(error)}`);
+      pushToast("error", t("未能保存规则：{value}", { value: describeError(error) }));
     } finally {
       setBusy(null);
     }
@@ -101,7 +102,7 @@ export function ForwardRules({
     const assetId = sessions.find((session) => session.id === sessionId)?.assetId;
     const ports = parsePorts(draft.listenPort, draft.targetPort);
     if (!canSave || !assetId || !draft.targetHost.trim() || !ports) {
-      pushToast("info", "请先选择 SSH 会话，并填写有效的固定端口和目标主机");
+      pushToast("info", t("请先选择 SSH 会话，并填写有效的固定端口和目标主机"));
       return;
     }
     await save({
@@ -125,7 +126,7 @@ export function ForwardRules({
     if (!editing) return;
     const ports = parsePorts(listenPort, targetPort);
     if (!targetHost.trim() || !ports) {
-      pushToast("info", "目标主机不能为空，端口必须是 1–65535 之间的整数");
+      pushToast("info", t("目标主机不能为空，端口必须是 1–65535 之间的整数"));
       return;
     }
     await save({
@@ -148,8 +149,8 @@ export function ForwardRules({
       pushToast(
         "info",
         candidates.length > 1
-          ? "同一资产有多个连接，请从所属主机工作区启动规则"
-          : "规则所属 SSH 资产尚未连接，请先手动连接",
+          ? t("同一资产有多个连接，请从所属主机工作区启动规则")
+          : t("规则所属 SSH 资产尚未连接，请先手动连接"),
       );
       return;
     }
@@ -157,10 +158,10 @@ export function ForwardRules({
     try {
       await forwardRuleApi.start(rule.id, selected.id);
       refreshAll();
-      pushToast("success", `规则已启动 → 127.0.0.1:${rule.listenPort}`);
+      pushToast("success", t("规则已启动 → 127.0.0.1:{listenPort}", { listenPort: rule.listenPort }));
     } catch (error) {
       refreshAll();
-      pushToast("error", `无法启动规则：${describeForwardError(error, rule.listenPort)}`);
+      pushToast("error", t("无法启动规则：{value}", { value: describeForwardError(error, rule.listenPort) }));
     } finally {
       setBusy(null);
     }
@@ -169,7 +170,7 @@ export function ForwardRules({
   const stop = async (rule: ForwardRule) => {
     if (
       rule.status === "active" &&
-      !(await ask(`停止规则「${rule.name}」？\n\n已经建立的连接会被断开，规则定义会保留。`, { kind: "warning" }))
+      !(await ask(t("停止规则「{name}」？\n\n已经建立的连接会被断开，规则定义会保留。", { name: rule.name }), { kind: "warning" }))
     ) {
       return;
     }
@@ -177,10 +178,10 @@ export function ForwardRules({
     try {
       await forwardRuleApi.stop(rule.id);
       refreshAll();
-      pushToast("success", "规则已停止，定义已保留");
+      pushToast("success", t("规则已停止，定义已保留"));
     } catch (error) {
       refreshAll();
-      pushToast("error", `停止规则失败：${describeError(error)}`);
+      pushToast("error", t("停止规则失败：{value}", { value: describeError(error) }));
     } finally {
       setBusy(null);
     }
@@ -191,8 +192,8 @@ export function ForwardRules({
     if (
       !(await ask(
         running
-          ? `删除规则「${rule.name}」？\n\n将先停止运行并断开连接；若停止失败，规则定义将保留。`
-          : `确定删除已保存的规则「${rule.name}」？`,
+          ? t("删除规则「{name}」？\n\n将先停止运行并断开连接；若停止失败，规则定义将保留。", { name: rule.name })
+          : t("确定删除已保存的规则「{name}」？", { name: rule.name }),
         { kind: "warning" },
       ))
     ) {
@@ -203,10 +204,10 @@ export function ForwardRules({
       await forwardRuleApi.delete(rule.id);
       if (editing?.id === rule.id) setEditing(null);
       refreshAll();
-      pushToast("success", "规则已删除");
+      pushToast("success", t("规则已删除"));
     } catch (error) {
       refreshAll();
-      pushToast("error", `删除规则失败：${describeError(error)}`);
+      pushToast("error", t("删除规则失败：{value}", { value: describeError(error) }));
     } finally {
       setBusy(null);
     }
@@ -222,38 +223,38 @@ export function ForwardRules({
         onClick={() => setExpanded((value) => !value)}
       >
         {expanded ? <IconChevronDown size={13} /> : <IconChevronRight size={13} />}
-        已保存规则
+        {t("已保存规则")}
       </button>
       {expanded && (
         <div id={panelId} className={`overflow-auto overscroll-contain border-t border-neutral-800/60 px-3 py-2 ${compact ? "max-h-[min(60dvh,32rem)] [padding-bottom:calc(0.5rem+var(--nx-kb-inset,0px)+var(--nx-safe-bottom,0px))]" : "max-h-72"}`}>
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-neutral-500">仅 local 固定端口；只监听 127.0.0.1，不自动启动。</span>
+            <span className="text-[11px] text-neutral-500">{t("仅 local 固定端口；只监听 127.0.0.1，不自动启动。")}</span>
             <div className="nx-spacer" />
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={refreshRules} disabled={busy !== null}>
               <IconRefresh size={11} />
-              刷新
+              {t("刷新")}
             </button>
             <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={() => void saveDraft()} disabled={!canSave || busy !== null}>
               <IconSave size={11} />
-              保存当前为规则
+              {t("保存当前为规则")}
             </button>
           </div>
           {rules.isPending ? (
-            <div className="py-3 text-[11px] text-neutral-500">正在加载规则…</div>
+            <div className="py-3 text-[11px] text-neutral-500">{t("正在加载规则…")}</div>
           ) : rules.isError && !rules.data ? (
             <div className="flex flex-wrap items-center gap-2 py-2 text-[11px] text-red-300" role="alert">
-              <span>未能加载规则：{describeError(rules.error)}</span>
-              <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void rules.refetch()}>重试</button>
+              <span>{t("未能加载规则：{value}", { value: describeError(rules.error) })}</span>
+              <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void rules.refetch()}>{t("重试")}</button>
             </div>
           ) : (
             <div className="flex flex-col gap-1.5">
               {rules.isError && (
                 <div className="text-[11px] text-amber-300" role="status">
-                  未能刷新规则：{describeError(rules.error)}；已保留上次结果。
+                  {t("未能刷新规则：{value}；已保留上次结果。", { value: describeError(rules.error) })}
                 </div>
               )}
               {(rules.data ?? []).length === 0 ? (
-                <div className="py-2 text-[11px] text-neutral-500">暂无保存的转发规则</div>
+                <div className="py-2 text-[11px] text-neutral-500">{t("暂无保存的转发规则")}</div>
               ) : (
                 (rules.data ?? []).map((rule) => (
                   <div key={rule.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-neutral-800/70 px-2 py-1.5 text-[11px]">
@@ -264,7 +265,7 @@ export function ForwardRules({
                             role: "button",
                             tabIndex: 0,
                             "aria-expanded": openRules.has(rule.id),
-                            "aria-label": `${rule.name} 详情`,
+                            "aria-label": t("{name} 详情", { name: rule.name }),
                             onClick: () => toggleRule(rule.id),
                             onKeyDown: (e: KeyboardEvent<HTMLElement>) => {
                               if (e.target !== e.currentTarget) return;
@@ -281,7 +282,7 @@ export function ForwardRules({
                         {rule.listenHost}:{rule.listenPort} → {rule.targetHost}:{rule.targetPort}
                       </div>
                       <div className={rule.status === "failed" ? "text-red-300" : rule.status === "active" ? "text-green-300" : "text-neutral-500"}>
-                        {rule.status === "active" ? "运行中" : rule.status === "failed" ? "失败" : rule.status === "reconnecting" ? "启动中" : "未运行"}
+                        {rule.status === "active" ? t("运行中") : rule.status === "failed" ? t("失败") : rule.status === "reconnecting" ? t("启动中") : t("未运行")}
                         {rule.error && <span className="ml-1 break-words text-red-300">{rule.error}</span>}
                       </div>
                     </div>
@@ -290,17 +291,17 @@ export function ForwardRules({
                         {rule.status === "stopped" || rule.status === "failed" ? (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
                             <IconPlay size={11} />
-                            启动
+                            {t("启动")}
                           </button>
                         ) : (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
                             <IconStop size={11} />
-                            停止
+                            {t("停止")}
                           </button>
                         )}
                         <button
                           className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:w-11"
-                          aria-label={`${rule.name} 更多操作`}
+                          aria-label={t("{name} 更多操作", { name: rule.name })}
                           aria-haspopup="menu"
                           disabled={busy !== null}
                           onClick={(e) => {
@@ -311,10 +312,10 @@ export function ForwardRules({
                               title: rule.name,
                               items: [
                                 ...(rule.status === "failed"
-                                  ? [{ kind: "item" as const, label: "清除状态", onSelect: () => void stop(rule) }]
+                                  ? [{ kind: "item" as const, label: t("清除状态"), onSelect: () => void stop(rule) }]
                                   : []),
-                                { kind: "item", label: "编辑", icon: <IconEdit size={13} />, disabled: rule.status !== "stopped", hint: rule.status !== "stopped" ? "请先停止并清除运行状态再编辑" : undefined, onSelect: () => beginEdit(rule) },
-                                { kind: "item", label: "删除", icon: <IconTrash size={13} />, danger: true, onSelect: () => void remove(rule) },
+                                { kind: "item", label: t("编辑"), icon: <IconEdit size={13} />, disabled: rule.status !== "stopped", hint: rule.status !== "stopped" ? t("请先停止并清除运行状态再编辑") : undefined, onSelect: () => beginEdit(rule) },
+                                { kind: "item", label: t("删除"), icon: <IconTrash size={13} />, danger: true, onSelect: () => void remove(rule) },
                               ],
                             });
                           }}
@@ -327,31 +328,31 @@ export function ForwardRules({
                         {rule.status === "stopped" || rule.status === "failed" ? (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void start(rule)}>
                             <IconPlay size={11} />
-                            启动
+                            {t("启动")}
                           </button>
                         ) : (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
                             <IconStop size={11} />
-                            停止
+                            {t("停止")}
                           </button>
                         )}
                         {rule.status === "failed" && (
                           <button className="nx-btn nx-btn-ghost nx-btn-xs" disabled={busy !== null} onClick={() => void stop(rule)}>
-                            清除状态
+                            {t("清除状态")}
                           </button>
                         )}
                         <button
                           className="nx-btn nx-btn-ghost nx-btn-xs"
                           disabled={busy !== null || rule.status !== "stopped"}
-                          title={rule.status !== "stopped" ? "请先停止并清除运行状态再编辑" : "编辑规则"}
+                          title={rule.status !== "stopped" ? t("请先停止并清除运行状态再编辑") : t("编辑规则")}
                           onClick={() => beginEdit(rule)}
                         >
                           <IconEdit size={11} />
-                          编辑
+                          {t("编辑")}
                         </button>
                         <button className="nx-btn nx-btn-danger nx-btn-xs" disabled={busy !== null} onClick={() => void remove(rule)}>
                           <IconTrash size={11} />
-                          删除
+                          {t("删除")}
                         </button>
                       </div>
                     )}
@@ -371,13 +372,13 @@ export function ForwardRules({
                 }
               } : undefined}
             >
-              <input className={`nx-input nx-input-sm min-w-36 flex-1 ${compact ? "col-span-2" : ""}`} value={name} onChange={(event) => setName(event.target.value)} aria-label="规则名称" placeholder="规则名称（可选）" />
-              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={listenPort} onChange={(event) => setListenPort(event.target.value)} aria-label="规则监听端口" inputMode="numeric" />
+              <input className={`nx-input nx-input-sm min-w-36 flex-1 ${compact ? "col-span-2" : ""}`} value={name} onChange={(event) => setName(event.target.value)} aria-label={t("规则名称")} placeholder={t("规则名称（可选）")} />
+              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={listenPort} onChange={(event) => setListenPort(event.target.value)} aria-label={t("规则监听端口")} inputMode="numeric" />
               <span className={compact ? "hidden" : "text-neutral-500"}>→</span>
-              <input className={`nx-input nx-input-sm min-w-40 flex-1 font-mono ${compact ? "order-last col-span-2" : ""}`} value={targetHost} onChange={(event) => setTargetHost(event.target.value)} aria-label="规则目标主机" />
-              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={targetPort} onChange={(event) => setTargetPort(event.target.value)} aria-label="规则目标端口" inputMode="numeric" />
-              <button className={`nx-btn nx-btn-primary nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => void saveEdit()}>保存编辑</button>
-              <button className={`nx-btn nx-btn-ghost nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => setEditing(null)}>取消</button>
+              <input className={`nx-input nx-input-sm min-w-40 flex-1 font-mono ${compact ? "order-last col-span-2" : ""}`} value={targetHost} onChange={(event) => setTargetHost(event.target.value)} aria-label={t("规则目标主机")} />
+              <input className={`nx-input nx-input-sm font-mono ${compact ? "w-full" : "w-24"}`} value={targetPort} onChange={(event) => setTargetPort(event.target.value)} aria-label={t("规则目标端口")} inputMode="numeric" />
+              <button className={`nx-btn nx-btn-primary nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => void saveEdit()}>{t("保存编辑")}</button>
+              <button className={`nx-btn nx-btn-ghost nx-btn-xs ${compact ? "order-last justify-center" : ""}`} disabled={busy !== null} onClick={() => setEditing(null)}>{t("取消")}</button>
             </div>
           )}
         </div>

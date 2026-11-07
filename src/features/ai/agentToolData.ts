@@ -14,6 +14,7 @@ import type {
   AgentRunSummary,
   AgentToolCall,
 } from "./agentTypes";
+import { t } from "../../i18n";
 
 export type ToolHandleLookup =
   | { kind: "handle"; handle: string }
@@ -134,11 +135,11 @@ export function runSummaryFromAttempt(
   if (typeof finishedAt === "number") {
     if (outcome === "done") {
       const excerpt = runExcerpt(row?.answer ?? "");
-      evidence = { kind: "output", observedAt: finishedAt, summary: excerpt === "" ? "已完成" : excerpt };
+      evidence = { kind: "output", observedAt: finishedAt, summary: excerpt === "" ? t("已完成") : excerpt };
     } else if (outcome === "error") {
-      evidence = { kind: "exit", observedAt: finishedAt, summary: row?.error?.trim() || "运行失败" };
+      evidence = { kind: "exit", observedAt: finishedAt, summary: row?.error?.trim() || t("运行失败") };
     } else {
-      evidence = { kind: "exit", observedAt: finishedAt, summary: row?.error?.trim() || "已取消" };
+      evidence = { kind: "exit", observedAt: finishedAt, summary: row?.error?.trim() || t("已取消") };
     }
   }
   return { state: outcome, evidence };

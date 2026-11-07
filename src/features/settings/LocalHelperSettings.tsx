@@ -5,22 +5,23 @@ import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { refreshLocalHelperStatus, useLocalHelperStatus } from "../terminal/localHelperStatus";
 import { SyncScopeBadge } from "./SyncScopeBadge";
+import { t } from "../../i18n";
 
 const LOCAL_MODE_OPTIONS: { value: LocalTerminalMode; label: string }[] = [
-  { value: "durable", label: "持久终端" },
-  { value: "regular", label: "临时终端" },
+  { value: "durable", label: t("持久终端") },
+  { value: "regular", label: t("临时终端") },
 ];
 
 const STATE_TEXT: Record<string, string> = {
-  idle: "未运行",
-  starting: "正在启动",
-  ready: "运行中",
-  outdated: "旧版本",
-  failed: "启动失败",
+  idle: t("未运行"),
+  starting: t("正在启动"),
+  ready: t("运行中"),
+  outdated: t("旧版本"),
+  failed: t("启动失败"),
 };
 
 function sessionCount(activeSessions: number | undefined, activityKnown: boolean | undefined): string {
-  return activityKnown === false ? "数量未知的会话" : `${activeSessions ?? 0} 个会话`;
+  return activityKnown === false ? t("数量未知的会话") : t("{value} 个会话", { value: activeSessions ?? 0 });
 }
 
 // LocalHelperSettings shows the local helper that keeps local terminals running after the app exits, lets this
@@ -40,7 +41,7 @@ export function LocalHelperSettings() {
       .then(() => localHelperApi.getMode())
       .then((value) => { if (!cancelled) setMode(value); })
       .catch((error) => {
-        if (!cancelled) pushToast("error", `读取本机终端模式失败：${describeError(error)}`);
+        if (!cancelled) pushToast("error", t("读取本机终端模式失败：{value}", { value: describeError(error) }));
       });
     return () => { cancelled = true; };
   }, [enabled, pushToast]);
@@ -54,7 +55,7 @@ export function LocalHelperSettings() {
       setMode(await localHelperApi.setMode(value));
       forgetLocalDurableReadiness();
     } catch (error) {
-      pushToast("error", `保存本机终端模式失败：${describeError(error)}`);
+      pushToast("error", t("保存本机终端模式失败：{value}", { value: describeError(error) }));
     } finally {
       setBusy(false);
     }
@@ -64,14 +65,14 @@ export function LocalHelperSettings() {
     if (busy || !status.consentToken) return;
     const sessions = sessionCount(status.activeSessions, status.activityKnown);
     const ok = await ask(
-      `重启本机持久终端组件将结束其中正在运行的 ${sessions}，未保存的工作将丢失。\n重启后新建的本机终端将使用当前版本的组件。确定要重启吗？`,
-      { title: "重启本机持久终端组件", kind: "warning" },
+      t("重启本机持久终端组件将结束其中正在运行的 {sessions}，未保存的工作将丢失。\n重启后新建的本机终端将使用当前版本的组件。确定要重启吗？", { sessions }),
+      { title: t("重启本机持久终端组件"), kind: "warning" },
     );
     if (!ok) return;
     setBusy(true);
     try {
       await localHelperApi.restart(status.consentToken);
-      pushToast("info", "本机持久终端组件已重启");
+      pushToast("info", t("本机持久终端组件已重启"));
     } catch (error) {
       pushToast("error", describeError(error));
     } finally {
@@ -98,12 +99,12 @@ export function LocalHelperSettings() {
   return (
     <div data-local-helper-state={status.state}>
       <div className="nx-setting-label mb-1.5 flex flex-wrap items-center gap-2">
-        本机终端模式
+        {t("本机终端模式")}
         <SyncScopeBadge scope="local" />
-        <span className={badge}>持久终端组件{STATE_TEXT[status.state] ?? status.state}</span>
-        {status.updateAvailable && <span className="nx-badge nx-badge-blue">可更新</span>}
+        <span className={badge}>{t("持久终端组件{value}", { value: STATE_TEXT[status.state] ?? status.state })}</span>
+        {status.updateAvailable && <span className="nx-badge nx-badge-blue">{t("可更新")}</span>}
       </div>
-      <div className="nx-segment" role="group" aria-label="本机终端模式" aria-busy={busy}>
+      <div className="nx-segment" role="group" aria-label={t("本机终端模式")} aria-busy={busy}>
         {LOCAL_MODE_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -119,19 +120,18 @@ export function LocalHelperSettings() {
       </div>
       <p className="nx-hint mt-1.5">
         {mode === "regular"
-          ? "本机新建的终端随 NexTerm 退出而结束，含 AI 和定时任务打开的。"
-          : "本机新建的终端在退出 NexTerm 后继续运行，含 AI 和定时任务打开的。"}
+          ? t("本机新建的终端随 NexTerm 退出而结束，含 AI 和定时任务打开的。")
+          : t("本机新建的终端在退出 NexTerm 后继续运行，含 AI 和定时任务打开的。")}
       </p>
       {status.reason && status.state !== "idle" && <p className="nx-hint mt-1.5 text-amber-300">{status.reason}</p>}
       {status.warning && <p className="nx-hint mt-1.5 text-amber-300">{status.warning}</p>}
       {restartable && (
         <button type="button" className="nx-btn nx-btn-danger nx-btn-sm mt-2" disabled={busy} onClick={() => void restart()}>
-          重启持久终端组件（结束 {sessionCount(status.activeSessions, status.activityKnown)}）
-        </button>
+          {t("重启持久终端组件（结束 {value}）", { value: sessionCount(status.activeSessions, status.activityKnown) })}</button>
       )}
       {status.state === "failed" && (
         <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-2" disabled={busy} onClick={() => void retry()}>
-          重试启动持久终端组件
+          {t("重试启动持久终端组件")}
         </button>
       )}
     </div>

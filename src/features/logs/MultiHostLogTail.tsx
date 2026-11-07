@@ -31,13 +31,14 @@ import {
   MergedLogBuffer,
   regexErrorNotice,
 } from "./mergedLog";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 const MAX_CONCURRENT = 32;
 const MAX_LINES = 50_000;
 const STOP_CONFIRM_TIMEOUT_MS = 31_000;
-const STOP_CONFIRM_ERROR = "日志流已停止，但结束状态未确认；未收到的末尾事件已放弃。";
-const CANCEL_UNCONFIRMED_ERROR = "取消未确认，远端可能仍在运行。";
+const STOP_CONFIRM_ERROR = t("日志流已停止，但结束状态未确认；未收到的末尾事件已放弃。");
+const CANCEL_UNCONFIRMED_ERROR = t("取消未确认，远端可能仍在运行。");
 
 interface SourceDraft {
   kind: LogTailSourceKind;
@@ -84,12 +85,12 @@ function allSourcesTerminal(
 }
 
 const INFO_TEXT =
-  "只执行只读日志命令，无需生产确认；仅支持已连接的 SSH 和非 Windows 受管设备。";
+  t("只执行只读日志命令，无需生产确认；仅支持已连接的 SSH 和非 Windows 受管设备。");
 
 const SOURCE_KIND_LABELS: Record<LogTailSourceKind, string> = {
-  file: "文件",
+  file: t("文件"),
   journal: "journalctl",
-  docker: "Docker 容器",
+  docker: t("Docker 容器"),
 };
 
 const SOURCE_PLACEHOLDERS: Record<LogTailSourceKind, string> = {
@@ -126,7 +127,7 @@ function collectTargets(
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? "受管设备" : null,
+        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? t("受管设备") : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
@@ -291,15 +292,15 @@ export function MultiHostLogTail({
     setSaveMessage(null);
     if (selectedIds.length === 0) {
       setHostsOpen(true);
-      setRunError("请至少选择一个已连接的 SSH 或受管设备会话");
+      setRunError(t("请至少选择一个已连接的 SSH 或受管设备会话"));
       return;
     }
     if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > MAX_CONCURRENT) {
-      setRunError(`并发数必须是 1-${MAX_CONCURRENT} 的整数`);
+      setRunError(t("并发数必须是 1-{MAX_CONCURRENT} 的整数", { MAX_CONCURRENT }));
       return;
     }
     if (!Number.isInteger(maxLines) || maxLines < 100 || maxLines > MAX_LINES) {
-      setRunError(`行数上限必须是 100-${MAX_LINES} 的整数`);
+      setRunError(t("行数上限必须是 100-{MAX_LINES} 的整数", { MAX_LINES }));
       return;
     }
     const targetsById = new Map(targets.map((target) => [target.id, target]));
@@ -310,7 +311,7 @@ export function MultiHostLogTail({
       const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
       if (!draft.value.trim()) {
         setHostsOpen(true);
-        setRunError(`请填写目标「${target?.label ?? sessionId}」的日志来源`);
+        setRunError(t("请填写目标「{value}」的日志来源", { value: target?.label ?? sessionId }));
         return;
       }
       sources.push({ sourceId: sessionId, sessionId, kind: draft.kind, value: draft.value });
@@ -416,15 +417,15 @@ export function MultiHostLogTail({
     try {
       if (WEB) {
         const saved = await saveBrowserBlob(name, new Blob([content], { type: "text/plain;charset=utf-8" }));
-        if (saved) setSaveMessage(`已保存 ${bufferRef.current.retainedLines().length} 行合并日志`);
+        if (saved) setSaveMessage(t("已保存 {length} 行合并日志", { length: bufferRef.current.retainedLines().length }));
       } else {
         const path = await pickSavePath(name);
         if (!path) return;
         const result = await logTailApi.save(path, content);
-        setSaveMessage(`已保存到 ${result.path}`);
+        setSaveMessage(t("已保存到 {path}", { path: result.path }));
       }
     } catch (cause) {
-      setRunError(`保存失败：${describeError(cause)}`);
+      setRunError(t("保存失败：{value}", { value: describeError(cause) }));
     } finally {
       setSaving(false);
     }
@@ -441,31 +442,31 @@ export function MultiHostLogTail({
     if (!content) return;
     try {
       await copyText(content);
-      setSaveMessage(`已复制 ${visibleLines.length} 行日志`);
+      setSaveMessage(t("已复制 {length} 行日志", { length: visibleLines.length }));
     } catch (cause) {
-      setRunError(`复制失败：${describeError(cause)}`);
+      setRunError(t("复制失败：{value}", { value: describeError(cause) }));
     }
   };
 
   const retained = bufferRef.current.retainedLines().length;
   const failedSources = runSources.filter((source) => statuses[source.sourceId]?.status === "failed").length;
-  const hostsSummary = selectedIds.length === 0 ? "选择主机" : `${selectedIds.length} 台主机`;
+  const hostsSummary = selectedIds.length === 0 ? t("选择主机") : t("{length} 台主机", { length: selectedIds.length });
   const emptyMessage =
     targets.length === 0
-      ? "没有已连接的 SSH / 受管设备。先在左侧连接主机，再回到这里合并跟随日志。"
+      ? t("没有已连接的 SSH / 受管设备。先在左侧连接主机，再回到这里合并跟随日志。")
       : retained > 0
-        ? "没有匹配当前过滤条件的日志"
+        ? t("没有匹配当前过滤条件的日志")
         : running
-          ? "等待日志…"
+          ? t("等待日志…")
           : selectedIds.length === 0
-            ? "点击上方「选择主机」，勾选主机并填写日志来源，然后开始跟随。"
-            : "点击「开始跟随」查看合并日志。";
+            ? t("点击上方「选择主机」，勾选主机并填写日志来源，然后开始跟随。")
+            : t("点击「开始跟随」查看合并日志。");
 
   return (
-    <section className="nx-pane" aria-label="多主机日志合并" data-testid="multi-host-log-tail">
+    <section className="nx-pane" aria-label={t("多主机日志合并")} data-testid="multi-host-log-tail">
       <div className="flex flex-none flex-wrap items-center gap-1.5 border-b border-neutral-800/70 px-2.5 py-1.5" data-testid="log-toolbar">
         <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title min-w-0 truncate">多主机日志</h2>
+        <h2 className="nx-toolbar-title min-w-0 truncate">{t("多主机日志")}</h2>
         <span
           className="inline-flex items-center justify-center text-neutral-500 pointer-coarse:min-h-10 pointer-coarse:min-w-10"
           role="img"
@@ -478,13 +479,13 @@ export function MultiHostLogTail({
         <LogPopover
           open={hostsOpen}
           onOpenChange={setHostsOpen}
-          label="选择主机与来源"
+          label={t("选择主机与来源")}
           trigger={
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
               aria-expanded={hostsOpen}
-              aria-label="选择主机与来源"
+              aria-label={t("选择主机与来源")}
               onClick={() => setHostsOpen((current) => !current)}
             >
               {hostsSummary}
@@ -499,7 +500,7 @@ export function MultiHostLogTail({
               onChange={setSelected}
               disabled={running}
               maxTargets={MAX_TARGETS}
-              metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+              metadataError={assetsQuery.isError ? t("未能加载资产详情：{value}", { value: describeError(assetsQuery.error) }) : null}
             />
             {selectedIds.length > 0 && (
               <div className="flex flex-col gap-2">
@@ -516,7 +517,7 @@ export function MultiHostLogTail({
                         triggerClassName="nx-input nx-input-sm nx-select-trigger"
                         value={draft.kind}
                         disabled={running}
-                        ariaLabel={`来源类型 ${target?.label ?? sessionId}`}
+                        ariaLabel={t("来源类型 {value}", { value: target?.label ?? sessionId })}
                         onChange={(value) =>
                           setDrafts((current) => ({
                             ...current,
@@ -530,7 +531,7 @@ export function MultiHostLogTail({
                         value={draft.value}
                         disabled={running}
                         placeholder={SOURCE_PLACEHOLDERS[draft.kind]}
-                        aria-label={`来源 ${target?.label ?? sessionId}`}
+                        aria-label={t("来源 {value}", { value: target?.label ?? sessionId })}
                         onChange={(event) =>
                           setDrafts((current) => ({
                             ...current,
@@ -548,26 +549,26 @@ export function MultiHostLogTail({
         <input
           className="nx-input nx-input-sm min-w-0 flex-1 basis-40 font-mono max-[560px]:order-last max-[560px]:basis-full sm:max-w-xs"
           value={include}
-          placeholder="只显示匹配的行（正则表达式），例如 ERROR|WARN"
-          aria-label="包含正则"
+          placeholder={t("只显示匹配的行（正则表达式），例如 ERROR|WARN")}
+          aria-label={t("包含正则")}
           onChange={(event) => setInclude(event.target.value)}
         />
         <span className="nx-spacer max-[560px]:hidden" />
         {running ? (
           <button type="button" className="nx-btn nx-btn-danger nx-btn-sm" disabled={stopping} onClick={() => void stop()}>
             <IconStop size={13} />
-            {stopping ? "正在取消…" : "停止全部"}
+            {stopping ? t("正在取消…") : t("停止全部")}
           </button>
         ) : (
           <button
             type="button"
             className="nx-btn nx-btn-primary nx-btn-sm"
             disabled={targets.length === 0}
-            title={targets.length === 0 ? "当前没有已连接的 SSH 或受管设备会话，请先连接主机" : undefined}
+            title={targets.length === 0 ? t("当前没有已连接的 SSH 或受管设备会话，请先连接主机") : undefined}
             onClick={start}
           >
             <IconPlay size={13} />
-            开始跟随
+            {t("开始跟随")}
           </button>
         )}
         <button
@@ -581,20 +582,20 @@ export function MultiHostLogTail({
             setRevision((current) => current + 1);
           }}
         >
-          {paused ? "继续显示" : "暂停显示"}
+          {paused ? t("继续显示") : t("暂停显示")}
         </button>
         <LogPopover
           open={moreOpen}
           onOpenChange={setMoreOpen}
-          label="更多选项"
+          label={t("更多选项")}
           align="right"
           widthClass="w-[min(18rem,calc(100vw-1.5rem))]"
           trigger={
             <button
               type="button"
               className="nx-icon-btn"
-              title="更多选项"
-              aria-label="更多选项"
+              title={t("更多选项")}
+              aria-label={t("更多选项")}
               aria-expanded={moreOpen}
               onClick={() => setMoreOpen((current) => !current)}
             >
@@ -604,18 +605,18 @@ export function MultiHostLogTail({
         >
           <div className="flex flex-col gap-3">
             <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-              排除（正则表达式）
+              {t("排除（正则表达式）")}
               <input
                 className="nx-input nx-input-sm font-mono"
                 value={exclude}
-                placeholder="隐藏匹配的行（正则表达式）"
-                aria-label="排除正则"
+                placeholder={t("隐藏匹配的行（正则表达式）")}
+                aria-label={t("排除正则")}
                 onChange={(event) => setExclude(event.target.value)}
               />
             </label>
             <div className="flex gap-2">
               <label className="flex flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-                并发数
+                {t("并发数")}
                 <input
                   type="number"
                   className="nx-input nx-input-sm"
@@ -627,7 +628,7 @@ export function MultiHostLogTail({
                 />
               </label>
               <label className="flex flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-                保留行数
+                {t("保留行数")}
                 <input
                   type="number"
                   className="nx-input nx-input-sm"
@@ -641,7 +642,7 @@ export function MultiHostLogTail({
             </div>
             <label className="flex items-center gap-2 text-[12px] text-neutral-300 pointer-coarse:min-h-11">
               <input type="checkbox" checked={wrap} onChange={(event) => setWrap(event.target.checked)} />
-              自动换行
+              {t("自动换行")}
             </label>
             <div className="flex flex-wrap gap-2">
               <button
@@ -651,7 +652,7 @@ export function MultiHostLogTail({
                 onClick={() => void copyVisible()}
               >
                 <IconCopy size={13} />
-                复制日志
+                {t("复制日志")}
               </button>
               <button
                 type="button"
@@ -660,7 +661,7 @@ export function MultiHostLogTail({
                 onClick={() => void save()}
               >
                 <IconDownload size={13} />
-                {saving ? "正在保存…" : "保存日志"}
+                {saving ? t("正在保存…") : t("保存日志")}
               </button>
               <button
                 type="button"
@@ -671,7 +672,7 @@ export function MultiHostLogTail({
                 }}
               >
                 <IconTrash size={13} />
-                清空日志
+                {t("清空日志")}
               </button>
             </div>
           </div>
@@ -686,7 +687,7 @@ export function MultiHostLogTail({
       {saveMessage && <div role="status" className="px-3 py-1.5 text-[11px] text-green-300">{saveMessage}</div>}
       {paused && (
         <div role="status" className="border-b border-neutral-800/70 px-3 py-1 text-[11px] text-amber-300">
-          显示已暂停；后台仍在接收（保留数量有上限），恢复后将显示最新内容。
+          {t("显示已暂停；后台仍在接收（保留数量有上限），恢复后将显示最新内容。")}
         </div>
       )}
 
@@ -694,7 +695,7 @@ export function MultiHostLogTail({
         <div
           ref={logRef}
           role="log"
-          aria-label="多主机合并日志内容"
+          aria-label={t("多主机合并日志内容")}
           data-wrap={wrap ? "true" : "false"}
           className="min-h-0 flex-1 overflow-auto overscroll-contain bg-term px-2 py-2 font-mono text-[12px] leading-[1.55]"
           onScroll={(event) => {
@@ -736,7 +737,7 @@ export function MultiHostLogTail({
             onClick={() => setFollow(true)}
           >
             <IconChevronDown size={13} />
-            跳到最新
+            {t("跳到最新")}
           </button>
         )}
       </div>
@@ -744,8 +745,7 @@ export function MultiHostLogTail({
       {runSources.length > 0 && (
         <details className="shrink-0 border-t border-neutral-800/70 px-3 py-1" open={failedSources > 0}>
           <summary className="flex cursor-pointer select-none items-center text-[11px] text-neutral-400 pointer-coarse:min-h-10">
-            来源状态（{runSources.length}{failedSources > 0 ? `，${failedSources} 个失败` : ""}）
-          </summary>
+            {t("来源状态（{length}{value}）", { length: runSources.length, value: failedSources > 0 ? t("，{failedSources} 个失败", { failedSources }) : "" })}</summary>
           <div className="mt-1 grid max-h-32 grid-cols-1 gap-1 overflow-y-auto xl:grid-cols-2">
             {runSources.map((source) => {
               const state = statuses[source.sourceId] ?? { status: "idle" as const };
@@ -763,7 +763,7 @@ export function MultiHostLogTail({
       )}
       <div className="flex-none border-t border-neutral-800/70 px-3 py-1">
         <span className="nx-hint" role="status">
-          显示 {visibleLines.length} · 保留 {retained} / {capacity} · 已丢弃 {bufferRef.current.droppedCount}
+          {t("显示 {length} · 保留 {retained} / {capacity} · 已丢弃 {droppedCount}", { length: visibleLines.length, retained, capacity, droppedCount: bufferRef.current.droppedCount })}
         </span>
       </div>
     </section>

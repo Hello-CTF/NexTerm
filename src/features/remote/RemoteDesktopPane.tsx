@@ -16,6 +16,7 @@ import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
 import { AUTO_RECONNECT_WINDOW_MS, MAX_AUTO_RECONNECTS, type Failure } from "./connectFlow";
 import type { ModifierKey, ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
+import { t } from "../../i18n";
 
 const TOOLBAR_HIDE_MS = 2500;
 const TOOLBAR_REVEAL_ZONE_PX = 56;
@@ -23,25 +24,25 @@ const RESIZE_DEBOUNCE_MS = 300;
 const HINT_MS = 3500;
 const PENDING_RETRY_MS = 600;
 const PENDING_RETRY_MAX = 10;
-const NOTICE_RECONNECT = "可重新连接，按所选大小启动。";
-const NOTICE_UNCONFIRMED = `远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
-const NOTICE_UNSUPPORTED = `这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
-const NOTICE_REFUSED = `远程主机拒绝了这次分辨率调整，所选分辨率尚未生效。${NOTICE_RECONNECT}`;
+const NOTICE_RECONNECT = t("可重新连接，按所选大小启动。");
+const NOTICE_UNCONFIRMED = t("远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。{NOTICE_RECONNECT}", { NOTICE_RECONNECT });
+const NOTICE_UNSUPPORTED = t("这台远程主机不支持在线调整分辨率，所选分辨率尚未生效。{NOTICE_RECONNECT}", { NOTICE_RECONNECT });
+const NOTICE_REFUSED = t("远程主机拒绝了这次分辨率调整，所选分辨率尚未生效。{NOTICE_RECONNECT}", { NOTICE_RECONNECT });
 
 function failureTitle(failure: Failure): string {
   switch (failure.kind) {
     case "auth":
-      return "认证失败";
+      return t("认证失败");
     case "certificate":
-      return "服务器证书未确认";
+      return t("服务器证书未确认");
     case "permission":
-      return "没有权限连接";
+      return t("没有权限连接");
     case "ended":
-      return "远程桌面已断开";
+      return t("远程桌面已断开");
     case "retryable":
-      return "连接已中断";
+      return t("连接已中断");
     default:
-      return "无法连接远程桌面";
+      return t("无法连接远程桌面");
   }
 }
 
@@ -56,10 +57,10 @@ function FailureDetail({ text }: { text: string }) {
   };
   return (
     <details className="max-w-md text-left text-[11.5px] text-neutral-400" data-testid="remote-failure-detail">
-      <summary className="cursor-pointer text-center">详情</summary>
+      <summary className="cursor-pointer text-center">{t("详情")}</summary>
       <pre className="mt-1 max-h-40 overflow-auto rounded bg-black/50 p-2 break-words whitespace-pre-wrap select-text">{text}</pre>
       <button type="button" className="nx-btn nx-btn-outline mt-1" onClick={copy}>
-        {copied ? "已复制" : "复制详情"}
+        {copied ? t("已复制") : t("复制详情")}
       </button>
     </details>
   );
@@ -102,18 +103,18 @@ function DisconnectOverlay({
       {failure.detail && <FailureDetail text={failure.detail} />}
       {retryIn !== null && (
         <div className="text-[12.5px] text-neutral-300" role="status" data-testid="remote-retry-countdown">
-          {retryIn} 秒后自动重新连接（第 {attempt + 1} 次）
+          {t("{retryIn} 秒后自动重新连接（第 {value} 次）", { retryIn, value: attempt + 1 })}
         </div>
       )}
       {reconnectPaused && (
         <div className="max-w-md text-[12.5px] text-amber-300" role="status" data-testid="remote-reconnect-paused">
-          {AUTO_RECONNECT_WINDOW_MS / 60_000} 分钟内已自动重新连接 {MAX_AUTO_RECONNECTS} 次，已暂停自动重连。可能有另一台设备正在使用同一个远程桌面，确认后请手动重新连接。
+          {t("{value} 分钟内已自动重新连接 {MAX_AUTO_RECONNECTS} 次，已暂停自动重连。可能有另一台设备正在使用同一个远程桌面，确认后请手动重新连接。", { value: AUTO_RECONNECT_WINDOW_MS / 60_000, MAX_AUTO_RECONNECTS })}
         </div>
       )}
-      {never && <div className="text-[11.5px] text-neutral-400">这类失败不会自动重试，请处理后手动重新连接。</div>}
+      {never && <div className="text-[11.5px] text-neutral-400">{t("这类失败不会自动重试，请处理后手动重新连接。")}</div>}
       <div className="flex items-center gap-2">
         <button type="button" className="nx-btn nx-btn-primary" onClick={onReconnect}>
-          重新连接
+          {t("重新连接")}
         </button>
         {showWake && (
           <button
@@ -125,11 +126,11 @@ function DisconnectOverlay({
               void onWake().finally(() => setWaking(false));
             }}
           >
-            唤醒
+            {t("唤醒")}
           </button>
         )}
         <button type="button" className="nx-btn nx-btn-outline" onClick={onClose}>
-          关闭
+          {t("关闭")}
         </button>
       </div>
       {showWake && <div className="max-w-md text-[11.5px] text-neutral-400">{WAKE_DISCLAIMER}</div>}
@@ -396,7 +397,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   );
 
   const chooseCustomResolution = useCallback(async () => {
-    let message = "输入分辨率（宽 x 高），例如 1600 x 900。\n仅对本次连接生效，不会保存到资产。";
+    let message = t("输入分辨率（宽 x 高），例如 1600 x 900。\n仅对本次连接生效，不会保存到资产。");
     for (;;) {
       const text = await promptText(message, "");
       if (text === null) return;
@@ -405,7 +406,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
         chooseResolution({ width: parsed.width, height: parsed.height });
         return;
       }
-      message = `${parsed.error}\n\n输入分辨率（宽 x 高），例如 1600 x 900。`;
+      message = t("{error}\n\n输入分辨率（宽 x 高），例如 1600 x 900。", { error: parsed.error });
     }
   }, [chooseResolution]);
 
@@ -575,8 +576,8 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
         <button
           type="button"
           className="absolute top-0 left-1/2 z-20 h-3 w-16 -translate-x-1/2 rounded-b-md bg-neutral-700/70 hover:bg-neutral-600"
-          aria-label="显示工具栏"
-          title="显示工具栏"
+          aria-label={t("显示工具栏")}
+          title={t("显示工具栏")}
           onClick={reveal}
           onMouseDown={(event) => event.preventDefault()}
         />
@@ -617,10 +618,10 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           >
             <span>{resolutionNotice}</span>
             <button type="button" className="nx-btn nx-btn-primary shrink-0" onClick={session.connect}>
-              重新连接
+              {t("重新连接")}
             </button>
             <button type="button" className="nx-btn nx-btn-outline shrink-0" onClick={() => setResolutionNotice(null)}>
-              忽略
+              {t("忽略")}
             </button>
           </div>
         )}
@@ -630,16 +631,16 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
             className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-neutral-800/90 px-3 py-1 text-[12px] text-neutral-100"
             data-testid="remote-capture-hint"
           >
-            键盘已交给远程桌面，按 {RELEASE_CHORD_LABEL} 释放
+            {t("键盘已交给远程桌面，按 {RELEASE_CHORD_LABEL} 释放", { RELEASE_CHORD_LABEL })}
           </div>
         )}
         {effectiveViewOnly && connected && (
-          <div className="pointer-events-none absolute top-2 right-2 z-20 rounded bg-neutral-800/90 px-2 py-0.5 text-[11.5px] text-neutral-200">只读</div>
+          <div className="pointer-events-none absolute top-2 right-2 z-20 rounded bg-neutral-800/90 px-2 py-0.5 text-[11.5px] text-neutral-200">{t("只读")}</div>
         )}
         {session.status === "connecting" && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 text-[13px] text-neutral-300" role="status" data-testid="remote-connecting">
             <IconLoader size={18} className="animate-spin" />
-            正在连接远程桌面…
+            {t("正在连接远程桌面…")}
           </div>
         )}
         {session.status === "disconnected" && session.failure && (
@@ -652,7 +653,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       {touch && (
         <input
           ref={keyboardInputRef}
-          aria-label="远程键盘输入"
+          aria-label={t("远程键盘输入")}
           className="pointer-events-none fixed bottom-0 left-0 h-px w-px opacity-0"
           autoCapitalize="off"
           autoComplete="off"

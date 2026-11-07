@@ -24,6 +24,7 @@ import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
 import { analyzeSnippetSteps, renderSnippetForTargets, type SnippetVariableValues } from "./snippetVariables";
 import { isMultiStep, type Snippet } from "./snippetInsert";
 import { Select } from "../../ui/Select";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 
@@ -32,7 +33,7 @@ function snippetRunSteps(snippet: Snippet): RunbookStep[] {
   if (isMultiStep(snippet)) {
     return (snippet.steps ?? []).map((step, index) => ({
       id: step.id,
-      name: step.name.trim() || `步骤 ${index + 1}`,
+      name: step.name.trim() || t("步骤 {value}", { value: index + 1 }),
       ...(step.description ? { description: step.description } : {}),
       command: step.command,
       ...(step.confirm ? { confirm: true } : {}),
@@ -43,27 +44,27 @@ function snippetRunSteps(snippet: Snippet): RunbookStep[] {
 }
 
 const RUN_STATUS_LABELS: Record<string, string> = {
-  awaiting_render: "等待填写变量",
-  awaiting_confirmation: "等待确认",
-  running: "执行中",
-  awaiting_production_confirmation: "等待生产确认",
-  success: "成功",
-  failed: "失败",
-  canceled: "已取消",
+  awaiting_render: t("等待填写变量"),
+  awaiting_confirmation: t("等待确认"),
+  running: t("执行中"),
+  awaiting_production_confirmation: t("等待生产确认"),
+  success: t("成功"),
+  failed: t("失败"),
+  canceled: t("已取消"),
 };
 
 const STEP_STATUS_LABELS: Record<string, string> = {
   ...RUN_STATUS_LABELS,
-  pending: "待执行",
-  skipped: "已跳过",
+  pending: t("待执行"),
+  skipped: t("已跳过"),
 };
 
 const TARGET_STATUS_LABELS: Record<ExecBatchStatus, string> = {
-  success: "成功",
-  exit_error: "命令失败",
-  transport_error: "连接出错",
-  timeout: "超时",
-  canceled: "已取消",
+  success: t("成功"),
+  exit_error: t("命令失败"),
+  transport_error: t("连接出错"),
+  timeout: t("超时"),
+  canceled: t("已取消"),
 };
 
 function terminalRun(status: string): boolean {
@@ -88,7 +89,7 @@ function collectTargets(sessions: readonly SessionInfo[], assets: readonly Asset
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: asset?.host ?? (session.kind === "device" ? "受管设备 · 执行前需确认" : null),
+        endpoint: asset?.host ?? (session.kind === "device" ? t("受管设备 · 执行前需确认") : null),
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [],
         envCount: 0,
@@ -103,7 +104,7 @@ function LiveResultMatrix({ step }: { step: RunbookStepState }) {
       {step.error && <div className="mb-2 whitespace-pre-wrap break-all text-[11px] text-red-300">{step.error}</div>}
       {step.results.length > 0 && (
         <table className="nx-table min-w-[560px]">
-          <thead><tr><th>目标</th><th>状态</th><th>退出码</th><th>输出 / 错误</th></tr></thead>
+          <thead><tr><th>{t("目标")}</th><th>{t("状态")}</th><th>{t("退出码")}</th><th>{t("输出 / 错误")}</th></tr></thead>
           <tbody>
             {step.results.map((result) => (
               <LiveResultRow key={result.sessionId} result={result} />
@@ -127,7 +128,7 @@ function LiveResultRow({ result }: { result: ExecBatchResult }) {
         {result.error && <div className="whitespace-pre-wrap break-all text-red-300">{result.error}</div>}
         {(result.stdout || result.stderr) && (
           <details>
-            <summary className="cursor-pointer text-neutral-400">查看输出</summary>
+            <summary className="cursor-pointer text-neutral-400">{t("查看输出")}</summary>
             {result.stdout && <pre className="nx-pre mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{result.stdout}</pre>}
             {result.stderr && <pre className="nx-pre mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{result.stderr}</pre>}
           </details>
@@ -152,17 +153,17 @@ function RunHistoryView({ history }: { history: RunbookHistory }) {
   return (
     <div className="mt-3 border-t border-neutral-800 pt-3" data-testid="runbook-history">
       <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-neutral-400">
-        <span title={`片段 ${history.runbookId} · 运行 ${history.runId}`}>本次运行</span>
-        <span>执行到第 {history.reachedStep} / {history.stepCount} 步</span>
+        <span title={t("片段 {runbookId} · 运行 {runId}", { runbookId: history.runbookId, runId: history.runId })}>{t("本次运行")}</span>
+        <span>{t("执行到第 {reachedStep} / {stepCount} 步", { reachedStep: history.reachedStep, stepCount: history.stepCount })}</span>
         <span className={statusClass(history.status)}>{RUN_STATUS_LABELS[history.status] ?? history.status}</span>
       </div>
       {history.batches.map((batch) => (
         <div key={batch.batch.id} className="mb-3 rounded border border-neutral-800 p-2">
           <div className="mb-1 text-[11px] text-neutral-400">
-            <span title={`批次 ${batch.batch.id}`}>第 {batch.batch.stepNumber} 步</span> · {RUN_STATUS_LABELS[batch.batch.status] ?? batch.batch.status}
+            <span title={t("批次 {id}", { id: batch.batch.id })}>{t("第")} {batch.batch.stepNumber} {t("步")}</span> · {RUN_STATUS_LABELS[batch.batch.status] ?? batch.batch.status}
           </div>
           <table className="nx-table min-w-[520px]">
-            <thead><tr><th>目标</th><th>状态</th><th>退出码</th><th>失败原因</th></tr></thead>
+            <thead><tr><th>{t("目标")}</th><th>{t("状态")}</th><th>{t("退出码")}</th><th>{t("失败原因")}</th></tr></thead>
             <tbody>{batch.results.map((result) => <HistoryResult key={result.sessionId} result={result} />)}</tbody>
           </table>
         </div>
@@ -240,7 +241,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
   const prepareState = async (state: RunbookRunState, epoch: number): Promise<RunbookRunState | null> => {
     if (!isActiveEpoch(epoch)) return null;
     const step = state.steps[state.currentStep - 1];
-    if (!step) throw new Error("当前步骤不存在");
+    if (!step) throw new Error(t("当前步骤不存在"));
     const current = runRef.current;
     if (!isActiveEpoch(epoch) || !current || current.runId !== state.runId || terminalRun(current.status)) return null;
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
@@ -252,9 +253,9 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
       return { id, label: targetsById.get(id)?.label ?? session?.name ?? id, asset };
     }));
     for (const target of rendered) {
-      if (!target.command.trim()) throw new Error(`目标「${target.id}」渲染后的命令不能为空`);
+      if (!target.command.trim()) throw new Error(t("目标「{id}」渲染后的命令不能为空", { id: target.id }));
       if (/[\r\n\0]/.test(target.command)) {
-        throw new Error(`目标「${target.id}」填入变量后的命令包含换行或空字符；多主机执行只支持单行命令`);
+        throw new Error(t("目标「{id}」填入变量后的命令包含换行或空字符；多主机执行只支持单行命令", { id: target.id }));
       }
     }
     if (!isActiveEpoch(epoch)) return null;
@@ -320,20 +321,20 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
 
   const start = () => {
     if (selected.length === 0) {
-      setError("请至少选择一个已连接的 SSH 或受管设备会话");
+      setError(t("请至少选择一个已连接的 SSH 或受管设备会话"));
       return;
     }
     setHistory(null);
     void transition(async (epoch) => {
       const analysis = analyzeSnippetSteps(steps.map((step) => step.command));
       if (analysis.unknownVariables.length > 0) {
-        throw new Error(`未知变量：${analysis.unknownVariables.map((variable) => `「${variable}」`).join("、")}`);
+        throw new Error(t("未知变量：{join}", { join: analysis.unknownVariables.map((variable) => `「${variable}」`).join("、") }));
       }
       const values = analysis.hasVariables
-        ? await promptForValues(`填写变量 · ${snippet.name}`, analysis.variables)
+        ? await promptForValues(t("填写变量 · {name}", { name: snippet.name }), analysis.variables)
         : {};
       if (values === null) {
-        if (isActiveEpoch(epoch)) setError("已取消填写变量，未开始执行");
+        if (isActiveEpoch(epoch)) setError(t("已取消填写变量，未开始执行"));
         return;
       }
       if (!isActiveEpoch(epoch)) return;
@@ -403,7 +404,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
       const canceled = await runbookApi.cancel(current.runId);
       if (isActiveEpoch(epoch) && runRef.current?.runId === current.runId) applyRun(canceled, epoch);
     } catch (cause) {
-      if (isActiveEpoch(epoch)) setError(`取消失败：${describeError(cause)}`);
+      if (isActiveEpoch(epoch)) setError(t("取消失败：{value}", { value: describeError(cause) }));
     } finally {
       if (isActiveEpoch(epoch)) setCanceling(false);
     }
@@ -449,7 +450,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
       const next = await runbookApi.respond({ runId: current.runId, promptId: prompt.id, value, ...(applyAll ? { applyAll: true } : {}) });
       if (next && next.status === "running" && runRef.current?.status === "running") applyRun(next, epoch);
     } catch (cause) {
-      if (isActiveEpoch(epoch)) setError(`提交回答失败：${describeError(cause)}`);
+      if (isActiveEpoch(epoch)) setError(t("提交回答失败：{value}", { value: describeError(cause) }));
     } finally {
       respondingRef.current -= 1;
       respondGenerationRef.current += 1;
@@ -476,7 +477,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
       const result = await runbookApi.historyGet(runId);
       if (isActiveEpoch(epoch) && runRef.current?.runId === runId) setHistory(result);
     } catch (cause) {
-      if (isActiveEpoch(epoch)) setHistoryError(`未能读取历史：${describeError(cause)}`);
+      if (isActiveEpoch(epoch)) setHistoryError(t("未能读取历史：{value}", { value: describeError(cause) }));
     } finally {
       if (isActiveEpoch(epoch)) setHistoryLoading(false);
     }
@@ -511,11 +512,11 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
         <div className="nx-modal-header shrink-0 flex-wrap">
           {onBack && (
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={backToSnippets}>
-              ← 命令片段
+              {t("← 命令片段")}
             </button>
           )}
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">在多台主机执行 · {snippet.name}</span>
-          <span className="nx-hint hidden sm:inline">按顺序在多台主机上执行片段的每一步，默认每一步都先确认</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("在多台主机执行 · {name}", { name: snippet.name })}</span>
+          <span className="nx-hint hidden sm:inline">{t("按顺序在多台主机上执行片段的每一步，默认每一步都先确认")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {error && <div role="alert" className="mb-3 flex items-start gap-1.5 text-[12px] text-red-400"><IconXCircle size={13} className="mt-0.5 shrink-0" />{error}</div>}
@@ -524,14 +525,14 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
             <div className="min-w-0">
               {snippet.description && <p className="mb-2 text-[11.5px] text-neutral-400">{snippet.description}</p>}
               <ScriptDirectiveHelp />
-              <div className="mb-3 flex flex-col gap-2" aria-label="片段步骤">
+              <div className="mb-3 flex flex-col gap-2" aria-label={t("片段步骤")}>
                 {steps.map((step, index) => (
                   <div key={step.id} className="rounded border border-neutral-800 p-2.5" data-testid={`multi-host-step-${index + 1}`}>
                     <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px]">
                       <span className="nx-badge">{index + 1}</span>
                       <span className="font-medium text-neutral-200">{step.name}</span>
-                      {step.confirm && <span className="nx-badge text-amber-300">执行前确认</span>}
-                      {step.interactive && <span className="nx-badge">交互指令</span>}
+                      {step.confirm && <span className="nx-badge text-amber-300">{t("执行前确认")}</span>}
+                      {step.interactive && <span className="nx-badge">{t("交互指令")}</span>}
                     </div>
                     {step.description && <p className="mb-1.5 text-[11px] text-neutral-500">{step.description}</p>}
                     <pre className="nx-pre whitespace-pre-wrap break-all text-[11px]">{step.command}</pre>
@@ -545,26 +546,26 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
                 selectedIds={selected}
                 onChange={setSelected}
                 maxTargets={MAX_TARGETS}
-                legend="在哪些主机上执行"
-                searchAriaLabel="搜索执行目标"
-                metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+                legend={t("在哪些主机上执行")}
+                searchAriaLabel={t("搜索执行目标")}
+                metadataError={assetsQuery.isError ? t("未能加载资产详情：{value}", { value: describeError(assetsQuery.error) }) : null}
               />
               <div className="mt-3 flex flex-col gap-2 text-[11px] text-neutral-400">
                 <div className="flex flex-col gap-1">
-                  <span>执行前确认</span>
+                  <span>{t("执行前确认")}</span>
                   <Select
-                    ariaLabel="执行前确认"
+                    ariaLabel={t("执行前确认")}
                     value={policy}
                     options={[
-                      { value: "every_step", label: "每一步都确认" },
-                      { value: "production_only", label: "只确认标记了『执行前确认』的步骤和生产主机" },
+                      { value: "every_step", label: t("每一步都确认") },
+                      { value: "production_only", label: t("只确认标记了『执行前确认』的步骤和生产主机") },
                     ]}
                     onChange={(value) => setPolicy(value as RunbookConfirmationPolicy)}
                   />
                 </div>
                 <label className="flex items-center gap-1.5">
                   <input type="checkbox" className="accent-blue-500" checked={stopOnFailure} onChange={(event) => setStopOnFailure(event.target.checked)} />
-                  有主机失败就停止后续步骤（默认）
+                  {t("有主机失败就停止后续步骤（默认）")}
                 </label>
               </div>
             </div>
@@ -574,7 +575,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <span className="font-medium text-neutral-200">{run.runbookName}</span>
                 <span className={statusClass(run.status)}>{RUN_STATUS_LABELS[run.status] ?? run.status}</span>
-                <span className="nx-hint">第 {run.currentStep} / {run.stepCount} 步 · {run.stopOnFailure ? "失败即停" : "失败后继续"}</span>
+                <span className="nx-hint">{t("第 {currentStep} / {stepCount} 步 · {value}", { currentStep: run.currentStep, stepCount: run.stepCount, value: run.stopOnFailure ? t("失败即停") : t("失败后继续") })}</span>
               </div>
               <div className="flex flex-col gap-2">
                 {run.steps.map((step) => (
@@ -587,7 +588,7 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
                     {step.step.description && <p className="mt-1 text-[11px] text-neutral-500">{step.step.description}</p>}
                     {step.number === run.currentStep && step.status === "awaiting_confirmation" && (
                       <div className="mt-2" data-testid="runbook-step-confirmation">
-                        <div className="mb-1 text-[11px] text-amber-300">请确认下列命令；该步骤执行完成后才会进入下一步。</div>
+                        <div className="mb-1 text-[11px] text-amber-300">{t("请确认下列命令；该步骤执行完成后才会进入下一步。")}</div>
                         {(step.renderedCommands ?? []).map((rendered) => (
                           <div key={rendered.sessionId} className="mb-1">
                             <div className="text-[10.5px] text-neutral-500" title={rendered.sessionId}>{targets.find((target) => target.id === rendered.sessionId)?.label ?? rendered.sessionId}</div>
@@ -603,17 +604,17 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
               <ScriptPrompts prompts={run.prompts ?? []} disabled={canceling || terminalRun(run.status)} onRespond={respondToPrompt} />
               <ScriptActivity live={run.live ?? []} answers={run.answers ?? []} />
               {run.status === "awaiting_render" && !busy && (
-                <button type="button" className="nx-btn mt-3" onClick={retryPrepare}>重新准备当前步骤</button>
+                <button type="button" className="nx-btn mt-3" onClick={retryPrepare}>{t("重新准备当前步骤")}</button>
               )}
               {run.status === "awaiting_confirmation" && (
                 <button type="button" className="nx-btn nx-btn-primary mt-3" disabled={busy || canceling} onClick={confirmStep}>
-                  <IconPlay size={13} />确认并执行第 {run.currentStep} 步
+                  <IconPlay size={13} />{t("确认并执行第 {currentStep} 步", { currentStep: run.currentStep })}
                 </button>
               )}
-              {run.status === "running" && <div role="status" className="mt-3 text-[11px] text-blue-300" title={run.activeBatchId ? `批次 ${run.activeBatchId}` : undefined}>正在执行第 {run.currentStep} 步…</div>}
+              {run.status === "running" && <div role="status" className="mt-3 text-[11px] text-blue-300" title={run.activeBatchId ? t("批次 {activeBatchId}", { activeBatchId: run.activeBatchId }) : undefined}>{t("正在执行第 {currentStep} 步…", { currentStep: run.currentStep })}</div>}
               {terminalRun(run.status) && run.steps.some((step) => step.batchIds.length > 0) && (
                 <button type="button" className="nx-btn mt-3" disabled={historyLoading} onClick={() => void loadHistory()}>
-                  {historyLoading ? "正在读取历史…" : "查看本次运行历史"}
+                  {historyLoading ? t("正在读取历史…") : t("查看本次运行历史")}
                 </button>
               )}
               {historyError && <div role="alert" className="mt-2 text-[11px] text-red-300">{historyError}</div>}
@@ -622,11 +623,11 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <span className="nx-hint mr-auto">取消会停止当前步骤和后续步骤，不会关闭终端。</span>
-          {run && terminalRun(run.status) && <button type="button" className="nx-btn" onClick={() => { runRef.current = null; setRun(null); setHistory(null); setError(null); }}>返回</button>}
-          {active && <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancelRun()}><IconStop size={12} />{canceling ? "正在取消…" : "取消执行"}</button>}
-          {!run && <button type="button" className="nx-btn nx-btn-primary" disabled={busy || targets.length === 0} onClick={start}><IconPlay size={13} />开始运行</button>}
-          <button type="button" className="nx-btn nx-btn-ghost" onClick={closePanel}>关闭</button>
+          <span className="nx-hint mr-auto">{t("取消会停止当前步骤和后续步骤，不会关闭终端。")}</span>
+          {run && terminalRun(run.status) && <button type="button" className="nx-btn" onClick={() => { runRef.current = null; setRun(null); setHistory(null); setError(null); }}>{t("返回")}</button>}
+          {active && <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancelRun()}><IconStop size={12} />{canceling ? t("正在取消…") : t("取消执行")}</button>}
+          {!run && <button type="button" className="nx-btn nx-btn-primary" disabled={busy || targets.length === 0} onClick={start}><IconPlay size={13} />{t("开始运行")}</button>}
+          <button type="button" className="nx-btn nx-btn-ghost" onClick={closePanel}>{t("关闭")}</button>
         </div>
       </div>
       {promptElement}

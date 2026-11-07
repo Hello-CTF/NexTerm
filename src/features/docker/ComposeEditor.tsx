@@ -11,6 +11,7 @@ import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmatio
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "./productionGuard";
 import { DockerStreamView, type DockerOutputStream } from "./DockerStreamView";
 import { dockerTextDiff } from "./textDiff";
+import { t } from "../../i18n";
 
 type PendingSave = {
   change: FileEditorSaveChange;
@@ -23,14 +24,14 @@ type ProductionSave = {
   challenge: DockerConfirmationChallenge;
 };
 
-const STACK_CHANGED = "栈配置已变化";
+const STACK_CHANGED = t("栈配置已变化");
 
 function isStackChanged(cause: unknown): boolean {
   const message = typeof cause === "string" ? cause : (cause as { message?: unknown } | null)?.message;
   return typeof message === "string" && message.includes(STACK_CHANGED);
 }
 
-const STACK_CHANGED_HINT = "栈配置已变化，请关闭后重新打开编辑器确认";
+const STACK_CHANGED_HINT = t("栈配置已变化，请关闭后重新打开编辑器确认");
 
 export function ComposeEditor({
   sessionId,
@@ -111,10 +112,10 @@ export function ComposeEditor({
       } catch (cause) {
         disposeChannel(channel);
         if (isStackChanged(cause)) {
-          setError("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认");
+          setError(t("文件已保存，但栈配置已变化，未执行 up -d；请关闭后重新打开编辑器确认"));
           onChanged();
         } else {
-          setError(`文件已保存，但重新部署未能启动：${describeError(cause)}`);
+          setError(t("文件已保存，但重新部署未能启动：{value}", { value: describeError(cause) }));
         }
       }
     } catch (cause) {
@@ -130,7 +131,7 @@ export function ComposeEditor({
           setError(STACK_CHANGED_HINT);
           onChanged();
         } else {
-          setError(`保存或 redeploy 失败：${describeError(cause)}`);
+          setError(t("保存或 redeploy 失败：{value}", { value: describeError(cause) }));
         }
       }
     } finally {
@@ -160,7 +161,7 @@ export function ComposeEditor({
           className="nx-modal flex h-[86dvh] w-[94vw] max-w-[1200px] flex-col"
           role="dialog"
           aria-modal="true"
-          aria-label={`编辑并重新部署 ${stack.project}`}
+          aria-label={t("编辑并重新部署 {project}", { project: stack.project })}
           tabIndex={-1}
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => {
@@ -169,10 +170,10 @@ export function ComposeEditor({
           }}
         >
           <div className="nx-modal-header">
-            <span className="min-w-0 truncate" title={stack.project}>编辑并重新部署 · {stack.project}</span>
-            <span className="nx-badge shrink-0 max-[560px]:hidden">保存前先查看差异</span>
+            <span className="min-w-0 truncate" title={stack.project}>{t("编辑并重新部署 · {project}", { project: stack.project })}</span>
+            <span className="nx-badge shrink-0 max-[560px]:hidden">{t("保存前先查看差异")}</span>
             <div className="nx-spacer" />
-            <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label="关闭 Compose 编辑器" onClick={onClose}>
+            <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label={t("关闭 Compose 编辑器")} onClick={onClose}>
               <IconClose size={12} />
             </button>
           </div>
@@ -188,8 +189,8 @@ export function ComposeEditor({
               </button>
             ))}
             {!stack.envExists && (
-              <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm font-mono" disabled title=".env 不存在；仅已有 .env 可在本流程中编辑">
-                .env（不存在）
+              <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm font-mono" disabled title={t(".env 不存在；仅已有 .env 可在本流程中编辑")}>
+                {t(".env（不存在）")}
               </button>
             )}
           </div>
@@ -215,8 +216,8 @@ export function ComposeEditor({
           challenge={production.challenge}
           contentHash={production.challenge.commandHash}
           command={stack.upCommand
-            ? `保存 ${production.pending.change.path} 并执行：${stack.upCommand}`
-            : `保存 ${production.pending.change.path} 并执行 docker compose up -d`}
+            ? t("保存 {path} 并执行：{upCommand}", { path: production.pending.change.path, upCommand: stack.upCommand })
+            : t("保存 {path} 并执行 docker compose up -d", { path: production.pending.change.path })}
           onCancel={cancelPending}
           onConfirm={(environmentNames) => void finish(production.pending, dockerConfirmation(production.challenge, environmentNames))}
         />
@@ -253,28 +254,28 @@ function DiffSaveDialog({ pending, stack, busy, onCancel, onConfirm }: {
         className="nx-modal flex max-h-[80dvh] w-[720px] max-w-[92vw] flex-col"
         role="dialog"
         aria-modal="true"
-        aria-label="确认 Compose 变更"
+        aria-label={t("确认 Compose 变更")}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           event.stopPropagation();
           if (layer.isTopmost()) trapOverlayTab(event, ref.current);
         }}
       >
-        <div className="nx-modal-header">保存并重新部署</div>
+        <div className="nx-modal-header">{t("保存并重新部署")}</div>
         <div className="nx-modal-body min-h-0 overflow-auto">
           <p className="mb-2 break-all font-mono text-xs text-neutral-400">{pending.change.path}</p>
           <dl className="mb-2 space-y-1 text-xs">
             <div>
-              <dt className="text-neutral-500">工作目录</dt>
+              <dt className="text-neutral-500">{t("工作目录")}</dt>
               <dd className="select-text break-all font-mono text-neutral-300">{stack.workingDir}</dd>
             </div>
             <div>
-              <dt className="text-neutral-500">将执行的命令</dt>
-              <dd className="select-text break-all font-mono text-neutral-300">{stack.upCommand || "docker compose up -d（命令预览不可用）"}</dd>
+              <dt className="text-neutral-500">{t("将执行的命令")}</dt>
+              <dd className="select-text break-all font-mono text-neutral-300">{stack.upCommand || t("docker compose up -d（命令预览不可用）")}</dd>
             </div>
           </dl>
           {diff.length === 0 ? (
-            <p className="text-xs text-amber-300">文件内容没有变化；继续仍会执行 up -d。</p>
+            <p className="text-xs text-amber-300">{t("文件内容没有变化；继续仍会执行 up -d。")}</p>
           ) : (
             <pre className="nx-pre overflow-auto text-[11px] leading-relaxed">{diff.map((line, index) => (
               <div key={index} className={line.kind === "add" ? "text-green-300" : line.kind === "del" ? "text-red-300" : "text-neutral-500"}>
@@ -284,9 +285,9 @@ function DiffSaveDialog({ pending, stack, busy, onCancel, onConfirm }: {
           )}
         </div>
         <div className="nx-modal-footer [padding-bottom:calc(0.75rem+var(--nx-safe-bottom,0px))]">
-          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={onCancel}>取消</button>
+          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy} onClick={onCancel}>{t("取消")}</button>
           <button type="button" className="nx-btn nx-btn-danger" disabled={busy} onClick={onConfirm}>
-            {busy ? "正在预检…" : "保存并 up -d"}
+            {busy ? t("正在预检…") : t("保存并 up -d")}
           </button>
         </div>
       </div>

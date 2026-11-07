@@ -19,6 +19,7 @@ import { TabAttentionBadge } from "./workspace/tabStrip";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import type { AssetGroup } from "../ipc/commands";
 import { IconClose, IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
+import { t } from "../i18n";
 
 const WORKSPACE_DRAG_MIME = "application/x-nexterm-workspace";
 
@@ -79,7 +80,7 @@ function WorkspaceStripTab({
     if (needsReconnect) {
       items.push({
         kind: "item",
-        label: "重新连接",
+        label: t("重新连接"),
         icon: <IconRefresh size={13} />,
         hint: statusLabel ?? undefined,
         onSelect: () => void reconnectWorkspaceConnection(workspace.id),
@@ -88,21 +89,21 @@ function WorkspaceStripTab({
     items.push(
       {
         kind: "item",
-        label: "关闭工作区",
+        label: t("关闭工作区"),
         icon: <IconClose size={13} />,
         disabled: !workspace.closable,
         onSelect: () => void closeWorkspaces([workspace]),
       },
       {
         kind: "item",
-        label: "关闭左侧全部工作区",
+        label: t("关闭左侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableLeft.length === 0,
         onSelect: () => void closeWorkspaces(closableLeft),
       },
       {
         kind: "item",
-        label: "关闭右侧全部工作区",
+        label: t("关闭右侧全部工作区"),
         icon: <IconClose size={13} />,
         disabled: closableRight.length === 0,
         onSelect: () => void closeWorkspaces(closableRight),
@@ -120,7 +121,7 @@ function WorkspaceStripTab({
         tabIndex={selected ? 0 : -1}
         draggable={draggable}
         className={`nx-tab ${selected ? "is-active" : ""}${dropEdge ? ` nx-drop-${dropEdge}` : ""}${dragging ? " nx-drag-source" : ""}`}
-        title={[statusLabel, attention?.label, `${tabCount} 个标签`].filter(Boolean).join(" · ")}
+        title={[statusLabel, attention?.label, t("{tabCount} 个标签", { tabCount })].filter(Boolean).join(" · ")}
         onContextMenu={onContextMenu}
         {...handlers}
       >
@@ -235,7 +236,7 @@ export function ProjectWorkspaceStrip({
       <span className="shrink-0 px-2 text-xs font-medium text-neutral-500">{label}</span>
       <div className="nx-tabstrip-scroll">
         {visible.length > 0 ? (
-          <div role="tablist" aria-label={`${label}工作区`} className="flex items-center gap-[3px]">
+          <div role="tablist" aria-label={t("{label}工作区", { label })} className="flex items-center gap-[3px]">
             {visible.map((workspace) => (
               <WorkspaceStripTab
                 key={workspace.id}
@@ -261,7 +262,7 @@ export function ProjectWorkspaceStrip({
             ))}
           </div>
         ) : (
-          <span className="px-2 text-xs text-neutral-500">没有打开的工作区</span>
+          <span className="px-2 text-xs text-neutral-500">{t("没有打开的工作区")}</span>
         )}
       </div>
     </div>

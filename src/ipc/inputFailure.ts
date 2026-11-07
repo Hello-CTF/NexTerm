@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Terminal input that fails must not vanish: the first failure in a window is reported through a handler the app
 // installs (a toast), and a failure that means the link or tab is gone also asks the app to probe and reconnect.
 
@@ -26,7 +27,7 @@ export const INPUT_MAX_PENDING_BYTES = 4 * 1024 * 1024;
 
 /** The error reported when queued terminal input exceeds the cap and part of it is discarded. */
 export function inputOverflowError(): { code: string; message: string } {
-  return { code: "input_overflow", message: "终端输入积压超过 4 MiB，部分输入已丢弃" };
+  return { code: "input_overflow", message: t("终端输入积压超过 4 MiB，部分输入已丢弃") };
 }
 
 export function isConnectionLostError(error: unknown): boolean {

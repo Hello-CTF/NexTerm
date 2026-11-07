@@ -1,6 +1,7 @@
 import { assetApi, sessionApi } from "../ipc/commands";
 import type { SshHostKeyProbeDto } from "../ipc/types";
 import { ask } from "../ui/dialogs";
+import { t } from "../i18n";
 
 export type HostKeyDetail = {
   host?: string;
@@ -29,9 +30,9 @@ export function hostKeyQuestion(detail: HostKeyDetail | undefined): string {
       .map((known) => known.fingerprint)
       .filter((fingerprint): fingerprint is string => Boolean(fingerprint))
       .join("、");
-    return `主机 ${detail.host}:${detail.port} 的密钥已变更\n原指纹（SHA-256）：${previous}\n新指纹（SHA-256）：${detail.fingerprint}\n主机密钥类型：${detail.keyType}\n仅在确认服务器更换过密钥时继续，否则可能连到冒充的主机。\n信任新指纹并继续？`;
+    return t("主机 {host}:{port} 的密钥已变更\n原指纹（SHA-256）：{previous}\n新指纹（SHA-256）：{fingerprint}\n主机密钥类型：{keyType}\n仅在确认服务器更换过密钥时继续，否则可能连到冒充的主机。\n信任新指纹并继续？", { host: detail.host, port: detail.port, previous, fingerprint: detail.fingerprint, keyType: detail.keyType });
   }
-  return `首次连接 ${detail?.host}:${detail?.port}\n主机密钥类型：${detail?.keyType}\n指纹（SHA-256）：${detail?.fingerprint}\n信任并继续？之后会自动核对指纹。`;
+  return t("首次连接 {host}:{port}\n主机密钥类型：{keyType}\n指纹（SHA-256）：{fingerprint}\n信任并继续？之后会自动核对指纹。", { host: detail?.host, port: detail?.port, keyType: detail?.keyType, fingerprint: detail?.fingerprint });
 }
 
 const inflightConfirms = new Map<string, Promise<boolean>>();
@@ -41,7 +42,7 @@ export function confirmHostKey(detail: HostKeyDetail | undefined): Promise<boole
   const existing = inflightConfirms.get(key);
   if (existing) return existing;
   const promise = ask(hostKeyQuestion(detail), {
-    title: detail?.changed ? "主机密钥变更警告" : "确认主机指纹",
+    title: detail?.changed ? t("主机密钥变更警告") : t("确认主机指纹"),
     kind: "warning",
   }).finally(() => {
     inflightConfirms.delete(key);
@@ -52,7 +53,7 @@ export function confirmHostKey(detail: HostKeyDetail | undefined): Promise<boole
 
 function ensureCurrent(isCurrent?: () => boolean): void {
   if (isCurrent && !isCurrent()) {
-    throw { code: "account_changed", message: "账号已切换，旧连接已取消" };
+    throw { code: "account_changed", message: t("账号已切换，旧连接已取消") };
   }
 }
 
@@ -87,8 +88,8 @@ export async function connectWithHostKeyConfirm<T>(connect: () => Promise<T>, is
         throw {
           ...retryPending,
           message: detail?.changed
-            ? `主机密钥确认后仍发生变更：${detail.host}:${detail.port}，原指纹 ${previous}，当前指纹 ${detail.fingerprint}。请核对主机后重试。`
-            : `主机密钥确认后仍待验证：${detail?.host}:${detail?.port}，当前指纹 ${detail?.fingerprint}。请核对主机后重试。`,
+            ? t("主机密钥确认后仍发生变更：{host}:{port}，原指纹 {previous}，当前指纹 {fingerprint}。请核对主机后重试。", { host: detail.host, port: detail.port, previous, fingerprint: detail.fingerprint })
+            : t("主机密钥确认后仍待验证：{host}:{port}，当前指纹 {fingerprint}。请核对主机后重试。", { host: detail?.host, port: detail?.port, fingerprint: detail?.fingerprint }),
         };
       }
       throw retryError;

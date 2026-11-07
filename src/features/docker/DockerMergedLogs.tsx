@@ -8,6 +8,7 @@ import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogH
 import { useUi } from "../../app/store";
 import { createLogLineDecoder } from "./DockerLogStream";
 import { MERGED_LOG_LINE_LIMIT, createMergedLogBuffer, type MergedLogLine } from "./mergedLogs";
+import { t } from "../../i18n";
 
 const PALETTE = [
   "text-sky-300",
@@ -188,7 +189,7 @@ export function DockerMergedLogs({
         className="nx-modal flex h-[86dvh] w-[94vw] max-w-[1200px] flex-col"
         role="dialog"
         aria-modal="true"
-        aria-label="合并日志"
+        aria-label={t("合并日志")}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
@@ -197,25 +198,25 @@ export function DockerMergedLogs({
         }}
       >
         <div className="nx-modal-header">
-          <span className="min-w-0 truncate">合并日志 · {containers.length} 个容器 · 仅保留最近 {MERGED_LOG_LINE_LIMIT} 行</span>
+          <span className="min-w-0 truncate">{t("合并日志 · {length} 个容器 · 仅保留最近 {MERGED_LOG_LINE_LIMIT} 行", { length: containers.length, MERGED_LOG_LINE_LIMIT })}</span>
           <div className="nx-spacer" />
-          <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label="关闭合并日志" onClick={onClose}>
+          <button type="button" className="nx-icon-btn nx-icon-btn-sm pointer-coarse:h-9 pointer-coarse:w-9" aria-label={t("关闭合并日志")} onClick={onClose}>
             <IconClose size={12} />
           </button>
         </div>
         <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-b border-neutral-800/70 px-3 py-1.5 text-[11px]">
           {containers.map((container, index) => (
             <span key={container.id} className={`font-mono ${PALETTE[index % PALETTE.length]}`} title={failed[index]}>
-              {container.name}{failed[index] !== undefined && "（附加失败）"}
+              {container.name}{failed[index] !== undefined && t("（附加失败）")}
             </span>
           ))}
         </div>
         {(down || wasDown) && (
           <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-amber-900/60 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-300">
-            <span className="min-w-0 flex-1">{down ? "主机连接中断，日志跟随已停止" : "连接已恢复，日志跟随已停止"}</span>
+            <span className="min-w-0 flex-1">{down ? t("主机连接中断，日志跟随已停止") : t("连接已恢复，日志跟随已停止")}</span>
             {!down && (
               <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-9" onClick={refollow}>
-                重新跟随
+                {t("重新跟随")}
               </button>
             )}
           </div>
@@ -226,19 +227,19 @@ export function DockerMergedLogs({
             <input
               className="nx-input nx-input-sm min-w-0 font-mono"
               type="search"
-              placeholder="高亮关键字"
-              aria-label="高亮关键字"
+              placeholder={t("高亮关键字")}
+              aria-label={t("高亮关键字")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </div>
           <label className="nx-hint inline-flex items-center gap-1">
             <input type="checkbox" checked={onlyMatches} onChange={(e) => setOnlyMatches(e.target.checked)} />
-            只显示匹配行
+            {t("只显示匹配行")}
           </label>
           <label className="nx-hint inline-flex items-center gap-1">
             <input type="checkbox" checked={showTime} onChange={(e) => setShowTime(e.target.checked)} />
-            显示时间
+            {t("显示时间")}
           </label>
           <button
             type="button"
@@ -247,18 +248,18 @@ export function DockerMergedLogs({
             onClick={() => setFrozen((cur) => (cur === null ? buffer.current.snapshot() : null))}
           >
             {frozen !== null && <IconPlay size={11} />}
-            {frozen !== null ? "继续" : "暂停"}
+            {frozen !== null ? t("继续") : t("暂停")}
           </button>
         </div>
         <div className="relative min-h-0 flex-1">
           <div
             ref={scroller}
             role="log"
-            aria-label="合并日志内容"
+            aria-label={t("合并日志内容")}
             className="h-full overflow-auto overscroll-contain bg-term px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-300 [overflow-wrap:anywhere]"
           >
             {visible.length === 0 ? (
-              <span className="text-neutral-500">{lines.length === 0 ? "等待日志…" : "没有匹配的日志行"}</span>
+              <span className="text-neutral-500">{lines.length === 0 ? t("等待日志…") : t("没有匹配的日志行")}</span>
             ) : (
               visible.map((line) => (
                 <div key={line.seq} className="whitespace-pre-wrap">
@@ -273,10 +274,10 @@ export function DockerMergedLogs({
             <button
               type="button"
               className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-neutral-700 bg-neutral-800/95 px-3.5 py-1 text-[11px] text-neutral-200 shadow-lg hover:bg-neutral-700 pointer-coarse:min-h-10"
-              aria-label="回到最新日志"
+              aria-label={t("回到最新日志")}
               onClick={jumpToLatest}
             >
-              ↓ 新输出
+              {t("↓ 新输出")}
             </button>
           )}
         </div>

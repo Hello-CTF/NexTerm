@@ -41,15 +41,16 @@ import {
 } from "../../ui/icons";
 import { showSettingsSection } from "./settingsNavigation";
 import { ListPager, usePagedList } from "./ListPager";
+import { t } from "../../i18n";
 
 // All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
 // the 24h default aligns with the server defaultHostShareTTL, and ttl_ms is always sent explicitly on submit.
 const SHARE_TTL_OPTIONS = [
-  { label: "1 小时", ms: 60 * 60_000 },
-  { label: "6 小时", ms: 6 * 60 * 60_000 },
-  { label: "24 小时", ms: 24 * 60 * 60_000 },
-  { label: "7 天", ms: 7 * 24 * 60 * 60_000 },
-  { label: "30 天", ms: 30 * 24 * 60 * 60_000 },
+  { label: t("1 小时"), ms: 60 * 60_000 },
+  { label: t("6 小时"), ms: 6 * 60 * 60_000 },
+  { label: t("24 小时"), ms: 24 * 60 * 60_000 },
+  { label: t("7 天"), ms: 7 * 24 * 60 * 60_000 },
+  { label: t("30 天"), ms: 30 * 24 * 60 * 60_000 },
 ];
 
 function shortId(id: string): string {
@@ -58,13 +59,13 @@ function shortId(id: string): string {
 
 // permissionBadge displays anything outside the contract as read-only (consistent with publicShareApi's parsing).
 function permissionBadge(permission: SharePermission): { text: string; tone: string } {
-  return permission === "read_write" ? { text: "读写", tone: "nx-badge-amber" } : { text: "只读", tone: "" };
+  return permission === "read_write" ? { text: t("读写"), tone: "nx-badge-amber" } : { text: t("只读"), tone: "" };
 }
 
 function shareState(expiresAt: number, revokedAt: number | undefined, now: number): { text: string; tone: string } {
-  if (revokedAt) return { text: "已吊销", tone: "nx-badge-red" };
-  if (now >= expiresAt) return { text: "已过期", tone: "nx-badge-amber" };
-  return { text: "有效", tone: "nx-badge-green" };
+  if (revokedAt) return { text: t("已吊销"), tone: "nx-badge-red" };
+  if (now >= expiresAt) return { text: t("已过期"), tone: "nx-badge-amber" };
+  return { text: t("有效"), tone: "nx-badge-green" };
 }
 
 function ShareUnsupported() {
@@ -72,11 +73,11 @@ function ShareUnsupported() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
-        <span className="nx-card-title">分享</span>
-        <span className="nx-badge nx-badge-amber">登录服务端账号后可用</span>
+        <span className="nx-card-title">{t("分享")}</span>
+        <span className="nx-badge nx-badge-amber">{t("登录服务端账号后可用")}</span>
       </div>
       <p className="nx-hint">
-        主机分享需要服务端账号。在「设置 → 账号同步」中登录服务端账号后，即可将已接入的受管设备分享给其他注册用户。
+        {t("主机分享需要服务端账号。在「设置 → 账号同步」中登录服务端账号后，即可将已接入的受管设备分享给其他注册用户。")}
       </p>
       <div className="mt-3">
         <button
@@ -84,7 +85,7 @@ function ShareUnsupported() {
           className="nx-btn nx-btn-outline nx-btn-sm"
           onClick={() => showSettingsSection("settings-account")}
         >
-          前往「账号同步」登录
+          {t("前往「账号同步」登录")}
         </button>
       </div>
     </section>
@@ -97,9 +98,9 @@ function ShareLoginHint() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconGlobe size={15} className="text-neutral-400" />
-        <span className="nx-card-title">分享</span>
+        <span className="nx-card-title">{t("分享")}</span>
       </div>
-      <p className="nx-hint">登录后可将已接入的受管设备分享给其他注册用户。</p>
+      <p className="nx-hint">{t("登录后可将已接入的受管设备分享给其他注册用户。")}</p>
     </section>
   );
 }
@@ -109,11 +110,11 @@ function ShareAuthOff() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
-        <span className="nx-card-title">分享</span>
-        <span className="nx-badge nx-badge-amber">账号功能已关闭</span>
+        <span className="nx-card-title">{t("分享")}</span>
+        <span className="nx-badge nx-badge-amber">{t("账号功能已关闭")}</span>
       </div>
       <p className="nx-hint">
-        此服务器已关闭账号功能（--auth=off），终端分享不可用；主机分享需要账号。
+        {t("此服务器已关闭账号功能（--auth=off），终端分享不可用；主机分享需要账号。")}
       </p>
     </section>
   );
@@ -139,8 +140,8 @@ export function ShareCard() {
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconGlobe size={15} className="text-neutral-400" />
-          <span className="nx-card-title">分享</span>
-          <span className="nx-hint">账号身份信息不可用，请重新登录。</span>
+          <span className="nx-card-title">{t("分享")}</span>
+          <span className="nx-hint">{t("账号身份信息不可用，请重新登录。")}</span>
         </div>
       </section>
     );
@@ -150,8 +151,8 @@ export function ShareCard() {
       <section className="nx-card">
         <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <IconGlobe size={15} className="text-neutral-400" />
-          <span className="nx-card-title">分享</span>
-          <span className="nx-hint">正在读取账号状态…</span>
+          <span className="nx-card-title">{t("分享")}</span>
+          <span className="nx-hint">{t("正在读取账号状态…")}</span>
         </div>
       </section>
     );
@@ -259,7 +260,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     try {
       await sharingClient().createHostShare({ deviceId, recipientUsername: recipient, write, ttlMs });
       if (epoch !== accountEpoch.current) return;
-      pushToast("success", `已将主机「${deviceName(deviceId)}」分享给 ${recipient}`);
+      pushToast("success", t("已将主机「{value}」分享给 {recipient}", { value: deviceName(deviceId), recipient }));
       setCreateOpen(false);
       setDeviceId("");
       setRecipientUsername("");
@@ -277,15 +278,15 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     // The epoch must be captured before the confirmation opens: if the account switches while the dialog is open, the old account's row must not be revoked in the new session.
     const epoch = accountEpoch.current;
     const ok = await ask(
-      `确定要吊销这条主机分享吗？\n\n「${share.recipient_username}」将无法再通过此分享在「${deviceName(share.device_id)}」上新建终端，进行中的连接也将尽快断开。`,
-      { title: "吊销主机分享", kind: "warning" },
+      t("确定要吊销这条主机分享吗？\n\n「{recipient_username}」将无法再通过此分享在「{value}」上新建终端，进行中的连接也将尽快断开。", { recipient_username: share.recipient_username, value: deviceName(share.device_id) }),
+      { title: t("吊销主机分享"), kind: "warning" },
     );
     if (!ok) return;
     if (epoch !== accountEpoch.current) return;
     try {
       await sharingClient().revokeHostShare(share.id);
       if (epoch !== accountEpoch.current) return;
-      pushToast("success", `已吊销「${share.recipient_username}」的主机分享`);
+      pushToast("success", t("已吊销「{recipient_username}」的主机分享", { recipient_username: share.recipient_username }));
       load();
     } catch (e) {
       if (epoch !== accountEpoch.current) return;
@@ -297,8 +298,8 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconGlobe size={15} className="text-neutral-400" />
-        <span className="nx-card-title">分享</span>
-        {shares !== null && <span className="nx-badge">{shares.length} 条主机分享</span>}
+        <span className="nx-card-title">{t("分享")}</span>
+        {shares !== null && <span className="nx-badge">{t("{length} 条主机分享", { length: shares.length })}</span>}
         <div className="nx-spacer" />
         <button
           className="nx-btn nx-btn-outline nx-btn-sm"
@@ -306,16 +307,16 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
           aria-expanded={createOpen}
         >
           <IconPlus size={12} />
-          新建主机分享
+          {t("新建主机分享")}
         </button>
         <button className="nx-btn nx-btn-ghost nx-btn-sm" disabled={loading} onClick={() => void load()}>
           <IconRefresh size={12} className={loading ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       <p className="nx-hint mb-3">
-        主机分享允许其他注册用户在有效期内通过设备代理在已接入的受管设备上新建终端。如需公开访问，请使用终端中的「预览链接」。
+        {t("主机分享允许其他注册用户在有效期内通过设备代理在已接入的受管设备上新建终端。如需公开访问，请使用终端中的「预览链接」。")}
       </p>
 
       {createOpen && (
@@ -323,14 +324,14 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
           <div className="flex flex-wrap items-center gap-2">
             <Select
               className="min-w-0 flex-1 basis-40"
-              ariaLabel="分享主机"
+              ariaLabel={t("分享主机")}
               value={deviceId}
               onChange={setDeviceId}
-              options={[{ value: "", label: "选择主机" }, ...shareableDevices.map((d) => ({ value: d.id, label: d.name }))]}
+              options={[{ value: "", label: t("选择主机") }, ...shareableDevices.map((d) => ({ value: d.id, label: d.name }))]}
             />
             <input
               className="nx-input min-w-0 flex-1 basis-40"
-              placeholder="接收者的用户名"
+              placeholder={t("接收者的用户名")}
               value={recipientUsername}
               autoComplete="off"
               onChange={(e) => setRecipientUsername(e.target.value)}
@@ -339,27 +340,27 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
           <div className="flex flex-wrap items-center gap-2">
             <Select
               className="w-[120px] shrink-0"
-              ariaLabel="分享有效期"
+              ariaLabel={t("分享有效期")}
               value={String(ttlMs)}
               onChange={(value) => setTtlMs(Number(value))}
               options={SHARE_TTL_OPTIONS.map((o) => ({ value: String(o.ms), label: o.label }))}
             />
             <label className="flex items-center gap-1.5 text-[12px] text-neutral-300">
               <input type="checkbox" className="h-4 w-4" checked={write} onChange={(e) => setWrite(e.target.checked)} />
-              允许读写
+              {t("允许读写")}
             </label>
-            <span className="nx-hint text-[11px]">默认只读；勾选后，对方可在终端中输入。</span>
+            <span className="nx-hint text-[11px]">{t("默认只读；勾选后，对方可在终端中输入。")}</span>
             <div className="nx-spacer" />
             <button
               className="nx-btn nx-btn-primary"
               disabled={creating || !deviceId || !recipientUsername.trim()}
               onClick={() => void submitCreate()}
             >
-              {creating ? "正在创建…" : "创建分享"}
+              {creating ? t("正在创建…") : t("创建分享")}
             </button>
           </div>
           {devices !== null && shareableDevices.length === 0 && (
-            <p className="nx-hint text-[11px]">暂无可分享的受管设备。请先在「设备管理」中接入设备并开启远程终端。</p>
+            <p className="nx-hint text-[11px]">{t("暂无可分享的受管设备。请先在「设备管理」中接入设备并开启远程终端。")}</p>
           )}
           {createError && (
             <div className="nx-alert nx-alert-danger flex items-start gap-2">
@@ -373,15 +374,15 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
       {listError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
           <IconXCircle size={13} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 flex-1 break-words">未能加载分享数据：{listError}。请重试。</span>
+          <span className="min-w-0 flex-1 break-words">{t("未能加载分享数据：{listError}。请重试。", { listError })}</span>
           <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void load()} disabled={loading}>
             <IconRefresh size={12} />
-            重试
+            {t("重试")}
           </button>
         </div>
       )}
 
-      <div className="mb-1 text-[12.5px] text-neutral-200">主机分享</div>
+      <div className="mb-1 text-[12.5px] text-neutral-200">{t("主机分享")}</div>
       {shares !== null && shares.length > 0 && (
         <div className="max-h-[240px] overflow-y-auto rounded border border-neutral-800/60">
           {sharePager.pageItems.map((s) => {
@@ -389,10 +390,10 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
             const perm = permissionBadge(s.permission);
             const direction =
               s.owner_id === userId
-                ? `分享给 ${s.recipient_username}`
+                ? t("分享给 {recipient_username}", { recipient_username: s.recipient_username })
                 : s.recipient_id === userId
-                  ? `来自 ${s.owner_username}`
-                  : `${s.owner_username} 分享给 ${s.recipient_username}`;
+                  ? t("来自 {owner_username}", { owner_username: s.owner_username })
+                  : t("{owner_username} 分享给 {recipient_username}", { owner_username: s.owner_username, recipient_username: s.recipient_username });
             const canRevoke = isAdmin || s.owner_id === userId || (devices?.some((d) => d.id === s.device_id) ?? false);
             const canOpen = s.recipient_id === userId && !s.revoked_at && now < s.expires_at;
             return (
@@ -406,7 +407,7 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
                 <span className="nx-hint min-w-0 break-words text-[11px]">{direction}</span>
                 <span className={`nx-badge shrink-0 ${perm.tone}`}>{perm.text}</span>
                 <span className={`nx-badge shrink-0 ${state.tone}`}>{state.text}</span>
-                <span className="nx-hint min-w-0 text-[11px]">有效期至 {formatTime(s.expires_at)}</span>
+                <span className="nx-hint min-w-0 text-[11px]">{t("有效期至 {value}", { value: formatTime(s.expires_at) })}</span>
                 {canOpen && (
                   <button
                     className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
@@ -416,12 +417,12 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
                       ownerUsername: s.owner_username,
                     })}
                   >
-                    打开终端
+                    {t("打开终端")}
                   </button>
                 )}
                 {canRevoke && !s.revoked_at && (
                   <button className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => void revokeHostShare(s)}>
-                    吊销
+                    {t("吊销")}
                   </button>
                 )}
               </div>
@@ -430,15 +431,15 @@ function ShareManagement({ userId, scopeKey, isAdmin }: { userId: string; scopeK
           {sharePager.paged && <ListPager currentPage={sharePager.currentPage} pageCount={sharePager.pageCount} setPage={sharePager.setPage} />}
         </div>
       )}
-      {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">正在加载分享数据…</div>}
+      {shares === null && !listError && <div className="nx-hint py-1.5 text-[11.5px]">{t("正在加载分享数据…")}</div>}
       {shares !== null && shares.length === 0 && !listError && (
-        <div className="nx-hint py-1.5 text-[11.5px]">暂无主机分享。</div>
+        <div className="nx-hint py-1.5 text-[11.5px]">{t("暂无主机分享。")}</div>
       )}
 
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          列表由服务端按账号过滤：普通用户仅可查看自己授予或接收的分享，超级管理员可查看全部。吊销立即生效；主机分享不会向访问者暴露主机密码或私钥。
+          {t("列表由服务端按账号过滤：普通用户仅可查看自己授予或接收的分享，超级管理员可查看全部。吊销立即生效；主机分享不会向访问者暴露主机密码或私钥。")}
         </div>
       </div>
       {activeShare && (

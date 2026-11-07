@@ -1,5 +1,6 @@
 import type { Asset, AssetGroup } from "../ipc/commands";
 import type { Workspace } from "./store";
+import { t } from "../i18n";
 
 export const ALL_PROJECTS = "all" as const;
 export const UNGROUPED_PROJECT = "ungrouped" as const;
@@ -125,10 +126,10 @@ export function reconcileActiveWorkspaceForFocus(state: ProjectFocusScope): stri
 }
 
 export function projectFocusLabel(focus: ProjectFocus, groups: readonly AssetGroup[]): string {
-  if (focus === ALL_PROJECTS) return "全部";
-  if (focus === UNGROUPED_PROJECT) return "未分组";
+  if (focus === ALL_PROJECTS) return t("全部");
+  if (focus === UNGROUPED_PROJECT) return t("未分组");
   const id = projectGroupId(focus);
-  return groups.find((group) => group.id === id && group.parentId === null)?.name ?? "未知项目";
+  return groups.find((group) => group.id === id && group.parentId === null)?.name ?? t("未知项目");
 }
 
 export const PROJECT_GROUP_COLLAPSE_LIMIT = 256;

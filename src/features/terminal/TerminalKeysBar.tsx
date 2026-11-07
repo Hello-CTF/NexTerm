@@ -31,6 +31,7 @@ import {
 import { setTerminalInputMode, useTerminalInputMode } from "./terminalInputMode";
 import { confirmQuickCommand, useQuickCommands, type QuickCommand } from "./quickCommands";
 import { QuickCommandsEditor } from "./QuickCommandsEditor";
+import { t } from "../../i18n";
 
 export interface TerminalKeysBarProps {
   onSend: (data: string) => void;
@@ -104,7 +105,7 @@ function BarDialog({
         <div className="nx-modal-header">
           <span className="truncate">{label}</span>
           <div className="nx-spacer" />
-          <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={`关闭${label}`} onClick={onClose}>
+          <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭{label}", { label })} onClick={onClose}>
             <IconClose size={12} />
           </button>
         </div>
@@ -154,7 +155,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
 
   const saveLayout = (next: string[]) => {
     saveTerminalKeyConfig(next).catch((error: unknown) => {
-      pushToast("error", `按键布局同步失败：${describeError(error)}`);
+      pushToast("error", t("按键布局同步失败：{value}", { value: describeError(error) }));
     });
   };
 
@@ -175,7 +176,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
 
   const resetKeys = () => {
     resetTerminalKeyConfig().catch((error: unknown) => {
-      pushToast("error", `按键布局同步失败：${describeError(error)}`);
+      pushToast("error", t("按键布局同步失败：{value}", { value: describeError(error) }));
     });
   };
 
@@ -239,7 +240,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm"
-            aria-label={`上移 ${key.title}`}
+            aria-label={t("上移 {title}", { title: key.title })}
             disabled={index === 0}
             onClick={() => moveKey(key.id, -1)}
           >
@@ -248,7 +249,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className="nx-icon-btn nx-icon-btn-sm"
-            aria-label={`下移 ${key.title}`}
+            aria-label={t("下移 {title}", { title: key.title })}
             disabled={index === enabledIds.length - 1}
             onClick={() => moveKey(key.id, 1)}
           >
@@ -263,7 +264,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
       <input
         type="checkbox"
         className="h-4 w-4 shrink-0"
-        aria-label={`在按键条中显示「${key.title}」`}
+        aria-label={t("在按键条中显示「{title}」", { title: key.title })}
         checked={enabledSet.has(key.id)}
         onChange={() => toggleKey(key.id)}
       />
@@ -272,7 +273,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
 
   const configDialog = configOpen ? (
     <BarDialog
-      label="终端按键配置"
+      label={t("终端按键配置")}
       onClose={() => setConfigOpen(false)}
       initialFocus={doneButtonRef}
       footer={
@@ -282,7 +283,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             className="nx-btn nx-btn-ghost"
             onClick={resetKeys}
           >
-            恢复默认
+            {t("恢复默认")}
           </button>
           <button
             ref={doneButtonRef}
@@ -290,26 +291,26 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             className="nx-btn nx-btn-primary"
             onClick={() => setConfigOpen(false)}
           >
-            完成
+            {t("完成")}
           </button>
         </>
       }
     >
       <div ref={configBodyRef}>
         <p className="nx-hint mb-3">
-          勾选要显示的按键，可上下调整顺序；登录后随账号同步。
+          {t("勾选要显示的按键，可上下调整顺序；登录后随账号同步。")}
         </p>
-        <div role="group" aria-label="已启用按键" className="mb-1 text-[11px] text-neutral-400">
-          已启用
+        <div role="group" aria-label={t("已启用按键")} className="mb-1 text-[11px] text-neutral-400">
+          {t("已启用")}
         </div>
         <div className="mb-3 flex max-h-[180px] flex-col gap-1 overflow-y-auto">
           {keys.map((key, index) => renderConfigRow(key, index))}
           {keys.length === 0 && (
-            <div className="nx-hint px-1 py-2">暂无已启用的按键，可在下方勾选添加。</div>
+            <div className="nx-hint px-1 py-2">{t("暂无已启用的按键，可在下方勾选添加。")}</div>
           )}
         </div>
-        <div role="group" aria-label="未启用按键" className="mb-1 text-[11px] text-neutral-400">
-          未启用
+        <div role="group" aria-label={t("未启用按键")} className="mb-1 text-[11px] text-neutral-400">
+          {t("未启用")}
         </div>
         <div className="flex max-h-[180px] flex-col gap-1 overflow-y-auto">
           {disabledKeys.map((key) => renderConfigRow(key, null))}
@@ -320,7 +321,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
 
   const quickDialog = quickOpen ? (
     <BarDialog
-      label="快捷命令"
+      label={t("快捷命令")}
       onClose={() => setQuickOpen(null)}
       footer={
         <button
@@ -328,30 +329,30 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           className="nx-btn nx-btn-ghost"
           onClick={() => setQuickOpen(quickOpen === "send" ? "manage" : "send")}
         >
-          {quickOpen === "send" ? "管理快捷命令" : "返回发送"}
+          {quickOpen === "send" ? t("管理快捷命令") : t("返回发送")}
         </button>
       }
     >
       {quickOpen === "manage" ? (
         <QuickCommandsEditor />
       ) : quickCommands.length === 0 ? (
-        <p className="nx-hint">暂无快捷命令。选择「管理快捷命令」添加；使用同一账号登录的桌面端和手机端共享。</p>
+        <p className="nx-hint">{t("暂无快捷命令。选择「管理快捷命令」添加；使用同一账号登录的桌面端和手机端共享。")}</p>
       ) : (
-        <div className="flex flex-col gap-1" role="list" aria-label="发送快捷命令">
+        <div className="flex flex-col gap-1" role="list" aria-label={t("发送快捷命令")}>
           {quickCommands.map((command, index) => (
             <button
               key={`${index}:${command.label}`}
               type="button"
               role="listitem"
               className="flex min-h-[40px] items-center gap-2 rounded-md border border-neutral-800/60 bg-neutral-900/50 px-2 py-1.5 text-left"
-              aria-label={`发送快捷命令 ${command.label}`}
+              aria-label={t("发送快捷命令 {label}", { label: command.label })}
               onClick={() => void runQuickCommand(command)}
             >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-[12.5px] text-neutral-200">{command.label}</span>
                 <span className="truncate font-mono text-[11px] text-neutral-500">{command.text}</span>
               </span>
-              {command.appendEnter && <span className="nx-badge shrink-0">回车</span>}
+              {command.appendEnter && <span className="nx-badge shrink-0">{t("回车")}</span>}
             </button>
           ))}
         </div>
@@ -362,7 +363,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   return (
     <>
       {buffered && (
-        <div className="nx-terminal-composer" role="group" aria-label="缓冲输入">
+        <div className="nx-terminal-composer" role="group" aria-label={t("缓冲输入")}>
           <input
             ref={(element) => {
               composer.current = element;
@@ -373,8 +374,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             value={draft}
             enterKeyHint="send"
             autoCapitalize="none"
-            aria-label="缓冲输入内容"
-            placeholder="编辑整行后发送，支持听写"
+            aria-label={t("缓冲输入内容")}
+            placeholder={t("编辑整行后发送，支持听写")}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || isImeKeyEvent(event)) return;
@@ -385,39 +386,39 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className="nx-terminal-key"
-            title="发送该行，不追加回车"
-            aria-label="发送但不回车"
+            title={t("发送该行，不追加回车")}
+            aria-label={t("发送但不回车")}
             onPointerDown={keepFocus}
             onClick={() => submitLine(false)}
           >
-            不回车
+            {t("不回车")}
           </button>
           <button
             type="button"
             className="nx-terminal-key is-active"
-            title="发送该行并回车"
-            aria-label="发送并回车"
+            title={t("发送该行并回车")}
+            aria-label={t("发送并回车")}
             onPointerDown={keepFocus}
             onClick={() => submitLine(true)}
           >
-            发送
+            {t("发送")}
           </button>
         </div>
       )}
-      <div className="nx-terminal-keys" aria-label="终端辅助按键">
+      <div className="nx-terminal-keys" aria-label={t("终端辅助按键")}>
         {broadcastCount != null && broadcastCount > 0 && (
           <span
             className="nx-badge nx-badge-red shrink-0"
-            title="命令广播已开启：这里的按键将同时发送到多个终端"
+            title={t("命令广播已开启：这里的按键将同时发送到多个终端")}
           >
-            广播 {broadcastCount}
+            {t("广播 {broadcastCount}", { broadcastCount })}
           </span>
         )}
         <button
           type="button"
           className={`nx-terminal-key ${ctrlActive ? "is-active" : ""}`}
-          title="下一个按键使用 Ctrl 修饰"
-          aria-label="Ctrl 修饰键"
+          title={t("下一个按键使用 Ctrl 修饰")}
+          aria-label={t("Ctrl 修饰键")}
           aria-pressed={ctrlActive}
           onPointerDown={keepFocus}
           onClick={() => toggleStickyModifier("ctrl")}
@@ -427,8 +428,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
         <button
           type="button"
           className={`nx-terminal-key ${altActive ? "is-active" : ""}`}
-          title="下一个按键使用 Alt 修饰"
-          aria-label="Alt 修饰键"
+          title={t("下一个按键使用 Alt 修饰")}
+          aria-label={t("Alt 修饰键")}
           aria-pressed={altActive}
           onPointerDown={keepFocus}
           onClick={() => toggleStickyModifier("alt")}
@@ -451,8 +452,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
         <button
           type="button"
           className="nx-terminal-key"
-          title="快捷命令"
-          aria-label="快捷命令"
+          title={t("快捷命令")}
+          aria-label={t("快捷命令")}
           aria-haspopup="dialog"
           aria-expanded={quickOpen !== null}
           onPointerDown={keepFocus}
@@ -462,13 +463,13 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             setQuickOpen((open) => (open ? null : "send"));
           }}
         >
-          命令
+          {t("命令")}
         </button>
         <button
           type="button"
           className="nx-terminal-key"
-          title="配置终端按键"
-          aria-label="配置终端按键"
+          title={t("配置终端按键")}
+          aria-label={t("配置终端按键")}
           aria-haspopup="dialog"
           aria-expanded={configOpen}
           onPointerDown={keepFocus}
@@ -484,19 +485,19 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           <button
             type="button"
             className={`nx-terminal-key nx-terminal-keyboard ${buffered ? "is-active" : ""}`}
-            title={buffered ? "缓冲输入已开启：单击可改回直接输入" : "缓冲输入：编辑整行后再发送，适用于听写和自动更正"}
-            aria-label="缓冲输入"
+            title={buffered ? t("缓冲输入已开启：单击可改回直接输入") : t("缓冲输入：编辑整行后再发送，适用于听写和自动更正")}
+            aria-label={t("缓冲输入")}
             aria-pressed={buffered}
             onPointerDown={keepFocus}
             onClick={toggleInputMode}
           >
-            整行
+            {t("整行")}
           </button>
           <button
             type="button"
             className="nx-terminal-key nx-terminal-keyboard"
-            title={buffered ? "聚焦输入框并打开系统键盘" : "聚焦终端并打开系统键盘"}
-            aria-label="聚焦终端并打开系统键盘"
+            title={buffered ? t("聚焦输入框并打开系统键盘") : t("聚焦终端并打开系统键盘")}
+            aria-label={t("聚焦终端并打开系统键盘")}
             onPointerDown={keepFocus}
             onClick={() => {
               clearModifiers();
@@ -504,7 +505,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
               else onFocus();
             }}
           >
-            键盘
+            {t("键盘")}
           </button>
         </div>
         {configDialog}

@@ -4,6 +4,7 @@ import type { CommandBlock } from "./commandBlocks";
 import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconPlay, IconSave, IconSparkles, IconTrash } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
+import { t } from "../../i18n";
 
 export interface CommandBlockPanelProps {
   blocks: CommandBlock[];
@@ -29,7 +30,7 @@ function clockOf(ms: number): string {
 }
 
 function durationOf(b: CommandBlock): string {
-  if (b.endedAt === null) return "运行中";
+  if (b.endedAt === null) return t("运行中");
   const s = (b.endedAt - b.startedAt) / 1000;
   return s < 1 ? `${Math.round(s * 1000)}ms` : `${s.toFixed(1)}s`;
 }
@@ -61,21 +62,21 @@ export function CommandBlockPanel({
   const copy = async (index: number) => {
     const text = getText(index);
     if (!text) {
-      onToast("info", `块 #${index} 的输出已滚出缓冲，无法复制`);
+      onToast("info", t("块 #{index} 的输出已滚出缓冲，无法复制", { index }));
       return;
     }
     try {
       await copyText(text);
-      onToast("success", `已复制块 #${index}`);
+      onToast("success", t("已复制块 #{index}", { index }));
     } catch (e) {
-      onToast("error", `复制失败：${describeError(e)}`);
+      onToast("error", t("复制失败：{value}", { value: describeError(e) }));
     }
   };
 
   const explain = (b: CommandBlock) => {
     const text = getText(b.index);
     if (!text) {
-      onToast("info", `块 #${b.index} 的输出已滚出缓冲，无法解释`);
+      onToast("info", t("块 #{index} 的输出已滚出缓冲，无法解释", { index: b.index }));
       return;
     }
     onExplain?.(b, text);
@@ -98,12 +99,12 @@ export function CommandBlockPanel({
     <div data-layout={embedded ? "embedded" : "panel"} className={embedded ? "nx-command-blocks flex min-h-0 flex-1 flex-col bg-neutral-950" : "nx-command-blocks flex h-full w-[252px] shrink-0 flex-col border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:absolute @max-[560px]:inset-x-0 @max-[560px]:bottom-0 @max-[560px]:z-10 @max-[560px]:h-[55%] @max-[560px]:w-auto @max-[560px]:border-t @max-[560px]:border-l-0 @max-[560px]:shadow-[0_-8px_24px_rgba(0,0,0,0.5)]"}>
       <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <IconList size={13} className="text-neutral-500" />
-        <span className="text-[11.5px] font-semibold text-neutral-200">命令列表</span>
+        <span className="text-[11.5px] font-semibold text-neutral-200">{t("命令列表")}</span>
         <span className="nx-count">{blocks.length}</span>
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="清空块记录（不影响终端内容）"
+          title={t("清空块记录（不影响终端内容）")}
           onClick={clear}
         >
           <IconTrash size={12} />
@@ -112,9 +113,9 @@ export function CommandBlockPanel({
 
       {blocks.length === 0 ? (
         <div className="nx-hint p-3">
-          暂无命令记录。
+          {t("暂无命令记录。")}
           <br />
-          在终端中执行命令后，可按命令复制输出或定位到终端中的位置。
+          {t("在终端中执行命令后，可按命令复制输出或定位到终端中的位置。")}
         </div>
       ) : (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -142,7 +143,7 @@ export function CommandBlockPanel({
                     <button
                       className="mt-0.5 shrink-0 text-neutral-500 hover:text-neutral-200"
                       onClick={() => toggle(b.index)}
-                      title={open ? "收起输出预览" : "展开输出预览"}
+                      title={open ? t("收起输出预览") : t("展开输出预览")}
                     >
                       {open ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
                     </button>
@@ -153,7 +154,7 @@ export function CommandBlockPanel({
                       <div className="truncate font-mono text-[11.5px] text-neutral-200" title={b.command}>
                         {b.command}
                         {!b.reliable && (
-                          <span className="ml-1 text-amber-300" title="命令包含控制字符，识别的文本可能不准确">
+                          <span className="ml-1 text-amber-300" title={t("命令包含控制字符，识别的文本可能不准确")}>
                             ?
                           </span>
                         )}
@@ -172,8 +173,8 @@ export function CommandBlockPanel({
                       {onRerun && !running && b.command.trim() !== "" && (
                         <button
                           className="nx-icon-btn nx-icon-btn-sm"
-                          title={anyRunning ? "终端里还有命令在运行，结束后才能重新运行" : "重新运行"}
-                          aria-label="重新运行"
+                          title={anyRunning ? t("终端里还有命令在运行，结束后才能重新运行") : t("重新运行")}
+                          aria-label={t("重新运行")}
                           disabled={anyRunning}
                           onClick={() => onRerun(b)}
                         >
@@ -183,8 +184,8 @@ export function CommandBlockPanel({
                       {onSaveAsSnippet && (
                         <button
                           className="nx-icon-btn nx-icon-btn-sm"
-                          title="保存为片段"
-                          aria-label="保存为片段"
+                          title={t("保存为片段")}
+                          aria-label={t("保存为片段")}
                           onClick={() => onSaveAsSnippet(b)}
                         >
                           <IconSave size={11} />
@@ -193,8 +194,8 @@ export function CommandBlockPanel({
                       {onExplain && (
                         <button
                           className="nx-icon-btn nx-icon-btn-sm"
-                          title="让 AI 解释这段输出"
-                          aria-label="让 AI 解释这段输出"
+                          title={t("让 AI 解释这段输出")}
+                          aria-label={t("让 AI 解释这段输出")}
                           onClick={() => explain(b)}
                         >
                           <IconSparkles size={11} />
@@ -202,14 +203,14 @@ export function CommandBlockPanel({
                       )}
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
-                        title="定位到此命令"
+                        title={t("定位到此命令")}
                         onClick={() => onLocate(b.index)}
                       >
                         <IconLocate size={11} />
                       </button>
                       <button
                         className="nx-icon-btn nx-icon-btn-sm"
-                        title="复制该块（命令 + 输出）"
+                        title={t("复制该块（命令 + 输出）")}
                         onClick={() => void copy(b.index)}
                       >
                         <IconCopy size={11} />
@@ -218,9 +219,9 @@ export function CommandBlockPanel({
                   </div>
                   {open && (
                     <pre className="max-h-64 overflow-auto border-t border-neutral-800/40 bg-term px-2.5 py-1.5 font-mono text-[10.5px] leading-snug whitespace-pre-wrap text-neutral-400">
-                      {shown || "（无输出）"}
+                      {shown || t("（无输出）")}
                       {lines.length > PREVIEW_LINES
-                        ? `\n… 还有 ${lines.length - PREVIEW_LINES} 行（复制可获取完整内容）`
+                        ? t("\n… 还有 {value} 行（复制可获取完整内容）", { value: lines.length - PREVIEW_LINES })
                         : ""}
                     </pre>
                   )}

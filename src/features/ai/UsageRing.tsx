@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AiRunDto, AiUsageSummaryRow } from "../../ipc/types";
+import { t } from "../../i18n";
 
 export interface AiUsage {
   promptTokens: number;
@@ -152,8 +153,8 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
   const dash = (used / 100) * circumference;
 
   const label = hasData
-    ? `上下文占用 ${used.toFixed(0)}%（${formatTokens(prompt)} / ${formatTokens(window)}），缓存命中 ${hit.toFixed(0)}%`
-    : "尚未产生用量";
+    ? t("上下文占用 {toFixed}%（{value} / {value2}），缓存命中 {toFixed2}%", { toFixed: used.toFixed(0), value: formatTokens(prompt), value2: formatTokens(window), toFixed2: hit.toFixed(0) })
+    : t("尚未产生用量");
 
   useEffect(() => {
     if (!detailsOpen) return;
@@ -247,7 +248,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
           ref={triggerRef}
           type="button"
           aria-expanded={detailsOpen}
-          title="查看用量明细"
+          title={t("查看用量明细")}
           onClick={toggleDetails}
           className={`nx-cbar-icon pointer-coarse:min-h-6 pointer-coarse:min-w-6 ${detailsOpen ? "is-open" : ""}`}
         >
@@ -269,8 +270,7 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
               {hasData ? (
                 <>
                   <span className="block font-medium text-neutral-100">
-                    上下文占用 {used.toFixed(0)}%
-                  </span>
+                    {t("上下文占用 {toFixed}%", { toFixed: used.toFixed(0) })}</span>
                   <span className="block font-mono text-[10.5px] text-neutral-400">
                     {formatTokens(prompt)} / {formatTokens(window)} tokens
                   </span>
@@ -279,23 +279,20 @@ export function UsageRing({ usage, size = 18, className = "", runs, loadSummary 
                       hit > 0 ? "text-green-400" : "text-neutral-500"
                     }`}
                   >
-                    缓存命中 {hit.toFixed(0)}%
-                  </span>
+                    {t("缓存命中 {toFixed}%", { toFixed: hit.toFixed(0) })}</span>
                 </>
               ) : null}
               {hasMainTokens ? (
                 <span className="block">
-                  对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
-                </span>
+                  {t("对话请求 输入 {value} · 输出 {value2} tokens", { value: formatTokens(prompt), value2: formatTokens(completion) })}</span>
               ) : null}
               {hasSummary ? (
                 <span className="block">
-                  上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
-                </span>
+                  {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
               ) : null}
             </>
           ) : (
-            <span className="block text-neutral-500">尚未产生用量</span>
+            <span className="block text-neutral-500">{t("尚未产生用量")}</span>
           )}
         </span>
         </span>
@@ -331,57 +328,49 @@ function UsageDetails({
   const hasSummary = summaryPrompt > 0 || summaryCompletion > 0;
   return (
     <span className="absolute bottom-full right-0 z-20 mb-1.5 block w-72 max-w-[calc(100vw-1.5rem)] max-h-[min(320px,60dvh)] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-2 text-left text-[11px] leading-relaxed shadow-xl">
-      <span className="mb-0.5 block font-medium text-neutral-100">用量明细</span>
+      <span className="mb-0.5 block font-medium text-neutral-100">{t("用量明细")}</span>
       {hasMainTokens ? (
         <span className="block text-neutral-300">
-          对话请求 输入 {formatTokens(prompt)} · 输出 {formatTokens(completion)} tokens
-        </span>
+          {t("对话请求 输入 {value} · 输出 {value2} tokens", { value: formatTokens(prompt), value2: formatTokens(completion) })}</span>
       ) : null}
       {hasSummary ? (
         <span className="block text-neutral-300">
-          上下文上下文摘要 输入 {formatTokens(summaryPrompt)} · 输出 {formatTokens(summaryCompletion)} tokens
-        </span>
+          {t("上下文上下文摘要 输入 {value} · 输出 {value2} tokens", { value: formatTokens(summaryPrompt), value2: formatTokens(summaryCompletion) })}</span>
       ) : null}
       {errorStats && errorStats.runs > 0 ? (
         <span className="block text-neutral-300">
-          本会话 {errorStats.runs} 次回答 · 可重试错误 {errorStats.retries}（{percentText(errorStats.retryRate)}）
-          · 失败 {errorStats.failures}（{percentText(errorStats.failureRate)}）
-        </span>
+          {t("本会话 {runs} 次回答 · 可重试错误 {retries}（{value}） · 失败 {failures}（{value2}）", { runs: errorStats.runs, retries: errorStats.retries, value: percentText(errorStats.retryRate), failures: errorStats.failures, value2: percentText(errorStats.failureRate) })}</span>
       ) : null}
       {scenes ? (
         <>
           <span className="block text-neutral-300">
-            对话 {scenes.chat.runs} 次 · 输入 {formatTokens(scenes.chat.tokensIn)} · 输出{" "}
-            {formatTokens(scenes.chat.tokensOut)}（全部会话）
+            {t("对话 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.chat.runs, value: formatTokens(scenes.chat.tokensIn), value2: " ", value3: formatTokens(scenes.chat.tokensOut) })}
           </span>
           {scenes.cron.runs > 0 ? (
             <span className="block text-neutral-300">
-              定时任务 {scenes.cron.runs} 次 · 输入 {formatTokens(scenes.cron.tokensIn)} · 输出{" "}
-              {formatTokens(scenes.cron.tokensOut)}（全部会话）
+              {t("定时任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.cron.runs, value: formatTokens(scenes.cron.tokensIn), value2: " ", value3: formatTokens(scenes.cron.tokensOut) })}
             </span>
           ) : null}
           {scenes.subagent.runs > 0 ? (
             <span className="block text-neutral-300">
-              子任务 {scenes.subagent.runs} 次 · 输入 {formatTokens(scenes.subagent.tokensIn)} · 输出{" "}
-              {formatTokens(scenes.subagent.tokensOut)}（全部会话）
+              {t("子任务 {runs} 次 · 输入 {value} · 输出{value2}{value3}（全部会话）", { runs: scenes.subagent.runs, value: formatTokens(scenes.subagent.tokensIn), value2: " ", value3: formatTokens(scenes.subagent.tokensOut) })}
             </span>
           ) : null}
           <span className="block text-neutral-500">
-            标题 {scenes.title.runs} 次 · 输入 {formatTokens(scenes.title.tokensIn)} · 输出{" "}
-            {formatTokens(scenes.title.tokensOut)}（单独统计）
+            {t("标题 {runs} 次 · 输入 {value} · 输出{value2}{value3}（单独统计）", { runs: scenes.title.runs, value: formatTokens(scenes.title.tokensIn), value2: " ", value3: formatTokens(scenes.title.tokensOut) })}
           </span>
         </>
       ) : null}
       {summaryFailed ? (
         <span className="flex items-center gap-1.5">
-          <span className="text-red-300">未能加载用量汇总</span>
+          <span className="text-red-300">{t("未能加载用量汇总")}</span>
           <button type="button" className="nx-btn nx-btn-outline nx-btn-xs" onClick={onRetrySummary}>
-            重试
+            {t("重试")}
           </button>
         </span>
       ) : null}
       {!errorStats && !scenes && !summaryFailed ? (
-        <span className="block text-neutral-500">加载中…</span>
+        <span className="block text-neutral-500">{t("加载中…")}</span>
       ) : null}
     </span>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { IconMore } from "../../../ui/icons";
+import { t } from "../../../i18n";
 
 export interface ComposerMoreItem {
   key: string;
@@ -74,8 +75,8 @@ export function ComposerMoreMenu({ items }: { items: ComposerMoreItem[] }) {
         ref={triggerRef}
         type="button"
         className={`nx-cbar-icon ${open ? "is-open" : ""}`}
-        title="更多"
-        aria-label="更多"
+        title={t("更多")}
+        aria-label={t("更多")}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
@@ -85,7 +86,7 @@ export function ComposerMoreMenu({ items }: { items: ComposerMoreItem[] }) {
       {open && (
         <div
           role="menu"
-          aria-label="更多操作"
+          aria-label={t("更多操作")}
           tabIndex={-1}
           className="absolute bottom-full right-0 z-[80] mb-1 w-60 max-w-[calc(100vw-1.5rem)] rounded-md border border-neutral-700 bg-neutral-900 p-1 shadow-lg outline-none"
           onKeyDown={onMenuKeyDown}

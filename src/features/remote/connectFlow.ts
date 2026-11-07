@@ -5,6 +5,7 @@ import type {
 } from "../../ipc/generated/types";
 import { describeRdpFailure, describeVncFailure, IRON_ACCESS_DENIED, IRON_LOGON_FAILURE, IRON_NEGOTIATION, IRON_PROXY_CONNECT, IRON_RDCLEANPATH, IRON_WRONG_PASSWORD, isCredsspText } from "./rdpFailure";
 import { RemoteEngineError, type EngineFailure, type RemoteClient, type RemoteSecret } from "./remoteTypes";
+import { t } from "../../i18n";
 
 // retryable: a network drop worth reconnecting automatically; auth, certificate and permission failures never are,
 // because retrying cannot fix them and would only repeat a rejected login.
@@ -33,7 +34,7 @@ function textOf(input: EngineFailure): Pick<Failure, "title" | "message" | "deta
 }
 
 export function classifyFailure(input: EngineFailure): Failure {
-  const base = { message: input.message || "连接失败", code: input.code };
+  const base = { message: input.message || t("连接失败"), code: input.code };
   if (input.code === "needs_confirm") return { ...base, kind: "certificate" };
   if (input.code && PERMISSION_CODES.has(input.code)) return { ...base, kind: "permission" };
   if (input.code && input.stage !== "closed" && input.protocol && input.rdpKind === undefined) {
@@ -72,7 +73,7 @@ export function classifyFailure(input: EngineFailure): Failure {
     return { ...base, ...text, kind: "fatal" };
   }
   if (input.stage === "closed") {
-    if (input.clean) return { ...base, kind: "ended", message: input.message || "远程桌面已断开" };
+    if (input.clean) return { ...base, kind: "ended", message: input.message || t("远程桌面已断开") };
     return { ...base, ...textOf(input), kind: input.wasConnected ? "retryable" : "fatal" };
   }
   if (input.protocol === "rdp" || input.protocol === "vnc") return { ...base, ...textOf(input), kind: "fatal" };
@@ -136,7 +137,7 @@ function engineFailureOf(error: unknown, protocol: EngineFailure["protocol"]): E
   return {
     protocol,
     stage: "connect",
-    message: typeof record.message === "string" && record.message ? record.message : "连接失败",
+    message: typeof record.message === "string" && record.message ? record.message : t("连接失败"),
     code: typeof record.code === "string" ? record.code : undefined,
   };
 }
@@ -169,7 +170,7 @@ export async function runConnectFlow(
   let prompted = false;
   let staleRetried = false;
   let kept: string | null = null;
-  const cancelledResult = (): FlowResult => ({ ok: false, canceled: true, prompted, failure: { kind: "ended", message: "已取消" } });
+  const cancelledResult = (): FlowResult => ({ ok: false, canceled: true, prompted, failure: { kind: "ended", message: t("已取消") } });
   const isCancelled = () => deps.cancelled?.() === true;
   try {
     for (let round = 0; round < MAX_ROUNDS; round += 1) {
@@ -245,7 +246,7 @@ export async function runConnectFlow(
                 ok: false,
                 canceled: true,
                 prompted,
-                failure: { kind: "certificate", message: "未信任服务器证书，连接已取消" },
+                failure: { kind: "certificate", message: t("未信任服务器证书，连接已取消") },
               };
             }
             if (isCancelled()) return cancelledResult();
@@ -262,7 +263,7 @@ export async function runConnectFlow(
               staleRetried = true;
               continue;
             }
-            failure = { kind: "fatal", message: "连接被中继拒绝（票据已失效），请重新连接", code: raw.code };
+            failure = { kind: "fatal", message: t("连接被中继拒绝（票据已失效），请重新连接"), code: raw.code };
           }
         }
         // A VNC server that wants a password the asset does not hold: ask once instead of failing.
@@ -277,27 +278,27 @@ export async function runConnectFlow(
         secret = null;
       }
     }
-    return { ok: false, prompted, failure: { kind: "fatal", message: "服务器证书确认后仍无法连接" } };
+    return { ok: false, prompted, failure: { kind: "fatal", message: t("服务器证书确认后仍无法连接") } };
   } finally {
     kept = null;
   }
 }
 
 export function describeCertificate(status: RemoteDesktopCertificateStatus): { title: string; body: string } {
-  const lines = [`主机：${status.host}:${status.port}`];
-  if (status.subject) lines.push(`证书主体：${status.subject}`);
-  if (status.notAfterMs) lines.push(`有效期至：${new Date(status.notAfterMs).toLocaleString()}`);
+  const lines = [t("主机：{host}:{port}", { host: status.host, port: status.port })];
+  if (status.subject) lines.push(t("证书主体：{subject}", { subject: status.subject }));
+  if (status.notAfterMs) lines.push(t("有效期至：{toLocaleString}", { toLocaleString: new Date(status.notAfterMs).toLocaleString() }));
   if (status.status === "changed") {
-    lines.push(`原指纹（SHA-256）：${status.previousFingerprint ?? "未知"}`);
-    lines.push(`新指纹（SHA-256）：${status.fingerprint}`);
+    lines.push(t("原指纹（SHA-256）：{value}", { value: status.previousFingerprint ?? t("未知") }));
+    lines.push(t("新指纹（SHA-256）：{fingerprint}", { fingerprint: status.fingerprint }));
     return {
-      title: "服务器证书已变更",
-      body: `${lines.join("\n")}\n\n仅在确认服务器更换过证书时继续，否则可能连到冒充的主机。\n信任新证书并继续？`,
+      title: t("服务器证书已变更"),
+      body: t("{join}\n\n仅在确认服务器更换过证书时继续，否则可能连到冒充的主机。\n信任新证书并继续？", { join: lines.join("\n") }),
     };
   }
-  lines.push(`指纹（SHA-256）：${status.fingerprint}`);
+  lines.push(t("指纹（SHA-256）：{fingerprint}", { fingerprint: status.fingerprint }));
   return {
-    title: "确认服务器证书",
-    body: `${lines.join("\n")}\n\n首次连接该主机。信任并继续？之后会自动核对指纹。`,
+    title: t("确认服务器证书"),
+    body: t("{join}\n\n首次连接该主机。信任并继续？之后会自动核对指纹。", { join: lines.join("\n") }),
   };
 }

@@ -10,6 +10,7 @@ import { HostSection, SectionHint } from "./HostSections";
 import { ListToolbar, Pager, useListFocus, usePaging, type ListFocus } from "./listControls";
 
 import { isLoopback, PORT_SCOPES, SCOPE_LABELS, SCOPE_TITLES, type PortScope } from "./portScope";
+import { t } from "../../i18n";
 
 // matchesListener tests a listener against every whitespace-separated term of the search, each of which may hit the
 // port, protocol, bound address, process name or PID.
@@ -79,51 +80,51 @@ export function PortsSection({
 
   return (
     <HostSection
-      title="端口"
+      title={t("端口")}
       icon={<IconNetwork size={14} />}
       testId="host-ports"
       actions={
         connected && visible ? (
           <>
             {query.dataUpdatedAt > 0 && (
-              <span className="nx-hint text-[11px]">读取于 {new Date(query.dataUpdatedAt).toLocaleTimeString()}</span>
+              <span className="nx-hint text-[11px]">{t("读取于 {toLocaleTimeString}", { toLocaleTimeString: new Date(query.dataUpdatedAt).toLocaleTimeString() })}</span>
             )}
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-xs"
-              aria-label="刷新端口"
+              aria-label={t("刷新端口")}
               disabled={query.isFetching}
               onClick={() => void query.refetch()}
             >
               <IconRefresh size={11} className={query.isFetching ? "animate-spin" : ""} />
-              {query.data ? "刷新" : "读取"}
+              {query.data ? t("刷新") : t("读取")}
             </button>
           </>
         ) : null
       }
     >
       {!connected || !sessionId ? (
-        <SectionHint>打开并连接工作区后可查看监听端口。</SectionHint>
+        <SectionHint>{t("打开并连接工作区后可查看监听端口。")}</SectionHint>
       ) : (
         <>
           {query.isError ? (
-            <p className="m-0 text-[12px] text-red-300">未能读取端口：{describeError(query.error)}</p>
+            <p className="m-0 text-[12px] text-red-300">{t("未能读取端口：{value}", { value: describeError(query.error) })}</p>
           ) : !query.data ? (
-            <SectionHint>{query.isFetching ? "正在读取监听端口…" : "点击「读取」查看监听端口（会在主机上执行 ss 或 netstat）。"}</SectionHint>
+            <SectionHint>{query.isFetching ? t("正在读取监听端口…") : t("点击「读取」查看监听端口（会在主机上执行 ss 或 netstat）。")}</SectionHint>
           ) : listeners.length === 0 ? (
-            <SectionHint>未发现监听端口。</SectionHint>
+            <SectionHint>{t("未发现监听端口。")}</SectionHint>
           ) : (
             <>
               <ListToolbar
-                label="搜索端口"
-                placeholder="按端口、地址、进程或 PID 搜索，空格分隔多个条件"
+                label={t("搜索端口")}
+                placeholder={t("按端口、地址、进程或 PID 搜索，空格分隔多个条件")}
                 query={queryText}
                 onQuery={setQueryText}
                 total={listeners.length}
                 matched={matched.length}
-                unit="个"
+                unit={t("个")}
               >
-                <div className="nx-segment" role="group" aria-label="端口范围">
+                <div className="nx-segment" role="group" aria-label={t("端口范围")}>
                   {PORT_SCOPES.map((key) => (
                     <button
                       key={key}
@@ -139,16 +140,16 @@ export function PortsSection({
                 </div>
               </ListToolbar>
               {matched.length === 0 ? (
-                <SectionHint>没有匹配的端口。</SectionHint>
+                <SectionHint>{t("没有匹配的端口。")}</SectionHint>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="nx-table w-full text-[12px]">
                     <thead>
                       <tr>
-                        <th>端口</th>
-                        <th>协议</th>
-                        <th>绑定地址</th>
-                        <th>进程</th>
+                        <th>{t("端口")}</th>
+                        <th>{t("协议")}</th>
+                        <th>{t("绑定地址")}</th>
+                        <th>{t("进程")}</th>
                         <th />
                       </tr>
                     </thead>
@@ -163,7 +164,7 @@ export function PortsSection({
                           <td>{l.proto}</td>
                           <td className="nx-mono">
                             {l.address}
-                            {isLoopback(l.address) && <span className="nx-badge ml-1.5">仅本机</span>}
+                            {isLoopback(l.address) && <span className="nx-badge ml-1.5">{t("仅本机")}</span>}
                           </td>
                           <td>
                             {l.process || l.pid !== undefined ? (
@@ -174,8 +175,8 @@ export function PortsSection({
                                     <button
                                       type="button"
                                       className="nx-link nx-mono"
-                                      title="在进程列表中查看"
-                                      aria-label={`查看进程 ${l.pid}`}
+                                      title={t("在进程列表中查看")}
+                                      aria-label={t("查看进程 {pid}", { pid: l.pid })}
                                       onClick={() => onShowProcess(l.pid as number)}
                                     >
                                       {l.pid}
@@ -192,12 +193,12 @@ export function PortsSection({
                             <button
                               type="button"
                               className="nx-btn nx-btn-ghost nx-btn-xs"
-                              aria-label={`转发并打开 ${l.port}`}
+                              aria-label={t("转发并打开 {port}", { port: l.port })}
                               onClick={() =>
                                 void forwardAndOpen({ sessionId, host: targetHostFor(l, listeners), port: l.port })
                               }
                             >
-                              转发并打开
+                              {t("转发并打开")}
                             </button>
                           </td>
                         </tr>
@@ -206,11 +207,11 @@ export function PortsSection({
                   </table>
                 </div>
               )}
-              <Pager label="端口分页" page={paging.page} pages={paging.pages} onPage={paging.setPage} />
+              <Pager label={t("端口分页")} page={paging.page} pages={paging.pages} onPage={paging.setPage} />
             </>
           )}
-          <SectionHint>非 root 用户执行时，lsof/ss 只能列出当前用户进程的端口，进程列可能为空。</SectionHint>
-          {query.data?.truncated && <SectionHint>端口较多，仅显示一部分。</SectionHint>}
+          <SectionHint>{t("非 root 用户执行时，lsof/ss 只能列出当前用户进程的端口，进程列可能为空。")}</SectionHint>
+          {query.data?.truncated && <SectionHint>{t("端口较多，仅显示一部分。")}</SectionHint>}
           <ConnectivityTest sessionId={sessionId} hostName={hostName} assetId={workspace?.assetId} />
         </>
       )}

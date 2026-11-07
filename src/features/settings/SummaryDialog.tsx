@@ -3,10 +3,11 @@
 import { useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { t } from "../../i18n";
 
 export function SummaryDialog({
   summary,
-  buttonLabel = "管理",
+  buttonLabel = t("管理"),
   manageable = true,
   title,
   description,
@@ -65,7 +66,7 @@ export function SummaryDialog({
                 </div>
                 {children}
                 <div className="flex justify-end">
-                  <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={close}>完成</button>
+                  <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={close}>{t("完成")}</button>
                 </div>
               </div>
             </div>

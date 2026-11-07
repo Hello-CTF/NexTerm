@@ -13,6 +13,7 @@ import {
   reconnectRestoredWorkspaces,
   type WorkspaceRestoreCandidate,
 } from "./workspaceRestore";
+import { t } from "../../i18n";
 
 interface RestoreItem extends WorkspaceRestoreCandidate {
   status: WorkspaceRestoreStatus;
@@ -47,12 +48,12 @@ function selectResultCandidates(state: UiSnapshot): WorkspaceRestoreCandidate[] 
 const RESTORED_LINGER_MS = 3000;
 
 function statusText(item: RestoreItem): string {
-  if (item.status === "waiting") return "等待重新连接";
-  if (item.status === "connecting") return "正在连接…";
-  if (item.status === "success") return "已连接";
-  if (item.status === "failed") return "连接失败";
-  if (item.status === "canceled") return "已取消";
-  return "已跳过";
+  if (item.status === "waiting") return t("等待重新连接");
+  if (item.status === "connecting") return t("正在连接…");
+  if (item.status === "success") return t("已连接");
+  if (item.status === "failed") return t("连接失败");
+  if (item.status === "canceled") return t("已取消");
+  return t("已跳过");
 }
 
 export function WorkspaceRestoreBanner() {
@@ -141,14 +142,14 @@ export function WorkspaceRestoreBanner() {
     const connectable = eligibleIds.length > 0;
     return (
       <section
-        aria-label="工作区恢复"
+        aria-label={t("工作区恢复")}
         className="relative shrink-0 border-b border-neutral-800/60 bg-neutral-900 text-xs text-neutral-300"
       >
         <div className="flex flex-wrap items-center gap-2 px-4 py-1.5">
           <span>
             {running
-              ? "正在恢复工作区…"
-              : `已载入账号中的 ${layoutRestore.count} 个工作区${connectable ? "，尚未连接" : ""}`}
+              ? t("正在恢复工作区…")
+              : t("已载入账号中的 {count} 个工作区{value}", { count: layoutRestore.count, value: connectable ? t("，尚未连接") : "" })}
           </span>
           {connectable && (
             <button
@@ -157,7 +158,7 @@ export function WorkspaceRestoreBanner() {
               disabled={running}
               onClick={() => void run(undefined, true)}
             >
-              恢复并全部连接
+              {t("恢复并全部连接")}
             </button>
           )}
           <button
@@ -166,34 +167,34 @@ export function WorkspaceRestoreBanner() {
             disabled={running}
             onClick={() => void keepLayout()}
           >
-            {connectable ? "仅恢复布局" : "保留此布局"}
+            {connectable ? t("仅恢复布局") : t("保留此布局")}
           </button>
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            title="恢复为本设备原有的布局"
+            title={t("恢复为本设备原有的布局")}
             disabled={running}
             onClick={undoLayoutRestore}
           >
-            撤销
+            {t("撤销")}
           </button>
         </div>
       </section>
     );
   }
-  const skippedNote = skippedCount > 0 ? `，${skippedCount} 个已跳过` : "";
+  const skippedNote = skippedCount > 0 ? t("，{skippedCount} 个已跳过", { skippedCount }) : "";
   const summary = running
-    ? "正在重新连接工作区…"
+    ? t("正在重新连接工作区…")
     : restored
-      ? `已恢复 ${successCount} 个工作区${skippedNote}`
+      ? t("已恢复 {successCount} 个工作区{skippedNote}", { successCount, skippedNote })
       : failedCount > 0
-        ? `${failedCount} 个主机工作区连接失败`
-        : `${pendingCount} 个主机工作区需要重新连接`;
+        ? t("{failedCount} 个主机工作区连接失败", { failedCount })
+        : t("{pendingCount} 个主机工作区需要重新连接", { pendingCount });
   const listable = expanded && !restored;
 
   return (
     <section
-      aria-label="工作区恢复"
+      aria-label={t("工作区恢复")}
       className="relative shrink-0 border-b border-neutral-800/60 bg-neutral-900 text-xs text-neutral-300"
       onKeyDown={(event) => {
         if (event.key === "Escape" && expanded) setExpanded(false);
@@ -209,7 +210,7 @@ export function WorkspaceRestoreBanner() {
               disabled={running || eligibleIds.length === 0}
               onClick={() => void run()}
             >
-              {running ? "正在重新连接…" : "全部重新连接"}
+              {running ? t("正在重新连接…") : t("全部重新连接")}
             </button>
             <button
               type="button"
@@ -217,15 +218,15 @@ export function WorkspaceRestoreBanner() {
               aria-expanded={expanded}
               onClick={openSelection}
             >
-              选择…
+              {t("选择…")}
             </button>
           </>
         )}
         <button
           type="button"
           className="nx-icon-btn nx-icon-btn-sm ml-auto"
-          aria-label="关闭工作区恢复提示"
-          title="关闭"
+          aria-label={t("关闭工作区恢复提示")}
+          title={t("关闭")}
           onClick={dismiss}
         >
           <IconClose size={12} />
@@ -233,7 +234,7 @@ export function WorkspaceRestoreBanner() {
       </div>
       {listable && (
         <div className="absolute left-4 top-full z-30 mt-1 w-[min(440px,calc(100%-2rem))] rounded-lg border border-neutral-700 bg-neutral-900 p-2 shadow-lg">
-          <ul aria-label="可恢复工作区" className="flex flex-col gap-1.5">
+          <ul aria-label={t("可恢复工作区")} className="flex flex-col gap-1.5">
             {items.map((item) => {
               const selectable = isOpen(item);
               return (
@@ -242,7 +243,7 @@ export function WorkspaceRestoreBanner() {
                     <label className="flex min-w-0 items-center gap-2">
                       <input
                         type="checkbox"
-                        aria-label={`选择 ${item.title}`}
+                        aria-label={t("选择 {title}", { title: item.title })}
                         checked={selectedIds.includes(item.workspaceId)}
                         disabled={running}
                         onChange={(event) => {
@@ -273,7 +274,7 @@ export function WorkspaceRestoreBanner() {
             disabled={running || selectedIds.length === 0}
             onClick={() => void run(selectedIds)}
           >
-            重新连接所选
+            {t("重新连接所选")}
           </button>
         </div>
       )}

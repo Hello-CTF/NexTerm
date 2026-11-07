@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WatchApi, WatchStatus, WatchSummary, WatchTargetSummary } from "./watchTypes";
 import { IconLoader, IconRefresh } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 const statusLabels: Record<WatchStatus, string> = {
-  armed: "等待中",
-  matched: "已命中",
-  cancelled: "已取消",
-  expired: "已过期",
-  unverifiable: "无法确认",
+  armed: tr("等待中"),
+  matched: tr("已命中"),
+  cancelled: tr("已取消"),
+  expired: tr("已过期"),
+  unverifiable: tr("无法确认"),
 };
 
 const statusClasses: Record<WatchStatus, string> = {
@@ -18,7 +19,7 @@ const statusClasses: Record<WatchStatus, string> = {
   unverifiable: "nx-badge-red",
 };
 
-const conditionLabels = { contains: "出现", regex: "匹配" } as const;
+const conditionLabels = { contains: tr("出现"), regex: tr("匹配") } as const;
 
 // WatchPanel lists the watches the AI armed on terminals (wait until output
 // matches, then wake the AI) and lets the user cancel one. It remounts by
@@ -72,7 +73,7 @@ function WatchPanelContent({
       onChangedRef.current?.();
     } catch (err) {
       if (!aliveRef.current || gen !== loadGenRef.current) return;
-      setError(`未能读取监视：${String(err)}`);
+      setError(tr("未能读取监视：{value}", { value: String(err) }));
     } finally {
       if (aliveRef.current && gen === loadGenRef.current) setLoading(false);
     }
@@ -106,13 +107,13 @@ function WatchPanelContent({
         if (!aliveRef.current) return;
         // The row moves to the ended section at once; the reload reconciles.
         setWatches((prev) => (prev ?? []).map((w) => (w.id === watch.id ? { ...w, status: "cancelled" } : w)));
-        setNotice({ tone: "ok", text: `已取消监视「${watch.name}」` });
+        setNotice({ tone: "ok", text: tr("已取消监视「{name}」", { name: watch.name }) });
         void load();
       } catch (err) {
         if (!aliveRef.current) return;
         setNotice({
           tone: "error",
-          text: `未能取消监视：${err instanceof Error ? err.message : String(err)}`,
+          text: tr("未能取消监视：{value}", { value: err instanceof Error ? err.message : String(err) }),
         });
       } finally {
         if (aliveRef.current) {
@@ -129,7 +130,7 @@ function WatchPanelContent({
 
   const targetLabel = (targetId: string) => {
     const t = targets.find((x) => x.targetId === targetId);
-    return t?.identity ? `终端 ${t.identity}` : "终端";
+    return t?.identity ? tr("终端 {identity}", { identity: t.identity }) : tr("终端");
   };
 
   const active = (watches ?? []).filter((w) => w.status === "armed" || w.status === "matched");
@@ -142,22 +143,21 @@ function WatchPanelContent({
     >
       <span className="font-medium">{watch.name}</span>
       <span className="min-w-0 flex-1 truncate text-neutral-500" title={watch.condition.pattern}>
-        {targetLabel(watch.targetId)}
-        {conditionLabels[watch.condition.type]}「{watch.condition.pattern}」时通知 AI
+        {tr("{value}{value2}「{pattern}」时通知 AI", { value: targetLabel(watch.targetId), value2: conditionLabels[watch.condition.type], pattern: watch.condition.pattern })}
       </span>
       <span className={`nx-badge ${statusClasses[watch.status]}`}>{statusLabels[watch.status]}</span>
-      {watch.repeat && <span className="nx-badge">重复</span>}
+      {watch.repeat && <span className="nx-badge">{tr("重复")}</span>}
       {watch.lastError && <span className="text-neutral-500">{watch.lastError}</span>}
       {canCancel && (
         <button
           type="button"
           className="nx-btn nx-btn-outline nx-btn-xs"
-          aria-label={`取消监视「${watch.name}」`}
+          aria-label={tr("取消监视「{name}」", { name: watch.name })}
           disabled={cancelling.has(watch.id)}
           aria-busy={cancelling.has(watch.id)}
           onClick={() => void cancel(watch)}
         >
-          {cancelling.has(watch.id) ? "正在取消…" : "取消监视"}
+          {cancelling.has(watch.id) ? tr("正在取消…") : tr("取消监视")}
         </button>
       )}
     </div>
@@ -166,14 +166,14 @@ function WatchPanelContent({
   return (
     <div className="flex flex-col gap-1.5 p-2.5">
       <header className="flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
-        监视
-        {watches && <span className="nx-badge">{active.length} 个进行中</span>}
+        {tr("监视")}
+        {watches && <span className="nx-badge">{tr("{length} 个进行中", { length: active.length })}</span>}
         <span className="nx-spacer" />
         <button
           type="button"
           className="nx-icon-btn nx-icon-btn-sm"
-          title="刷新"
-          aria-label="刷新监视列表"
+          title={tr("刷新")}
+          aria-label={tr("刷新监视列表")}
           disabled={loading}
           aria-busy={loading}
           onClick={() => void load()}
@@ -181,7 +181,7 @@ function WatchPanelContent({
           {loading ? <IconLoader size={11} className="animate-spin" /> : <IconRefresh size={11} />}
         </button>
       </header>
-      <p className="nx-hint text-[11px]">监视：AI 持续观察指定终端，出现指定输出或进程结束时将收到通知。不再需要时可取消。</p>
+      <p className="nx-hint text-[11px]">{tr("监视：AI 持续观察指定终端，出现指定输出或进程结束时将收到通知。不再需要时可取消。")}</p>
       {error && (
         <div role="alert" className="nx-badge nx-badge-red">
           {error}
@@ -199,18 +199,18 @@ function WatchPanelContent({
           {notice.text}
           {notice.tone === "error" && (
             <button type="button" className="ml-1.5 underline" onClick={() => setNotice(null)}>
-              确定
+              {tr("确定")}
             </button>
           )}
         </div>
       )}
       {watches !== null && active.length === 0 && !error && (
-        <div className="py-1 text-[11px] text-neutral-500">暂无进行中的监视</div>
+        <div className="py-1 text-[11px] text-neutral-500">{tr("暂无进行中的监视")}</div>
       )}
       {active.map((w) => row(w, true))}
       {ended.length > 0 && (
         <details className="text-[11px] text-neutral-500">
-          <summary className="cursor-pointer py-0.5">已结束（{ended.length}）</summary>
+          <summary className="cursor-pointer py-0.5">{tr("已结束（{length}）", { length: ended.length })}</summary>
           <div className="mt-1 flex flex-col gap-1">{ended.map((w) => row(w, false))}</div>
         </details>
       )}

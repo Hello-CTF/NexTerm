@@ -23,6 +23,7 @@ import {
   type StateRuleDraftForm,
 } from "./stateRuleDraft";
 import { StateRuleForm, useRuleValidation, type HostOption } from "./StateRuleForm";
+import { t } from "../../i18n";
 
 type ScreenState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; screen: StateRuleScreenDTO };
 
@@ -66,11 +67,11 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
         if (draft) {
           setForm(formFromDraft(draft, request.assetId));
           setDraftNote(
-            `草稿引用了屏幕的最后一行文字，可让 AI 起草更通用的规则，或直接修改。${draft.redacted ? `（${STATE_RULE_REDACTED_NOTE}，请核对匹配模式。）` : ""}`,
+            t("草稿引用了屏幕的最后一行文字，可让 AI 起草更通用的规则，或直接修改。{value}", { value: draft.redacted ? t("（{STATE_RULE_REDACTED_NOTE}，请核对匹配模式。）", { STATE_RULE_REDACTED_NOTE }) : "" }),
           );
         } else {
           setForm((previous) => ({ ...previous, scope: request.assetId ? "host" : "global", assetId: request.assetId ?? "" }));
-          setDraftNote("屏幕上没有文字，请手动填写匹配模式。");
+          setDraftNote(t("屏幕上没有文字，请手动填写匹配模式。"));
         }
       },
       (cause: unknown) => {
@@ -96,15 +97,15 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
         keys: previous.keys,
         enabled: previous.enabled,
       }));
-      const note = draft.explanation ? `AI：${draft.explanation}` : "AI 起草的规则，保存前请确认。";
-      setDraftNote(draft.redacted ? `${note}（发送前${STATE_RULE_REDACTED_NOTE}。）` : note);
+      const note = draft.explanation ? `AI：${draft.explanation}` : t("AI 起草的规则，保存前请确认。");
+      setDraftNote(draft.redacted ? t("{note}（发送前{STATE_RULE_REDACTED_NOTE}。）", { note, STATE_RULE_REDACTED_NOTE }) : note);
       setAiState({ busy: false, error: null });
     } catch (cause) {
       if (!aliveRef.current) return;
       const error = toAppError(cause);
       setAiState({
         busy: false,
-        error: error.code === "unsupported" ? `${error.message}。可以使用上面的草稿，或手动编辑。` : error.message,
+        error: error.code === "unsupported" ? t("{message}。可以使用上面的草稿，或手动编辑。", { message: error.message }) : error.message,
       });
     }
   };
@@ -116,7 +117,7 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
     try {
       await stateRuleApi.save(saveRequestFromForm(form));
       if (!aliveRef.current) return;
-      pushToast("success", "已保存状态规则，之后同样的屏幕将按规则显示");
+      pushToast("success", t("已保存状态规则，之后同样的屏幕将按规则显示"));
       onClose();
     } catch (cause) {
       if (aliveRef.current) setSaveError(describeError(cause));
@@ -126,16 +127,16 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
   };
 
   const openRules = () => {
-    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
     showSettingsSection("settings-state-rules");
     onClose();
   };
 
-  const heading = request.intent === "this_is_it" ? "标记为需要处理" : "状态有误";
+  const heading = request.intent === "this_is_it" ? t("标记为需要处理") : t("状态有误");
   const explanation =
     request.intent === "this_is_it"
-      ? `「${request.title}」显示为「${stateLabel(request.current)}」，但该屏幕正在等待回应。保存一条规则，以后同样的屏幕显示为「需要处理」。`
-      : `「${request.title}」显示为「${stateLabel(request.current)}」，但该状态有误。保存一条规则，以后同样的屏幕按所选状态显示。`;
+      ? t("「{title}」显示为「{value}」，但该屏幕正在等待回应。保存一条规则，以后同样的屏幕显示为「需要处理」。", { title: request.title, value: stateLabel(request.current) })
+      : t("「{title}」显示为「{value}」，但该状态有误。保存一条规则，以后同样的屏幕按所选状态显示。", { title: request.title, value: stateLabel(request.current) });
   const canSave = Boolean(validation.result?.valid) && !validation.pending && !saving;
 
   return (
@@ -166,22 +167,22 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
             </h2>
             <p className="nx-hint mt-1">{explanation}</p>
           </div>
-          {screenState.status === "loading" && <div className="nx-hint">读取屏幕…</div>}
+          {screenState.status === "loading" && <div className="nx-hint">{t("读取屏幕…")}</div>}
           {screenState.status === "error" && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert">
-              无法读取屏幕：{screenState.message}。仍可手动填写规则。
+              {t("无法读取屏幕：{message}。仍可手动填写规则。", { message: screenState.message })}
             </div>
           )}
           {screen && (
             <details>
-              <summary className="cursor-pointer text-[12px] text-neutral-300">AI 起草会发送的内容（屏幕末尾 {STATE_RULE_DRAFT_ROWS} 行和标题）</summary>
-              <div className="nx-hint mt-1.5 text-[11.5px]">窗口标题</div>
+              <summary className="cursor-pointer text-[12px] text-neutral-300">{t("AI 起草会发送的内容（屏幕末尾 {STATE_RULE_DRAFT_ROWS} 行和标题）", { STATE_RULE_DRAFT_ROWS })}</summary>
+              <div className="nx-hint mt-1.5 text-[11.5px]">{t("窗口标题")}</div>
               <pre className="nx-code mt-1 max-h-12 overflow-auto whitespace-pre text-[11px]" data-ai-sent-title>
-                {sent?.title || "（空）"}
+                {sent?.title || t("（空）")}
               </pre>
-              <div className="nx-hint mt-1.5 text-[11.5px]">屏幕末尾</div>
+              <div className="nx-hint mt-1.5 text-[11.5px]">{t("屏幕末尾")}</div>
               <pre className="nx-code mt-1 max-h-60 overflow-auto whitespace-pre text-[11px]" data-ai-sent-rows>
-                {sent?.rows || "（空）"}
+                {sent?.rows || t("（空）")}
               </pre>
             </details>
           )}
@@ -193,13 +194,13 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
               onClick={() => void askAi()}
             >
               {aiState.busy ? <IconRefresh size={11} className="animate-spin" /> : <IconSparkles size={11} />}
-              AI 起草
+              {t("AI 起草")}
             </button>
-            <span className="nx-hint text-[11.5px]">会把上面的内容发送给当前 AI 模型，疑似密钥或密码会先脱敏。</span>
+            <span className="nx-hint text-[11.5px]">{t("会把上面的内容发送给当前 AI 模型，疑似密钥或密码会先脱敏。")}</span>
           </div>
           {aiState.error && (
             <div className="nx-alert nx-alert-danger text-[12px]" role="alert" data-ai-draft-error>
-              AI 起草失败：{aiState.error}
+              {t("AI 起草失败：{error}", { error: aiState.error })}
             </div>
           )}
           {draftNote && <p className="nx-hint text-[11.5px]">{draftNote}</p>}
@@ -216,13 +217,13 @@ export function StateMarkDialog({ request, onClose }: { request: StateMarkReques
         </div>
         <div className="nx-modal-footer">
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mr-auto" onClick={openRules}>
-            管理状态规则
+            {t("管理状态规则")}
           </button>
           <button type="button" className="nx-btn nx-btn-ghost" onClick={onClose}>
-            取消
+            {t("取消")}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={!canSave} onClick={() => void save()}>
-            {saving ? "正在保存…" : "保存规则"}
+            {saving ? t("正在保存…") : t("保存规则")}
           </button>
         </div>
       </div>

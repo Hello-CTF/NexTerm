@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fleetAlertsClient, type FleetAlert, type FleetAlertEvent, type FleetAlerts } from "../../ipc/fleetAlertsApi";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
+import { t } from "../../i18n";
 
 export const ALERTS_REFETCH_MS = 60_000;
 
@@ -23,8 +24,8 @@ export function useFleetAlerts() {
   });
 }
 
-const RULE_NAMES: Record<string, string> = { disk: "磁盘", mem: "内存", cpu: "CPU", offline: "离线" };
-const RULE_METRIC_NAMES: Record<string, string> = { disk: "磁盘使用率", mem: "内存使用率", cpu: "CPU 使用率" };
+const RULE_NAMES: Record<string, string> = { disk: t("磁盘"), mem: t("内存"), cpu: "CPU", offline: t("离线") };
+const RULE_METRIC_NAMES: Record<string, string> = { disk: t("磁盘使用率"), mem: t("内存使用率"), cpu: t("CPU 使用率") };
 // Fixed sustain windows, mirroring the server rules.
 export const RULE_SUSTAIN_MINUTES: Record<string, number> = { disk: 10, mem: 10, cpu: 15 };
 
@@ -43,20 +44,20 @@ function minutesOf(durationMs: number): number {
 export function alertEventText(event: FleetAlertEvent): string {
   if (event.rule === "offline") {
     const minutes = minutesOf(event.duration_ms);
-    if (event.kind === "fired") return `已离线 ${minutes} 分钟`;
-    return event.muted ? `静音期间离线 ${minutes} 分钟，已恢复` : `已恢复，离线 ${minutes} 分钟`;
+    if (event.kind === "fired") return t("已离线 {minutes} 分钟", { minutes });
+    return event.muted ? t("静音期间离线 {minutes} 分钟，已恢复", { minutes }) : t("已恢复，离线 {minutes} 分钟", { minutes });
   }
-  if (event.kind !== "fired") return "已恢复";
+  if (event.kind !== "fired") return t("已恢复");
   const metric = RULE_METRIC_NAMES[event.rule] ?? ruleName(event.rule);
   const sustain = RULE_SUSTAIN_MINUTES[event.rule];
   const parts = [event.value !== undefined ? `${metric} ${percent(event.value)}` : metric];
-  if (event.threshold !== undefined) parts.push(`超过 ${percent(event.threshold)}`);
-  return sustain ? `${parts.join("，")} 已持续 ${sustain} 分钟` : parts.join("，");
+  if (event.threshold !== undefined) parts.push(t("超过 {value}", { value: percent(event.threshold) }));
+  return sustain ? t("{join} 已持续 {sustain} 分钟", { join: parts.join("，"), sustain }) : parts.join("，");
 }
 
 export function alertEventTitle(deviceName: string, event: FleetAlertEvent): string {
   const rule = ruleName(event.rule);
-  return event.kind === "fired" ? `${deviceName} · ${rule}告警` : `${deviceName} · ${rule}已恢复`;
+  return event.kind === "fired" ? t("{deviceName} · {rule}告警", { deviceName, rule }) : t("{deviceName} · {rule}已恢复", { deviceName, rule });
 }
 
 export function activeAlertCounts(alerts: FleetAlerts | undefined): Map<string, number> {
@@ -85,10 +86,10 @@ export function clockSkewText(skewMs: number | undefined): string {
   if (!skewMs) return "";
   const abs = Math.abs(skewMs);
   let amount: string;
-  if (abs < 60_000) amount = `${Math.max(1, Math.round(abs / 1000))} 秒`;
-  else if (abs < 3_600_000) amount = `${Math.round(abs / 60_000)} 分钟`;
-  else amount = `${Math.round(abs / 3_600_000)} 小时`;
-  return `设备时钟偏差约 ${amount}（${skewMs > 0 ? "快" : "慢"}），指标按服务器接收时间记录`;
+  if (abs < 60_000) amount = t("{max} 秒", { max: Math.max(1, Math.round(abs / 1000)) });
+  else if (abs < 3_600_000) amount = t("{round} 分钟", { round: Math.round(abs / 60_000) });
+  else amount = t("{round} 小时", { round: Math.round(abs / 3_600_000) });
+  return t("设备时钟偏差约 {amount}（{value}），指标按服务器接收时间记录", { amount, value: skewMs > 0 ? t("快") : t("慢") });
 }
 
 export function mutedAlertEvents(alerts: FleetAlerts | undefined): FleetAlertEvent[] {

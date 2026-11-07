@@ -10,13 +10,14 @@ import { findTab } from "./tabActions";
 import { useRemoteStatus } from "../../features/remote/remoteStatus";
 import type { AppTab, CloseTabReport, SqlDraft, WorkspaceKind } from "./types";
 import { useUi } from "./useUi";
+import { t as tr } from "../../i18n";
 
 export async function confirmDirtyEditors(tabs: AppTab[], title: string): Promise<boolean> {
   const dirty = dirtyFileEditors(tabs, useUi.getState().sessions);
   if (dirty.length === 0) return true;
   const { ask } = await import("../../ui/dialogs");
   const names = dirty.map((tab) => tab.title).join("、");
-  return ask(`有 ${dirty.length} 个文件尚未保存：${names}\n关闭后会丢失这些改动。仍要继续？`, {
+  return ask(tr("有 {length} 个文件尚未保存：{names}\n关闭后会丢失这些改动。仍要继续？", { length: dirty.length, names }), {
     title,
     kind: "warning",
   });
@@ -64,11 +65,11 @@ function endsOnClose(block: DetachBlock | null): block is Exclude<DetachBlock, "
 }
 
 function detachBlockLabel(block: Exclude<DetachBlock, "unattached">): string {
-  if (block === "exec") return "容器 exec";
-  if (block === "regular") return "临时";
-  if (block === "winrm") return "WinRM 非交互";
-  if (block === "local") return "本地";
-  return "其他";
+  if (block === "exec") return tr("容器 exec");
+  if (block === "regular") return tr("临时");
+  if (block === "winrm") return tr("WinRM 非交互");
+  if (block === "local") return tr("本地");
+  return tr("其他");
 }
 
 function assetKindForTab(t: AppTab): string | undefined {
@@ -133,7 +134,7 @@ async function applyClosePreference(plan: ClosePreferencePlan, title: string): P
   }
   const { askChoiceRemember } = await import("../../ui/dialogs");
   const result = await askChoiceRemember(
-    `${plan.detachable.length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
+    tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: plan.detachable.length }),
     { title, choices: CLOSE_CHOICE_OPTIONS },
   );
   if (!result) return false;
@@ -199,39 +200,39 @@ export async function confirmWorkspaceClose(
   if (detachOnly) {
     summary.preferredKills = [];
     summary.confirmBlocked = false;
-  } else if (!(await applyClosePreference(summary, `关闭「${title}」`))) return false;
+  } else if (!(await applyClosePreference(summary, tr("关闭「{title}」", { title })))) return false;
   const confirmBlocked = summary.blocked.length > 0 && summary.confirmBlocked;
   const unconfirmed = summary.unconfirmed.length;
   if (summary.dirty.length === 0 && !confirmBlocked && !summary.hasSqlDraft && summary.runningAiTabs.length === 0 && unconfirmed === 0 && summary.liveRemote.length === 0) return true;
   const lines: string[] = [];
   if (summary.dirty.length > 0) {
     lines.push(
-      `· ${summary.dirty.length} 个文件尚未保存，关闭后会丢失改动：${summary.dirty.map((t) => t.title).join("、")}`,
+      tr("· {length} 个文件尚未保存，关闭后会丢失改动：{join}", { length: summary.dirty.length, join: summary.dirty.map((t) => t.title).join("、") }),
     );
   }
   if (summary.hasSqlDraft) {
-    lines.push("· 此工作区仍有未保存的 SQL 草稿，关闭后将丢失");
+    lines.push(tr("· 此工作区仍有未保存的 SQL 草稿，关闭后将丢失"));
   }
   if (summary.liveRemote.length > 0) {
-    lines.push(`· ${summary.liveRemote.length} 个远程桌面仍在连接，断开后会话结束`);
+    lines.push(tr("· {length} 个远程桌面仍在连接，断开后会话结束", { length: summary.liveRemote.length }));
   }
   if (summary.runningAiTabs.length > 0) {
-    lines.push(`· ${summary.runningAiTabs.length} 个 AI 标签页仍在运行：${summary.runningAiTabs.map((tab) => tab.title).join("、")}`);
+    lines.push(tr("· {length} 个 AI 标签页仍在运行：{join}", { length: summary.runningAiTabs.length, join: summary.runningAiTabs.map((tab) => tab.title).join("、") }));
   }
   if (confirmBlocked) {
-    lines.push(`· ${summary.blocked.length} 个${summary.blockedKinds}终端不支持转入后台，将结束进程`);
+    lines.push(tr("· {length} 个{blockedKinds}终端不支持转入后台，将结束进程", { length: summary.blocked.length, blockedKinds: summary.blockedKinds }));
   }
   if (summary.preferredKills.length > 0) {
-    lines.push(`· ${summary.preferredKills.length} 个运行中的终端将结束进程`);
+    lines.push(tr("· {length} 个运行中的终端将结束进程", { length: summary.preferredKills.length }));
   }
   if (summary.detachable.length > 0) {
-    lines.push(`· ${summary.detachable.length} 个运行中的终端将转入后台`);
+    lines.push(tr("· {length} 个运行中的终端将转入后台", { length: summary.detachable.length }));
   }
   if (unconfirmed > 0) {
-    lines.push(`· ${unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台会话`);
+    lines.push(tr("· {unconfirmed} 个终端无法确认状态，主机上可能仍在运行，将转入后台会话", { unconfirmed }));
   }
   const { ask } = await import("../../ui/dialogs");
-  return ask(`${lines.join("\n")}\n仍要继续？`, { title: `关闭「${title}」`, kind: "warning" });
+  return ask(tr("{join}\n仍要继续？", { join: lines.join("\n") }), { title: tr("关闭「{title}」", { title }), kind: "warning" });
 }
 
 export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Promise<WorkspaceCloseOutcome> {
@@ -276,50 +277,50 @@ export async function executeWorkspaceClose(summary: WorkspaceCloseSummary): Pro
 export function pushWorkspaceCloseToast(title: string, outcome: WorkspaceCloseOutcome, deleted: boolean): void {
   const { pushToast } = useUi.getState();
   const parts: string[] = [];
-  if (outcome.detached > 0) parts.push(`${outcome.detached} 个终端转入后台，可在「后台会话」接管`);
-  if (outcome.killed > 0) parts.push(`${outcome.killed} 个进程已结束`);
+  if (outcome.detached > 0) parts.push(tr("{detached} 个终端转入后台，可在「后台会话」接管", { detached: outcome.detached }));
+  if (outcome.killed > 0) parts.push(tr("{killed} 个进程已结束", { killed: outcome.killed }));
   if (outcome.failed > 0) {
-    pushToast("error", `关闭「${title}」：${outcome.failed} 个终端操作失败：${outcome.failureText}`);
+    pushToast("error", tr("关闭「{title}」：{failed} 个终端操作失败：{failureText}", { title, failed: outcome.failed, failureText: outcome.failureText }));
     return;
   }
   if (outcome.killUnreachable > 0) {
     // The kill was skipped, not performed: say so as a warning, never inside the success summary.
     parts.push(
-      `${outcome.killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束`,
+      tr("{killUnreachable} 个终端所在主机已断开或无法访问，远端进程未能结束，仍在「后台会话」中，重新连接后可接管或结束", { killUnreachable: outcome.killUnreachable }),
     );
-    pushToast("error", `${deleted ? `已关闭「${title}」` : `已关闭部分标签页「${title}」`}：${parts.join("，")}`);
+    pushToast("error", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`);
     return;
   }
   if (parts.length === 0) return;
-  pushToast("info", `${deleted ? `已关闭「${title}」` : `已关闭部分标签页「${title}」`}：${parts.join("，")}`);
+  pushToast("info", `${deleted ? tr("已关闭「{title}」", { title }) : tr("已关闭部分标签页「{title}」", { title })}：${parts.join("，")}`);
 }
 
 export function closeActionHint(t: AppTab): string | undefined {
   if (t.kind !== "terminal" || !t.tabId || t.dead || t.exited) return undefined;
   const block = detachBlockOf(t, useUi.getState().sessions, assetKindForTab(t));
-  if (block === "exec") return "结束容器内命令进程";
-  if (block === "winrm") return "结束 WinRM 非交互进程";
-  if (block === "local") return "结束本地进程";
-  if (block === "unattached") return "终端未连上，只移除标签页";
-  if (block === "regular" || block === "unknown") return "结束进程";
+  if (block === "exec") return tr("结束容器内命令进程");
+  if (block === "winrm") return tr("结束 WinRM 非交互进程");
+  if (block === "local") return tr("结束本地进程");
+  if (block === "unattached") return tr("终端未连上，只移除标签页");
+  if (block === "regular" || block === "unknown") return tr("结束进程");
   const action = getTerminalPrefs().closeAction;
-  if (action === "kill") return "结束进程";
-  if (action === "detach") return "转入后台运行";
-  return "转入后台运行或结束进程";
+  if (action === "kill") return tr("结束进程");
+  if (action === "detach") return tr("转入后台运行");
+  return tr("转入后台运行或结束进程");
 }
 
 export function closeTabHint(t: AppTab): string {
-  if (t.kind === "remote") return "关闭标签页（断开后会话结束）";
-  if (t.kind !== "terminal" || !t.tabId || t.dead) return "关闭标签页";
-  if (isUnconfirmedDurableExit(t)) return "关闭标签页（转入后台会话）";
-  if (t.exited) return "关闭标签页（进程已结束）";
+  if (t.kind === "remote") return tr("关闭标签页（断开后会话结束）");
+  if (t.kind !== "terminal" || !t.tabId || t.dead) return tr("关闭标签页");
+  if (isUnconfirmedDurableExit(t)) return tr("关闭标签页（转入后台会话）");
+  if (t.exited) return tr("关闭标签页（进程已结束）");
   const action = closeActionHint(t);
-  return action ? `关闭标签页（${action}）` : "关闭标签页";
+  return action ? tr("关闭标签页（{action}）", { action }) : tr("关闭标签页");
 }
 
 const CLOSE_CHOICE_OPTIONS: ChoiceOption[] = [
-  { key: "detach", label: "转到后台运行", hint: "进程继续运行，可在「后台会话」随时接管", primary: true },
-  { key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true },
+  { key: "detach", label: tr("转到后台运行"), hint: tr("进程继续运行，可在「后台会话」随时接管"), primary: true },
+  { key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true },
 ];
 
 // decided is only passed by batch close: undefined = dispatch by preference, null = batch choice canceled (keep running terminals), anything else is the unified decision.
@@ -331,11 +332,11 @@ async function requestCloseTabWithAction(
   const found = findTab(id);
   if (!found) return;
   const { tab: target, ws } = found;
-  if (!(await confirmDirtyEditors([target], `关闭「${target.title}」`))) return;
+  if (!(await confirmDirtyEditors([target], tr("关闭「{title}」", { title: target.title })))) return;
   if (isLiveRemoteTab(target)) {
     const { ask } = await import("../../ui/dialogs");
-    const ok = await ask(`「${ws.title}」的远程桌面仍在连接。\n断开后会话结束，仍要关闭？`, {
-      title: `关闭「${ws.title}」`,
+    const ok = await ask(tr("「{title}」的远程桌面仍在连接。\n断开后会话结束，仍要关闭？", { title: ws.title }), {
+      title: tr("关闭「{title}」", { title: ws.title }),
       kind: "warning",
     });
     if (!ok) return;
@@ -359,17 +360,17 @@ async function requestCloseTabWithAction(
     if (block === "regular" && (decided !== undefined || action !== "kill")) {
       // A regular SSH terminal has a single outcome, so offer only the red close action.
       const { askChoice } = await import("../../ui/dialogs");
-      const choice = await askChoice(`「${target.title}」是临时终端，进程随连接结束，不能转到后台。`, {
-        title: `关闭「${target.title}」`,
+      const choice = await askChoice(tr("「{title}」是临时终端，进程随连接结束，不能转到后台。", { title: target.title }), {
+        title: tr("关闭「{title}」", { title: target.title }),
         level: "warning",
-        choices: [{ key: "kill", label: "直接关闭", hint: "结束进程，无法恢复", danger: true }],
+        choices: [{ key: "kill", label: tr("直接关闭"), hint: tr("结束进程，无法恢复"), danger: true }],
       });
       if (choice !== "kill") return;
     } else if (decided !== undefined || action !== "kill") {
       const { ask } = await import("../../ui/dialogs");
       const ok = await ask(
-        `「${target.title}」是${detachBlockLabel(block)}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？`,
-        { title: `关闭「${target.title}」`, kind: "warning" },
+        tr("「{title}」是{value}终端，不支持转入后台。\n关闭会结束这个进程，仍要关闭？", { title: target.title, value: detachBlockLabel(block) }),
+        { title: tr("关闭「{title}」", { title: target.title }), kind: "warning" },
       );
       if (!ok) return;
     }
@@ -382,10 +383,10 @@ async function requestCloseTabWithAction(
     if (action === "ask") {
       const { askChoiceRemember } = await import("../../ui/dialogs");
       const result = await askChoiceRemember(
-        `「${target.title}」的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
+        tr("「{title}」的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { title: target.title }),
         {
-          title: `关闭「${target.title}」`,
-          rememberLabel: "以后都按此选择",
+          title: tr("关闭「{title}」", { title: target.title }),
+          rememberLabel: tr("以后都按此选择"),
           choices: CLOSE_CHOICE_OPTIONS,
         },
       );
@@ -399,7 +400,7 @@ async function requestCloseTabWithAction(
     return;
   }
   if (await st.closeTab(id, "detach")) {
-    st.pushToast("info", `「${target.title}」已转入后台，可在「后台会话」接管`);
+    st.pushToast("info", tr("「{title}」已转入后台，可在「后台会话」接管", { title: target.title }));
   }
 }
 
@@ -489,8 +490,8 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
     if (pending.length > 0) {
       const { askChoiceRemember } = await import("../../ui/dialogs");
       const result = await askChoiceRemember(
-        `${pending.length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。`,
-        { title: "关闭终端标签页", choices: CLOSE_CHOICE_OPTIONS },
+        tr("{length} 个终端的进程正在运行。\n转到后台后，可在「后台会话」中随时接管；直接关闭会结束进程。", { length: pending.length }),
+        { title: tr("关闭终端标签页"), choices: CLOSE_CHOICE_OPTIONS },
       );
       decided = result ? (result.key === "kill" ? "kill" : "detach") : null;
     }
@@ -500,7 +501,7 @@ export async function requestCloseTabs(ids: string[]): Promise<void> {
   }
   const failed = ids.filter((id) => findTab(id)?.tab.closeError).length;
   if (failed > 0) {
-    useUi.getState().pushToast("error", `${failed} 个标签页未能关闭，已保留并在标签页上标出原因`);
+    useUi.getState().pushToast("error", tr("{failed} 个标签页未能关闭，已保留并在标签页上标出原因", { failed }));
   }
 }
 
@@ -514,14 +515,14 @@ export async function requestKillTab(id: string): Promise<void> {
     return;
   }
   const { ask } = await import("../../ui/dialogs");
-  const ok = await ask(`结束「${target.title}」里的进程？\n\n进程会被终止，无法恢复。`, {
-    title: "结束进程",
+  const ok = await ask(tr("结束「{title}」里的进程？\n\n进程会被终止，无法恢复。", { title: target.title }), {
+    title: tr("结束进程"),
     kind: "warning",
   });
   if (!ok) return;
   const report: CloseTabReport = {};
   if ((await st.closeTab(id, "kill", false, report)) && !report.remoteKillSkipped) {
-    st.pushToast("success", `已结束「${target.title}」的进程`);
+    st.pushToast("success", tr("已结束「{title}」的进程", { title: target.title }));
   }
 }
 
@@ -531,12 +532,12 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   const st = useUi.getState();
   const live = before.panes.flatMap((p) => p.tabs).filter(isRunningTerminal);
   if (live.length === 0) {
-    st.pushToast("info", "该工作区里没有正在运行的终端");
+    st.pushToast("info", tr("该工作区里没有正在运行的终端"));
     return;
   }
   const { ask } = await import("../../ui/dialogs");
-  const ok = await ask(`结束「${before.title}」里 ${live.length} 个终端的进程？\n\n进程会被终止，无法恢复。`, {
-    title: "结束全部终端进程",
+  const ok = await ask(tr("结束「{title}」里 {length} 个终端的进程？\n\n进程会被终止，无法恢复。", { title: before.title, length: live.length }), {
+    title: tr("结束全部终端进程"),
     kind: "warning",
   });
   if (!ok) return;
@@ -552,9 +553,9 @@ export async function requestKillWorkspaceTerminals(workspaceId: string): Promis
   );
   const failed = results.filter((r) => r.status === "rejected").length;
   if (failed) {
-    st.pushToast("error", `${failed}/${live.length} 个终端结束失败`);
+    st.pushToast("error", tr("{failed}/{length} 个终端结束失败", { failed, length: live.length }));
   } else {
-    st.pushToast("success", `已结束 ${live.length} 个终端进程`);
+    st.pushToast("success", tr("已结束 {length} 个终端进程", { length: live.length }));
   }
   live.forEach((t, i) => {
     const result = results[i];

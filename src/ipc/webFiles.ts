@@ -1,6 +1,7 @@
 
 import { WEB, httpUrl } from "./env";
 import { authedFetch } from "./serverAuth";
+import { t } from "../i18n";
 
 export interface StagedRef {
   id: string;
@@ -94,11 +95,11 @@ export function pickBrowserFile(accept?: string): Promise<File | null> {
 }
 
 async function readStagedRef(res: Response, what: string): Promise<StagedRef> {
-  if (!res.ok) throw new Error(`${what}失败（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(t("{what}失败（HTTP {status}）", { what, status: res.status }));
   const body = (await res.json()) as { data?: Partial<StagedRef> };
   const id = body.data?.id;
   const path = body.data?.path;
-  if (!id || !path) throw new Error(`${what}失败：服务端未返回 id / path`);
+  if (!id || !path) throw new Error(t("{what}失败：服务端未返回 id / path", { what }));
   return { id, path };
 }
 
@@ -112,7 +113,7 @@ export async function stageFile(
     method: "POST",
     body: file,
   });
-  const ref = await readStagedRef(res, "暂存");
+  const ref = await readStagedRef(res, t("暂存"));
   if (!opts.persist) stagedIds.set(ref.path, ref.id);
   return ref;
 }
@@ -120,7 +121,7 @@ export async function stageFile(
 async function reserveTarget(name: string): Promise<StagedRef> {
   const q = new URLSearchParams({ name });
   const res = await csrfFetch(httpUrl(`/files/blob/reserve?${q.toString()}`), { method: "POST" });
-  const ref = await readStagedRef(res, "预留落点");
+  const ref = await readStagedRef(res, t("预留落点"));
   stagedIds.set(ref.path, ref.id);
   return ref;
 }
@@ -172,7 +173,7 @@ export async function deliverStaged(
   let cleanup = false;
   try {
     const res = await authedFetch(httpUrl(`/files/blob?id=${encodeURIComponent(id)}`));
-    if (!res.ok) throw new Error(`回读暂存内容失败（HTTP ${res.status}）`);
+    if (!res.ok) throw new Error(t("回读暂存内容失败（HTTP {status}）", { status: res.status }));
     const blob = await res.blob();
     if (handle) {
       const writable = await handle.createWritable();

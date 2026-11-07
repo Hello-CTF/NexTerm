@@ -99,6 +99,7 @@ import {
   filterAssetsForProject,
   filterGroupsForProject,
 } from "../../app/projectFocus";
+import { t as tr } from "../../i18n";
 
 const ASSET_IDENTITY_KEY = "nexterm.assetIdentity.v1";
 
@@ -149,10 +150,10 @@ function watchAssetIdentityWidth(nodes: Element[], measure: () => void): () => v
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
   winrm: "WinRM",
-  local: "本地终端",
-  docker: "Docker 主机",
-  "docker-context": "Docker context（仅清单）",
-  kubernetes: "Kubernetes（仅清单）",
+  local: tr("本地终端"),
+  docker: tr("Docker 主机"),
+  "docker-context": tr("Docker context（仅清单）"),
+  kubernetes: tr("Kubernetes（仅清单）"),
   mysql: "MySQL / MariaDB",
   postgres: "PostgreSQL",
   redis: "Redis",
@@ -167,13 +168,13 @@ const ASSET_FIELD_IDLE_VALIDATION_MS = 500;
 
 function validateAssetHost(value: string): string | null {
   const h = value.trim();
-  if (!h) return "请填写主机";
-  if (/\s/.test(h)) return "主机不能包含空格";
+  if (!h) return tr("请填写主机");
+  if (/\s/.test(h)) return tr("主机不能包含空格");
   return null;
 }
 
 function validateAssetPort(port: number): string | null {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return "端口需在 1-65535 之间";
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return tr("端口需在 1-65535 之间");
   return null;
 }
 
@@ -200,7 +201,7 @@ function parseEnvText(text: string): { ok: true; env: Record<string, string> } |
     if (!line) continue;
     const match = ENV_LINE_PATTERN.exec(line);
     if (!match) {
-      return { ok: false, error: `环境变量第 ${index + 1} 行不是有效的 KEY=VALUE：${line}` };
+      return { ok: false, error: tr("环境变量第 {value} 行不是有效的 KEY=VALUE：{line}", { value: index + 1, line }) };
     }
     env[match[1]] = match[2];
   }
@@ -223,8 +224,8 @@ const SKELETON_ROW_WIDTHS = ["w-3/5", "w-2/5", "w-1/2", "w-3/5", "w-2/5"];
 
 function AssetTreeSkeleton() {
   return (
-    <div role="status" aria-label="正在加载资产">
-      <span className="nx-sr-only">正在加载资产…</span>
+    <div role="status" aria-label={tr("正在加载资产")}>
+      <span className="nx-sr-only">{tr("正在加载资产…")}</span>
       <div aria-hidden="true">
         {SKELETON_ROW_WIDTHS.map((width, i) => (
           <div key={i} className="nx-row cursor-default">
@@ -359,7 +360,7 @@ export function AssetTree() {
   const [presetGroup, setPresetGroup] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<AssetGroup | null>(null);
   const [groupBusyId, setGroupBusyId] = useState<string | null>(null);
-  const [groupError, setGroupError] = useState<{ id: string; message: string; action: "删除" | "修复" } | null>(null);
+  const [groupError, setGroupError] = useState<{ id: string; message: string; action: "delete" | "repair" } | null>(null);
   const [assetError, setAssetError] = useState<{ id: string; message: string; mode?: "keep" | "disconnect" | "close" } | null>(null);
   const [moveErrors, setMoveErrors] = useState<Record<string, AssetMoveError>>({});
   const [movingTargets, setMovingTargets] = useState<Record<string, string>>({});
@@ -392,7 +393,7 @@ export function AssetTree() {
   const deviceTree = useDeviceTree((device) =>
     deviceGroupIdsRef.current.has(device.id) ? [{
       kind: "item",
-      label: "移出分组",
+      label: tr("移出分组"),
       icon: <IconFolder size={13} />,
       onSelect: () => void moveAsset(deviceAssetId(device.id), null),
     }] : [],
@@ -621,29 +622,29 @@ export function AssetTree() {
       if (!created) return;
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("success", `已克隆为「${created.name}」`);
+      pushToast("success", tr("已克隆为「{name}」", { name: created.name }));
     } catch (e) {
-      pushToast("error", `无法克隆资产：${describeError(e)}`);
+      pushToast("error", tr("无法克隆资产：{value}", { value: describeError(e) }));
     }
   };
 
   const onHide = (a: Asset) => {
     hide(a.id);
-    pushToast("info", `已隐藏「${a.name}」。可在「视图」菜单中选择「显示已隐藏的资产」恢复`);
+    pushToast("info", tr("已隐藏「{name}」。可在「视图」菜单中选择「显示已隐藏的资产」恢复", { name: a.name }));
   };
 
   const onUnhide = (a: Asset) => {
     unhide(a.id);
-    pushToast("info", `已取消隐藏「${a.name}」`);
+    pushToast("info", tr("已取消隐藏「{name}」", { name: a.name }));
   };
 
   const onCopySshCommand = async (a: Asset) => {
     const command = formatSshCommand(a);
     try {
       await copyText(command);
-      pushToast("success", `已复制 SSH 命令：${command}`);
+      pushToast("success", tr("已复制 SSH 命令：{command}", { command }));
     } catch (e) {
-      pushToast("error", `无法复制：${describeError(e)}`);
+      pushToast("error", tr("无法复制：{value}", { value: describeError(e) }));
     }
   };
 
@@ -651,7 +652,7 @@ export function AssetTree() {
     const host = a.host?.trim();
     if (!host) return;
     const epoch = useUi.getState().accountEpoch;
-    const username = (await promptText(`使用其他用户名连接「${a.name}」`, a.username ?? ""))?.trim();
+    const username = (await promptText(tr("使用其他用户名连接「{name}」", { name: a.name }), a.username ?? ""))?.trim();
     if (!username || useUi.getState().accountEpoch !== epoch) return;
     void connectQuickTarget({ host, port: a.port ?? 22, username });
   };
@@ -692,11 +693,11 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
-      pushToast("info", `已删除资产「${a.name}」`);
+      pushToast("info", tr("已删除资产「{name}」", { name: a.name }));
     } catch (e) {
       if (stale()) return;
       const detail = closedWorkspaceCount > 0
-        ? `${describeError(e)}。已关闭的工作区可在资产列表中重新打开`
+        ? tr("{value}。已关闭的工作区可在资产列表中重新打开", { value: describeError(e) })
         : describeError(e);
       setAssetError({ id: a.id, message: detail, mode });
     }
@@ -705,7 +706,7 @@ export function AssetTree() {
   // Groups that use this asset as their default jump host: deleting it makes their members' connections fail.
   const jumpGroupNotice = (a: Asset) => {
     const names = (groups.data ?? []).filter((group) => group.defaultJumpAssetId === a.id).map((group) => `「${group.name}」`);
-    return names.length === 0 ? "" : `\n\n分组 ${names.join("、")} 把它设为默认跳板机；删除后这些分组内的资产会连接失败，需要在分组的连接默认值中重新选择。`;
+    return names.length === 0 ? "" : tr("\n\n分组 {join} 把它设为默认跳板机；删除后这些分组内的资产会连接失败，需要在分组的连接默认值中重新选择。", { join: names.join("、") });
   };
   const onDelete = async (a: Asset) => {
     const epoch = useUi.getState().accountEpoch;
@@ -715,17 +716,17 @@ export function AssetTree() {
       s.assetId === a.id && s.status !== "disconnected" && s.status !== "failed",
     );
     if (workspaces.length > 0 || liveSessions.length > 0) {
-      const workspaceNotice = workspaces.length > 0 ? `有 ${workspaces.length} 个工作区正在使用此资产。` : "";
-      const sessionNotice = liveSessions.length > 0 ? `有 ${liveSessions.length} 个后台会话正在使用此资产。` : "";
+      const workspaceNotice = workspaces.length > 0 ? tr("有 {length} 个工作区正在使用此资产。", { length: workspaces.length }) : "";
+      const sessionNotice = liveSessions.length > 0 ? tr("有 {length} 个后台会话正在使用此资产。", { length: liveSessions.length }) : "";
       const action = await askChoice(
-        `删除资产「${a.name}」？\n\n${workspaceNotice}${sessionNotice}资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。${jumpGroupNotice(a)}`,
+        tr("删除资产「{name}」？\n\n{workspaceNotice}{sessionNotice}资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。{value}", { name: a.name, workspaceNotice, sessionNotice, value: jumpGroupNotice(a) }),
         {
-          title: "删除资产",
+          title: tr("删除资产"),
           level: "warning",
           choices: [
-            { key: "keep", label: workspaces.length > 0 ? "保留工作区并删除资产" : "保留会话并删除资产", hint: "工作区会提示资产已删除，仍可查看或关闭。", primary: true },
-            ...(liveSessions.length > 0 ? [{ key: "disconnect", label: "断开会话并删除资产", hint: "断开会话并停止端口转发，工作区保留。", danger: true }] : []),
-            ...(workspaces.length > 0 ? [{ key: "close", label: "关闭工作区并删除资产", hint: "先关闭相关工作区再删除；中途取消则不会删除。", danger: true }] : []),
+            { key: "keep", label: workspaces.length > 0 ? tr("保留工作区并删除资产") : tr("保留会话并删除资产"), hint: tr("工作区会提示资产已删除，仍可查看或关闭。"), primary: true },
+            ...(liveSessions.length > 0 ? [{ key: "disconnect", label: tr("断开会话并删除资产"), hint: tr("断开会话并停止端口转发，工作区保留。"), danger: true }] : []),
+            ...(workspaces.length > 0 ? [{ key: "close", label: tr("关闭工作区并删除资产"), hint: tr("先关闭相关工作区再删除；中途取消则不会删除。"), danger: true }] : []),
           ],
         },
       );
@@ -734,7 +735,7 @@ export function AssetTree() {
       await runDeleteAsset(a, epoch, action);
       return;
     }
-    const ok = await ask(`删除资产「${a.name}」？\n\n资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。${jumpGroupNotice(a)}`, { kind: "warning" });
+    const ok = await ask(tr("删除资产「{name}」？\n\n资产会从列表移除；凭据库里的凭据会保留，已有的终端历史仍可查看。{value}", { name: a.name, value: jumpGroupNotice(a) }), { kind: "warning" });
     if (ok && useUi.getState().accountEpoch === epoch) await runDeleteAsset(a, epoch);
   };
 
@@ -753,11 +754,11 @@ export function AssetTree() {
     if (pendingMovesRef.current.has(assetId)) return;
     const asset = [...(assets.data ?? []), ...deviceAssets].find((item) => item.id === assetId) ?? filtered.find((item) => item.id === assetId);
     if (!asset) {
-      pushToast("error", "无法移动：资产已不在列表中，请刷新后重试");
+      pushToast("error", tr("无法移动：资产已不在列表中，请刷新后重试"));
       return;
     }
     const groupName = (id: string | null) =>
-      id === null ? "根目录" : groupPaths.get(id) ?? "未知分组";
+      id === null ? tr("根目录") : groupPaths.get(id) ?? tr("未知分组");
     if (asset.kind !== "device") {
       // A move can change which credential, authentication or jump host the asset really uses; say so first.
       const changes = await inheritanceChangesOnMove(asset, groupId);
@@ -776,7 +777,7 @@ export function AssetTree() {
       if (asset.kind === "device") {
         await moveDevice(asset, groupId);
         void qc.invalidateQueries({ queryKey: ["device-refs"] });
-        pushToast("info", groupId ? `已将「${asset.name}」移入分组` : `已将「${asset.name}」移出分组`);
+        pushToast("info", groupId ? tr("已将「{name}」移入分组", { name: asset.name }) : tr("已将「{name}」移出分组", { name: asset.name }));
         return;
       }
       await assetApi.update({ id: assetId, groupId });
@@ -785,7 +786,7 @@ export function AssetTree() {
       qc.setQueryData<Asset[]>(["assets"], updateCachedGroup);
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("info", groupId ? `已将「${asset.name}」移入分组` : `已将「${asset.name}」移出分组`);
+      pushToast("info", groupId ? tr("已将「{name}」移入分组", { name: asset.name }) : tr("已将「{name}」移出分组", { name: asset.name }));
     } catch (e) {
       const message = describeError(e);
       setMoveErrors((prev) => ({
@@ -800,7 +801,7 @@ export function AssetTree() {
       if (asset.groupId && useGroupCollapse.getState().collapsedIds.includes(asset.groupId)) {
         useGroupCollapse.getState().toggle(asset.groupId);
       }
-      pushToast("error", `无法移动「${asset.name}」，仍在原位置。可选择该资产下方的「重试移动」。原因：${message}`);
+      pushToast("error", tr("无法移动「{name}」，仍在原位置。可选择该资产下方的「重试移动」。原因：{message}", { name: asset.name, message }));
     } finally {
       pendingMovesRef.current.delete(assetId);
       setMovingTargets((prev) => {
@@ -829,10 +830,10 @@ export function AssetTree() {
       void qc.invalidateQueries({ queryKey: ["groups"] });
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("info", `已删除分组「${g.name}」`);
+      pushToast("info", tr("已删除分组「{name}」", { name: g.name }));
     } catch (e) {
       if (stale()) return;
-      setGroupError({ id: g.id, message: describeError(e), action: "删除" });
+      setGroupError({ id: g.id, message: describeError(e), action: "delete" });
     } finally {
       setGroupBusyId(null);
     }
@@ -841,7 +842,7 @@ export function AssetTree() {
   const deleteGroup = async (g: AssetGroup) => {
     if (groupBusyId) return;
     const epoch = useUi.getState().accountEpoch;
-    const ok = await ask(`删除分组「${g.name}」？\n组内资产会移到「未分组」，并不再继承该分组的连接默认值；子分组会被一并删除。`, {
+    const ok = await ask(tr("删除分组「{name}」？\n组内资产会移到「未分组」，并不再继承该分组的连接默认值；子分组会被一并删除。", { name: g.name }), {
       kind: "warning",
     });
     if (!ok || useUi.getState().accountEpoch !== epoch) return;
@@ -860,10 +861,10 @@ export function AssetTree() {
       await qc.invalidateQueries({ queryKey: ["groups"] });
       if (stale()) return;
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
-      pushToast("success", `已将「${g.name}」移到根目录`);
+      pushToast("success", tr("已将「{name}」移到根目录", { name: g.name }));
     } catch (e) {
       if (stale()) return;
-      setGroupError({ id: g.id, message: describeError(e), action: "修复" });
+      setGroupError({ id: g.id, message: describeError(e), action: "repair" });
     } finally {
       setGroupBusyId(null);
     }
@@ -883,53 +884,53 @@ export function AssetTree() {
       ? [
           {
             kind: "item",
-            label: "新建资产",
+            label: tr("新建资产"),
             icon: <IconPlus size={13} />,
             onSelect: () => {
               setPresetGroup(null);
               setEditing("asset");
             },
           },
-          { kind: "item", label: "新建分组", icon: <IconFolder size={13} />, onSelect: () => setEditing("group") },
+          { kind: "item", label: tr("新建分组"), icon: <IconFolder size={13} />, onSelect: () => setEditing("group") },
           { kind: "separator" },
           {
             kind: "item",
-            label: "导入 SSH 配置",
+            label: tr("导入 SSH 配置"),
             icon: <IconDownload size={13} />,
-            hint: "~/.ssh/config 或 Termius",
+            hint: tr("~/.ssh/config 或 Termius"),
             onSelect: () => setImporting(true),
           },
           {
             kind: "item",
-            label: "同步外部主机",
+            label: tr("同步外部主机"),
             icon: <IconGlobe size={13} />,
             hint: "SSH、Docker、Kubernetes",
             onSelect: () => setInventoryOpen(true),
           },
         ]
       : [
-          { kind: "group", label: "显示" },
+          { kind: "group", label: tr("显示") },
           {
             kind: "item",
-            label: detailedIdentity ? "紧凑显示（隐藏主机地址）" : "显示主机地址",
+            label: detailedIdentity ? tr("紧凑显示（隐藏主机地址）") : tr("显示主机地址"),
             icon: detailedIdentity ? <IconCheck size={13} /> : <IconList size={13} />,
             onSelect: toggleDetailedIdentity,
           },
           ...(hiddenIds.length > 0
             ? [{
                 kind: "item" as const,
-                label: showHidden ? "收起已隐藏的资产" : `显示已隐藏的资产（${hiddenIds.length}）`,
+                label: showHidden ? tr("收起已隐藏的资产") : tr("显示已隐藏的资产（{length}）", { length: hiddenIds.length }),
                 icon: showHidden ? <IconEyeOff size={13} /> : <IconEye size={13} />,
                 onSelect: () => setShowHidden(!showHidden),
               }]
             : []),
           { kind: "separator" },
-          { kind: "group", label: "维护" },
+          { kind: "group", label: tr("维护") },
           {
             kind: "item",
-            label: "批量维护",
+            label: tr("批量维护"),
             icon: <IconServer size={13} />,
-            hint: "批量执行维护操作",
+            hint: tr("批量执行维护操作"),
             onSelect: () => setBulkMaintenanceOpen(true),
           },
         ];
@@ -941,7 +942,7 @@ export function AssetTree() {
     const detailLabel = hostDetailLabel(asset.kind);
     const main: MenuItem[] = [
       ...(connectable
-        ? [{ kind: "item" as const, label: "连接", icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
+        ? [{ kind: "item" as const, label: tr("连接"), icon: <IconPlay size={13} />, onSelect: () => void connectAsset(asset) }]
         : []),
       ...(detailLabel
         ? [{ kind: "item" as const, label: detailLabel, icon: <IconServer size={13} />, onSelect: () => openHostDetail(asset.id) }]
@@ -949,65 +950,65 @@ export function AssetTree() {
       ...(canWake(asset.options)
         ? [{
             kind: "item" as const,
-            label: "唤醒",
+            label: tr("唤醒"),
             icon: <IconPlug size={13} />,
-            hint: "发出不代表已开机",
+            hint: tr("发出不代表已开机"),
             onSelect: () => void wakeAsset(asset.id, asset.name),
           }]
         : []),
-      { kind: "item", label: "编辑", icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
+      { kind: "item", label: tr("编辑"), icon: <IconEdit size={13} />, onSelect: () => setEditingAsset(asset) },
     ];
     const share: MenuItem[] = [
       {
         kind: "item",
-        label: "克隆",
+        label: tr("克隆"),
         icon: <IconCopy size={13} />,
-        hint: "共用同一份登录凭据",
+        hint: tr("共用同一份登录凭据"),
         onSelect: () => void onClone(asset),
       },
       ...(sshCommandCopyable(asset)
         ? [{
             kind: "item" as const,
-            label: "复制 SSH 命令",
+            label: tr("复制 SSH 命令"),
             icon: <IconTerminal size={13} />,
-            hint: "粘贴到任意终端使用",
+            hint: tr("粘贴到任意终端使用"),
             onSelect: () => void onCopySshCommand(asset),
           }]
         : []),
       ...(canConnectAs
         ? [{
             kind: "item" as const,
-            label: "使用其他用户名连接",
+            label: tr("使用其他用户名连接"),
             icon: <IconPlug size={13} />,
-            hint: "临时输入，不会保存",
+            hint: tr("临时输入，不会保存"),
             onSelect: () => void onConnectAsUser(asset),
           }]
         : []),
       {
         kind: "item",
-        label: "复制资产链接",
+        label: tr("复制资产链接"),
         icon: <IconGlobe size={13} />,
-        hint: "用 NexTerm 打开此资产",
+        hint: tr("用 NexTerm 打开此资产"),
         onSelect: () => copyAssetDeepLink(asset.id),
       },
     ];
     const careful: MenuItem[] = [
       isHidden(asset.id)
-        ? { kind: "item", label: "取消隐藏", icon: <IconEye size={13} />, onSelect: () => onUnhide(asset) }
+        ? { kind: "item", label: tr("取消隐藏"), icon: <IconEye size={13} />, onSelect: () => onUnhide(asset) }
         : {
             kind: "item",
-            label: "在列表中隐藏",
+            label: tr("在列表中隐藏"),
             icon: <IconEyeOff size={13} />,
-            hint: "不会删除资产",
+            hint: tr("不会删除资产"),
             onSelect: () => onHide(asset),
           },
       ...(asset.builtin
         ? []
         : [{
             kind: "item" as const,
-            label: "删除资产…",
+            label: tr("删除资产…"),
             icon: <IconClose size={13} />,
-            hint: "凭据库中的凭据保留",
+            hint: tr("凭据库中的凭据保留"),
             danger: true,
             onSelect: () => void onDelete(asset),
           }]),
@@ -1070,7 +1071,7 @@ export function AssetTree() {
         key={group.id}
         group={group}
         path={node.path}
-        contextPath={group.parentId ? groupPaths.get(group.parentId) ?? "父分组缺失" : "根目录"}
+        contextPath={group.parentId ? groupPaths.get(group.parentId) ?? tr("父分组缺失") : tr("根目录")}
         showPath={duplicateGroupNames.has(group.name)}
         issue={node.issue}
         level={level}
@@ -1100,12 +1101,12 @@ export function AssetTree() {
         }}
         busy={groupBusyId === group.id}
         error={groupError?.id === group.id ? groupError.message : null}
-        errorAction={groupError?.id === group.id ? groupError.action : "删除"}
+        errorAction={groupError?.id === group.id ? groupError.action : "delete"}
         onRename={() => setRenamingGroup(group)}
         onEditDefaults={() => setEditingGroup(group)}
         onDeleteGroup={() => void deleteGroup(group)}
         onRepair={() => void repairGroup(group)}
-        onRetry={() => void (groupError?.id === group.id && groupError.action === "修复" ? repairGroup(group) : runDeleteGroup(group, useUi.getState().accountEpoch))}
+        onRetry={() => void (groupError?.id === group.id && groupError.action === "repair" ? repairGroup(group) : runDeleteGroup(group, useUi.getState().accountEpoch))}
         onDismissError={() => setGroupError(null)}
         assetError={assetError}
         onRetryAssetDelete={(asset) => void runDeleteAsset(asset, useUi.getState().accountEpoch, assetError?.mode)}
@@ -1125,8 +1126,8 @@ export function AssetTree() {
       <div>
         {renderAssetRow(item.asset, 1)}
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
-          <span className="min-w-0 flex-1">所属分组已不存在，已临时放入根目录。</span>
-          <button className="nx-link shrink-0" onClick={() => void moveAsset(item.asset.id, null)}>移到根目录</button>
+          <span className="min-w-0 flex-1">{tr("所属分组已不存在，已临时放入根目录。")}</span>
+          <button className="nx-link shrink-0" onClick={() => void moveAsset(item.asset.id, null)}>{tr("移到根目录")}</button>
         </div>
       </div>
     ) : renderAssetRow(item.asset, 1);
@@ -1141,27 +1142,27 @@ export function AssetTree() {
       style={{ width: leftWidth }}
     >
       <div className="nx-panel-head flex min-h-[34px] shrink-0 flex-wrap items-center gap-1 px-2.5">
-        <span className="shrink-0 whitespace-nowrap text-xs font-semibold tracking-wide text-neutral-200">资产</span>
+        <span className="shrink-0 whitespace-nowrap text-xs font-semibold tracking-wide text-neutral-200">{tr("资产")}</span>
         <div className="nx-spacer" />
         <button
           type="button"
           className="nx-btn nx-btn-sm nx-btn-primary"
           aria-haspopup="menu"
-          title="新建资产、分组，或导入已有主机"
+          title={tr("新建资产、分组，或导入已有主机")}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             setHeaderMenu({ kind: "new", x: r.left, y: r.bottom });
           }}
         >
           <IconPlus size={12} />
-          新建
+          {tr("新建")}
         </button>
         <button
           type="button"
           className={`nx-icon-btn nx-icon-btn-sm ${detailedIdentity || showHidden ? "is-active" : ""}`}
           aria-haspopup="menu"
-          title="视图：显示方式与批量维护"
-          aria-label="视图"
+          title={tr("视图：显示方式与批量维护")}
+          aria-label={tr("视图")}
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
             setHeaderMenu({ kind: "view", x: r.left, y: r.bottom });
@@ -1180,8 +1181,8 @@ export function AssetTree() {
           </span>
           <input
             className="nx-input nx-input-sm"
-            placeholder="搜索资产名称、地址或用户"
-            aria-label="搜索资产名称、地址或用户"
+            placeholder={tr("搜索资产名称、地址或用户")}
+            aria-label={tr("搜索资产名称、地址或用户")}
             value={query}
             onChange={(e) => {
               const next = e.target.value;
@@ -1196,15 +1197,14 @@ export function AssetTree() {
 
       {searchSummary && !listError && (
         <div className="px-2 pb-1 text-[11px] text-neutral-500" role="status">
-          找到 {searchSummary.total} 个匹配
-          {searchSummary.truncated ? `，仅显示前 ${searchSummary.returned} 个。请输入更具体的关键字` : ""}
+          {tr("找到 {total} 个匹配{value}", { total: searchSummary.total, value: searchSummary.truncated ? tr("，仅显示前 {returned} 个。请输入更具体的关键字", { returned: searchSummary.returned }) : "" })}
         </div>
       )}
 
       <div
         ref={treeRef}
         role="tree"
-        aria-label="资产"
+        aria-label={tr("资产")}
         className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2"
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(DRAG_ASSET)) e.preventDefault();
@@ -1222,7 +1222,7 @@ export function AssetTree() {
         {assets.isPending ? (
           <AssetTreeSkeleton />
         ) : listError ? (
-          <LoadError title={query.trim() ? "搜索失败" : "未能加载资产列表"} error={listError} onRetry={retryList} />
+          <LoadError title={query.trim() ? tr("搜索失败") : tr("未能加载资产列表")} error={listError} onRetry={retryList} />
         ) : (
           <>
             {treeVirtualized ? (
@@ -1245,12 +1245,12 @@ export function AssetTree() {
             {visible.length === 0 && (
               <div className="nx-hint px-2 py-8 text-center">
                 {query
-                  ? "没有匹配的资产"
+                  ? tr("没有匹配的资产")
                   : activeProject !== ALL_PROJECTS
-                    ? "当前项目下没有可见的资产"
+                    ? tr("当前项目下没有可见的资产")
                     : (assets.data?.length ?? 0) > 0
-                      ? "全部资产已隐藏。在「视图」菜单中选择「显示已隐藏的资产」查看"
-                      : "暂无资产。选择上方的「新建」添加资产"}
+                      ? tr("全部资产已隐藏。在「视图」菜单中选择「显示已隐藏的资产」查看")
+                      : tr("暂无资产。选择上方的「新建」添加资产")}
               </div>
             )}
           </>
@@ -1259,11 +1259,11 @@ export function AssetTree() {
 
       <button
         className="mx-1.5 mb-1 mt-auto flex h-[32px] shrink-0 items-center gap-2 rounded-md border border-transparent px-2.5 text-[12.5px] text-neutral-400 transition-colors hover:bg-neutral-800/70 hover:text-neutral-100"
-        title="打开命令片段"
+        title={tr("打开命令片段")}
         onClick={() => setSnippetsOpen(true)}
       >
         <IconCommand size={14} className="shrink-0 text-neutral-500" />
-        <span className="flex-1 text-left">命令片段</span>
+        <span className="flex-1 text-left">{tr("命令片段")}</span>
         <span className="nx-count">{snippets.data?.length ?? "…"}</span>
         <IconChevronRight size={12} className="shrink-0 text-neutral-600" />
       </button>
@@ -1356,7 +1356,7 @@ export function AssetTree() {
                 items: [
                   {
                     kind: "item",
-                    label: "新建分组",
+                    label: tr("新建分组"),
                     icon: <IconFolder size={13} />,
                     onSelect: () => setEditing("group"),
                   },
@@ -1425,7 +1425,7 @@ function AssetRow({
   const label = asset.name;
   const target = asset.host ? `${asset.host}${asset.port ? `:${asset.port}` : ""}` : "";
   const targetSummary = inventoryTargetText(asset.options);
-  const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : targetSummary || (asset.builtin ? "本机" : "");
+  const identity = target ? `${asset.username?.trim() ? `${asset.username.trim()}@` : ""}${target}` : targetSummary || (asset.builtin ? tr("本机") : "");
   const env = asset.options?.env;
   const envCount = env && typeof env === "object" && !Array.isArray(env) ? Object.keys(env).length : 0;
   const identityAreaRef = useRef<HTMLSpanElement>(null);
@@ -1461,12 +1461,12 @@ function AssetRow({
   const compactActions = coarse;
   const tip = [
     asset.name,
-    target || targetSummary || (asset.builtin ? "本机" : ""),
-    managed ? `来自「${inventorySourceLabel(managed.source)}」同步 · 名称和连接信息随来源更新` : "",
-    asset.builtin ? "本机资产 · 不能删除" : "",
-    hidden ? "已隐藏" : "",
-    connectionProblem ? `连接失败：${connectionProblem.summary}` : "",
-    inventoryOnly ? "仅作清单记录 · 暂不能打开终端" : "双击连接 · 可拖入分组",
+    target || targetSummary || (asset.builtin ? tr("本机") : ""),
+    managed ? tr("来自「{value}」同步 · 名称和连接信息随来源更新", { value: inventorySourceLabel(managed.source) }) : "",
+    asset.builtin ? tr("本机资产 · 不能删除") : "",
+    hidden ? tr("已隐藏") : "",
+    connectionProblem ? tr("连接失败：{summary}", { summary: connectionProblem.summary }) : "",
+    inventoryOnly ? tr("仅作清单记录 · 暂不能打开终端") : tr("双击连接 · 可拖入分组"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1522,31 +1522,31 @@ function AssetRow({
       <span aria-hidden="true" className="nx-asset-row-measures pointer-events-none invisible whitespace-nowrap" style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}>
         <span ref={nameMeasureRef} className="nx-asset-row-name-measure inline-block whitespace-nowrap">{label}</span>
       </span>
-      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={`来自「${inventorySourceLabel(managed.source)}」同步；名称和连接信息随来源更新，不能在这里修改`}>{inventorySourceLabel(managed.source)}</span>}
-      {envCount > 0 && <span className="nx-badge nx-badge-amber" title={`已设置 ${envCount} 个环境变量`}>env {envCount}</span>}
-      {hidden && <span className="nx-badge">已隐藏</span>}
-      {asset.builtin && <span className="nx-badge nx-badge-blue">本机</span>}
+      {managed && <span className="nx-badge nx-badge-blue shrink-0" title={tr("来自「{value}」同步；名称和连接信息随来源更新，不能在这里修改", { value: inventorySourceLabel(managed.source) })}>{inventorySourceLabel(managed.source)}</span>}
+      {envCount > 0 && <span className="nx-badge nx-badge-amber" title={tr("已设置 {envCount} 个环境变量", { envCount })}>env {envCount}</span>}
+      {hidden && <span className="nx-badge">{tr("已隐藏")}</span>}
+      {asset.builtin && <span className="nx-badge nx-badge-blue">{tr("本机")}</span>}
       {connectionProblem && !inventoryOnly && (
         <button
           type="button"
           className="nx-badge nx-badge-red shrink-0 cursor-pointer"
-          title={`连接失败：${connectionProblem.summary}。选择可重试`}
-          aria-label={`重试连接 ${asset.name}`}
+          title={tr("连接失败：{summary}。选择可重试", { summary: connectionProblem.summary })}
+          aria-label={tr("重试连接 {name}", { name: asset.name })}
           onClick={(event) => {
             event.stopPropagation();
             void connectAsset(asset);
           }}
           onDoubleClick={(event) => event.stopPropagation()}
         >
-          连接失败，重试
+          {tr("连接失败，重试")}
         </button>
       )}
       {compactActions ? (
         <button
           ref={moreRef}
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-          title="更多操作"
-          aria-label={`更多操作 ${asset.name}`}
+          title={tr("更多操作")}
+          aria-label={tr("更多操作 {name}", { name: asset.name })}
           onClick={(e) => {
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
@@ -1561,16 +1561,16 @@ function AssetRow({
           {!inventoryOnly && inlineCount > 0 && (connecting ? (
             <span
               className="nx-icon-btn nx-icon-btn-sm"
-              title="正在连接…"
-              aria-label={`正在连接 ${asset.name}`}
+              title={tr("正在连接…")}
+              aria-label={tr("正在连接 {name}", { name: asset.name })}
             >
               <IconLoader size={12} className="animate-spin" />
             </span>
           ) : (
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="连接"
-              aria-label={`连接 ${asset.name}`}
+              title={tr("连接")}
+              aria-label={tr("连接 {name}", { name: asset.name })}
               onClick={(e) => {
                 e.stopPropagation();
                 void connectAsset(asset);
@@ -1582,8 +1582,8 @@ function AssetRow({
           <button
             ref={moreRef}
             className={`nx-icon-btn nx-icon-btn-sm ${inlineCount === 0 ? "nx-row-more" : ""}`}
-            title="更多操作"
-            aria-label={`更多操作 ${asset.name}`}
+            title={tr("更多操作")}
+            aria-label={tr("更多操作 {name}", { name: asset.name })}
             onClick={(e) => {
               e.stopPropagation();
               const r = e.currentTarget.getBoundingClientRect();
@@ -1599,13 +1599,13 @@ function AssetRow({
       <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
         <IconXCircle size={12} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate" title={error}>
-          删除失败：{error}
+          {tr("删除失败：{error}", { error })}
         </span>
         <button className="nx-link shrink-0" onClick={onRetry}>
-          重试
+          {tr("重试")}
         </button>
         <button className="nx-link shrink-0" onClick={onDismissError}>
-          知道了
+          {tr("知道了")}
         </button>
       </div>
     )}
@@ -1613,16 +1613,15 @@ function AssetRow({
       <div role="alert" className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
         <IconXCircle size={12} className="shrink-0" />
         <span className="min-w-0 flex-1" title={moveError.message}>
-          未能移动，仍在「{moveError.sourceName}」（目标：「{moveError.targetName}」）。原因：{moveError.message}
+          {tr("未能移动，仍在「{sourceName}」（目标：「{targetName}」）。原因：{message}", { sourceName: moveError.sourceName, targetName: moveError.targetName, message: moveError.message })}
         </span>
-        <button className="nx-link shrink-0" onClick={onRetryMove}>重试移动</button>
-        <button className="nx-link shrink-0" onClick={onCancelMove}>取消移动</button>
+        <button className="nx-link shrink-0" onClick={onRetryMove}>{tr("重试移动")}</button>
+        <button className="nx-link shrink-0" onClick={onCancelMove}>{tr("取消移动")}</button>
       </div>
     )}
     {movingTarget && (
       <div role="status" className="nx-alert nx-alert-info mx-1 mb-1 px-2 py-1.5 text-[11.5px]">
-        正在移动到「{movingTarget}」…
-      </div>
+        {tr("正在移动到「{movingTarget}」…", { movingTarget })}</div>
     )}
     </>
   );
@@ -1695,7 +1694,7 @@ function GroupNode({
   onCreateChild: () => void;
   busy: boolean;
   error: string | null;
-  errorAction: "删除" | "修复";
+  errorAction: "delete" | "repair";
   onRename: () => void;
   onEditDefaults: () => void;
   onDeleteGroup: () => void;
@@ -1846,8 +1845,8 @@ function GroupNode({
         {coarse ? (
           <button
             className="nx-icon-btn nx-icon-btn-sm nx-row-more"
-            title="更多操作"
-            aria-label={`更多操作 ${group.name}`}
+            title={tr("更多操作")}
+            aria-label={tr("更多操作 {name}", { name: group.name })}
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
@@ -1862,8 +1861,8 @@ function GroupNode({
           <span className="nx-row-actions">
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="在此分组内新建资产"
-              aria-label={`在分组「${group.name}」内新建资产`}
+              title={tr("在此分组内新建资产")}
+              aria-label={tr("在分组「{name}」内新建资产", { name: group.name })}
               disabled={busy}
               onClick={(e) => {
                 e.stopPropagation();
@@ -1874,8 +1873,8 @@ function GroupNode({
             </button>
             <button
               className="nx-icon-btn nx-icon-btn-sm"
-              title="更多操作"
-              aria-label={`更多操作 ${group.name}`}
+              title={tr("更多操作")}
+              aria-label={tr("更多操作 {name}", { name: group.name })}
               disabled={busy}
               onClick={(e) => {
                 e.stopPropagation();
@@ -1891,21 +1890,21 @@ function GroupNode({
       {issue && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-amber-500/10 px-2 py-1.5 text-[11.5px] text-amber-300">
           <IconXCircle size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1">{issue === "cycle" ? "分组的上下级关系出现循环，已临时放入根目录。" : "上级分组已不存在，已临时放入根目录。"}</span>
-          <button className="nx-link shrink-0" disabled={busy} onClick={onRepair}>移到根目录</button>
+          <span className="min-w-0 flex-1">{issue === "cycle" ? tr("分组的上下级关系出现循环，已临时放入根目录。") : tr("上级分组已不存在，已临时放入根目录。")}</span>
+          <button className="nx-link shrink-0" disabled={busy} onClick={onRepair}>{tr("移到根目录")}</button>
         </div>
       )}
       {error && (
         <div className="mx-1 mb-1 flex items-center gap-2 rounded bg-red-500/10 px-2 py-1.5 text-[11.5px] text-red-400">
           <IconXCircle size={12} className="shrink-0" />
           <span className="min-w-0 flex-1 truncate" title={error}>
-            {errorAction}失败：{error}
+            {errorAction === "repair" ? tr("修复失败：") : tr("删除失败：")}{error}
           </span>
           <button className="nx-link shrink-0" onClick={onRetry}>
-            重试
+            {tr("重试")}
           </button>
           <button className="nx-link shrink-0" onClick={onDismissError}>
-            知道了
+            {tr("知道了")}
           </button>
         </div>
       )}
@@ -1931,7 +1930,7 @@ function GroupNode({
         <div>
           {assets.map(renderGroupAsset)}
           {assets.length === 0 && children.length === 0 && (
-            <div className="px-2 py-1.5 text-[11px] text-neutral-500">分组为空。可将资产拖入，或选择 + 新建资产。</div>
+            <div className="px-2 py-1.5 text-[11px] text-neutral-500">{tr("分组为空。可将资产拖入，或选择 + 新建资产。")}</div>
           )}
         </div>
       )}{children.map(renderChildGroup)}</div>}
@@ -1945,38 +1944,38 @@ function GroupNode({
                 items: [
                   {
                     kind: "item",
-                    label: "在此分组内新建资产",
+                    label: tr("在此分组内新建资产"),
                     icon: <IconPlus size={13} />,
                     disabled: busy,
                     onSelect: onCreateIn,
                   },
                   {
                     kind: "item",
-                    label: "新建子分组",
+                    label: tr("新建子分组"),
                     icon: <IconFolder size={13} />,
                     disabled: busy,
                     onSelect: onCreateChild,
                   },
                   {
                     kind: "item",
-                    label: "重命名分组",
+                    label: tr("重命名分组"),
                     icon: <IconEdit size={13} />,
                     disabled: busy,
                     onSelect: onRename,
                   },
                   {
                     kind: "item",
-                    label: "连接默认值…",
+                    label: tr("连接默认值…"),
                     icon: <IconPlug size={13} />,
-                    hint: "组内资产留空时继承",
+                    hint: tr("组内资产留空时继承"),
                     disabled: busy,
                     onSelect: onEditDefaults,
                   },
                   {
                     kind: "item",
-                    label: "删除分组…",
+                    label: tr("删除分组…"),
                     icon: <IconTrash size={13} />,
-                    hint: "资产改为未分组，不再继承默认值",
+                    hint: tr("资产改为未分组，不再继承默认值"),
                     danger: true,
                     disabled: busy,
                     onSelect: onDeleteGroup,
@@ -2023,7 +2022,7 @@ function GroupRenameDialog({
       onClose();
       return;
     }
-    const ok = await ask("放弃未保存的修改？", { kind: "warning" });
+    const ok = await ask(tr("放弃未保存的修改？"), { kind: "warning" });
     if (ok) onClose();
   };
 
@@ -2031,7 +2030,7 @@ function GroupRenameDialog({
     if (saving) return;
     const next = name.trim();
     if (!next) {
-      setError("分组名不能为空");
+      setError(tr("分组名不能为空"));
       return;
     }
     if (next === group.name && parentId === group.parentId) {
@@ -2043,7 +2042,7 @@ function GroupRenameDialog({
     try {
       if (parentId !== group.parentId) await assetApi.groupUpdate(group.id, next !== group.name ? next : undefined, parentId);
       else await assetApi.groupUpdate(group.id, next);
-      pushToast("success", parentId !== group.parentId ? "已更新分组位置" : "已重命名");
+      pushToast("success", parentId !== group.parentId ? tr("已更新分组位置") : tr("已重命名"));
       onRenamed();
     } catch (e) {
       setError(describeError(e));
@@ -2075,12 +2074,12 @@ function GroupRenameDialog({
       >
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-            重命名分组
+            {tr("重命名分组")}
           </span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <label className="nx-label">名称</label>
+            <label className="nx-label">{tr("名称")}</label>
             <input
               ref={nameInputRef}
               className="nx-input"
@@ -2092,12 +2091,12 @@ function GroupRenameDialog({
             />
           </div>
           <div className="nx-form-row">
-            <label className="nx-label">父分组</label>
+            <label className="nx-label">{tr("父分组")}</label>
             <Select
-              ariaLabel="父分组"
+              ariaLabel={tr("父分组")}
               value={parentId ?? ""}
               onChange={(value) => setParentId(value || null)}
-              options={[{ value: "", label: "（根目录）" }, ...parentOptions.map((option) => ({ value: option.id, label: option.path }))]}
+              options={[{ value: "", label: tr("（根目录）") }, ...parentOptions.map((option) => ({ value: option.id, label: option.path }))]}
             />
           </div>
           {error && (
@@ -2108,14 +2107,14 @@ function GroupRenameDialog({
         </div>
         <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
-            取消
+            {tr("取消")}
           </button>
           <button
             className="nx-btn nx-btn-primary"
             disabled={saving || !name.trim()}
             onClick={() => void save()}
           >
-            {saving ? "正在保存…" : "保存"}
+            {saving ? tr("正在保存…") : tr("保存")}
           </button>
         </div>
       </div>
@@ -2126,8 +2125,8 @@ function GroupRenameDialog({
 type CredChoice = "new" | "none" | string;
 
 const CRED_KIND_LABEL: Record<string, string> = {
-  password: "密码",
-  private_key: "私钥",
+  password: tr("密码"),
+  private_key: tr("私钥"),
   api_key: "API Key",
 };
 
@@ -2319,7 +2318,7 @@ export function AssetEditor({
     const h = host.trim();
     const p = Number(port);
     if (!h || !Number.isFinite(p) || p <= 0 || p > 65535) {
-      pushToast("error", "请先填写有效的主机地址和端口");
+      pushToast("error", tr("请先填写有效的主机地址和端口"));
       return;
     }
     if (probe.status === "pending") return;
@@ -2335,7 +2334,7 @@ export function AssetEditor({
         setProbe({ status: "idle" });
         return;
       }
-      setProbe(res.open ? { status: "ok" } : { status: "fail", error: res.error || "端口无法连通" });
+      setProbe(res.open ? { status: "ok" } : { status: "fail", error: res.error || tr("端口无法连通") });
     } catch (e) {
       if (seq !== probeSeq.current) return;
       setProbe({ status: "fail", error: describeError(e) });
@@ -2399,19 +2398,19 @@ export function AssetEditor({
     ...(kindFields.via === "ssh-or-device"
       ? (fleetDevices.data ?? [])
           .filter((device) => device.revoked_at === 0)
-          .map((device) => ({ id: deviceAssetId(device.id), label: `${device.name}（受管设备）` }))
+          .map((device) => ({ id: deviceAssetId(device.id), label: tr("{name}（受管设备）", { name: device.name }) }))
       : []),
   ];
 
   const createGroupInline = async () => {
-    const name = (await promptText("新建分组", ""))?.trim();
+    const name = (await promptText(tr("新建分组"), ""))?.trim();
     if (!name) return;
     try {
       const group = groupId ? await assetApi.groupCreate(name, groupId) : await assetApi.groupCreate(name);
       await qc.invalidateQueries({ queryKey: ["groups"] });
       setGroupId(group.id);
     } catch (e) {
-      pushToast("error", `无法新建分组：${describeError(e)}`);
+      pushToast("error", tr("无法新建分组：{value}", { value: describeError(e) }));
     }
   };
 
@@ -2606,7 +2605,7 @@ export function AssetEditor({
         (keyAuth && keyOrigin === "ref" && (passphrase.length > 0 || boundIsRefKey)) ||
         (keyAuth && keyOrigin === "vault" && vaultMode === "new")
       );
-      if (willWriteVault && !(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
+      if (willWriteVault && !(await ensureVaultReady(tr("保存凭据前需要解锁凭据库")))) return;
       if (stale()) return;
       let finalKeyPath: string | null = null;
       let credId: string | null = null;
@@ -2620,7 +2619,7 @@ export function AssetEditor({
         if (keyOrigin === "ref") {
           const path = keyPath.trim();
           if (!path && !initial) {
-            pushToast("error", "请选择私钥文件，或改选「存入凭据库」");
+            pushToast("error", tr("请选择私钥文件，或改选「存入凭据库」"));
             return;
           }
           if (passphrase || boundIsRefKey) {
@@ -2638,7 +2637,7 @@ export function AssetEditor({
           }
         } else if (vaultMode === "existing") {
           if (!vaultCredId) {
-            pushToast("error", "请选择一条私钥凭据");
+            pushToast("error", tr("请选择一条私钥凭据"));
             return;
           }
           finalKeyPath = null;
@@ -2646,11 +2645,11 @@ export function AssetEditor({
         } else {
           if (keyContentMode === "paste") {
             if (!pastedKey.trim()) {
-              pushToast("error", "请粘贴私钥内容");
+              pushToast("error", tr("请粘贴私钥内容"));
               return;
             }
           } else if (!keyPath.trim()) {
-            pushToast("error", "请选择私钥文件");
+            pushToast("error", tr("请选择私钥文件"));
             return;
           }
           const content =
@@ -2775,7 +2774,7 @@ export function AssetEditor({
     if (serverLimited) {
       const restricted = restrictTemplateForServer(original);
       t = restricted.template;
-      if (restricted.dropped.length > 0) pushToast("info", `多用户服务端不支持：${restricted.dropped.join("、")}，已忽略`);
+      if (restricted.dropped.length > 0) pushToast("info", tr("多用户服务端不支持：{join}，已忽略", { join: restricted.dropped.join("、") }));
     }
     setGroupKind(t.kind);
     setHostError(null);
@@ -2809,7 +2808,7 @@ export function AssetEditor({
   };
 
   const saveAsTemplate = async () => {
-    const templateName = (await promptText("模板名称", name.trim()))?.trim();
+    const templateName = (await promptText(tr("模板名称"), name.trim()))?.trim();
     if (!templateName) return;
     useConnectTemplates.getState().add({
       name: templateName,
@@ -2829,13 +2828,13 @@ export function AssetEditor({
       encoding,
       envText,
     });
-    pushToast("success", `已存为模板「${templateName}」`);
+    pushToast("success", tr("已存为模板「{templateName}」", { templateName }));
   };
 
   const deleteTemplate = () => {
     useConnectTemplates.getState().remove(templateId);
     setTemplateId("");
-    pushToast("info", "已删除该模板");
+    pushToast("info", tr("已删除该模板"));
   };
 
   const requestClose = async () => {
@@ -2844,7 +2843,7 @@ export function AssetEditor({
       onClose();
       return;
     }
-    const ok = await ask("放弃未保存的修改？", { kind: "warning" });
+    const ok = await ask(tr("放弃未保存的修改？"), { kind: "warning" });
     if (ok) onClose();
   };
 
@@ -2872,7 +2871,7 @@ export function AssetEditor({
       >
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-            {kind === "group" ? (initialGroup ? "编辑分组" : "新建分组") : initial ? "编辑资产" : "新建资产"}
+            {kind === "group" ? (initialGroup ? tr("编辑分组") : tr("新建分组")) : initial ? tr("编辑资产") : tr("新建资产")}
           </span>
         </div>
         <div
@@ -2881,14 +2880,14 @@ export function AssetEditor({
         >
           {managed && (
             <div className="mb-3 rounded-md border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[12px] text-blue-300" role="note">
-              由 {inventorySourceLabel(managed.source)} 同步。名称、分组、地址和认证方式随来源更新，不能在这里修改。
+              {tr("由 {value} 同步。名称、分组、地址和认证方式随来源更新，不能在这里修改。", { value: inventorySourceLabel(managed.source) })}
             </div>
           )}
           {kind === "asset" && (
             <div className="nx-form-row">
-              <label className="nx-label">类型</label>
+              <label className="nx-label">{tr("类型")}</label>
               <Select
-                ariaLabel="类型"
+                ariaLabel={tr("类型")}
                 value={groupKind}
                 disabled={initial?.builtin || managed !== null}
                 options={Object.entries(KIND_LABEL)
@@ -2897,7 +2896,7 @@ export function AssetEditor({
                     value: k,
                     label,
                     ...(k === "local" && serverLimited && initial?.kind !== "local"
-                      ? { disabled: true, description: "多用户服务端不可用" }
+                      ? { disabled: true, description: tr("多用户服务端不可用") }
                       : {}),
                   }))}
                 onChange={(value) => {
@@ -2914,7 +2913,7 @@ export function AssetEditor({
               {serverLimited && initial?.kind !== "local" && <ServerRestrictionNote text={serverText.local} />}
               {initial?.builtin && (
                 <div className="nx-hint mt-1">
-                  ↳ 内置的「当前设备」，始终指向本机，类型不可更改，名称可以修改
+                  {tr("↳ 内置的「当前设备」，始终指向本机，类型不可更改，名称可以修改")}
                 </div>
               )}
             </div>
@@ -2922,13 +2921,13 @@ export function AssetEditor({
 
           {kind === "asset" && !initial && templates.length > 0 && (
             <div className="nx-form-row">
-              <label className="nx-label">模板</label>
+              <label className="nx-label">{tr("模板")}</label>
               <div className="flex min-w-0 items-center gap-2">
                 <Select
                   className="min-w-0 flex-1"
-                  ariaLabel="从模板创建"
+                  ariaLabel={tr("从模板创建")}
                   value={templateId}
-                  options={[{ value: "", label: "从模板创建…" }, ...templates.map((t) => ({ value: t.id, label: t.name }))]}
+                  options={[{ value: "", label: tr("从模板创建…") }, ...templates.map((t) => ({ value: t.id, label: t.name }))]}
                   onChange={(id) => {
                     setTemplateId(id);
                     const t = templates.find((x) => x.id === id);
@@ -2941,7 +2940,7 @@ export function AssetEditor({
                     className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
                     onClick={deleteTemplate}
                   >
-                    删除模板
+                    {tr("删除模板")}
                   </button>
                 )}
               </div>
@@ -2949,20 +2948,20 @@ export function AssetEditor({
           )}
 
           <div className="nx-form-row">
-            <label className="nx-label">名称</label>
+            <label className="nx-label">{tr("名称")}</label>
             <input
               ref={nameInputRef}
               className="nx-input"
               value={name}
               disabled={managed !== null}
               onChange={(e) => (kind === "group" ? setName(e.target.value) : syncCredName(e.target.value))}
-              placeholder={kind === "group" ? "生产环境" : "web-01"}
+              placeholder={kind === "group" ? tr("生产环境") : "web-01"}
             />
           </div>
 
           {kind === "asset" && (
             <div className="nx-form-row">
-              <label className="nx-label">图标</label>
+              <label className="nx-label">{tr("图标")}</label>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <button
@@ -2972,7 +2971,7 @@ export function AssetEditor({
                     onClick={() => setIconPickerOpen((v) => !v)}
                   >
                     <IconPreview size={14} />
-                    选择图标
+                    {tr("选择图标")}
                   </button>
                   {icon && (
                     <button
@@ -2983,7 +2982,7 @@ export function AssetEditor({
                         setDirty(true);
                       }}
                     >
-                      恢复默认
+                      {tr("恢复默认")}
                     </button>
                   )}
                 </div>
@@ -3002,7 +3001,7 @@ export function AssetEditor({
                                 : "border-transparent text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-100"
                             }`}
                             title={name}
-                            aria-label={`选择图标 ${name}`}
+                            aria-label={tr("选择图标 {name}", { name })}
                             onClick={() => {
                               setIcon(name);
                               setDirty(true);
@@ -3022,16 +3021,16 @@ export function AssetEditor({
 
           {(kind === "asset" || kind === "group") && (
             <div className="nx-form-row">
-              <label className="nx-label">{kind === "group" ? "父分组" : "分组"}</label>
+              <label className="nx-label">{kind === "group" ? tr("父分组") : tr("分组")}</label>
               <div className="flex min-w-0 items-center gap-2">
                 <Select
                   className="min-w-0 flex-1"
-                  ariaLabel={kind === "group" ? "父分组" : "分组"}
+                  ariaLabel={kind === "group" ? tr("父分组") : tr("分组")}
                   value={groupId ?? ""}
                   disabled={managed !== null}
                   onChange={(value) => setGroupId(value || null)}
                   options={[
-                    { value: "", label: kind === "group" ? "（根目录）" : "（不分组）" },
+                    { value: "", label: kind === "group" ? tr("（根目录）") : tr("（不分组）") },
                     ...groupOptions.filter((g) => g.id !== initialGroup?.id).map((g) => ({ value: g.id, label: g.path })),
                   ]}
                 />
@@ -3041,7 +3040,7 @@ export function AssetEditor({
                   onClick={() => void createGroupInline()}
                 >
                   <IconPlus size={11} />
-                  新建分组
+                  {tr("新建分组")}
                 </button>}
               </div>
             </div>
@@ -3053,10 +3052,10 @@ export function AssetEditor({
 
           {kind === "asset" && inventoryOnly && (
             <div className="nx-form-row">
-              <span className="nx-label">来源目标</span>
+              <span className="nx-label">{tr("来源目标")}</span>
               <div className="rounded-md border border-neutral-800/70 bg-neutral-950/40 px-3 py-2 text-[12px] text-neutral-400">
-                <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || "仅清单记录"}</div>
-                <div className="nx-hint mt-1">此类型仅作清单展示，暂不能打开终端；连接信息随同步来源更新。</div>
+                <div className="break-all">{initial?.host || inventoryTargetText(initial?.options) || tr("仅清单记录")}</div>
+                <div className="nx-hint mt-1">{tr("此类型仅作清单展示，暂不能打开终端；连接信息随同步来源更新。")}</div>
               </div>
             </div>
           )}
@@ -3064,25 +3063,25 @@ export function AssetEditor({
           {kind === "asset" && groupKind === "local" && (
             <>
               <div className="nx-form-row">
-                <label className="nx-label">默认 Shell</label>
+                <label className="nx-label">{tr("默认 Shell")}</label>
                 <input
                   className="nx-input font-mono text-[12px]"
                   value={shell}
                   onChange={(e) => setShell(e.target.value)}
-                  placeholder="留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置"
+                  placeholder={tr("留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置")}
                 />
               </div>
               <div className="nx-form-row">
-                <label className="nx-label">起始目录</label>
+                <label className="nx-label">{tr("起始目录")}</label>
                 <input
                   className="nx-input font-mono text-[12px]"
                   value={cwd}
                   onChange={(e) => setCwd(e.target.value)}
-                  placeholder="留空使用用户主目录"
+                  placeholder={tr("留空使用用户主目录")}
                 />
               </div>
               <div className="nx-hint mb-3">
-                ↳ 只对新开的终端生效，已打开的标签不变。本机资产双击即连，不需要凭据。
+                {tr("↳ 只对新开的终端生效，已打开的标签不变。本机资产双击即连，不需要凭据。")}
               </div>
             </>
           )}
@@ -3092,7 +3091,7 @@ export function AssetEditor({
               <fieldset disabled={managed !== null} className="contents">
               <div className="mb-3 flex gap-2">
                 <div className="min-w-0 flex-1">
-                  <label className="nx-label" htmlFor={hostInputId}>主机</label>
+                  <label className="nx-label" htmlFor={hostInputId}>{tr("主机")}</label>
                   <input
                     id={hostInputId}
                     className="nx-input"
@@ -3110,7 +3109,7 @@ export function AssetEditor({
                   )}
                 </div>
                 <div className="w-[86px] shrink-0">
-                  <label className="nx-label" htmlFor={portInputId}>端口</label>
+                  <label className="nx-label" htmlFor={portInputId}>{tr("端口")}</label>
                   <input
                     id={portInputId}
                     type="number"
@@ -3141,22 +3140,22 @@ export function AssetEditor({
                   ) : (
                     <IconPlug size={12} />
                   )}
-                  测试端口
+                  {tr("测试端口")}
                 </button>
                 {probe.status === "ok" && (
-                  <span className="text-[11.5px] text-green-300">端口可达</span>
+                  <span className="text-[11.5px] text-green-300">{tr("端口可达")}</span>
                 )}
                 {probe.status === "fail" && (
                   <span className="min-w-0 truncate text-[11.5px] text-red-400" title={probe.error}>
-                    端口不可达：{probe.error}
+                    {tr("端口不可达：")}{probe.error}
                   </span>
                 )}
-                <span className="nx-hint ml-auto">只探测端口，不带凭据</span>
+                <span className="nx-hint ml-auto">{tr("只探测端口，不带凭据")}</span>
               </div>
 
               {kindFields.username && (
               <div className="nx-form-row">
-                <label className="nx-label">用户名</label>
+                <label className="nx-label">{tr("用户名")}</label>
                 <input
                   className="nx-input"
                   value={username}
@@ -3169,19 +3168,19 @@ export function AssetEditor({
 
               {kindFields.authMethod && (
                 <div className="nx-form-row">
-                  <label className="nx-label">认证方式</label>
+                  <label className="nx-label">{tr("认证方式")}</label>
                   <Select
-                    ariaLabel="认证方式"
+                    ariaLabel={tr("认证方式")}
                     value={authKind}
                     onChange={setAuthKind}
                     options={[
                       ...(groupKind === "ssh" || groupKind === "docker"
-                        ? [{ value: "", label: inheritedPlaceholder(inheritance, "auth", "（未设置）") ?? "（未设置）" }]
+                        ? [{ value: "", label: inheritedPlaceholder(inheritance, "auth", tr("（未设置）")) ?? tr("（未设置）") }]
                         : []),
-                      { value: "password", label: "密码" },
-                      { value: "keyboard-interactive", label: "键盘交互（密码）" },
-                      { value: "key", label: "私钥文件" },
-                      { value: "agent", label: serverLimited ? "SSH Agent（多用户服务端不可用）" : "SSH Agent", disabled: serverLimited },
+                      { value: "password", label: tr("密码") },
+                      { value: "keyboard-interactive", label: tr("键盘交互（密码）") },
+                      { value: "key", label: tr("私钥文件") },
+                      { value: "agent", label: serverLimited ? tr("SSH Agent（多用户服务端不可用）") : "SSH Agent", disabled: serverLimited },
                     ]}
                   />
                   {serverLimited && authKind === "agent" && <ServerRestrictionNote text={serverText.agentAuth} />}
@@ -3193,23 +3192,23 @@ export function AssetEditor({
 
               {kindFields.via && (
                 <div className="nx-form-row">
-                  <label className="nx-label">{kindFields.via === "ssh" ? "通过 SSH 资产连接" : "通过跳板连接"}</label>
+                  <label className="nx-label">{kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板连接")}</label>
                   <Select
-                    ariaLabel={kindFields.via === "ssh" ? "通过 SSH 资产连接" : "通过跳板连接"}
+                    ariaLabel={kindFields.via === "ssh" ? tr("通过 SSH 资产连接") : tr("通过跳板连接")}
                     value={viaAssetId}
                     onChange={setViaAssetId}
                     options={[
-                      { value: "", label: "（直连，不通过SSH）" },
+                      { value: "", label: tr("（直连，不通过SSH）") },
                       ...(viaAssetId && !viaCandidates.some((a) => a.id === viaAssetId)
-                        ? [{ value: viaAssetId, label: "当前配置的 SSH 资产（不在可选列表）" }]
+                        ? [{ value: viaAssetId, label: tr("当前配置的 SSH 资产（不在可选列表）") }]
                         : []),
                       ...viaCandidates.map((a) => ({ value: a.id, label: a.label })),
                     ]}
                   />
                   <div className="nx-hint mt-1.5">
                     {kindFields.via === "ssh"
-                      ? "↳ 默认直连；选择后复用该资产已建立的 SSH 连接，不会自动连接。"
-                      : "↳ 默认直连；选择 SSH 资产或受管设备后，经它转发到目标主机。"}
+                      ? tr("↳ 默认直连；选择后复用该资产已建立的 SSH 连接，不会自动连接。")
+                      : tr("↳ 默认直连；选择 SSH 资产或受管设备后，经它转发到目标主机。")}
                   </div>
                   <InheritanceHint view={inheritance} field="jump" empty={viaAssetId === ""} />
                 </div>
@@ -3234,14 +3233,14 @@ export function AssetEditor({
 
               {keyAuth && (
                 <div className="nx-form-row">
-                  <label className="nx-label">私钥来源</label>
+                  <label className="nx-label">{tr("私钥来源")}</label>
                   <div className="nx-segment mb-2">
                     <button
                       type="button"
                       className={`nx-segment-item ${keyOrigin === "vault" ? "is-active" : ""}`}
                       onClick={() => changeKeyOrigin("vault")}
                     >
-                      存入凭据库
+                      {tr("存入凭据库")}
                     </button>
                     <button
                       type="button"
@@ -3250,7 +3249,7 @@ export function AssetEditor({
                       title={serverLimited ? serverText.keyPath : undefined}
                       onClick={() => changeKeyOrigin("ref")}
                     >
-                      引用文件路径
+                      {tr("引用文件路径")}
                     </button>
                   </div>
 
@@ -3262,7 +3261,7 @@ export function AssetEditor({
                           value={keyPath}
                           disabled={serverLimited}
                           onChange={(e) => setKeyPath(e.target.value)}
-                          placeholder="选择或输入私钥路径"
+                          placeholder={tr("选择或输入私钥路径")}
                         />
                         {!webFiles && !serverLimited && (
                           <button
@@ -3277,7 +3276,7 @@ export function AssetEditor({
                               })
                             }
                           >
-                            浏览…
+                            {tr("浏览…")}
                           </button>
                         )}
                       </div>
@@ -3289,19 +3288,19 @@ export function AssetEditor({
                       )}
                       <div className="nx-hint mt-1.5">
                         {webFiles
-                          ? "↳ Web 模式只能填服务器上的私钥路径；浏览器侧的私钥请用「存入凭据库」。"
-                          : "↳ 仅保存路径，私钥不存入凭据库；文件移动后需更新路径。"}
+                          ? tr("↳ Web 模式只能填服务器上的私钥路径；浏览器侧的私钥请用「存入凭据库」。")
+                          : tr("↳ 仅保存路径，私钥不存入凭据库；文件移动后需更新路径。")}
                       </div>
                     </>
                   ) : (
                     <>
                       <Select
-                        ariaLabel="私钥凭据来源"
+                        ariaLabel={tr("私钥凭据来源")}
                         value={vaultMode}
                         onChange={(value) => setVaultMode(value as "new" | "existing")}
                         options={[
-                          { value: "new", label: "新建凭据" },
-                          { value: "existing", label: "选择已有私钥凭据" },
+                          { value: "new", label: tr("新建凭据") },
+                          { value: "existing", label: tr("选择已有私钥凭据") },
                         ]}
                       />
 
@@ -3316,7 +3315,7 @@ export function AssetEditor({
                                 setKeyContentMode("file");
                               }}
                             >
-                              私钥文件
+                              {tr("私钥文件")}
                             </button>
                             <button
                               type="button"
@@ -3326,7 +3325,7 @@ export function AssetEditor({
                                 setKeyContentMode("paste");
                               }}
                             >
-                              粘贴内容
+                              {tr("粘贴内容")}
                             </button>
                           </div>
                           {keyContentMode === "file" ? (
@@ -3335,7 +3334,7 @@ export function AssetEditor({
                                 className="nx-input font-mono text-[12px]"
                                 value={keyPath}
                                 onChange={(e) => changeInlinePath(e.target.value)}
-                                placeholder="选择私钥文件"
+                                placeholder={tr("选择私钥文件")}
                               />
                               <button
                                 type="button"
@@ -3343,7 +3342,7 @@ export function AssetEditor({
                                 onClick={() => void pickInline()}
                                 disabled={inlinePicker.pending}
                               >
-                                浏览…
+                                {tr("浏览…")}
                               </button>
                             </div>
                           ) : (
@@ -3359,35 +3358,35 @@ export function AssetEditor({
                           )}
                           <div className="nx-hint mt-1.5">
                             {keyContentMode === "file"
-                              ? "↳ 保存时读取私钥并加密入库，之后不再依赖原文件。"
-                              : "↳ 保存时将粘贴的私钥加密入库。"}
+                              ? tr("↳ 保存时读取私钥并加密入库，之后不再依赖原文件。")
+                              : tr("↳ 保存时将粘贴的私钥加密入库。")}
                           </div>
                         </>
                       ) : (
                         <>
                           <Select
                             className="mt-2"
-                            ariaLabel="选择私钥凭据"
+                            ariaLabel={tr("选择私钥凭据")}
                             value={vaultCredId}
                             onChange={setVaultCredId}
                             options={[
-                              { value: "", label: "选择私钥凭据…" },
+                              { value: "", label: tr("选择私钥凭据…") },
                               ...privateKeys.map((c) => ({
                                 value: c.id,
-                                label: `${c.name}${c.source === "file" ? "（引用文件）" : "（已入库）"}${
-                                  c.usedBy.length > 0 ? ` · 被 ${c.usedBy.length} 个资产使用` : " · 未使用"
-                                }${serverLimited && c.source === "file" ? " · 多用户服务端不可用" : ""}`,
+                                label: `${c.name}${c.source === "file" ? tr("（引用文件）") : tr("（已入库）")}${
+                                  c.usedBy.length > 0 ? tr(" · 被 {length} 个资产使用", { length: c.usedBy.length }) : tr(" · 未使用")
+                                }${serverLimited && c.source === "file" ? tr(" · 多用户服务端不可用") : ""}`,
                                 disabled: serverLimited && c.source === "file",
                               })),
                             ]}
                           />
                           {privateKeys.length === 0 && (
                             <div className="nx-hint mt-1.5">
-                              ↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左侧栏「凭据」中新建。
+                              {tr("↳ 凭据库里暂无私钥：改成「新建凭据」，或先在左侧栏「凭据」中新建。")}
                             </div>
                           )}
                           {vaultCredId && (
-                            <div className="nx-hint mt-1.5">↳ 修改该凭据会影响所有使用它的资产。</div>
+                            <div className="nx-hint mt-1.5">{tr("↳ 修改该凭据会影响所有使用它的资产。")}</div>
                           )}
                         </>
                       )}
@@ -3395,7 +3394,7 @@ export function AssetEditor({
                   )}
 
                   <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
-                    <label className="nx-label">私钥口令</label>
+                    <label className="nx-label">{tr("私钥口令")}</label>
                     <input
                       type="password"
                       className="nx-input font-mono"
@@ -3405,15 +3404,14 @@ export function AssetEditor({
                       onChange={(e) => setPassphrase(e.target.value)}
                       placeholder={
                         keyOrigin === "vault" && vaultMode === "existing"
-                          ? "口令随所选凭据管理，请在凭据库中修改"
-                          : "无口令时留空"
+                          ? tr("口令随所选凭据管理，请在凭据库中修改")
+                          : tr("无口令时留空")
                       }
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 私钥设有口令时填写，连接时自动使用。
-                      {keyOrigin === "ref" && !passphrase
-                        ? " 留空时仅引用本地文件，不保存私钥内容。"
-                        : ""}
+                      {tr("↳ 私钥设有口令时填写，连接时自动使用。{value}", { value: keyOrigin === "ref" && !passphrase
+                        ? tr(" 留空时仅引用本地文件，不保存私钥内容。")
+                        : "" })}
                     </div>
                   </div>
                 </div>
@@ -3421,22 +3419,22 @@ export function AssetEditor({
 
               {usesCred && (
                 <div className="nx-form-row">
-                  <label className="nx-label">密码</label>
+                  <label className="nx-label">{tr("密码")}</label>
                   <Select
-                    ariaLabel="密码"
+                    ariaLabel={tr("密码")}
                     value={credChoice}
                     onChange={setCredChoice}
                     options={[
-                      { value: "new", label: "新建凭据" },
+                      { value: "new", label: tr("新建凭据") },
                       ...(credentials.data ?? []).map((c) => ({
                         value: c.id,
                         label: `${c.name}（${CRED_KIND_LABEL[c.kind] ?? c.kind} · ${
-                          c.usedBy.length > 0 ? `被 ${c.usedBy.length} 个资产使用` : "未使用"
+                          c.usedBy.length > 0 ? tr("被 {length} 个资产使用", { length: c.usedBy.length }) : tr("未使用")
                         }）`,
                       })),
                       {
                         value: "none",
-                        label: groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm" ? "不使用密码" : "（不使用凭据）",
+                        label: groupKind === "rdp" || groupKind === "vnc" || groupKind === "winrm" ? tr("不使用密码") : tr("（不使用凭据）"),
                       },
                     ]}
                   />
@@ -3444,7 +3442,7 @@ export function AssetEditor({
                     <>
                       <input
                         className="nx-input mt-1.5"
-                        placeholder="凭据名称（默认同资产名）"
+                        placeholder={tr("凭据名称（默认同资产名）")}
                         value={credName}
                         onChange={(e) => {
                           credNameTouched.current = true;
@@ -3457,15 +3455,15 @@ export function AssetEditor({
                         value={password}
                         autoComplete="off"
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="密码"
-                        aria-label="凭据密码"
+                        placeholder={tr("密码")}
+                        aria-label={tr("凭据密码")}
                       />
                       <div className="nx-hint mt-1">
-                        ↳ 保存后存入凭据库，可重命名，其他资产也可选用。
+                        {tr("↳ 保存后存入凭据库，可重命名，其他资产也可选用。")}
                       </div>
                     </>
                   ) : credChoice !== "none" ? (
-                    <div className="nx-hint mt-1">↳ 修改该凭据会影响所有使用它的资产。</div>
+                    <div className="nx-hint mt-1">{tr("↳ 修改该凭据会影响所有使用它的资产。")}</div>
                   ) : null}
                   {groupKind !== "ssh" && groupKind !== "docker" && (
                     <InheritanceHint
@@ -3492,41 +3490,41 @@ export function AssetEditor({
                     ) : (
                       <IconChevronRight size={12} className="shrink-0" />
                     )}
-                    高级选项
+                    {tr("高级选项")}
                   </button>
                   {advancedOpen && (
                     <div id={advancedPanelId} className="mt-2.5">
                       {groupKind === "ssh" && (
                         <div className="nx-form-row">
-                          <label className="nx-label" htmlFor={terminalModeId}>终端模式</label>
+                          <label className="nx-label" htmlFor={terminalModeId}>{tr("终端模式")}</label>
                           <Select
                             id={terminalModeId}
-                            ariaLabel="终端模式"
+                            ariaLabel={tr("终端模式")}
                             value={terminalMode}
                             onChange={(value) => setTerminalMode(value as "auto" | "durable" | "regular")}
                             options={[
-                              { value: "auto", label: "默认（使用全局设置）" },
-                              { value: "durable", label: "持久终端（断开后可在后台接管）" },
-                              { value: "regular", label: "临时终端（随连接断开结束）" },
+                              { value: "auto", label: tr("默认（使用全局设置）") },
+                              { value: "durable", label: tr("持久终端（断开后可在后台接管）") },
+                              { value: "regular", label: tr("临时终端（随连接断开结束）") },
                             ]}
                           />
-                          <div className="nx-hint mt-1.5">首次连接会自动安装持久终端组件，期间使用临时终端；只影响新开的终端。</div>
+                          <div className="nx-hint mt-1.5">{tr("首次连接会自动安装持久终端组件，期间使用临时终端；只影响新开的终端。")}</div>
                         </div>
                       )}
                       <div className="nx-form-row">
-                        <label className="nx-label">跳板机</label>
+                        <label className="nx-label">{tr("跳板机")}</label>
                         <Select
-                          ariaLabel="跳板机"
+                          ariaLabel={tr("跳板机")}
                           value={jumpAssetId}
                           disabled={managed !== null}
                           onChange={setJumpAssetId}
                           options={[
-                            { value: "", label: "（不使用跳板机）" },
+                            { value: "", label: tr("（不使用跳板机）") },
                             ...jumpCandidates.map((a) => ({ value: a.id, label: `${a.name}（${a.host}:${a.port}）` })),
                           ]}
                         />
                         <div className="nx-hint mt-1.5">
-                          ↳ 先登录跳板机，再连接目标资产；两者分别验证凭据。
+                          {tr("↳ 先登录跳板机，再连接目标资产；两者分别验证凭据。")}
                         </div>
                         <InheritanceHint view={inheritance} field="jump" empty={jumpAssetId === ""} />
                       </div>
@@ -3547,21 +3545,21 @@ export function AssetEditor({
                             onClear={proxyCommand ? () => { setProxyCommand(""); setDirty(true); } : undefined}
                           />
                         )}
-                        <div className="nx-hint mt-1.5">↳ 选填。%h 为主机，%p 为端口，%% 为百分号。</div>
+                        <div className="nx-hint mt-1.5">{tr("↳ 选填。%h 为主机，%p 为端口，%% 为百分号。")}</div>
                       </div>
 
                       <div className="nx-form-row">
                         <label className="flex cursor-pointer items-start gap-3">
                           <div className="min-w-0 flex-1">
-                            <div className="text-[12.5px] text-neutral-200">ssh-agent 转发</div>
+                            <div className="text-[12.5px] text-neutral-200">{tr("ssh-agent 转发")}</div>
                             <p className="nx-hint mt-0.5">
-                              远端可借本机 ssh-agent 登录其他主机，私钥不离开本机；仅对可信主机开启。
+                              {tr("远端可借本机 ssh-agent 登录其他主机，私钥不离开本机；仅对可信主机开启。")}
                             </p>
                           </div>
                           <input
                             type="checkbox"
                             className="mt-0.5 h-4 w-4 shrink-0"
-                            aria-label="ssh-agent 转发"
+                            aria-label={tr("ssh-agent 转发")}
                             checked={forwardAgent}
                             disabled={serverLimited && !forwardAgent}
                             onChange={(e) => setForwardAgent(e.target.checked)}
@@ -3575,7 +3573,7 @@ export function AssetEditor({
                             aria-label="Agent socket"
                             disabled={serverLimited}
                             onChange={(e) => setAgentSocket(e.target.value)}
-                            placeholder="留空使用 $SSH_AUTH_SOCK"
+                            placeholder={tr("留空使用 $SSH_AUTH_SOCK")}
                           />
                         )}
                         {serverLimited && agentSocket && (
@@ -3588,14 +3586,14 @@ export function AssetEditor({
 
                       {keyAuth && (
                         <div className="nx-form-row">
-                          <label className="nx-label">SSH 证书</label>
+                          <label className="nx-label">{tr("SSH 证书")}</label>
                           <input
                             className="nx-input font-mono text-[12px]"
                             value={certPath}
-                            aria-label="SSH 证书"
+                            aria-label={tr("SSH 证书")}
                             disabled={serverLimited}
                             onChange={(e) => setCertPath(e.target.value)}
-                            placeholder="id_ed25519-cert.pub（可选）"
+                            placeholder={tr("id_ed25519-cert.pub（可选）")}
                           />
                           {serverLimited && (
                             <ServerRestrictionNote
@@ -3603,57 +3601,57 @@ export function AssetEditor({
                               onClear={certPath ? () => { setCertPath(""); setDirty(true); } : undefined}
                             />
                           )}
-                          <div className="nx-hint mt-1.5">↳ 选填。与私钥配对的证书文件。</div>
+                          <div className="nx-hint mt-1.5">{tr("↳ 选填。与私钥配对的证书文件。")}</div>
                         </div>
                       )}
 
                       <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
                         <div className="nx-form-row">
-                          <label className="nx-label">启动命令</label>
+                          <label className="nx-label">{tr("启动命令")}</label>
                           <input
                             className="nx-input font-mono text-[12px]"
                             value={startupCommand}
                             onChange={(e) => setStartupCommand(e.target.value)}
-                            placeholder="连接成功后在该终端自动执行"
+                            placeholder={tr("连接成功后在该终端自动执行")}
                           />
-                          <div className="nx-hint mt-1.5">↳ 选填。相当于连接后手动输入并回车，失败不影响连接；仅 SSH/Docker 资产执行。</div>
+                          <div className="nx-hint mt-1.5">{tr("↳ 选填。相当于连接后手动输入并回车，失败不影响连接；仅 SSH/Docker 资产执行。")}</div>
                         </div>
 
                         <div className="nx-form-row">
-                          <label className="nx-label">终端编码</label>
+                          <label className="nx-label">{tr("终端编码")}</label>
                           <Select
-                            ariaLabel="终端编码"
+                            ariaLabel={tr("终端编码")}
                             value={encoding}
                             onChange={setEncoding}
                             options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
                           />
-                          <div className="nx-hint mt-1.5">↳ 连接后自动应用；也可在终端「更多终端操作」中临时切换。</div>
+                          <div className="nx-hint mt-1.5">{tr("↳ 连接后自动应用；也可在终端「更多终端操作」中临时切换。")}</div>
                         </div>
 
                         <div className="nx-form-row">
-                          <label className="nx-label">环境变量</label>
+                          <label className="nx-label">{tr("环境变量")}</label>
                           <textarea
                             className="nx-textarea font-mono text-[11.5px]"
                             rows={3}
                             value={envText}
                             onChange={(e) => setEnvText(e.target.value)}
-                            placeholder={"每行一个 KEY=VALUE\n例如：\nLANG=en_US.UTF-8"}
+                            placeholder={tr("每行一个 KEY=VALUE\n例如：\nLANG=en_US.UTF-8")}
                           />
-                          <div className="nx-hint mt-1.5">↳ 选填。需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。</div>
+                          <div className="nx-hint mt-1.5">{tr("↳ 选填。需服务端 sshd 配置 AcceptEnv，被拒绝时不影响连接。")}</div>
                         </div>
 
                         <div className="nx-form-row">
                           <label className="flex cursor-pointer items-start gap-3">
                             <div className="min-w-0 flex-1">
-                              <div className="text-[12.5px] text-neutral-200">覆盖文件前在主机上保留 .nexterm-bak 备份</div>
+                              <div className="text-[12.5px] text-neutral-200">{tr("覆盖文件前在主机上保留 .nexterm-bak 备份")}</div>
                               <p className="nx-hint mt-0.5">
-                                AI 写入文件或 Compose 重新部署覆盖文件前，在同目录保留备份。
+                                {tr("AI 写入文件或 Compose 重新部署覆盖文件前，在同目录保留备份。")}
                               </p>
                             </div>
                             <input
                               type="checkbox"
                               className="mt-0.5 h-4 w-4 shrink-0"
-                              aria-label="覆盖文件前保留 .nexterm-bak 备份"
+                              aria-label={tr("覆盖文件前保留 .nexterm-bak 备份")}
                               checked={backupBeforeOverwrite}
                               onChange={(e) => setBackupBeforeOverwrite(e.target.checked)}
                             />
@@ -3665,7 +3663,7 @@ export function AssetEditor({
                         <div className="mt-3 border-t border-neutral-800/60 pt-2.5">
                           <div className="nx-form-row">
                             <label className="nx-label" htmlFor={pasteUploadDirId}>
-                              粘贴上传目录
+                              {tr("粘贴上传目录")}
                             </label>
                             <input
                               id={pasteUploadDirId}
@@ -3677,31 +3675,31 @@ export function AssetEditor({
                           </div>
                           <div className="nx-form-row">
                             <label className="nx-label" htmlFor={pasteTerminalDirId}>
-                              终端中的对应路径
+                              {tr("终端中的对应路径")}
                             </label>
                             <input
                               id={pasteTerminalDirId}
                               className="nx-input font-mono text-[12px]"
                               value={pasteTerminalDir}
                               onChange={(e) => setPasteTerminalDir(e.target.value)}
-                              placeholder="与上传目录相同"
+                              placeholder={tr("与上传目录相同")}
                             />
                             <div className="nx-hint mt-1.5">
-                              ↳ 选填。用于 chroot 的 SFTP 账号（如上传目录填 /，此处填 /tmp），需同时填写上传目录。
+                              {tr("↳ 选填。用于 chroot 的 SFTP 账号（如上传目录填 /，此处填 /tmp），需同时填写上传目录。")}
                             </div>
                           </div>
                           <div className="nx-form-row">
                             <label className="flex cursor-pointer items-start gap-3">
                               <div className="min-w-0 flex-1">
-                                <div className="text-[12.5px] text-neutral-200">不使用随机目录</div>
+                                <div className="text-[12.5px] text-neutral-200">{tr("不使用随机目录")}</div>
                                 <p className="nx-hint mt-0.5">
-                                  文件直接放入上传目录（文件名加随机后缀），能列出该目录的其他用户可以读取。
+                                  {tr("文件直接放入上传目录（文件名加随机后缀），能列出该目录的其他用户可以读取。")}
                                 </p>
                               </div>
                               <input
                                 type="checkbox"
                                 className="mt-0.5 h-4 w-4 shrink-0"
-                                aria-label="不使用随机目录"
+                                aria-label={tr("不使用随机目录")}
                                 checked={pasteNoRandomDir}
                                 onChange={(e) => setPasteNoRandomDir(e.target.checked)}
                               />
@@ -3718,23 +3716,23 @@ export function AssetEditor({
           {kind === "asset" && (
             <>
               <div className="nx-form-row">
-                <label className="nx-label">标签</label>
+                <label className="nx-label">{tr("标签")}</label>
                 <input
                   className="nx-input"
                   value={tags}
                   onChange={(e) => setTags(e.target.value)}
-                  placeholder="用逗号分隔，如 production, 欧洲"
+                  placeholder={tr("用逗号分隔，如 production, 欧洲")}
                 />
-                <div className="nx-hint mt-1.5">保存时会去掉首尾空格并合并重复标签。</div>
+                <div className="nx-hint mt-1.5">{tr("保存时会去掉首尾空格并合并重复标签。")}</div>
               </div>
               <div className="nx-form-row">
-                <label className="nx-label">备注</label>
+                <label className="nx-label">{tr("备注")}</label>
                 <textarea
                   className="nx-textarea"
                   rows={3}
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="备注（可选）"
+                  placeholder={tr("备注（可选）")}
                 />
               </div>
             </>
@@ -3753,11 +3751,11 @@ export function AssetEditor({
               disabled={saving}
               onClick={() => void saveAsTemplate()}
             >
-              存为模板
+              {tr("存为模板")}
             </button>
           )}
           <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
-            取消
+            {tr("取消")}
           </button>
           <button
             className="nx-btn nx-btn-primary"
@@ -3774,7 +3772,7 @@ export function AssetEditor({
             }
             onClick={() => void save()}
           >
-            {saving ? "正在保存…" : "保存"}
+            {saving ? tr("正在保存…") : tr("保存")}
           </button>
         </div>
       </div>

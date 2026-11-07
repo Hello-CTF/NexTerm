@@ -28,6 +28,7 @@ import { onEventsResync } from "../../ipc/webTransport";
 import { fleetClient } from "./clients";
 import { useFleetAccount } from "./useFleetAccount";
 import { isOnline, ONLINE_THRESHOLD_MS } from "./format";
+import { t } from "../../i18n";
 
 function deviceRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -42,7 +43,7 @@ function deviceRowKeyDown(event: React.KeyboardEvent<HTMLElement>): void {
 }
 
 function openDevicesTab(): void {
-  useUi.getState().addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true });
+  useUi.getState().addTab({ id: "devices", kind: "devices", title: t("设备管理"), closable: true });
 }
 
 export interface DeviceTree {
@@ -129,20 +130,20 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
 
   const revoke = async (device: FleetDevice) => {
     if (device.revoked_at !== 0 || busyId === device.id) return;
-    const first = await ask(`确定要撤销设备「${device.name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开。`, {
-      title: "撤销接入",
+    const first = await ask(t("确定要撤销设备「{name}」的接入吗？\n\n撤销后，该设备的登录凭据将立即失效，远程连接将断开。", { name: device.name }), {
+      title: t("撤销接入"),
       kind: "warning",
     });
     if (!first) return;
     const second = await ask(
-      `再次确认：确定要撤销「${device.name}」的接入吗？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。`,
-      { title: "确认撤销", kind: "warning" },
+      t("再次确认：确定要撤销「{name}」的接入吗？\n\n撤销后无法恢复；要再次使用，需要重新生成接入码并重新接入。", { name: device.name }),
+      { title: t("确认撤销"), kind: "warning" },
     );
     if (!second) return;
     setBusyId(device.id);
     try {
       await fleetClient().revoke(device.id);
-      pushToast("success", `已撤销接入「${device.name}」`);
+      pushToast("success", t("已撤销接入「{name}」", { name: device.name }));
       markRevoked(device.id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -155,7 +156,7 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
     const items: MenuItem[] = [];
     items.push({
       kind: "item",
-      label: "打开工作区",
+      label: t("打开工作区"),
       icon: <IconTerminal size={13} />,
       disabled: disabledReason !== null,
       hint: disabledReason ?? undefined,
@@ -164,8 +165,8 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
       },
     });
     items.push(
-      { kind: "item", label: "主机详情", icon: <IconInfo size={13} />, hint: "会话、容器和指标", onSelect: () => openHostDetail(deviceAssetId(device.id)) },
-      { kind: "item", label: "设备管理", icon: <IconMonitor size={13} />, hint: "接入、自动启动与撤销", onSelect: openDevicesTab },
+      { kind: "item", label: t("主机详情"), icon: <IconInfo size={13} />, hint: t("会话、容器和指标"), onSelect: () => openHostDetail(deviceAssetId(device.id)) },
+      { kind: "item", label: t("设备管理"), icon: <IconMonitor size={13} />, hint: t("接入、自动启动与撤销"), onSelect: openDevicesTab },
     );
     const extra = extraMenuItems?.(device) ?? [];
     if (extra.length > 0) items.push({ kind: "separator" }, ...extra);
@@ -173,11 +174,11 @@ export function useDeviceTree(extraMenuItems?: (device: FleetDevice) => MenuItem
       { kind: "separator" },
       {
         kind: "item",
-        label: "撤销接入…",
+        label: t("撤销接入…"),
         icon: <IconTrash size={13} />,
         danger: true,
         disabled: busyId === device.id,
-        hint: "登录凭据立即失效",
+        hint: t("登录凭据立即失效"),
         onSelect: () => void revoke(device),
       },
     );
@@ -233,10 +234,10 @@ export function DeviceTreeSection() {
 }
 
 export function deviceOpenBlockReason(device: FleetDevice, online: boolean): string | null {
-  if (device.revoked_at !== 0) return "设备已撤销接入，无法打开工作区";
-  if (!device.agent) return "该设备未安装设备代理";
-  if (!online) return "设备离线，无法打开工作区";
-  if (!device.agent.terminal_enabled) return "该设备已关闭远程终端";
+  if (device.revoked_at !== 0) return t("设备已撤销接入，无法打开工作区");
+  if (!device.agent) return t("该设备未安装设备代理");
+  if (!online) return t("设备离线，无法打开工作区");
+  if (!device.agent.terminal_enabled) return t("该设备已关闭远程终端");
   return null;
 }
 
@@ -259,7 +260,7 @@ export function DeviceTreeRow({
   const agent = device.agent;
   const disabledReason = deviceOpenBlockReason(device, online);
   const connectable = disabledReason === null;
-  const status = device.revoked_at !== 0 ? "已撤销接入" : !agent ? "未安装设备代理" : !online ? "离线" : null;
+  const status = device.revoked_at !== 0 ? t("已撤销接入") : !agent ? t("未安装设备代理") : !online ? t("离线") : null;
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
@@ -280,7 +281,7 @@ export function DeviceTreeRow({
   const tip = [
     device.name,
     agent?.platform || "",
-    disabledReason ?? "单击打开工作区 · 右键管理",
+    disabledReason ?? t("单击打开工作区 · 右键管理"),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -354,8 +355,8 @@ export function DeviceTreeRow({
         <span className="nx-row-actions" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button
             className="nx-icon-btn nx-icon-btn-sm"
-            title={disabledReason ?? "打开工作区"}
-            aria-label={`打开工作区 ${device.name}`}
+            title={disabledReason ?? t("打开工作区")}
+            aria-label={t("打开工作区 {name}", { name: device.name })}
             disabled={!connectable || busy}
             onClick={open}
           >

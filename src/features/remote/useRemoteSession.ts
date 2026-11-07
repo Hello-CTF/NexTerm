@@ -21,6 +21,7 @@ import type { ResolutionChoice } from "./RemoteToolbar";
 import { canWake } from "../explorer/wakeOptions";
 import { readRemoteDesktopOptions, type RemoteDesktopOptions } from "../explorer/assetKindFields";
 import { RemoteEngineError, type ClientCallbacks, type ClientFactory, type EngineFailure, type RemoteClient, type RemoteProtocol, type RemoteStatus } from "./remoteTypes";
+import { t } from "../../i18n";
 
 const flowApi: FlowApi = {
   prepare: (assetId) => remoteDesktopApi.prepare(assetId),
@@ -32,7 +33,7 @@ const flowApi: FlowApi = {
 
 const flowUi: FlowUi = {
   askPassword: (prepared) =>
-    promptText(`输入「${prepared.name}」的登录密码${prepared.username ? `（${prepared.username}）` : ""}\n密码只用于本次连接，不会被保存。`, "", {
+    promptText(t("输入「{name}」的登录密码{value}\n密码只用于本次连接，不会被保存。", { name: prepared.name, value: prepared.username ? `（${prepared.username}）` : "" }), "", {
       secret: true,
     }),
   confirmCertificate: (status) => {
@@ -189,7 +190,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
         },
         onDisconnected: (raw: EngineFailure | null) => {
           if (gen !== generation.current) return;
-          fail(classifyFailure(raw ?? { protocol: kind, stage: "closed", wasConnected: true, message: "连接已中断" }), promptedRef.current, gen);
+          fail(classifyFailure(raw ?? { protocol: kind, stage: "closed", wasConnected: true, message: t("连接已中断") }), promptedRef.current, gen);
         },
       };
       const result = await runConnectFlow(
@@ -227,7 +228,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
             );
             if (gen !== generation.current) {
               client.disconnect();
-              throw new RemoteEngineError({ protocol: kind, stage: "closed", clean: true, message: "已取消" });
+              throw new RemoteEngineError({ protocol: kind, stage: "closed", clean: true, message: t("已取消") });
             }
             // Registered before it connects, so closing the tab or reconnecting reaches a connect in flight.
             clientRef.current = client;
@@ -270,7 +271,7 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     dropClient();
     settle("disconnected");
     setReconnectPaused(false);
-    setFailure({ kind: "ended", message: "已断开连接" });
+    setFailure({ kind: "ended", message: t("已断开连接") });
   }, [clearTimers, dropClient, settle]);
 
   useEffect(() => {

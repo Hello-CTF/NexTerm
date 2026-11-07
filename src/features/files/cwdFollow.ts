@@ -10,6 +10,7 @@ import {
 } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { norm } from "./pathUtils";
+import { t as tr } from "../../i18n";
 
 const STORAGE_KEY = "nexterm.files.followCwd.v1";
 const NEVER = "\u0000";
@@ -238,7 +239,7 @@ export function useCwdFollow(
       .catch((e: unknown) => {
         if (cancelled || notifiedFailures.has(sessionId)) return;
         notifiedFailures.add(sessionId);
-        pushToast("info", `无法跟随终端切换到 ${next}：${describeError(e)}`);
+        pushToast("info", tr("无法跟随终端切换到 {next}：{value}", { next, value: describeError(e) }));
       });
     return () => {
       cancelled = true;

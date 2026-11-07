@@ -10,6 +10,7 @@ import { resolveInlineKeyContent, useInlineKeyPicker } from "./keyStaging";
 import { useVaultInitGate } from "./useVaultInitGate";
 import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
 import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
+import { t } from "../../i18n";
 
 type Origin = "ref" | "vault";
 
@@ -88,7 +89,7 @@ export function NewCredentialModal({
   const save = async () => {
     setSaving(true);
     try {
-      if (!(await ensureVaultReady("保存凭据前需要解锁凭据库"))) return;
+      if (!(await ensureVaultReady(t("保存凭据前需要解锁凭据库")))) return;
       let secret = value;
       let source: CredentialSource | undefined;
       if (isKey) {
@@ -110,7 +111,7 @@ export function NewCredentialModal({
         source,
         ...(isKey && passphrase ? { passphrase } : {}),
       });
-      pushToast("success", `已创建凭据「${name.trim()}」`);
+      pushToast("success", t("已创建凭据「{trim}」", { trim: name.trim() }));
       onSaved(id);
     } catch (e) {
       pushToast("error", describeError(e));
@@ -142,11 +143,11 @@ export function NewCredentialModal({
         }}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">新建凭据</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("新建凭据")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <span className="nx-label">类型</span>
+            <span className="nx-label">{t("类型")}</span>
             <div className="grid grid-cols-3 gap-1.5">
               {NEW_KIND_ORDER.map((k) => {
                 const meta = KIND_META[k];
@@ -175,22 +176,22 @@ export function NewCredentialModal({
           </div>
 
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor={nameId}>名称</label>
+            <label className="nx-label" htmlFor={nameId}>{t("名称")}</label>
             <input
               id={nameId}
               ref={nameInputRef}
               className="nx-input"
               value={name}
-              placeholder="例如：db-prod"
+              placeholder={t("例如：db-prod")}
               onChange={(e) => setName(e.target.value)}
             />
-            <span className="nx-hint mt-1.5 block">名称用于区分凭据，之后选择凭据时会显示。</span>
+            <span className="nx-hint mt-1.5 block">{t("名称用于区分凭据，之后选择凭据时会显示。")}</span>
           </div>
 
           {isKey ? (
             <>
               <div className="nx-form-row">
-                <span className="nx-label">私钥来源</span>
+                <span className="nx-label">{t("私钥来源")}</span>
                 <div className="nx-segment mb-2">
                   <button
                     type="button"
@@ -199,14 +200,14 @@ export function NewCredentialModal({
                     title={serverLimited ? serverText.fileCredential : undefined}
                     onClick={() => changeOrigin("ref")}
                   >
-                    引用本地文件
+                    {t("引用本地文件")}
                   </button>
                   <button
                     type="button"
                     className={`nx-segment-item ${origin === "vault" ? "is-active" : ""}`}
                     onClick={() => changeOrigin("vault")}
                   >
-                    存入凭据库
+                    {t("存入凭据库")}
                   </button>
                 </div>
                 {serverLimited && <ServerRestrictionNote text={serverText.fileCredential} />}
@@ -219,7 +220,7 @@ export function NewCredentialModal({
                         value={keyFilePath}
                         onChange={(e) => setKeyFilePath(e.target.value)}
                         placeholder="C:\Users\you\.ssh\id_rsa"
-                        aria-label="私钥文件路径"
+                        aria-label={t("私钥文件路径")}
                         autoComplete="off"
                       />
                       {!webFiles && (
@@ -228,14 +229,14 @@ export function NewCredentialModal({
                           className="nx-btn nx-btn-outline shrink-0"
                           onClick={() => pick(setKeyFilePath)}
                         >
-                          浏览…
+                          {t("浏览…")}
                         </button>
                       )}
                     </div>
                     <div className="nx-hint mt-1.5">
                       {webFiles
-                        ? "↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。"
-                        : "↳ 仅保存路径，不复制私钥内容。文件被移动或删除后，使用该凭据的资产将无法连接。"}
+                        ? t("↳ Web 模式只能填写服务器上的私钥路径；要引用浏览器侧的私钥文件，请改用「存入凭据库」。")
+                        : t("↳ 仅保存路径，不复制私钥内容。文件被移动或删除后，使用该凭据的资产将无法连接。")}
                     </div>
                   </>
                 ) : (
@@ -246,14 +247,14 @@ export function NewCredentialModal({
                         className={`nx-segment-item ${contentMode === "file" ? "is-active" : ""}`}
                         onClick={() => changeContentMode("file")}
                       >
-                        私钥文件
+                        {t("私钥文件")}
                       </button>
                       <button
                         type="button"
                         className={`nx-segment-item ${contentMode === "paste" ? "is-active" : ""}`}
                         onClick={() => changeContentMode("paste")}
                       >
-                        粘贴内容
+                        {t("粘贴内容")}
                       </button>
                     </div>
                     {contentMode === "file" ? (
@@ -262,8 +263,8 @@ export function NewCredentialModal({
                           className="nx-input font-mono text-[12px]"
                           value={keyFilePath}
                           onChange={(e) => changeInlinePath(e.target.value)}
-                          placeholder="选择私钥文件"
-                          aria-label="私钥文件路径"
+                          placeholder={t("选择私钥文件")}
+                          aria-label={t("私钥文件路径")}
                           autoComplete="off"
                         />
                         <button
@@ -272,7 +273,7 @@ export function NewCredentialModal({
                           onClick={() => void pickInline()}
                           disabled={inlinePicker.pending}
                         >
-                          浏览…
+                          {t("浏览…")}
                         </button>
                       </div>
                     ) : (
@@ -284,19 +285,19 @@ export function NewCredentialModal({
                         placeholder={
                           "-----BEGIN OPENSSH PRIVATE KEY-----\n…\n-----END OPENSSH PRIVATE KEY-----"
                         }
-                        aria-label="私钥内容"
+                        aria-label={t("私钥内容")}
                         autoComplete="off"
                       />
                     )}
                     <div className="nx-hint mt-1.5">
-                      ↳ 保存时读取内容并加密入库，之后不再依赖原文件。
+                      {t("↳ 保存时读取内容并加密入库，之后不再依赖原文件。")}
                     </div>
                   </>
                 )}
               </div>
 
               <div className="nx-form-row">
-                <label className="nx-label" htmlFor={passphraseId}>私钥口令</label>
+                <label className="nx-label" htmlFor={passphraseId}>{t("私钥口令")}</label>
                 <input
                   id={passphraseId}
                   type="password"
@@ -304,16 +305,16 @@ export function NewCredentialModal({
                   value={passphrase}
                   autoComplete="off"
                   onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="没有则留空"
+                  placeholder={t("没有则留空")}
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。仅当私钥本身设有口令时填写，连接时自动使用。
+                  {t("↳ 选填。仅当私钥本身设有口令时填写，连接时自动使用。")}
                 </div>
               </div>
             </>
           ) : (
             <div className="nx-form-row">
-              <label className="nx-label" htmlFor={valueId}>值</label>
+              <label className="nx-label" htmlFor={valueId}>{t("值")}</label>
               <input
                 id={valueId}
                 type="password"
@@ -323,21 +324,21 @@ export function NewCredentialModal({
                 onChange={(e) => setValue(e.target.value)}
               />
               <div className="nx-hint mt-1.5">
-                ↳ 填写密码或 API 密钥，保存后将加密存入凭据库。
+                {t("↳ 填写密码或 API 密钥，保存后将加密存入凭据库。")}
               </div>
             </div>
           )}
         </div>
         <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
-            取消
+            {t("取消")}
           </button>
           <button
             className="nx-btn nx-btn-primary"
             disabled={!ready || saving}
             onClick={() => void save()}
           >
-            {saving ? "正在保存…" : "保存"}
+            {saving ? t("正在保存…") : t("保存")}
           </button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { IconCheck, IconCopy, IconInsert } from "../../ui/icons";
 import "./selectionActionBar.css";
+import { t } from "../../i18n";
 
 const COARSE_POINTER_QUERY = "(pointer: coarse)";
 const BAR_HALF_WIDTH_PX = 112;
@@ -32,7 +33,7 @@ export function SelectionActionBar({ x, y, onCopy, onPaste, onSelectAll }: Selec
   return (
     <div
       role="toolbar"
-      aria-label="选区操作"
+      aria-label={t("选区操作")}
       className="nx-selection-bar"
       style={{
         left,
@@ -43,15 +44,15 @@ export function SelectionActionBar({ x, y, onCopy, onPaste, onSelectAll }: Selec
     >
       <button type="button" onClick={onCopy}>
         <IconCopy size={13} />
-        复制
+        {t("复制")}
       </button>
       <button type="button" onClick={onPaste}>
         <IconInsert size={13} />
-        粘贴
+        {t("粘贴")}
       </button>
       <button type="button" onClick={onSelectAll}>
         <IconCheck size={13} />
-        全选
+        {t("全选")}
       </button>
     </div>
   );

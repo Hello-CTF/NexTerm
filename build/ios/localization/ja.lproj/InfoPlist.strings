@@ -1,0 +1,3 @@
+/* Permission prompts shown by iOS in the system language. */
+"NSFaceIDUsageDescription" = "Face ID を使って NexTerm のデータキーをすばやくロック解除します";
+"NSLocationWhenInUseUsageDescription" = "内蔵の Web コンポーネントが位置情報へのアクセスを要求する場合があります。NexTerm が自ら位置情報を取得することはありません";

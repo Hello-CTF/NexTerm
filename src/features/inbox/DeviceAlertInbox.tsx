@@ -18,6 +18,7 @@ import { useFleetAccount } from "../fleet/useFleetAccount";
 import { useAlertFirstHint } from "./alertFirstHint";
 import { defaultDeviceAlertDeps, deviceAlertNotifier } from "./deviceAlertNotifications";
 import { formatTime } from "../fleet/format";
+import { t } from "../../i18n";
 
 // useDeviceAlertNotifications feeds every fresh poll to the notifier. InboxButton is always mounted in the
 // header, so it is the one caller.
@@ -59,7 +60,7 @@ export function useAckAlerts() {
       );
       void qc.invalidateQueries({ queryKey: alertsQueryKey(userId) });
     } catch (e) {
-      pushToast("error", `确认告警失败：${describeError(e)}`);
+      pushToast("error", t("确认告警失败：{value}", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -81,8 +82,8 @@ function EventRow({ event, name, busy, onAck }: { event: FleetAlertEvent; name: 
         <button
           type="button"
           className="nx-icon-btn shrink-0"
-          aria-label={`确认 ${alertEventTitle(name, event)}`}
-          title="确认（所有设备）"
+          aria-label={t("确认 {value}", { value: alertEventTitle(name, event) })}
+          title={t("确认（所有设备）")}
           disabled={busy}
           onClick={onAck}
         >
@@ -98,9 +99,9 @@ function FirstAlertHint() {
   if (!visible) return null;
   return (
     <div className="mx-2 mb-1 flex items-start gap-2 rounded-md bg-neutral-800/60 px-2 py-1.5" role="note" data-testid="device-alert-hint">
-      <span className="min-w-0 flex-1 text-[11.5px] text-neutral-300">可在设备详情关闭规则，或在通知设置里关闭系统通知</span>
+      <span className="min-w-0 flex-1 text-[11.5px] text-neutral-300">{t("可在设备详情关闭规则，或在通知设置里关闭系统通知")}</span>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={dismiss}>
-        知道了
+        {t("知道了")}
       </button>
     </div>
   );
@@ -116,14 +117,14 @@ export function DeviceAlertInbox() {
   const visible = visibleAlertEvents(alerts.data);
   const muted = mutedAlertEvents(alerts.data);
   if (visible.length === 0 && muted.length === 0) return null;
-  const nameOf = (event: FleetAlertEvent) => names(event.device_id) ?? "设备";
+  const nameOf = (event: FleetAlertEvent) => names(event.device_id) ?? t("设备");
   return (
     <div className="mt-1" data-testid="device-alert-inbox">
       <FirstAlertHint />
       {visible.length > 0 && (
         <>
           <div className="flex items-center gap-2 px-2 pb-1 pt-0.5">
-            <span className="min-w-0 flex-1 text-[11.5px] font-semibold text-neutral-400">设备告警</span>
+            <span className="min-w-0 flex-1 text-[11.5px] font-semibold text-neutral-400">{t("设备告警")}</span>
             {visible.length > 1 && (
               <button
                 type="button"
@@ -131,7 +132,7 @@ export function DeviceAlertInbox() {
                 disabled={busy}
                 onClick={() => void ack(visible.map((e) => e.id))}
               >
-                全部确认
+                {t("全部确认")}
               </button>
             )}
           </div>
@@ -150,8 +151,7 @@ export function DeviceAlertInbox() {
             aria-expanded={mutedOpen}
             onClick={() => setMutedOpen((v) => !v)}
           >
-            静音期间的离线记录（{muted.length}）
-          </button>
+            {t("静音期间的离线记录（{length}）", { length: muted.length })}</button>
           {mutedOpen && (
             <ul className="flex flex-col" data-testid="device-alert-muted-list">
               {muted.map((event) => (

@@ -11,10 +11,11 @@ import { useAssetProductionClassification } from "../production/productionSettin
 import { HostSection, SectionHint } from "./HostSections";
 import { ListToolbar, Pager, useListFocus, usePaging, type ListFocus } from "./listControls";
 import { buildRows, type ProcessSort } from "./processTree";
+import { t } from "../../i18n";
 
 const AUTO_REFRESH_MS = 5000;
-const COLUMN_LABELS: Record<string, string> = { cpu: "CPU", mem: "内存", user: "用户", elapsed: "运行时长" };
-const CPU_TITLE = "POSIX：相对单核的百分比，多线程进程可超过 100；Windows：占全部 CPU 的比例。";
+const COLUMN_LABELS: Record<string, string> = { cpu: "CPU", mem: t("内存"), user: t("用户"), elapsed: t("运行时长") };
+const CPU_TITLE = t("POSIX：相对单核的百分比，多线程进程可超过 100；Windows：占全部 CPU 的比例。");
 const WINDOWS_CRITICAL = new Set(["csrss", "wininit", "smss", "services", "lsass", "winlogon"]);
 
 function isCriticalWindows(p: HostProcess, platform: string | undefined): boolean {
@@ -29,10 +30,10 @@ function formatElapsed(p: HostProcess): string {
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
-  if (d > 0) return `${d}天${h}小时`;
-  if (h > 0) return `${h}小时${m}分`;
-  if (m > 0) return `${m}分${s % 60}秒`;
-  return `${s}秒`;
+  if (d > 0) return t("{d}天{h}小时", { d, h });
+  if (h > 0) return t("{h}小时{m}分", { h, m });
+  if (m > 0) return t("{m}分{value}秒", { m, value: s % 60 });
+  return t("{s}秒", { s });
 }
 
 function formatRss(kib: number): string {
@@ -166,10 +167,10 @@ export function ProcessesSection({
     try {
       const request = { sessionId, pid: p.pid, ppid: p.ppid, name: p.argName ?? p.name, started: p.started, force };
       const plan = await hostProcessesApi.kill({ ...request, dryRun: true });
-      const warning = production ? "【生产主机】此命令将在生产环境的主机上执行，请确认目标无误。\n\n" : "";
-      const note = force ? "\n\n强制结束会直接终止进程，进程不会有机会清理。" : "";
+      const warning = production ? t("【生产主机】此命令将在生产环境的主机上执行，请确认目标无误。\n\n") : "";
+      const note = force ? t("\n\n强制结束会直接终止进程，进程不会有机会清理。") : "";
       const ok = await confirmDialog(
-        `${warning}将在 ${hostName} 上${force ? "强制结束" : "结束"}进程 ${p.name}（PID ${p.pid}），执行：\n${plan.command}${note}`,
+        t("{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}", { warning, hostName, value: force ? t("强制结束") : t("结束"), name: p.name, pid: p.pid, command: plan.command, note }),
       );
       if (!ok) return;
       const result = await hostProcessesApi.kill(request);
@@ -177,15 +178,15 @@ export function ProcessesSection({
         setKillMessage({
           ok: true,
           text: result.auditError
-            ? `已执行，但审计记录写入失败：${result.auditError}`
-            : `已向进程 ${p.name}（PID ${p.pid}）发送 ${result.signal}。`,
+            ? t("已执行，但审计记录写入失败：{auditError}", { auditError: result.auditError })
+            : t("已向进程 {name}（PID {pid}）发送 {signal}。", { name: p.name, pid: p.pid, signal: result.signal }),
         });
         void refresh(true);
       } else {
-        const detail = result.output || "命令未成功";
+        const detail = result.output || t("命令未成功");
         setKillMessage({
           ok: false,
-          text: result.auditError ? `${detail}（已执行，但审计记录写入失败：${result.auditError}）` : detail,
+          text: result.auditError ? t("{detail}（已执行，但审计记录写入失败：{auditError}）", { detail, auditError: result.auditError }) : detail,
         });
       }
     } catch (e) {
@@ -216,58 +217,58 @@ export function ProcessesSection({
   const fetching = query.isFetching;
   return (
     <HostSection
-      title="进程"
+      title={t("进程")}
       icon={<IconActivity size={14} />}
       testId="host-processes"
       actions={
         connected && visible ? (
           <>
             {query.dataUpdatedAt > 0 && (
-              <span className="nx-hint text-[11px]">读取于 {new Date(query.dataUpdatedAt).toLocaleTimeString()}</span>
+              <span className="nx-hint text-[11px]">{t("读取于 {toLocaleTimeString}", { toLocaleTimeString: new Date(query.dataUpdatedAt).toLocaleTimeString() })}</span>
             )}
             <label className="flex items-center gap-1 text-[12px] text-neutral-400">
               <input
                 type="checkbox"
-                aria-label="自动刷新（5 秒）"
+                aria-label={t("自动刷新（5 秒）")}
                 checked={autoRefresh}
                 onChange={(e) => setAutoRefresh(e.target.checked)}
               />
-              自动刷新（5 秒）
+              {t("自动刷新（5 秒）")}
             </label>
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-xs"
-              aria-label="刷新进程"
+              aria-label={t("刷新进程")}
               disabled={fetching}
               onClick={() => void refresh()}
             >
               <IconRefresh size={11} className={fetching ? "animate-spin" : ""} />
-              {query.data ? "刷新" : "读取"}
+              {query.data ? t("刷新") : t("读取")}
             </button>
           </>
         ) : null
       }
     >
       {!connected || !sessionId ? (
-        <SectionHint>打开并连接工作区后可查看进程。</SectionHint>
+        <SectionHint>{t("打开并连接工作区后可查看进程。")}</SectionHint>
       ) : (
         <>
           {query.isError ? (
-            <p className="m-0 text-[12px] text-red-300">未能读取进程：{describeError(query.error)}</p>
+            <p className="m-0 text-[12px] text-red-300">{t("未能读取进程：{value}", { value: describeError(query.error) })}</p>
           ) : !query.data ? (
-            <SectionHint>{fetching ? "正在读取进程列表…" : "点击「读取」查看进程列表（会在主机上执行 ps 或等效命令）。"}</SectionHint>
+            <SectionHint>{fetching ? t("正在读取进程列表…") : t("点击「读取」查看进程列表（会在主机上执行 ps 或等效命令）。")}</SectionHint>
           ) : (
             <>
               <ListToolbar
-                label="搜索进程"
-                placeholder="按名称、命令、用户或 PID 搜索"
+                label={t("搜索进程")}
+                placeholder={t("按名称、命令、用户或 PID 搜索")}
                 query={queryText}
                 onQuery={setQueryText}
                 total={processes?.length ?? 0}
                 matched={queryText ? rows.length : processes?.length ?? 0}
-                unit="个"
+                unit={t("个")}
               >
-                <div className="nx-segment" role="group" aria-label="排序">
+                <div className="nx-segment" role="group" aria-label={t("排序")}>
                   {(["cpu", "mem"] as const).map((k) => (
                     <button
                       key={k}
@@ -276,36 +277,36 @@ export function ProcessesSection({
                       aria-pressed={sort === k}
                       onClick={() => setSort(k)}
                     >
-                      {k === "cpu" ? "CPU" : "内存"}
+                      {k === "cpu" ? "CPU" : t("内存")}
                     </button>
                   ))}
                 </div>
                 <label className="flex items-center gap-1 text-[12px] text-neutral-400">
-                  <input type="checkbox" aria-label="树形" checked={tree} onChange={(e) => setTree(e.target.checked)} />
-                  树形
+                  <input type="checkbox" aria-label={t("树形")} checked={tree} onChange={(e) => setTree(e.target.checked)} />
+                  {t("树形")}
                 </label>
               </ListToolbar>
               {partial.size > 0 && (
                 <SectionHint>
-                  该主机未提供：{[...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、")}
+                  {t("该主机未提供：{join}", { join: [...partial].map((c) => COLUMN_LABELS[c] ?? c).join("、") })}
                 </SectionHint>
               )}
-              {skippedRows > 0 && <SectionHint>有 {skippedRows} 行无法解析，已跳过。</SectionHint>}
+              {skippedRows > 0 && <SectionHint>{t("有 {skippedRows} 行无法解析，已跳过。", { skippedRows })}</SectionHint>}
               {rows.length === 0 ? (
-                <SectionHint>{queryText ? "没有匹配的进程。" : "未发现进程。"}</SectionHint>
+                <SectionHint>{queryText ? t("没有匹配的进程。") : t("未发现进程。")}</SectionHint>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="nx-table w-full text-[12px]">
                     <thead>
                       <tr>
                         <th>PID</th>
-                        <th>名称</th>
-                        <th>用户</th>
+                        <th>{t("名称")}</th>
+                        <th>{t("用户")}</th>
                         <th title={CPU_TITLE}>CPU%</th>
-                        <th>内存</th>
-                        <th>运行时长</th>
-                        <th>状态</th>
-                        <th>监听端口</th>
+                        <th>{t("内存")}</th>
+                        <th>{t("运行时长")}</th>
+                        <th>{t("状态")}</th>
+                        <th>{t("监听端口")}</th>
                         <th />
                       </tr>
                     </thead>
@@ -322,7 +323,7 @@ export function ProcessesSection({
                                     <button
                                       type="button"
                                       className="nx-btn nx-btn-ghost nx-btn-xs"
-                                      aria-label={`${expanded ? "折叠" : "展开"} ${p.pid}`}
+                                      aria-label={`${expanded ? t("折叠") : t("展开")} ${p.pid}`}
                                       aria-expanded={expanded}
                                       onClick={() => toggle(p.pid)}
                                     >
@@ -340,7 +341,7 @@ export function ProcessesSection({
                               {missing("mem") ? "-" : `${p.mem.toFixed(1)}% · ${formatRss(p.rssKiB)}`}
                             </td>
                             <td>{missing("elapsed") ? "-" : formatElapsed(p)}</td>
-                            <td>{p.zombie ? "僵尸" : p.stat || "-"}</td>
+                            <td>{p.zombie ? t("僵尸") : p.stat || "-"}</td>
                             <td>
                               {ports.length === 0
                                 ? "-"
@@ -350,8 +351,8 @@ export function ProcessesSection({
                                         <button
                                           type="button"
                                           className="nx-link nx-mono"
-                                          title="在端口列表中查看"
-                                          aria-label={`查看端口 ${l.port}`}
+                                          title={t("在端口列表中查看")}
+                                          aria-label={t("查看端口 {port}", { port: l.port })}
                                           onClick={() => onShowPort(l.port)}
                                         >
                                           {l.port}
@@ -362,12 +363,12 @@ export function ProcessesSection({
                                       <button
                                         type="button"
                                         className="nx-btn nx-btn-ghost nx-btn-xs"
-                                        aria-label={`转发并打开 ${l.port}`}
+                                        aria-label={t("转发并打开 {port}", { port: l.port })}
                                         onClick={() =>
                                           void forwardAndOpen({ sessionId, host: targetHostFor(l, listeners), port: l.port })
                                         }
                                       >
-                                        转发并打开
+                                        {t("转发并打开")}
                                       </button>
                                     </span>
                                   ))}
@@ -378,21 +379,21 @@ export function ProcessesSection({
                                   <button
                                     type="button"
                                     className="nx-btn nx-btn-ghost nx-btn-xs"
-                                    aria-label={`结束进程 ${p.pid}`}
-                                    title={p.zombie ? "僵尸进程已退出，需结束其父进程" : undefined}
+                                    aria-label={t("结束进程 {pid}", { pid: p.pid })}
+                                    title={p.zombie ? t("僵尸进程已退出，需结束其父进程") : undefined}
                                     disabled={busyPid !== null || p.zombie}
                                     onClick={() => void kill(p, false)}
                                   >
-                                    结束
+                                    {t("结束")}
                                   </button>
                                   <button
                                     type="button"
                                     className="nx-btn nx-btn-ghost nx-btn-xs"
-                                    aria-label={`强制结束进程 ${p.pid}`}
+                                    aria-label={t("强制结束进程 {pid}", { pid: p.pid })}
                                     disabled={busyPid !== null || p.zombie}
                                     onClick={() => void kill(p, true)}
                                   >
-                                    强制结束
+                                    {t("强制结束")}
                                   </button>
                                 </>
                               )}
@@ -404,11 +405,11 @@ export function ProcessesSection({
                   </table>
                 </div>
               )}
-              <Pager label="进程分页" page={paging.page} pages={paging.pages} onPage={paging.setPage} />
+              <Pager label={t("进程分页")} page={paging.page} pages={paging.pages} onPage={paging.setPage} />
             </>
           )}
-          {query.data?.truncated && <SectionHint>进程较多，仅显示一部分。</SectionHint>}
-          {portsError && <SectionHint>未能读取端口，监听端口列不可用。</SectionHint>}
+          {query.data?.truncated && <SectionHint>{t("进程较多，仅显示一部分。")}</SectionHint>}
+          {portsError && <SectionHint>{t("未能读取端口，监听端口列不可用。")}</SectionHint>}
           {killMessage && (
             <p
               className={`m-0 whitespace-pre-wrap break-all text-[12px] ${killMessage.ok ? "text-green-300" : "text-red-300"}`}

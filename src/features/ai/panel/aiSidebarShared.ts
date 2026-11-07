@@ -3,6 +3,7 @@ import { type ChatItem, type ConfirmItem, type StatusLine } from "../conversatio
 import type { AiRunDto } from "../../../ipc/types";
 import { useUi, GLOBAL_AI_BOARD_KEY } from "../../../app/store";
 import { formatBytes } from "../../../ui/format";
+import { t } from "../../../i18n";
 
 export { CONFIRM_HELP, CONFIRM_RESOLUTION, confirmTitle, toolLabel } from "./aiConfirmLabels";
 
@@ -22,20 +23,20 @@ export interface RefChip {
 export { composeUserMessage, splitUserRefs } from "../userRefs";
 
 export const MODE_OPTIONS: { value: AiPermissionMode; label: string; hint: string }[] = [
-  { value: "read_only", label: "只读", hint: "AI 只能查看，修改一律拒绝" },
-  { value: "read_write", label: "读写", hint: "查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问" },
-  { value: "silent", label: "自动执行", hint: "普通修改直接执行，高危和无法判断的操作仍需要你确认" },
+  { value: "read_only", label: t("只读"), hint: t("AI 只能查看，修改一律拒绝") },
+  { value: "read_write", label: t("读写"), hint: t("查看操作直接执行，修改前需要你确认；选择「本会话允许」后，本次对话内同类操作不再询问") },
+  { value: "silent", label: t("自动执行"), hint: t("普通修改直接执行，高危和无法判断的操作仍需要你确认") },
 ];
 
 export const MODE_LABEL: Record<AiPermissionMode, string> = {
-  read_only: "只读",
-  read_write: "读写",
-  silent: "自动执行",
+  read_only: t("只读"),
+  read_write: t("读写"),
+  silent: t("自动执行"),
 };
 
-export const PLAN_MODE_HINT = "先生成方案，批准后执行";
+export const PLAN_MODE_HINT = t("先生成方案，批准后执行");
 
-export const PLAN_EXECUTE_MESSAGE = "按上面的方案执行。";
+export const PLAN_EXECUTE_MESSAGE = t("按上面的方案执行。");
 
 export const AI_RESYNC_BACKOFF_MS = 1000;
 export const AI_RESYNC_MAX_ATTEMPTS = 2;
@@ -77,7 +78,7 @@ export function aiCreatedTerminalOf(ev: Record<string, unknown>): AiCreatedTermi
 export type SlashItem = { key: string; label: string; hint: string; run: () => void };
 
 export function permanentScopeText(card: ConfirmItem): string {
-  return `永久允许${card.permanentScope ?? ""}`;
+  return t("永久允许{value}", { value: card.permanentScope ?? "" });
 }
 
 export function extractUrls(text: string): string[] {
@@ -120,9 +121,9 @@ export function aiDatabaseScopeLabel(
   asset: { name: string; kind: string } | null,
 ): string {
   const kind = workspace.dbKind || asset?.kind || workspace.assetKind;
-  const kindLabel = kind ? AI_DB_KIND_LABEL[kind] ?? kind : "未知类型";
-  const target = asset?.name?.trim() || workspace.connId || workspace.title || "未命名连接";
-  return `数据库：${target} · ${kindLabel}`;
+  const kindLabel = kind ? AI_DB_KIND_LABEL[kind] ?? kind : t("未知类型");
+  const target = asset?.name?.trim() || workspace.connId || workspace.title || t("未命名连接");
+  return t("数据库：{target} · {kindLabel}", { target, kindLabel });
 }
 
 export function runStatusOf(runs: AiRunDto[]): "running" | "interrupted" | null {
@@ -141,7 +142,7 @@ export function currentAiBoardKey(): string {
 }
 
 export function terminalEventOf(run: AiRunDto): Record<string, unknown> | null {
-  if (run.status === "canceled") return { type: "canceled", message: "已停止" };
+  if (run.status === "canceled") return { type: "canceled", message: t("已停止") };
   if (run.status === "completed") {
     return {
       type: "done",
@@ -153,10 +154,10 @@ export function terminalEventOf(run: AiRunDto): Record<string, unknown> | null {
       latencyMs: run.latencyMs,
     };
   }
-  if (run.status === "failed") return { type: "error", message: run.error || "AI 任务失败，请重试" };
-  if (run.status === "expired") return { type: "error", message: run.error || "AI 任务已过期，请重新发送" };
+  if (run.status === "failed") return { type: "error", message: run.error || t("AI 任务失败，请重试") };
+  if (run.status === "expired") return { type: "error", message: run.error || t("AI 任务已过期，请重新发送") };
   if (run.status === "interrupted" && run.finishedAt != null) {
-    return { type: "error", message: run.error || "AI 任务被中断，请重试" };
+    return { type: "error", message: run.error || t("AI 任务被中断，请重试") };
   }
   return null;
 }
@@ -178,17 +179,17 @@ export function readAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(String(fr.result));
-    fr.onerror = () => reject(new Error("读取图片失败"));
+    fr.onerror = () => reject(new Error(t("读取图片失败")));
     fr.readAsDataURL(file);
   });
 }
 
 export function statusText(s: StatusLine): string {
-  if (s.phase === "paused") return `接管已暂停：${s.detail ?? "用户暂停"}`;
-  if (s.phase === "compacting") return s.detail ?? "上下文接近上限，正在压缩早期的命令输出…";
-  if (s.phase === "thinking") return s.turn ? `第 ${s.turn} 步 · 正在思考…` : "正在思考…";
+  if (s.phase === "paused") return t("接管已暂停：{value}", { value: s.detail ?? t("用户暂停") });
+  if (s.phase === "compacting") return s.detail ?? t("上下文接近上限，正在压缩早期的命令输出…");
+  if (s.phase === "thinking") return s.turn ? t("第 {turn} 步 · 正在思考…", { turn: s.turn }) : t("正在思考…");
   if (s.phase === "tool_args") {
-    return `${preparingLabel(s.tool)} · 已生成参数 ${formatBytes(s.chars ?? 0)}`;
+    return t("{value} · 已生成参数 {value2}", { value: preparingLabel(s.tool), value2: formatBytes(s.chars ?? 0) });
   }
   return s.detail ?? s.phase;
 }
@@ -196,15 +197,15 @@ export function statusText(s: StatusLine): string {
 export function preparingLabel(tool?: string): string {
   switch (tool) {
     case "write_file":
-      return "正在准备写入内容";
+      return t("正在准备写入内容");
     case "edit_file":
-      return "正在准备修改内容";
+      return t("正在准备修改内容");
     case "exec_commands":
-      return "正在准备命令";
+      return t("正在准备命令");
     case "send_keys":
-      return "正在准备按键";
+      return t("正在准备按键");
     default:
-      return "正在准备工具参数";
+      return t("正在准备工具参数");
   }
 }
 

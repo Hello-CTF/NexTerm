@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { isTouchShell } from "../app/shell";
 import { isImeKeyEvent } from "./DialogHost";
 import { IconCheck, IconChevronDown } from "./icons";
+import { t } from "../i18n";
 
 export interface ComboboxOption {
   value: string;
@@ -89,12 +90,12 @@ export function Combobox({ id, ariaLabel, value, options, onChange, disabled, cl
         onFocus={() => { setQuery(""); setOpen(true); }}
         onChange={(event) => { onChange(event.target.value); setQuery(event.target.value); setOpen(true); }}
         onKeyDown={onKeyDown} />
-      <button type="button" className="nx-combobox-toggle" aria-label={`${ariaLabel}预设`} tabIndex={-1}
+      <button type="button" className="nx-combobox-toggle" aria-label={t("{ariaLabel}预设", { ariaLabel })} tabIndex={-1}
         disabled={disabled} onClick={() => setOpen((current) => !current)}>
         <IconChevronDown size={12} className={open ? "rotate-180" : ""} />
       </button>
       {open && filtered.length > 0 && (
-        <ul id={listId} role="listbox" aria-label={`${ariaLabel}预设`} className="nx-select-popup">
+        <ul id={listId} role="listbox" aria-label={t("{ariaLabel}预设", { ariaLabel })} className="nx-select-popup">
           {filtered.map((option, index) => (
             <li key={option.value} id={`${listId}-${index}`} role="option" aria-selected={option.value === value}
               className={`nx-select-option ${index === active ? "is-active" : ""}`}

@@ -12,6 +12,7 @@ import {
   type BroadcastEnvironmentConfirmation,
   type BroadcastProductionChallenge,
 } from "../production/productionChallenge";
+import { t } from "../../i18n";
 
 export interface BroadcastCandidate {
   storeTabId: string;
@@ -44,19 +45,19 @@ function candidateOf(
   let ineligibleReason: string | null = null;
   if (tab.dead) {
     eligible = false;
-    ineligibleReason = "终端已失效";
+    ineligibleReason = t("终端已失效");
   } else if (tab.exited) {
     eligible = false;
-    ineligibleReason = "进程已退出";
+    ineligibleReason = t("进程已退出");
   } else if (sessionKind === "winrm") {
     eligible = false;
-    ineligibleReason = "WinRM 非交互终端不支持广播";
+    ineligibleReason = t("WinRM 非交互终端不支持广播");
   } else if (!session || session.status !== "connected") {
     eligible = false;
-    ineligibleReason = "主机未连接";
+    ineligibleReason = t("主机未连接");
   } else if (!tab.tabId) {
     eligible = false;
-    ineligibleReason = "终端尚未连接";
+    ineligibleReason = t("终端尚未连接");
   }
   return {
     storeTabId: tab.id,
@@ -157,12 +158,12 @@ export function localRemoteMix(candidates: readonly BroadcastCandidate[]): Local
 
 export function broadcastRiskMessage(count: number, mix: LocalRemoteMix): string {
   const base = [
-    `命令广播会将广播来源终端中的每一次输入（含回车、粘贴与控制键）同时发送到 ${count} 个终端。`,
-    "在多台主机上同时执行同一条命令可能造成数据损坏或服务中断，请确认目标后再开启",
+    t("命令广播会将广播来源终端中的每一次输入（含回车、粘贴与控制键）同时发送到 {count} 个终端。", { count }),
+    t("在多台主机上同时执行同一条命令可能造成数据损坏或服务中断，请确认目标后再开启"),
   ];
   if (mix.mixed) {
     base.push(
-      `注意：目标同时包含本地终端（${mix.local} 个）与远程终端（${mix.remote} 个），同一条命令会在本机和远程主机上同时执行。`,
+      t("注意：目标同时包含本地终端（{local} 个）与远程终端（{remote} 个），同一条命令会在本机和远程主机上同时执行。", { local: mix.local, remote: mix.remote }),
     );
   }
   return base.join("\n");
@@ -213,11 +214,11 @@ function unavailableTarget(
   target: BroadcastCandidate | undefined,
   targetId: string,
 ): BroadcastTargetResult | null {
-  if (!target) return skipped(targetId, targetId, "标签页已关闭");
+  if (!target) return skipped(targetId, targetId, t("标签页已关闭"));
   if (!target.eligible) {
-    return skipped(targetId, target.title, target.ineligibleReason ?? "不可广播");
+    return skipped(targetId, target.title, target.ineligibleReason ?? t("不可广播"));
   }
-  if (!target.kernelTabId) return skipped(targetId, target.title, "终端尚未连接");
+  if (!target.kernelTabId) return skipped(targetId, target.title, t("终端尚未连接"));
   return null;
 }
 
@@ -252,14 +253,14 @@ async function writeTarget(
 ): Promise<BroadcastTargetResult> {
   const unavailable = unavailableTarget(target, targetId);
   if (unavailable) return unavailable;
-  if (!target?.kernelTabId) return skipped(targetId, targetId, "终端尚未连接");
+  if (!target?.kernelTabId) return skipped(targetId, targetId, t("终端尚未连接"));
   try {
     await write(target.kernelTabId, bytes, options);
     return { targetId, title: target.title, status: "sent", reason: null };
   } catch (error) {
     const code = (error as { code?: string } | null)?.code;
     if (code === "needs_confirm") throw error;
-    return { targetId, title: target.title, status: "failed", reason: "写入失败" };
+    return { targetId, title: target.title, status: "failed", reason: t("写入失败") };
   }
 }
 
@@ -278,10 +279,10 @@ function summarizeBroadcast(results: BroadcastTargetResult[]): BroadcastOutcome 
     sent: results.filter((result) => result.status === "sent").length,
     skipped: results
       .filter((result) => result.status === "skipped")
-      .map((result) => ({ title: result.title, reason: result.reason ?? "已跳过" })),
+      .map((result) => ({ title: result.title, reason: result.reason ?? t("已跳过") })),
     failed: results
       .filter((result) => result.status === "failed")
-      .map((result) => ({ title: result.title, reason: result.reason ?? "写入失败" })),
+      .map((result) => ({ title: result.title, reason: result.reason ?? t("写入失败") })),
     results,
   };
 }
@@ -305,7 +306,7 @@ export async function broadcastInput(args: BroadcastWriteArgs): Promise<Broadcas
         targetId,
         title: candidates.get(targetId)?.title ?? targetId,
         status: "failed",
-        reason: "写入失败",
+        reason: t("写入失败"),
       };
     }),
   );
@@ -374,7 +375,7 @@ export class BroadcastInputQueue {
       args.onProgress?.(unavailable);
       return Promise.resolve(unavailable);
     }
-    if (!target) return Promise.resolve(skipped(targetId, targetId, "标签页已关闭"));
+    if (!target) return Promise.resolve(skipped(targetId, targetId, t("标签页已关闭")));
 
     let chain = this.chains.get(targetId);
     if (!chain) {
@@ -387,7 +388,7 @@ export class BroadcastInputQueue {
       chain.active = 0;
     }
     if (chain.active >= this.limit) {
-      const result = skipped(targetId, target.title, "目标写入积压，本次输入已丢弃");
+      const result = skipped(targetId, target.title, t("目标写入积压，本次输入已丢弃"));
       args.onProgress?.(result);
       return Promise.resolve(result);
     }
@@ -397,7 +398,7 @@ export class BroadcastInputQueue {
     const targetChain = chain;
     const run = targetChain.tail.then(async () => {
       if (!this.current(args.revision, epoch, args.isCurrent)) {
-        return skipped(targetId, target.title, "广播目标已变化，过期输入已丢弃");
+        return skipped(targetId, target.title, t("广播目标已变化，过期输入已丢弃"));
       }
       const latest = args.resolveTarget ? args.resolveTarget(targetId) : target;
       const result = await writeTarget(latest, targetId, bytes, args.write, options);
@@ -457,7 +458,7 @@ export class BroadcastInputQueue {
           targetId,
           title: candidates.get(targetId)?.title ?? targetId,
           status: "failed",
-          reason: "写入失败",
+          reason: t("写入失败"),
         };
       }),
     );
@@ -466,6 +467,6 @@ export class BroadcastInputQueue {
 
 export function describeBroadcastSkips(skipped: BroadcastSkip[]): string {
   const shown = skipped.slice(0, 3).map((skip) => `「${skip.title}」${skip.reason}`);
-  if (skipped.length > 3) shown.push(`另有 ${skipped.length - 3} 个`);
+  if (skipped.length > 3) shown.push(t("另有 {value} 个", { value: skipped.length - 3 }));
   return shown.join("、");
 }

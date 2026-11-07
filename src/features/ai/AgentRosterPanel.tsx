@@ -23,6 +23,7 @@ import {
   type AgentStateTone,
 } from "./agentState";
 import type { AgentPresence, AgentRosterEntry } from "./agentTypes";
+import { t } from "../../i18n";
 
 const TONE_BADGE: Record<AgentStateTone, string> = {
   ok: "nx-badge nx-badge-green",
@@ -47,11 +48,11 @@ const DEAD_PRESENCES: ReadonlySet<AgentPresence> = new Set<AgentPresence>([
 function deadReason(presence: AgentPresence): string {
   switch (presence) {
     case "gone":
-      return "子代理已不存在，无法打开";
+      return t("子代理已不存在，无法打开");
     case "replaced":
-      return "子代理已被新会话替换，无法打开";
+      return t("子代理已被新会话替换，无法打开");
     default:
-      return "终端已退出，无法打开";
+      return t("终端已退出，无法打开");
   }
 }
 
@@ -136,7 +137,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.open(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `未能打开子代理：${describeError(e)}`);
+        pushToast("error", t("未能打开子代理：{value}", { value: describeError(e) }));
       }
     });
 
@@ -146,7 +147,7 @@ export function AgentRosterPanel({
         const { tabId } = await api.attach(entry.handle);
         onOpened?.(tabId, entry);
       } catch (e) {
-        pushToast("error", `未能附加子代理：${describeError(e)}`);
+        pushToast("error", t("未能附加子代理：{value}", { value: describeError(e) }));
       }
     });
 
@@ -167,11 +168,11 @@ export function AgentRosterPanel({
       return;
     }
     if (next === "") {
-      setRenameError("请输入别名");
+      setRenameError(t("请输入别名"));
       return;
     }
     if ([...next].length > MAX_ALIAS_RUNES) {
-      setRenameError(`别名最多 ${MAX_ALIAS_RUNES} 个字`);
+      setRenameError(t("别名最多 {MAX_ALIAS_RUNES} 个字", { MAX_ALIAS_RUNES }));
       return;
     }
     void withBusy(entry.handle, async () => {
@@ -184,9 +185,9 @@ export function AgentRosterPanel({
           (prev ?? []).map((row) => (row.handle === entry.handle ? updated : row)),
         );
         setRenaming(null);
-        pushToast("success", `子代理 ${entry.handle} 的别名已更新为 ${updated.alias}`);
+        pushToast("success", t("子代理 {handle} 的别名已更新为 {alias}", { handle: entry.handle, alias: updated.alias }));
       } catch (e) {
-        pushToast("error", `未能重命名：${describeError(e)}`);
+        pushToast("error", t("未能重命名：{value}", { value: describeError(e) }));
       }
     });
   };
@@ -194,10 +195,10 @@ export function AgentRosterPanel({
   const releaseEntry = (entry: AgentRosterEntry) =>
     withBusy(entry.handle, async () => {
       const productionNote = entry.production
-        ? "\n\n该子代理位于生产环境，释放会影响正在运行的生产会话，请确认后再继续。"
+        ? t("\n\n该子代理位于生产环境，释放会影响正在运行的生产会话，请确认后再继续。")
         : "";
       const confirmed = await ask(
-        `确定要释放子代理「${handleAtHostCwd(entry)}」吗？\n\n释放后将回收该子代理，它所在终端中未保存的状态可能丢失。${productionNote}`,
+        t("确定要释放子代理「{value}」吗？\n\n释放后将回收该子代理，它所在终端中未保存的状态可能丢失。{productionNote}", { value: handleAtHostCwd(entry), productionNote }),
         { kind: "warning" },
       );
       if (!confirmed) return;
@@ -215,9 +216,9 @@ export function AgentRosterPanel({
           ),
         );
         onChangedRef.current?.();
-        pushToast("success", `已提交释放子代理 ${entry.handle}`);
+        pushToast("success", t("已提交释放子代理 {handle}", { handle: entry.handle }));
       } catch (e) {
-        pushToast("error", `未能释放：${describeError(e)}`);
+        pushToast("error", t("未能释放：{value}", { value: describeError(e) }));
       }
     });
 
@@ -225,13 +226,13 @@ export function AgentRosterPanel({
     <div className="max-h-[55%] shrink-0 overflow-y-auto border-b border-neutral-800/60 bg-neutral-900/60 p-2.5">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-neutral-200">
         <IconTerminal size={12} />
-        子代理与终端会话
-        <span className="nx-count">{entries ? `${entries.length} 个` : "加载中"}</span>
+        {t("子代理与终端会话")}
+        <span className="nx-count">{entries ? t("{length} 个", { length: entries.length }) : t("加载中")}</span>
         <span className="nx-spacer" />
         <button
           className="nx-icon-btn nx-icon-btn-sm"
-          title="刷新子代理列表"
-          aria-label="刷新子代理列表"
+          title={t("刷新子代理列表")}
+          aria-label={t("刷新子代理列表")}
           aria-busy={refreshing}
           onClick={() => void reload()}
         >
@@ -241,9 +242,9 @@ export function AgentRosterPanel({
 
       {loadError && (
         <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-red-400">
-          <span className="min-w-0 flex-1 truncate">未能加载子代理列表：{loadError}</span>
+          <span className="min-w-0 flex-1 truncate">{t("未能加载子代理列表：{loadError}", { loadError })}</span>
           <button className="nx-btn nx-btn-outline nx-btn-xs" onClick={() => void reload()}>
-            重试
+            {t("重试")}
           </button>
         </div>
       )}
@@ -251,7 +252,7 @@ export function AgentRosterPanel({
       {!loadError && entries === null && (
         <div className="flex items-center gap-1.5 py-1 text-[11px] text-neutral-500">
           <IconLoader size={12} className="animate-spin" />
-          加载子代理列表…
+          {t("加载子代理列表…")}
         </div>
       )}
 
@@ -279,14 +280,14 @@ export function AgentRosterPanel({
               </span>
               <span
                 className={`shrink-0 ${TONE_BADGE[presence.tone]}`}
-                title={presence.evidence ? formatEvidence(presence.evidence) : "暂无依据"}
+                title={presence.evidence ? formatEvidence(presence.evidence) : t("暂无依据")}
               >
                 {presence.label}
               </span>
               {run ? (
                 <span
                   className={`shrink-0 ${TONE_BADGE[run.tone]}`}
-                  title={run.evidence ? formatEvidence(run.evidence) : "暂无依据"}
+                  title={run.evidence ? formatEvidence(run.evidence) : t("暂无依据")}
                 >
                   {run.label}
                 </span>
@@ -295,19 +296,19 @@ export function AgentRosterPanel({
 
             <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[10.5px]">
               {entry.alias !== entry.handle && (
-                <span className="nx-count" title={`子代理编号 ${entry.handle} 不会改变，此处仅显示别名`}>
-                  别名 {entry.alias}
+                <span className="nx-count" title={t("子代理编号 {handle} 不会改变，此处仅显示别名", { handle: entry.handle })}>
+                  {t("别名 {alias}", { alias: entry.alias })}
                 </span>
               )}
               {!entry.isMine && (
-                <span className="nx-badge nx-badge-amber" title="仅所有者可重命名和释放">
-                  所有者：{entry.ownerName}
+                <span className="nx-badge nx-badge-amber" title={t("仅所有者可重命名和释放")}>
+                  {t("所有者：{ownerName}", { ownerName: entry.ownerName })}
                 </span>
               )}
-              {entry.production && <span className="nx-badge nx-badge-red">生产环境</span>}
-              {entry.releasePending && <span className="nx-count">释放待确认</span>}
+              {entry.production && <span className="nx-badge nx-badge-red">{t("生产环境")}</span>}
+              {entry.releasePending && <span className="nx-count">{t("释放待确认")}</span>}
               {!autoWriteAllowed(entry.presence) && (
-                <span className="text-[var(--nx-fg-warning)]">自动写入已禁止</span>
+                <span className="text-[var(--nx-fg-warning)]">{t("自动写入已禁止")}</span>
               )}
             </div>
 
@@ -316,7 +317,7 @@ export function AgentRosterPanel({
                 <div className="flex items-center gap-1">
                   <input
                     className="nx-input min-w-32 flex-1 py-0.5 font-mono text-[11px]"
-                    aria-label="新别名"
+                    aria-label={t("新别名")}
                     value={renameDraft}
                     disabled={pending}
                     onChange={(event) => {
@@ -333,18 +334,18 @@ export function AgentRosterPanel({
                     disabled={pending}
                     onClick={() => commitRename(entry)}
                   >
-                    {pending ? "保存中…" : "保存"}
+                    {pending ? t("保存中…") : t("保存")}
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs"
                     disabled={pending}
                     onClick={() => setRenaming(null)}
                   >
-                    取消
+                    {t("取消")}
                   </button>
                 </div>
                 <div className="mt-0.5 text-[10.5px] text-neutral-500">
-                  仅修改显示别名，子代理编号 {entry.handle} 不会改变
+                  {t("仅修改显示别名，子代理编号 {handle} 不会改变", { handle: entry.handle })}
                 </div>
               </div>
             ) : (
@@ -356,12 +357,12 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "子代理状态未知，暂时不能打开"
-                        : "在终端标签页中打开"
+                        ? t("子代理状态未知，暂时不能打开")
+                        : t("在终端标签页中打开")
                   }
                   onClick={() => void openEntry(entry)}
                 >
-                  打开
+                  {t("打开")}
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
@@ -370,37 +371,37 @@ export function AgentRosterPanel({
                     confirmedDead
                       ? deadReason(entry.presence)
                       : unknownTerminal
-                        ? "子代理状态未知，暂时不能附加"
+                        ? t("子代理状态未知，暂时不能附加")
                         : entry.releasePending
-                          ? "正在释放，无法附加"
-                          : "附加到现有终端会话"
+                          ? t("正在释放，无法附加")
+                          : t("附加到现有终端会话")
                   }
                   onClick={() => void attachEntry(entry)}
                 >
-                  附加
+                  {t("附加")}
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
                   disabled={pending || !entry.isMine || entry.releasePending}
-                  title={entry.isMine ? "重命名子代理" : "仅所有者可重命名"}
+                  title={entry.isMine ? t("重命名子代理") : t("仅所有者可重命名")}
                   onClick={() => startRename(entry)}
                 >
-                  重命名
+                  {t("重命名")}
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
-                  title="在对话中 @ 该子代理"
+                  title={t("在对话中 @ 该子代理")}
                   onClick={() => onMention?.(mentionToken(entry), entry)}
                 >
-                  提及
+                  {t("提及")}
                 </button>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs"
                   disabled={pending || !entry.isMine || entry.releasePending}
-                  title={entry.isMine ? "释放子代理" : "仅所有者可释放"}
+                  title={entry.isMine ? t("释放子代理") : t("仅所有者可释放")}
                   onClick={() => void releaseEntry(entry)}
                 >
-                  {pending ? "处理中…" : "释放"}
+                  {pending ? t("处理中…") : t("释放")}
                 </button>
               </div>
             )}
@@ -413,7 +414,7 @@ export function AgentRosterPanel({
       })}
 
       {!loadError && entries !== null && entries.length === 0 && (
-        <div className="py-1 text-[11px] text-neutral-500">尚无子代理。AI 创建子代理后将显示在此处。</div>
+        <div className="py-1 text-[11px] text-neutral-500">{t("尚无子代理。AI 创建子代理后将显示在此处。")}</div>
       )}
     </div>
   );

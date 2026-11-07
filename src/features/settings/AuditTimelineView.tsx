@@ -20,6 +20,7 @@ import { useAuth } from "../auth/store";
 import { KIND_LABELS } from "./auditLabels";
 import { collectTimelineExport, timelineToCsv, timelineToJson, TIMELINE_EXPORT_MAX } from "./auditTimelineExport";
 import { useCompactWidth } from "./useCompactWidth";
+import { t } from "../../i18n";
 
 const PAGE_SIZE = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -28,23 +29,23 @@ type OriginFilter = "" | AuditTimelineOrigin;
 type RangePreset = "all" | "24h" | "7d" | "30d" | "custom";
 
 const ORIGIN_FILTERS: { value: OriginFilter; label: string }[] = [
-  { value: "", label: "全部" },
-  { value: "user", label: "用户" },
+  { value: "", label: t("全部") },
+  { value: "user", label: t("用户") },
   { value: "ai", label: "AI" },
-  { value: "device", label: "设备" },
+  { value: "device", label: t("设备") },
 ];
 
 const RANGE_PRESETS: { value: RangePreset; label: string }[] = [
-  { value: "all", label: "全部时间" },
-  { value: "24h", label: "24 小时" },
-  { value: "7d", label: "7 天" },
-  { value: "30d", label: "30 天" },
+  { value: "all", label: t("全部时间") },
+  { value: "24h", label: t("24 小时") },
+  { value: "7d", label: t("7 天") },
+  { value: "30d", label: t("30 天") },
 ];
 
 function originLabel(origin: string): string {
   if (origin === "ai") return "AI";
-  if (origin === "device") return "设备";
-  return "用户";
+  if (origin === "device") return t("设备");
+  return t("用户");
 }
 
 function originBadge(origin: string): string {
@@ -228,13 +229,13 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
       }
       if (!saved) return;
       if (truncated) {
-        setExportNote({ tone: "warn", text: `已导出 ${all.length} 条。仅导出最新 ${TIMELINE_EXPORT_MAX} 条，请缩小时间范围或筛选条件` });
+        setExportNote({ tone: "warn", text: t("已导出 {length} 条。仅导出最新 {TIMELINE_EXPORT_MAX} 条，请缩小时间范围或筛选条件", { length: all.length, TIMELINE_EXPORT_MAX }) });
       } else {
-        setExportNote({ tone: "ok", text: `已导出 ${all.length} 条` });
-        pushToast("success", `已导出 ${all.length} 条时间线记录`);
+        setExportNote({ tone: "ok", text: t("已导出 {length} 条", { length: all.length }) });
+        pushToast("success", t("已导出 {length} 条时间线记录", { length: all.length }));
       }
     } catch (e) {
-      setExportNote({ tone: "error", text: `导出失败：${describeError(e)}` });
+      setExportNote({ tone: "error", text: t("导出失败：{value}", { value: describeError(e) }) });
     } finally {
       setExporting(false);
     }
@@ -242,7 +243,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
 
   const hostOptions = useMemo(
     () => [
-      { value: "", label: "全部主机" },
+      { value: "", label: t("全部主机") },
       ...(assets ?? []).map((a) => ({ value: a.id, label: a.name })),
       ...(devices ?? []).map((d) => ({ value: d.id, label: d.name })),
     ],
@@ -257,38 +258,38 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
     e.exitCode === null ? (
       <span className="text-neutral-500">—</span>
     ) : e.exitCode === 0 ? (
-      <span className="text-green-300" title="成功">✓ 0</span>
+      <span className="text-green-300" title={t("成功")}>✓ 0</span>
     ) : (
-      <span className="text-red-300" title="失败">✗ {e.exitCode}</span>
+      <span className="text-red-300" title={t("失败")}>✗ {e.exitCode}</span>
     );
 
-  const scopeText = !WEB ? "显示本机全部记录" : user ? "只显示你账户下的记录" : "显示本服务器的全部记录";
+  const scopeText = !WEB ? t("显示本机全部记录") : user ? t("只显示你账户下的记录") : t("显示本服务器的全部记录");
 
   const retry = (
     <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void loadFirstPage(filters)} disabled={loading}>
       <IconRefresh size={12} />
-      重试
+      {t("重试")}
     </button>
   );
-  const emptyText = "暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。";
+  const emptyText = t("暂无记录。连接主机、执行命令或运行 AI 操作后，记录将显示在此处。");
 
   return (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconHistory size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">审计时间线</span>
+        <span className="nx-toolbar-title">{t("审计时间线")}</span>
         <div className="nx-segment">
-          <button className="nx-segment-item" onClick={onShowAudit}>审计</button>
-          <button className="nx-segment-item" onClick={onShowCommand}>命令</button>
-          <button className="nx-segment-item is-active" disabled>时间线</button>
+          <button className="nx-segment-item" onClick={onShowAudit}>{t("审计")}</button>
+          <button className="nx-segment-item" onClick={onShowCommand}>{t("命令")}</button>
+          <button className="nx-segment-item is-active" disabled>{t("时间线")}</button>
         </div>
         <span className="nx-hint">
-          {error && items.length === 0 ? "未能加载时间线" : `已加载 ${items.length} 条`}
+          {error && items.length === 0 ? t("未能加载时间线") : t("已加载 {length} 条", { length: items.length })}
         </span>
         <div className="nx-spacer" />
         <Select
           className="w-[140px] shrink-0"
-          ariaLabel="按主机过滤"
+          ariaLabel={t("按主机过滤")}
           value={filters.assetId}
           onChange={(v) => patch({ assetId: v })}
           options={hostOptions}
@@ -296,8 +297,8 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
         <div
           className="nx-segment"
           role="group"
-          aria-label="来源过滤"
-          title="命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户"
+          aria-label={t("来源过滤")}
+          title={t("命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户")}
         >
           {ORIGIN_FILTERS.map((f) => (
             <button
@@ -309,7 +310,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
             </button>
           ))}
         </div>
-        <div className="nx-segment" role="group" aria-label="时间范围">
+        <div className="nx-segment" role="group" aria-label={t("时间范围")}>
           {RANGE_PRESETS.map((r) => (
             <button
               key={r.value}
@@ -323,35 +324,35 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
         <input
           type="date"
           className="nx-input w-[130px]"
-          aria-label="开始日期"
+          aria-label={t("开始日期")}
           value={filters.fromDate}
           onChange={(e) => patch({ fromDate: e.target.value, range: "custom" })}
         />
         <input
           type="date"
           className="nx-input w-[130px]"
-          aria-label="结束日期"
+          aria-label={t("结束日期")}
           value={filters.toDate}
           onChange={(e) => patch({ toDate: e.target.value, range: "custom" })}
         />
         <button className="nx-btn nx-btn-ghost" onClick={() => void loadFirstPage(filters)} disabled={loading}>
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
         <button className="nx-btn nx-btn-ghost" onClick={() => void exportTimeline("csv")} disabled={exporting}>
           <IconDownload size={13} />
-          导出 CSV
+          {t("导出 CSV")}
         </button>
         <button className="nx-btn nx-btn-ghost" onClick={() => void exportTimeline("json")} disabled={exporting}>
           <IconDownload size={13} />
-          导出 JSON
+          {t("导出 JSON")}
         </button>
-        <span className="nx-hint min-w-0 break-words">导出文件可能包含命令行中的敏感内容</span>
+        <span className="nx-hint min-w-0 break-words">{t("导出文件可能包含命令行中的敏感内容")}</span>
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
         {compact ? (
-          <ul className="m-0 flex list-none flex-col p-0" aria-label="审计时间线" data-testid="timeline-cards">
+          <ul className="m-0 flex list-none flex-col p-0" aria-label={t("审计时间线")} data-testid="timeline-cards">
             {items.map((e) => (
               <li key={`${e.stream}:${e.id}`} className="flex flex-col gap-1 border-b border-neutral-800/60 px-3 py-2.5">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -366,10 +367,10 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
                 <div className="nx-mono line-clamp-3 break-all text-[11.5px] text-neutral-400">{payloadText(e.payload)}</div>
               </li>
             ))}
-            {items.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">正在加载…</li>}
+            {items.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">{t("正在加载…")}</li>}
             {items.length === 0 && !loading && error && (
               <li className="px-3 py-4 text-center text-[12px]">
-                <span className="break-words text-red-300">未能加载时间线：{error}</span>
+                <span className="break-words text-red-300">{t("未能加载时间线：{error}", { error })}</span>
                 {retry}
               </li>
             )}
@@ -379,13 +380,13 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
           <table className="nx-table nx-table-fixed">
             <thead>
               <tr>
-                <th style={{ width: 168 }}>时间</th>
-                <th style={{ width: 72 }}>来源</th>
-                <th style={{ width: 140 }}>主机</th>
-                <th style={{ width: 200 }}>操作</th>
-                <th>详情</th>
-                <th style={{ width: 84 }} className="nx-right">退出码</th>
-                <th style={{ width: 84 }} className="nx-right">耗时</th>
+                <th style={{ width: 168 }}>{t("时间")}</th>
+                <th style={{ width: 72 }}>{t("来源")}</th>
+                <th style={{ width: 140 }}>{t("主机")}</th>
+                <th style={{ width: 200 }}>{t("操作")}</th>
+                <th>{t("详情")}</th>
+                <th style={{ width: 84 }} className="nx-right">{t("退出码")}</th>
+                <th style={{ width: 84 }} className="nx-right">{t("耗时")}</th>
               </tr>
             </thead>
             <tbody>
@@ -406,12 +407,12 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
               ))}
               {items.length === 0 && loading ? (
                 <tr>
-                  <td colSpan={7} className="nx-table-empty">正在加载…</td>
+                  <td colSpan={7} className="nx-table-empty">{t("正在加载…")}</td>
                 </tr>
               ) : items.length === 0 && error ? (
                 <tr>
                   <td colSpan={7} className="nx-table-empty">
-                    <span className="text-red-300">未能加载时间线：{error}</span>
+                    <span className="text-red-300">{t("未能加载时间线：{error}", { error })}</span>
                     {retry}
                   </td>
                 </tr>
@@ -427,22 +428,22 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
 
       {items.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
-          <span className="nx-hint min-w-0 truncate">已显示 {items.length} 条</span>
+          <span className="nx-hint min-w-0 truncate">{t("已显示 {length} 条", { length: items.length })}</span>
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">未能加载更多：{moreError}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：{moreError}", { moreError })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadMore()} disabled={loadingMore}>
-                重试
+                {t("重试")}
               </button>
             </>
           ) : cursor ? (
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={() => void loadMore()} disabled={loadingMore}>
               {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-              加载更多
+              {t("加载更多")}
             </button>
           ) : (
-            <span>已加载全部</span>
+            <span>{t("已加载全部")}</span>
           )}
         </div>
       )}
@@ -460,7 +461,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span className="min-w-0 break-words">
-          时间线合并审计、命令和设备上下线记录，{scopeText}。命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户。
+          {t("时间线合并审计、命令和设备上下线记录，{scopeText}。命令日志没有 AI 来源标记，AI 发起的终端命令显示为用户。", { scopeText })}
         </span>
       </div>
     </div>

@@ -11,6 +11,7 @@ import { IconClose, IconRefresh, IconServer } from "../../ui/icons";
 import { openInboxTab } from "../inbox/inbox";
 import { takeOverAggregateSession, unknownHostText } from "../terminal/backgroundSessionsAccess";
 import { buildStatusWall, WALL_GROUP_LABELS, WALL_GROUPS, type WallCard, type WallGroup } from "./statusWallModel";
+import { t } from "../../i18n";
 
 // A downward drag this far from the top of the list refreshes it.
 export const PULL_REFRESH_PX = 64;
@@ -28,10 +29,10 @@ export interface StatusWallProps {
 function ago(at: number, now: number): string {
   if (at <= 0) return "";
   const minutes = Math.max(0, Math.floor((now - at) / 60_000));
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("刚刚");
+  if (minutes < 60) return t("{minutes} 分钟前", { minutes });
   const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
+  return hours < 24 ? t("{hours} 小时前", { hours }) : t("{floor} 天前", { floor: Math.floor(hours / 24) });
 }
 
 const STATE_TONE: Record<WallGroup, string> = {
@@ -75,8 +76,8 @@ function WallCardView({
           <span id={`${id}-state`} className={`shrink-0 ${STATE_TONE[card.group]}`} data-testid="wall-state">{card.stateLabel}</span>
         </span>
         {card.detail && <span id={`${id}-detail`} className="block truncate text-[12px] text-[var(--nx-fg)]" data-testid="wall-detail">{card.detail}</span>}
-        {card.stale && <span id={`${id}-stale`} className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-stale">该主机的会话列表可能已过时</span>}
-        {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">当前客户端无法打开该终端</span>}
+        {card.stale && <span id={`${id}-stale`} className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-stale">{t("该主机的会话列表可能已过时")}</span>}
+        {!reachable && <span className="block text-[11.5px] text-[var(--nx-fg-soft)]" data-testid="wall-unreachable">{t("当前客户端无法打开该终端")}</span>}
       </span>
       {card.remote?.thumb && (
         <img src={card.remote.thumb} alt="" className="h-11 w-[78px] shrink-0 rounded-sm border border-[var(--nx-border-strong)] object-cover" data-testid="wall-thumb" />
@@ -157,7 +158,7 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
     setRefreshing(true);
     try {
       await reloadSessionAggregate();
-      if (useSessionAggregate.getState().error) useUi.getState().pushToast("error", "刷新会话列表失败，请稍后重试");
+      if (useSessionAggregate.getState().error) useUi.getState().pushToast("error", t("刷新会话列表失败，请稍后重试"));
     } finally {
       setRefreshing(false);
       setNow(Date.now());
@@ -199,9 +200,9 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
     void takeOverAggregateSession(card.host, card.tabId, card.title)
       .then((result) => {
         if (result.ok) onOpened();
-        else if ("error" in result) useUi.getState().pushToast("error", `未能打开终端：${result.error}`);
+        else if ("error" in result) useUi.getState().pushToast("error", t("未能打开终端：{error}", { error: result.error }));
       })
-      .catch((error: unknown) => useUi.getState().pushToast("error", `未能打开终端：${describeError(error)}`))
+      .catch((error: unknown) => useUi.getState().pushToast("error", t("未能打开终端：{value}", { value: describeError(error) })))
       .finally(() => setOpening(null));
   };
 
@@ -251,9 +252,9 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
       }}
     >
       <div className="nx-toolbar">
-        <h2 id="nx-wall-heading" className="nx-toolbar-title">会话状态</h2>
+        <h2 id="nx-wall-heading" className="nx-toolbar-title">{t("会话状态")}</h2>
         <span className="nx-hint" role="status" aria-live="polite" data-testid="wall-progress">
-          {refreshing ? "正在刷新…" : loadError && !loaded ? "未能读取" : pending.length > 0 ? `正在查询 ${pending.length} 台主机…` : !loaded ? "正在读取各主机的会话…" : ""}
+          {refreshing ? t("正在刷新…") : loadError && !loaded ? t("未能读取") : pending.length > 0 ? t("正在查询 {length} 台主机…", { length: pending.length }) : !loaded ? t("正在读取各主机的会话…") : ""}
         </span>
         <div className="nx-spacer" />
         {total > 0 && (
@@ -263,10 +264,10 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
         )}
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" disabled={refreshing} onClick={() => void refresh()}>
           <IconRefresh size={13} className={refreshing ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
         {onClose && (
-          <button type="button" className="nx-icon-btn" title="关闭总览" aria-label="关闭总览" onClick={onClose}>
+          <button type="button" className="nx-icon-btn" title={t("关闭总览")} aria-label={t("关闭总览")} onClick={onClose}>
             <IconClose size={14} />
           </button>
         )}
@@ -282,7 +283,7 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
       >
         {pull > 0 && (
           <div className="flex items-center justify-center text-[12px] text-[var(--nx-fg-soft)]" style={{ height: Math.min(pull, PULL_REFRESH_PX) }} data-testid="wall-pull">
-            {pull >= PULL_REFRESH_PX ? "松开刷新" : "下拉刷新"}
+            {pull >= PULL_REFRESH_PX ? t("松开刷新") : t("下拉刷新")}
           </div>
         )}
         {WALL_GROUPS.map((group) => shown[group].length > 0 && (
@@ -305,7 +306,7 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
         ))}
         {unreachable.length > 0 && (
           <div className="pt-3" data-wall-group="hosts">
-            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">读取失败的主机</h3>
+            <h3 className="mb-1.5 text-[12px] font-semibold text-[var(--nx-fg-soft)]">{t("读取失败的主机")}</h3>
             <ul className="flex flex-col gap-1">
               {unreachable.map((host) => (
                 <li key={host.key} className="flex items-baseline gap-2 text-[12px]" data-wall-host={host.key} data-host-status={host.status}>
@@ -323,19 +324,19 @@ export function StatusWall({ onOpened, onClose, onOpenAssets }: StatusWallProps)
           <div className="flex flex-col items-center gap-2 px-6 pt-12 text-center text-[13px] text-[var(--nx-fg-soft)]" data-testid="wall-empty">
             {loadError && !loaded ? (
               <>
-                <span role="alert">未能读取各主机的会话。</span>
+                <span role="alert">{t("未能读取各主机的会话。")}</span>
                 <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" disabled={refreshing} onClick={() => void refresh()}>
-                  重试
+                  {t("重试")}
                 </button>
               </>
             ) : !loaded || pending.length > 0 ? (
-              <span>正在读取各主机的会话…</span>
+              <span>{t("正在读取各主机的会话…")}</span>
             ) : (
               <>
-                <span>暂无会话。连接主机后，其终端将显示在此处。</span>
+                <span>{t("暂无会话。连接主机后，其终端将显示在此处。")}</span>
                 {onOpenAssets && (
                   <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={onOpenAssets}>
-                    打开资产
+                    {t("打开资产")}
                   </button>
                 )}
               </>

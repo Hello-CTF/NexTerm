@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { hostHistoryTab, useUi } from "../../app/store";
+import { t } from "../../i18n";
 
 export interface TranscriptFocusRequest {
   assetId: string;
@@ -37,7 +38,7 @@ export function openHostHistoryTab(assetId: string): void {
     ui.workspaces.find((item) => item.id === ui.activeWorkspaceId) ??
     ui.workspaces[ui.workspaces.length - 1];
   const hostTab = active?.assetId === assetId ? hostHistoryTab(active) : null;
-  ui.addTab(hostTab ?? { id: "history", kind: "history", title: "终端历史", closable: true, assetId });
+  ui.addTab(hostTab ?? { id: "history", kind: "history", title: t("终端历史"), closable: true, assetId });
 }
 
 // openTranscriptFocus asks the history panel to land on a transcript position and makes sure a history tab is open.

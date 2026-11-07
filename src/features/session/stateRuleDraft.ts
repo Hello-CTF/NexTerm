@@ -5,6 +5,7 @@ import type {
   StateRuleSaveRequest,
   StateRuleScreenDTO,
 } from "../../ipc/stateRuleApi";
+import { t } from "../../i18n";
 
 // Limits mirrored from internal/terminal/staterule for checks before a round trip; the backend stays authoritative.
 export const STATE_RULE_MAX_RULES = 64;
@@ -17,7 +18,7 @@ const MAX_TITLE_BYTES = 1024;
 const HEURISTIC_TEXT_CHARS = 120;
 // Rows of the screen bottom the AI draft is built from; mirrors stateRuleDraftRows in the backend.
 export const STATE_RULE_DRAFT_ROWS = 30;
-export const STATE_RULE_REDACTED_NOTE = "已对疑似密钥或密码脱敏";
+export const STATE_RULE_REDACTED_NOTE = t("已对疑似密钥或密码脱敏");
 
 export const STATE_RULE_EXPORT_FORMAT = "nexterm.state-rules";
 export const STATE_RULE_EXPORT_VERSION = 1;
@@ -25,15 +26,15 @@ export const STATE_RULE_EXPORT_VERSION = 1;
 export type StateRuleTarget = "needs_me" | "running" | "idle" | "just_finished";
 
 export const STATE_RULE_TARGETS: readonly { value: StateRuleTarget; label: string }[] = [
-  { value: "needs_me", label: "需要处理" },
-  { value: "running", label: "运行中" },
-  { value: "idle", label: "空闲" },
-  { value: "just_finished", label: "刚结束" },
+  { value: "needs_me", label: t("需要处理") },
+  { value: "running", label: t("运行中") },
+  { value: "idle", label: t("空闲") },
+  { value: "just_finished", label: t("刚结束") },
 ];
 
 export function stateLabel(state: string): string {
-  if (state === "unknown") return "未知";
-  if (state === "exited") return "已退出";
+  if (state === "unknown") return t("未知");
+  if (state === "exited") return t("已退出");
   return STATE_RULE_TARGETS.find((target) => target.value === state)?.label ?? state;
 }
 
@@ -179,8 +180,8 @@ const MIN_SPECIFIC_PATTERN_CHARS = 4;
 export function patternWarning(pattern: string): string | null {
   const trimmed = pattern.trim();
   if (!trimmed) return null;
-  if (/^\.[*+]$/.test(trimmed)) return "这个模式几乎匹配任何内容，规则会在所有屏幕上生效。";
-  if (Array.from(trimmed).length < MIN_SPECIFIC_PATTERN_CHARS) return "匹配模式很短，可能误匹配其他屏幕，建议写得更具体。";
+  if (/^\.[*+]$/.test(trimmed)) return t("这个模式几乎匹配任何内容，规则会在所有屏幕上生效。");
+  if (Array.from(trimmed).length < MIN_SPECIFIC_PATTERN_CHARS) return t("匹配模式很短，可能误匹配其他屏幕，建议写得更具体。");
   return null;
 }
 
@@ -254,20 +255,20 @@ export function parseRuleFile(text: string): StateRuleImportRequest {
   try {
     value = JSON.parse(text);
   } catch {
-    throw new Error("不是有效的 JSON");
+    throw new Error(t("不是有效的 JSON"));
   }
-  if (typeof value !== "object" || value === null) throw new Error("不是状态规则文件");
+  if (typeof value !== "object" || value === null) throw new Error(t("不是状态规则文件"));
   const file = value as Partial<StateRuleImportRequest>;
   if (file.format !== STATE_RULE_EXPORT_FORMAT || file.version !== STATE_RULE_EXPORT_VERSION || !Array.isArray(file.rules)) {
-    throw new Error("不是可识别的状态规则文件");
+    throw new Error(t("不是可识别的状态规则文件"));
   }
-  if (file.rules.length > STATE_RULE_MAX_RULES) throw new Error(`一次最多导入 ${STATE_RULE_MAX_RULES} 条状态规则`);
+  if (file.rules.length > STATE_RULE_MAX_RULES) throw new Error(t("一次最多导入 {STATE_RULE_MAX_RULES} 条状态规则", { STATE_RULE_MAX_RULES }));
   file.rules.forEach((rule, index) => {
     if (typeof rule !== "object" || rule === null || typeof rule.pattern !== "string" || typeof rule.state !== "string" || typeof rule.region !== "string") {
-      throw new Error(`第 ${index + 1} 条规则格式不正确`);
+      throw new Error(t("第 {value} 条规则格式不正确", { value: index + 1 }));
     }
     if (byteLength(rule.pattern) > STATE_RULE_MAX_PATTERN_BYTES) {
-      throw new Error(`第 ${index + 1} 条规则的匹配模式超过 ${STATE_RULE_MAX_PATTERN_BYTES} 字节`);
+      throw new Error(t("第 {value} 条规则的匹配模式超过 {STATE_RULE_MAX_PATTERN_BYTES} 字节", { value: index + 1, STATE_RULE_MAX_PATTERN_BYTES }));
     }
   });
   return { format: file.format, version: file.version, rules: file.rules };

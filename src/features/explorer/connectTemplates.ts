@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Asset } from "../../ipc/commands";
+import { t as tr } from "../../i18n";
 
 const KEY = "nexterm.connectTemplates.v1";
 
@@ -109,19 +110,19 @@ export function restrictTemplateForServer(t: ConnectTemplate): { template: Conne
   const next = { ...t };
   if (next.kind === "local") {
     next.kind = "ssh";
-    dropped.push("本地终端类型");
+    dropped.push(tr("本地终端类型"));
   }
   if (next.authKind === "agent") {
     next.authKind = "password";
-    dropped.push("SSH Agent 认证");
+    dropped.push(tr("SSH Agent 认证"));
   }
   if (next.proxyCommand) {
     next.proxyCommand = "";
-    dropped.push("代理命令");
+    dropped.push(tr("代理命令"));
   }
   if (next.forwardAgent) {
     next.forwardAgent = false;
-    dropped.push("Agent 转发");
+    dropped.push(tr("Agent 转发"));
   }
   if (next.agentSocket) {
     next.agentSocket = "";
@@ -129,10 +130,10 @@ export function restrictTemplateForServer(t: ConnectTemplate): { template: Conne
   }
   if (next.certPath) {
     next.certPath = "";
-    dropped.push("证书路径");
+    dropped.push(tr("证书路径"));
   }
   if (next.keyPath || next.keyOrigin === "ref") {
-    if (next.keyPath) dropped.push("私钥路径");
+    if (next.keyPath) dropped.push(tr("私钥路径"));
     next.keyPath = "";
     next.keyOrigin = "vault";
   }

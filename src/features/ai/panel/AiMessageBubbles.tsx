@@ -7,7 +7,8 @@ import { AgentToolCard } from "../AgentToolCard";
 import { type EnvironmentConfirmationChallenge, evaluateEnvironmentConfirmation, isManagedDeviceEnvironment, MANAGED_DEVICE_ENVIRONMENT_HINT, targetKey, environmentDisplayLabel } from "../../production/environmentConfirmation";
 import { simpleDiff, hasVisibleChange, diffLineText } from "../diff";
 import { toolLabel, extractUrls, splitUserRefs } from "./aiSidebarShared";
-import { TOOL_USER_DENIED } from "./aiConfirmLabels";
+import { resolutionLabel, TOOL_USER_DENIED } from "./aiConfirmLabels";
+import { t } from "../../../i18n";
 
 
 export const ChatBubble = memo(function ChatBubble({
@@ -39,8 +40,8 @@ export const ChatBubble = memo(function ChatBubble({
           <button
             type="button"
             className="absolute right-1.5 top-1.5 rounded p-0.5 text-[var(--nx-fg-soft)] opacity-0 transition-opacity hover:text-neutral-100 focus:opacity-100 group-hover/user:opacity-100 pointer-coarse:opacity-100"
-            title="编辑并重新发送"
-            aria-label="编辑并重新发送"
+            title={t("编辑并重新发送")}
+            aria-label={t("编辑并重新发送")}
             onClick={() => onEdit(item)}
           >
             <IconEdit size={11} />
@@ -49,11 +50,11 @@ export const ChatBubble = memo(function ChatBubble({
         {item.imageCount ? (
           <div className="mb-1 flex items-center gap-1 text-[11px] text-[var(--nx-fg-soft)]">
             <IconImage size={11} />
-            {item.imageCount} 张图片
+            {t("{imageCount} 张图片", { imageCount: item.imageCount })}
           </div>
         ) : null}
         {refs.length > 0 ? (
-          <ul className="mb-1 flex flex-wrap gap-1" aria-label="引用">
+          <ul className="mb-1 flex flex-wrap gap-1" aria-label={t("引用")}>
             {refs.map((ref, index) => (
               <li
                 key={`${index}:${ref}`}
@@ -69,10 +70,10 @@ export const ChatBubble = memo(function ChatBubble({
         {item.steer ? (
           <div className="mt-1 text-[10.5px] text-[var(--nx-fg-soft)]">
             {item.steer === "pending"
-              ? "补充指令 · 等待送达…"
+              ? t("补充指令 · 等待送达…")
               : item.steer === "delivered"
-                ? "补充指令 · 已送达"
-                : "补充指令 · 未送达"}
+                ? t("补充指令 · 已送达")
+                : t("补充指令 · 未送达")}
           </div>
         ) : null}
       </div>
@@ -92,7 +93,7 @@ export const ChatBubble = memo(function ChatBubble({
         open={streaming}
       >
         <summary className="cursor-pointer select-none text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
-          思考过程（{item.text.length} 字）{streaming ? " · 进行中" : ""}
+          {t("思考过程（{length} 字）{value}", { length: item.text.length, value: streaming ? t(" · 进行中") : "" })}
         </summary>
         <div className="mt-1 whitespace-pre-wrap italic">{item.text}</div>
       </details>
@@ -105,7 +106,7 @@ export const ChatBubble = memo(function ChatBubble({
     return (
       <details className="rounded-lg border border-dashed border-neutral-800 px-2.5 py-1.5 text-[11px] text-neutral-500">
         <summary className="cursor-pointer select-none">
-          已压缩上下文{item.messages > 0 ? `（${item.messages} 条消息）` : ""}，之后的回答基于下方摘要
+          {t("已压缩上下文{value}，之后的回答基于下方摘要", { value: item.messages > 0 ? t("（{messages} 条消息）", { messages: item.messages }) : "" })}
         </summary>
         <div className="mt-1.5 whitespace-pre-wrap text-[11.5px] leading-relaxed text-neutral-400">{item.text}</div>
       </details>
@@ -120,17 +121,17 @@ export const ChatBubble = memo(function ChatBubble({
         >
           <IconAlert size={12} className="mt-0.5 shrink-0 text-red-300" />
           {item.maxIterations ? (
-            <span className="nx-badge nx-badge-amber shrink-0">已达到最大步数</span>
+            <span className="nx-badge nx-badge-amber shrink-0">{t("已达到最大步数")}</span>
           ) : null}
-          <span className="whitespace-pre-wrap">本次回答失败：{item.text}</span>
+          <span className="whitespace-pre-wrap">{t("本次回答失败：{text}", { text: item.text })}</span>
           {item.retryable ? (
             <button
               className="nx-btn nx-btn-outline nx-btn-xs ml-auto shrink-0"
-              title="使用同一条消息重新回答"
+              title={t("使用同一条消息重新回答")}
               onClick={() => onRetry(item)}
             >
               <IconRefresh size={11} />
-              重试
+              {t("重试")}
             </button>
           ) : null}
         </div>
@@ -174,11 +175,11 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   const text =
     item.role === "confirm"
       ? pending
-        ? `等待确认：${toolLabel(item.tool)}`
-        : `${toolLabel(item.tool)} · ${item.resolution}`
+        ? t("等待确认：{value}", { value: toolLabel(item.tool) })
+        : `${toolLabel(item.tool)} · ${resolutionLabel(item.resolution ?? "")}`
       : pending
-        ? `等待回答：${item.question}`
-        : `提问 · ${item.resolution}`;
+        ? t("等待回答：{question}", { question: item.question })
+        : t("提问 · {resolution}", { resolution: item.resolution });
   return (
     <div
       className={`flex items-center gap-1.5 text-[10.5px] ${
@@ -192,8 +193,8 @@ function InteractionRecord({ item }: { item: ConfirmItem | QuestionItem }) {
   );
 }
 
-const POLICY_DENIED_PREFIX = "权限策略已拒绝: ";
-const USER_DENIED_TEXT = "用户拒绝了此操作";
+const POLICY_DENIED_PREFIX = t("权限策略已拒绝: ");
+const USER_DENIED_TEXT = t("用户拒绝了此操作");
 
 // blockedOutcome recognizes the two refusals the backend reports as tool
 // failures, so the card shows them as interceptions rather than errors.
@@ -217,7 +218,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
   const preview = item.summary ?? "";
   const output = full || preview;
   const blocked = !running && !item.ok && !item.panic ? blockedOutcome(output) : null;
-  const body = blocked ? (blocked.by === "policy" ? `拦截原因：${blocked.reason}` : TOOL_USER_DENIED.body) : output;
+  const body = blocked ? (blocked.by === "policy" ? t("拦截原因：{reason}", { reason: blocked.reason }) : TOOL_USER_DENIED.body) : output;
   const headline = !running && !item.ok ? firstLine(body) : "";
   return (
     <div
@@ -229,7 +230,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
           aria-expanded={open}
-          title={open ? "收起输入和输出" : "展开输入和输出"}
+          title={open ? t("收起输入和输出") : t("展开输入和输出")}
           onClick={() => setOpen((v) => !v)}
         >
           <IconChevronRight size={10} className={`shrink-0 text-neutral-500 ${open ? "rotate-90" : ""}`} />
@@ -237,13 +238,13 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           <span className="min-w-0 flex-1 truncate font-mono text-neutral-400">{item.display}</span>
         </button>
         <span className="sr-only">
-          {running ? "工具执行中" : item.panic ? "工具执行出错" : item.ok ? "工具执行成功" : blocked ? (blocked.by === "policy" ? "已被权限策略拦截" : TOOL_USER_DENIED.status) : "工具执行失败"}
+          {running ? t("工具执行中") : item.panic ? t("工具执行出错") : item.ok ? t("工具执行成功") : blocked ? (blocked.by === "policy" ? t("已被权限策略拦截") : TOOL_USER_DENIED.status) : t("工具执行失败")}
         </span>
-        {item.panic && !running ? <span className="nx-badge nx-badge-red">出错</span> : null}
+        {item.panic && !running ? <span className="nx-badge nx-badge-red">{t("出错")}</span> : null}
         {blocked ? (
           <span className={blocked.by === "policy" ? "nx-badge nx-badge-amber" : "nx-badge"}>
             <IconShield size={10} className="mr-0.5 inline" />
-            {blocked.by === "policy" ? "已拦截" : TOOL_USER_DENIED.badge}
+            {blocked.by === "policy" ? t("已拦截") : TOOL_USER_DENIED.badge}
           </span>
         ) : running ? (
           <IconLoader size={11} className="animate-spin text-amber-300" />
@@ -266,7 +267,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
         <div className="mt-1.5 flex flex-col gap-1.5">
           {item.display && (
             <div>
-              <div className="text-[10px] text-neutral-500">输入</div>
+              <div className="text-[10px] text-neutral-500">{t("输入")}</div>
               <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-[10.5px] text-neutral-300">
                 {item.display}
               </pre>
@@ -274,7 +275,7 @@ function ToolBubble({ item }: { item: Extract<ChatItem, { role: "tool" }> }) {
           )}
           {body && (
             <div>
-              <div className="text-[10px] text-neutral-500">{blocked ? "结果" : `输出（${output.length} 字）`}</div>
+              <div className="text-[10px] text-neutral-500">{blocked ? t("结果") : t("输出（{length} 字）", { length: output.length })}</div>
               <pre className="max-h-[26rem] overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-300">
                 {body}
               </pre>
@@ -290,12 +291,12 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
   const [open, setOpen] = useState(timeline.status === "running");
   const running = timeline.status === "running";
   const label = running
-    ? "子任务 · 运行中"
+    ? t("子任务 · 运行中")
     : timeline.status === "completed"
-      ? "子任务 · 已完成"
+      ? t("子任务 · 已完成")
       : timeline.status === "canceled"
-        ? "子任务 · 已取消"
-        : "子任务 · 失败";
+        ? t("子任务 · 已取消")
+        : t("子任务 · 失败");
   return (
     <div className="mt-1.5 border-t border-neutral-800 pt-1.5">
       <button
@@ -313,7 +314,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
         <IconBot size={11} className="shrink-0 text-neutral-500" />
         <span className="min-w-0 flex-1 truncate text-left">{label}</span>
         <span className="shrink-0 text-neutral-500">
-          {timeline.text.length} 字 · {timeline.tools.length} 个工具
+          {t("{length} 字 · {length2} 个工具", { length: timeline.text.length, length2: timeline.tools.length })}
         </span>
         <IconChevronRight size={10} className={open ? "rotate-90" : undefined} />
       </button>
@@ -334,7 +335,7 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
                 <IconXCircle size={10} className="shrink-0 text-red-300" />
               )}
               <span className="shrink-0 font-mono text-neutral-400">{tool.name || "tool"}</span>
-              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">出错</span> : null}
+              {tool.panic && tool.status !== "running" ? <span className="nx-badge nx-badge-red">{t("出错")}</span> : null}
               {tool.summary ? (
                 <span className="min-w-0 flex-1 truncate text-neutral-500" title={tool.summary}>
                   {tool.summary}
@@ -345,8 +346,8 @@ function SubagentTimelineView({ timeline }: { timeline: SubagentTimeline }) {
           {!running ? (
             <div className="text-[10.5px] text-neutral-500">
               {timeline.status === "completed"
-                ? (timeline.summary ?? "已完成")
-                : (timeline.error ?? timeline.summary ?? "已结束")}
+                ? (timeline.summary ?? t("已完成"))
+                : (timeline.error ?? timeline.summary ?? t("已结束"))}
             </div>
           ) : null}
         </div>
@@ -368,8 +369,8 @@ function PlanBubble({
     <div className="rounded-lg border border-blue-500/30 bg-blue-500/[0.07] px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconList size={12} className="shrink-0 text-blue-300" />
-        <span className="font-medium text-[var(--nx-fg-on-tint)]">方案已提交</span>
-        <span className="text-neutral-500">{approved ? "已批准" : "尚未执行任何操作"}</span>
+        <span className="font-medium text-[var(--nx-fg-on-tint)]">{t("方案已提交")}</span>
+        <span className="text-neutral-500">{approved ? t("已批准") : t("尚未执行任何操作")}</span>
       </div>
       <div className="max-h-72 overflow-y-auto">
         <Markdown text={item.text} className="text-neutral-300" />
@@ -377,7 +378,7 @@ function PlanBubble({
       {!approved && (
         <button className="nx-btn nx-btn-outline nx-btn-xs mt-2" onClick={onApprove}>
           <IconPlay size={11} />
-          批准并执行方案
+          {t("批准并执行方案")}
         </button>
       )}
     </div>
@@ -390,7 +391,7 @@ export function ConfirmBody({ card }: { card: ConfirmItem }) {
   const urlBlock =
     urls.length > 0 ? (
       <div className="mb-1.5 rounded border border-neutral-800 bg-neutral-950/70 px-2 py-1.5">
-        <div className="mb-0.5 text-[10.5px] text-neutral-500">包含 URL</div>
+        <div className="mb-0.5 text-[10.5px] text-neutral-500">{t("包含 URL")}</div>
         {urls.map((url) => (
           <div key={url} className="truncate font-mono text-[10.5px] text-blue-300" title={url}>
             {url}
@@ -434,7 +435,7 @@ export function ConfirmBody({ card }: { card: ConfirmItem }) {
     <>
       <div className="mb-1 flex items-baseline gap-1.5 font-mono text-[11px]">
         <span className="shrink-0 text-neutral-500">
-          {pv.kind === "create" ? "将新建" : "将修改"}
+          {pv.kind === "create" ? t("将新建") : t("将修改")}
         </span>
         <span className="min-w-0 flex-1 truncate text-neutral-200" title={pv.path}>
           {pv.path}
@@ -451,7 +452,7 @@ export function ConfirmBody({ card }: { card: ConfirmItem }) {
       ) : null}
       <details className="mb-2">
         <summary className="cursor-pointer text-[10.5px] text-[var(--nx-fg-tertiary)] hover:text-neutral-400">
-          查看原始参数
+          {t("查看原始参数")}
         </summary>
         <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[10.5px] text-neutral-500">
           {card.rendered}
@@ -498,25 +499,25 @@ export function ProductionEnvironmentChallenge({
     <div className="mb-2 rounded border border-amber-900/50 bg-amber-950/10 px-2.5 py-2" role="note">
       <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-amber-300">
         <IconAlert size={12} />
-        生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。
+        {t("生产环境写入风险：AI 写入将需要逐次输入实际环境名确认，本会话不会记住授权。")}
       </div>
       {names.some(isManagedDeviceEnvironment) && (
         <p className="mb-1.5 text-[11px] leading-relaxed text-neutral-300">{MANAGED_DEVICE_ENVIRONMENT_HINT}</p>
       )}
-      <ul className="flex flex-col gap-1.5" aria-label="生产环境名列表">
+      <ul className="flex flex-col gap-1.5" aria-label={t("生产环境名列表")}>
         {state.targets.map(({ target, typed, missing, matches }) => (
           <li key={targetKey(target)} className="flex items-center gap-2 text-[11px]">
             <span className="nx-badge nx-badge-amber shrink-0">{environmentDisplayLabel(target.environment)}</span>
             <input
               className="nx-input font-mono text-xs"
-              aria-label={`输入环境名 ${target.environment}`}
+              aria-label={t("输入环境名 {environment}", { environment: target.environment })}
               autoComplete="off"
               value={typed}
               onChange={(event) =>
                 setTypedByTarget((current) => ({ ...current, [targetKey(target)]: event.target.value }))
               }
             />
-            {!missing && !matches && <span className="shrink-0 text-red-300">环境名不匹配</span>}
+            {!missing && !matches && <span className="shrink-0 text-red-300">{t("环境名不匹配")}</span>}
           </li>
         ))}
       </ul>
@@ -529,7 +530,7 @@ function DiffBubble({ item }: { item: Extract<ChatItem, { role: "diff" }> }) {
     <div className="rounded-lg border border-neutral-700 bg-neutral-900/70 px-2.5 py-2 text-[11.5px]">
       <div className="mb-1.5 flex items-center gap-1.5">
         <IconEdit size={12} className="shrink-0 text-neutral-400" />
-        <span className="shrink-0 font-medium text-neutral-200">文件已修改</span>
+        <span className="shrink-0 font-medium text-neutral-200">{t("文件已修改")}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-neutral-400" title={item.path}>
           {item.path}
         </span>
@@ -546,7 +547,7 @@ function DiffLines({ before, after }: { before: string; after: string }) {
   if (!hasVisibleChange(lines)) {
     return (
       <div className="text-neutral-500">
-        {before === after ? "（内容无变化）" : "（仅文件末尾换行不同）"}
+        {before === after ? t("（内容无变化）") : t("（仅文件末尾换行不同）")}
       </div>
     );
   }

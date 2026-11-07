@@ -9,6 +9,7 @@ import { isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { terminalDefaultUsesAccount } from "../../app/preferences";
 import { DESKTOP } from "../../ipc/env";
+import { t } from "../../i18n";
 
 export type SettingsSectionId =
   | "settings-appearance"
@@ -38,80 +39,80 @@ export interface SettingsSearchMeta {
 
 export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-appearance": {
-    description: "界面主题与字号、终端主题、字体与对比度",
-    keywords: ["appearance", "theme", "dark", "light", "font", "主题", "深色", "浅色", "字体", "字号", "外观"],
+    description: t("界面主题与字号、终端主题、字体与对比度"),
+    keywords: ["appearance", "theme", "dark", "light", "font", t("主题"), t("深色"), t("浅色"), t("字体"), t("字号"), t("外观")],
   },
   "settings-terminal": {
-    description: "新建终端、关闭行为、剪贴板与粘贴、链接、端口发现、GPU 加速",
-    keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "paste", "tray", "link", "port", "持久", "剪贴板", "粘贴", "托盘", "后台", "链接", "端口"],
+    description: t("新建终端、关闭行为、剪贴板与粘贴、链接、端口发现、GPU 加速"),
+    keywords: ["terminal", "durable", "persistent", "osc52", "clipboard", "paste", "tray", "link", "port", t("持久"), t("剪贴板"), t("粘贴"), t("托盘"), t("后台"), t("链接"), t("端口")],
   },
   "settings-state-rules": {
-    description: "按屏幕内容纠正会话状态（需要处理、运行中、空闲）的规则",
-    keywords: ["state", "rule", "needs attention", "attention", "badge", "regex", "pattern", "状态", "规则", "需要处理", "徽章", "误报", "正则", "标记", "test", "测试"],
+    description: t("按屏幕内容纠正会话状态（需要处理、运行中、空闲）的规则"),
+    keywords: ["state", "rule", "needs attention", "attention", "badge", "regex", "pattern", t("状态"), t("规则"), t("需要处理"), t("徽章"), t("误报"), t("正则"), t("标记"), "test", t("测试")],
   },
   "settings-notifications": {
-    description: "会话需要处理时在本机弹出系统通知",
-    keywords: ["notification", "notify", "bell", "inbox", "通知", "系统通知", "响铃", "铃铛", "收件箱"],
+    description: t("会话需要处理时在本机弹出系统通知"),
+    keywords: ["notification", "notify", "bell", "inbox", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")],
   },
   "settings-quick-commands": {
-    description: "在终端按键条中发送的常用命令",
-    keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条", "快捷命令"],
+    description: t("在终端按键条中发送的常用命令"),
+    keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条"), t("快捷命令")],
   },
   "settings-shortcuts": {
-    description: "自定义快捷键",
-    keywords: ["shortcut", "keybinding", "hotkey", "keyboard", "key", "split", "pane", "close pane", "快捷键", "键盘", "按键", "热键", "分屏", "窗格"],
+    description: t("自定义快捷键"),
+    keywords: ["shortcut", "keybinding", "hotkey", "keyboard", "key", "split", "pane", "close pane", t("快捷键"), t("键盘"), t("按键"), t("热键"), t("分屏"), t("窗格")],
   },
   "settings-update": {
-    description: "检查并安装应用更新",
-    keywords: ["update", "upgrade", "version", "download", "about", "更新", "升级", "版本", "关于"],
+    description: t("检查并安装应用更新"),
+    keywords: ["update", "upgrade", "version", "download", "about", t("更新"), t("升级"), t("版本"), t("关于")],
   },
   "settings-diagnostics": {
-    description: "调试日志与抓包文件",
-    keywords: ["diagnostics", "debug", "log", "capture", "trace", "诊断", "调试", "日志", "抓包"],
+    description: t("调试日志与抓包文件"),
+    keywords: ["diagnostics", "debug", "log", "capture", "trace", t("诊断"), t("调试"), t("日志"), t("抓包")],
   },
   "settings-ai-model": {
-    description: "AI 模型档案、密钥与连通性测试",
-    keywords: ["ai", "model", "api key", "openai", "ollama", "llm", "模型", "密钥", "大模型", "连通性"],
+    description: t("AI 模型档案、密钥与连通性测试"),
+    keywords: ["ai", "model", "api key", "openai", "ollama", "llm", t("模型"), t("密钥"), t("大模型"), t("连通性")],
   },
   "settings-ai-privacy": {
-    description: "本地模型检测敏感信息、稳定占位符与回复还原，下载或删除本地模型",
-    keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", "脱敏", "隐私", "敏感", "还原", "模型下载", "删除模型", "磁盘占用"],
+    description: t("本地模型检测敏感信息、稳定占位符与回复还原，下载或删除本地模型"),
+    keywords: ["privacy", "guard", "astrlink", "int8", "fp32", "fp16", t("脱敏"), t("隐私"), t("敏感"), t("还原"), t("模型下载"), t("删除模型"), t("磁盘占用")],
   },
   "settings-ai-rules": {
-    description: "AI 操作命中后需确认或拒绝的危险命令规则",
-    keywords: ["rule", "danger", "block", "permission", "rm", "拦截", "规则", "危险", "权限", "确认"],
+    description: t("AI 操作命中后需确认或拒绝的危险命令规则"),
+    keywords: ["rule", "danger", "block", "permission", "rm", t("拦截"), t("规则"), t("危险"), t("权限"), t("确认")],
   },
   "settings-ai-skills": {
-    description: "管理 AI 技能",
-    keywords: ["skill", "skills", "prompt", "技能"],
+    description: t("管理 AI 技能"),
+    keywords: ["skill", "skills", "prompt", t("技能")],
   },
   "settings-memory": {
-    description: "AI 长期记忆：引用记忆与记忆工具",
-    keywords: ["memory", "remember", "记忆", "长期记忆"],
+    description: t("AI 长期记忆：引用记忆与记忆工具"),
+    keywords: ["memory", "remember", t("记忆"), t("长期记忆")],
   },
   "settings-vault": {
-    description: "用密码保护凭据，闲置自动锁定",
-    keywords: ["credential", "vault", "password", "lock", "encrypt", "凭据", "密码", "加密", "锁定", "保险库", "安全"],
+    description: t("用密码保护凭据，闲置自动锁定"),
+    keywords: ["credential", "vault", "password", "lock", "encrypt", t("凭据"), t("密码"), t("加密"), t("锁定"), t("保险库"), t("安全")],
   },
   "settings-known-hosts": {
-    description: "已信任的 SSH 主机指纹",
-    keywords: ["known hosts", "fingerprint", "ssh", "trust", "host key", "指纹", "信任", "主机"],
+    description: t("已信任的 SSH 主机指纹"),
+    keywords: ["known hosts", "fingerprint", "ssh", "trust", "host key", t("指纹"), t("信任"), t("主机")],
   },
   "settings-production": {
-    description: "生产环境主机的额外保护",
-    keywords: ["production", "prod", "safety", "protect", "生产", "保护", "确认"],
+    description: t("生产环境主机的额外保护"),
+    keywords: ["production", "prod", "safety", "protect", t("生产"), t("保护"), t("确认")],
   },
   "settings-account": {
-    description: "账号、用户管理、多端同步与本机终端开放",
-    keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "expose", "账号", "同步", "用户", "登录", "两步验证", "代理", "服务器", "开放"],
+    description: t("账号、用户管理、多端同步与本机终端开放"),
+    keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "expose", t("账号"), t("同步"), t("用户"), t("登录"), t("两步验证"), t("代理"), t("服务器"), t("开放")],
   },
   "settings-bundle": {
-    description: "资产包导入与导出",
-    keywords: ["bundle", "import", "export", "backup", "file", "资产", "导入", "导出", "备份"],
+    description: t("资产包导入与导出"),
+    keywords: ["bundle", "import", "export", "backup", "file", t("资产"), t("导入"), t("导出"), t("备份")],
   },
   "settings-share": {
-    description: "向他人分享主机与会话",
-    keywords: ["share", "link", "invite", "分享", "链接", "邀请"],
+    description: t("向他人分享主机与会话"),
+    keywords: ["share", "link", "invite", t("分享"), t("链接"), t("邀请")],
   },
 };
 
@@ -130,33 +131,34 @@ export interface SettingsItem {
 export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
-  { id: "ui-theme", section: "settings-appearance", label: "界面主题", description: "跟随系统、浅色或深色", keywords: ["theme", "dark", "light", "主题", "深色", "浅色"] },
-  { id: "ui-font-size", section: "settings-appearance", label: "界面字号", description: "界面文字大小，可自定义", keywords: ["font size", "scale", "zoom", "字体", "字号", "缩放", "倍率", "文字大小"] },
-  { id: "terminal-theme", section: "settings-appearance", label: "终端与编辑器主题", keywords: ["theme", "color scheme", "配色", "主题"] },
-  { id: "terminal-font-size", section: "settings-appearance", label: "终端字号", keywords: ["font size", "字体", "字号"] },
-  { id: "terminal-font-family", section: "settings-appearance", label: "终端字体", keywords: ["font", "family", "cascadia", "字体"] },
-  { id: "terminal-contrast", section: "settings-appearance", label: "终端对比度", keywords: ["contrast", "对比度"], panel: "appearance-advanced" },
-  { id: "default-terminal-mode", section: "settings-terminal", label: "默认终端模式", description: "持久终端或临时终端", keywords: ["durable", "persistent", "detach", "持久", "local", "本机", "本地终端", "本机终端模式", "持久组件", "持久终端组件"] },
-  { id: "close-action", section: "settings-terminal", label: "关闭运行中的终端标签页时", keywords: ["close", "kill", "detach", "关闭", "后台"] },
-  { id: "close-to-tray", section: "settings-terminal", label: "关闭时保留后台运行", description: "关闭窗口后最小化到系统托盘（仅 Windows 桌面版）", keywords: ["tray", "minimize", "background", "托盘", "最小化", "后台运行", "退出"], available: () => DESKTOP && isWindows() },
-  { id: "osc52", section: "settings-terminal", label: "允许远程主机写入剪贴板（OSC 52）", keywords: ["clipboard", "osc52", "剪贴板"] },
-  { id: "ctrl-v-paste", section: "settings-terminal", label: "Ctrl+V 粘贴", description: "Windows：关闭后 Ctrl+V 发送 ^V", keywords: ["paste", "ctrl+v", "clipboard", "vim", "^V", "quoted-insert", "块选择", "粘贴", "剪贴板"], available: isWindows },
-  { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: "多行粘贴确认", description: "粘贴多行文本前的确认方式", keywords: ["paste", "bracketed paste", "括号粘贴", "multiline", "multi-line", "confirm", "clipboard", "粘贴", "多行", "确认", "提示", "剪贴板"] },
-  { id: "copy-on-select", section: "settings-terminal", label: "选中自动复制", keywords: ["copy", "select", "clipboard", "复制", "剪贴板"] },
-  { id: "terminal-link-activation", section: "settings-terminal", label: "链接打开方式", description: "Ctrl/Cmd+单击或单击打开终端中的链接", keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", "链接", "超链接", "单击"] },
-  { id: "terminal-link-open-mode", section: "settings-terminal", label: "链接打开位置", description: "http/https 链接在系统浏览器、NexTerm 内打开，或每次询问", keywords: ["link", "url", "browser", "preview", "iframe", "open", "链接", "浏览器", "预览", "内置", "打开位置"], available: () => !isMobileShell() },
-  { id: "terminal-port-discovery", section: "settings-terminal", label: "端口发现", description: "检测远端新监听的端口，并提示一键转发", keywords: ["port", "discovery", "forward", "listen", "ss", "netstat", "端口", "发现", "转发", "监听"] },
-  { id: "terminal-gpu-acceleration", section: "settings-terminal", label: "终端 GPU 加速", description: "自动、开启或关闭 WebGL 渲染", keywords: ["gpu", "webgl", "render", "renderer", "acceleration", "硬件加速", "渲染"], panel: "terminal-advanced" },
-  { id: "terminal-scrollback", section: "settings-terminal", label: "终端回滚行数", description: "每个终端在本机保留的滚动历史行数", keywords: ["scrollback", "history", "buffer", "lines", "滚动", "回滚", "历史", "行数"], panel: "terminal-advanced" },
-  { id: "terminal-durable-history", section: "settings-terminal", label: "持久终端历史上限", description: "每个新建的持久终端在主机上保留的输出量", keywords: ["history", "durable", "limit", "quota", "scrollback", "历史", "持久", "上限", "配额"], panel: "terminal-advanced", available: terminalDefaultUsesAccount },
-  { id: "system-notifications", section: "settings-notifications", label: "系统通知", description: "会话需要处理或长时间命令结束时，在本机显示系统通知", keywords: ["notification", "notify", "bell", "inbox", "osc9", "通知", "系统通知", "响铃", "铃铛", "收件箱"] },
-  { id: "state-rules-import", section: "settings-state-rules", label: "导入或导出状态规则", keywords: ["import", "export", "json", "导入", "导出"] },
-  { id: "state-rules-status", section: "settings-state-rules", label: "各主机的规则状态", description: "各主机的持久终端是否已应用当前规则", keywords: ["push", "helper", "host", "下发", "主机", "组件", "生效"] },
-  { id: "quick-commands", section: "settings-quick-commands", label: "快捷命令", description: "在终端按键条中发送的常用命令", keywords: ["quick command", "snippet", "macro", "命令", "常用命令", "片段", "按键条"] },
-  { id: "memory-mode", section: "settings-memory", label: "AI 使用记忆", description: "引用记忆、允许记忆工具或关闭", keywords: ["memory", "inject", "tool", "记忆", "记忆工具", "引用"] },
-  { id: "vault-password", section: "settings-vault", label: "用密码保护凭据", keywords: ["password", "credential", "vault", "密码", "凭据"] },
-  { id: "vault-auto-lock", section: "settings-vault", label: "闲置自动锁定", keywords: ["lock", "idle", "timeout", "锁定", "凭据"] },
-  { id: "local-helper-exposure", section: "settings-account", label: "向服务器账号开放本机终端", description: "让同一账号的浏览器和手机接管本机终端", keywords: ["expose", "remote", "local terminal", "开放", "本机终端", "远程"], available: () => DESKTOP },
+  { id: "ui-language", section: "settings-appearance", label: t("界面语言"), description: t("简体中文、繁體中文、English、日本語等"), keywords: ["language", "locale", "i18n", t("语言"), t("語言"), "English", t("日本語"), "한국어", "Deutsch", "Français", "Español", "Русский"] },
+  { id: "ui-theme", section: "settings-appearance", label: t("界面主题"), description: t("跟随系统、浅色或深色"), keywords: ["theme", "dark", "light", t("主题"), t("深色"), t("浅色")] },
+  { id: "ui-font-size", section: "settings-appearance", label: t("界面字号"), description: t("界面文字大小，可自定义"), keywords: ["font size", "scale", "zoom", t("字体"), t("字号"), t("缩放"), t("倍率"), t("文字大小")] },
+  { id: "terminal-theme", section: "settings-appearance", label: t("终端与编辑器主题"), keywords: ["theme", "color scheme", t("配色"), t("主题")] },
+  { id: "terminal-font-size", section: "settings-appearance", label: t("终端字号"), keywords: ["font size", t("字体"), t("字号")] },
+  { id: "terminal-font-family", section: "settings-appearance", label: t("终端字体"), keywords: ["font", "family", "cascadia", t("字体")] },
+  { id: "terminal-contrast", section: "settings-appearance", label: t("终端对比度"), keywords: ["contrast", t("对比度")], panel: "appearance-advanced" },
+  { id: "default-terminal-mode", section: "settings-terminal", label: t("默认终端模式"), description: t("持久终端或临时终端"), keywords: ["durable", "persistent", "detach", t("持久"), "local", t("本机"), t("本地终端"), t("本机终端模式"), t("持久组件"), t("持久终端组件")] },
+  { id: "close-action", section: "settings-terminal", label: t("关闭运行中的终端标签页时"), keywords: ["close", "kill", "detach", t("关闭"), t("后台")] },
+  { id: "close-to-tray", section: "settings-terminal", label: t("关闭时保留后台运行"), description: t("关闭窗口后最小化到系统托盘（仅 Windows 桌面版）"), keywords: ["tray", "minimize", "background", t("托盘"), t("最小化"), t("后台运行"), t("退出")], available: () => DESKTOP && isWindows() },
+  { id: "osc52", section: "settings-terminal", label: t("允许远程主机写入剪贴板（OSC 52）"), keywords: ["clipboard", "osc52", t("剪贴板")] },
+  { id: "ctrl-v-paste", section: "settings-terminal", label: t("Ctrl+V 粘贴"), description: t("Windows：关闭后 Ctrl+V 发送 ^V"), keywords: ["paste", "ctrl+v", "clipboard", "vim", "^V", "quoted-insert", t("块选择"), t("粘贴"), t("剪贴板")], available: isWindows },
+  { id: "terminal-confirm-multiline-paste", section: "settings-terminal", label: t("多行粘贴确认"), description: t("粘贴多行文本前的确认方式"), keywords: ["paste", "bracketed paste", t("括号粘贴"), "multiline", "multi-line", "confirm", "clipboard", t("粘贴"), t("多行"), t("确认"), t("提示"), t("剪贴板")] },
+  { id: "copy-on-select", section: "settings-terminal", label: t("选中自动复制"), keywords: ["copy", "select", "clipboard", t("复制"), t("剪贴板")] },
+  { id: "terminal-link-activation", section: "settings-terminal", label: t("链接打开方式"), description: t("Ctrl/Cmd+单击或单击打开终端中的链接"), keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", t("链接"), t("超链接"), t("单击")] },
+  { id: "terminal-link-open-mode", section: "settings-terminal", label: t("链接打开位置"), description: t("http/https 链接在系统浏览器、NexTerm 内打开，或每次询问"), keywords: ["link", "url", "browser", "preview", "iframe", "open", t("链接"), t("浏览器"), t("预览"), t("内置"), t("打开位置")], available: () => !isMobileShell() },
+  { id: "terminal-port-discovery", section: "settings-terminal", label: t("端口发现"), description: t("检测远端新监听的端口，并提示一键转发"), keywords: ["port", "discovery", "forward", "listen", "ss", "netstat", t("端口"), t("发现"), t("转发"), t("监听")] },
+  { id: "terminal-gpu-acceleration", section: "settings-terminal", label: t("终端 GPU 加速"), description: t("自动、开启或关闭 WebGL 渲染"), keywords: ["gpu", "webgl", "render", "renderer", "acceleration", t("硬件加速"), t("渲染")], panel: "terminal-advanced" },
+  { id: "terminal-scrollback", section: "settings-terminal", label: t("终端回滚行数"), description: t("每个终端在本机保留的滚动历史行数"), keywords: ["scrollback", "history", "buffer", "lines", t("滚动"), t("回滚"), t("历史"), t("行数")], panel: "terminal-advanced" },
+  { id: "terminal-durable-history", section: "settings-terminal", label: t("持久终端历史上限"), description: t("每个新建的持久终端在主机上保留的输出量"), keywords: ["history", "durable", "limit", "quota", "scrollback", t("历史"), t("持久"), t("上限"), t("配额")], panel: "terminal-advanced", available: terminalDefaultUsesAccount },
+  { id: "system-notifications", section: "settings-notifications", label: t("系统通知"), description: t("会话需要处理或长时间命令结束时，在本机显示系统通知"), keywords: ["notification", "notify", "bell", "inbox", "osc9", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")] },
+  { id: "state-rules-import", section: "settings-state-rules", label: t("导入或导出状态规则"), keywords: ["import", "export", "json", t("导入"), t("导出")] },
+  { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
+  { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
+  { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
+  { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
+  { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
+  { id: "local-helper-exposure", section: "settings-account", label: t("向服务器账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
 ];
 
 export type SettingsSearchResult =

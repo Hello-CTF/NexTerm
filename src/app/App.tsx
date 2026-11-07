@@ -21,6 +21,7 @@ import { useOverlayDocks } from "./shell/useOverlayDocks";
 import { useSyncStatusSummary, useVaultStatus } from "./shell/useStatusBarState";
 import { useWorkspaceActions } from "./shell/useWorkspaceActions";
 import { useWorkspaceSwitcher } from "./shell/useWorkspaceSwitcher";
+import { t as tr } from "../i18n";
 
 // Shell helpers keep their historical App exports for existing importers.
 export { dialogLevelForKind } from "./shell/AppBootEffects";
@@ -35,7 +36,7 @@ export {
 
 export default function App() {
   return (
-    <ErrorBoundary title="应用界面发生错误">
+    <ErrorBoundary title={tr("应用界面发生错误")}>
       <AppShell />
     </ErrorBoundary>
   );

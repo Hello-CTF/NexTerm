@@ -11,6 +11,7 @@ import { PrivacyIndicator, usePrivacyGuard } from "../PrivacyIndicator";
 import { acknowledgePrivacyImageNotice, PRIVACY_IMAGE_NOTICE, usePrivacyImageNoticeSeen } from "../privacyImageNotice";
 import { PLAN_MODE_HINT, statusText, MODE_LABEL } from "./aiSidebarShared";
 import type { AiChatCtx } from "./aiChatCtx";
+import { t } from "../../../i18n";
 
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const privacyGuard = usePrivacyGuard();
@@ -24,24 +25,24 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   };
   const sendDisabled = (!input.trim() && images.length === 0) || editSubmitting;
   const permTitle = permError
-    ? "未能读取 AI 权限（选择以查看并重试）"
+    ? t("未能读取 AI 权限（选择以查看并重试）")
     : perm
-      ? `AI 权限与模式：${MODE_LABEL[perm.mode]}（${permScope ? "这台主机" : "全局默认"}），含计划模式和免确认授权`
-      : "AI 权限与模式：读取中（选择以设置）";
+      ? t("AI 权限与模式：{value}（{value2}），含计划模式和免确认授权", { value: MODE_LABEL[perm.mode], value2: permScope ? t("这台主机") : t("全局默认") })
+      : t("AI 权限与模式：读取中（选择以设置）");
   // Rarely used or experimental actions live here; with no terminal tab the
   // takeover entry is omitted instead of shown disabled.
   const moreItems: ComposerMoreItem[] = tabId
     ? [
         {
           key: "takeover",
-          label: "终端接管",
-          badge: "实验性",
+          label: t("终端接管"),
+          badge: t("实验性"),
           icon: <IconMonitor size={12} />,
           title: bindings.reclaimTakeover
-            ? `终端接管（实验性功能）：AI 直接接手当前终端，随时按 ${reclaimKeyLabel} 收回控制权`
-            : "终端接管（实验性功能）：AI 直接接手当前终端",
+            ? t("终端接管（实验性功能）：AI 直接接手当前终端，随时按 {reclaimKeyLabel} 收回控制权", { reclaimKeyLabel })
+            : t("终端接管（实验性功能）：AI 直接接手当前终端"),
           disabled: busy,
-          disabledReason: "AI 运行中，结束后可用",
+          disabledReason: t("AI 运行中，结束后可用"),
           run: () => void runTakeover(),
         },
       ]
@@ -52,28 +53,28 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300">
             <IconList size={10} className="shrink-0" />
-            <span className="truncate">计划模式 · {PLAN_MODE_HINT}</span>
+            <span className="truncate">{t("计划模式 · {PLAN_MODE_HINT}", { PLAN_MODE_HINT })}</span>
           </div>
         )}
         {editing && (
           <div className="mb-1.5 flex items-center gap-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2 py-1 text-[11px] text-blue-300">
             <IconEdit size={10} className="shrink-0" />
             <span className="min-w-0 flex-1 truncate">
-              {editSubmitting ? "正在编辑并重新发送…" : "编辑并重新发送将删除此消息后的消息和运行记录"}
+              {editSubmitting ? t("正在编辑并重新发送…") : t("编辑并重新发送将删除此消息后的消息和运行记录")}
             </span>
             <button
               className="nx-btn nx-btn-primary nx-btn-xs shrink-0"
               disabled={!input.trim() || editSubmitting}
               onClick={() => void submitEditResend()}
             >
-              编辑并重新发送
+              {t("编辑并重新发送")}
             </button>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
               disabled={editSubmitting}
               onClick={() => setEditing(null)}
             >
-              取消
+              {t("取消")}
             </button>
           </div>
         )}
@@ -85,16 +86,16 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           >
             <IconAlert size={10} className="shrink-0" />
             <span className="truncate">
-              {activeRun.cancellation === "cancelling" ? "正在停止，等待任务结束…" : "停止未确认"}
+              {activeRun.cancellation === "cancelling" ? t("正在停止，等待任务结束…") : t("停止未确认")}
             </span>
             {activeRun.cancellation === "unconfirmed" && !activeRun.settled && (
               <button className="nx-btn nx-btn-outline nx-btn-xs shrink-0" onClick={stop}>
-                重试
+                {t("重试")}
               </button>
             )}
             {activeRun.cancellation === "unconfirmed" && (
               <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={follow.jumpToLatest}>
-                查看任务
+                {t("查看任务")}
               </button>
             )}
           </div>
@@ -108,12 +109,12 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             {syncNotice.phase === "syncing" ? (
               <>
                 <IconLoader size={10} className="animate-spin text-amber-300/80" />
-                <span className="truncate">连接已恢复，正在补齐输出…</span>
+                <span className="truncate">{t("连接已恢复，正在补齐输出…")}</span>
               </>
             ) : syncNotice.phase === "failed" ? (
               <>
                 <IconAlert size={10} className="shrink-0 text-red-300" />
-                <span className="truncate">补齐失败，输出可能不完整</span>
+                <span className="truncate">{t("补齐失败，输出可能不完整")}</span>
                 <button
                   className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
                   onClick={() => {
@@ -121,12 +122,12 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                     if (current?.jobId) resyncRun(current.generation, current.jobId);
                   }}
                 >
-                  重新补齐
+                  {t("重新补齐")}
                 </button>
               </>
             ) : (
               <span className="truncate text-[var(--nx-fg-tertiary)]">
-                {syncNotice.count > 0 ? `已补齐断线期间的 ${syncNotice.count} 条输出` : "连接已恢复，输出无缺失"}
+                {syncNotice.count > 0 ? t("已补齐断线期间的 {count} 条输出", { count: syncNotice.count }) : t("连接已恢复，输出无缺失")}
               </span>
             )}
           </div>
@@ -167,7 +168,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
                 <span className="truncate">{r.label}</span>
                 <button
                   className="nx-chip-x"
-                  title="移除引用"
+                  title={t("移除引用")}
                   onClick={() => setRefs((prev) => prev.filter((x) => x.id !== r.id))}
                 >
                   <IconClose size={10} />
@@ -180,11 +181,11 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
         {images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
             {images.map((src, i) => (
-              <span key={i} className="nx-attach" title="粘贴的图片">
+              <span key={i} className="nx-attach" title={t("粘贴的图片")}>
                 <img src={src} alt="" />
                 <button
                   className="nx-attach-x"
-                  title="移除图片"
+                  title={t("移除图片")}
                   onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
                 >
                   <IconClose size={10} />
@@ -199,13 +200,13 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             <IconAlert size={10} className="shrink-0" />
             <span className="min-w-0 flex-1">{PRIVACY_IMAGE_NOTICE}</span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs shrink-0" onClick={acknowledgePrivacyImageNotice}>
-              确定
+              {t("确定")}
             </button>
           </div>
         )}
 
         {slashMenuOpen && (
-          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label="命令与技能">
+          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label={t("命令与技能")}>
             {slashItems.length === 0 ? (
               <div className="px-2 py-1.5 text-[11.5px] text-neutral-500">{slashEmptyText}</div>
             ) : (
@@ -224,15 +225,15 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               ))
             )}
             {modelQuery === null && skillOptions !== null && skillOptions.length === 0 && (
-              <div className="border-t border-neutral-800/70 px-2 pt-1.5 text-[10.5px] text-neutral-500">在「设置 → AI 技能」中定义的技能也会显示在此处。</div>
+              <div className="border-t border-neutral-800/70 px-2 pt-1.5 text-[10.5px] text-neutral-500">{t("在「设置 → AI 技能」中定义的技能也会显示在此处。")}</div>
             )}
           </div>
         )}
 
         {atOpen && (
-          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label="引用">
+          <div className="mb-1.5 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1" role="listbox" aria-label={t("引用")}>
             {atItems.length === 0 ? (
-              <div className="px-2 py-1.5 text-[11.5px] text-neutral-500">无匹配的终端或文件</div>
+              <div className="px-2 py-1.5 text-[11.5px] text-neutral-500">{t("无匹配的终端或文件")}</div>
             ) : (
               atItems.map((r, index) => (
                 <button
@@ -256,14 +257,14 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
           className="nx-textarea pointer-coarse:text-[16px] max-h-40 min-h-[64px] w-full [@media(max-height:480px)]:h-9 [@media(max-height:480px)]:min-h-0"
           placeholder={
             busy
-              ? "运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到"
+              ? t("运行中：Enter 发送补充指令，AI 会在当前步骤完成后收到")
               : sessionId
                 ? DESKTOP
-                  ? "向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能"
-                  : "向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片"
-                : "未连接会话（仍可全局提问）"
+                  ? t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能")
+                  : t("向 NexTerm 提问（Enter 发送，Shift+Enter 换行），@ 引用，/ 命令与技能，可粘贴图片")
+                : t("未连接会话（仍可全局提问）")
           }
-          aria-label="消息输入"
+          aria-label={t("消息输入")}
           value={input}
           rows={3}
           onChange={(e) => onInputChange(e.target.value)}
@@ -326,8 +327,8 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             <button
               type="button"
               className="nx-cbar-icon"
-              title={`${DESKTOP ? "添加图片" : "添加图片（也可以直接粘贴）"}${privacyGuard.enabled ? "，图片不会脱敏" : ""}`}
-              aria-label="添加图片"
+              title={`${DESKTOP ? t("添加图片") : t("添加图片（也可以直接粘贴）")}${privacyGuard.enabled ? t("，图片不会脱敏") : ""}`}
+              aria-label={t("添加图片")}
               onClick={() => imageInputRef.current?.click()}
             >
               <IconImage size={14} />
@@ -343,7 +344,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
               onClick={() => setPermOpen((v) => !v)}
             >
               {permError ? <IconAlert size={13} /> : <IconKey size={13} />}
-              <span className="nx-cbar-label">{permError ? "权限异常" : perm ? MODE_LABEL[perm.mode] : "权限"}</span>
+              <span className="nx-cbar-label">{permError ? t("权限异常") : perm ? MODE_LABEL[perm.mode] : t("权限")}</span>
             </button>
             <PrivacyIndicator guard={privacyGuard} />
             <UsageRing
@@ -355,13 +356,13 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             {busy ? (
               <button
                 className="nx-send-btn nx-send-btn-stop"
-                aria-label="停止"
+                aria-label={t("停止")}
                 title={
                   activeRun?.cancellation === "cancelling"
-                    ? "停止当前任务：已提交停止请求，等待任务结束"
+                    ? t("停止当前任务：已提交停止请求，等待任务结束")
                     : activeRun?.cancellation === "unconfirmed"
-                      ? "停止当前任务：停止未确认，选择以重试"
-                      : "停止当前任务（保留已完成的输出）"
+                      ? t("停止当前任务：停止未确认，选择以重试")
+                      : t("停止当前任务（保留已完成的输出）")
                 }
                 disabled={activeRun?.cancellation === "cancelling"}
                 onClick={() => void stop()}
@@ -371,9 +372,9 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
             ) : (
               <button
                 className="nx-send-btn"
-                aria-label={editing ? "编辑并重新发送" : "发送"}
+                aria-label={editing ? t("编辑并重新发送") : t("发送")}
                 aria-keyshortcuts="Enter"
-                title={editing ? "编辑并重新发送" : "发送 (Enter)"}
+                title={editing ? t("编辑并重新发送") : t("发送 (Enter)")}
                 disabled={sendDisabled}
                 onClick={() => (editing ? void submitEditResend() : sendMessage())}
               >

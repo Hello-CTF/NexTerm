@@ -20,6 +20,7 @@ import { WelcomePage, WorkspaceEmpty } from "../workspace/EmptyStates";
 import { type OverlayDocks } from "./useOverlayDocks";
 import { WorkspaceConnectionBar } from "./WorkspaceConnectionBar";
 import { useLeftView } from "./leftView";
+import { t as tr } from "../../i18n";
 
 export interface WorkspaceBodyProps {
   ws: Workspace | null | undefined;
@@ -105,12 +106,12 @@ export function WorkspaceBody({
         <button
           type="button"
           className="nx-dock-backdrop"
-          aria-label="收起侧栏"
+          aria-label={tr("收起侧栏")}
           onClick={() => setOverlayDock(null)}
         />
       )}
       {leftDockOpen && (
-        <div className="nx-left-dock" role="navigation" aria-label="左侧栏">
+        <div className="nx-left-dock" role="navigation" aria-label={tr("左侧栏")}>
           {leftView === "credentials" ? (
             <Lazy fallback={dockFallback}><CredentialsSidebar /></Lazy>
           ) : leftView === "files" && ws?.sessionId ? (
@@ -146,7 +147,7 @@ export function WorkspaceBody({
             <div className="min-h-0 flex-1">
               {visibleWorkspaces.length === 0 && (
                 <div role="status" className="flex h-full items-center justify-center px-6 text-center text-sm text-neutral-500">
-                  当前项目暂无打开的工作区。切换项目不会断开其他工作区。
+                  {tr("当前项目暂无打开的工作区。切换项目不会断开其他工作区。")}
                 </div>
               )}
               {workspaces.map((w) => {
@@ -245,10 +246,10 @@ function WorkspaceArea({ wrapped, covered, children }: { wrapped: boolean; cover
 }
 
 const MOVE_DIRECTIONS: { direction: FocusDirection; label: string }[] = [
-  { direction: "left", label: "左侧窗格" },
-  { direction: "right", label: "右侧窗格" },
-  { direction: "up", label: "上方窗格" },
-  { direction: "down", label: "下方窗格" },
+  { direction: "left", label: tr("左侧窗格") },
+  { direction: "right", label: tr("右侧窗格") },
+  { direction: "up", label: tr("上方窗格") },
+  { direction: "down", label: tr("下方窗格") },
 ];
 
 // paneMoveTargets lists the panes a tab can move to: the geometric neighbours of its pane.

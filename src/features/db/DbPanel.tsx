@@ -38,6 +38,7 @@ import {
   IconTerminal,
   IconXCircle,
 } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 export function DbPanel({
   connId,
@@ -60,7 +61,7 @@ const SQL_SYSTEM_SCHEMAS: Record<string, string[]> = {
   postgres: ["information_schema", "pg_catalog", "pg_toast"],
 };
 
-const UNKNOWN_SQL_RESULT = "结果未知，请先确认数据库状态";
+const UNKNOWN_SQL_RESULT = tr("结果未知，请先确认数据库状态");
 
 function isUnknownSqlExecutionError(error: unknown): boolean {
   if (typeof error !== "object" || error === null || !("code" in error) || !("message" in error)) {
@@ -163,9 +164,9 @@ function SqlView({
   const copyProblemDetail = async (detail: string) => {
     try {
       await copyText(sanitizeWorkspaceProblemText(detail));
-      pushToast("success", "问题详情已复制");
+      pushToast("success", tr("问题详情已复制"));
     } catch (error) {
-      pushToast("error", `复制失败：${describeError(error)}`);
+      pushToast("error", tr("复制失败：{value}", { value: describeError(error) }));
     }
   };
 
@@ -225,7 +226,7 @@ function SqlView({
       recordProblem(generation, {
         createdAt: Date.now(),
         source: "sql-tables",
-        operation: "读取表列表",
+        operation: tr("读取表列表"),
         target: {
           ...target,
           identity: `${target.title} · ${target.connId}`,
@@ -274,7 +275,7 @@ function SqlView({
       recordProblem(generation, {
         createdAt: Date.now(),
         source: "sql-schemas",
-        operation: "读取 schema 列表",
+        operation: tr("读取 schema 列表"),
         target: {
           ...target,
           identity: `${target.title} · ${target.connId}`,
@@ -340,8 +341,8 @@ function SqlView({
           basicSetup,
           sqlLang(),
           nxHighlight,
-          EditorView.contentAttributes.of({ "aria-label": "SQL 编辑器" }),
-          placeholder("输入 SQL；草稿仅保留到当前工作区关闭或应用退出"),
+          EditorView.contentAttributes.of({ "aria-label": tr("SQL 编辑器") }),
+          placeholder(tr("输入 SQL；草稿仅保留到当前工作区关闭或应用退出")),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged && !update.selectionSet) return;
             if (
@@ -406,7 +407,7 @@ function SqlView({
         recordProblem(problemContext, {
           createdAt: endedAt,
           source: "sql-query",
-          operation: "执行 SQL",
+          operation: tr("执行 SQL"),
           target: {
             ...target,
             identity: `${target.title} · ${target.connId}`,
@@ -488,11 +489,9 @@ function SqlView({
     if (incomplete || replacing) {
       const replace = await ask(
         incomplete
-          ? `此历史 SQL 已截断，载入的只是不完整副本，不是原始完整 SQL。${
-              replacing ? "\n\n当前 SQL 草稿也会被覆盖。" : ""
-            }\n\n取消：保留当前草稿\n确定：载入不完整副本`
-          : "当前 SQL 草稿会被覆盖。\n\n取消：保留草稿并取消\n确定：替换查询",
-        { title: incomplete ? "载入不完整 SQL 副本？" : "替换 SQL 草稿？", kind: "warning" },
+          ? tr("此历史 SQL 已截断，载入的只是不完整副本，不是原始完整 SQL。{value}\n\n取消：保留当前草稿\n确定：载入不完整副本", { value: replacing ? tr("\n\n当前 SQL 草稿也会被覆盖。") : "" })
+          : tr("当前 SQL 草稿会被覆盖。\n\n取消：保留草稿并取消\n确定：替换查询"),
+        { title: incomplete ? tr("载入不完整 SQL 副本？") : tr("替换 SQL 草稿？"), kind: "warning" },
       );
       if (
         !replace ||
@@ -550,21 +549,21 @@ function SqlView({
         <span className="nx-toolbar-title">{dialect === "postgres" ? "PostgreSQL" : "MySQL / MariaDB"}</span>
         <Select
           className="w-[168px]"
-          ariaLabel={dialect === "postgres" ? "选择 schema" : "选择数据库"}
+          ariaLabel={dialect === "postgres" ? tr("选择 schema") : tr("选择数据库")}
           value={schema}
           onChange={(value) => void loadTables(value)}
           options={schemas.map((s) => ({ value: s, label: s }))}
         />
         <span className="nx-count">{tablesStatus === "ready" ? tables.length : "—"}</span>
         <span className="nx-hint hidden min-[560px]:inline">
-          {dialect === "postgres" ? "张表和视图" : "张表"}
+          {dialect === "postgres" ? tr("张表和视图") : tr("张表")}
         </span>
         <div className="nx-spacer" />
         {(workspaceProblems?.length ?? 0) > 0 && (
           <button
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
-            aria-label="打开问题列表"
+            aria-label={tr("打开问题列表")}
             aria-expanded={showingProblems}
             aria-controls={problemPanelId}
             onClick={() => {
@@ -572,7 +571,7 @@ function SqlView({
               setProblemsOpen((open) => !open);
             }}
           >
-            问题
+            {tr("问题")}
           </button>
         )}
         <button
@@ -584,19 +583,19 @@ function SqlView({
             setProblemsOpen(false);
             setHistoryOpen((open) => !open);
           }}
-          title="查看执行历史；选择记录仅载入 SQL 草稿"
+          title={tr("查看执行历史；选择记录仅载入 SQL 草稿")}
         >
           <IconHistory size={12} />
-          历史
+          {tr("历史")}
         </button>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
           onClick={() => void run()}
-          title="运行整段 SQL，或只运行选中部分（一次只执行一条语句）"
+          title={tr("运行整段 SQL，或只运行选中部分（一次只执行一条语句）")}
         >
           {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
-          {running ? "正在运行…" : "运行"}
+          {running ? tr("正在运行…") : tr("运行")}
           <span className="nx-kbd border-white/30 text-white/75">Ctrl ↵</span>
         </button>
       </div>
@@ -617,7 +616,7 @@ function SqlView({
         id={showingProblems ? problemPanelId : historyPanelId}
         className="min-h-[48px] flex-1 overflow-auto"
         role={showingProblems || historyOpen ? "region" : "status"}
-        aria-label={showingProblems ? "本次问题" : historyOpen ? "SQL 执行历史" : undefined}
+        aria-label={showingProblems ? tr("本次问题") : historyOpen ? tr("SQL 执行历史") : undefined}
       >
         {showingProblems && workspaceId ? (
           <WorkspaceProblems
@@ -635,14 +634,14 @@ function SqlView({
           <StructureView structure={structure} />
         ) : unknownResult ? (
           <SqlErrorView
-            label="结果未知"
+            label={tr("结果未知")}
             error={unknownResult}
             onCopy={() => void copyProblemDetail(unknownResult)}
             onShowProblems={() => setProblemsOpen(true)}
           />
         ) : transportError ? (
           <SqlErrorView
-            label="连接错误"
+            label={tr("连接错误")}
             error={transportError}
             onCopy={() => void copyProblemDetail(transportError)}
             onShowProblems={() => setProblemsOpen(true)}
@@ -654,7 +653,7 @@ function SqlView({
             onShowProblems={() => setProblemsOpen(true)}
           />
         ) : (
-          <div className="nx-empty">按 Ctrl+Enter 运行，一次只执行一条语句</div>
+          <div className="nx-empty">{tr("按 Ctrl+Enter 运行，一次只执行一条语句")}</div>
         )}
       </div>
 
@@ -663,35 +662,35 @@ function SqlView({
           <button
             className={`nx-segment-item ${browse === "tables" ? "is-active" : ""}`}
             onClick={() => setBrowse("tables")}
-            title="选择表名，将 SELECT 查询填入编辑器"
+            title={tr("选择表名，将 SELECT 查询填入编辑器")}
           >
             <IconTable size={12} />
-            表
+            {tr("表")}
           </button>
           <button
             className={`nx-segment-item ${browse === "columns" ? "is-active" : ""}`}
             onClick={() => setBrowse("columns")}
-            title="选择表名查看字段结构"
+            title={tr("选择表名查看字段结构")}
           >
             <IconList size={12} />
-            结构
+            {tr("结构")}
           </button>
         </div>
         <input
           className="nx-input nx-input-sm w-[120px] shrink-0"
           value={tableFilter}
           onChange={(e) => setTableFilter(e.target.value)}
-          placeholder="搜索全部表"
-          aria-label="搜索全部表"
+          placeholder={tr("搜索全部表")}
+          aria-label={tr("搜索全部表")}
         />
         <button
           className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
           disabled={!schema || tablesStatus === "loading"}
           onClick={() => void loadTables(schema)}
-          title="刷新表列表"
+          title={tr("刷新表列表")}
         >
           <IconRefresh size={11} />
-          刷新
+          {tr("刷新")}
         </button>
         <div
           className={`flex min-w-0 flex-1 items-center gap-1 ${
@@ -703,32 +702,32 @@ function SqlView({
           {schemasStatus === "error" ? (
             <>
               <span className="nx-hint shrink-0 text-red-300">
-                {dialect === "postgres" ? "未能加载 schema 列表" : "未能加载数据库列表"}：{schemasError}
+                {dialect === "postgres" ? tr("未能加载 schema 列表") : tr("未能加载数据库列表")}：{schemasError}
               </span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                 onClick={() => void loadSchemas()}
               >
                 <IconRefresh size={11} />
-                重试
+                {tr("重试")}
               </button>
             </>
           ) : schemasStatus === "loading" || tablesStatus === "loading" ? (
-            <span className="nx-hint shrink-0">正在加载表列表…</span>
+            <span className="nx-hint shrink-0">{tr("正在加载表列表…")}</span>
           ) : tablesStatus === "error" ? (
             <>
-              <span className="nx-hint shrink-0 text-red-300">未能加载表列表：{tablesError}</span>
+              <span className="nx-hint shrink-0 text-red-300">{tr("未能加载表列表：")}{tablesError}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                 onClick={() => void loadTables(schema)}
               >
                 <IconRefresh size={11} />
-                重试
+                {tr("重试")}
               </button>
             </>
           ) : tables.length === 0 ? (
             <span className="nx-hint">
-              {dialect === "postgres" ? "此 schema 中没有表或视图" : "此数据库中没有表"}
+              {dialect === "postgres" ? tr("此 schema 中没有表或视图") : tr("此数据库中没有表")}
             </span>
           ) : (
             <>
@@ -739,18 +738,18 @@ function SqlView({
                     activeTable === t && browse === "columns" ? "nx-chip-accent" : ""
                   }`}
                   onClick={() => (browse === "tables" ? void fillQuery(t) : void showColumns(t))}
-                  title={browse === "tables" ? `填入 SELECT * FROM ${t}` : `查看 ${t} 的字段`}
+                  title={browse === "tables" ? tr("填入 SELECT * FROM {t}", { t }) : tr("查看 {t} 的字段", { t })}
                 >
                   {t}
                 </button>
               ))}
-              {filteredTables.length === 0 && <span className="nx-hint">没有匹配的表</span>}
+              {filteredTables.length === 0 && <span className="nx-hint">{tr("没有匹配的表")}</span>}
               {!normalizedFilter && tables.length > 60 && (
                 <button
                   className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                   onClick={() => setTablesExpanded((expanded) => !expanded)}
                 >
-                  {tablesExpanded ? "收起" : "展开全部"}
+                  {tablesExpanded ? tr("收起") : tr("展开全部")}
                 </button>
               )}
             </>
@@ -771,16 +770,16 @@ function SqlExecutionHistory({
   return (
     <div>
       <div className="border-b border-neutral-800/60 px-3 py-2 text-[11px] text-neutral-500">
-        仅保留最近 50 条；工作区关闭或应用退出后清理
+        {tr("仅保留最近 50 条；工作区关闭或应用退出后清理")}
       </div>
       {records.length === 0 ? (
-        <div className="nx-empty">暂无执行记录</div>
+        <div className="nx-empty">{tr("暂无执行记录")}</div>
       ) : (
-        <ul aria-label="执行记录" className="divide-y divide-neutral-800/60">
+        <ul aria-label={tr("执行记录")} className="divide-y divide-neutral-800/60">
           {records.map((record) => {
             const startedAt = new Date(record.startedAt);
             const outcomeLabel =
-              record.outcome === "success" ? "成功" : record.outcome === "unknown" ? "结果未知" : "SQL 错误";
+              record.outcome === "success" ? tr("成功") : record.outcome === "unknown" ? tr("结果未知") : tr("SQL 错误");
             const outcomeClass =
               record.outcome === "success"
                 ? "text-green-300"
@@ -795,8 +794,8 @@ function SqlExecutionHistory({
                   onClick={() => onLoad(record)}
                   title={
                     record.sqlTruncated
-                      ? "只载入不完整的 SQL 副本，不会自动执行"
-                      : "只载入 SQL 草稿，不会自动执行"
+                      ? tr("只载入不完整的 SQL 副本，不会自动执行")
+                      : tr("只载入 SQL 草稿，不会自动执行")
                   }
                 >
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-neutral-400">
@@ -808,17 +807,16 @@ function SqlExecutionHistory({
                     <span className={outcomeClass}>{outcomeLabel}</span>
                   </span>
                   <span className="text-[11px] text-neutral-500">
-                    schema {record.schema || "默认"} · 耗时 {record.durationMs}ms ·{" "}
-                    {record.rowsAffected === null ? "影响行数未知" : `${record.rowsAffected} 行受影响`}
+                    {tr("schema {value} · 耗时 {durationMs}ms ·{value2}{value3}", { value: record.schema || tr("默认"), durationMs: record.durationMs, value2: " ", value3: record.rowsAffected === null ? tr("影响行数未知") : tr("{rowsAffected} 行受影响", { rowsAffected: record.rowsAffected }) })}
                   </span>
                   <span className="w-full truncate font-mono text-xs text-neutral-300" title={record.sql}>
                     {record.sql}
                   </span>
                   {record.sqlTruncated && (
-                    <span className="text-[11px] text-amber-300">SQL 已截断；载入的只是不完整副本</span>
+                    <span className="text-[11px] text-amber-300">{tr("SQL 已截断；载入的只是不完整副本")}</span>
                   )}
                   {record.errorTruncated && (
-                    <span className="text-[11px] text-amber-300">错误已截断</span>
+                    <span className="text-[11px] text-amber-300">{tr("错误已截断")}</span>
                   )}
                   {record.error && (
                     <span className={`max-h-10 overflow-hidden break-all text-xs ${outcomeClass}`}>
@@ -839,12 +837,12 @@ function StructureView({ structure }: { structure: TableDescribe & { table: stri
   return (
     <div className="min-w-max p-2">
       <div className="nx-hint px-1 py-1 font-mono">{structure.table}</div>
-      <section aria-label="字段">
-        <h3 className="nx-hint px-1 py-1">字段</h3>
-        <table className="nx-table" aria-label="字段列表">
+      <section aria-label={tr("字段")}>
+        <h3 className="nx-hint px-1 py-1">{tr("字段")}</h3>
+        <table className="nx-table" aria-label={tr("字段列表")}>
           <thead>
             <tr>
-              {["字段", "类型", "可空", "键", "默认值", "额外"].map((name) => (
+              {[tr("字段"), tr("类型"), tr("可空"), tr("键"), tr("默认值"), tr("额外")].map((name) => (
                 <th key={name}>{name}</th>
               ))}
             </tr>
@@ -863,13 +861,13 @@ function StructureView({ structure }: { structure: TableDescribe & { table: stri
           </tbody>
         </table>
       </section>
-      <section aria-label="索引">
-        <h3 className="nx-hint px-1 pb-1 pt-3">索引</h3>
+      <section aria-label={tr("索引")}>
+        <h3 className="nx-hint px-1 pb-1 pt-3">{tr("索引")}</h3>
         {structure.indexes.length ? (
-          <table className="nx-table" aria-label="索引列表">
+          <table className="nx-table" aria-label={tr("索引列表")}>
             <thead>
               <tr>
-                {["索引", "类型", "字段", "顺序"].map((name) => (
+                {[tr("索引"), tr("类型"), tr("字段"), tr("顺序")].map((name) => (
                   <th key={name}>{name}</th>
                 ))}
               </tr>
@@ -886,7 +884,7 @@ function StructureView({ structure }: { structure: TableDescribe & { table: stri
             </tbody>
           </table>
         ) : (
-          <div className="nx-hint px-1">没有索引</div>
+          <div className="nx-hint px-1">{tr("没有索引")}</div>
         )}
       </section>
     </div>
@@ -904,12 +902,12 @@ function SqlErrorView({
   onCopy: () => void;
   onShowProblems: () => void;
 }) {
-  const unknown = label === "结果未知";
+  const unknown = label === tr("结果未知");
   const summary = unknown
-    ? "无法确认该 SQL 是否已生效。请先在数据库中确认结果，避免重复执行。"
-    : label === "连接错误"
-      ? "无法连接数据库，该 SQL 未执行。请检查连接后重新运行。"
-      : "该 SQL 执行失败。请根据详细信息修改后重新运行。";
+    ? tr("无法确认该 SQL 是否已生效。请先在数据库中确认结果，避免重复执行。")
+    : label === tr("连接错误")
+      ? tr("无法连接数据库，该 SQL 未执行。请检查连接后重新运行。")
+      : tr("该 SQL 执行失败。请根据详细信息修改后重新运行。");
   return (
     <div className={`p-3 text-xs leading-relaxed ${unknown ? "text-amber-300" : "text-red-300"}`}>
       <div>
@@ -917,15 +915,15 @@ function SqlErrorView({
         {summary}
       </div>
       <details className="mt-1.5 font-mono">
-        <summary className="cursor-pointer font-sans text-neutral-400">查看详细信息</summary>
+        <summary className="cursor-pointer font-sans text-neutral-400">{tr("查看详细信息")}</summary>
         <div className="mt-1 whitespace-pre-wrap break-words">{error}</div>
       </details>
       <div className="mt-2 flex items-center gap-2 font-sans">
         <button type="button" className="nx-link" onClick={onCopy}>
-          复制
+          {tr("复制")}
         </button>
         <button type="button" className="nx-link" onClick={onShowProblems}>
-          查看问题
+          {tr("查看问题")}
         </button>
       </div>
     </div>
@@ -945,7 +943,7 @@ function ResultTable({
   if (result.error) {
     return (
       <SqlErrorView
-        label="SQL 错误"
+        label={tr("SQL 错误")}
         error={result.error}
         onCopy={() => onCopyError(result.error as string)}
         onShowProblems={onShowProblems}
@@ -955,25 +953,23 @@ function ResultTable({
   if (!result.columns.length) {
     return (
       <div className="p-3 text-xs text-neutral-400">
-        <span className="nx-badge nx-badge-green mr-2">运行成功</span>
-        {result.rowsAffected} 行受影响，耗时 {result.durationMs}ms
-      </div>
+        <span className="nx-badge nx-badge-green mr-2">{tr("运行成功")}</span>
+        {tr("{rowsAffected} 行受影响，耗时 {durationMs}ms", { rowsAffected: result.rowsAffected, durationMs: result.durationMs })}</div>
     );
   }
   if (result.rows.length === 0) {
     return (
       <div className="p-3 text-xs text-neutral-400">
-        <span className="nx-badge nx-badge-green mr-2">运行成功</span>
-        查询未返回数据（{result.columns.length} 列，0 行），耗时 {result.durationMs}ms
-      </div>
+        <span className="nx-badge nx-badge-green mr-2">{tr("运行成功")}</span>
+        {tr("查询未返回数据（{length} 列，0 行），耗时 {durationMs}ms", { length: result.columns.length, durationMs: result.durationMs })}</div>
     );
   }
   const copyCsv = async () => {
     try {
       await copyAsCsv(result);
-      pushToast("success", "CSV 已复制");
+      pushToast("success", tr("CSV 已复制"));
     } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
+      pushToast("error", tr("复制失败：{value}", { value: describeError(e) }));
     }
   };
   return (
@@ -1000,12 +996,11 @@ function ResultTable({
       </table>
       <div className="flex items-center gap-3 px-3 py-2 text-[11px] text-neutral-500">
         <span>
-          {result.rows.length} 行，耗时 {result.durationMs}ms
-        </span>
-        {result.truncated && <span className="text-amber-300">结果超过 5000 行，仅显示前 5000 行。可添加 LIMIT 缩小范围</span>}
+          {tr("{length} 行，耗时 {durationMs}ms", { length: result.rows.length, durationMs: result.durationMs })}</span>
+        {result.truncated && <span className="text-amber-300">{tr("结果超过 5000 行，仅显示前 5000 行。可添加 LIMIT 缩小范围")}</span>}
         <span className="nx-spacer" />
         <button className="nx-link" onClick={() => void copyCsv()}>
-          复制 CSV
+          {tr("复制 CSV")}
         </button>
       </div>
     </div>
@@ -1023,16 +1018,16 @@ async function copyAsCsv(result: QueryResult) {
 }
 
 const DESTRUCTIVE_REDIS_WARNINGS: Record<string, string> = {
-  FLUSHALL: "删除 Redis 中的所有键，且无法恢复",
-  FLUSHDB: "删除当前数据库中的所有键，且无法恢复",
-  SHUTDOWN: "停止 Redis 服务，并断开所有客户端",
-  DEL: "删除指定的键，且无法恢复",
-  UNLINK: "异步删除指定的键，且无法恢复",
-  CONFIG: "CONFIG SET 会修改服务器配置，可能导致服务异常；CONFIG REWRITE 会将修改写入配置文件",
-  DEBUG: "DEBUG 用于服务器内部排障，DEBUG SEGFAULT 会导致 Redis 进程崩溃",
-  EVAL: "EVAL 会执行任意 Lua 脚本，可读取、修改或删除任意数据",
-  EVALSHA: "EVALSHA 会执行已缓存的 Lua 脚本，可读取、修改或删除任意数据",
-  FCALL: "FCALL 会调用已加载的函数，可读取、修改或删除任意数据",
+  FLUSHALL: tr("删除 Redis 中的所有键，且无法恢复"),
+  FLUSHDB: tr("删除当前数据库中的所有键，且无法恢复"),
+  SHUTDOWN: tr("停止 Redis 服务，并断开所有客户端"),
+  DEL: tr("删除指定的键，且无法恢复"),
+  UNLINK: tr("异步删除指定的键，且无法恢复"),
+  CONFIG: tr("CONFIG SET 会修改服务器配置，可能导致服务异常；CONFIG REWRITE 会将修改写入配置文件"),
+  DEBUG: tr("DEBUG 用于服务器内部排障，DEBUG SEGFAULT 会导致 Redis 进程崩溃"),
+  EVAL: tr("EVAL 会执行任意 Lua 脚本，可读取、修改或删除任意数据"),
+  EVALSHA: tr("EVALSHA 会执行已缓存的 Lua 脚本，可读取、修改或删除任意数据"),
+  FCALL: tr("FCALL 会调用已加载的函数，可读取、修改或删除任意数据"),
 };
 
 function RedisView({ connId }: { connId: string }) {
@@ -1134,7 +1129,7 @@ function RedisView({ connId }: { connId: string }) {
     const command = args[0].toUpperCase();
     const warning = DESTRUCTIVE_REDIS_WARNINGS[command];
     if (warning) {
-      const go = await ask(`执行 Redis ${command}？\n\n${warning}`, { kind: "warning" });
+      const go = await ask(tr("执行 Redis {command}？\n\n{warning}", { command, warning }), { kind: "warning" });
       if (!go) return;
     }
     try {
@@ -1146,15 +1141,15 @@ function RedisView({ connId }: { connId: string }) {
 
   const editTtl = async () => {
     if (!view) return;
-    const current = String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒`;
+    const current = String(view.ttl) === "-1" ? tr("永不过期") : tr("{value} 秒", { value: String(view.ttl) });
     const input = await promptText(
-      `设置过期时间（秒，填 -1 表示永不过期，填 0 会立即删除该键）。当前：${current}`,
+      tr("设置过期时间（秒，填 -1 表示永不过期，填 0 会立即删除该键）。当前：{current}", { current }),
       String(view.ttl),
     );
     if (input === null) return;
     const seconds = Number(input.trim());
     if (!/^(?:-1|\d+)$/.test(input.trim()) || !Number.isSafeInteger(seconds)) {
-      pushToast("error", "过期时间必须是整数秒（-1 表示永不过期）");
+      pushToast("error", tr("过期时间必须是整数秒（-1 表示永不过期）"));
       return;
     }
     try {
@@ -1163,7 +1158,7 @@ function RedisView({ connId }: { connId: string }) {
       pushToast("error", describeError(e));
       return;
     }
-    pushToast("success", "过期时间已更新");
+    pushToast("success", tr("过期时间已更新"));
     void inspect(String(view.key));
   };
 
@@ -1180,31 +1175,31 @@ function RedisView({ connId }: { connId: string }) {
               if (isImeKeyEvent(e)) return;
               if (e.key === "Enter") void doScan(0);
             }}
-            placeholder="匹配模式，如 products:*"
-            aria-label="键匹配模式"
+            placeholder={tr("匹配模式，如 products:*")}
+            aria-label={tr("键匹配模式")}
           />
-          <button className="nx-btn nx-btn-sm px-3" title="按当前模式重新扫描" onClick={() => void doScan(0)}>
+          <button className="nx-btn nx-btn-sm px-3" title={tr("按当前模式重新扫描")} onClick={() => void doScan(0)}>
             SCAN
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
           {scanStatus === "loading" ? (
-            <div className="nx-hint p-3">正在加载键列表…</div>
+            <div className="nx-hint p-3">{tr("正在加载键列表…")}</div>
           ) : scanStatus === "error" ? (
             <div className="p-3">
-              <div className="nx-hint text-red-300">未能加载键列表：{scanError}</div>
+              <div className="nx-hint text-red-300">{tr("未能加载键列表：")}{scanError}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs mt-1.5"
                 onClick={() => void doScan(0)}
               >
                 <IconRefresh size={11} />
-                重试
+                {tr("重试")}
               </button>
             </div>
           ) : keys.length === 0 && cursor === 0 ? (
-            <div className="nx-hint p-3">没有匹配的键</div>
+            <div className="nx-hint p-3">{tr("没有匹配的键")}</div>
           ) : keys.length === 0 ? (
-            <div className="nx-hint p-3">本页没有匹配的键，继续下一页…</div>
+            <div className="nx-hint p-3">{tr("本页没有匹配的键，继续下一页…")}</div>
           ) : (
             keys.map((k) => (
               <div
@@ -1220,14 +1215,14 @@ function RedisView({ connId }: { connId: string }) {
         {pageError && (
           <div className="flex shrink-0 items-center gap-1.5 border-t border-neutral-800/60 px-2.5 py-1.5">
             <span className="nx-hint min-w-0 flex-1 truncate text-red-300">
-              未能加载下一页：{pageError}
+              {tr("未能加载下一页：{pageError}", { pageError })}
             </span>
             <button
               className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
               onClick={() => void doScan(cursor)}
             >
               <IconRefresh size={11} />
-              重试
+              {tr("重试")}
             </button>
           </div>
         )}
@@ -1236,7 +1231,7 @@ function RedisView({ connId }: { connId: string }) {
             className="shrink-0 border-t border-neutral-800/60 px-2.5 py-1.5 text-left text-[11.5px] text-blue-300 hover:bg-neutral-800/50"
             onClick={() => void doScan(cursor)}
           >
-            下一页
+            {tr("下一页")}
           </button>
         )}
       </div>
@@ -1249,12 +1244,12 @@ function RedisView({ connId }: { connId: string }) {
                 <span className="nx-badge nx-badge-blue">{String(view.keyType)}</span>
                 <span className="nx-toolbar-title min-w-0 flex-1 truncate font-mono">{String(view.key)}</span>
                 <span className="nx-hint">
-                  {String(view.ttl) === "-1" ? "永不过期" : `${String(view.ttl)} 秒后过期`}
+                  {String(view.ttl) === "-1" ? tr("永不过期") : tr("{value} 秒后过期", { value: String(view.ttl) })}
                 </span>
                 <div className="nx-spacer" />
                 <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void editTtl()}>
                   <IconSettings size={13} />
-                  修改过期时间
+                  {tr("修改过期时间")}
                 </button>
               </div>
               <pre className="nx-pre min-h-0 flex-1 overflow-auto rounded-none bg-term">
@@ -1266,13 +1261,13 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-empty-icon">
                 <IconXCircle size={18} />
               </span>
-              <div className="text-[12.5px] text-red-300">未能加载键内容：{viewError}</div>
+              <div className="text-[12.5px] text-red-300">{tr("未能加载键内容：{viewError}", { viewError })}</div>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-sm"
                 onClick={() => void inspect(selected)}
               >
                 <IconRefresh size={12} />
-                重试
+                {tr("重试")}
               </button>
             </div>
           ) : viewPending && selected ? (
@@ -1280,14 +1275,14 @@ function RedisView({ connId }: { connId: string }) {
               <span className="nx-empty-icon">
                 <IconLoader size={18} className="animate-spin" />
               </span>
-              正在加载键内容…
+              {tr("正在加载键内容…")}
             </div>
           ) : (
             <div className="nx-empty">
               <span className="nx-empty-icon">
                 <IconLayers size={18} />
               </span>
-              请选择左侧的键以查看内容
+              {tr("请选择左侧的键以查看内容")}
             </div>
           )}
         </div>
@@ -1296,9 +1291,9 @@ function RedisView({ connId }: { connId: string }) {
           <div id={consolePanelId} className="nx-redis-console flex min-h-[74px] flex-col border-t border-neutral-800/60 bg-neutral-950/40 p-2.5">
             <div ref={consoleScrollRef} className="min-h-0 flex-1 overflow-auto">
               <div className="mb-1.5 text-[11px] text-neutral-500">
-                <div>控制台 · 使用 Redis 命令协议，不支持 SQL</div>
-                <div>危险命令执行前需要确认，其余命令直接执行</div>
-                <div>参数按空白切分，不支持引号包裹（如 SET k "a b" 会被拆成 3 个参数）</div>
+                <div>{tr("控制台 · 使用 Redis 命令协议，不支持 SQL")}</div>
+                <div>{tr("危险命令执行前需要确认，其余命令直接执行")}</div>
+                <div>{tr("参数按空白切分，不支持引号包裹（如 SET k \"a b\" 会被拆成 3 个参数）")}</div>
               </div>
               {cmdOut && (
                 <pre className="nx-pre text-[11px]" role="status">
@@ -1315,10 +1310,10 @@ function RedisView({ connId }: { connId: string }) {
                   if (isImeKeyEvent(e)) return;
                   if (e.key === "Enter") void runCmd();
                 }}
-                aria-label="Redis 命令"
+                aria-label={tr("Redis 命令")}
               />
               <button className="nx-btn nx-btn-sm" onClick={() => void runCmd()}>
-                执行
+                {tr("执行")}
               </button>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
@@ -1326,7 +1321,7 @@ function RedisView({ connId }: { connId: string }) {
                 aria-controls={consolePanelId}
                 onClick={() => setConsoleOpen(false)}
               >
-                收起
+                {tr("收起")}
               </button>
             </div>
           </div>
@@ -1339,11 +1334,11 @@ function RedisView({ connId }: { connId: string }) {
             onClick={() => setConsoleOpen(true)}
           >
             <IconTerminal size={12} className="shrink-0 text-neutral-500" />
-            <span className="shrink-0 text-[11.5px] text-neutral-300">控制台</span>
+            <span className="shrink-0 text-[11.5px] text-neutral-300">{tr("控制台")}</span>
             <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-500">
               {cmdOut.trim()
                 ? cmdOut.trim().split("\n").slice(-1)[0]
-                : "执行任意 Redis 命令；FLUSHALL / DEL 等危险命令会先要求确认"}
+                : tr("执行任意 Redis 命令；FLUSHALL / DEL 等危险命令会先要求确认")}
             </span>
             <IconChevronUp size={11} className="shrink-0 rotate-180 text-neutral-500" />
           </button>

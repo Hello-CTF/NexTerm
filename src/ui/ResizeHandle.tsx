@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { t } from "../i18n";
 
 export const RESIZE_END_EVENT = "nexterm:resize-end";
 
@@ -153,12 +154,12 @@ export function ResizeHandle({
       role="separator"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label={label ?? (side === "left" ? "调整左侧栏宽度" : "调整 AI 侧栏宽度")}
+      aria-label={label ?? (side === "left" ? t("调整左侧栏宽度") : t("调整 AI 侧栏宽度"))}
       aria-valuemin={min}
       aria-valuemax={max}
       aria-valuenow={Math.round(width)}
-      aria-valuetext={`${Math.round(width)} 像素`}
-      title="拖动调整宽度（双击或回车复位，方向键微调）"
+      aria-valuetext={t("{round} 像素", { round: Math.round(width) })}
+      title={t("拖动调整宽度（双击或回车复位，方向键微调）")}
       className={`nx-resize-handle ${active ? "is-dragging" : ""}`}
       onPointerDown={(event) => {
         if (event.button !== 0) return;

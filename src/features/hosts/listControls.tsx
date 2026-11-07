@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { t } from "../../i18n";
 
 export const LIST_PAGE_SIZE = 50;
 
@@ -55,7 +56,7 @@ export function ListToolbar({
       />
       {children}
       <span className="nx-hint whitespace-nowrap text-[11.5px]" data-list-count="">
-        {matched === total ? `共 ${total} ${unit}` : `匹配 ${matched} / ${total} ${unit}`}
+        {matched === total ? t("共 {total} {unit}", { total, unit }) : t("匹配 {matched} / {total} {unit}", { matched, total, unit })}
       </span>
     </div>
   );
@@ -67,13 +68,13 @@ export function Pager({ label, page, pages, onPage }: { label: string; page: num
   return (
     <div className="flex items-center justify-end gap-1.5 text-[11.5px]" role="group" aria-label={label}>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={page === 0} onClick={() => onPage(page - 1)}>
-        上一页
+        {t("上一页")}
       </button>
       <span className="nx-hint" aria-live="polite">
-        第 {page + 1} / {pages} 页
+        {t("第 {value} / {pages} 页", { value: page + 1, pages })}
       </span>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs" disabled={page >= pages - 1} onClick={() => onPage(page + 1)}>
-        下一页
+        {t("下一页")}
       </button>
     </div>
   );

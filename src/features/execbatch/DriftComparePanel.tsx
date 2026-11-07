@@ -19,6 +19,7 @@ import {
   type DriftAnalysis,
   type DriftGroup,
 } from "./drift";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 const MAX_DIFF_LINES = 500;
@@ -36,7 +37,7 @@ function GroupHosts({ group, onPin }: { group: DriftGroup; onPin: (sessionId: st
             type="button"
             key={result.sessionId}
             className="nx-badge"
-            title={`将 ${resultName(result)} 固定为 baseline`}
+            title={t("将 {value} 固定为 baseline", { value: resultName(result) })}
             onClick={() => onPin(result.sessionId)}
           >
             {resultName(result)}
@@ -45,7 +46,7 @@ function GroupHosts({ group, onPin }: { group: DriftGroup; onPin: (sessionId: st
       </div>
       {group.results.filter((result) => result.stderr).map((result) => (
         <details key={result.sessionId} className="mt-1 text-[11px]">
-          <summary className="cursor-pointer text-neutral-500">{resultName(result)} 的错误输出</summary>
+          <summary className="cursor-pointer text-neutral-500">{t("{value} 的错误输出", { value: resultName(result) })}</summary>
           <pre className="nx-pre mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all">{result.stderr}</pre>
         </details>
       ))}
@@ -136,11 +137,11 @@ export function DriftComparePanel({
 
   const start = () => {
     if (selectedIds.length === 0) {
-      setError("请至少选择一个已连接的 SSH 或受管设备会话");
+      setError(t("请至少选择一个已连接的 SSH 或受管设备会话"));
       return;
     }
     if (selectedIds.length > MAX_TARGETS) {
-      setError(`每次最多对比 ${MAX_TARGETS} 个目标`);
+      setError(t("每次最多对比 {MAX_TARGETS} 个目标", { MAX_TARGETS }));
       return;
     }
     let command: string;
@@ -151,7 +152,7 @@ export function DriftComparePanel({
       return;
     }
     if (!command.trim() || /[\r\n\0]/.test(command)) {
-      setError("请输入一条单行只读命令或有效文件路径");
+      setError(t("请输入一条单行只读命令或有效文件路径"));
       return;
     }
     void run({
@@ -169,7 +170,7 @@ export function DriftComparePanel({
   };
 
   return (
-    <section className="flex flex-col" aria-label="配置与输出漂移对比">
+    <section className="flex flex-col" aria-label={t("配置与输出漂移对比")}>
       <form
         className="flex flex-col gap-3 px-3 pb-3"
         onSubmit={(event) => {
@@ -190,10 +191,10 @@ export function DriftComparePanel({
         />
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            对比来源
+            {t("对比来源")}
             <Select
               className="w-32"
-              ariaLabel="漂移来源"
+              ariaLabel={t("漂移来源")}
               value={sourceKind}
               disabled={running}
               onChange={(value) => {
@@ -203,16 +204,16 @@ export function DriftComparePanel({
                 setProduction(null);
               }}
               options={[
-                { value: "file", label: "文件路径" },
-                { value: "command", label: "只读命令" },
+                { value: "file", label: t("文件路径") },
+                { value: "command", label: t("只读命令") },
               ]}
             />
           </div>
           <label className="flex min-w-56 flex-1 flex-col gap-1 text-[11px] text-neutral-500">
-            {sourceKind === "file" ? "远端文件路径" : "远端只读命令"}
+            {sourceKind === "file" ? t("远端文件路径") : t("远端只读命令")}
             <input
               className="nx-input font-mono text-xs"
-              aria-label={sourceKind === "file" ? "漂移文件路径" : "漂移只读命令"}
+              aria-label={sourceKind === "file" ? t("漂移文件路径") : t("漂移只读命令")}
               value={source}
               disabled={running}
               onChange={(event) => changeSource(event.target.value)}
@@ -227,19 +228,19 @@ export function DriftComparePanel({
                 if (active) void execBatchApi.cancel(active).catch((cause) => setError(describeError(cause)));
               }}
             >
-              <IconStop size={13} /> 取消对比
+              <IconStop size={13} /> {t("取消对比")}
             </button>
           ) : (
             <button type="submit" className="nx-btn nx-btn-primary" disabled={targets.length === 0}>
-              <IconPlay size={13} /> 执行对比
+              <IconPlay size={13} /> {t("执行对比")}
             </button>
           )}
         </div>
         <div className="text-[11px] text-neutral-500">
-          请只输入不会修改主机的命令；输出相同的主机归为一组。
+          {t("请只输入不会修改主机的命令；输出相同的主机归为一组。")}
         </div>
         {error && <div role="alert" className="text-[11px] text-red-300">{error}</div>}
-        {running && <div role="status" className="text-[11px] text-blue-300">正在读取并分组实时输出…</div>}
+        {running && <div role="status" className="text-[11px] text-blue-300">{t("正在读取并分组实时输出…")}</div>}
       </form>
 
       {production && (
@@ -263,21 +264,21 @@ export function DriftComparePanel({
       {analysis && (
         <div className="border-t border-neutral-800/70 px-3 py-3" data-testid="drift-results">
           <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px]">
-            <span className="font-medium text-neutral-300">内容分组</span>
+            <span className="font-medium text-neutral-300">{t("内容分组")}</span>
             <span className="nx-hint">
-              {groups.length} 组 · {analysis.failures.length} 个失败目标
+              {t("{length} 组 · {length2} 个失败目标", { length: groups.length, length2: analysis.failures.length })}
             </span>
             {baselineResult && <span className="nx-badge nx-badge-blue">baseline：{resultName(baselineResult)}</span>}
           </div>
-          {groups.length === 0 && <div className="text-[11px] text-neutral-500">没有可用于对比的成功输出。</div>}
+          {groups.length === 0 && <div className="text-[11px] text-neutral-500">{t("没有可用于对比的成功输出。")}</div>}
           <div className="flex flex-col gap-2">
             {groups.map((group, index) => (
               <article key={group.id} className="rounded border border-neutral-800/70 p-2.5" data-group-id={group.id}>
                 <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                  <span className="font-medium text-neutral-200">组 {index + 1} · {group.results.length} 台</span>
+                  <span className="font-medium text-neutral-200">{t("组 {value} · {length} 台", { value: index + 1, length: group.results.length })}</span>
                   <span className="nx-mono text-[10px] text-neutral-500" title={group.hash}>SHA-256 {group.hash.slice(0, 12)}…</span>
-                  {group.truncated && <span className="nx-badge nx-badge-amber">输出截断，仅返回部分可比较</span>}
-                  {group.binary && <span className="nx-badge nx-badge-amber">二进制，不做文本差异</span>}
+                  {group.truncated && <span className="nx-badge nx-badge-amber">{t("输出截断，仅返回部分可比较")}</span>}
+                  {group.binary && <span className="nx-badge nx-badge-amber">{t("二进制，不做文本差异")}</span>}
                   <span className="nx-spacer" />
                   <button
                     type="button"
@@ -289,7 +290,7 @@ export function DriftComparePanel({
                       if (compareGroupId === group.id) setCompareGroupId(groups.find((item) => item.id !== group.id)?.id ?? null);
                     }}
                   >
-                    设为基准组
+                    {t("设为基准组")}
                   </button>
                   <button
                     type="button"
@@ -297,7 +298,7 @@ export function DriftComparePanel({
                     disabled={group.id === baselineGroup?.id || group.id === compareGroup?.id}
                     onClick={() => setCompareGroupId(group.id)}
                   >
-                    对比此组
+                    {t("对比此组")}
                   </button>
                 </div>
                 <GroupHosts group={group} onPin={(sessionId) => {
@@ -306,12 +307,12 @@ export function DriftComparePanel({
                   if (compareGroupId === group.id) setCompareGroupId(groups.find((item) => item.id !== group.id)?.id ?? null);
                 }} />
                 {group.binary ? (
-                  <div className="mt-2 text-[11px] text-neutral-500">二进制输出 {group.content.length} 个字符；仅提供分组。</div>
+                  <div className="mt-2 text-[11px] text-neutral-500">{t("二进制输出 {length} 个字符；仅提供分组。", { length: group.content.length })}</div>
                 ) : (
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-[11px] text-neutral-500">查看本组输出</summary>
+                    <summary className="cursor-pointer text-[11px] text-neutral-500">{t("查看本组输出")}</summary>
                     <pre className="nx-pre mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all">
-                      {group.content || "（空输出）"}
+                      {group.content || t("（空输出）")}
                     </pre>
                   </details>
                 )}
@@ -322,15 +323,15 @@ export function DriftComparePanel({
           {baselineGroup && compareGroup && (
             <div className="mt-4 border-t border-neutral-800/70 pt-3" data-testid="drift-diff">
               <div className="mb-2 text-[11px] font-medium text-neutral-300">
-                组间差异：{baselineResult ? resultName(baselineResult) : "基准组"} → 对比组
+                {t("组间差异：{value} → 对比组", { value: baselineResult ? resultName(baselineResult) : t("基准组") })}
               </div>
               {baselineGroup.truncated || compareGroup.truncated ? (
-                <div className="text-[11px] text-amber-300">至少一组输出被截断，不能据此判断完整内容差异。</div>
+                <div className="text-[11px] text-amber-300">{t("至少一组输出被截断，不能据此判断完整内容差异。")}</div>
               ) : baselineGroup.binary || compareGroup.binary ? (
-                <div className="text-[11px] text-amber-300">二进制输出不支持逐行差异对比。</div>
+                <div className="text-[11px] text-amber-300">{t("二进制输出不支持逐行差异对比。")}</div>
               ) : (
                 <>
-                  <div className="nx-pre max-h-96 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px]" aria-label="组间行级差异">
+                  <div className="nx-pre max-h-96 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px]" aria-label={t("组间行级差异")}>
                     {diff.slice(0, MAX_DIFF_LINES).map((line, index) => (
                       <div key={index} className={line.kind === "add" ? "text-green-300" : line.kind === "del" ? "text-red-300" : "text-neutral-500"}>
                         {driftDiffLineText(line)}
@@ -338,7 +339,7 @@ export function DriftComparePanel({
                     ))}
                   </div>
                   {diff.length > MAX_DIFF_LINES && (
-                    <div className="mt-1 text-[10px] text-neutral-500">仅显示前 {MAX_DIFF_LINES} 行差异，共 {diff.length} 行。</div>
+                    <div className="mt-1 text-[10px] text-neutral-500">{t("仅显示前 {MAX_DIFF_LINES} 行差异，共 {length} 行。", { MAX_DIFF_LINES, length: diff.length })}</div>
                   )}
                 </>
               )}
@@ -347,7 +348,7 @@ export function DriftComparePanel({
 
           {analysis.failures.length > 0 && (
             <div className="mt-4 border-t border-neutral-800/70 pt-3">
-              <div className="mb-2 text-[11px] font-medium text-neutral-300">未纳入分组的目标</div>
+              <div className="mb-2 text-[11px] font-medium text-neutral-300">{t("未纳入分组的目标")}</div>
               <table className="nx-table">
                 <tbody>
                   {analysis.failures.map((result) => (
@@ -355,8 +356,8 @@ export function DriftComparePanel({
                       <td>{resultName(result)}</td>
                       <td className="text-red-300">{result.status}</td>
                       <td className="whitespace-pre-wrap break-all text-neutral-400">
-                        {result.error || result.stderr || "命令未成功完成"}
-                        {result.truncated && "（输出截断）"}
+                        {result.error || result.stderr || t("命令未成功完成")}
+                        {result.truncated && t("（输出截断）")}
                       </td>
                     </tr>
                   ))}

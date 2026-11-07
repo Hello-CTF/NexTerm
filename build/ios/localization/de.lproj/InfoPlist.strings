@@ -1,0 +1,3 @@
+/* Permission prompts shown by iOS in the system language. */
+"NSFaceIDUsageDescription" = "Face ID verwenden, um den NexTerm-Datenschlüssel schnell zu entsperren";
+"NSLocationWhenInUseUsageDescription" = "Die integrierte Webansicht kann den Standortzugriff anfordern; NexTerm ruft Ihren Standort nie von sich aus ab";

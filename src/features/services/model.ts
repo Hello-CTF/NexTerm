@@ -1,23 +1,24 @@
 import type { FinderMatch, ServiceHostResult, ServiceUnit } from "../../ipc/servicesApi";
+import { t } from "../../i18n";
 
 export type ServiceStateFilter = "all" | "running" | "failed" | "inactive" | "other";
 
 export const SERVICE_ACTION_LABELS: Record<string, string> = {
-  status: "状态",
-  start: "启动",
-  stop: "停止",
-  restart: "重启",
-  reload: "重载",
-  enable: "启用",
-  disable: "禁用",
+  status: t("状态"),
+  start: t("启动"),
+  stop: t("停止"),
+  restart: t("重启"),
+  reload: t("重载"),
+  enable: t("启用"),
+  disable: t("禁用"),
 };
 
 export const EXEC_STATUS_LABELS: Record<string, string> = {
-  success: "成功",
-  exit_error: "非零退出",
-  transport_error: "传输错误",
-  timeout: "超时",
-  canceled: "已取消",
+  success: t("成功"),
+  exit_error: t("非零退出"),
+  transport_error: t("传输错误"),
+  timeout: t("超时"),
+  canceled: t("已取消"),
 };
 
 export function filterServiceUnits(
@@ -50,10 +51,10 @@ export function filterServiceUnits(
 }
 
 export function serviceResultMessage(host: ServiceHostResult): string {
-  if (host.systemd === "unsupported") return "该主机不支持 systemd，或当前无法访问 system bus";
-  if (host.failureKind === "sudo") return "sudo 不可用或需要密码；非交互执行未跳过该主机";
+  if (host.systemd === "unsupported") return t("该主机不支持 systemd，或当前无法访问 system bus");
+  if (host.failureKind === "sudo") return t("sudo 不可用或需要密码；非交互执行未跳过该主机");
   const result = host.result;
-  return result.error || result.stderr || result.stdout || EXEC_STATUS_LABELS[result.status] || "执行失败";
+  return result.error || result.stderr || result.stdout || EXEC_STATUS_LABELS[result.status] || t("执行失败");
 }
 
 export function matchPID(match: FinderMatch): number {
@@ -61,7 +62,7 @@ export function matchPID(match: FinderMatch): number {
 }
 
 export function matchCommand(match: FinderMatch): string {
-  return match.process?.args || match.listener?.program || "（无进程信息）";
+  return match.process?.args || match.listener?.program || t("（无进程信息）");
 }
 
 export function listenerTargetHost(address: string): string {

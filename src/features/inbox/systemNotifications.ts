@@ -2,6 +2,7 @@ import { systemApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { EVENTS, listenEvent, type NotificationClickEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 export type NotificationPermissionState = "granted" | "denied" | "prompt";
 
@@ -84,15 +85,15 @@ function browserNotification(): BrowserNotificationCtor | null {
 }
 
 function browserStatus(api: BrowserNotificationCtor | null): SystemNotificationStatus {
-  if (!api) return { available: false, reason: "此浏览器不支持系统通知" };
+  if (!api) return { available: false, reason: t("此浏览器不支持系统通知") };
   if (typeof isSecureContext === "boolean" && !isSecureContext) {
-    return { available: false, reason: "系统通知需要通过 HTTPS 访问" };
+    return { available: false, reason: t("系统通知需要通过 HTTPS 访问") };
   }
   const permission = api.permission === "default" ? "prompt" : api.permission;
   return {
     available: true,
     permission,
-    reason: permission === "denied" ? "浏览器已阻止此站点的通知，可在站点设置中允许" : undefined,
+    reason: permission === "denied" ? t("浏览器已阻止此站点的通知，可在站点设置中允许") : undefined,
   };
 }
 
@@ -144,5 +145,5 @@ export function setSystemNotifierForTest(next: SystemNotifier | null): void {
 }
 
 export function notificationErrorText(error: unknown): string {
-  return `系统通知发送失败：${describeError(error)}`;
+  return t("系统通知发送失败：{value}", { value: describeError(error) });
 }

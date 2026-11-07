@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { useUi } from "./useUi";
 import { reconnectRestoredWorkspace } from "./workspaceRestore";
+import { t } from "../../i18n";
 
 export async function ensureVaultUnlocked(reason: string, epoch?: number): Promise<boolean> {
   let st: VaultStatus;
@@ -44,7 +45,7 @@ export async function ensureVaultUnlocked(reason: string, epoch?: number): Promi
       if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
       return true;
     } catch (e) {
-      if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+      if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", t("解锁失败：{value}", { value: describeError(e) }));
       return false;
     }
   }
@@ -57,7 +58,7 @@ export async function ensureVaultUnlocked(reason: string, epoch?: number): Promi
     if (epoch !== undefined && !currentConnectionEpoch(epoch)) return false;
     return true;
   } catch (e) {
-    if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", `解锁失败：${describeError(e)}`);
+    if (epoch === undefined || currentConnectionEpoch(epoch)) useUi.getState().pushToast("error", t("解锁失败：{value}", { value: describeError(e) }));
     return false;
   }
 }
@@ -77,7 +78,7 @@ export async function ensureVaultReadyFor(
     }
     if (!required) return true;
   }
-  return ensureVaultUnlocked(`连接「${asset.name}」需要使用凭据，请先输入保护密码：`, epoch);
+  return ensureVaultUnlocked(t("连接「{name}」需要使用凭据，请先输入保护密码：", { name: asset.name }), epoch);
 }
 
 export async function openConnectedAssetSession(
@@ -110,7 +111,7 @@ export async function openConnectedAssetSession(
   if (options?.preserveUserFocus && workspaces.length > 0) return;
   const pane = makePane();
   if (asset.kind === "docker") {
-    const tab: AppTab = { id: nextTabId(`docker-${info.id}`), kind: "docker", title: "容器", sessionId: info.id, closable: true };
+    const tab: AppTab = { id: nextTabId(`docker-${info.id}`), kind: "docker", title: t("容器"), sessionId: info.id, closable: true };
     pane.tabs = [tab];
     pane.activeTabId = tab.id;
   }
@@ -236,7 +237,7 @@ function settleConnectionOutcome(
     return;
   }
   if (outcome.canceled) return;
-  const error = outcome.error ?? "连接失败";
+  const error = outcome.error ?? t("连接失败");
   useUi.getState().recordConnectionProblem({
     connectionKey,
     workspaceId,
@@ -264,7 +265,7 @@ function settleAssetConnectionOutcome(
   settleConnectionOutcome(
     context,
     outcome,
-    "连接",
+    t("连接"),
     {
       title: asset.name,
       identity: host ? `${asset.name} · ${host}${port ? `:${port}` : ""}` : asset.name,
@@ -287,7 +288,7 @@ export function settleQuickConnectionOutcome(
   settleConnectionOutcome(
     context,
     outcome,
-    mode === "save" ? "保存并连接" : "临时连接",
+    mode === "save" ? t("保存并连接") : t("临时连接"),
     { title: label, identity: label, kind: "ssh" },
     { kind: "quick", mode, target: { ...target }, label },
     workspaceId,
@@ -373,7 +374,7 @@ async function runConnectAsset(
         const fresh = await reconnectSessionAndWait(session);
         if (!currentConnectionEpoch(epoch)) return fresh ? discardStaleSession(fresh) : { ok: false, canceled: true };
         if (!fresh) {
-          pushToast("info", "已取消连接");
+          pushToast("info", t("已取消连接"));
           return { ok: false, canceled: true };
         }
         const { sessions, setSessions } = useUi.getState();
@@ -386,7 +387,7 @@ async function runConnectAsset(
         if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
         if ((error as { code?: string } | null)?.code !== "not_found") {
           const message = describeError(error);
-          pushToast("error", `连接失败：${message}`);
+          pushToast("error", t("连接失败：{message}", { message }));
           return { ok: false, error: message };
         }
       }
@@ -454,7 +455,7 @@ async function runConnectAsset(
     const info = await connectWithHostKeyConfirm(() => sessionApi.connect(asset.id), () => currentConnectionEpoch(epoch));
     if (!currentConnectionEpoch(epoch)) return info ? discardStaleSession(info) : { ok: false, canceled: true };
     if (!info) {
-      pushToast("info", "已取消连接");
+      pushToast("info", t("已取消连接"));
       return { ok: false, canceled: true };
     }
     await openConnectedAssetSession(info, asset, options);
@@ -477,7 +478,7 @@ async function openRemoteDesktopWorkspace(asset: ConnectAssetInput, epoch: numbe
   const workspaceId = state.ensureWorkspace({ kind: "remote", title, assetId: asset.id, assetKind: asset.kind });
   const paneId = useUi.getState().workspaces.find((workspace) => workspace.id === workspaceId)?.panes[0]?.id;
   state.addTab(
-    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: "远程桌面", assetId: asset.id, closable: true },
+    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: t("远程桌面"), assetId: asset.id, closable: true },
     paneId,
   );
   useConnectHistory.getState().record(asset.id);
@@ -489,9 +490,9 @@ export async function reopenRemoteDesktopTab(workspaceId: string, paneId?: strin
   const epoch = useUi.getState().workspaceRuntimeEpoch;
   const workspace = useUi.getState().workspaces.find((item) => item.id === workspaceId);
   if (!workspace || workspace.kind !== "remote" || !workspace.assetId) {
-    return { ok: false, error: "远程桌面目标已丢失，请从资产树重新连接" };
+    return { ok: false, error: t("远程桌面目标已丢失，请从资产树重新连接") };
   }
-  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  if (workspace.deletedTarget) return { ok: false, error: t("原资产已删除，请从资产树选择其他目标") };
   let asset: Awaited<ReturnType<typeof assetApi.get>>;
   try {
     asset = await assetApi.get(workspace.assetId);
@@ -503,10 +504,10 @@ export async function reopenRemoteDesktopTab(workspaceId: string, paneId?: strin
   if (!current || current.assetId !== workspace.assetId) return { ok: false, canceled: true };
   // Another empty pane may have reopened the desktop while this call waited.
   if (current.panes.some((pane) => pane.tabs.some((tab) => tab.kind === "remote"))) return { ok: false, canceled: true };
-  if (asset.kind !== "rdp" && asset.kind !== "vnc") return { ok: false, error: "该资产不是远程桌面类型，请从资产树重新连接" };
+  if (asset.kind !== "rdp" && asset.kind !== "vnc") return { ok: false, error: t("该资产不是远程桌面类型，请从资产树重新连接") };
   const targetPane = current.panes.find((pane) => pane.id === paneId) ?? current.panes.find((pane) => pane.id === current.activePaneId) ?? current.panes[0];
   useUi.getState().addTab(
-    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: "远程桌面", assetId: asset.id, closable: true },
+    { id: nextTabId(`remote-${asset.id}`), kind: "remote", title: t("远程桌面"), assetId: asset.id, closable: true },
     targetPane?.id,
   );
   useUi.setState({ activeWorkspaceId: workspaceId });
@@ -585,7 +586,7 @@ async function runConnectDevice(
         const fresh = await reconnectSessionAndWait(session);
         if (!currentConnectionEpoch(epoch)) return fresh ? discardStaleSession(fresh) : { ok: false, canceled: true };
         if (!fresh) {
-          pushToast("info", "已取消连接");
+          pushToast("info", t("已取消连接"));
           return { ok: false, canceled: true };
         }
         const { sessions, setSessions } = useUi.getState();
@@ -596,7 +597,7 @@ async function runConnectDevice(
         if (!currentConnectionEpoch(epoch)) return { ok: false, canceled: true };
         if ((error as { code?: string } | null)?.code !== "not_found") {
           const message = describeError(error);
-          pushToast("error", `连接失败：${message}`);
+          pushToast("error", t("连接失败：{message}", { message }));
           return { ok: false, error: message };
         }
       }
@@ -645,7 +646,7 @@ export async function reconnectDeadHost(
     }
   };
   if (!isCurrent()) return null;
-  if (ws.deletedTarget) throw new Error(`「${ws.title}」的资产已删除，请选择其他资产或关闭工作区`);
+  if (ws.deletedTarget) throw new Error(t("「{title}」的资产已删除，请选择其他资产或关闭工作区", { title: ws.title }));
   if (ws.assetKind === "device" && ws.assetId) {
     return finish(sessionApi.connectDevice(ws.assetId.slice("device/".length), ws.title));
   }
@@ -657,7 +658,7 @@ export async function reconnectDeadHost(
       : "";
     if (!isCurrent()) return null;
     if (password === null) return null;
-    if (target.authKind === "password" && !password) throw new Error("此快速连接需要重新输入密码");
+    if (target.authKind === "password" && !password) throw new Error(t("此快速连接需要重新输入密码"));
     return finish(connectWithHostKeyConfirm(() => sessionApi.connectQuick({
       host: target.host,
       port: target.port,
@@ -667,5 +668,5 @@ export async function reconnectDeadHost(
     }), isCurrent));
   }
   if (ws.assetKind === "local") return finish(sessionApi.connectLocal());
-  throw new Error(`「${ws.title}」缺少可恢复的主机目标，请从资产树重新连接`);
+  throw new Error(t("「{title}」缺少可恢复的主机目标，请从资产树重新连接", { title: ws.title }));
 }

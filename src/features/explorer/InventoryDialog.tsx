@@ -19,10 +19,11 @@ import { InventoryTargetActions, targetExecutable, type InventoryTargetSession }
 import { Select } from "../../ui/Select";
 import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
 import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
+import { t } from "../../i18n";
 
 const SOURCE_ORDER: InventorySource[] = ["ssh-config", "docker-context", "kubernetes"];
 const SOURCE_LABEL: Record<InventorySource, string> = {
-  "ssh-config": "SSH 配置文件",
+  "ssh-config": t("SSH 配置文件"),
   "docker-context": "Docker contexts",
   kubernetes: "Kubernetes",
 };
@@ -125,8 +126,8 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
     const epoch = accountEpoch;
     if (source !== "ssh-config" && selected.size === 0) {
       const confirmed = await ask(
-        "本次没有勾选任何主机。继续会移除此来源在当前账号下导入的全部资产；手动添加的资产和其他来源的资产不受影响。",
-        { title: "同步为空清单", kind: "warning" },
+        t("本次没有勾选任何主机。继续会移除此来源在当前账号下导入的全部资产；手动添加的资产和其他来源的资产不受影响。"),
+        { title: t("同步为空清单"), kind: "warning" },
       );
       if (!confirmed || isStale(epoch)) return;
     }
@@ -210,13 +211,13 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">同步外部主机列表</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("同步外部主机列表")}</span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <p className="nx-hint mb-3">
-            来源里的增删改会同步到所选分组，来源删除的主机这里也会移除；手动添加的主机不受影响。
+            {t("来源里的增删改会同步到所选分组，来源删除的主机这里也会移除；手动添加的主机不受影响。")}
           </p>
-          <div className="nx-segment mb-3" aria-label="清单来源">
+          <div className="nx-segment mb-3" aria-label={t("清单来源")}>
             {SOURCE_ORDER.map((item) => (
               <button
                 key={item}
@@ -240,14 +241,14 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
           {serverLimited && SOURCE_ORDER.map((item) => <ServerRestrictionNote key={item} text={sourceRestriction[item]} />)}
 
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor="inventory-group">同步到分组</label>
+            <label className="nx-label" htmlFor="inventory-group">{t("同步到分组")}</label>
             <Select
               id="inventory-group"
-              ariaLabel="同步到分组"
+              ariaLabel={t("同步到分组")}
               value={groupId}
               disabled={busy !== null || (source === "ssh-config" && watching)}
               options={[
-                { value: "", label: `新建或沿用「${DEFAULT_GROUP[source]}」分组` },
+                { value: "", label: t("新建或沿用「{value}」分组", { value: DEFAULT_GROUP[source] }) },
                 ...(groups.data ?? []).map((group) => ({ value: group.id, label: group.name })),
               ]}
               onChange={setGroupId}
@@ -256,7 +257,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
 
           {source === "ssh-config" && (
             <div className="nx-form-row">
-              <label className="nx-label" htmlFor={pathId}>SSH 配置文件</label>
+              <label className="nx-label" htmlFor={pathId}>{t("SSH 配置文件")}</label>
               <input
                 id={pathId}
                 ref={pathRef}
@@ -268,27 +269,27 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                 autoComplete="off"
               />
               <div className="nx-hint mt-1.5">
-                留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。
+                {t("留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。")}
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null || (serverLimited && !watching)} onClick={() => void setWatch(!watching)}>
                   {busy === "watch" ? <IconLoader size={12} className="animate-spin" /> : null}
-                  {watching ? "关闭自动同步" : "立即同步并开启自动同步"}
+                  {watching ? t("关闭自动同步") : t("立即同步并开启自动同步")}
                 </button>
-                {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">正在跟随 {watchQuery.data.path}</span>}
+                {watching && watchQuery.data?.path && <span className="nx-badge nx-badge-green">{t("正在跟随 {path}", { path: watchQuery.data.path })}</span>}
               </div>
               <div className="nx-hint mt-1.5">
-                每 2 秒检查文件并同步改动；文件被删除时会移除由它同步的主机。
+                {t("每 2 秒检查文件并同步改动；文件被删除时会移除由它同步的主机。")}
               </div>
-              {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">后台同步失败：{watchQuery.data.lastError}</div>}
+              {watchQuery.data?.lastError && <div className="mt-2 text-[12px] text-red-300" role="alert">{t("后台同步失败：{lastError}", { lastError: watchQuery.data.lastError })}</div>}
             </div>
           )}
 
           {source === "docker-context" && (
-            <div className="nx-hint mb-3">读取 docker context ls 的结果，不会修改任何 context。同步来的 context 只是一条记录，可以查看和执行一次性命令，不能打开终端。</div>
+            <div className="nx-hint mb-3">{t("读取 docker context ls 的结果，不会修改任何 context。同步来的 context 只是一条记录，可以查看和执行一次性命令，不能打开终端。")}</div>
           )}
           {source === "kubernetes" && (
-            <div className="nx-hint mb-3">读取 kubectl 的 contexts，以及当前 context 下的 pods，不会修改集群。可以对 pod 执行一次性命令，不能打开交互式终端。</div>
+            <div className="nx-hint mb-3">{t("读取 kubectl 的 contexts，以及当前 context 下的 pods，不会修改集群。可以对 pod 执行一次性命令，不能打开交互式终端。")}</div>
           )}
 
           {error && (
@@ -297,21 +298,21 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
-          {busy === "discover" && <div className="nx-empty" role="status"><IconLoader size={16} className="animate-spin" />正在读取来源…</div>}
+          {busy === "discover" && <div className="nx-empty" role="status"><IconLoader size={16} className="animate-spin" />{t("正在读取来源…")}</div>}
 
           {discovery && busy !== "discover" && (
-            <section aria-label={`${inventorySourceLabel(source)} 中找到的主机`}>
+            <section aria-label={t("{value} 中找到的主机", { value: inventorySourceLabel(source) })}>
               <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px] text-neutral-400">
-                <span>找到 {items.length} 个 · 将同步 {selectedCount} 个</span>
+                <span>{t("找到 {length} 个 · 将同步 {selectedCount} 个", { length: items.length, selectedCount })}</span>
                 {source !== "ssh-config" && items.length > 0 && (
                   <>
-                    <button type="button" className="nx-link" onClick={() => setSelected(new Set(items.map((item) => item.key)))}>全选</button>
-                    <button type="button" className="nx-link" onClick={() => setSelected(new Set())}>全不选</button>
+                    <button type="button" className="nx-link" onClick={() => setSelected(new Set(items.map((item) => item.key)))}>{t("全选")}</button>
+                    <button type="button" className="nx-link" onClick={() => setSelected(new Set())}>{t("全不选")}</button>
                   </>
                 )}
               </div>
               {items.length === 0 ? (
-                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">来源中未找到主机；立即同步将移除此前从该来源同步的主机。</span></div>
+                <div className="nx-empty"><IconServer size={18} /><span className="text-[12px] text-neutral-400">{t("来源中未找到主机；立即同步将移除此前从该来源同步的主机。")}</span></div>
               ) : (
                 <div className="flex max-h-[320px] flex-col gap-1.5 overflow-y-auto">
                   {items.map((item) => {
@@ -326,7 +327,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                               <input
                                 type="checkbox"
                                 className="mt-0.5 shrink-0"
-                                aria-label={`选择清单项 ${item.name}`}
+                                aria-label={t("选择清单项 {name}", { name: item.name })}
                                 checked={selected.has(item.key)}
                                 onChange={(event) => {
                                   setSelected((current) => {
@@ -342,7 +343,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                               <span className="break-all font-mono text-neutral-100">{item.name}</span>
                               <span className="ml-2 text-neutral-500">{item.kind}</span>
                               <div className="mt-0.5 break-all text-[11px] text-neutral-500">
-                                {item.host || target || "仅清单记录"}
+                                {item.host || target || t("仅清单记录")}
                               </div>
                             </span>
                           </label>
@@ -353,7 +354,7 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                               aria-expanded={execKey === item.key}
                               onClick={() => setExecKey((current) => (current === item.key ? null : item.key))}
                             >
-                              {execKey === item.key ? "收起" : "执行命令"}
+                              {execKey === item.key ? t("收起") : t("执行命令")}
                             </button>
                           )}
                         </div>
@@ -373,35 +374,35 @@ export function InventoryDialog({ onClose }: { onClose: () => void }) {
                   })}
                 </div>
               )}
-              {source !== "ssh-config" && <div className="nx-hint mt-2">只同步勾选的项；取消勾选的项如果之前同步过，会从资产树移除。手动添加的主机和其他来源不受影响。</div>}
+              {source !== "ssh-config" && <div className="nx-hint mt-2">{t("只同步勾选的项；取消勾选的项如果之前同步过，会从资产树移除。手动添加的主机和其他来源不受影响。")}</div>}
             </section>
           )}
 
           {result && (
             <div className="mt-3" role="status">
               <div className="flex flex-wrap gap-1.5">
-                <span className="nx-badge nx-badge-green">新增 {result.created}</span>
-                <span className="nx-badge">更新 {result.updated}</span>
-                <span className="nx-badge nx-badge-amber">移除 {result.removed}</span>
-                <span className="nx-badge">未变化 {result.unchanged}</span>
+                <span className="nx-badge nx-badge-green">{t("新增 {created}", { created: result.created })}</span>
+                <span className="nx-badge">{t("更新 {updated}", { updated: result.updated })}</span>
+                <span className="nx-badge nx-badge-amber">{t("移除 {removed}", { removed: result.removed })}</span>
+                <span className="nx-badge">{t("未变化 {unchanged}", { unchanged: result.unchanged })}</span>
               </div>
             </div>
           )}
           {(result?.warnings.length || discovery?.warnings.length) ? (
             <div className="mt-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11.5px] text-amber-300">
-              <div className="mb-1 flex items-center gap-1"><IconAlert size={12} />注意</div>
+              <div className="mb-1 flex items-center gap-1"><IconAlert size={12} />{t("注意")}</div>
               {(result?.warnings.length ? result.warnings : discovery?.warnings ?? []).map((warning, index) => <div key={index}>{warning}</div>)}
             </div>
           ) : null}
         </div>
         <div className="nx-modal-footer shrink-0">
-          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy !== null} onClick={onClose}>关闭</button>
+          <button type="button" className="nx-btn nx-btn-ghost" disabled={busy !== null} onClick={onClose}>{t("关闭")}</button>
           <div className="nx-spacer" />
           <button type="button" className="nx-btn nx-btn-outline" disabled={busy !== null || serverLimited} onClick={() => void runDiscover()}>
-            {busy === "discover" ? "正在读取…" : discovery ? "重新读取" : "预览"}
+            {busy === "discover" ? t("正在读取…") : discovery ? t("重新读取") : t("预览")}
           </button>
           <button type="button" className="nx-btn nx-btn-primary" disabled={busy !== null || serverLimited || !discovery} onClick={() => void runSync()}>
-            {busy === "sync" ? "正在同步…" : source === "ssh-config" ? "同步全部" : "同步选中的主机"}
+            {busy === "sync" ? t("正在同步…") : source === "ssh-config" ? t("同步全部") : t("同步选中的主机")}
           </button>
         </div>
       </div>

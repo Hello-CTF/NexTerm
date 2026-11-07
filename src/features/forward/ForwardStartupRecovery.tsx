@@ -5,6 +5,7 @@ import { WEB } from "../../ipc/env";
 import { describeError } from "../../ui/errorText";
 import type { ForwardRecoverySettings, ForwardSettingsApi } from "./forwardSettingsApi";
 import { createForwardSettingsIpcApi } from "./forwardSettingsIpc";
+import { t } from "../../i18n";
 
 export type ForwardStartupRecoveryApi = Pick<ForwardSettingsApi, "getRecoverySettings" | "recoverNow">;
 
@@ -57,7 +58,7 @@ export function ForwardStartupRecovery({ api = defaultApi }: { api?: ForwardStar
   useEffect(() => {
     if (!ready) return;
     const run = startForwardStartupRecovery(api, (error) => {
-      pushToast("error", `启动恢复失败：${describeError(error)}`);
+      pushToast("error", t("启动恢复失败：{value}", { value: describeError(error) }));
     });
     return run.cancel;
   }, [accountEpoch, api, pushToast, ready]);

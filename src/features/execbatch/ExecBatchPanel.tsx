@@ -26,6 +26,7 @@ import { ExecBatchHistory } from "./ExecBatchHistory";
 import { TargetSetPicker, type TargetSetPickerTarget } from "./TargetSetPicker";
 import { SavedTargetSets } from "./SavedTargetSets";
 import { BatchProgressPanel, liveBatchProgressApi, type BatchProgressHandle, type BatchRerunRequest } from "./BatchProgress";
+import { t } from "../../i18n";
 
 const MAX_TARGETS = 64;
 const MAX_CONCURRENT = 32;
@@ -39,10 +40,13 @@ type ExecutionPlan = {
   cancelRequested: boolean;
 };
 
+// A plan with a command rendered per target has no single command; this marker stands in for it and is never shown.
+const PER_TARGET_COMMANDS = "\u0000per-target-commands";
+
 function executionPlanBatch(plan: ExecutionPlan): ExecBatch {
   return {
     batchId: plan.requests[0]?.batchId ?? "",
-    command: plan.requests.length === 1 ? plan.requests[0]?.command ?? "" : "多条逐目标渲染命令",
+    command: plan.requests.length === 1 ? plan.requests[0]?.command ?? "" : PER_TARGET_COMMANDS,
     startedAt: plan.startedAt,
     finishedAt: plan.finishedAt,
     results: [...plan.results],
@@ -77,7 +81,7 @@ function collectTargets(
         id: session.id,
         label: asset?.name.trim() || session.name,
         sessionName: session.name,
-        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? "受管设备 · 执行前需确认" : null,
+        endpoint: host ? `${username ? `${username}@` : ""}${host}` : session.kind === "device" ? t("受管设备 · 执行前需确认") : null,
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
@@ -86,11 +90,11 @@ function collectTargets(
 }
 
 const STATUS_LABELS: Record<ExecBatchStatus, string> = {
-  success: "成功",
-  exit_error: "非零退出",
-  transport_error: "传输错误",
-  timeout: "超时",
-  canceled: "已取消",
+  success: t("成功"),
+  exit_error: t("非零退出"),
+  transport_error: t("传输错误"),
+  timeout: t("超时"),
+  canceled: t("已取消"),
 };
 
 function statusClass(status: ExecBatchStatus): string {
@@ -110,10 +114,10 @@ function resultSummary(results: ExecBatchResult[]): string {
 }
 
 function ResultOutput({ result }: { result: ExecBatchResult }) {
-  if (!result.stdout && !result.stderr) return <span className="text-neutral-500">无输出</span>;
+  if (!result.stdout && !result.stderr) return <span className="text-neutral-500">{t("无输出")}</span>;
   return (
     <details className="min-w-40">
-      <summary className="cursor-pointer select-none text-neutral-400">查看输出</summary>
+      <summary className="cursor-pointer select-none text-neutral-400">{t("查看输出")}</summary>
       {result.stdout && (
         <div className="mt-2">
           <div className="mb-1 text-[10px] text-neutral-500">stdout</div>
@@ -167,7 +171,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
   const targetSetsApi = useMemo(() => ({ ...targetSetApi }), [accountID]);
   const availableIds = useMemo(() => targets.map((target) => target.id), [targets]);
   const progressBatchId = runningId ?? rerunId ?? batch?.batchId ?? null;
-  const progressCommand = batch && batch.command !== "多条逐目标渲染命令" ? batch.command : command;
+  const progressCommand = batch && batch.command !== PER_TARGET_COMMANDS ? batch.command : command;
 
   useEffect(() => {
     const available = new Set(targets.map((target) => target.id));
@@ -232,7 +236,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           const plan = executionPlanRef.current;
           if (plan) {
             if (plan.startedAt !== 0) setBatch(executionPlanBatch(plan));
-            setError(`批次 ${batchId} 失败，后续目标未执行：${describeError(cause)}`);
+            setError(t("批次 {batchId} 失败，后续目标未执行：{value}", { batchId, value: describeError(cause) }));
             executionPlanRef.current = null;
           } else {
             setError(describeError(cause));
@@ -254,27 +258,27 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     const maxConcurrent = Number(concurrency);
     const timeout = Number(timeoutSeconds);
     if (!command.trim()) {
-      setError("请输入要执行的单条命令");
+      setError(t("请输入要执行的单条命令"));
       return;
     }
     if (command.includes("\n") || command.includes("\r") || command.includes("\0")) {
-      setError("批量执行只接受一条单行命令");
+      setError(t("批量执行只接受一条单行命令"));
       return;
     }
     if (selectedIds.length === 0) {
-      setError("请至少选择一个已连接的 SSH 或受管设备会话");
+      setError(t("请至少选择一个已连接的 SSH 或受管设备会话"));
       return;
     }
     if (selectedIds.length > MAX_TARGETS) {
-      setError(`每批最多选择 ${MAX_TARGETS} 个目标，当前已选 ${selectedIds.length} 个`);
+      setError(t("每批最多选择 {MAX_TARGETS} 个目标，当前已选 {length} 个", { MAX_TARGETS, length: selectedIds.length }));
       return;
     }
     if (!Number.isInteger(maxConcurrent) || maxConcurrent < 1 || maxConcurrent > MAX_CONCURRENT) {
-      setError(`并发数必须是 1-${MAX_CONCURRENT} 的整数`);
+      setError(t("并发数必须是 1-{MAX_CONCURRENT} 的整数", { MAX_CONCURRENT }));
       return;
     }
     if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600) {
-      setError("单目标超时必须是 1-600 秒的整数");
+      setError(t("单目标超时必须是 1-600 秒的整数"));
       return;
     }
 
@@ -282,7 +286,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     try {
       analysis = analyzeSnippetTemplate(command);
     } catch (cause) {
-      setError(`变量解析失败：${describeError(cause)}`);
+      setError(t("变量解析失败：{value}", { value: describeError(cause) }));
       return;
     }
     if (!analysis.hasVariables) {
@@ -296,11 +300,11 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       return;
     }
     if (analysis.unknownVariables.length > 0) {
-      setError(`未知变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
+      setError(t("未知变量：{join}", { join: analysis.unknownVariables.map((name) => `「${name}」`).join("、") }));
       return;
     }
 
-    const values = await promptForValues("填写批量执行变量", analysis.variables);
+    const values = await promptForValues(t("填写批量执行变量"), analysis.variables);
     if (values === null || activeRef.current) return;
     const targetsById = new Map(targets.map((target) => [target.id, target]));
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
@@ -315,9 +319,9 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       const rendered = renderSnippetForTargets(command, values, renderTargets);
       const commandGroups = new Map<string, string[]>();
       for (const target of rendered) {
-        if (!target.command.trim()) throw new Error(`目标「${target.id}」渲染后的命令不能为空`);
+        if (!target.command.trim()) throw new Error(t("目标「{id}」渲染后的命令不能为空", { id: target.id }));
         if (target.command.includes("\n") || target.command.includes("\r") || target.command.includes("\0")) {
-          throw new Error(`目标「${target.id}」渲染后的命令包含换行或 NUL；批量执行只接受一条单行命令`);
+          throw new Error(t("目标「{id}」渲染后的命令包含换行或 NUL；批量执行只接受一条单行命令", { id: target.id }));
         }
         const group = commandGroups.get(target.command) ?? [];
         group.push(target.id);
@@ -347,7 +351,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       await runExecute(first);
     } catch (cause) {
       executionPlanRef.current = null;
-      setError(`变量渲染失败：${describeError(cause)}`);
+      setError(t("变量渲染失败：{value}", { value: describeError(cause) }));
     }
   };
 
@@ -371,7 +375,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     executionPlanRef.current = null;
     if (plan?.startedAt) {
       setBatch(executionPlanBatch(plan));
-      setError("已取消生产确认；已完成目标保留在结果中，后续目标未执行");
+      setError(t("已取消生产确认；已完成目标保留在结果中，后续目标未执行"));
     }
   };
 
@@ -414,24 +418,24 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
     try {
       await execBatchApi.cancel(batchId);
     } catch (cause) {
-      if (activeRef.current === batchId) setCancelError(`取消失败：${describeError(cause)}`);
+      if (activeRef.current === batchId) setCancelError(t("取消失败：{value}", { value: describeError(cause) }));
     } finally {
       if (activeRef.current === batchId) setCanceling(false);
     }
   };
 
   return (
-    <section className="nx-pane" aria-label="批量执行" data-testid="exec-batch-panel">
+    <section className="nx-pane" aria-label={t("批量执行")} data-testid="exec-batch-panel">
       <div className="nx-toolbar nx-wrap-toolbar flex-wrap">
         <IconServer size={14} className="text-neutral-500" />
-        <h2 className="nx-toolbar-title">多主机工具</h2>
-        <span className="nx-hint">只能对当前已连接的 SSH 主机和受管设备执行。受管设备无环境标记，执行前需要确认。</span>
+        <h2 className="nx-toolbar-title">{t("多主机工具")}</h2>
+        <span className="nx-hint">{t("只能对当前已连接的 SSH 主机和受管设备执行。受管设备无环境标记，执行前需要确认。")}</span>
         <span className="nx-spacer" />
         <div className="nx-toolbar-views contents">
-        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>批量执行</button>
-        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "drift"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("drift"); }}>漂移对比</button>
-        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "services"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("services"); }}>服务</button>
-        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "finder"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("finder"); }}>端口 / 进程</button>
+        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "execute"} disabled={running || prompting} onClick={() => setView("execute")}>{t("批量执行")}</button>
+        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "drift"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("drift"); }}>{t("漂移对比")}</button>
+        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "services"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("services"); }}>{t("服务")}</button>
+        <button type="button" className="nx-btn nx-btn-sm" aria-pressed={view === "finder"} disabled={running || prompting} onClick={() => { discardProductionConfirmation(); setView("finder"); }}>{t("端口 / 进程")}</button>
         </div>
       </div>
 
@@ -439,18 +443,18 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         <ServicesPanel
           targets={targets}
           sessions={sessions}
-          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? t("未能加载资产详情：{value}", { value: describeError(assetsQuery.error) }) : null}
         />
       ) : view === "finder" ? (
         <ProcessFinderPanel
           targets={targets}
           sessions={sessions}
-          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? t("未能加载资产详情：{value}", { value: describeError(assetsQuery.error) }) : null}
         />
       ) : view === "drift" ? (
         <DriftComparePanel
           targets={targets}
-          metadataError={assetsQuery.isError ? `未能加载资产详情：${describeError(assetsQuery.error)}` : null}
+          metadataError={assetsQuery.isError ? t("未能加载资产详情：{value}", { value: describeError(assetsQuery.error) }) : null}
         />
       ) : (
         <>
@@ -476,19 +480,19 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           maxTargets={MAX_TARGETS}
           metadataError={
             assetsQuery.isError
-              ? `资产详情加载失败，别名、主机与标签搜索可能不完整：${describeError(assetsQuery.error)}`
+              ? t("资产详情加载失败，别名、主机与标签搜索可能不完整：{value}", { value: describeError(assetsQuery.error) })
               : null
           }
         />
 
         <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-          命令
+          {t("命令")}
           <input
             className="nx-input font-mono text-xs"
             value={command}
             disabled={running}
-            placeholder="例如：uname -a"
-            aria-label="批量执行命令"
+            placeholder={t("例如：uname -a")}
+            aria-label={t("批量执行命令")}
             onChange={(event) => {
               setCommand(event.target.value);
               discardProductionConfirmation();
@@ -498,7 +502,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
 
         <div className="flex flex-wrap items-end gap-2">
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            并发数
+            {t("并发数")}
             <input
               type="number"
               className="nx-input w-24"
@@ -511,7 +515,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
             />
           </label>
           <label className="flex flex-col gap-1 text-[11px] text-neutral-500">
-            单目标超时（秒）
+            {t("单目标超时（秒）")}
             <input
               type="number"
               className="nx-input w-28"
@@ -527,18 +531,18 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
           {running ? (
             <button type="button" className="nx-btn nx-btn-danger" disabled={canceling} onClick={() => void cancel()}>
               <IconStop size={13} />
-              {canceling ? "正在取消…" : "取消本批次"}
+              {canceling ? t("正在取消…") : t("取消本批次")}
             </button>
           ) : (
             <button type="submit" className="nx-btn nx-btn-primary" disabled={targets.length === 0}>
               <IconPlay size={13} />
-              执行
+              {t("执行")}
             </button>
           )}
         </div>
 
         <div className="text-[11px] leading-relaxed text-neutral-500">
-          输出过长会被截断；结果只保留在当前面板，审计记录不含命令输出。
+          {t("输出过长会被截断；结果只保留在当前面板，审计记录不含命令输出。")}
         </div>
         {error && (
           <div role="alert" className="rounded border border-red-900/60 bg-red-950/20 px-2 py-1.5 text-[11px] text-red-300">
@@ -552,7 +556,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
         )}
         {running && (
           <div className="text-[11px] text-blue-300" role="status">
-            正在执行批次 {runningId}；取消请求与执行请求可并行，等待各目标返回。
+            {t("正在执行批次 {runningId}；取消请求与执行请求可并行，等待各目标返回。", { runningId })}
           </div>
         )}
       </form>
@@ -571,7 +575,7 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
             }}
             onConfirmationRequired={handleRerunConfirmation}
             onRerunStart={handleRerunStart}
-            rerunDisabled={batch !== null && batch.command === "多条逐目标渲染命令"}
+            rerunDisabled={batch !== null && batch.command === PER_TARGET_COMMANDS}
             newBatchId={createExecBatchId}
           />
         </div>
@@ -603,22 +607,22 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
       {batch && (
         <div className="border-t border-neutral-800/70">
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-[11px]">
-            <span className="font-medium text-neutral-300">结果矩阵</span>
+            <span className="font-medium text-neutral-300">{t("结果矩阵")}</span>
             <span className="nx-hint">{resultSummary(batch.results)}</span>
             <span className="nx-spacer" />
             <span className="nx-hint" title={batch.batchId}>
-              批次 {batch.batchId.slice(0, 8)}
+              {t("批次 {slice}", { slice: batch.batchId.slice(0, 8) })}
             </span>
           </div>
           <div className="overflow-x-auto px-3 pb-3">
             <table className="nx-table nx-table-cards nx-table-fixed min-w-[720px]">
               <thead>
                 <tr>
-                  <th className="w-1/5">目标</th>
-                  <th className="w-28">状态</th>
-                  <th className="w-20">退出码</th>
-                  <th className="w-24">耗时</th>
-                  <th>输出 / 错误</th>
+                  <th className="w-1/5">{t("目标")}</th>
+                  <th className="w-28">{t("状态")}</th>
+                  <th className="w-20">{t("退出码")}</th>
+                  <th className="w-24">{t("耗时")}</th>
+                  <th>{t("输出 / 错误")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -630,15 +634,15 @@ export function ExecBatchPanel({ sessions, progressPollIntervalMs }: { sessions:
                       </div>
                       <div className="truncate font-mono text-[10px] text-neutral-500">{result.sessionId}</div>
                     </td>
-                    <td data-label="状态" className={statusClass(result.status)}>
+                    <td data-label={t("状态")} className={statusClass(result.status)}>
                       {STATUS_LABELS[result.status]}
-                      {result.truncated && <span className="ml-1 text-[10px] text-amber-300">已截断</span>}
+                      {result.truncated && <span className="ml-1 text-[10px] text-amber-300">{t("已截断")}</span>}
                     </td>
-                    <td data-label="退出码" className="nx-mono">
+                    <td data-label={t("退出码")} className="nx-mono">
                       {result.exitCode ?? "—"}
                       {result.signal ? ` (${result.signal})` : ""}
                     </td>
-                    <td data-label="耗时" className="nx-mono">{result.durationMs} ms</td>
+                    <td data-label={t("耗时")} className="nx-mono">{result.durationMs} ms</td>
                     <td>
                       {result.error && <div className="mb-1 whitespace-pre-wrap break-all text-red-300">{result.error}</div>}
                       <ResultOutput result={result} />

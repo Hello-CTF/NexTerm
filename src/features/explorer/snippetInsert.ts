@@ -3,6 +3,7 @@ import { terminalApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { SnippetStep } from "../../ipc/types";
+import { t as tr } from "../../i18n";
 
 export interface Snippet {
   id: string;
@@ -22,8 +23,8 @@ export function isMultiStep(s: Pick<Snippet, "steps">): boolean {
 export type SnippetAction = "insert" | "execute";
 
 const ACTION_LABEL: Record<SnippetAction, string> = {
-  insert: "插入",
-  execute: "执行",
+  insert: tr("插入"),
+  execute: tr("执行"),
 };
 
 type TerminalTarget = { tabId: string } | { blocked: string };
@@ -37,10 +38,10 @@ export function terminalTarget(): TerminalTarget {
   const pane = ws?.panes.find((p) => p.id === ws.activePaneId) ?? ws?.panes[0] ?? null;
   const tab = pane?.tabs.find((t) => t.id === pane.activeTabId) ?? null;
   if (!tab || tab.kind !== "terminal" || !tab.tabId) {
-    return { blocked: "请先打开一个终端" };
+    return { blocked: tr("请先打开一个终端") };
   }
   if (tab.dead || tab.exited) {
-    return { blocked: "当前终端已断开或已结束" };
+    return { blocked: tr("当前终端已断开或已结束") };
   }
   return { tabId: tab.tabId };
 }
@@ -63,13 +64,13 @@ async function confirmRisk(s: Snippet, risk: InsertRisk, action: SnippetAction):
   const label = ACTION_LABEL[action];
   if (risk === "execute") {
     return ask(
-      `片段「${s.name}」包含回车或换行，${label}时会逐行提交执行。仍要${label}吗？`,
+      tr("片段「{name}」包含回车或换行，{label}时会逐行提交执行。仍要{label2}吗？", { name: s.name, label, label2: label }),
       { kind: "warning" },
     );
   }
   if (risk === "control") {
     return ask(
-      `片段「${s.name}」包含终端控制字符，可能执行 shell 代码、中断前台进程或改变终端状态。仍要${label}吗？`,
+      tr("片段「{name}」包含终端控制字符，可能执行 shell 代码、中断前台进程或改变终端状态。仍要{label}吗？", { name: s.name, label }),
       { kind: "warning" },
     );
   }
@@ -82,10 +83,10 @@ function stepTargetState(tabId: string): string | null {
     for (const pane of ws.panes) {
       const tab = pane.tabs.find((t) => t.kind === "terminal" && t.tabId === tabId);
       if (!tab) continue;
-      return tab.dead || tab.exited ? "原终端已断开或已结束" : null;
+      return tab.dead || tab.exited ? tr("原终端已断开或已结束") : null;
     }
   }
-  return "原终端已关闭";
+  return tr("原终端已关闭");
 }
 
 async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string): Promise<boolean> {
@@ -100,29 +101,29 @@ async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string
     if (step.confirm) {
       const title = step.name.trim() ? `「${step.name.trim()}」` : "";
       const ok = await ask(
-        `片段「${s.name}」第 ${index + 1} / ${steps.length} 步${title}将执行：\n${step.command}\n\n确认执行吗？`,
+        tr("片段「{name}」第 {value} / {length} 步{title}将执行：\n{command}\n\n确认执行吗？", { name: s.name, value: index + 1, length: steps.length, title, command: step.command }),
         { kind: "warning" },
       );
       if (useUi.getState().accountEpoch !== epoch) return false;
       if (!ok) {
-        pushToast("info", `已停止「${s.name}」：已执行到第 ${done} 步`);
+        pushToast("info", tr("已停止「{name}」：已执行到第 {done} 步", { name: s.name, done }));
         return false;
       }
     }
     const blocked = stepTargetState(tabId);
     if (blocked) {
-      pushToast("info", `${blocked}，已停止「${s.name}」：已执行到第 ${done} 步`);
+      pushToast("info", tr("{blocked}，已停止「{name}」：已执行到第 {done} 步", { blocked, name: s.name, done }));
       return false;
     }
     const payload = /[\r\n]$/.test(step.command) ? step.command : step.command + "\r";
     try {
       await terminalApi.write(tabId, new TextEncoder().encode(payload));
     } catch (e) {
-      pushToast("error", `执行失败：${describeError(e)}（已执行到第 ${done} 步）`);
+      pushToast("error", tr("执行失败：{value}（已执行到第 {done} 步）", { value: describeError(e), done }));
       return false;
     }
   }
-  pushToast("success", `已执行「${s.name}」 · 共 ${steps.length} 步`);
+  pushToast("success", tr("已执行「{name}」 · 共 {length} 步", { name: s.name, length: steps.length }));
   return true;
 }
 
@@ -131,19 +132,19 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
   const label = ACTION_LABEL[action];
   if (isMultiStep(s)) {
     if (action === "insert") {
-      pushToast("info", "多步片段只能执行，不能插入");
+      pushToast("info", tr("多步片段只能执行，不能插入"));
       return false;
     }
     const first = terminalTarget();
     if ("blocked" in first) {
-      pushToast("info", `${first.blocked}，才能${label}片段`);
+      pushToast("info", tr("{blocked}，才能{label}片段", { blocked: first.blocked, label }));
       return false;
     }
     return runSteps(s, s.steps ?? [], first.tabId);
   }
   const target = terminalTarget();
   if ("blocked" in target) {
-    pushToast("info", `${target.blocked}，才能${label}片段`);
+    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: target.blocked, label }));
     return false;
   }
   const risk = insertRisk(s.body);
@@ -156,19 +157,19 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
       "success",
       action === "insert"
         ? risk === "none"
-          ? `已插入「${s.name}」，按回车执行`
+          ? tr("已插入「{name}」，按回车执行", { name: s.name })
           : risk === "execute"
-            ? `已插入「${s.name}」 · 回车或换行处已逐行执行`
-            : `已插入「${s.name}」 · 控制字符可能已改变终端状态`
+            ? tr("已插入「{name}」 · 回车或换行处已逐行执行", { name: s.name })
+            : tr("已插入「{name}」 · 控制字符可能已改变终端状态", { name: s.name })
         : risk === "none"
-          ? `已执行「${s.name}」`
+          ? tr("已执行「{name}」", { name: s.name })
           : risk === "execute"
-            ? `已执行「${s.name}」 · 回车或换行处已逐行执行`
-            : `已执行「${s.name}」 · 控制字符可能已改变终端状态`,
+            ? tr("已执行「{name}」 · 回车或换行处已逐行执行", { name: s.name })
+            : tr("已执行「{name}」 · 控制字符可能已改变终端状态", { name: s.name }),
     );
     return true;
   } catch (e) {
-    pushToast("error", `${label}失败：${describeError(e)}`);
+    pushToast("error", tr("{label}失败：{value}", { label, value: describeError(e) }));
     return false;
   }
 }

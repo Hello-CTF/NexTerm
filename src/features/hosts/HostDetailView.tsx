@@ -39,12 +39,13 @@ import { PortsSection } from "./PortsSection";
 import { ProcessesSection } from "./ProcessesSection";
 import { ContainersSection, DatabasesSection, HostSection, SectionHint, SessionsSection, SshHealthSection } from "./HostSections";
 import type { ListFocus } from "./listControls";
+import { t } from "../../i18n";
 
 const ASSET_KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
   winrm: "WinRM",
-  local: "本机",
-  device: "受管设备",
+  local: t("本机"),
+  device: t("受管设备"),
 };
 
 // Short cards share rows; the tables (metrics, ports, processes) follow at full width so their columns stay legible.
@@ -141,13 +142,13 @@ function CopyLinkButton({ assetId }: { assetId: string }) {
   return (
     <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => copyHostDeepLink(assetId)}>
       <IconGlobe size={11} />
-      复制链接
+      {t("复制链接")}
     </button>
   );
 }
 
 export function HostDetailView({ assetId, visible }: { assetId: string | undefined; visible: boolean }) {
-  if (!assetId) return <Notice title="未选择主机" hint="在主机工作区点左侧导航栏的「主机详情」，或在资产树中右键主机选择「主机详情」。" />;
+  if (!assetId) return <Notice title={t("未选择主机")} hint={t("在主机工作区点左侧导航栏的「主机详情」，或在资产树中右键主机选择「主机详情」。")} />;
   const deviceId = deviceIdOfHost(assetId);
   return deviceId ? (
     <DeviceDetail key={assetId} assetId={assetId} deviceId={deviceId} visible={visible} />
@@ -164,19 +165,19 @@ function AssetDetail({ assetId, visible }: { assetId: string; visible: boolean }
     if (assetsQuery.isError) {
       return (
         <Notice
-          title="未能加载主机信息"
+          title={t("未能加载主机信息")}
           hint={describeError(assetsQuery.error)}
           action={
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void assetsQuery.refetch()}>
-              重试
+              {t("重试")}
             </button>
           }
         />
       );
     }
-    return <Notice title="正在加载主机信息…" />;
+    return <Notice title={t("正在加载主机信息…")} />;
   }
-  if (!asset) return <Notice title="资产不存在或已删除" hint="该资产可能已被删除、尚未同步到本机，或当前账号无访问权限。" />;
+  if (!asset) return <Notice title={t("资产不存在或已删除")} hint={t("该资产可能已被删除、尚未同步到本机，或当前账号无访问权限。")} />;
   if (dbKindOf(asset.kind)) return <DatabaseAssetDetail asset={asset} assets={assets} visible={visible} />;
   return <HostAssetDetail asset={asset} assets={assets} visible={visible} />;
 }
@@ -185,8 +186,8 @@ function ProductionBadge({ assetId }: { assetId: string }) {
   const classification = useAssetProductionClassification(assetId);
   if (!classification?.production) return null;
   return (
-    <span className="nx-badge nx-badge-amber shrink-0" title={`环境：${classification.environment}`}>
-      生产
+    <span className="nx-badge nx-badge-amber shrink-0" title={t("环境：{environment}", { environment: classification.environment })}>
+      {t("生产")}
     </span>
   );
 }
@@ -230,7 +231,7 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
             {hostKind && (
               <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => void connectAsset(asset)}>
                 <IconTerminal size={11} />
-                {workspace ? "切换到工作区" : "打开工作区"}
+                {workspace ? t("切换到工作区") : t("打开工作区")}
               </button>
             )}
             <CopyLinkButton assetId={asset.id} />
@@ -249,13 +250,13 @@ function HostAssetDetail({ asset, assets, visible }: { asset: Asset; assets: rea
                 databases={databases}
                 relations={relations}
                 visible={visible}
-                emptyHint="无经由该主机或指向其地址的数据库资产。"
+                emptyHint={t("无经由该主机或指向其地址的数据库资产。")}
               />,
               asset.kind === "ssh" ? (
                 <SshHealthSection key="health" assetId={asset.id} workspace={workspace} viaJump={hasJump(asset)} />
               ) : (
-                <HostSection key="metrics" title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
-                  <SectionHint>{asset.kind === "local" ? "本机不采集指标。" : "此类主机不采集指标。"}</SectionHint>
+                <HostSection key="metrics" title={t("指标")} icon={<IconActivity size={14} />} testId="host-metrics">
+                  <SectionHint>{asset.kind === "local" ? t("本机不采集指标。") : t("此类主机不采集指标。")}</SectionHint>
                 </HostSection>
               ),
             ]}
@@ -303,14 +304,13 @@ function DatabaseAssetDetail({ asset, assets, visible }: { asset: Asset; assets:
         subtitle={
           tunnel ? (
             <span>
-              经由{" "}
+              {t("经由{value}", { value: " " })}
               <button type="button" className="nx-link" onClick={() => openHostDetail(tunnel.id)}>
                 {tunnel.name}
-              </button>{" "}
-              连接
+              </button>{t("{value}连接", { value: " " })}
             </span>
           ) : viaAssetId ? (
-            <span className="text-amber-300">经由的主机已删除</span>
+            <span className="text-amber-300">{t("经由的主机已删除")}</span>
           ) : undefined
         }
         actions={<CopyLinkButton assetId={asset.id} />}
@@ -325,12 +325,12 @@ function DatabaseAssetDetail({ asset, assets, visible }: { asset: Asset; assets:
 const PLATFORM_LABELS: Record<string, string> = { darwin: "macOS", linux: "Linux", windows: "Windows" };
 
 function openAccountSyncSettings(): void {
-  useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+  useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
   showSettingsSection("settings-account");
 }
 
 function openDevicesTab(): void {
-  useUi.getState().addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true });
+  useUi.getState().addTab({ id: "devices", kind: "devices", title: t("设备管理"), closable: true });
 }
 
 function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceId: string; visible: boolean }) {
@@ -344,15 +344,15 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
     refetchOnWindowFocus: false,
     refetchInterval: WEB ? 60_000 : 30_000,
   });
-  if (account.loading) return <Notice title="正在加载设备信息…" />;
+  if (account.loading) return <Notice title={t("正在加载设备信息…")} />;
   if (!userId) {
     return (
       <Notice
-        title="登录服务端账号后可查看设备"
-        hint="受管设备属于服务端账号。在「设置 → 账号同步」登录后即可查看该设备。"
+        title={t("登录服务端账号后可查看设备")}
+        hint={t("受管设备属于服务端账号。在「设置 → 账号同步」登录后即可查看该设备。")}
         action={
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={openAccountSyncSettings}>
-            前往「设置 → 账号同步」登录
+            {t("前往「设置 → 账号同步」登录")}
           </button>
         }
       />
@@ -361,20 +361,20 @@ function DeviceDetail({ assetId, deviceId, visible }: { assetId: string; deviceI
   if (devicesQuery.isError && !devicesQuery.data) {
     return (
       <Notice
-        title="未能加载设备信息"
+        title={t("未能加载设备信息")}
         hint={describeError(devicesQuery.error)}
         action={
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void devicesQuery.refetch()}>
-            重试
+            {t("重试")}
           </button>
         }
       />
     );
   }
-  if (!devicesQuery.data) return <Notice title="正在加载设备信息…" />;
+  if (!devicesQuery.data) return <Notice title={t("正在加载设备信息…")} />;
   const device = devicesQuery.data.devices.find((item) => item.id === deviceId);
   if (!device) {
-    return <Notice title="无法查看该设备" hint="设备不存在，或不属于当前账号。仅设备所有者和超级管理员可查看。" />;
+    return <Notice title={t("无法查看该设备")} hint={t("设备不存在，或不属于当前账号。仅设备所有者和超级管理员可查看。")} />;
   }
   return <DeviceHostDetail assetId={assetId} device={device} isAdmin={account.isAdmin} visible={visible} />;
 }
@@ -399,18 +399,18 @@ function DeviceHostDetail({
   const lastSeenAt = agent?.last_seen_at || device.last_seen_at;
   const online = !revoked && Boolean(agent) && isOnline(lastSeenAt, now);
   const blockReason = deviceOpenBlockReason(device, online);
-  const status = revoked ? "已撤销接入" : !agent ? "未安装设备代理" : online ? "在线" : "离线";
+  const status = revoked ? t("已撤销接入") : !agent ? t("未安装设备代理") : online ? t("在线") : t("离线");
   const statusTone = revoked ? "text-red-300" : online ? "text-green-300" : "text-neutral-400";
   const subtitleParts: { key: string; text: string; className?: string; title?: string }[] = [];
   if (agent?.platform) subtitleParts.push({ key: "platform", text: PLATFORM_LABELS[agent.platform.toLowerCase()] ?? agent.platform });
   if (agent?.app_version) subtitleParts.push({ key: "version", text: `v${agent.app_version.replace(/^v/i, "")}` });
-  if (revoked) subtitleParts.push({ key: "seen", text: `撤销于 ${formatTime(device.revoked_at)}`, className: "text-red-300" });
-  else if (lastSeenAt) subtitleParts.push({ key: "seen", text: `${relativeTime(lastSeenAt, now)}上报`, title: formatTime(lastSeenAt) });
-  else subtitleParts.push({ key: "seen", text: "尚未上报" });
+  if (revoked) subtitleParts.push({ key: "seen", text: t("撤销于 {value}", { value: formatTime(device.revoked_at) }), className: "text-red-300" });
+  else if (lastSeenAt) subtitleParts.push({ key: "seen", text: t("{value}上报", { value: relativeTime(lastSeenAt, now) }), title: formatTime(lastSeenAt) });
+  else subtitleParts.push({ key: "seen", text: t("尚未上报") });
   if (agent) {
     subtitleParts.push({
       key: "terminal",
-      text: `远程终端${agent.terminal_enabled ? "已开启" : "已关闭"}`,
+      text: t("远程终端{value}", { value: agent.terminal_enabled ? t("已开启") : t("已关闭") }),
       className: agent.terminal_enabled ? undefined : "text-amber-300",
     });
   }
@@ -447,11 +447,11 @@ function DeviceHostDetail({
               onClick={() => void connectDevice(device)}
             >
               <IconTerminal size={11} />
-              {workspace ? "切换到工作区" : "打开工作区"}
+              {workspace ? t("切换到工作区") : t("打开工作区")}
             </button>
             <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={openDevicesTab}>
               <IconInfo size={11} />
-              设备管理
+              {t("设备管理")}
             </button>
             <CopyLinkButton assetId={assetId} />
           </>
@@ -465,15 +465,15 @@ function DeviceHostDetail({
             cards={[
               <SessionsSection key="sessions" workspace={workspace} />,
               <ContainersSection key="containers" workspace={workspace} visible={visible} />,
-              <HostSection key="alerts" title="告警" icon={<IconBell size={14} />} testId="host-alerts">
-                {revoked ? <SectionHint>设备已撤销接入，不再评估告警。</SectionHint> : <DeviceAlertsCard device={device} />}
+              <HostSection key="alerts" title={t("告警")} icon={<IconBell size={14} />} testId="host-alerts">
+                {revoked ? <SectionHint>{t("设备已撤销接入，不再评估告警。")}</SectionHint> : <DeviceAlertsCard device={device} />}
               </HostSection>,
             ]}
             wide={
               <>
-                <HostSection title="指标" icon={<IconActivity size={14} />} testId="host-metrics">
+                <HostSection title={t("指标")} icon={<IconActivity size={14} />} testId="host-metrics">
                   {revoked ? (
-                    <SectionHint>设备已撤销接入，不再上报指标。</SectionHint>
+                    <SectionHint>{t("设备已撤销接入，不再上报指标。")}</SectionHint>
                   ) : visible ? (
                     <MetricsPanel deviceId={device.id} online={online} />
                   ) : null}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { describeError } from "../../ui/errorText";
+import { t } from "../../i18n";
 
 export interface SavedTargetSet {
   id: string;
@@ -153,7 +154,7 @@ export function SavedTargetSets({
 
   return (
     <fieldset className="min-w-0" disabled={disabled}>
-      <legend className="mb-1.5 text-[11px] text-neutral-500">保存的目标集（已选 {selectedIds.length}）</legend>
+      <legend className="mb-1.5 text-[11px] text-neutral-500">{t("保存的目标集（已选 {length}）", { length: selectedIds.length })}</legend>
       {error !== null && (
         <div className="mb-2 text-[11px] text-amber-300" role="alert">
           {error}
@@ -162,8 +163,8 @@ export function SavedTargetSets({
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <input
           className="nx-input nx-input-sm max-w-40"
-          aria-label="目标集名称"
-          placeholder="目标集名称"
+          aria-label={t("目标集名称")}
+          placeholder={t("目标集名称")}
           value={name}
           disabled={busy}
           onChange={(event) => setName(event.target.value)}
@@ -174,17 +175,17 @@ export function SavedTargetSets({
           disabled={busy || trimmedName === "" || selectedIds.length === 0}
           onClick={save}
         >
-          保存当前选择
+          {t("保存当前选择")}
         </button>
-        <span className="nx-hint">把已选目标存为可复用集合</span>
+        <span className="nx-hint">{t("把已选目标存为可复用集合")}</span>
       </div>
       {sets === null ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500" role="status">
-          正在加载…
+          {t("正在加载…")}
         </div>
       ) : sets.length === 0 ? (
         <div className="rounded border border-dashed border-neutral-800 px-3 py-3 text-[11px] text-neutral-500">
-          暂无保存的目标集
+          {t("暂无保存的目标集")}
         </div>
       ) : (
         <ul className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded border border-neutral-800/70 p-2">
@@ -194,7 +195,7 @@ export function SavedTargetSets({
                 <>
                   <input
                     className="nx-input nx-input-sm max-w-40"
-                    aria-label={`重命名目标集 ${set.name}`}
+                    aria-label={t("重命名目标集 {name}", { name: set.name })}
                     value={editingName}
                     disabled={busy}
                     onChange={(event) => setEditingName(event.target.value)}
@@ -205,10 +206,10 @@ export function SavedTargetSets({
                     disabled={busy || editingName.trim() === ""}
                     onClick={() => confirmRename(set)}
                   >
-                    保存名称
+                    {t("保存名称")}
                   </button>
                   <button type="button" className="nx-link" onClick={() => setEditingId(null)}>
-                    取消
+                    {t("取消")}
                   </button>
                 </>
               ) : (
@@ -217,18 +218,18 @@ export function SavedTargetSets({
                     {set.name}
                   </span>
                   <span className="nx-hint">
-                    在线 {set.sessionIds.filter((id) => available.has(id)).length}/{set.sessionIds.length}
+                    {t("在线 {length}/{length2}", { length: set.sessionIds.filter((id) => available.has(id)).length, length2: set.sessionIds.length })}
                   </span>
                   <button
                     type="button"
                     className="nx-link"
-                    aria-label={`选择目标集 ${set.name}`}
+                    aria-label={t("选择目标集 {name}", { name: set.name })}
                     onClick={() => apply(set)}
                   >
-                    选择
+                    {t("选择")}
                   </button>
                   <button type="button" className="nx-link" disabled={busy} onClick={() => startRename(set)}>
-                    重命名
+                    {t("重命名")}
                   </button>
                   <button
                     type="button"
@@ -236,16 +237,16 @@ export function SavedTargetSets({
                     disabled={busy || selectedIds.length === 0}
                     onClick={() => overwrite(set)}
                   >
-                    覆盖
+                    {t("覆盖")}
                   </button>
                   <button
                     type="button"
                     className="nx-link"
-                    aria-label={`删除目标集 ${set.name}`}
+                    aria-label={t("删除目标集 {name}", { name: set.name })}
                     disabled={busy}
                     onClick={() => remove(set)}
                   >
-                    {armedDeleteId === set.id ? "确认删除" : "删除"}
+                    {armedDeleteId === set.id ? t("确认删除") : t("删除")}
                   </button>
                 </>
               )}

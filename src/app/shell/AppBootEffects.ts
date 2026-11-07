@@ -13,6 +13,7 @@ import { listenEvent } from "../../ipc/events";
 import { onAssetDataChanged } from "../../ipc/assetEvents";
 import { TRANSPORT, WEB } from "../../ipc/env";
 import { registerPromptHandler, registerDialogHandlers, registerDialogEpochSource, type ChoiceResult } from "../../ui/dialogs";
+import { t } from "../../i18n";
 
 export function dialogLevelForKind(kind?: string): "info" | "warning" {
   return kind === "info" ? "info" : "warning";
@@ -69,7 +70,7 @@ export function useAppDialogHandlers(): void {
       choose: (message, options) =>
         new Promise<ChoiceResult | null>((resolve) => {
           useUi.getState().openAppChoice({
-            title: options?.title ?? "请选择",
+            title: options?.title ?? t("请选择"),
             message,
             options: options?.choices ?? [],
             level: options?.level ?? "info",

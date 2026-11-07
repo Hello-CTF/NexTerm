@@ -12,6 +12,7 @@ import {
 } from "../../features/terminal/backgroundSessionsAccess";
 import { getLocalHelperStatus, localDurableEnabled } from "../../features/terminal/localHelperStatus";
 import { tabRecency } from "./tabRecency";
+import { t } from "../../i18n";
 
 const BACKGROUND_STALE_MS = 5_000;
 
@@ -47,7 +48,7 @@ export function openTabSessions(workspaces: Workspace[], activeWorkspaceId: stri
         entries.push({
           key: `tab-${tab.id}`,
           label: tab.title,
-          hint: [workspace.title, current ? "当前" : null, ended ? "已结束" : null].filter(Boolean).join(" · "),
+          hint: [workspace.title, current ? t("当前") : null, ended ? t("已结束") : null].filter(Boolean).join(" · "),
           keywords: [workspace.title],
           recency: current ? Number.MIN_SAFE_INTEGER : tabRecency(tab.id),
           sessionId: tab.sessionId ?? workspace.sessionId ?? null,
@@ -62,10 +63,10 @@ export function openTabSessions(workspaces: Workspace[], activeWorkspaceId: stri
 
 function outputAgo(ms: number | undefined): string | null {
   if (ms === undefined || !Number.isFinite(ms) || ms < 0) return null;
-  if (ms < 60_000) return "刚有输出";
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)} 分钟前有输出`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)} 小时前有输出`;
-  return `${Math.floor(ms / 86_400_000)} 天前有输出`;
+  if (ms < 60_000) return t("刚有输出");
+  if (ms < 3_600_000) return t("{floor} 分钟前有输出", { floor: Math.floor(ms / 60_000) });
+  if (ms < 86_400_000) return t("{floor} 小时前有输出", { floor: Math.floor(ms / 3_600_000) });
+  return t("{floor} 天前有输出", { floor: Math.floor(ms / 86_400_000) });
 }
 
 const UNKNOWN_OUTPUT_AGE = 1e12;
@@ -74,9 +75,9 @@ const UNKNOWN_OUTPUT_AGE = 1e12;
 export function backgroundSessionEntries(tabs: BackgroundTab[]): JumpSessionEntry[] {
   return tabs.map((tab) => ({
     key: `background-${JSON.stringify([tab.sessionId, tab.tabId])}`,
-    label: tab.title || `${tab.sessionName} 的终端`,
-    hint: ["后台", tab.sessionName, outputAgo(tab.lastOutputMsAgo)].filter(Boolean).join(" · "),
-    keywords: [tab.sessionName, "后台"],
+    label: tab.title || t("{sessionName} 的终端", { sessionName: tab.sessionName }),
+    hint: [t("后台"), tab.sessionName, outputAgo(tab.lastOutputMsAgo)].filter(Boolean).join(" · "),
+    keywords: [tab.sessionName, t("后台")],
     recency: -1 - Math.min(tab.lastOutputMsAgo ?? UNKNOWN_OUTPUT_AGE, UNKNOWN_OUTPUT_AGE),
     sessionId: tab.sessionId,
     terminalId: tab.tabId,
@@ -149,10 +150,10 @@ export async function jumpToSession(target: JumpSessionTarget): Promise<void> {
   }
   const result = await takeOverBackgroundTab(target.tab, {
     guard: (session) => {
-      if (!ownedByApp(session)) throw new Error("该终端所属主机已不在工作区中，请重新连接后再接管");
+      if (!ownedByApp(session)) throw new Error(t("该终端所属主机已不在工作区中，请重新连接后再接管"));
     },
   });
   const { pushToast } = useUi.getState();
-  if (result.ok) pushToast("info", `已接管「${result.sessionName}」的终端`);
-  else if ("error" in result) pushToast("error", `接管失败：${result.error}`);
+  if (result.ok) pushToast("info", t("已接管「{sessionName}」的终端", { sessionName: result.sessionName }));
+  else if ("error" in result) pushToast("error", t("接管失败：{error}", { error: result.error }));
 }

@@ -11,6 +11,7 @@ import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmatio
 import { dockerConfirmation, getDockerConfirmationChallenge, type DockerConfirmationChallenge } from "./productionGuard";
 import { DockerStreamView, type DockerOutputStream } from "./DockerStreamView";
 import { ComposeEditor } from "./ComposeEditor";
+import { t } from "../../i18n";
 
 type ComposeAction = "up" | "down" | "restart" | "pull";
 
@@ -19,9 +20,9 @@ type ComposeAction = "up" | "down" | "restart" | "pull";
 export type ComposeMetadataState = { state: "loading" } | { state: "failed"; error: string } | { state: "ready" };
 
 function missingStackReason(metadata: ComposeMetadataState): string {
-  if (metadata.state === "loading") return "正在读取 Compose 元数据…";
-  if (metadata.state === "failed") return `读取 Compose 元数据失败：${metadata.error}`;
-  return "未找到该 Compose 项目的配置信息";
+  if (metadata.state === "loading") return t("正在读取 Compose 元数据…");
+  if (metadata.state === "failed") return t("读取 Compose 元数据失败：{error}", { error: metadata.error });
+  return t("未找到该 Compose 项目的配置信息");
 }
 
 type PendingProduction = {
@@ -79,8 +80,8 @@ export function ComposeStackHeader({
     setOutput(null);
     try {
       const result = await dockerApi.composeAction(sessionId, project, action, confirmation);
-      setOutput(result || "命令已完成，无输出。");
-      pushToast("success", `${project} · ${action} 已完成`);
+      setOutput(result || t("命令已完成，无输出。"));
+      pushToast("success", t("{project} · {action} 已完成", { project, action }));
       onChanged();
     } catch (cause) {
       const challenge = getDockerConfirmationChallenge(cause);
@@ -91,7 +92,7 @@ export function ComposeStackHeader({
           retry: (nextConfirmation) => execute(action, nextConfirmation),
         });
       } else {
-        pushToast("error", `${project} · ${action} 失败：${describeError(cause)}`);
+        pushToast("error", t("{project} · {action} 失败：{value}", { project, action, value: describeError(cause) }));
       }
     } finally {
       actionInFlight.current = false;
@@ -102,7 +103,7 @@ export function ComposeStackHeader({
   const startAction = async (action: ComposeAction) => {
     if (unavailable) return;
     if (action === "down" && !(await ask(
-      `停止并删除 Compose 栈 ${project} 的容器和默认网络？\n\n命名卷不会被删除；生产环境还需要逐目标输入实际环境名。`,
+      t("停止并删除 Compose 栈 {project} 的容器和默认网络？\n\n命名卷不会被删除；生产环境还需要逐目标输入实际环境名。", { project }),
       { kind: "warning" },
     ))) return;
     await execute(action);
@@ -121,10 +122,10 @@ export function ComposeStackHeader({
         disposeChannel(channel);
         return;
       }
-      setStream({ id, sessionId, title: `${project} · Compose logs（按 service 前缀合并）`, channel, sink });
+      setStream({ id, sessionId, title: t("{project} · Compose logs（按 service 前缀合并）", { project }), channel, sink });
     } catch (cause) {
       disposeChannel(channel);
-      pushToast("error", `${project} 日志打开失败：${describeError(cause)}`);
+      pushToast("error", t("{project} 日志打开失败：{value}", { project, value: describeError(cause) }));
     } finally {
       setBusy(null);
     }
@@ -137,9 +138,9 @@ export function ComposeStackHeader({
         <span className="nx-badge nx-badge-purple max-w-[60%] truncate" title={project}>{project}</span>
         <span className="text-[11px] text-neutral-500">{compact ? `${effective.services.length} services` : `Compose stack · ${effective.services.length} services`}</span>
         {loading ? (
-          <span className="nx-badge" title={effective.reason} role="status">加载中</span>
+          <span className="nx-badge" title={effective.reason} role="status">{t("加载中")}</span>
         ) : (
-          effective.readOnly && <span className="nx-badge nx-badge-amber" title={effective.reason}>只读</span>
+          effective.readOnly && <span className="nx-badge nx-badge-amber" title={effective.reason}>{t("只读")}</span>
         )}
         {effective.reason && (
           <span
@@ -161,7 +162,7 @@ export function ComposeStackHeader({
         <button
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-xs pointer-coarse:h-8"
-          aria-label="更多 Compose 操作"
+          aria-label={t("更多 Compose 操作")}
           aria-haspopup="menu"
           disabled={unavailable}
           onClick={(e) => {
@@ -208,7 +209,7 @@ export function ComposeStackHeader({
       </div>
       {output && (
         <div className="relative mt-1.5">
-          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs absolute right-1 top-1 z-10" onClick={() => setOutput(null)}>关闭</button>
+          <button type="button" className="nx-btn nx-btn-ghost nx-btn-xs absolute right-1 top-1 z-10" onClick={() => setOutput(null)}>{t("关闭")}</button>
           <pre className="nx-pre max-h-56 overflow-auto whitespace-pre-wrap break-all pr-14 text-[11px]">{output}</pre>
         </div>
       )}

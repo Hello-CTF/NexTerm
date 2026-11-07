@@ -14,6 +14,7 @@ import { type RefChip, type AiChatBase, composeUserMessage } from "./aiSidebarSh
 import { currentAtQuery } from "../userRefs";
 import { hasExitEvidence } from "../../../app/store";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
+import { t as tr } from "../../../i18n";
 
 export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
   const { isLifecycleActive, conversationIdRef, toolHandlesRef, setToolHandleVersion, lastRefreshedHandleVersionRef, restoreBindingRef, restoreGenerationRef, setConversationId, onConversationChangeRef, stream, conv, permScope, pushToast, input, sessionId, workspaces } = p;
@@ -166,7 +167,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
       if (permScope) setPermDeviceOverride(true);
     } catch (e) {
       setPerm(prev);
-      pushToast("error", `未能保存权限设置：${describeError(e)}`);
+      pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
     }
   };
 
@@ -187,7 +188,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
         await loadPermission();
       } catch (e) {
         setPerm(prev);
-        pushToast("error", `未能保存权限设置：${describeError(e)}`);
+        pushToast("error", tr("未能保存权限设置：{value}", { value: describeError(e) }));
       }
     })();
   };
@@ -245,7 +246,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
         id: `asset:${sess.id}`,
         kind: "asset",
         label: sess.name,
-        detail: `${sess.kind} 会话`,
+        detail: tr("{kind} 会话", { kind: sess.kind }),
         refId: sess.id,
       });
     }
@@ -260,7 +261,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
               id: `tab:${t.id}`,
               kind: "tab",
               label: t.title,
-              detail: host && host !== w.title ? `${host} · ${w.title}` : `${w.title} 的终端`,
+              detail: host && host !== w.title ? `${host} · ${w.title}` : tr("{title} 的终端", { title: w.title }),
               refId: t.tabId,
             });
             continue;
@@ -304,7 +305,7 @@ export function useChatPanelState(p: AiChatBase & UseChatRunSessionOut) {
     if (taken.length === 0) return;
     setRefs((prev) => [...prev, ...taken.filter((r) => !prev.some((x) => x.id === r.id))]);
     // Only command output needs the explain prompt; a terminal or file reference just joins the list.
-    if (taken.some((r) => r.kind === "text")) setInput((prev) => (prev.trim() === "" ? "解释这段命令输出" : prev));
+    if (taken.some((r) => r.kind === "text")) setInput((prev) => (prev.trim() === "" ? tr("解释这段命令输出") : prev));
     inputRef.current?.focus();
   }, [active, rightOpen, pendingRefCount, setRefs, setInput]);
 

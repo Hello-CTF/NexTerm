@@ -15,6 +15,7 @@ import {
   type SkillOverrideInput,
   type SkillsApi,
 } from "./skillsApi";
+import { t } from "../../i18n";
 
 export interface SkillSeed {
   name: string;
@@ -103,22 +104,22 @@ export function createSkillsMockBackend(embeddedSeeds: SkillSeed[]): SkillsMockB
     if (input.description !== undefined) {
       const trimmed = input.description.trim();
       if (!trimmed || byteLength(trimmed) > 256) {
-        throw new SkillError("invalid_param", `AI 技能内容无效: invalid override description for ${name}`);
+        throw new SkillError("invalid_param", t("AI 技能内容无效: invalid override description for {name}", { name }));
       }
     }
     if (input.body !== undefined) {
       if (!input.body.trim() || byteLength(input.body) > 64 * 1024) {
-        throw new SkillError("invalid_param", `AI 技能内容无效: invalid override body for ${name}`);
+        throw new SkillError("invalid_param", t("AI 技能内容无效: invalid override body for {name}", { name }));
       }
     }
     if (!hasBase) {
       if (input.description === undefined || input.body === undefined) {
-        throw new SkillError("invalid_param", `AI 技能内容无效: custom skill ${name} requires description and body`);
+        throw new SkillError("invalid_param", t("AI 技能内容无效: custom skill {name} requires description and body", { name }));
       }
       return;
     }
     if (input.description === undefined && input.body === undefined && !input.disabled) {
-      throw new SkillError("invalid_param", `AI 技能内容无效: empty override for ${name}`);
+      throw new SkillError("invalid_param", t("AI 技能内容无效: empty override for {name}", { name }));
     }
   }
 
@@ -128,10 +129,10 @@ export function createSkillsMockBackend(embeddedSeeds: SkillSeed[]): SkillsMockB
       const override = store.get(name);
       const seed = embedded.get(name);
       if (!seed && !override) {
-        throw new SkillError("not_found", `AI 技能不存在，可能已被删除或覆盖已移除: ${name}`);
+        throw new SkillError("not_found", t("AI 技能不存在，可能已被删除或覆盖已移除: {name}", { name }));
       }
       if (!allowDisabled && override?.disabled) {
-        throw new SkillError("disabled", `AI 技能已被禁用，请在设置中启用后重试: ${name}`);
+        throw new SkillError("disabled", t("AI 技能已被禁用，请在设置中启用后重试: {name}", { name }));
       }
       const effective = effectiveOf(seed, override);
       return {
@@ -153,7 +154,7 @@ export function createSkillsMockBackend(embeddedSeeds: SkillSeed[]): SkillsMockB
       async saveOverride(input: SkillOverrideInput): Promise<SkillEntry> {
         const name = input.name.trim();
         if (!isValidSkillName(name)) {
-          throw new SkillError("invalid_param", `AI 技能内容无效: invalid skill name ${name}`);
+          throw new SkillError("invalid_param", t("AI 技能内容无效: invalid skill name {name}", { name }));
         }
         const hasBase = embedded.has(name);
         validateOverrideInput(name, hasBase, input);
@@ -170,7 +171,7 @@ export function createSkillsMockBackend(embeddedSeeds: SkillSeed[]): SkillsMockB
       async deleteOverride(name: string): Promise<void> {
         const store = storeFor(ownerKey);
         if (!store.delete(name.trim())) {
-          throw new SkillError("not_found", `AI 技能不存在，可能已被删除或覆盖已移除: ${name}`);
+          throw new SkillError("not_found", t("AI 技能不存在，可能已被删除或覆盖已移除: {name}", { name }));
         }
       },
 

@@ -1,4 +1,5 @@
 import { IconAlert } from "../../ui/icons";
+import { t } from "../../i18n";
 
 // Reusable production visual warning for workspace, terminal, and AI scopes.
 // The warning is purely presentational and never infers authorization from
@@ -9,8 +10,8 @@ import { IconAlert } from "../../ui/icons";
 
 export function ProductionEnvironmentBadge({ environment, production }: { environment: string; production: boolean }) {
   return (
-    <span className={production ? "nx-badge nx-badge-amber" : "nx-badge"} title={production ? "生产环境" : undefined}>
-      {production ? "生产 · " : ""}
+    <span className={production ? "nx-badge nx-badge-amber" : "nx-badge"} title={production ? t("生产环境") : undefined}>
+      {production ? t("生产 · ") : ""}
       {environment}
     </span>
   );
@@ -35,12 +36,11 @@ export function ProductionWriteRiskNotice({
     >
       <span className="flex items-center gap-1.5">
         <IconAlert size={14} />
-        生产环境写入风险
+        {t("生产环境写入风险")}
       </span>
       <span className="mt-1 block text-neutral-200">
-        当前目标环境为 <code className="text-amber-300">{environment}</code>
-        {operation ? `，${operation}写入将需要逐次输入实际环境名确认` : "，写入将需要逐次输入实际环境名确认"}
-        ；本会话不会记住授权。
+        {t("当前目标环境为")} <code className="text-amber-300">{environment}</code>
+        {t("{value}；本会话不会记住授权。", { value: operation ? t("，{operation}写入将需要逐次输入实际环境名确认", { operation }) : t("，写入将需要逐次输入实际环境名确认") })}
       </span>
     </div>
   );

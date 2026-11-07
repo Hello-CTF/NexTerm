@@ -10,6 +10,7 @@ import { createAiChannel, onChannelReopen } from "../../../ipc/events";
 import { terminalEventOf, aiCreatedTerminalOf, AI_RESYNC_MAX_ATTEMPTS, AI_RESYNC_BACKOFF_MS, AI_HITL_EXPIRY_GRACE_MS, type AiChatBase } from "./aiSidebarShared";
 import type { UseChatRunSessionOut } from "./useChatRunSession";
 import type { UseChatPanelStateOut } from "./useChatPanelState";
+import { t } from "../../../i18n";
 
 export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseChatPanelStateOut) {
   const { tabId, isLifecycleActive, activeRunRef, stream, cancelWaitersRef, cancelOperationRef, setActiveRun, pushToast, conversationIdRef, pushAgentEvent, setBusy, runChannelRef, restoredChannelRef, disposeRestoredChannel, clearResyncState, tabKey, activeRef, catchupChains, clearResyncTimer, markSyncing, markSynced, markSyncFailed, resyncTimerRef, terminalPollRef, terminalPollFailuresRef, activeRun, isRestoreActive, setConversationRuns, runSequenceRef, runControl, restoreGenerationRef, updateConversationId, clearMessageHistory, setConversationError, resetMessageHistory, boundConversationId, setConversationId, restoreBindingRef, rightOpenRef } = p;
@@ -63,8 +64,8 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       pushToast(
         "error",
         error === undefined
-          ? "未能确认任务已停止，请重试"
-          : `未能确认任务已停止：${describeError(error)}。请重试`,
+          ? t("未能确认任务已停止，请重试")
+          : t("未能确认任务已停止：{value}。请重试", { value: describeError(error) }),
       );
     }
   }, [activeRunRef, setActiveRun, cancelWaitersRef, pushToast]);
@@ -128,7 +129,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
           stream.resolveSteer(operation.generation, item.id, "dropped");
         }
       }
-      pushToast("info", current.kind === "takeover" ? "正在停止接管，等待终端退出…" : "正在停止…");
+      pushToast("info", current.kind === "takeover" ? t("正在停止接管，等待终端退出…") : t("正在停止…"));
     }
     if (!isLifecycleActive()) {
       const deadline = Date.now() + 4500;
@@ -169,7 +170,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
           if (isCurrentAiRun(latest, generation) && latest.cancellation !== "idle") {
             setActiveRun(markAiRunCancellationUnconfirmed(latest));
           }
-          pushToast("error", "未能确认任务已停止，请重试");
+          pushToast("error", t("未能确认任务已停止，请重试"));
           resolve(false);
         }, 5000),
       };
@@ -342,7 +343,7 @@ export function useChatRunRecovery(p: AiChatBase & UseChatRunSessionOut & UseCha
       if (!isLifecycleActive() || !isCurrentAiRun(activeRunRef.current, generation)) return;
       terminalPollFailuresRef.current += 1;
       if (terminalPollFailuresRef.current === 3) {
-        pushToast("error", "暂时无法获取 AI 任务状态，正在重试。也可以重新打开会话确认结果");
+        pushToast("error", t("暂时无法获取 AI 任务状态，正在重试。也可以重新打开会话确认结果"));
       }
     }
   };

@@ -1,6 +1,7 @@
 import type { ExecBatchProductionChallenge } from "../production/productionChallenge";
 import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmationDialog";
 import { IconStop } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export function OperationFeedback({
   error,
@@ -23,9 +24,9 @@ export function OperationFeedback({
       {cancelError && <div role="alert" className="px-3 py-1.5 text-[11px] text-red-300">{cancelError}</div>}
       {running && (
         <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-blue-300" role="status">
-          <span>正在执行批次 {runningId}，逐目标结果会在返回后保留。</span>
+          <span>{t("正在执行批次")} {runningId}{t("，逐目标结果会在返回后保留。")}</span>
           <button type="button" className="nx-btn nx-btn-danger nx-btn-xs" disabled={canceling} onClick={onCancel}>
-            <IconStop size={11} />{canceling ? "正在取消…" : "取消"}
+            <IconStop size={11} />{canceling ? t("正在取消…") : t("取消")}
           </button>
         </div>
       )}

@@ -1,0 +1,3 @@
+/* Permission prompts shown by iOS in the system language. */
+"NSFaceIDUsageDescription" = "使用 Face ID 快速解鎖 NexTerm 資料金鑰";
+"NSLocationWhenInUseUsageDescription" = "內建網頁元件可能會要求定位權限；NexTerm 不會主動取得您的位置資訊";

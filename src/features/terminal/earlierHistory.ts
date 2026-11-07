@@ -1,5 +1,6 @@
 import type { TerminalHistoryChunk } from "../../ipc/types";
 import { decodeBase64 } from "./transcriptText";
+import { t } from "../../i18n";
 
 // Earlier history of a durable tab: the recorded output before the first byte a
 // terminal view rendered (a fresh open replays only the tail, and a view's own
@@ -87,7 +88,7 @@ export function nextEarlierHistoryRead(state: EarlierHistoryState): EarlierHisto
 
 export class EarlierHistoryMismatchError extends Error {
   constructor() {
-    super("历史读取结果与请求的位置不一致");
+    super(t("历史读取结果与请求的位置不一致"));
     this.name = "EarlierHistoryMismatchError";
   }
 }

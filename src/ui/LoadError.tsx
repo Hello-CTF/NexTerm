@@ -1,5 +1,6 @@
 import { friendlyErrorDetail, friendlyErrorMessage } from "./friendlyError";
 import { IconRefresh, IconXCircle } from "./icons";
+import { t } from "../i18n";
 
 // Plain-language load failure with a retry; the raw error is only shown under the details disclosure.
 export function LoadError({ title, error, onRetry }: { title: string; error: unknown; onRetry: () => void }) {
@@ -11,10 +12,10 @@ export function LoadError({ title, error, onRetry }: { title: string; error: unk
       <div className="nx-hint mt-1.5">{friendlyErrorMessage(error)}</div>
       <button type="button" className="nx-btn nx-btn-outline nx-btn-sm mt-3" onClick={onRetry}>
         <IconRefresh size={12} />
-        重试
+        {t("重试")}
       </button>
       <details className="mt-2 text-left text-[11px] text-neutral-500">
-        <summary className="cursor-pointer text-center">查看详情</summary>
+        <summary className="cursor-pointer text-center">{t("查看详情")}</summary>
         <pre className="mt-1 whitespace-pre-wrap break-all">{friendlyErrorDetail(error)}</pre>
       </details>
     </div>

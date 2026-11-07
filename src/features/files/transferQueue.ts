@@ -1,5 +1,6 @@
 import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import type { FileEntryDto } from "../../ipc/types";
+import { t } from "../../i18n";
 
 export type TransferDirection = "upload" | "download";
 
@@ -34,12 +35,12 @@ export interface TransferTask {
 }
 
 export const TRANSFER_STATUS_LABEL: Record<TransferStatus, string> = {
-  queued: "排队中",
-  running: "进行中",
-  done: "已完成",
-  failed: "失败",
-  skipped: "已跳过",
-  cancelled: "已取消",
+  queued: t("排队中"),
+  running: t("进行中"),
+  done: t("已完成"),
+  failed: t("失败"),
+  skipped: t("已跳过"),
+  cancelled: t("已取消"),
 };
 
 // Upload targets whose filesystem folds filename case: winrm is always NTFS semantics; a local

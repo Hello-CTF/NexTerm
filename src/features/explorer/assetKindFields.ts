@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 // Which parts of the asset form each kind shows, and the defaults a kind brings. The editor reads this table instead
 // of repeating kind comparisons, so a new protocol is one row.
 
@@ -151,8 +152,8 @@ export function writeRemoteDesktopOptions(
 }
 
 export function validateResolution(width: number, height: number): string | null {
-  if (!Number.isInteger(width) || !Number.isInteger(height)) return "分辨率必须是整数";
-  if (width < 640 || height < 480) return "分辨率不能小于 640 x 480";
-  if (width > 8192 || height > 8192) return "分辨率不能大于 8192 x 8192";
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return t("分辨率必须是整数");
+  if (width < 640 || height < 480) return t("分辨率不能小于 640 x 480");
+  if (width > 8192 || height > 8192) return t("分辨率不能大于 8192 x 8192");
   return null;
 }

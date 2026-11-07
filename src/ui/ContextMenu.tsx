@@ -12,6 +12,7 @@ import {
 } from "react";
 import { documentTabTarget, isImeKeyEvent, useOverlayFocus } from "./DialogHost";
 import "./contextMenuSheet.css";
+import { t } from "../i18n";
 
 export type MenuItem =
   | { kind: "separator" }
@@ -211,7 +212,7 @@ function FloatingContextMenu({
       ref={boxRef}
       className="nx-menu"
       role="menu"
-      aria-label={state.title ?? "上下文菜单"}
+      aria-label={state.title ?? t("上下文菜单")}
       tabIndex={-1}
       style={{
         left: pos?.left ?? state.x,
@@ -622,7 +623,7 @@ function ContextMenuSheet({
         ref={boxRef}
         className="nx-menu-sheet"
         role="menu"
-        aria-label={state.title ?? "上下文菜单"}
+        aria-label={state.title ?? t("上下文菜单")}
         tabIndex={-1}
         style={{
           transform: dragOffset > 0 ? `translateY(${dragOffset}px)` : undefined,

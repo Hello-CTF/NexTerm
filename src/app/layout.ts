@@ -56,6 +56,7 @@ import {
 import { syncWorkspaceTree, workspaceLayoutTree } from "./paneLayout";
 import { decodeSplitTree, SPLIT_TREE_FORMAT_VERSION } from "./splitTreeSync";
 import { paneIdsInOrder } from "./splitTree";
+import { t as tr } from "../i18n";
 
 export type { PersistedLayout } from "./layoutMerge";
 
@@ -116,7 +117,7 @@ function sanitizeTab(raw: unknown): AppTab | null {
   return {
     id,
     kind: kind as PaneKind,
-    title: typeof raw.title === "string" ? raw.title : "标签",
+    title: typeof raw.title === "string" ? raw.title : tr("标签页"),
     sessionId: optStr(raw.sessionId),
     assetId: optStr(raw.assetId),
     tabId,
@@ -196,7 +197,7 @@ function sanitizeWorkspace(raw: unknown): Workspace | null {
   const workspace = normalizeMergedWorkspace({
     id,
     kind: kind as WorkspaceKind,
-    title: typeof raw.title === "string" ? raw.title : "工作区",
+    title: typeof raw.title === "string" ? raw.title : tr("工作区"),
     sessionId: optStr(raw.sessionId),
     assetId: optStr(raw.assetId),
     connId: optStr(raw.connId),
@@ -219,7 +220,7 @@ function sanitizeAiDockTab(raw: unknown): AiDockTab | null {
   const id = optStr(raw.id);
   if (!id) return null;
   const title = typeof raw.title === "string" ? clipText(raw.title.trim(), 80) : "";
-  return { id, title: title || "新会话", conversationId: optStr(raw.conversationId) };
+  return { id, title: title || tr("新会话"), conversationId: optStr(raw.conversationId) };
 }
 
 function sanitizeAiBoard(raw: unknown): AiBoard | null {
@@ -673,19 +674,19 @@ async function restoreSummary(layout: PersistedLayout): Promise<{ text: string; 
     // Show an unverified target rather than guessing whether an asset still exists.
   }
   const lines = layout.workspaces.slice(0, 12).map((workspace) => {
-    let status = "工具标签";
-    if (workspace.quickTarget) status = "临时 SSH 目标，重新连接时需要重新提供凭据";
-    else if (workspace.assetId?.startsWith("device/")) status = "受管设备，使用前需确认在线状态";
-    else if (workspace.assetId && assets === null) status = "资产状态未核实";
-    else if (workspace.assetId && !assets?.has(workspace.assetId)) status = "原资产已不存在，旧连接将跳过";
-    else if (workspace.kind === "db") status = "数据库目标，连接状态需重新确认";
-    else if (workspace.kind === "remote") status = "远程桌面，恢复后需手动重新连接";
-    else if (workspace.kind === "session") status = "资产目标，连接状态需重新确认";
+    let status = tr("工具标签");
+    if (workspace.quickTarget) status = tr("临时 SSH 目标，重新连接时需要重新提供凭据");
+    else if (workspace.assetId?.startsWith("device/")) status = tr("受管设备，使用前需确认在线状态");
+    else if (workspace.assetId && assets === null) status = tr("资产状态未核实");
+    else if (workspace.assetId && !assets?.has(workspace.assetId)) status = tr("原资产已不存在，旧连接将跳过");
+    else if (workspace.kind === "db") status = tr("数据库目标，连接状态需重新确认");
+    else if (workspace.kind === "remote") status = tr("远程桌面，恢复后需手动重新连接");
+    else if (workspace.kind === "session") status = tr("资产目标，连接状态需重新确认");
     return `• ${workspace.title}：${status}`;
   });
-  if (layout.workspaces.length > lines.length) lines.push(`• 另有 ${layout.workspaces.length - lines.length} 个工作区`);
+  if (layout.workspaces.length > lines.length) lines.push(tr("• 另有 {value} 个工作区", { value: layout.workspaces.length - lines.length }));
   return {
-    text: `账号中有 ${layout.workspaces.length} 个工作区。恢复前请核对目标：\n\n${lines.join("\n")}\n\n恢复保留工作区与标签页，但不会启动旧连接。请在每个工作区确认目标后手动重新连接。`,
+    text: tr("账号中有 {length} 个工作区。恢复前请核对目标：\n\n{join}\n\n恢复保留工作区与标签页，但不会启动旧连接。请在每个工作区确认目标后手动重新连接。", { length: layout.workspaces.length, join: lines.join("\n") }),
     assets,
   };
 }
@@ -729,10 +730,10 @@ export async function reviewPendingLayoutRestore(): Promise<void> {
     const summary = await restoreSummary(candidate);
     if (epoch !== accountEpoch || pendingRestore !== candidate) return;
     const choice = await askChoice(summary.text, {
-      title: "恢复账号工作区",
+      title: tr("恢复账号工作区"),
       choices: [
-        { key: "restore", label: "恢复并预览", primary: true },
-        { key: "later", label: "稍后处理", hint: "服务端布局保留，本设备暂不写入账号布局" },
+        { key: "restore", label: tr("恢复并预览"), primary: true },
+        { key: "later", label: tr("稍后处理"), hint: tr("服务端布局保留，本设备暂不写入账号布局") },
       ],
     });
     if (epoch !== accountEpoch || pendingRestore !== candidate) return;
@@ -772,7 +773,7 @@ function rejectStaleRestore(latest: PersistedLayout | null): void {
     }
   }
   notifyRestoreChanged();
-  useUi.getState().pushToast("info", "账号布局已在其他设备更新，请重新核对后再恢复");
+  useUi.getState().pushToast("info", tr("账号布局已在其他设备更新，请重新核对后再恢复"));
   if (pendingRestore) void reviewPendingLayoutRestore();
 }
 
@@ -823,7 +824,7 @@ export async function finishLayoutRestore(): Promise<boolean> {
     return true;
   } catch (e) {
     if (epoch === accountEpoch && previewRestore === preview) {
-      useUi.getState().pushToast("error", `完成布局恢复失败：${describeError(e)}`);
+      useUi.getState().pushToast("error", tr("完成布局恢复失败：{value}", { value: describeError(e) }));
     }
     return false;
   } finally {
@@ -1206,7 +1207,7 @@ function applyToStore(l: PersistedLayout) {
     const newDrops = droppedBackgrounds.filter((key) => !notifiedInvalidBackgrounds.has(key));
     if (newDrops.length > 0) {
       for (const key of newDrops) notifiedInvalidBackgrounds.add(key);
-      useUi.getState().pushToast("info", "请从目标主机重新打开后台会话");
+      useUi.getState().pushToast("info", tr("请从目标主机重新打开后台会话"));
     }
     if (droppedBackgrounds.length === 0) notifiedInvalidBackgrounds.clear();
   } finally {
@@ -1249,7 +1250,7 @@ async function pullLatest(reason: "boot" | "remote" | "conflict"): Promise<Persi
           applyToStore(merged);
           if (sharedLayoutKey(merged) !== baseSharedKey) scheduleSharedSave();
           if (reason === "conflict") {
-            useUi.getState().pushToast("info", "布局已在其他设备上更新，已合并最新版本");
+            useUi.getState().pushToast("info", tr("布局已在其他设备上更新，已合并最新版本"));
           }
           if (removed.length > 0) void notifyBackgroundedTerminals(removed);
         }
@@ -1288,7 +1289,7 @@ async function putLayout(candidate: PersistedLayout, epoch = accountEpoch): Prom
       if (needsSave && conflictCount >= LAYOUT_MAX_RETRY) {
         if (!saveErrorNotified) {
           saveErrorNotified = true;
-          useUi.getState().pushToast("error", "布局同步连续冲突，本地修改暂未上传");
+          useUi.getState().pushToast("error", tr("布局同步连续冲突，本地修改暂未上传"));
         }
       } else if (!needsSave) {
         conflictCount = 0;
@@ -1306,7 +1307,7 @@ async function putLayout(candidate: PersistedLayout, epoch = accountEpoch): Prom
     if (epoch !== accountEpoch) return;
     if (!saveErrorNotified) {
       saveErrorNotified = true;
-      useUi.getState().pushToast("error", `布局同步失败：${describeError(e)}`);
+      useUi.getState().pushToast("error", tr("布局同步失败：{value}", { value: describeError(e) }));
     }
     if (retryCount < LAYOUT_MAX_RETRY) {
       retryCount += 1;
@@ -1387,10 +1388,10 @@ export async function notifyBackgroundedTerminals(
     const hit = live.find((t) => t.tabId === r.tabId);
     if (!hit || hit.exited) continue;
     const text = r.retainable !== true
-      ? `终端「${r.title}」的标签页已被其他设备关闭`
+      ? tr("终端「{title}」的标签页已被其他设备关闭", { title: r.title })
       : hit.viewers > 1
-        ? `终端「${r.title}」的标签页已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管`
-        : `终端「${r.title}」的标签页已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管`;
+        ? tr("终端「{title}」的标签页已被其他设备关闭，进程仍在运行，且仍有其他设备正在观看，可在「后台会话」里接管", { title: r.title })
+        : tr("终端「{title}」的标签页已被其他设备关闭，进程仍在后台运行，可在「后台会话」里接管", { title: r.title });
     useUi.getState().pushToast("info", text);
   }
 }
@@ -1398,7 +1399,7 @@ export async function notifyBackgroundedTerminals(
 export function advanceLayoutAccount(): void {
   accountEpoch += 1;
   const pendingDialog = useUi.getState().appChoice;
-  if (pendingDialog?.title === "恢复账号工作区") useUi.getState().closeAppChoice(null);
+  if (pendingDialog?.title === tr("恢复账号工作区")) useUi.getState().closeAppChoice(null);
   revision = 0;
   baseLayout = null;
   baseSharedKey = sharedLayoutKey(null);

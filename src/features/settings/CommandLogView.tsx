@@ -7,6 +7,7 @@ import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { IconRefresh, IconTerminal } from "../../ui/icons";
 import { useCompactWidth } from "./useCompactWidth";
+import { t } from "../../i18n";
 
 interface CommandEntry {
   id: number;
@@ -25,8 +26,8 @@ const PAGE_SIZE = 100;
 const SKELETON_ROWS = 8;
 
 const SOURCE_LABELS: Record<string, string> = {
-  terminal: "终端",
-  exec: "执行",
+  terminal: t("终端"),
+  exec: t("执行"),
 };
 
 function toEntry(r: CommandEntryDto): CommandEntry {
@@ -200,44 +201,44 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
     <div className="nx-pane">
       <div className="nx-toolbar flex-wrap">
         <IconTerminal size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">命令记录</span>
+        <span className="nx-toolbar-title">{t("命令记录")}</span>
         <div className="nx-segment">
           <button className="nx-segment-item" onClick={onShowAudit}>
-            审计
+            {t("审计")}
           </button>
           <button className="nx-segment-item is-active" disabled>
-            命令
+            {t("命令")}
           </button>
           {onShowTimeline && (
             <button className="nx-segment-item" onClick={onShowTimeline}>
-              时间线
+              {t("时间线")}
             </button>
           )}
         </div>
         <span className="nx-hint">
           {error && entries.length === 0
-            ? "未能加载命令记录"
+            ? t("未能加载命令记录")
             : knownTotal !== null
-              ? `共 ${knownTotal} 条`
-              : `已加载 ${entries.length} 条`}
+              ? t("共 {knownTotal} 条", { knownTotal })
+              : t("已加载 {length} 条", { length: entries.length })}
         </span>
         {error && entries.length > 0 && (
-          <span className="nx-hint text-red-300">刷新失败：{error}</span>
+          <span className="nx-hint text-red-300">{t("刷新失败：{error}", { error })}</span>
         )}
         <div className="nx-spacer" />
         <Select
           className="w-[140px] shrink-0"
-          ariaLabel="按设备过滤"
+          ariaLabel={t("按设备过滤")}
           value={assetId}
           onChange={setAssetId}
-          options={[{ value: "", label: "全部设备" }, ...(assets ?? []).map((a) => ({ value: a.id, label: a.name }))]}
+          options={[{ value: "", label: t("全部设备") }, ...(assets ?? []).map((a) => ({ value: a.id, label: a.name }))]}
         />
         {!userFilterLocked && (
           <input
             className="nx-input shrink-0"
             style={{ width: 120 }}
-            aria-label="按用户过滤"
-            placeholder="用户 ID"
+            aria-label={t("按用户过滤")}
+            placeholder={t("用户 ID")}
             value={userId}
             onChange={(e) => setUserId(e.target.value.trim())}
           />
@@ -245,8 +246,8 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
         <input
           className="nx-input shrink-0"
           style={{ width: 140 }}
-          aria-label="按会话过滤"
-          placeholder="会话 ID"
+          aria-label={t("按会话过滤")}
+          placeholder={t("会话 ID")}
           value={sessionId}
           onChange={(e) => setSessionId(e.target.value.trim())}
         />
@@ -256,13 +257,13 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
           disabled={loading}
         >
           <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       <div ref={bodyRef} className="min-h-0 flex-1 overflow-auto">
         {compact ? (
-        <ul className="m-0 flex list-none flex-col p-0" aria-label="命令记录" data-testid="command-cards">
+        <ul className="m-0 flex list-none flex-col p-0" aria-label={t("命令记录")} data-testid="command-cards">
           {entries.map((e) => (
             <li key={e.id} className="flex flex-col gap-1 border-b border-neutral-800/60 px-3 py-2.5">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -273,7 +274,7 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
                   {assetName(e.assetId)}
                 </span>
                 {e.exitCode !== null && (
-                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? "成功" : "失败"}>
+                  <span className={`text-[12px] ${e.exitCode === 0 ? "text-green-300" : "text-red-300"}`} title={e.exitCode === 0 ? t("成功") : t("失败")}>
                     {e.exitCode === 0 ? "✓ 0" : `✗ ${e.exitCode}`}
                   </span>
                 )}
@@ -287,32 +288,32 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
               </div>
             </li>
           ))}
-          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">正在加载…</li>}
+          {entries.length === 0 && loading && <li className="nx-hint px-3 py-4 text-center">{t("正在加载…")}</li>}
           {entries.length === 0 && !loading && error && (
             <li className="flex flex-wrap items-center justify-center gap-2 px-3 py-4 text-center text-[12px]">
-              <span className="min-w-0 break-words text-red-300">未能加载命令记录：{error}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载命令记录：{error}", { error })}</span>
               <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => void loadFirstPage(assetId, userId, sessionId)} disabled={loading}>
                 <IconRefresh size={12} />
-                重试
+                {t("重试")}
               </button>
             </li>
           )}
           {entries.length === 0 && !loading && !error && (
-            <li className="nx-hint px-3 py-4 text-center">暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。</li>
+            <li className="nx-hint px-3 py-4 text-center">{t("暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。")}</li>
           )}
         </ul>
         ) : (
         <table className="nx-table nx-table-fixed">
           <thead>
             <tr>
-              <th style={{ width: 168 }}>时间</th>
-              <th style={{ width: 110 }}>设备</th>
-              <th style={{ width: 90 }}>用户</th>
-              <th style={{ width: 110 }}>会话</th>
-              <th>命令</th>
-              <th style={{ width: 72 }}>来源</th>
+              <th style={{ width: 168 }}>{t("时间")}</th>
+              <th style={{ width: 110 }}>{t("设备")}</th>
+              <th style={{ width: 90 }}>{t("用户")}</th>
+              <th style={{ width: 110 }}>{t("会话")}</th>
+              <th>{t("命令")}</th>
+              <th style={{ width: 72 }}>{t("来源")}</th>
               <th style={{ width: 84 }} className="nx-right">
-                退出码
+                {t("退出码")}
               </th>
             </tr>
           </thead>
@@ -341,11 +342,11 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
                   {e.exitCode === null ? (
                     <span className="text-neutral-600">—</span>
                   ) : e.exitCode === 0 ? (
-                    <span className="text-green-300" title="成功">
+                    <span className="text-green-300" title={t("成功")}>
                       ✓ 0
                     </span>
                   ) : (
-                    <span className="text-red-300" title="失败">
+                    <span className="text-red-300" title={t("失败")}>
                       ✗ {e.exitCode}
                     </span>
                   )}
@@ -357,21 +358,21 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
             ) : entries.length === 0 && error ? (
               <tr>
                 <td colSpan={7} className="nx-table-empty">
-                  <span className="text-red-300">未能加载命令记录：{error}</span>
+                  <span className="text-red-300">{t("未能加载命令记录：{error}", { error })}</span>
                   <button
                     className="nx-btn nx-btn-ghost nx-btn-sm ml-2"
                     onClick={() => void loadFirstPage(assetId, userId, sessionId)}
                     disabled={loading}
                   >
                     <IconRefresh size={12} />
-                    重试
+                    {t("重试")}
                   </button>
                 </td>
               </tr>
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={7} className="nx-table-empty">
-                  暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。
+                  {t("暂无记录。仅记录启用了 OSC 133 集成的 shell 中执行的命令。")}
                 </td>
               </tr>
             ) : null}
@@ -383,19 +384,19 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
       {entries.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
           <span className="nx-hint min-w-0 truncate">
-            {knownTotal !== null ? `已显示 ${entries.length} / ${knownTotal} 条` : `已显示 ${entries.length} 条`}
+            {knownTotal !== null ? t("已显示 {length} / {knownTotal} 条", { length: entries.length, knownTotal }) : t("已显示 {length} 条", { length: entries.length })}
           </span>
           <div className="nx-spacer" />
           {moreError ? (
             <>
-              <span className="min-w-0 break-words text-red-300">未能加载更多：{moreError}</span>
+              <span className="min-w-0 break-words text-red-300">{t("未能加载更多：{moreError}", { moreError })}</span>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 onClick={() => void loadMore()}
                 disabled={loadingMore}
               >
                 {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-                重试
+                {t("重试")}
               </button>
             </>
           ) : hasMore ? (
@@ -405,17 +406,17 @@ export function CommandLogView({ onShowAudit, onShowTimeline }: { onShowAudit: (
               disabled={loadingMore}
             >
               {loadingMore ? <IconRefresh size={11} className="animate-spin" /> : null}
-              加载更多
+              {t("加载更多")}
             </button>
           ) : (
-            <span>已加载全部</span>
+            <span>{t("已加载全部")}</span>
           )}
         </div>
       )}
 
       <div className="flex shrink-0 items-center gap-3 border-t border-neutral-800/60 bg-neutral-950/40 px-3 py-1.5 text-[11px] text-neutral-500">
         <span>
-          仅覆盖启用 OSC 133 shell 集成的会话（本地注入或远端支持）；命令文本取自执行时的屏幕行，可能包含提示符。纯输出和其他来源将不被记录。
+          {t("仅覆盖启用 OSC 133 shell 集成的会话（本地注入或远端支持）；命令文本取自执行时的屏幕行，可能包含提示符。纯输出和其他来源将不被记录。")}
         </span>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { isMac, modHint } from "./platform";
 import { WEB } from "../ipc/env";
 import { getAccountDefaults, getAccountOverrides, getAccountPreferenceStore, patchAccountOverrideCache, subscribeAccountOverrides } from "./preferences";
+import { t } from "../i18n";
 
 export type KeybindingActionId =
   | "commandPalette"
@@ -42,35 +43,35 @@ export interface KeybindingAction {
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
-  { id: "commandPalette", label: "跳转面板", defaultBinding: "Mod+Shift+p" },
-  { id: "quickConnect", label: "快速连接", defaultBinding: "Mod+Shift+k" },
-  { id: "newTerminal", label: "新建终端标签页", defaultBinding: "Mod+t" },
-  { id: "nextWorkspace", label: "下一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
-  { id: "previousWorkspace", label: "上一个工作区", defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
-  { id: "nextTab", label: "下一个标签页", defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
-  { id: "previousTab", label: "上一个标签页", defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
-  { id: "focusPaneLeft", label: "聚焦左侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowLeft" : "Mod+Shift+Alt+ArrowLeft" },
-  { id: "focusPaneRight", label: "聚焦右侧窗格", defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
-  { id: "focusPaneUp", label: "聚焦上方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
-  { id: "focusPaneDown", label: "聚焦下方窗格", defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
-  { id: "toggleSidebar", label: "收起 / 展开左侧栏", defaultBinding: "Mod+b" },
-  { id: "toggleAiSidebar", label: "收起 / 展开 AI 侧栏", defaultBinding: "Mod+j" },
-  { id: "closeTab", label: "关闭当前标签页", defaultBinding: "Mod+w" },
-  { id: "splitDown", label: "向下分屏", defaultBinding: "Mod+\\" },
-  { id: "splitRight", label: "向右分屏", defaultBinding: "Mod+Shift+\\" },
+  { id: "commandPalette", label: t("跳转面板"), defaultBinding: "Mod+Shift+p" },
+  { id: "quickConnect", label: t("快速连接"), defaultBinding: "Mod+Shift+k" },
+  { id: "newTerminal", label: t("新建终端标签页"), defaultBinding: "Mod+t" },
+  { id: "nextWorkspace", label: t("下一个工作区"), defaultBinding: WEB ? "Ctrl+Alt+ArrowRight" : "Mod+Alt+ArrowRight" },
+  { id: "previousWorkspace", label: t("上一个工作区"), defaultBinding: WEB ? "Ctrl+Alt+ArrowLeft" : "Mod+Alt+ArrowLeft" },
+  { id: "nextTab", label: t("下一个标签页"), defaultBinding: WEB ? "Ctrl+Alt+]" : "Ctrl+Tab", macDefaultBinding: "Mod+Shift+]" },
+  { id: "previousTab", label: t("上一个标签页"), defaultBinding: WEB ? "Ctrl+Alt+[" : "Ctrl+Shift+Tab", macDefaultBinding: "Mod+Shift+[" },
+  { id: "focusPaneLeft", label: t("聚焦左侧窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowLeft" : "Mod+Shift+Alt+ArrowLeft" },
+  { id: "focusPaneRight", label: t("聚焦右侧窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+ArrowRight" : "Mod+Shift+Alt+ArrowRight" },
+  { id: "focusPaneUp", label: t("聚焦上方窗格"), defaultBinding: WEB ? "Ctrl+Alt+ArrowUp" : "Mod+Alt+ArrowUp" },
+  { id: "focusPaneDown", label: t("聚焦下方窗格"), defaultBinding: WEB ? "Ctrl+Alt+ArrowDown" : "Mod+Alt+ArrowDown" },
+  { id: "toggleSidebar", label: t("收起 / 展开左侧栏"), defaultBinding: "Mod+b" },
+  { id: "toggleAiSidebar", label: t("收起 / 展开 AI 侧栏"), defaultBinding: "Mod+j" },
+  { id: "closeTab", label: t("关闭当前标签页"), defaultBinding: "Mod+w" },
+  { id: "splitDown", label: t("向下分屏"), defaultBinding: "Mod+\\" },
+  { id: "splitRight", label: t("向右分屏"), defaultBinding: "Mod+Shift+\\" },
   // Browsers reserve Ctrl+Shift+W for closing the window, so the web build uses Ctrl+Alt+W.
-  { id: "closePane", label: "关闭当前窗格（保留标签页）", defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
-  { id: "switchTab", label: "跳转到第 1-9 个标签页", defaultBinding: "Mod+1-9" },
-  { id: "restoreClosedTab", label: "恢复关闭的标签页", defaultBinding: "Mod+Shift+t" },
+  { id: "closePane", label: t("关闭当前窗格（保留标签页）"), defaultBinding: WEB ? "Ctrl+Alt+w" : "Mod+Shift+w" },
+  { id: "switchTab", label: t("跳转到第 1-9 个标签页"), defaultBinding: "Mod+1-9" },
+  { id: "restoreClosedTab", label: t("恢复关闭的标签页"), defaultBinding: "Mod+Shift+t" },
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
-  { id: "terminalSearch", label: "终端内搜索", defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
-  { id: "terminalLinks", label: "终端链接面板", defaultBinding: "Mod+Shift+u" },
-  { id: "sessionSidebar", label: "收起 / 展开会话侧栏", defaultBinding: "Mod+Shift+b" },
+  { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
+  { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
+  { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
-  { id: "reclaimTakeover", label: "AI 接管时收回控制权", defaultBinding: "Mod+Shift+e" },
-  { id: "openSettings", label: "打开设置", defaultBinding: "Mod+," },
-  { id: "focusAiInput", label: "聚焦 AI 输入框", defaultBinding: "Mod+Shift+a" },
-  { id: "lockVault", label: "锁定凭据库", defaultBinding: "Mod+Shift+l" },
+  { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },
+  { id: "openSettings", label: t("打开设置"), defaultBinding: "Mod+," },
+  { id: "focusAiInput", label: t("聚焦 AI 输入框"), defaultBinding: "Mod+Shift+a" },
+  { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
 ];
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
@@ -251,7 +252,7 @@ export function normalizeBinding(input: string): string | null {
 }
 
 export function formatBinding(binding: string | null): string {
-  if (binding === null) return "未绑定";
+  if (binding === null) return t("未绑定");
   const parsed = parseBinding(binding);
   if (!parsed) return binding;
   const parts: string[] = [];
@@ -316,11 +317,11 @@ export type CaptureResult =
 export function captureBinding(event: KeyEventLike): CaptureResult {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return { kind: "modifier" };
   const key = logicalEventKey(event);
-  if (key === null) return { kind: "invalid", reason: `无法识别按键 ${event.key}` };
+  if (key === null) return { kind: "invalid", reason: t("无法识别按键 {key}", { key: event.key }) };
   const mod = event.ctrlKey || event.metaKey;
   const named = NAMED_KEYS.has(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
   if (!mod && !event.shiftKey && !event.altKey && !named) {
-    return { kind: "invalid", reason: "单个按键需要至少一个修饰键（Ctrl / Shift / Alt）" };
+    return { kind: "invalid", reason: t("单个按键需要至少一个修饰键（Ctrl / Shift / Alt）") };
   }
   const parts: string[] = [];
   if (mod) parts.push("Mod");
@@ -338,7 +339,7 @@ export function captureBindingForAction(
   if (result.kind !== "binding" || id !== "switchTab") return result;
   const parsed = parseBinding(result.binding);
   if (!parsed || !/^[0-9]$/.test(parsed.key)) {
-    return { kind: "invalid", reason: "标签页跳转只支持数字键（保持修饰键，1-9 通用）" };
+    return { kind: "invalid", reason: t("标签页跳转只支持数字键（保持修饰键，1-9 通用）") };
   }
   const parts = result.binding.split("+");
   parts[parts.length - 1] = "1-9";

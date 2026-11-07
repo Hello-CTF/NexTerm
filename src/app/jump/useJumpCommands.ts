@@ -38,6 +38,7 @@ import {
   IconZap,
   assetIcon,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export interface JumpCommand {
   id: string;
@@ -55,7 +56,7 @@ function snippetHint(snippet: SnippetDto): string {
   const source = steps.length > 0 ? steps[0].command : snippet.body;
   const first = source.split(/\r?\n/, 1)[0]?.trim() ?? "";
   const text = first.length > 36 ? `${first.slice(0, 36)}…` : first;
-  return steps.length > 0 ? `${steps.length} 步 · ${text}` : text;
+  return steps.length > 0 ? t("{length} 步 · {text}", { length: steps.length, text }) : text;
 }
 
 function workspaceIcon(workspace: Workspace) {
@@ -96,20 +97,20 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       const created = await cloneAsset(asset);
       if (!created) return;
       await qc.invalidateQueries({ queryKey: ["assets"] });
-      pushToast("success", `已复制为「${created.name}」`);
+      pushToast("success", t("已复制为「{name}」", { name: created.name }));
     } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
+      pushToast("error", t("复制失败：{value}", { value: describeError(e) }));
     }
   }, [qc, pushToast]);
 
   const hideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().hide(asset.id);
-    pushToast("info", `已隐藏「${asset.name}」，可通过资产树中的眼睛图标恢复显示`);
+    pushToast("info", t("已隐藏「{name}」，可通过资产树中的眼睛图标恢复显示", { name: asset.name }));
   }, [pushToast]);
 
   const unhideAsset = useCallback((asset: Asset) => {
     useAssetVisibility.getState().unhide(asset.id);
-    pushToast("info", `已取消隐藏「${asset.name}」`);
+    pushToast("info", t("已取消隐藏「{name}」", { name: asset.name }));
   }, [pushToast]);
 
   const backgroundAvailable = useBackgroundSessionsAccess(workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[workspaces.length - 1]);
@@ -130,11 +131,11 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
     const workspaceActions: JumpCommand[] = workspaces.map((workspace) => ({
       id: `workspace-${workspace.id}`,
       label: workspace.title,
-      section: "已打开的工作区",
+      section: t("已打开的工作区"),
       hint: [
-        workspace.id === currentWorkspace?.id ? "当前" : null,
-        `${workspace.panes.flatMap((pane) => pane.tabs).length} 个标签页`,
-        workspace.panes.length > 1 ? "已分屏" : null,
+        workspace.id === currentWorkspace?.id ? t("当前") : null,
+        t("{length} 个标签页", { length: workspace.panes.flatMap((pane) => pane.tabs).length }),
+        workspace.panes.length > 1 ? t("已分屏") : null,
       ].filter(Boolean).join(" · "),
       icon: workspaceIcon(workspace),
       run: () => {
@@ -148,7 +149,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       currentWorkspace && workspaceNeedsReconnect(workspaceConnectionState(currentWorkspace, sessions))
         ? [{
             id: "reconnect-workspace",
-            label: "重新连接当前工作区",
+            label: t("重新连接当前工作区"),
             hint: currentWorkspace.title,
             icon: IconRefresh,
             run: () => void reconnectWorkspaceConnection(currentWorkspace.id),
@@ -158,8 +159,8 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       ...reconnectCommands,
       {
         id: "quick-connect",
-        label: "快速连接…",
-        hint: keyHint("quickConnect", "只看主机 · Tab 切换"),
+        label: t("快速连接…"),
+        hint: keyHint("quickConnect", t("只看主机 · Tab 切换")),
         icon: IconZap,
         keepOpen: true,
         run: onShowHosts,
@@ -169,8 +170,8 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         : [
             {
               id: "local-terminal",
-              label: "打开本地终端",
-              hint: "当前设备",
+              label: t("打开本地终端"),
+              hint: t("当前设备"),
               icon: IconTerminal,
               run: () => {
                 void sessionApi
@@ -184,18 +185,18 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             } satisfies JumpCommand,
           ]),
       ...([
-        { id: "split-right", label: "向右分屏", direction: "right", icon: IconSplitV },
-        { id: "split-down", label: "向下分屏", direction: "down", icon: IconSplitH },
+        { id: "split-right", label: t("向右分屏"), direction: "right", icon: IconSplitV },
+        { id: "split-down", label: t("向下分屏"), direction: "down", icon: IconSplitH },
       ] as const).map(({ id, label, direction, icon }): JumpCommand => ({
         id,
         label,
-        hint: keyHint(direction === "right" ? "splitRight" : "splitDown", "拆分当前窗格"),
+        hint: keyHint(direction === "right" ? "splitRight" : "splitDown", t("拆分当前窗格")),
         icon,
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace) {
-            pushToast("info", "请先连接主机（双击左侧资产）");
+            pushToast("info", t("请先连接主机（双击左侧资产）"));
             return;
           }
           current.splitPane(direction, undefined, workspace.id);
@@ -203,14 +204,14 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       })),
       {
         id: "close-pane",
-        label: "关闭当前窗格（保留标签页）",
-        hint: keyHint("closePane", "标签页将移到相邻窗格"),
+        label: t("关闭当前窗格（保留标签页）"),
+        hint: keyHint("closePane", t("标签页将移到相邻窗格")),
         icon: IconMergeH,
         run: () => {
           const current = useUi.getState();
           const workspace = current.workspaces.find((item) => item.id === current.activeWorkspaceId);
           if (!workspace || workspace.panes.length < 2) {
-            pushToast("info", "当前工作区未分屏");
+            pushToast("info", t("当前工作区未分屏"));
             return;
           }
           current.closePane(workspace.activePaneId, workspace.id);
@@ -218,12 +219,12 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       },
       // Keyboard equivalents of dropping the current tab on the current pane's right or bottom edge.
       ...([
-        { id: "tab-to-new-pane-right", label: "移到右侧新窗格", edge: "right", icon: IconSplitV },
-        { id: "tab-to-new-pane-down", label: "移到下方新窗格", edge: "bottom", icon: IconSplitH },
+        { id: "tab-to-new-pane-right", label: t("移到右侧新窗格"), edge: "right", icon: IconSplitV },
+        { id: "tab-to-new-pane-down", label: t("移到下方新窗格"), edge: "bottom", icon: IconSplitH },
       ] as const).map(({ id, label, edge, icon }): JumpCommand => ({
         id,
         label,
-        hint: "将当前标签页移到新拆分的窗格",
+        hint: t("将当前标签页移到新拆分的窗格"),
         icon,
         run: () => {
           const current = useUi.getState();
@@ -234,7 +235,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
           const pane = workspace?.panes.find((item) => item.id === paneId);
           const tabId = pane?.activeTabId ?? pane?.tabs[pane.tabs.length - 1]?.id;
           if (!workspace || !pane || !tabId) {
-            pushToast("info", "当前窗格无标签页");
+            pushToast("info", t("当前窗格无标签页"));
             return;
           }
           current.splitPaneWithTab(tabId, pane.id, edge, workspace.id);
@@ -242,8 +243,8 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       })),
       {
         id: "port-forward",
-        label: "打开端口转发",
-        hint: "本地 / SOCKS5",
+        label: t("打开端口转发"),
+        hint: t("本地 / SOCKS5"),
         icon: IconNetwork,
         run: () => {
           const current = useUi.getState();
@@ -252,13 +253,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             current.workspaces[current.workspaces.length - 1];
           const sessionId = workspace?.kind === "session" ? workspace.sessionId : undefined;
           if (!sessionId) {
-            current.pushToast("info", "请先连接主机（双击左侧资产）");
+            current.pushToast("info", t("请先连接主机（双击左侧资产）"));
             return;
           }
           current.addTab({
             id: nextTabId(`forward-${sessionId}`),
             kind: "forward",
-            title: "端口转发",
+            title: t("端口转发"),
             sessionId,
             closable: true,
           });
@@ -266,49 +267,49 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       },
       {
         id: "forward-overview",
-        label: "查看全部端口转发",
-        hint: "所有会话",
+        label: t("查看全部端口转发"),
+        hint: t("所有会话"),
         icon: IconNetwork,
         run: () =>
           addTab({
             id: "forward-overview",
             kind: "forward",
-            title: "端口转发",
+            title: t("端口转发"),
             closable: true,
           }),
       },
       {
         id: "exec-batch",
-        label: "批量执行命令",
-        hint: "已连接 SSH / 设备",
+        label: t("批量执行命令"),
+        hint: t("已连接 SSH / 设备"),
         icon: IconZap,
-        run: () => addTab({ id: "exec-batch", kind: "execBatch", title: "批量执行", closable: true }),
+        run: () => addTab({ id: "exec-batch", kind: "execBatch", title: t("批量执行"), closable: true }),
       },
       {
         id: MULTI_HOST_LOG_TAB_ID,
-        label: "多主机日志合并",
-        hint: "文件 / journalctl / Docker · 已连接 SSH / 设备",
+        label: t("多主机日志合并"),
+        hint: t("文件 / journalctl / Docker · 已连接 SSH / 设备"),
         icon: IconCommand,
-        run: () => addTab({ id: createMultiHostLogTabId(), kind: "log", title: "多主机日志", closable: true }),
+        run: () => addTab({ id: createMultiHostLogTabId(), kind: "log", title: t("多主机日志"), closable: true }),
       },
       {
         id: FLEET_HEALTH_TAB_ID,
-        label: "主机概览",
-        hint: "当前项目的主机状态 · 只读 · 手动刷新",
+        label: t("主机概览"),
+        hint: t("当前项目的主机状态 · 只读 · 手动刷新"),
         icon: IconActivity,
-        run: () => addTab({ id: createFleetHealthTabId(), kind: "log", title: "主机概览", closable: true }),
+        run: () => addTab({ id: createFleetHealthTabId(), kind: "log", title: t("主机概览"), closable: true }),
       },
       {
         id: "settings",
-        label: "打开设置",
-        hint: "AI / 凭据库",
+        label: t("打开设置"),
+        hint: t("AI / 凭据库"),
         icon: IconSettings,
-        run: () => addTab({ id: "settings", kind: "settings", title: "设置", closable: true }),
+        run: () => addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true }),
       },
       ...(backgroundAvailable ? [{
         id: "background",
-        label: "打开后台会话",
-        hint: "查看主机上转入后台的终端进程",
+        label: t("打开后台会话"),
+        hint: t("查看主机上转入后台的终端进程"),
         icon: IconActivity,
         run: () => {
           const current = useUi.getState();
@@ -316,13 +317,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
             current.workspaces[current.workspaces.length - 1];
           if (workspace?.kind !== "session" || !workspace.sessionId) {
-            current.pushToast("info", "请先连接主机（双击左侧资产）");
+            current.pushToast("info", t("请先连接主机（双击左侧资产）"));
             return;
           }
           current.addTab({
             id: `background-${workspace.id}`,
             kind: "background",
-            title: "后台会话",
+            title: t("后台会话"),
             sessionId: workspace.sessionId,
             closable: true,
           });
@@ -330,20 +331,20 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       }] : []),
       {
         id: "history",
-        label: "打开终端历史",
-        hint: "回看和搜索终端输出",
+        label: t("打开终端历史"),
+        hint: t("回看和搜索终端输出"),
         icon: IconClock,
         run: () => {
           const current = useUi.getState();
           const active =
             current.workspaces.find((item) => item.id === current.activeWorkspaceId) ??
             current.workspaces[current.workspaces.length - 1];
-          addTab(hostHistoryTab(active) ?? { id: "history", kind: "history", title: "终端历史", closable: true });
+          addTab(hostHistoryTab(active) ?? { id: "history", kind: "history", title: t("终端历史"), closable: true });
         },
       },
       {
         id: "refresh-status",
-        label: "刷新会话列表与凭据库状态",
+        label: t("刷新会话列表与凭据库状态"),
         icon: IconRefresh,
         run: () => {
           void useUi.getState().resyncSessions();
@@ -352,35 +353,35 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       },
       {
         id: "devices",
-        label: "打开设备管理",
-        hint: "已安装设备代理的设备",
+        label: t("打开设备管理"),
+        hint: t("已安装设备代理的设备"),
         icon: IconMonitor,
-        run: () => addTab({ id: "devices", kind: "devices", title: "设备管理", closable: true }),
+        run: () => addTab({ id: "devices", kind: "devices", title: t("设备管理"), closable: true }),
       },
       ...(
         [
-          ["system", "主题：跟随系统"],
-          ["light", "主题：浅色"],
-          ["dark", "主题：深色"],
+          ["system", t("主题：跟随系统")],
+          ["light", t("主题：浅色")],
+          ["dark", t("主题：深色")],
         ] as const
       ).map(([value, label]) => ({
         id: `theme-${value}`,
         label,
-        hint: themeMode === value ? "当前" : undefined,
+        hint: themeMode === value ? t("当前") : undefined,
         icon: IconMonitor,
         run: () => setThemeMode(value),
       })),
       {
         id: "audit",
-        label: "查看审计日志",
-        hint: "用户和 AI 的操作记录",
+        label: t("查看审计日志"),
+        hint: t("用户和 AI 的操作记录"),
         icon: IconHistory,
-        run: () => addTab({ id: "audit", kind: "audit", title: "审计日志", closable: true }),
+        run: () => addTab({ id: "audit", kind: "audit", title: t("审计日志"), closable: true }),
       },
       {
         id: "kill-terminal",
-        label: "结束当前终端进程…",
-        hint: "进程会结束，无法恢复",
+        label: t("结束当前终端进程…"),
+        hint: t("进程会结束，无法恢复"),
         icon: IconTerminal,
         run: () => {
           const st = useUi.getState();
@@ -390,7 +391,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
             pane?.tabs.find((item) => item.id === pane.activeTabId) ??
             pane?.tabs[pane.tabs.length - 1];
           if (!tab || tab.kind !== "terminal" || !tab.tabId || tab.dead || tab.exited) {
-            pushToast("info", "当前标签页不是运行中的终端");
+            pushToast("info", t("当前标签页不是运行中的终端"));
             return;
           }
           void requestKillTab(tab.id);
@@ -404,25 +405,25 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       const hidden = isHidden(asset.id);
       list.push({
         id: `edit-${asset.id}`,
-        label: `编辑资产 ${asset.name}`,
-        section: "资产操作",
-        hint: "主机 / 端口 / 凭据",
+        label: t("编辑资产 {name}", { name: asset.name }),
+        section: t("资产操作"),
+        hint: t("主机 / 端口 / 凭据"),
         icon: IconEdit,
         run: () => onEditAsset?.(asset),
       });
       list.push({
         id: `clone-${asset.id}`,
-        label: `复制资产 ${asset.name}`,
-        section: "资产操作",
-        hint: "与原资产共用凭据",
+        label: t("复制资产 {name}", { name: asset.name }),
+        section: t("资产操作"),
+        hint: t("与原资产共用凭据"),
         icon: IconCopy,
         run: () => void runClone(asset),
       });
       list.push({
         id: `${hidden ? "unhide" : "hide"}-${asset.id}`,
-        label: `${hidden ? "取消隐藏" : "隐藏"}资产 ${asset.name}`,
-        section: "资产操作",
-        hint: hidden ? "恢复显示" : "仅界面隐藏",
+        label: t("{value}资产 {name}", { value: hidden ? t("取消隐藏") : t("隐藏"), name: asset.name }),
+        section: t("资产操作"),
+        hint: hidden ? t("恢复显示") : t("仅界面隐藏"),
         icon: hidden ? IconEye : IconEyeOff,
         run: () => (hidden ? unhideAsset(asset) : hideAsset(asset)),
       });
@@ -434,12 +435,12 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
       const needsPanel = multi && analyzeSnippetSteps((s.steps ?? []).map((x) => x.command)).hasVariables;
       list.push({
         id: `snippet-${s.id}`,
-        label: `${multi ? "执行" : "插入"}片段 ${s.name}`,
-        section: "片段",
+        label: t("{value}片段 {name}", { value: multi ? t("执行") : t("插入"), name: s.name }),
+        section: t("片段"),
         hint: snippetHint(s),
         icon: IconCommand,
         run: () => {
-          if (needsPanel) pushToast("info", "带参数的片段请在片段面板中执行");
+          if (needsPanel) pushToast("info", t("带参数的片段请在片段面板中执行"));
           else void (multi ? executeSnippet(s) : insertSnippet(s));
         },
       });

@@ -3,6 +3,7 @@
 // and a digest is only reported while the device is online, so offline devices never pair. The digest alone is the same on another
 // machine with the same uid and path, so a device without an instance id (older agent or server) never pairs either.
 import type { FleetDevice } from "../../ipc/fleetApi";
+import { t } from "../../i18n";
 
 // sharedHelperPeers maps a device id to the other devices of the list that front the same helper.
 export function sharedHelperPeers(devices: readonly FleetDevice[] | null | undefined): Map<string, FleetDevice[]> {
@@ -28,6 +29,6 @@ export function sharedHelperPeers(devices: readonly FleetDevice[] | null | undef
 export function sharedHelperLabel(peers: readonly FleetDevice[] | undefined): string | null {
   if (!peers || peers.length === 0) return null;
   const local = peers.find((peer) => peer.kind === "local-helper");
-  if (local) return "与本机终端共用持久终端";
-  return `与「${peers[0].name}」共用持久终端`;
+  if (local) return t("与本机终端共用持久终端");
+  return t("与「{name}」共用持久终端", { name: peers[0].name });
 }

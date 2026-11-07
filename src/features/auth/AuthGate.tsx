@@ -16,6 +16,7 @@ import {
   IconShield,
   IconXCircle,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 type Screen = "setup" | "login" | "register" | "reset_required" | "recovery" | "mfa_enroll";
 
@@ -135,11 +136,11 @@ function SetupForm() {
     setFormError(null);
     clearError();
     if (password.length < 8) {
-      setFormError("密码至少 8 位");
+      setFormError(t("密码至少 8 位"));
       return;
     }
     if (password !== confirm) {
-      setFormError("两次输入的密码不一致");
+      setFormError(t("两次输入的密码不一致"));
       return;
     }
     setBusy(true);
@@ -156,17 +157,17 @@ function SetupForm() {
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">初始化 NexTerm</span>
+        <span className="nx-card-title">{t("初始化 NexTerm")}</span>
       </div>
-      <p className="nx-hint">输入服务器控制台打印的一次性初始化码，创建超级管理员。</p>
-      <Field label="初始化码" value={code} onChange={setCode} mono placeholder="控制台输出的初始化码" autoComplete="off" />
-      <Field label="用户名" value={username} onChange={setUsername} placeholder="超级管理员用户名" autoComplete="username" />
-      <Field label="密码" value={password} onChange={setPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
-      <Field label="确认密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
+      <p className="nx-hint">{t("输入服务器控制台打印的一次性初始化码，创建超级管理员。")}</p>
+      <Field label={t("初始化码")} value={code} onChange={setCode} mono placeholder={t("控制台输出的初始化码")} autoComplete="off" />
+      <Field label={t("用户名")} value={username} onChange={setUsername} placeholder={t("超级管理员用户名")} autoComplete="username" />
+      <Field label={t("密码")} value={password} onChange={setPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />
+      <Field label={t("确认密码")} value={confirm} onChange={setConfirm} type="password" placeholder={t("再输入一次")} autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim() || !username.trim()}>
-        {busy ? "正在创建…" : "创建超级管理员"}
+        {busy ? t("正在创建…") : t("创建超级管理员")}
       </button>
       {status?.auth === "loopback" && (
         <button
@@ -174,7 +175,7 @@ function SetupForm() {
           className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
           onClick={() => useAuth.setState({ gate: "ready" })}
         >
-          暂不初始化，匿名使用
+          {t("暂不初始化，匿名使用")}
         </button>
       )}
       {status?.auth === "off" && (
@@ -183,7 +184,7 @@ function SetupForm() {
           className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full"
           onClick={() => useAuth.setState({ gate: "ready" })}
         >
-          账号功能已关闭，返回应用
+          {t("账号功能已关闭，返回应用")}
         </button>
       )}
     </form>
@@ -215,21 +216,21 @@ function LoginForm({ onNavigate, registrationOpen }: { onNavigate: (s: Screen) =
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconLock size={15} className="text-neutral-400" />
-        <span className="nx-card-title">登录</span>
+        <span className="nx-card-title">{t("登录")}</span>
       </div>
-      <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
-      <Field label="密码" value={password} onChange={setPassword} type="password" autoComplete="current-password" />
+      <Field label={t("用户名")} value={username} onChange={setUsername} autoComplete="username" />
+      <Field label={t("密码")} value={password} onChange={setPassword} type="password" autoComplete="current-password" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !password}>
-        {busy ? "正在登录…" : "登录"}
+        {busy ? t("正在登录…") : t("登录")}
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[12px]">
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("recovery")}>
-          使用恢复密钥重置密码
+          {t("使用恢复密钥重置密码")}
         </button>
         {registrationOpen && (
           <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => onNavigate("register")}>
-            注册新账号
+            {t("注册新账号")}
           </button>
         )}
       </div>
@@ -262,16 +263,16 @@ function TotpChallengeForm() {
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">两步验证</span>
+        <span className="nx-card-title">{t("两步验证")}</span>
       </div>
-      <p className="nx-hint">输入认证器中的 6 位动态码，或一个未使用的恢复码。</p>
-      <Field label="动态码 / 恢复码" value={code} onChange={setCode} mono placeholder="6 位数字或恢复码" autoComplete="one-time-code" />
+      <p className="nx-hint">{t("输入认证器中的 6 位动态码，或一个未使用的恢复码。")}</p>
+      <Field label={t("动态码 / 恢复码")} value={code} onChange={setCode} mono placeholder={t("6 位数字或恢复码")} autoComplete="one-time-code" />
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !code.trim()}>
-        {busy ? "正在验证…" : "验证并登录"}
+        {busy ? t("正在验证…") : t("验证并登录")}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={cancelMfa}>
-        返回登录
+        {t("返回登录")}
       </button>
     </form>
   );
@@ -310,7 +311,7 @@ function MfaEnrollForm() {
   const submitConfirm = async (e: FormEvent) => {
     e.preventDefault();
     if (code.trim().length !== 6) {
-      setError("请输入认证器中的 6 位动态码");
+      setError(t("请输入认证器中的 6 位动态码"));
       return;
     }
     setBusy(true);
@@ -347,7 +348,7 @@ function MfaEnrollForm() {
       setConfirmed(true);
     } catch {
       setConfirmed(true);
-      setError("复制失败，请手动复制恢复码");
+      setError(t("复制失败，请手动复制恢复码"));
     }
   };
 
@@ -356,7 +357,7 @@ function MfaEnrollForm() {
     try {
       await copyText(value);
     } catch {
-      setError("复制失败，请手动复制");
+      setError(t("复制失败，请手动复制"));
     }
   };
 
@@ -365,9 +366,9 @@ function MfaEnrollForm() {
       <div>
         <div className="mb-1 flex items-center gap-2">
           <IconShield size={15} className="text-amber-300" />
-          <span className="nx-card-title">保存恢复码</span>
+          <span className="nx-card-title">{t("保存恢复码")}</span>
         </div>
-        <p className="nx-hint">无法使用认证器时可用恢复码登录，每个限用一次。关闭后无法再次查看。</p>
+        <p className="nx-hint">{t("无法使用认证器时可用恢复码登录，每个限用一次。关闭后无法再次查看。")}</p>
         <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[12.5px]">
             {recoveryCodes.map((recoveryCode) => (
@@ -381,16 +382,16 @@ function MfaEnrollForm() {
               onClick={() => void copyRecoveryCodes()}
             >
               <IconCopy size={12} />
-              {copied ? "已复制" : "复制全部"}
+              {copied ? t("已复制") : t("复制全部")}
             </button>
           </div>
         </div>
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !confirmed} onClick={() => void finish()}>
           <IconCheckCircle size={12} />
-          已保存，进入应用
+          {t("已保存，进入应用")}
         </button>
-        {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">请先复制或手动保存恢复码</p>}
+        {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">{t("请先复制或手动保存恢复码")}</p>}
       </div>
     );
   }
@@ -400,15 +401,15 @@ function MfaEnrollForm() {
       <div>
         <div className="mb-1 flex items-center gap-2">
           <IconShield size={15} className="text-amber-300" />
-          <span className="nx-card-title">必须启用两步验证</span>
+          <span className="nx-card-title">{t("必须启用两步验证")}</span>
         </div>
-        <p className="nx-hint">管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。</p>
+        <p className="nx-hint">{t("管理员已要求所有账号启用 TOTP 两步验证，完成绑定前无法使用其他功能。")}</p>
         {error && <GateError error={{ code: "internal", message: error }} />}
         <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy} onClick={() => void startSetup()}>
-          {busy ? "正在生成…" : "重试"}
+          {busy ? t("正在生成…") : t("重试")}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
-          退出登录
+          {t("退出登录")}
         </button>
       </div>
     );
@@ -418,9 +419,9 @@ function MfaEnrollForm() {
     <form onSubmit={(e) => void submitConfirm(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-amber-300" />
-        <span className="nx-card-title">必须启用两步验证</span>
+        <span className="nx-card-title">{t("必须启用两步验证")}</span>
       </div>
-      <p className="nx-hint">完成绑定前无法使用其他功能；在认证器 App 中导入绑定链接或手动输入密钥。</p>
+      <p className="nx-hint">{t("完成绑定前无法使用其他功能；在认证器 App 中导入绑定链接或手动输入密钥。")}</p>
       <div className="nx-alert nx-alert-info mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <code className="nx-code break-all font-mono text-[12.5px]">{setup.otpauth_uri}</code>
@@ -430,7 +431,7 @@ function MfaEnrollForm() {
             onClick={() => void copySetupValue(setup.otpauth_uri)}
           >
             <IconCopy size={12} />
-            复制
+            {t("复制")}
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -441,17 +442,17 @@ function MfaEnrollForm() {
             onClick={() => void copySetupValue(setup.secret)}
           >
             <IconCopy size={12} />
-            复制
+            {t("复制")}
           </button>
         </div>
       </div>
-      <Field label="动态码" value={code} onChange={setCode} mono placeholder="输入 6 位动态码完成绑定" autoComplete="one-time-code" />
+      <Field label={t("动态码")} value={code} onChange={setCode} mono placeholder={t("输入 6 位动态码完成绑定")} autoComplete="one-time-code" />
       <GateError error={error ? { code: "internal", message: error } : null} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || code.trim().length === 0}>
-        {busy ? "正在确认…" : "确认绑定"}
+        {busy ? t("正在确认…") : t("确认绑定")}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={() => void logout()}>
-        退出登录
+        {t("退出登录")}
       </button>
     </form>
   );
@@ -473,11 +474,11 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
     setFormError(null);
     clearError();
     if (password.length < 8) {
-      setFormError("密码至少 8 位");
+      setFormError(t("密码至少 8 位"));
       return;
     }
     if (password !== confirm) {
-      setFormError("两次输入的密码不一致");
+      setFormError(t("两次输入的密码不一致"));
       return;
     }
     setBusy(true);
@@ -494,20 +495,20 @@ function RegisterForm({ onBack }: { onBack: () => void }) {
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconKey size={15} className="text-neutral-400" />
-        <span className="nx-card-title">注册</span>
+        <span className="nx-card-title">{t("注册")}</span>
       </div>
-      <p className="nx-hint">管理员已开放注册，可创建普通用户账号。</p>
-      <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
-      <Field label="显示名（可选）" value={displayName} onChange={setDisplayName} />
-      <Field label="密码" value={password} onChange={setPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
-      <Field label="确认密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
+      <p className="nx-hint">{t("管理员已开放注册，可创建普通用户账号。")}</p>
+      <Field label={t("用户名")} value={username} onChange={setUsername} autoComplete="username" />
+      <Field label={t("显示名（可选）")} value={displayName} onChange={setDisplayName} />
+      <Field label={t("密码")} value={password} onChange={setPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />
+      <Field label={t("确认密码")} value={confirm} onChange={setConfirm} type="password" placeholder={t("再输入一次")} autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim()}>
-        {busy ? "正在注册…" : "注册并登录"}
+        {busy ? t("正在注册…") : t("注册并登录")}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
-        返回登录
+        {t("返回登录")}
       </button>
     </form>
   );
@@ -528,11 +529,11 @@ function ResetRequiredForm() {
     setFormError(null);
     clearError();
     if (newPassword.length < 8) {
-      setFormError("新密码至少 8 位");
+      setFormError(t("新密码至少 8 位"));
       return;
     }
     if (newPassword !== confirm) {
-      setFormError("两次输入的密码不一致");
+      setFormError(t("两次输入的密码不一致"));
       return;
     }
     setBusy(true);
@@ -549,16 +550,16 @@ function ResetRequiredForm() {
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-amber-300" />
-        <span className="nx-card-title">必须先设置新密码</span>
+        <span className="nx-card-title">{t("必须先设置新密码")}</span>
       </div>
-      <p className="nx-hint">当前临时密码仅用于本次验证。数据密钥、会话和两步验证已清除，需从仍持有数据的设备重新同步。</p>
-      <Field label="当前临时密码" value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
-      <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
-      <Field label="确认新密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
+      <p className="nx-hint">{t("当前临时密码仅用于本次验证。数据密钥、会话和两步验证已清除，需从仍持有数据的设备重新同步。")}</p>
+      <Field label={t("当前临时密码")} value={tempPassword} onChange={setTempPassword} type="password" autoComplete="current-password" />
+      <Field label={t("新密码")} value={newPassword} onChange={setNewPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />
+      <Field label={t("确认新密码")} value={confirm} onChange={setConfirm} type="password" placeholder={t("再输入一次")} autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !tempPassword || !newPassword}>
-        {busy ? "正在设置…" : "设置新密码"}
+        {busy ? t("正在设置…") : t("设置新密码")}
       </button>
     </form>
   );
@@ -580,11 +581,11 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
     setFormError(null);
     clearError();
     if (newPassword.length < 8) {
-      setFormError("新密码至少 8 位");
+      setFormError(t("新密码至少 8 位"));
       return;
     }
     if (newPassword !== confirm) {
-      setFormError("两次输入的密码不一致");
+      setFormError(t("两次输入的密码不一致"));
       return;
     }
     setBusy(true);
@@ -601,22 +602,22 @@ function RecoveryForm({ onBack }: { onBack: () => void }) {
     <form onSubmit={(e) => void submit(e)}>
       <div className="mb-1 flex items-center gap-2">
         <IconKey size={15} className="text-neutral-400" />
-        <span className="nx-card-title">用恢复密钥重置</span>
+        <span className="nx-card-title">{t("用恢复密钥重置")}</span>
       </div>
       <p className="nx-hint">
-        重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效；请从仍持有数据的设备重新同步服务端密文。
+        {t("重置后，旧密码、数据密钥、所有会话和两步验证绑定将失效；请从仍持有数据的设备重新同步服务端密文。")}
       </p>
-      <Field label="用户名" value={username} onChange={setUsername} autoComplete="username" />
-      <Field label="恢复密钥" value={recoveryKey} onChange={setRecoveryKey} mono placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autoComplete="off" />
-      <Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" placeholder="至少 8 位" autoComplete="new-password" />
-      <Field label="确认新密码" value={confirm} onChange={setConfirm} type="password" placeholder="再输入一次" autoComplete="new-password" />
+      <Field label={t("用户名")} value={username} onChange={setUsername} autoComplete="username" />
+      <Field label={t("恢复密钥")} value={recoveryKey} onChange={setRecoveryKey} mono placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autoComplete="off" />
+      <Field label={t("新密码")} value={newPassword} onChange={setNewPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />
+      <Field label={t("确认新密码")} value={confirm} onChange={setConfirm} type="password" placeholder={t("再输入一次")} autoComplete="new-password" />
       {formError && <GateError error={{ code: "bad_param", message: formError }} />}
       <GateError error={error} />
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !username.trim() || !recoveryKey.trim() || !newPassword}>
-        {busy ? "正在重置…" : "重置密码并登录"}
+        {busy ? t("正在重置…") : t("重置密码并登录")}
       </button>
       <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm mt-3 w-full" onClick={onBack}>
-        返回登录
+        {t("返回登录")}
       </button>
     </form>
   );
@@ -638,7 +639,7 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
     } catch {
       setRevealed(true);
       setConfirmed(true);
-      setCopyError("复制失败，请手动复制恢复密钥");
+      setCopyError(t("复制失败，请手动复制恢复密钥"));
     }
   };
 
@@ -646,18 +647,18 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
     <div>
       <div className="mb-1 flex items-center gap-2">
         <IconShield size={15} className="text-amber-300" />
-        <span className="nx-card-title">恢复密钥（仅显示一次）</span>
+        <span className="nx-card-title">{t("恢复密钥（仅显示一次）")}</span>
       </div>
-      <p className="nx-hint">找回账号的唯一凭据，关闭后无法再次查看，请存入密码管理器。</p>
+      <p className="nx-hint">{t("找回账号的唯一凭据，关闭后无法再次查看，请存入密码管理器。")}</p>
       <div className="nx-alert nx-alert-danger mt-3 flex flex-col gap-2">
         <code className="nx-code break-all font-mono text-[13px]">{revealed ? issue.formatted : "•".repeat(39)}</code>
         <div className="flex flex-wrap items-center gap-2">
           <button className="nx-btn nx-btn-ghost nx-btn-sm" onClick={() => setRevealed((v) => !v)}>
-            {revealed ? "隐藏" : "显示"}
+            {revealed ? t("隐藏") : t("显示")}
           </button>
           <button className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void copy()}>
             <IconCopy size={12} />
-            {copied ? "已复制" : "复制"}
+            {copied ? t("已复制") : t("复制")}
           </button>
         </div>
       </div>
@@ -670,14 +671,14 @@ function RecoveryKeyScreen({ issue, onDone }: { issue: RecoveryKeyIssue; onDone:
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          恢复密钥仅用于忘记密码时重置账号；日常解密使用密码。两者都需要保密。
+          {t("恢复密钥仅用于忘记密码时重置账号；日常解密使用密码。两者都需要保密。")}
         </div>
       </div>
       <button className="nx-btn nx-btn-primary mt-4 w-full" disabled={!confirmed} onClick={onDone}>
         <IconCheckCircle size={12} />
-        已保存，进入应用
+        {t("已保存，进入应用")}
       </button>
-      {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">请先复制或手动保存恢复密钥</p>}
+      {!confirmed && <p className="nx-hint mt-2 text-center text-[11px]">{t("请先复制或手动保存恢复密钥")}</p>}
     </div>
   );
 }

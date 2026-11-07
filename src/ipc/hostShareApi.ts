@@ -8,6 +8,7 @@ import type {
   PublicShareHandlers,
   PublicShareReady,
 } from "./publicShareApi";
+import { t } from "../i18n";
 
 export type HostShareReady = PublicShareReady;
 export type HostShareFailure = PublicShareFailure;
@@ -54,7 +55,7 @@ function failure(error: unknown): HostShareFailure {
   const raw = error && typeof error === "object" ? error as Record<string, unknown> : null;
   return {
     code: typeof raw?.code === "string" ? raw.code : "disconnected",
-    message: typeof raw?.message === "string" ? raw.message : "共享终端连接失败",
+    message: typeof raw?.message === "string" ? raw.message : t("共享终端连接失败"),
   };
 }
 
@@ -128,7 +129,7 @@ class DesktopHostShareConnection implements HostShareConnection {
   constructor(deviceId: string, private readonly handlers: HostShareHandlers) {
     this.channel = createAiChannel((raw) => this.dispatch(raw));
     const streamId = channelIdOf(this.channel);
-    if (!streamId) throw new Error("桌面共享终端通道不可用");
+    if (!streamId) throw new Error(t("桌面共享终端通道不可用"));
     this.streamId = streamId;
     this.openPromise = remoteHostShareApi.open(deviceId, streamId, this.channel).then(
       () => {

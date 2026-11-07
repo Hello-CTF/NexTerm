@@ -5,6 +5,7 @@ import { isMac, isWailsDragRegionTarget, wailsNoDragRegionStyle } from "../platf
 import { IconClose, IconMaximize, IconMinus } from "../../ui/icons";
 import { ShellFrame, type ShellParts } from "./ShellFrame";
 import { useStatusHome } from "./useStatusHome";
+import { t } from "../../i18n";
 
 function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   if (TRANSPORT !== "desktop") return;
@@ -18,24 +19,24 @@ function WindowControls() {
     <div className="flex shrink-0 items-center gap-0.5 border-l border-neutral-800/60 pl-1.5">
       <button
         className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title="最小化"
-        aria-label="最小化窗口"
+        title={t("最小化")}
+        aria-label={t("最小化窗口")}
         onClick={() => void minimiseWindow()}
       >
         <IconMinus size={13} />
       </button>
       <button
         className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title="最大化 / 还原（双击空白处亦可）"
-        aria-label="最大化或还原窗口"
+        title={t("最大化 / 还原（双击空白处亦可）")}
+        aria-label={t("最大化或还原窗口")}
         onClick={() => void toggleMaximiseWindow()}
       >
         <IconMaximize size={12} />
       </button>
       <button
         className="nx-icon-btn is-danger" style={wailsNoDragRegionStyle}
-        title="关闭"
-        aria-label="关闭窗口"
+        title={t("关闭")}
+        aria-label={t("关闭窗口")}
         onClick={() => void closeWindow()}
       >
         <IconClose size={14} />

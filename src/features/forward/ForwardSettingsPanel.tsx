@@ -10,10 +10,11 @@ import {
   type ForwardRuleSettings,
   type ForwardSettingsApi,
 } from "./forwardSettingsApi";
+import { t } from "../../i18n";
 
 const PORT_DISCOVERY_OPTIONS: { value: TerminalPortDiscovery; label: string }[] = [
-  { value: "off", label: "关闭" },
-  { value: "on", label: "开启" },
+  { value: "off", label: t("关闭") },
+  { value: "on", label: t("开启") },
 ];
 
 // PortDiscoverySetting is the account preference that offers a one-click forward for ports a connected host starts
@@ -23,10 +24,10 @@ export function PortDiscoverySetting() {
   return (
     <div data-setting="terminal-port-discovery">
       <div className="nx-setting-label mb-1.5 flex items-center gap-2">
-        端口发现
+        {t("端口发现")}
         <SyncScopeBadge scope="sync" />
       </div>
-      <div className="nx-segment" role="group" aria-label="端口发现">
+      <div className="nx-segment" role="group" aria-label={t("端口发现")}>
         {PORT_DISCOVERY_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -39,7 +40,7 @@ export function PortDiscoverySetting() {
           </button>
         ))}
       </div>
-      <p className="nx-hint mt-1.5">每 10 秒在远端运行 ss/netstat（会留在审计记录中），发现新端口后提示一键转发。</p>
+      <p className="nx-hint mt-1.5">{t("每 10 秒在远端运行 ss/netstat（会留在审计记录中），发现新端口后提示一键转发。")}</p>
     </div>
   );
 }
@@ -173,16 +174,16 @@ export function ForwardSettingsPanel() {
   };
 
   return (
-    <section aria-label="转发设置" className="flex flex-col gap-3 text-[12px]">
+    <section aria-label={t("转发设置")} className="flex flex-col gap-3 text-[12px]">
       <div>
-        <div className="mb-1 font-medium text-neutral-200">自动启动规则</div>
+        <div className="mb-1 font-medium text-neutral-200">{t("自动启动规则")}</div>
         <div className="nx-hint mb-2">
-          仅本地固定端口转发，只监听 127.0.0.1，不会对外暴露；SOCKS5、远程转发和公共监听不支持自动启动。
+          {t("仅本地固定端口转发，只监听 127.0.0.1，不会对外暴露；SOCKS5、远程转发和公共监听不支持自动启动。")}
         </div>
         {rules === null ? (
-          <div role="status" className="text-[11px] text-neutral-500">正在加载…</div>
+          <div role="status" className="text-[11px] text-neutral-500">{t("正在加载…")}</div>
         ) : rules.length === 0 ? (
-          <div className="text-[11px] text-neutral-500">暂无保存的转发规则</div>
+          <div className="text-[11px] text-neutral-500">{t("暂无保存的转发规则")}</div>
         ) : (
           <div className="flex flex-col gap-1.5">
             {rules.map((rule) => (
@@ -201,15 +202,15 @@ export function ForwardSettingsPanel() {
                     type="button"
                     role="switch"
                     aria-checked={rule.autoStart}
-                    aria-label={`自动启动 ${rule.name}`}
+                    aria-label={t("自动启动 {name}", { name: rule.name })}
                     className="nx-btn nx-btn-ghost nx-btn-xs"
                     disabled={busy !== null}
                     onClick={() => void toggleAutoStart(rule, !rule.autoStart)}
                   >
-                    {rule.autoStart ? "已开启" : "已关闭"}
+                    {rule.autoStart ? t("已开启") : t("已关闭")}
                   </button>
                 ) : (
-                  <span className="text-[11px] text-neutral-500">仅本地 127.0.0.1 规则支持自动启动</span>
+                  <span className="text-[11px] text-neutral-500">{t("仅本地 127.0.0.1 规则支持自动启动")}</span>
                 )}
               </div>
             ))}
@@ -218,25 +219,25 @@ export function ForwardSettingsPanel() {
       </div>
 
       <div>
-        <div className="mb-1 font-medium text-neutral-200">启动恢复</div>
+        <div className="mb-1 font-medium text-neutral-200">{t("启动恢复")}</div>
         <div className="mb-2 flex items-center gap-2">
           <button
             type="button"
             role="switch"
             aria-checked={recovery?.enabled ?? false}
-            aria-label="启动时自动恢复转发"
+            aria-label={t("启动时自动恢复转发")}
             className="nx-btn nx-btn-ghost nx-btn-xs"
             disabled={busy !== null || recovery === null}
             onClick={() => void toggleRecovery(!(recovery?.enabled ?? false))}
           >
-            {recovery?.enabled ? "已开启" : "已关闭"}
+            {recovery?.enabled ? t("已开启") : t("已关闭")}
           </button>
-          <span className="text-[11px] text-neutral-500">默认关闭</span>
+          <span className="text-[11px] text-neutral-500">{t("默认关闭")}</span>
         </div>
         <ul className="nx-hint list-inside list-disc space-y-0.5">
-          <li>仅恢复标记为自动启动的规则</li>
-          <li>最多同时建立 {recovery?.maxConcurrentConnections ?? DEFAULT_FORWARD_RECOVERY_SETTINGS.maxConcurrentConnections} 个设备连接</li>
-          <li>自动跳过生产项目资产</li>
+          <li>{t("仅恢复标记为自动启动的规则")}</li>
+          <li>{t("最多同时建立 {value} 个设备连接", { value: recovery?.maxConcurrentConnections ?? DEFAULT_FORWARD_RECOVERY_SETTINGS.maxConcurrentConnections })}</li>
+          <li>{t("自动跳过生产项目资产")}</li>
         </ul>
         {recovery?.enabled && (
           <button
@@ -245,7 +246,7 @@ export function ForwardSettingsPanel() {
             disabled={busy !== null}
             onClick={() => void recoverNow()}
           >
-            立即恢复
+            {t("立即恢复")}
           </button>
         )}
       </div>

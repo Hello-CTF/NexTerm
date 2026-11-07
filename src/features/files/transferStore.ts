@@ -10,6 +10,7 @@ import { fileChunkSource, uploadChunked } from "./chunkedUpload";
 import { baseName } from "./pathUtils";
 import type { TransferDirection, TransferTask } from "./transferQueue";
 import { createTransferTaskId } from "./transferTaskId";
+import { t as tr } from "../../i18n";
 
 export { createTransferTaskId } from "./transferTaskId";
 
@@ -137,7 +138,7 @@ function resolveTransferTarget(sessionId: string): TransferTarget {
   const workspace = workspaces?.find((item) => item.sessionId === sessionId);
   return {
     hostId: session?.assetId ?? workspace?.assetId ?? null,
-    targetName: session?.name?.trim() || workspace?.title?.trim() || `会话 ${sessionId}`,
+    targetName: session?.name?.trim() || workspace?.title?.trim() || tr("会话 {sessionId}", { sessionId }),
   };
 }
 
@@ -164,7 +165,7 @@ function enqueueBatch(
     ...ready.map((item) => newTask(batchId, sessionId, target, direction, item, "queued", refreshDir)),
     ...skipped.map((item) => ({
       ...newTask(batchId, sessionId, target, "upload", item, "skipped", refreshDir),
-      resultText: `已跳过：${item.remotePath}`,
+      resultText: tr("已跳过：{remotePath}", { remotePath: item.remotePath }),
     })),
   ];
   useTransferStore.setState((s) => ({ tasks: [...s.tasks, ...tasks] }));
@@ -286,8 +287,8 @@ function armCancellationTimeout(id: string, attemptId: string | undefined, reque
     const task = useTransferStore.getState().tasks.find((item) => item.id === id);
     if (!task || task.attemptId !== attemptId || task.status !== "running" || !task.cancelling) return;
     const message = task.cancelAccepted
-      ? `取消「${task.remotePath}」的请求已接受，但传输尚未停止；请重试取消或断开会话`
-      : `取消「${task.remotePath}」尚未得到后端确认，且传输尚未停止；请重试取消或断开会话`;
+      ? tr("取消「{remotePath}」的请求已接受，但传输尚未停止；请重试取消或断开会话", { remotePath: task.remotePath })
+      : tr("取消「{remotePath}」尚未得到后端确认，且传输尚未停止；请重试取消或断开会话", { remotePath: task.remotePath });
     useTransferStore.setState((state) => ({
       tasks: state.tasks.map((item) => item.id === id ? { ...item, cancelling: false, error: message } : item),
     }));
@@ -393,7 +394,7 @@ export async function restartTransferTask(id: string): Promise<void> {
     }));
     pump();
   } catch (error) {
-    const message = `全量重传准备失败：${describeError(error)}`;
+    const message = tr("全量重传准备失败：{value}", { value: describeError(error) });
     useTransferStore.setState((state) => ({
       tasks: state.tasks.map((item) =>
         item.id === id ? { ...item, restartPreparing: false, error: message } : item,
@@ -429,7 +430,7 @@ export function cancelTransferTask(id: string): void {
         return;
       }
       clearCancellationRequest(id, request);
-      const message = `取消「${latest.remotePath}」未生效：后端未找到该运行任务，传输仍在进行`;
+      const message = tr("取消「{remotePath}」未生效：后端未找到该运行任务，传输仍在进行", { remotePath: latest.remotePath });
       useTransferStore.setState((state) => ({
         tasks: state.tasks.map((item) =>
           item.id === id ? { ...item, cancelling: false, cancelAccepted: false, error: message } : item,
@@ -440,7 +441,7 @@ export function cancelTransferTask(id: string): void {
       if (!isCurrentCancellationRequest(id, attemptId, request)) return;
       if (!request.settle("not_accepted")) return;
       clearCancellationRequest(id, request);
-      const message = `取消传输失败：${describeError(error)}`;
+      const message = tr("取消传输失败：{value}", { value: describeError(error) });
       useTransferStore.setState((state) => ({
         tasks: state.tasks.map((item) =>
           item.id === id ? { ...item, cancelling: false, cancelAccepted: false, error: message } : item,
@@ -454,7 +455,7 @@ export function cancelTransferTask(id: string): void {
   useTransferStore.setState((state) => ({
     tasks: state.tasks.map((item) =>
       item.id === id
-        ? { ...item, status: "cancelled" as const, resultText: `已取消：${item.remotePath}` }
+        ? { ...item, status: "cancelled" as const, resultText: tr("已取消：{remotePath}", { remotePath: item.remotePath }) }
         : item,
     ),
   }));
@@ -548,7 +549,7 @@ async function execute(id: string, epoch: number): Promise<void> {
       } else {
         await fsApi.upload(task.sessionId, task.localPath, task.remotePath, task.resume === true, id, attemptId);
       }
-      resultText = `已上传到 ${task.remotePath}`;
+      resultText = tr("已上传到 {remotePath}", { remotePath: task.remotePath });
     } else {
       if (task.pack) {
         await fsApi.packDownload(task.sessionId, task.remotePath, task.localPath, id, attemptId);
@@ -558,10 +559,10 @@ async function execute(id: string, epoch: number): Promise<void> {
       if (!active()) return;
       const where = await finishSave(task.localPath, task.pack ? `${baseName(task.remotePath)}.tar.gz` : baseName(task.remotePath));
       if (where) {
-        resultText = `已下载到 ${where}`;
+        resultText = tr("已下载到 {where}", { where });
       } else {
         status = "cancelled";
-        resultText = "已取消保存";
+        resultText = tr("已取消保存");
       }
     }
   } catch (e) {
@@ -572,15 +573,15 @@ async function execute(id: string, epoch: number): Promise<void> {
     }
     if (cancellationOutcome === "accepted") {
       status = "cancelled";
-      resultText = `已取消：${task.remotePath}`;
+      resultText = tr("已取消：{remotePath}", { remotePath: task.remotePath });
     } else if (cancellationOutcome === "unconfirmed") {
       status = "failed";
-      error = `取消结果未确认：${task.remotePath}，请检查目标状态后重试`;
+      error = tr("取消结果未确认：{remotePath}，请检查目标状态后重试", { remotePath: task.remotePath });
       resultText = error;
     } else {
       status = "failed";
       error = describeError(e);
-      resultText = `${task.direction === "upload" ? "上传" : "下载"}失败：${task.remotePath}：${error}`;
+      resultText = tr("{value}失败：{remotePath}：{error}", { value: task.direction === "upload" ? tr("上传") : tr("下载"), remotePath: task.remotePath, error });
       resumeIssue = resumeIssueFromError(e);
     }
   } finally {
@@ -636,21 +637,21 @@ function batchSettleCheck(batchId: string): void {
   const pushToast = useUi.getState().pushToast;
   if (batch.length === 1) {
     const only = batch[0];
-    if (only.status === "done") pushToast("success", only.resultText ?? "传输完成");
-    else if (only.status === "failed") pushToast("error", only.resultText ?? "传输失败");
+    if (only.status === "done") pushToast("success", only.resultText ?? tr("传输完成"));
+    else if (only.status === "failed") pushToast("error", only.resultText ?? tr("传输失败"));
     else pushToast("info", only.resultText ?? only.remotePath);
     return;
   }
   const done = batch.filter((t) => t.status === "done").length;
   const failed = batch.filter((t) => t.status === "failed");
   const skipped = batch.filter((t) => t.status === "skipped" || t.status === "cancelled").length;
-  const head = batch[0].direction === "upload" ? "上传" : "下载";
-  const parts = [`完成 ${done}`];
-  if (skipped > 0) parts.push(`跳过/取消 ${skipped}`);
-  if (failed.length > 0) parts.push(`失败 ${failed.length}`);
+  const head = batch[0].direction === "upload" ? tr("上传") : tr("下载");
+  const parts = [tr("完成 {done}", { done })];
+  if (skipped > 0) parts.push(tr("跳过/取消 {skipped}", { skipped }));
+  if (failed.length > 0) parts.push(tr("失败 {length}", { length: failed.length }));
   if (failed.length > 0) {
-    pushToast("error", `${head}批次结束：${parts.join("，")}。${failed[0].resultText ?? ""}`);
+    pushToast("error", tr("{head}批次结束：{join}。{value}", { head, join: parts.join("，"), value: failed[0].resultText ?? "" }));
   } else {
-    pushToast(done > 0 ? "success" : "info", `${head}批次结束：${parts.join("，")}`);
+    pushToast(done > 0 ? "success" : "info", tr("{head}批次结束：{join}", { head, join: parts.join("，") }));
   }
 }

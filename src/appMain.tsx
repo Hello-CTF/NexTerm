@@ -1,0 +1,178 @@
+import { startFrontendProbeIfCapturing } from "./features/diagnostics/frontendProbe";
+import React, { lazy } from "react";
+import ReactDOM from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import App from "./app/App";
+import { registerPreviewIntegrations } from "./features/browser/registerPreviewIntegrations";
+import "./styles.css";
+import { listenEvent, EVENTS, EventVersionGate, type AINotificationEvent, type AppErrorEvent, type ConnectProgressEvent, type HelperProgressEvent, type SessionStatusEvent, type TerminalExitEvent } from "./ipc/events";
+import { onEventsResync } from "./ipc/webTransport";
+import { mountApi, systemApi } from "./ipc/commands";
+import { DESKTOP, WEB } from "./ipc/env";
+import { setInputFailureHandler } from "./ipc/inputFailure";
+import { describeError } from "./ui/errorText";
+import { consumeDeepLinks } from "./ipc/wails";
+import { openDeepLink } from "./app/deepLink";
+import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
+import { installForegroundResume } from "./app/foregroundResume";
+import { onRemoteChange } from "./app/layout";
+import { applyBackendPlatform } from "./app/platform";
+import { installLongPressContextMenu } from "./app/longPress";
+import { installInputCapitalization } from "./app/inputCapitalization";
+import { setMountUnavailableReason } from "./app/capabilities";
+import { forceResolvedTheme } from "./app/theme";
+import { startUnlessFramed } from "./app/frameGuard";
+import { Lazy } from "./ui/LazyBoundary";
+import { notifyAi } from "./features/inbox/inboxNotifications";
+import { t } from "./i18n";
+
+// Public share pages carry their own terminal/preview stack; keep it out of the main app's entry chunk.
+const PublicPreviewApp = lazy(() => import("./features/sharing/PublicPreviewApp").then((m) => ({ default: m.PublicPreviewApp })));
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
+});
+
+const eventVersions = new EventVersionGate();
+
+function publicPreviewTokenFromPath(pathname: string): string | null {
+  const match = /^\/share\/preview\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const token = decodeURIComponent(match[1]);
+    return token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function mount(node: React.ReactNode): void {
+  installInputCapitalization();
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>{node}</React.StrictMode>,
+  );
+  void startFrontendProbeIfCapturing();
+}
+
+function wireDesktopShell(): void {
+  void listenEvent<SessionStatusEvent>(EVENTS.sessionStatus, (p) => {
+    if (!eventVersions.accept(p.sessionId, p.version)) return;
+    applySessionStatusEvent(p);
+  });
+
+  void listenEvent<ConnectProgressEvent>(EVENTS.connectProgress, (p) => {
+    useUi.getState().setConnectProgress(p.assetId, p);
+  });
+
+  void listenEvent<HelperProgressEvent>(EVENTS.helperProgress, (p) => {
+    noteHelperProgress(p);
+    useUi.getState().setHelperProgress(p);
+  });
+
+  void listenEvent<TerminalExitEvent>(EVENTS.terminalExit, (p) => {
+    if (!eventVersions.accept(p.tabId, p.version)) return;
+    // The store keeps the tab: a durable terminal's exit without a status may be a dropped stream while the
+    // process still runs on the host, so the tab (and its reattach actions) stays until the user closes it.
+    const { pushToast } = useUi.getState();
+    if (p.exitCode !== null && p.exitCode !== 0) {
+      pushToast("info", t("终端进程退出（exit {exitCode}）", { exitCode: p.exitCode }));
+    }
+  });
+
+  void listenEvent<AppErrorEvent>(EVENTS.appError, (p) => {
+    useUi.getState().pushToast("error", p.message);
+  });
+
+  void listenEvent<AINotificationEvent>(EVENTS.aiNotification, (p) => {
+    useUi.getState().pushToast("info", t("AI 通知：{text}", { text: p.text }));
+    notifyAi(p.text);
+  });
+
+  if (!WEB) {
+    void listenEvent<string>(EVENTS.deepLink, (url) => void openDeepLink(url));
+    void consumeDeepLinks().then((urls) => {
+      for (const url of urls) void openDeepLink(url);
+    });
+  }
+
+  // Returning to the foreground (tab shown, app resumed, machine woke, network back) checks the visible
+  // sessions at once instead of waiting for the next heartbeat or reconnect backoff.
+  installForegroundResume(() => void probeForegroundSessions());
+
+  // A failed keystroke is never silent. A link or tab that is gone also triggers a reconnect probe right away,
+  // so the user is not left typing into a dead terminal until the next foreground event.
+  setInputFailureHandler(({ error, connectionLost }) => {
+    const { pushToast } = useUi.getState();
+    if (connectionLost) {
+      pushToast("error", t("连接已断开，正在重连"));
+      void probeForegroundSessions();
+      return;
+    }
+    pushToast("error", t("终端输入失败：{value}", { value: describeError(error) }));
+  });
+
+  onEventsResync(() => {
+    void useUi.getState().resyncSessions();
+    onRemoteChange(null);
+  });
+
+  window.addEventListener("contextmenu", (e) => {
+    const el = e.target as HTMLElement | null;
+    const inEditable = el?.closest("input, textarea, [contenteditable='true']");
+    const inTerminal = el?.closest(".xterm");
+    if (inEditable && !inTerminal) return;
+    e.preventDefault();
+  });
+  installLongPressContextMenu();
+}
+
+async function bootstrapApp(): Promise<void> {
+  wireDesktopShell();
+  registerPreviewIntegrations();
+  void wireMobileInsets();
+  try {
+    const [os, mountReason] = await Promise.all([
+      systemApi.platform(),
+      mountApi.capability(),
+    ]);
+    applyBackendPlatform(os, DESKTOP);
+    setMountUnavailableReason(mountReason);
+  } catch {
+  }
+  mount(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
+
+async function wireMobileInsets(): Promise<void> {
+  if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) return;
+  const apply = async () => {
+    try {
+      const insets = await systemApi.insets();
+      const style = document.documentElement.style;
+      style.setProperty("--nx-inset-top", `${insets.top}px`);
+      style.setProperty("--nx-inset-right", `${insets.right}px`);
+      style.setProperty("--nx-inset-bottom", `${insets.bottom}px`);
+      style.setProperty("--nx-inset-left", `${insets.left}px`);
+    } catch {
+      // Keep the env()/0 values when system_insets is unavailable (server/web)
+    }
+  };
+  await apply();
+  window.addEventListener("resize", () => void apply());
+  window.addEventListener("orientationchange", () => void apply());
+}
+
+function start(): void {
+  const publicPreviewToken = publicPreviewTokenFromPath(window.location.pathname);
+  if (publicPreviewToken) {
+    forceResolvedTheme("dark");
+    mount(<Lazy><PublicPreviewApp token={publicPreviewToken} /></Lazy>);
+  } else {
+    void bootstrapApp();
+  }
+}
+
+if (typeof window !== "undefined") startUnlessFramed(window, document.body, start, { desktop: DESKTOP });

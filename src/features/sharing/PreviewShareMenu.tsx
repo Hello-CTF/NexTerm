@@ -22,15 +22,16 @@ import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
 import { Select } from "../../ui/Select";
 import { IconGlobe } from "../../ui/icons";
+import { t } from "../../i18n";
 
 // All TTL options fall within the server-side minShareTTL(1 minute)-maxShareTTL(30 days) bounds;
 // the 1h default aligns with the server defaultLinkTTL, and ttl_ms is always sent explicitly on create.
 const PREVIEW_TTL_OPTIONS = [
-  { label: "15 分钟", ms: 15 * 60_000 },
-  { label: "1 小时", ms: 60 * 60_000 },
-  { label: "6 小时", ms: 6 * 60 * 60_000 },
-  { label: "24 小时", ms: 24 * 60 * 60_000 },
-  { label: "7 天", ms: 7 * 24 * 60 * 60_000 },
+  { label: t("15 分钟"), ms: 15 * 60_000 },
+  { label: t("1 小时"), ms: 60 * 60_000 },
+  { label: t("6 小时"), ms: 6 * 60 * 60_000 },
+  { label: t("24 小时"), ms: 24 * 60 * 60_000 },
+  { label: t("7 天"), ms: 7 * 24 * 60 * 60_000 },
 ];
 
 function activePreviews(links: PreviewLinkView[], tabId: string): PreviewLinkView[] {
@@ -189,9 +190,9 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
     if (copyHintTimerRef.current !== null) window.clearTimeout(copyHintTimerRef.current);
     try {
       await copyText(url);
-      setCopyHint("链接已复制");
+      setCopyHint(t("链接已复制"));
     } catch {
-      setCopyHint("复制失败，请手动复制链接");
+      setCopyHint(t("复制失败，请手动复制链接"));
     }
     copyHintTimerRef.current = window.setTimeout(() => {
       copyHintTimerRef.current = null;
@@ -203,22 +204,22 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
     <div ref={rootRef} className="relative inline-block">
       <button
         type="button"
-        title="创建预览链接"
+        title={t("创建预览链接")}
         className="flex items-center gap-1 rounded-md px-2 py-1 text-xs max-sm:min-h-10 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 @max-[560px]:hidden"
         onClick={toggle}
       >
         <IconGlobe className="h-3.5 w-3.5" />
-        预览链接
+        {t("预览链接")}
       </button>
       {open && (
         <div className="absolute right-0 z-30 mt-1 w-80 max-w-[calc(100vw-1.5rem)] @max-[560px]:fixed @max-[560px]:inset-x-3 @max-[560px]:top-14 @max-[560px]:w-auto rounded-md border border-neutral-700 bg-neutral-900 p-3 shadow-xl">
           <p className="text-xs text-neutral-300">
-            为「{sessionName || "当前终端"}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。
+            {t("为「{value}」创建预览链接：获得链接的人无需登录即可查看当前屏幕和后续输出。默认只读，观看者不能输入。", { value: sessionName || t("当前终端") })}
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Select
               className="w-32 shrink-0"
-              ariaLabel="预览链接有效期"
+              ariaLabel={t("预览链接有效期")}
               value={String(ttlMs)}
               onChange={(value) => setTtlMs(Number(value))}
               options={PREVIEW_TTL_OPTIONS.map((option) => ({ value: String(option.ms), label: option.label }))}
@@ -229,7 +230,7 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
               disabled={creating}
               onClick={() => void create()}
             >
-              {creating ? "正在创建…" : "创建链接"}
+              {creating ? t("正在创建…") : t("创建链接")}
             </button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -240,9 +241,9 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
                 disabled={!WEB}
                 onChange={(event) => setAllowWrite(event.target.checked)}
               />
-              允许控制
+              {t("允许控制")}
             </label>
-            {!WEB && <span className="text-xs text-neutral-500">桌面中继创建的预览暂不支持控制</span>}
+            {!WEB && <span className="text-xs text-neutral-500">{t("桌面中继创建的预览暂不支持控制")}</span>}
           </div>
           {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
           {createdUrl && (
@@ -253,18 +254,18 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
                 className="mt-1 rounded-md bg-neutral-800 px-2 py-0.5 text-xs max-sm:min-h-9 text-neutral-200 hover:bg-neutral-700"
                 onClick={() => void copyUrl(createdUrl)}
               >
-                复制链接
+                {t("复制链接")}
               </button>
             </div>
           )}
           {links.length > 0 && (
             <div className="mt-3 border-t border-neutral-800 pt-2">
-              <p className="text-xs text-neutral-500">进行中的预览</p>
+              <p className="text-xs text-neutral-500">{t("进行中的预览")}</p>
               {links.map((link) => {
                 const permission = previewPermission(link);
                 return (
                   <div key={link.id} className="mt-1 flex flex-wrap items-center justify-between gap-1 text-xs">
-                    <span className="text-neutral-400">有效期至 {new Date(link.expires_at).toLocaleString()}</span>
+                    <span className="text-neutral-400">{t("有效期至 {toLocaleString}", { toLocaleString: new Date(link.expires_at).toLocaleString() })}</span>
                     <span className="flex items-center gap-2">
                       <span
                         className={
@@ -273,14 +274,14 @@ export function PreviewShareMenu({ tabId, sessionName, openRequest, onActiveChan
                             : "rounded-full bg-neutral-800 px-2 py-0.5 text-neutral-400"
                         }
                       >
-                        {permission === "read_write" ? "可控制" : "只读"}
+                        {permission === "read_write" ? t("可控制") : t("只读")}
                       </span>
                       <button
                         type="button"
                         className="rounded-md px-2 py-0.5 max-sm:min-h-9 text-red-400 hover:bg-neutral-800"
                         onClick={() => void revoke(link.id)}
                       >
-                        吊销
+                        {t("吊销")}
                       </button>
                     </span>
                   </div>

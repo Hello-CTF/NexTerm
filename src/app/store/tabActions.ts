@@ -8,6 +8,7 @@ import { isWorkspaceToolTab, nextTabId } from "./model";
 import type { AppTab, LeftMode, SessionRuntimeInfo, UiState, Workspace } from "./types";
 import { useUi } from "./useUi";
 import { clipText } from "../../ui/textClip";
+import { t as tr } from "../../i18n";
 
 export function rejectPendingFileLocator(tab: AppTab): boolean {
   if (
@@ -18,7 +19,7 @@ export function rejectPendingFileLocator(tab: AppTab): boolean {
   ) {
     return false;
   }
-  useUi.getState().pushToast("info", "重命名进行中，完成后才能打开该文件");
+  useUi.getState().pushToast("info", tr("重命名进行中，完成后才能打开该文件"));
   return true;
 }
 
@@ -28,7 +29,7 @@ export function resolveWorkspaceId(
   workspaceId?: string,
 ): string {
   const { ensureWorkspace } = useUi.getState();
-  if (isWorkspaceToolTab(tab)) return ensureWorkspace({ kind: "tools", title: "工具" });
+  if (isWorkspaceToolTab(tab)) return ensureWorkspace({ kind: "tools", title: tr("工具") });
   if (tab.sessionId) {
     const hit = st.workspaces.find((w) => w.sessionId === tab.sessionId);
     if (hit) return hit.id;
@@ -42,7 +43,7 @@ export function resolveWorkspaceId(
     return ensureWorkspace({
       kind: "session",
       sessionId: tab.sessionId,
-      title: s?.name ?? "会话",
+      title: s?.name ?? tr("会话"),
       assetId: s?.assetId ?? undefined,
       assetKind: s?.kind,
     });
@@ -60,7 +61,7 @@ export function resolveWorkspaceId(
     if (explicit) return explicit.id;
   }
   if (st.activeWorkspaceId) return st.activeWorkspaceId;
-  return ensureWorkspace({ kind: "tools", title: "工具" });
+  return ensureWorkspace({ kind: "tools", title: tr("工具") });
 }
 
 export function useActiveWorkspace(): Workspace | null {
@@ -153,7 +154,7 @@ export async function openTerminalTab(
     {
       id: nextTabId(`term-${session.id}`),
       kind: "terminal",
-      title: title ?? `终端 ${number}`,
+      title: title ?? tr("终端 {number}", { number }),
       sessionId: session.id,
       pendingDirectory: options?.directory,
       ...(regularReason ? { regularReason } : {}),
@@ -306,7 +307,7 @@ export function openCredentialsTab(credId?: string) {
   useUi.getState().addTab({
     id: "tab-credentials",
     kind: "credentials",
-    title: "凭据",
+    title: tr("凭据"),
     ...(credId !== undefined ? { credId } : {}),
     closable: true,
   });

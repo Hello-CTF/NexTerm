@@ -10,6 +10,7 @@ import type {
   AgentPresence,
   AgentRunState,
 } from "./agentTypes";
+import { t } from "../../i18n";
 
 export type AgentStateTone = "ok" | "warn" | "error" | "muted" | "accent";
 
@@ -23,14 +24,14 @@ export interface AgentStateView {
 
 const UNKNOWN_VIEW: AgentStateView = {
   key: "unknown",
-  label: "未知",
+  label: t("未知"),
   tone: "muted",
   evidence: null,
   unknown: true,
 };
 
 function unknownBecause(missing: string): AgentStateView {
-  return { ...UNKNOWN_VIEW, label: `未知（缺少${missing}）` };
+  return { ...UNKNOWN_VIEW, label: t("未知（缺少{missing}）", { missing }) };
 }
 
 export function presenceView(
@@ -39,17 +40,17 @@ export function presenceView(
 ): AgentStateView {
   switch (presence) {
     case "attached":
-      return { key: "attached", label: "已附加", tone: "ok", evidence, unknown: false };
+      return { key: "attached", label: t("已附加"), tone: "ok", evidence, unknown: false };
     case "detached":
-      return { key: "detached", label: "已分离", tone: "muted", evidence, unknown: false };
+      return { key: "detached", label: t("已分离"), tone: "muted", evidence, unknown: false };
     case "disconnected":
-      return { key: "disconnected", label: "已断开", tone: "warn", evidence, unknown: false };
+      return { key: "disconnected", label: t("已断开"), tone: "warn", evidence, unknown: false };
     case "unverifiable":
       // Unverifiable stays visible as its own state; it never collapses into
       // gone, and it always forbids automatic writes (see autoWriteAllowed).
       return {
         key: "unverifiable",
-        label: evidence ? "无法确认" : "无法确认（缺少依据）",
+        label: evidence ? t("无法确认") : t("无法确认（缺少依据）"),
         tone: "warn",
         evidence,
         unknown: false,
@@ -57,7 +58,7 @@ export function presenceView(
     case "nonpersistent":
       return {
         key: "nonpersistent",
-        label: "非持久终端",
+        label: t("非持久终端"),
         tone: "muted",
         evidence,
         unknown: false,
@@ -65,16 +66,16 @@ export function presenceView(
     case "gone":
       // Gone requires authoritative absence; without evidence we cannot claim it.
       return evidence
-        ? { key: "gone", label: "已不存在", tone: "error", evidence, unknown: false }
-        : unknownBecause("终端缺失的确认依据");
+        ? { key: "gone", label: t("已不存在"), tone: "error", evidence, unknown: false }
+        : unknownBecause(t("终端缺失的确认依据"));
     case "replaced":
       return evidence
-        ? { key: "replaced", label: "已被替换", tone: "warn", evidence, unknown: false }
-        : unknownBecause("替换依据");
+        ? { key: "replaced", label: t("已被替换"), tone: "warn", evidence, unknown: false }
+        : unknownBecause(t("替换依据"));
     case "exited":
       return evidence
-        ? { key: "exited", label: "已退出", tone: "muted", evidence, unknown: false }
-        : unknownBecause("退出依据");
+        ? { key: "exited", label: t("已退出"), tone: "muted", evidence, unknown: false }
+        : unknownBecause(t("退出依据"));
   }
 }
 
@@ -84,24 +85,24 @@ export function runStateView(
 ): AgentStateView {
   switch (state) {
     case "queued":
-      return { key: "queued", label: "排队中", tone: "muted", evidence, unknown: false };
+      return { key: "queued", label: t("排队中"), tone: "muted", evidence, unknown: false };
     case "running":
-      return { key: "running", label: "运行中", tone: "accent", evidence, unknown: false };
+      return { key: "running", label: t("运行中"), tone: "accent", evidence, unknown: false };
     case "idle":
       // Idle is deliberately its own label: an idle agent is not a completed one.
-      return { key: "idle", label: "空闲", tone: "muted", evidence, unknown: false };
+      return { key: "idle", label: t("空闲"), tone: "muted", evidence, unknown: false };
     case "done":
       return evidence
-        ? { key: "done", label: "已完成", tone: "ok", evidence, unknown: false }
-        : unknownBecause("完成依据");
+        ? { key: "done", label: t("已完成"), tone: "ok", evidence, unknown: false }
+        : unknownBecause(t("完成依据"));
     case "error":
       return evidence
-        ? { key: "error", label: "失败", tone: "error", evidence, unknown: false }
-        : unknownBecause("失败依据");
+        ? { key: "error", label: t("失败"), tone: "error", evidence, unknown: false }
+        : unknownBecause(t("失败依据"));
     case "canceled":
       return evidence
-        ? { key: "canceled", label: "已取消", tone: "warn", evidence, unknown: false }
-        : unknownBecause("取消依据");
+        ? { key: "canceled", label: t("已取消"), tone: "warn", evidence, unknown: false }
+        : unknownBecause(t("取消依据"));
   }
 }
 

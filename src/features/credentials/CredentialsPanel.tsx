@@ -23,6 +23,7 @@ import {
   IconRefresh,
   IconXCircle,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 const REVEAL_SECONDS = 15;
 
@@ -66,22 +67,22 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
     <div className="flex h-full flex-col bg-neutral-900">
       <div className="flex min-h-[38px] shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-neutral-800/60 px-3 py-1">
         <IconKey size={14} className="shrink-0 text-neutral-400" />
-        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">凭据</span>
+        <span className="shrink-0 whitespace-nowrap text-[13px] font-semibold text-neutral-100">{t("凭据")}</span>
         {st &&
           (protectionOn ? (
             locked ? (
               <span className="nx-badge nx-badge-amber">
-                <IconLock size={11} /> 已锁定
+                <IconLock size={11} /> {t("已锁定")}
               </span>
             ) : (
-              <span className="nx-badge nx-badge-green">已解锁</span>
+              <span className="nx-badge nx-badge-green">{t("已解锁")}</span>
             )
           ) : st.mode === "not_init" ? (
-            <span className="nx-badge nx-badge-amber">未初始化</span>
+            <span className="nx-badge nx-badge-amber">{t("未初始化")}</span>
           ) : st.mode === "master" ? (
-            <span className="nx-badge nx-badge-amber">已启用 · 未设密码</span>
+            <span className="nx-badge nx-badge-amber">{t("已启用 · 未设密码")}</span>
           ) : (
-            <span className="nx-badge">未启用密码保护</span>
+            <span className="nx-badge">{t("未启用密码保护")}</span>
           ))}
         <div className="nx-spacer" />
         <button
@@ -93,28 +94,28 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
           }
         >
           <IconKey size={12} />
-          生成密钥
+          {t("生成密钥")}
         </button>
         <button className="nx-btn nx-btn-primary nx-btn-sm shrink-0" onClick={startCreate}>
           <IconPlus size={12} />
-          新建凭据
+          {t("新建凭据")}
         </button>
       </div>
 
       {locked && protectionOn && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[12px] text-amber-300">
           <IconLock size={13} />
-          <span>凭据库已锁定 · 解锁后可查看与使用</span>
+          <span>{t("凭据库已锁定 · 解锁后可查看与使用")}</span>
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-sm" onClick={() => void unlock()}>
-            解锁
+            {t("解锁")}
           </button>
         </div>
       )}
 
       {credentials.isLoading ? (
         <div className="nx-empty" role="status">
-          正在加载凭据…
+          {t("正在加载凭据…")}
         </div>
       ) : credentials.isError && !credentials.data ? (
         <div className="nx-empty">
@@ -122,14 +123,14 @@ export function CredentialsPanel({ credId }: { credId?: string }) {
             <IconXCircle size={18} />
           </div>
           <div className="text-[12.5px] text-red-300">
-            未能加载凭据列表：{describeError(credentials.error)}
+            {t("未能加载凭据列表：{value}", { value: describeError(credentials.error) })}
           </div>
           <button
             className="nx-btn nx-btn-ghost nx-btn-sm"
             onClick={() => void credentials.refetch()}
           >
             <IconRefresh size={12} />
-            重试
+            {t("重试")}
           </button>
         </div>
       ) : selected ? (
@@ -232,7 +233,7 @@ function CredentialDetail({
       await copyText(value);
       pushToast("success", label);
     } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
+      pushToast("error", t("复制失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -259,10 +260,10 @@ function CredentialDetail({
       pushToast(
         "success",
         patch.secret && cred.usedBy.length > 0
-          ? `已保存 · 使用它的 ${cred.usedBy.length} 个资产（${cred.usedBy
+          ? t("已保存 · 使用它的 {length} 个资产（{join}）下次连接生效", { length: cred.usedBy.length, join: cred.usedBy
               .map((u) => u.name)
-              .join("、")}）下次连接生效`
-          : "已保存",
+              .join("、") })
+          : t("已保存"),
       );
       setNewSecret("");
       setNewPassphrase("");
@@ -276,13 +277,13 @@ function CredentialDetail({
   };
 
   const clearPassphrase = async () => {
-    const ok = await ask("清除凭据库中保存的私钥口令？\n清除后，若私钥本身已加密，连接时将无法自动解密。", {
+    const ok = await ask(t("清除凭据库中保存的私钥口令？\n清除后，若私钥本身已加密，连接时将无法自动解密。"), {
       kind: "warning",
     });
     if (!ok) return;
     try {
       await vaultApi.updateCredential(cred.id, { passphrase: "" });
-      pushToast("success", "已清除口令");
+      pushToast("success", t("已清除口令"));
       maskNow();
       onChanged();
     } catch (e) {
@@ -293,10 +294,10 @@ function CredentialDetail({
   const del = async () => {
     const ok = await ask(
       cred.usedBy.length > 0
-        ? `${cred.usedBy.length} 个资产正在使用：${cred.usedBy
+        ? t("{length} 个资产正在使用：{join}\n删除后引用置空，资产保留。确认删除？", { length: cred.usedBy.length, join: cred.usedBy
             .map((u) => u.name)
-            .join("、")}\n删除后引用置空，资产保留。确认删除？`
-        : `未被引用，删除无影响。确认删除「${cred.name}」？`,
+            .join("、") })
+        : t("未被引用，删除无影响。确认删除「{name}」？", { name: cred.name }),
       { kind: "warning" },
     );
     if (!ok) return;
@@ -304,7 +305,7 @@ function CredentialDetail({
       await vaultApi.deleteCredential(cred.id);
       pushToast(
         "success",
-        cred.usedBy.length > 0 ? `已删除 · ${cred.usedBy.length} 个资产引用已置空` : "已删除",
+        cred.usedBy.length > 0 ? t("已删除 · {length} 个资产引用已置空", { length: cred.usedBy.length }) : t("已删除"),
       );
       onDeleted(cred.id);
     } catch (e) {
@@ -327,43 +328,43 @@ function CredentialDetail({
               value={locked ? cred.name : name}
               disabled={locked}
               spellCheck={false}
-              aria-label="凭据名称"
+              aria-label={t("凭据名称")}
               onChange={(e) => setName(e.target.value)}
-              title={locked ? "解锁后可重命名" : "单击可重命名"}
+              title={locked ? t("解锁后可重命名") : t("单击可重命名")}
             />
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-neutral-500">
               <span className="nx-badge">{meta.label}</span>
               {isKey && !locked && cred.source && (
                 <span className="nx-badge">
-                  {cred.source === "file" ? "引用本地文件" : "已存入凭据库"}
+                  {cred.source === "file" ? t("引用本地文件") : t("已存入凭据库")}
                 </span>
               )}
-              {isKey && !locked && cred.hasPassphrase && <span className="nx-badge">有口令</span>}
+              {isKey && !locked && cred.hasPassphrase && <span className="nx-badge">{t("有口令")}</span>}
               {cred.usedBy.length > 0 ? (
                 <span>
-                  被 <span className="text-neutral-300">{cred.usedBy.length}</span> 个资产使用
+                  {t("被")} <span className="text-neutral-300">{cred.usedBy.length}</span> {t("个资产使用")}
                 </span>
               ) : (
-                <span className="text-[var(--nx-fg-warning)]">未被引用 · 可安全删除</span>
+                <span className="text-[var(--nx-fg-warning)]">{t("未被引用 · 可安全删除")}</span>
               )}
             </div>
           </div>
         </div>
 
-        <Section title={isKey ? (isRef ? "引用的私钥文件" : "私钥内容") : meta.label}>
+        <Section title={isKey ? (isRef ? t("引用的私钥文件") : t("私钥内容")) : meta.label}>
           {locked ? (
             <div className="flex items-center gap-2.5">
               <code className="font-mono text-[13px] tracking-[0.3em] text-neutral-600">
                 ••••••••••
               </code>
-              <span className="nx-hint">解锁后可查看与修改</span>
+              <span className="nx-hint">{t("解锁后可查看与修改")}</span>
             </div>
           ) : (
             <>
               <div className="flex flex-wrap items-start gap-2 sm:flex-nowrap">
                 {isRef ? (
                   <code className="min-w-0 flex-1 max-sm:basis-full break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12px] text-neutral-300">
-                    {cred.refPath || "（路径为空）"}
+                    {cred.refPath || t("（路径为空）")}
                   </code>
                 ) : revealed === null ? (
                   <code className="min-w-0 flex-1 max-sm:basis-full truncate rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12.5px] tracking-[0.2em] text-neutral-500">
@@ -377,21 +378,21 @@ function CredentialDetail({
                 {!isRef && (
                   <button className="nx-btn nx-btn-sm shrink-0" onClick={() => void reveal()}>
                     {revealed !== null ? <IconEyeOff size={12} /> : <IconEye size={12} />}
-                    {revealed !== null ? "隐藏" : "显示"}
+                    {revealed !== null ? t("隐藏") : t("显示")}
                   </button>
                 )}
                 <button
                   className="nx-btn nx-btn-sm shrink-0"
-                  onClick={() => void copy("value", "已复制")}
+                  onClick={() => void copy("value", t("已复制"))}
                 >
                   <IconCopy size={12} />
-                  复制
+                  {t("复制")}
                 </button>
               </div>
               {revealed !== null && !isRef && (
                 <div className="mt-2 flex items-center gap-1.5 text-[11px] text-[var(--nx-fg-warning)]">
                   <IconEye size={11} />
-                  {left} 秒后自动隐藏
+                  {t("{left} 秒后自动隐藏", { left })}
                 </div>
               )}
 
@@ -400,20 +401,20 @@ function CredentialDetail({
                   <>
                     <input
                       className="nx-input font-mono text-[12px]"
-                      placeholder="新的私钥文件路径（留空不修改）"
+                      placeholder={t("新的私钥文件路径（留空不修改）")}
                       value={newSecret}
                       spellCheck={false}
                       onChange={(e) => setNewSecret(e.target.value)}
                     />
                     <div className="nx-hint mt-1.5">
-                      ↳ 仅保存路径，凭据库不保存私钥内容。文件被移动后将失效，请在此更新路径。
+                      {t("↳ 仅保存路径，凭据库不保存私钥内容。文件被移动后将失效，请在此更新路径。")}
                     </div>
                   </>
                 ) : (
                   <input
                     type="password"
                     className="nx-input font-mono"
-                    placeholder={isKey ? "新私钥内容（留空不修改）" : "新值（留空不修改）"}
+                    placeholder={isKey ? t("新私钥内容（留空不修改）") : t("新值（留空不修改）")}
                     value={newSecret}
                     autoComplete="off"
                     onChange={(e) => setNewSecret(e.target.value)}
@@ -421,7 +422,7 @@ function CredentialDetail({
                 )}
                 {newSecret.length > 0 && cred.usedBy.length > 0 && (
                   <div className="nx-hint mt-1.5">
-                    保存后，使用它的 {cred.usedBy.length} 个资产下次连接时生效，无需逐个修改。
+                    {t("保存后，使用它的 {length} 个资产下次连接时生效，无需逐个修改。", { length: cred.usedBy.length })}
                   </div>
                 )}
               </div>
@@ -430,31 +431,31 @@ function CredentialDetail({
         </Section>
 
         {isKey && (
-          <Section title="私钥口令">
+          <Section title={t("私钥口令")}>
             {locked ? (
-              <span className="nx-hint">解锁后可查看与修改</span>
+              <span className="nx-hint">{t("解锁后可查看与修改")}</span>
             ) : (
               <>
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[12.5px] text-neutral-300">
                     {!cred.hasPassphrase
-                      ? "未设置"
+                      ? t("未设置")
                       : revealed
-                        ? revealed.passphrase || "（空）"
+                        ? revealed.passphrase || t("（空）")
                         : "••••••••"}
                   </span>
                   {cred.hasPassphrase && (
                     <>
                       <button className="nx-btn nx-btn-sm shrink-0" onClick={() => void reveal()}>
                         {revealed !== null ? <IconEyeOff size={12} /> : <IconEye size={12} />}
-                        {revealed !== null ? "隐藏" : "显示"}
+                        {revealed !== null ? t("隐藏") : t("显示")}
                       </button>
                       <button
                         className="nx-btn nx-btn-sm shrink-0"
-                        onClick={() => void copy("passphrase", "已复制口令")}
+                        onClick={() => void copy("passphrase", t("已复制口令"))}
                       >
                         <IconCopy size={12} />
-                        复制
+                        {t("复制")}
                       </button>
                     </>
                   )}
@@ -462,21 +463,21 @@ function CredentialDetail({
                 <input
                   type="password"
                   className="nx-input mt-3 font-mono"
-                  placeholder="新口令（留空不修改）"
+                  placeholder={t("新口令（留空不修改）")}
                   value={newPassphrase}
                   autoComplete="off"
                   onChange={(e) => setNewPassphrase(e.target.value)}
                 />
                 <div className="mt-1.5 flex items-center gap-2">
                   <span className="nx-hint flex-1">
-                    选填。仅当私钥本身设有口令时填写；修改口令无需重新填写私钥。
+                    {t("选填。仅当私钥本身设有口令时填写；修改口令无需重新填写私钥。")}
                   </span>
                   {cred.hasPassphrase && newPassphrase.length === 0 && (
                     <button
                       className="nx-btn nx-btn-ghost nx-btn-sm text-[var(--nx-fg-warning)]"
                       onClick={() => void clearPassphrase()}
                     >
-                      清除口令
+                      {t("清除口令")}
                     </button>
                   )}
                 </div>
@@ -485,7 +486,7 @@ function CredentialDetail({
           </Section>
         )}
 
-        <Section title="使用它的资产" count={cred.usedBy.length}>
+        <Section title={t("使用它的资产")} count={cred.usedBy.length}>
           {cred.usedBy.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {cred.usedBy.map((u) => {
@@ -494,7 +495,7 @@ function CredentialDetail({
                   <button
                     key={u.id}
                     className="nx-chip nx-chip-accent"
-                    title="单击可连接该资产"
+                    title={t("单击可连接该资产")}
                     onClick={() => void connectAsset({ id: u.id, name: u.name, kind: u.kind })}
                   >
                     <Icon size={12} />
@@ -505,14 +506,14 @@ function CredentialDetail({
             </div>
           ) : (
             <div className="nx-hint">
-              暂无资产使用该凭据。
+              {t("暂无资产使用该凭据。")}
             </div>
           )}
         </Section>
 
         <div className="mb-5 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-neutral-500">
-          <span>创建于 {formatTime(cred.createdAt)}</span>
-          <span>最后修改 {formatTime(cred.updatedAt)}</span>
+          <span>{t("创建于 {value}", { value: formatTime(cred.createdAt) })}</span>
+          <span>{t("最后修改 {value}", { value: formatTime(cred.updatedAt) })}</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800/60 pt-4">
@@ -521,7 +522,7 @@ function CredentialDetail({
             disabled={!dirty || saving || locked}
             onClick={() => void save()}
           >
-            {saving ? "正在保存…" : "保存"}
+            {saving ? t("正在保存…") : t("保存")}
           </button>
           {dirty && (
             <button
@@ -532,12 +533,12 @@ function CredentialDetail({
                 setNewPassphrase("");
               }}
             >
-              放弃修改
+              {t("放弃修改")}
             </button>
           )}
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost text-red-400" onClick={() => void del()}>
-            删除
+            {t("删除")}
           </button>
         </div>
       </div>
@@ -572,18 +573,18 @@ function EmptyDetail({ hasAny, onNew }: { hasAny: boolean; onNew: () => void }) 
         <IconFile size={18} />
       </div>
       <div className="text-[12.5px] text-neutral-400">
-        {hasAny ? "在左侧选择一条凭据" : "暂无任何凭据"}
+        {hasAny ? t("在左侧选择一条凭据") : t("暂无任何凭据")}
       </div>
       <div className="text-[11.5px] text-neutral-500">
-        {hasAny ? "名称 · 值 · 引用它的资产 · 最后修改时间" : "新建资产时填写的密码会自动保存到此处"}
+        {hasAny ? t("名称 · 值 · 引用它的资产 · 最后修改时间") : t("新建资产时填写的密码会自动保存到此处")}
       </div>
       <div className="mt-1 flex gap-2">
         <button className="nx-btn nx-btn-sm" onClick={openCredentialsSidebar}>
-          打开凭据列表
+          {t("打开凭据列表")}
         </button>
         <button className="nx-btn nx-btn-sm nx-btn-primary" onClick={onNew}>
           <IconPlus size={12} />
-          新建凭据
+          {t("新建凭据")}
         </button>
       </div>
     </div>

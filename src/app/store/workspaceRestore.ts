@@ -11,6 +11,7 @@ import { reconnectSessionAndWait } from "./reconnect";
 import { prepareDurableInBackground } from "./durableReadiness";
 import type { ConnectOutcome, RestoreWorkspaceOptions, SessionRuntimeInfo, Workspace } from "./types";
 import { useUi } from "./useUi";
+import { t } from "../../i18n";
 
 const inflightRestoreConnects = new Map<string, {
   workspace: Workspace;
@@ -67,9 +68,9 @@ async function connectRestoredWorkspace(
 ): Promise<ConnectOutcome> {
   const state = useUi.getState();
   const workspace = state.workspaces.find((item) => item.id === workspaceId);
-  if (!workspace) return { ok: false, error: "工作区无需重新连接" };
+  if (!workspace) return { ok: false, error: t("工作区无需重新连接") };
   if (!workspace.restorePending) return reconnectDeadRestoredWorkspace(workspace, options);
-  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  if (workspace.deletedTarget) return { ok: false, error: t("原资产已删除，请从资产树选择其他目标") };
   const epoch = state.workspaceRuntimeEpoch;
   const stillPending = () => {
     const current = useUi.getState();
@@ -81,7 +82,7 @@ async function connectRestoredWorkspace(
   try {
     if (workspace.kind === "remote") {
       // Nothing is dialed here: the pane connects when it mounts, which is the user's explicit reconnect.
-      if (!workspace.assetId) return { ok: false, error: "远程桌面目标已丢失，请从资产树重新连接" };
+      if (!workspace.assetId) return { ok: false, error: t("远程桌面目标已丢失，请从资产树重新连接") };
       const asset = await assetApi.get(workspace.assetId);
       if (!stillPending()) return { ok: false, canceled: true };
       if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
@@ -100,7 +101,7 @@ async function connectRestoredWorkspace(
       return { ok: true };
     }
     if (workspace.kind === "db") {
-      if (!workspace.assetId) return { ok: false, error: "数据库目标已丢失，请从资产树重新连接" };
+      if (!workspace.assetId) return { ok: false, error: t("数据库目标已丢失，请从资产树重新连接") };
       const asset = await assetApi.get(workspace.assetId);
       if (!stillPending()) return { ok: false, canceled: true };
       if (!(await ensureVaultReadyFor(asset, epoch))) return { ok: false, canceled: true };
@@ -172,9 +173,9 @@ async function reconnectDeadRestoredWorkspace(
 ): Promise<ConnectOutcome> {
   const state = useUi.getState();
   if (!workspaceSessionIsDead(workspace, state.sessions)) {
-    return { ok: false, error: "工作区无需重新连接" };
+    return { ok: false, error: t("工作区无需重新连接") };
   }
-  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  if (workspace.deletedTarget) return { ok: false, error: t("原资产已删除，请从资产树选择其他目标") };
   const epoch = state.workspaceRuntimeEpoch;
   const existing = state.sessions.find((item) => item.id === workspace.sessionId);
   const stillCurrent = () => {

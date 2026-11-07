@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 export type DockerDiffLine = { kind: "add" | "del" | "same"; text: string };
 
 function lines(value: string): string[] {
@@ -7,7 +8,7 @@ function lines(value: string): string[] {
 function redactEnvLine(line: string): string {
   if (line === "") return line;
   const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
-  return match ? `${match[1]}（值已脱敏）` : "（非键值内容已脱敏）";
+  return match ? t("{value}（值已脱敏）", { value: match[1] }) : t("（非键值内容已脱敏）");
 }
 
 export function dockerTextDiff(before: string, after: string, redactEnv = false): DockerDiffLine[] {

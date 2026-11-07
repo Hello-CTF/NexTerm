@@ -3,9 +3,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUi } from "../store";
 import { syncApi, vaultApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
-import { describeError } from "../../ui/errorText";
+import { describeError, describeErrorSource } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
 import { trackWebSyncRequests, WEB_SYNC_ERROR_EVENT, WEB_SYNC_RESULT_EVENT } from "../syncEvents";
+import { t } from "../../i18n";
 
 export interface VaultStatusSummary {
   // attention is the only reason the status bar shows the vault: nothing is rendered for a healthy or loading vault.
@@ -31,15 +32,15 @@ export function useVaultStatus() {
         uninitialized: !vaultQuery.data.initialized,
         passwordless: vaultQuery.data.passwordless,
         text: !vaultQuery.data.initialized
-          ? "凭据库未初始化"
+          ? t("凭据库未初始化")
           : vaultQuery.data.passwordless
-            ? "已启用 · 未设密码"
+            ? t("已启用 · 未设密码")
             : vaultQuery.data.unlocked
-              ? "凭据库已解锁"
-              : "凭据库已锁定",
+              ? t("凭据库已解锁")
+              : t("凭据库已锁定"),
       }
     : vaultQuery.isError
-      ? { text: "凭据库状态未知", attention: "unknown", uninitialized: false, passwordless: false }
+      ? { text: t("凭据库状态未知"), attention: "unknown", uninitialized: false, passwordless: false }
       : { text: "…", attention: null, uninitialized: false, passwordless: false };
   const refetchVault = vaultQuery.refetch;
   const retryVault = useCallback(() => void refetchVault(), [refetchVault]);
@@ -47,21 +48,21 @@ export function useVaultStatus() {
   const managed = vaultQuery.data?.managed === true;
   const lockVault = useCallback(async () => {
     if (managed) {
-      pushToast("info", "服务端凭据库由服务器托管，无需锁定");
+      pushToast("info", t("服务端凭据库由服务器托管，无需锁定"));
       return;
     }
     if (vaultStatus.uninitialized) {
-      pushToast("info", "凭据库尚未初始化");
+      pushToast("info", t("凭据库尚未初始化"));
       return;
     }
     if (vaultStatus.passwordless) {
-      pushToast("info", "空密码凭据库无需锁定");
+      pushToast("info", t("空密码凭据库无需锁定"));
       return;
     }
     try {
       await vaultApi.lock();
       void queryClient.invalidateQueries({ queryKey: ["vault-status"] });
-      pushToast("info", "凭据库已锁定");
+      pushToast("info", t("凭据库已锁定"));
     } catch (e) {
       pushToast("error", describeError(e));
     }
@@ -85,7 +86,7 @@ function syncPauseReason(error: unknown): SyncPauseReason | null {
     if (code === "vault_locked") return "locked";
     if (code === "vault_not_init") return "uninitialized";
   }
-  const message = describeError(error);
+  const message = describeErrorSource(error);
   if (message.includes("凭据库已锁定")) return "locked";
   if (message.includes("凭据库尚未初始化") || message.includes("凭据库未初始化")) return "uninitialized";
   return null;
@@ -157,7 +158,7 @@ export function useSyncStatusSummary(vaultLocked: boolean): SyncStatusSummary {
         webErrorSignatureRef.current.clear();
       } else if (!webErrorSignatureRef.current.has(signature)) {
         webErrorSignatureRef.current.add(signature);
-        pushToast("error", `同步失败：${message}`);
+        pushToast("error", t("同步失败：{message}", { message }));
       }
     };
     const onResult = (event: Event) => {
@@ -200,26 +201,26 @@ export function useSyncStatusSummary(vaultLocked: boolean): SyncStatusSummary {
     (lastSuccessAt === null || lastAttemptAt === null || lastAttemptAt >= lastSuccessAt);
   const text = WEB
     ? pauseReason
-      ? `同步已暂停：${pauseReason === "locked" ? "凭据库已锁定" : "凭据库未初始化"}`
+      ? t("同步已暂停：{value}", { value: pauseReason === "locked" ? t("凭据库已锁定") : t("凭据库未初始化") })
       : syncFailed
-        ? "同步失败"
-        : "服务端：浏览器模式"
+        ? t("同步失败")
+        : t("服务端：浏览器模式")
     : pauseReason && syncConfigured
-      ? `同步已暂停：${pauseReason === "locked" ? "凭据库已锁定" : "凭据库未初始化"}`
+      ? t("同步已暂停：{value}", { value: pauseReason === "locked" ? t("凭据库已锁定") : t("凭据库未初始化") })
       : syncFailed
-        ? "同步失败"
+        ? t("同步失败")
         : syncLink.isError && !syncStatus.data
-          ? "同步：不可用"
+          ? t("同步：不可用")
           : syncLink.data === undefined && !syncStatus.data
-            ? "同步：…"
+            ? t("同步：…")
             : syncConfigured
-              ? "同步：已配置"
-              : "同步：本地模式";
+              ? t("同步：已配置")
+              : t("同步：本地模式");
   const title = syncFailed
-    ? `${lastError}${lastAttemptAt ? ` · 上次尝试：${formatTime(lastAttemptAt)}` : ""}`
+    ? `${lastError}${lastAttemptAt ? t(" · 上次尝试：{value}", { value: formatTime(lastAttemptAt) }) : ""}`
     : [
-        lastSuccessAt ? `上次成功：${formatTime(lastSuccessAt)}` : null,
-        lastAttemptAt ? `上次尝试：${formatTime(lastAttemptAt)}` : null,
+        lastSuccessAt ? t("上次成功：{value}", { value: formatTime(lastSuccessAt) }) : null,
+        lastAttemptAt ? t("上次尝试：{value}", { value: formatTime(lastAttemptAt) }) : null,
       ].filter(Boolean).join(" · ") || undefined;
   const warnings = WEB ? webSyncHealth.warnings : syncStatus.data?.warnings ?? [];
   const showWarnings = warnings.length > 0 && !pauseReason;

@@ -6,6 +6,7 @@ import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { IconRefresh, IconShield, IconTrash, IconXCircle } from "../../ui/icons";
+import { t } from "../../i18n";
 
 export function KnownHostsCard() {
   const pushToast = useUi((s) => s.pushToast);
@@ -56,17 +57,17 @@ export function KnownHostsCard() {
 
   const revoke = async (host: KnownHostDto) => {
     const ok = await ask(
-      `确定要撤销对 ${host.host}:${host.port} 的信任吗？\n指纹（${host.keyType}）：${host.fingerprint}\n\n撤销后，下次连接该主机时将重新确认指纹。`,
-      { title: "撤销主机信任", kind: "warning" },
+      t("确定要撤销对 {host}:{port} 的信任吗？\n指纹（{keyType}）：{fingerprint}\n\n撤销后，下次连接该主机时将重新确认指纹。", { host: host.host, port: host.port, keyType: host.keyType, fingerprint: host.fingerprint }),
+      { title: t("撤销主机信任"), kind: "warning" },
     );
     if (!ok) return;
     setRevokingId(host.id);
     try {
       await assetApi.knownHostRemove(host.id);
-      pushToast("success", `已撤销对 ${host.host}:${host.port} 的信任，下次连接时将重新确认指纹`);
+      pushToast("success", t("已撤销对 {host}:{port} 的信任，下次连接时将重新确认指纹", { host: host.host, port: host.port }));
       await reload();
     } catch (e) {
-      pushToast("error", `撤销失败：${describeError(e)}。请重试。`);
+      pushToast("error", t("撤销失败：{value}。请重试。", { value: describeError(e) }));
     } finally {
       if (aliveRef.current) setRevokingId(null);
     }
@@ -93,14 +94,14 @@ export function KnownHostsCard() {
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconShield size={15} className="text-neutral-400" />
-        <span className="nx-card-title">已知主机</span>
-        {hosts && <span className="nx-badge">{filtered.length} 台</span>}
+        <span className="nx-card-title">{t("已知主机")}</span>
+        {hosts && <span className="nx-badge">{t("{length} 台", { length: filtered.length })}</span>}
         <div className="nx-spacer" />
         {hosts && hosts.length > 0 && (
           <input
             className="nx-input nx-input-sm w-full sm:w-40"
-            aria-label="搜索已知主机"
-            placeholder="搜索主机 / 指纹"
+            aria-label={t("搜索已知主机")}
+            placeholder={t("搜索主机 / 指纹")}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -110,11 +111,11 @@ export function KnownHostsCard() {
         )}
         <button className="nx-btn nx-btn-ghost nx-btn-sm" aria-busy={loading} onClick={() => void reload()}>
           <IconRefresh size={11} className={loading ? "animate-spin" : undefined} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
       <p className="nx-hint mb-3.5">
-        首次连接 SSH 服务器并确认指纹后，将记录在此处。删除条目即撤销信任，下次连接时将重新确认指纹；服务器重装或更换主机密钥后，请删除旧条目并重新确认。
+        {t("首次连接 SSH 服务器并确认指纹后，将记录在此处。删除条目即撤销信任，下次连接时将重新确认指纹；服务器重装或更换主机密钥后，请删除旧条目并重新确认。")}
       </p>
 
       {hosts === null ? (
@@ -122,24 +123,24 @@ export function KnownHostsCard() {
           <div className="nx-alert nx-alert-danger flex items-start gap-2">
             <IconXCircle size={13} className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
-              <div className="break-words">未能读取：{error}</div>
+              <div className="break-words">{t("未能读取：{error}", { error })}</div>
               <button className="nx-btn nx-btn-outline nx-btn-sm mt-2" onClick={() => void reload()}>
                 <IconRefresh size={11} />
-                重试
+                {t("重试")}
               </button>
             </div>
           </div>
         ) : (
-          <div className="nx-hint py-2 text-[12px]">正在读取…</div>
+          <div className="nx-hint py-2 text-[12px]">{t("正在读取…")}</div>
         )
       ) : hosts.length === 0 ? (
-        <div className="nx-hint py-2 text-[12px]">尚未信任任何主机。</div>
+        <div className="nx-hint py-2 text-[12px]">{t("尚未信任任何主机。")}</div>
       ) : (
         <div className="flex flex-col gap-1">
           {error && (
             <div className="nx-alert nx-alert-danger mb-1 flex items-center gap-2 text-[12px]">
               <IconXCircle size={13} className="shrink-0" />
-              <span className="min-w-0 break-words">未能读取：{error}。请选择「刷新」重试。</span>
+              <span className="min-w-0 break-words">{t("未能读取：{error}。请选择「刷新」重试。", { error })}</span>
             </div>
           )}
           {pageHosts.map((h) => (
@@ -159,7 +160,7 @@ export function KnownHostsCard() {
                 className="nx-btn nx-btn-outline nx-btn-sm shrink-0"
                 disabled={revokingId !== null}
                 aria-busy={revokingId === h.id}
-                title={revokingId !== null && revokingId !== h.id ? "正在撤销另一台主机，请稍候" : `撤销对 ${h.host}:${h.port} 的信任`}
+                title={revokingId !== null && revokingId !== h.id ? t("正在撤销另一台主机，请稍候") : t("撤销对 {host}:{port} 的信任", { host: h.host, port: h.port })}
                 onClick={() => void revoke(h)}
               >
                 {revokingId === h.id ? (
@@ -167,14 +168,14 @@ export function KnownHostsCard() {
                 ) : (
                   <IconTrash size={11} />
                 )}
-                {revokingId === h.id ? "正在撤销…" : "撤销信任"}
+                {revokingId === h.id ? t("正在撤销…") : t("撤销信任")}
               </button>
             </div>
           ))}
           {filtered.length > pageSize && (
             <div className="mt-1 flex items-center gap-2 text-[11px] text-neutral-500">
               <span>
-                第 {currentPage + 1} / {pageCount} 页
+                {t("第 {value} / {pageCount} 页", { value: currentPage + 1, pageCount })}
               </span>
               <div className="nx-spacer" />
               <button
@@ -182,14 +183,14 @@ export function KnownHostsCard() {
                 disabled={currentPage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
-                上一页
+                {t("上一页")}
               </button>
               <button
                 className="nx-btn nx-btn-ghost nx-btn-xs"
                 disabled={currentPage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               >
-                下一页
+                {t("下一页")}
               </button>
             </div>
           )}

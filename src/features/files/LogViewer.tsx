@@ -17,6 +17,7 @@ import {
   IconRefresh,
   IconSearch,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 const CHUNK_SIZE = 256 * 1024;
 
@@ -222,9 +223,9 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
     if (rowItems.length === 0) return;
     try {
       await copyText(rowItems.map((r) => r.text).join("\n"));
-      setNotice(`已复制 ${rowItems.length} 行日志`);
+      setNotice(t("已复制 {length} 行日志", { length: rowItems.length }));
     } catch (e) {
-      setNotice(`复制失败：${describeError(toAppError(e).message)}`);
+      setNotice(t("复制失败：{value}", { value: describeError(toAppError(e).message) }));
     }
   };
 
@@ -243,23 +244,23 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           : "flex shrink-0 items-center gap-0.5"
       }
       role="group"
-      aria-label="分页"
+      aria-label={t("分页")}
       data-testid="log-pager"
     >
       <button
         className="nx-btn nx-btn-ghost nx-btn-sm"
         disabled={loading || page <= 1}
         onClick={() => gotoPage(1)}
-        title="第一页"
+        title={t("第一页")}
       >
-        首页
+        {t("首页")}
       </button>
       <button
         className="nx-icon-btn"
         disabled={loading || page <= 1}
         onClick={() => gotoPage(page - 1)}
-        title="上一页"
-        aria-label="上一页"
+        title={t("上一页")}
+        aria-label={t("上一页")}
       >
         <IconChevronLeft size={13} />
       </button>
@@ -276,19 +277,19 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           className="nx-input nx-input-sm w-14 text-center font-mono"
           value={pageDraft}
           inputMode="numeric"
-          aria-label="页码"
-          title="输入页码后回车跳转"
+          aria-label={t("页码")}
+          title={t("输入页码后回车跳转")}
           onChange={(e) => setPageDraft(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
         />
       </form>
-      <span className="shrink-0 text-[11px] text-neutral-500">/ {pages} 页</span>
+      <span className="shrink-0 text-[11px] text-neutral-500">{t("/ {pages} 页", { pages })}</span>
       <button
         className="nx-icon-btn"
         disabled={loading || page >= pages}
         onClick={() => gotoPage(page + 1)}
-        title="下一页"
-        aria-label="下一页"
+        title={t("下一页")}
+        aria-label={t("下一页")}
       >
         <IconChevronRight size={13} />
       </button>
@@ -296,9 +297,9 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         className="nx-btn nx-btn-ghost nx-btn-sm"
         disabled={loading || page >= pages}
         onClick={() => gotoPage(pages)}
-        title="最后一页（日志末尾）"
+        title={t("最后一页（日志末尾）")}
       >
-        末页
+        {t("末页")}
       </button>
     </div>
   );
@@ -308,14 +309,14 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
       <div className="nx-toolbar">
         <Icon size={14} className={`shrink-0 ${tone}`} />
         <span className="nx-toolbar-title truncate font-mono">{path}</span>
-        <span className="nx-badge nx-badge-amber shrink-0" title="只读视图，不会修改远端文件">
+        <span className="nx-badge nx-badge-amber shrink-0" title={t("只读视图，不会修改远端文件")}>
           <span className="nx-dot" />
-          只读日志
+          {t("只读日志")}
         </span>
         <div className="nx-spacer" />
         <button
           className="nx-icon-btn"
-          title="重新读取当前分块（日志文件可能已增长）"
+          title={t("重新读取当前分块（日志文件可能已增长）")}
           disabled={loading}
           onClick={() => void load(offset)}
         >
@@ -323,7 +324,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         </button>
         {!narrow && pagerBar}
         {onClose && (
-          <button className="nx-icon-btn" onClick={onClose} title="关闭日志查看器">
+          <button className="nx-icon-btn" onClick={onClose} title={t("关闭日志查看器")}>
             <IconClose size={14} />
           </button>
         )}
@@ -336,8 +337,8 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
         <Select
           className="shrink-0"
           triggerClassName="nx-btn nx-btn-ghost nx-btn-sm font-mono"
-          ariaLabel="日志编码"
-          title={`日志编码：${LOG_ENCODING_LABEL[enc]}（默认跟随资产的终端编码设置）`}
+          ariaLabel={t("日志编码")}
+          title={t("日志编码：{value}（默认跟随资产的终端编码设置）", { value: LOG_ENCODING_LABEL[enc] })}
           value={enc}
           options={LOG_ENCODINGS.map((k) => ({ value: k, label: LOG_ENCODING_LABEL[k] }))}
           onChange={changeEncoding}
@@ -350,35 +351,35 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
             className="nx-input nx-input-sm font-mono"
             value={query}
             spellCheck={false}
-            placeholder="过滤当前分块…"
-            title="在已加载的分块内过滤行；翻页后仍按当前条件过滤"
+            placeholder={t("过滤当前分块…")}
+            title={t("在已加载的分块内过滤行；翻页后仍按当前条件过滤")}
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
         {filtered && (
           <span className="shrink-0 text-[11px] text-neutral-500" role="status">
-            {filtered.length} 行匹配
+            {t("{length} 行匹配", { length: filtered.length })}
           </span>
         )}
         <label className="flex shrink-0 cursor-pointer items-center gap-1 text-[12px] text-neutral-300 pointer-coarse:min-h-11">
           <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
-          自动换行
+          {t("自动换行")}
         </label>
         <button
           className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
           disabled={loading || rowItems.length === 0}
           onClick={() => void copyVisible()}
-          title="复制当前分块中显示的日志行"
+          title={t("复制当前分块中显示的日志行")}
         >
-          复制日志
+          {t("复制日志")}
         </button>
         <button
           className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
           disabled={loading || !chunk}
           onClick={jumpToLatest}
-          title="跳到日志末尾（最后一页的最后一行）"
+          title={t("跳到日志末尾（最后一页的最后一行）")}
         >
-          跳到最新
+          {t("跳到最新")}
         </button>
         {notice && (
           <span className="shrink-0 text-[11px] text-neutral-500" role="status">
@@ -393,34 +394,34 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
           <div className="min-w-0 flex-1">
             {error.unsupported ? (
               <div className="break-words">
-                当前连接不支持远程日志查看，请使用内置编辑器或下载到本机查看
+                {t("当前连接不支持远程日志查看，请使用内置编辑器或下载到本机查看")}
               </div>
             ) : (
               <>
                 <div className="break-words">{describeError(error.message)}</div>
                 <button className="nx-link mt-1 text-[11px]" onClick={() => void load(offset)}>
-                  重试
+                  {t("重试")}
                 </button>
               </>
             )}
           </div>
         </div>
       ) : loading && !chunk ? (
-        <div role="status" aria-label="加载中" className="p-3">
+        <div role="status" aria-label={t("加载中")} className="p-3">
           {Array.from({ length: 10 }, (_, i) => (
             <div key={i} className="nx-skeleton-row" aria-hidden="true">
               <span className="nx-skeleton nx-skeleton-icon" />
               <span className="nx-skeleton min-w-0 flex-1" />
             </div>
           ))}
-          <span className="nx-sr-only">正在加载…</span>
+          <span className="nx-sr-only">{t("正在加载…")}</span>
         </div>
       ) : chunk && chunk.size === 0 ? (
-        <div className="nx-empty">该文件是空的</div>
+        <div className="nx-empty">{t("该文件是空的")}</div>
       ) : chunk ? (
         <div
           role="log"
-          aria-label={`日志内容 ${path}`}
+          aria-label={t("日志内容 {path}", { path })}
           ref={scrollRef}
           data-wrap={wrap ? "true" : "false"}
           className="min-h-0 flex-1 overflow-auto overscroll-contain px-1 py-1 font-mono text-[12px] leading-[1.55]"
@@ -444,7 +445,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
               );
             })}
             {filtered && filtered.length === 0 && (
-              <div className="nx-hint px-2 py-4 text-center">当前分块没有匹配的行</div>
+              <div className="nx-hint px-2 py-4 text-center">{t("当前分块没有匹配的行")}</div>
             )}
           </div>
         </div>
@@ -453,21 +454,16 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
       {chunk && !error && (
         <div className="flex min-h-[24px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5 border-t border-neutral-800/60 px-3 text-[10.5px] text-neutral-500">
           <IconEye size={11} />
-          <span>只读，不修改远端文件</span>
+          <span>{t("只读，不修改远端文件")}</span>
           <span className="text-neutral-700">|</span>
           <span>
-            字节 {chunk.offset.toLocaleString()}–
-            {(chunk.offset + Math.max(chunk.bytes - 1, 0)).toLocaleString()} /{" "}
-            {formatSize(chunk.size)}
+            {t("字节 {toLocaleString}–{toLocaleString2} /{value}{value2}", { toLocaleString: chunk.offset.toLocaleString(), toLocaleString2: (chunk.offset + Math.max(chunk.bytes - 1, 0)).toLocaleString(), value: " ", value2: formatSize(chunk.size) })}
           </span>
           <span className="text-neutral-700">|</span>
           <span>
-            分块 {page} / {pages}（每页 {formatSize(CHUNK_SIZE)}，行号为分块内序号
-            {chunk.offset > 0 ? "，首行可能不完整" : ""}
-            {chunk.truncated ? "，末行延续到下一页" : ""}）
-          </span>
+            {t("分块 {page} / {pages}（每页 {value}，行号为分块内序号{value2}{value3}）", { page, pages, value: formatSize(CHUNK_SIZE), value2: chunk.offset > 0 ? t("，首行可能不完整") : "", value3: chunk.truncated ? t("，末行延续到下一页") : "" })}</span>
           <div className="nx-spacer" />
-          <span className="max-[560px]:hidden">搜索仅过滤当前已加载分块</span>
+          <span className="max-[560px]:hidden">{t("搜索仅过滤当前已加载分块")}</span>
         </div>
       )}
       {narrow && pagerBar}

@@ -9,6 +9,7 @@ import {
   type MultilinePastePrompt,
 } from "./multilinePastePrompt";
 import { MULTILINE_PASTE_WARNING } from "./terminalPaste";
+import { t } from "../../i18n";
 
 const CANCEL = { paste: false, skipTab: false, skipAlways: false } as const;
 
@@ -83,18 +84,18 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
           <span className="flex shrink-0 text-amber-300" aria-hidden="true">
             <IconAlert size={14} />
           </span>
-          <span id={titleId} className="truncate">粘贴多行文本</span>
+          <span id={titleId} className="truncate">{t("粘贴多行文本")}</span>
         </div>
         <div className="nx-modal-body flex flex-col gap-3">
           <p id={descriptionId} className="text-[12.5px] leading-relaxed text-neutral-200">
-            即将向终端粘贴 {prompt.lineCount} 行文本。{MULTILINE_PASTE_WARNING}
+            {t("即将向终端粘贴 {lineCount} 行文本。{MULTILINE_PASTE_WARNING}", { lineCount: prompt.lineCount, MULTILINE_PASTE_WARNING })}
           </p>
           <pre
-            aria-label="粘贴内容预览"
+            aria-label={t("粘贴内容预览")}
             className="max-h-40 overflow-auto rounded border border-neutral-800/70 bg-neutral-950/60 px-2.5 py-2 font-mono text-[11.5px] leading-relaxed whitespace-pre text-neutral-300"
           >
             {prompt.preview.join("\n")}
-            {more > 0 && `\n…（共 ${prompt.lineCount} 行）`}
+            {more > 0 && t("\n…（共 {lineCount} 行）", { lineCount: prompt.lineCount })}
           </pre>
           <div className="flex flex-col gap-2 text-[12px] text-neutral-300">
             {prompt.tabScoped && (
@@ -105,7 +106,7 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
                   checked={skipTab}
                   onChange={(event) => setSkipTab(event.target.checked)}
                 />
-                本终端不再提示
+                {t("本终端不再提示")}
               </label>
             )}
             <label className="flex cursor-pointer items-start gap-2">
@@ -116,18 +117,18 @@ function MultilinePasteDialog({ prompt }: { prompt: MultilinePastePrompt }) {
                 onChange={(event) => setSkipAlways(event.target.checked)}
               />
               <span>
-                以后都不再提示
-                <span className="nx-hint block">可在 设置 &gt; 终端 &gt; 多行粘贴确认 中重新开启</span>
+                {t("以后都不再提示")}
+                <span className="nx-hint block">{t("可在 设置 > 终端 > 多行粘贴确认 中重新开启")}</span>
               </span>
             </label>
           </div>
         </div>
         <div className="nx-modal-footer">
           <button ref={cancelRef} type="button" className="nx-btn nx-btn-ghost" onClick={cancel}>
-            取消
+            {t("取消")}
           </button>
           <button ref={pasteRef} type="button" className="nx-btn nx-btn-primary" onClick={confirm}>
-            粘贴
+            {t("粘贴")}
           </button>
         </div>
       </div>

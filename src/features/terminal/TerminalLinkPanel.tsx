@@ -6,6 +6,7 @@ import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./term
 import { terminalIntegrations } from "./terminalIntegrations";
 import type { ExtractedLink } from "./terminalLinkProvider";
 import "./terminalLinks.css";
+import { t } from "../../i18n";
 
 interface TerminalLinkPanelProps {
   /** Newest first. */
@@ -32,8 +33,8 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
   const copy = (url: string) => {
     const pushToast = useUi.getState().pushToast;
     void copyText(cleanTerminalLink(url)).then(
-      () => pushToast("success", "已复制链接"),
-      (e: unknown) => pushToast("error", `复制链接失败：${describeError(e)}`),
+      () => pushToast("success", t("已复制链接")),
+      (e: unknown) => pushToast("error", t("复制链接失败：{value}", { value: describeError(e) })),
     );
   };
 
@@ -54,7 +55,7 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
           onClose();
         } else {
           const why = plan.kind === "blocked" ? `（${plan.reason}）` : "";
-          useUi.getState().pushToast("info", `只能在 NexTerm 中打开 http/https 链接${why}`);
+          useUi.getState().pushToast("info", t("只能在 NexTerm 中打开 http/https 链接{why}", { why }));
         }
       }
     } else if (e.key === "Enter") {
@@ -69,18 +70,18 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
   };
 
   return (
-    <div className="nx-term-link-panel" role="dialog" aria-label="终端链接面板">
+    <div className="nx-term-link-panel" role="dialog" aria-label={t("终端链接面板")}>
       <div
         ref={listRef}
         className="nx-term-link-list"
         role="listbox"
-        aria-label="终端链接"
+        aria-label={t("终端链接")}
         tabIndex={0}
         aria-activedescendant={links[selected] ? `nx-term-link-${selected}` : undefined}
         onKeyDown={onKeyDown}
       >
         {links.length === 0 ? (
-          <div className="nx-term-link-empty">当前终端没有可识别的链接</div>
+          <div className="nx-term-link-empty">{t("当前终端没有可识别的链接")}</div>
         ) : (
           links.map((link, i) => {
             const context = cleanTerminalLink(link.context);
@@ -102,7 +103,7 @@ export function TerminalLinkPanel({ links, onOpen, onClose }: TerminalLinkPanelP
         )}
       </div>
       <div className="nx-term-link-footer">
-        ↑↓ 选择 · Enter 打开 · C 复制{openInApp ? " · Shift+Enter 在 NexTerm 中打开" : ""} · Esc 关闭
+        {t("↑↓ 选择 · Enter 打开 · C 复制{value} · Esc 关闭", { value: openInApp ? t(" · Shift+Enter 在 NexTerm 中打开") : "" })}
       </div>
     </div>
   );

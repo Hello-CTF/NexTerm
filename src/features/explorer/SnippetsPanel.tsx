@@ -28,6 +28,7 @@ import {
   IconTrash,
   IconXCircle,
 } from "../../ui/icons";
+import { t } from "../../i18n";
 
 function activeTerminalAssetId(): string | undefined {
   const state = useUi.getState();
@@ -82,7 +83,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
       const analysis = analyzeSnippetSteps(commands);
       if (!analysis.hasVariables) return s;
       if (analysis.unknownVariables.length > 0) {
-        pushToast("error", `片段包含未识别的变量：${analysis.unknownVariables.map((name) => `「${name}」`).join("、")}`);
+        pushToast("error", t("片段包含未识别的变量：{join}", { join: analysis.unknownVariables.map((name) => `「${name}」`).join("、") }));
         return null;
       }
       let asset: SnippetAsset | undefined;
@@ -91,17 +92,17 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         try {
           asset = await assetApi.get(assetId);
         } catch (cause) {
-          pushToast("error", `无法读取资产信息：${describeError(cause)}`);
+          pushToast("error", t("无法读取资产信息：{value}", { value: describeError(cause) }));
           return null;
         }
       }
-      const values = await promptForValues(`填写片段变量 · ${s.name}`, analysis.variables);
+      const values = await promptForValues(t("填写片段变量 · {name}", { name: s.name }), analysis.variables);
       if (values === null) return null;
       if (!multi) return { ...s, body: renderSnippetTemplate(s.body, values, asset) };
       const steps = (s.steps ?? []).map((step) => ({ ...step, command: renderSnippetTemplate(step.command, values, asset) }));
       return { ...s, steps, body: steps.map((step) => step.command).join("\n") };
     } catch (cause) {
-      pushToast("error", `无法解析片段变量：${describeError(cause)}`);
+      pushToast("error", t("无法解析片段变量：{value}", { value: describeError(cause) }));
       return null;
     }
   };
@@ -123,15 +124,15 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     // The confirmation is account-scoped: a late resolve after an account switch must not
     // delete the snippet under the new account.
     const epoch = useUi.getState().accountEpoch;
-    const ok = await ask(`删除片段「${s.name}」？删除后无法恢复。`, { kind: "warning" });
+    const ok = await ask(t("删除片段「{name}」？删除后无法恢复。", { name: s.name }), { kind: "warning" });
     if (!ok || useUi.getState().accountEpoch !== epoch) return;
     setDeletingId(s.id);
     try {
       await assetApi.snippetDelete(s.id);
-      pushToast("info", `已删除片段「${s.name}」`);
+      pushToast("info", t("已删除片段「{name}」", { name: s.name }));
       refresh();
     } catch (e) {
-      pushToast("error", `无法删除片段：${describeError(e)}`);
+      pushToast("error", t("无法删除片段：{value}", { value: describeError(e) }));
     } finally {
       setDeletingId(null);
     }
@@ -180,61 +181,61 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         onKeyDown={onModalKeyDown}
       >
         <div className="nx-modal-header shrink-0">
-          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">命令片段</span>
+          <span id={titleId} className="text-[13px] font-semibold text-neutral-100">{t("命令片段")}</span>
           <div className="nx-spacer" />
-          <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" title="新建片段" onClick={() => setEditing("new")}>
+          <button type="button" className="nx-btn nx-btn-primary nx-btn-sm" title={t("新建片段")} onClick={() => setEditing("new")}>
             <IconPlus size={12} />
-            新建片段
+            {t("新建片段")}
           </button>
         </div>
         <div className="nx-modal-body flex min-h-[320px] flex-1 flex-col overflow-y-auto">
-          <p className="nx-hint mb-2.5">插入：只写入不回车；执行：写入并回车。含换行或控制字符的片段会先确认。</p>
+          <p className="nx-hint mb-2.5">{t("插入：只写入不回车；执行：写入并回车。含换行或控制字符的片段会先确认。")}</p>
           {unmigrated > 0 && (
             <p className="nx-hint mb-2.5" role="status" data-testid="snippet-migration-notice">
-              有 {unmigrated} 个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中。
+              {t("有 {unmigrated} 个旧版执行流程模板未能迁移为片段，内容仍保留在本机数据库中。", { unmigrated })}
             </p>
           )}
           {blockedReason && (snippets.data?.length ?? 0) > 0 && (
-            <p className="nx-hint mb-2.5" role="status">{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。</p>
+            <p className="nx-hint mb-2.5" role="status">{t("{blockedReason}，才能插入或执行片段。仍可新建、编辑或删除片段。", { blockedReason })}</p>
           )}
           {(snippets.data?.length ?? 0) > 6 && (
             <input
               className="nx-input mb-2"
-              placeholder="搜索片段名称或命令"
-              aria-label="搜索片段"
+              placeholder={t("搜索片段名称或命令")}
+              aria-label={t("搜索片段")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
           )}
           {snippets.isPending && (
             <div className="flex items-center gap-2 px-1 py-6 text-[12px] text-neutral-500">
-              <IconLoader size={13} className="animate-spin" /> 正在加载片段…
+              <IconLoader size={13} className="animate-spin" /> {t("正在加载片段…")}
             </div>
           )}
           {snippets.isError && (
-            <LoadError title="未能加载片段" error={snippets.error} onRetry={() => void snippets.refetch()} />
+            <LoadError title={t("未能加载片段")} error={snippets.error} onRetry={() => void snippets.refetch()} />
           )}
           {snippets.data && snippets.data.length === 0 && (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
               <span className="nx-empty-icon">
                 <IconCommand size={18} />
               </span>
-              <div className="nx-hint">暂无命令片段。可将常用命令保存为片段，之后可直接插入或执行。</div>
+              <div className="nx-hint">{t("暂无命令片段。可将常用命令保存为片段，之后可直接插入或执行。")}</div>
               <button type="button" className="nx-btn nx-btn-sm" onClick={() => setEditing("new")}>
                 <IconPlus size={12} />
-                新建第一个片段
+                {t("新建第一个片段")}
               </button>
             </div>
           )}
           {snippets.data && snippets.data.length > 0 && visible.length === 0 && (
-            <div className="nx-hint py-6 text-center">没有匹配的片段。</div>
+            <div className="nx-hint py-6 text-center">{t("没有匹配的片段。")}</div>
           )}
           <div className="flex flex-col gap-1">
             {visible.map((s) => {
-              const insertLabel = `插入片段「${s.name}」`;
-              const executeLabel = `执行片段「${s.name}」`;
+              const insertLabel = t("插入片段「{name}」", { name: s.name });
+              const executeLabel = t("执行片段「{name}」", { name: s.name });
               const multi = isMultiStep(s);
-              const multiHostLabel = `在多台主机执行片段「${s.name}」`;
+              const multiHostLabel = t("在多台主机执行片段「{name}」", { name: s.name });
               const preview = (multi ? s.steps?.[0]?.command ?? s.body : s.body).split("\n")[0];
               return (
                 <div key={s.id} data-snippet-row className="flex items-center gap-2 rounded-md border border-neutral-800/70 px-2.5 py-1.5">
@@ -242,7 +243,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-[12.5px] text-neutral-200">{s.name}</span>
-                      {multi && <span className="nx-badge shrink-0">{s.steps?.length ?? 0} 步</span>}
+                      {multi && <span className="nx-badge shrink-0">{t("{value} 步", { value: s.steps?.length ?? 0 })}</span>}
                     </div>
                     {s.description && <div className="truncate text-[11px] text-neutral-400" title={s.description}>{s.description}</div>}
                     <div className="truncate font-mono text-[11px] text-neutral-500" title={s.body}>
@@ -252,38 +253,38 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   </div>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title={multi ? "多步片段只能执行" : (blockedReason ?? "插入到当前终端")}
+                    title={multi ? t("多步片段只能执行") : (blockedReason ?? t("插入到当前终端"))}
                     aria-label={insertLabel}
                     disabled={deletingId === s.id || blockedReason !== null || multi}
                     onClick={() => void insert(s)}
                   >
                     <IconInsert size={11} />
-                    插入
+                    {t("插入")}
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title={blockedReason ?? "在当前终端执行"}
+                    title={blockedReason ?? t("在当前终端执行")}
                     aria-label={executeLabel}
                     disabled={deletingId === s.id || blockedReason !== null}
                     onClick={() => void execute(s)}
                   >
                     <IconPlay size={11} />
-                    执行
+                    {t("执行")}
                   </button>
                   <button
                     className="nx-btn nx-btn-outline nx-btn-xs shrink-0"
-                    title="在多台主机执行…"
+                    title={t("在多台主机执行…")}
                     aria-label={multiHostLabel}
                     disabled={deletingId === s.id}
                     onClick={() => setMultiHostSnippet(s)}
                   >
                     <IconServer size={11} />
-                    多主机…
+                    {t("多主机…")}
                   </button>
                   <button
                     className="nx-icon-btn nx-icon-btn-sm shrink-0"
-                    title="编辑片段"
-                    aria-label={`编辑片段「${s.name}」`}
+                    title={t("编辑片段")}
+                    aria-label={t("编辑片段「{name}」", { name: s.name })}
                     disabled={deletingId === s.id}
                     onClick={() => setEditing(s)}
                   >
@@ -291,8 +292,8 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
                   </button>
                   <button
                     className="nx-icon-btn nx-icon-btn-sm is-danger shrink-0"
-                    title="删除片段"
-                    aria-label={`删除片段「${s.name}」`}
+                    title={t("删除片段")}
+                    aria-label={t("删除片段「{name}」", { name: s.name })}
                     disabled={deletingId === s.id}
                     onClick={() => void remove(s)}
                   >
@@ -306,7 +307,7 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
         <div className="nx-modal-footer shrink-0">
           <div className="nx-spacer" />
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
-            关闭
+            {t("关闭")}
           </button>
         </div>
       </div>
@@ -394,8 +395,8 @@ function SnippetEditor({
     if (saving) return;
     if (
       dirty &&
-      !(await ask("当前修改尚未保存，关闭编辑器将丢弃这些改动。确定要继续？", {
-        title: "放弃未保存的修改",
+      !(await ask(t("当前修改尚未保存，关闭编辑器将丢弃这些改动。确定要继续？"), {
+        title: t("放弃未保存的修改"),
         kind: "warning",
       }))
     ) {
@@ -408,7 +409,7 @@ function SnippetEditor({
     if (saving) return;
     const n = name.trim();
     if (!valid) {
-      setError(multi ? "名称不能为空，且每一步都要填写命令" : "名称和内容都不能为空");
+      setError(multi ? t("名称不能为空，且每一步都要填写命令") : t("名称和内容都不能为空"));
       return;
     }
     setSaving(true);
@@ -436,7 +437,7 @@ function SnippetEditor({
           ? assetApi.snippetCreate(n, body, undefined, undefined, descriptionPatch)
           : assetApi.snippetCreate(n, body));
       }
-      pushToast("success", initial ? "已保存片段" : "已创建片段");
+      pushToast("success", initial ? t("已保存片段") : t("已创建片段"));
       onSaved();
     } catch (e) {
       setError(describeError(e));
@@ -476,24 +477,24 @@ function SnippetEditor({
       >
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-            {initial ? "编辑片段" : "新建片段"}
+            {initial ? t("编辑片段") : t("新建片段")}
           </span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           <div className="nx-form-row">
-            <label className="nx-label" htmlFor="snippet-name">名称</label>
+            <label className="nx-label" htmlFor="snippet-name">{t("名称")}</label>
             <input
               id="snippet-name"
               ref={nameInputRef}
               className="nx-input"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="看容器状态"
+              placeholder={t("看容器状态")}
             />
           </div>
           {multi ? (
             <div className="nx-form-row">
-              <label className="nx-label" htmlFor="snippet-description">说明（可选）</label>
+              <label className="nx-label" htmlFor="snippet-description">{t("说明（可选）")}</label>
               <input
                 id="snippet-description"
                 className="nx-input"
@@ -503,16 +504,16 @@ function SnippetEditor({
             </div>
           ) : initial?.description ? (
             <div className="nx-form-row">
-              <span className="nx-label">说明</span>
+              <span className="nx-label">{t("说明")}</span>
               <div data-testid="snippet-description-readonly" className="text-[12px] text-neutral-400">{initial.description}</div>
             </div>
           ) : null}
           <div className="nx-form-row">
             <div className="flex items-center gap-2">
-              <span className="nx-label">{multi ? "步骤" : "内容"}</span>
+              <span className="nx-label">{multi ? t("步骤") : t("内容")}</span>
               <div className="nx-spacer" />
               <button type="button" className="nx-btn nx-btn-sm" onClick={multi ? toSingle : toMulti}>
-                {multi ? "改为单条" : "改为多步"}
+                {multi ? t("改为单条") : t("改为多步")}
               </button>
             </div>
             {!multi ? (
@@ -523,7 +524,7 @@ function SnippetEditor({
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 placeholder="docker ps --format '{{.Names}}'"
-                aria-label="内容"
+                aria-label={t("内容")}
                 aria-describedby={hintId}
               />
             ) : (
@@ -534,47 +535,47 @@ function SnippetEditor({
                       <span className="nx-badge">{index + 1}</span>
                       <input
                         className="nx-input min-w-40 flex-1"
-                        aria-label={`步骤 ${index + 1} 名称`}
-                        placeholder="步骤名称（可选）"
+                        aria-label={t("步骤 {value} 名称", { value: index + 1 })}
+                        placeholder={t("步骤名称（可选）")}
                         value={step.name}
                         onChange={(e) => updateStep(step.id, { name: e.target.value })}
                       />
-                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === 0} aria-label={`上移步骤 ${index + 1}`} title="上移" onClick={() => moveStep(index, -1)}><IconArrowUp size={12} /></button>
-                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === steps.length - 1} aria-label={`下移步骤 ${index + 1}`} title="下移" onClick={() => moveStep(index, 1)}><IconArrowDown size={12} /></button>
-                      <button type="button" className="nx-icon-btn nx-icon-btn-sm is-danger" aria-label={`删除步骤 ${index + 1}`} title="删除步骤" onClick={() => setSteps((current) => current.filter((candidate) => candidate.id !== step.id))}><IconTrash size={12} /></button>
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === 0} aria-label={t("上移步骤 {value}", { value: index + 1 })} title={t("上移")} onClick={() => moveStep(index, -1)}><IconArrowUp size={12} /></button>
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm" disabled={index === steps.length - 1} aria-label={t("下移步骤 {value}", { value: index + 1 })} title={t("下移")} onClick={() => moveStep(index, 1)}><IconArrowDown size={12} /></button>
+                      <button type="button" className="nx-icon-btn nx-icon-btn-sm is-danger" aria-label={t("删除步骤 {value}", { value: index + 1 })} title={t("删除步骤")} onClick={() => setSteps((current) => current.filter((candidate) => candidate.id !== step.id))}><IconTrash size={12} /></button>
                     </div>
                     <textarea
                       className="nx-textarea font-mono text-[11.5px]"
                       rows={2}
-                      aria-label={`步骤 ${index + 1} 命令`}
+                      aria-label={t("步骤 {value} 命令", { value: index + 1 })}
                       aria-describedby={hintId}
                       value={step.command}
                       onChange={(e) => updateStep(step.id, { command: e.target.value })}
                     />
                     <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-neutral-400">
-                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 执行前确认`} checked={step.confirm === true} onChange={(e) => updateStep(step.id, { confirm: e.target.checked || undefined })} />
-                      执行前确认
+                      <input type="checkbox" className="accent-blue-500" aria-label={t("步骤 {value} 执行前确认", { value: index + 1 })} checked={step.confirm === true} onChange={(e) => updateStep(step.id, { confirm: e.target.checked || undefined })} />
+                      {t("执行前确认")}
                     </label>
                     <label className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
-                      <input type="checkbox" className="accent-blue-500" aria-label={`步骤 ${index + 1} 启用脚本交互指令`} checked={step.interactive === true} onChange={(e) => updateStep(step.id, { interactive: e.target.checked || undefined })} />
-                      启用脚本交互指令（仅多主机执行；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）
+                      <input type="checkbox" className="accent-blue-500" aria-label={t("步骤 {value} 启用脚本交互指令", { value: index + 1 })} checked={step.interactive === true} onChange={(e) => updateStep(step.id, { interactive: e.target.checked || undefined })} />
+                      {t("启用脚本交互指令（仅多主机执行；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）")}
                     </label>
                   </div>
                 ))}
                 <div>
                   <button type="button" className="nx-btn nx-btn-sm" onClick={() => setSteps((current) => [...current, blankStep()])}>
-                    <IconPlus size={12} />添加步骤
+                    <IconPlus size={12} />{t("添加步骤")}
                   </button>
                 </div>
               </div>
             )}
             <div id={hintId} className="nx-hint mt-1.5 leading-relaxed">
               <div>
-                支持使用变量，运行时需填写：<code>{"{{service}}"}</code> 必填，<code>{"{{service=nginx}}"}</code> 或 <code>{"{{service:nginx}}"}</code> 带默认值，<code>{"{{service|multiline}}"}</code> 多行输入。
-                {multi && "多步片段的所有步骤共用同一组变量，只填写一次。"}
+                {t("支持使用变量，运行时需填写：")}<code>{"{{service}}"}</code> {t("必填，")}<code>{"{{service=nginx}}"}</code> {t("或")} <code>{"{{service:nginx}}"}</code> {t("带默认值，")}<code>{"{{service|multiline}}"}</code> {t("多行输入。")}
+                {multi && t("多步片段的所有步骤共用同一组变量，只填写一次。")}
               </div>
               <div className="mt-1">
-                自动填入当前主机信息：<code>{"{{asset.name}}"}</code> 名称、<code>{"{{asset.host}}"}</code> 地址、<code>{"{{asset.tags}}"}</code> 标签。
+                {t("自动填入当前主机信息：")}<code>{"{{asset.name}}"}</code> {t("名称、")}<code>{"{{asset.host}}"}</code> {t("地址、")}<code>{"{{asset.tags}}"}</code> {t("标签。")}
               </div>
             </div>
           </div>
@@ -586,14 +587,14 @@ function SnippetEditor({
         </div>
         <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={() => void requestClose()} disabled={saving}>
-            取消
+            {t("取消")}
           </button>
           <button
             className="nx-btn nx-btn-primary"
             disabled={saving || !valid}
             onClick={() => void save()}
           >
-            {saving ? "正在保存…" : "保存"}
+            {saving ? t("正在保存…") : t("保存")}
           </button>
         </div>
       </div>

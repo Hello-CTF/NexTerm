@@ -17,6 +17,7 @@ import {
   TranscriptReplay,
   type ReplaySink,
 } from "./transcriptReplay";
+import { t } from "../../i18n";
 
 // Small pages keep each JSON parse short; a 4 MiB page is a 5+ MB payload that blocks the UI thread for a noticeable time.
 const READ_PAGE_BYTES = 1024 * 1024;
@@ -323,9 +324,9 @@ export function TranscriptReplayView({
   const emptyRecording = loadPhase === "ready" && !hasChunks;
   const status =
     loadPhase === "loading" && hasChunks
-      ? "加载中…"
+      ? t("加载中…")
       : indexPercent !== null
-        ? `正在建立快速跳转索引 ${indexPercent}%`
+        ? t("正在建立快速跳转索引 {indexPercent}%", { indexPercent })
         : null;
 
   return (
@@ -335,15 +336,15 @@ export function TranscriptReplayView({
           className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11 pointer-coarse:px-4"
           disabled={!interactive || loadError !== null || duration <= 0}
           onClick={togglePlay}
-          aria-label={playing ? "暂停回放" : "开始回放"}
+          aria-label={playing ? t("暂停回放") : t("开始回放")}
         >
           {playing ? null : <IconPlay size={12} />}
-          {playing ? "暂停" : "播放"}
+          {playing ? t("暂停") : t("播放")}
         </button>
         <Select
           className="w-[76px] shrink-0"
           triggerClassName="nx-input nx-select-trigger nx-select-ghost"
-          ariaLabel="回放倍速"
+          ariaLabel={t("回放倍速")}
           value={String(speed)}
           disabled={!interactive || loadError !== null}
           onChange={(value) => changeSpeed(Number(value))}
@@ -354,7 +355,7 @@ export function TranscriptReplayView({
           // The thumb owns horizontal drags; vertical pans still scroll the page. On phones the slider gets its own full-width row.
           className="h-6 min-w-[120px] flex-1 touch-pan-y pointer-coarse:h-11 max-[560px]:order-last max-[560px]:basis-full"
           data-testid="replay-seek"
-          aria-label="回放进度"
+          aria-label={t("回放进度")}
           min={0}
           max={Math.max(1, duration)}
           step={100}
@@ -389,7 +390,7 @@ export function TranscriptReplayView({
         </div>
         {!interactive && !loadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">
-            加载回放数据…
+            {t("加载回放数据…")}
           </div>
         )}
         {seekBusy && !loadError && (
@@ -397,18 +398,18 @@ export function TranscriptReplayView({
             className="absolute inset-0 flex items-center justify-center bg-neutral-900/60 text-[12px] text-neutral-400"
             data-testid="replay-seek-busy"
           >
-            跳转中…
+            {t("跳转中…")}
           </div>
         )}
         {loadError && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-neutral-900/80 text-[12px] text-red-300">
             <IconAlert size={13} />
-            未能加载回放数据：{loadError}
+            {t("未能加载回放数据：{loadError}", { loadError })}
           </div>
         )}
         {emptyRecording && !loadError && (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-900/80 text-[12px] text-neutral-500">
-            {contentOmitted ? "仅保留元数据" : "该记录没有任何可回放的内容"}
+            {contentOmitted ? t("仅保留元数据") : t("该记录没有任何可回放的内容")}
           </div>
         )}
       </div>

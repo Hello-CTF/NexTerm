@@ -56,7 +56,7 @@ describe("AppearanceCard reset to defaults", () => {
       JSON.stringify({ leftWidth: 300, rightWidth: 400 }),
     );
     expect(resetButton(mounted.container).disabled).toBe(true);
-    const system = [...mounted.container.querySelectorAll("button")].find(
+    const system = [...mounted.container.querySelectorAll('[aria-label="界面主题"] button')].find(
       (b) => b.textContent?.trim() === "跟随系统",
     );
     expect(system?.getAttribute("aria-pressed")).toBe("true");

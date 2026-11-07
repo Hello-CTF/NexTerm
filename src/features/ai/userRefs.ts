@@ -1,4 +1,5 @@
-const USER_REF_HEADER = "[引用]";
+import { t } from "../../i18n";
+const USER_REF_HEADER = t("[引用]");
 
 // singleLine keeps a reference label on one line so the prefix stays parseable.
 function singleLine(value: string): string {

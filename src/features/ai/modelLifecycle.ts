@@ -1,5 +1,6 @@
 import type { ModelProfile, ModelProfilesView } from "../../ipc/commands";
 import type { AiCircuitStatusDto } from "../../ipc/types";
+import { t } from "../../i18n";
 
 export function requestTimeoutLabel(profile: ModelProfile): string {
   return profile.requestTimeoutSeconds?.toString() ?? "";
@@ -66,14 +67,14 @@ export function circuitStatusText(status: AiCircuitStatusDto, now: number): stri
   const openUntil = status.openUntil;
   if (openUntil != null) {
     if (openUntil > now) {
-      return `已暂停：连续失败 ${status.consecutiveFailures} 次，${circuitRemainingSeconds(openUntil, now)} 秒后自动恢复`;
+      return t("已暂停：连续失败 {consecutiveFailures} 次，{value} 秒后自动恢复", { consecutiveFailures: status.consecutiveFailures, value: circuitRemainingSeconds(openUntil, now) });
     }
-    return `暂停已结束：连续失败 ${status.consecutiveFailures} 次，下次请求时恢复`;
+    return t("暂停已结束：连续失败 {consecutiveFailures} 次，下次请求时恢复", { consecutiveFailures: status.consecutiveFailures });
   }
   if (status.consecutiveFailures > 0) {
-    return `运行中：最近连续失败 ${status.consecutiveFailures} 次`;
+    return t("运行中：最近连续失败 {consecutiveFailures} 次", { consecutiveFailures: status.consecutiveFailures });
   }
-  return "运行正常：暂无连续失败";
+  return t("运行正常：暂无连续失败");
 }
 
 function positiveIntFromInput(raw: string): number | null {

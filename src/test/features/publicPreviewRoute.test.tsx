@@ -6,7 +6,7 @@ import { flush, flushUntil } from "./reactTestUtils";
 
 const mountedRoots = vi.hoisted(() => [] as Array<{ unmount: () => void }>);
 
-// The route decision under test is main.tsx's token parsing and branch selection; the full
+// The route decision under test is appMain.tsx's token parsing and branch selection; the full
 // App bundle (xterm and every feature) is a heavy leaf no case's assertions touch, so it is
 // layered out — cold transform per case drops from ~21s to a few seconds without changing
 // any route behavior.
@@ -57,18 +57,18 @@ async function importMainAt(pathname: string): Promise<void> {
   document.body.innerHTML = '<div id="root"></div>';
   vi.resetModules();
   await act(async () => {
-    await import("../../main");
+    await import("../../appMain");
     await flush();
   });
 }
 
-// The preview app is a React.lazy panel behind main.tsx. A cold import transforms the module
+// The preview app is a React.lazy panel behind appMain.tsx. A cold import transforms the module
 // in real time, which no tick budget bounds under machine load, so warm them before flushUntil counts ticks.
 beforeAll(async () => {
   await import("../../features/sharing/PublicPreviewApp");
 });
 
-describe("main.tsx public preview route", () => {
+describe("appMain.tsx public preview route", () => {
   beforeEach(() => {
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);

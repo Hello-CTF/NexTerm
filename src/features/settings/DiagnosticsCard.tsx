@@ -6,6 +6,7 @@ import { ask } from "../../ui/dialogs";
 import { copyText } from "../../ui/clipboard";
 import { formatBytes } from "../../ui/format";
 import { IconActivity, IconArchive, IconCopy, IconFolderOpen, IconLoader, IconTrash } from "../../ui/icons";
+import { t } from "../../i18n";
 
 function formatTime(timeMs: number): string {
   return timeMs > 0 ? new Date(timeMs).toLocaleString() : "";
@@ -66,10 +67,10 @@ export function DiagnosticsCard() {
   };
 
   const toggle = (armed: boolean) =>
-    run(armed ? "正在开启调试模式…" : "正在取消调试模式…", undefined, async () => {
+    run(armed ? t("正在开启调试模式…") : t("正在取消调试模式…"), undefined, async () => {
       const next = await diagnosticsApi.arm(armed);
       if (mounted.current) setStatus(next);
-      return armed ? "已开启。请重启应用，下次启动时开始记录（仅记录一次）。" : "已取消，下次启动不会记录调试信息。";
+      return armed ? t("已开启。请重启应用，下次启动时开始记录（仅记录一次）。") : t("已取消，下次启动不会记录调试信息。");
     });
 
   const openFolder = async (path: string) => {
@@ -94,48 +95,48 @@ export function DiagnosticsCard() {
     setError(null);
     try {
       await copyText(path);
-      setNotice("已复制路径。");
+      setNotice(t("已复制路径。"));
     } catch (e) {
       fail(e);
     }
   };
 
   const pack = (capture: DiagnosticsCapture) =>
-    run("正在打包…", capture.name, async () => {
+    run(t("正在打包…"), capture.name, async () => {
       const result = await diagnosticsApi.pack(capture.path);
       if (mounted.current) setPacked((prev) => ({ ...prev, [capture.name]: result.path }));
       const next = await diagnosticsApi.status();
       if (mounted.current) setStatus(next);
-      return `已打包 ${capture.name}，压缩包位置：${result.path}`;
+      return t("已打包 {name}，压缩包位置：{path}", { name: capture.name, path: result.path });
     });
 
   const remove = async (capture: DiagnosticsCapture) => {
-    if (!(await ask(`确定要删除调试记录 ${capture.name} 吗？\n\n文件夹和已打包的压缩包将一并删除，且无法恢复。`, { kind: "warning" }))) return;
-    await run("正在删除…", capture.name, async () => {
+    if (!(await ask(t("确定要删除调试记录 {name} 吗？\n\n文件夹和已打包的压缩包将一并删除，且无法恢复。", { name: capture.name }), { kind: "warning" }))) return;
+    await run(t("正在删除…"), capture.name, async () => {
       const next = await diagnosticsApi.remove(capture.path);
       if (mounted.current) setStatus(next);
-      return `已删除 ${capture.name}。`;
+      return t("已删除 {name}。", { name: capture.name });
     });
   };
 
   const clearAll = async () => {
-    if (!(await ask("确定要清空全部调试记录吗？\n\n除本次正在记录的以外，所有文件夹和压缩包将被删除，且无法恢复。", { kind: "warning" }))) return;
-    await run("正在清空…", undefined, async () => {
+    if (!(await ask(t("确定要清空全部调试记录吗？\n\n除本次正在记录的以外，所有文件夹和压缩包将被删除，且无法恢复。"), { kind: "warning" }))) return;
+    await run(t("正在清空…"), undefined, async () => {
       const next = await diagnosticsApi.clear();
       if (mounted.current) setStatus(next);
-      return "已清空历史调试记录。";
+      return t("已清空历史调试记录。");
     });
   };
 
   // Non-admin accounts on a server cannot use these commands; keep the navigation target but say why it is empty.
   if (forbidden) {
     return (
-      <section className="nx-card" aria-label="诊断与调试">
+      <section className="nx-card" aria-label={t("诊断与调试")}>
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <IconActivity size={15} className="text-neutral-400" />
-          <span className="nx-card-title">诊断与调试</span>
+          <span className="nx-card-title">{t("诊断与调试")}</span>
         </div>
-        <div className="nx-hint">仅管理员可使用调试模式。</div>
+        <div className="nx-hint">{t("仅管理员可使用调试模式。")}</div>
       </section>
     );
   }
@@ -145,21 +146,21 @@ export function DiagnosticsCard() {
   const activeDir = status?.active ? status.activeDir ?? "" : "";
 
   return (
-    <section className="nx-card" aria-label="诊断与调试">
+    <section className="nx-card" aria-label={t("诊断与调试")}>
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconActivity size={15} className="text-neutral-400" />
-        <span className="nx-card-title">诊断与调试</span>
+        <span className="nx-card-title">{t("诊断与调试")}</span>
       </div>
 
       {status?.active && (
         <div className="nx-alert mb-3" role="status">
-          <div className="font-medium">本次启动正在记录调试信息</div>
+          <div className="font-medium">{t("本次启动正在记录调试信息")}</div>
           <div className="mt-1 break-all text-[12px]">{activeDir}</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {canOpen && (
               <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void openFolder(activeDir)}>
                 <IconFolderOpen size={12} />
-                打开文件夹
+                {t("打开文件夹")}
               </button>
             )}
             <button
@@ -172,21 +173,21 @@ export function DiagnosticsCard() {
               }}
             >
               <IconArchive size={12} />
-              打包
+              {t("打包")}
             </button>
           </div>
         </div>
       )}
 
       <p className="nx-hint">
-        仅在下次启动时生效，最长记录 30 分钟、约 200 MB，记录期间运行速度可能略有下降。将记录性能数据、调试日志和系统信息，不含终端输入输出，密码、令牌和私钥已隐去。发送前请自行检查主机名、路径等信息。
+        {t("仅在下次启动时生效，最长记录 30 分钟、约 200 MB，记录期间运行速度可能略有下降。将记录性能数据、调试日志和系统信息，不含终端输入输出，密码、令牌和私钥已隐去。发送前请自行检查主机名、路径等信息。")}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {status?.armed ? (
           <>
-            <span className="text-[12.5px] text-neutral-200">已开启：重启应用后开始记录（仅一次）</span>
+            <span className="text-[12.5px] text-neutral-200">{t("已开启：重启应用后开始记录（仅一次）")}</span>
             <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy} onClick={() => void toggle(false)}>
-              取消
+              {t("取消")}
             </button>
           </>
         ) : (
@@ -196,13 +197,13 @@ export function DiagnosticsCard() {
             disabled={status === null || busy}
             onClick={() => void toggle(true)}
           >
-            开启下次启动的调试模式
+            {t("开启下次启动的调试模式")}
           </button>
         )}
         {canOpen && (
           <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" onClick={() => void openFolder("")}>
             <IconFolderOpen size={12} />
-            打开记录目录
+            {t("打开记录目录")}
           </button>
         )}
       </div>
@@ -212,14 +213,14 @@ export function DiagnosticsCard() {
       </div>
       {error && (
         <div className="nx-alert nx-alert-danger mt-3" role="alert">
-          未能完成：{error}。请稍后重试。
+          {t("未能完成：{error}。请稍后重试。", { error })}
         </div>
       )}
 
       {captures.length > 0 && (
         <div className="mt-4">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
-            <span className="text-[12px] text-neutral-400">历史记录</span>
+            <span className="text-[12px] text-neutral-400">{t("历史记录")}</span>
             <button
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm ml-auto"
@@ -227,7 +228,7 @@ export function DiagnosticsCard() {
               onClick={() => void clearAll()}
             >
               <IconTrash size={12} />
-              清空全部记录
+              {t("清空全部记录")}
             </button>
           </div>
           <ul className="flex flex-col gap-2">
@@ -242,62 +243,62 @@ export function DiagnosticsCard() {
                     <button
                       type="button"
                       className="nx-btn nx-btn-outline nx-btn-sm"
-                      aria-label={`打开 ${capture.name}`}
+                      aria-label={t("打开 {name}", { name: capture.name })}
                       onClick={() => void openFolder(capture.path)}
                     >
                       <IconFolderOpen size={12} />
-                      打开
+                      {t("打开")}
                     </button>
                   )}
                   <button
                     type="button"
                     className="nx-btn nx-btn-outline nx-btn-sm"
-                    aria-label={`打包 ${capture.name}`}
+                    aria-label={t("打包 {name}", { name: capture.name })}
                     disabled={busy}
                     onClick={() => void pack(capture)}
                   >
-                    {task?.name === capture.name && task.label === "正在打包…" ? (
+                    {task?.name === capture.name && task.label === t("正在打包…") ? (
                       <IconLoader size={12} className="animate-spin" />
                     ) : (
                       <IconArchive size={12} />
                     )}
-                    打包
+                    {t("打包")}
                   </button>
                   {capture.path !== activeDir && (
                     <button
                       type="button"
                       className="nx-btn nx-btn-outline nx-btn-sm is-danger"
-                      aria-label={`删除 ${capture.name}`}
+                      aria-label={t("删除 {name}", { name: capture.name })}
                       disabled={busy}
                       onClick={() => void remove(capture)}
                     >
                       <IconTrash size={12} />
-                      删除
+                      {t("删除")}
                     </button>
                   )}
                 </div>
                 {(packed[capture.name] || capture.archive) && (
                   <div className="mt-1 flex flex-wrap items-center gap-2">
-                    <span className="nx-hint min-w-0 flex-1 break-all">压缩包：{packed[capture.name] || capture.archive}</span>
+                    <span className="nx-hint min-w-0 flex-1 break-all">{t("压缩包：")}{packed[capture.name] || capture.archive}</span>
                     {canOpen && (
                       <button
                         type="button"
                         className="nx-btn nx-btn-outline nx-btn-sm"
-                        aria-label={`在文件夹中显示 ${capture.name}`}
+                        aria-label={t("在文件夹中显示 {name}", { name: capture.name })}
                         onClick={() => void revealArchive(packed[capture.name] || capture.archive || "")}
                       >
                         <IconFolderOpen size={12} />
-                        在文件夹中显示
+                        {t("在文件夹中显示")}
                       </button>
                     )}
                     <button
                       type="button"
                       className="nx-btn nx-btn-outline nx-btn-sm"
-                      aria-label={`复制路径 ${capture.name}`}
+                      aria-label={t("复制路径 {name}", { name: capture.name })}
                       onClick={() => void copyPath(packed[capture.name] || capture.archive || "")}
                     >
                       <IconCopy size={12} />
-                      复制路径
+                      {t("复制路径")}
                     </button>
                   </div>
                 )}

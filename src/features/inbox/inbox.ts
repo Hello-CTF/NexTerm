@@ -15,6 +15,7 @@ import { aggregateRows, useSessionAggregate, type AggregateRow } from "../../app
 import { terminalApi } from "../../ipc/commands";
 import { hideMobileHome } from "../../app/shell/mobileHome";
 import type { AggregateHost } from "../../ipc/generated/types";
+import { t } from "../../i18n";
 
 // An inbox entry is a terminal session whose needs_me or just_finished state nobody has seen yet, on any device. The
 // inbox is derived from the attention states the backend keeps, so it survives reloads and empties on every device
@@ -54,20 +55,20 @@ function locateTerminalTabs(workspaces: readonly Workspace[]): Map<string, TabLo
 }
 
 const NEEDS_ME_REASON: Record<string, string> = {
-  bell: "终端响铃",
-  notify: "程序发出通知",
+  bell: t("终端响铃"),
+  notify: t("程序发出通知"),
 };
 
 // attentionDetail describes why the session is in the inbox, with the program's own notification text when it sent one.
 export function attentionDetail(awareness: SessionAwareness): string {
   if (awareness.state === "just_finished") {
     const code = awareness.exitCode;
-    if (typeof code !== "number") return "命令已结束";
-    return code === 0 ? "命令已成功结束" : `命令已结束，退出码 ${code}`;
+    if (typeof code !== "number") return t("命令已结束");
+    return code === 0 ? t("命令已成功结束") : t("命令已结束，退出码 {code}", { code });
   }
   const text = [awareness.title, awareness.body].filter(Boolean).join("：");
   if (text) return text;
-  return NEEDS_ME_REASON[awareness.reason ?? ""] ?? "需要处理";
+  return NEEDS_ME_REASON[awareness.reason ?? ""] ?? t("需要处理");
 }
 
 function sinceTime(awareness: SessionAwareness): number {
@@ -96,8 +97,8 @@ export function buildInbox(
       tabId,
       uiTabId: where?.tab.id,
       workspaceId: where?.workspace.id,
-      title: where?.tab.title ?? (row?.session.title || "未在当前客户端打开的终端"),
-      place: where?.workspace.title ?? row?.host.name ?? "其他窗口或设备",
+      title: where?.tab.title ?? (row?.session.title || t("未在当前客户端打开的终端")),
+      place: where?.workspace.title ?? row?.host.name ?? t("其他窗口或设备"),
       awareness,
       badge,
       detail: attentionDetail(awareness),
@@ -118,7 +119,7 @@ export function buildInbox(
       tabId: session.tabId,
       uiTabId: where?.tab.id,
       workspaceId: where?.workspace.id,
-      title: where?.tab.title ?? (session.title || "持久终端"),
+      title: where?.tab.title ?? (session.title || t("持久终端")),
       place: where?.workspace.title ?? host.name,
       awareness,
       badge,
@@ -160,7 +161,7 @@ export function openInboxTab(tabId: string): boolean {
 // connected session, or, for a device no workspace here holds, by opening the device first. It resolves to null once
 // the tab is open, or to the reason it could not be.
 export async function openAggregateEntry(entry: Pick<InboxEntry, "tabId" | "title" | "host">): Promise<string | null> {
-  if (!entry.host) return "当前客户端未打开该终端";
+  if (!entry.host) return t("当前客户端未打开该终端");
   const result = await takeOverAggregateSession(entry.host, entry.tabId, entry.title);
   if (result.ok) return null;
   return "canceled" in result ? null : result.error;

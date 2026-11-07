@@ -1,4 +1,5 @@
 import type { SplitDir, SplitSide } from "./splitTree";
+import { t } from "../i18n";
 
 /** Where a tab dragged over a pane lands: one of its edges (split) or its centre (move). */
 export type PaneEdge = "left" | "right" | "top" | "bottom";
@@ -81,4 +82,4 @@ export function dropPreviewRect(region: DropRegion): { x: number; y: number; wid
   }
 }
 
-export const EDGE_LABEL: Record<PaneEdge, string> = { left: "向左", right: "向右", top: "向上", bottom: "向下" };
+export const EDGE_LABEL: Record<PaneEdge, string> = { left: t("向左"), right: t("向右"), top: t("向上"), bottom: t("向下") };

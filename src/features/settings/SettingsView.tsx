@@ -91,6 +91,7 @@ import {
   IconXCircle,
   IconZap,
 } from "../../ui/icons";
+import { formatNumber, getLocale, t } from "../../i18n";
 
 // Settings are split into a few groups shown one at a time; each group lists
 // its sections in the navigation. Hidden groups stay mounted, so switching
@@ -98,14 +99,14 @@ import {
 type SettingsGroupId = "appearance" | "terminal" | "notifications" | "shortcuts" | "ai" | "security" | "account" | "app";
 
 const SETTINGS_GROUPS: readonly { id: SettingsGroupId; label: string; icon: typeof IconMonitor }[] = [
-  { id: "appearance", label: "外观", icon: IconMonitor },
-  { id: "terminal", label: "终端", icon: IconTerminal },
-  { id: "notifications", label: "通知", icon: IconBell },
-  { id: "shortcuts", label: "快捷键与快捷命令", icon: IconCommand },
+  { id: "appearance", label: t("外观"), icon: IconMonitor },
+  { id: "terminal", label: t("终端"), icon: IconTerminal },
+  { id: "notifications", label: t("通知"), icon: IconBell },
+  { id: "shortcuts", label: t("快捷键与快捷命令"), icon: IconCommand },
   { id: "ai", label: "AI", icon: IconSparkles },
-  { id: "security", label: "安全", icon: IconLock },
-  { id: "account", label: "账号与数据", icon: IconServer },
-  { id: "app", label: "关于", icon: IconInfo },
+  { id: "security", label: t("安全"), icon: IconLock },
+  { id: "account", label: t("账号与数据"), icon: IconServer },
+  { id: "app", label: t("关于"), icon: IconInfo },
 ];
 
 const DEFAULT_GROUP: SettingsGroupId = "appearance";
@@ -113,25 +114,25 @@ const DEFAULT_GROUP: SettingsGroupId = "appearance";
 type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
 
 const ALL_SETTINGS_SECTIONS = [
-  { id: "settings-appearance", label: "外观", icon: IconMonitor, group: "appearance" },
-  { id: "settings-terminal", label: "终端", icon: IconTerminal, group: "terminal" },
-  { id: "settings-state-rules", label: "状态规则", icon: IconFlag, group: "terminal" },
-  { id: "settings-notifications", label: "通知", icon: IconBell, group: "notifications" },
-  { id: "settings-shortcuts", label: "快捷键", icon: IconCommand, group: "shortcuts" },
-  { id: "settings-quick-commands", label: "快捷命令", icon: IconCommand, group: "shortcuts" },
-  { id: "settings-update", label: "软件更新", icon: IconDownload, group: "app" },
-  { id: "settings-diagnostics", label: "诊断与调试", icon: IconActivity, group: "app" },
-  { id: "settings-ai-model", label: "模型", icon: IconSparkles, group: "ai" },
-  { id: "settings-ai-privacy", label: "AI 信息脱敏", icon: IconShield, group: "ai" },
-  { id: "settings-ai-rules", label: "AI 拦截规则", icon: IconShield, group: "ai" },
-  { id: "settings-ai-skills", label: "技能", icon: IconLayers, group: "ai" },
-  { id: "settings-memory", label: "记忆", icon: IconBot, group: "ai" },
-  { id: "settings-vault", label: "凭据保护", icon: IconLock, group: "security" },
-  { id: "settings-known-hosts", label: "已知主机", icon: IconShieldCheck, group: "security" },
-  { id: "settings-production", label: "生产安全", icon: IconAlert, group: "security" },
-  { id: "settings-account", label: "账号与同步", icon: IconServer, group: "account" },
-  { id: "settings-bundle", label: "资产包", icon: IconArchive, group: "account" },
-  { id: "settings-share", label: "分享", icon: IconGlobe, group: "account" },
+  { id: "settings-appearance", label: t("外观"), icon: IconMonitor, group: "appearance" },
+  { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
+  { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
+  { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
+  { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-update", label: t("软件更新"), icon: IconDownload, group: "app" },
+  { id: "settings-diagnostics", label: t("诊断与调试"), icon: IconActivity, group: "app" },
+  { id: "settings-ai-model", label: t("模型"), icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: t("AI 信息脱敏"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-rules", label: t("AI 拦截规则"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
+  { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
+  { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
+  { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
+  { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
+  { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
+  { id: "settings-bundle", label: t("资产包"), icon: IconArchive, group: "account" },
+  { id: "settings-share", label: t("分享"), icon: IconGlobe, group: "account" },
 ] as const satisfies readonly SettingsSectionDef[];
 
 const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
@@ -169,54 +170,56 @@ function jumpToSection(id: string): void {
 const NAV_OPEN_KEY = "nexterm.settingsNav.v1";
 
 const CLOSE_ACTION_OPTIONS: { value: TerminalCloseAction; label: string }[] = [
-  { value: "ask", label: "每次询问" },
-  { value: "kill", label: "直接关闭" },
-  { value: "detach", label: "转到后台" },
+  { value: "ask", label: t("每次询问") },
+  { value: "kill", label: t("直接关闭") },
+  { value: "detach", label: t("转到后台") },
 ];
 
 const GPU_ACCELERATION_OPTIONS: { value: TerminalGpuAcceleration; label: string }[] = [
-  { value: "auto", label: "自动" },
-  { value: "on", label: "开启" },
-  { value: "off", label: "关闭" },
+  { value: "auto", label: t("自动") },
+  { value: "on", label: t("开启") },
+  { value: "off", label: t("关闭") },
 ];
 
 const DURABLE_HISTORY_OPTIONS_MIB = [4, 8, 16, 32, 64, 128, 256];
 
+// Chinese counts large numbers in 万; other languages group the digits their own way. count chooses the plural form.
 function formatScrollbackLines(lines: number): string {
-  return lines >= 10_000 ? `${lines / 10_000} 万行` : `${lines.toLocaleString("zh-CN")} 行`;
+  if (lines >= 10_000 && getLocale().startsWith("zh")) return t("{value} 万行", { value: lines / 10_000 });
+  return t("{lines} 行", { lines: formatNumber(lines), count: lines });
 }
 
 const LINK_ACTIVATION_OPTIONS: { value: TerminalLinkActivation; label: string }[] = [
-  { value: "modifier", label: "Ctrl/Cmd+单击" },
-  { value: "click", label: "单击" },
+  { value: "modifier", label: t("Ctrl/Cmd+单击") },
+  { value: "click", label: t("单击") },
 ];
 
 const LINK_OPEN_MODE_OPTIONS: { value: TerminalLinkOpenMode; label: string }[] = [
-  { value: "system", label: "系统浏览器（默认）" },
-  { value: "app", label: "NexTerm 内" },
-  { value: "ask", label: "每次询问" },
+  { value: "system", label: t("系统浏览器（默认）") },
+  { value: "app", label: t("NexTerm 内") },
+  { value: "ask", label: t("每次询问") },
 ];
 
 const MULTILINE_PASTE_OPTIONS: { value: TerminalMultilinePasteConfirm; label: string }[] = [
-  { value: "unbracketed", label: "程序未开启括号粘贴时确认" },
-  { value: "always", label: "每次都确认" },
-  { value: "never", label: "从不确认" },
+  { value: "unbracketed", label: t("程序未开启括号粘贴时确认") },
+  { value: "always", label: t("每次都确认") },
+  { value: "never", label: t("从不确认") },
 ];
 
 const CLOSE_ACTION_HINTS: Record<TerminalCloseAction, string> = {
-  ask: "关闭前询问转到后台还是结束进程。",
-  kill: "直接结束进程。",
-  detach: "进程转入后台，可在「后台会话」接管。",
+  ask: t("关闭前询问转到后台还是结束进程。"),
+  kill: t("直接结束进程。"),
+  detach: t("进程转入后台，可在「后台会话」接管。"),
 };
 
 const GPU_ACCELERATION_HINTS: Record<TerminalGpuAcceleration, string> = {
-  auto: "检测到软件渲染（如虚拟机、远程桌面）时改用兼容渲染。",
-  on: "软件渲染环境也尝试 WebGL，多次失效时回退。",
-  off: "始终使用兼容渲染，不占用 GPU。",
+  auto: t("检测到软件渲染（如虚拟机、远程桌面）时改用兼容渲染。"),
+  on: t("软件渲染环境也尝试 WebGL，多次失效时回退。"),
+  off: t("始终使用兼容渲染，不占用 GPU。"),
 };
 
 const OSC52_CONFIRM =
-  "确定要允许远程主机直接写入剪贴板吗？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。请仅在可信的主机与网络中开启。";
+  t("确定要允许远程主机直接写入剪贴板吗？\n开启后将不再逐次询问，恶意主机可能改写剪贴板内容。请仅在可信的主机与网络中开启。");
 
 function Subsection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -228,8 +231,8 @@ function Subsection({ title, children }: { title: string; children: React.ReactN
 }
 
 const DEFAULT_MODE_OPTIONS: { value: TerminalDefaultMode; label: string }[] = [
-  { value: "durable", label: "持久终端（推荐）" },
-  { value: "regular", label: "临时终端" },
+  { value: "durable", label: t("持久终端（推荐）") },
+  { value: "regular", label: t("临时终端") },
 ];
 
 function loadNavOpen(): boolean {
@@ -265,7 +268,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
     try {
       await setTerminalDefaultMode(value);
     } catch (error) {
-      pushToast("error", `保存默认终端模式失败：${describeError(error)}`);
+      pushToast("error", t("保存默认终端模式失败：{value}", { value: describeError(error) }));
     } finally {
       setTerminalModeSaving(false);
     }
@@ -280,7 +283,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
     try {
       await setTerminalDurableHistoryMiB(value);
     } catch (error) {
-      pushToast("error", `保存持久终端历史上限失败：${describeError(error)}`);
+      pushToast("error", t("保存持久终端历史上限失败：{value}", { value: describeError(error) }));
     } finally {
       setDurableHistorySaving(false);
     }
@@ -491,10 +494,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
   const testPassed = !!testResult && testResult.modelsOk && testResult.chatOk;
   const testDetail = testResult
     ? testResult.fatal
-      ? `调用失败：${testResult.fatal}`
+      ? t("调用失败：{fatal}", { fatal: testResult.fatal })
       : [
-          `模型列表：${testResult.modelsOk ? "可用" : `失败（${testResult.modelsError ?? "原因未查明"}）`}`,
-          `实际对话：${testResult.chatOk ? "可用" : `失败（${testResult.chatError ?? "原因未查明"}）`}`,
+          t("模型列表：{value}", { value: testResult.modelsOk ? t("可用") : t("失败（{value}）", { value: testResult.modelsError ?? t("原因未查明") }) }),
+          t("实际对话：{value}", { value: testResult.chatOk ? t("可用") : t("失败（{value}）", { value: testResult.chatError ?? t("原因未查明") }) }),
         ].join("\n")
     : "";
 
@@ -502,13 +505,13 @@ export function SettingsView({ active = true }: { active?: boolean }) {
     <div className="nx-pane nx-settings-view h-full" onKeyDown={onViewKeyDown}>
       <div className="nx-toolbar">
         <IconSettings size={14} className="text-neutral-500" />
-        <span className="nx-toolbar-title">设置</span>
+        <span className="nx-toolbar-title">{t("设置")}</span>
         <div className="nx-spacer" />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <nav
-          aria-label="设置分区"
+          aria-label={t("设置分区")}
           className={`z-10 flex shrink-0 flex-col md:overflow-y-auto ${
             navOpen ? "md:w-52" : "md:w-14"
           }`}
@@ -546,9 +549,9 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             <button
               type="button"
               className="nx-icon-btn nx-icon-btn-sm self-end"
-              aria-label={navOpen ? "收起设置目录" : "展开设置目录"}
+              aria-label={navOpen ? t("收起设置目录") : t("展开设置目录")}
               aria-expanded={navOpen}
-              title={navOpen ? "收起目录" : "展开目录"}
+              title={navOpen ? t("收起目录") : t("展开目录")}
               onClick={() => setNavOpen(!navOpen)}
             >
               {navOpen ? <IconChevronLeft size={13} /> : <IconChevronRight size={13} />}
@@ -591,8 +594,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                     key="search"
                     type="button"
                     className="nx-icon-btn self-center"
-                    title="搜索设置"
-                    aria-label="搜索设置"
+                    title={t("搜索设置")}
+                    aria-label={t("搜索设置")}
                     onClick={focusSearch}
                   >
                     <IconSearch size={14} />
@@ -626,16 +629,16 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <section id="settings-terminal" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconTerminal size={15} className="text-neutral-400" />
-            <span className="nx-card-title">终端</span>
+            <span className="nx-card-title">{t("终端")}</span>
           </div>
 
-          <Subsection title="新建终端">
+          <Subsection title={t("新建终端")}>
             <div>
               <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="default-terminal-mode">
-                默认终端模式
+                {t("默认终端模式")}
                 <SyncScopeBadge scope={durableHistoryAccount ? "sync" : "local"} />
               </div>
-              <div className="nx-segment" role="group" aria-label="默认终端模式" aria-busy={terminalModeSaving}>
+              <div className="nx-segment" role="group" aria-label={t("默认终端模式")} aria-busy={terminalModeSaving}>
                 {DEFAULT_MODE_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -650,19 +653,19 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 ))}
               </div>
               <p className="nx-hint mt-1.5">
-                断线后继续运行，可在「后台会话」接管；持久终端组件就绪前新建的为临时终端。仅影响新建终端，资产设置优先。
+                {t("断线后继续运行，可在「后台会话」接管；持久终端组件就绪前新建的为临时终端。仅影响新建终端，资产设置优先。")}
               </p>
             </div>
             <LocalHelperSettings />
           </Subsection>
 
-          <Subsection title="关闭">
+          <Subsection title={t("关闭")}>
             <div>
               <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="close-action">
-                关闭运行中的终端标签页时
+                {t("关闭运行中的终端标签页时")}
                 <SyncScopeBadge scope="sync" />
               </div>
-              <div className="nx-segment" role="group" aria-label="关闭运行中的终端标签页时">
+              <div className="nx-segment" role="group" aria-label={t("关闭运行中的终端标签页时")}>
                 {CLOSE_ACTION_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -681,10 +684,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               <label className="flex cursor-pointer items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="close-to-tray">
-                    关闭时保留后台运行（最小化到托盘）
+                    {t("关闭时保留后台运行（最小化到托盘）")}
                     <SyncScopeBadge scope="local" />
                   </div>
-                  <p className="nx-hint mt-0.5">关闭窗口后留在托盘，会话保持连接；右键托盘图标可退出。</p>
+                  <p className="nx-hint mt-0.5">{t("关闭窗口后留在托盘，会话保持连接；右键托盘图标可退出。")}</p>
                 </div>
                 <input
                   type="checkbox"
@@ -697,14 +700,14 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             )}
           </Subsection>
 
-          <Subsection title="剪贴板与粘贴">
+          <Subsection title={t("剪贴板与粘贴")}>
             <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="osc52">
-                  允许远程主机写入剪贴板（OSC 52）
+                  {t("允许远程主机写入剪贴板（OSC 52）")}
                   <SyncScopeBadge scope="local" />
                 </div>
-                <p className="nx-hint mt-0.5">开启后不再逐次询问，请仅对可信主机开启。</p>
+                <p className="nx-hint mt-0.5">{t("开启后不再逐次询问，请仅对可信主机开启。")}</p>
               </div>
               <input
                 type="checkbox"
@@ -717,7 +720,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                     return;
                   }
                   void ask(OSC52_CONFIRM, {
-                    title: "开启剪贴板写入",
+                    title: t("开启剪贴板写入"),
                     kind: "warning",
                   }).then((ok) => {
                     if (ok) setTerminalOsc52(true);
@@ -729,14 +732,14 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               <label className="flex cursor-pointer items-start gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="ctrl-v-paste">
-                    Ctrl+V 粘贴
+                    {t("Ctrl+V 粘贴")}
                     <SyncScopeBadge scope="local" />
                   </div>
-                  <p className="nx-hint mt-0.5">关闭后 Ctrl+V 发送 ^V；Ctrl+Shift+V 始终可粘贴。</p>
+                  <p className="nx-hint mt-0.5">{t("关闭后 Ctrl+V 发送 ^V；Ctrl+Shift+V 始终可粘贴。")}</p>
                 </div>
                 <input
                   type="checkbox"
-                  aria-label="Ctrl+V 粘贴"
+                  aria-label={t("Ctrl+V 粘贴")}
                   className="mt-0.5 h-4 w-4 shrink-0"
                   checked={ctrlVPaste}
                   onChange={(e) => setCtrlVPaste(e.target.checked)}
@@ -745,44 +748,44 @@ export function SettingsView({ active = true }: { active?: boolean }) {
             )}
             <div>
               <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={multilinePasteSelectId} data-setting="terminal-confirm-multiline-paste">
-                多行粘贴确认
+                {t("多行粘贴确认")}
                 <SyncScopeBadge scope="sync" />
               </label>
               <Select
                 id={multilinePasteSelectId}
-                ariaLabel="多行粘贴确认"
+                ariaLabel={t("多行粘贴确认")}
                 className="w-full sm:w-auto"
                 value={terminalPrefs.confirmMultilinePaste}
                 options={MULTILINE_PASTE_OPTIONS}
                 onChange={(value) => setTerminalConfirmMultilinePaste(normalizeMultilinePasteConfirm(value))}
               />
-              <p className="nx-hint mt-1.5">防止多行内容被 shell 逐行执行。</p>
+              <p className="nx-hint mt-1.5">{t("防止多行内容被 shell 逐行执行。")}</p>
             </div>
             <label className="flex cursor-pointer items-start gap-3">
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="copy-on-select">
-                  选中自动复制
+                  {t("选中自动复制")}
                   <SyncScopeBadge scope="sync" />
                 </div>
-                <p className="nx-hint mt-0.5">在终端选中文字后立即复制到剪贴板。</p>
+                <p className="nx-hint mt-0.5">{t("在终端选中文字后立即复制到剪贴板。")}</p>
               </div>
               <input
                 type="checkbox"
                 className="mt-0.5 h-4 w-4 shrink-0"
-                aria-label="选中自动复制"
+                aria-label={t("选中自动复制")}
                 checked={inputPrefs.selectionAutoCopy}
                 onChange={(event) => setSelectionAutoCopy(event.target.checked)}
               />
             </label>
           </Subsection>
 
-          <Subsection title="链接">
+          <Subsection title={t("链接")}>
             <div>
               <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-link-activation">
-                链接打开方式
+                {t("链接打开方式")}
                 <SyncScopeBadge scope="sync" />
               </div>
-              <div className="nx-segment" role="group" aria-label="链接打开方式">
+              <div className="nx-segment" role="group" aria-label={t("链接打开方式")}>
                 {LINK_ACTIVATION_OPTIONS.map((option) => (
                   <button
                     key={option.value}
@@ -795,15 +798,15 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                   </button>
                 ))}
               </div>
-              <p className="nx-hint mt-1.5">终端程序捕获鼠标时按住 Shift，或右键选择「打开链接」。</p>
+              <p className="nx-hint mt-1.5">{t("终端程序捕获鼠标时按住 Shift，或右键选择「打开链接」。")}</p>
             </div>
             {showLinkOpenMode && (
               <div>
                 <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-link-open-mode">
-                  链接打开位置
+                  {t("链接打开位置")}
                   <SyncScopeBadge scope="sync" />
                 </div>
-                <div className="nx-segment" role="group" aria-label="链接打开位置">
+                <div className="nx-segment" role="group" aria-label={t("链接打开位置")}>
                   {LINK_OPEN_MODE_OPTIONS.map((option) => (
                     <button
                       key={option.value}
@@ -816,12 +819,12 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                     </button>
                   ))}
                 </div>
-                <p className="nx-hint mt-1.5">仅影响 http/https 链接；无法嵌入时改用系统浏览器。</p>
+                <p className="nx-hint mt-1.5">{t("仅影响 http/https 链接；无法嵌入时改用系统浏览器。")}</p>
               </div>
             )}
           </Subsection>
 
-          <Subsection title="端口转发">
+          <Subsection title={t("端口转发")}>
             <PortDiscoverySetting />
           </Subsection>
 
@@ -834,16 +837,16 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               onClick={() => setTerminalAdvancedOpen((open) => !open)}
             >
               {terminalAdvancedOpen ? <IconChevronDown size={12} className="shrink-0" /> : <IconChevronRight size={12} className="shrink-0" />}
-              高级设置
+              {t("高级设置")}
             </button>
             {terminalAdvancedOpen && (
               <div id={terminalAdvancedId} className="mt-3 flex flex-col gap-3.5">
                 <div>
                   <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-gpu-acceleration">
-                    终端 GPU 加速
+                    {t("终端 GPU 加速")}
                     <SyncScopeBadge scope="sync" />
                   </div>
-                  <div className="nx-segment" role="group" aria-label="终端 GPU 加速">
+                  <div className="nx-segment" role="group" aria-label={t("终端 GPU 加速")}>
                     {GPU_ACCELERATION_OPTIONS.map((option) => (
                       <button
                         key={option.value}
@@ -860,37 +863,37 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 </div>
                 <div>
                   <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={scrollbackSelectId} data-setting="terminal-scrollback">
-                    终端回滚行数
+                    {t("终端回滚行数")}
                     <SyncScopeBadge scope="local" />
                   </label>
                   <Select
                     id={scrollbackSelectId}
-                    ariaLabel="终端回滚行数"
+                    ariaLabel={t("终端回滚行数")}
                     className="w-full sm:w-auto"
                     value={terminalPrefs.scrollback.toString()}
                     options={TERMINAL_SCROLLBACK_OPTIONS.map((lines) => ({
                       value: lines.toString(),
-                      label: `${formatScrollbackLines(lines)}${lines === 10_000 ? "（默认）" : ""}`,
+                      label: `${formatScrollbackLines(lines)}${lines === 10_000 ? t("（默认）") : ""}`,
                     }))}
                     onChange={(value) => setTerminalScrollback(normalizeTerminalScrollback(Number(value)))}
                   />
-                  <p className="nx-hint mt-1.5">调小后丢弃最早的行。</p>
+                  <p className="nx-hint mt-1.5">{t("调小后丢弃最早的行。")}</p>
                 </div>
                 {durableHistoryAccount && (
                   <div>
                     <label className="nx-setting-label mb-1.5 flex items-center gap-2" htmlFor={durableHistorySelectId} data-setting="terminal-durable-history">
-                      持久终端历史上限
+                      {t("持久终端历史上限")}
                       <SyncScopeBadge scope="sync" />
                     </label>
                     <div aria-busy={durableHistorySaving}>
                       <Select
                         id={durableHistorySelectId}
-                        ariaLabel="持久终端历史上限"
+                        ariaLabel={t("持久终端历史上限")}
                         className="w-full sm:w-auto"
                         value={terminalPrefs.durableHistoryMiB?.toString() ?? ""}
                         disabled={durableHistorySaving}
                         options={[
-                          { value: "", label: `默认（${DEFAULT_DURABLE_HISTORY_MIB} MB）` },
+                          { value: "", label: t("默认（{DEFAULT_DURABLE_HISTORY_MIB} MB）", { DEFAULT_DURABLE_HISTORY_MIB }) },
                           ...(terminalPrefs.durableHistoryMiB !== null && !DURABLE_HISTORY_OPTIONS_MIB.includes(terminalPrefs.durableHistoryMiB)
                             ? [{ value: terminalPrefs.durableHistoryMiB.toString(), label: `${terminalPrefs.durableHistoryMiB} MB` }]
                             : []),
@@ -899,7 +902,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                         onChange={(value) => void saveDurableHistory(value === "" ? null : Number(value))}
                       />
                     </div>
-                    <p className="nx-hint mt-1.5">超出后丢弃最早的输出，只影响新开的持久终端。</p>
+                    <p className="nx-hint mt-1.5">{t("超出后丢弃最早的输出，只影响新开的持久终端。")}</p>
                   </div>
                 )}
               </div>
@@ -916,7 +919,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <section id="settings-notifications" className="nx-card scroll-mt-12">
           <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconBell size={15} className="text-neutral-400" />
-            <span className="nx-card-title">通知</span>
+            <span className="nx-card-title">{t("通知")}</span>
             <SyncScopeBadge scope="local" />
           </div>
           <NotificationSettings />
@@ -931,10 +934,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <section id="settings-quick-commands" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <IconCommand size={15} className="text-neutral-400" />
-            <span className="nx-card-title" data-setting="quick-commands">快捷命令</span>
+            <span className="nx-card-title" data-setting="quick-commands">{t("快捷命令")}</span>
             <SyncScopeBadge scope="sync" />
           </div>
-          <p className="nx-hint mb-2">在终端按键条的「命令」中发送。</p>
+          <p className="nx-hint mb-2">{t("在终端按键条的「命令」中发送。")}</p>
           <QuickCommandsEditor />
         </section>
         </div>
@@ -954,11 +957,11 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <section id="settings-ai-model" className="nx-card scroll-mt-12">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <IconSparkles size={15} className="text-blue-300" />
-            <span className="nx-card-title">AI 模型</span>
-            <span className="nx-badge">OpenAI 兼容协议 · 自带密钥</span>
+            <span className="nx-card-title">{t("AI 模型")}</span>
+            <span className="nx-badge">{t("OpenAI 兼容协议 · 自带密钥")}</span>
           </div>
           <p className="nx-hint mb-3.5">
-            配置 OpenAI 兼容端点，支持云端模型及本地 Ollama、LM Studio、vLLM。密钥加密保存在当前实例；启用档案同步并解锁凭据库后，才会加密同步。
+            {t("配置 OpenAI 兼容端点，支持云端模型及本地 Ollama、LM Studio、vLLM。密钥加密保存在当前实例；启用档案同步并解锁凭据库后，才会加密同步。")}
           </p>
 
           <ModelManager />
@@ -976,7 +979,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               ) : (
                 <IconChevronRight size={12} className="shrink-0" />
               )}
-              连通性测试
+              {t("连通性测试")}
             </button>
             {connTestOpen && (
               <div id={connTestPanelId}>
@@ -991,10 +994,10 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                     ) : (
                       <IconZap size={13} className="shrink-0" />
                     )}
-                    {testing ? "正在测试…" : "测试当前模型连通性"}
+                    {testing ? t("正在测试…") : t("测试当前模型连通性")}
                   </button>
                   <span className="nx-hint">
-                    仅可测试已生效的当前模型；未保存的修改请通过上方的「刷新模型列表」验证。
+                    {t("仅可测试已生效的当前模型；未保存的修改请通过上方的「刷新模型列表」验证。")}
                   </span>
                 </div>
 
@@ -1008,7 +1011,7 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                   >
                     <div className="mb-1 flex items-center gap-1.5 font-semibold">
                       {testPassed ? <IconCheckCircle size={13} /> : <IconXCircle size={13} />}
-                      测试结果
+                      {t("测试结果")}
                     </div>
                     <pre className="whitespace-pre-wrap font-mono text-[11px]">{testDetail}</pre>
                   </div>

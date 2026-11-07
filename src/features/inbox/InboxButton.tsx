@@ -9,6 +9,7 @@ import { DeviceAlertInbox, useDeviceAlertNotifications, useUnackedAlertCount } f
 import { InboxGuidance } from "./InboxGuidance";
 import { isInboxGuidanceDismissed, useInboxGuidanceDismissed } from "./firstRunGuidance";
 import { markInboxEntrySeen, openAggregateEntry, openInboxTab, useInboxEntries, type InboxEntry } from "./inbox";
+import { t } from "../../i18n";
 
 const CUE_MS = 8000;
 
@@ -16,10 +17,10 @@ function sinceLabel(since: string | undefined, now: number): string {
   const at = since ? Date.parse(since) : Number.NaN;
   if (Number.isNaN(at)) return "";
   const minutes = Math.max(0, Math.floor((now - at) / 60_000));
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("刚刚");
+  if (minutes < 60) return t("{minutes} 分钟前", { minutes });
   const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
+  return hours < 24 ? t("{hours} 小时前", { hours }) : t("{floor} 天前", { floor: Math.floor(hours / 24) });
 }
 
 function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: number; onOpen: () => void; onMarked: () => void }) {
@@ -35,17 +36,17 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
     setOpening(true);
     void openAggregateEntry(entry)
       .then((problem) => {
-        if (problem) useUi.getState().pushToast("error", `未能打开终端：${problem}`);
+        if (problem) useUi.getState().pushToast("error", t("未能打开终端：{problem}", { problem }));
         else onOpen();
       })
-      .catch((error: unknown) => useUi.getState().pushToast("error", `未能打开终端：${describeError(error)}`))
+      .catch((error: unknown) => useUi.getState().pushToast("error", t("未能打开终端：{value}", { value: describeError(error) })))
       .finally(() => setOpening(false));
   };
   const markSeen = () => {
     setMarking(true);
     markInboxEntrySeen(entry)
       .then(onMarked)
-      .catch((error: unknown) => useUi.getState().pushToast("error", `标记已读失败：${describeError(error)}`))
+      .catch((error: unknown) => useUi.getState().pushToast("error", t("标记已读失败：{value}", { value: describeError(error) })))
       .finally(() => setMarking(false));
   };
   const shown = entry.uiTabId !== undefined;
@@ -60,7 +61,7 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
           className="flex min-w-0 flex-1 items-start gap-2 text-left disabled:cursor-default"
           style={wailsNoDragRegionStyle}
           disabled={!reachable || opening}
-          title={shown ? "转到该终端" : reachable ? `在当前客户端打开（${entry.place}）` : "当前客户端未打开该终端"}
+          title={shown ? t("转到该终端") : reachable ? t("在当前客户端打开（{place}）", { place: entry.place }) : t("当前客户端未打开该终端")}
           onClick={open}
         >
           <span className="mt-[5px] flex w-2.5 shrink-0 justify-center">
@@ -79,8 +80,8 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
           type="button"
           className="nx-icon-btn shrink-0"
           style={wailsNoDragRegionStyle}
-          aria-label={`标记 ${entry.title} 为已读`}
-          title={markable ? "标记为已读（所有设备）" : "打开该终端后方可标记为已读"}
+          aria-label={t("标记 {title} 为已读", { title: entry.title })}
+          title={markable ? t("标记为已读（所有设备）") : t("打开该终端后方可标记为已读")}
           disabled={marking || !markable}
           onClick={markSeen}
         >
@@ -89,8 +90,8 @@ function InboxRow({ entry, now, onOpen, onMarked }: { entry: InboxEntry; now: nu
       </div>
       {(!reachable || !markable) && (
         <div className="pl-[18px] pt-0.5 text-[11px] text-[var(--nx-fg-soft)]" data-inbox-reason="">
-          {!reachable && <p>当前客户端未打开该终端，无法跳转。</p>}
-          {!markable && <p>打开该终端后方可标记为已读。</p>}
+          {!reachable && <p>{t("当前客户端未打开该终端，无法跳转。")}</p>}
+          {!markable && <p>{t("打开该终端后方可标记为已读。")}</p>}
         </div>
       )}
     </li>
@@ -198,7 +199,7 @@ export function InboxButton() {
         const failed = results.filter((result) => result.status === "rejected");
         if (failed.length > 0) {
           const reason = (failed[0] as PromiseRejectedResult).reason;
-          useUi.getState().pushToast("error", `${failed.length} 个会话未能标记为已读：${describeError(reason)}`);
+          useUi.getState().pushToast("error", t("{length} 个会话未能标记为已读：{value}", { length: failed.length, value: describeError(reason) }));
         }
         keepFocusInPanel();
       })
@@ -207,10 +208,10 @@ export function InboxButton() {
 
   const label =
     count === 0
-      ? "收件箱：暂无需要关注的会话"
+      ? t("收件箱：暂无需要关注的会话")
       : alertCount === 0
-        ? `收件箱：${count} 个会话需要关注`
-        : `收件箱：${count} 项需要关注`;
+        ? t("收件箱：{count} 个会话需要关注", { count })
+        : t("收件箱：{count} 项需要关注", { count });
   return (
     <div
       className="relative"
@@ -254,13 +255,13 @@ export function InboxButton() {
             ? "pointer-events-none absolute right-0 top-[30px] z-40 whitespace-nowrap rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11.5px] text-neutral-300 shadow-lg"
             : "sr-only"
         } data-inbox-cue={cue && !open ? "" : undefined}>
-        {cue && !open ? "有会话需要关注，选择铃铛图标查看" : ""}
+        {cue && !open ? t("有会话需要关注，选择铃铛图标查看") : ""}
       </span>
       {open && (
         <div
           ref={panelRef}
           role="dialog"
-          aria-label="收件箱"
+          aria-label={t("收件箱")}
           tabIndex={-1}
           onPointerDownCapture={() => setHeld(ordered)}
           style={wailsNoDragRegionStyle}
@@ -268,21 +269,21 @@ export function InboxButton() {
         >
           {!guidanceDismissed && <InboxGuidance onNavigate={() => setOpen(false)} />}
           <div className="flex items-center gap-2 px-2 pb-1 pt-0.5">
-            <span className="min-w-0 flex-1 text-[11.5px] font-semibold text-neutral-400">需要关注的会话</span>
+            <span className="min-w-0 flex-1 text-[11.5px] font-semibold text-neutral-400">{t("需要关注的会话")}</span>
             {markable.length > 1 && (
               <button
                 type="button"
                 className="nx-btn nx-btn-ghost nx-btn-xs shrink-0"
                 disabled={markingAll}
-                title="将列表中的会话全部标记为已读（所有设备）"
+                title={t("将列表中的会话全部标记为已读（所有设备）")}
                 onClick={markAll}
               >
-                全部标记已读
+                {t("全部标记已读")}
               </button>
             )}
           </div>
           {count === 0 ? (
-            <p className="px-2 py-3 text-[12px] text-neutral-500">暂无需要处理或刚结束的会话。</p>
+            <p className="px-2 py-3 text-[12px] text-neutral-500">{t("暂无需要处理或刚结束的会话。")}</p>
           ) : sessionCount === 0 ? null : (
             <ul className="flex flex-col">
               {entries.map((entry) => (

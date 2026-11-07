@@ -1,5 +1,6 @@
 import { StreamLanguage, type StreamParser } from "@codemirror/language";
 import type { Extension } from "@codemirror/state";
+import { t } from "../../i18n";
 
 // Language packs are loaded on demand so they stay out of the editor chunk.
 async function stream<K extends string>(
@@ -27,7 +28,7 @@ const DEFINITIONS = [
   { id: "dockerfile", label: "Dockerfile", filenames: ["dockerfile", "containerfile"], extensions: [".dockerfile"], load: () => stream(import("@codemirror/legacy-modes/mode/dockerfile"), "dockerFile") },
   { id: "go", label: "Go", extensions: [".go"], load: () => stream(import("@codemirror/legacy-modes/mode/go"), "go") },
   { id: "html", label: "HTML", extensions: [".html", ".htm", ".xhtml", ".vue"], load: () => stream(import("@codemirror/legacy-modes/mode/xml"), "html") },
-  { id: "properties", label: "INI / 配置", filenames: [".editorconfig", ".gitconfig"], extensions: [".ini", ".conf", ".env", ".cfg", ".properties"], load: () => stream(import("@codemirror/legacy-modes/mode/properties"), "properties") },
+  { id: "properties", label: t("INI / 配置"), filenames: [".editorconfig", ".gitconfig"], extensions: [".ini", ".conf", ".env", ".cfg", ".properties"], load: () => stream(import("@codemirror/legacy-modes/mode/properties"), "properties") },
   { id: "java", label: "Java", extensions: [".java"], load: () => stream(import("@codemirror/legacy-modes/mode/clike"), "java") },
   { id: "javascript", label: "JavaScript", extensions: [".js", ".mjs", ".cjs", ".jsx"], load: () => stream(import("@codemirror/legacy-modes/mode/javascript"), "javascript") },
   { id: "json", label: "JSON", extensions: [".json", ".jsonc", ".json5"], load: () => stream(import("@codemirror/legacy-modes/mode/javascript"), "json") },

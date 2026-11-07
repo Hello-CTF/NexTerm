@@ -3,6 +3,7 @@ import { findTabLocation } from "./model";
 import type { AppTab, ConnectOutcome, Workspace } from "./types";
 import { useUi } from "./useUi";
 import { reconnectRestoredWorkspace } from "./workspaceRestore";
+import { t as tr } from "../../i18n";
 
 // restoreClosedTab pops the most recent (or keyed) closed-tab entry and lands it in a
 // workspace chosen before the pop, so a failed placement never consumes the entry.
@@ -21,7 +22,7 @@ export async function restoreClosedTab(key?: string): Promise<boolean> {
   if (reattach) {
     const session = useUi.getState().sessions.find((s) => s.id === entry.sessionId);
     if (!session || session.status !== "connected") {
-      useUi.getState().pushToast("error", "原会话未连接，请重新连接后再恢复后台会话");
+      useUi.getState().pushToast("error", tr("原会话未连接，请重新连接后再恢复后台会话"));
       return false;
     }
   }
@@ -48,7 +49,7 @@ function resolveClosedTabTarget(entry: ClosedTabEntry, reattach: boolean): Works
       kind: "session",
       sessionId: entry.sessionId,
       ...(entry.assetId ? { assetId: entry.assetId } : {}),
-      title: session?.name ?? "会话",
+      title: session?.name ?? tr("会话"),
     });
     return useUi.getState().workspaces.find((w) => w.id === workspaceId);
   }
@@ -65,7 +66,7 @@ function resolveClosedTabTarget(entry: ClosedTabEntry, reattach: boolean): Works
       kind: "session",
       ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
       ...(entry.assetId ? { assetId: entry.assetId } : {}),
-      title: session?.name ?? "会话",
+      title: session?.name ?? tr("会话"),
     });
     target = useUi.getState().workspaces.find((w) => w.id === workspaceId);
   }
@@ -86,9 +87,9 @@ function applyRestoredClosedTab(tab: AppTab, target: Workspace | undefined): voi
 export async function reconnectRestoredTab(tabId: string): Promise<ConnectOutcome> {
   const st = useUi.getState();
   const hit = findTabLocation(st.workspaces, st.activeWorkspaceId, tabId);
-  if (!hit) return { ok: false, error: "标签页不存在" };
+  if (!hit) return { ok: false, error: tr("标签页不存在") };
   const workspace = hit.workspace;
-  if (workspace.deletedTarget) return { ok: false, error: "原资产已删除，请从资产树选择其他目标" };
+  if (workspace.deletedTarget) return { ok: false, error: tr("原资产已删除，请从资产树选择其他目标") };
   const session = st.sessions.find((s) => s.id === workspace.sessionId);
   const live = session && ["connecting", "connected", "reconnecting"].includes(session.status);
   if (live) {

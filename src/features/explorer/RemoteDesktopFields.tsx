@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { Select } from "../../ui/Select";
 import { RESOLUTION_PRESETS } from "../remote/remoteTypes";
 import type { RemoteDesktopOptions } from "./assetKindFields";
+import { t } from "../../i18n";
 
 const CUSTOM = "custom";
 
@@ -60,19 +61,19 @@ export function RemoteDesktopFields({
       {protocol === "rdp" && (
         <>
           <div className="nx-form-row">
-            <label className="nx-label">域</label>
+            <label className="nx-label">{t("域")}</label>
             <input
               className="nx-input"
-              aria-label="域"
+              aria-label={t("域")}
               value={values.domain}
               onChange={(event) => onChange({ domain: event.target.value })}
-              placeholder="可选，如 CORP"
+              placeholder={t("可选，如 CORP")}
             />
           </div>
           <div className="nx-form-row">
-            <label className="nx-label">分辨率</label>
+            <label className="nx-label">{t("分辨率")}</label>
             <Select
-              ariaLabel="分辨率"
+              ariaLabel={t("分辨率")}
               value={selected}
               onChange={(value) => {
                 if (value === "follow") {
@@ -88,19 +89,19 @@ export function RemoteDesktopFields({
                 }
               }}
               options={[
-                { value: "follow", label: "跟随窗口" },
+                { value: "follow", label: t("跟随窗口") },
                 ...RESOLUTION_PRESETS.map((p) => ({ value: `${p.width}x${p.height}`, label: `${p.width} x ${p.height}` })),
-                { value: CUSTOM, label: "自定义" },
+                { value: CUSTOM, label: t("自定义") },
               ]}
             />
-            <p className="nx-hint mt-0.5">连接时以此大小启动；服务器支持时，会话中也可在工具栏的“分辨率”里临时调整。</p>
+            <p className="nx-hint mt-0.5">{t("连接时以此大小启动；服务器支持时，会话中也可在工具栏的“分辨率”里临时调整。")}</p>
             {selected === CUSTOM && (
               <div className="mt-1.5 flex items-center gap-2">
                 <input
                   id={widthId}
                   type="number"
                   className="nx-input w-[96px]"
-                  aria-label="宽度"
+                  aria-label={t("宽度")}
                   aria-invalid={resolutionError ? true : undefined}
                   aria-describedby={resolutionError ? errorId : undefined}
                   value={values.width}
@@ -114,7 +115,7 @@ export function RemoteDesktopFields({
                   id={heightId}
                   type="number"
                   className="nx-input w-[96px]"
-                  aria-label="高度"
+                  aria-label={t("高度")}
                   aria-invalid={resolutionError ? true : undefined}
                   aria-describedby={resolutionError ? errorId : undefined}
                   value={values.height}
@@ -134,35 +135,35 @@ export function RemoteDesktopFields({
         </>
       )}
       <ToggleRow
-        label="每次连接时输入密码"
-        hint="不保存密码。连接时弹出输入框，密码只用于本次连接。"
+        label={t("每次连接时输入密码")}
+        hint={t("不保存密码。连接时弹出输入框，密码只用于本次连接。")}
         checked={values.promptPassword}
         onChange={(promptPassword) => onChange({ promptPassword })}
       />
       <ToggleRow
-        label="启用剪贴板"
-        hint={protocol === "rdp" ? "允许在本机与远程桌面之间同步剪贴板中的文本和图片。" : "允许在本机与远程桌面之间同步文本剪贴板。"}
+        label={t("启用剪贴板")}
+        hint={protocol === "rdp" ? t("允许在本机与远程桌面之间同步剪贴板中的文本和图片。") : t("允许在本机与远程桌面之间同步文本剪贴板。")}
         checked={values.clipboard}
         onChange={(clipboard) => onChange({ clipboard })}
       />
       {values.clipboard && (
         <ToggleRow
-          label="自动同步剪贴板"
-          hint="在远程桌面中粘贴时先发送本机剪贴板；远程复制的内容在该标签页位于前台时写入本机剪贴板。关闭后只能从工具栏手动同步。"
+          label={t("自动同步剪贴板")}
+          hint={t("在远程桌面中粘贴时先发送本机剪贴板；远程复制的内容在该标签页位于前台时写入本机剪贴板。关闭后只能从工具栏手动同步。")}
           checked={values.clipboardAutoSync}
           onChange={(clipboardAutoSync) => onChange({ clipboardAutoSync })}
         />
       )}
       <ToggleRow
-        label="在 Mac 上将 Command 当作 Ctrl"
-        hint="仅在本机为 Mac 时生效：Command 键按 Ctrl 发送，例如 Command+C 在远程执行 Ctrl+C。远程也是 Mac 时请关闭。"
+        label={t("在 Mac 上将 Command 当作 Ctrl")}
+        hint={t("仅在本机为 Mac 时生效：Command 键按 Ctrl 发送，例如 Command+C 在远程执行 Ctrl+C。远程也是 Mac 时请关闭。")}
         checked={values.commandAsCtrl}
         onChange={(commandAsCtrl) => onChange({ commandAsCtrl })}
       />
       {protocol === "vnc" && (
         <ToggleRow
-          label="默认只读"
-          hint="连接后先以只读方式查看，不发送键盘和鼠标输入；可在工具栏中随时切换。"
+          label={t("默认只读")}
+          hint={t("连接后先以只读方式查看，不发送键盘和鼠标输入；可在工具栏中随时切换。")}
           checked={values.viewOnly}
           onChange={(viewOnly) => onChange({ viewOnly })}
         />

@@ -7,12 +7,13 @@ import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconCopy, IconKey } from "../../ui/icons";
 import { useVaultInitGate } from "./useVaultInitGate";
+import { t } from "../../i18n";
 
 type Algorithm = "ed25519" | "rsa";
 
 const ALGORITHMS: { key: Algorithm; label: string; hint: string }[] = [
-  { key: "ed25519", label: "Ed25519", hint: "推荐：速度更快、安全性更高，需 OpenSSH 6.5 及以上版本" },
-  { key: "rsa", label: "RSA 4096", hint: "兼容旧版设备；生成较慢" },
+  { key: "ed25519", label: "Ed25519", hint: t("推荐：速度更快、安全性更高，需 OpenSSH 6.5 及以上版本") },
+  { key: "rsa", label: "RSA 4096", hint: t("兼容旧版设备；生成较慢") },
 ];
 
 export function GenerateKeyModal({
@@ -44,7 +45,7 @@ export function GenerateKeyModal({
   const generate = async () => {
     setGenerating(true);
     try {
-      if (!(await ensureVaultReady("生成密钥前需要解锁凭据库"))) return;
+      if (!(await ensureVaultReady(t("生成密钥前需要解锁凭据库")))) return;
       const result = await vaultApi.generateKey(
         name.trim(),
         algorithm,
@@ -64,7 +65,7 @@ export function GenerateKeyModal({
       await copyText(value);
       pushToast("success", label);
     } catch (e) {
-      pushToast("error", `复制失败：${describeError(e)}`);
+      pushToast("error", t("复制失败：{value}", { value: describeError(e) }));
     }
   };
 
@@ -92,29 +93,29 @@ export function GenerateKeyModal({
       >
         <div className="nx-modal-header shrink-0">
           <span id={titleId} className="text-[13px] font-semibold text-neutral-100">
-            生成密钥对
+            {t("生成密钥对")}
           </span>
         </div>
         <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
           {generated === null ? (
             <>
               <div className="nx-form-row">
-                <label className="nx-label" htmlFor={nameId}>名称</label>
+                <label className="nx-label" htmlFor={nameId}>{t("名称")}</label>
                 <input
                   id={nameId}
                   ref={nameInputRef}
                   className="nx-input"
                   value={name}
-                  placeholder="例如：github-deploy"
+                  placeholder={t("例如：github-deploy")}
                   onChange={(e) => setName(e.target.value)}
                 />
                 <span className="nx-hint mt-1.5 block">
-                  私钥加密存入凭据库，不会写入任何明文文件。
+                  {t("私钥加密存入凭据库，不会写入任何明文文件。")}
                 </span>
               </div>
 
               <div className="nx-form-row">
-                <span className="nx-label">算法</span>
+                <span className="nx-label">{t("算法")}</span>
                 <div className="grid grid-cols-2 gap-1.5">
                   {ALGORITHMS.map((item) => {
                     const on = item.key === algorithm;
@@ -146,7 +147,7 @@ export function GenerateKeyModal({
               </div>
 
               <div className="nx-form-row">
-                <label className="nx-label" htmlFor={passphraseId}>私钥口令</label>
+                <label className="nx-label" htmlFor={passphraseId}>{t("私钥口令")}</label>
                 <input
                   id={passphraseId}
                   type="password"
@@ -154,46 +155,46 @@ export function GenerateKeyModal({
                   value={passphrase}
                   autoComplete="off"
                   onChange={(e) => setPassphrase(e.target.value)}
-                  placeholder="没有则留空"
+                  placeholder={t("没有则留空")}
                 />
                 <div className="nx-hint mt-1.5">
-                  ↳ 选填。为私钥设置口令，连接时自动使用。
+                  {t("↳ 选填。为私钥设置口令，连接时自动使用。")}
                 </div>
               </div>
             </>
           ) : (
             <div role="status">
               <div className="nx-form-row">
-                <span className="nx-label">SHA-256 指纹</span>
+                <span className="nx-label">{t("SHA-256 指纹")}</span>
                 <div className="flex items-start gap-2">
                   <code className="min-w-0 flex-1 break-all rounded-md border border-neutral-800/70 bg-neutral-900/60 px-2.5 py-1.5 font-mono text-[11.5px] text-neutral-300">
                     {generated.fingerprint}
                   </code>
                   <button
                     className="nx-btn nx-btn-sm shrink-0"
-                    onClick={() => void copy(generated.fingerprint, "已复制指纹")}
+                    onClick={() => void copy(generated.fingerprint, t("已复制指纹"))}
                   >
                     <IconCopy size={12} />
-                    复制
+                    {t("复制")}
                   </button>
                 </div>
               </div>
               <div className="nx-form-row">
-                <span className="nx-label">authorized_keys 公钥行</span>
+                <span className="nx-label">{t("authorized_keys 公钥行")}</span>
                 <div className="flex items-start gap-2">
                   <pre className="nx-mono max-h-[140px] min-w-0 flex-1 overflow-auto whitespace-pre-wrap break-all rounded-md border border-purple-500/25 bg-neutral-900/60 px-2.5 py-1.5 text-[11.5px] leading-[1.5] text-neutral-300">
                     {generated.publicKey}
                   </pre>
                   <button
                     className="nx-btn nx-btn-sm shrink-0"
-                    onClick={() => void copy(generated.publicKey, "已复制公钥行")}
+                    onClick={() => void copy(generated.publicKey, t("已复制公钥行"))}
                   >
                     <IconCopy size={12} />
-                    复制
+                    {t("复制")}
                   </button>
                 </div>
                 <div className="nx-hint mt-1.5">
-                  ↳ 把它追加到目标主机的 ~/.ssh/authorized_keys。私钥已加密入库，可在凭据详情中查看。
+                  {t("↳ 把它追加到目标主机的 ~/.ssh/authorized_keys。私钥已加密入库，可在凭据详情中查看。")}
                 </div>
               </div>
             </div>
@@ -201,7 +202,7 @@ export function GenerateKeyModal({
         </div>
         <div className="nx-modal-footer shrink-0">
           <button className="nx-btn nx-btn-ghost" onClick={onClose}>
-            {generated === null ? "取消" : "关闭"}
+            {generated === null ? t("取消") : t("关闭")}
           </button>
           {generated === null && (
             <button
@@ -209,7 +210,7 @@ export function GenerateKeyModal({
               disabled={!ready}
               onClick={() => void generate()}
             >
-              {generating ? "正在生成…" : "生成并入库"}
+              {generating ? t("正在生成…") : t("生成并入库")}
             </button>
           )}
         </div>

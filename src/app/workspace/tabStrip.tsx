@@ -33,6 +33,7 @@ import {
   IconSettings,
   IconTerminal,
 } from "../../ui/icons";
+import { t as tr } from "../../i18n";
 
 const TAB_ICON = {
   terminal: IconTerminal,
@@ -72,15 +73,15 @@ export function tabTooltip(
   if (t.kind === "terminal" && attention) notes.push(attention.label);
   const persistence = t.kind === "terminal" ? live.failureMark ?? live.note : undefined;
   if (persistence) notes.push(persistence);
-  else if (t.kind === "terminal" && t.durable === true) notes.push("持久终端：断开后可在「后台会话」接管");
-  else if (t.kind === "terminal" && t.regularReason) notes.push(`临时终端：${t.regularReason}`);
+  else if (t.kind === "terminal" && t.durable === true) notes.push(tr("持久终端：断开后可在「后台会话」接管"));
+  else if (t.kind === "terminal" && t.regularReason) notes.push(tr("临时终端：{regularReason}", { regularReason: t.regularReason }));
   else if (t.kind === "terminal" && t.durable === false) notes.push(EPHEMERAL_NOTE);
-  if (unread) notes.push("有新输出");
-  if (t.closeError) notes.push(`上次关闭失败：${t.closeError}`);
+  if (unread) notes.push(tr("有新输出"));
+  if (t.closeError) notes.push(tr("上次关闭失败：{closeError}", { closeError: t.closeError }));
   return notes.length > 0 ? `${t.title}（${notes.join(" · ")}）` : t.title;
 }
 
-const EPHEMERAL_NOTE = "临时终端：关闭标签页或断开连接后进程会结束";
+const EPHEMERAL_NOTE = tr("临时终端：关闭标签页或断开连接后进程会结束");
 
 // Durable terminals (the common case) show no mark, only a tooltip note. A terminal known to be non-durable
 // (durable === false, still alive) carries a small dashed-ring mark before its title; unknown durability, a tab
@@ -102,7 +103,7 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
         <button
           type="button"
           className="relative h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 p-0 before:absolute before:-inset-2 before:content-['']"
-          aria-label={`重新显示提示：${failure}`}
+          aria-label={tr("重新显示提示：{failure}", { failure })}
           title={failure}
           onClick={() => reshowPersistenceHint(tab.id)}
         />
@@ -218,8 +219,8 @@ export function TabProductionBadge({ sessionId }: { sessionId?: string }) {
   const classification = useAssetProductionClassification(assetId);
   if (!classification?.production) return null;
   return (
-    <span className="nx-badge nx-badge-amber nx-tab-production-badge shrink-0" title={`生产环境：${classification.environment}`}>
-      生产
+    <span className="nx-badge nx-badge-amber nx-tab-production-badge shrink-0" title={tr("生产环境：{environment}", { environment: classification.environment })}>
+      {tr("生产")}
     </span>
   );
 }

@@ -1,6 +1,7 @@
 import { call } from "./commands";
 import { EVENTS, listenEvent } from "./events";
 import type { WatchSummary, WatchTargetSummary } from "./generated/types";
+import { t } from "../i18n";
 
 // The wire shape of one delivered watch event: untrusted terminal data that
 // travels as tool data, never as a user message.
@@ -75,22 +76,22 @@ function asMember<Value extends string>(value: string, allowed: readonly Value[]
   if ((allowed as readonly string[]).includes(value)) {
     return value as Value;
   }
-  throw new Error(`watch ${what} 包含无法识别的后端取值：${value}`);
+  throw new Error(t("watch {what} 包含无法识别的后端取值：{value}", { what, value }));
 }
 
 function toWatchSummaryView(summary: WatchSummary): WatchSummaryView {
   return {
     ...summary,
     condition: {
-      type: asMember(summary.condition.type, watchConditionTypes, "条件类型"),
+      type: asMember(summary.condition.type, watchConditionTypes, t("条件类型")),
       pattern: summary.condition.pattern,
     },
-    status: asMember(summary.status, watchStatuses, "状态"),
+    status: asMember(summary.status, watchStatuses, t("状态")),
   };
 }
 
 function toWatchTargetView(target: WatchTargetSummary): WatchTargetView {
-  return { ...target, state: asMember(target.state, watchTargetStates, "目标状态") };
+  return { ...target, state: asMember(target.state, watchTargetStates, t("目标状态")) };
 }
 
 function isWatchToolDataEvent(payload: unknown): payload is WatchToolDataEventPayload {

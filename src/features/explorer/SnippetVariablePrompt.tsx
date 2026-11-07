@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconXCircle } from "../../ui/icons";
 import type { SnippetVariable, SnippetVariableValues } from "./snippetVariables";
+import { t } from "../../i18n";
 
 export function SnippetVariablePrompt({
   title,
@@ -38,7 +39,7 @@ export function SnippetVariablePrompt({
     event.preventDefault();
     const missing = variables.find((variable) => variable.required && values[variable.name]?.length === 0);
     if (missing) {
-      setError(`必填变量「${missing.name}」不能为空`);
+      setError(t("必填变量「{name}」不能为空", { name: missing.name }));
       return;
     }
     onSubmit(values);
@@ -78,7 +79,7 @@ export function SnippetVariablePrompt({
         </div>
         <form className="flex min-h-0 flex-col" noValidate onSubmit={submit}>
           <div className="nx-modal-body min-h-0 flex-1 overflow-y-auto">
-            <p className="nx-hint mb-3">变量值会原样替换到命令中；内建资产变量自动使用当前目标值。</p>
+            <p className="nx-hint mb-3">{t("变量值会原样替换到命令中；内建资产变量自动使用当前目标值。")}</p>
             {variables.map((variable, index) => {
               const inputId = `${formId}-${index}`;
               const value = values[variable.name] ?? "";
@@ -87,7 +88,7 @@ export function SnippetVariablePrompt({
                   <label className="nx-label" htmlFor={inputId}>
                     {variable.name}
                     <span className="ml-1.5 font-normal text-neutral-500">
-                      {variable.required ? "必填" : "可选"}{variable.multiline ? " · 多行" : ""}
+                      {variable.required ? t("必填") : t("可选")}{variable.multiline ? t(" · 多行") : ""}
                     </span>
                   </label>
                   {variable.multiline ? (
@@ -97,7 +98,7 @@ export function SnippetVariablePrompt({
                       rows={4}
                       value={value}
                       required={variable.required}
-                      aria-label={`变量 ${variable.name}`}
+                      aria-label={t("变量 {name}", { name: variable.name })}
                       onChange={(event) => {
                         setValues((current) => ({ ...current, [variable.name]: event.target.value }));
                         setError(null);
@@ -109,7 +110,7 @@ export function SnippetVariablePrompt({
                       className="nx-input font-mono text-xs"
                       value={value}
                       required={variable.required}
-                      aria-label={`变量 ${variable.name}`}
+                      aria-label={t("变量 {name}", { name: variable.name })}
                       onChange={(event) => {
                         setValues((current) => ({ ...current, [variable.name]: event.target.value }));
                         setError(null);
@@ -126,8 +127,8 @@ export function SnippetVariablePrompt({
             )}
           </div>
           <div className="nx-modal-footer shrink-0">
-            <button type="button" className="nx-btn nx-btn-ghost" onClick={onCancel}>取消</button>
-            <button type="submit" className="nx-btn nx-btn-primary">继续</button>
+            <button type="button" className="nx-btn nx-btn-ghost" onClick={onCancel}>{t("取消")}</button>
+            <button type="submit" className="nx-btn nx-btn-primary">{t("继续")}</button>
           </div>
         </form>
       </div>

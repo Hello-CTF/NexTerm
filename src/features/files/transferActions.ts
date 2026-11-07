@@ -17,6 +17,7 @@ import {
 } from "./transferQueue";
 import { enqueueUploadBatch, type UploadItem } from "./transferStore";
 import type { FolderFileEntry } from "./folderUpload";
+import { t } from "../../i18n";
 
 interface PolicyAnswer {
   kind: ConflictPolicy;
@@ -32,27 +33,27 @@ async function askConflictPolicy(
   conflict: FileEntryDto,
   moreComing: boolean,
 ): Promise<PolicyAnswer | null> {
-  const detail = conflict.kind === "dir" ? "目录" : `文件 · ${formatSize(conflict.size)}`;
-  const key = await askChoice(`「${name}」在目标目录已存在（${detail}）。如何处理这个冲突？`, {
-    title: "上传冲突",
+  const detail = conflict.kind === "dir" ? t("目录") : t("文件 · {value}", { value: formatSize(conflict.size) });
+  const key = await askChoice(t("「{name}」在目标目录已存在（{detail}）。如何处理这个冲突？", { name, detail }), {
+    title: t("上传冲突"),
     level: "warning",
     choices: [
-      { key: "skip", label: "跳过", hint: "保留远端现有内容，不上传该文件", primary: true },
-      { key: "overwrite", label: "覆盖", hint: "用本地文件替换远端现有内容", danger: true },
-      { key: "keepBoth", label: "保留两者", hint: "远端自动重命名（如 a (1).txt）后上传" },
+      { key: "skip", label: t("跳过"), hint: t("保留远端现有内容，不上传该文件"), primary: true },
+      { key: "overwrite", label: t("覆盖"), hint: t("用本地文件替换远端现有内容"), danger: true },
+      { key: "keepBoth", label: t("保留两者"), hint: t("远端自动重命名（如 a (1).txt）后上传") },
       ...(moreComing
         ? [
-            { key: "skip-all", label: "跳过，并应用到本次队列", hint: "本次队列中其余冲突也全部跳过" },
+            { key: "skip-all", label: t("跳过，并应用到本次队列"), hint: t("本次队列中其余冲突也全部跳过") },
             {
               key: "overwrite-all",
-              label: "覆盖，并应用到本次队列",
-              hint: "本次队列中其余冲突也全部覆盖",
+              label: t("覆盖，并应用到本次队列"),
+              hint: t("本次队列中其余冲突也全部覆盖"),
               danger: true,
             },
             {
               key: "keepBoth-all",
-              label: "保留两者，并应用到本次队列",
-              hint: "本次队列中其余冲突也全部自动重命名",
+              label: t("保留两者，并应用到本次队列"),
+              hint: t("本次队列中其余冲突也全部自动重命名"),
             },
           ]
         : []),
@@ -118,7 +119,7 @@ export async function enqueueUploadWithConflicts(args: {
       answer = await askConflictPolicy(name, conflict, moreComing);
     }
     if (!answer) {
-      pushToast("info", "已取消上传，所有文件保持原样");
+      pushToast("info", t("已取消上传，所有文件保持原样"));
       return false;
     }
     if (answer.applyAll) batchPolicy = answer.kind;
@@ -145,7 +146,7 @@ export async function localPathsFromFiles(files: File[]): Promise<string[] | nul
       return staged;
     } catch (e) {
       for (const p of staged) await dropStaged(p).catch(() => undefined);
-      pushToast("error", `未能读取拖入文件：${describeError(e)}`);
+      pushToast("error", t("未能读取拖入文件：{value}", { value: describeError(e) }));
       return null;
     }
   }
@@ -178,7 +179,7 @@ export async function dropLocalFiles(args: {
           refreshDir: args.dir,
         });
       } catch (e) {
-        pushToast("error", `上传失败：${describeError(e)}`);
+        pushToast("error", t("上传失败：{value}", { value: describeError(e) }));
       }
     }
     return;
@@ -194,7 +195,7 @@ export async function dropLocalFiles(args: {
       refreshDir: args.dir,
     });
   } catch (e) {
-    pushToast("error", `上传失败：${describeError(e)}`);
+    pushToast("error", t("上传失败：{value}", { value: describeError(e) }));
   } finally {
     if (!enqueued) {
       for (const p of localPaths) await dropStaged(p).catch(() => undefined);
@@ -218,14 +219,14 @@ export async function dropUploadFiles(args: {
 
 async function askFolderMergePolicy(folderName: string): Promise<ConflictPolicy | null> {
   const key = await askChoice(
-    `目标目录已存在文件夹「${folderName}」，上传会合并进去。其中的同名文件如何处理？`,
+    t("目标目录已存在文件夹「{folderName}」，上传会合并进去。其中的同名文件如何处理？", { folderName }),
     {
-      title: "上传文件夹",
+      title: t("上传文件夹"),
       level: "warning",
       choices: [
-        { key: "skip", label: "跳过同名文件", hint: "远端同名文件保持原样", primary: true },
-        { key: "overwrite", label: "覆盖同名文件", hint: "远端同名文件将被替换", danger: true },
-        { key: "keepBoth", label: "同名文件自动重命名", hint: "远端自动重命名（如 a (1).txt）后上传" },
+        { key: "skip", label: t("跳过同名文件"), hint: t("远端同名文件保持原样"), primary: true },
+        { key: "overwrite", label: t("覆盖同名文件"), hint: t("远端同名文件将被替换"), danger: true },
+        { key: "keepBoth", label: t("同名文件自动重命名"), hint: t("远端自动重命名（如 a (1).txt）后上传") },
       ],
     },
   );
@@ -276,25 +277,25 @@ export async function enqueueFolderUpload(args: {
   const top = findConflict(folderName, siblings, ci);
   if (top && top.kind !== "dir") {
     const key = await askChoice(
-      `目标目录已存在同名文件「${folderName}」，无法在其位置创建文件夹。`,
+      t("目标目录已存在同名文件「{folderName}」，无法在其位置创建文件夹。", { folderName }),
       {
-        title: "上传文件夹",
+        title: t("上传文件夹"),
         level: "warning",
         choices: [
           {
             key: "keepBoth",
-            label: "保留两者",
-            hint: "文件夹自动重命名（如 pics (1)）后上传",
+            label: t("保留两者"),
+            hint: t("文件夹自动重命名（如 pics (1)）后上传"),
             primary: true,
           },
-          { key: "skip", label: "不上传", hint: "远端保持原样" },
+          { key: "skip", label: t("不上传"), hint: t("远端保持原样") },
         ],
       },
     );
     if (key !== "keepBoth") {
       pushToast(
         "info",
-        key === "skip" ? "已跳过文件夹上传，远端保持原样" : "已取消上传，所有文件保持原样",
+        key === "skip" ? t("已跳过文件夹上传，远端保持原样") : t("已取消上传，所有文件保持原样"),
       );
       return false;
     }
@@ -317,7 +318,7 @@ export async function enqueueFolderUpload(args: {
   if (top && top.kind === "dir" && uploads.length > 0) {
     const policy = await askFolderMergePolicy(folderName);
     if (!policy) {
-      pushToast("info", "已取消上传，所有文件保持原样");
+      pushToast("info", t("已取消上传，所有文件保持原样"));
       return false;
     }
     if (policy !== "overwrite") {
@@ -354,14 +355,14 @@ export async function enqueueFolderUpload(args: {
   }
   if (args.files.length === 0) {
     if (mkdirFailed.length > 0) {
-      pushToast("error", `创建空文件夹失败：${mkdirFailed[0]}`);
+      pushToast("error", t("创建空文件夹失败：{value}", { value: mkdirFailed[0] }));
       return false;
     }
-    pushToast("success", `已创建空文件夹「${folderName}」`);
+    pushToast("success", t("已创建空文件夹「{folderName}」", { folderName }));
   } else if (mkdirFailed.length > 0) {
     pushToast(
       "error",
-      `部分空目录创建失败：${mkdirFailed[0]}${mkdirFailed.length > 1 ? ` 等 ${mkdirFailed.length} 个` : ""}`,
+      t("部分空目录创建失败：{value}{value2}", { value: mkdirFailed[0], value2: mkdirFailed.length > 1 ? t(" 等 {length} 个", { length: mkdirFailed.length }) : "" }),
     );
   }
   return true;

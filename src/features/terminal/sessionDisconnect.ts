@@ -2,6 +2,7 @@ import { sessionApi, terminalApi, type LiveTabInfo } from "../../ipc/commands";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
+import { t as tr } from "../../i18n";
 
 function localRunningTabs(sessionId: string): string[] {
   return useUi
@@ -39,16 +40,16 @@ export async function disconnectSessionWithConfirm(
   const n = await runningTerminalCount(sessionId);
   const ok = await ask(
     n > 0
-      ? `断开「${sessionName}」？\n\n${n} 个终端正在运行。断开后，临时终端的进程将终止且无法恢复；持久终端会保留在「后台会话」，可稍后接管`
-      : `断开「${sessionName}」？`,
-    { title: "断开连接", kind: "warning" },
+      ? tr("断开「{sessionName}」？\n\n{n} 个终端正在运行。断开后，临时终端的进程将终止且无法恢复；持久终端会保留在「后台会话」，可稍后接管", { sessionName, n })
+      : tr("断开「{sessionName}」？", { sessionName }),
+    { title: tr("断开连接"), kind: "warning" },
   );
   if (!ok) return;
   const { pushToast } = useUi.getState();
   try {
     await sessionApi.disconnect(sessionId);
-    pushToast("info", "已断开连接");
+    pushToast("info", tr("已断开连接"));
   } catch (e) {
-    pushToast("error", `断开失败：${describeError(e)}`);
+    pushToast("error", tr("断开失败：{value}", { value: describeError(e) }));
   }
 }

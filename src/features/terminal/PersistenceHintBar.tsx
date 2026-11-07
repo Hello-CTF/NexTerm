@@ -1,5 +1,6 @@
 import { IconClose } from "../../ui/icons";
 import { persistenceHintFailure, persistenceHintMessage, type PersistenceHint } from "./persistenceHint";
+import { t } from "../../i18n";
 
 export function PersistenceHintBar({
   hint,
@@ -18,11 +19,11 @@ export function PersistenceHintBar({
   const tone = hint.kind === "ready" ? "accent" : persistenceHintFailure(hint) ? "danger" : "neutral";
   let action: { label: string; onSelect: () => void; primary?: boolean } | null = null;
   if (hint.kind === "ready") {
-    if (onOpenDurable) action = { label: "新建持久终端", onSelect: onOpenDurable, primary: true };
+    if (onOpenDurable) action = { label: t("新建持久终端"), onSelect: onOpenDurable, primary: true };
   } else if (onManageHelper && (hint.kind === "attention" || hint.kind === "restore")) {
-    action = { label: "处理", onSelect: onManageHelper };
+    action = { label: t("处理"), onSelect: onManageHelper };
   } else if (onManageHelper && (hint.kind !== "preparing" || !local)) {
-    action = { label: local ? "本机持久终端组件设置…" : "持久终端组件…", onSelect: onManageHelper };
+    action = { label: local ? t("本机持久终端组件设置…") : t("持久终端组件…"), onSelect: onManageHelper };
   }
   const dot = tone === "accent" ? "bg-[var(--color-accent)]" : tone === "danger" ? "bg-red-500" : "bg-[var(--nx-fg-tertiary)]";
   return (
@@ -46,8 +47,8 @@ export function PersistenceHintBar({
       <button
         type="button"
         className="nx-icon-btn h-8 w-8 shrink-0"
-        aria-label="关闭提示"
-        title="关闭提示"
+        aria-label={t("关闭提示")}
+        title={t("关闭提示")}
         onClick={onDismiss}
       >
         <IconClose size={12} />

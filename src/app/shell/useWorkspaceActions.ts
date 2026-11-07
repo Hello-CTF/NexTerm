@@ -18,6 +18,7 @@ import { createMultiHostLogTabId } from "../../features/logs/logTailTab";
 import { startCwdTracking } from "../../features/files/cwdFollow";
 import { isMobileShell } from "./shellMode";
 import { hideMobileHome } from "./mobileHome";
+import { t } from "../../i18n";
 
 function isSessionAlive(status: string): boolean {
   return status === "connected" || status === "connecting" || status === "reconnecting";
@@ -37,12 +38,12 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
   const activeSessionId = ws?.kind === "session" ? ws.sessionId : undefined;
 
   const needSession = useCallback(() => {
-    pushToast("info", "请先连接主机（双击左侧资产）");
+    pushToast("info", t("请先连接主机（双击左侧资产）"));
   }, [pushToast]);
 
   const openLocalTerminal = useCallback(async () => {
     if (isMobileShell()) {
-      pushToast("info", "移动端不支持本地终端，请双击资产连接远程主机");
+      pushToast("info", t("移动端不支持本地终端，请双击资产连接远程主机"));
       return;
     }
     const epoch = useUi.getState().workspaceRuntimeEpoch;
@@ -65,7 +66,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: createMultiHostLogTabId(),
       kind: "log",
-      title: "多主机日志",
+      title: t("多主机日志"),
       ...(sessionId ? { logSessionIds: [sessionId] } : {}),
       closable: true,
     });
@@ -76,7 +77,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: nextTabId(`mount-${activeSessionId}`),
       kind: "mount",
-      title: "磁盘挂载",
+      title: t("磁盘挂载"),
       sessionId: activeSessionId,
       closable: true,
     });
@@ -87,7 +88,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: nextTabId(`forward-${activeSessionId}`),
       kind: "forward",
-      title: "端口转发",
+      title: t("端口转发"),
       sessionId: activeSessionId,
       closable: true,
     });
@@ -98,7 +99,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: nextTabId(`docker-${activeSessionId}`),
       kind: "docker",
-      title: "容器",
+      title: t("容器"),
       sessionId: activeSessionId,
       closable: true,
     });
@@ -110,7 +111,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       const assets = (await assetApi.list()).filter((asset) => dbKindOf(asset.kind) !== null);
       if (useUi.getState().workspaceRuntimeEpoch !== epoch) return;
       if (assets.length === 0) {
-        pushToast("info", "暂无数据库资产，请先在资产树中新建");
+        pushToast("info", t("暂无数据库资产，请先在资产树中新建"));
         return;
       }
       if (assets.length === 1) {
@@ -127,7 +128,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: "audit",
       kind: "audit",
-      title: "审计日志",
+      title: t("审计日志"),
       closable: true,
     });
   }, []);
@@ -136,13 +137,13 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: "devices",
       kind: "devices",
-      title: "设备管理",
+      title: t("设备管理"),
       closable: true,
     });
   }, []);
 
   const openSettings = useCallback(() => {
-    useUi.getState().addTab({ id: "settings", kind: "settings", title: "设置", closable: true });
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
   }, []);
   const openSyncSettings = useCallback(() => {
     openSettings();
@@ -169,7 +170,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
       `#nx-ws-panel-${CSS.escape(wsId)} [data-tab-content]:not(.hidden) [role='tabpanel']`,
     )) {
       const card = [...panel.querySelectorAll<HTMLElement>(".nx-card-title")]
-        .find((el) => el.textContent?.trim() === "凭据保护")
+        .find((el) => el.textContent?.trim() === t("凭据保护"))
         ?.closest<HTMLElement>(".nx-card");
       if (!card) continue;
       card.scrollIntoView({ block: "start" });
@@ -183,7 +184,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     useUi.getState().addTab({
       id: `background-${ws.id}`,
       kind: "background",
-      title: "后台会话",
+      title: t("后台会话"),
       sessionId: ws.sessionId,
       closable: true,
     });
@@ -191,7 +192,7 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
 
   const openHistory = useCallback(() => {
     useUi.getState().addTab(
-      hostHistoryTab(ws) ?? { id: "history", kind: "history", title: "终端历史", closable: true },
+      hostHistoryTab(ws) ?? { id: "history", kind: "history", title: t("终端历史"), closable: true },
     );
   }, [ws]);
 
@@ -208,26 +209,26 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
     const s = sid ? useUi.getState().sessions.find((x) => x.id === sid) : undefined;
     if (s && ws) {
       if (isSessionReconnectPending(s.id)) {
-        pushToast("info", "正在重新连接，连接成功后自动新建终端");
+        pushToast("info", t("正在重新连接，连接成功后自动新建终端"));
         return;
       }
       if (isSessionAlive(s.status)) {
         void openTerminalTab(s);
         return;
       }
-      pushToast("info", "正在重新连接，连接成功后自动新建终端");
+      pushToast("info", t("正在重新连接，连接成功后自动新建终端"));
       try {
         const fresh = await reconnectWorkspaceSession(ws, s, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重新连接");
+          pushToast("info", t("已取消重新连接"));
           return;
         }
         const list = useUi.getState().sessions;
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
       } catch (e) {
-        if (isCurrent()) pushToast("error", `重新连接失败：${describeError(e)}`);
+        if (isCurrent()) pushToast("error", t("重新连接失败：{value}", { value: describeError(e) }));
       }
       return;
     }
@@ -236,19 +237,19 @@ export function useWorkspaceActions({ ws, backgroundAvailable, openDatabasePicke
         const fresh = await reconnectDeadHost(ws, { isCurrent });
         if (!isCurrent()) return;
         if (!fresh) {
-          pushToast("info", "已取消重新连接");
+          pushToast("info", t("已取消重新连接"));
           return;
         }
         const list = useUi.getState().sessions;
         setSessions([...list.filter((x) => x.id !== fresh.id), fresh]);
         await openTerminalTab(fresh);
       } catch (e) {
-        if (isCurrent()) pushToast("error", `重新连接失败：${describeError(e)}`);
+        if (isCurrent()) pushToast("error", t("重新连接失败：{value}", { value: describeError(e) }));
       }
       return;
     }
     if (isMobileShell()) {
-      pushToast("info", "移动端不支持本地终端，请双击左侧资产连接远程主机");
+      pushToast("info", t("移动端不支持本地终端，请双击左侧资产连接远程主机"));
       return;
     }
     void openLocalTerminal();

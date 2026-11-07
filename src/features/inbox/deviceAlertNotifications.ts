@@ -4,6 +4,7 @@ import type { FleetAlerts } from "../../ipc/fleetAlertsApi";
 import { alertEventText, alertEventTitle, visibleAlertEvents } from "../fleet/deviceAlerts";
 import { getNotificationPrefs } from "./notificationPrefs";
 import { systemNotifier, type SystemNotifier } from "./systemNotifications";
+import { t } from "../../i18n";
 
 export interface DeviceAlertNotificationDeps {
   notifier: SystemNotifier;
@@ -69,9 +70,9 @@ export class DeviceAlertNotifier {
     const byDevice = new Map<string, typeof fresh>();
     for (const event of fresh) byDevice.set(event.device_id, [...(byDevice.get(event.device_id) ?? []), event]);
     for (const [deviceId, group] of byDevice) {
-      const name = deps.deviceName(deviceId) ?? "设备";
+      const name = deps.deviceName(deviceId) ?? t("设备");
       const first = group[0];
-      const title = group.length === 1 ? alertEventTitle(name, first) : `${name} · ${group.length} 条告警`;
+      const title = group.length === 1 ? alertEventTitle(name, first) : t("{name} · {length} 条告警", { name, length: group.length });
       const body = group.length === 1 ? alertEventText(first) : truncate(group.map(alertEventText).join("；"));
       void (async () => {
         if (prefs.system && !deps.appFocused() && (await systemUsable(deps.notifier))) {

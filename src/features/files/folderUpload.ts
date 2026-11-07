@@ -8,6 +8,7 @@ import type { FileEntryDto } from "../../ipc/types";
 import { formatSize } from "./fileTypes";
 import { packExtractSupported, packUploadAndExtract } from "./folderPackUpload";
 import { dropLocalFiles, dropUploadFiles, enqueueFolderUpload } from "./transferActions";
+import { t } from "../../i18n";
 
 export interface FolderFileEntry {
   // file is present when the entry came from browser File APIs (drop / webkitdirectory picker);
@@ -96,10 +97,10 @@ async function pendingFoldersFromDrop(
       const skipped = files.filter((file) => file.size === 0 && file.type === "");
       if (skipped.length > 0) {
         const shown = skipped.slice(0, 3).map((file) => file.name);
-        if (skipped.length > 3) shown.push(`等 ${skipped.length} 个`);
+        if (skipped.length > 3) shown.push(t("等 {length} 个", { length: skipped.length }));
         useUi.getState().pushToast(
           "info",
-          `已跳过 ${skipped.length} 个无法识别的条目（${shown.join("、")}）：当前平台不支持拖拽文件夹，请使用「上传文件夹」`,
+          t("已跳过 {length} 个无法识别的条目（{join}）：当前平台不支持拖拽文件夹，请使用「上传文件夹」", { length: skipped.length, join: shown.join("、") }),
         );
         return { folders: [], looseFiles: files.filter((file) => file.size > 0 || file.type !== "") };
       }
@@ -191,7 +192,7 @@ async function materializeFolder(pending: PendingFolder): Promise<FolderSelectio
       }
     } catch (e) {
       for (const s of staged) await dropStaged(s.localPath).catch(() => undefined);
-      pushToast("error", `未能读取文件夹内容：${describeError(e)}`);
+      pushToast("error", t("未能读取文件夹内容：{value}", { value: describeError(e) }));
       return null;
     }
     return { folderName: pending.folderName, files: staged, emptyDirs };
@@ -218,7 +219,7 @@ function packProgressToast(folderName: string): (transferred: number, total: num
     last = pct;
     pushToast(
       "info",
-      `打包上传「${folderName}」：${pct}%（${formatSize(transferred)} / ${formatSize(total)}）`,
+      t("打包上传「{folderName}」：{pct}%（{value} / {value2}）", { folderName, pct, value: formatSize(transferred), value2: formatSize(total) }),
     );
   };
 }
@@ -230,22 +231,22 @@ async function chooseUploadMode(
   const total = selection.files.reduce((sum, f) => sum + f.size, 0);
   const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
   const key = await askChoice(
-    `上传文件夹「${selection.folderName}」：共 ${selection.files.length} 个文件，合计 ${formatSize(total)}`,
+    t("上传文件夹「{folderName}」：共 {length} 个文件，合计 {value}", { folderName: selection.folderName, length: selection.files.length, value: formatSize(total) }),
     {
-      title: "上传文件夹",
+      title: t("上传文件夹"),
       choices: [
         {
           key: "perFile",
-          label: "逐文件上传",
-          hint: "默认方式；失败的任务可单独重试",
+          label: t("逐文件上传"),
+          hint: t("默认方式；失败的任务可单独重试"),
           primary: true,
         },
         ...(packExtractSupported(kind)
           ? [
               {
                 key: "pack",
-                label: "打包为 tar 上传并自动解包",
-                hint: "更快；同名文件将被覆盖，同名的文件与目录会相互替换（tar 语义）；需要远端 tar",
+                label: t("打包为 tar 上传并自动解包"),
+                hint: t("更快；同名文件将被覆盖，同名的文件与目录会相互替换（tar 语义）；需要远端 tar"),
               },
             ]
           : []),
@@ -274,7 +275,7 @@ async function uploadFolderSelection(
       await releaseStaged();
       pushToast(
         "error",
-        `无法上传到 Windows 会话：名称「${bad}」包含反斜杠，远端会把它当作路径分隔符，请重命名后再上传`,
+        t("无法上传到 Windows 会话：名称「{bad}」包含反斜杠，远端会把它当作路径分隔符，请重命名后再上传", { bad }),
       );
       return;
     }
@@ -284,12 +285,12 @@ async function uploadFolderSelection(
     const mode = await chooseUploadMode(args.sessionId, selection);
     if (!mode) {
       await releaseStaged();
-      pushToast("info", "已取消上传，所有文件保持原样");
+      pushToast("info", t("已取消上传，所有文件保持原样"));
       return;
     }
     if (mode === "pack") {
       try {
-        pushToast("info", `正在打包上传「${selection.folderName}」…`);
+        pushToast("info", t("正在打包上传「{folderName}」…", { folderName: selection.folderName }));
         const target = await packUploadAndExtract({
           sessionId: args.sessionId,
           dir: args.dir,
@@ -300,10 +301,10 @@ async function uploadFolderSelection(
         });
         pushToast(
           "success",
-          `已上传并解包到 ${target}（${selection.files.length} 个文件）`,
+          t("已上传并解包到 {target}（{length} 个文件）", { target, length: selection.files.length }),
         );
       } catch (e) {
-        pushToast("error", `打包上传失败：${describeError(e)}`);
+        pushToast("error", t("打包上传失败：{value}", { value: describeError(e) }));
       } finally {
         await releaseStaged();
         args.onSettled?.();
@@ -323,7 +324,7 @@ async function uploadFolderSelection(
       knownSiblings: args.knownSiblings,
     });
   } catch (e) {
-    pushToast("error", `上传失败：${describeError(e)}`);
+    pushToast("error", t("上传失败：{value}", { value: describeError(e) }));
   } finally {
     if (!handed) await releaseStaged();
     args.onSettled?.();
@@ -340,7 +341,7 @@ export async function dropNativeFolderUpload(
   try {
     listing = await localFileApi.listFolder(folderPath);
   } catch (e) {
-    useUi.getState().pushToast("error", `未能读取本地文件夹：${describeError(e)}`);
+    useUi.getState().pushToast("error", t("未能读取本地文件夹：{value}", { value: describeError(e) }));
     return;
   }
   const selection: FolderSelection = {
@@ -379,13 +380,13 @@ export async function pickFolderUpload(args: FolderFlowArgs): Promise<void> {
   if (!picked) return;
   const pending = pendingFolderFromPicker(picked);
   if (!pending) {
-    useUi.getState().pushToast("info", "当前平台不支持选择文件夹，请改用拖拽文件夹上传");
+    useUi.getState().pushToast("info", t("当前平台不支持选择文件夹，请改用拖拽文件夹上传"));
     return;
   }
   const selection = await materializeFolder(pending);
   if (!selection) return;
   if (selection.files.length === 0) {
-    useUi.getState().pushToast("info", "所选文件夹里没有可上传的文件");
+    useUi.getState().pushToast("info", t("所选文件夹里没有可上传的文件"));
     return;
   }
   await uploadFolderSelection({ ...args, selection });

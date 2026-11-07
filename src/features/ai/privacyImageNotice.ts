@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from "react";
+import { t } from "../../i18n";
 
 // Whether this device already acknowledged that images bypass the privacy guard. Per-device, never synced.
 const STORAGE_KEY = "nexterm.ai-privacy-image-notice.v1";
 
-export const PRIVACY_IMAGE_NOTICE = "已开启 AI 信息脱敏，但图片不会脱敏，将原样发送给 AI 服务。";
+export const PRIVACY_IMAGE_NOTICE = t("已开启 AI 信息脱敏，但图片不会脱敏，将原样发送给 AI 服务。");
 
 let seen: boolean | null = null;
 const listeners = new Set<() => void>();

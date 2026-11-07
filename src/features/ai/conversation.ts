@@ -1,6 +1,7 @@
 import { confirmationNonceOf, interactionIdentityOf, questionFromEvent, requiredEnvironmentNamesFromEvent } from "./aiWire";
 import type { AiHitlInterruptDto } from "../../ipc/types";
 import type { AiUsage } from "./UsageRing";
+import { t } from "../../i18n";
 
 export interface FilePreviewItem {
   path: string;
@@ -746,7 +747,7 @@ export function applyAiEvent(
             role: "tool",
             callId: "",
             name: "read_screen",
-            display: "读取屏幕",
+            display: t("读取屏幕"),
             summary: textOf(ev).slice(-200),
             text: textOf(ev).slice(-4000),
             ok: true,
@@ -788,28 +789,28 @@ export function applyAiEvent(
       if (attempt.kind !== "takeover") return rejected(state);
       return accepted({
         ...state,
-        status: { phase: "paused", detail: (ev.reason as string) || "用户暂停" },
+        status: { phase: "paused", detail: (ev.reason as string) || t("用户暂停") },
       });
     case "resumed":
       if (attempt.kind !== "takeover") return rejected(state);
       return accepted({ ...state, status: null });
     case "done":
-      return accepted(settleOpenTools(finishDone(state, attempt, ev), generation, "未返回结果", "canceled"), "done");
+      return accepted(settleOpenTools(finishDone(state, attempt, ev), generation, t("未返回结果"), "canceled"), "done");
     case "error": {
-      const message = (ev.message as string) || "未知错误";
+      const message = (ev.message as string) || t("未知错误");
       let next = patchAttempt(state, generation, { outcome: "error", planPending: false });
-      next = closeInteractions({ ...next, status: null }, generation, "本次回答已出错，无需再处理");
+      next = closeInteractions({ ...next, status: null }, generation, t("本次回答已出错，无需再处理"));
       next = settlePendingSteers(next, generation);
-      next = settleOpenTools(next, generation, "回答出错而中断", "failed");
+      next = settleOpenTools(next, generation, t("回答出错而中断"), "failed");
       next = appendOutcome(next, generation, "error", message, ev.retryable === true, ev.maxIterations === true);
       return accepted(next, "error");
     }
     case "canceled": {
-      const message = (ev.message as string) || "已停止";
+      const message = (ev.message as string) || t("已停止");
       let next = patchAttempt(state, generation, { outcome: "canceled", planPending: false });
-      next = closeInteractions({ ...next, status: null }, generation, "本次回答已停止，无需再处理");
+      next = closeInteractions({ ...next, status: null }, generation, t("本次回答已停止，无需再处理"));
       next = settlePendingSteers(next, generation);
-      next = settleOpenTools(next, generation, "已停止", "canceled");
+      next = settleOpenTools(next, generation, t("已停止"), "canceled");
       next = appendOutcome(next, generation, "canceled", message);
       return accepted(next, "canceled");
     }
@@ -825,18 +826,18 @@ function finishDone(
 ): ConversationState {
   const generation = attempt.generation;
   const raw = (ev.answer as string) || "";
-  const answer = raw || "（无回答）";
+  const answer = raw || t("（无回答）");
   const wasPlan = attempt.planPending;
   let next = patchAttempt(state, generation, { outcome: "done", planPending: false });
-  next = closeInteractions({ ...next, status: null }, generation, "本次回答已结束，无需再处理");
+  next = closeInteractions({ ...next, status: null }, generation, t("本次回答已结束，无需再处理"));
   next = settlePendingSteers(next, generation);
 
   if (attempt.kind === "takeover") {
     const { id, seq } = nextId(next, "a");
     next = appendItems({ ...next, seq }, [
-      { id, attempt: generation, role: "assistant", text: `接管结束：${answer}` },
+      { id, attempt: generation, role: "assistant", text: t("接管结束：{answer}", { answer }) },
     ]);
-    return appendOutcome(next, generation, "done", "接管已完成");
+    return appendOutcome(next, generation, "done", t("接管已完成"));
   }
 
   const segment = finalStreamedSegment(next.items, generation);
@@ -849,7 +850,7 @@ function finishDone(
           : { ...last, text: answer }
         : item,
     );
-    return appendOutcome({ ...next, items }, generation, "done", "回答已完成");
+    return appendOutcome({ ...next, items }, generation, "done", t("回答已完成"));
   }
   if (!raw && segment >= 0) {
     const last = next.items[segment] as Extract<ChatItem, { role: "assistant" | "plan" }>;
@@ -859,7 +860,7 @@ function finishDone(
             index === segment ? { ...last, role: "plan" as const } : item,
           )
         : next.items;
-      return appendOutcome({ ...next, items }, generation, "done", "回答已完成");
+      return appendOutcome({ ...next, items }, generation, "done", t("回答已完成"));
     }
   }
   const { id, seq } = nextId(next, wasPlan ? "p" : "a");
@@ -868,7 +869,7 @@ function finishDone(
       ? { id, attempt: generation, role: "plan", text: answer }
       : { id, attempt: generation, role: "assistant", text: answer },
   ]);
-  return appendOutcome(next, generation, "done", "回答已完成");
+  return appendOutcome(next, generation, "done", t("回答已完成"));
 }
 
 function finalStreamedSegment(items: ChatItem[], generation: number): number {
@@ -911,12 +912,12 @@ export function cancelRun(
 ): ConversationState {
   const attempt = attemptOf(state, generation);
   if (!attempt || attempt.outcome) return state;
-  let next = closeInteractions({ ...state, status: null }, generation, "本次回答已停止，无需再处理");
+  let next = closeInteractions({ ...state, status: null }, generation, t("本次回答已停止，无需再处理"));
   next = settlePendingSteers(next, generation);
-  next = settleOpenTools(next, generation, "已停止", "canceled");
+  next = settleOpenTools(next, generation, t("已停止"), "canceled");
   if (!settle) return next;
   next = patchAttempt(next, generation, { outcome: "canceled", planPending: false });
-  return appendOutcome(next, generation, "canceled", "已停止");
+  return appendOutcome(next, generation, "canceled", t("已停止"));
 }
 
 export function resetConversation(

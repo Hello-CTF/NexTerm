@@ -26,6 +26,7 @@ import {
   type TerminalHistoryInfo,
 } from "./earlierHistory";
 import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { t } from "../../i18n";
 
 // Alternate screen switches (DECSET/DECRST 47, 1047, 1049) are ignored so a
 // full-screen program in the history draws into the scrollable buffer instead of
@@ -102,7 +103,7 @@ export function EarlierHistoryPanel({
   const [state, setState] = useState<EarlierHistoryState>(() => initialEarlierHistory(end));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copyNote, setCopyNote] = useState<string | null>(null);
+  const [copyNote, setCopyNote] = useState<{ text: string; failed: boolean } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const stateRef = useRef(state);
@@ -186,38 +187,38 @@ export function EarlierHistoryPanel({
   const copySelection = useCallback(() => {
     const text = terminalRef.current?.getSelection() ?? "";
     if (!text) {
-      setCopyNote("没有选中的内容");
+      setCopyNote({ text: t("没有选中的内容"), failed: false });
       return;
     }
     copyText(text).then(
-      () => mountedRef.current && setCopyNote("已复制"),
-      (cause: unknown) => mountedRef.current && setCopyNote(`复制失败：${describeError(cause)}`),
+      () => mountedRef.current && setCopyNote({ text: t("已复制"), failed: false }),
+      (cause: unknown) => mountedRef.current && setCopyNote({ text: t("复制失败：{value}", { value: describeError(cause) }), failed: true }),
     );
   }, []);
 
   // The copy outcome is feedback about a finished action: success clears sooner than a failure.
   useEffect(() => {
     if (!copyNote) return;
-    const timer = window.setTimeout(() => setCopyNote(null), copyNote.startsWith("复制失败") ? 8000 : 3500);
+    const timer = window.setTimeout(() => setCopyNote(null), copyNote.failed ? 8000 : 3500);
     return () => window.clearTimeout(timer);
   }, [copyNote]);
 
   const canLoad = canLoadEarlierHistory(state) && !loading;
   let status: string;
-  if (error) status = `加载失败：${error}`;
-  else if (loading && state.bytes === 0) status = "正在加载更早历史…";
-  else if (state.capped === "lines") status = `已加载 ${formatHistoryBytes(state.bytes)}，达到回放行数上限，更早的输出不再加载`;
-  else if (state.truncated) status = "早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃";
-  else if (state.capped === "bytes") status = `已加载 ${formatHistoryBytes(state.bytes)}，达到单次查看上限`;
-  else if (state.exhausted) status = state.bytes === 0 ? "没有更早的输出" : "已到会话开头";
-  else status = `已加载 ${formatHistoryBytes(state.bytes)}`;
+  if (error) status = t("加载失败：{error}", { error });
+  else if (loading && state.bytes === 0) status = t("正在加载更早历史…");
+  else if (state.capped === "lines") status = t("已加载 {value}，达到回放行数上限，更早的输出不再加载", { value: formatHistoryBytes(state.bytes) });
+  else if (state.truncated) status = t("早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃");
+  else if (state.capped === "bytes") status = t("已加载 {value}，达到单次查看上限", { value: formatHistoryBytes(state.bytes) });
+  else if (state.exhausted) status = state.bytes === 0 ? t("没有更早的输出") : t("已到会话开头");
+  else status = t("已加载 {value}", { value: formatHistoryBytes(state.bytes) });
 
   // Keys and the context menu stay inside the panel: the live terminal's menu,
   // shortcuts and search act on the live terminal, not on this replay.
   return (
     <div
       role="dialog"
-      aria-label="更早历史"
+      aria-label={t("更早历史")}
       data-testid="earlier-history"
       {...{ [EARLIER_HISTORY_PANEL_ATTRIBUTE]: "" }}
       className="absolute inset-0 z-20 flex min-h-0 flex-col bg-neutral-950"
@@ -241,8 +242,8 @@ export function EarlierHistoryPanel({
     >
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-neutral-800/60 px-3 py-1.5">
         <IconHistory size={13} className="text-neutral-400" />
-        <span className="text-[12px] font-semibold text-neutral-200">更早历史</span>
-        <span className="nx-badge">只读回放</span>
+        <span className="text-[12px] font-semibold text-neutral-200">{t("更早历史")}</span>
+        <span className="nx-badge">{t("只读回放")}</span>
         <span
           role="status"
           aria-live="polite"
@@ -262,13 +263,13 @@ export function EarlierHistoryPanel({
           onClick={() => void loadMore()}
         >
           {loading ? <IconRefresh size={12} className="animate-spin" /> : <IconArrowUp size={12} />}
-          {error ? "重试" : "加载更早"}
+          {error ? t("重试") : t("加载更早")}
         </button>
         <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm" onClick={copySelection}>
           <IconCopy size={12} />
-          复制所选
+          {t("复制所选")}
         </button>
-        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label="关闭更早历史" title="关闭" onClick={onClose}>
+        <button type="button" className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭更早历史")} title={t("关闭")} onClick={onClose}>
           <IconClose size={12} />
         </button>
       </div>
@@ -277,8 +278,8 @@ export function EarlierHistoryPanel({
       </div>
       {(overlap || copyNote) && (
         <div className="flex shrink-0 gap-3 border-t border-neutral-800/60 px-3 py-1 text-[11px] text-neutral-500">
-          {overlap && <span data-testid="earlier-history-overlap">可能与当前终端内容有重叠</span>}
-          {copyNote && <span role="status">{copyNote}</span>}
+          {overlap && <span data-testid="earlier-history-overlap">{t("可能与当前终端内容有重叠")}</span>}
+          {copyNote && <span role="status">{copyNote.text}</span>}
         </div>
       )}
     </div>
@@ -343,7 +344,7 @@ export function EarlierHistory({
         data-testid="earlier-history-entry"
         className="pointer-events-none absolute left-1/2 top-2 z-10 max-w-[92%] -translate-x-1/2 rounded-md border border-amber-400/30 bg-neutral-900/95 px-3 py-1 text-[11.5px] text-amber-300 shadow-lg"
       >
-        早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃
+        {t("早期历史已截断：更早的输出超出持久终端历史上限，已被丢弃")}
       </div>
     );
   }
@@ -358,7 +359,7 @@ export function EarlierHistory({
       }}
     >
       <IconHistory size={12} />
-      加载更早历史
+      {t("加载更早历史")}
     </button>
   );
 }
