@@ -20,6 +20,26 @@ func openLingerTestStore(t *testing.T) *store.Store {
 	return database
 }
 
+// lingerTranscriptRows polls for the asset's transcripts; the shared session
+// helpers are built only on darwin and linux, and this test runs everywhere.
+func lingerTranscriptRows(t *testing.T, database *store.Store, ctx context.Context) []store.TranscriptRow {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) > 0 {
+			return rows
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("transcript row was not created")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestTranscriptWriterLingerCoalescesChunksAndShutdownDoesNotWait(t *testing.T) {
 	ctx := context.Background()
 	database := openLingerTestStore(t)
@@ -37,7 +57,7 @@ func TestTranscriptWriterLingerCoalescesChunksAndShutdownDoesNotWait(t *testing.
 	if stats.batches != 1 || stats.flushedChunks != 20 {
 		t.Fatalf("expected the 20 chunks in one append, got %+v", stats)
 	}
-	rows := waitForTranscriptRows(t, database, ctx, "asset-1", 1)
+	rows := lingerTranscriptRows(t, database, ctx)
 	if rows[0].Chunks != 20 || rows[0].EndedAt == nil {
 		t.Fatalf("transcript not complete after shutdown: %+v", rows[0])
 	}
@@ -51,7 +71,7 @@ func TestTranscriptWriterLingerFlushesFullBatchWithoutWaiting(t *testing.T) {
 	for index := 0; index < transcriptBatchMaxItems+10; index++ {
 		writer.SessionOutput(ctx, "", "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d", index)))
 	}
-	rows := waitForTranscriptRows(t, database, ctx, "asset-1", 1)
+	rows := lingerTranscriptRows(t, database, ctx)
 	// The start item takes one slot of the first full batch.
 	waitForTranscriptChunks(t, database, rows[0].ID, transcriptBatchMaxItems-1)
 }
