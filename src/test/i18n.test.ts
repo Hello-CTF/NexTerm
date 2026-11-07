@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { applyLocale, formatNumber, getLocale, t, translateMessage } from "../i18n";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyLocale, formatDateTime, formatNumber, getLocale, initI18n, setLocale, t, translateMessage } from "../i18n";
 import { matchLocale, resolveLocale, systemLocale } from "../i18n/locales";
 
 afterEach(() => applyLocale("zh-CN", {}, {}));
@@ -81,5 +81,46 @@ describe("translateMessage", () => {
   it("matches interface text that arrives as a message", () => {
     applyLocale("en", { 操作已取消: "Cancelled" }, {});
     expect(translateMessage("操作已取消")).toBe("Cancelled");
+  });
+});
+
+describe("loading and choosing a language", () => {
+  it("loads a language's catalogs and returns to the source language", async () => {
+    await initI18n("en");
+    expect(getLocale()).toBe("en");
+    expect(t("保存")).not.toBe("保存");
+    expect(translateMessage("连接已断开，请重新连接后再试")).not.toMatch(/[\u4e00-\u9fff]/);
+    await initI18n("zh-CN");
+    expect(getLocale()).toBe("zh-CN");
+    expect(t("保存")).toBe("保存");
+  });
+
+  it("loads every language's catalogs", async () => {
+    for (const locale of ["zh-TW", "ja", "ko", "de", "fr", "es", "ru"] as const) {
+      await initI18n(locale);
+      expect(getLocale()).toBe(locale);
+      expect(t("设置")).not.toBe("设置");
+    }
+  });
+
+  it("saves the choice and reloads, or clears it to follow the system", () => {
+    const store = new Map<string, string>();
+    const reload = vi.fn();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => store.set(key, value),
+      removeItem: (key: string) => store.delete(key),
+    });
+    vi.stubGlobal("location", { reload });
+    setLocale("ja");
+    expect(store.get("nexterm.locale")).toBe("ja");
+    setLocale(null);
+    expect(store.has("nexterm.locale")).toBe(false);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it("formats dates for the interface language", () => {
+    applyLocale("en", {}, {});
+    expect(formatDateTime(Date.UTC(2026, 0, 2), { timeZone: "UTC", month: "long" })).toBe("January");
   });
 });

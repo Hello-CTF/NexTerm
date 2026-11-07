@@ -9,28 +9,38 @@ export type CatalogEntry = string | PluralForms;
 export type Catalog = Record<string, CatalogEntry>;
 
 type CatalogModule = { default: Catalog };
+type TranslatedLocale = Exclude<Locale, "zh-CN">;
 
 // One file per language and kind: ui holds the frontend's text, server the backend's messages (Go format templates).
 // Each loads as its own chunk, only for the language in use.
-const catalogFiles: Record<Exclude<Locale, "zh-CN">, [() => Promise<CatalogModule>, () => Promise<CatalogModule>]> = {
-  "zh-TW": [() => import("./locales/zh-TW/ui.json"), () => import("./locales/zh-TW/server.json")],
-  "en": [() => import("./locales/en/ui.json"), () => import("./locales/en/server.json")],
-  "ja": [() => import("./locales/ja/ui.json"), () => import("./locales/ja/server.json")],
-  "ko": [() => import("./locales/ko/ui.json"), () => import("./locales/ko/server.json")],
-  "de": [() => import("./locales/de/ui.json"), () => import("./locales/de/server.json")],
-  "fr": [() => import("./locales/fr/ui.json"), () => import("./locales/fr/server.json")],
-  "es": [() => import("./locales/es/ui.json"), () => import("./locales/es/server.json")],
-  "ru": [() => import("./locales/ru/ui.json"), () => import("./locales/ru/server.json")],
-};
+function importCatalog(locale: TranslatedLocale, kind: "ui" | "server"): Promise<CatalogModule> {
+  switch (`${locale}/${kind}`) {
+    case "zh-TW/ui": return import("./locales/zh-TW/ui.json");
+    case "zh-TW/server": return import("./locales/zh-TW/server.json");
+    case "en/ui": return import("./locales/en/ui.json");
+    case "en/server": return import("./locales/en/server.json");
+    case "ja/ui": return import("./locales/ja/ui.json");
+    case "ja/server": return import("./locales/ja/server.json");
+    case "ko/ui": return import("./locales/ko/ui.json");
+    case "ko/server": return import("./locales/ko/server.json");
+    case "de/ui": return import("./locales/de/ui.json");
+    case "de/server": return import("./locales/de/server.json");
+    case "fr/ui": return import("./locales/fr/ui.json");
+    case "fr/server": return import("./locales/fr/server.json");
+    case "es/ui": return import("./locales/es/ui.json");
+    case "es/server": return import("./locales/es/server.json");
+    case "ru/ui": return import("./locales/ru/ui.json");
+    default: return import("./locales/ru/server.json");
+  }
+}
 
 let current: Locale = SOURCE_LOCALE;
 let ui: Catalog = {};
 let server: ServerCatalog = compileServerCatalog({});
 let plurals = new Intl.PluralRules(SOURCE_LOCALE);
 
-async function loadCatalog(locale: Exclude<Locale, "zh-CN">, kind: "ui" | "server"): Promise<Catalog> {
-  const [ui, server] = catalogFiles[locale];
-  return (await (kind === "ui" ? ui : server)()).default;
+async function loadCatalog(locale: TranslatedLocale, kind: "ui" | "server"): Promise<Catalog> {
+  return (await importCatalog(locale, kind)).default;
 }
 
 // initI18n loads the language's catalogs. It runs before the interface modules load, so text built when a module
