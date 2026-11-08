@@ -93,7 +93,7 @@ const options = (patch: Partial<ClientOptions> = {}): ClientOptions => ({
   initialSize: null,
   ...patch,
 });
-const callbacks = () => ({ onConnected: vi.fn(), onDisconnected: vi.fn(), onRemoteClipboard: vi.fn(), onDesktopSize: vi.fn() }) satisfies ClientCallbacks;
+const callbacks = () => ({ onConnected: vi.fn(), onDisconnected: vi.fn(), onClipboardNotice: vi.fn(), onDesktopSize: vi.fn() }) satisfies ClientCallbacks;
 const rfb = () => mocks.rfbs[0] as Rfb;
 
 let stage: HTMLElement;
@@ -240,7 +240,7 @@ describe("VncClient session end", () => {
     client.focus();
     client.blur();
     expect(rfb().keys).toEqual([]);
-    expect(await client.sendClipboard()).toBe(false);
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
   });
 });
 
@@ -249,15 +249,16 @@ describe("VncClient scale", () => {
     const { client } = await connected();
     expect(rfb()).toMatchObject({ scaleViewport: true, clipViewport: false, dragViewport: false });
     client.setScale(1);
-    expect(rfb()).toMatchObject({ scaleViewport: false, clipViewport: true, dragViewport: true });
+    expect(rfb()).toMatchObject({ scaleViewport: false, clipViewport: false, dragViewport: false });
     client.setScale("fit");
     expect(rfb()).toMatchObject({ scaleViewport: true, clipViewport: false, dragViewport: false });
   });
 
-  it("treats every fixed zoom as the picture's own size, scrollable", async () => {
+  it("treats every fixed zoom as the picture's own size, scrolled by noVNC's screen, and leaves drags to the remote", async () => {
     const { client } = await connected();
     client.setScale(1.5);
-    expect(rfb()).toMatchObject({ scaleViewport: false, clipViewport: true, dragViewport: true });
+    // dragViewport would turn every left-button drag into panning, so text could not be selected on the remote.
+    expect(rfb()).toMatchObject({ scaleViewport: false, clipViewport: false, dragViewport: false });
   });
 
   it("applies a scale chosen before the session exists once it does", async () => {
@@ -265,7 +266,7 @@ describe("VncClient scale", () => {
     client.setScale(2);
     const pending = client.connect();
     await vi.waitFor(() => expect(mocks.rfbs).toHaveLength(1));
-    expect(rfb()).toMatchObject({ scaleViewport: false, clipViewport: true });
+    expect(rfb()).toMatchObject({ scaleViewport: false, dragViewport: false });
     rfb().emit("connect");
     await pending;
   });
@@ -350,25 +351,25 @@ describe("VncClient clipboard", () => {
     const readText = vi.fn(async () => "from local");
     stubClipboard({ readText });
     const { client } = await connected();
-    expect(await client.sendClipboard()).toBe(true);
+    expect(await client.sendClipboard()).toEqual({ status: "done" });
     expect(rfb().pasted).toEqual(["from local"]);
 
-    const data = { getData: (type: string) => (type === "text/plain" ? "from event" : "") } as unknown as DataTransfer;
-    expect(await client.sendClipboard(data)).toBe(true);
+    const data = { files: [], types: ["text/plain"], getData: (type: string) => (type === "text/plain" ? "from event" : "") } as unknown as DataTransfer;
+    expect(await client.sendClipboard(data)).toEqual({ status: "done" });
     expect(rfb().pasted).toEqual(["from local", "from event"]);
     expect(readText).toHaveBeenCalledTimes(1);
   });
 
-  it("reports false for an empty clipboard, a refusal, read-only, or clipboard turned off", async () => {
+  it("says when the clipboard is empty, refused, read-only, or turned off", async () => {
     const readText = vi.fn(async () => "");
     stubClipboard({ readText });
     const { client } = await connected();
-    expect(await client.sendClipboard()).toBe(false);
+    expect(await client.sendClipboard()).toEqual({ status: "empty" });
     readText.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
-    expect(await client.sendClipboard()).toBe(false);
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
     readText.mockResolvedValue("x");
     client.setViewOnly(true);
-    expect(await client.sendClipboard()).toBe(false);
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
     expect(rfb().pasted).toEqual([]);
 
     mocks.rfbs.length = 0;
@@ -377,8 +378,32 @@ describe("VncClient clipboard", () => {
     await vi.waitFor(() => expect(mocks.rfbs).toHaveLength(1));
     rfb().emit("connect");
     await pending;
-    expect(await off.sendClipboard()).toBe(false);
-    expect(await off.fetchClipboard()).toBe(false);
+    expect(await off.sendClipboard()).toEqual({ status: "refused" });
+    expect(await off.fetchClipboard()).toEqual({ status: "refused" });
+  });
+
+  it("sends nothing for an image or file paste, and says VNC carries text only", async () => {
+    stubClipboard({});
+    const { client } = await connected();
+    const image = new File([new Uint8Array([1])], "a.png", { type: "image/png" });
+    const data = { files: [image], types: ["Files"], getData: () => "" } as unknown as DataTransfer;
+    const outcome = await client.sendClipboard(data);
+    expect(outcome.status).toBe("unsupported");
+    expect(outcome.note).toBeTruthy();
+    expect(rfb().pasted).toEqual([]);
+  });
+
+  it("warns that non-Latin-1 text turns into question marks without the extended clipboard", async () => {
+    stubClipboard({});
+    const { client } = await connected();
+    const data = { files: [], types: ["text/plain"], getData: () => "中文" } as unknown as DataTransfer;
+    const classic = await client.sendClipboard(data);
+    expect(classic.status).toBe("done");
+    expect(classic.note).toBeTruthy();
+    expect((await client.sendClipboard({ ...data, getData: () => "latin é" } as unknown as DataTransfer)).note).toBeUndefined();
+    // A server that negotiated the extended clipboard (text format, notify action) carries UTF-8.
+    Object.assign(rfb(), { _clipboardServerCapabilitiesFormats: { 1: true }, _clipboardServerCapabilitiesActions: { [1 << 27]: true } });
+    expect((await client.sendClipboard(data)).note).toBeUndefined();
   });
 
   it("writes a remote copy to the local clipboard only while the tab is in front and the window has focus", async () => {
@@ -397,40 +422,53 @@ describe("VncClient clipboard", () => {
     focus.mockRestore();
   });
 
+  it("tells the pane when an automatic write of a remote copy is refused", async () => {
+    stubClipboard({ writeText: vi.fn(async () => Promise.reject(new DOMException("denied", "NotAllowedError"))) });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { cb } = await connected();
+    rfb().emit("clipboard", { text: "t" });
+    await vi.waitFor(() => expect(cb.onClipboardNotice).toHaveBeenCalledTimes(1));
+  });
+
   it("keeps the text the remote copied and writes it to the local clipboard only when fetched with sync off", async () => {
     const writeText = vi.fn(async () => undefined);
     stubClipboard({ writeText });
-    const { client, cb } = await connected(options({ clipboardAutoSync: false }));
-    expect(await client.fetchClipboard()).toBe(false);
+    const { client } = await connected(options({ clipboardAutoSync: false }));
+    expect(await client.fetchClipboard()).toEqual({ status: "empty" });
     rfb().emit("clipboard", { text: "from remote" });
-    expect(cb.onRemoteClipboard).toHaveBeenCalledWith("from remote");
     expect(writeText).not.toHaveBeenCalled();
-    expect(await client.fetchClipboard()).toBe(true);
+    expect(await client.fetchClipboard()).toEqual({ status: "done" });
     expect(writeText).toHaveBeenCalledWith("from remote");
   });
 
-  it("reports false when the browser refuses to write the clipboard", async () => {
+  it("reports a refusal when the browser refuses to write the clipboard", async () => {
     stubClipboard({ writeText: vi.fn(async () => Promise.reject(new DOMException("denied", "NotAllowedError"))) });
-    const { client } = await connected();
+    const { client } = await connected(options({ clipboardAutoSync: false }));
     rfb().emit("clipboard", { text: "t" });
-    expect(await client.fetchClipboard()).toBe(false);
+    expect(await client.fetchClipboard()).toEqual({ status: "refused" });
   });
 });
 
 describe("VncClient picture", () => {
   it("reports the canvas size and tells the pane when the desktop size changes", async () => {
-    const { client, cb } = await connected();
-    expect(client.desktopSize()).toEqual({ width: 0, height: 0 });
-    expect(client.inputElement()).toBeNull();
-    expect(client.thumbnail(100)).toBeNull();
+    const before = await connected();
+    expect(before.client.desktopSize()).toEqual({ width: 0, height: 0 });
+    expect(before.client.inputElement()).toBeNull();
+    expect(before.client.thumbnail(100)).toBeNull();
+    before.client.disconnect();
+    mocks.rfbs.length = 0;
+
+    // noVNC's canvas exists once the session is up and is resized to the framebuffer when the server changes it.
     const canvas = document.createElement("canvas");
     canvas.width = 1024;
     canvas.height = 768;
     stage.append(canvas);
+    const { client, cb } = await connected();
     expect(client.inputElement()).toBe(canvas);
     expect(client.desktopSize()).toEqual({ width: 1024, height: 768 });
-    rfb().emit("desktopsize");
     expect(cb.onDesktopSize).toHaveBeenCalledWith(1024, 768);
+    canvas.width = 1280;
+    await vi.waitFor(() => expect(cb.onDesktopSize).toHaveBeenLastCalledWith(1280, 768));
   });
 });
 

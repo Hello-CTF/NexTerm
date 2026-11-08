@@ -1116,7 +1116,6 @@
   "允许一次": "Allow once",
   "允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。高危、无法判断和生产环境的操作每次都询问。": "Allow once: this time only; Allow for this session: no more prompts in this conversation; Always allow: saved in Grant Management and can be revoked. High-risk operations, operations that cannot be assessed and production operations are asked about every time.",
   "允许在本机与远程桌面之间同步剪贴板中的文本和图片。": "Allow syncing text and images on the clipboard between this machine and the remote desktop.",
-  "允许在本机与远程桌面之间同步文本剪贴板。": "Allow syncing text on the clipboard between this machine and the remote desktop.",
   "允许定时任务使用": "Allow scheduled jobs to use",
   "允许定时任务使用此规则": "Allow scheduled jobs to use this rule",
   "允许控制": "Allow control",

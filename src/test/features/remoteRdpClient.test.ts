@@ -5,7 +5,54 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   prepareRdpTransport: vi.fn(),
   init: vi.fn(),
+  copyText: vi.fn(async (_text: string) => undefined),
+  readText: vi.fn(async () => ""),
 }));
+
+// A stand-in for the IronRDP wasm module: the session builder records the clipboard callback it is given and the
+// session records every clipboard it is handed, the way the real module wires its clipboard channel.
+const wasm = vi.hoisted(() => {
+  class ClipboardData {
+    entries: Array<{ mime: string; value: string | Uint8Array }> = [];
+    addText(mime: string, text: string) {
+      this.entries.push({ mime, value: text });
+    }
+    addBinary(mime: string, bytes: Uint8Array) {
+      this.entries.push({ mime, value: bytes });
+    }
+    items() {
+      return this.entries.map((entry) => ({ mimeType: () => entry.mime, value: () => entry.value }));
+    }
+    isEmpty() {
+      return this.entries.length === 0;
+    }
+  }
+  const state = {
+    remoteCallback: null as ((data: ClipboardData) => void) | null,
+    pastes: [] as ClipboardData[],
+    ClipboardData,
+  };
+  class SessionBuilder {
+    remoteClipboardChangedCallback(cb: (data: ClipboardData) => void) {
+      state.remoteCallback = cb;
+      return this;
+    }
+    forceClipboardUpdateCallback() {
+      return this;
+    }
+    extension() {
+      return this;
+    }
+    async connect() {
+      return {
+        onClipboardPaste: async (data: ClipboardData) => {
+          state.pastes.push(data);
+        },
+      };
+    }
+  }
+  return { state, Backend: { SessionBuilder, ClipboardData } };
+});
 
 vi.mock("../../features/remote/remoteSocket", () => ({
   openVncChannel: vi.fn(),
@@ -13,9 +60,11 @@ vi.mock("../../features/remote/remoteSocket", () => ({
   remoteProxyAddress: () => "nxrd://remotedesktop",
 }));
 vi.mock("@devolutions/iron-remote-desktop", () => ({}));
+vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText, readText: mocks.readText, isNativeWebKit: () => false }));
 vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({
   init: mocks.init,
-  Backend: { backend: true },
+  Backend: wasm.Backend,
+  RdpFileTransferProvider: undefined,
   displayControl: vi.fn((enabled: boolean) => ({ displayControl: enabled })),
 }));
 
@@ -644,102 +693,54 @@ describe("RdpClient input", () => {
 });
 
 describe("RdpClient clipboard", () => {
-  it("sends and fetches through the component", async () => {
-    const { client } = await connected();
-    expect(await client.sendClipboard()).toBe(true);
-    expect(await client.fetchClipboard()).toBe(true);
-    expect(scenario.ui.sendClipboardData).toHaveBeenCalledTimes(1);
-    expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
-  });
+  type Clip = InstanceType<typeof wasm.Backend.ClipboardData>;
+  const entries = (clip: Clip | undefined) => clip?.entries.map((entry) => [entry.mime, entry.value]);
+  const remoteCopy = (fill: (clip: Clip) => void) => {
+    const clip = new wasm.Backend.ClipboardData();
+    fill(clip);
+    wasm.state.remoteCallback?.(clip);
+  };
+  const flush = async () => {
+    for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  };
 
-  it("writes a remote copy to the local clipboard only while the tab is in front and the window has focus", async () => {
-    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    const { client } = await connected();
-    const onUpdate = scenario.ui.onClipboardRemoteUpdateCallback.mock.calls[0]?.[0] as () => void;
-    expect(onUpdate).toBeTypeOf("function");
-    const flush = async () => {
-      for (let i = 0; i < 3; i += 1) await Promise.resolve();
+  beforeEach(() => {
+    wasm.state.remoteCallback = null;
+    wasm.state.pastes = [];
+    mocks.copyText.mockReset();
+    mocks.copyText.mockResolvedValue(undefined);
+    mocks.readText.mockReset();
+    mocks.readText.mockResolvedValue("");
+    // Like the component: ui.connect() builds the session from the module before initClipboard() has registered
+    // any clipboard callback of its own.
+    scenario.connect = async () => {
+      const element = document.querySelector("iron-remote-desktop") as HTMLElement & { module: { SessionBuilder: new () => { connect(): Promise<unknown> } } };
+      await new element.module.SessionBuilder().connect();
+      return { run: () => new Promise(() => undefined) };
     };
-    onUpdate();
-    await flush();
-    expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
-    client.setForeground(false);
-    onUpdate();
-    client.setForeground(true);
-    focus.mockReturnValue(false);
-    onUpdate();
-    await flush();
-    expect(scenario.ui.saveRemoteClipboardData).toHaveBeenCalledTimes(1);
-    focus.mockRestore();
   });
 
-  it("leaves remote copies for a manual fetch when automatic sync is off", async () => {
-    await connected(options({ clipboardAutoSync: false }));
-    expect(scenario.ui.onClipboardRemoteUpdateCallback).not.toHaveBeenCalled();
+  it("opens the clipboard channel itself, since the component registers its callback too late", async () => {
+    await connected();
+    expect(wasm.state.remoteCallback).toBeTypeOf("function");
   });
 
-  it("reports false when the component or browser refuses", async () => {
-    scenario.ui.sendClipboardData.mockRejectedValue(new Error("denied"));
-    scenario.ui.saveRemoteClipboardData.mockRejectedValue(new Error("denied"));
+  it("opens no clipboard channel when clipboard is off for the asset", async () => {
+    const { client } = await connected(options({ clipboard: false }));
+    expect(wasm.state.remoteCallback).toBeNull();
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
+    expect(await client.fetchClipboard()).toEqual({ status: "refused" });
+  });
+
+  it("sends text, and an image together with its text, from a native paste", async () => {
     const { client } = await connected();
-    expect(await client.sendClipboard()).toBe(false);
-    expect(await client.fetchClipboard()).toBe(false);
-  });
-
-  it("does not send in read-only mode, and moves nothing when clipboard is off for the asset", async () => {
-    const { client } = await connected();
-    client.setViewOnly(true);
-    expect(await client.sendClipboard()).toBe(false);
-    expect(await client.fetchClipboard()).toBe(true);
-    expect(scenario.ui.sendClipboardData).not.toHaveBeenCalled();
-
-    scenario = newScenario();
-    const other = document.body.appendChild(document.createElement("div"));
-    const off = new RdpClient(other, options({ clipboard: false }), callbacks());
-    await off.connect();
-    expect(await off.sendClipboard()).toBe(false);
-    expect(await off.fetchClipboard()).toBe(false);
-    expect(scenario.ui.setEnableClipboard).toHaveBeenCalledWith(false);
-  });
-
-  it("sends text and screenshot PNGs from a native paste DataTransfer without calling ui.sendClipboardData", async () => {
-    const { client } = await connected();
-    const pasted: Array<{ texts: Array<[string, string]>; binaries: Array<[string, Uint8Array]> }> = [];
-    class FakeClipboardData {
-      texts: Array<[string, string]> = [];
-      binaries: Array<[string, Uint8Array]> = [];
-      addText(mime: string, text: string) {
-        this.texts.push([mime, text]);
-      }
-      addBinary(mime: string, bytes: Uint8Array) {
-        this.binaries.push([mime, bytes]);
-      }
-      items() {
-        return [];
-      }
-      isEmpty() {
-        return this.texts.length === 0 && this.binaries.length === 0;
-      }
-    }
-    const clientInternal = client as unknown as {
-      wasmSession: { onClipboardPaste: (clip: FakeClipboardData) => Promise<void> };
-      clipboardDataCtor: typeof FakeClipboardData;
-    };
-    clientInternal.clipboardDataCtor = FakeClipboardData;
-    clientInternal.wasmSession = {
-      onClipboardPaste: vi.fn(async (clip: FakeClipboardData) => {
-        pasted.push({ texts: clip.texts, binaries: clip.binaries });
-      }),
-    };
-
     const textData = {
       items: [],
       files: [],
       getData: (type: string) => (type === "text/plain" ? "copied text" : type === "text/html" ? "<b>copied</b>" : ""),
     } as unknown as DataTransfer;
-    expect(await client.sendClipboard(textData)).toBe(true);
-    expect(scenario.ui.sendClipboardData).not.toHaveBeenCalled();
-    expect(pasted[0]?.texts).toEqual([
+    expect(await client.sendClipboard(textData)).toEqual({ status: "done" });
+    expect(entries(wasm.state.pastes[0])).toEqual([
       ["text/plain", "copied text"],
       ["text/html", "<b>copied</b>"],
     ]);
@@ -749,11 +750,88 @@ describe("RdpClient clipboard", () => {
     const imageData = {
       items: [{ kind: "file", type: "image/png", getAsFile: () => imageFile }],
       files: [imageFile],
-      getData: () => "",
+      getData: (type: string) => (type === "text/plain" ? "caption" : ""),
     } as unknown as DataTransfer;
-    expect(await client.sendClipboard(imageData)).toBe(true);
-    expect(scenario.ui.sendClipboardData).not.toHaveBeenCalled();
-    expect(pasted[1]?.binaries).toEqual([["image/png", pngMagic]]);
+    expect(await client.sendClipboard(imageData)).toEqual({ status: "done" });
+    expect(entries(wasm.state.pastes[1])).toEqual([
+      ["image/png", pngMagic],
+      ["text/plain", "caption"],
+    ]);
+  });
+
+  it("names the images it left out and refuses files it has no channel for", async () => {
+    const { client } = await connected();
+    const png = () => new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "a.png", { type: "image/png" });
+    const images = [png(), png()];
+    const two = { items: images.map((file) => ({ kind: "file", type: "image/png", getAsFile: () => file })), files: images, getData: () => "" } as unknown as DataTransfer;
+    const outcome = await client.sendClipboard(two);
+    expect(outcome.status).toBe("done");
+    expect(outcome.note).toBeTruthy();
+
+    const doc = new File(["x"], "a.txt", { type: "text/plain" });
+    const files = { items: [{ kind: "file", type: "text/plain", getAsFile: () => doc }], files: [doc], getData: () => "" } as unknown as DataTransfer;
+    const refused = await client.sendClipboard(files);
+    expect(refused.status).toBe("unsupported");
+    expect(refused.note).toBeTruthy();
+  });
+
+  it("reads the browser clipboard for the toolbar, and says when it is empty or refused", async () => {
+    const read = vi.fn(async () => [{ types: ["text/plain"], getType: async () => new Blob(["from toolbar"], { type: "text/plain" }) }]);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { read } });
+    const { client } = await connected();
+    expect(await client.sendClipboard()).toEqual({ status: "done" });
+    expect(entries(wasm.state.pastes[0])).toEqual([["text/plain", "from toolbar"]]);
+    read.mockResolvedValueOnce([]);
+    expect((await client.sendClipboard()).status).toBe("empty");
+    read.mockRejectedValueOnce(new Error("denied"));
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
+  });
+
+  it("writes a remote copy to the local clipboard only while the tab is in front and the window has focus", async () => {
+    const focus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { client } = await connected();
+    remoteCopy((clip) => clip.addText("text/plain", "remote text"));
+    await flush();
+    expect(mocks.copyText).toHaveBeenCalledWith("remote text");
+    client.setForeground(false);
+    remoteCopy((clip) => clip.addText("text/plain", "in background"));
+    client.setForeground(true);
+    focus.mockReturnValue(false);
+    remoteCopy((clip) => clip.addText("text/plain", "unfocused"));
+    await flush();
+    expect(mocks.copyText).toHaveBeenCalledTimes(1);
+    // The latest remote copy is still there for a manual fetch.
+    expect(await client.fetchClipboard()).toEqual({ status: "done" });
+    expect(mocks.copyText).toHaveBeenLastCalledWith("unfocused");
+  });
+
+  it("leaves remote copies for a manual fetch when automatic sync is off", async () => {
+    const { client } = await connected(options({ clipboardAutoSync: false }));
+    expect((await client.fetchClipboard()).status).toBe("empty");
+    remoteCopy((clip) => clip.addText("text/plain", "kept"));
+    await flush();
+    expect(mocks.copyText).not.toHaveBeenCalled();
+    expect(await client.fetchClipboard()).toEqual({ status: "done" });
+    expect(mocks.copyText).toHaveBeenCalledWith("kept");
+  });
+
+  it("reports a remote image it could not write, keeps it for a retry, and tells the pane when it was automatic", async () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const cb = { ...callbacks(), onClipboardNotice: vi.fn() };
+    const { client } = await connected(options(), cb);
+    remoteCopy((clip) => clip.addBinary("image/png", new Uint8Array([1, 2, 3])));
+    await flush();
+    expect(cb.onClipboardNotice).toHaveBeenCalledTimes(1);
+    const outcome = await client.fetchClipboard();
+    expect(outcome.status).toBe("refused");
+    expect(outcome.note).toBeTruthy();
+  });
+
+  it("does not send in read-only mode", async () => {
+    const { client } = await connected();
+    client.setViewOnly(true);
+    expect(await client.sendClipboard()).toEqual({ status: "refused" });
+    expect(wasm.state.pastes).toEqual([]);
   });
 });
 

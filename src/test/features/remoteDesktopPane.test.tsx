@@ -48,6 +48,7 @@ import { resetRemoteStatusForTest, useRemoteStatus } from "../../features/remote
 import type { ClientCallbacks, ClientOptions, EngineFailure, RemoteClient } from "../../features/remote/remoteTypes";
 import { RemoteEngineError } from "../../features/remote/remoteTypes";
 import { flush, mount, type MountedView } from "./reactTestUtils";
+import { NATIVE_PASTE_WAIT_MS } from "../../features/remote/remoteKeyboard";
 
 interface FakeClient extends RemoteClient {
   callbacks: ClientCallbacks;
@@ -71,8 +72,8 @@ function fakeClient(options: ClientOptions, callbacks: ClientCallbacks): FakeCli
     sendCombo: vi.fn(async () => undefined),
     sendText: vi.fn(),
     releaseAllKeys: vi.fn(),
-    sendClipboard: vi.fn(async () => true),
-    fetchClipboard: vi.fn(async () => true),
+    sendClipboard: vi.fn(async () => ({ status: "done" })),
+    fetchClipboard: vi.fn(async () => ({ status: "done" })),
     setForeground: vi.fn(),
     inputElement: () => null,
     thumbnail: () => null,
@@ -360,6 +361,9 @@ describe("RemoteDesktopPane", () => {
     act(() => {
       canvas.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyV", key: "v", ctrlKey: true, bubbles: true, cancelable: true }));
     });
+    // No native paste event follows a synthetic keydown, so the pane reads the clipboard itself after the wait, then
+    // gives the remote side a moment to take the clipboard in before the paste keys.
+    await act(() => new Promise((resolve) => setTimeout(resolve, NATIVE_PASTE_WAIT_MS + 200)));
     await flush();
     expect(reachedRemote).not.toHaveBeenCalled();
     expect(client.sendClipboard).toHaveBeenCalledTimes(1);
@@ -384,6 +388,20 @@ describe("RemoteDesktopPane", () => {
     expect(client.sendClipboard).toHaveBeenCalledTimes(1);
     expect(client.sendClipboard).toHaveBeenCalledWith(clipboardData);
     expect(vi.mocked(client.focus)).toHaveBeenCalled();
+  });
+
+  it("shows why a paste sent nothing and presses no paste keys", async () => {
+    const { client } = await focusedScreen();
+    vi.mocked(client.sendClipboard).mockResolvedValue({ status: "unsupported", note: "VNC 只能同步文本，图片和文件未发送" });
+    const target = pane().querySelector<HTMLTextAreaElement>("[data-testid='remote-paste-target']")!;
+    act(() => {
+      const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(pasteEvent, "clipboardData", { value: { getData: () => "", types: ["Files"], files: [] } });
+      target.dispatchEvent(pasteEvent);
+    });
+    await flush();
+    expect(vi.mocked(client.sendKey)).not.toHaveBeenCalled();
+    expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toBe("VNC 只能同步文本，图片和文件未发送");
   });
 
   it("hands the paste chord to the remote untouched when automatic clipboard sync is off", async () => {

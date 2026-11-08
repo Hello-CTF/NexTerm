@@ -11,10 +11,10 @@ import { RemoteKeysBar } from "./RemoteKeysBar";
 import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
-import { RemoteKeyboard } from "./remoteKeyboard";
+import { RemoteKeyboard, type PasteSource } from "./remoteKeyboard";
 import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
 import { AUTO_RECONNECT_WINDOW_MS, MAX_AUTO_RECONNECTS, type Failure } from "./connectFlow";
-import type { ModifierKey, ScaleMode } from "./remoteTypes";
+import type { ClipboardOutcome, ModifierKey, ScaleMode } from "./remoteTypes";
 import type { TouchMode } from "./touchGestures";
 import { t } from "../../i18n";
 
@@ -22,6 +22,28 @@ const TOOLBAR_HIDE_MS = 2500;
 const TOOLBAR_REVEAL_ZONE_PX = 56;
 const RESIZE_DEBOUNCE_MS = 300;
 const HINT_MS = 3500;
+const NOTICE_MS = 4000;
+
+// What a paste tells the user. A paste that worked says nothing (the remote side shows the result); an empty local
+// clipboard on a key paste is not an error either, the remote side then pastes its own clipboard.
+export function pasteNotice(outcome: ClipboardOutcome, source: PasteSource): string | null {
+  if (outcome.note) return outcome.note;
+  if (outcome.status === "refused") return source === "drop" ? t("拖入的内容未能发送") : t("无法读取本机剪贴板，远程桌面粘贴的是它自己的剪贴板内容");
+  if (outcome.status === "empty" && source === "drop") return t("拖入的内容中没有可发送的项目");
+  return null;
+}
+
+export function sendNotice(outcome: ClipboardOutcome): string {
+  if (outcome.status === "done") return outcome.note ?? t("已发送本机剪贴板");
+  if (outcome.status === "empty") return t("本机剪贴板为空");
+  return outcome.note ?? t("无法读取本机剪贴板");
+}
+
+export function fetchNotice(outcome: ClipboardOutcome): string {
+  if (outcome.status === "done") return outcome.note ?? t("已复制远程剪贴板");
+  if (outcome.status === "empty") return t("远程剪贴板暂无内容");
+  return outcome.note ?? t("无法写入本机剪贴板");
+}
 const PENDING_RETRY_MS = 600;
 const PENDING_RETRY_MAX = 10;
 const NOTICE_RECONNECT = t("可重新连接，按所选大小启动。");
@@ -168,6 +190,19 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const hideTimer = useRef<number | null>(null);
   const hintTimer = useRef<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
+  const showNotice = useCallback((message: string | null) => {
+    if (!message) return;
+    setNotice(message);
+    if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), NOTICE_MS);
+  }, []);
+  const showNoticeRef = useRef(showNotice);
+  showNoticeRef.current = showNotice;
+  useEffect(() => {
+    if (session.clipboardNotice) showNotice(session.clipboardNotice.message);
+  }, [session.clipboardNotice, showNotice]);
 
   const effectiveViewOnly = viewOnly ?? options.viewOnly;
   const effectiveResolution = useMemo<ResolutionChoice>(
@@ -175,12 +210,13 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     [resolution, options.resolution, options.width, options.height],
   );
   const connected = session.status === "connected";
-  // RDP takes a new clipboard on its own channel, so the paste keys wait briefly; VNC keeps both on one stream.
+  // RDP takes a new clipboard on its own channel, and a VNC server with the extended clipboard asks for the text
+  // after it was announced, so the paste keys wait briefly in both.
   const keyboardOptionsRef = useRef({ commandAsCtrl: false, syncPaste: false, pasteDelayMs: 0 });
   keyboardOptionsRef.current = {
     commandAsCtrl: options.commandAsCtrl && isMac(),
     syncPaste: options.clipboard && options.clipboardAutoSync,
-    pasteDelayMs: protocol === "rdp" ? 150 : 0,
+    pasteDelayMs: protocol === "rdp" ? 150 : 100,
   };
   const allowNativePasteRef = useRef(false);
   const keyboard = useMemo(
@@ -197,6 +233,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           input.focus({ preventScroll: true });
           return true;
         },
+        (outcome, source) => showNoticeRef.current(pasteNotice(outcome, source)),
       ),
     [clientRef],
   );
@@ -219,6 +256,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     return () => {
       if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
       if (hintTimer.current !== null) window.clearTimeout(hintTimer.current);
+      if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current);
     };
   }, [armHide]);
   useEffect(() => {
@@ -305,7 +343,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       event.preventDefault();
       event.stopPropagation();
       clientRef.current?.focus();
-      keyboard.handlePaste(event.dataTransfer);
+      if (!keyboard.handlePaste(event.dataTransfer, "drop")) showNoticeRef.current(t("「自动同步剪贴板」已关闭，拖入的文件未发送"));
     };
     wrap.addEventListener("focusin", onFocusIn);
     wrap.addEventListener("focusout", onFocusOut);
@@ -583,7 +621,11 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
 
   const onPan = (dx: number, dy: number) => {
     const stage = viewportRef.current?.firstElementChild;
-    if (stage instanceof HTMLElement) stage.scrollBy(-dx, -dy);
+    if (!(stage instanceof HTMLElement)) return;
+    // RDP scrolls the stage itself; noVNC scrolls its own screen element inside it.
+    const inner = stage.firstElementChild;
+    const scroller = inner instanceof HTMLElement && inner.scrollHeight + inner.scrollWidth > inner.clientHeight + inner.clientWidth ? inner : stage;
+    scroller.scrollBy(-dx, -dy);
   };
 
   const onPaneMove = (event: React.PointerEvent) => {
@@ -646,8 +688,8 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
           onToggleHeld={toggleHeld}
           onCombo={sendCombo}
           clipboardEnabled={options.clipboard}
-          onSendClipboard={() => void clientRef.current?.sendClipboard()}
-          onFetchClipboard={() => void clientRef.current?.fetchClipboard()}
+          onSendClipboard={() => void clientRef.current?.sendClipboard().then((outcome) => showNotice(sendNotice(outcome)))}
+          onFetchClipboard={() => void clientRef.current?.fetchClipboard().then((outcome) => showNotice(fetchNotice(outcome)))}
           resolution={effectiveResolution}
           onResolution={chooseResolution}
           onCustomResolution={() => void chooseCustomResolution()}
@@ -679,6 +721,15 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
             <button type="button" className="nx-btn nx-btn-outline shrink-0" onClick={() => setResolutionNotice(null)}>
               {t("忽略")}
             </button>
+          </div>
+        )}
+        {notice && connected && (
+          <div
+            role="status"
+            className="absolute bottom-12 left-1/2 z-20 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-lg bg-neutral-800/95 px-3 py-1.5 text-[12px] text-neutral-100"
+            data-testid="remote-clipboard-notice"
+          >
+            {notice}
           </div>
         )}
         {hint && (

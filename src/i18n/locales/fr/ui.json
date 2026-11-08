@@ -1119,7 +1119,6 @@
   "允许一次": "Autoriser une fois",
   "允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。高危、无法判断和生产环境的操作每次都询问。": "Autoriser une fois : cette fois seulement ; Autoriser pour cette session : plus de demande pendant cette conversation ; Toujours autoriser : enregistré dans la gestion des autorisations, révocable. Les actions à haut risque, indéterminées ou en production sont toujours demandées.",
   "允许在本机与远程桌面之间同步剪贴板中的文本和图片。": "Autoriser la synchronisation du texte et des images du presse-papiers entre cet appareil et le bureau à distance.",
-  "允许在本机与远程桌面之间同步文本剪贴板。": "Autoriser la synchronisation du texte du presse-papiers entre cet appareil et le bureau à distance.",
   "允许定时任务使用": "Autoriser les tâches planifiées à l'utiliser",
   "允许定时任务使用此规则": "Autoriser les tâches planifiées à utiliser cette règle",
   "允许控制": "Autoriser le contrôle",

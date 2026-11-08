@@ -22,7 +22,9 @@ interface DirectoryProbeItem {
 //   text they copy, and dropping that text would break an ordinary paste.
 // - Any other file item (for example copied in a file manager, which also exposes its name or path as text): the files
 //   win and the accompanying text is ignored. Folders and items whose File is unavailable are reported as skipped.
-export function pasteUploadFiles(data: DataTransfer | null): PasteUploadSelection {
+// An image that arrives with plain text (a copied spreadsheet range, an office document) is the text's rendering, so a
+// terminal pastes the text; a remote desktop can carry both and passes `keepImagesWithText`.
+export function pasteUploadFiles(data: DataTransfer | null, { keepImagesWithText = false }: { keepImagesWithText?: boolean } = {}): PasteUploadSelection {
   const none: PasteUploadSelection = { files: [], skipped: [] };
   if (!data) return none;
   const files: File[] = [];
@@ -57,7 +59,7 @@ export function pasteUploadFiles(data: DataTransfer | null): PasteUploadSelectio
     }
   }
   if (fileItems === 0) return none;
-  if (onlyImages && clipboardHasPlainText(data)) return none;
+  if (onlyImages && !keepImagesWithText && clipboardHasPlainText(data)) return none;
   return { files, skipped };
 }
 

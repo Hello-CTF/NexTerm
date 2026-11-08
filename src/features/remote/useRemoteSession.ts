@@ -62,6 +62,7 @@ export interface RemoteSession {
   // The asset has a Wake-on-LAN MAC, so a failed connect can offer to wake the host; name is for messages.
   wake: { available: boolean; name: string };
   clientRef: RefObject<RemoteClient | null>;
+  clipboardNotice: { message: string; at: number } | null;
   connect: () => void;
   disconnect: () => void;
   // Makes the next connect start with this desktop size instead of the asset's.
@@ -81,6 +82,8 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
   const [reconnectPaused, setReconnectPaused] = useState(false);
   const [protocol, setProtocol] = useState<RemoteProtocol>("rdp");
   const [desktopSize, setDesktopSize] = useState<{ width: number; height: number } | null>(null);
+  // A clipboard transfer that ran without the user watching (a remote copy written locally) and did not complete.
+  const [clipboardNotice, setClipboardNotice] = useState<{ message: string; at: number } | null>(null);
   const [options, setOptions] = useState<RemoteDesktopOptions>(DEFAULT_OPTIONS);
   const [wake, setWake] = useState({ available: false, name: "" });
   const clientRef = useRef<RemoteClient | null>(null);
@@ -187,6 +190,9 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
         },
         onDesktopSize: (width, height) => {
           if (gen === generation.current) setDesktopSize({ width, height });
+        },
+        onClipboardNotice: (message) => {
+          if (gen === generation.current) setClipboardNotice({ message, at: Date.now() });
         },
         onDisconnected: (raw: EngineFailure | null) => {
           if (gen !== generation.current) return;
@@ -298,5 +304,5 @@ export function useRemoteSession(tabId: string, assetId: string, viewportRef: Re
     return () => window.clearInterval(timer);
   }, [status, tabId]);
 
-  return { status, failure, retryIn, attempt, reconnectPaused, desktopSize, protocol, options, wake, clientRef, connect: manualConnect, disconnect, setResolution };
+  return { status, failure, retryIn, attempt, reconnectPaused, desktopSize, protocol, options, wake, clientRef, clipboardNotice, connect: manualConnect, disconnect, setResolution };
 }

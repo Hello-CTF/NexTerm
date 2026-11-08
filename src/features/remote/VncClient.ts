@@ -3,6 +3,7 @@ import { keysymOf } from "./keys";
 import {
   RemoteEngineError,
   type ClientCallbacks,
+  type ClipboardOutcome,
   type ClientOptions,
   type EngineFailure,
   type RemoteClient,
@@ -61,10 +62,10 @@ export class VncClient implements RemoteClient {
       rfb.showDotCursor = true;
       rfb.viewOnly = this.options.viewOnly;
       this.applyScale();
-      const reportSize = (force = false) => {
+      const reportSize = () => {
         const size = this.desktopSize();
-        if (!force && (size.width <= 0 || size.height <= 0)) return;
-        if (!force && this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
+        if (size.width <= 0 || size.height <= 0) return;
+        if (this.lastDesktopSize.width === size.width && this.lastDesktopSize.height === size.height) return;
         this.lastDesktopSize = size;
         this.callbacks.onDesktopSize?.(size.width, size.height);
       };
@@ -74,11 +75,11 @@ export class VncClient implements RemoteClient {
         settled = true;
         const canvas = this.stage.querySelector("canvas");
         if (canvas) {
-          this.canvasObserver = new MutationObserver(() => reportSize(false));
+          this.canvasObserver = new MutationObserver(() => reportSize());
           this.canvasObserver.observe(canvas, { attributes: true, attributeFilter: ["width", "height"] });
         }
         this.callbacks.onConnected();
-        reportSize(false);
+        reportSize();
         resolve();
       });
       rfb.addEventListener("securityfailure", (event) => {
@@ -114,13 +115,11 @@ export class VncClient implements RemoteClient {
       });
       rfb.addEventListener("clipboard", (event) => {
         this.remoteClipboard = (event as CustomEvent<{ text: string }>).detail.text;
-        this.callbacks.onRemoteClipboard?.(this.remoteClipboard);
         if (this.options.clipboard && this.options.clipboardAutoSync && this.foreground && document.hasFocus()) {
-          void (isNativeWebKit() ? copyText(this.remoteClipboard) : navigator.clipboard?.writeText(this.remoteClipboard))?.catch(() => undefined);
+          void this.fetchClipboard().then((outcome) => {
+            if (outcome.status === "refused") this.callbacks.onClipboardNotice?.(t("远程剪贴板未能写入本机剪贴板"));
+          });
         }
-      });
-      rfb.addEventListener("desktopsize" as string, () => {
-        reportSize(true);
       });
     });
   }
@@ -147,10 +146,12 @@ export class VncClient implements RemoteClient {
       rfb.scaleViewport = true;
       rfb.dragViewport = false;
     } else {
-      // noVNC has no arbitrary zoom: anything but fit shows the picture at its own size and scrolls.
+      // noVNC has no arbitrary zoom: anything but fit shows the picture at its own size. The canvas keeps the
+      // framebuffer size and noVNC's screen element scrolls it; dragging the viewport would swallow every left-button
+      // drag (text selection included), so drags stay with the remote desktop.
       rfb.scaleViewport = false;
-      rfb.clipViewport = true;
-      rfb.dragViewport = true;
+      rfb.clipViewport = false;
+      rfb.dragViewport = false;
     }
   }
 
@@ -206,33 +207,46 @@ export class VncClient implements RemoteClient {
     // noVNC releases its own held keys on blur; the modifiers this app latched are released by the pane.
   }
 
-  async sendClipboard(data?: DataTransfer | null): Promise<boolean> {
-    if (!this.options.clipboard || !this.rfb || this.rfb.viewOnly) return false;
+  // Without the extended clipboard extension, RFB cut text is Latin-1: noVNC turns every other character into "?".
+  private latin1Only(): boolean {
+    const rfb = this.rfb as unknown as { _clipboardServerCapabilitiesFormats?: Record<number, boolean>; _clipboardServerCapabilitiesActions?: Record<number, boolean> } | null;
+    // Format 1 is text, action 0x08000000 is notify (noVNC's extendedClipboardFormatText / ActionNotify).
+    return !(rfb?._clipboardServerCapabilitiesFormats?.[1] && rfb._clipboardServerCapabilitiesActions?.[0x08000000]);
+  }
+
+  async sendClipboard(data?: DataTransfer | null): Promise<ClipboardOutcome> {
+    if (!this.options.clipboard || !this.rfb || this.rfb.viewOnly) return { status: "refused" };
+    let text: string;
     try {
-      const text = data ? data.getData("text/plain") : isNativeWebKit() ? await readText() : await navigator.clipboard.readText();
-      if (!text) return false;
-      this.rfb.clipboardPasteFrom(text);
-      return true;
+      text = data ? data.getData("text/plain") : isNativeWebKit() ? await readText() : await navigator.clipboard.readText();
     } catch {
-      return false;
+      return { status: "refused" };
     }
+    if (!text) {
+      const carriesOther = data ? data.files.length > 0 || Array.from(data.types ?? []).some((type) => type !== "text/plain") : false;
+      return carriesOther ? { status: "unsupported", note: t("VNC 只能同步文本，图片和文件未发送") } : { status: "empty" };
+    }
+    this.rfb.clipboardPasteFrom(text);
+    const lossy = Array.from(text).some((char) => (char.codePointAt(0) ?? 0) > 0xff) && this.latin1Only();
+    return { status: "done", note: lossy ? t("此 VNC 服务器的剪贴板只支持西文字符，中文等字符会变成「?」") : undefined };
   }
 
   setForeground(foreground: boolean): void {
     this.foreground = foreground;
   }
 
-  async fetchClipboard(): Promise<boolean> {
-    if (!this.options.clipboard || !this.remoteClipboard) return false;
+  async fetchClipboard(): Promise<ClipboardOutcome> {
+    if (!this.options.clipboard) return { status: "refused" };
+    if (!this.remoteClipboard) return { status: "empty" };
     try {
       if (isNativeWebKit()) {
         await copyText(this.remoteClipboard);
       } else {
         await navigator.clipboard.writeText(this.remoteClipboard);
       }
-      return true;
+      return { status: "done" };
     } catch {
-      return false;
+      return { status: "refused" };
     }
   }
 

@@ -62,11 +62,19 @@ export class RemoteEngineError extends Error {
   }
 }
 
+// "done": the content was moved. "empty": there was nothing to move. "unsupported": the content is of a kind this
+// session cannot carry, so nothing was moved. "refused": clipboard access or the transfer failed. `note` is a
+// user-facing remark that applies even when something was moved (an item that was left out, a lossy conversion).
+export interface ClipboardOutcome {
+  status: "done" | "empty" | "unsupported" | "refused";
+  note?: string;
+}
+
 export interface ClientCallbacks {
   onConnected: () => void;
   onDisconnected: (failure: EngineFailure | null) => void;
-  // Text the remote side copied; delivered only when the user asked to fetch it.
-  onRemoteClipboard?: (text: string) => void;
+  // A clipboard transfer the user did not ask about directly (a remote copy) could not complete.
+  onClipboardNotice?: (message: string) => void;
   onDesktopSize?: (width: number, height: number) => void;
 }
 
@@ -98,11 +106,11 @@ export interface RemoteClient {
   sendCombo(codes: readonly string[]): Promise<void>;
   sendText(text: string): void;
   releaseAllKeys(): void;
-  // Both move the local clipboard (text, and PNG images or files over RDP); they resolve to false when there was
-  // nothing to move or the browser refused clipboard access. When `data` is supplied from a native paste/drop event,
-  // its payload is sent directly without calling navigator.clipboard.read().
-  sendClipboard(data?: DataTransfer | null): Promise<boolean>;
-  fetchClipboard(): Promise<boolean>;
+  // Moves the local clipboard (text, and PNG images or files over RDP) to the remote side. When `data` is supplied
+  // from a native paste/drop event, its payload is sent directly without calling navigator.clipboard.read().
+  sendClipboard(data?: DataTransfer | null): Promise<ClipboardOutcome>;
+  // Writes the last remote copy to the local clipboard.
+  fetchClipboard(): Promise<ClipboardOutcome>;
   // Whether the tab is the one shown; a tab in the background never writes the local clipboard.
   setForeground(foreground: boolean): void;
   // The element that receives pointer events, for the touch layer.

@@ -1122,7 +1122,6 @@
   "允许一次": "Permitir una vez",
   "允许一次：仅本次；本会话允许：本次对话不再询问；永久允许：存入授权管理，可撤销。高危、无法判断和生产环境的操作每次都询问。": "Permitir una vez: solo esta vez; Permitir en esta sesión: no se vuelve a preguntar en esta conversación; Permitir siempre: se guarda en la gestión de autorizaciones y se puede revocar. Las operaciones de alto riesgo, indeterminables o de producción se preguntan siempre.",
   "允许在本机与远程桌面之间同步剪贴板中的文本和图片。": "Permitir sincronizar texto e imágenes del portapapeles entre este equipo y el escritorio remoto.",
-  "允许在本机与远程桌面之间同步文本剪贴板。": "Permitir sincronizar el portapapeles de texto entre este equipo y el escritorio remoto.",
   "允许定时任务使用": "Permitir que las tareas programadas lo usen",
   "允许定时任务使用此规则": "Permitir que las tareas programadas usen esta regla",
   "允许控制": "Permitir control",

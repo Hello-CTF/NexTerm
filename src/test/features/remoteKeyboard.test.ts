@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi } from "vitest";
-import { RemoteKeyboard, type RemoteKeyboardOptions } from "../../features/remote/remoteKeyboard";
+import { NATIVE_PASTE_WAIT_MS, RemoteKeyboard, type RemoteKeyboardOptions } from "../../features/remote/remoteKeyboard";
+import type { ClipboardOutcome } from "../../features/remote/remoteTypes";
 
 function key(type: "keydown" | "keyup", code: string, init: KeyboardEventInit = {}): KeyboardEvent {
   return new KeyboardEvent(type, { code, ...init });
 }
 
-function setup(options: Partial<RemoteKeyboardOptions> = {}, sendClipboard = vi.fn(async () => true)) {
+function setup(options: Partial<RemoteKeyboardOptions> = {}, sendClipboard = vi.fn(async (): Promise<ClipboardOutcome> => ({ status: "done" }))) {
   const log: string[] = [];
   const target = {
     sendKey: vi.fn((code: string, down: boolean) => log.push(`${code}:${down ? "down" : "up"}`)),
@@ -60,14 +61,15 @@ describe("RemoteKeyboard", () => {
   });
 
   it("keeps the modifier on the paste when it was let go while the clipboard was read", async () => {
-    let finish: (sent: boolean) => void = () => undefined;
-    const { keyboard, log } = setup({}, vi.fn(() => new Promise<boolean>((resolve) => (finish = resolve))));
+    let finish: (outcome: ClipboardOutcome) => void = () => undefined;
+    const { keyboard, log } = setup({}, vi.fn(() => new Promise<ClipboardOutcome>((resolve) => (finish = resolve))));
     keyboard.handle(key("keydown", "ControlLeft", { ctrlKey: true }));
     expect(keyboard.handle(key("keydown", "KeyV", { ctrlKey: true }))).toBe(true);
     // A second press while the first paste is in flight sends nothing more.
     expect(keyboard.handle(key("keydown", "KeyV", { ctrlKey: true }))).toBe(true);
     keyboard.handle(key("keyup", "ControlLeft"));
-    finish(false);
+    // An empty local clipboard still lets the remote side paste its own.
+    finish({ status: "empty" });
     await settle();
     expect(log).toEqual(["clipboard", "ControlLeft:down", "KeyV:down", "KeyV:up", "ControlLeft:up"]);
   });
@@ -96,7 +98,7 @@ describe("RemoteKeyboard", () => {
       sendKey: vi.fn((code: string, down: boolean) => log.push(`${code}:${down ? "down" : "up"}`)),
       sendClipboard: vi.fn(async (data?: DataTransfer | null) => {
         log.push(`clipboard:${data ? "event" : "fallback"}`);
-        return true;
+        return { status: "done" } as ClipboardOutcome;
       }),
     };
     const keyboard = new RemoteKeyboard(
@@ -111,5 +113,54 @@ describe("RemoteKeyboard", () => {
     await settle();
     expect(log).toEqual(["ControlLeft:down", "clipboard:event", "KeyV:down", "KeyV:up"]);
     expect(target.sendClipboard).toHaveBeenCalledWith(fakeData);
+  });
+
+  it("does not paste the remote clipboard over local content the session cannot carry, and reports it", async () => {
+    const outcomes: ClipboardOutcome[] = [];
+    const log: string[] = [];
+    const target = {
+      sendKey: vi.fn((code: string, down: boolean) => log.push(`${code}:${down ? "down" : "up"}`)),
+      sendClipboard: vi.fn(async (): Promise<ClipboardOutcome> => ({ status: "unsupported", note: "text only" })),
+    };
+    const keyboard = new RemoteKeyboard(
+      () => target,
+      () => ({ commandAsCtrl: false, syncPaste: true, pasteDelayMs: 0 }),
+      undefined,
+      (outcome) => outcomes.push(outcome),
+    );
+    expect(keyboard.handle(key("keydown", "KeyV", { ctrlKey: true }))).toBe(true);
+    await settle();
+    expect(log).toEqual([]);
+    expect(outcomes).toEqual([{ status: "unsupported", note: "text only" }]);
+  });
+
+  it("presses no paste keys for a drop that delivered nothing", async () => {
+    const { keyboard, log } = setup({}, vi.fn(async (): Promise<ClipboardOutcome> => ({ status: "empty" })));
+    expect(keyboard.handlePaste({ getData: () => "" } as unknown as DataTransfer, "drop")).toBe(true);
+    await settle();
+    expect(log).toEqual(["clipboard"]);
+  });
+
+  it("waits for the late native paste event before reading the clipboard itself, then refocuses the remote", async () => {
+    vi.useFakeTimers();
+    try {
+      const log: string[] = [];
+      const target = {
+        sendKey: vi.fn((code: string, down: boolean) => log.push(`${code}:${down ? "down" : "up"}`)),
+        sendClipboard: vi.fn(async (data?: DataTransfer | null): Promise<ClipboardOutcome> => {
+          log.push(`clipboard:${data ? "event" : "fallback"}`);
+          return { status: "done" };
+        }),
+        focus: vi.fn(() => log.push("focus")),
+      };
+      const keyboard = new RemoteKeyboard(() => target, () => ({ commandAsCtrl: false, syncPaste: true, pasteDelayMs: 0 }), () => true);
+      expect(keyboard.handle(key("keydown", "KeyV", { ctrlKey: true }))).toBe(true);
+      await vi.advanceTimersByTimeAsync(NATIVE_PASTE_WAIT_MS - 50);
+      expect(target.sendClipboard).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(log).toEqual(["focus", "clipboard:fallback", "ControlLeft:down", "KeyV:down", "KeyV:up", "ControlLeft:up"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
