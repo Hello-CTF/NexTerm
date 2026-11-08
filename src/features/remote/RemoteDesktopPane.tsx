@@ -12,6 +12,10 @@ import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
 import { RemoteKeyboard, type PasteSource } from "./remoteKeyboard";
+import { filesTransfer, readNativeDrop } from "./nativeRemoteDrop";
+import { asNativeDropEvent, html5DropIsRecent, noteHtml5Drop } from "../files/nativeDrop";
+import { EVENTS, listenEvent } from "../../ipc/events";
+import { DESKTOP } from "../../ipc/env";
 import { WAKE_DISCLAIMER, wakeAsset } from "../explorer/wakeAction";
 import { AUTO_RECONNECT_WINDOW_MS, MAX_AUTO_RECONNECTS, type Failure } from "./connectFlow";
 import type { ClipboardOutcome, ModifierKey, ScaleMode } from "./remoteTypes";
@@ -342,6 +346,8 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       if (!event.dataTransfer?.types.includes("Files")) return;
       event.preventDefault();
       event.stopPropagation();
+      // WebView2 also reports this drop as a native one; that copy must not be sent again.
+      noteHtml5Drop();
       clientRef.current?.focus();
       if (!keyboard.handlePaste(event.dataTransfer, "drop")) showNoticeRef.current(t("「自动同步剪贴板」已关闭，拖入的文件未发送"));
     };
@@ -363,6 +369,42 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       wrap.removeEventListener("drop", onDrop, true);
     };
   }, [tabId, effectiveViewOnly, connected, options.clipboard, clientRef, releaseKeyboardNow, keyboard]);
+
+  // macOS and Linux hand file drops to the desktop shell instead of the page; the shell reports the local paths.
+  useEffect(() => {
+    if (!DESKTOP || effectiveViewOnly || !connected || !options.clipboard) return;
+    let off: (() => void) | null = null;
+    let disposed = false;
+    void listenEvent<unknown>(EVENTS.filesDropped, (raw) => {
+      const event = asNativeDropEvent(raw);
+      const wrap = wrapRef.current;
+      if (!event || !wrap || html5DropIsRecent()) return;
+      const point = document.elementFromPoint?.(event.x, event.y) ?? null;
+      if (!point || !viewportRef.current?.contains(point)) return;
+      // VNC carries text only, so the files are not read at all.
+      if (protocol !== "rdp") {
+        showNoticeRef.current(t("VNC 只能同步文本，图片和文件未发送"));
+        return;
+      }
+      clientRef.current?.focus();
+      void readNativeDrop(event.paths).then(({ files, skipped }) => {
+        if (disposed) return;
+        const note = skipped.length > 0 ? t("未发送：{value}", { value: skipped.join(t("、")) }) : undefined;
+        if (files.length === 0) {
+          showNoticeRef.current(note ?? t("拖入的内容中没有可发送的项目"));
+          return;
+        }
+        if (!keyboard.handlePaste(filesTransfer(files), "drop", note)) showNoticeRef.current(t("「自动同步剪贴板」已关闭，拖入的文件未发送"));
+      });
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else off = unlisten;
+    });
+    return () => {
+      disposed = true;
+      off?.();
+    };
+  }, [effectiveViewOnly, connected, options.clipboard, clientRef, keyboard, protocol]);
 
   useEffect(() => {
     const onBlur = () => releaseHeld();

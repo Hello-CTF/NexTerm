@@ -4,7 +4,11 @@ import { RemoteEngineError, type ClientCallbacks, type ClipboardOutcome, type Cl
 import { stripBuildPaths } from "./rdpFailure";
 import { drawThumbnail } from "./thumbnail";
 import { pasteUploadFiles } from "../terminal/imagePaste";
+import { saveRemoteFiles, type RemoteFileEntry } from "./remoteFileSave";
 import { copyText, isNativeWebKit, readText } from "../../ui/clipboard";
+import { bytesToBase64 } from "../../ui/base64";
+import { describeError } from "../../ui/errorText";
+import { localFileApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { t } from "../../i18n";
 
@@ -31,6 +35,8 @@ interface FileTransferLike {
   getBuilderExtensions(): unknown[];
   setSession(session: unknown): void;
   uploadFiles(files: File[]): unknown;
+  on?(event: "files-available", handler: (files: RemoteFileEntry[]) => void): void;
+  downloadFile?(file: RemoteFileEntry, index: number): { completion: Promise<Blob> };
   dispose?(): void;
 }
 
@@ -181,6 +187,11 @@ export function resizeOutcomeOf(text: string): ResizeOutcome {
   return "failed";
 }
 
+// imageNote adds why the app could not write the image (a missing clipboard tool, say) to a failure note.
+function imageNote(note: string, reason: string): string {
+  return reason ? t("{note}（{reason}）", { note, reason }) : note;
+}
+
 // RdpClient drives the IronRDP web component (WebAssembly, loaded on first use). Audio redirection is not part of the
 // component's API, so a session has no sound.
 export class RdpClient implements RemoteClient {
@@ -191,6 +202,8 @@ export class RdpClient implements RemoteClient {
   private wasmSession: WasmSession | null = null;
   private clipboardDataCtor: (new () => WasmClipboardData) | null = null;
   private remoteClipboard: WasmClipboardData | null = null;
+  // Files the remote side copied last, as its file channel listed them; saved on the toolbar's fetch.
+  private remoteFiles: RemoteFileEntry[] | null = null;
   private fileTransfer: FileTransferLike | null = null;
   private sizer: HTMLElement | null = null;
   private holder: HTMLElement | null = null;
@@ -343,6 +356,7 @@ export class RdpClient implements RemoteClient {
                 client.fileTransfer?.dispose?.();
                 const provider = new FileTransferCtor();
                 client.fileTransfer = provider;
+                provider.on?.("files-available", (files) => client.remoteFilesAvailable(files));
                 for (const ext of provider.getBuilderExtensions()) inner.extension(ext);
               }
               const session = (await inner.connect()) as WasmSession;
@@ -509,6 +523,7 @@ export class RdpClient implements RemoteClient {
     this.wasmSession = null;
     this.clipboardDataCtor = null;
     this.remoteClipboard = null;
+    this.remoteFiles = null;
     try {
       this.ui?.shutdown();
     } catch {
@@ -705,6 +720,8 @@ export class RdpClient implements RemoteClient {
   private remoteClipboardChanged(data: WasmClipboardData): void {
     if (this.closed) return;
     this.remoteClipboard = data;
+    // A file copy is announced with no text or image formats; only a copy that carries content replaces it.
+    if (!data.isEmpty()) this.remoteFiles = null;
     if (!this.options.clipboardAutoSync || !this.foreground || !document.hasFocus()) return;
     void this.writeRemoteClipboard().then((outcome) => {
       if (outcome.status === "refused" || outcome.status === "unsupported") {
@@ -713,10 +730,22 @@ export class RdpClient implements RemoteClient {
     });
   }
 
+  // The remote side copied files. They cannot go to the local clipboard, so the user is told how to save them.
+  private remoteFilesAvailable(files: RemoteFileEntry[]): void {
+    if (this.closed) return;
+    const count = files.filter((file) => !file.isDirectory).length;
+    if (count === 0) return;
+    this.remoteFiles = files;
+    this.remoteClipboard = null;
+    if (!this.foreground || !document.hasFocus()) return;
+    this.callbacks.onClipboardNotice?.(t("远程桌面复制了 {count} 个文件，点击工具栏「取回远程剪贴板到本机」保存", { count }));
+  }
+
   private async writeRemoteClipboard(): Promise<ClipboardOutcome> {
     const remote = this.remoteClipboard;
     if (!remote || remote.isEmpty()) return { status: "empty" };
     let plain: string | null = null;
+    let imageError = "";
     const blobs: Record<string, Blob> = {};
     for (const item of remote.items()) {
       const mime = item.mimeType();
@@ -725,6 +754,16 @@ export class RdpClient implements RemoteClient {
       if (mime === "text/plain" || mime === "text/html" || mime === "image/png") blobs[mime] = new Blob([val as BlobPart], { type: mime });
     }
     const hasImage = "image/png" in blobs;
+    // The WebKit webview writes an image only from a click, and the desktop runtime writes text only, so desktop
+    // WebKit builds hand images to the system clipboard through the app.
+    if (hasImage && !WEB && isNativeWebKit()) {
+      try {
+        await localFileApi.writeClipboardImage(bytesToBase64(new Uint8Array(await blobs["image/png"]!.arrayBuffer())));
+        return { status: "done", note: plain ? t("远程剪贴板同时有文本和图片，只复制了图片") : undefined };
+      } catch (error) {
+        imageError = describeError(error);
+      }
+    }
     // WebKit desktop builds write text through the native runtime, which never shows WebKit's paste confirmation.
     const viaBrowser = hasImage || !isNativeWebKit() || WEB;
     if (viaBrowser && typeof ClipboardItem === "function" && typeof navigator !== "undefined" && typeof navigator.clipboard?.write === "function") {
@@ -738,12 +777,12 @@ export class RdpClient implements RemoteClient {
     if (plain !== null) {
       try {
         await copyText(plain);
-        return { status: "done", note: hasImage ? t("远程图片未能写入本机剪贴板，只复制了文本") : undefined };
+        return { status: "done", note: hasImage ? imageNote(t("远程图片未能写入本机剪贴板，只复制了文本"), imageError) : undefined };
       } catch {
         return { status: "refused" };
       }
     }
-    if (hasImage) return { status: "refused", note: t("远程图片未能写入本机剪贴板，点击工具栏「取回远程剪贴板到本机」重试") };
+    if (hasImage) return { status: "refused", note: imageNote(t("远程图片未能写入本机剪贴板，点击工具栏「取回远程剪贴板到本机」重试"), imageError) };
     return { status: Object.keys(blobs).length > 0 ? "refused" : "unsupported", note: Object.keys(blobs).length > 0 ? undefined : t("远程剪贴板的内容类型不受支持") };
   }
 
@@ -784,6 +823,11 @@ export class RdpClient implements RemoteClient {
   async fetchClipboard(): Promise<ClipboardOutcome> {
     if (!this.options.clipboard || !this.ui) return { status: "refused" };
     try {
+      const files = this.remoteFiles;
+      const transfer = this.fileTransfer;
+      if (files && transfer?.downloadFile) {
+        return await saveRemoteFiles(files, (index) => transfer.downloadFile!(files[index]!, index).completion);
+      }
       return await this.writeRemoteClipboard();
     } catch {
       return { status: "refused" };

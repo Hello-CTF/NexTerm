@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   init: vi.fn(),
   copyText: vi.fn(async (_text: string) => undefined),
   readText: vi.fn(async () => ""),
+  nativeWebKit: false,
+  web: true,
+  pickLocalFolder: vi.fn(async (): Promise<string | null> => null),
+  writeFile: vi.fn(async (path: string, _contentBase64: string) => ({ path, bytes: 0, exists: false })),
+  writeClipboardImage: vi.fn(async (_pngBase64: string) => ({ bytes: 0 })),
 }));
 
 // A stand-in for the IronRDP wasm module: the session builder records the clipboard callback it is given and the
@@ -27,10 +32,33 @@ const wasm = vi.hoisted(() => {
       return this.entries.length === 0;
     }
   }
+  // The file channel: records its listeners and serves each download from `downloads`.
+  class FileTransfer {
+    static last: FileTransfer | null = null;
+    handlers = new Map<string, (files: unknown) => void>();
+    downloads = new Map<number, Blob>();
+    constructor() {
+      FileTransfer.last = this;
+    }
+    getBuilderExtensions() {
+      return [];
+    }
+    setSession() {}
+    uploadFiles() {}
+    on(event: string, handler: (files: unknown) => void) {
+      this.handlers.set(event, handler);
+    }
+    downloadFile(_file: unknown, index: number) {
+      const blob = this.downloads.get(index);
+      return { transferId: index, completion: blob ? Promise.resolve(blob) : Promise.reject(new Error("transfer failed")) };
+    }
+  }
   const state = {
     remoteCallback: null as ((data: ClipboardData) => void) | null,
     pastes: [] as ClipboardData[],
     ClipboardData,
+    FileTransfer,
+    fileChannel: false,
   };
   class SessionBuilder {
     remoteClipboardChangedCallback(cb: (data: ClipboardData) => void) {
@@ -51,7 +79,7 @@ const wasm = vi.hoisted(() => {
       };
     }
   }
-  return { state, Backend: { SessionBuilder, ClipboardData } };
+  return { state, Backend: { SessionBuilder, ClipboardData }, FileTransfer };
 });
 
 vi.mock("../../features/remote/remoteSocket", () => ({
@@ -60,11 +88,27 @@ vi.mock("../../features/remote/remoteSocket", () => ({
   remoteProxyAddress: () => "nxrd://remotedesktop",
 }));
 vi.mock("@devolutions/iron-remote-desktop", () => ({}));
-vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText, readText: mocks.readText, isNativeWebKit: () => false }));
+vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText, readText: mocks.readText, isNativeWebKit: () => mocks.nativeWebKit }));
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return {
+    ...actual,
+    get WEB() {
+      return mocks.web;
+    },
+  };
+});
+vi.mock("../../ui/dialogs", async (importOriginal) => ({ ...(await importOriginal<object>()), pickLocalFolder: mocks.pickLocalFolder }));
+vi.mock("../../ipc/commands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/commands")>();
+  return { ...actual, localFileApi: { ...actual.localFileApi, write: mocks.writeFile, writeClipboardImage: mocks.writeClipboardImage } };
+});
 vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({
   init: mocks.init,
   Backend: wasm.Backend,
-  RdpFileTransferProvider: undefined,
+  get RdpFileTransferProvider() {
+    return wasm.state.fileChannel ? wasm.FileTransfer : undefined;
+  },
   displayControl: vi.fn((enabled: boolean) => ({ displayControl: enabled })),
 }));
 
@@ -825,6 +869,82 @@ describe("RdpClient clipboard", () => {
     const outcome = await client.fetchClipboard();
     expect(outcome.status).toBe("refused");
     expect(outcome.note).toBeTruthy();
+  });
+
+  describe("on the desktop", () => {
+    beforeEach(() => {
+      mocks.web = false;
+      mocks.pickLocalFolder.mockReset();
+      mocks.writeFile.mockReset();
+      mocks.writeFile.mockImplementation(async (path: string) => ({ path, bytes: 1, exists: false }));
+      mocks.writeClipboardImage.mockReset();
+      mocks.writeClipboardImage.mockResolvedValue({ bytes: 3 });
+    });
+    afterEach(() => {
+      mocks.web = true;
+      mocks.nativeWebKit = false;
+      wasm.state.fileChannel = false;
+      wasm.FileTransfer.last = null;
+    });
+
+    const filesCopied = (files: unknown[]) => wasm.FileTransfer.last?.handlers.get("files-available")?.(files);
+
+    it("saves files the remote copied into a picked folder, keeping their folders and never replacing a local file", async () => {
+      vi.spyOn(document, "hasFocus").mockReturnValue(true);
+      wasm.state.fileChannel = true;
+      const cb = { ...callbacks(), onClipboardNotice: vi.fn() };
+      const { client } = await connected(options(), cb);
+      const channel = wasm.FileTransfer.last!;
+      channel.downloads.set(0, new Blob(["abc"]));
+      channel.downloads.set(2, new Blob(["de"]));
+      channel.downloads.set(3, new Blob(["f"]));
+      filesCopied([
+        { name: "a.txt", size: 3, lastModified: 0 },
+        { name: "docs", size: 0, lastModified: 0, isDirectory: true },
+        { name: "b.txt", path: "docs", size: 2, lastModified: 0 },
+        { name: "taken.txt", size: 1, lastModified: 0 },
+        { name: "evil.txt", path: "..\\..", size: 1, lastModified: 0 },
+      ]);
+      expect(cb.onClipboardNotice).toHaveBeenCalledTimes(1);
+      mocks.pickLocalFolder.mockResolvedValue("/home/me/Downloads");
+      mocks.writeFile.mockImplementation(async (path: string) => ({ path, bytes: 1, exists: path.endsWith("taken.txt") }));
+      const outcome = await client.fetchClipboard();
+      expect(outcome.status).toBe("done");
+      expect(outcome.note).toContain("/home/me/Downloads");
+      expect(outcome.note).toContain("taken.txt");
+      expect(outcome.note).toContain("evil.txt");
+      expect(mocks.writeFile.mock.calls.map(([path, content]) => [path, atob(content)])).toEqual([
+        ["/home/me/Downloads/a.txt", "abc"],
+        ["/home/me/Downloads/docs/b.txt", "de"],
+        ["/home/me/Downloads/taken.txt", "f"],
+      ]);
+      expect(mocks.copyText).not.toHaveBeenCalled();
+    });
+
+    it("saves nothing when the folder pick is cancelled, and a later text copy replaces the file copy", async () => {
+      wasm.state.fileChannel = true;
+      const { client } = await connected(options({ clipboardAutoSync: false }));
+      filesCopied([{ name: "a.txt", size: 1, lastModified: 0 }]);
+      mocks.pickLocalFolder.mockResolvedValue(null);
+      expect((await client.fetchClipboard()).status).toBe("refused");
+      expect(mocks.writeFile).not.toHaveBeenCalled();
+      remoteCopy((clip) => clip.addText("text/plain", "newer text"));
+      expect(await client.fetchClipboard()).toEqual({ status: "done" });
+      expect(mocks.copyText).toHaveBeenCalledWith("newer text");
+      expect(mocks.pickLocalFolder).toHaveBeenCalledTimes(1);
+    });
+
+    it("writes a remote image through the app on desktop WebKit, and says why when that fails", async () => {
+      mocks.nativeWebKit = true;
+      const { client } = await connected(options({ clipboardAutoSync: false }));
+      remoteCopy((clip) => clip.addBinary("image/png", new Uint8Array([1, 2, 3])));
+      expect(await client.fetchClipboard()).toEqual({ status: "done" });
+      expect(mocks.writeClipboardImage).toHaveBeenCalledWith(btoa(String.fromCharCode(1, 2, 3)));
+      mocks.writeClipboardImage.mockRejectedValueOnce(new Error("xclip missing"));
+      const failed = await client.fetchClipboard();
+      expect(failed.status).toBe("refused");
+      expect(failed.note).toContain("xclip missing");
+    });
   });
 
   it("does not send in read-only mode", async () => {

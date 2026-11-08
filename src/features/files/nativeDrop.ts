@@ -24,11 +24,16 @@ export function noteHtml5Drop(): void {
   lastHtml5DropAt = Date.now();
 }
 
+// html5DropIsRecent tells a native drop listener that the DOM drop of the same OS drop was already handled.
+export function html5DropIsRecent(): boolean {
+  return Date.now() - lastHtml5DropAt < HTML5_DROP_DEDUPE_MS;
+}
+
 export function resetNativeDropDedupeForTest(): void {
   lastHtml5DropAt = 0;
 }
 
-function asNativeDropEvent(raw: unknown): NativeFilesDroppedEvent | null {
+export function asNativeDropEvent(raw: unknown): NativeFilesDroppedEvent | null {
   if (typeof raw !== "object" || raw === null) return null;
   const { paths, x, y } = raw as Partial<NativeFilesDroppedEvent>;
   if (!Array.isArray(paths) || paths.length === 0) return null;
@@ -94,7 +99,7 @@ export function useNativeFileDrop(sessionId: string, surface: NativeDropSurface)
     void listenEvent<unknown>(EVENTS.filesDropped, (raw) => {
       const event = asNativeDropEvent(raw);
       if (!event) return;
-      if (Date.now() - lastHtml5DropAt < HTML5_DROP_DEDUPE_MS) return;
+      if (html5DropIsRecent()) return;
       const current = surfaceRef.current;
       const el = current.surface.current;
       if (!el) return;

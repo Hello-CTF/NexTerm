@@ -142,7 +142,7 @@ export function RemoteDesktopFields({
       />
       <ToggleRow
         label={t("启用剪贴板")}
-        hint={protocol === "rdp" ? t("允许在本机与远程桌面之间同步剪贴板中的文本和图片。") : t("允许在本机与远程桌面之间同步文本剪贴板。图片和文件无法同步；中文等字符需要服务器支持扩展剪贴板。")}
+        hint={protocol === "rdp" ? t("允许在本机与远程桌面之间同步文本、图片和文件；远程复制的文件从工具栏的剪贴板菜单保存到本机。") : t("允许在本机与远程桌面之间同步文本剪贴板。图片和文件无法同步；中文等字符需要服务器支持扩展剪贴板。")}
         checked={values.clipboard}
         onChange={(clipboard) => onChange({ clipboard })}
       />

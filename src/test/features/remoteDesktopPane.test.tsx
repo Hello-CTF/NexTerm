@@ -17,6 +17,9 @@ const mocks = vi.hoisted(() => ({
   touch: vi.fn(() => false),
   wake: vi.fn(),
   toast: vi.fn(),
+  desktop: false,
+  readLocal: vi.fn(),
+  dropListeners: [] as Array<(payload: unknown) => void>,
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -24,6 +27,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     assetApi: { get: mocks.assetGet },
     wakeApi: { wake: mocks.wake },
+    localFileApi: { read: mocks.readLocal },
     remoteDesktopApi: {
       prepare: mocks.prepare,
       releaseSecret: mocks.releaseSecret,
@@ -32,6 +36,28 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       trustCertificate: mocks.trustCertificate,
     },
   });
+});
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return {
+    ...actual,
+    get DESKTOP() {
+      return mocks.desktop;
+    },
+  };
+});
+vi.mock("../../ipc/events", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/events")>();
+  return {
+    ...actual,
+    listenEvent: vi.fn(async (event: string, handler: (payload: unknown) => void) => {
+      if (event !== actual.EVENTS.filesDropped) return actual.listenEvent(event, handler);
+      mocks.dropListeners.push(handler);
+      return () => {
+        mocks.dropListeners = mocks.dropListeners.filter((listener) => listener !== handler);
+      };
+    }),
+  };
 });
 vi.mock("../../features/remote/VncClient", () => ({ createVncClient: mocks.createClient }));
 vi.mock("../../features/remote/RdpClient", () => ({ createRdpClient: mocks.createClient }));
@@ -402,6 +428,77 @@ describe("RemoteDesktopPane", () => {
     await flush();
     expect(vi.mocked(client.sendKey)).not.toHaveBeenCalled();
     expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toBe("VNC 只能同步文本，图片和文件未发送");
+  });
+
+  it("sends files dropped through the desktop shell, and names the folders it left out", async () => {
+    mocks.desktop = true;
+    mocks.assetGet.mockResolvedValue({ id: "asset-1", kind: "rdp", name: "box", options: {} });
+    const prepare = mocks.prepare.getMockImplementation()!;
+    mocks.prepare.mockImplementation(async () => ({ ...(await prepare()), protocol: "rdp" }));
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      const { client, canvas } = await focusedScreen();
+      vi.mocked(client.sendClipboard).mockImplementation(async (data?: DataTransfer | null) => ({ status: data?.files.length ? "done" : "empty" }));
+      mocks.readLocal.mockResolvedValue({ path: "/Users/me/report.pdf", size: 3, contentBase64: btoa("pdf") });
+      const elementFromPoint = vi.fn(() => canvas);
+      Object.defineProperty(document, "elementFromPoint", { configurable: true, value: elementFromPoint });
+      await act(async () => {
+        for (const listener of mocks.dropListeners) {
+          listener({ x: 10, y: 20, paths: [{ path: "/Users/me/report.pdf", dir: false }, { path: "/Users/me/photos", dir: true }] });
+        }
+      });
+      await act(() => new Promise((resolve) => setTimeout(resolve, 300)));
+      await flush();
+      expect(elementFromPoint).toHaveBeenCalledWith(10, 20);
+      expect(mocks.readLocal).toHaveBeenCalledTimes(1);
+      const sent = vi.mocked(client.sendClipboard).mock.calls[0]?.[0];
+      expect(sent?.files.length).toBe(1);
+      expect(await sent!.files[0]!.text()).toBe("pdf");
+      expect(sent!.files[0]!.name).toBe("report.pdf");
+      expect(vi.mocked(client.sendKey).mock.calls.some(([code]) => code === "KeyV")).toBe(true);
+      expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toContain("photos");
+    } finally {
+      mocks.desktop = false;
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+  });
+
+  it("does not read files dropped through the desktop shell into a VNC session", async () => {
+    mocks.desktop = true;
+    try {
+      const { client, canvas } = await focusedScreen();
+      Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => canvas });
+      await act(async () => {
+        for (const listener of mocks.dropListeners) listener({ x: 1, y: 1, paths: [{ path: "/tmp/a.txt", dir: false }] });
+      });
+      await flush();
+      expect(mocks.readLocal).not.toHaveBeenCalled();
+      expect(client.sendClipboard).not.toHaveBeenCalled();
+      expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toBe("VNC 只能同步文本，图片和文件未发送");
+    } finally {
+      mocks.desktop = false;
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
+  });
+
+  it("ignores a desktop-shell drop that landed outside the remote screen", async () => {
+    mocks.desktop = true;
+    try {
+      const { client } = await focusedScreen();
+      Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => document.body });
+      await act(async () => {
+        for (const listener of mocks.dropListeners) listener({ x: 1, y: 1, paths: [{ path: "/tmp/a.txt", dir: false }] });
+      });
+      await flush();
+      expect(mocks.readLocal).not.toHaveBeenCalled();
+      expect(client.sendClipboard).not.toHaveBeenCalled();
+    } finally {
+      mocks.desktop = false;
+      Reflect.deleteProperty(document, "elementFromPoint");
+    }
   });
 
   it("hands the paste chord to the remote untouched when automatic clipboard sync is off", async () => {

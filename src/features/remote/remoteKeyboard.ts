@@ -2,6 +2,7 @@
 // turns a paste chord into "send the local clipboard, then paste", so the remote side pastes what was copied here.
 
 import type { ClipboardOutcome } from "./remoteTypes";
+import { t } from "../../i18n";
 
 export interface RemoteKeyboardTarget {
   sendKey(code: string, down: boolean): void;
@@ -102,8 +103,9 @@ export class RemoteKeyboard {
   }
 
   // handlePaste consumes a native DOM paste/drop DataTransfer, sending its text/image/file content directly to the
-  // remote clipboard and then pressing the paste shortcut on the remote side.
-  handlePaste(data: DataTransfer | null, source: PasteSource = "keys"): boolean {
+  // remote clipboard and then pressing the paste shortcut on the remote side. `note` names items the caller already
+  // left out; it is reported together with the outcome.
+  handlePaste(data: DataTransfer | null, source: PasteSource = "keys", note?: string): boolean {
     const options = this.options();
     if (!options.syncPaste) return false;
     if (this.pendingPasteTimer !== null) {
@@ -116,7 +118,7 @@ export class RemoteKeyboard {
     const viaCtrl = pending ? pending.viaCtrl : this.ctrlDown.size > 0 || options.commandAsCtrl || this.commandDown.size === 0;
     const modifier = pending ? pending.modifier : viaCtrl ? "ControlLeft" : "MetaLeft";
     const delayMs = pending ? pending.delayMs : options.pasteDelayMs;
-    void this.paste(modifier, viaCtrl, delayMs, data, source);
+    void this.paste(modifier, viaCtrl, delayMs, data, source, note);
     return true;
   }
 
@@ -143,11 +145,12 @@ export class RemoteKeyboard {
     return this.ctrlDown.size > 0 || (this.options().commandAsCtrl && this.commandDown.size > 0);
   }
 
-  private async paste(modifier: string, viaCtrl: boolean, delayMs: number, data?: DataTransfer | null, source: PasteSource = "keys"): Promise<void> {
+  private async paste(modifier: string, viaCtrl: boolean, delayMs: number, data?: DataTransfer | null, source: PasteSource = "keys", note?: string): Promise<void> {
     this.pasting = true;
     try {
       const refused: ClipboardOutcome = { status: "refused" };
-      const outcome = (await this.target()?.sendClipboard(data).catch(() => refused)) ?? refused;
+      const sent = (await this.target()?.sendClipboard(data).catch(() => refused)) ?? refused;
+      const outcome: ClipboardOutcome = note ? { ...sent, note: [sent.note, note].filter(Boolean).join(t("；")) } : sent;
       this.onOutcome?.(outcome, source);
       // Local content the session cannot carry is not replaced by whatever the remote clipboard holds, and a drop
       // that delivered nothing pastes nothing. An empty local clipboard still lets the remote side paste its own.
