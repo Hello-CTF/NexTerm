@@ -279,7 +279,7 @@ describe("ShareCard auth=off/on/loopback", () => {
     await flushUntil(() => document.body.textContent?.includes("已关闭账号功能") ?? false);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("此服务器已关闭账号功能（--auth=off），终端分享不可用");
+    expect(text).toContain("此服务端已关闭账号功能（--auth=off），终端分享不可用");
     expect(text).not.toContain("登录后可将已接入的受管设备分享给其他注册用户");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/share") || c.url.startsWith("/fleet") || c.url.startsWith("/admin"))).toHaveLength(0);
@@ -375,7 +375,7 @@ describe("ShareCard lists and states", () => {
     mocks.fetch.mockRejectedValue(new Error("connect ECONNREFUSED"));
     vi.stubGlobal("fetch", mocks.fetch);
     mounted = mountWithClient(createElement(ShareCard));
-    await flushUntil(() => document.body.textContent?.includes("无法连接服务器") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("无法连接服务端") ?? false);
     expect(document.body.textContent).toContain("未能加载分享数据");
   });
 });

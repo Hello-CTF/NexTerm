@@ -58,7 +58,7 @@ describe("VaultCard on a server-managed vault", () => {
   it("hides the management controls and says the server hosts the vault", async () => {
     mocks.status.mockResolvedValue({ ...MASTER, managed: true });
     mounted = render(createElement(VaultCard));
-    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库由服务器托管") ?? false);
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库由服务端托管") ?? false);
     expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
     expect(mounted.container.querySelector('input[aria-label="闲置自动锁定分钟数"]')).toBeNull();
     expect(mounted.container.textContent).not.toContain("修改密码");
@@ -70,14 +70,14 @@ describe("VaultCard on a server-managed vault", () => {
     mounted = render(createElement(VaultCard));
     await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库未能解锁，请联系管理员") ?? false);
     expect(mounted.container.querySelector('[role="alert"]')?.textContent).toContain("请联系管理员");
-    expect(mounted.container.textContent).toContain("服务端凭据库由服务器托管");
+    expect(mounted.container.textContent).toContain("服务端凭据库由服务端托管");
     expect(mounted.container.querySelector('input[type="checkbox"]')).toBeNull();
   });
 
   it("shows no unlock warning when the managed vault is unlocked", async () => {
     mocks.status.mockResolvedValue({ ...MASTER, unlocked: true, managed: true });
     mounted = render(createElement(VaultCard));
-    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库由服务器托管") ?? false);
+    await flushUntil(() => mounted!.container.textContent?.includes("服务端凭据库由服务端托管") ?? false);
     expect(mounted.container.textContent).not.toContain("未能解锁");
   });
 
@@ -85,7 +85,7 @@ describe("VaultCard on a server-managed vault", () => {
     mocks.status.mockResolvedValue({ ...MASTER, managed });
     mounted = render(createElement(VaultCard));
     await flushUntil(() => !!mounted!.container.querySelector('input[aria-label="闲置自动锁定分钟数"]'));
-    expect(mounted.container.textContent).not.toContain("服务端凭据库由服务器托管");
+    expect(mounted.container.textContent).not.toContain("服务端凭据库由服务端托管");
     expect(mounted.container.textContent).toContain("修改密码");
   });
 });
@@ -102,7 +102,7 @@ describe("lockVault", () => {
     await ready({ ...MASTER, managed: true });
     await lockVault!();
     expect(mocks.lock).not.toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("服务端凭据库由服务器托管"));
+    expect(mocks.toast).toHaveBeenCalledWith("info", expect.stringContaining("服务端凭据库由服务端托管"));
   });
 
   it("still locks a local password vault", async () => {

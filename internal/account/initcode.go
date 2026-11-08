@@ -68,7 +68,7 @@ func (a *Accounts) GenerateInitCode(ctx context.Context) (string, error) {
 		return "", dbError(err)
 	}
 	if row.Value != string(encoded) {
-		return "", ipc.NewError(ipc.CodeForbidden, "初始化码已生成，请查看服务器控制台")
+		return "", ipc.NewError(ipc.CodeForbidden, "初始化码已生成，请查看服务端控制台")
 	}
 	return code, nil
 }
@@ -77,7 +77,7 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *gorm.DB, code string
 	setting := query.Use(tx).Setting
 	row, err := setting.WithContext(ctx).Where(setting.Key.Eq(initCodeSettingKey)).First()
 	if err == gorm.ErrRecordNotFound {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码不存在，请重启服务器生成")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码不存在，请重启服务端生成")
 	}
 	if err != nil {
 		return dbError(err)
@@ -87,7 +87,7 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *gorm.DB, code string
 		return ipc.WrapError(ipc.CodeInternal, "内部错误: 初始化码状态损坏", err)
 	}
 	if state.Consumed {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务器已完成初始化，请直接登录")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务端已完成初始化，请直接登录")
 	}
 	digest := sha256.Sum256([]byte(code))
 	if state.Hash != hex.EncodeToString(digest[:]) {
@@ -104,7 +104,7 @@ func (a *Accounts) consumeInitCode(ctx context.Context, tx *gorm.DB, code string
 		return dbError(err)
 	}
 	if info.RowsAffected != 1 {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务器已完成初始化，请直接登录")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务端已完成初始化，请直接登录")
 	}
 	return nil
 }
@@ -135,7 +135,7 @@ func (a *Accounts) ReleaseInitCode(ctx context.Context, code string) error {
 		return ipc.WrapError(ipc.CodeInternal, "内部错误: 初始化码状态损坏", err)
 	}
 	if state.Consumed {
-		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务器已完成初始化，请直接登录")
+		return ipc.NewError(ipc.CodeForbidden, "初始化码已被使用，服务端已完成初始化，请直接登录")
 	}
 	digest := sha256.Sum256([]byte(code))
 	if state.Hash != hex.EncodeToString(digest[:]) {
@@ -209,7 +209,7 @@ func (a *Accounts) initSuperadmin(ctx context.Context, code, username, password 
 			return dbError(err)
 		}
 		if users > 0 {
-			return ipc.NewError(ipc.CodeForbidden, "服务器已完成初始化，不能重复初始化")
+			return ipc.NewError(ipc.CodeForbidden, "服务端已完成初始化，不能重复初始化")
 		}
 		if err := a.consumeInitCode(ctx, tx, code); err != nil {
 			return err

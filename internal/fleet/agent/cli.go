@@ -156,7 +156,7 @@ func resolveDataDirFor(flagValue, goos string, getenv func(string) string, homeD
 
 func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("enroll", stderr)
-	server := set.String("server", "", "服务器地址（必填）")
+	server := set.String("server", "", "服务端地址（必填）")
 	code := set.String("code", "", "设备注册码（必填）")
 	name := set.String("name", "", "设备名（默认为主机名）")
 	dataDir := set.String("data-dir", "", dataDirUsage)
@@ -210,7 +210,7 @@ func cliEnroll(args []string, getenv func(string) string, stdout, stderr io.Writ
 		EnrolledAt:        ids.NowMS(),
 	}
 	if len(config.BaseURLs) == 0 {
-		fmt.Fprintln(stderr, "agent enroll: 服务器未返回任何接入地址")
+		fmt.Fprintln(stderr, "agent enroll: 服务端未返回任何接入地址")
 		return ExitError
 	}
 	store := StoreAt(dir)

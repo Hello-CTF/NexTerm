@@ -76,14 +76,14 @@ func (h *localHelperExposureHost) Blocked(ctx context.Context) string {
 
 func localHelperExposureBlocked(ctx context.Context, helper *localhelper.Service, settings localTerminalModeStore) string {
 	if helper == nil {
-		return "本机终端在此环境中不使用持久终端组件，无法开放给服务器"
+		return "本机终端在此环境中不使用持久终端组件，无法开放给服务端"
 	}
 	mode, err := localTerminalMode(ctx, settings)
 	if err != nil {
 		return "无法读取本机终端模式：" + err.Error()
 	}
 	if mode == "regular" {
-		return "本机终端为临时终端，不向服务器开放"
+		return "本机终端为临时终端，不向服务端开放"
 	}
 	return ""
 }
@@ -239,7 +239,7 @@ func localHelperExposureStatus(status exposure.Status) localHelperExposureDTO {
 }
 
 func registerLocalHelperExposureCommands(dispatcher *ipc.Dispatcher, controller *exposure.Controller) error {
-	unsupported := localHelperExposureDTO{State: string(exposure.StateUnavailable), Reason: "此环境不能向服务器开放本机终端"}
+	unsupported := localHelperExposureDTO{State: string(exposure.StateUnavailable), Reason: "此环境不能向服务端开放本机终端"}
 	if err := ipc.Register(dispatcher, "local_helper_expose_get", func(context.Context, *ipc.Call, struct{}) (localHelperExposureDTO, error) {
 		if controller == nil {
 			return unsupported, nil

@@ -202,7 +202,7 @@ export async function request<T>(method: string, path: string, body?: unknown, o
     });
   } catch (e) {
     ensureAuthEpoch(startedEpoch);
-    throw new AuthApiError("disconnected", t("无法连接服务器：{value}", { value: e instanceof Error ? e.message : String(e) }), 0);
+    throw new AuthApiError("disconnected", t("无法连接服务端：{value}", { value: e instanceof Error ? e.message : String(e) }), 0);
   }
   ensureAuthEpoch(startedEpoch);
   const text = await response.text();

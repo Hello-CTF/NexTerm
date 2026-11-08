@@ -450,7 +450,7 @@ describe("Device management - guided enrollment", () => {
     await openIssuedPanel();
     expect(commandTexts().some((c) => c.includes("install-device"))).toBe(false);
     expect(document.body.textContent).not.toContain("--version");
-    expect(document.body.textContent).toContain("无法读取服务器版本");
+    expect(document.body.textContent).toContain("无法读取服务端版本");
     expect(commandTexts().some((c) => c.includes("nexterm-agent enroll"))).toBe(true);
   });
 
@@ -460,7 +460,7 @@ describe("Device management - guided enrollment", () => {
       route();
       await openIssuedPanel();
       expect(commandTexts().some((c) => c.includes("install-device"))).toBe(false);
-      expect(document.body.textContent).toContain("无法读取服务器版本");
+      expect(document.body.textContent).toContain("无法读取服务端版本");
     });
   }
 

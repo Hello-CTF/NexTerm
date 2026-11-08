@@ -139,13 +139,13 @@ export function BaseUrlsSection({ entries, isAdmin, onSaved, status = "ready", l
       {open && status === "ready" && (
         <>
           <p className="nx-hint mb-3 mt-1">
-            {t("设备连接此服务器的地址（如 https://nexterm.example.com），修改只影响之后接入的设备。")}
+            {t("设备连接此服务端的地址（如 https://nexterm.example.com），修改只影响之后接入的设备。")}
             {!isAdmin && t(" 仅超级管理员可修改。")}
           </p>
 
           {draft.length === 0 && (
             <div className="nx-hint py-1 text-[12px]">
-              {isAdmin ? t("尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务器地址。") : t("尚未配置接入地址，新设备无法接入。请联系超级管理员配置。")}
+              {isAdmin ? t("尚未配置接入地址，新设备无法接入。请在下方添加设备可访问的服务端地址。") : t("尚未配置接入地址，新设备无法接入。请联系超级管理员配置。")}
             </div>
           )}
 

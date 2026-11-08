@@ -234,7 +234,7 @@ describe("BaseUrlsSection empty-list guidance", () => {
     expect(document.body.textContent).toContain("新设备无法接入");
     await expandSection();
     await flushUntil(() => document.body.textContent?.includes("尚未配置接入地址") ?? false);
-    expect(document.body.textContent).toContain("请在下方添加设备可访问的服务器地址");
+    expect(document.body.textContent).toContain("请在下方添加设备可访问的服务端地址");
     mounted.unmount();
 
     mounted = mount(createElement(BaseUrlsSection, { entries: [], isAdmin: false, onSaved: () => undefined }));

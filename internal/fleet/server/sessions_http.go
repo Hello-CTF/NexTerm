@@ -48,7 +48,7 @@ func (s *Service) serveSessionList(w http.ResponseWriter, r *http.Request) {
 	list := s.sessionList.list
 	s.sessionList.mu.Unlock()
 	if list == nil {
-		writeFleetJSON(w, http.StatusNotImplemented, ipc.Failure(ipc.NewError(ipc.CodeUnsupported, "服务器不提供会话列表")))
+		writeFleetJSON(w, http.StatusNotImplemented, ipc.Failure(ipc.NewError(ipc.CodeUnsupported, "服务端不提供会话列表")))
 		return
 	}
 	wait := time.Duration(0)

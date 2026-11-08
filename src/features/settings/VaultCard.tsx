@@ -147,7 +147,7 @@ export function VaultCard() {
       {managed ? (
         <>
           <p className="nx-hint mt-1" data-setting="vault-managed">
-            {t("服务端凭据库由服务器托管，无需在此初始化、设置密码或锁定。")}
+            {t("服务端凭据库由服务端托管，无需在此初始化、设置密码或锁定。")}
           </p>
           {vault && !vault.unlocked && (
             <p className="nx-hint mt-1.5 text-amber-300" role="alert" data-setting="vault-managed-locked">

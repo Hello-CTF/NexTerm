@@ -48,7 +48,7 @@ export function useVaultStatus() {
   const managed = vaultQuery.data?.managed === true;
   const lockVault = useCallback(async () => {
     if (managed) {
-      pushToast("info", t("服务端凭据库由服务器托管，无需锁定"));
+      pushToast("info", t("服务端凭据库由服务端托管，无需锁定"));
       return;
     }
     if (vaultStatus.uninitialized) {

@@ -341,7 +341,7 @@ describe("Device management view - role differences", () => {
     mounted = mountWithClient(createElement(DevicesView));
     await flushUntil(() => document.body.textContent?.includes("已关闭账号功能") ?? false);
 
-    expect(document.body.textContent).toContain("该服务器已关闭账号功能，设备管理不可用。");
+    expect(document.body.textContent).toContain("该服务端已关闭账号功能，设备管理不可用。");
     expect(document.body.textContent).not.toContain("登录入口位于");
     expect(mounted.container.querySelectorAll("button").length).toBe(0);
     expect(calls.filter((c) => c.url.startsWith("/fleet") || c.url.startsWith("/device"))).toHaveLength(0);
@@ -1106,7 +1106,7 @@ describe("Device management view - enrollment code issuance", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("接入码仅可使用一次，设备凭证只保存在设备上。");
     expect(text).toContain("接入码 15 分钟后失效");
-    expect(text).toContain("无法读取服务器版本");
+    expect(text).toContain("无法读取服务端版本");
     expect(text).toContain("随用户登录自动启动");
     expect(text).not.toContain("高级说明");
     expect(text).not.toContain("散列");

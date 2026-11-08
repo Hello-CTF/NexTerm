@@ -89,7 +89,7 @@ export function clockSkewText(skewMs: number | undefined): string {
   if (abs < 60_000) amount = t("{max} 秒", { max: Math.max(1, Math.round(abs / 1000)) });
   else if (abs < 3_600_000) amount = t("{round} 分钟", { round: Math.round(abs / 60_000) });
   else amount = t("{round} 小时", { round: Math.round(abs / 3_600_000) });
-  return t("设备时钟偏差约 {amount}（{value}），指标按服务器接收时间记录", { amount, value: skewMs > 0 ? t("快") : t("慢") });
+  return t("设备时钟偏差约 {amount}（{value}），指标按服务端接收时间记录", { amount, value: skewMs > 0 ? t("快") : t("慢") });
 }
 
 export function mutedAlertEvents(alerts: FleetAlerts | undefined): FleetAlertEvent[] {

@@ -165,7 +165,7 @@ describe("DeviceAlertsCard", () => {
   it("explains a fast device clock", async () => {
     mocks.getSettings.mockResolvedValue({ ...settings, clock_skew_ms: 180_000 });
     await open();
-    expect(view!.container.textContent).toContain("设备时钟偏差约 3 分钟（快），指标按服务器接收时间记录");
+    expect(view!.container.textContent).toContain("设备时钟偏差约 3 分钟（快），指标按服务端接收时间记录");
   });
 
   it("explains a slow device clock", async () => {

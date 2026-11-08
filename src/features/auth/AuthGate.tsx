@@ -159,7 +159,7 @@ function SetupForm() {
         <IconShield size={15} className="text-neutral-400" />
         <span className="nx-card-title">{t("初始化 NexTerm")}</span>
       </div>
-      <p className="nx-hint">{t("输入服务器控制台打印的一次性初始化码，创建超级管理员。")}</p>
+      <p className="nx-hint">{t("输入服务端控制台打印的一次性初始化码，创建超级管理员。")}</p>
       <Field label={t("初始化码")} value={code} onChange={setCode} mono placeholder={t("控制台输出的初始化码")} autoComplete="off" />
       <Field label={t("用户名")} value={username} onChange={setUsername} placeholder={t("超级管理员用户名")} autoComplete="username" />
       <Field label={t("密码")} value={password} onChange={setPassword} type="password" placeholder={t("至少 8 位")} autoComplete="new-password" />

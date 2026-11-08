@@ -176,14 +176,14 @@ describe("AuditTimelineView", () => {
 
   it("describes the record scope by mode and login state", async () => {
     await openTimeline();
-    expect(text()).toContain("显示本服务器的全部记录");
+    expect(text()).toContain("显示本服务端的全部记录");
     expect(text()).toContain("时间线合并审计、命令和设备上下线记录");
     await act(async () => {
       useAuth.setState({ user: { id: "u1", username: "alice" } as never });
     });
     await flush();
     expect(text()).toContain("只显示你账户下的记录");
-    expect(text()).not.toContain("显示本服务器的全部记录");
+    expect(text()).not.toContain("显示本服务端的全部记录");
   });
 
   it("keeps the audit tab working", async () => {

@@ -477,7 +477,7 @@ func invalidResponseMessage(contentType string) string {
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	switch {
 	case mediaType == "text/html":
-		return "远端同步响应数据结构无效：服务器返回了网页而不是接口数据，服务器版本可能过旧，或请求被反向代理拦截"
+		return "远端同步响应数据结构无效：服务端返回了网页而不是接口数据，服务端版本可能过旧，或请求被反向代理拦截"
 	case mediaType != "" && mediaType != "application/json":
 		return "远端同步响应数据结构无效（Content-Type: " + mediaType + "）"
 	default:

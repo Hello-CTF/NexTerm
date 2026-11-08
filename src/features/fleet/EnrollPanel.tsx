@@ -340,7 +340,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
           </div>
         ) : (
           <p className="nx-hint text-amber-300">
-            {t("无法读取服务器版本，暂不能提供一键命令。请展开「手动接入」，在已安装 nexterm-agent 的设备上执行命令。")}
+            {t("无法读取服务端版本，暂不能提供一键命令。请展开「手动接入」，在已安装 nexterm-agent 的设备上执行命令。")}
           </p>
         )}
         <p className="nx-hint text-[11.5px]">{t("接入码仅可使用一次，设备凭证只保存在设备上。")}</p>
@@ -377,7 +377,7 @@ export function EnrollPanel(props: EnrollPanelProps) {
                 {copied === "code" ? t("已复制") : t("复制")}
               </button>
             </div>
-            <div className="text-[11.5px] text-neutral-400">{t("服务器地址")}</div>
+            <div className="text-[11.5px] text-neutral-400">{t("服务端地址")}</div>
             <code className="nx-code block max-w-full overflow-x-auto whitespace-pre px-2 py-1 font-mono text-[12px]" tabIndex={0}>
               {baseUrls[0].url}
             </code>

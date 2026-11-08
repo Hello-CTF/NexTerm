@@ -341,7 +341,7 @@ export function AccountCard() {
             {t("开放注册")}
             <span className="nx-hint block">
               {registrationDraft
-                ? t("任何知道服务器地址的人均可注册普通用户账号。建议仅在可信网络中临时开放。")
+                ? t("任何知道服务端地址的人均可注册普通用户账号。建议仅在可信网络中临时开放。")
                 : t("默认关闭。新用户只能由管理员添加。")}
             </span>
           </span>

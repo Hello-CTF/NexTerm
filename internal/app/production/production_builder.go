@@ -309,7 +309,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 				}
 				var list session.AggregateList
 				if err := json.Unmarshal(raw, &list); err != nil {
-					return session.AggregateList{}, ipc.WrapError(ipc.CodeInternal, "服务器返回的会话列表无法解析", err)
+					return session.AggregateList{}, ipc.WrapError(ipc.CodeInternal, "服务端返回的会话列表无法解析", err)
 				}
 				self := ""
 				if services.LocalHelperExposure != nil {
@@ -507,7 +507,7 @@ func (c *productionUpgradeCoordinator) retry(ctx context.Context) {
 	report, err := upgrade.Migrate(ctx, c.database.GORM(), c.shared)
 	if err != nil {
 		c.logger.Error("data upgrade retry after active superadmin creation failed", "error", err)
-		c.emit(ctx, "首个超级管理员创建后的数据升级重试失败；原始数据已保留，请查看服务器日志")
+		c.emit(ctx, "首个超级管理员创建后的数据升级重试失败；原始数据已保留，请查看服务端日志")
 		return
 	}
 	c.deferred = report.DeferredNoActiveSuperadmin
@@ -538,7 +538,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 	}
 	if report.DeferredNoActiveSuperadmin {
 		c.logger.Warn("data upgrade deferred until an active superadmin is created", values...)
-		c.emit(ctx, "数据升级已暂缓：等待首个 active superadmin；保留与孤立记录计数请查看服务器日志")
+		c.emit(ctx, "数据升级已暂缓：等待首个 active superadmin；保留与孤立记录计数请查看服务端日志")
 		return
 	}
 	conflicts := report.Ownership.Conflicts + report.Layout.Conflicts + aiSettings.Conflicts
@@ -546,7 +546,7 @@ func (c *productionUpgradeCoordinator) report(ctx context.Context, report upgrad
 	// ownerless by an earlier run (ai_unattributed) are logged as a count.
 	if conflicts > 0 || report.AI.CronJobsDisabled > 0 || aiSettings.Tombstoned > 0 {
 		c.logger.Warn("data upgrade completed with preserved or unattended entries", values...)
-		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务器日志")
+		c.emit(ctx, "数据升级存在未自动处理的冲突或孤立记录；原始记录已保留，请查看服务端日志")
 		return
 	}
 	changed := report.Ownership.Assigned+report.Layout.Copied+aiSettings.Migrated+report.DeviceAuditOwners > 0 || report.AI.Changed()

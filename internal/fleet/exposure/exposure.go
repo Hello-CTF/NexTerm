@@ -385,7 +385,7 @@ func accountError(err error) error {
 	case errors.Is(err, ErrLocked):
 		return errors.New("凭据库已锁定，请先解锁")
 	case errors.Is(err, ErrNoAccount):
-		return errors.New("请先在同步设置中登录服务器账号")
+		return errors.New("请先在同步设置中登录服务端账号")
 	}
 	return err
 }
@@ -425,7 +425,7 @@ func (c *Controller) reconcile() {
 		return
 	case err != nil:
 		c.stopAgent()
-		c.setStatus(Status{Enabled: true, State: StateUnavailable, Reason: "未登录服务器账号，本机终端暂不开放"})
+		c.setStatus(Status{Enabled: true, State: StateUnavailable, Reason: "未登录服务端账号，本机终端暂不开放"})
 		return
 	}
 	if c.running != nil {
@@ -513,7 +513,7 @@ func (c *Controller) enroll(account Account) (*Enrollment, error) {
 	}
 	response, err := c.config.Host.Enroll(ctx, account, request)
 	if err != nil {
-		return nil, fmt.Errorf("向服务器注册本机失败：%w", err)
+		return nil, fmt.Errorf("向服务端注册本机失败：%w", err)
 	}
 	if response.Kind != agent.DeviceKindLocalHelper {
 		// The server enrolled an ordinary, shareable device: take it back.
@@ -595,10 +595,10 @@ func (c *Controller) agentExited(err error) {
 		if setErr := c.config.Host.SetEnabled(c.ctx, false); setErr != nil {
 			c.config.Logger.Warn("turn local terminal exposure off", "error", setErr)
 		}
-		c.stopped = &Status{State: StateRevoked, Reason: "服务器已吊销此设备，本机终端不再开放；重新开启会重新注册"}
+		c.stopped = &Status{State: StateRevoked, Reason: "服务端已吊销此设备，本机终端不再开放；重新开启会重新注册"}
 		c.setStatus(*c.stopped)
 	case errors.Is(err, agent.ErrProtocolMismatch):
-		c.fail("服务器的设备协议版本与本机不同，请将桌面端与服务器升级到同一版本")
+		c.fail("服务端的设备协议版本与本机不同，请将桌面端与服务端升级到同一版本")
 	case err == nil:
 		// The agent stops cleanly only when its context ends.
 		c.fail("设备代理已停止")
@@ -607,7 +607,7 @@ func (c *Controller) agentExited(err error) {
 	}
 }
 
-const serverTooOldReason = "服务器版本过旧，不支持开放桌面本机终端，请升级服务器"
+const serverTooOldReason = "服务端版本过旧，不支持开放桌面本机终端，请升级服务端"
 
 // enrollmentStore is the agent config store of a running agent. The agent
 // saves its current server URL through it; a save that cannot reach the

@@ -263,7 +263,7 @@ export function AuditTimelineView({ onShowAudit, onShowCommand }: { onShowAudit:
       <span className="text-red-300" title={t("失败")}>✗ {e.exitCode}</span>
     );
 
-  const scopeText = !WEB ? t("显示本机全部记录") : user ? t("只显示你账户下的记录") : t("显示本服务器的全部记录");
+  const scopeText = !WEB ? t("显示本机全部记录") : user ? t("只显示你账户下的记录") : t("显示本服务端的全部记录");
 
   const retry = (
     <button className="nx-btn nx-btn-ghost nx-btn-sm ml-2" onClick={() => void loadFirstPage(filters)} disabled={loading}>

@@ -123,7 +123,7 @@ func TestRemoteClientNamesAWebPageInsteadOfJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.ListSessions(t.Context(), 0)
-	if err == nil || !strings.Contains(err.Error(), "服务器返回了网页") {
+	if err == nil || !strings.Contains(err.Error(), "服务端返回了网页") {
 		t.Fatalf("ListSessions error = %v, want it to name the web page", err)
 	}
 }

@@ -114,7 +114,7 @@ function ShareAuthOff() {
         <span className="nx-badge nx-badge-amber">{t("账号功能已关闭")}</span>
       </div>
       <p className="nx-hint">
-        {t("此服务器已关闭账号功能（--auth=off），终端分享不可用；主机分享需要账号。")}
+        {t("此服务端已关闭账号功能（--auth=off），终端分享不可用；主机分享需要账号。")}
       </p>
     </section>
   );

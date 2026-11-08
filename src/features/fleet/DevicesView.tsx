@@ -187,7 +187,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const desired = !agent.desired_autostart;
     if (!online) {
       const ok = await ask(
-        t("设备「{name}」当前离线。\n\n设置已保存，设备下次连接服务器后生效。", { name: device.name }),
+        t("设备「{name}」当前离线。\n\n设置已保存，设备下次连接服务端后生效。", { name: device.name }),
         { title: t("设备离线"), kind: "info" },
       );
       if (!ok) return;
@@ -209,13 +209,13 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
     const enabled = !agent.terminal_enabled;
     if (!enabled) {
       const ok = await ask(
-        t("确定要关闭「{name}」的远程终端吗？\n\n关闭后设备拒绝新的远程终端、文件和转发连接，已有连接保留，可随时重新开启。{value}", { name: device.name, value: online ? "" : t("\n\n设备当前离线，将在下次连接服务器后生效。") }),
+        t("确定要关闭「{name}」的远程终端吗？\n\n关闭后设备拒绝新的远程终端、文件和转发连接，已有连接保留，可随时重新开启。{value}", { name: device.name, value: online ? "" : t("\n\n设备当前离线，将在下次连接服务端后生效。") }),
         { title: t("关闭远程终端"), kind: "warning" },
       );
       if (!ok) return;
     } else if (!online) {
       const ok = await ask(
-        t("设备「{name}」当前离线。\n\n此次修改会先保存在服务器上，设备下次连接服务器后生效。", { name: device.name }),
+        t("设备「{name}」当前离线。\n\n此次修改会先保存在服务端，设备下次连接服务端后生效。", { name: device.name }),
         { title: t("设备离线"), kind: "info" },
       );
       if (!ok) return;
@@ -268,7 +268,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
   const statusTitle = !agent || revoked
     ? undefined
     : online
-      ? heartbeatOnline ? t("最近 3 分钟内与服务器有联系") : t("与服务器保持连接")
+      ? heartbeatOnline ? t("最近 3 分钟内与服务端有联系") : t("与服务端保持连接")
       : t("最近一次上报：{value}", { value: lastSeenAt ? formatTime(lastSeenAt) : t("从未") });
 
   const lastSeenText = lastSeenAt ? (
@@ -362,7 +362,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
       {!revoked && agent && !online && reasonOpen && (
         <div className="nx-alert nx-alert-info mt-2 text-[12px]">
           <div>
-            {t("设备{value}。常见原因：设备关机或断网，或后台服务未运行。", { value: lastSeenAt ? t("自 {value} 起未再联系服务器", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务器") })}
+            {t("设备{value}。常见原因：设备关机或断网，或后台服务未运行。", { value: lastSeenAt ? t("自 {value} 起未再联系服务端", { value: formatTime(lastSeenAt) }) : t("尚未联系过服务端") })}
           </div>
           <div className="mt-1 text-neutral-400">
             {t("请先确认设备已开机并联网；若后台服务未运行，可在设备上重新执行")} <code className="nx-code font-mono">nexterm-agent install</code>{t("。仍无法恢复时，请通过页面右上角的「接入新设备」重新接入。")}
@@ -442,7 +442,7 @@ function DeviceCard({ device, serverVersion: listServerVersion, now, online, isA
               <span>{agent.terminal_enabled ? t("已开启") : t("已关闭")}</span>
               <span className="nx-hint">· {agent.terminal_enabled ? t("允许新建终端、文件和端口转发连接") : t("拒绝新建远程连接，已打开的连接不受影响")}</span>
             </label>
-            {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：服务器立即按新设置处理连接请求，设备上线后同步")}</div>}
+            {!online && <div className="nx-hint mt-0.5 text-[11px]">{t("设备离线：服务端立即按新设置处理连接请求，设备上线后同步")}</div>}
           </DetailRow>
           {!localHelper && <DetailRow label={t("随登录自动启动")}>
             <label className="flex flex-wrap items-center gap-1.5">
@@ -800,7 +800,7 @@ export function DevicesView() {
             </div>
             <div>
               <div className="text-[13px] text-neutral-300">
-                {authOff ? t("该服务器已关闭账号功能，设备管理不可用。") : t("登录后方可查看与管理设备。")}
+                {authOff ? t("该服务端已关闭账号功能，设备管理不可用。") : t("登录后方可查看与管理设备。")}
               </div>
               {!authOff && <div className="mt-1 text-[11.5px] text-neutral-500">{t("登录入口位于「设置 → 账号同步」的「账号」卡片。")}</div>}
             </div>
@@ -832,7 +832,7 @@ export function DevicesView() {
     const agentRelease = releaseVersion(d.agent?.app_version);
     const serverRelease = releaseVersion(listServerVersion ?? serverVersion);
     if (!agentRelease || !serverRelease || !olderRelease(agentRelease, serverRelease)) return null;
-    return t("设备代理版本较旧（v{agentRelease}，服务器为 v{serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
+    return t("设备代理版本较旧（v{agentRelease}，服务端为 v{serverRelease}）。请在设备上运行 nexterm-agent update；1.2.x 版本需重新运行一次安装命令。", { agentRelease, serverRelease });
   };
   const closeEnroll = () => {
     setEnrollOpen(false);

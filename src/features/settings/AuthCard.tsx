@@ -274,7 +274,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
             <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            {t("此服务器已关闭账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。")}
+            {t("此服务端已关闭账号功能（--auth=off），不提供登录、注册与账号同步；其他本地功能不受影响。")}
           </p>
         </section>
       );
@@ -288,7 +288,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
             <span className="nx-card-title">{t("账号")}</span>
           </div>
           <p className="nx-hint mb-3">
-            {t("此服务器尚未创建任何账号{value}。初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用；也可以继续匿名使用本地功能。", { value: status.auth === "loopback" ? t("，当前允许匿名使用") : "" })}
+            {t("此服务端尚未创建任何账号{value}。初始化后将创建超级管理员，资产、分组、片段将加密同步到该账号，并可在其他设备上使用；也可以继续匿名使用本地功能。", { value: status.auth === "loopback" ? t("，当前允许匿名使用") : "" })}
           </p>
           <button
             className="nx-btn nx-btn-primary nx-btn-sm"
@@ -307,7 +307,7 @@ export function AuthCard({ sync }: { sync?: ReactNode } = {}) {
           <span className="nx-card-title">{t("账号")}</span>
         </div>
         <p className="nx-hint mb-3">
-          {t("当前未登录{value}。登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。", { value: status?.auth === "loopback" ? t("（此服务器允许匿名使用）") : "" })}
+          {t("当前未登录{value}。登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。", { value: status?.auth === "loopback" ? t("（此服务端允许匿名使用）") : "" })}
         </p>
         <button
           className="nx-btn nx-btn-primary nx-btn-sm"

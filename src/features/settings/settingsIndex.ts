@@ -105,7 +105,7 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   },
   "settings-account": {
     description: t("账号、用户管理、多端同步与本机终端开放"),
-    keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "expose", t("账号"), t("同步"), t("用户"), t("登录"), t("两步验证"), t("代理"), t("服务器"), t("开放")],
+    keywords: ["account", "sync", "server", "user", "mfa", "login", "proxy", "expose", t("账号"), t("同步"), t("用户"), t("登录"), t("两步验证"), t("代理"), t("服务器"), t("服务端"), t("开放")],
   },
   "settings-history": {
     description: t("终端历史的自动清理、手动清理与占用空间"),
@@ -163,7 +163,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
-  { id: "local-helper-exposure", section: "settings-account", label: t("向服务器账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
+  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
 ];
 
 export type SettingsSearchResult =

@@ -91,6 +91,6 @@ describe("clock skew wording", () => {
     expect(clockSkewText(-5 * 3_600_000)).toContain("约 5 小时（慢）");
     expect(clockSkewText(-75_000)).toContain("（慢）");
     expect(clockSkewText(30_000)).toContain("约 30 秒（快）");
-    expect(clockSkewText(90_000)).toContain("指标按服务器接收时间记录");
+    expect(clockSkewText(90_000)).toContain("指标按服务端接收时间记录");
   });
 });
