@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -37,6 +38,19 @@ type localFileReadRequest struct {
 	MaxBytes int64  `json:"maxBytes"`
 }
 
+type localFileWriteRequest struct {
+	Path          string `json:"path"`
+	ContentBase64 string `json:"contentBase64"`
+}
+
+// localFileWriteDTO reports Exists instead of writing when the target is already there, so a save
+// never replaces a local file the user did not choose to replace.
+type localFileWriteDTO struct {
+	Path   string `json:"path"`
+	Bytes  int    `json:"bytes"`
+	Exists bool   `json:"exists"`
+}
+
 type localFileReadRangeRequest struct {
 	Path     string `json:"path"`
 	Offset   int64  `json:"offset"`
@@ -45,7 +59,8 @@ type localFileReadRangeRequest struct {
 
 // registerLocalFolderCommands serves the desktop folder-upload flow: the webview cannot expose OS
 // paths of picked files, so the native folder dialog returns the picked folder path and these
-// commands walk/read it locally. Registered only in the desktop assembly; on the server they would
+// commands walk/read it locally. The same desktop-only set saves files and images a remote
+// desktop copied. Registered only in the desktop assembly; on the server they would
 // turn /rpc into an arbitrary server-filesystem listing/read channel.
 func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
 	registrations := []func() error{
@@ -57,6 +72,16 @@ func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, "local_file_read", func(_ context.Context, _ *ipc.Call, input localFileReadRequest) (fsReadDTO, error) {
 				return readLocalFile(input.Path, input.MaxBytes)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_file_write", func(_ context.Context, _ *ipc.Call, input localFileWriteRequest) (localFileWriteDTO, error) {
+				return saveLocalFile(input.Path, input.ContentBase64)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "clipboard_write_image", func(ctx context.Context, _ *ipc.Call, input clipboardImageWriteRequest) (clipboardImageWriteDTO, error) {
+				return writeClipboardImage(ctx, input.PNGBase64)
 			})
 		},
 		func() error {
@@ -156,6 +181,36 @@ func readLocalFile(path string, maxBytes int64) (fsReadDTO, error) {
 		return fsReadDTO{}, localFolderError(err)
 	}
 	return fsReadDTO{Path: path, Size: len(data), ContentBase64: base64.StdEncoding.EncodeToString(data)}, nil
+}
+
+// saveLocalFile saves bytes received in the webview (a file copied on a remote desktop) under a
+// path the user picked. Missing parent folders are created; an existing entry is never replaced.
+func saveLocalFile(path, contentBase64 string) (localFileWriteDTO, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return localFileWriteDTO{}, ipc.BadParam(fmt.Errorf("保存路径必须是绝对路径"))
+	}
+	data, err := base64.StdEncoding.DecodeString(contentBase64)
+	if err != nil {
+		return localFileWriteDTO{}, ipc.BadParam(fmt.Errorf("文件内容不是有效的 Base64: %w", err))
+	}
+	if int64(len(data)) > localFileReadDefaultMaxBytes {
+		return localFileWriteDTO{}, ipc.BadParam(fmt.Errorf("文件大小 %d 字节超过写入上限 %d 字节", len(data), localFileReadDefaultMaxBytes))
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return localFileWriteDTO{Path: path, Exists: true}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return localFileWriteDTO{}, localFolderError(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return localFileWriteDTO{}, localFolderError(err)
+	}
+	if err := atomicfile.Write(path, 0o600, func(writer io.Writer) error {
+		_, err := writer.Write(data)
+		return err
+	}); err != nil {
+		return localFileWriteDTO{}, localFolderError(err)
+	}
+	return localFileWriteDTO{Path: path, Bytes: len(data)}, nil
 }
 
 func readLocalFileRange(path string, offset, maxBytes int64) (fsRangeReadDTO, error) {

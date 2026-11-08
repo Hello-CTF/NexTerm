@@ -612,6 +612,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.biometricUnlockResult", ts: "BiometricUnlockResult" },
     },
+    "clipboard_write_image": {
+      scope: "clipboard",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.clipboardImageWriteRequest", ts: "ClipboardImageWriteRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.clipboardImageWriteDTO", ts: "ClipboardImageWriteDTO" },
+    },
     "command_count": {
       scope: "command-log",
       nested: true,
@@ -1552,6 +1560,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileReadRangeRequest", ts: "LocalFileReadRangeRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsRangeReadDTO", ts: "FSRangeReadDTO" },
+    },
+    "local_file_write": {
+      scope: "local-file",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteRequest", ts: "LocalFileWriteRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteDTO", ts: "LocalFileWriteDTO" },
     },
     "local_folder_list": {
       scope: "local-file",
@@ -3426,6 +3442,10 @@ export interface IPCCommandTypeMap {
     input: Record<string, never>;
     output: contractTypes.BiometricUnlockResult;
   };
+  "clipboard_write_image": {
+    input: contractTypes.ClipboardImageWriteRequest;
+    output: contractTypes.ClipboardImageWriteDTO;
+  };
   "command_count": {
     input: {
   sessionId?: string | null;
@@ -4032,6 +4052,10 @@ export interface IPCCommandTypeMap {
   "local_file_read_range": {
     input: contractTypes.LocalFileReadRangeRequest;
     output: contractTypes.FSRangeReadDTO;
+  };
+  "local_file_write": {
+    input: contractTypes.LocalFileWriteRequest;
+    output: contractTypes.LocalFileWriteDTO;
   };
   "local_folder_list": {
     input: contractTypes.LocalFolderListRequest;

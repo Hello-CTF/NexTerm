@@ -233,6 +233,52 @@ func TestLocalFileRead(t *testing.T) {
 	}
 }
 
+func TestLocalFileWrite(t *testing.T) {
+	dispatcher := newLocalFolderDispatcher(t)
+	dispatch := func(path, content string) (localFileWriteDTO, *ipc.Error) {
+		args, err := json.Marshal(localFileWriteRequest{Path: path, ContentBase64: content})
+		if err != nil {
+			t.Fatal(err)
+		}
+		response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "local_file_write", Args: args}, ipc.Environment{})
+		if response.Error != nil {
+			return localFileWriteDTO{}, response.Error
+		}
+		raw, err := json.Marshal(response.Data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result localFileWriteDTO
+		if err := json.Unmarshal(raw, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result, nil
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte("hello"))
+	path := filepath.Join(t.TempDir(), "nested", "dir", "copied.bin")
+	result, ipcErr := dispatch(path, encoded)
+	if ipcErr != nil || result.Exists || result.Bytes != 5 {
+		t.Fatalf("write = %+v, %+v", result, ipcErr)
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "hello" {
+		t.Fatalf("written = %q, %v", data, err)
+	}
+	// An existing file is reported and left alone.
+	again, ipcErr := dispatch(path, base64.StdEncoding.EncodeToString([]byte("other")))
+	if ipcErr != nil || !again.Exists || again.Bytes != 0 {
+		t.Fatalf("existing = %+v, %+v", again, ipcErr)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "hello" {
+		t.Fatalf("existing file replaced: %q", data)
+	}
+	if _, ipcErr := dispatch("relative.bin", encoded); ipcErr == nil || ipcErr.Code != ipc.CodeBadParam {
+		t.Fatalf("relative = %+v", ipcErr)
+	}
+	if _, ipcErr := dispatch(filepath.Join(t.TempDir(), "bad.bin"), "%%%"); ipcErr == nil || ipcErr.Code != ipc.CodeBadParam {
+		t.Fatalf("bad base64 = %+v", ipcErr)
+	}
+}
+
 func TestLocalFileReadRange(t *testing.T) {
 	dispatcher := newLocalFolderDispatcher(t)
 	path := filepath.Join(t.TempDir(), "data.bin")
@@ -318,5 +364,18 @@ func TestLocalFolderCommandsRegisteredOnlyOnDesktop(t *testing.T) {
 	}
 	if response := dispatch(server); response.OK || response.Error == nil || response.Error.Code != ipc.CodeNotFound {
 		t.Fatalf("server local_folder_list = %+v", response)
+	}
+}
+
+func TestClipboardWriteImageRejectsBadInput(t *testing.T) {
+	dispatcher := newLocalFolderDispatcher(t)
+	for name, args := range map[string]string{
+		"not base64": `{"pngBase64":"%%%"}`,
+		"empty":      `{"pngBase64":""}`,
+	} {
+		response := dispatcher.Dispatch(context.Background(), ipc.Request{Command: "clipboard_write_image", Args: json.RawMessage(args)}, ipc.Environment{})
+		if response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+			t.Fatalf("%s = %+v", name, response.Error)
+		}
 	}
 }

@@ -416,6 +416,14 @@ export type BundleWriteResult = {
   encrypted: boolean;
 };
 
+export type ClipboardImageWriteDTO = {
+  bytes: number;
+};
+
+export type ClipboardImageWriteRequest = {
+  pngBase64: string;
+};
+
 export type CollectAIGrantDevice = {
   id: string;
   deviceId: string;
@@ -1909,6 +1917,17 @@ export type LocalFileReadRangeRequest = {
 export type LocalFileReadRequest = {
   path: string;
   maxBytes?: number;
+};
+
+export type LocalFileWriteDTO = {
+  path: string;
+  bytes: number;
+  exists: boolean;
+};
+
+export type LocalFileWriteRequest = {
+  path: string;
+  contentBase64: string;
 };
 
 export type LocalFolderFileDTO = {

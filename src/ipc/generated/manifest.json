@@ -517,6 +517,12 @@
       "channel": false,
       "stream": "none"
     },
+    "clipboard_write_image": {
+      "scope": "clipboard",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "command_count": {
       "scope": "command-log",
       "nested": true,
@@ -1214,6 +1220,12 @@
       "stream": "none"
     },
     "local_file_read_range": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_file_write": {
       "scope": "local-file",
       "nested": false,
       "channel": false,

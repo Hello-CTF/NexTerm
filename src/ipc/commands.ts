@@ -1152,7 +1152,8 @@ export type LocalFolderFileDto = import("./generated/types").LocalFolderFileDTO;
 export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
 
 // Desktop-only commands (not registered in the server assembly): enumerate and read a local
-// folder picked via the native folder dialog, giving folder upload real OS paths.
+// folder picked via the native folder dialog, giving folder upload real OS paths, and save
+// files a remote desktop copied into a picked local folder.
 export const localFileApi = {
   listFolder: (path: string) => call("local_folder_list", { path }),
   read: (path: string, maxBytes?: number) =>
@@ -1162,6 +1163,10 @@ export const localFileApi = {
     }),
   readRange: (path: string, offset: number, maxBytes?: number) =>
     call("local_file_read_range", { path, offset, maxBytes }),
+  // Saves bytes under a picked local path; an existing entry is reported (exists) and left alone.
+  write: (path: string, contentBase64: string) => call("local_file_write", { path, contentBase64 }),
+  // Puts a PNG on the system clipboard (macOS and Linux desktop), where the webview cannot write images itself.
+  writeClipboardImage: (pngBase64: string) => call("clipboard_write_image", { pngBase64 }),
 };
 
 export const mountApi = {

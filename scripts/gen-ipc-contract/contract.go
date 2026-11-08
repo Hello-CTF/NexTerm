@@ -135,6 +135,7 @@ var contractScopes = []scopeSpec{
 	{name: "fs", prefixes: []string{"fs_"}},
 	{name: "local-file", prefixes: []string{"local_file_", "local_folder_"}},
 	{name: "local-helper", prefixes: []string{"local_helper_"}},
+	{name: "clipboard", commands: []string{"clipboard_write_image"}},
 	{name: "mount", prefixes: []string{"mount_"}},
 	{name: "session", commands: []string{
 		"session_connect_device",
