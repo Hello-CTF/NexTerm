@@ -259,7 +259,7 @@
 }
 
 .nx-mac-control:focus-visible {
-  outline: 2px solid var(--nx-accent, #7b8ff0);
+  outline: 2px solid var(--nx-focus-ring);
   outline-offset: 2px;
 }
 
@@ -310,6 +310,6 @@
 }
 
 .nx-window-control:focus-visible {
-  outline: 2px solid var(--nx-accent, #7b8ff0);
+  outline: 2px solid var(--nx-focus-ring);
   outline-offset: -2px;
 }

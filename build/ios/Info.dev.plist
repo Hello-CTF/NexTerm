@@ -40,6 +40,8 @@
     <string>LaunchScreen</string>
     <key>NSFaceIDUsageDescription</key>
     <string>使用面容 ID 快速解锁 NexTerm 数据密钥</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>NexTerm 需要访问本地网络，以连接局域网中的 SSH、RDP、VNC 等主机</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

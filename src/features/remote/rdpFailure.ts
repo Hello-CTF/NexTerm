@@ -1,4 +1,5 @@
 import type { EngineFailure } from "./remoteTypes";
+import { isMac } from "../../app/platform";
 import { t } from "../../i18n";
 
 // A failure as the user reads it: a short title, one actionable next step, and the raw engine text for the details
@@ -22,6 +23,7 @@ export const IRON_NEGOTIATION = 6;
 // Winsock codes the relay sends in RDCleanPath errors (internal/remotedesktop/rdp.go).
 const WSA_TIMED_OUT = 10060;
 const WSA_CONN_REFUSED = 10061;
+const WSA_HOST_UNREACHABLE = 10065;
 const WSA_HOST_NOT_FOUND = 11001;
 
 const NSTATUS_PATTERN = /NSTATUS code 0x([0-9a-f]{1,8})/i;
@@ -92,6 +94,13 @@ function relayFailure(failure: EngineFailure): Omit<FailureText, "detail"> | nul
       return { title: t("远程主机拒绝了连接"), advice: t("主机在线，但该端口没有 RDP 服务在监听。请确认远程桌面已启用，并检查端口号和防火墙。") };
     case WSA_TIMED_OUT:
       return { title: t("连接远程主机超时"), advice: t("没有收到主机的响应。请确认主机已开机、网络可达、端口号正确，且防火墙放行了 RDP。") };
+    case WSA_HOST_UNREACHABLE:
+      return {
+        title: t("无法访问远程主机"),
+        advice: isMac()
+          ? t("没有到达主机的网络路由。请确认主机地址和网络可达；在 macOS 上还需在「系统设置 > 隐私与安全性 > 本地网络」中允许 NexTerm 访问。")
+          : t("没有到达主机的网络路由。请确认主机地址正确、网络可达。"),
+      };
     case WSA_HOST_NOT_FOUND:
       return { title: t("找不到远程主机"), advice: t("无法解析主机地址。请检查资产里的主机名或 IP 是否正确。") };
     default:

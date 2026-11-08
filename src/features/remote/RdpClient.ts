@@ -743,7 +743,7 @@ export class RdpClient implements RemoteClient {
         return { status: "refused" };
       }
     }
-    if (hasImage) return { status: "refused", note: t("远程图片未能写入本机剪贴板，点击工具栏「取回远程剪贴板」重试") };
+    if (hasImage) return { status: "refused", note: t("远程图片未能写入本机剪贴板，点击工具栏「取回远程剪贴板到本机」重试") };
     return { status: Object.keys(blobs).length > 0 ? "refused" : "unsupported", note: Object.keys(blobs).length > 0 ? undefined : t("远程剪贴板的内容类型不受支持") };
   }
 

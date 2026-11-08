@@ -47,6 +47,7 @@ const (
 	wsaConnRefused     = 10061
 	wsaTimedOut        = 10060
 	wsaHostUnreachable = 10065
+	wsaNetUnreachable  = 10051
 	wsaHostNotFound    = 11001
 	wsaGeneric         = 10050
 )
@@ -94,10 +95,20 @@ func wsaCode(err error) uint16 {
 		return wsaHostNotFound
 	case errors.Is(err, syscall.ECONNREFUSED):
 		return wsaConnRefused
-	case errors.Is(err, syscall.EHOSTUNREACH):
+	case errors.Is(err, syscall.EHOSTUNREACH), errors.Is(err, syscall.ENETUNREACH):
 		return wsaHostUnreachable
 	case errors.Is(err, context.DeadlineExceeded):
 		return wsaTimedOut
+	}
+	// On Windows the dial error carries the Winsock code itself, which syscall's portable errno names do not match.
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		switch uint16(errno) {
+		case wsaConnRefused, wsaTimedOut, wsaHostUnreachable:
+			return uint16(errno)
+		case wsaNetUnreachable:
+			return wsaHostUnreachable
+		}
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
