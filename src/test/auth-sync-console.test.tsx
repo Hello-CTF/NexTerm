@@ -371,6 +371,17 @@ describe("M141 collect consumption: complete local copies enter the push set (P1
     expect(text()).toContain("关闭单条终端录像的同步会删除其服务端副本，本机记录保留");
     expect(text()).not.toContain("同步台");
   });
+
+  it("orders the account cards by dependency: account, sync, then account security", async () => {
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("项数据"));
+    const titles = [...mounted.container.querySelectorAll(".nx-card-title")].map((el) => el.textContent ?? "");
+    const at = (title: string) => titles.indexOf(title);
+    expect(at("账号")).toBeGreaterThanOrEqual(0);
+    expect(at("账号")).toBeLessThan(at("账号同步"));
+    expect(at("账号同步")).toBeLessThan(at("修改密码"));
+    expect(at("修改密码")).toBeLessThan(at("已登记设备"));
+  });
   it("keeps a same-ID local copy out of automatic sync when the cloud object cannot be decrypted", async () => {
     mocks.collectAssets.mockResolvedValue({
       assets: [

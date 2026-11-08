@@ -12,10 +12,7 @@ import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
-import { ServerSecurityLink } from "./ServerSecurityLink";
 import {
-  IconCheckCircle,
-  IconInfo,
   IconPlus,
   IconRefresh,
   IconShield,
@@ -301,9 +298,12 @@ export function AccountCard() {
                 </span>
                 {u.role === "superadmin" && <span className="nx-badge shrink-0 nx-badge-blue">{t("超级管理员")}</span>}
                 <span className={`nx-badge shrink-0 ${st.tone}`}>{st.text}</span>
-                <span className={`nx-badge shrink-0 ${u.mfa_enabled ? "nx-badge-green" : "nx-badge-amber"}`}>
-                  {u.mfa_enabled ? t("两步验证已开启") : t("两步验证未绑定")}
-                </span>
+                {u.mfa_enabled ? (
+                  <span className="nx-badge shrink-0 nx-badge-green">{t("两步验证已开启")}</span>
+                ) : settings?.mfa_required ? (
+                  // Only a missing binding the policy demands needs attention.
+                  <span className="nx-badge shrink-0 nx-badge-amber">{t("两步验证未绑定")}</span>
+                ) : null}
                 <span className="nx-hint shrink-0 text-[11px]">{t("最近登录 {value}", { value: formatTime(u.last_login_at) })}</span>
                 {!isSelf && u.state === "active" && (
                   <button
@@ -329,22 +329,40 @@ export function AccountCard() {
       )}
 
       {!DESKTOP && (
-      <div className="mt-3 border-t border-neutral-800/60 pt-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[12.5px] text-neutral-200">{t("开放注册")}</span>
+      <div className="mt-3 flex flex-col gap-2.5 border-t border-neutral-800/60 pt-3">
+        <label className="flex items-start gap-2">
           <input
             type="checkbox"
-            className="h-4 w-4"
+            className="mt-0.5 h-4 w-4 shrink-0"
             checked={registrationDraft}
             onChange={(e) => setRegistrationDraft(e.target.checked)}
           />
-          <span className="text-[12.5px] text-neutral-200">{t("要求两步验证")}</span>
+          <span className="text-[12.5px] text-neutral-200">
+            {t("开放注册")}
+            <span className="nx-hint block">
+              {registrationDraft
+                ? t("任何知道服务器地址的人均可注册普通用户账号。建议仅在可信网络中临时开放。")
+                : t("默认关闭。新用户只能由管理员添加。")}
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2">
           <input
             type="checkbox"
-            className="h-4 w-4"
+            className="mt-0.5 h-4 w-4 shrink-0"
             checked={mfaDraft}
             onChange={(e) => setMfaDraft(e.target.checked)}
           />
+          <span className="text-[12.5px] text-neutral-200">
+            {t("要求两步验证")}
+            <span className="nx-hint block">
+              {mfaDraft
+                ? t("强制启用两步验证：未绑定 TOTP 的账号登录后只能进入绑定页，完成前无法使用其他功能（包括管理功能）；已绑定的账号登录时必须输入动态码。开启前请确认所有用户都能完成绑定。")
+                : t("默认不强制。用户可在账号设置中开启 TOTP 两步验证。")}
+            </span>
+          </span>
+        </label>
+        <div>
           <button
             className="nx-btn nx-btn-outline nx-btn-sm"
             disabled={settingsBusy || !settings || (registrationDraft === settings.registration_open && mfaDraft === settings.mfa_required)}
@@ -353,33 +371,12 @@ export function AccountCard() {
             {settingsBusy ? t("正在保存…") : t("保存")}
           </button>
         </div>
-        <p className="nx-hint mt-1.5">
-          {registrationDraft
-            ? t("任何知道服务器地址的人均可注册普通用户账号。建议仅在可信网络中临时开放。")
-            : t("默认关闭。新用户只能由管理员添加。")}
-        </p>
-        <p className="nx-hint mt-1.5">
-          {mfaDraft
-            ? t("强制启用两步验证：未绑定 TOTP 的账号登录后只能进入绑定页，完成前无法使用其他功能（包括管理功能）；已绑定的账号登录时必须输入动态码。开启前请确认所有用户都能完成绑定。")
-            : t("默认不强制。用户可在账号设置中开启 TOTP 两步验证。")}
-        </p>
       </div>
       )}
 
       {DESKTOP && (
-        <div className="mt-3 border-t border-neutral-800/60 pt-3">
-          <p className="nx-hint">{t("开放注册与两步验证策略在服务端 Web 界面管理。")}</p>
-          <ServerSecurityLink />
-        </div>
+        <p className="nx-hint mt-3 border-t border-neutral-800/60 pt-3">{t("开放注册与两步验证策略在服务端 Web 界面管理，入口在「服务端账号」中。")}</p>
       )}
-
-      <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
-        <IconInfo size={14} className="mt-0.5 shrink-0" />
-        <div>
-          <IconCheckCircle size={11} className="mr-1 inline align-[-1px]" />
-          {t("注册默认关闭；管理员无法获取用户数据密钥的明文。")}
-        </div>
-      </div>
     </section>
   );
 }

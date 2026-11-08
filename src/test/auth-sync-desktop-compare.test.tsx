@@ -99,6 +99,15 @@ afterEach(() => {
 });
 
 describe("desktop sync console row-by-row comparison", () => {
+  it("puts the account (connection and logout) first and sync right after it", async () => {
+    mounted = mountSyncCard();
+    await flushUntil(() => text().includes("差异 1 条"));
+    const titles = [...mounted.container.querySelectorAll(".nx-card-title")].map((el) => el.textContent ?? "");
+    expect(titles[0]).toBe("服务端账号");
+    expect(titles.indexOf("账号同步")).toBe(1);
+    expect(text()).toContain("终端录像默认不同步，可在「终端历史」中单独开启");
+  });
+
   it("loads the comparison on mount and renders the summary, cloud object count, and row badges", async () => {
     mounted = mountSyncCard();
     await flushUntil(() => mocks.compare.mock.calls.length > 0 && text().includes("差异 1 条"));

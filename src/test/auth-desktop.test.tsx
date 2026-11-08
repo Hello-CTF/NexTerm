@@ -56,7 +56,7 @@ vi.mock("../ipc/remoteApi", async (importOriginal) => {
 
 vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
 
-import { AuthCard } from "../features/settings/AuthCard";
+import { AuthCard, DesktopAccountSummary } from "../features/settings/AuthCard";
 import { AccountCard } from "../features/settings/AccountCard";
 import { useUi } from "../app/store";
 import { useFleetAccount } from "../features/fleet/useFleetAccount";
@@ -116,14 +116,17 @@ function seedAdmin() {
 
 let mounted: MountedView | undefined;
 
-function mountCards(both: "auth" | "account" | "all"): { client: QueryClient } {
+// "summary" adds the account details the desktop connection card shows above the security cards.
+function mountCards(both: "auth" | "account" | "all" | "summary"): { client: QueryClient } {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const node =
     both === "auth"
       ? createElement(AuthCard)
       : both === "account"
         ? createElement(AccountCard)
-        : createElement(Fragment, null, createElement(AuthCard), createElement(AccountCard));
+        : both === "summary"
+          ? createElement(Fragment, null, createElement(DesktopAccountSummary), createElement(AuthCard), createElement(AccountCard))
+          : createElement(Fragment, null, createElement(AuthCard), createElement(AccountCard));
   mounted = mount(createElement(QueryClientProvider, { client }, node));
   return { client };
 }
@@ -167,7 +170,7 @@ describe("desktop account card signed-out state", () => {
   it("refreshes identity after invalidating [\"sync-link\"] and hides the card on logout", async () => {
     seedUser();
     const { client } = mountCards("auth");
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("修改密码"));
 
     mocks.status.mockResolvedValue(syncStatus(false));
     await act(async () => {
@@ -178,19 +181,21 @@ describe("desktop account card signed-out state", () => {
 });
 
 describe("desktop account card regular user", () => {
-  it("shows the current account and regular-user badge, hides logout/add-device actions, and notes browser-managed TOTP", async () => {
+  it("shows the account details and regular-user badge once, and leaves login and TOTP to the connection card", async () => {
     seedUser();
-    mountCards("all");
+    mountCards("summary");
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("MacBook"));
 
     const text = mounted!.container.textContent ?? "";
-    expect(text).toContain("alice");
+    expect(text).toContain("Alice");
     expect(text).toContain("普通用户");
     const buttonLabels = [...mounted!.container.querySelectorAll("button")].map((b) => b.textContent?.trim());
     expect(buttonLabels).not.toContain("退出登录");
     expect(buttonLabels).not.toContain("退出全部会话");
     expect(buttonLabels).not.toContain("添加设备");
-    expect(text).toContain("两步验证的绑定、换绑与关闭暂未接入桌面端");
+    // TOTP is managed in the server's web interface; the connection card links there, the security cards do not.
+    expect(buttonLabels).not.toContain("开启两步验证");
+    expect(text).not.toContain("两步验证的绑定、换绑与关闭暂未接入桌面端");
     // Non-super-admin: the user management card is not rendered
     expect(text).not.toContain("用户管理");
     expect(text).not.toContain("开放注册");
@@ -238,8 +243,10 @@ describe("desktop account card regular user", () => {
     mocks.status.mockResolvedValue(syncStatus(true, bob.username, bob.id));
     mocks.me.mockResolvedValue({ user: bob });
     mocks.linkGet.mockResolvedValue({ url: "https://server-b.example", username: bob.username, insecure: false, hasPassword: true, verifiedAt: 2, lastError: "" });
+    const identityReads = mocks.me.mock.calls.length;
     await act(async () => { await client.invalidateQueries({ queryKey: ["sync-link"] }); });
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("bob"));
+    await flushUntil(() => mocks.me.mock.calls.length > identityReads);
+    for (let i = 0; i < 5; i += 1) await flush();
 
     await act(async () => { changed.resolve({ ok: true, recoveryKey: "LATE-KEY-FOR-ALICE" }); });
     expect(mounted!.container.textContent).not.toContain("LATE-KEY-FOR-ALICE");
@@ -368,8 +375,8 @@ describe("desktop account card superadmin", () => {
 
   it("shows the superadmin badge and latest login after the identity probe finds the user list", async () => {
     seedAdmin();
-    mountCards("auth");
-    await flushUntil(() => (mounted!.container.textContent ?? "").includes("root"));
+    mountCards("summary");
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("超级管理员"));
 
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("超级管理员");

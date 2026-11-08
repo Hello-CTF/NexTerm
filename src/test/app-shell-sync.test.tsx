@@ -442,12 +442,13 @@ describe("desktop account sync card", () => {
     expect(document.body.textContent).not.toContain("立即同步");
   });
 
-  it("points per-record sync guidance to the terminal history section", async () => {
+  it("keeps sync guidance out of the login form until there is a sync to configure", async () => {
     mounted = mountAppWithSyncCard();
     await flushUntil(() => document.querySelector("#sync-url") !== null);
 
     const text = document.body.textContent ?? "";
-    expect(text).toContain("终端录像默认不同步，可在「终端历史」中单独开启");
+    expect(text).toContain("服务端账号");
+    expect(text).not.toContain("终端录像默认不同步");
     expect(text).not.toContain("到「会话记录」里");
   });
 });

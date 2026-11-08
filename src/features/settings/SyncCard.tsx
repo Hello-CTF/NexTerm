@@ -37,8 +37,11 @@ import { WEB } from "../../ipc/env";
 import { listenEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
-import { AuthCard } from "./AuthCard";
+import { AuthCard, DesktopAccountSummary } from "./AuthCard";
 import { AccountCard } from "./AccountCard";
+import { ServerSecurityLink } from "./ServerSecurityLink";
+import { showSettingsSection } from "./settingsNavigation";
+import { isImeKeyEvent } from "../../ui/imeKeyEvent";
 import { SYNC_AUTO_BADGE, SYNC_CONSOLE_TITLE, SYNC_INTERVAL_LABEL, SYNC_MERGE_GUIDE, SyncOptInSection } from "./syncOptIns";
 import { ForeignCronSection } from "./syncForeignCron";
 import { COMPARE_KIND_LABELS, CompareDetails, type UndecryptableAction } from "./syncCompareRows";
@@ -57,19 +60,24 @@ import { copyText } from "../../ui/clipboard";
 import { ask } from "../../ui/dialogs";
 import { t as tr } from "../../i18n";
 
+// Account cards in dependency order: the account (login), then sync, then account security, then administration.
+// On desktop the connection card is the account; AuthCard then adds only the security cards.
 export function SyncCard() {
+  if (WEB) {
+    return (
+      <>
+        <AuthCard sync={<WebSyncConsole />} />
+        <AccountCard />
+      </>
+    );
+  }
   return (
     <>
+      <DesktopLinkCard />
       <AuthCard />
       <AccountCard />
-      <SyncBody />
     </>
   );
-}
-
-function SyncBody() {
-  if (WEB) return <WebSyncConsole />;
-  return <DesktopLinkCard />;
 }
 
 // ---------- Desktop: account login and sync ----------
@@ -274,7 +282,6 @@ function DesktopLinkCard() {
     if (logoutPending.current || busy !== null || !status?.loggedIn) return;
     const account = currentAccount.current;
     logoutPending.current = true;
-    setBusy("logout");
     setError(null);
     try {
       let exposing = false;
@@ -287,6 +294,7 @@ function DesktopLinkCard() {
       if (!(await ask(tr("确定要退出登录吗？本机将停止自动登录与同步，本机和服务端的数据均会保留。{exposureNote}", { exposureNote }), {
         title: tr("退出登录"), kind: "warning",
       })) || !active.current || currentAccount.current !== account) return;
+      setBusy("logout");
       const [latestLink, latestStatus] = await Promise.all([syncApi.linkGet(), syncApi.status()]);
       if (!active.current || JSON.stringify([latestLink.url, latestStatus.userId, latestStatus.username, latestStatus.loggedIn]) !== account) return;
       loadSequence.current += 1;
@@ -310,27 +318,26 @@ function DesktopLinkCard() {
 
   const syncPaused = !!status?.paused || !!status?.vaultLocked;
   const connected = !!status?.loggedIn && !status.lastError && !syncPaused;
+  const loginReady = busy === null && !!draft.url.trim() && !!draft.username.trim() && (!!draft.password || !!link?.hasPassword);
 
   return (
     <>
     <section className="nx-card">
       <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <IconServer size={15} className="text-neutral-400" />
-        <span className="nx-card-title">{status?.loggedIn ? tr("服务端连接") : tr("账号同步")}</span>
+        <span className="nx-card-title">{tr("服务端账号")}</span>
         {status?.loggedIn ? (
           <span className={`nx-badge ${connected ? "nx-badge-green" : "nx-badge-amber"}`}>{tr("已登录")} {status.username}</span>
         ) : !loaded ? (
           <span className="nx-badge">{tr("正在读取账号…")}</span>
-        ) : status?.configured ? (
-          <span className="nx-badge nx-badge-amber">{tr("待同步")}</span>
         ) : (
-          <span className="nx-badge">{tr("未配置")}</span>
+          <span className="nx-badge">{tr("未登录")}</span>
         )}
       </div>
 
-      <p className="nx-hint mb-3.5">
-        {status?.loggedIn ? tr("数据将在本机与服务端之间自动同步。") : tr("登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。")}
-      </p>
+      {!status?.loggedIn && (
+        <p className="nx-hint mb-3.5">{tr("登录后，数据将在本机与服务端之间自动同步；未登录时仍可在本机使用。")}</p>
+      )}
 
       {loadError && (
         <div className="nx-alert nx-alert-danger mb-3 flex items-start gap-2">
@@ -346,17 +353,26 @@ function DesktopLinkCard() {
       {!loaded && !loadError && <p role="status" className="nx-hint">{tr("正在检查登录状态…")}</p>}
 
       {step.kind === "form" && status?.loggedIn && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="nx-hint min-w-0 flex-1 break-all">{link?.url}</span>
-          <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void logout()}>
-            {busy === "logout" ? tr("正在退出…") : tr("退出登录")}
-          </button>
-          {status.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次同步失败：{lastError}", { lastError: status.lastError })}</span>}
-        </div>
+        <>
+          <DesktopAccountSummary />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="nx-hint min-w-0 flex-1 break-all">{link?.url}</span>
+            <button type="button" className="nx-btn nx-btn-outline nx-btn-sm" disabled={busy !== null} onClick={() => void logout()}>
+              {busy === "logout" ? tr("正在退出…") : tr("退出登录")}
+            </button>
+          </div>
+          <p className="nx-hint mt-2">{tr("退出登录后可切换账号。两步验证在服务端 Web 界面管理。")}</p>
+          <ServerSecurityLink />
+        </>
       )}
 
       {step.kind === "form" && loaded && !status?.loggedIn && (
-        <>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (loginReady) void login();
+          }}
+        >
           <div className="flex flex-col gap-2">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
               <label className="sm:w-[76px] sm:shrink-0 text-[12px] text-neutral-400" htmlFor="sync-url">
@@ -394,7 +410,7 @@ function DesktopLinkCard() {
                 className="nx-input min-w-0 flex-1"
                 placeholder={link?.hasPassword ? tr("留空则不修改已保存的密码") : tr("账号密码")}
                 value={draft.password}
-                autoComplete="new-password"
+                autoComplete="current-password"
                 onChange={(e) => updateDraft({ password: e.target.value })}
               />
             </div>
@@ -433,17 +449,13 @@ function DesktopLinkCard() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button
-              className="nx-btn nx-btn-primary nx-btn-sm"
-              disabled={busy !== null || !draft.url.trim() || !draft.username.trim() || (!draft.password && !link?.hasPassword)}
-              onClick={() => void login()}
-            >
+            <button type="submit" className="nx-btn nx-btn-primary nx-btn-sm" disabled={!loginReady}>
               {busy === "login" ? <IconRefresh size={12} className="animate-spin" /> : <IconLock size={12} />}
               {busy === "login" ? tr("正在登录…") : tr("登录")}
             </button>
             {status?.lastError && !syncPaused && <span className="nx-hint text-amber-300">{tr("上次失败：{lastError}", { lastError: status.lastError })}</span>}
           </div>
-        </>
+        </form>
       )}
 
       {step.kind === "mfa" && (
@@ -461,9 +473,10 @@ function DesktopLinkCard() {
               placeholder={tr("6 位数字或恢复码")}
               value={mfaCode}
               autoComplete="one-time-code"
+              autoFocus
               onChange={(e) => setMfaCode(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && mfaCode.trim() && busy === null) void submitMfa();
+                if (e.key === "Enter" && mfaCode.trim() && busy === null && !isImeKeyEvent(e)) void submitMfa();
               }}
             />
           </div>
@@ -499,6 +512,7 @@ function DesktopLinkCard() {
               placeholder={tr("至少 8 位")}
               value={newPassword}
               autoComplete="new-password"
+              autoFocus
               onChange={(e) => setNewPassword(e.target.value)}
             />
           </div>
@@ -515,7 +529,7 @@ function DesktopLinkCard() {
               autoComplete="new-password"
               onChange={(e) => setConfirmPassword(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && newPassword && confirmPassword && busy === null) void submitReset();
+                if (e.key === "Enter" && newPassword && confirmPassword && busy === null && !isImeKeyEvent(e)) void submitReset();
               }}
             />
           </div>
@@ -584,14 +598,6 @@ function DesktopLinkCard() {
         </div>
       )}
 
-      {step.kind === "form" && (
-        <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
-          <IconInfo size={14} className="mt-0.5 shrink-0" />
-          <div>
-            {tr("终端录像默认不同步，可在「终端历史」中单独开启。")}
-          </div>
-        </div>
-      )}
     </section>
     {status?.loggedIn && <DesktopSyncConsole />}
     </>
@@ -799,7 +805,11 @@ function DesktopSyncConsole() {
       <div className="mb-1 flex flex-wrap items-center gap-2">
         <IconServer size={15} className="text-neutral-400" />
         <span className="nx-card-title">{SYNC_CONSOLE_TITLE}</span>
-        <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
+        {status?.paused || status?.vaultLocked ? (
+          <span className="nx-badge nx-badge-amber">{tr("已暂停")}</span>
+        ) : (
+          <span className="nx-badge nx-badge-green">{SYNC_AUTO_BADGE}</span>
+        )}
         {compareRemote !== null && <span className="nx-hint">{tr("服务端共 {compareRemote} 项数据", { compareRemote })}</span>}
         <span className="nx-hint">{SYNC_INTERVAL_LABEL}</span>
         <div className="nx-spacer" />
@@ -821,6 +831,16 @@ function DesktopSyncConsole() {
           {syncBusy ? tr("正在同步…") : tr("立即同步")}
         </button>
       </div>
+      {(status?.vaultLocked || status?.paused) && (
+        <div className="nx-alert nx-alert-info mb-2 flex flex-wrap items-center gap-2 text-amber-300" role="status">
+          <span className="min-w-0 flex-1">
+            {status.vaultLocked ? tr("凭据库已锁定，同步已暂停；解锁后自动继续。") : tr("凭据库尚未初始化，同步已暂停；完成凭据保护设置后自动继续。")}
+          </span>
+          <button type="button" className="nx-btn nx-btn-ghost nx-btn-sm shrink-0" onClick={() => showSettingsSection("settings-vault")}>
+            {tr("前往凭据保护")}
+          </button>
+        </div>
+      )}
       {syncBusy && (
         <div className="nx-hint mb-2" role="status">{tr("正在同步…完成后将显示结果。")}</div>
       )}
@@ -891,7 +911,7 @@ function DesktopSyncConsole() {
       <div className="nx-alert nx-alert-info mt-3 flex items-start gap-2">
         <IconInfo size={14} className="mt-0.5 shrink-0" />
         <div>
-          {tr("关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。冲突以最后修改时间为准，请保持各设备时钟准确。")}
+          {tr("终端录像默认不同步，可在「终端历史」中单独开启。关闭内容类型开关不会删除服务端已有副本；关闭单条终端录像的同步会删除其服务端副本，本机记录保留。冲突以最后修改时间为准，请保持各设备时钟准确。")}
         </div>
       </div>
     </section>
@@ -1745,7 +1765,7 @@ function UnlockDEKCard() {
           autoComplete="current-password"
           onChange={(e) => setPassword(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && password) void submit();
+            if (e.key === "Enter" && password && !busy && !isImeKeyEvent(e)) void submit();
           }}
         />
         <button className="nx-btn nx-btn-primary" disabled={busy || !password} onClick={() => void submit()}>

@@ -340,7 +340,34 @@ describe("TotpCard re-enrollment", () => {
     mocks.totpStatus.mockResolvedValue({ enabled: true, pending: false, mfa_required: false, recovery_codes_left: 8 });
     mounted = mountCard();
     await flushUntil(() => mounted!.container.textContent?.includes("已开启"));
-    expect(mounted.container.textContent).toContain("两步验证绑定在服务端账号上，换设备登录仍使用同一认证器，无需重新绑定");
+    expect(mounted.container.textContent).toContain("换设备登录仍使用同一认证器，无需重新绑定");
+    expect(mounted.container.textContent).toContain("剩余恢复码 8 个。");
+  });
+
+  it("describes only enabling while two-step verification is off, and warns when few recovery codes are left", async () => {
+    useAuth.setState({
+      status: { initialized: true, registration_open: false, auth: "on" },
+      user: BOUND_USER,
+      dek: null,
+      gate: "ready",
+      pendingRecoveryKey: null,
+      pendingMfa: null,
+      mfaEnrollmentPassword: null,
+      error: null,
+    });
+    mocks.totpStatus.mockResolvedValue({ enabled: false, pending: false, mfa_required: false, recovery_codes_left: 0 });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("开启两步验证"));
+    const text = mounted.container.textContent ?? "";
+    expect(text).not.toContain("换设备登录仍使用同一认证器");
+    expect(text).not.toContain("换绑认证器");
+    expect(text).not.toContain("剩余恢复码");
+    mounted.unmount();
+
+    mocks.totpStatus.mockResolvedValue({ enabled: true, pending: false, mfa_required: false, recovery_codes_left: 1 });
+    mounted = mountCard();
+    await flushUntil(() => mounted!.container.textContent?.includes("已开启"));
+    expect(mounted.container.textContent).toContain("剩余恢复码 1 个，用完后无法在没有认证器时登录");
   });
 });
 
