@@ -174,7 +174,8 @@ describe("Desktop account sync console", () => {
       await flush();
     });
 
-    expect(document.body.textContent).toContain("账号同步");
+    expect(document.body.textContent).toContain("服务端账号");
+    expect(document.body.textContent).not.toContain("账号同步");
     expect(document.body.textContent).not.toContain("立即同步");
     expect(mocks.kindOptInGet).not.toHaveBeenCalled();
   });

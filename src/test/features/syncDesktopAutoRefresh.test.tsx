@@ -105,7 +105,7 @@ afterEach(() => {
 describe("Desktop account sync card - automatic status refresh", () => {
   it("changes from pending sync to logged in after a background session is established and sync://status is broadcast", async () => {
     mounted = mountCard();
-    await flushUntil(() => document.body.textContent?.includes("待同步") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("未登录") ?? false);
     expect(mocks.syncStatusHandlers.length).toBeGreaterThan(0);
 
     loggedIn = true;
@@ -121,7 +121,7 @@ describe("Desktop account sync card - automatic status refresh", () => {
 
   it("surfaces LastError after a background probe failure and sync://status broadcast", async () => {
     mounted = mountCard();
-    await flushUntil(() => document.body.textContent?.includes("待同步") ?? false);
+    await flushUntil(() => document.body.textContent?.includes("未登录") ?? false);
 
     lastError = "cannot reach remote sync service: connection refused";
     fireSyncStatus();

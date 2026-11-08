@@ -119,7 +119,7 @@ describe("Desktop login - direct success", () => {
     });
     await mountAndLogin(consoleReady);
 
-    expect(document.body.textContent).not.toContain("两步验证");
+    expect(document.body.textContent).not.toContain("验证并登录");
     expect(document.body.textContent).not.toContain("设置新密码");
     expect(mocks.mfa).not.toHaveBeenCalled();
     expect(mocks.resetPassword).not.toHaveBeenCalled();

@@ -35,6 +35,7 @@ vi.mock("../../ipc/remoteApi", async (importOriginal) => {
 });
 
 import { DeviceSessionBoundary } from "../../features/fleet/DeviceSessionBoundary";
+import { DesktopAccountSummary } from "../../features/settings/DesktopAccountSummary";
 import { AuthCard } from "../../features/settings/AuthCard";
 import { useUi } from "../../app/store";
 
@@ -89,6 +90,7 @@ function tree(withSettings: boolean) {
 			Fragment,
 			null,
 			createElement(DeviceSessionBoundary),
+			withSettings ? createElement(DesktopAccountSummary) : null,
 			withSettings ? createElement(AuthCard) : null,
 		),
 	);
@@ -224,13 +226,13 @@ describe("desktop device session identity resolution", () => {
 		await flushUntil(() => mocks.status.mock.calls.length === 2);
 		await flush();
 		expectDevicePreserved();
-		expect(mounted!.container.textContent ?? "").not.toContain("alice");
+		expect(mounted!.container.textContent ?? "").not.toContain("Alice");
 
 		await act(async () => {
 			next.resolve(syncStatus(USER));
 		});
 		await settleIdentity();
-		await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+		await flushUntil(() => (mounted!.container.textContent ?? "").includes("Alice"));
 		expectDevicePreserved();
 	});
 
@@ -330,7 +332,7 @@ describe("desktop device session identity resolution", () => {
 	it("keeps old account content hidden after an identity error until a same-named account is resolved on the new server", async () => {
 		mountBoundary(true);
 		await settleIdentity();
-		await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+		await flushUntil(() => (mounted!.container.textContent ?? "").includes("Alice"));
 		const failed = deferred<SyncStatus>();
 		mocks.status.mockImplementationOnce(() => failed.promise);
 		mocks.linkGet.mockResolvedValue(accountLink(USER, "https://server-b.example"));
@@ -341,7 +343,7 @@ describe("desktop device session identity resolution", () => {
 		);
 		await flush();
 		expectDevicePreserved();
-		expect(mounted!.container.textContent ?? "").not.toContain("alice");
+		expect(mounted!.container.textContent ?? "").not.toContain("Alice");
 
 		await act(async () => {
 			failed.reject(new Error("offline"));
@@ -350,7 +352,7 @@ describe("desktop device session identity resolution", () => {
 		await flushUntil(() => client!.getQueryState(IDENTITY_KEY)?.status === "error");
 		await flush();
 		expectDevicePreserved();
-		expect(mounted!.container.textContent ?? "").not.toContain("alice");
+		expect(mounted!.container.textContent ?? "").not.toContain("Alice");
 		expect(mounted!.container.textContent ?? "").not.toContain("修改密码");
 
 		const recovered = deferred<SyncStatus>();
@@ -359,14 +361,14 @@ describe("desktop device session identity resolution", () => {
 		await flushUntil(() => mocks.status.mock.calls.length === 3);
 		await flush();
 		expectDevicePreserved();
-		expect(mounted!.container.textContent ?? "").not.toContain("alice");
+		expect(mounted!.container.textContent ?? "").not.toContain("Alice");
 
 		await act(async () => {
 			recovered.resolve(syncStatus(USER));
 			await recovery;
 		});
 		await flushUntil(() => useUi.getState().workspaces.every((w) => w.assetKind !== "device"));
-		await flushUntil(() => (mounted!.container.textContent ?? "").includes("alice"));
+		await flushUntil(() => (mounted!.container.textContent ?? "").includes("Alice"));
 		expect(mocks.closeTab).toHaveBeenCalledTimes(1);
 		expect(mocks.closeTab).toHaveBeenCalledWith("t1", "kill");
 		expect(mocks.disconnect).toHaveBeenCalledTimes(1);

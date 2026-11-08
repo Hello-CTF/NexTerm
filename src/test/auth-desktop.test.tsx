@@ -56,7 +56,8 @@ vi.mock("../ipc/remoteApi", async (importOriginal) => {
 
 vi.mock("../ui/dialogs", () => ({ ask: mocks.ask }));
 
-import { AuthCard, DesktopAccountSummary } from "../features/settings/AuthCard";
+import { AuthCard } from "../features/settings/AuthCard";
+import { DesktopAccountSummary } from "../features/settings/DesktopAccountSummary";
 import { AccountCard } from "../features/settings/AccountCard";
 import { useUi } from "../app/store";
 import { useFleetAccount } from "../features/fleet/useFleetAccount";

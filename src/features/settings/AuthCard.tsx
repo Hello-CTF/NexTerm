@@ -45,22 +45,6 @@ function DeviceKind({ kind }: { kind: string }) {
   return label ? <span className="nx-hint shrink-0 text-[11px]">{label}</span> : <code className="nx-code shrink-0 text-[11px]">{kind}</code>;
 }
 
-// The desktop account's role and details, shown in SyncCard's connection card (the desktop account card).
-export function DesktopAccountSummary() {
-  const user = useDesktopAccount();
-  if (!user) return null;
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-neutral-200">
-      <span className={`nx-badge ${user.role === "superadmin" ? "nx-badge-blue" : ""}`}>
-        {user.role === "superadmin" ? t("超级管理员") : t("普通用户")}
-      </span>
-      {user.state === "reset_required" && <span className="nx-badge nx-badge-amber">{t("待重置密码")}</span>}
-      {user.display_name && <span>{t("显示名 {display_name}", { display_name: user.display_name })}</span>}
-      {user.last_login_at > 0 && <span className="nx-hint">{t("最近登录 {value}", { value: formatTime(user.last_login_at) })}</span>}
-    </div>
-  );
-}
-
 // `sync` is rendered right after the account itself: syncing depends on the login and comes before account security.
 // On desktop the account (connection, login and logout) lives in SyncCard's connection card, so only the security
 // cards are rendered here.
