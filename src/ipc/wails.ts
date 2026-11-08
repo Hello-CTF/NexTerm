@@ -215,6 +215,11 @@ export async function toggleMaximiseWindow(): Promise<void> {
   await Window.ToggleMaximise();
 }
 
+export async function isWindowFullscreen(): Promise<boolean> {
+  const { Window } = await runtime();
+  return Window.IsFullscreen();
+}
+
 export async function closeWindow(): Promise<void> {
   const { Window } = await runtime();
   await Window.Close();

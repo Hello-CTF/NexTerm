@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   closeWindow: vi.fn(),
   minimiseWindow: vi.fn(),
   toggleMaximiseWindow: vi.fn(),
+  isWindowFullscreen: vi.fn(async () => false),
   banners: { takeover: false, update: false, dek: false },
   aiSidebarProps: [] as { sessionId?: string }[],
   backgroundProps: [] as { workspaceId?: string; sessionId?: string }[],
@@ -83,6 +84,7 @@ vi.mock("../ipc/wails", () => ({
   closeWindow: mocks.closeWindow,
   minimiseWindow: mocks.minimiseWindow,
   toggleMaximiseWindow: mocks.toggleMaximiseWindow,
+  isWindowFullscreen: mocks.isWindowFullscreen,
   listenWailsEvent: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("../app/layout", () => ({
@@ -1338,6 +1340,21 @@ describe("App shell notification layout", () => {
         click(button);
         expect(action).toHaveBeenCalledTimes(1);
       }
+
+      // Grey while the window is inactive, like the native buttons.
+      await act(async () => window.dispatchEvent(new Event("blur")));
+      expect(header?.querySelector(".nx-mac-controls")?.getAttribute("data-inactive")).toBe("true");
+      await act(async () => window.dispatchEvent(new Event("focus")));
+      expect(header?.querySelector(".nx-mac-controls")?.hasAttribute("data-inactive")).toBe(false);
+      // Gone in fullscreen, where macOS shows no window buttons.
+      mocks.isWindowFullscreen.mockResolvedValue(true);
+      await act(async () => window.dispatchEvent(new Event("resize")));
+      await flush();
+      expect(header?.querySelector(".nx-mac-controls")).toBeNull();
+      mocks.isWindowFullscreen.mockResolvedValue(false);
+      await act(async () => window.dispatchEvent(new Event("resize")));
+      await flush();
+      expect(header?.querySelector(".nx-mac-controls")).not.toBeNull();
     } finally {
       setMacPlatform(false);
     }

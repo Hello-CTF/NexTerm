@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   getExposure: vi.fn(),
   setExposure: vi.fn(),
+  syncStatus: vi.fn(),
 }));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: vi.fn() }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
     localHelperApi: { getExposure: mocks.getExposure, setExposure: mocks.setExposure },
+    syncApi: { status: mocks.syncStatus },
   });
 });
 
@@ -21,17 +23,18 @@ import { useUi } from "../../app/store";
 import { flush, mount } from "./reactTestUtils";
 
 function checkbox(container: HTMLElement): HTMLInputElement | null {
-  return container.querySelector<HTMLInputElement>('input[aria-label="向服务器账号开放本机终端"]');
+  return container.querySelector<HTMLInputElement>('input[aria-label="向服务端账号开放本机终端"]');
 }
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.syncStatus.mockResolvedValue({ loggedIn: true });
   useUi.setState({ toasts: [] });
 });
 
 describe("local terminal exposure setting", () => {
   it("renders nothing where exposure is unsupported", async () => {
-    mocks.getExposure.mockResolvedValue({ enabled: false, state: "unavailable", reason: "此环境不能向服务器开放本机终端" });
+    mocks.getExposure.mockResolvedValue({ enabled: false, state: "unavailable", reason: "此环境不能向服务端开放本机终端" });
     const view = mount(createElement(LocalHelperExposureSettings));
     try {
       await flush();
@@ -39,6 +42,27 @@ describe("local terminal exposure setting", () => {
       expect(checkbox(view.container)).toBeNull();
     } finally {
       view.unmount();
+    }
+  });
+
+  it("stays out of the way while no account is logged in, unless exposure is still on", async () => {
+    mocks.syncStatus.mockResolvedValue({ loggedIn: false });
+    mocks.getExposure.mockResolvedValue({ enabled: false, state: "off" });
+    const off = mount(createElement(LocalHelperExposureSettings));
+    try {
+      await flush();
+      expect(checkbox(off.container)).toBeNull();
+    } finally {
+      off.unmount();
+    }
+    mocks.getExposure.mockResolvedValue({ enabled: true, state: "unavailable", reason: "未登录服务端账号，本机终端暂不开放" });
+    const on = mount(createElement(LocalHelperExposureSettings));
+    try {
+      await flush();
+      expect(checkbox(on.container)?.checked).toBe(true);
+      expect(on.container.textContent).toContain("未登录服务端账号");
+    } finally {
+      on.unmount();
     }
   });
 
@@ -73,7 +97,7 @@ describe("local terminal exposure setting", () => {
 
   it("turns exposure off without asking and shows why it stopped", async () => {
     mocks.getExposure.mockResolvedValue({ enabled: true, state: "online", deviceId: "desk-1" });
-    mocks.setExposure.mockResolvedValue({ enabled: false, state: "revoked", reason: "服务器已吊销此设备" });
+    mocks.setExposure.mockResolvedValue({ enabled: false, state: "revoked", reason: "服务端已吊销此设备" });
     const view = mount(createElement(LocalHelperExposureSettings));
     try {
       await flush();
@@ -82,7 +106,7 @@ describe("local terminal exposure setting", () => {
       await flush();
       expect(mocks.ask).not.toHaveBeenCalled();
       expect(mocks.setExposure).toHaveBeenCalledWith(false);
-      expect(view.container.textContent).toContain("服务器已吊销此设备");
+      expect(view.container.textContent).toContain("服务端已吊销此设备");
     } finally {
       view.unmount();
     }
@@ -90,7 +114,7 @@ describe("local terminal exposure setting", () => {
 
   it("reports a refused change and keeps the backend's status", async () => {
     mocks.getExposure.mockResolvedValue({ enabled: false, state: "off" });
-    mocks.setExposure.mockRejectedValue(new Error("请先在同步设置中登录服务器账号"));
+    mocks.setExposure.mockRejectedValue(new Error("请先在同步设置中登录服务端账号"));
     mocks.ask.mockResolvedValue(true);
     const view = mount(createElement(LocalHelperExposureSettings));
     try {
@@ -99,7 +123,7 @@ describe("local terminal exposure setting", () => {
       await act(async () => checkbox(view.container)!.click());
       await flush();
       expect(checkbox(view.container)?.checked).toBe(false);
-      expect(useUi.getState().toasts.some((toast) => toast.text.includes("请先在同步设置中登录服务器账号"))).toBe(true);
+      expect(useUi.getState().toasts.some((toast) => toast.text.includes("请先在同步设置中登录服务端账号"))).toBe(true);
     } finally {
       view.unmount();
     }

@@ -1,6 +1,6 @@
-import { type MouseEvent } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { TRANSPORT } from "../../ipc/env";
-import { closeWindow, minimiseWindow, toggleMaximiseWindow } from "../../ipc/wails";
+import { closeWindow, isWindowFullscreen, minimiseWindow, toggleMaximiseWindow } from "../../ipc/wails";
 import { isMac, isWailsDragRegionTarget, wailsNoDragRegionStyle } from "../platform";
 import { IconClose, IconMaximize, IconMinus } from "../../ui/icons";
 import { ShellFrame, type ShellParts } from "./ShellFrame";
@@ -14,9 +14,42 @@ function onDragRegionDoubleClick(event: MouseEvent<HTMLElement>): void {
   }
 }
 
+// The window state the native traffic lights follow: grey while another app is in front, and gone in fullscreen,
+// where macOS shows no window buttons either. Entering or leaving fullscreen always resizes the window.
+function useMacWindowState(): { focused: boolean; fullscreen: boolean } {
+  const [focused, setFocused] = useState(() => typeof document === "undefined" || document.hasFocus());
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    let active = true;
+    const onFocus = () => setFocused(true);
+    const onBlur = () => setFocused(false);
+    const onResize = () => {
+      void Promise.resolve()
+        .then(() => isWindowFullscreen())
+        .then((value) => {
+          if (active) setFullscreen(value);
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("resize", onResize);
+    if (TRANSPORT === "desktop") onResize();
+    return () => {
+      active = false;
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+  return { focused, fullscreen };
+}
+
 function MacWindowControls() {
+  const { focused, fullscreen } = useMacWindowState();
+  if (fullscreen) return null;
   return (
-    <div className="nx-mac-controls" style={wailsNoDragRegionStyle}>
+    <div className="nx-mac-controls" style={wailsNoDragRegionStyle} data-inactive={focused ? undefined : "true"}>
       <button
         type="button"
         className="nx-mac-control is-close"
