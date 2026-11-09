@@ -1092,6 +1092,9 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return c.classifyGit(args)
 	case "redis-cli", "valkey-cli":
 		result := classifyRedis(args)
+		if stdin.kind == stdinFile {
+			return Worst(result, Dangerous("Redis 客户端执行重定向的命令文件，内容无法验证"))
+		}
 		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
 
 			if !stdin.ok {
@@ -2738,15 +2741,37 @@ func (c *classifier) classifyTarAction(value string) Ruling {
 func classifyRedis(args []string) Ruling {
 	filtered := make([]string, 0, len(args))
 	scan := false
+	mode := Allow()
+	cluster := false
+	clusterCommand := ""
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			switch arg {
-			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--quoted-pattern", "--count", "--cursor", "--type", "--sni", "--lru-test", "--rdb", "--functions-rdb", "--pipe-timeout", "--memkeys-samples", "--keystats-samples", "--top", "--eval", "--cluster", "--show-pushes", "--name", "--tls-ciphers", "--tls-ciphersuites", "--intrinsic-latency", "--vset-recall", "--vset-recall-count", "-ef", "-ele":
+			case "--rdb", "--functions-rdb":
+				mode = Worst(mode, Dangerous("redis-cli 把 RDB 快照写入本地文件"))
+				i++
+			case "--eval":
+				mode = Worst(mode, Dangerous("redis-cli 执行 Lua 脚本文件，内容无法验证"))
+				i++
+			case "--pipe":
+				mode = Worst(mode, Dangerous("redis-cli --pipe 从标准输入批量执行命令，内容无法验证"))
+			case "--lru-test":
+				mode = Worst(mode, Confirm(KindDBWrite, "redis-cli --lru-test 会向 Redis 批量写入测试键"))
+				i++
+			case "--replica", "--slave":
+				mode = Worst(mode, Confirm(KindUnknown, "redis-cli 以副本身份同步会触发服务端全量复制"))
+			case "--cluster":
+				cluster = true
+				if i+1 < len(args) {
+					clusterCommand = strings.ToLower(args[i+1])
+				}
+				i++
+			case "-h", "-p", "-a", "-s", "-d", "-D", "-r", "-i", "-X", "-t", "-k", "-n", "-u", "--user", "--pass", "--host", "--port", "--db", "--uri", "--socket", "--cert", "--key", "--cacert", "--cacertdir", "--capath", "--pattern", "--quoted-pattern", "--count", "--cursor", "--type", "--sni", "--pipe-timeout", "--memkeys-samples", "--keystats-samples", "--top", "--show-pushes", "--name", "--tls-ciphers", "--tls-ciphersuites", "--intrinsic-latency", "--vset-recall", "--vset-recall-count", "-ef", "-ele":
 				i++
 			case "--scan":
 				scan = true
-			case "--no-raw", "--raw", "--csv", "--json", "--quoted-json", "--quoted-input", "--stat", "--bigkeys", "--hotkeys", "--memkeys", "--keystats", "--latency", "--latency-history", "--latency-dist", "--replica", "--pipe", "--trip", "--ldb", "--ldb-sync-mode", "--tls", "--insecure", "--verbose", "--no-auth-warning", "--askpass", "-2", "-3", "-4", "-6", "-c", "-e", "-v", "-x":
+			case "--no-raw", "--raw", "--csv", "--json", "--quoted-json", "--quoted-input", "--stat", "--bigkeys", "--hotkeys", "--memkeys", "--keystats", "--latency", "--latency-history", "--latency-dist", "--trip", "--ldb", "--ldb-sync-mode", "--tls", "--insecure", "--verbose", "--no-auth-warning", "--askpass", "-2", "-3", "-4", "-6", "-c", "-e", "-v", "-x":
 			default:
 				return Indeterminate("redis-cli 包含无法识别的选项")
 			}
@@ -2754,9 +2779,33 @@ func classifyRedis(args []string) Ruling {
 		}
 		filtered = append(filtered, arg)
 	}
-	if scan && len(filtered) == 0 {
-		return Allow()
+	if cluster {
+		return Worst(mode, classifyRedisCluster(clusterCommand, filtered))
 	}
+	if scan && len(filtered) == 0 {
+		return mode
+	}
+	return Worst(mode, classifyRedisCommand(filtered))
+}
+
+// classifyRedisCluster grades a --cluster subcommand; its positional words are
+// node addresses, except for call, which runs the remaining command on every node.
+func classifyRedisCluster(command string, args []string) Ruling {
+	switch command {
+	case "check", "info", "help":
+		return Confirm(KindUnknown, "Redis 集群管理需要确认")
+	case "call":
+		inner := Confirm(KindUnknown, "交互式 Redis 客户端需要确认")
+		if len(args) > 1 {
+			inner = classifyRedisCommand(args[1:])
+		}
+		return Worst(Confirm(KindDBWrite, "redis-cli --cluster call 在所有节点执行命令"), inner)
+	default:
+		return Dangerous("Redis 集群拓扑、槽位或数据迁移操作")
+	}
+}
+
+func classifyRedisCommand(filtered []string) Ruling {
 	if len(filtered) == 0 {
 		return Confirm(KindUnknown, "交互式 Redis 客户端需要确认")
 	}

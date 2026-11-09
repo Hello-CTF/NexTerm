@@ -185,6 +185,7 @@ func TestR5RedisRepeatOptionsExposeRealCommand(t *testing.T) {
 		`redis-cli -t 5 -r 1 FLUSHALL`,
 		`redis-cli --rdb /tmp/dump.rdb -r 1 FLUSHALL`,
 		`redis-cli -D INFO FLUSHALL`,
+		`redis-cli --rdb /tmp/dump.rdb`,
 	}
 	for _, command := range danger {
 		t.Run(command, func(t *testing.T) {
@@ -209,10 +210,75 @@ func TestR5RedisRepeatOptionsExposeRealCommand(t *testing.T) {
 			}
 		})
 	}
-	for _, command := range []string{`redis-cli -r 1 SET k v`, `redis-cli --rdb /tmp/dump.rdb`, `redis-cli -r 1 DEBUG JMAP`} {
+	for _, command := range []string{`redis-cli -r 1 SET k v`, `redis-cli -r 1 DEBUG JMAP`} {
 		t.Run(command, func(t *testing.T) {
 			if ruling := ClassifyCommand(command, nil); ruling.Risk != NeedsConfirm {
 				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
+			}
+		})
+	}
+}
+
+func TestRedisModeOptionsIgnorePositionalCommand(t *testing.T) {
+	t.Parallel()
+	danger := []string{
+		`redis-cli --rdb /home/app/.bashrc PING`,
+		`redis-cli --functions-rdb /home/app/.profile INFO`,
+		`valkey-cli --rdb /home/app/.bashrc PING`,
+		`redis-cli --pipe PING < /tmp/cmds`,
+		`redis-cli --pipe`,
+		`echo PING | redis-cli --pipe`,
+		`redis-cli --eval /tmp/x.lua GET`,
+		`redis-cli --eval /tmp/x.lua`,
+		`redis-cli --scan --rdb /tmp/dump.rdb`,
+		`redis-cli --cluster reshard 127.0.0.1:7000`,
+		`redis-cli --cluster fix 127.0.0.1:7000`,
+		`redis-cli --cluster del-node 127.0.0.1:7000 abc`,
+		`redis-cli --cluster backup 127.0.0.1:7000 /home/app`,
+		`redis-cli --cluster call 127.0.0.1:7000 FLUSHALL`,
+		`redis-cli PING < /tmp/cmds`,
+		`valkey-cli GET k < /tmp/cmds`,
+		`redis-cli < /tmp/cmds`,
+	}
+	for _, command := range danger {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != Danger {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Danger", command, ruling)
+			}
+			for _, mode := range []Mode{ReadOnly, Unattended} {
+				if decision := Decide(Config{Mode: mode}, ruling, nil); decision.Action != ActionDeny {
+					t.Fatalf("%v decision = %+v, want ActionDeny", mode, decision)
+				}
+			}
+		})
+	}
+	confirm := []string{
+		`redis-cli --lru-test 1000000 PING`,
+		`redis-cli --lru-test 1000000`,
+		`redis-cli --replica`,
+		`redis-cli --slave`,
+		`redis-cli --cluster check 127.0.0.1:7000`,
+		`redis-cli --cluster info PING`,
+		`redis-cli --cluster call 127.0.0.1:7000 INFO`,
+	}
+	for _, command := range confirm {
+		t.Run(command, func(t *testing.T) {
+			ruling := ClassifyCommand(command, nil)
+			if ruling.Risk != NeedsConfirm {
+				t.Fatalf("ClassifyCommand(%q) = %v, want NeedsConfirm", command, ruling)
+			}
+			for _, mode := range []Mode{ReadOnly, Unattended} {
+				if decision := Decide(Config{Mode: mode}, ruling, nil); decision.Action != ActionDeny {
+					t.Fatalf("%v decision = %+v, want ActionDeny", mode, decision)
+				}
+			}
+		})
+	}
+	for _, command := range []string{`redis-cli PING`, `redis-cli --scan`, `redis-cli --scan --pattern 'user:*'`, `redis-cli -i 1 GET key`} {
+		t.Run(command, func(t *testing.T) {
+			if ruling := ClassifyCommand(command, nil); ruling.Risk != Safe {
+				t.Fatalf("ClassifyCommand(%q) = %v, want Safe", command, ruling)
 			}
 		})
 	}
