@@ -158,3 +158,35 @@ func initErr(a *Accounts, ctx context.Context, code, username, password string) 
 	_, err := a.InitSuperadmin(ctx, code, username, password)
 	return err
 }
+
+// A login for an unknown username runs the same argon2id verification as a
+// wrong password for an existing account and returns the same error, so the
+// response does not reveal whether the username exists.
+func TestAuthenticateUnknownUserVerifiesDummyHash(t *testing.T) {
+	a, _ := testAccounts(t)
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "dave", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown := authErr(a, ctx, "nobody", "synthetic-password-1")
+	wrong := authErr(a, ctx, "dave", "wrong-password")
+	requireCode(t, unknown, ipc.CodeForbidden)
+	if unknown.Error() != wrong.Error() {
+		t.Fatalf("unknown username error %q differs from wrong password error %q", unknown, wrong)
+	}
+	dummy := dummyPasswordHash()
+	if verifyPassword(dummy, "synthetic-password-1") {
+		t.Fatal("dummy hash accepted a password")
+	}
+	costs := func(encoded string) string {
+		parts := strings.Split(encoded, "$")
+		if len(parts) != 6 {
+			t.Fatalf("malformed hash %q", encoded)
+		}
+		return parts[1] + "$" + parts[3]
+	}
+	if costs(dummy) != costs(user.PasswordHash()) {
+		t.Fatalf("dummy hash costs %q differ from a real hash %q", costs(dummy), costs(user.PasswordHash()))
+	}
+}

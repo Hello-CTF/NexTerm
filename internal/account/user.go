@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -94,6 +95,29 @@ func verifyPassword(encoded, password string) bool {
 	}
 	key := argon2.IDKey([]byte(password), salt, uint32(timeParam), uint32(memory), uint8(threads), uint32(len(expected)))
 	return subtle.ConstantTimeCompare(key, expected) == 1
+}
+
+// dummyPassword holds a hash with the current argon2id costs. Logins for an
+// unknown username verify against it so they take as long as a wrong password
+// for an existing account.
+var dummyPassword struct {
+	mu     sync.Mutex
+	params vault.Argon2Params
+	hash   string
+}
+
+func dummyPasswordHash() string {
+	params := vault.PasswordArgon2()
+	dummyPassword.mu.Lock()
+	defer dummyPassword.mu.Unlock()
+	if dummyPassword.hash == "" || dummyPassword.params != params {
+		hash, err := hashPassword("nexterm-unknown-user")
+		if err != nil {
+			return ""
+		}
+		dummyPassword.params, dummyPassword.hash = params, hash
+	}
+	return dummyPassword.hash
 }
 
 func validateUsername(username string) error {
@@ -198,6 +222,7 @@ func (a *Accounts) GetUserByUsername(ctx context.Context, username string) (*Use
 func (a *Accounts) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	user, err := a.GetUserByUsername(ctx, username)
 	if err != nil {
+		verifyPassword(dummyPasswordHash(), password)
 		return nil, ipc.NewError(ipc.CodeForbidden, "用户名或密码错误")
 	}
 	if !verifyPassword(user.passwordHash, password) {
