@@ -3321,6 +3321,7 @@
   "搜索这台主机的历史终端输出，回车开始": "Rechercher dans l'historique de sortie du terminal de cet hôte ; appuyez sur Entrée pour lancer",
   "搜索进程": "Rechercher des processus",
   "搜索选中内容的首行": "Rechercher la première ligne de la sélection",
+  "搜索选项": "Options de recherche",
   "摘要：{summary}": "Résumé : {summary}",
   "撤销": "Révoquer",
   "撤销 ({value}+Z)": "Annuler ({value}+Z)",

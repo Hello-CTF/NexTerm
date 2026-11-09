@@ -3315,6 +3315,7 @@
   "搜索这台主机的历史终端输出，回车开始": "Verlaufsausgabe dieses Hosts durchsuchen, zum Starten Eingabetaste drücken",
   "搜索进程": "Prozesse durchsuchen",
   "搜索选中内容的首行": "Nach der ersten Zeile der Auswahl suchen",
+  "搜索选项": "Suchoptionen",
   "摘要：{summary}": "Zusammenfassung: {summary}",
   "撤销": "Widerrufen",
   "撤销 ({value}+Z)": "Rückgängig ({value}+Z)",

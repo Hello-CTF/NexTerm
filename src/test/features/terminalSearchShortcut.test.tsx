@@ -12,6 +12,7 @@ const harness = vi.hoisted(() => ({
   clearSearch: vi.fn(),
   focusTerminal: vi.fn(),
   copyText: vi.fn(),
+  registerSearch: undefined as ((api: unknown) => void) | undefined,
   searchResults: undefined as ((results: { resultIndex: number; resultCount: number }) => void) | undefined,
 }));
 
@@ -77,6 +78,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
       registerSearchRef.current = props.registerSearch;
       onAttachRef.current = props.onAttach;
       harness.searchResults = props.onSearchResults as typeof harness.searchResults;
+      harness.registerSearch = props.registerSearch as typeof harness.registerSearch;
       useEffect(() => {
         (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
@@ -399,6 +401,70 @@ describe("terminal search shortcut", () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
     await flush();
     expect(harness.findNext).not.toHaveBeenCalled();
+  });
+
+  it("folds the option toggles into one popover on narrow panes and lets the status truncate", async () => {
+    await openSearchWith("needle");
+    const inline = mounted?.container.querySelector<HTMLElement>('[data-testid="terminal-search-flags"]');
+    expect(inline?.className).toContain("@max-[560px]:hidden");
+    const options = searchButton("搜索选项");
+    const optionsHost = options.parentElement as HTMLElement;
+    expect(optionsHost.className).toContain("hidden");
+    expect(optionsHost.className).toContain("@max-[560px]:block");
+    expect(options.getAttribute("aria-expanded")).toBe("false");
+
+    click(options);
+    const popover = mounted?.container.querySelector<HTMLElement>('[data-testid="terminal-search-options"]');
+    expect(options.getAttribute("aria-expanded")).toBe("true");
+    const regex = popover?.querySelector<HTMLButtonElement>('button[aria-label="正则表达式"]');
+    expect(popover?.querySelectorAll("button[aria-pressed]")).toHaveLength(3);
+    if (!regex) throw new Error("regex toggle not found in popover");
+    click(regex);
+    expect(regex.getAttribute("aria-pressed")).toBe("true");
+    await waitForRendered(() =>
+      expect(harness.findNext).toHaveBeenCalledWith("needle", { caseSensitive: false, wholeWord: false, regex: true }),
+    );
+
+    act(() => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(mounted?.container.querySelector('[data-testid="terminal-search-options"]')).toBeNull();
+
+    act(() => harness.searchResults?.({ resultIndex: 0, resultCount: 7 }));
+    const status = mounted?.container.querySelector<HTMLElement>('[data-testid="terminal-search-status"]');
+    expect(status?.className).toContain("truncate");
+    expect(status?.className).toContain("min-w-0");
+  });
+
+  it("searches a rebuilt terminal again instead of keeping the old count", async () => {
+    await openSearchWith("needle");
+    act(() => harness.searchResults?.({ resultIndex: 2, resultCount: 12 }));
+    expect(searchStatus()).toBe("3/12");
+    const rebuilt = { findNext: vi.fn(), findPrevious: vi.fn(), clear: vi.fn() };
+    act(() => harness.registerSearch?.(rebuilt));
+    expect(rebuilt.findNext).toHaveBeenCalledWith("needle", { caseSensitive: false, wholeWord: false, regex: false });
+
+    keyDown(searchInput() as HTMLInputElement, "Escape");
+    await flush();
+    act(() => harness.searchResults?.({ resultIndex: 0, resultCount: 4 }));
+    const closedRebuild = { findNext: vi.fn(), findPrevious: vi.fn(), clear: vi.fn() };
+    act(() => harness.registerSearch?.(closedRebuild));
+    expect(closedRebuild.findNext).not.toHaveBeenCalled();
+    await pressFromTerminal("F", SEARCH);
+    // The reopened bar shows no count until the new terminal reports one.
+    expect(searchStatus()).toBe("");
+  });
+
+  it("steps to the next match when the selection search repeats the shown term", async () => {
+    harness.selection = "hello";
+    await pressFromTerminal("F", SEARCH);
+    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith("hello", expect.anything()));
+    harness.findNext.mockClear();
+    harness.clearSearch.mockClear();
+
+    await pressFromTerminal("F", SEARCH);
+    expect(harness.findNext).toHaveBeenCalledTimes(1);
+    expect(harness.clearSearch).not.toHaveBeenCalled();
   });
 
   it("shows an error toast when copying the selection fails", async () => {

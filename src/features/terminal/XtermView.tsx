@@ -35,6 +35,7 @@ import {
   waitAccountPreferences,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
+  type ResolvedTerminalTheme,
 } from "../../app/preferences";
 import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
@@ -225,6 +226,8 @@ export function XtermView(props: XtermViewProps) {
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const webglRef = useRef<WebglRenderer | null>(null);
+  // Re-colours the open search's highlights after a terminal theme change.
+  const refreshSearchThemeRef = useRef<(() => void) | null>(null);
   const outputRef = useRef<ScheduledTerminalOutput | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
@@ -1543,17 +1546,30 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);
     pasteHost.addEventListener("drop", onDropCapture, true);
-    // Decorations follow the terminal theme in force when the search runs.
-    const searchOptions = (flags: TerminalSearchFlags) => ({
-      ...flags,
-      decorations: searchDecorationsFor(getResolvedTerminalTheme()),
-    });
+    // Each search takes the decoration colours of the current terminal theme. The addon keeps the colours of the
+    // search that drew the highlights, so a theme change redraws them from the last term (refreshSearchThemeRef).
+    let lastSearch: { text: string; flags: TerminalSearchFlags; theme: ResolvedTerminalTheme } | null = null;
+    const searchOptions = (text: string, flags: TerminalSearchFlags) => {
+      const theme = getResolvedTerminalTheme();
+      lastSearch = { text, flags, theme };
+      return { ...flags, decorations: searchDecorationsFor(theme) };
+    };
     const offSearchResults = search.onResults((results) => onSearchResultsRef.current?.(results));
     registerSearchRef.current?.({
-      findNext: (text, flags) => search.findNext(text, searchOptions(flags)),
-      findPrevious: (text, flags) => search.findPrevious(text, searchOptions(flags)),
-      clear: () => search.clear(),
+      findNext: (text, flags) => search.findNext(text, searchOptions(text, flags)),
+      findPrevious: (text, flags) => search.findPrevious(text, searchOptions(text, flags)),
+      clear: () => {
+        lastSearch = null;
+        search.clear();
+      },
     });
+    refreshSearchThemeRef.current = () => {
+      if (!lastSearch || lastSearch.theme === getResolvedTerminalTheme()) return;
+      const { text, flags } = lastSearch;
+      // Without the cached term the search starts at the current match, so it stays selected.
+      search.clear();
+      search.findNext(text, searchOptions(text, flags));
+    };
 
     let measureFrame: number | null = null;
     let finalFrame = false;
@@ -1627,6 +1643,7 @@ export function XtermView(props: XtermViewProps) {
       followerTimerRef.current = undefined;
       osc7Disposable.dispose();
       offSearchResults();
+      refreshSearchThemeRef.current = null;
       links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();
@@ -1676,6 +1693,7 @@ export function XtermView(props: XtermViewProps) {
       term.options.fontFamily = fontFamily;
       if (fontMetricsChanged) fitIfSized(true);
       term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
+      refreshSearchThemeRef.current?.();
     };
     return subscribeAppearancePrefs(applyAppearance);
   }, []);

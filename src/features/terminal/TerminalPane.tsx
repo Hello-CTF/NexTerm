@@ -116,6 +116,7 @@ import {
   IconPanelRight,
   IconMergeH,
   IconPlug,
+  IconSettings,
   IconRefresh,
   IconSave,
   IconSearch,
@@ -339,6 +340,9 @@ export function TerminalPane({
   const [query, setQuery] = useState("");
   const [searchFlags, setSearchFlags] = useState<TerminalSearchFlags>({ caseSensitive: false, wholeWord: false, regex: false });
   const [searchResults, setSearchResults] = useState<TerminalSearchResults | null>(null);
+  // Narrow panes fold the option toggles into one popover so the input keeps its width.
+  const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
+  const searchOptionsRef = useRef<HTMLDivElement>(null);
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
@@ -432,6 +436,16 @@ export function TerminalPane({
   };
   const runSearchRef = useRef(runSearch);
   runSearchRef.current = runSearch;
+  // Searching for the term already shown steps to its next match; a new term searches as typing does.
+  const searchFor = (text: string) => {
+    if (searchOpen && text === query) runSearch("next", text);
+    else setQuery(text);
+    setSearchOpen(true);
+  };
+  const searchOpenRef = useRef(searchOpen);
+  searchOpenRef.current = searchOpen;
+  const searchForRef = useRef(searchFor);
+  searchForRef.current = searchFor;
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const exitedMayRun = useUi((s) => {
     for (const w of s.workspaces) for (const p of w.panes) {
@@ -1037,9 +1051,7 @@ export function TerminalPane({
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
       if (selected) {
-        const first = selected.split("\n")[0];
-        setQuery(first);
-        setSearchOpen(true);
+        searchForRef.current(selected.split("\n")[0]);
       } else {
         setSearchOpen(true);
       }
@@ -1054,16 +1066,48 @@ export function TerminalPane({
     if (!searchOpen) {
       searchApi.current?.clear();
       setSearchResults(null);
+      setSearchOptionsOpen(false);
       return;
     }
     const timer = window.setTimeout(() => runSearchRef.current("refresh", query), SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [searchOpen, query, searchFlags]);
 
+  useEffect(() => {
+    if (!searchOptionsOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && searchOptionsRef.current?.contains(e.target)) return;
+      setSearchOptionsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [searchOptionsOpen]);
+
   const closeSearch = () => {
     setSearchOpen(false);
     handleRef.current?.focus();
   };
+
+  const searchFlagsActive = searchFlags.caseSensitive || searchFlags.wholeWord || searchFlags.regex;
+  const searchFlagButtons = (
+    [
+      ["caseSensitive", "Aa", tr("区分大小写")],
+      ["wholeWord", "ab", tr("全字匹配")],
+      ["regex", ".*", tr("正则表达式")],
+    ] as const
+  ).map(([flag, glyph, label]) => (
+    <button
+      key={flag}
+      type="button"
+      className={`nx-icon-btn font-mono text-[11px] ${searchFlags[flag] ? "bg-neutral-800 text-neutral-100" : ""}`}
+      aria-label={label}
+      aria-pressed={searchFlags[flag]}
+      title={label}
+      onClick={() => setSearchFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}
+    >
+      {flag === "wholeWord" ? <span className="underline underline-offset-2">{glyph}</span> : glyph}
+    </button>
+  ));
 
   // Closes the sidebar when this pane shows it; otherwise moves it here and keeps it open.
   const toggleSidebarHere = useCallback(() => {
@@ -2237,8 +2281,7 @@ export function TerminalPane({
         accel: searchBindingLabel,
         disabled: !hasSel,
         onSelect: () => {
-          setQuery(firstLine);
-          setSearchOpen(true);
+          searchFor(firstLine);
         },
       },
       {
@@ -2617,7 +2660,7 @@ export function TerminalPane({
 
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 bg-neutral-900/70 px-2.5 py-1.5">
-          <div className="nx-field max-w-[260px] @max-[560px]:max-w-none @max-[560px]:flex-1">
+          <div className="nx-field max-w-[260px] @max-[560px]:min-w-0 @max-[560px]:max-w-none @max-[560px]:flex-1">
             <span className="nx-field-icon">
               <IconSearch size={12} />
             </span>
@@ -2642,28 +2685,40 @@ export function TerminalPane({
               }}
             />
           </div>
-          {(
-            [
-              ["caseSensitive", "Aa", tr("区分大小写")],
-              ["wholeWord", "ab", tr("全字匹配")],
-              ["regex", ".*", tr("正则表达式")],
-            ] as const
-          ).map(([flag, glyph, label]) => (
+          <div className="flex shrink-0 items-center gap-1.5 @max-[560px]:hidden" data-testid="terminal-search-flags">
+            {searchFlagButtons}
+          </div>
+          <div ref={searchOptionsRef} className="relative hidden shrink-0 @max-[560px]:block">
             <button
-              key={flag}
               type="button"
-              className={`nx-icon-btn font-mono text-[11px] ${searchFlags[flag] ? "bg-neutral-800 text-neutral-100" : ""}`}
-              aria-label={label}
-              aria-pressed={searchFlags[flag]}
-              title={label}
-              onClick={() => setSearchFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}
+              className={`nx-icon-btn ${searchOptionsOpen || searchFlagsActive ? "bg-neutral-800 text-neutral-100" : ""}`}
+              aria-label={tr("搜索选项")}
+              title={tr("搜索选项")}
+              aria-haspopup="true"
+              aria-expanded={searchOptionsOpen}
+              onClick={() => setSearchOptionsOpen((open) => !open)}
             >
-              {flag === "wholeWord" ? <span className="underline underline-offset-2">{glyph}</span> : glyph}
+              <IconSettings size={13} />
             </button>
-          ))}
+            {searchOptionsOpen && (
+              <div
+                className="absolute right-0 top-full z-20 mt-1 flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-1 shadow-lg"
+                data-testid="terminal-search-options"
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape" || isImeKeyEvent(e)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchOptionsOpen(false);
+                  searchInputRef.current?.focus();
+                }}
+              >
+                {searchFlagButtons}
+              </div>
+            )}
+          </div>
           {query && (
             <span
-              className={`shrink-0 whitespace-nowrap text-[11px] tabular-nums ${
+              className={`min-w-0 shrink truncate whitespace-nowrap text-[11px] tabular-nums ${
                 searchRegexError || searchResults?.resultCount === 0 ? "text-red-300" : "text-neutral-400"
               }`}
               role="status"
@@ -2853,6 +2908,9 @@ export function TerminalPane({
               onLinkMenu={openLinkMenu}
               registerSearch={(api) => {
                 searchApi.current = api;
+                // A rebuilt terminal (reconnect, reattach) has no highlights: search its buffer again.
+                if (searchOpenRef.current) runSearchRef.current("refresh");
+                else setSearchResults(null);
               }}
               onSearchResults={setSearchResults}
             />

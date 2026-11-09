@@ -3318,6 +3318,7 @@
   "搜索这台主机的历史终端输出，回车开始": "Search past terminal output of this host; press Enter to start",
   "搜索进程": "Search processes",
   "搜索选中内容的首行": "Search for the first line of the selection",
+  "搜索选项": "Search options",
   "摘要：{summary}": "Summary: {summary}",
   "撤销": "Undo",
   "撤销 ({value}+Z)": "Undo ({value}+Z)",
