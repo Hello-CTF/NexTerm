@@ -310,3 +310,63 @@ func TestFSMkdirCreatesNestedDirectories(t *testing.T) {
 		t.Fatalf("fs_mkdir onto a file = %+v, want a failure", response)
 	}
 }
+
+func TestFSCreateRefusesAnExistingFileAndNeverTruncates(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		filesystem base.FileSystem
+		creates    bool
+	}{
+		{name: "exclusive backend", filesystem: fslocal.New(), creates: true},
+		// A backend without base.FileCreator must be refused rather than served by a truncating write.
+		{name: "backend without exclusive create", filesystem: singleLevelMkdirFS{FileSystem: fslocal.New()}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			connector := session.ConnectorFunc(func(context.Context, session.Asset, uint64) (base.Transport, error) {
+				return fakeProviderTransport{kind: "ssh", fs: test.filesystem}, nil
+			})
+			manager := session.NewManager(session.Config{Connector: connector, OpenAccess: true})
+			dispatcher := ipc.NewDispatcher()
+			if err := registerFSCommands(dispatcher, manager, nil); err != nil {
+				t.Fatal(err)
+			}
+			connected, err := manager.Connect(t.Context(), session.Asset{ID: "fs-create", Kind: session.KindSSH})
+			if err != nil {
+				t.Fatal(err)
+			}
+			create := func(path string) ipc.Response {
+				encoded, _ := json.Marshal(path)
+				return dispatcher.Dispatch(t.Context(), ipc.Request{
+					Command: "fs_create", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":` + string(encoded) + `}`),
+				}, ipc.Environment{})
+			}
+			root := t.TempDir()
+			existing := filepath.Join(root, "nginx.conf")
+			if err := os.WriteFile(existing, []byte("keep me"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			response := create(existing)
+			if response.OK || response.Error == nil {
+				t.Fatalf("fs_create over an existing file = %+v, want a failure", response)
+			}
+			if test.creates && response.Error.Code != ipc.Code("conflict") {
+				t.Fatalf("fs_create over an existing file = %+v, want a conflict", response.Error)
+			}
+			if !test.creates && response.Error.Code != ipc.CodeUnsupported {
+				t.Fatalf("fs_create without exclusive create = %+v, want unsupported", response.Error)
+			}
+			if data, err := os.ReadFile(existing); err != nil || string(data) != "keep me" {
+				t.Fatalf("existing file after fs_create = %q, %v", data, err)
+			}
+			fresh := filepath.Join(root, "fresh.conf")
+			response = create(fresh)
+			_, statErr := os.Stat(fresh)
+			if test.creates && (!response.OK || statErr != nil) {
+				t.Fatalf("fs_create of a new file = %+v, stat %v", response, statErr)
+			}
+			if !test.creates && (response.OK || statErr == nil) {
+				t.Fatalf("fs_create without exclusive create = %+v, stat %v; want a refusal", response, statErr)
+			}
+		})
+	}
+}

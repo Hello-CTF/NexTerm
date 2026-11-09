@@ -979,6 +979,12 @@
       "channel": false,
       "stream": "none"
     },
+    "fs_create": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "fs_delete": {
       "scope": "fs",
       "nested": false,

@@ -1007,6 +1007,7 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "fs_cancel", scope: "fs", input: "FSCancelRequest", output: "boolean"},
 		{name: "fs_checksum", scope: "fs", input: structType("sessionId: string;", "path: string;", "algo?: string;"), output: "string"},
 		{name: "fs_chmod", scope: "fs", input: structType("sessionId: string;", "path: string;", "mode: number;"), output: "unknown"},
+		{name: "fs_create", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "unknown"},
 		{name: "fs_delete", scope: "fs", input: structType("sessionId: string;", "path: string;", "isDir: boolean;"), output: "unknown"},
 		{name: "fs_download", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "localPath: string;", "resume?: boolean;", "taskId?: string;", "attemptId?: string;"), output: "number"},
 		{name: "fs_extract", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "string"},
@@ -1067,8 +1068,8 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 28 {
-		t.Fatalf("selected fs/local-file/mount command count = %d, want 28", len(selected))
+	if len(selected) != 29 {
+		t.Fatalf("selected fs/local-file/mount command count = %d, want 29", len(selected))
 	}
 	for name, command := range commands {
 		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")

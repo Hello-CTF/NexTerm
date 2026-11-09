@@ -103,39 +103,64 @@ func remoteAlreadyExists(expected conditional.Expectation) error {
 	return &conditional.MismatchError{Expected: expected, Actual: conditional.Version{Exists: true}, Reason: "file already exists"}
 }
 
-func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (temporary string, err error) {
+var (
+	errStageCreate     = errors.New("SFTP create temporary file")
+	errStageAttributes = errors.New("SFTP set temporary file attributes")
+)
+
+func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (string, error) {
+	return f.stageTemporary(ctx, remotePath, data, func(temporary string) error {
+		return f.client.Chmod(temporary, mode)
+	})
+}
+
+// stageTemporary writes data to a new sibling of remotePath created with O_EXCL, applies its attributes, syncs and
+// closes it. A failure to create the file wraps errStageCreate and a failure to apply attributes wraps
+// errStageAttributes; the temporary file is removed on every failure.
+func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte, attributes func(temporary string) error) (temporary string, err error) {
 	var suffix [8]byte
 	_, _ = rand.Read(suffix[:])
 	temporary = path.Join(path.Dir(remotePath), "."+path.Base(remotePath)+".nexterm-tmp-"+hex.EncodeToString(suffix[:]))
 	file, err := f.client.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
-		return "", fmt.Errorf("SFTP create temporary file: %w", err)
+		return "", fmt.Errorf("%w: %w", errStageCreate, err)
 	}
+	// Failure returns clear the named result before deferred calls run, so cleanup holds its own copy of the name.
+	staged := temporary
 	defer func() {
 		if err != nil {
 			_ = file.Close()
-			_ = f.client.Remove(temporary)
+			_ = f.client.Remove(staged)
 		}
 	}()
 	stop := context.AfterFunc(ctx, func() { _ = file.Close() })
 	defer stop()
 	if err = writeAll(ctx, file, data); err != nil {
-		return "", fmt.Errorf("SFTP stage conditional write: %w", err)
+		return "", fmt.Errorf("SFTP stage write: %w", err)
 	}
-	if err = f.client.Chmod(temporary, mode); err != nil {
-		return "", fmt.Errorf("SFTP stage conditional mode: %w", err)
+	if f.stageWrittenHook != nil {
+		f.stageWrittenHook()
+	}
+	if err = ctx.Err(); err != nil {
+		return "", err
+	}
+	if err = attributes(temporary); err != nil {
+		return "", fmt.Errorf("%w: %w", errStageAttributes, err)
 	}
 	if syncErr := file.Sync(); syncErr != nil {
 		var status *sftp.StatusError
 		if !errors.As(syncErr, &status) || status.FxCode() != sftp.ErrSSHFxOpUnsupported {
 			err = syncErr
-			return "", fmt.Errorf("SFTP stage conditional sync: %w", err)
+			return "", fmt.Errorf("SFTP stage sync: %w", err)
 		}
 	}
 	if err = file.Close(); err != nil {
-		return "", fmt.Errorf("SFTP stage conditional close: %w", err)
+		return "", fmt.Errorf("SFTP stage close: %w", err)
 	}
 	return temporary, nil
 }
 
-var _ conditional.Writer = (*FS)(nil)
+var (
+	_ conditional.Writer = (*FS)(nil)
+	_ base.FileCreator   = (*FS)(nil)
+)

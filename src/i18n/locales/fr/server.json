@@ -1219,6 +1219,7 @@
   "同 --force": "Identique à --force",
   "同 --yes": "Identique à --yes",
   "同一批推送包含重复对象 ID": "Un même lot poussé contient des ID d'objet en double",
+  "同名文件或目录已存在，未创建也未修改: ": "Un fichier ou un répertoire portant ce nom existe déjà ; rien n'a été créé ni modifié : ",
   "同步冲突次数过多，请稍后重试": "Trop de conflits de synchronisation, réessayez plus tard",
   "同步协议 %d": "Protocole de synchronisation %d",
   "同步协议不兼容：服务端为%s，此设备使用同步协议 %d。NexTerm 1.3.0 起不再与 1.3.0 之前的服务端或设备同步，请将服务端升级到 1.3.0 或更高版本": "Protocole de synchronisation incompatible : le serveur est %s, cet appareil utilise le protocole de synchronisation %d. À partir de NexTerm 1.3.0, la synchronisation avec les serveurs ou appareils antérieurs à 1.3.0 n'est plus prise en charge ; mettez le serveur à niveau vers la version 1.3.0 ou ultérieure",

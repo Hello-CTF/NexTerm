@@ -1219,6 +1219,7 @@
   "同 --force": "Same as --force",
   "同 --yes": "Same as --yes",
   "同一批推送包含重复对象 ID": "The same push contains duplicate object IDs",
+  "同名文件或目录已存在，未创建也未修改: ": "A file or directory with that name already exists; nothing was created or changed: ",
   "同步冲突次数过多，请稍后重试": "Too many sync conflicts; try again later",
   "同步协议 %d": "Sync protocol %d",
   "同步协议不兼容：服务端为%s，此设备使用同步协议 %d。NexTerm 1.3.0 起不再与 1.3.0 之前的服务端或设备同步，请将服务端升级到 1.3.0 或更高版本": "Sync protocol mismatch: the server is %s, and this device uses sync protocol %d. Starting with NexTerm 1.3.0, sync with servers or devices older than 1.3.0 is no longer supported; upgrade the server to 1.3.0 or later",

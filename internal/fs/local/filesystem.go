@@ -337,4 +337,7 @@ func (f *FileSystem) FileMode(ctx context.Context, path string) (fs.FileMode, er
 	return info.Mode(), nil
 }
 
-var _ base.FileSystem = (*FileSystem)(nil)
+var (
+	_ base.FileSystem  = (*FileSystem)(nil)
+	_ base.FileCreator = (*FileSystem)(nil)
+)

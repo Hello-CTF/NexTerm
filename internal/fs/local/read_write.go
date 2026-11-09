@@ -190,3 +190,15 @@ var (
 	_ io.Seeker         = (*reader)(nil)
 	_ base.RemoteWriter = (*writer)(nil)
 )
+
+// CreateFile creates an empty file exclusively with the same owner-only mode WriteFile gives a new file.
+func (f *FileSystem) CreateFile(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(real(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	return file.Close()
+}

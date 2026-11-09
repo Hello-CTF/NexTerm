@@ -128,3 +128,9 @@ var ErrNotPrivateDir = errors.New("directory is not a private directory")
 type PrivateDirCreator interface {
 	MkdirPrivate(context.Context, string) error
 }
+
+// FileCreator creates one empty regular file exclusively. It fails with fs.ErrExist when anything already exists at
+// the path, including a directory or a dangling symlink, and never creates parents, so it cannot truncate a file.
+type FileCreator interface {
+	CreateFile(context.Context, string) error
+}

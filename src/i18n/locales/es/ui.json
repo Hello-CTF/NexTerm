@@ -3560,6 +3560,7 @@
   "无法写入本机剪贴板": "No se pudo escribir en el portapapeles local",
   "无法创建转发：{value}": "No se puede crear el reenvío: {value}",
   "无法创建：{problem}": "No se puede crear: {problem}",
+  "无法创建：「{name}」已存在，原有内容未被修改。请换一个名称。": "No se puede crear: «{name}» ya existe y su contenido no se ha modificado. Elija otro nombre.",
   "无法删除片段：{value}": "No se puede eliminar el fragmento: {value}",
   "无法判断影响，需要你确认": "No se puede evaluar el impacto; necesita tu confirmación",
   "无法加载资产列表，最近连接暂不可用。": "No se pudo cargar la lista de recursos; las conexiones recientes no están disponibles por ahora.",

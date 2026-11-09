@@ -3548,6 +3548,7 @@
   "无法写入本机剪贴板": "Die lokale Zwischenablage konnte nicht beschrieben werden",
   "无法创建转发：{value}": "Weiterleitung konnte nicht erstellt werden: {value}",
   "无法创建：{problem}": "Erstellen nicht möglich: {problem}",
+  "无法创建：「{name}」已存在，原有内容未被修改。请换一个名称。": "Erstellen nicht möglich: „{name}“ existiert bereits, der Inhalt wurde nicht verändert. Wählen Sie einen anderen Namen.",
   "无法删除片段：{value}": "Snippet konnte nicht gelöscht werden: {value}",
   "无法判断影响，需要你确认": "Die Auswirkungen sind nicht absehbar, Ihre Bestätigung ist erforderlich",
   "无法加载资产列表，最近连接暂不可用。": "Die Asset-Liste konnte nicht geladen werden, zuletzt verwendete Verbindungen sind vorerst nicht verfügbar.",
