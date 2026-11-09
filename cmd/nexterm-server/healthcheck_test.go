@@ -47,6 +47,14 @@ func TestHealthcheckExitCodes(t *testing.T) {
 			}
 			return ""
 		}, want: 0},
+		{name: "listen flag over env", args: []string{"--listen", healthy.Listener.Addr().String()}, getenv: func(key string) string {
+			if key == "NEXTERM_LISTEN" {
+				return closedAddr
+			}
+			return ""
+		}, want: 0},
+		{name: "url over listen flag", args: []string{"--url", unavailable.URL + "/healthz", "--listen", healthy.Listener.Addr().String()}, want: 1},
+		{name: "invalid listen flag", args: []string{"--listen", "no-port"}, want: 2},
 		{name: "unavailable", args: []string{"--url=" + unavailable.URL + "/healthz"}, want: 1},
 		{name: "not nexterm", args: []string{"--url", impostor.URL + "/healthz"}, want: 1},
 		{name: "not json", args: []string{"--url", notJSON.URL + "/healthz"}, want: 1},

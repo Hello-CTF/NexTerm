@@ -268,6 +268,11 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+A reverse proxy on the same host must send `X-Forwarded-For` (or `Forwarded`
+/ `X-Real-IP`) on every request. Without one, a proxied remote caller looks
+like a direct loopback caller and receives the detailed `/healthz` payload
+(see Health checks below).
+
 ## Health checks
 
 - `GET /livez` answers 200 while the process serves HTTP and touches neither
@@ -284,11 +289,13 @@ direct peer address is used.
   that carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP` without being a
   trusted proxy counts as remote, so a local reverse proxy must send one of
   those headers.
-- `nexterm-server healthcheck [--url URL] [--timeout 5s]` probes `/healthz`
-  without curl and exits 0 when ready, 1 when unreachable or unhealthy, and 2
-  on usage errors. Without `--url` it derives the address from
-  `NEXTERM_LISTEN`, replacing a wildcard host with loopback, so it suits a
-  container health check such as
+- `nexterm-server healthcheck [--url URL | --listen ADDRESS] [--timeout 5s]`
+  probes `/healthz` without curl and exits 0 when ready, 1 when unreachable
+  or unhealthy, and 2 on usage errors. The target is `--url`, else
+  `http://<listen>/healthz` built from `--listen`, then `NEXTERM_LISTEN`, then
+  `0.0.0.0:8080`, with a wildcard host replaced by loopback. Pass the same
+  `--listen` value the server uses when it is not set through the
+  environment. It suits a container health check such as
   `HEALTHCHECK CMD ["nexterm-server", "healthcheck"]`.
 
 ## Multi-user limits

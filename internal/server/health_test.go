@@ -151,6 +151,31 @@ func TestHealthzDetailOnlyForLoopbackCallers(t *testing.T) {
 	}
 }
 
+func TestHealthzSuperadminProbeDoesNotSlideSession(t *testing.T) {
+	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
+	admin, _ := fixture.initSuperadmin(t, "root", "password-health-3")
+	// Age the session past the slide-persist window so a sliding validation would rewrite it.
+	if _, err := fixture.db.Exec(`UPDATE user_session SET touched_at = touched_at - 3600000, expires_at = expires_at - 3600000`); err != nil {
+		t.Fatal(err)
+	}
+	readSession := func() (int64, int64) {
+		t.Helper()
+		var touched, expires int64
+		if err := fixture.db.QueryRow(`SELECT touched_at, expires_at FROM user_session`).Scan(&touched, &expires); err != nil {
+			t.Fatal(err)
+		}
+		return touched, expires
+	}
+	touchedBefore, expiresBefore := readSession()
+	got := probeHealthz(t, fixture.server.Handler(), "/healthz", "203.0.113.7:5000", func(r *http.Request) { r.AddCookie(admin.cookie) })
+	if got.status != http.StatusOK || got.body["commands"] == nil {
+		t.Fatalf("superadmin /healthz = %d %v", got.status, got.body)
+	}
+	if touchedAfter, expiresAfter := readSession(); touchedAfter != touchedBefore || expiresAfter != expiresBefore {
+		t.Fatalf("session slid: touched %d -> %d, expires %d -> %d", touchedBefore, touchedAfter, expiresBefore, expiresAfter)
+	}
+}
+
 func TestHealthzDetailForSuperadminSession(t *testing.T) {
 	fixture := newAccountFixtureListen(t, AuthOn, "0.0.0.0:8080")
 	admin, _ := fixture.initSuperadmin(t, "root", "password-health-1")

@@ -161,13 +161,8 @@ type accountThrottles struct {
 	mfa      *account.LoginThrottle
 }
 
-// HealthSummary is the payload every caller may read: fleet agents check ok and
-// service, and clients read version for one-line agent install commands.
-type HealthSummary struct {
-	OK      bool   `json:"ok"`
-	Service string `json:"service"`
-	Version string `json:"version"`
-}
+// HealthSummary is the payload every caller may read.
+type HealthSummary = core.HealthSummary
 
 type Health struct {
 	OK               bool             `json:"ok"`
@@ -526,7 +521,8 @@ func (s *Server) healthDetailAllowed(r *http.Request) bool {
 	if !ok {
 		return false
 	}
-	identity, err := s.accounts.ValidateSession(r.Context(), token)
+	// CheckSession is read-only: polling /healthz must neither keep a session alive nor write to the database.
+	identity, err := s.accounts.CheckSession(r.Context(), token)
 	return err == nil && identity.Role == account.RoleSuperadmin
 }
 

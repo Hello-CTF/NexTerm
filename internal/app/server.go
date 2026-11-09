@@ -34,7 +34,8 @@ type ServeConfig struct {
 	WriteIdleTimeout time.Duration
 }
 
-// HealthSummary is the /healthz payload for callers that are not on loopback.
+// HealthSummary is the /healthz payload every caller may read: fleet agents check
+// ok and service, and clients read version for one-line agent install commands.
 type HealthSummary struct {
 	OK      bool   `json:"ok"`
 	Service string `json:"service"`

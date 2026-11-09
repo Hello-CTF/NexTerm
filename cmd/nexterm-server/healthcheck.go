@@ -17,15 +17,17 @@ import (
 )
 
 const healthcheckUsage = `Usage:
-  nexterm-server healthcheck [--url URL] [--timeout DURATION]
+  nexterm-server healthcheck [--url URL | --listen ADDRESS] [--timeout DURATION]
 
 Probe a running nexterm-server readiness endpoint without curl (Docker, LazyCat, systemd).
 Exits 0 when /healthz answers 200 with {"ok":true,"service":"nexterm-server"}, 1 when the
 server is unreachable or unhealthy (database ping failed, required vault locked), 2 on usage errors.
 
 Flags:
-  --url URL           Health URL (default http://<NEXTERM_LISTEN>/healthz, with a wildcard
-                      host replaced by loopback; NEXTERM_LISTEN defaults to 0.0.0.0:8080)
+  --url URL           Health URL; takes precedence over --listen
+  --listen ADDRESS    The server's listen address; probes http://ADDRESS/healthz with a
+                      wildcard host replaced by loopback (default env NEXTERM_LISTEN,
+                      then 0.0.0.0:8080)
   --timeout DURATION  Request timeout (default 5s)
   -h, --help          Print this help
 `
@@ -34,6 +36,7 @@ func runHealthcheck(args []string, getenv func(string) string, stdout, stderr io
 	flags := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	rawURL := flags.String("url", "", "")
+	listenFlag := flags.String("listen", "", "")
 	timeout := flags.Duration("timeout", 5*time.Second, "")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -53,7 +56,10 @@ func runHealthcheck(args []string, getenv func(string) string, stdout, stderr io
 	}
 	target := strings.TrimSpace(*rawURL)
 	if target == "" {
-		listen := strings.TrimSpace(getenv("NEXTERM_LISTEN"))
+		listen := strings.TrimSpace(*listenFlag)
+		if listen == "" {
+			listen = strings.TrimSpace(getenv("NEXTERM_LISTEN"))
+		}
 		if listen == "" {
 			listen = "0.0.0.0:8080"
 		}
@@ -78,7 +84,7 @@ func runHealthcheck(args []string, getenv func(string) string, stdout, stderr io
 func healthURLForListen(listen string) (string, error) {
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
-		return "", fmt.Errorf("invalid NEXTERM_LISTEN %q: %w", listen, err)
+		return "", fmt.Errorf("invalid listen address %q: %w", listen, err)
 	}
 	switch host {
 	case "", "0.0.0.0":
