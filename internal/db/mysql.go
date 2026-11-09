@@ -143,10 +143,10 @@ func mysqlDescribe(ctx context.Context, connection *mysqlConnection, schema, tab
 }
 
 func queryMySQL(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
-	return querySQL(ctx, database, statement, limit, timeout, mysqlJSONValue)
+	return querySQL(ctx, database, statement, sqlDialectMySQL, limit, timeout, mysqlJSONValue)
 }
 
-func querySQL(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration, jsonValue func(any, string) any) (result QueryResult, returnedErr error) {
+func querySQL(ctx context.Context, database *sql.DB, statement string, dialect sqlDialect, limit uint64, timeout time.Duration, jsonValue func(any, string) any) (result QueryResult, returnedErr error) {
 	started := time.Now()
 	result.Columns = []string{}
 	result.Rows = [][]any{}
@@ -160,7 +160,7 @@ func querySQL(ctx context.Context, database *sql.DB, statement string, limit uin
 	defer cancel()
 
 	var err error
-	if statementReturnsRows(statement) {
+	if statementReturnsRows(statement, dialect) {
 		err = readSQLRows(queryContext, database, statement, normalizeRowLimit(limit), &result, jsonValue)
 	} else {
 		var execution sql.Result
@@ -297,79 +297,176 @@ func queryStrings(ctx context.Context, database *sql.DB, statement string, args 
 	return values, nil
 }
 
-func statementReturnsRows(statement string) bool {
+type sqlDialect int
+
+const (
+	sqlDialectMySQL sqlDialect = iota
+	sqlDialectPostgres
+)
+
+func statementReturnsRows(statement string, dialect sqlDialect) bool {
 	keyword := firstSQLKeyword(statement)
 	if keyword == "WITH" {
-		keyword = withMainKeyword(statement)
+		keyword = withMainKeyword(statement, dialect)
 	}
 	switch keyword {
 	case "SELECT", "SHOW", "DESC", "DESCRIBE", "EXPLAIN", "WITH", "CALL", "VALUES", "TABLE", "HELP", "ANALYZE", "OPTIMIZE", "REPAIR", "CHECK", "CHECKSUM", "(":
 		return true
+	case "INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE":
+		return hasTopLevelReturning(statement, dialect)
 	default:
 		return false
 	}
 }
 
-func withMainKeyword(statement string) string {
+// withMainKeyword returns the statement keyword that follows the CTE list,
+// or "WITH" when it cannot be determined.
+func withMainKeyword(statement string, dialect sqlDialect) string {
+	keyword := "WITH"
+	scanTopLevelSQLWords(statement, dialect, func(word string) bool {
+		switch upper := strings.ToUpper(word); upper {
+		case "SELECT", "INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "VALUES", "TABLE":
+			keyword = upper
+			return false
+		}
+		return true
+	})
+	return keyword
+}
+
+// hasTopLevelReturning reports whether the first statement carries a
+// RETURNING clause (PostgreSQL, MariaDB), which makes a DML statement
+// return rows.
+func hasTopLevelReturning(statement string, dialect sqlDialect) bool {
+	found := false
+	scanTopLevelSQLWords(statement, dialect, func(word string) bool {
+		found = strings.EqualFold(word, "RETURNING")
+		return !found
+	})
+	return found
+}
+
+func isSQLWordByte(c byte) bool {
+	return c == '_' || c == '$' || c >= 0x80 || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
+// scanTopLevelSQLWords calls visit for every bare word outside quotes,
+// comments and parentheses of the first statement. Scanning stops at a
+// top-level ';', at an unterminated quote or comment, or when visit
+// returns false.
+func scanTopLevelSQLWords(statement string, dialect sqlDialect, visit func(string) bool) {
+	postgres := dialect == sqlDialectPostgres
 	depth := 0
 	for i := 0; i < len(statement); {
+		c := statement[i]
 		switch {
-		case i+1 < len(statement) && statement[i:i+2] == "/*":
-			end := strings.Index(statement[i+2:], "*/")
-			if end < 0 {
-				return "WITH"
+		case strings.HasPrefix(statement[i:], "/*"):
+			if !postgres {
+				end := strings.Index(statement[i+2:], "*/")
+				if end < 0 {
+					return
+				}
+				i += end + 4
+				continue
 			}
-			i += end + 4
-		case statement[i] == '#' || (i+1 < len(statement) && statement[i:i+2] == "--" && (i+2 == len(statement) || unicode.IsSpace(rune(statement[i+2])))):
+			nested := 0
+			for i < len(statement) {
+				if strings.HasPrefix(statement[i:], "/*") {
+					nested++
+					i += 2
+				} else if strings.HasPrefix(statement[i:], "*/") {
+					nested--
+					i += 2
+					if nested == 0 {
+						break
+					}
+				} else {
+					i++
+				}
+			}
+			if nested > 0 {
+				return
+			}
+		case (!postgres && c == '#') || (strings.HasPrefix(statement[i:], "--") && (postgres || i+2 == len(statement) || unicode.IsSpace(rune(statement[i+2])))):
 			end := strings.IndexByte(statement[i:], '\n')
 			if end < 0 {
-				return "WITH"
+				return
 			}
 			i += end + 1
-		case statement[i] == '\'' || statement[i] == '"' || statement[i] == '`':
-			quote := statement[i]
-			i++
-			for i < len(statement) {
-				if quote != '`' && statement[i] == '\\' && i+1 < len(statement) {
-					i += 2
-					continue
-				}
-				if statement[i] == quote {
-					if i+1 < len(statement) && statement[i+1] == quote {
-						i += 2
-						continue
-					}
-					i++
-					break
-				}
-				i++
+		case c == '\'' || c == '"' || (!postgres && c == '`'):
+			next, ok := skipSQLQuoted(statement, i, !postgres && c != '`')
+			if !ok {
+				return
 			}
-		case statement[i] == '(':
+			i = next
+		case postgres && c == '$':
+			tagEnd := i + 1
+			for tagEnd < len(statement) && isSQLWordByte(statement[tagEnd]) && statement[tagEnd] != '$' {
+				tagEnd++
+			}
+			if tagEnd >= len(statement) || statement[tagEnd] != '$' || (tagEnd > i+1 && statement[i+1] >= '0' && statement[i+1] <= '9') {
+				i++
+				continue
+			}
+			tag := statement[i : tagEnd+1]
+			end := strings.Index(statement[tagEnd+1:], tag)
+			if end < 0 {
+				return
+			}
+			i = tagEnd + 1 + end + len(tag)
+		case c == '(':
 			depth++
 			i++
-		case statement[i] == ')':
+		case c == ')':
 			if depth > 0 {
 				depth--
 			}
 			i++
-		case statement[i] == ';' && depth == 0:
-			return "WITH"
-		case (statement[i] >= 'a' && statement[i] <= 'z') || (statement[i] >= 'A' && statement[i] <= 'Z'):
+		case c == ';' && depth == 0:
+			return
+		case isSQLWordByte(c):
 			start := i
-			for i < len(statement) && ((statement[i] >= 'a' && statement[i] <= 'z') || (statement[i] >= 'A' && statement[i] <= 'Z')) {
+			for i < len(statement) && isSQLWordByte(statement[i]) {
 				i++
 			}
-			if depth == 0 {
-				keyword := strings.ToUpper(statement[start:i])
-				if keyword == "SELECT" || keyword == "UPDATE" || keyword == "DELETE" {
-					return keyword
+			word := statement[start:i]
+			if postgres && (word == "E" || word == "e") && i < len(statement) && statement[i] == '\'' {
+				next, ok := skipSQLQuoted(statement, i, true)
+				if !ok {
+					return
 				}
+				i = next
+				continue
+			}
+			if depth == 0 && !visit(word) {
+				return
 			}
 		default:
 			i++
 		}
 	}
-	return "WITH"
+}
+
+// skipSQLQuoted returns the index after the quoted literal or identifier
+// starting at start. A doubled quote is an escaped quote; backslash escapes
+// apply only when backslashEscapes is set.
+func skipSQLQuoted(statement string, start int, backslashEscapes bool) (int, bool) {
+	quote := statement[start]
+	for i := start + 1; i < len(statement); {
+		if backslashEscapes && statement[i] == '\\' && i+1 < len(statement) {
+			i += 2
+			continue
+		}
+		if statement[i] == quote {
+			if i+1 < len(statement) && statement[i+1] == quote {
+				i += 2
+				continue
+			}
+			return i + 1, true
+		}
+		i++
+	}
+	return len(statement), false
 }
 
 func firstSQLKeyword(statement string) string {
