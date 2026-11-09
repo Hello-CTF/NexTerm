@@ -646,6 +646,26 @@ func TestServerProcessRejectsInvalidAuthMode(t *testing.T) {
 	}
 }
 
+func TestServerProcessRejectsInvalidLoggingEnvironment(t *testing.T) {
+	binary := buildServerBinary(t)
+	for _, entry := range []string{"NEXTERM_LOG_LEVEL=verbose", "NEXTERM_LOG_FORMAT=xml", "NEXTERM_LOG_FILE=maybe", "NEXTERM_ACCESS_LOG=sometimes"} {
+		t.Run(entry, func(t *testing.T) {
+			dataDir := t.TempDir()
+			cmd := exec.Command(binary, "--listen", "127.0.0.1:0", "--data-dir", dataDir)
+			cmd.Env = serverProcessEnv(t, "NEXTERM_WEB_ROOT=", entry)
+			output, err := cmd.CombinedOutput()
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok || exitErr.ExitCode() != 2 {
+				t.Fatalf("%s = %v, output %q", entry, err, output)
+			}
+			name, _, _ := strings.Cut(entry, "=")
+			if !strings.Contains(string(output), name) {
+				t.Fatalf("error does not name %s: %q", name, output)
+			}
+		})
+	}
+}
+
 func TestServerProcessWarnsOnNonLoopbackExposure(t *testing.T) {
 	binary := buildServerBinary(t)
 	start := func(t *testing.T, listen string, syncOnly bool, extraArgs ...string) (*testServerProcess, string) {

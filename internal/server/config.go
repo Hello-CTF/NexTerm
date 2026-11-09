@@ -30,6 +30,8 @@ type Options struct {
 	TrustedProxyCIDRs []string
 	// TrustForwardedFor lets peers inside TrustedProxyCIDRs supply the client address via X-Forwarded-For.
 	TrustForwardedFor bool
+	// AccessLog writes one record per request (NEXTERM_ACCESS_LOG); query strings and bodies are never logged.
+	AccessLog bool
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {

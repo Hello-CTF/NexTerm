@@ -65,7 +65,12 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
 		return 1
 	}
-	logger, logErr := applog.NewLogger(paths, os.Stderr)
+	// A GUI launch has no place to show a startup error, so invalid values fall back to defaults with a warning.
+	logOptions, logEnvErr := applog.ParseEnv(os.Getenv)
+	logger, logErr := applog.NewLoggerWithOptions(paths, os.Stderr, logOptions)
+	if logEnvErr != nil {
+		logger.Warn("ignoring invalid logging environment; using defaults for those values", "error", logEnvErr)
+	}
 	if logErr != nil {
 		logger.Warn("file logging is unavailable; using console only", "error", logErr)
 	}

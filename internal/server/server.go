@@ -326,6 +326,9 @@ func New(config Config) (*Server, error) {
 	}
 
 	s.handler = s.transportGuard(s.routes(config))
+	if s.options.AccessLog {
+		s.handler = withAccessLog(s.logger, s.realIP.ClientIP, s.handler)
+	}
 	return s, nil
 }
 

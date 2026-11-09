@@ -268,6 +268,28 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+## Logging
+
+The units send the server's stderr to the journal: read it with
+`journalctl -u nexterm-server` (or `nexterm-onlyserver`). Because records
+already reach the journal, the default `NEXTERM_LOG_FILE=auto` does not also
+write `/var/lib/nexterm/logs/nexterm.log` when stderr is the systemd journal.
+Set `NEXTERM_LOG_FILE=on` to keep the file as well, or `off` to never write
+it. Outside systemd (containers, manual runs) `auto` writes the file. The file
+rotates at 10 MB and keeps five backups (`nexterm.log.1` to `nexterm.log.5`).
+
+- `NEXTERM_LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`.
+- `NEXTERM_LOG_FORMAT`: `text` (default) or `json`.
+- `NEXTERM_ACCESS_LOG=1`: one record per HTTP request with method, path,
+  status, bytes, duration and client address. The client address follows
+  `NEXTERM_TRUSTED_PROXY_CIDRS` and `NEXTERM_TRUST_FORWARDED_FOR` as above.
+  Query strings, request bodies and share-link tokens in paths are never
+  logged. WebSocket connections are logged when they close, with their
+  lifetime as the duration.
+
+An invalid value for any of these stops the server at startup with exit
+code 2 and names the variable.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
