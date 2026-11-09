@@ -15,7 +15,7 @@ func TestStartupErrorHTMLShowsActualErrorAndDataDir(t *testing.T) {
 	startupErr := ipc.WrapError(ipc.CodeDBMigrate,
 		"数据库迁移错误: execute migration 1 (init): SQL logic error: table asset_group already exists (1)",
 		errors.New("table asset_group already exists"))
-	doc := startupErrorHTML(paths, startupErr, nativeTexts["zh-CN"])
+	doc := startupErrorHTML(paths, paths.LogFile, startupErr, nativeTexts["zh-CN"])
 	for _, want := range []string{
 		startupErr.Error(),
 		paths.DataDir,
@@ -31,7 +31,7 @@ func TestStartupErrorHTMLShowsActualErrorAndDataDir(t *testing.T) {
 func TestStartupErrorHTMLEscapesErrorText(t *testing.T) {
 	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
 	startupErr := errors.New(`<script>alert("pwned")</script>`)
-	doc := startupErrorHTML(paths, startupErr, nativeTexts["zh-CN"])
+	doc := startupErrorHTML(paths, paths.LogFile, startupErr, nativeTexts["zh-CN"])
 	if strings.Contains(doc, `<script>alert`) {
 		t.Fatal("startup error HTML contains unescaped error text")
 	}
@@ -42,7 +42,7 @@ func TestStartupErrorHTMLEscapesErrorText(t *testing.T) {
 
 func TestStartupErrorHTMLDoesNotSpeculateAboutCause(t *testing.T) {
 	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
-	doc := startupErrorHTML(paths, errors.New("some failure"), nativeTexts["zh-CN"])
+	doc := startupErrorHTML(paths, paths.LogFile, errors.New("some failure"), nativeTexts["zh-CN"])
 	for _, banned := range []string{"旧版", "版本过旧", "升级", "自动修复", "自动删除"} {
 		if strings.Contains(doc, banned) {
 			t.Errorf("startup error HTML must stay factual, found speculative phrase %q", banned)
@@ -52,7 +52,7 @@ func TestStartupErrorHTMLDoesNotSpeculateAboutCause(t *testing.T) {
 
 func TestStartupErrorHTMLMakesNoAbsoluteDataClaim(t *testing.T) {
 	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
-	doc := startupErrorHTML(paths, errors.New("some failure"), nativeTexts["zh-CN"])
+	doc := startupErrorHTML(paths, paths.LogFile, errors.New("some failure"), nativeTexts["zh-CN"])
 	for _, banned := range []string{"你的数据没有被删除或修改", "数据没有被删除", "数据未被修改", "数据未发生变化"} {
 		if strings.Contains(doc, banned) {
 			t.Errorf("startup error HTML makes an unverifiable absolute data claim %q", banned)
@@ -67,7 +67,7 @@ func TestStartupErrorHTMLMakesNoAbsoluteDataClaim(t *testing.T) {
 
 func TestStartupErrorHTMLFollowsTheSystemLanguage(t *testing.T) {
 	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
-	doc := startupErrorHTML(paths, errors.New("some failure"), nativeTextFor([]string{"en-US"}))
+	doc := startupErrorHTML(paths, paths.LogFile, errors.New("some failure"), nativeTextFor([]string{"en-US"}))
 	for _, want := range []string{`lang="en"`, "NexTerm failed to start", "Data directory", "<code>" + paths.LogFile + "</code>"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("English startup error HTML missing %q", want)
@@ -75,5 +75,17 @@ func TestStartupErrorHTMLFollowsTheSystemLanguage(t *testing.T) {
 	}
 	if strings.ContainsAny(doc, "数据目录启动失败") {
 		t.Error("English startup error HTML still has Chinese text")
+	}
+}
+
+func TestStartupErrorHTMLWithoutLogFilePointsToTerminalOutput(t *testing.T) {
+	paths := platform.NewPaths("/tmp/nexterm-startup-error-test")
+	text := nativeTextFor([]string{"en-US"})
+	doc := startupErrorHTML(paths, "", errors.New("some failure"), text)
+	if strings.Contains(doc, paths.LogFile) {
+		t.Fatal("startup error HTML points at a log file that is not written")
+	}
+	if !strings.Contains(doc, html.EscapeString(text.StartupLogsConsole)) {
+		t.Fatal("startup error HTML does not explain where logs go without a log file")
 	}
 }

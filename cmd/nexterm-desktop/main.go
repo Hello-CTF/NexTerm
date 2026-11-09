@@ -139,7 +139,7 @@ func run(args []string) int {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
-		return showStartupError(paths, err, logger.Logger, brandIcon)
+		return showStartupError(paths, logger.FilePath(), err, logger.Logger, brandIcon)
 	}
 	service := &Service{app: production.Application, streams: streams}
 	appOptions := application.Options{

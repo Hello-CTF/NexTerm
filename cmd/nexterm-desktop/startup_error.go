@@ -11,7 +11,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-func startupErrorHTML(paths platform.Paths, startupErr error, text nativeText) string {
+// startupErrorHTML points at logFile, the log file being written, or at terminal output when it is "".
+func startupErrorHTML(paths platform.Paths, logFile string, startupErr error, text nativeText) string {
 	var b strings.Builder
 	b.WriteString(`<!doctype html>
 <html lang="` + html.EscapeString(text.Lang) + `">
@@ -46,8 +47,12 @@ li { margin: 4px 0; }
 <ol>
 <li>` + html.EscapeString(text.StartupRetry) + `</li>
 <li>`)
-	logs := html.EscapeString(text.StartupLogs)
-	b.WriteString(strings.Replace(logs, "%s", "<code>"+html.EscapeString(paths.LogFile)+"</code>", 1))
+	if logFile == "" {
+		b.WriteString(html.EscapeString(text.StartupLogsConsole))
+	} else {
+		logs := html.EscapeString(text.StartupLogs)
+		b.WriteString(strings.Replace(logs, "%s", "<code>"+html.EscapeString(logFile)+"</code>", 1))
+	}
 	b.WriteString(`</li>
 </ol>
 <p class="note">` + html.EscapeString(text.StartupNote) + `</p>
@@ -57,7 +62,7 @@ li { margin: 4px 0; }
 	return b.String()
 }
 
-func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logger, brandIcon []byte) int {
+func showStartupError(paths platform.Paths, logFile string, startupErr error, logger *slog.Logger, brandIcon []byte) int {
 	logger.Error("startup failed", "error", startupErr)
 	options := application.Options{
 		Name:        "NexTerm",
@@ -73,7 +78,7 @@ func showStartupError(paths platform.Paths, startupErr error, logger *slog.Logge
 	text := systemNativeText()
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  text.StartupTitle,
-		HTML:   startupErrorHTML(paths, startupErr, text),
+		HTML:   startupErrorHTML(paths, logFile, startupErr, text),
 		Width:  720,
 		Height: 560,
 	})
