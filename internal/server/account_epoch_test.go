@@ -59,6 +59,10 @@ func TestAccountLoginIssuanceWaitsForInFlightRevocation(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	_, _ = fixture.initSuperadmin(t, "alice", "password-alice")
 
+	authenticated := make(chan struct{})
+	restoreGate := SetAccountLoginGateForTest(func(context.Context, *account.User) { close(authenticated) })
+	defer restoreGate()
+
 	fixture.server.accountRevocationMu.Lock()
 	done := make(chan struct{})
 	go func() {
@@ -68,6 +72,13 @@ func TestAccountLoginIssuanceWaitsForInFlightRevocation(t *testing.T) {
 		request.Header.Set("Content-Type", "application/json")
 		fixture.server.serveAccountLogin(recorder, request)
 	}()
+	// The password is verified without the lock; issuance must then wait.
+	select {
+	case <-authenticated:
+	case <-time.After(10 * time.Second):
+		fixture.server.accountRevocationMu.Unlock()
+		t.Fatal("login did not verify the password while the revocation lock was held")
+	}
 	select {
 	case <-done:
 		fixture.server.accountRevocationMu.Unlock()
