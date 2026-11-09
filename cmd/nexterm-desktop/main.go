@@ -38,6 +38,11 @@ func run(args []string) int {
 	}
 	args, launchLink := extractDeepLink(args)
 	args, toastActivation := stripToastActivationArgs(args)
+	args, restartWaitPID, err := stripRestartWaitPID(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
+		return 2
+	}
 	invocation, err := core.ParseCLI(args, core.CommandDesktop, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
@@ -56,6 +61,9 @@ func run(args []string) int {
 		return 2
 	}
 
+	// Wait before opening the data directory, logs and the single-instance lock,
+	// all still held by the instance that relaunched us after an update.
+	previousExited := restartWaitPID <= 0 || waitForProcessExit(restartWaitPID, restartWaitTimeout)
 	paths, err := platform.DesktopPaths(invocation.DataDir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-desktop:", applog.RedactText(err.Error()))
@@ -77,6 +85,9 @@ func run(args []string) int {
 	previousLogger := slog.Default()
 	slog.SetDefault(logger.Logger)
 	defer slog.SetDefault(previousLogger)
+	if !previousExited {
+		logger.Warn("previous instance is still running after restart wait", "pid", restartWaitPID, "timeout", restartWaitTimeout)
+	}
 	if capture := diagcapture.StartIfRequested(context.Background(), paths, logger, diagcapture.Info{Mode: "desktop", Args: args}, invocation.DebugCapture); capture != nil {
 		defer capture.Stop()
 	}
@@ -121,7 +132,7 @@ func run(args []string) int {
 		SharedHelperStateDir: sharedHelperStateDir(invocation.DataDir, logger.Logger),
 		ForwardPlatform:      os.Getenv("NEXTERM_PLATFORM"),
 		RestartFunc: func(_ context.Context, target string) error {
-			if err := update.StartDetached(target, args); err != nil {
+			if err := update.StartDetached(target, restartArgs(args, os.Getpid())); err != nil {
 				return err
 			}
 			wailsApp.Quit()
