@@ -147,7 +147,7 @@ func TestRotatingFileKeepsBoundedBackups(t *testing.T) {
 	if err := os.WriteFile(path, []byte("existing-0123456789\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	file, err := openRotatingFile(path, 32, 2)
+	file, err := openRotatingFile(path, 32, 2, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestRotatingFileKeepsBoundedBackups(t *testing.T) {
 
 func TestRotatingFileAppendsUntilLimit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexterm.log")
-	file, err := openRotatingFile(path, 64, 1)
+	file, err := openRotatingFile(path, 64, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

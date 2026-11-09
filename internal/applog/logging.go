@@ -40,7 +40,7 @@ func NewLoggerWithOptions(paths platform.Paths, stderr io.Writer, options Option
 			if maxBackups == 0 && options.MaxFileBytes == 0 {
 				maxBackups = DefaultMaxBackups
 			}
-			file, err = openRotatingFile(paths.LogFile, options.MaxFileBytes, maxBackups)
+			file, err = openRotatingFile(paths.LogFile, options.MaxFileBytes, maxBackups, stderr)
 			if err == nil {
 				writer = io.MultiWriter(stderr, file)
 			}
