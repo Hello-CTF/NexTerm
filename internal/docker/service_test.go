@@ -251,6 +251,53 @@ func TestServiceStatsBoundedAndOrdered(t *testing.T) {
 	}
 }
 
+func TestServiceStatsReportsTheFailureNotTheCancellationItCaused(t *testing.T) {
+	root := errors.New("daemon refused stats")
+	containers := []container.Summary{{ID: "c0"}, {ID: "c1"}, {ID: "c2"}}
+	backend := &stubBackend{
+		listContainers: func(context.Context, bool) ([]container.Summary, error) { return containers, nil },
+		stats: func(ctx context.Context, id string) (container.StatsResponse, error) {
+			if id == "c2" {
+				return container.StatsResponse{}, root
+			}
+			<-ctx.Done()
+			return container.StatsResponse{}, ctx.Err()
+		},
+	}
+	service := NewService(&stubProvider{sdk: backend}, WithConfig(Config{StatsConcurrency: 3}))
+	_, err := service.Stats(t.Context(), "s1")
+	if !errors.Is(err, root) || !strings.Contains(err.Error(), "stats for c2") {
+		t.Fatalf("err = %v, want the c2 failure", err)
+	}
+	if errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v reports the cancellation", err)
+	}
+}
+
+func TestServiceStatsSkipsContainersThatExitedAfterListing(t *testing.T) {
+	moby, _ := newFakeMobyBackend(t)
+	backend := &stubBackend{
+		listContainers: func(context.Context, bool) ([]container.Summary, error) {
+			return []container.Summary{{ID: "gone", Names: []string{"/old"}}, {ID: "c1", Names: []string{"/web"}}}, nil
+		},
+		stats: moby.ContainerStats,
+	}
+	snapshot := &recordingRunner{result: CommandResult{Stdout: "{}\n"}}
+	provider := &stubProvider{sdk: backend, command: NewCommandBackend(snapshot, nil, ShellPOSIX)}
+	output, err := NewService(provider).Stats(t.Context(), "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.commandCalls.Load() != 0 {
+		t.Fatalf("stats fell back to the command backend %d times", provider.commandCalls.Load())
+	}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	var value statsLine
+	if len(lines) != 1 || json.Unmarshal([]byte(lines[0]), &value) != nil || value.Name != "web" {
+		t.Fatalf("output = %q", output)
+	}
+}
+
 func TestServiceLogsExecAndOtherCapabilities(t *testing.T) {
 	multiplexed := append([]byte{1, 0, 0, 0, 0, 0, 0, 5}, []byte("one\nx")...)
 	multiplexed = append(multiplexed, []byte{2, 0, 0, 0, 0, 0, 0, 4}...)
