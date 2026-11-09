@@ -24,16 +24,25 @@ const (
 	DefaultBlobSweepInterval        = 10 * time.Minute
 	DefaultBlobMaxBytes       int64 = 256 << 20
 	DefaultBlobPersistQuota   int64 = 1 << 30
+	DefaultBlobStageQuota     int64 = 2 << 30
+	DefaultBlobDownloadMax    int64 = 2 << 30
 	DefaultBlobDiskMaxPercent       = 90.0
 	blobCopyBuffer                  = 256 << 10
 	blobTooLargeMessage             = "文件超出大小限制，请压缩或拆分后重试"
 	blobMetaName                    = ".meta.json"
 )
 
+// DefaultBlobStageMaxEntries bounds how many staged entries one owner may hold at once, so empty
+// reservations cannot exhaust inodes while the byte quota stays untouched.
+const DefaultBlobStageMaxEntries = 1000
+
 var (
 	errBlobPersistQuota  = errors.New("持久化存储配额已用尽，请清理空间后重试")
 	errBlobDiskThreshold = errors.New("磁盘使用率超过阈值，无法继续持久化存储")
 	errStagedNotFound    = errors.New("暂存文件不存在或已过期")
+	errBlobStageQuota    = errors.New("暂存空间已达上限，请等待已有传输完成或稍后重试")
+	errBlobStageDisk     = errors.New("服务端磁盘使用率超过阈值，暂时无法暂存文件")
+	errBlobStageUsage    = errors.New("暂存空间用量获取失败，请稍后重试")
 )
 
 type BlobStore struct {
@@ -43,6 +52,9 @@ type BlobStore struct {
 	maxBytes       int64
 	persistQuota   int64
 	persistMu      sync.Mutex
+	stageQuota     int64
+	downloadMax    int64
+	stageEntries   int
 	diskMaxPercent float64
 	diskUsage      func(string) (float64, error)
 	newID          func() string
@@ -81,6 +93,16 @@ func NewBlobStore(dataDir string, logger *slog.Logger) *BlobStore {
 	} else {
 		store.persistQuota = quota
 	}
+	if quota, err := ParseBlobStageQuotaEnv(os.Getenv); err != nil {
+		logger.Warn("ignoring invalid staging quota override", "error", err)
+	} else {
+		store.stageQuota = quota
+	}
+	if limit, err := ParseBlobDownloadMaxBytesEnv(os.Getenv); err != nil {
+		logger.Warn("ignoring invalid server-side staging write limit override", "error", err)
+	} else {
+		store.downloadMax = limit
+	}
 	if percent, err := ParseBlobDiskMaxPercentEnv(os.Getenv); err != nil {
 		logger.Warn("ignoring invalid disk threshold override", "error", err)
 	} else {
@@ -95,6 +117,17 @@ func ParseBlobMaxBytesEnv(getenv func(string) string) (int64, error) {
 
 func ParseBlobPersistQuotaEnv(getenv func(string) string) (int64, error) {
 	return parseBlobByteEnv(getenv, "NEXTERM_BLOB_PERSIST_MAX_BYTES")
+}
+
+// ParseBlobStageQuotaEnv reads the per-owner total of staged (non-persisted) files.
+func ParseBlobStageQuotaEnv(getenv func(string) string) (int64, error) {
+	return parseBlobByteEnv(getenv, "NEXTERM_BLOB_STAGE_MAX_BYTES")
+}
+
+// ParseBlobDownloadMaxBytesEnv reads the size cap of one file the server writes into staging on a browser's
+// behalf: remote file and archive downloads, terminal recordings and log or recording exports.
+func ParseBlobDownloadMaxBytesEnv(getenv func(string) string) (int64, error) {
+	return parseBlobByteEnv(getenv, "NEXTERM_BLOB_DOWNLOAD_MAX_BYTES")
 }
 
 func ParseBlobDiskMaxPercentEnv(getenv func(string) string) (float64, error) {
@@ -135,6 +168,27 @@ func (b *BlobStore) persistQuotaBytes() int64 {
 	return DefaultBlobPersistQuota
 }
 
+func (b *BlobStore) stageQuotaBytes() int64 {
+	if b.stageQuota > 0 {
+		return b.stageQuota
+	}
+	return DefaultBlobStageQuota
+}
+
+func (b *BlobStore) downloadMaxBytes() int64 {
+	if b.downloadMax > 0 {
+		return b.downloadMax
+	}
+	return DefaultBlobDownloadMax
+}
+
+func (b *BlobStore) stageMaxEntries() int {
+	if b.stageEntries > 0 {
+		return b.stageEntries
+	}
+	return DefaultBlobStageMaxEntries
+}
+
 func (b *BlobStore) diskThresholdPercent() float64 {
 	if b.diskMaxPercent > 0 {
 		return b.diskMaxPercent
@@ -158,6 +212,13 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	root := b.stageRoot()
+	owner := requestOwner(r)
+	if !persist {
+		if err := b.checkStageAdmission(owner, r.ContentLength); err != nil {
+			writeStageError(w, err)
+			return
+		}
+	}
 	if persist {
 		b.persistMu.Lock()
 		defer b.persistMu.Unlock()
@@ -182,6 +243,12 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 	dir, id, err := b.createItemDir(root)
 	if err != nil {
 		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	// Owner metadata is written before the body so the staging quota counts an upload while it is in flight.
+	if err := b.writeOwnerMeta(dir, r); err != nil {
+		_ = os.RemoveAll(dir)
+		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	name := SafeBlobName(r.URL.Query().Get("name"))
@@ -214,10 +281,9 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "持久化存储用量获取失败，请稍后重试", http.StatusInternalServerError)
 			return
 		}
-	}
-	if err := b.writeOwnerMeta(dir, r); err != nil {
+	} else if err := b.checkStageUsageAfterWrite(owner); err != nil {
 		_ = os.RemoveAll(dir)
-		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
+		writeStageError(w, err)
 		return
 	}
 	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name, Bytes: &written})
@@ -230,9 +296,18 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := b.checkStageAdmission(requestOwner(r), 0); err != nil {
+		writeStageError(w, err)
+		return
+	}
 	dir, id, err := b.createItemDir(b.stageRoot())
 	if err != nil {
 		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	if err := b.writeOwnerMeta(dir, r); err != nil {
+		_ = os.RemoveAll(dir)
+		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
 		return
 	}
 	name := SafeBlobName(r.URL.Query().Get("name"))
@@ -244,11 +319,6 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := file.Close(); err != nil {
-		_ = os.RemoveAll(dir)
-		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
-		return
-	}
-	if err := b.writeOwnerMeta(dir, r); err != nil {
 		_ = os.RemoveAll(dir)
 		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
 		return
@@ -380,6 +450,144 @@ func (b *BlobStore) ResolveStagedPath(rel, userID string) (string, error) {
 		return "", errStagedNotFound
 	}
 	return path, nil
+}
+
+// StagedWriteLimit returns how many bytes the server may write into the staged file at path (as returned by
+// ResolveStagedPath) on behalf of userID: the per-file cap, reduced to what is left of the owner's staging quota
+// not counting the file itself. It fails with a user-facing error when the quota is used up or the disk is past
+// its threshold. The budget is taken once per write, so concurrent writes of one owner can overshoot the quota by
+// at most one budget each.
+func (b *BlobStore) StagedWriteLimit(path, userID string) (int64, error) {
+	if err := b.checkDiskThreshold(); err != nil {
+		return 0, stageError(err)
+	}
+	usage, _, err := b.stageUsage(userID, path)
+	if err != nil {
+		return 0, errBlobStageUsage
+	}
+	remaining := b.stageQuotaBytes() - usage
+	if remaining <= 0 {
+		return 0, errBlobStageQuota
+	}
+	return min(remaining, b.downloadMaxBytes()), nil
+}
+
+// checkStageAdmission rejects a new staged entry once the owner holds too many entries or bytes, or the disk is
+// past its threshold. incoming is the declared body length (zero or negative when unknown).
+func (b *BlobStore) checkStageAdmission(owner string, incoming int64) error {
+	usage, entries, err := b.stageUsage(owner, "")
+	if err != nil {
+		return errBlobStageUsage
+	}
+	quota := b.stageQuotaBytes()
+	if entries >= b.stageMaxEntries() || usage >= quota || incoming > 0 && usage+incoming > quota {
+		return errBlobStageQuota
+	}
+	if err := b.checkDiskThreshold(); err != nil {
+		return stageError(err)
+	}
+	return nil
+}
+
+func (b *BlobStore) checkStageUsageAfterWrite(owner string) error {
+	usage, _, err := b.stageUsage(owner, "")
+	if err != nil {
+		return errBlobStageUsage
+	}
+	if usage > b.stageQuotaBytes() {
+		return errBlobStageQuota
+	}
+	return nil
+}
+
+func stageError(err error) error {
+	if errors.Is(err, errBlobDiskThreshold) {
+		return errBlobStageDisk
+	}
+	return errBlobStageUsage
+}
+
+func writeStageError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errBlobStageUsage) {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusInsufficientStorage)
+}
+
+// stageUsage sums the staged files and counts the staged entries owned by owner (empty for entries without owner
+// metadata), skipping the file at exclude. Entries removed concurrently by Delete or the sweeper are ignored.
+func (b *BlobStore) stageUsage(owner, exclude string) (int64, int, error) {
+	root := b.stageRoot()
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, err
+	}
+	var usage int64
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		entryOwner, ok := stagedOwner(dir)
+		if !ok || entryOwner != owner {
+			continue
+		}
+		files, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, 0, err
+		}
+		count++
+		for _, file := range files {
+			if !file.Type().IsRegular() || file.Name() == blobMetaName {
+				continue
+			}
+			path := filepath.Join(dir, file.Name())
+			if path == exclude {
+				continue
+			}
+			info, err := file.Info()
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return 0, 0, err
+			}
+			usage += info.Size()
+		}
+	}
+	return usage, count, nil
+}
+
+// stagedOwner reads the owner recorded for a staged entry; entries without metadata belong to the empty owner.
+// ok is false when the metadata is unreadable, so such an entry is not charged to anyone.
+func stagedOwner(dir string) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, blobMetaName))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", true
+	}
+	if err != nil {
+		return "", false
+	}
+	var meta blobMeta
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return "", false
+	}
+	return meta.OwnerID, true
+}
+
+func requestOwner(r *http.Request) string {
+	if identity := accountIdentityFrom(r.Context()); identity != nil {
+		return identity.UserID
+	}
+	return ""
 }
 
 func (b *BlobStore) createItemDir(root string) (string, string, error) {

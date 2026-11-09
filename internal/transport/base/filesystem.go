@@ -39,6 +39,9 @@ const (
 
 var ErrNoMedia = errors.New("filesystem media not ready")
 
+// ErrTransferTooLarge reports that a transfer would write more than its byte budget (TransferOptions.MaxBytes).
+var ErrTransferTooLarge = errors.New("文件超过服务端允许的大小上限，传输已中止")
+
 type FileRoot struct {
 	Path  string `json:"path"`
 	Label string `json:"label"`

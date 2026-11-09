@@ -1022,11 +1022,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_record_start", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				path, maxBytes, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return nil, err
 				}
-				return nil, terminalIPCError(s.sessions.StartRecordingFor(ctx, input.TabID, path))
+				return nil, terminalIPCError(s.sessions.StartRecordingLimitedFor(ctx, input.TabID, path, maxBytes))
 			})
 		},
 		func() error {
@@ -1046,11 +1046,11 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_export_log", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
 				ctx = productionSessionRequestContext(ctx)
-				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				path, limit, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return 0, err
 				}
-				value, err := s.sessions.ExportLogFor(ctx, input.TabID, path, input.MaxBytes)
+				value, err := s.sessions.ExportLogFor(ctx, input.TabID, path, exportLogMaxBytes(input.MaxBytes, limit))
 				return value, terminalIPCError(err)
 			})
 		},

@@ -8,8 +8,10 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/asciicast"
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
+	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
 const transcriptCastPageBytes = 1 << 20
@@ -37,16 +39,19 @@ func (s *terminalCommandService) exportTranscriptCast(ctx context.Context, input
 	if row.ContentOmitted {
 		return transcriptExportCastResult{}, ipc.BadParam(errors.New("该录像只同步了元数据，没有可导出的内容"))
 	}
-	path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+	path, maxBytes, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 	if err != nil {
 		return transcriptExportCastResult{}, err
 	}
 	var summary asciicast.Result
 	err = atomicfile.Write(path, 0o600, func(out io.Writer) error {
 		var encodeErr error
-		summary, encodeErr = s.encodeTranscriptCast(ctx, row, out)
+		summary, encodeErr = s.encodeTranscriptCast(ctx, row, fslocal.LimitWriter(out, maxBytes))
 		return encodeErr
 	})
+	if errors.Is(err, base.ErrTransferTooLarge) {
+		return transcriptExportCastResult{}, fsIPCError("", err)
+	}
 	if err != nil {
 		return transcriptExportCastResult{}, err
 	}

@@ -435,7 +435,11 @@ func TestBlobPersistDiskThresholdRejects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decodeStagedBlob(t, response)
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusInsufficientStorage {
+		t.Fatalf("temporary staging past the disk threshold = %d: %s, want 507", response.StatusCode, body)
+	}
 
 	store.diskUsage = func(string) (float64, error) { return 0.5, nil }
 	response, err = httpServer.Client().Post(httpServer.URL+"/files/blob?name=p.bin&persist=1", "application/octet-stream", bytes.NewReader(make([]byte, 8)))

@@ -67,7 +67,7 @@
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。升级、回滚、反向代理、外部数据库和多用户限制见[服务端部署说明](deploy/systemd/README.md)。
+安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。升级、回滚、反向代理、外部数据库、多用户限制，以及浏览器上传下载和录制使用的暂存空间上限（每个账号默认 2 GiB，`NEXTERM_BLOB_STAGE_MAX_BYTES` 等环境变量）见[服务端部署说明](deploy/systemd/README.md)。
 
 ## 更多文档
 

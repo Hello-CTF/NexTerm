@@ -23,6 +23,10 @@ var ErrClosed = errors.New("terminal: tab closed")
 // the recording is failed and the dropped byte count is visible in its status.
 var ErrRecordingSaturated = errors.New("terminal: recording saturated")
 
+// ErrRecordingTooLarge marks a recording that reached the byte cap passed to
+// StartRecordingLimited; the file keeps the bytes written up to the cap.
+var ErrRecordingTooLarge = errors.New("录制文件已达到大小上限，录制已停止")
+
 // ErrRecordingDrainTimeout marks a stop whose queued chunks could not be
 // written within the drain timeout; the queue was abandoned.
 var ErrRecordingDrainTimeout = errors.New("terminal: recording drain timeout")
@@ -365,6 +369,26 @@ func (r *recording) statusLocked(tabID string) RecordingStatus {
 		status.SafeError = r.err.Error()
 	}
 	return status
+}
+
+// cappedRecordingFile is written only by the recording's writer goroutine.
+type cappedRecordingFile struct {
+	io.WriteCloser
+	remaining int64
+}
+
+func (f *cappedRecordingFile) Write(p []byte) (int, error) {
+	if int64(len(p)) <= f.remaining {
+		n, err := f.WriteCloser.Write(p)
+		f.remaining -= int64(n)
+		return n, err
+	}
+	n, err := f.WriteCloser.Write(p[:f.remaining])
+	f.remaining -= int64(n)
+	if err != nil {
+		return n, err
+	}
+	return n, ErrRecordingTooLarge
 }
 
 type Tab struct {
@@ -819,9 +843,19 @@ func (t *Tab) LastOutputAgo() time.Duration {
 }
 
 func (t *Tab) StartRecording(path string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	return t.StartRecordingLimited(path, 0)
+}
+
+// StartRecordingLimited starts a recording that fails with ErrRecordingTooLarge
+// once it has written maxBytes; zero or a negative cap means unlimited.
+func (t *Tab) StartRecordingLimited(path string, maxBytes int64) error {
+	opened, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("terminal: record %s: %w", path, err)
+	}
+	var file io.WriteCloser = opened
+	if maxBytes > 0 {
+		file = &cappedRecordingFile{WriteCloser: opened, remaining: maxBytes}
 	}
 	t.recOpMu.Lock()
 	t.recMu.Lock()

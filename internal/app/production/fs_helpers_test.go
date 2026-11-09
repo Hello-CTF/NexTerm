@@ -37,6 +37,13 @@ func (r *fsEventRecorder) count(topic ipc.Topic) int {
 type fakeStagedBlobResolver struct {
 	dir     string
 	userIDs []string
+	// writeLimit is the budget StagedWriteLimit grants; writeErr refuses the write instead.
+	writeLimit int64
+	writeErr   error
+}
+
+func (f *fakeStagedBlobResolver) StagedWriteLimit(string, string) (int64, error) {
+	return f.writeLimit, f.writeErr
 }
 
 func (f *fakeStagedBlobResolver) ResolveStagedPath(rel, userID string) (string, error) {
