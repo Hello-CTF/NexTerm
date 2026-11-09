@@ -99,6 +99,19 @@ export function zoomedPaneOf(workspace: Workspace, zoomedPanes: Record<string, s
   return tree && findPanePath(tree, zoomed) ? zoomed : null;
 }
 
+/**
+ * Drops every zoom that no longer holds (see zoomedPaneOf), keeping the same object when all hold. Run after each
+ * workspace change, so a zoom lapsed by any path (a tab activated in another pane, a pane removed) never returns
+ * when its pane is focused again.
+ */
+export function pruneZoomedPanes(workspaces: readonly Workspace[], zoomedPanes: Record<string, string>): Record<string, string> {
+  const lapsed = Object.keys(zoomedPanes).filter((id) => {
+    const workspace = workspaces.find((candidate) => candidate.id === id);
+    return !workspace || zoomedPaneOf(workspace, zoomedPanes) === null;
+  });
+  return lapsed.length === 0 ? zoomedPanes : withoutZoom(zoomedPanes, ...lapsed);
+}
+
 // withoutZoom drops the zoom of the given workspaces, keeping the same object when none is zoomed.
 function withoutZoom(zoomedPanes: Record<string, string>, ...workspaceIds: (string | null | undefined)[]): Record<string, string> {
   if (!workspaceIds.some((id) => id && id in zoomedPanes)) return zoomedPanes;
@@ -507,6 +520,12 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
       }));
       return true;
     },
+
+    clearZoomPane: (workspaceId) =>
+      set((st) => {
+        const next = withoutZoom(st.zoomedPanes, workspaceId);
+        return next === st.zoomedPanes ? {} : { zoomedPanes: next };
+      }),
 
     equalizeSplits: (workspaceId) => {
       const st = get();

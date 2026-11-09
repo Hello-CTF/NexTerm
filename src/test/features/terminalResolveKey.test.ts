@@ -107,6 +107,10 @@ describe("resolveKey precedence (desktop)", () => {
       ["Mod+= enlarges the terminal font", ev("=", "Equal", mod), app("terminalFontIncrease")],
       ["Mod+- shrinks the terminal font", ev("-", "Minus", mod), app("terminalFontDecrease")],
       ["Mod+0 resets the terminal font", ev("0", "Digit0", mod), app("terminalFontReset")],
+      ["Mod+Plus (Mod+Shift+=) enlarges the terminal font", ev("+", "Equal", { ...mod, shiftKey: true }), app("terminalFontIncrease")],
+      ["Mod+keypad plus enlarges the terminal font", ev("+", "NumpadAdd", mod), app("terminalFontIncrease")],
+      ["Mod+keypad minus shrinks the terminal font", ev("-", "NumpadSubtract", mod), app("terminalFontDecrease")],
+      ["Mod+keypad 0 resets the terminal font", ev("0", "Numpad0", mod), app("terminalFontReset")],
       ["Mod+Shift+Enter zooms the pane", ev("Enter", "Enter", { ...mod, shiftKey: true }), app("toggleZoomPane")],
       ["Mod+/ (cheat sheet) is not withheld", ev("/", "Slash", mod), PASS],
     ];

@@ -46,6 +46,8 @@ export interface KeybindingAction {
   macDefaultBinding?: string;
   /** The default on macOS (desktop and web) in place of defaultBinding. */
   macBinding?: string;
+  /** Extra desktop chords that also trigger the action while the default binding is in effect. */
+  desktopExtraBindings?: string[];
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
@@ -79,7 +81,13 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "focusAiInput", label: t("聚焦 AI 输入框"), defaultBinding: "Mod+Shift+a" },
   { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
   // Browsers keep Ctrl+= / Ctrl+- / Ctrl+0 for page zoom, so the web build adds Alt.
-  { id: "terminalFontIncrease", label: t("增大终端字号"), defaultBinding: WEB ? "Ctrl+Alt+=" : "Mod+=" },
+  // Mod+Shift+= is Ctrl/Cmd+Plus on most layouts. The web build adds none: there Ctrl+Shift+Alt+= equalizes the splits.
+  {
+    id: "terminalFontIncrease",
+    label: t("增大终端字号"),
+    defaultBinding: WEB ? "Ctrl+Alt+=" : "Mod+=",
+    desktopExtraBindings: ["Mod+Shift+="],
+  },
   { id: "terminalFontDecrease", label: t("减小终端字号"), defaultBinding: WEB ? "Ctrl+Alt+-" : "Mod+-" },
   { id: "terminalFontReset", label: t("重置终端字号"), defaultBinding: WEB ? "Ctrl+Alt+0" : "Mod+0" },
   { id: "toggleZoomPane", label: t("最大化 / 还原当前窗格"), defaultBinding: "Mod+Shift+Enter" },
@@ -218,6 +226,8 @@ function logicalEventKey(event: KeyEventLike): string | null {
   // The physical keys keep Mod+= and Mod+- bindable on layouts that put other characters there.
   if (code === "Equal") return "=";
   if (code === "Minus") return "-";
+  // The keypad plus types "+", which cannot be bound; it stands for "=", the unshifted plus key (Mod+= zooms in).
+  if (code === "NumpadAdd") return "=";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -564,17 +574,20 @@ export function useKeybindings(): KeybindingSnapshot {
   return useSyncExternalStore(subscribeKeybindings, getKeybindings);
 }
 
+/**
+ * The chords that trigger `action` besides `binding`: the macOS desktop tab chords and the desktop extras, all only
+ * while the default binding is in effect.
+ */
+export function defaultExtraBindings(action: KeybindingAction, binding: string | null, mac = isMac(), web = WEB): string[] {
+  if (web || binding === null || binding !== action.defaultBinding) return [];
+  return [...(mac && action.macDefaultBinding ? [action.macDefaultBinding] : []), ...(action.desktopExtraBindings ?? [])];
+}
+
 function matchActionBinding(event: KeyEventLike, id: KeybindingActionId): boolean {
   const binding = currentSnapshot()[id];
   if (binding !== null && matchBinding(event, binding)) return true;
-  const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
-  return Boolean(
-    action?.macDefaultBinding &&
-    binding === action.defaultBinding &&
-    !WEB &&
-    isMac() &&
-    matchBinding(event, action.macDefaultBinding),
-  );
+  const action = ACTIONS_BY_ID.get(id);
+  return action ? defaultExtraBindings(action, binding).some((extra) => matchBinding(event, extra)) : false;
 }
 
 export function matchKeybinding(event: KeyEventLike, id: KeybindingActionId): boolean {
@@ -673,10 +686,7 @@ export function bindingConflicts(
 ): KeybindingConflict[] {
   const parsed = KEYBINDING_ACTIONS.flatMap((action) => {
     const binding = bindings[action.id];
-    const candidates = [
-      binding,
-      !WEB && mac && binding === action.defaultBinding ? action.macDefaultBinding : undefined,
-    ];
+    const candidates = [binding, ...defaultExtraBindings(action, binding, mac)];
     return candidates
       .filter((candidate): candidate is string => Boolean(candidate))
       .map((candidate) => ({ action, binding: candidate }));

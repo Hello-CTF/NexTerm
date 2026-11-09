@@ -370,6 +370,15 @@ describe("SplitView", () => {
     return view;
   }
 
+  // The store holds the same layout as the rendered workspace, so its zoom is not pruned as lapsed.
+  function zoomStore(activePaneId: string) {
+    const panes = ["left", "top", "bottom"].map((id) => ({ id, tabs: [], activeTabId: null }));
+    useUi.setState({
+      workspaces: [workspace({ panes, activePaneId, layoutTree: nested() })],
+      zoomedPanes: { ws: "top" },
+    });
+  }
+
   function separator(id: string): HTMLElement {
     return view!.container.querySelector<HTMLElement>(`[data-split-id="${id}"]`)!;
   }
@@ -504,7 +513,7 @@ describe("SplitView", () => {
   });
 
   it("fills the workspace with a zoomed pane and keeps the other panes mounted but hidden", () => {
-    useUi.setState({ zoomedPanes: { ws: "top" } });
+    zoomStore("top");
     try {
       renderView(nested(), false, "top");
       expect(view!.container.querySelector('[role="separator"]')).toBeNull();
@@ -522,8 +531,14 @@ describe("SplitView", () => {
     }
   });
 
+  it("ends a zoom in the single-pane view instead of keeping it for a wider window", () => {
+    zoomStore("top");
+    renderView(nested(), true, "top");
+    expect(useUi.getState().zoomedPanes).toEqual({});
+  });
+
   it("ignores a zoom whose pane is no longer the focused one", () => {
-    useUi.setState({ zoomedPanes: { ws: "top" } });
+    zoomStore("left");
     try {
       renderView(nested(), false, "left");
       expect(view!.container.querySelectorAll('[role="separator"]')).toHaveLength(2);

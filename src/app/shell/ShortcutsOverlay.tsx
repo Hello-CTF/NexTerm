@@ -1,7 +1,6 @@
 import { useId, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { KEYBINDING_ACTIONS, formatBinding, useKeybindings, type KeybindingActionId, type KeybindingSnapshot } from "../keybindings";
+import { KEYBINDING_ACTIONS, defaultExtraBindings, formatBinding, useKeybindings, type KeybindingActionId, type KeybindingSnapshot } from "../keybindings";
 import { isMac } from "../platform";
-import { WEB } from "../../ipc/env";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { IconClose, IconCommand } from "../../ui/icons";
 import { t } from "../../i18n";
@@ -72,10 +71,7 @@ export function shortcutGroups(bindings: KeybindingSnapshot, filter: string, mac
   const needle = filter.trim().toLowerCase();
   const rows = KEYBINDING_ACTIONS.map((action): ShortcutRow => {
     const binding = bindings[action.id];
-    const chords = binding === null ? [] : [formatBinding(binding)];
-    if (binding !== null && binding === action.defaultBinding && action.macDefaultBinding && mac && !WEB) {
-      chords.push(formatBinding(action.macDefaultBinding));
-    }
+    const chords = binding === null ? [] : [binding, ...defaultExtraBindings(action, binding, mac)].map(formatBinding);
     return { id: action.id, label: action.label, chords };
   }).filter(
     (row) =>

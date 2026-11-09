@@ -400,6 +400,20 @@ describe("pane zoom and equalize", () => {
     expect(zoomed()).toBeNull();
   });
 
+  it("does not bring back a zoom lapsed by activating a tab in another pane", () => {
+    const right = useUi.getState().splitPane("right")!;
+    useUi.getState().addTab(file("right-tab"), right);
+    useUi.getState().setActivePane("p1");
+    useUi.getState().toggleZoomPane();
+    expect(zoomed()).toBe("p1");
+    // A palette jump activates the tab directly, moving focus without setActivePane.
+    useUi.getState().setActiveTab("right-tab");
+    expect(current().activePaneId).toBe(right);
+    expect(useUi.getState().zoomedPanes).toEqual({});
+    useUi.getState().setActivePane("p1");
+    expect(zoomed()).toBeNull();
+  });
+
   it("keeps the zoom out of the workspace model", () => {
     useUi.getState().splitPane("right");
     useUi.getState().toggleZoomPane();

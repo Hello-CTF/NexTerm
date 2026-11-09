@@ -1,5 +1,6 @@
 import {
   KEYBINDING_ACTIONS,
+  defaultExtraBindings,
   TERMINAL_WITHHELD_ACTIONS,
   modIsMetaOnly,
   parseBinding,
@@ -149,10 +150,7 @@ export function terminalShortcutConflicts(
     const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
     const binding = bindings[id];
     if (!action || binding === null) continue;
-    const candidates = [binding];
-    if (!web && mac && action.macDefaultBinding && binding === action.defaultBinding) {
-      candidates.push(action.macDefaultBinding);
-    }
+    const candidates = [binding, ...defaultExtraBindings(action, binding, mac, web)];
     for (const candidate of candidates) {
       const chord = terminalChord(candidate, mac, web);
       if (!chord) continue;

@@ -65,7 +65,7 @@ import App from "../../app/App";
 import { useUi } from "../../app/store";
 import { getKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import { ALL_PROJECTS } from "../../app/projectFocus";
-import { defaultTerminalFontSize, getAppearancePrefs, setTerminalFontSize, TERMINAL_FONT_SIZE_MAX } from "../../app/preferences";
+import { getAppearancePrefs, setTerminalFontSize, TERMINAL_FONT_SIZE_MAX } from "../../app/preferences";
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
@@ -380,7 +380,11 @@ describe("held app shortcuts outside the terminal", () => {
     keyDown(window, "=", { code: "Equal", ctrlKey: true, altKey: true });
     expect(getAppearancePrefs().terminalFontSize).toBe(TERMINAL_FONT_SIZE_MAX);
     keyDown(window, "0", { code: "Digit0", ctrlKey: true, altKey: true });
-    expect(getAppearancePrefs().terminalFontSize).toBe(defaultTerminalFontSize());
+    // Reset drops the override, so the builtin default applies (no server default here).
+    expect(getAppearancePrefs().terminalFontSize).toBe(13);
+    // The keypad plus counts as the plus key.
+    keyDown(window, "+", { code: "NumpadAdd", ctrlKey: true, altKey: true });
+    expect(getAppearancePrefs().terminalFontSize).toBe(14);
   });
 
   it("zooms the active pane with its shortcut and restores the layout on the second press", async () => {

@@ -774,7 +774,8 @@ function appearanceEquals(a: AppearancePrefs, b: AppearancePrefs): boolean {
   );
 }
 
-function commitAppearance(next: AppearancePrefs): void {
+// deferAccountWrite updates the account override cache at once but leaves the request to the caller.
+function commitAppearance(next: AppearancePrefs, options: { deferAccountWrite?: boolean } = {}): void {
   const changedFields = (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).filter(
     (field) => next[field] !== appearance[field],
   );
@@ -787,23 +788,66 @@ function commitAppearance(next: AppearancePrefs): void {
   if (accountStore && changedFields.length > 0) {
     const set: Record<string, unknown> = {};
     for (const field of changedFields) set[appearanceKey(field)] = next[field];
-    void accountStore.putOverrides(set).catch(() => undefined);
+    if (!options.deferAccountWrite) void accountStore.putOverrides(set).catch(() => undefined);
     patchAccountOverrideCache(set, []);
   }
   applyAppearance();
   if (changedFields.length > 0) notifyAppearance();
 }
 
+// A held zoom key steps the size many times a second; the account write waits until the steps settle.
+const FONT_STEP_SYNC_DELAY_MS = 400;
+let fontStepSync: ReturnType<typeof setTimeout> | null = null;
+
+function cancelFontStepSync(): void {
+  if (fontStepSync === null) return;
+  clearTimeout(fontStepSync);
+  fontStepSync = null;
+}
+
+/**
+ * Changes the terminal font size by `delta` within its limits. The size applies at once; with an account it syncs
+ * as one override write after the steps pause, so holding the zoom key sends a single request.
+ */
+export function stepTerminalFontSize(delta: number): void {
+  const next = parseTerminalFontSize(appearance.terminalFontSize + delta);
+  if (appearance.terminalFontSize === next) return;
+  commitAppearance({ ...appearance, terminalFontSize: next }, { deferAccountWrite: true });
+  if (!accountStore) return;
+  cancelFontStepSync();
+  fontStepSync = setTimeout(() => {
+    fontStepSync = null;
+    const store = accountStore;
+    if (store) void store.putOverrides({ [appearanceKey("terminalFontSize")]: appearance.terminalFontSize }).catch(() => undefined);
+  }, FONT_STEP_SYNC_DELAY_MS);
+}
+
+/** Drops this device's and the account's terminal font size, so the size follows the server or builtin default again. */
+export function resetTerminalFontSize(): void {
+  cancelFontStepSync();
+  try {
+    const raw = localStorage.getItem(APPEARANCE_KEY);
+    const local = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    if (local && "terminalFontSize" in local) {
+      delete local.terminalFontSize;
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(local));
+    }
+  } catch {
+  }
+  const key = appearanceKey("terminalFontSize");
+  if (accountStore) void accountStore.deleteOverrides([key]).catch(() => undefined);
+  patchAccountOverrideCache({}, [key]);
+  const next = loadAppearance();
+  const changed = !appearanceEquals(appearance, next);
+  appearance = next;
+  applyAppearance();
+  if (changed) notifyAppearance();
+}
+
 export function setUiFontSize(value: number): void {
   const next = parsePreset(value);
   if (appearance.uiFontPreset === next && appearance.uiFontScale === 1) return;
   commitAppearance({ ...appearance, uiFontPreset: next, uiFontScale: 1 });
-}
-
-/** The terminal font size this device starts from: the server default when set, else the builtin one. */
-export function defaultTerminalFontSize(): number {
-  const key = appearanceKey("terminalFontSize");
-  return parseTerminalFontSize(key in accountDefaults ? accountDefaults[key] : builtinAppearance("terminalFontSize"));
 }
 
 export function setTerminalFontSize(value: number): void {
@@ -831,6 +875,7 @@ export function setTerminalContrast(value: TerminalContrast): void {
 
 // resetAppearancePrefs clears device-local values and removes account appearance overrides, falling back to builtin/server global defaults.
 export function resetAppearancePrefs(): void {
+  cancelFontStepSync();
   try {
     localStorage.removeItem(APPEARANCE_KEY);
   } catch {

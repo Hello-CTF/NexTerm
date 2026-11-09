@@ -153,6 +153,13 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
   // A zoomed pane fills the workspace like the single-pane view; the other panes stay mounted but hidden.
   const zoomedPaneId = useUi((state) => (singlePane ? null : zoomedPaneOf(workspace, state.zoomedPanes)));
   const solo = singlePane || zoomedPaneId !== null;
+  // The single-pane view already shows one pane full size: a zoom made there, or held when the view narrows,
+  // ends instead of appearing later when the window widens.
+  const zoomRecorded = useUi((state) => workspace.id in state.zoomedPanes);
+  const clearZoomPane = useUi((state) => state.clearZoomPane);
+  useEffect(() => {
+    if (singlePane && zoomRecorded) clearZoomPane(workspace.id);
+  }, [singlePane, zoomRecorded, clearZoomPane, workspace.id]);
   const handles = tree && !solo ? splitHandles(tree) : [];
   const [strips, setStrips] = useState<Record<string, number>>({});
   const stripRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());

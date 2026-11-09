@@ -449,6 +449,8 @@ export interface UiState {
   zoomedPanes: Record<string, string>;
   /** Zooms the active pane to fill its workspace, or restores the layout; false when there is nothing to zoom. */
   toggleZoomPane: (workspaceId?: string) => boolean;
+  /** Restores the layout of a zoomed workspace; no-op when it is not zoomed. */
+  clearZoomPane: (workspaceId: string) => void;
   /** Gives panes lined up in the same direction equal shares; false when the layout has no split to change. */
   equalizeSplits: (workspaceId?: string) => boolean;
   /** Moves a tab into another pane of its workspace, at `index` of its tabs (default: the end). */

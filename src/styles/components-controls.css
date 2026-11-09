@@ -388,12 +388,15 @@
   }
   /* Edge fades mark the ends of the strip that hide tabs (desktop; touch shells swipe the strip). */
   .nx-tabstrip-scroll.has-overflow-left {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px);
     mask-image: linear-gradient(to right, transparent 0, #000 24px);
   }
   .nx-tabstrip-scroll.has-overflow-right {
+    -webkit-mask-image: linear-gradient(to left, transparent 0, #000 24px);
     mask-image: linear-gradient(to left, transparent 0, #000 24px);
   }
   .nx-tabstrip-scroll.has-overflow-left.has-overflow-right {
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
     mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
   }
 

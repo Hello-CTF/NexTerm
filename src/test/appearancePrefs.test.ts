@@ -360,3 +360,61 @@ describe("account preference re-registration", () => {
     expect(document.documentElement.dataset.nxTheme).toBe("light");
   });
 });
+
+describe("terminal font zoom steps", () => {
+  async function withAccount(view: { defaults?: Record<string, unknown>; overrides?: Record<string, unknown> } = {}) {
+    const loaded = await loadPrefs();
+    const store = {
+      getView: vi.fn(async () => ({ defaults: view.defaults ?? {}, overrides: view.overrides ?? {} })),
+      putOverrides: vi.fn(async () => undefined),
+      deleteOverrides: vi.fn(async () => undefined),
+    };
+    loaded.prefs.registerAccountPreferenceStore(store);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getView).toHaveBeenCalled();
+    return { ...loaded, store };
+  }
+
+  it("applies each step at once but writes the account override once after the steps settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { prefs, store } = await withAccount();
+      for (let step = 0; step < 5; step += 1) prefs.stepTerminalFontSize(1);
+      expect(prefs.getAppearancePrefs().terminalFontSize).toBe(18);
+      expect(store.putOverrides).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(store.putOverrides).toHaveBeenCalledTimes(1);
+      expect(store.putOverrides).toHaveBeenCalledWith({ "appearance.terminalFontSize": 18 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays within the size limits", async () => {
+    const { prefs } = await loadPrefs();
+    prefs.setTerminalFontSize(prefs.TERMINAL_FONT_SIZE_MAX);
+    prefs.stepTerminalFontSize(1);
+    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(prefs.TERMINAL_FONT_SIZE_MAX);
+    prefs.setTerminalFontSize(prefs.TERMINAL_FONT_SIZE_MIN);
+    prefs.stepTerminalFontSize(-1);
+    expect(prefs.getAppearancePrefs().terminalFontSize).toBe(prefs.TERMINAL_FONT_SIZE_MIN);
+  });
+
+  it("resets by clearing the override, so the size follows the server default", async () => {
+    vi.useFakeTimers();
+    try {
+      const { prefs, store } = await withAccount({ defaults: { "appearance.terminalFontSize": 15 } });
+      prefs.stepTerminalFontSize(3);
+      expect(prefs.getAppearancePrefs().terminalFontSize).toBe(18);
+      prefs.resetTerminalFontSize();
+      expect(prefs.getAppearancePrefs().terminalFontSize).toBe(15);
+      expect(store.deleteOverrides).toHaveBeenCalledWith(["appearance.terminalFontSize"]);
+      expect(JSON.parse(localStorage.getItem(KEY) ?? "{}")).not.toHaveProperty("terminalFontSize");
+      // The pending step write is dropped, so it cannot re-create the override.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(store.putOverrides).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

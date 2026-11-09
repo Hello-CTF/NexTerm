@@ -8,7 +8,7 @@ import {
   restoreClosedTab,
 } from "../store";
 import { keybindingRepeats, matchAppKeybinding, matchKeybinding } from "../keybindings";
-import { defaultTerminalFontSize, getAppearancePrefs, setTerminalFontSize } from "../preferences";
+import { resetTerminalFontSize, stepTerminalFontSize } from "../preferences";
 import { toggleShortcutsOverlay } from "./ShortcutsOverlay";
 import { hideMobileHome } from "./mobileHome";
 import { isKeyboardCaptured } from "../inputCapture";
@@ -152,11 +152,11 @@ export function useAppKeybindings({
         case "terminalFontIncrease":
         case "terminalFontDecrease":
           e.preventDefault();
-          setTerminalFontSize(getAppearancePrefs().terminalFontSize + (hit.action === "terminalFontIncrease" ? 1 : -1));
+          stepTerminalFontSize(hit.action === "terminalFontIncrease" ? 1 : -1);
           return;
         case "terminalFontReset":
           e.preventDefault();
-          setTerminalFontSize(defaultTerminalFontSize());
+          resetTerminalFontSize();
           return;
         case "toggleZoomPane":
           if (useUi.getState().toggleZoomPane()) e.preventDefault();
