@@ -1,0 +1,2 @@
+@@nexterm-monitor os Darwin
+@@nexterm-monitor end

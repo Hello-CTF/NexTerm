@@ -1,0 +1,103 @@
+@@nexterm-monitor os Linux
+@@nexterm-monitor stat
+cpu  144959 0 36930 60958182 3370 0 9088 0 0 0
+cpu0 8809 0 2803 4061347 165 0 7781 0 0 0
+cpu1 9514 0 2488 4064722 457 0 692 0 0 0
+cpu2 10604 0 2578 4063722 161 0 171 0 0 0
+cpu3 12203 0 2583 4061826 178 0 95 0 0 0
+cpu4 9404 0 2436 4065034 169 0 65 0 0 0
+cpu5 9701 0 2472 4064618 140 0 50 0 0 0
+cpu6 9281 0 2374 4065313 256 0 38 0 0 0
+cpu7 9758 0 2890 4054960 187 0 35 0 0 0
+cpu8 8914 0 2522 4065492 177 0 29 0 0 0
+cpu9 9313 0 2432 4065010 237 0 25 0 0 0
+cpu10 8916 0 2375 4065375 320 0 17 0 0 0
+cpu11 9041 0 2288 4065654 154 0 16 0 0 0
+cpu12 9359 0 2024 4065919 237 0 36 0 0 0
+cpu13 10818 0 2173 4063773 327 0 23 0 0 0
+cpu14 9317 0 2485 4065409 197 0 11 0 0 0
+@@nexterm-monitor meminfo
+MemTotal:       12205776 kB
+MemFree:         2505860 kB
+MemAvailable:    9919620 kB
+Buffers:          308796 kB
+Cached:          6586492 kB
+SwapCached:           60 kB
+Active:          2536008 kB
+Inactive:        5912824 kB
+Active(anon):    1355828 kB
+Inactive(anon):   209520 kB
+Active(file):    1180180 kB
+Inactive(file):  5703304 kB
+Unevictable:       21024 kB
+Mlocked:           17024 kB
+SwapTotal:      16777212 kB
+SwapFree:       16777152 kB
+Zswap:                 0 kB
+Zswapped:              0 kB
+Dirty:              2520 kB
+Writeback:             0 kB
+AnonPages:       1574240 kB
+Mapped:           440048 kB
+Shmem:              5408 kB
+KReclaimable:     746372 kB
+Slab:             933632 kB
+SReclaimable:     746372 kB
+SUnreclaim:       187260 kB
+KernelStack:        8848 kB
+ShadowCallStack:    2272 kB
+PageTables:        14020 kB
+SecPageTables:         0 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:    22880100 kB
+Committed_AS:    3554160 kB
+VmallocTotal:   135288315904 kB
+VmallocUsed:       33428 kB
+VmallocChunk:          0 kB
+Percpu:             8640 kB
+HardwareCorrupted:     0 kB
+AnonHugePages:    217088 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:     90112 kB
+FilePmdMapped:     51200 kB
+CmaTotal:          32768 kB
+CmaFree:          479984 kB
+Balloon:               0 kB
+GPUActive:             0 kB
+GPUReclaim:            0 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+@@nexterm-monitor loadavg
+5.87 2.59 1.22 1/542 101316
+@@nexterm-monitor netdev
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 1230656    5059    0    0    0     0          0         0  1230656    5059    0    0    0     0       0          0
+enp2s0: 43966983  211785    0    0    0     0          0         0 77986511  218522    0    0    0     0       0          0
+docker0:  211916    1126    0    0    0     0          0         0   138456    1607    0    8    0     0       0          0
+vethc18f795:     288       6    0    0    0     0          0         0      790       9    0    0    0     0       0          0
+@@nexterm-monitor uptime
+40795.22 609581.90
+@@nexterm-monitor df
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+tmpfs              2441156      1440   2439716       1% /run
+/dev/vda1        202051056  96657036 105377636      48% /
+tmpfs              6102888         0   6102888       0% /dev/shm
+efivarfs               256        56       201      22% /sys/firmware/efi/efivars
+none                  1024         0      1024       0% /run/credentials/systemd-journald.service
+none                  1024         0      1024       0% /run/credentials/systemd-resolved.service
+/dev/vda13          911580    202792    645148      24% /boot
+/dev/vda15           99791      6647     93145       7% /boot/efi
+none                  1024         0      1024       0% /run/credentials/systemd-networkd.service
+pvmshare         971298972 649123524 322175448      67% /share
+none                  1024         0      1024       0% /run/credentials/getty@tty1.service
+none                  1024         0      1024       0% /run/credentials/serial-getty@ttyAMA0.service
+tmpfs              1220576        28   1220548       1% /run/user/501
+@@nexterm-monitor end

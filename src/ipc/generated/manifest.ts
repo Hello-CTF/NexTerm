@@ -1416,6 +1416,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs", ts: "HostProbeArgs" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult", ts: "HostProbeResult" },
     },
+    "host_monitor_sample": {
+      scope: "host-monitor",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostmonitor.SampleArgs", ts: "HostMonitorSampleArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostmonitor.Snapshot", ts: "HostMonitorSnapshot" },
+    },
     "host_ports_list": {
       scope: "host-ports",
       nested: false,
@@ -3980,6 +3988,10 @@ export interface IPCCommandTypeMap {
   "host_connectivity_test": {
     input: contractTypes.HostProbeArgs;
     output: contractTypes.HostProbeResult;
+  };
+  "host_monitor_sample": {
+    input: contractTypes.HostMonitorSampleArgs;
+    output: contractTypes.HostMonitorSnapshot;
   };
   "host_ports_list": {
     input: contractTypes.HostPortsListArgs;

@@ -1,0 +1,26 @@
+@@nexterm-monitor os Linux
+@@nexterm-monitor stat
+cpu  2255 34 2290 22625563 6290 127 456
+cpu0 1132 34 1441 11311718 3675 127 438
+cpu1 1123 0 849 11313845 2614 0 18
+@@nexterm-monitor meminfo
+MemTotal:        1017984 kB
+MemFree:          201324 kB
+Buffers:           61216 kB
+Cached:           400040 kB
+SwapCached:            0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+@@nexterm-monitor loadavg
+0.00 0.01 0.05 1/87 2410
+@@nexterm-monitor netdev
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+  eth0:4294967000  901234    0    0    0     0          0         0 12345678   45678    0    0    0     0       0          0
+    lo:    2776      32    0    0    0     0          0         0     2776      32    0    0    0     0       0          0
+@@nexterm-monitor uptime
+350735.47 701234.02
+@@nexterm-monitor df
+Filesystem           1024-blocks    Used Available Capacity Mounted on
+/dev/sda1                 20509308   3459000  16001708  18% /
+@@nexterm-monitor end

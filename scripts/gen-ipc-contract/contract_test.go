@@ -1703,6 +1703,18 @@ func TestHostPortsVerticalContracts(t *testing.T) {
 	})
 }
 
+func TestHostMonitorVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-monitor", []verticalWant{
+		{name: "host_monitor_sample", input: "HostMonitorSampleArgs", output: "HostMonitorSnapshot"},
+	}, map[string][]string{
+		"HostMonitorSampleArgs": {"sessionId: string;"},
+		"HostMonitorSnapshot": {"status: string;", "reason?: string;", "intervalMs: number;", "retryAfterMs?: number;", "cpuPercent?: number | null;",
+			"memory?: HostMonitorMemory | null;", "load?: HostMonitorLoad | null;", "network: HostMonitorNetInterface[];", "disks: HostMonitorDisk[];"},
+		"HostMonitorNetInterface": {"name: string;", "rxRate?: number | null;", "txRate?: number | null;"},
+		"HostMonitorDisk":         {"mount: string;", "usedPercent: number;"},
+	})
+}
+
 func TestPreviewVerticalContracts(t *testing.T) {
 	checkVerticalScope(t, "preview", []verticalWant{
 		{name: "preview_embed_check", input: "EmbedCheckArgs", output: "EmbedCheck"},

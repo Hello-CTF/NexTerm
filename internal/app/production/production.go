@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor"
 	"github.com/Hello-CTF/NexTerm/internal/hostports"
 	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -71,6 +72,7 @@ type ProductionServices struct {
 	Docker        *docker.Service
 	hostPorts     *hostports.Service
 	hostProcs     *hostprocs.Service
+	hostMonitor   *hostmonitor.Service
 	Retention     *RetentionRunner
 	Guard         *guard.Manager
 	Agent         *agent.Runner
@@ -429,6 +431,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.hostProcs != nil {
 		modules = append(modules, hostProcsModule(services.hostProcs))
+	}
+	if services.hostMonitor != nil {
+		modules = append(modules, hostMonitorModule(services.hostMonitor))
 	}
 	if module, ok := previewModule(services.desktop); ok {
 		modules = append(modules, module)

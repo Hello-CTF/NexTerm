@@ -23,7 +23,7 @@
 
 - **Persistent terminals**: keep running when the app closes or the network drops
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
-- **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding
+- **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding, live host monitoring
 - **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync
 - **Nine interface languages**: Simplified and Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian

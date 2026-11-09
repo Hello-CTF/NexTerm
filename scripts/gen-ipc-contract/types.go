@@ -27,6 +27,12 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Disk":                         "HostMonitorDisk",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Load":                         "HostMonitorLoad",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Memory":                       "HostMonitorMemory",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.NetInterface":                 "HostMonitorNetInterface",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.SampleArgs":                   "HostMonitorSampleArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Snapshot":                     "HostMonitorSnapshot",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.Listener":                       "HostPortListener",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ListArgs":                       "HostPortsListArgs",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ListResult":                     "HostPortsListResult",

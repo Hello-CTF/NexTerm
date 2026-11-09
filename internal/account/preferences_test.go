@@ -46,6 +46,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.linkActivation",
 		"terminal.linkOpenMode",
 		"terminal.portDiscovery",
+		"terminal.hostMonitor",
 		"terminal.confirmMultilinePaste",
 		"terminal.durableHistoryMiB",
 		"keybinding.commandPalette",
@@ -144,6 +145,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.linkActivation":        `"click"`,
 		"terminal.linkOpenMode":          `"ask"`,
 		"terminal.portDiscovery":         `"on"`,
+		"terminal.hostMonitor":           `"on"`,
 		"terminal.confirmMultilinePaste": `"unbracketed"`,
 		"keybinding.closeTab":            `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":       "null",
@@ -204,6 +206,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
 		"terminal.linkOpenMode":          {`"browser"`, `"System"`, "1", "null", "true"},
 		"terminal.portDiscovery":         {`"auto"`, `"On"`, "true", "1", "null"},
+		"terminal.hostMonitor":           {`"auto"`, `"On"`, "true", "1", "null"},
 		"terminal.confirmMultilinePaste": {"true", "false", `"false"`, `"Always"`, `"ask"`, "0", "null"},
 		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}

@@ -1077,6 +1077,7 @@ func newProductionHTTPBoundaryFixture(t *testing.T) *productionHTTPBoundaryFixtu
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}, ProductionServices{
 		Store: database, Sessions: manager, Docker: newProductionDockerService(manager, database),
+		hostMonitor: newProductionHostMonitorService(manager),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1192,6 +1193,7 @@ func TestProductionFSAndDockerHTTPAccountBoundaries(t *testing.T) {
 		{name: "docker image remove", command: "docker_image_remove", args: map[string]any{"sessionId": fixture.sessionID, "image": "nginx:latest"}},
 		{name: "docker inspect", command: "docker_inspect", args: map[string]any{"sessionId": fixture.sessionID, "containerId": "c1"}},
 		{name: "docker stats", command: "docker_stats", args: sessionArgs()},
+		{name: "host monitor sample", command: "host_monitor_sample", args: sessionArgs()},
 		{name: "docker container list dir", command: "docker_container_list_dir", args: map[string]any{
 			"sessionId": fixture.sessionID, "containerId": "c1", "path": "/",
 		}},
