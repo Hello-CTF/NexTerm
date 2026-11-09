@@ -122,6 +122,8 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.switchTab":              {kind: preferenceKindBinding},
 	"keybinding.restoreClosedTab":       {kind: preferenceKindBinding},
 	"keybinding.terminalSearch":         {kind: preferenceKindBinding},
+	"keybinding.terminalLinks":          {kind: preferenceKindBinding},
+	"keybinding.sessionSidebar":         {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":        {kind: preferenceKindBinding},
 	"keybinding.lockVault":              {kind: preferenceKindBinding},
 	"keybinding.openSettings":           {kind: preferenceKindBinding},
