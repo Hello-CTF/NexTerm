@@ -24,7 +24,7 @@ func newRealIPFixture(t *testing.T, trusted []string, trustForwardedFor bool) *a
 	config.Options.Auth = AuthOn
 	config.Options.TrustedProxyCIDRs = trusted
 	config.Options.TrustForwardedFor = trustForwardedFor
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{server: server, http: httpServer, accounts: accounts, db: database.DB(), client: &http.Client{}}

@@ -41,7 +41,7 @@ func newAccountFixtureListen(t *testing.T, auth, listen string) *accountFixture 
 	config := testConfig(t, false)
 	config.Options.Auth = auth
 	config.Options.Listen = listen
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{

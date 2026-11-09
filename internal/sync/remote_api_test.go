@@ -102,7 +102,10 @@ func (f *remoteAPIFixture) bindTOTP(t *testing.T, username, password string) str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, testTOTPCode(t, secret, time.Now())); err != nil {
+	// Confirm with the previous step's code (inside the window) so the code of
+	// the current step stays unused for the login that follows: accepted codes
+	// are single-use.
+	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, testTOTPCode(t, secret, time.Now().Add(-30*time.Second))); err != nil {
 		t.Fatal(err)
 	}
 	return secret

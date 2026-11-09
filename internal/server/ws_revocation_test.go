@@ -345,7 +345,7 @@ func newAccountFixtureWithChannels(t *testing.T, channels ChannelBinder) *accoun
 	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
 	config.Channels = channels
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{server: server, http: httpServer, accounts: accounts, db: database.DB(), client: &http.Client{}}

@@ -10,9 +10,23 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/account"
 )
+
+// testTOTPClockOffset shifts the clock of the test account services, in
+// seconds. Accepted TOTP codes are single-use per time step, so testTOTPCode
+// moves the clock one step forward for every code it derives; the tests of
+// this package do not run in parallel.
+var testTOTPClockOffset atomic.Int64
+
+// withTestTOTPClock gives an account service the shifted test clock.
+func withTestTOTPClock() account.Option {
+	return account.WithNow(func() int64 { return time.Now().UnixMilli() + testTOTPClockOffset.Load()*1000 })
+}
 
 func testTOTPCode(t *testing.T, secretBase32 string, unixSeconds int64) string {
 	t.Helper()
@@ -22,7 +36,7 @@ func testTOTPCode(t *testing.T, secretBase32 string, unixSeconds int64) string {
 	}
 	mac := hmac.New(sha1.New, secret)
 	var counter [8]byte
-	binary.BigEndian.PutUint64(counter[:], uint64(unixSeconds)/30)
+	binary.BigEndian.PutUint64(counter[:], uint64(unixSeconds+testTOTPClockOffset.Add(30))/30)
 	_, _ = mac.Write(counter[:])
 	sum := mac.Sum(nil)
 	offset := sum[len(sum)-1] & 0x0f
