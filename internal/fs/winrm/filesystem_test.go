@@ -97,6 +97,24 @@ func TestListReportsHiddenAttributesAndLinks(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesLinksWithoutRecursingIntoTargets(t *testing.T) {
+	for _, isDir := range []bool{false, true} {
+		executor := &fakeExecutor{result: success("")}
+		if err := New(executor).Delete(context.Background(), `C:\O'Brien\link`, isDir); err != nil {
+			t.Fatal(err)
+		}
+		script := executor.scripts[0]
+		if !strings.Contains(script, `Get-Item -LiteralPath 'C:\O''Brien\link' -Force`) ||
+			!strings.Contains(script, "$__nextermItem.LinkType -in 'SymbolicLink','Junction'") ||
+			!strings.Contains(script, "$__nextermItem.Delete()") {
+			t.Fatalf("delete script lacks the link branch: %s", script)
+		}
+		if isDir != strings.Contains(script, "-Recurse") {
+			t.Fatalf("isDir=%v delete script recursion mismatch: %s", isDir, script)
+		}
+	}
+}
+
 func TestListUsesStableJSONAndUnlimitedFileOutput(t *testing.T) {
 	executor := &fakeExecutor{result: success("[]")}
 	filesystem := New(executor)

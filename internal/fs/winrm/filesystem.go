@@ -261,11 +261,17 @@ func (f *FileSystem) Rename(ctx context.Context, from, to string) error {
 }
 
 func (f *FileSystem) Delete(ctx context.Context, path string, isDir bool) error {
-	command := "Remove-Item -LiteralPath " + quoteLiteral(path) + " -Force"
+	quoted := quoteLiteral(path)
+	remove := "Remove-Item -LiteralPath " + quoted + " -Force"
 	if isDir {
-		command = "Remove-Item -LiteralPath " + quoteLiteral(path) + " -Recurse -Force"
+		remove = "Remove-Item -LiteralPath " + quoted + " -Recurse -Force"
 	}
-	_, err := f.execute(ctx, "$ErrorActionPreference='Stop'; "+command)
+	// A symlink or junction is removed as the link itself: FileSystemInfo.Delete never recurses into the
+	// target and, unlike Remove-Item on Windows PowerShell 5.1, does not prompt for a junction. Other reparse
+	// points (cloud placeholders) are ordinary files or folders and keep the recursive removal.
+	command := "$ErrorActionPreference='Stop'; $__nextermItem=Get-Item -LiteralPath " + quoted + " -Force; " +
+		"if (($__nextermItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -and ($__nextermItem.LinkType -in 'SymbolicLink','Junction')) { $__nextermItem.Delete() } else { " + remove + " }"
+	_, err := f.execute(ctx, command)
 	return err
 }
 

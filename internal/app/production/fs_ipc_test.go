@@ -377,17 +377,17 @@ func TestProductionFSRootsDTOAndFallbacks(t *testing.T) {
 			filesystem: rootsFakeFileSystem{FileSystem: fakeProviderFileSystem{}, roots: base.FileSystemRoots{
 				PathStyle: base.PathStyleWindows, Roots: []base.FileRoot{}, Supported: true,
 			}},
-			want: `{"pathStyle":"windows","roots":[],"homePath":null,"supported":true,"capabilities":{"chmod":"posix","pack":false,"extract":false,"caseInsensitive":false}}`,
+			want: `{"pathStyle":"windows","roots":[],"homePath":null,"supported":true,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 		{
 			name:       "missing roots capability",
 			filesystem: fakeProviderFileSystem{},
-			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"posix","pack":false,"extract":false,"caseInsensitive":false}}`,
+			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 		{
 			name:       "explicit unsupported",
 			filesystem: rootsFakeFileSystem{FileSystem: fakeProviderFileSystem{}, err: base.ErrUnsupported},
-			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"posix","pack":false,"extract":false,"caseInsensitive":false}}`,
+			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

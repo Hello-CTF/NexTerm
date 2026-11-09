@@ -30,20 +30,30 @@ func win32Attributes(info fs.FileInfo) (uint32, bool) {
 // platformFileKind classifies reparse points that Go reports as irregular: a junction behaves as a link to a
 // directory, while non-surrogate reparse points (cloud placeholders, app execution aliases) are ordinary files
 // or directories for browsing purposes.
+//
+// Go already classifies symlinks, AF_UNIX sockets and deduplicated files, so only irregular entries are inspected:
+// ModeDir still set means a non-surrogate directory placeholder, and only the rest needs the reparse tag.
 func platformFileKind(path string, info fs.FileInfo) base.FileKind {
+	mode := info.Mode()
+	if mode&fs.ModeIrregular == 0 {
+		return fileKind(mode)
+	}
+	if mode.IsDir() {
+		return base.FileDirectory
+	}
 	attributes, ok := win32Attributes(info)
 	if !ok || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-		return fileKind(info.Mode())
+		return fileKind(mode)
 	}
 	tag, err := reparseTag(path)
 	if err != nil {
-		return fileKind(info.Mode())
+		return fileKind(mode)
 	}
 	switch {
-	case tag == windows.IO_REPARSE_TAG_SYMLINK, tag == windows.IO_REPARSE_TAG_MOUNT_POINT:
+	case tag == windows.IO_REPARSE_TAG_MOUNT_POINT:
 		return base.FileSymlink
 	case tag&reparseNameSurrogate != 0:
-		return fileKind(info.Mode())
+		return fileKind(mode)
 	case attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0:
 		return base.FileDirectory
 	default:

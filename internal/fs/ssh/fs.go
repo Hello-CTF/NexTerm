@@ -11,6 +11,7 @@ import (
 	"hash"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path"
 	"sort"
@@ -32,6 +33,7 @@ type FS struct {
 	executor                 Executor
 	conditionalLink          func(*sftp.Client, string, string) error
 	posixRename              func(*sftp.Client, string, string) error
+	removeAside              func(*sftp.Client, string) error
 	conditionalPreVerifyHook func()
 	conditionalPreCommitHook func()
 }
@@ -69,6 +71,9 @@ func New(client *sftp.Client, executor Executor) *FS {
 				return sftp.ErrSSHFxOpUnsupported
 			}
 			return client.PosixRename(oldname, newname)
+		},
+		removeAside: func(client *sftp.Client, path string) error {
+			return client.Remove(path)
 		},
 	}
 }
@@ -306,8 +311,15 @@ func posixRenameUnsupported(err error) bool {
 
 // replaceAside replaces an existing target on servers without posix-rename (plain SFTP v3 rename refuses an
 // existing target): it moves the target aside, renames the staged file in and removes the old copy. A failed
-// rename-in restores the target; a failed restore or cleanup names the aside path so the copy can be recovered.
-func (f *FS) replaceAside(ctx context.Context, from, to string) error {
+// rename-in restores the target and a failed restore names the aside path so the copy can be recovered. A
+// directory target is refused, as posix-rename refuses replacing a directory with a file. Once the staged file is
+// in place the replacement has succeeded, so a failed cleanup of the old copy is only logged.
+func (f *FS) replaceAside(_ context.Context, from, to string) error {
+	if info, err := f.client.Lstat(to); err != nil {
+		return fmt.Errorf("SFTP replace %s: %w", to, err)
+	} else if info.IsDir() {
+		return fmt.Errorf("SFTP replace %s: target is a directory: %w", to, &sftp.StatusError{Code: uint32(sftp.ErrSSHFxFailure)})
+	}
 	var random [8]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return fmt.Errorf("SFTP replace %s: %w", to, err)
@@ -322,10 +334,10 @@ func (f *FS) replaceAside(ctx context.Context, from, to string) error {
 		}
 		return fmt.Errorf("SFTP replace %s: rename %s in: %w", to, from, err)
 	}
-	if err := f.client.Remove(aside); err != nil {
-		return fmt.Errorf("SFTP replace %s: replaced, but the previous file remains at %s: %w", to, aside, err)
+	if err := f.removeAside(f.client, aside); err != nil {
+		slog.Warn("SFTP replace left the previous file behind", "target", to, "previous", aside, "error", err)
 	}
-	return ctx.Err()
+	return nil
 }
 
 func (f *FS) Delete(ctx context.Context, remotePath string, directory bool) error {

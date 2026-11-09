@@ -117,6 +117,64 @@ func TestAtomicRenameFallbackRestoresTargetWhenRenameInFails(t *testing.T) {
 	}
 }
 
+func TestAtomicRenameFallbackRefusesDirectoryTarget(t *testing.T) {
+	filesystem, root := newTestFS(t, nil)
+	stubPosixRenameUnsupported(filesystem)
+	target := filepath.Join(root, "target")
+	staged := filepath.Join(root, "staged")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "keep"), []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := filesystem.AtomicRename(context.Background(), staged, target)
+	var status *sftp.StatusError
+	if !errors.As(err, &status) || status.FxCode() != sftp.ErrSSHFxFailure {
+		t.Fatalf("AtomicRename over a directory = %v, want an SFTP failure status", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(target, "keep")); err != nil || string(data) != "kept" {
+		t.Fatalf("directory target content = %q, %v", data, err)
+	}
+	assertRemoteContent(t, filesystem, staged, "new")
+	if names := remoteNames(t, root); len(names) != 2 {
+		t.Fatalf("directory after refused replace = %v, want only target and staged", names)
+	}
+}
+
+func TestAtomicRenameFallbackSucceedsWhenOldCopyCleanupFails(t *testing.T) {
+	filesystem, root := newTestFS(t, nil)
+	stubPosixRenameUnsupported(filesystem)
+	filesystem.removeAside = func(*sftp.Client, string) error { return errors.New("cleanup refused") }
+	target := filepath.Join(root, "target")
+	staged := filepath.Join(root, "staged")
+	if err := os.WriteFile(target, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(staged, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := filesystem.AtomicRename(context.Background(), staged, target); err != nil {
+		t.Fatalf("AtomicRename = %v, want success once the new file is in place", err)
+	}
+	assertRemoteContent(t, filesystem, target, "new")
+	names := remoteNames(t, root)
+	if len(names) != 2 {
+		t.Fatalf("directory after replace = %v, want target and the kept previous copy", names)
+	}
+	for _, name := range names {
+		if name == "target" {
+			continue
+		}
+		if data, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(data) != "old" {
+			t.Fatalf("previous copy %s = %q, %v", name, data, err)
+		}
+	}
+}
+
 func TestAtomicRenameReportsOtherPosixRenameErrors(t *testing.T) {
 	filesystem, root := newTestFS(t, nil)
 	refused := errors.New("refused")

@@ -463,7 +463,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				if err != nil {
 					return fsRootsDTO{}, fsIPCError(kind, err)
 				}
-				result.Capabilities = productionFSCapabilities(filesystem, base.FileCapabilities{})
+				result.Capabilities = productionFSCapabilities(base.FileCapabilities{})
 				provider, ok := filesystem.(base.RootsProvider)
 				if !ok {
 					return result, nil
@@ -481,7 +481,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				}
 				result.HomePath = nullableProductionString(roots.HomePath)
 				result.Supported = roots.Supported
-				result.Capabilities = productionFSCapabilities(filesystem, roots.Capabilities)
+				result.Capabilities = productionFSCapabilities(roots.Capabilities)
 				result.Roots = make([]fsRootDTO, len(roots.Roots))
 				for index, root := range roots.Roots {
 					result.Roots[index] = fsRootDTO{Path: root.Path, Label: root.Label}
@@ -795,13 +795,12 @@ func productionTransferOptions(ctx context.Context, call *ipc.Call, taskID strin
 	}}
 }
 
-// productionFSCapabilities reports what the backend declared, or, when it declared nothing, what its implemented
-// interfaces offer.
-func productionFSCapabilities(filesystem base.FileSystem, declared base.FileCapabilities) *fsCapabilitiesDTO {
+// productionFSCapabilities reports what the backend declared. A backend that declared nothing, or whose target
+// environment is unknown, offers no optional operations: an implemented interface does not mean the target can
+// run it (a Windows SFTP target without PowerShell has no tar or POSIX modes).
+func productionFSCapabilities(declared base.FileCapabilities) *fsCapabilitiesDTO {
 	if declared.Chmod == "" {
-		_, pack := filesystem.(sshPackDownloader)
-		_, extract := filesystem.(sshExtractor)
-		declared = base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: pack, Extract: extract}
+		declared = base.FileCapabilities{Chmod: base.ChmodNone}
 	}
 	return &fsCapabilitiesDTO{
 		Chmod: string(declared.Chmod), Pack: declared.Pack, Extract: declared.Extract, CaseInsensitive: declared.CaseInsensitive,
