@@ -143,6 +143,7 @@ try {
     $env:NEXTERM_WINDOWS_LOCAL_INTEGRATION = '1'
     Invoke-TargetedGoTest -Package './internal/fs/local' -Test 'TestRealWindowsSecondVolume'
     Remove-Item Env:NEXTERM_WINDOWS_LOCAL_INTEGRATION
+    Invoke-TargetedGoTest -Package './internal/fs/local' -Test 'TestWindowsListClassifiesJunctionsAndHiddenAttributes'
 
     Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsNaturalExitEOF'
     Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestSessionWindowsBackpressureAndDrain'

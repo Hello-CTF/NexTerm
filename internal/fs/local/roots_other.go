@@ -2,13 +2,18 @@
 
 package local
 
-import "github.com/Hello-CTF/NexTerm/internal/transport/base"
+import (
+	"runtime"
+
+	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+)
 
 func platformRoots() (base.FileSystemRoots, error) {
 	return base.FileSystemRoots{
-		PathStyle: base.PathStylePOSIX,
-		Roots:     []base.FileRoot{{Path: "/", Label: "/"}},
-		Supported: true,
+		PathStyle:    base.PathStylePOSIX,
+		Roots:        []base.FileRoot{{Path: "/", Label: "/"}},
+		Supported:    true,
+		Capabilities: Capabilities(runtime.GOOS),
 	}, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf16"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
@@ -138,10 +139,11 @@ func (f *sftpFileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error
 	}
 	if environment.pathStyle == base.PathStylePOSIX {
 		return base.FileSystemRoots{
-			PathStyle: base.PathStylePOSIX,
-			Roots:     []base.FileRoot{{Path: "/", Label: "/"}},
-			HomePath:  environment.homePath,
-			Supported: true,
+			PathStyle:    base.PathStylePOSIX,
+			Roots:        []base.FileRoot{{Path: "/", Label: "/"}},
+			HomePath:     environment.homePath,
+			Supported:    true,
+			Capabilities: sftpCapabilities(base.PathStylePOSIX),
 		}, nil
 	}
 	if environment.pathStyle != base.PathStyleWindows {
@@ -167,7 +169,18 @@ func (f *sftpFileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error
 		}
 		document = &current
 	}
-	return windowsRootsFromDocument(*document)
+	roots, err := windowsRootsFromDocument(*document)
+	roots.Capabilities = sftpCapabilities(base.PathStyleWindows)
+	return roots, err
+}
+
+// sftpCapabilities describes an SFTP target by path style. POSIX hosts run tar for archives; Windows OpenSSH maps
+// chmod to the read-only attribute, has no archive support here and compares names case-insensitively.
+func sftpCapabilities(style base.PathStyle) base.FileCapabilities {
+	if style == base.PathStyleWindows {
+		return base.FileCapabilities{Chmod: base.ChmodReadOnly, CaseInsensitive: true}
+	}
+	return base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true}
 }
 
 func (f *sftpFileSystem) targetEnvironment(ctx context.Context) (*sftpEnvironment, *windowsRootsDocument, error) {
@@ -548,6 +561,20 @@ func (f *sftpFileSystem) MkdirPrivate(ctx context.Context, remotePath string) er
 
 func (f *sftpFileSystem) Rename(ctx context.Context, from, to string) error {
 	return normalizeSFTPError(f.FS.Rename(ctx, f.sftpPath(from), f.sftpPath(to)))
+}
+
+func (f *sftpFileSystem) AtomicRename(ctx context.Context, from, to string) error {
+	return normalizeSFTPError(f.FS.AtomicRename(ctx, f.sftpPath(from), f.sftpPath(to)))
+}
+
+func (f *sftpFileSystem) FileMode(ctx context.Context, remotePath string) (fs.FileMode, error) {
+	mode, err := f.FS.FileMode(ctx, f.sftpPath(remotePath))
+	return mode, normalizeSFTPError(err)
+}
+
+func (f *sftpFileSystem) ModTime(ctx context.Context, remotePath string) (time.Time, error) {
+	modTime, err := f.FS.ModTime(ctx, f.sftpPath(remotePath))
+	return modTime, normalizeSFTPError(err)
 }
 
 func (f *sftpFileSystem) Delete(ctx context.Context, remotePath string, directory bool) error {

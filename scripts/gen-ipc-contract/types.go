@@ -33,6 +33,7 @@ var tsNameOverrides = map[string]string{
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs":                      "HostProbeArgs",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult":                    "HostProbeResult",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":           "FSCancelRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCapabilitiesDTO":         "FSCapabilitiesDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO":     "FSChunkUploadBeginDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO":  "FSChunkUploadProgressDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsEntryDTO":                "FSEntryDTO",

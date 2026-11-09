@@ -374,6 +374,17 @@ type fsEntryDTO struct {
 	Group         *string `json:"group"`
 	Mtime         int64   `json:"mtime"`
 	SymlinkTarget *string `json:"symlinkTarget"`
+	// TargetKind is "dir", "file" or "other" for a symlink whose target resolved, and omitted otherwise.
+	TargetKind string `json:"targetKind,omitempty"`
+	Hidden     bool   `json:"hidden,omitempty"`
+}
+
+type fsCapabilitiesDTO struct {
+	// Chmod is "posix", "readonly" (Windows read-only attribute only) or "none".
+	Chmod           string `json:"chmod"`
+	Pack            bool   `json:"pack"`
+	Extract         bool   `json:"extract"`
+	CaseInsensitive bool   `json:"caseInsensitive"`
 }
 
 type fsRootDTO struct {
@@ -382,10 +393,11 @@ type fsRootDTO struct {
 }
 
 type fsRootsDTO struct {
-	PathStyle string      `json:"pathStyle"`
-	Roots     []fsRootDTO `json:"roots"`
-	HomePath  *string     `json:"homePath"`
-	Supported bool        `json:"supported"`
+	PathStyle    string             `json:"pathStyle"`
+	Roots        []fsRootDTO        `json:"roots"`
+	HomePath     *string            `json:"homePath"`
+	Supported    bool               `json:"supported"`
+	Capabilities *fsCapabilitiesDTO `json:"capabilities,omitempty"`
 }
 
 type fsReadDTO struct {
@@ -451,6 +463,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				if err != nil {
 					return fsRootsDTO{}, fsIPCError(kind, err)
 				}
+				result.Capabilities = productionFSCapabilities(filesystem, base.FileCapabilities{})
 				provider, ok := filesystem.(base.RootsProvider)
 				if !ok {
 					return result, nil
@@ -468,6 +481,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				}
 				result.HomePath = nullableProductionString(roots.HomePath)
 				result.Supported = roots.Supported
+				result.Capabilities = productionFSCapabilities(filesystem, roots.Capabilities)
 				result.Roots = make([]fsRootDTO, len(roots.Roots))
 				for index, root := range roots.Roots {
 					result.Roots[index] = fsRootDTO{Path: root.Path, Label: root.Label}
@@ -781,10 +795,23 @@ func productionTransferOptions(ctx context.Context, call *ipc.Call, taskID strin
 	}}
 }
 
+// productionFSCapabilities reports what the backend declared, or, when it declared nothing, what its implemented
+// interfaces offer.
+func productionFSCapabilities(filesystem base.FileSystem, declared base.FileCapabilities) *fsCapabilitiesDTO {
+	if declared.Chmod == "" {
+		_, pack := filesystem.(sshPackDownloader)
+		_, extract := filesystem.(sshExtractor)
+		declared = base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: pack, Extract: extract}
+	}
+	return &fsCapabilitiesDTO{
+		Chmod: string(declared.Chmod), Pack: declared.Pack, Extract: declared.Extract, CaseInsensitive: declared.CaseInsensitive,
+	}
+}
+
 func productionFSEntry(entry base.FileEntry) fsEntryDTO {
 	return fsEntryDTO{
 		Name: entry.Name, Path: entry.Path, Kind: string(entry.Kind), Size: entry.Size, Mode: entry.Mode.String(),
 		Owner: nullableProductionString(entry.Owner), Group: nullableProductionString(entry.Group), Mtime: entry.ModTime.UnixMilli(),
-		SymlinkTarget: nullableProductionString(entry.SymlinkTarget),
+		SymlinkTarget: nullableProductionString(entry.SymlinkTarget), TargetKind: string(entry.TargetKind), Hidden: entry.Hidden,
 	}
 }

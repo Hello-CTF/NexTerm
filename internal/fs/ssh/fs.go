@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -30,6 +31,7 @@ type FS struct {
 	client                   *sftp.Client
 	executor                 Executor
 	conditionalLink          func(*sftp.Client, string, string) error
+	posixRename              func(*sftp.Client, string, string) error
 	conditionalPreVerifyHook func()
 	conditionalPreCommitHook func()
 }
@@ -47,7 +49,8 @@ func ClientOptions() []sftp.ClientOption {
 
 const (
 	maxConcurrentRequests = 64
-	// listLinkConcurrency bounds in-flight ReadLink requests while listing.
+	// listLinkConcurrency bounds in-flight ReadLink and Stat requests while
+	// listing; each symlink holds two.
 	listLinkConcurrency = 32
 	// sftpPacketSize is the default pkg/sftp payload size; a Write of at most this
 	// size is always a single request.
@@ -61,8 +64,16 @@ func New(client *sftp.Client, executor Executor) *FS {
 		conditionalLink: func(client *sftp.Client, oldname, newname string) error {
 			return client.Link(oldname, newname)
 		},
+		posixRename: func(client *sftp.Client, oldname, newname string) error {
+			if _, ok := client.HasExtension(posixRenameExtension); !ok {
+				return sftp.ErrSSHFxOpUnsupported
+			}
+			return client.PosixRename(oldname, newname)
+		},
 	}
 }
+
+const posixRenameExtension = "posix-rename@openssh.com"
 
 func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, error) {
 	remotePath, err := f.real(ctx, remotePath)
@@ -90,12 +101,13 @@ func (f *FS) List(ctx context.Context, remotePath string) ([]base.FileEntry, err
 	return entries, ctx.Err()
 }
 
-// resolveSymlinks fills SymlinkTarget for symlink entries. The SFTP client
-// multiplexes requests, so overlapping the ReadLink calls turns N round trips
-// into roughly N/listLinkConcurrency. Failed lookups leave the target empty.
+// resolveSymlinks fills SymlinkTarget and TargetKind for symlink entries. The
+// SFTP client multiplexes requests, so overlapping the ReadLink and Stat calls
+// turns 2N round trips into roughly 2N/listLinkConcurrency. Failed lookups leave
+// the fields empty, which marks a broken link.
 func (f *FS) resolveSymlinks(ctx context.Context, entries []base.FileEntry) {
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, listLinkConcurrency)
+	sem := make(chan struct{}, listLinkConcurrency/2)
 	for i := range entries {
 		if entries[i].Kind != base.FileSymlink {
 			continue
@@ -110,9 +122,18 @@ func (f *FS) resolveSymlinks(ctx context.Context, entries []base.FileEntry) {
 		go func(entry *base.FileEntry) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			stat := make(chan base.FileKind, 1)
+			go func() {
+				var kind base.FileKind
+				if info, err := f.client.Stat(entry.Path); err == nil {
+					kind = base.TargetKindOf(info.Mode())
+				}
+				stat <- kind
+			}()
 			if target, err := f.client.ReadLink(entry.Path); err == nil {
 				entry.SymlinkTarget = target
 			}
+			entry.TargetKind = <-stat
 		}(&entries[i])
 	}
 	wg.Wait()
@@ -265,8 +286,44 @@ func (f *FS) AtomicRename(ctx context.Context, from, to string) error {
 	case statErr != nil:
 		return fmt.Errorf("SFTP stat rename target %s: %w", to, statErr)
 	}
-	if err := f.client.PosixRename(from, to); err != nil {
+	err = f.posixRename(f.client, from, to)
+	if posixRenameUnsupported(err) {
+		return f.replaceAside(ctx, from, to)
+	}
+	if err != nil {
 		return fmt.Errorf("SFTP atomic rename %s to %s: %w", from, to, err)
+	}
+	return ctx.Err()
+}
+
+func posixRenameUnsupported(err error) bool {
+	if errors.Is(err, sftp.ErrSSHFxOpUnsupported) {
+		return true
+	}
+	var status *sftp.StatusError
+	return errors.As(err, &status) && status.FxCode() == sftp.ErrSSHFxOpUnsupported
+}
+
+// replaceAside replaces an existing target on servers without posix-rename (plain SFTP v3 rename refuses an
+// existing target): it moves the target aside, renames the staged file in and removes the old copy. A failed
+// rename-in restores the target; a failed restore or cleanup names the aside path so the copy can be recovered.
+func (f *FS) replaceAside(ctx context.Context, from, to string) error {
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return fmt.Errorf("SFTP replace %s: %w", to, err)
+	}
+	aside := to + ".nexterm-replace-" + hex.EncodeToString(random[:])
+	if err := f.client.Rename(to, aside); err != nil {
+		return fmt.Errorf("SFTP replace %s: move existing target aside: %w", to, err)
+	}
+	if err := f.client.Rename(from, to); err != nil {
+		if restoreErr := f.client.Rename(aside, to); restoreErr != nil {
+			return fmt.Errorf("SFTP replace %s: rename %s in: %w; restoring the previous file from %s failed: %w", to, from, err, aside, restoreErr)
+		}
+		return fmt.Errorf("SFTP replace %s: rename %s in: %w", to, from, err)
+	}
+	if err := f.client.Remove(aside); err != nil {
+		return fmt.Errorf("SFTP replace %s: replaced, but the previous file remains at %s: %w", to, aside, err)
 	}
 	return ctx.Err()
 }
@@ -568,6 +625,7 @@ func fileEntry(info os.FileInfo, remotePath string) base.FileEntry {
 		Size:    info.Size(),
 		Mode:    info.Mode(),
 		ModTime: info.ModTime(),
+		Hidden:  base.DotHidden(info.Name()),
 	}
 	if stat, ok := info.Sys().(*sftp.FileStat); ok {
 		entry.Owner = strconv.FormatUint(uint64(stat.UID), 10)

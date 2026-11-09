@@ -27,6 +27,26 @@ type FileEntry struct {
 	Group         string      `json:"group,omitempty"`
 	ModTime       time.Time   `json:"modTime"`
 	SymlinkTarget string      `json:"symlinkTarget,omitempty"`
+	// TargetKind is what a symlink resolves to (dir, file or other); it stays empty for non-links and broken links.
+	TargetKind FileKind `json:"targetKind,omitempty"`
+	Hidden     bool     `json:"hidden,omitempty"`
+}
+
+// TargetKindOf classifies the followed metadata of a symlink target.
+func TargetKindOf(mode fs.FileMode) FileKind {
+	switch {
+	case mode.IsDir():
+		return FileDirectory
+	case mode.IsRegular():
+		return FileFile
+	default:
+		return FileOther
+	}
+}
+
+// DotHidden reports the POSIX convention that a leading dot hides an entry.
+func DotHidden(name string) bool {
+	return len(name) > 1 && name[0] == '.' && name != ".."
 }
 
 type PathStyle string
@@ -45,10 +65,30 @@ type FileRoot struct {
 }
 
 type FileSystemRoots struct {
-	PathStyle PathStyle  `json:"pathStyle"`
-	Roots     []FileRoot `json:"roots"`
-	HomePath  string     `json:"homePath"`
-	Supported bool       `json:"supported"`
+	PathStyle    PathStyle        `json:"pathStyle"`
+	Roots        []FileRoot       `json:"roots"`
+	HomePath     string           `json:"homePath"`
+	Supported    bool             `json:"supported"`
+	Capabilities FileCapabilities `json:"capabilities"`
+}
+
+// ChmodSupport describes how far a filesystem honours permission changes.
+type ChmodSupport string
+
+const (
+	// ChmodPOSIX applies full POSIX permission bits.
+	ChmodPOSIX ChmodSupport = "posix"
+	// ChmodReadOnly maps the owner write bit to the Windows read-only attribute.
+	ChmodReadOnly ChmodSupport = "readonly"
+	ChmodNone     ChmodSupport = "none"
+)
+
+// FileCapabilities lets the file manager offer only the operations a backend can perform.
+type FileCapabilities struct {
+	Chmod           ChmodSupport `json:"chmod"`
+	Pack            bool         `json:"pack"`
+	Extract         bool         `json:"extract"`
+	CaseInsensitive bool         `json:"caseInsensitive"`
 }
 
 type RootsProvider interface {
