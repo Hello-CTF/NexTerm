@@ -1,13 +1,26 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createAnsiStripper,
   createOutputTail,
-  createStepMatcher,
+  createRegexMatcher,
+  createTextMatcher,
+  loadRegexEngine,
+  regexPatternError,
   stepWaitTimeoutMs,
   waitForOutput,
-  waitPatternError,
+  waitPatternBytes,
   DEFAULT_WAIT_TIMEOUT_MS,
+  MATCH_CHECK_INTERVAL_MS,
+  REGEX_LOOKBACK_CHARS,
+  type RegexEngine,
 } from "../../features/explorer/snippetWaitFor";
+
+let engine: RegexEngine;
+beforeAll(async () => {
+  engine = await loadRegexEngine();
+});
+const createStepMatcher = (pattern: string, regex: boolean) =>
+  regex ? createRegexMatcher(engine, pattern) : createTextMatcher(pattern);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -34,21 +47,51 @@ describe("ANSI stripping", () => {
 });
 
 describe("step matchers", () => {
-  it("matches plain text literally", () => {
+  it("matches plain text literally, including across the checked boundary", () => {
     const match = createStepMatcher("a.b (x)", false);
-    expect(match("got a.b (x) here")).toBe(true);
-    expect(match("got aXb (x) here")).toBe(false);
+    expect(match("got a.b (x) here", 0)).toBe(true);
+    expect(match("got aXb (x) here", 0)).toBe(false);
+    expect(match("got a.b (x)", 6)).toBe(true);
   });
 
   it("matches a regex in multiline mode", () => {
     const match = createStepMatcher("[$#] $", true);
-    expect(match("root@h:~# \nmore")).toBe(true);
-    expect(match("no prompt")).toBe(false);
+    expect(match("root@h:~# \nmore", 0)).toBe(true);
+    expect(match("no prompt", 0)).toBe(false);
   });
 
-  it("reports an invalid regex but accepts the same text as plain text", () => {
-    expect(waitPatternError("(", true)).not.toBeNull();
-    expect(waitPatternError("(", false)).toBeNull();
+  it("uses RE2 syntax, the same the store validates", () => {
+    expect(regexPatternError(engine, "(")).not.toBeNull();
+    expect(regexPatternError(engine, "(?=a)")).not.toBeNull();
+    expect(regexPatternError(engine, String.raw`(a)\1`)).not.toBeNull();
+    expect(regexPatternError(engine, "(?i)ok")).toBeNull();
+    expect(createStepMatcher("(?i)ok", true)("OK", 0)).toBe(true);
+    expect(createStepMatcher(String.raw`^\pL+\z`, true)("été", 0)).toBe(true);
+  });
+
+  it("runs a pattern that backtracks catastrophically in JavaScript in linear time", () => {
+    const match = createStepMatcher("(a+)+$", true);
+    const started = performance.now();
+    expect(match(`${"a".repeat(64 * 1024 - 1)}b`, 0)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it("only re-checks new output plus a bounded lookback from a line start", () => {
+    const match = createStepMatcher("^old$", true);
+    const text = `old\ny${"x".repeat(REGEX_LOOKBACK_CHARS * 2)}\nnew`;
+    expect(match(text, 0)).toBe(true);
+    expect(match(text, text.length - 3)).toBe(false);
+    // The window starts inside the long line, which is not a line start.
+    expect(createStepMatcher("^x+\nnew$", true)(text, text.length - 3)).toBe(false);
+    expect(createStepMatcher("x\nnew$", true)(text, text.length - 3)).toBe(true);
+    // Within the lookback the window starts at a line start, so ^ anchors there and a match may span lines.
+    const lines = `${"q".repeat(REGEX_LOOKBACK_CHARS)}\nprompt$ ls\nfile\n${"z".repeat(REGEX_LOOKBACK_CHARS - 13)}`;
+    expect(createStepMatcher("^prompt\\$ ls\nfile$", true)(lines, lines.length - 3)).toBe(true);
+    expect(createStepMatcher("q\nprompt", true)(lines, lines.length - 3)).toBe(false);
+  });
+
+  it("measures the pattern limit in UTF-8 bytes", () => {
+    expect(waitPatternBytes("密码")).toBe(6);
   });
 
   it("uses the default timeout unless the step sets one", () => {
@@ -88,6 +131,7 @@ describe("waiting for output", () => {
     const result = waitForOutput(tail, createStepMatcher("password:", false), 5000, new AbortController().signal);
     tail.append("[sudo] pass");
     tail.append("\x1b[1mword:\x1b[0m");
+    await vi.advanceTimersByTimeAsync(MATCH_CHECK_INTERVAL_MS);
     await expect(result).resolves.toBe("matched");
   });
 
@@ -100,6 +144,28 @@ describe("waiting for output", () => {
     tail.append("still not");
     vi.advanceTimersByTime(1);
     await expect(result).resolves.toBe("timeout");
+  });
+
+  it("counts output that arrived just before the deadline", async () => {
+    vi.useFakeTimers();
+    const tail = createOutputTail();
+    const result = waitForOutput(tail, createStepMatcher("ready", false), 1000, new AbortController().signal);
+    vi.advanceTimersByTime(999);
+    tail.append("ready");
+    vi.advanceTimersByTime(1);
+    await expect(result).resolves.toBe("matched");
+  });
+
+  it("checks a burst of output once", async () => {
+    vi.useFakeTimers();
+    const tail = createOutputTail();
+    const matcher = vi.fn(() => false);
+    void waitForOutput(tail, matcher, 1000, new AbortController().signal);
+    for (let i = 0; i < 50; i += 1) tail.append(`line ${i}\n`);
+    vi.advanceTimersByTime(MATCH_CHECK_INTERVAL_MS);
+    // Once for what the tail held at the start, once for the burst.
+    expect(matcher).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(1000);
   });
 
   it("resolves as cancelled when aborted, before or during the wait", async () => {

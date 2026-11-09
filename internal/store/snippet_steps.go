@@ -77,7 +77,8 @@ func ValidateSnippetSteps(steps []SnippetStep) error {
 }
 
 // validateSnippetStepWait bounds the wait condition. A regular expression must
-// compile as RE2, the syntax clients share with JavaScript patterns.
+// compile as RE2: clients match it with an RE2 engine (linear time), never as a
+// JavaScript RegExp, so the stored syntax means the same everywhere.
 func validateSnippetStepWait(step SnippetStep) error {
 	if step.WaitFor == "" {
 		if step.WaitForRegex || step.TimeoutMs != 0 {

@@ -167,6 +167,25 @@ describe("multi-step snippet steps that wait for output", () => {
     expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("bad"));
   });
 
+  it("refuses a second waiting run on the same terminal", async () => {
+    const first = executeSnippet(waiting([{ command: "a" }, { command: "b", waitFor: "never" }]));
+    await settle();
+    const second = await executeSnippet(waiting([{ command: "c", waitFor: "$ " }]));
+    expect(second).toBe(false);
+    expect(mocks.toast).toHaveBeenLastCalledWith("info", expect.stringContaining("正在等待输出"));
+    snippetRuns()[0].cancel();
+    expect(await first).toBe(false);
+    expect(written()).toEqual(["a\r"]);
+  });
+
+  it("matches a regex wait with the RE2 engine", async () => {
+    const run = executeSnippet(waiting([{ command: "ssh db" }, { command: "uptime", waitFor: "(?i)^root@\\w+:~# $", waitForRegex: true }]));
+    await vi.waitFor(() => expect(written()).toEqual(["ssh db\r"]));
+    emit("ssh db\r\nROOT@db:~# ");
+    expect(await run).toBe(true);
+    expect(written()).toEqual(["ssh db\r", "uptime\r"]);
+  });
+
   it("does not observe output for snippets without waits", async () => {
     expect(await executeSnippet(waiting([{ command: "a" }, { command: "b" }]))).toBe(true);
     expect(written()).toEqual(["a\r", "b\r"]);

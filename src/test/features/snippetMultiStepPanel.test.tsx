@@ -244,6 +244,10 @@ describe("multi-step snippets in the snippets panel", () => {
     setInputValue(byLabel<HTMLInputElement>("步骤 2 等待输出"), "[$#] $");
     click(byLabel("步骤 2 等待条件使用正则表达式"));
     setInputValue(byLabel<HTMLInputElement>("步骤 2 等待超时（秒）"), "30");
+    // The regex engine loads before a regex wait can be saved.
+    await waitForRendered(() =>
+      expect([...document.body.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存")?.disabled).toBe(false),
+    );
     clickButton(document.body, "保存");
     await flush();
     const patch = mocks.snippetUpdate.mock.calls[0][3];
@@ -279,10 +283,24 @@ describe("multi-step snippets in the snippets panel", () => {
     await flush();
     expect(save().disabled).toBe(false);
     click(byLabel("步骤 1 等待条件使用正则表达式"));
-    await flush();
+    await waitForRendered(() => expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("第 1 步的正则表达式无效"));
     expect(save().disabled).toBe(true);
+    // A lookahead is valid JavaScript but not RE2, which the store and the matcher use.
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "(?=a)");
+    await flush();
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("第 1 步的正则表达式无效");
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "(?i)^ok$");
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    expect(save().disabled).toBe(false);
     click(byLabel("步骤 1 等待条件使用正则表达式"));
+    // The limit counts UTF-8 bytes, as the store does.
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "密".repeat(342));
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("1024 字节");
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "密".repeat(341));
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
     setInputValue(byLabel<HTMLInputElement>("步骤 1 等待超时（秒）"), "0");
     await flush();
     expect(save().disabled).toBe(true);

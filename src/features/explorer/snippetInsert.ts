@@ -7,11 +7,14 @@ import { t as tr } from "../../i18n";
 import { readTerminalScreen, subscribeTerminalOutput } from "../terminal/terminalOutputTap";
 import {
   createOutputTail,
-  createStepMatcher,
+  createRegexMatcher,
+  createTextMatcher,
+  loadRegexEngine,
+  regexPatternError,
   stepWaitTimeoutMs,
   waitForOutput,
-  waitPatternError,
   type OutputTail,
+  type RegexEngine,
   type StepMatcher,
 } from "./snippetWaitFor";
 import { beginSnippetRun, type SnippetRunHandle } from "./snippetRuns";
@@ -110,24 +113,56 @@ export interface SnippetRunOptions {
   onWaiting?: () => void;
 }
 
+// Terminals with a snippet run that waits for output.
+const waitingTabs = new Set<string>();
+
 async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string, options: SnippetRunOptions): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const epoch = useUi.getState().accountEpoch;
   if (steps.some((step) => insertRisk(step.command) === "control")) {
     if (!(await confirmRisk(s, "control", "execute"))) return false;
   }
+  if (!steps.some((step) => step.waitFor)) return sendSteps(s, steps, tabId, epoch, null, options);
+  // Two runs waiting on one terminal would race for the same output.
+  if (waitingTabs.has(tabId)) {
+    pushToast("info", tr("当前终端已有片段正在等待输出，请等它结束或取消后再执行「{name}」", { name: s.name }));
+    return false;
+  }
+  waitingTabs.add(tabId);
+  try {
+    return await runWaitingSteps(s, steps, tabId, epoch, options);
+  } finally {
+    waitingTabs.delete(tabId);
+  }
+}
+
+async function runWaitingSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string, epoch: number, options: SnippetRunOptions): Promise<boolean> {
+  const pushToast = useUi.getState().pushToast;
+  let engine: RegexEngine | null = null;
+  if (steps.some((step) => step.waitFor && step.waitForRegex)) {
+    try {
+      engine = await loadRegexEngine();
+    } catch (cause) {
+      pushToast("error", tr("无法加载正则表达式引擎，未执行「{name}」：{value}", { name: s.name, value: describeError(cause) }));
+      return false;
+    }
+    if (useUi.getState().accountEpoch !== epoch) return false;
+  }
   // Wait patterns are checked before anything is sent, so a bad one never leaves the run half done.
   const matchers = new Map<number, StepMatcher>();
   for (const [index, step] of steps.entries()) {
     if (!step.waitFor) continue;
-    const problem = waitPatternError(step.waitFor, step.waitForRegex === true);
-    if (problem !== null) {
-      pushToast("error", tr("「{name}」{step}的等待条件不是有效的正则表达式，未执行任何步骤：{value}", { name: s.name, step: stepLabel(step, index), value: problem }));
-      return false;
+    if (step.waitForRegex && engine) {
+      const problem = regexPatternError(engine, step.waitFor);
+      if (problem !== null) {
+        pushToast("error", tr("「{name}」{step}的等待条件不是有效的正则表达式，未执行任何步骤：{value}", { name: s.name, step: stepLabel(step, index), value: problem }));
+        return false;
+      }
+      matchers.set(index, createRegexMatcher(engine, step.waitFor));
+    } else {
+      matchers.set(index, createTextMatcher(step.waitFor));
     }
-    matchers.set(index, createStepMatcher(step.waitFor, step.waitForRegex === true));
   }
-  if (matchers.size === 0) return sendSteps(s, steps, tabId, epoch, null, options);
   // The first wait starts from the current screen; every later one sees only the output after the previous step.
   const tail = createOutputTail();
   tail.append(readTerminalScreen(tabId) ?? "");

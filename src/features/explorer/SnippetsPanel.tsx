@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
@@ -12,10 +12,14 @@ import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
 import { MultiHostRunPanel } from "./MultiHostRunPanel";
 import {
   DEFAULT_WAIT_TIMEOUT_MS,
-  MAX_WAIT_FOR_LENGTH,
+  MAX_WAIT_FOR_BYTES,
   MAX_WAIT_TIMEOUT_MS,
   MIN_WAIT_TIMEOUT_MS,
-  waitPatternError,
+  loadRegexEngine,
+  loadedRegexEngine,
+  regexPatternError,
+  waitPatternBytes,
+  type RegexEngine,
 } from "./snippetWaitFor";
 import {
   analyzeSnippetSteps,
@@ -356,16 +360,41 @@ function cleanWait(step: EditorStep): EditorStep {
   };
 }
 
-function stepWaitProblem(step: EditorStep, index: number): string | null {
+// The regex engine loads on first use; until then a regex wait cannot be checked or saved.
+function useRegexEngine(needed: boolean): { engine: RegexEngine | null; loadError: string | null } {
+  const [engine, setEngine] = useState<RegexEngine | null>(loadedRegexEngine);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!needed || engine) return;
+    let current = true;
+    loadRegexEngine().then(
+      (loaded) => {
+        if (current) setEngine(() => loaded);
+      },
+      (cause: unknown) => {
+        if (current) setLoadError(describeError(cause));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [needed, engine]);
+  return { engine, loadError };
+}
+
+function stepWaitProblem(step: EditorStep, index: number, regex: { engine: RegexEngine | null; loadError: string | null }): string | null {
   const pattern = step.waitFor ?? "";
   if (pattern.trim() === "") return null;
-  if (pattern.length > MAX_WAIT_FOR_LENGTH) {
-    return t("第 {value} 步的等待条件不能超过 {max} 个字符", { value: index + 1, max: MAX_WAIT_FOR_LENGTH });
+  if (waitPatternBytes(pattern) > MAX_WAIT_FOR_BYTES) {
+    return t("第 {value} 步的等待条件不能超过 {max} 字节", { value: index + 1, max: MAX_WAIT_FOR_BYTES });
   }
   if (step.timeoutMs !== undefined && (!Number.isFinite(step.timeoutMs) || step.timeoutMs < MIN_WAIT_TIMEOUT_MS || step.timeoutMs > MAX_WAIT_TIMEOUT_MS)) {
     return t("第 {value} 步的超时须在 {min} 到 {max} 秒之间", { value: index + 1, min: MIN_WAIT_TIMEOUT_MS / 1000, max: MAX_WAIT_TIMEOUT_MS / 1000 });
   }
-  const regexError = waitPatternError(pattern, step.waitForRegex === true);
+  if (step.waitForRegex !== true) return null;
+  if (regex.loadError !== null) return t("无法加载正则表达式引擎：{value}", { value: regex.loadError });
+  if (!regex.engine) return null;
+  const regexError = regexPatternError(regex.engine, pattern);
   return regexError === null ? null : t("第 {value} 步的正则表达式无效：{error}", { value: index + 1, error: regexError });
 }
 
@@ -389,7 +418,6 @@ function StepWaitFields({
           className="nx-input min-w-40 flex-1 font-mono text-[11.5px]"
           aria-label={t("步骤 {value} 等待输出", { value: index + 1 })}
           placeholder={index === 0 ? t("执行前等待输出（可选），如 $ ") : t("等待上一步输出（可选），如 password:")}
-          maxLength={MAX_WAIT_FOR_LENGTH}
           value={step.waitFor ?? ""}
           onChange={(e) => onChange({ waitFor: e.target.value })}
         />
@@ -481,10 +509,12 @@ function SnippetEditor({
     setMulti(false);
   };
 
-  const waitProblems = multi ? steps.map(stepWaitProblem) : [];
+  const regexWaits = multi && steps.some((step) => step.waitForRegex === true && (step.waitFor ?? "").trim() !== "");
+  const regex = useRegexEngine(regexWaits);
+  const waitProblems = multi ? steps.map((step, index) => stepWaitProblem(step, index, regex)) : [];
   const valid =
     name.trim() !== "" &&
-    (multi ? steps.length > 0 && steps.every((step) => step.command.trim() !== "") && waitProblems.every((problem) => problem === null) : body.trim() !== "");
+    (multi ? steps.length > 0 && steps.every((step) => step.command.trim() !== "") && waitProblems.every((problem) => problem === null) && (!regexWaits || regex.engine !== null) : body.trim() !== "");
 
   const requestClose = async () => {
     if (saving) return;
@@ -676,7 +706,7 @@ function SnippetEditor({
               </div>
               {multi && (
                 <div className="mt-1">
-                  {t("在当前终端执行时，填写了等待输出的步骤会等终端出现该文本后再发送：第一步从当前屏幕开始匹配，之后匹配上一步发送后的输出；超时或取消会停止执行并提示。正则使用多行模式，不支持前后断言和反向引用。多主机执行逐步等待命令结束，不使用等待条件。")}
+                  {t("在当前终端执行时，填写了等待输出的步骤会等终端出现该文本后再发送：第一步从当前屏幕开始匹配，之后匹配上一步发送后的输出（包括终端回显的上一步命令本身）；超时或取消会停止执行并提示。正则使用 RE2 语法和多行模式，不支持前后断言和反向引用。多主机执行逐步等待命令结束，不使用等待条件。")}
                 </div>
               )}
               <div className="mt-1">

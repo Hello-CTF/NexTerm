@@ -5,34 +5,74 @@ import type { SnippetStep } from "../../ipc/types";
 export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 export const MIN_WAIT_TIMEOUT_MS = 1_000;
 export const MAX_WAIT_TIMEOUT_MS = 10 * 60 * 1000;
-export const MAX_WAIT_FOR_LENGTH = 1024;
+// Matches the store's bound, which counts UTF-8 bytes.
+export const MAX_WAIT_FOR_BYTES = 1024;
 // The matched text is the output since the previous step, bounded to its most recent part.
 export const OUTPUT_TAIL_CHARS = 64 * 1024;
+// A regex is re-checked over the new output plus this much before it (from a line start where possible), so a
+// match may span lines but a flood of output never re-scans the whole tail.
+export const REGEX_LOOKBACK_CHARS = 4096;
+// Output arriving in quick succession is checked at most once per interval.
+export const MATCH_CHECK_INTERVAL_MS = 16;
 
-export type StepMatcher = (text: string) => boolean;
+// Checks text, of which everything from `from` on has not been checked yet.
+export type StepMatcher = (text: string, from: number) => boolean;
 
 export function stepWaitTimeoutMs(step: Pick<SnippetStep, "timeoutMs">): number {
   const value = step.timeoutMs ?? 0;
   return value > 0 ? value : DEFAULT_WAIT_TIMEOUT_MS;
 }
 
-// Returns the reason a wait pattern cannot be used, or null when it can. A regex uses the multiline flag, so
-// ^ and $ also match at line boundaries.
-export function waitPatternError(pattern: string, regex: boolean): string | null {
+export function waitPatternBytes(pattern: string): number {
+  return new TextEncoder().encode(pattern).length;
+}
+
+// Regex waits use RE2 (the syntax the store validates with Go's regexp), which runs in linear time, so no
+// pattern can stall the interface the way a backtracking JavaScript RegExp can. It is loaded only when needed.
+export type RegexEngine = typeof import("re2js").RE2JS;
+
+let regexEngine: RegexEngine | null = null;
+let regexEngineLoad: Promise<RegexEngine> | null = null;
+
+export function loadRegexEngine(): Promise<RegexEngine> {
+  regexEngineLoad ??= import("re2js").then(
+    (module) => (regexEngine = module.RE2JS),
+    (cause: unknown) => {
+      regexEngineLoad = null;
+      throw cause;
+    },
+  );
+  return regexEngineLoad;
+}
+
+export function loadedRegexEngine(): RegexEngine | null {
+  return regexEngine;
+}
+
+// Returns why a regex wait pattern cannot be used, or null when it can. ^ and $ also match at line boundaries.
+export function regexPatternError(engine: RegexEngine, pattern: string): string | null {
   try {
-    if (regex) new RegExp(pattern, "m");
+    engine.compile(pattern, engine.MULTILINE);
     return null;
   } catch (cause) {
     return cause instanceof Error ? cause.message : String(cause);
   }
 }
 
-export function createStepMatcher(pattern: string, regex: boolean): StepMatcher {
-  if (regex) {
-    const expression = new RegExp(pattern, "m");
-    return (text) => expression.test(text);
-  }
-  return (text) => text.includes(pattern);
+export function createTextMatcher(pattern: string): StepMatcher {
+  return (text, from) => text.indexOf(pattern, Math.max(0, from - pattern.length + 1)) >= 0;
+}
+
+export function createRegexMatcher(engine: RegexEngine, pattern: string): StepMatcher {
+  const expression = engine.compile(pattern, engine.MULTILINE);
+  return (text, from) => {
+    const target = Math.max(0, from - REGEX_LOOKBACK_CHARS);
+    if (target === 0) return expression.test(text);
+    const lineStart = text.lastIndexOf("\n", target - 1) + 1;
+    if (target - lineStart <= REGEX_LOOKBACK_CHARS) return expression.test(text.slice(lineStart));
+    // Cut inside a very long line: a NUL (which stripped output never contains) keeps ^ from matching there.
+    return expression.test("\u0000" + text.slice(target));
+  };
 }
 
 const ESC = 0x1b;
@@ -92,6 +132,8 @@ export function createAnsiStripper(): (chunk: string) => string {
 
 export interface OutputTail {
   text: () => string;
+  // Characters appended since the last clear, including those trimmed off the front.
+  total: () => number;
   // Appends decoded text that may contain escape sequences.
   append: (chunk: string) => void;
   appendBytes: (bytes: Uint8Array) => void;
@@ -105,18 +147,22 @@ export function createOutputTail(limit = OUTPUT_TAIL_CHARS): OutputTail {
   const decoder = new TextDecoder();
   const listeners = new Set<() => void>();
   let text = "";
+  let total = 0;
   const add = (plain: string) => {
     if (!plain) return;
     text += plain;
+    total += plain.length;
     if (text.length > limit) text = text.slice(text.length - limit);
     for (const listener of [...listeners]) listener();
   };
   return {
     text: () => text,
+    total: () => total,
     append: (chunk) => add(strip(chunk)),
     appendBytes: (bytes) => add(strip(decoder.decode(bytes, { stream: true }))),
     clear: () => {
       text = "";
+      total = 0;
     },
     onAppend: (listener) => {
       listeners.add(listener);
@@ -130,25 +176,42 @@ export function createOutputTail(limit = OUTPUT_TAIL_CHARS): OutputTail {
 export type WaitOutcome = "matched" | "timeout" | "cancelled";
 
 // Resolves once the tail matches (checking what it already holds first), when the timeout passes, or when
-// the signal aborts.
+// the signal aborts. New output is checked at most once per MATCH_CHECK_INTERVAL_MS.
 export function waitForOutput(tail: OutputTail, matcher: StepMatcher, timeoutMs: number, signal: AbortSignal): Promise<WaitOutcome> {
   if (signal.aborted) return Promise.resolve("cancelled");
-  if (matcher(tail.text())) return Promise.resolve("matched");
+  if (matcher(tail.text(), 0)) return Promise.resolve("matched");
+  let checked = tail.total();
   return new Promise((resolve) => {
     let settled = false;
+    let checkTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (outcome: WaitOutcome) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (checkTimer !== null) clearTimeout(checkTimer);
       unsubscribe();
       signal.removeEventListener("abort", onAbort);
       resolve(outcome);
     };
+    const check = () => {
+      checkTimer = null;
+      const text = tail.text();
+      const from = Math.max(0, text.length - (tail.total() - checked));
+      checked = tail.total();
+      if (matcher(text, from)) finish("matched");
+    };
     const onAbort = () => finish("cancelled");
     const unsubscribe = tail.onAppend(() => {
-      if (matcher(tail.text())) finish("matched");
+      checkTimer ??= setTimeout(check, MATCH_CHECK_INTERVAL_MS);
     });
-    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    const timer = setTimeout(() => {
+      // Output that arrived just before the deadline still counts.
+      if (checkTimer !== null) {
+        clearTimeout(checkTimer);
+        check();
+      }
+      finish("timeout");
+    }, timeoutMs);
     signal.addEventListener("abort", onAbort);
   });
 }
