@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -202,5 +203,62 @@ func TestRealIPForwardedProtoStillTrustedWithoutForwardedForOptIn(t *testing.T) 
 	}
 	if len(response.Cookies()) != 1 || !response.Cookies()[0].Secure {
 		t.Fatalf("cookie = %+v, want Secure", response.Cookies())
+	}
+}
+
+// One address spraying throwaway usernames is throttled by the per-address
+// bucket even though each username+address key sees a single failure.
+func TestLoginThrottlePerAddressAcrossUsernames(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	headers := map[string]string{"X-Forwarded-For": "203.0.113.9"}
+	throttled := false
+	for i := 0; i < 200 && !throttled; i++ {
+		call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "spray-" + strconv.Itoa(i), "password": "wrong-password"}, nil, "", headers)
+		switch call.status {
+		case http.StatusTooManyRequests:
+			throttled = true
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("spray login status = %d body = %v", call.status, call.body)
+		}
+	}
+	if !throttled {
+		t.Fatal("an address spraying distinct usernames was never throttled")
+	}
+	if call := fixture.loginVia(t, "password-a1", "203.0.113.9"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("throttled address login status = %d", call.status)
+	}
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusOK {
+		t.Fatalf("other address login status = %d body = %v", call.status, call.body)
+	}
+}
+
+// Failures against one username from many addresses back the username off,
+// so distributed guessing cannot bypass the per-address buckets.
+func TestLoginThrottlePerUsernameAcrossAddresses(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	fixture.createUser(t, "other", "password-b1")
+	throttled := false
+	for i := 0; i < 100 && !throttled; i++ {
+		call := fixture.loginVia(t, "wrong-password", "203.0.113."+strconv.Itoa(i+1))
+		switch call.status {
+		case http.StatusTooManyRequests:
+			throttled = true
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("distributed login status = %d body = %v", call.status, call.body)
+		}
+	}
+	if !throttled {
+		t.Fatal("a username guessed from many addresses was never throttled")
+	}
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("backed-off username login from a fresh address status = %d", call.status)
+	}
+	other := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "other", "password": "password-b1"}, nil, "", map[string]string{"X-Forwarded-For": "198.51.100.4"})
+	if other.status != http.StatusOK {
+		t.Fatalf("unrelated username login status = %d body = %v", other.status, other.body)
 	}
 }

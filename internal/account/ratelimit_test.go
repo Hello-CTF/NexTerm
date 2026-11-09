@@ -114,3 +114,71 @@ func TestLoginThrottleCapacityBoundedAndEvicts(t *testing.T) {
 		t.Fatalf("idle entries linger: %d", idle)
 	}
 }
+
+func testPolicyThrottle(policy ThrottlePolicy) (*LoginThrottle, *time.Time) {
+	now := time.Unix(1_700_000_000, 0)
+	throttle := NewLoginThrottleWithPolicy(policy)
+	throttle.now = func() time.Time { return now }
+	return throttle, &now
+}
+
+// The per-username bucket tolerates a streak before backing off, caps the
+// backoff short so the real user is delayed rather than locked out, and
+// forgets the streak after a quiet period.
+func TestLoginUserThrottlePolicyBacksOffWithShortCap(t *testing.T) {
+	policy := LoginUserThrottlePolicy
+	throttle, now := testPolicyThrottle(policy)
+	key := "login-user|alice"
+	for i := 0; i < policy.FreeFailures; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d refused within the free streak", i+1)
+		}
+		throttle.RecordFailure(key)
+	}
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused right after the free streak")
+	}
+	throttle.RecordFailure(key)
+	if throttle.Allow(key) {
+		t.Fatal("failure past the free streak did not back off")
+	}
+	for i := 0; i < 20; i++ {
+		*now = now.Add(policy.BackoffMax)
+		if !throttle.Allow(key) {
+			t.Fatalf("round %d still refused after the backoff cap", i)
+		}
+		throttle.RecordFailure(key)
+	}
+	*now = now.Add(policy.BackoffMax + policy.FailureDecay)
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused after the streak decayed")
+	}
+	throttle.RecordFailure(key)
+	if !throttle.Allow(key) {
+		t.Fatal("decayed streak still backs off on the first new failure")
+	}
+}
+
+func TestLoginIPThrottlePolicyAdmitsMoreThanPerCredential(t *testing.T) {
+	policy := LoginIPThrottlePolicy
+	throttle, now := testPolicyThrottle(policy)
+	key := "login-ip|192.0.2.7"
+	for i := 0; i < policy.FreeFailures; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d refused within the free streak", i+1)
+		}
+		throttle.RecordFailure(key)
+		*now = now.Add(2 * time.Second)
+	}
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused right after the free streak")
+	}
+	throttle.RecordFailure(key)
+	if throttle.Allow(key) {
+		t.Fatal("address past the free streak did not back off")
+	}
+	*now = now.Add(policy.BackoffBase)
+	if !throttle.Allow(key) {
+		t.Fatal("address still refused after the first backoff")
+	}
+}

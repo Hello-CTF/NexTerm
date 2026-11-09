@@ -384,7 +384,9 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := loginThrottleKey(r, request.Username)
-	if !s.accountThrottle.login.Allow(key) {
+	ipKey := ipThrottleKey(r, "login-ip")
+	userKey := loginUserThrottleKey(request.Username)
+	if !s.accountThrottle.loginIP.Allow(ipKey) || !s.accountThrottle.loginUser.Allow(userKey) || !s.accountThrottle.login.Allow(key) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
@@ -396,6 +398,8 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	authenticated, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
+		s.accountThrottle.loginIP.RecordFailure(ipKey)
+		s.accountThrottle.loginUser.RecordFailure(userKey)
 		writeAccountFailure(w, err)
 		return
 	}
@@ -426,6 +430,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	s.accountThrottle.loginUser.RecordSuccess(userKey)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 

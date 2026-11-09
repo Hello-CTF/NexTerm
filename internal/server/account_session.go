@@ -148,6 +148,10 @@ func loginThrottleKey(r *http.Request, username string) string {
 	return "login|" + strings.ToLower(username) + "|" + clientIP(r)
 }
 
+func loginUserThrottleKey(username string) string {
+	return "login-user|" + strings.ToLower(username)
+}
+
 func recoveryThrottleKey(r *http.Request, username string) string {
 	return "recovery|" + strings.ToLower(username) + "|" + clientIP(r)
 }

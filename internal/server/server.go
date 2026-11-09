@@ -154,11 +154,16 @@ type Server struct {
 }
 
 type accountThrottles struct {
-	login    *account.LoginThrottle
-	recovery *account.LoginThrottle
-	init     *account.LoginThrottle
-	register *account.LoginThrottle
-	mfa      *account.LoginThrottle
+	// login is keyed by username and client address; loginIP and loginUser
+	// bound attempts per address across usernames and per username across
+	// addresses.
+	login     *account.LoginThrottle
+	loginIP   *account.LoginThrottle
+	loginUser *account.LoginThrottle
+	recovery  *account.LoginThrottle
+	init      *account.LoginThrottle
+	register  *account.LoginThrottle
+	mfa       *account.LoginThrottle
 }
 
 type Health struct {
@@ -286,9 +291,13 @@ func New(config Config) (*Server, error) {
 		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs, config.Options.TrustForwardedFor), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
-			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
-			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(),
-			mfa: account.NewLoginThrottle(),
+			login:     account.NewLoginThrottle(),
+			loginIP:   account.NewLoginThrottleWithPolicy(account.LoginIPThrottlePolicy),
+			loginUser: account.NewLoginThrottleWithPolicy(account.LoginUserThrottlePolicy),
+			recovery:  account.NewLoginThrottle(),
+			init:      account.NewLoginThrottle(),
+			register:  account.NewLoginThrottle(),
+			mfa:       account.NewLoginThrottle(),
 		},
 		mfaTickets:     newMFATicketStore(),
 		mfaLock:        newMFALockout(),
