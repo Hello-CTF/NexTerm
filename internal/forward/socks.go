@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	sshtransport "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -156,27 +157,21 @@ func socksReplyReserve(handshakeTimeout time.Duration) time.Duration {
 }
 
 // socksReplyForError maps an upstream dial failure to a SOCKS5 reply code.
-// OpenSSH reports direct-tcpip failures as ConnectionFailed with the
-// strerror or getaddrinfo text as the message.
 func socksReplyForError(err error) byte {
 	var openErr *gossh.OpenChannelError
 	if errors.As(err, &openErr) {
 		if openErr.Reason == gossh.Prohibited {
 			return socksNotAllowed
 		}
-		message := strings.ToLower(openErr.Message)
-		switch {
-		case strings.Contains(message, "refused"):
+		switch sshtransport.ClassifyChannelOpenMessage(openErr.Message) {
+		case sshtransport.ErrorKindRefused:
 			return socksConnectionRefused
-		case strings.Contains(message, "network is unreachable"):
-			return socksNetworkUnreachable
-		case strings.Contains(message, "no route"),
-			strings.Contains(message, "host is unreachable"),
-			strings.Contains(message, "timed out"),
-			strings.Contains(message, "name or service not known"),
-			strings.Contains(message, "nodename nor servname"),
-			strings.Contains(message, "temporary failure in name resolution"),
-			strings.Contains(message, "no address associated"):
+		case sshtransport.ErrorKindUnreachable:
+			if strings.Contains(strings.ToLower(openErr.Message), "network is unreachable") {
+				return socksNetworkUnreachable
+			}
+			return socksHostUnreachable
+		case sshtransport.ErrorKindTimeout, sshtransport.ErrorKindDNS:
 			return socksHostUnreachable
 		}
 		return socksGeneralFailure

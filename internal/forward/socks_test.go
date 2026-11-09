@@ -179,6 +179,7 @@ func TestSOCKSOpenChannelRejectionIsNotRetriedAndMapsReply(t *testing.T) {
 		{name: "no route", reason: gossh.ConnectionFailed, message: "No route to host", want: socksHostUnreachable},
 		{name: "dns", reason: gossh.ConnectionFailed, message: "Name or service not known", want: socksHostUnreachable},
 		{name: "network", reason: gossh.ConnectionFailed, message: "Network is unreachable", want: socksNetworkUnreachable},
+		{name: "host down", reason: gossh.ConnectionFailed, message: "Host is down", want: socksHostUnreachable},
 		{name: "prohibited", reason: gossh.Prohibited, message: "administratively prohibited", want: socksNotAllowed},
 		{name: "other", reason: gossh.ResourceShortage, message: "too many channels", want: socksGeneralFailure},
 	}
@@ -244,6 +245,34 @@ func TestSOCKSTransportFailureIsRetried(t *testing.T) {
 		t.Fatalf("reply = %d", reply)
 	}
 	assertEcho(t, conn, "after-retry")
+	if calls := dialer.calls.Load(); calls != 2 {
+		t.Fatalf("dial calls = %d, want 2", calls)
+	}
+}
+
+func TestLocalForwardRetriesAfterAttemptTimeout(t *testing.T) {
+	upstream := startEchoServer(t)
+	dialer := &countingDialer{}
+	dialer.dial = func(ctx context.Context) (net.Conn, error) {
+		if dialer.calls.Load() == 1 {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", upstream)
+	}
+	service := NewService(Config{
+		Provider:    &switchProvider{dialer: dialer},
+		Policy:      Policy{Desktop: true},
+		Reconnect:   ReconnectPolicy{Attempts: 2, Backoff: time.Millisecond},
+		DialTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = service.Close() })
+	spec, err := service.CreateLocal(t.Context(), CreateLocalArgs{SessionID: "s", TargetHost: "internal.example", TargetPort: 22})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := dialForward(t, spec)
+	assertEcho(t, conn, "after-attempt-timeout")
 	if calls := dialer.calls.Load(); calls != 2 {
 		t.Fatalf("dial calls = %d, want 2", calls)
 	}

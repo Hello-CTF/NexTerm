@@ -711,15 +711,12 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 }
 
 // retryableUpstreamError reports whether a later attempt may succeed. A
-// channel-open rejection is the remote host's definite answer and an expired
-// dial deadline has already used the time budget, so neither is retried;
-// dialer acquisition and transport failures may recover after a reconnect.
+// channel-open rejection is the remote host's definite answer; other failures,
+// including a per-attempt timeout, may recover with a reconnected dialer. The
+// caller's context bounds the retries.
 func retryableUpstreamError(err error) bool {
 	var openErr *gossh.OpenChannelError
-	if errors.As(err, &openErr) {
-		return false
-	}
-	return !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled)
+	return !errors.As(err, &openErr)
 }
 
 type forwarder struct {
