@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type ServeConfig struct {
@@ -22,12 +24,21 @@ type ServeConfig struct {
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
 	Stderr         io.Writer
+	// RequireVault makes /healthz report unavailable (503) while the vault is locked.
+	RequireVault bool
 
 	// Listener replaces the listener opened for Listen; nil keeps ListenAndServe behavior.
 	Listener net.Listener
 	// ReadIdleTimeout and WriteIdleTimeout bound request-body and response-write stalls; zero uses one minute.
 	ReadIdleTimeout  time.Duration
 	WriteIdleTimeout time.Duration
+}
+
+// HealthSummary is the /healthz payload for callers that are not on loopback.
+type HealthSummary struct {
+	OK      bool   `json:"ok"`
+	Service string `json:"service"`
+	Version string `json:"version"`
 }
 
 type Health struct {
@@ -55,10 +66,8 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(a.health(r.Context(), config))
-	})
+	mux.HandleFunc("GET /healthz", a.serveHealth(config))
+	mux.HandleFunc("GET /livez", a.serveLive)
 	if !config.SyncOnly && config.Static != nil {
 		mux.Handle("/", config.Static)
 	}
@@ -121,6 +130,29 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}
 }
 
+// serveHealth is the readiness probe of the transport-less sync-only mux.
+func (a *Application) serveHealth(config ServeConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		health := a.health(r.Context(), config)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if !health.OK {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		if !directLoopbackPeer(r) {
+			_ = json.NewEncoder(w).Encode(HealthSummary{OK: health.OK, Service: health.Service, Version: health.Version})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(health)
+	}
+}
+
+func (a *Application) serveLive(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(HealthSummary{OK: true, Service: "nexterm-server", Version: a.version})
+}
+
 func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 	var webRoot *string
 	if config.Static != nil && config.WebRoot != "" {
@@ -148,9 +180,34 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 	}
 	commands := a.Dispatcher.Len()
 	return Health{
-		OK: true, Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
+		OK: !config.RequireVault || VaultUnlocked(vault), Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
 		Commands: commands, WebRoot: webRoot, Vault: vault, Retention: retention,
 	}
+}
+
+// VaultUnlocked reports whether a vault status value describes an unlocked vault.
+func VaultUnlocked(status any) bool {
+	switch typed := status.(type) {
+	case vault.Status:
+		return typed.Unlocked
+	case *vault.Status:
+		return typed != nil && typed.Unlocked
+	default:
+		return false
+	}
+}
+
+// directLoopbackPeer reports a loopback peer that did not relay another caller.
+func directLoopbackPeer(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func LoopbackListen(address string) bool {

@@ -268,6 +268,29 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+## Health checks
+
+- `GET /livez` answers 200 while the process serves HTTP and touches neither
+  the database nor the vault. Use it for liveness (restart on failure).
+- `GET /healthz` is the readiness probe. It returns 503 with `"ok":false`
+  when the database ping fails, or when `--require-vault` is set and the
+  vault is locked; otherwise 200.
+- Both are public, so callers that are not on loopback and hold no
+  super-admin session get only `ok`, `service` and `version`. The detailed
+  payload (vault state, database pool, channel counts, web root, retention)
+  is returned to direct loopback callers, to callers that trusted proxies
+  report as loopback through `X-Forwarded-For` (see the reverse proxy notes
+  above), and to signed-in super-admins. A request from a loopback peer
+  that carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP` without being a
+  trusted proxy counts as remote, so a local reverse proxy must send one of
+  those headers.
+- `nexterm-server healthcheck [--url URL] [--timeout 5s]` probes `/healthz`
+  without curl and exits 0 when ready, 1 when unreachable or unhealthy, and 2
+  on usage errors. Without `--url` it derives the address from
+  `NEXTERM_LISTEN`, replacing a wildcard host with loopback, so it suits a
+  container health check such as
+  `HEALTHCHECK CMD ["nexterm-server", "healthcheck"]`.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
