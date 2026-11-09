@@ -1,14 +1,18 @@
 package forward
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 const (
@@ -18,6 +22,9 @@ const (
 	socksConnect            = 1
 	socksSucceeded          = 0
 	socksGeneralFailure     = 1
+	socksNotAllowed         = 2
+	socksNetworkUnreachable = 3
+	socksHostUnreachable    = 4
 	socksConnectionRefused  = 5
 	socksCommandUnsupported = 7
 	socksAddressUnsupported = 8
@@ -26,7 +33,8 @@ const (
 var errSOCKSVersion = errors.New("unsupported SOCKS version")
 
 func (s *Service) serveSOCKS(f *forwarder, client net.Conn) error {
-	if err := client.SetDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
+	deadline := time.Now().Add(s.handshakeTimeout)
+	if err := client.SetDeadline(deadline); err != nil {
 		return err
 	}
 	if err := negotiateSOCKS(client); err != nil {
@@ -41,9 +49,13 @@ func (s *Service) serveSOCKS(f *forwarder, client net.Conn) error {
 		_ = writeSOCKSReply(client, socksCommandUnsupported)
 		return fmt.Errorf("SOCKS 命令 %d 不受支持", command)
 	}
-	upstream, err := s.openUpstream(f.ctx, f.sessionID, target)
+	// The upstream dial ends before the client deadline so the failure reply
+	// still reaches the client instead of a reset.
+	dialCtx, cancel := context.WithDeadline(f.ctx, deadline.Add(-socksReplyReserve(s.handshakeTimeout)))
+	upstream, err := s.openUpstream(dialCtx, f.sessionID, target)
+	cancel()
 	if err != nil {
-		_ = writeSOCKSReply(client, socksConnectionRefused)
+		_ = writeSOCKSReply(client, socksReplyForError(err))
 		return err
 	}
 	if err := writeSOCKSReply(client, socksSucceeded); err != nil {
@@ -137,6 +149,42 @@ func readSOCKSRequest(conn net.Conn) (string, byte, error) {
 		return "", 0, errors.New("SOCKS 目标端口为 0")
 	}
 	return net.JoinHostPort(host, strconv.Itoa(int(value))), header[1], nil
+}
+
+func socksReplyReserve(handshakeTimeout time.Duration) time.Duration {
+	return min(time.Second, handshakeTimeout/4)
+}
+
+// socksReplyForError maps an upstream dial failure to a SOCKS5 reply code.
+// OpenSSH reports direct-tcpip failures as ConnectionFailed with the
+// strerror or getaddrinfo text as the message.
+func socksReplyForError(err error) byte {
+	var openErr *gossh.OpenChannelError
+	if errors.As(err, &openErr) {
+		if openErr.Reason == gossh.Prohibited {
+			return socksNotAllowed
+		}
+		message := strings.ToLower(openErr.Message)
+		switch {
+		case strings.Contains(message, "refused"):
+			return socksConnectionRefused
+		case strings.Contains(message, "network is unreachable"):
+			return socksNetworkUnreachable
+		case strings.Contains(message, "no route"),
+			strings.Contains(message, "host is unreachable"),
+			strings.Contains(message, "timed out"),
+			strings.Contains(message, "name or service not known"),
+			strings.Contains(message, "nodename nor servname"),
+			strings.Contains(message, "temporary failure in name resolution"),
+			strings.Contains(message, "no address associated"):
+			return socksHostUnreachable
+		}
+		return socksGeneralFailure
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return socksHostUnreachable
+	}
+	return socksGeneralFailure
 }
 
 func writeSOCKSReply(conn net.Conn, reply byte) error {
