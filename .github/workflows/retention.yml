@@ -46,7 +46,14 @@ jobs:
           RELEASE_ID: ${{ github.event.release.id }}
         run: |
           set -euo pipefail
-          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .id 2>/dev/null || true)"
+          # Only "no latest release yet" (404) may leave latest empty; any other lookup error stops before deleting.
+          if ! latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .id 2>"$RUNNER_TEMP/latest.err")"; then
+            if ! grep -q 'HTTP 404' "$RUNNER_TEMP/latest.err"; then
+              cat "$RUNNER_TEMP/latest.err" >&2
+              exit 1
+            fi
+            latest=""
+          fi
           gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
             --jq '.[] | {id, tag_name, draft, prerelease, published_at} | tojson' > "$RUNNER_TEMP/releases.jsonl"
           node .github/scripts/release-retention.mjs --keep "${latest:-}" --keep "${RELEASE_ID:-}" \
