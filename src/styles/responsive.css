@@ -521,3 +521,22 @@
   padding-left: var(--nx-safe-left);
   padding-right: var(--nx-safe-right);
 }
+
+/* The header search pill gives way to the workspace switcher and breadcrumb on narrow windows. */
+@media (max-width: 900px) {
+  .nx-header-search {
+    flex: 0 0 auto;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--nx-fg-soft);
+  }
+
+  .nx-header-search-text,
+  .nx-header-search-keys {
+    display: none;
+  }
+}

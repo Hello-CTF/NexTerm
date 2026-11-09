@@ -319,3 +319,59 @@
   outline: 2px solid var(--nx-focus-ring);
   outline-offset: -2px;
 }
+
+/* Title-bar search pill that opens the jump palette; it collapses to its icon when the header runs out of room. */
+.nx-header-search {
+  display: inline-flex;
+  flex: 0 1 240px;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--color-neutral-700) 60%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--nx-bg-raised) 60%, transparent);
+  color: var(--nx-fg-tertiary);
+  font-size: calc(11.5px * var(--nx-ui-text-factor));
+  cursor: pointer;
+}
+
+.nx-header-search:hover {
+  border-color: color-mix(in srgb, var(--color-neutral-600) 70%, transparent);
+  background: var(--nx-bg-raised);
+  color: var(--nx-fg-soft);
+}
+
+.nx-header-search:focus-visible {
+  outline: 2px solid var(--nx-focus-ring);
+  outline-offset: 1px;
+}
+
+.nx-header-search-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-header-search-keys {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.nx-header-search-keys .nx-kbd {
+  height: 16px;
+  padding: 0 4px;
+  font-size: calc(10px * var(--nx-ui-text-factor));
+}
+
+/* Query matches inside jump palette rows. */
+.nx-command-match {
+  background: transparent;
+  color: var(--color-blue-300);
+  font-weight: 600;
+}

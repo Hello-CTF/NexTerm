@@ -9,6 +9,26 @@ import { isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { terminalDefaultUsesAccount } from "../../app/preferences";
 import { DESKTOP } from "../../ipc/env";
+import {
+  IconActivity,
+  IconAlert,
+  IconArchive,
+  IconBell,
+  IconBot,
+  IconCommand,
+  IconDownload,
+  IconFlag,
+  IconGlobe,
+  IconHistory,
+  IconLayers,
+  IconLock,
+  IconMonitor,
+  IconServer,
+  IconShield,
+  IconShieldCheck,
+  IconSparkles,
+  IconTerminal,
+} from "../../ui/icons";
 import { t } from "../../i18n";
 
 export type SettingsSectionId =
@@ -32,6 +52,40 @@ export type SettingsSectionId =
   | "settings-history"
   | "settings-bundle"
   | "settings-share";
+
+export type SettingsGroupId = "appearance" | "terminal" | "notifications" | "shortcuts" | "ai" | "security" | "account" | "app";
+
+export type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
+
+// The settings sections in navigation order. Kept here rather than in the settings view so the jump palette can
+// search and link to them without loading the view.
+const ALL_SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: t("外观"), icon: IconMonitor, group: "appearance" },
+  { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
+  { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
+  { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
+  { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-update", label: t("软件更新"), icon: IconDownload, group: "app" },
+  { id: "settings-diagnostics", label: t("诊断与调试"), icon: IconActivity, group: "app" },
+  { id: "settings-ai-model", label: t("模型"), icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: t("AI 信息脱敏"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-rules", label: t("AI 拦截规则"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
+  { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
+  { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
+  { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
+  { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
+  { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
+  { id: "settings-history", label: t("历史会话"), icon: IconHistory, group: "account" },
+  { id: "settings-bundle", label: t("资产包"), icon: IconArchive, group: "account" },
+  { id: "settings-share", label: t("分享"), icon: IconGlobe, group: "account" },
+] as const satisfies readonly SettingsSectionDef[];
+
+export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
+  if (section.id === "settings-update") return DESKTOP;
+  return true;
+});
 
 export interface SettingsSearchMeta {
   description: string;

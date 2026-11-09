@@ -1,5 +1,6 @@
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
   assetConnectionProblemKey,
   connectAsset,
@@ -33,13 +34,25 @@ import { resolveActivePane } from "./splitTree";
 import { TabAttentionBadge } from "./workspace/tabStrip";
 import { awarenessBadge, useTabAwareness } from "./sessionAwarenessStore";
 import { hideMobileHome } from "./shell/mobileHome";
-import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
+import { isMac } from "./platform";
+import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconSettings, IconSparkles, IconTerminal, assetIcon } from "../ui/icons";
 import {
   formatQuickConnectTarget,
   parseQuickConnectTarget,
   type QuickConnectTarget,
 } from "./quickConnectTarget";
-import { freezeOrder, hostCandidates, rankJumpItems, type JumpAttention, type JumpCandidate } from "./jump/jumpRanking";
+import {
+  freezeOrder,
+  hostCandidates,
+  jumpMatchRanges,
+  jumpMatchTier,
+  rankJumpItems,
+  type JumpAttention,
+  type JumpCandidate,
+} from "./jump/jumpRanking";
+import { commandRecencyScores, recordCommandUse } from "./jump/commandRecency";
+import { SETTINGS_SECTIONS, searchSettings, type SettingsSearchResult } from "../features/settings/settingsIndex";
+import { showSettingsSection } from "../features/settings/settingsNavigation";
 import {
   backgroundSessionEntries,
   jumpToSession,
@@ -54,18 +67,58 @@ import { t } from "../i18n";
 
 const PROBE_DEBOUNCE_MS = 250;
 const PROBE_VISIBLE_LIMIT = 24;
+const SETTINGS_RESULT_LIMIT = 6;
+// Longer lists render only the rows in view; short ones render whole, which keeps them simple to inspect.
+const VIRTUALIZE_AFTER = 60;
+const FALLBACK_WINDOW = 24;
+const VIRTUAL_INITIAL_RECT = { width: 560, height: 340 };
+// A query whose best row matched only as a fuzzy subsequence, or nothing, also offers asking AI.
+const STRONG_MATCH_TIER = 2;
 
 // JumpScope picks what the palette lists: everything, hosts only (quick connect) or database assets only.
 export type JumpScope = "all" | "hosts" | "database";
 
 type QuickRow = { kind: "quick"; mode: "temporary" | "save"; target: QuickConnectTarget; label: string };
+type SettingRow = { kind: "setting"; result: SettingsSearchResult };
+type AskAiRow = { kind: "ai"; text: string };
 type JumpRow =
   | QuickRow
+  | SettingRow
+  | AskAiRow
   | { kind: "asset"; asset: Asset }
   | { kind: "session"; entry: JumpSessionEntry }
   | { kind: "command"; command: JumpCommand };
 
-type RankedRow = JumpCandidate & { row: Exclude<JumpRow, QuickRow> };
+type RankedRow = JumpCandidate & { row: Exclude<JumpRow, QuickRow | SettingRow | AskAiRow> };
+
+type ListEntry =
+  | { type: "header"; key: string; label: string }
+  | { type: "row"; key: string; row: JumpRow; index: number };
+
+function estimateEntrySize(entry: ListEntry | undefined): number {
+  if (!entry || entry.type === "header") return 26;
+  return entry.row.kind === "asset" && entry.row.asset.host ? 46 : 34;
+}
+
+// MatchText marks the parts of text that the query matched, by the palette's own ranking rules.
+function MatchText({ text, query, keywords }: { text: string; query: string; keywords?: readonly (string | null | undefined)[] }) {
+  const ranges = query.trim() ? jumpMatchRanges({ label: text, keywords }, query) : [];
+  if (ranges.length === 0) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const [start, end] of ranges) {
+    if (start > at) parts.push(text.slice(at, start));
+    parts.push(<mark key={start} className="nx-command-match">{text.slice(start, end)}</mark>);
+    at = end;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return <>{parts}</>;
+}
+
+// The Alt+N row shortcut as the platform writes it: the Option glyph on macOS, "Alt+" elsewhere.
+function altDigitHint(digit: number): string {
+  return isMac() ? `⌥${digit}` : `Alt+${digit}`;
+}
 
 function rowKey(row: JumpRow): string {
   switch (row.kind) {
@@ -77,6 +130,10 @@ function rowKey(row: JumpRow): string {
       return row.entry.key;
     case "command":
       return `command-${row.command.id}`;
+    case "setting":
+      return `setting-${row.result.key}`;
+    case "ai":
+      return "ask-ai";
   }
 }
 
@@ -89,6 +146,10 @@ function sectionLabel(row: JumpRow): string {
       return t("会话");
     case "command":
       return row.command.section ?? t("命令");
+    case "setting":
+      return t("设置");
+    case "ai":
+      return "AI";
   }
 }
 
@@ -181,6 +242,9 @@ export function JumpPalette({
   const titleId = useId();
   const helpId = useId();
   const layer = useOverlayFocus(true, modalRef, { initialFocus: () => inputRef.current });
+  const listRef = useRef<HTMLDivElement>(null);
+  // Command use is read once per opening; the order freezes while the palette is open anyway.
+  const [commandScore] = useState(commandRecencyScores);
 
   const assets = useMemo(() => assetsQuery.data ?? [], [assetsQuery.data]);
   const snippets = useMemo(() => snippetsQuery.data ?? [], [snippetsQuery.data]);
@@ -224,8 +288,12 @@ export function JumpPalette({
   // renamed tab or a newly listed background terminal change rows in place or append them, never reorder.
   const orderToken = `${scope}\n${query}`;
   const grouped = !query.trim();
-  const ranked = useMemo(() => {
+  // Host candidates are sorted by name once per asset or history change, not on every keystroke.
+  const hostRows = useMemo(() => {
     const now = Date.now();
+    return hostCandidates(hostAssets, (item) => quickConnectScore(historyEntries[item.id], now));
+  }, [hostAssets, historyEntries]);
+  const { ranked, bestTier } = useMemo(() => {
     const items: RankedRow[] = [];
     if (showAll) {
       for (const entry of sessions) {
@@ -238,7 +306,7 @@ export function JumpPalette({
         });
       }
     }
-    for (const { asset, ...candidate } of hostCandidates(hostAssets, (item) => quickConnectScore(historyEntries[item.id], now))) {
+    for (const { asset, ...candidate } of hostRows) {
       items.push({ ...candidate, row: { kind: "asset", asset } });
     }
     if (showAll) {
@@ -247,37 +315,53 @@ export function JumpPalette({
           section: "command",
           label: command.label,
           keywords: [command.section, command.hint],
+          recency: commandScore(command.id),
           row: { kind: "command", command },
         });
       }
     }
-    const fresh = rankJumpItems(items, query, {
+    const rankedItems = rankJumpItems(items, query, {
       attentionOf: attentionOf
         ? (item) => (item.row.kind === "session" ? attentionOf(item.row.entry) : undefined)
         : undefined,
-    }).map((item) => item.row);
+    });
+    // With a query the ranking puts the best match first.
+    const best = !grouped && rankedItems.length > 0 ? jumpMatchTier(rankedItems[0], query) : null;
+    const fresh = rankedItems.map((item) => item.row);
     const previous = orderRef.current?.token === orderToken ? orderRef.current.keys : null;
     const byKey = new Map(fresh.map((row) => [rowKey(row), row]));
     // Without a query each section freezes on its own, so rows that arrive late stay in their section.
+    // Command recency only reorders commands within their own section, so each section keeps one header.
     const groups = grouped
-      ? (["session", "asset", "command"] as const).map((kind) => fresh.filter((row) => row.kind === kind))
+      ? (["session", "asset", "command"] as const).map((kind) => {
+          const group = fresh.filter((row) => row.kind === kind);
+          if (kind !== "command") return group;
+          const sectionOrder = new Map<string | undefined, number>();
+          for (const command of commands) if (!sectionOrder.has(command.section)) sectionOrder.set(command.section, sectionOrder.size);
+          const orderOf = (row: JumpRow) => (row.kind === "command" ? (sectionOrder.get(row.command.section) ?? 0) : 0);
+          return [...group].sort((a, b) => orderOf(a) - orderOf(b));
+        })
       : [fresh];
-    return groups.flatMap((group) =>
-      freezeOrder(previous, group.map(rowKey)).map((key) => byKey.get(key)!),
-    );
-  }, [showAll, sessions, hostAssets, commands, historyEntries, query, attentionOf, orderToken, grouped]);
+    return {
+      ranked: groups.flatMap((group) =>
+        freezeOrder(previous, group.map(rowKey)).map((key) => byKey.get(key)!),
+      ),
+      bestTier: best,
+    };
+  }, [showAll, sessions, hostRows, commands, commandScore, query, attentionOf, orderToken, grouped]);
   useLayoutEffect(() => {
     orderRef.current = { token: orderToken, keys: ranked.map(rowKey) };
   }, [orderToken, ranked]);
 
   // Probe targets depend only on the hosts and the query, so unrelated updates do not probe again.
+  const probeHosts = useMemo(() => hostCandidates(hostAssets, () => 0), [hostAssets]);
   const probeKey = useMemo(
     () =>
-      rankJumpItems(hostCandidates(hostAssets, () => 0), query)
+      rankJumpItems(probeHosts, query)
         .flatMap((candidate) => (candidate.asset.host ? [candidate.asset.id] : []))
         .slice(0, PROBE_VISIBLE_LIMIT)
         .join("\n"),
-    [hostAssets, query],
+    [probeHosts, query],
   );
 
   useEffect(() => {
@@ -301,6 +385,20 @@ export function JumpPalette({
     assetsQuery.isSuccess &&
     !query.trim() &&
     !assets.some((asset) => asset.kind !== "local");
+  const settingRows = useMemo<SettingRow[]>(
+    () =>
+      showAll && query.trim() && !quickTarget
+        ? searchSettings(query, SETTINGS_SECTIONS)
+            .slice(0, SETTINGS_RESULT_LIMIT)
+            .map((result) => ({ kind: "setting", result }))
+        : [],
+    [showAll, query, quickTarget],
+  );
+  const trimmedQuery = query.trim();
+  const strongMatch =
+    (bestTier !== null && bestTier <= STRONG_MATCH_TIER) ||
+    settingRows.some((row) => row.result.label.toLowerCase().includes(trimmedQuery.toLowerCase()));
+  const askAiText = showAll && !quickTarget && trimmedQuery && !strongMatch ? trimmedQuery : null;
   const rows = useMemo<JumpRow[]>(() => {
     const list: JumpRow[] = [];
     if (firstConnect) return list;
@@ -311,9 +409,10 @@ export function JumpPalette({
       if (!WEB && !quickTarget.protocol) list.push({ kind: "quick", mode: "temporary", target: quickTarget, label });
       list.push({ kind: "quick", mode: "save", target: quickTarget, label });
     }
-    list.push(...ranked);
+    list.push(...ranked, ...settingRows);
+    if (askAiText) list.push({ kind: "ai", text: askAiText });
     return list;
-  }, [quickTarget, ranked, firstConnect]);
+  }, [quickTarget, ranked, settingRows, askAiText, firstConnect]);
   const localAsset =
     assets.find(
       (asset) =>
@@ -321,7 +420,8 @@ export function JumpPalette({
         !mobile &&
         (showHidden || !hiddenIds.includes(asset.id)),
     ) ?? null;
-  const showConnectionActions = assetsQuery.isSuccess && rows.length === 0;
+  // The ask-AI row is an offer, not a match, so the empty state still says nothing matched.
+  const showConnectionActions = assetsQuery.isSuccess && rows.every((row) => row.kind === "ai");
 
   const activeIndex = rows.length > 0 ? Math.min(cursor, rows.length - 1) : 0;
   const activeRow = rows[activeIndex];
@@ -335,6 +435,49 @@ export function JumpPalette({
     !problemKey && !query.trim(),
   );
   const activeOptionId = activeRow ? `${listId}-option-${activeIndex}` : undefined;
+
+  // Section headers sit in the list between rows. Without a query every section has one; with a query the
+  // rows are one ranked list and only the settings results that follow it get a header.
+  const { entries, entryOfRow } = useMemo(() => {
+    const list: ListEntry[] = [];
+    const positions: number[] = [];
+    rows.forEach((row, index) => {
+      const section = sectionLabel(row);
+      const sectioned = grouped || row.kind === "setting";
+      if (showAll && sectioned && (index === 0 || sectionLabel(rows[index - 1]) !== section)) {
+        list.push({ type: "header", key: `header-${rowKey(row)}`, label: section });
+      }
+      positions.push(list.length);
+      list.push({ type: "row", key: rowKey(row), row, index });
+    });
+    return { entries: list, entryOfRow: positions };
+  }, [rows, grouped, showAll]);
+  const virtualized = entries.length > VIRTUALIZE_AFTER;
+  const activeEntry = activeRow ? (entryOfRow[activeIndex] ?? -1) : -1;
+  // Stable callbacks: the virtualizer rebuilds its measurements whenever getItemKey changes identity.
+  const getScrollElement = useCallback(() => listRef.current, []);
+  const estimateSize = useCallback((index: number) => estimateEntrySize(entries[index]), [entries]);
+  const getItemKey = useCallback((index: number) => entries[index]?.key ?? index, [entries]);
+  // The active row always renders, so aria-activedescendant resolves and scrollIntoView can bring it into view.
+  const rangeExtractor = useCallback(
+    (range: Range) => {
+      const indexes = defaultRangeExtractor(range);
+      if (activeEntry < 0 || indexes.includes(activeEntry)) return indexes;
+      return [...indexes, activeEntry].sort((a, b) => a - b);
+    },
+    [activeEntry],
+  );
+  const virtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement,
+    estimateSize,
+    overscan: 8,
+    enabled: virtualized,
+    getItemKey,
+    initialRect: VIRTUAL_INITIAL_RECT,
+    rangeExtractor,
+  });
+  const virtualItems = virtualized ? virtualizer.getVirtualItems() : [];
   useEffect(() => {
     if (!activeOptionId) return;
     const option = document.getElementById(activeOptionId);
@@ -461,6 +604,23 @@ export function JumpPalette({
     return assets.some((asset) => asset.id === connection.asset.id);
   };
 
+  const openSetting = (result: SettingsSearchResult) => {
+    if (closedRef.current) return;
+    closeOverlay();
+    hideMobileHome();
+    useUi.getState().addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true });
+    showSettingsSection(result.sectionId, result.kind === "item" ? result.itemId : undefined);
+  };
+
+  // Asking AI only fills in the composer and opens the AI sidebar; the user reviews and sends it.
+  const askAi = (text: string) => {
+    if (closedRef.current) return;
+    closeOverlay();
+    const st = useUi.getState();
+    st.queueAiPrompt(text);
+    st.setRightOpen(true);
+  };
+
   const runCommand = (command: JumpCommand) => {
     if (closedRef.current) return;
     if (command.keepOpen) {
@@ -519,7 +679,14 @@ export function JumpPalette({
         void jumpToSession(row.entry.target);
         return;
       case "command":
+        recordCommandUse(row.command.id);
         runCommand(row.command);
+        return;
+      case "setting":
+        openSetting(row.result);
+        return;
+      case "ai":
+        askAi(row.text);
         return;
     }
   };
@@ -604,8 +771,32 @@ export function JumpPalette({
       onMouseDown: (event: { preventDefault: () => void }) => event.preventDefault(),
       onClick: (event: { shiftKey: boolean }) => activate(row, event.shiftKey),
       "aria-keyshortcuts": index < 9 ? `Alt+${index + 1}` : undefined,
+      "aria-setsize": virtualized ? rows.length : undefined,
+      "aria-posinset": virtualized ? index + 1 : undefined,
     };
-    const numberHint = index < 9 ? <span aria-hidden="true" className="nx-command-hint shrink-0 text-[10.5px]">⌥{index + 1}</span> : null;
+    const numberHint = index < 9 ? <span aria-hidden="true" className="nx-command-hint shrink-0 text-[10.5px]">{altDigitHint(index + 1)}</span> : null;
+    if (row.kind === "setting") {
+      return (
+        <button {...optionProps}>
+          <IconSettings size={15} className="shrink-0 text-neutral-400" />
+          <span className="min-w-0 flex-1 truncate">
+            <MatchText text={row.result.label} query={query} />
+          </span>
+          {row.result.detail && <span className="nx-command-hint min-w-0 shrink truncate text-[11px]">{row.result.detail}</span>}
+          {numberHint}
+        </button>
+      );
+    }
+    if (row.kind === "ai") {
+      return (
+        <button {...optionProps}>
+          <IconSparkles size={15} className="shrink-0 text-neutral-400" />
+          <span className="min-w-0 flex-1 truncate">{t("问 AI：{query}", { query: row.text })}</span>
+          <span className="nx-command-hint shrink-0 text-[11px]">{t("填入 AI 输入框")}</span>
+          {numberHint}
+        </button>
+      );
+    }
     if (row.kind === "quick") {
       const Icon = row.mode === "temporary" ? IconTerminal : IconSave;
       const pending = pendingQuick === row.mode;
@@ -633,7 +824,9 @@ export function JumpPalette({
       return (
         <button {...optionProps}>
           <IconTerminal size={15} className="shrink-0 text-neutral-400" />
-          <span className="min-w-0 flex-1 truncate">{row.entry.label}</span>
+          <span className="min-w-0 flex-1 truncate">
+            <MatchText text={row.entry.label} query={query} keywords={row.entry.keywords} />
+          </span>
           <SessionAttentionBadge terminalId={row.entry.terminalId} />
           {row.entry.hint && <span className="nx-command-hint min-w-0 shrink truncate text-[11px]">{row.entry.hint}</span>}
           {numberHint}
@@ -645,7 +838,9 @@ export function JumpPalette({
       return (
         <button {...optionProps}>
           <Icon size={15} className="shrink-0 text-neutral-400" />
-          <span className="min-w-0 flex-1 truncate">{row.command.label}</span>
+          <span className="min-w-0 flex-1 truncate">
+            <MatchText text={row.command.label} query={query} keywords={[row.command.section, row.command.hint]} />
+          </span>
           {row.command.hint && <span className="nx-command-hint shrink-0 text-[11px]">{row.command.hint}</span>}
           {numberHint}
         </button>
@@ -662,7 +857,9 @@ export function JumpPalette({
       <button {...optionProps}>
         <Icon size={15} className="shrink-0 text-neutral-400" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate">{asset.name}</span>
+          <span className="block truncate">
+            <MatchText text={asset.name} query={query} keywords={[asset.host, asset.username, asset.tags, asset.kind]} />
+          </span>
           {identity && <span className="block break-all text-[11px] leading-tight text-neutral-400">{identity}</span>}
         </span>
         {asset.kind === "local" || asset.builtin ? (
@@ -680,6 +877,15 @@ export function JumpPalette({
       </button>
     );
   };
+
+  const renderEntry = (entry: ListEntry) =>
+    entry.type === "header" ? (
+      <div role="presentation" className="px-3 pb-1 pt-2 text-[10.5px] font-medium text-neutral-500" data-command-section={entry.label}>
+        {entry.label}
+      </div>
+    ) : (
+      renderRow(entry.row, entry.index)
+    );
 
   const errorBanner = (message: string, onRetry: () => void, key?: string) => (
     <div key={key} className="nx-command-error" role="alert">
@@ -763,21 +969,34 @@ export function JumpPalette({
           />
         )}
         {!historyMode && (<>
-        <div id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={text.list} tabIndex={-1}>
-          {rows.map((row, index) => {
-            const section = sectionLabel(row);
-            const header = showAll && grouped && (index === 0 || sectionLabel(rows[index - 1]) !== section);
-            return (
-              <Fragment key={rowKey(row)}>
-                {header && (
-                  <div role="presentation" className="px-3 pb-1 pt-2 text-[10.5px] font-medium text-neutral-500" data-command-section={section}>
-                    {section}
+        <div ref={listRef} id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={text.list} tabIndex={-1}>
+          {virtualized && virtualItems.length === 0 ? (
+            // No measured viewport yet (a hidden or not-yet-laid-out list): show the first window and the active row.
+            entries
+              .filter((_, index) => index < FALLBACK_WINDOW || index === activeEntry)
+              .map((entry) => <Fragment key={entry.key}>{renderEntry(entry)}</Fragment>)
+          ) : virtualized ? (
+            <div role="presentation" className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualItems.map((item) => {
+                const entry = entries[item.index];
+                if (!entry) return null;
+                return (
+                  <div
+                    key={item.key}
+                    ref={virtualizer.measureElement}
+                    data-index={item.index}
+                    role="presentation"
+                    className="absolute top-0 left-0 w-full"
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    {renderEntry(entry)}
                   </div>
-                )}
-                {renderRow(row, index)}
-              </Fragment>
-            );
-          })}
+                );
+              })}
+            </div>
+          ) : (
+            entries.map((entry) => <Fragment key={entry.key}>{renderEntry(entry)}</Fragment>)
+          )}
           {showConnectionActions && (
             <div className="nx-command-empty px-4 py-8 text-center text-xs">
               <div role="status">
@@ -885,7 +1104,7 @@ export function JumpPalette({
             </span>
           )}
           <span className="flex items-center gap-1.5">
-            <span className="nx-kbd">Alt</span>
+            <span className="nx-kbd">{isMac() ? "⌥" : "Alt"}</span>
             <span className="nx-kbd">1-9</span> {t("直达")}
           </span>
           <span className="flex items-center gap-1.5">
