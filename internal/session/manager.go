@@ -944,8 +944,9 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		return nil
 	}
 	type candidate struct {
-		id   string
-		idle time.Time
+		id      string
+		idle    time.Time
+		session *Session
 	}
 	type remoteCandidate struct {
 		id       string
@@ -967,7 +968,7 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 			continue
 		}
 		if session.status == StatusConnected && len(session.tabs) == 0 && !session.idleSince.IsZero() && now.Sub(session.idleSince) >= m.idleTimeout {
-			candidates = append(candidates, candidate{id: session.ID, idle: session.idleSince})
+			candidates = append(candidates, candidate{id: session.ID, idle: session.idleSince, session: session})
 		}
 		session.mu.Unlock()
 	}
@@ -975,6 +976,9 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if m.holdsDurable(ctx, candidate.session) {
+			continue
 		}
 		if err := m.disconnect(candidate.id, &candidate.idle); err != nil && !errors.Is(err, ErrSessionNotFound) {
 			return err
@@ -989,6 +993,33 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// durableIdleCheckTimeout bounds the host query that decides whether an idle
+// session still carries persistent terminals.
+const durableIdleCheckTimeout = 5 * time.Second
+
+// holdsDurable reports whether the idle sweep must keep session connected
+// because persistent terminals still live on its host. A persistent terminal
+// outlives its tabs, so a session with no tab open is not unused; dropping the
+// connection would only force a reconnect. A failed query keeps the session
+// too: dead connections are the liveness heartbeat's job, not the sweep's.
+// Sessions that never resolved a durable provider on this connection hold none.
+func (m *Manager) holdsDurable(ctx context.Context, session *Session) bool {
+	session.mu.Lock()
+	generation, transport := session.generation, session.transport
+	session.mu.Unlock()
+	session.durableMu.Lock()
+	provider := session.durableProvider
+	current := provider != nil && session.durableGen == generation && session.durableTransport == transport
+	session.durableMu.Unlock()
+	if !current {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, durableIdleCheckTimeout)
+	defer cancel()
+	descriptors, err := provider.ListDurableDescriptors(ctx)
+	return err != nil || len(descriptors) > 0
 }
 
 func (m *Manager) idleLoop() {
