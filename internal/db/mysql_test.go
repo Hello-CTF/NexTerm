@@ -227,6 +227,8 @@ func TestStatementReturnsRowsSkipsComments(t *testing.T) {
 		"DELETE FROM t # RETURNING id\n":                        false,
 		"DELETE FROM t; SELECT 1 RETURNING":                     false,
 		"INSERT INTO t SELECT * FROM (SELECT 1 AS returning) s": false,
+		"/* a /* b */ SELECT 1":                                 true,
+		"--1\nSELECT 1":                                         false,
 	} {
 		if got := statementReturnsRows(statement, sqlDialectMySQL); got != want {
 			t.Errorf("statementReturnsRows(%q)=%v want %v", statement, got, want)

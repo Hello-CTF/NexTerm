@@ -305,7 +305,7 @@ const (
 )
 
 func statementReturnsRows(statement string, dialect sqlDialect) bool {
-	keyword := firstSQLKeyword(statement)
+	keyword := firstSQLKeyword(statement, dialect)
 	if keyword == "WITH" {
 		keyword = withMainKeyword(statement, dialect)
 	}
@@ -360,39 +360,12 @@ func scanTopLevelSQLWords(statement string, dialect sqlDialect, visit func(strin
 	for i := 0; i < len(statement); {
 		c := statement[i]
 		switch {
-		case strings.HasPrefix(statement[i:], "/*"):
-			if !postgres {
-				end := strings.Index(statement[i+2:], "*/")
-				if end < 0 {
-					return
-				}
-				i += end + 4
-				continue
-			}
-			nested := 0
-			for i < len(statement) {
-				if strings.HasPrefix(statement[i:], "/*") {
-					nested++
-					i += 2
-				} else if strings.HasPrefix(statement[i:], "*/") {
-					nested--
-					i += 2
-					if nested == 0 {
-						break
-					}
-				} else {
-					i++
-				}
-			}
-			if nested > 0 {
+		case sqlCommentStart(statement, i, dialect):
+			next, ok := skipSQLComment(statement, i, dialect)
+			if !ok {
 				return
 			}
-		case (!postgres && c == '#') || (strings.HasPrefix(statement[i:], "--") && (postgres || i+2 == len(statement) || unicode.IsSpace(rune(statement[i+2])))):
-			end := strings.IndexByte(statement[i:], '\n')
-			if end < 0 {
-				return
-			}
-			i += end + 1
+			i = next
 		case c == '\'' || c == '"' || (!postgres && c == '`'):
 			next, ok := skipSQLQuoted(statement, i, !postgres && c != '`')
 			if !ok {
@@ -469,37 +442,75 @@ func skipSQLQuoted(statement string, start int, backslashEscapes bool) (int, boo
 	return len(statement), false
 }
 
-func firstSQLKeyword(statement string) string {
-	remaining := strings.TrimSpace(strings.TrimPrefix(statement, "\ufeff"))
-	for remaining != "" {
+// sqlCommentStart reports whether a comment opens at i under the dialect's
+// rules: MySQL needs whitespace after "--" and accepts "#".
+func sqlCommentStart(statement string, i int, dialect sqlDialect) bool {
+	rest := statement[i:]
+	if strings.HasPrefix(rest, "/*") {
+		return true
+	}
+	if dialect == sqlDialectPostgres {
+		return strings.HasPrefix(rest, "--")
+	}
+	return rest[0] == '#' || (strings.HasPrefix(rest, "--") && (len(rest) == 2 || unicode.IsSpace(rune(rest[2]))))
+}
+
+// skipSQLComment returns the index after the comment that opens at i.
+// PostgreSQL block comments nest. ok is false when the comment does not end.
+func skipSQLComment(statement string, i int, dialect sqlDialect) (int, bool) {
+	if !strings.HasPrefix(statement[i:], "/*") {
+		end := strings.IndexByte(statement[i:], '\n')
+		if end < 0 {
+			return len(statement), false
+		}
+		return i + end + 1, true
+	}
+	if dialect != sqlDialectPostgres {
+		end := strings.Index(statement[i+2:], "*/")
+		if end < 0 {
+			return len(statement), false
+		}
+		return i + end + 4, true
+	}
+	nested := 0
+	for i < len(statement) {
 		switch {
-		case strings.HasPrefix(remaining, "/*"):
-			end := strings.Index(remaining[2:], "*/")
-			if end < 0 {
-				return ""
+		case strings.HasPrefix(statement[i:], "/*"):
+			nested++
+			i += 2
+		case strings.HasPrefix(statement[i:], "*/"):
+			nested--
+			i += 2
+			if nested == 0 {
+				return i, true
 			}
-			remaining = strings.TrimSpace(remaining[end+4:])
-		case strings.HasPrefix(remaining, "--") && (len(remaining) == 2 || unicode.IsSpace(rune(remaining[2]))):
-			end := strings.IndexByte(remaining, '\n')
-			if end < 0 {
-				return ""
-			}
-			remaining = strings.TrimSpace(remaining[end+1:])
-		case strings.HasPrefix(remaining, "#"):
-			end := strings.IndexByte(remaining, '\n')
-			if end < 0 {
-				return ""
-			}
-			remaining = strings.TrimSpace(remaining[end+1:])
 		default:
-			if remaining[0] == '(' {
-				return "("
+			i++
+		}
+	}
+	return len(statement), false
+}
+
+func firstSQLKeyword(statement string, dialect sqlDialect) string {
+	remaining := strings.TrimPrefix(statement, "\ufeff")
+	for i := 0; i < len(remaining); {
+		switch {
+		case unicode.IsSpace(rune(remaining[i])):
+			i++
+		case sqlCommentStart(remaining, i, dialect):
+			next, ok := skipSQLComment(remaining, i, dialect)
+			if !ok {
+				return ""
 			}
-			end := 0
+			i = next
+		case remaining[i] == '(':
+			return "("
+		default:
+			end := i
 			for end < len(remaining) && ((remaining[end] >= 'a' && remaining[end] <= 'z') || (remaining[end] >= 'A' && remaining[end] <= 'Z')) {
 				end++
 			}
-			return strings.ToUpper(remaining[:end])
+			return strings.ToUpper(remaining[i:end])
 		}
 	}
 	return ""

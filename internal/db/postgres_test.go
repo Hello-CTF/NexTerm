@@ -136,6 +136,11 @@ func TestPostgresStatementReturnsRows(t *testing.T) {
 		"UPDATE t SET v = 1 --RETURNING id":                                                     false,
 		"UPDATE t SET v = 5 # 1 RETURNING v":                                                    true,
 		"INSERT INTO t VALUES (1)":                                                              false,
+		"--note\nSELECT 1":                                                                      true,
+		"/* a /* b */ c */ SELECT 1":                                                            true,
+		"--note\nINSERT INTO t VALUES (1) RETURNING id":                                         true,
+		"-- note\n/* x */ UPDATE t SET v = 1":                                                   false,
+		"/* unterminated /* */ SELECT 1":                                                        false,
 	} {
 		if got := statementReturnsRows(statement, sqlDialectPostgres); got != want {
 			t.Errorf("statementReturnsRows(%q)=%v want %v", statement, got, want)
