@@ -286,7 +286,8 @@ func (s *terminalCommandService) testLoginAssetTarget(ctx context.Context, targe
 		}
 		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
-	case session.KindWinRM:
+	case session.KindWinRM, session.KindTelnet:
+		// Telnet has no login protocol to test; only the port is checked.
 		portOnly = true
 		err = s.probeSSHReachability(ctx, target, timeout)
 	case session.KindRDP, session.KindVNC:

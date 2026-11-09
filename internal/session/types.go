@@ -24,6 +24,8 @@ const (
 	KindDocker = "docker"
 	KindWinRM  = "winrm"
 	KindDevice = "device"
+	// KindTelnet is a plain-text Telnet terminal; each tab is its own connection and never outlives it.
+	KindTelnet = "telnet"
 	// KindRDP and KindVNC are remote desktop assets served by internal/remotedesktop, never by a terminal transport.
 	KindRDP = "rdp"
 	KindVNC = "vnc"
@@ -586,7 +588,7 @@ func durableTerminalEnv(term string) []string {
 }
 
 func ptyBacked(kind string) bool {
-	return kind == KindLocal || kind == KindSSH || kind == KindDocker || kind == KindDevice
+	return kind == KindLocal || kind == KindSSH || kind == KindDocker || kind == KindDevice || kind == KindTelnet
 }
 
 func startupCommandSupported(kind string) bool {
