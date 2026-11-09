@@ -1,3 +1,10 @@
+# Release retention: deletes old releases and their assets but keeps their tags (release-notes.mjs derives ranges
+# from tags). Self-hosted servers download the agent and SHA256SUMS of their own exact version from the release, and
+# agents self-upgrade to the server's version, so a release stays while people may still run it. Kept: drafts, the
+# GitHub latest release, the release just published, the newest patch of every minor line, the newest 10 stable
+# releases, stable releases published within 365 days, and release candidates newer than the newest stable release.
+# Older stable patches and superseded release candidates are deleted. .github/scripts/release-retention.mjs holds
+# the selection and its tests. Workflow runs are pruned to the newest completed run per workflow.
 name: Retention
 
 on:
@@ -14,7 +21,7 @@ concurrency:
 
 jobs:
   prune:
-    name: Keep only the latest release and its workflow runs
+    name: Prune old releases and workflow runs
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -24,23 +31,30 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Delete older releases but keep their tags
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            scripts/lib
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Delete releases outside the retention policy but keep their tags
         shell: bash
         env:
           RELEASE_ID: ${{ github.event.release.id }}
         run: |
           set -euo pipefail
-          # Tags stay: release-notes.mjs derives the previous release range from git tags.
-          # Keep the release that was just published plus the latest stable one, which stable-channel updaters still need.
-          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .id)"
-          current="${RELEASE_ID:-$latest}"
-          gh api --paginate "repos/$GH_REPO/releases?per_page=100" --jq '.[] | select(.draft == false) | .id' |
-            while read -r id; do
-              if [ "$id" != "$latest" ] && [ "$id" != "$current" ]; then
-                echo "deleting release $id"
-                gh api -X DELETE "repos/$GH_REPO/releases/$id"
-              fi
-            done
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .id 2>/dev/null || true)"
+          gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+            --jq '.[] | {id, tag_name, draft, prerelease, published_at} | tojson' > "$RUNNER_TEMP/releases.jsonl"
+          node .github/scripts/release-retention.mjs --keep "${latest:-}" --keep "${RELEASE_ID:-}" \
+            < "$RUNNER_TEMP/releases.jsonl" > "$RUNNER_TEMP/delete.txt"
+          while read -r id; do
+            echo "deleting release $id"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done < "$RUNNER_TEMP/delete.txt"
       - name: Delete workflow runs except the newest per workflow
         shell: bash
         run: |
