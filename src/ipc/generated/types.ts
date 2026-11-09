@@ -2919,6 +2919,9 @@ export type SnippetStep = {
   command: string;
   confirm?: boolean;
   interactive?: boolean;
+  waitFor?: string;
+  waitForRegex?: boolean;
+  timeoutMs?: number;
 };
 
 export type SnippetStepObject = {
@@ -2928,6 +2931,9 @@ export type SnippetStepObject = {
   command: string;
   confirm?: boolean;
   interactive?: boolean;
+  waitFor?: string;
+  waitForRegex?: boolean;
+  timeoutMs?: number;
 };
 
 export type Spec = {

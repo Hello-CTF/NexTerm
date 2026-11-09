@@ -212,7 +212,7 @@ func TestMultiStepSnippetSyncsBetweenDevices(t *testing.T) {
 	deviceB := newTestDevice(t)
 	steps := []store.SnippetStep{
 		{ID: "a", Name: "one", Command: "echo 1", Confirm: true},
-		{ID: "b", Name: "two", Description: "second", Command: "echo 2", Interactive: true},
+		{ID: "b", Name: "two", Description: "second", Command: "echo 2", Interactive: true, WaitFor: `[$#] $`, WaitForRegex: true, TimeoutMs: 30000},
 	}
 	created, err := deviceA.db.SnippetCreateContent(ctx, "multi", store.SnippetContent{Description: "d", Steps: steps}, nil, 0)
 	if err != nil {

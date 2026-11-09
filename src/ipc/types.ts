@@ -135,7 +135,7 @@ status: string, tabs: Array<string>, createdAt: number, };
 
 export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, version: number, };
 
-export type SnippetStep = { id: string, name: string, description?: string, command: string, confirm?: boolean, interactive?: boolean, };
+export type SnippetStep = { id: string, name: string, description?: string, command: string, confirm?: boolean, interactive?: boolean, waitFor?: string, waitForRegex?: boolean, timeoutMs?: number, };
 
 export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, description: string, steps: Array<SnippetStep>, };
 

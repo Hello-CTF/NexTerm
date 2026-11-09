@@ -320,6 +320,15 @@ describe("MultiHostRunPanel", () => {
     expect(panel().container.querySelector('[data-testid="multi-host-step-2"]')?.textContent).not.toContain("执行前确认");
   });
 
+  it("says that step wait conditions do not apply to a multi-host run", () => {
+    openPanel(snippetOf("plain", "Plain", [{ command: "a" }, { command: "b" }]));
+    expect(panel().container.querySelector('[data-testid="multi-host-wait-ignored"]')).toBeNull();
+    const waiting = snippetOf("login", "Login", [{ command: "ssh db" }, { command: "uptime" }]);
+    waiting.steps = waiting.steps?.map((step, index) => (index === 1 ? { ...step, waitFor: "$ " } : step));
+    openPanel(waiting);
+    expect(panel().container.querySelector('[data-testid="multi-host-wait-ignored"]')?.textContent).toContain("等待输出");
+  });
+
   it("treats a single-command snippet as one step", async () => {
     openPanel(trueOnce);
     await settleAssets();
