@@ -2,13 +2,23 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
-import { flush, flushMacrotask, mount, waitForRendered, type MountedView } from "./reactTestUtils";
+import { click, flush, flushMacrotask, mount, setInputValue, waitForRendered, type MountedView } from "./reactTestUtils";
 
 const harness = vi.hoisted(() => ({
   mac: false,
   selection: "",
   findNext: vi.fn(),
   findPrevious: vi.fn(),
+  clearSearch: vi.fn(),
+  focusTerminal: vi.fn(),
+  copyText: vi.fn(),
+  searchResults: undefined as ((results: { resultIndex: number; resultCount: number }) => void) | undefined,
+}));
+
+vi.mock("../../ui/clipboard", () => ({
+  copyText: (text: string) => harness.copyText(text),
+  readText: vi.fn().mockResolvedValue(""),
+  isNativeWebKit: () => false,
 }));
 
 vi.mock("../../app/platform", () => ({
@@ -66,6 +76,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
       onHandleRef.current = props.onHandle;
       registerSearchRef.current = props.registerSearch;
       onAttachRef.current = props.onAttach;
+      harness.searchResults = props.onSearchResults as typeof harness.searchResults;
       useEffect(() => {
         (onHandleRef.current as ((h: unknown) => void) | undefined)?.({
           copyBlock: () => "",
@@ -74,13 +85,14 @@ vi.mock("../../features/terminal/XtermView", async () => {
           clearBlocks: () => {},
           clear: () => {},
           getSelection: () => harness.selection,
-          focus: () => {},
+          focus: harness.focusTerminal,
           fit: () => {},
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: harness.findNext,
           findPrevious: harness.findPrevious,
+          clear: harness.clearSearch,
         });
         (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
@@ -266,7 +278,7 @@ describe("terminal search shortcut", () => {
     const input = searchInput();
     expect(input).not.toBeNull();
     expect(input?.value).toBe("hello");
-    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith("hello"));
+    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith("hello", expect.objectContaining({ regex: false })));
   });
 
   it("refocuses the search input when the shortcut fires while search is open", async () => {
@@ -299,6 +311,115 @@ describe("terminal search shortcut", () => {
     keyDown(input as HTMLInputElement, "Escape");
     await flush();
     expect(searchInput()).toBeNull();
+  });
+
+  async function openSearchWith(text: string): Promise<HTMLInputElement> {
+    await pressFromTerminal("F", SEARCH);
+    const input = searchInput();
+    if (!input) throw new Error("search input not found");
+    setInputValue(input, text);
+    // The debounced search as you type runs once the term settles.
+    await waitForRendered(() => expect(harness.findNext).toHaveBeenCalledWith(text, expect.anything()));
+    harness.findNext.mockClear();
+    harness.findPrevious.mockClear();
+    return input;
+  }
+
+  function searchStatus(): string {
+    return mounted?.container.querySelector('[data-testid="terminal-search-status"]')?.textContent ?? "";
+  }
+
+  function searchButton(label: string): HTMLButtonElement {
+    const button = mounted?.container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+    if (!button) throw new Error(`button not found: ${label}`);
+    return button;
+  }
+
+  it("searches as the user types and steps with Enter and Shift+Enter", async () => {
+    const input = await openSearchWith("needle");
+    keyDown(input, "Enter");
+    expect(harness.findNext).toHaveBeenCalledWith("needle", { caseSensitive: false, wholeWord: false, regex: false });
+    keyDown(input, "Enter", { shiftKey: true });
+    expect(harness.findPrevious).toHaveBeenCalledWith("needle", { caseSensitive: false, wholeWord: false, regex: false });
+  });
+
+  it("ignores the Enter that commits an IME composition", async () => {
+    const input = await openSearchWith("中文");
+    keyDown(input, "Enter", { isComposing: true });
+    keyDown(input, "Enter", { keyCode: 229 });
+    expect(harness.findNext).not.toHaveBeenCalled();
+    expect(harness.findPrevious).not.toHaveBeenCalled();
+  });
+
+  it("shows the active match position, the match count and no results", async () => {
+    await openSearchWith("needle");
+    act(() => harness.searchResults?.({ resultIndex: 1, resultCount: 5 }));
+    expect(searchStatus()).toBe("2/5");
+    act(() => harness.searchResults?.({ resultIndex: -1, resultCount: 1000 }));
+    expect(searchStatus()).toBe("1000+ 个匹配");
+    act(() => harness.searchResults?.({ resultIndex: -1, resultCount: 0 }));
+    expect(searchStatus()).toBe("无结果");
+  });
+
+  it("closes with Escape, clears the highlights and returns focus to the terminal", async () => {
+    const input = await openSearchWith("needle");
+    harness.clearSearch.mockClear();
+    keyDown(input, "Escape");
+    await flush();
+    expect(searchInput()).toBeNull();
+    expect(harness.clearSearch).toHaveBeenCalled();
+    expect(harness.focusTerminal).toHaveBeenCalled();
+  });
+
+  it("re-runs the search with the case, whole word and regex toggles", async () => {
+    await openSearchWith("Needle");
+    const caseButton = searchButton("区分大小写");
+    click(caseButton);
+    expect(caseButton.getAttribute("aria-pressed")).toBe("true");
+    await waitForRendered(() =>
+      expect(harness.findNext).toHaveBeenCalledWith("Needle", { caseSensitive: true, wholeWord: false, regex: false }),
+    );
+    click(searchButton("全字匹配"));
+    await waitForRendered(() =>
+      expect(harness.findNext).toHaveBeenCalledWith("Needle", { caseSensitive: true, wholeWord: true, regex: false }),
+    );
+    click(searchButton("正则表达式"));
+    await waitForRendered(() =>
+      expect(harness.findNext).toHaveBeenCalledWith("Needle", { caseSensitive: true, wholeWord: true, regex: true }),
+    );
+  });
+
+  it("reports an invalid regular expression instead of searching", async () => {
+    const input = await openSearchWith("a(");
+    click(searchButton("正则表达式"));
+    await flush();
+    expect(searchStatus()).toBe("正则表达式无效");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    keyDown(input, "Enter");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await flush();
+    expect(harness.findNext).not.toHaveBeenCalled();
+  });
+
+  it("shows an error toast when copying the selection fails", async () => {
+    harness.selection = "hello";
+    harness.copyText.mockRejectedValue(new Error("denied"));
+    useUi.setState({ toasts: [] });
+    const body = mounted?.container.querySelector<HTMLElement>(".nx-terminal-body > div");
+    if (!body) throw new Error("terminal body not found");
+    act(() => {
+      body.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 20 }));
+    });
+    await flush();
+    const copy = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent?.trim().startsWith("复制") && !item.textContent.includes("链接"),
+    );
+    if (!copy) throw new Error("copy menu item not found");
+    click(copy);
+    await waitForRendered(() =>
+      expect(useUi.getState().toasts.some((toast) => toast.kind === "error" && toast.text === "复制失败，请重试")).toBe(true),
+    );
+    expect(harness.copyText).toHaveBeenCalledWith("hello");
   });
 
   it("shows the platform modifier in the terminal context menu accel", async () => {

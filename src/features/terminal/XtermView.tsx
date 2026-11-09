@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
-import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
+import {
+  attachLazyAddons,
+  scheduleWebglRenderer,
+  searchDecorationsFor,
+  type TerminalSearchFlags,
+  type TerminalSearchResults,
+  type WebglRenderer,
+} from "./xtermAddons";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
 import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
@@ -121,6 +128,13 @@ export interface TerminalHandle {
 
 export type { TerminalLinkMenuRequest } from "./terminalLinks";
 
+export interface TerminalSearchApi {
+  findNext: (text: string, flags: TerminalSearchFlags) => void;
+  findPrevious: (text: string, flags: TerminalSearchFlags) => void;
+  // Removes the highlights and forgets the last term, so the next search starts at the current match.
+  clear: () => void;
+}
+
 export interface XtermViewProps {
   sessionId: string;
   tabId: string;
@@ -165,7 +179,9 @@ export interface XtermViewProps {
   visible?: boolean;
   onAttach?: (kernelTabId: string) => void;
   onAttachFailed?: (code: string) => void;
-  registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
+  registerSearch?: (api: TerminalSearchApi) => void;
+  // Match count and active match of the open search; decorations make the addon report them.
+  onSearchResults?: (results: TerminalSearchResults) => void;
   onData?: (data: string) => void;
   onBlocks?: (blocks: CommandBlock[]) => void;
   onHandle?: (h: TerminalHandle) => void;
@@ -235,6 +251,7 @@ export function XtermView(props: XtermViewProps) {
   const onTouchTapRef = useRef(props.onTouchTap);
   const onLinkMenuRef = useRef(props.onLinkMenu);
   const registerSearchRef = useRef(props.registerSearch);
+  const onSearchResultsRef = useRef(props.onSearchResults);
   // Mount-effect inputs that must not rebuild the terminal when they change:
   // visibility and resize updates flow through their dedicated effects, and
   // the WinRM mode is fixed for the tab's lifetime.
@@ -270,6 +287,7 @@ export function XtermView(props: XtermViewProps) {
   onTouchTapRef.current = props.onTouchTap;
   onLinkMenuRef.current = props.onLinkMenu;
   registerSearchRef.current = props.registerSearch;
+  onSearchResultsRef.current = props.onSearchResults;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
   followerRef.current.following = props.canResize === false;
@@ -1525,9 +1543,16 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);
     pasteHost.addEventListener("drop", onDropCapture, true);
+    // Decorations follow the terminal theme in force when the search runs.
+    const searchOptions = (flags: TerminalSearchFlags) => ({
+      ...flags,
+      decorations: searchDecorationsFor(getResolvedTerminalTheme()),
+    });
+    const offSearchResults = search.onResults((results) => onSearchResultsRef.current?.(results));
     registerSearchRef.current?.({
-      findNext: (t) => search.findNext(t),
-      findPrevious: (t) => search.findPrevious(t),
+      findNext: (text, flags) => search.findNext(text, searchOptions(flags)),
+      findPrevious: (text, flags) => search.findPrevious(text, searchOptions(flags)),
+      clear: () => search.clear(),
     });
 
     let measureFrame: number | null = null;
@@ -1601,6 +1626,7 @@ export function XtermView(props: XtermViewProps) {
       if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
       followerTimerRef.current = undefined;
       osc7Disposable.dispose();
+      offSearchResults();
       links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();

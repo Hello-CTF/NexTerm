@@ -285,6 +285,7 @@
   "{blocked}，已停止「{name}」：已执行到第 {done} 步": "{blocked}, « {name} » arrêté : exécuté jusqu'à l'étape {done}",
   "{blocked}，才能{label}片段": "{blocked} avant de pouvoir {label} le snippet",
   "{blocked}，才能填入命令": "{blocked} avant de pouvoir saisir la commande",
+  "{count} 个匹配": "{count} résultats",
   "{count} 个可恢复": {
     "one": "{count} récupérable",
     "other": "{count} récupérables"
@@ -1144,6 +1145,7 @@
   "免确认": "Sans confirmation",
   "免确认授权": "Autorisations sans confirmation",
   "全不选": "Tout désélectionner",
+  "全字匹配": "Mot entier",
   "全局 AI 权限": "Autorisations IA globales",
   "全局默认": "Par défaut global",
   "全屏": "Plein écran",
@@ -1565,6 +1567,7 @@
   "匹配模式（RE2 正则）": "Motif de correspondance (regex RE2)",
   "匹配模式，如 products:*": "Motif de correspondance, par ex. products:*",
   "匹配的主机": "Hôtes correspondants",
+  "区分大小写": "Respecter la casse",
   "升级": "mise à niveau",
   "升级会先请求旧版组件退出，超时后强制结束，再启动新版组件。上述会话会被终止且无法恢复；它们的输出记录保留为只读。": "La mise à niveau demande d'abord à l'ancien composant de quitter, puis le force à s'arrêter après expiration du délai, avant de démarrer le nouveau composant. Les sessions ci-dessus seront terminées sans récupération possible ; leurs enregistrements de sortie sont conservés en lecture seule.",
   "升级持久终端组件失败。": "Échec de la mise à niveau du composant de terminal persistant.",
@@ -3639,6 +3642,7 @@
   "无法锁定凭据库。请重试。": "Impossible de verrouiller le coffre d'identifiants. Veuillez réessayer.",
   "无符合当前搜索或过滤条件的设备。": "Aucun appareil ne correspond à la recherche ou au filtre actuels.",
   "无经由该主机或指向其地址的数据库资产。": "Aucune ressource de base de données ne passe par cet hôte ni ne pointe vers son adresse.",
+  "无结果": "Aucun résultat",
   "无输出": "Aucune sortie",
   "无（终端默认不发送）": "Aucune (le terminal n'envoie rien par défaut)",
   "日志": "Journaux",
@@ -4338,7 +4342,9 @@
   "模板": "Modèle",
   "模板名称": "Nom du modèle",
   "正则": "expression régulière",
+  "正则表达式": "Expression régulière",
   "正则表达式写法有误，当前显示未过滤的日志。请检查括号和转义符是否成对（技术详情：{detail}）": "L'expression régulière est incorrecte ; les journaux affichés ne sont pas filtrés. Vérifiez que les parenthèses et les caractères d'échappement sont bien appariés (détails techniques : {detail}).",
+  "正则表达式无效": "Expression régulière non valide",
   "正则（RE2）": "Regex (RE2)",
   "正在上传 {length} 个文件到该主机的 {terminalDir}…{value}": {
     "one": "Téléversement de {length} fichier vers {terminalDir} sur cet hôte…{value}",

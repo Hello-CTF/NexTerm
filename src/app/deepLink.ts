@@ -1,5 +1,5 @@
 import { assetApi, type Asset } from "../ipc/commands";
-import { copyText } from "../ui/clipboard";
+import { copyTextWithToast } from "../ui/copyWithToast";
 import { openHostDetail } from "../features/hosts/hostDetail";
 import { connectAsset, useUi } from "./store";
 import { t } from "../i18n";
@@ -79,8 +79,5 @@ export function copyHostDeepLink(assetId: string): void {
 }
 
 function copyLink(link: string): void {
-  const { pushToast } = useUi.getState();
-  void copyText(link)
-    .then(() => pushToast("success", t("链接已复制")))
-    .catch(() => pushToast("error", t("复制失败，请重试")));
+  void copyTextWithToast(link, t("链接已复制"));
 }
