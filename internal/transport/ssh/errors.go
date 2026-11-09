@@ -95,6 +95,10 @@ func (e *ConnectError) UserMessage() string {
 	}
 	message.WriteString("失败：")
 	message.WriteString(userGuidanceForKind(e.Kind))
+	var exitErr *proxyCommandExitError
+	if errors.As(e, &exitErr) {
+		message.WriteString(exitErr.userDetail())
+	}
 	return message.String()
 }
 
@@ -227,6 +231,12 @@ func classifyHandshakeError(host string, port int, proxy, jump string, err error
 	}
 	if strings.Contains(err.Error(), "unable to authenticate") {
 		return newConnectError(ErrorKindAuth, "authentication", host, port, proxy, err).withJump(jump)
+	}
+	var exitErr *proxyCommandExitError
+	if errors.As(err, &exitErr) {
+		connectErr := newConnectError(ErrorKindProxy, "proxy command", host, port, proxy, err).withJump(jump)
+		connectErr.Hint = "Check the ProxyCommand and its error output"
+		return connectErr
 	}
 	kind, classified := classifyErrorKind(err)
 	if !classified {
