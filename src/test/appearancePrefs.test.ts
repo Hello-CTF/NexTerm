@@ -35,6 +35,10 @@ describe("appearance prefs defaults", () => {
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(textFactor()).toBe(1);
@@ -69,6 +73,10 @@ describe("appearance prefs defaults", () => {
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
 
     localStorage.setItem(
@@ -139,6 +147,10 @@ describe("appearance prefs persistence", () => {
       terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
       terminalContrast: "high",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
     expect(textFactor()).toBeCloseTo(14.5 / 13, 10);
     expect(document.documentElement.dataset.nxTermTheme).toBe("light");
@@ -151,6 +163,10 @@ describe("appearance prefs persistence", () => {
       terminalFontFamily: "jetbrains-mono",
       terminalTheme: "light",
       terminalContrast: "high",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
   });
 
@@ -205,6 +221,10 @@ describe("appearance prefs persistence", () => {
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     }]);
     unsubscribe();
     prefs.setUiFontSize(13);
@@ -230,6 +250,10 @@ describe("appearance prefs persistence", () => {
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(textFactor()).toBe(1);

@@ -57,6 +57,21 @@
         } catch (e) {}
         root.style.setProperty("--nx-ui-text-factor", String((scale * preset) / 13));
         root.dataset.nxTermTheme = termTheme === "interface" ? resolved : termTheme;
+
+        // Mirrors applyAccent in src/app/preferences.ts.
+        try {
+          var accent = JSON.parse(localStorage.getItem("nexterm.accent.v1") || "null");
+          if (accent && typeof accent === "object") {
+            var applied = 0;
+            for (var name in accent) {
+              if (/^--nx-accent-(dark|light)-[a-z0-9]+$/.test(name) && /^#[0-9a-f]{6}$/.test(accent[name])) {
+                root.style.setProperty(name, accent[name]);
+                applied++;
+              }
+            }
+            if (applied > 0) root.dataset.nxAccent = "custom";
+          }
+        } catch (e) {}
       })();
     </script>
   </head>

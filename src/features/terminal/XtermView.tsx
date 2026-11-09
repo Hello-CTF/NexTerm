@@ -29,7 +29,7 @@ import {
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
 } from "../../app/preferences";
-import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { activeXtermTheme, TERMINAL_FONT_STACKS } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
 import {
   createTerminalStreamWriter,
@@ -65,11 +65,6 @@ import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./fol
 import { t as tr } from "../../i18n";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
-
-function accentColor(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
-  return v || "#516cd6";
-}
 
 // overflow: clip (not hidden) also forbids programmatic scrolling, so focusing the helper textarea cannot shift it.
 const XTERM_HOST_STYLE = { overflow: "clip" } as const;
@@ -351,7 +346,7 @@ export function XtermView(props: XtermViewProps) {
       fontSize: appearance.terminalFontSize,
       // Hidden panes do not blink: the blink timer would keep scheduling repaints.
       cursorBlink: visibleRef.current !== false,
-      theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
+      theme: activeXtermTheme(getResolvedTerminalTheme(), appearance),
       vtExtensions: { kittyKeyboard },
       linkHandler: links.linkHandler,
     });
@@ -1649,7 +1644,7 @@ export function XtermView(props: XtermViewProps) {
       if (canResizeRef.current !== false) term.options.fontSize = prefs.terminalFontSize;
       term.options.fontFamily = fontFamily;
       if (fontMetricsChanged) fitIfSized(true);
-      term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
+      term.options.theme = activeXtermTheme(getResolvedTerminalTheme(), prefs);
     };
     return subscribeAppearancePrefs(applyAppearance);
   }, []);

@@ -250,6 +250,10 @@ describe("AppearanceCard appearance preferences", () => {
       terminalFontFamily: "cascadia",
       terminalTheme: "dark",
       terminalContrast: "standard",
+      terminalSchemeDark: "nexterm-dark",
+      terminalSchemeLight: "nexterm-light",
+      terminalCustomSchemes: [],
+      accent: "indigo",
     });
     expect(localStorage.getItem(KEY)).toBeNull();
     expect(localStorage.getItem("nexterm.layout.v1")).toBe(

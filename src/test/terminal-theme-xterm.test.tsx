@@ -150,6 +150,7 @@ import {
   setTerminalContrast,
   setTerminalFontFamily,
   setTerminalFontSize,
+  setTerminalScheme,
   setTerminalScrollback,
   setTerminalTheme,
 } from "../app/preferences";
@@ -471,6 +472,29 @@ describe("XtermView appearance hot updates", () => {
     expect((term.options.theme as Record<string, string>).background).toBe(
       XTERM_DARK_THEME.background,
     );
+  });
+
+  it("hot-updates the color scheme of the active slot and keeps the other slot for later", async () => {
+    await show();
+    const term = harness.terminals[0];
+    const theme = () => term.options.theme as Record<string, string>;
+
+    act(() => setTerminalScheme("dark", "gruvbox-dark"));
+    expect(theme().background).toBe("#282828");
+    expect(theme().brightYellow).toBe("#fabd2f");
+    expect(theme().cursor).toBe("#ebdbb2");
+
+    act(() => setTerminalScheme("light", "catppuccin-latte"));
+    expect(theme().background).toBe("#282828");
+
+    act(() => setTerminalTheme("light"));
+    expect(theme().background).toBe("#eff1f5");
+    expect(theme().red).toBe("#d20f39");
+    expect(harness.terminals).toHaveLength(1);
+
+    act(() => setTerminalScheme("light", "nexterm-light"));
+    expect(theme().background).toBe(XTERM_LIGHT_THEME.background);
+    expect(theme().cursor).toBe("#516cd6");
   });
 
   it("does not recompute geometry when the font size is unchanged", async () => {
