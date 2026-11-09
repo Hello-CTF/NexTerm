@@ -253,10 +253,10 @@ func TestBuildTermiusPreviewKeyReconciliation(t *testing.T) {
 	if preview.Hosts[0].KeyName != "orig" {
 		t.Errorf("h1 key not canonicalized: %q", preview.Hosts[0].KeyName)
 	}
-	if !hasWarning(preview.Hosts[1].Warnings, "not part of the import") {
+	if !hasWarning(preview.Hosts[1].Warnings, "不在本次导入中") {
 		t.Errorf("h2 dangling key reference not marked: %v", preview.Hosts[1].Warnings)
 	}
-	if preview.Hosts[2].AuthMethod != "key" || !hasWarning(preview.Hosts[2].Warnings, "could not be resolved") {
+	if preview.Hosts[2].AuthMethod != "key" || !hasWarning(preview.Hosts[2].Warnings, "无法解析") {
 		t.Errorf("h3 unresolved key id not marked: %+v", preview.Hosts[2])
 	}
 
@@ -265,7 +265,7 @@ func TestBuildTermiusPreviewKeyReconciliation(t *testing.T) {
 	if preview.Hosts[0].KeyName != "stored" {
 		t.Errorf("h1 key not mapped to existing key: %q", preview.Hosts[0].KeyName)
 	}
-	if !hasWarning(preview.Hosts[0].Warnings, "already exists") {
+	if !hasWarning(preview.Hosts[0].Warnings, "已以") {
 		t.Errorf("h1 missing existing-key warning: %v", preview.Hosts[0].Warnings)
 	}
 }

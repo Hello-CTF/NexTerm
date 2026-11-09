@@ -465,8 +465,9 @@ func sshImportJumpChainProblem(hosts []sshconfig.HostPreview, canonical map[stri
 	if len(hops) <= 1 {
 		return "", nil
 	}
-	if len(hops) > maxJumpAssetHops {
-		return fmt.Sprintf("多跳 ProxyJump %s 超过跳板链上限 %d；该主机未导入", raw, maxJumpAssetHops), nil
+	// The connector counts the target asset in its chain, so a host can have at most maxJumpAssetHops-1 jump hosts.
+	if maxHops := maxJumpAssetHops - 1; len(hops) > maxHops {
+		return fmt.Sprintf("多跳 ProxyJump %s 超过跳板链上限 %d；该主机未导入", raw, maxHops), nil
 	}
 	links := map[int]string{}
 	for k := 1; k < len(hops); k++ {

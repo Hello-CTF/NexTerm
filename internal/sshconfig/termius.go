@@ -156,19 +156,19 @@ func reconcileTermiusKey(item *HostPreview, rec termiusdb.HostRecord, canonicalB
 		if canonical, ok := canonicalByAlias[lower]; ok {
 			item.KeyName = canonical.Aliases[0]
 			if name, ok := existingFPNames[canonical.Fingerprint]; ok && canonical.Action == PlanSkipDuplicate {
-				item.Warnings = append(item.Warnings, fmt.Sprintf("key %q already exists as %q", canonical.Aliases[0], name))
+				item.Warnings = append(item.Warnings, fmt.Sprintf("密钥 %q 已以 %q 的名称存在", canonical.Aliases[0], name))
 				item.KeyName = name
 			}
 			return
 		}
 		if _, ok := existingKeyNames[lower]; !ok {
-			item.Warnings = append(item.Warnings, fmt.Sprintf("references key %q which is not part of the import", item.KeyName))
+			item.Warnings = append(item.Warnings, fmt.Sprintf("引用的密钥 %q 不在本次导入中", item.KeyName))
 		}
 		return
 	}
 	if rec.KeyID != 0 {
 		item.AuthMethod = "key"
-		item.Warnings = append(item.Warnings, fmt.Sprintf("references key id %d which could not be resolved", rec.KeyID))
+		item.Warnings = append(item.Warnings, fmt.Sprintf("引用的密钥 ID %d 无法解析", rec.KeyID))
 	}
 }
 

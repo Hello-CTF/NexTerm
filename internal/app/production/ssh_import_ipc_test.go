@@ -1221,7 +1221,7 @@ func TestSSHImportHomePreviewAndApply(t *testing.T) {
 	if encKey.Action != "add" || encKey.Fingerprint != encPair.Fingerprint {
 		t.Fatalf("encrypted key = %+v", encKey)
 	}
-	if len(encKey.Warnings) == 0 || !strings.Contains(strings.Join(encKey.Warnings, " "), "passphrase") {
+	if len(encKey.Warnings) == 0 || !strings.Contains(strings.Join(encKey.Warnings, " "), "口令") {
 		t.Fatalf("encrypted key warnings = %+v", encKey.Warnings)
 	}
 	diagCodes := map[string]bool{}

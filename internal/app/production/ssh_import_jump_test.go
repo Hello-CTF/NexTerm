@@ -3,6 +3,7 @@ package production
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -32,6 +33,18 @@ func TestBlockUnmappableJumps(t *testing.T) {
 		action  sshconfig.PlanAction
 		warning string
 	}
+	// chainConfig declares hops h1..hN and an app host jumping through all of them.
+	chainConfig := func(n int) string {
+		var config strings.Builder
+		hops := make([]string, 0, n)
+		for i := 1; i <= n; i++ {
+			hop := "h" + strconv.Itoa(i)
+			hops = append(hops, hop)
+			config.WriteString("Host " + hop + "\n")
+		}
+		config.WriteString("Host app\n  ProxyJump " + strings.Join(hops, ",") + "\n")
+		return config.String()
+	}
 	cases := []struct {
 		name     string
 		config   string
@@ -53,6 +66,16 @@ func TestBlockUnmappableJumps(t *testing.T) {
 			name:   "three hops",
 			config: "Host h1\nHost h2\nHost h3\nHost app\n  ProxyJump user@h1:2222,h2,h3\n",
 			want:   map[string]want{"app": {action: sshconfig.PlanAdd}},
+		},
+		{
+			name:   "longest chain the connector accepts",
+			config: chainConfig(maxJumpAssetHops - 1),
+			want:   map[string]want{"app": {action: sshconfig.PlanAdd}},
+		},
+		{
+			name:   "chain longer than the connector accepts",
+			config: chainConfig(maxJumpAssetHops),
+			want:   map[string]want{"app": {action: sshconfig.PlanBlockedJump, warning: "上限 " + strconv.Itoa(maxJumpAssetHops-1)}},
 		},
 		{
 			name:     "first hop may be an existing asset",

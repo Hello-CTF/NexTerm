@@ -102,10 +102,10 @@ func TestPreviewProxyJump(t *testing.T) {
 			t.Errorf("%s action = %q, want add", alias, actions[alias])
 		}
 	}
-	if !hasWarning(warnings["loop1"], "cycle") || !hasWarning(warnings["loop2"], "cycle") {
+	if !hasWarning(warnings["loop1"], "循环") || !hasWarning(warnings["loop2"], "循环") {
 		t.Errorf("loop cycle not detected: %v %v", warnings["loop1"], warnings["loop2"])
 	}
-	if !hasWarning(warnings["selfy"], "itself") {
+	if !hasWarning(warnings["selfy"], "自身") {
 		t.Errorf("self jump not detected: %v", warnings["selfy"])
 	}
 	if !hasWarning(warnings["dangling"], "ghost") {
@@ -124,7 +124,7 @@ func TestPreviewProxyJump(t *testing.T) {
 			t.Errorf("%s action = %q, want blocked-jump (propagated): %v", alias, actions[alias], warnings[alias])
 		}
 	}
-	if !hasWarning(warnings["chainapp"], "not importable") {
+	if !hasWarning(warnings["chainapp"], "不可导入") {
 		t.Errorf("chainapp missing propagation warning: %v", warnings["chainapp"])
 	}
 }
@@ -340,6 +340,45 @@ func TestDedupeIdentityFiles(t *testing.T) {
 	got := DedupeIdentityFiles([]string{first, filepath.FromSlash("/a/./b"), first, "", second})
 	if len(got) != 2 || got[0] != first || got[1] != second {
 		t.Errorf("DedupeIdentityFiles = %v, want [%q %q]", got, first, second)
+	}
+}
+
+func TestPreviewWildcardMissingIdentityFileKeepsAgentAuth(t *testing.T) {
+	dir := t.TempDir()
+	keyPath, _ := writeTestKey(t, dir, "id_present", false)
+	missing := filepath.Join(dir, "id_missing")
+	configPath := filepath.Join(dir, "config")
+	config := "Host keyed\n    IdentityFile " + keyPath + "\n\nHost plain other\n\nHost *\n    IdentityFile " + missing + "\n"
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	result, err := Parse(configPath, DefaultLimits)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	preview := PreviewSSHConfig(result, nil, nil, DefaultLimits)
+	if len(preview.Hosts) != 3 {
+		t.Fatalf("unexpected hosts: %+v", preview.Hosts)
+	}
+	for _, host := range preview.Hosts {
+		if host.Alias == "keyed" {
+			if host.AuthMethod != "key" || len(host.IdentityFiles) != 1 || host.IdentityFiles[0] != keyPath {
+				t.Errorf("keyed = %+v, want key auth with only the existing file", host)
+			}
+			continue
+		}
+		if host.AuthMethod != "" || len(host.IdentityFiles) != 0 {
+			t.Errorf("%s = %+v, want agent auth without the missing wildcard IdentityFile", host.Alias, host)
+		}
+	}
+	count := 0
+	for _, d := range preview.Diagnostics {
+		if d.Code == "key-unreadable" && d.Source == missing {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("got %d key-unreadable diagnostics for the missing file, want 1: %+v", count, preview.Diagnostics)
 	}
 }
 

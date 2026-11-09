@@ -247,13 +247,14 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 	batchNames := map[string]endpoint{}
 	batchEndpoints := map[endpoint]string{}
 	hostPreviews := make([]HostPreview, 0, len(hosts))
+	reportedIdentities := map[string]bool{}
 	for _, host := range hosts {
 		item := HostPreview{
 			Alias:         host.Alias,
 			Hostname:      host.Hostname,
 			Port:          host.Port,
 			Username:      host.Username,
-			IdentityFiles: DedupeIdentityFiles(host.IdentityFiles),
+			IdentityFiles: preview.usableIdentityFiles(host.IdentityFiles, reportedIdentities),
 			ProxyJump:     host.ProxyJump,
 			Source:        host.Source,
 			Action:        PlanAdd,
@@ -289,7 +290,7 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 			Action:      PlanAdd,
 		}
 		if key.Encrypted {
-			item.Warnings = append(item.Warnings, "private key is passphrase-protected; it will be imported as a file reference, bind a credential for the passphrase")
+			item.Warnings = append(item.Warnings, "私钥受口令保护，将作为文件引用导入；请绑定凭据以提供口令")
 		}
 		decideKeyAction(&item, seenFingerprints, existingKeyByName, existingFPNames, batchKeyNames)
 		seenFingerprints[item.Fingerprint] = true
