@@ -154,6 +154,9 @@ import {
   setTerminalTheme,
 } from "../app/preferences";
 import { setThemeMode } from "../app/theme";
+import { setBackendOS, setLocalWindowsBuild } from "../app/platform";
+import { useUi } from "../app/store";
+import type { SessionInfo } from "../ipc/commands";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -498,5 +501,40 @@ describe("XtermView scrollback preference", () => {
     expect(term.options.scrollback).toBe(10_000);
     act(() => setTerminalScrollback(50_000));
     expect(term.options.scrollback).toBe(50_000);
+  });
+});
+
+describe("xterm ConPTY options", () => {
+  afterEach(() => {
+    setBackendOS(null);
+    setLocalWindowsBuild(null);
+    useUi.setState({ sessions: [] });
+  });
+
+  function useSession(kind: SessionInfo["kind"]): void {
+    useUi.setState({ sessions: [{ id: "session", assetId: null, name: "session", kind, status: "connected", tabs: [], createdAt: 1 }] });
+  }
+
+  it("declares ConPTY with the backend build for local tabs of a Windows backend", async () => {
+    setBackendOS("windows");
+    setLocalWindowsBuild(22631);
+    useSession("local");
+    await show();
+    expect(harness.terminals[0].options.windowsPty).toEqual({ backend: "conpty", buildNumber: 22631 });
+  });
+
+  it("leaves remote tabs and other backends without a Windows PTY", async () => {
+    setBackendOS("windows");
+    setLocalWindowsBuild(22631);
+    useSession("ssh");
+    await show();
+    expect(harness.terminals[0].options.windowsPty).toBeUndefined();
+    act(() => root?.unmount());
+    root = null;
+
+    setBackendOS("linux");
+    useSession("local");
+    await show();
+    expect(harness.terminals[1].options.windowsPty).toBeUndefined();
   });
 });

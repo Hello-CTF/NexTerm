@@ -403,6 +403,12 @@
       "channel": false,
       "stream": "none"
     },
+    "app_windows_build": {
+      "scope": "platform",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "asset_create": {
       "scope": "asset",
       "nested": true,

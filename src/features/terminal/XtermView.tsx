@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IWindowsPty } from "@xterm/xterm";
 import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
@@ -13,6 +13,7 @@ import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
+import { localConptyBuild } from "../../app/platform";
 import { useUi } from "../../app/store";
 import {
   resetTerminalLinesBelow,
@@ -185,6 +186,14 @@ export interface XtermViewProps {
   onLinkMenu?: (request: TerminalLinkMenuRequest) => void;
 }
 
+// A local terminal of a Windows backend runs in ConPTY; xterm.js adapts reflow and wrapped-line detection to its build.
+function localWindowsPty(sessionId: string, containerId: string | undefined): IWindowsPty | undefined {
+  const buildNumber = localConptyBuild();
+  if (buildNumber === null || containerId) return undefined;
+  const session = useUi.getState().sessions.find((candidate) => candidate.id === sessionId);
+  return session?.kind === "local" ? { backend: "conpty", buildNumber } : undefined;
+}
+
 // The scrollback badge subscribes to the per-tab view store with the narrow selector:
 // a scroll burst on this tab re-renders only the badge, never the XtermView body above it.
 function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void }) {
@@ -343,7 +352,9 @@ export function XtermView(props: XtermViewProps) {
       onInactiveClick: (message) => useUi.getState().pushToast("info", message),
       hasSelection: () => termRef.current?.hasSelection() ?? false,
     });
+    const windowsPty = localWindowsPty(sessionId, containerId);
     const term = new Terminal({
+      ...(windowsPty ? { windowsPty } : {}),
       scrollback: getTerminalPrefs().scrollback,
       allowProposedApi: true,
       scrollbar: { width: 10 },
