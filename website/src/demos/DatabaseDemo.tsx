@@ -1,5 +1,6 @@
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { tableSelectSql } from "../../../src/features/db/tableSelectSql";
+import { statementAtCursor } from "../../../src/features/db/sqlStatements";
 import { IconDatabase, IconHistory, IconList, IconPlay, IconTable } from "../../../src/ui/icons";
 import { copyToClipboard, errorText, pick, useToasts, type DemoProps } from "./common";
 
@@ -8,7 +9,7 @@ const SCHEMA = "public";
 const copy = {
   zh: {
     schema: "选择 schema", tablesHint: "张表和视图", history: "历史", historyTitle: "查看执行历史；选择记录仅载入 SQL 草稿", historyLabel: "SQL 执行历史",
-    run: "运行", runTitle: "运行整段 SQL，或只运行选中部分（一次只执行一条语句）", empty: "按 Ctrl+Enter 运行，一次只执行一条语句",
+    run: "运行", runTitle: "运行光标所在的语句，或只运行选中部分（一次只执行一条语句）", empty: "按 Ctrl+Enter 运行光标所在的语句",
     rows: (n: number, ms: number) => `${n} 行，耗时 ${ms}ms`, copyCsv: "复制 CSV", csvCopied: "CSV 已复制", copyFailed: (reason: string) => `复制失败：${reason}`,
     tables: "表", structure: "结构", tablesTitle: "选择表名，将 SELECT 查询填入编辑器", structureTitle: "选择表名查看字段结构",
     fill: (table: string) => `填入 SELECT * FROM ${table}`, columns: (table: string) => `查看 ${table} 的字段`,
@@ -17,7 +18,7 @@ const copy = {
   },
   en: {
     schema: "Choose schema", tablesHint: "tables and views", history: "History", historyTitle: "Show run history; picking an entry only loads its SQL", historyLabel: "SQL run history",
-    run: "Run", runTitle: "Run the whole SQL or just the selection (one statement at a time)", empty: "Press Ctrl+Enter to run one statement at a time",
+    run: "Run", runTitle: "Run the statement under the cursor, or only the selection (one statement at a time)", empty: "Press Ctrl+Enter to run the statement under the cursor",
     rows: (n: number, ms: number) => `${n} rows in ${ms}ms`, copyCsv: "Copy CSV", csvCopied: "CSV copied", copyFailed: (reason: string) => `Copy failed: ${reason}`,
     tables: "Tables", structure: "Structure", tablesTitle: "Pick a table to fill a SELECT query into the editor", structureTitle: "Pick a table to see its columns",
     fill: (table: string) => `Fill SELECT * FROM ${table}`, columns: (table: string) => `Show columns of ${table}`,
@@ -86,10 +87,15 @@ export default function DatabaseDemo({ language }: DemoProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<{ sql: string; at: string }[]>([{ sql: initialSql, at: "15:12:04" }]);
 
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const run = () => {
     setHistoryOpen(false);
     setStructure(null);
-    const next = runSql(sql);
+    const editor = editorRef.current;
+    const statement = editor
+      ? sql.slice(editor.selectionStart, editor.selectionEnd).trim() || statementAtCursor(sql, editor.selectionEnd, "postgres")
+      : sql;
+    const next = runSql(statement);
     if (!next) {
       setWarning(true);
       return;
@@ -98,7 +104,7 @@ export default function DatabaseDemo({ language }: DemoProps) {
     setResult(next);
     const now = new Date();
     const at = [now.getHours(), now.getMinutes(), now.getSeconds()].map((v) => String(v).padStart(2, "0")).join(":");
-    setHistory((list) => [{ sql, at }, ...list].slice(0, 20));
+    setHistory((list) => [{ sql: statement, at }, ...list].slice(0, 20));
   };
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
@@ -137,7 +143,7 @@ export default function DatabaseDemo({ language }: DemoProps) {
       <button type="button" className={`nx-btn nx-btn-ghost nx-btn-sm${historyOpen ? " is-active" : ""}`} aria-expanded={historyOpen} title={t.historyTitle} onClick={() => setHistoryOpen((open) => !open)}><IconHistory size={12} />{t.history}</button>
       <button type="button" className="nx-btn nx-btn-primary nx-btn-sm demo-sticky-run" title={t.runTitle} onClick={run}><IconPlay size={12} />{t.run}<span className="nx-kbd demo-kbd-on-primary">Ctrl ↵</span></button>
     </div>
-    <textarea className="demo-sql" aria-label="SQL" value={sql} spellCheck={false} onChange={(event) => setSql(event.target.value)} onKeyDown={onKey} />
+    <textarea ref={editorRef} className="demo-sql" aria-label="SQL" value={sql} spellCheck={false} onChange={(event) => setSql(event.target.value)} onKeyDown={onKey} />
     <div className="demo-db-output" role={historyOpen ? "region" : "status"} aria-label={historyOpen ? t.historyLabel : undefined}>
       {historyOpen ? <div className="demo-db-history">
         {history.length === 0 && <div className="nx-hint">{t.noHistory}</div>}

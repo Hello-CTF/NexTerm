@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { EditorView } from "@codemirror/view";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { click, clickButton, flush, flushUntil, mount, setInputValue, type MountedView } from "./reactTestUtils";
 
@@ -199,7 +200,11 @@ describe("IME guards for Enter submission", () => {
     await flushUntil(() => mounted!.container.textContent?.includes("mydb") ?? false);
     const host = mounted.container.querySelector<HTMLElement>(".bg-term");
     if (!host) throw new Error("editor host not found");
-    const runButton = mounted.container.querySelector<HTMLButtonElement>('button[title^="运行整段 SQL"]')!;
+    const runButton = mounted.container.querySelector<HTMLButtonElement>('button[title^="运行光标所在的语句"]')!;
+    const view = EditorView.findFromDOM(mounted.container.querySelector<HTMLElement>(".cm-editor")!)!;
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: "SELECT 1;" } });
+    });
     keyDown(host, "Enter", { ctrlKey: true, isComposing: true });
     expect(mocks.query).not.toHaveBeenCalled();
     keyDown(host, "Enter", { ctrlKey: true });

@@ -23,6 +23,10 @@ import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { copyText } from "../../ui/clipboard";
 import { tableSelectSql } from "./tableSelectSql";
+import { statementAtCursor } from "./sqlStatements";
+import { parseRedisArgs } from "./redisArgs";
+import { CommandHistory } from "./commandHistory";
+import { modHint } from "../../app/platform";
 import {
   IconChevronUp,
   IconDatabase,
@@ -372,10 +376,16 @@ function SqlView({
   const run = async () => {
     const view = viewRef.current;
     if (!view || activeRunsRef.current.has(connId)) return;
+    const selection = view.state.selection.main;
+    const text =
+      view.state.sliceDoc(selection.from, selection.to).trim() ||
+      statementAtCursor(view.state.doc.toString(), selection.head, dialect);
+    if (!text) {
+      pushToast("info", tr("没有可运行的 SQL 语句"));
+      return;
+    }
     const runSeq = ++runSeqRef.current;
     activeRunsRef.current.set(connId, runSeq);
-    const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
-    const text = sel.trim() || view.state.doc.toString();
     const targetWorkspaceId = workspaceId;
     const generation = draftGenerationRef.current;
     const problemContext = problemGeneration();
@@ -592,11 +602,11 @@ function SqlView({
           className="nx-btn nx-btn-primary nx-btn-sm sticky right-0"
           disabled={running}
           onClick={() => void run()}
-          title={tr("运行整段 SQL，或只运行选中部分（一次只执行一条语句）")}
+          title={tr("运行光标所在的语句，或只运行选中部分（一次只执行一条语句）")}
         >
           {running ? <IconRefresh size={13} className="animate-spin" /> : <IconPlay size={12} />}
           {running ? tr("正在运行…") : tr("运行")}
-          <span className="nx-kbd border-white/30 text-white/75">Ctrl ↵</span>
+          <span className="nx-kbd border-white/30 text-white/75">{modHint()} ↵</span>
         </button>
       </div>
 
@@ -653,7 +663,7 @@ function SqlView({
             onShowProblems={() => setProblemsOpen(true)}
           />
         ) : (
-          <div className="nx-empty">{tr("按 Ctrl+Enter 运行，一次只执行一条语句")}</div>
+          <div className="nx-empty">{tr("按 {value}+Enter 运行光标所在的语句", { value: modHint() })}</div>
         )}
       </div>
 
@@ -1046,6 +1056,7 @@ function RedisView({ connId }: { connId: string }) {
   const [cmdText, setCmdText] = useState("INFO memory");
   const [cmdOut, setCmdOut] = useState("");
   const [consoleOpen, setConsoleOpen] = useState(false);
+  const historyRef = useRef(new CommandHistory());
   const consoleScrollRef = useRef<HTMLDivElement>(null);
   const consolePanelId = useId();
   const scanRequestRef = useRef(0);
@@ -1125,7 +1136,16 @@ function RedisView({ connId }: { connId: string }) {
   const runCmd = async () => {
     const text = cmdText.trim();
     if (!text) return;
-    const args = text.split(/\s+/);
+    historyRef.current.push(text);
+    const parsed = parseRedisArgs(text);
+    if (!parsed.ok) {
+      setCmdOut(
+        `(error) ${parsed.error === "unbalanced-quotes" ? tr("引号不匹配，请检查参数") : tr("\\x 转义得到的字节不是有效的 UTF-8")}`,
+      );
+      return;
+    }
+    const args = parsed.args;
+    if (args.length === 0) return;
     const command = args[0].toUpperCase();
     const warning = DESTRUCTIVE_REDIS_WARNINGS[command];
     if (warning) {
@@ -1293,7 +1313,7 @@ function RedisView({ connId }: { connId: string }) {
               <div className="mb-1.5 text-[11px] text-neutral-500">
                 <div>{tr("控制台 · 使用 Redis 命令协议，不支持 SQL")}</div>
                 <div>{tr("危险命令执行前需要确认，其余命令直接执行")}</div>
-                <div>{tr("参数按空白切分，不支持引号包裹（如 SET k \"a b\" 会被拆成 3 个参数）")}</div>
+                <div>{tr("参数可用引号包裹，按 ↑/↓ 切换历史命令")}</div>
               </div>
               {cmdOut && (
                 <pre className="nx-pre text-[11px]" role="status">
@@ -1308,7 +1328,16 @@ function RedisView({ connId }: { connId: string }) {
                 onChange={(e) => setCmdText(e.target.value)}
                 onKeyDown={(e) => {
                   if (isImeKeyEvent(e)) return;
-                  if (e.key === "Enter") void runCmd();
+                  if (e.key === "Enter") {
+                    void runCmd();
+                    return;
+                  }
+                  if ((e.key !== "ArrowUp" && e.key !== "ArrowDown") || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+                  const entry =
+                    e.key === "ArrowUp" ? historyRef.current.older(cmdText) : historyRef.current.newer();
+                  if (entry === null) return;
+                  e.preventDefault();
+                  setCmdText(entry);
                 }}
                 aria-label={tr("Redis 命令")}
               />
