@@ -27,6 +27,10 @@ export type KeybindingActionId =
   | "terminalSearch"
   | "terminalLinks"
   | "sessionSidebar"
+  | "previousPrompt"
+  | "nextPrompt"
+  | "copyLastOutput"
+  | "generateCommand"
   | "reclaimTakeover"
   | "openSettings"
   | "focusAiInput"
@@ -67,6 +71,11 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
   { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
+  { id: "previousPrompt", label: t("跳到上一条命令"), defaultBinding: "Mod+Shift+ArrowUp" },
+  { id: "nextPrompt", label: t("跳到下一条命令"), defaultBinding: "Mod+Shift+ArrowDown" },
+  { id: "copyLastOutput", label: t("选中并复制上一条命令的输出"), defaultBinding: "Mod+Shift+o" },
+  // Ctrl+I is Tab in a terminal, and browsers keep Ctrl+Shift+I for developer tools, so only macOS uses Cmd+I.
+  { id: "generateCommand", label: t("用 AI 生成命令"), defaultBinding: "Ctrl+Shift+g", macBinding: "Primary+i" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },
   { id: "openSettings", label: t("打开设置"), defaultBinding: "Mod+," },
@@ -576,16 +585,25 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
  * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
  * terminal pane intercepts before xterm. Listed in match precedence order.
  */
-export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks", "sessionSidebar"];
+const TERMINAL_PANE_ACTIONS: readonly KeybindingActionId[] = [
+  "terminalSearch",
+  "terminalLinks",
+  "sessionSidebar",
+  "previousPrompt",
+  "nextPrompt",
+  "copyLastOutput",
+  "generateCommand",
+];
+
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, ...TERMINAL_PANE_ACTIONS];
 
 /** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
 export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
   const hit = matchAppKeybinding(event);
   if (hit) return hit;
   if (isAltGraph(event)) return null;
-  if (matchActionBinding(event, "terminalSearch")) return { action: "terminalSearch", digit: null };
-  if (matchActionBinding(event, "terminalLinks")) return { action: "terminalLinks", digit: null };
-  return matchActionBinding(event, "sessionSidebar") ? { action: "sessionSidebar", digit: null } : null;
+  const action = TERMINAL_PANE_ACTIONS.find((id) => matchActionBinding(event, id));
+  return action ? { action, digit: null } : null;
 }
 
 export interface KeybindingConflict {

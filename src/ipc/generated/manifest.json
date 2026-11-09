@@ -25,6 +25,12 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_command_generate": {
+      "scope": "ai-command",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_confirm": {
       "nested": false,
       "channel": true,

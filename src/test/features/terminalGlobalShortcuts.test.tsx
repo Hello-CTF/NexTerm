@@ -319,12 +319,12 @@ describe("XtermView app-level shortcut passthrough", () => {
   it("passes through updated bindings after keybinding overrides sync", async () => {
     await show({ sessionId: "session", tabId: "pending" });
 
-    setKeybinding("commandPalette", "Mod+Shift+g");
-    expect(handledByXterm({ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true })).toBe(false);
+    setKeybinding("commandPalette", "Mod+Shift+y");
+    expect(handledByXterm({ key: "Y", code: "KeyY", ctrlKey: true, shiftKey: true })).toBe(false);
     expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(true);
 
     resetAllKeybindings();
     expect(handledByXterm({ key: "P", code: "KeyP", ctrlKey: true, shiftKey: true })).toBe(false);
-    expect(handledByXterm({ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true })).toBe(true);
+    expect(handledByXterm({ key: "Y", code: "KeyY", ctrlKey: true, shiftKey: true })).toBe(true);
   });
 });

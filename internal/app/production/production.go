@@ -361,6 +361,12 @@ func productionModules(services ProductionServices) []Module {
 		}
 		modules = append(modules, Module{Name: "state-rules", RegisterCommands: services.stateRules.registerCommands})
 	}
+	// Registered without the AI runtime too, so the terminal can say that AI is unavailable.
+	aiCommands := &aiCommandRuntime{}
+	if services.Profiles != nil {
+		aiCommands.model = aiCommandModelFactory(aiModelFactory(services.Profiles))
+	}
+	modules = append(modules, Module{Name: "ai-command", RegisterCommands: aiCommands.registerCommands})
 	if services.Sessions != nil {
 		localHelper := services.LocalHelper
 		exposureController := services.LocalHelperExposure

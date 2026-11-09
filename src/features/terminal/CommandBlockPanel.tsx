@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { CommandBlock } from "./commandBlocks";
+import { commandBlockStatus, type CommandBlock } from "./commandBlocks";
+import { commandBlockDuration } from "./StickyCommandHeader";
 import { IconChevronDown, IconChevronRight, IconCopy, IconList, IconLocate, IconPlay, IconSave, IconSparkles, IconTrash } from "../../ui/icons";
 import { describeError } from "../../ui/errorText";
 import { copyText } from "../../ui/clipboard";
@@ -29,11 +30,13 @@ function clockOf(ms: number): string {
   ).padStart(2, "0")}`;
 }
 
-function durationOf(b: CommandBlock): string {
-  if (b.endedAt === null) return t("运行中");
-  const s = (b.endedAt - b.startedAt) / 1000;
-  return s < 1 ? `${Math.round(s * 1000)}ms` : `${s.toFixed(1)}s`;
-}
+// The left edge of each row repeats the terminal's status mark color.
+const STATUS_EDGE: Record<ReturnType<typeof commandBlockStatus>, string> = {
+  running: "border-l-blue-400",
+  success: "border-l-green-400/70",
+  failure: "border-l-red-400",
+  done: "border-l-transparent",
+};
 
 export function CommandBlockPanel({
   blocks,
@@ -134,7 +137,8 @@ export function CommandBlockPanel({
                   ref={virtualizer.measureElement}
                   data-index={item.index}
                   data-command-block={b.index}
-                  className={`absolute top-0 left-0 w-full border-b border-neutral-800/40 ${
+                  data-status={commandBlockStatus(b)}
+                  className={`absolute top-0 left-0 w-full border-b border-l-2 border-neutral-800/40 ${STATUS_EDGE[commandBlockStatus(b)]} ${
                     running ? "bg-blue-500/[0.06]" : ""
                   }`}
                   style={{ transform: `translateY(${item.start}px)` }}
@@ -160,7 +164,7 @@ export function CommandBlockPanel({
                         )}
                       </div>
                       <div className="mt-0.5 font-mono text-[10px] text-neutral-500">
-                        {clockOf(b.startedAt)} · {durationOf(b)}
+                        {clockOf(b.startedAt)} · {commandBlockDuration(b)}
                         {b.exitCode !== null && (
                           <span className={b.exitCode === 0 ? "text-green-300" : "text-red-300"}>
                             {" "}
