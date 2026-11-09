@@ -277,6 +277,53 @@ func TestSnippetStepsPayloadWithInvalidStepsIsSkippedWithWarning(t *testing.T) {
 	}
 }
 
+func TestOlderClientCompanionWithoutWaitConditionsKeepsThem(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	steps := []store.SnippetStep{
+		{ID: "a", Command: "ssh db"},
+		{ID: "b", Name: "password", Command: "hunter2", WaitFor: "Password:", TimeoutMs: 30000},
+	}
+	created, err := instance.db.SnippetCreateContent(ctx, "login", store.SnippetContent{Steps: steps}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped := func(updatedAt int64) snippetStepsObject {
+		return snippetStepsObject{
+			ID: store.SnippetStepsObjectID(created.ID), SnippetID: created.ID, BodyHash: snippetBodyHash(created.Body), UpdatedAt: updatedAt,
+			Steps: []snippetStepObject{{ID: "a", Command: "ssh db"}, {ID: "b", Name: "password", Command: "hunter2"}},
+		}
+	}
+	localSteps := func() []store.SnippetStep {
+		t.Helper()
+		got, err := instance.db.SnippetGet(ctx, created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := store.DecodeSnippetSteps(got.Steps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+
+	// The same version re-encoded by a client that drops the wait fields.
+	same := stripped(created.UpdatedAt)
+	result := mustApplyObjects(t, instance, ApplyObject{ID: same.ID, Kind: KindSnippetSteps, Payload: applyPayload(t, same)})
+	requireApplyResult(t, result.Objects[0], ApplyResultIdentical)
+	if got := localSteps(); !sameSnippetSteps(got, steps) {
+		t.Fatalf("wait conditions were erased: %+v", got)
+	}
+
+	// A newer version is a real edit and still wins.
+	newer := stripped(created.UpdatedAt + 1000)
+	result = mustApplyObjects(t, instance, ApplyObject{ID: newer.ID, Kind: KindSnippetSteps, Payload: applyPayload(t, newer)})
+	requireApplyResult(t, result.Objects[0], ApplyResultApplied)
+	if got := localSteps(); len(got) != 2 || got[1].WaitFor != "" {
+		t.Fatalf("newer companion was not applied: %+v", got)
+	}
+}
+
 // Plain snippets keep the exact payload bytes older clients and the browser hash, so no push storm follows an upgrade.
 func TestSingleStepSnippetPayloadBytesAreUnchanged(t *testing.T) {
 	group := "G1"
