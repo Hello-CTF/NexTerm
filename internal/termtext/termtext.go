@@ -2,7 +2,12 @@
 //
 // The renderer is line oriented and keeps only the line being written in memory. It drops escape sequences (colors, OSC titles,
 // hyperlinks, mode changes), applies carriage returns, backspaces, tabs and in-line editing (erase, insert and delete characters,
-// horizontal cursor moves) to the current line, and writes every finished line with "\n" endings and trailing blanks trimmed.
+// horizontal cursor moves, saved cursor columns) to the current line, maps DEC line-drawing characters, and writes every
+// finished line with "\n" endings and trailing blanks trimmed.
+//
+// A logical line keeps soft-wrapped text together. Cursor moves and character edits stay on the screen row the cursor is on,
+// as in a terminal, using the recorded width (fallbackCols until a resize reports one), which also bounds what one sequence
+// can add to the line.
 //
 // Vertical cursor positioning cannot be expressed in a text stream: a vertical move finishes the current line and continues on a
 // new one, so programs that redraw several lines in place (multi-line progress displays) leave each redraw as separate lines.
@@ -14,6 +19,7 @@ import (
 	"bufio"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -27,6 +33,10 @@ const (
 	maxCombining = 8
 	maxCSIParams = 32
 	tabWidth     = 8
+	// fallbackCols is the screen width assumed until the recording reports one; it bounds cursor moves and row edits.
+	fallbackCols = 512
+	// maxCols bounds a reported screen width, matching the terminal's own limit.
+	maxCols = 1024
 	// TimestampLayout is the per-line prefix layout when Options.Timestamps is set.
 	TimestampLayout = "2006-01-02 15:04:05"
 )
@@ -83,12 +93,21 @@ type Renderer struct {
 	lineTS int64
 	nowTS  int64
 	dirty  bool // the current line holds output or was explicitly started by output
+	// wrapPending is set when output filled the last column of a row: the cursor still sits on that row until the next print.
+	wrapPending bool
 
 	alt    bool
 	result Result
 	err    error
 	closed bool
 	prefix []byte
+
+	// DEC special graphics (line drawing) designations and the active set (SO/SI).
+	g0dec, g1dec, glG1 bool
+	// savedCol and savedLines hold the cursor saved by DECSC or CSI s and the line count at that moment.
+	savedCol   int
+	savedLines int64
+	saved      bool
 }
 
 type countingWriter struct {
@@ -114,8 +133,21 @@ func NewRenderer(out io.Writer, opts Options) *Renderer {
 // Resize records the terminal width, which locates carriage returns and absolute columns on soft-wrapped lines.
 func (r *Renderer) Resize(cols int) {
 	if cols > 0 {
-		r.cols = cols
+		r.cols = min(cols, maxCols)
 	}
+}
+
+// width is the screen width in effect.
+func (r *Renderer) width() int {
+	if r.cols > 0 {
+		return r.cols
+	}
+	return fallbackCols
+}
+
+// rowEnd is the exclusive end column of the screen row holding the cursor.
+func (r *Renderer) rowEnd() int {
+	return r.rowStart() + r.width()
 }
 
 // Write renders output that arrived at tsMS (Unix milliseconds; zero or negative when unknown).
@@ -301,25 +333,68 @@ func (r *Renderer) startCSI() {
 }
 
 func (r *Renderer) escDispatch(intermediate, final byte) {
-	if intermediate != 0 {
-		return // charset designations and other two-byte sequences do not change the text
+	switch intermediate {
+	case 0:
+	case '(', ')':
+		// Charset designation: '0' selects DEC special graphics, anything else a text set.
+		if intermediate == '(' {
+			r.g0dec = final == '0'
+		} else {
+			r.g1dec = final == '0'
+		}
+		return
+	default:
+		return // other two-byte sequences do not change the text
 	}
 	switch final {
+	case '7':
+		r.saveCursor()
+	case '8':
+		r.restoreCursor()
 	case 'D', 'E': // IND, NEL
 		r.newLine()
 	case 'M': // reverse index: a vertical move
 		r.verticalMove(r.col - r.rowStart())
 	case 'c': // full reset
-		if r.alt {
-			r.alt = false
-		}
+		r.alt = false
+		r.g0dec, r.g1dec, r.glG1, r.saved = false, false, false, false
 		r.verticalMove(0)
 	}
+}
+
+func (r *Renderer) clearWrap() {
+	r.wrapPending = false
+}
+
+func (r *Renderer) saveCursor() {
+	if r.alt {
+		return
+	}
+	r.savedCol = min(r.col-r.rowStart(), r.width()-1)
+	r.savedLines = r.result.Lines
+	r.saved = true
+}
+
+// restoreCursor returns to the saved column. When lines were finished since the save the cursor moves to another row, which
+// continues on a new line like any vertical move.
+func (r *Renderer) restoreCursor() {
+	if r.alt || !r.saved {
+		return
+	}
+	if r.result.Lines != r.savedLines {
+		r.verticalMove(r.savedCol)
+		return
+	}
+	r.moveInRow(r.savedCol)
 }
 
 func (r *Renderer) control(b byte) {
 	if r.alt {
 		return
+	}
+	switch b {
+	case '\r', '\b', '\t':
+		defer r.clearWrap()
 	}
 	switch b {
 	case '\r':
@@ -332,20 +407,22 @@ func (r *Renderer) control(b byte) {
 		}
 	case '\t':
 		next := (r.col/tabWidth + 1) * tabWidth
-		if r.cols > 0 {
-			next = min(next, r.rowStart()+r.cols-1)
-		}
+		next = min(next, r.rowEnd()-1)
 		r.col = max(next, r.col)
+	case 0x0e:
+		r.glG1 = true
+	case 0x0f:
+		r.glG1 = false
 	}
 }
 
-// rowStart is the first column of the screen row holding the cursor when the line wraps at a known width.
+// rowStart is the first column of the screen row holding the cursor.
 func (r *Renderer) rowStart() int {
-	if r.cols <= 0 || r.col == 0 {
-		return 0
+	width := r.width()
+	if r.wrapPending && r.col > 0 {
+		return (r.col - 1) / width * width
 	}
-	// A cursor just past the last column still sits on the row it filled (pending wrap).
-	return (r.col - 1) / r.cols * r.cols
+	return r.col / width * width
 }
 
 func (r *Renderer) csiDispatch(final byte) {
@@ -372,19 +449,29 @@ func (r *Renderer) csiDispatch(final byte) {
 	if private != 0 || r.alt {
 		return
 	}
+	if strings.IndexByte("CaDG`ABFEHfdeKP@Xu", final) >= 0 {
+		// Cursor moves and edits use the row the cursor is on, then end a pending wrap; SGR and other modes keep it.
+		defer r.clearWrap()
+	}
+	if final == 's' && len(values) == 0 {
+		r.saveCursor()
+		return
+	}
+	if final == 'u' && len(values) == 0 {
+		r.restoreCursor()
+		return
+	}
 	n := param(values, 0, 1)
 	if n <= 0 {
 		n = 1
 	}
 	switch final {
 	case 'C', 'a':
-		r.col += n
-		r.clampCol()
+		r.moveInRow(r.col - r.rowStart() + n)
 	case 'D':
-		r.col = max(0, r.col-n)
+		r.moveInRow(r.col - r.rowStart() - n)
 	case 'G', '`':
-		r.col = r.rowStart() + n - 1
-		r.clampCol()
+		r.moveInRow(n - 1)
 	case 'A', 'B', 'F', 'E', 'H', 'f', 'd', 'e':
 		col := r.col - r.rowStart()
 		switch final {
@@ -405,11 +492,12 @@ func (r *Renderer) csiDispatch(final byte) {
 	}
 }
 
-func (r *Renderer) clampCol() {
-	if r.cols > 0 {
-		r.col = min(r.col, r.rowStart()+r.cols-1)
-	}
-	r.col = min(r.col, maxLineCells)
+// moveInRow puts the cursor at column offset of its screen row, clamped to the row like a terminal cursor.
+func (r *Renderer) moveInRow(offset int) {
+	start := r.rowStart()
+	offset = max(0, min(offset, r.width()-1))
+	r.col = min(start+offset, maxLineCells)
+	r.wrapPending = false
 }
 
 func parseParams(raw []byte) []int {
@@ -466,6 +554,11 @@ func (r *Renderer) print(value rune) {
 	if r.alt {
 		return
 	}
+	if r.glG1 && r.g1dec || !r.glG1 && r.g0dec {
+		if mapped, ok := decGraphics[value]; ok {
+			value = mapped
+		}
+	}
 	width := 1
 	if value >= 0x80 {
 		width = runewidth.RuneWidth(value)
@@ -475,7 +568,7 @@ func (r *Renderer) print(value rune) {
 		}
 		width = min(width, 2)
 	}
-	if r.cols > 0 && width == 2 && r.col%r.cols == r.cols-1 {
+	if width == 2 && r.col%r.width() == r.width()-1 {
 		// A wide character that does not fit the last column moves to the next row.
 		r.col++
 	}
@@ -496,6 +589,7 @@ func (r *Renderer) print(value rune) {
 		r.line[r.col+1] = textCell{width: 0}
 	}
 	r.col += width
+	r.wrapPending = r.col%r.width() == 0
 }
 
 func (r *Renderer) addMark(mark rune) {
@@ -556,34 +650,49 @@ func (r *Renderer) eraseLine(mode int) {
 	}
 }
 
+// deleteChars removes n cells at the cursor; like a terminal it only shifts the rest of the cursor's screen row.
 func (r *Renderer) deleteChars(n int) {
-	if r.col >= len(r.line) {
+	end := min(len(r.line), r.rowEnd())
+	if r.col >= end {
 		return
 	}
-	r.clearPair(r.col)
-	end := min(r.col+n, len(r.line))
-	r.clearPair(end)
-	r.line = append(r.line[:r.col], r.line[end:]...)
+	n = min(n, end-r.col)
+	// Only a wide character cut in half is blanked; one that starts at the edit point moves with the row.
+	if r.line[r.col].width == 0 {
+		r.clearPair(r.col)
+	}
+	if r.col+n < end && r.line[r.col+n].width == 0 {
+		r.clearPair(r.col + n)
+	}
+	copy(r.line[r.col:end], r.line[r.col+n:end])
+	for c := end - n; c < end; c++ {
+		r.line[c] = textCell{r: ' ', width: 1}
+	}
 }
 
+// insertChars inserts n blanks at the cursor; cells pushed past the end of the cursor's screen row are lost.
 func (r *Renderer) insertChars(n int) {
-	if r.col >= len(r.line) {
+	rowEnd := r.rowEnd()
+	if r.col >= len(r.line) || r.col >= rowEnd {
 		return
 	}
-	n = min(n, maxLineCells-len(r.line))
-	if n <= 0 {
-		return
+	n = min(n, rowEnd-r.col)
+	end := min(rowEnd, min(len(r.line), rowEnd)+n)
+	if r.line[r.col].width == 0 {
+		r.clearPair(r.col)
 	}
-	r.clearPair(r.col)
-	blanks := make([]textCell, n)
-	for i := range blanks {
-		blanks[i] = textCell{r: ' ', width: 1}
+	r.ensure(end)
+	copy(r.line[r.col+n:end], r.line[r.col:end-n])
+	for c := r.col; c < r.col+n; c++ {
+		r.line[c] = textCell{r: ' ', width: 1}
 	}
-	r.line = append(r.line[:r.col], append(blanks, r.line[r.col:]...)...)
+	if last := &r.line[end-1]; last.width == 2 {
+		*last = textCell{r: ' ', width: 1}
+	}
 }
 
 func (r *Renderer) eraseChars(n int) {
-	end := min(r.col+n, len(r.line))
+	end := min(r.col+n, len(r.line), r.rowEnd())
 	if r.col >= end {
 		return
 	}
@@ -613,7 +722,8 @@ func (r *Renderer) verticalMove(col int) {
 		r.line = r.line[:0]
 		r.dirty = false
 	}
-	r.col = min(col, maxLineCells)
+	r.col = max(0, min(col, r.width()-1))
+	r.wrapPending = false
 }
 
 func (r *Renderer) lineBlank() bool {
@@ -629,6 +739,10 @@ func (r *Renderer) finishLine() {
 	if r.err != nil {
 		return
 	}
+	end := len(r.line)
+	for end > 0 && r.line[end-1].r == ' ' && r.line[end-1].width == 1 && len(r.line[end-1].marks) == 0 {
+		end--
+	}
 	if r.opts.Timestamps {
 		ts := r.lineTS
 		if !r.dirty || ts <= 0 {
@@ -641,15 +755,14 @@ func (r *Renderer) finishLine() {
 		} else {
 			r.prefix = append(r.prefix, "????-??-?? ??:??:??"...)
 		}
-		r.prefix = append(r.prefix, "] "...)
+		r.prefix = append(r.prefix, ']')
+		if end > 0 {
+			r.prefix = append(r.prefix, ' ')
+		}
 		if _, err := r.out.Write(r.prefix); err != nil {
 			r.err = err
 			return
 		}
-	}
-	end := len(r.line)
-	for end > 0 && r.line[end-1].r == ' ' && r.line[end-1].width == 1 && len(r.line[end-1].marks) == 0 {
-		end--
 	}
 	for _, cell := range r.line[:end] {
 		if cell.width == 0 {
@@ -674,6 +787,7 @@ func (r *Renderer) finishLine() {
 	r.line = r.line[:0]
 	r.col = 0
 	r.dirty = false
+	r.wrapPending = false
 }
 
 // FixedOffset returns a fixed zone for a UTC offset in minutes.
@@ -688,4 +802,15 @@ func FixedOffset(minutes int) *time.Location {
 		name += ":" + strconv.Itoa(value%60)
 	}
 	return time.FixedZone(name, minutes*60)
+}
+
+// decGraphics maps the DEC special graphics set to Unicode, as the terminal emulator does.
+var decGraphics = map[rune]rune{
+	'`': '◆', 'a': '▒', 'b': '␉', 'c': '␌', 'd': '␍',
+	'e': '␊', 'f': '°', 'g': '±', 'h': '␤', 'i': '␋',
+	'j': '┘', 'k': '┐', 'l': '┌', 'm': '└', 'n': '┼',
+	'o': '⎺', 'p': '⎻', 'q': '─', 'r': '⎼', 's': '⎽',
+	't': '├', 'u': '┤', 'v': '┴', 'w': '┬', 'x': '│',
+	'y': '⩽', 'z': '⩾', '{': 'π', '|': '≠', '}': '£',
+	'~': '·',
 }

@@ -942,7 +942,7 @@ func TestVaultCredentialVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 14 {
+	if len(selected) != 13 {
 		t.Fatalf("selected vault/credential command count = %d, want 13", len(selected))
 	}
 	for name, command := range commands {

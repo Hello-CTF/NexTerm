@@ -3425,6 +3425,7 @@ export type TranscriptExportTextRequest = {
   id: string;
   path: string;
   timestamps?: boolean;
+  timeZone?: string;
   utcOffsetMinutes?: number | null;
 };
 

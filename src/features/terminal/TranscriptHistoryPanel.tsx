@@ -34,6 +34,7 @@ import {
 import { TranscriptReplayView } from "./TranscriptReplayView";
 import { ResizeHandle } from "../../ui/ResizeHandle";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
+import { WEB } from "../../ipc/env";
 import { useTranscriptFocus } from "./transcriptFocus";
 import { t } from "../../i18n";
 
@@ -58,6 +59,18 @@ interface HostOption {
 function hostLabel(host: HostOption): string {
   const suffix = host.deleted ? t("（已删除）") : "";
   return `${host.name}${suffix}`;
+}
+
+// The browser-mode backend runs elsewhere, so timestamps need the viewer's zone; the desktop backend's local zone is the viewer's.
+function viewerTimeZone(): { timeZone?: string; utcOffsetMinutes?: number } {
+  if (!WEB) return {};
+  let timeZone: string | undefined;
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    timeZone = undefined;
+  }
+  return { timeZone, utcOffsetMinutes: -new Date().getTimezoneOffset() };
 }
 
 function exportFileName(summary: TranscriptSummary, extension: string): string {
@@ -446,10 +459,7 @@ export function TranscriptHistoryPanel({
     const path = await pickSavePath(name);
     if (!path) return;
     try {
-      const result = await transcriptApi.exportText(summary.id, path, {
-        timestamps,
-        utcOffsetMinutes: -new Date().getTimezoneOffset(),
-      });
+      const result = await transcriptApi.exportText(summary.id, path, { timestamps, ...viewerTimeZone() });
       const where = await finishSave(path, name);
       if (!where) {
         pushToast("info", t("已取消保存"));

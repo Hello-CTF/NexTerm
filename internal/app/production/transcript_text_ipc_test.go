@@ -75,6 +75,82 @@ func TestTranscriptExportTextRendersOutputOnly(t *testing.T) {
 	}
 }
 
+func newTextExportFixture(t *testing.T, ctx context.Context, chunks []store.TranscriptChunkRow) (*ipc.Dispatcher, string) {
+	t.Helper()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	dispatcher := transcriptDispatcher(t, database, session.NewManager(session.Config{}))
+	id := ids.New()
+	if err := database.TranscriptStart(ctx, store.TranscriptRow{ID: id, SessionID: "s", AssetID: "a", StartedAt: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.TranscriptAppendChunks(ctx, id, chunks); err != nil {
+		t.Fatal(err)
+	}
+	return dispatcher, id
+}
+
+func TestTranscriptExportTextUsesTheViewerTimeZone(t *testing.T) {
+	ctx := context.Background()
+	// 2026-07-01 12:00 UTC is 14:00 in Berlin (summer time), while the January offset sent as fallback would be +01:00.
+	ts := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).UnixMilli()
+	dispatcher, id := newTextExportFixture(t, ctx, []store.TranscriptChunkRow{{Seq: 0, TabID: "t", TS: ts, Data: []byte("hi\r\n")}})
+	export := func(zone string) (string, ipc.Response) {
+		target := filepath.Join(t.TempDir(), "zone.txt")
+		response := dispatchStoreTest(dispatcher, "transcript_export_text",
+			`{"id":"`+id+`","path":`+castJSONString(t, target)+`,"timestamps":true,"timeZone":`+castJSONString(t, zone)+`,"utcOffsetMinutes":60}`)
+		raw, _ := os.ReadFile(target)
+		return string(raw), response
+	}
+	text, response := export("Europe/Berlin")
+	requireStoreTestResponse(t, response, &transcriptExportTextResult{})
+	if text != "[2026-07-01 14:00:00] hi\n" {
+		t.Fatalf("Berlin text = %q", text)
+	}
+	text, response = export("Not/AZone")
+	requireStoreTestResponse(t, response, &transcriptExportTextResult{})
+	if text != "[2026-07-01 13:00:00] hi\n" {
+		t.Fatalf("unknown zone must fall back to the offset: %q", text)
+	}
+}
+
+func TestTranscriptExportTextStopsInflatedOutput(t *testing.T) {
+	ctx := context.Background()
+	// Each 9-byte chunk moves the cursor to the end of a 1024-column row and prints, roughly 114 output bytes per input byte.
+	payload := []byte(strings.Repeat("\x1b[1024Gx\n", 20_000))
+	chunks := []store.TranscriptChunkRow{{Seq: 0, TabID: "t", TS: 1000, Kind: store.TranscriptChunkKindResize, Data: []byte(`{"cols":1024,"rows":24}`)}}
+	for seq := int64(1); seq <= 10; seq++ {
+		chunks = append(chunks, store.TranscriptChunkRow{Seq: seq, TabID: "t", TS: 1000 + seq, Data: payload})
+	}
+	dispatcher, id := newTextExportFixture(t, ctx, chunks)
+	target := filepath.Join(t.TempDir(), "inflated.txt")
+	response := dispatchStoreTest(dispatcher, "transcript_export_text", `{"id":"`+id+`","path":`+castJSONString(t, target)+`}`)
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam {
+		t.Fatalf("inflated export must fail with a bad param: %+v", response)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("a rejected export must not leave a file")
+	}
+}
+
+func TestTranscriptExportTextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dispatcher, id := newTextExportFixture(t, ctx, []store.TranscriptChunkRow{{Seq: 0, TabID: "t", TS: 1001, Data: []byte("x\n")}})
+	cancel()
+	target := filepath.Join(t.TempDir(), "cancelled.txt")
+	response := dispatcher.Dispatch(ctx, ipc.Request{Command: "transcript_export_text",
+		Args: json.RawMessage(`{"id":"` + id + `","path":` + castJSONString(t, target) + `}`)}, ipc.Environment{})
+	if response.OK {
+		t.Fatal("a cancelled export must fail")
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("a cancelled export must not leave a file")
+	}
+}
+
 func TestTranscriptExportTextPagesThroughLargeTranscripts(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)

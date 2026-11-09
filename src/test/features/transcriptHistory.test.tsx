@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   ask: vi.fn(),
   toast: vi.fn(),
   copyText: vi.fn(),
+  web: true,
   updateTab: vi.fn(),
   uiState: {
     pushToast: null as unknown,
@@ -60,6 +61,12 @@ vi.mock("../../ui/dialogs", () => ({
   ask: mocks.ask,
   pickSavePath: mocks.pickSavePath,
   finishSave: mocks.finishSave,
+}));
+vi.mock("../../ipc/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/env")>()),
+  get WEB() {
+    return mocks.web;
+  },
 }));
 vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
 vi.mock("../../app/store", () => {
@@ -147,6 +154,7 @@ beforeEach(() => {
   mocks.transcriptSearch.mockResolvedValue([]);
   mocks.ask.mockResolvedValue(true);
   mocks.copyText.mockResolvedValue(undefined);
+  mocks.web = true;
   mocks.uiState.workspaces = [];
   mocks.uiState.activeWorkspaceId = null;
 });
@@ -856,6 +864,7 @@ describe("TranscriptHistoryPanel text export", () => {
     expect(name).not.toMatch(/[\\/:*?"<>|]/);
     expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", {
       timestamps: false,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       utcOffsetMinutes: -new Date().getTimezoneOffset(),
     });
     expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/out.txt", name);
@@ -873,6 +882,19 @@ describe("TranscriptHistoryPanel text export", () => {
     click(menuItem("纯文本，每行带时间戳")!);
     await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
     expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", expect.objectContaining({ timestamps: true }));
+  });
+
+  it("leaves the time zone to the desktop backend", async () => {
+    mocks.web = false;
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.txt");
+    mocks.transcriptExportText.mockResolvedValue({ path: "/tmp/out.txt", bytes: 10, lines: 2, fullScreenSegments: 0 });
+    mocks.finishSave.mockResolvedValue("/tmp/out.txt");
+    await openRecord();
+    click(exportButton()!);
+    await flush();
+    click(menuItem("纯文本，每行带时间戳")!);
+    await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
+    expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", { timestamps: true });
     expect(mocks.toast).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("全屏程序"));
   });
 
