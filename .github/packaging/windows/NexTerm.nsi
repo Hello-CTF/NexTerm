@@ -116,7 +116,10 @@ Section "NexTerm" SEC01
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\NexTerm" "NoRepair" 1
   CreateDirectory "$SMPROGRAMS\NexTerm"
   CreateShortcut "$SMPROGRAMS\NexTerm\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
-  CreateShortcut "$DESKTOP\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
+  ; Silent installs are in-app updates; keep a desktop shortcut the user deleted.
+  ${IfNot} ${Silent}
+    CreateShortcut "$DESKTOP\NexTerm.lnk" "$INSTDIR\${NEXTERM_EXE_NAME}"
+  ${EndIf}
   WriteRegStr HKCU "Software\Classes\nexterm" "" "URL:NexTerm protocol"
   WriteRegStr HKCU "Software\Classes\nexterm" "URL Protocol" ""
   WriteRegStr HKCU "Software\Classes\nexterm\DefaultIcon" "" "$INSTDIR\${NEXTERM_EXE_NAME},0"
