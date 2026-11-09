@@ -86,6 +86,7 @@ var contractScopes = []scopeSpec{
 	{name: "transcript", commands: []string{
 		"transcript_delete",
 		"transcript_export_cast",
+		"transcript_export_text",
 		"transcript_hosts",
 		"transcript_list",
 		"transcript_purge",

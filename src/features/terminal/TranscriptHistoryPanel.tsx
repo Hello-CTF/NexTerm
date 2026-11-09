@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import {
   assetApi,
   transcriptApi,
@@ -33,6 +33,7 @@ import {
 } from "./transcriptText";
 import { TranscriptReplayView } from "./TranscriptReplayView";
 import { ResizeHandle } from "../../ui/ResizeHandle";
+import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { useTranscriptFocus } from "./transcriptFocus";
 import { t } from "../../i18n";
 
@@ -57,6 +58,11 @@ interface HostOption {
 function hostLabel(host: HostOption): string {
   const suffix = host.deleted ? t("（已删除）") : "";
   return `${host.name}${suffix}`;
+}
+
+function exportFileName(summary: TranscriptSummary, extension: string): string {
+  const day = new Date(summary.startedAt).toISOString().slice(0, 10);
+  return `${summary.assetName}-${day}.${extension}`.replace(/[\\/:*?"<>|]/g, "_");
 }
 
 function badgeClass(summary: TranscriptSummary): string {
@@ -113,6 +119,7 @@ export function TranscriptHistoryPanel({
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [syncToggleError, setSyncToggleError] = useState<string | null>(null);
+  const [exportMenu, setExportMenu] = useState<ContextMenuState | null>(null);
   // Lists every starred transcript of the host instead of the most recent ones.
   const [starredOnly, setStarredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"text" | "replay">("text");
@@ -420,8 +427,7 @@ export function TranscriptHistoryPanel({
 
   const exportCast = async (summary: TranscriptSummary) => {
     if (summary.contentOmitted) return;
-    const day = new Date(summary.startedAt).toISOString().slice(0, 10);
-    const name = `${summary.assetName}-${day}.cast`.replace(/[\\/:*?"<>|]/g, "_");
+    const name = exportFileName(summary, "cast");
     const path = await pickSavePath(name);
     if (!path) return;
     try {
@@ -432,6 +438,42 @@ export function TranscriptHistoryPanel({
     } catch (error) {
       pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
     }
+  };
+
+  const exportText = async (summary: TranscriptSummary, timestamps: boolean) => {
+    if (summary.contentOmitted) return;
+    const name = exportFileName(summary, "txt");
+    const path = await pickSavePath(name);
+    if (!path) return;
+    try {
+      const result = await transcriptApi.exportText(summary.id, path, {
+        timestamps,
+        utcOffsetMinutes: -new Date().getTimezoneOffset(),
+      });
+      const where = await finishSave(path, name);
+      if (!where) {
+        pushToast("info", t("已取消保存"));
+        return;
+      }
+      const omitted = result.fullScreenSegments > 0
+        ? t("。{count} 段全屏程序（如 vim、top）的画面不在文本中", { count: result.fullScreenSegments })
+        : "";
+      pushToast("success", t("已导出到 {where}{omitted}", { where, omitted }));
+    } catch (error) {
+      pushToast("error", t("导出失败：{value}。请更换保存位置后重试", { value: describeError(error) }));
+    }
+  };
+
+  const openExportTextMenu = (event: ReactMouseEvent<HTMLElement>, summary: TranscriptSummary) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    setExportMenu({
+      x: rect.left,
+      y: rect.bottom,
+      items: [
+        { kind: "item", label: t("纯文本"), onSelect: () => void exportText(summary, false) },
+        { kind: "item", label: t("纯文本，每行带时间戳"), onSelect: () => void exportText(summary, true) },
+      ],
+    });
   };
 
   const toggleTranscriptSync = async (summary: TranscriptSummary) => {
@@ -821,6 +863,20 @@ export function TranscriptHistoryPanel({
             >
               {t("导出 asciicast")}
             </button>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-sm pointer-coarse:min-h-11"
+              aria-label={t("导出文本")}
+              aria-haspopup="menu"
+              disabled={!selected || selected.contentOmitted}
+              title={
+                selected?.contentOmitted
+                  ? t("该记录只同步了元数据，没有输出内容，无法导出")
+                  : t("按终端里看到的样子导出纯文本：去掉颜色和控制序列，不含键盘输入和全屏程序画面")
+              }
+              onClick={(event) => selected && openExportTextMenu(event, selected)}
+            >
+              {t("导出文本")}
+            </button>
             <div className="flex overflow-hidden rounded border border-neutral-700/60" role="tablist" aria-label={t("记录视图")}>
               {(["text", "replay"] as const).map((mode) => (
                 <button
@@ -946,6 +1002,7 @@ export function TranscriptHistoryPanel({
           </div>
         </div>
       </div>
+      <ContextMenu state={exportMenu} onClose={() => setExportMenu(null)} />
     </div>
   );
 }

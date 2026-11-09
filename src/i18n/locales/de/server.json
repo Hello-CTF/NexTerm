@@ -1826,6 +1826,7 @@
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动": "Die alte Komponente wurde beendet (die darin enthaltenen Sitzungen wurden beendet), aber die neue Komponente für persistente Terminals konnte nicht gestartet werden.",
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复": "Die alte Komponente wurde beendet (die darin enthaltenen Sitzungen wurden beendet), aber die neue Komponente für persistente Terminals konnte nicht gestartet werden. Die alte Komponente wurde neu gestartet; die ursprünglichen Sitzungen werden nicht wiederhergestellt.",
   "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行": "Die alte Komponente hat nicht auf die Beendigungsanfrage reagiert und wurde zwangsweise beendet. Einige Hintergrundprozesse laufen möglicherweise noch.",
+  "时区偏移超出范围": "Zeitzonenversatz liegt außerhalb des gültigen Bereichs",
   "显式 shell 已设置: ": "Explizite Shell festgelegt: ",
   "显式资产不匹配 tags 过滤: ": "Explizites Asset entspricht nicht dem tags-Filter: ",
   "显示名长度需在 0-%d 之间": "Die Länge des Anzeigenamens muss zwischen 0 und %d liegen.",

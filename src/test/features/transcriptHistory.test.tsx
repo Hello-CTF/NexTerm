@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   transcriptRemove: vi.fn(),
   transcriptSyncOptIn: vi.fn(),
   transcriptExportCast: vi.fn(),
+  transcriptExportText: vi.fn(),
   transcriptStar: vi.fn(),
   pickSavePath: vi.fn(),
   finishSave: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock("../../ipc/commands", () => ({
     remove: mocks.transcriptRemove,
     syncOptIn: mocks.transcriptSyncOptIn,
     exportCast: mocks.transcriptExportCast,
+    exportText: mocks.transcriptExportText,
     star: mocks.transcriptStar,
   },
   sessionApi: {},
@@ -821,6 +823,81 @@ describe("TranscriptHistoryPanel asciicast export", () => {
     click(exportButton()!);
     await flush();
     expect(mocks.pickSavePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("TranscriptHistoryPanel text export", () => {
+  const exportButton = () =>
+    mounted!.container.querySelector<HTMLButtonElement>('button[aria-label="导出文本"]');
+  const menuItem = (label: string) =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')).find(
+      (item) => item.textContent === label,
+    );
+
+  async function openRecord(overrides: Record<string, unknown> = {}) {
+    mocks.transcriptList.mockResolvedValue([summary(overrides)]);
+    mounted = mount(createElement(TranscriptHistoryPanel, { assetId: ASSET.id }));
+    await flushUntil(() => (mounted!.container.textContent ?? "").includes("已结束"));
+    click(mounted.container.querySelector("tbody tr")!);
+    await flush();
+  }
+
+  it("exports plain text without timestamps and reports omitted full-screen output", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.txt");
+    mocks.transcriptExportText.mockResolvedValue({ path: "/tmp/out.txt", bytes: 10, lines: 2, fullScreenSegments: 2 });
+    mocks.finishSave.mockResolvedValue("/tmp/out.txt");
+    await openRecord();
+    click(exportButton()!);
+    await flush();
+    click(menuItem("纯文本")!);
+    await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
+    const name = mocks.pickSavePath.mock.calls[0][0] as string;
+    expect(name).toMatch(/\.txt$/);
+    expect(name).not.toMatch(/[\\/:*?"<>|]/);
+    expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", {
+      timestamps: false,
+      utcOffsetMinutes: -new Date().getTimezoneOffset(),
+    });
+    expect(mocks.finishSave).toHaveBeenCalledWith("/tmp/out.txt", name);
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("/tmp/out.txt"));
+    expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("2 段全屏程序"));
+  });
+
+  it("asks for per-line timestamps from the menu", async () => {
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.txt");
+    mocks.transcriptExportText.mockResolvedValue({ path: "/tmp/out.txt", bytes: 10, lines: 2, fullScreenSegments: 0 });
+    mocks.finishSave.mockResolvedValue("/tmp/out.txt");
+    await openRecord();
+    click(exportButton()!);
+    await flush();
+    click(menuItem("纯文本，每行带时间戳")!);
+    await waitFor(() => expect(mocks.finishSave).toHaveBeenCalled());
+    expect(mocks.transcriptExportText).toHaveBeenCalledWith(summary().id, "/tmp/out.txt", expect.objectContaining({ timestamps: true }));
+    expect(mocks.toast).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("全屏程序"));
+  });
+
+  it("does not export when the save dialog is cancelled and reports failures", async () => {
+    mocks.pickSavePath.mockResolvedValueOnce(null);
+    await openRecord();
+    click(exportButton()!);
+    await flush();
+    click(menuItem("纯文本")!);
+    await flush();
+    expect(mocks.transcriptExportText).not.toHaveBeenCalled();
+
+    mocks.pickSavePath.mockResolvedValue("/tmp/out.txt");
+    mocks.transcriptExportText.mockRejectedValue(new Error("disk full"));
+    click(exportButton()!);
+    await flush();
+    click(menuItem("纯文本")!);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("disk full")));
+    expect(mocks.finishSave).not.toHaveBeenCalled();
+  });
+
+  it("disables the button for a record without content", async () => {
+    await openRecord({ contentOmitted: true });
+    expect(exportButton()!.disabled).toBe(true);
+    expect(exportButton()!.title).toContain("没有输出内容");
   });
 });
 

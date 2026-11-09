@@ -1826,6 +1826,7 @@
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动": "The legacy component has exited (its sessions were terminated), but the new persistent terminal component failed to start",
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复": "The legacy component has exited (its sessions were terminated), but the new persistent terminal component failed to start. The legacy component was restarted; the original sessions will not be restored.",
   "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行": "The legacy component did not respond to the exit request and was forcibly terminated. Some background processes may still be running.",
+  "时区偏移超出范围": "Time zone offset is out of range",
   "显式 shell 已设置: ": "Explicit shell is set: ",
   "显式资产不匹配 tags 过滤: ": "Explicit asset does not match the tags filter: ",
   "显示名长度需在 0-%d 之间": "The display name must be 0-%d characters long",

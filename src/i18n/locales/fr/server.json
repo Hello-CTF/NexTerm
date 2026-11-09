@@ -1826,6 +1826,7 @@
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动": "L'ancien composant s'est arrêté (ses sessions ont été terminées), mais le nouveau composant de terminal persistant n'a pas pu démarrer",
   "旧版组件已结束（其中的会话已终止），但新版持久终端组件未能启动；已重新启动旧版组件，原会话不会恢复": "L'ancien composant s'est arrêté (ses sessions ont été terminées), mais le nouveau composant de terminal persistant n'a pas pu démarrer ; l'ancien composant a été relancé, les sessions d'origine ne seront pas restaurées",
   "旧版组件未响应退出请求，已被强制结束，部分后台进程可能仍在运行": "L'ancien composant n'a pas répondu à la demande d'arrêt et a été arrêté de force ; certains processus en arrière-plan peuvent encore s'exécuter",
+  "时区偏移超出范围": "Le décalage horaire est hors limites",
   "显式 shell 已设置: ": "Shell explicite défini : ",
   "显式资产不匹配 tags 过滤: ": "La ressource explicite ne correspond pas au filtre tags : ",
   "显示名长度需在 0-%d 之间": "Le nom d'affichage doit comporter entre 0 et %d caractères",

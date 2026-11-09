@@ -3421,6 +3421,20 @@ export type TranscriptExportCastResult = {
   timingEstimated: boolean;
 };
 
+export type TranscriptExportTextRequest = {
+  id: string;
+  path: string;
+  timestamps?: boolean;
+  utcOffsetMinutes?: number | null;
+};
+
+export type TranscriptExportTextResult = {
+  path: string;
+  bytes: number;
+  lines: number;
+  fullScreenSegments: number;
+};
+
 export type TranscriptHostDTO = {
   assetId: string;
   assetName: string;

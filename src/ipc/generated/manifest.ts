@@ -2925,6 +2925,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastRequest", ts: "TranscriptExportCastRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastResult", ts: "TranscriptExportCastResult" },
     },
+    "transcript_export_text": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportTextRequest", ts: "TranscriptExportTextRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportTextResult", ts: "TranscriptExportTextResult" },
+    },
     "transcript_hosts": {
       scope: "transcript",
       nested: false,
@@ -4662,6 +4670,10 @@ export interface IPCCommandTypeMap {
   "transcript_export_cast": {
     input: contractTypes.TranscriptExportCastRequest;
     output: contractTypes.TranscriptExportCastResult;
+  };
+  "transcript_export_text": {
+    input: contractTypes.TranscriptExportTextRequest;
+    output: contractTypes.TranscriptExportTextResult;
   };
   "transcript_hosts": {
     input: Record<string, never>;
