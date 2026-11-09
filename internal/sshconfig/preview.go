@@ -174,7 +174,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 	inspected := 0
 	for _, path := range paths {
 		if inspected >= limits.MaxKeys {
-			truncate(preview, "key count exceeds %d", limits.MaxKeys)
+			truncate(preview, "密钥数量超过上限 %d", limits.MaxKeys)
 			break
 		}
 		inspected++
@@ -183,7 +183,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 				Code:    "key-unreadable",
 				Source:  path,
-				Message: "identity file cannot be inspected",
+				Message: "IdentityFile 无法检查",
 			})
 			continue
 		}

@@ -51,7 +51,7 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 	fingerprintByPK := map[string]string{}
 	for _, rec := range keyRecords {
 		if len(preview.Keys) >= limits.MaxKeys {
-			truncate(preview, "key count exceeds %d", limits.MaxKeys)
+			truncate(preview, "密钥数量超过上限 %d", limits.MaxKeys)
 			break
 		}
 		fingerprint, keyType, err := FingerprintPrivateKey([]byte(rec.PrivateKey))
@@ -59,7 +59,7 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 				Code:    "termius-key-unparsed",
 				Source:  "termius",
-				Message: "a Termius key could not be parsed and is excluded from the preview",
+				Message: "一个 Termius 密钥无法解析，未列入预览",
 			})
 			continue
 		}
@@ -102,7 +102,7 @@ func buildTermiusPreview(hostRecords []termiusdb.HostRecord, keyRecords []termiu
 	batchEndpoints := map[endpoint]string{}
 	for _, rec := range hostRecords {
 		if len(preview.Hosts) >= limits.MaxHosts {
-			truncate(preview, "host count exceeds %d", limits.MaxHosts)
+			truncate(preview, "主机数量超过上限 %d", limits.MaxHosts)
 			break
 		}
 		alias := ""
