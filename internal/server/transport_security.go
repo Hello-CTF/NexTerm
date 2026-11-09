@@ -13,8 +13,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/realip"
 )
 
-var defaultAllowedOrigins = []string{"localhost:*", "127.0.0.1:*"}
-
 func (s *Server) transportGuard(next http.Handler) http.Handler {
 	hostGuard := s.options.Auth == AuthLoopback && core.LoopbackListen(s.options.Listen)
 	resolver := s.realIP

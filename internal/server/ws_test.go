@@ -260,7 +260,9 @@ func TestWebSocketChannelPendingReplayAndFrameTypes(t *testing.T) {
 }
 
 func TestWebSocketEventsEnvelopeAndUnsubscribe(t *testing.T) {
-	server, httpServer := newTestHTTP(t, testConfig(t, false))
+	config := testConfig(t, false)
+	config.Options.AllowedOrigins = []string{"localhost:1420"}
+	server, httpServer := newTestHTTP(t, config)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	connection, _, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/events", &websocket.DialOptions{

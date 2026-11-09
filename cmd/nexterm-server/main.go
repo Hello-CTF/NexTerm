@@ -67,9 +67,9 @@ func main() {
 // which feeds both transportGuard and the WebSocket OriginPatterns, so one
 // setting takes effect on both paths.
 //
-// When unset it returns nil so the Server keeps the upstream localhost default
-// (fallback happens only when `allowedOrigins == nil`; returning an empty
-// slice would override the default).
+// When unset only same-origin requests are admitted. A browser frontend served
+// from another origin, such as the Vite dev server, must be listed explicitly
+// (NEXTERM_ALLOWED_ORIGINS=http://localhost:1420).
 func allowedOrigins() []string {
 	var origins []string
 	for _, item := range strings.Split(os.Getenv("NEXTERM_ALLOWED_ORIGINS"), ",") {

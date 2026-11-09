@@ -1066,6 +1066,7 @@ func TestAccountHTTPCORSDevFrontend(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	fixture.initSuperadmin(t, "root", "password-o1")
 	const devOrigin = "http://localhost:1420"
+	fixture.server.options.AllowedOrigins = []string{devOrigin}
 
 	preflight, err := http.NewRequest(http.MethodOptions, fixture.http.URL+"/admin/settings", nil)
 	if err != nil {

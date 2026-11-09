@@ -281,11 +281,9 @@ func New(config Config) (*Server, error) {
 			return config.Vault.Status(), nil
 		}
 	}
-	allowedOrigins := config.Options.AllowedOrigins
-	if allowedOrigins == nil {
-		allowedOrigins = defaultAllowedOrigins
-	}
-	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
+	// Only same-origin requests are admitted unless origins are listed: a
+	// credentialed cross-origin default would let any local page drive the API.
+	config.Options.AllowedOrigins = append([]string(nil), config.Options.AllowedOrigins...)
 
 	s := &Server{
 		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs, config.Options.TrustForwardedFor), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,

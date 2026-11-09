@@ -268,6 +268,13 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+Browser requests are accepted only when their `Origin` matches the `Host`
+the server receives. A proxy that rewrites `Host` to the upstream address, or
+a frontend served from another origin, needs `NEXTERM_ALLOWED_ORIGINS` set to
+the public origins (comma separated, for example
+`NEXTERM_ALLOWED_ORIGINS=https://nexterm.example`). Listed origins receive
+credentialed CORS responses, so list only origins you control.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
