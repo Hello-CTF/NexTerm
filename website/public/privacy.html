@@ -62,7 +62,7 @@
   </ul>
 
   <h2>3. 生物识别</h2>
-  <p>Face ID / 指纹仅用于在本机解锁凭据库，验证结果不会离开设备，我们也不会收集任何生物特征数据。</p>
+  <p>生物识别解锁仅在移动端（Android、iOS、iPadOS）提供：Face ID、Touch ID 或指纹等系统生物识别仅用于在本机解锁凭据库，验证由系统完成，结果不会离开设备，我们也不会收集任何生物特征数据。桌面端和浏览器模式不提供生物识别解锁。</p>
 
   <h2>4. AI 助手功能</h2>
   <p>AI 功能使用你配置的 OpenAI 兼容接口，可以是本地模型或第三方端点。请求由运行 AI 功能的 NexTerm 实例发送：桌面端由本机发送，浏览器模式由你部署的服务端发送。发送给模型的对话、终端或文件内容受该端点的隐私规则约束；AI 对话和运行记录也会保存在相应 NexTerm 实例的数据存储中。若你启用可选的 AI 信息脱敏，应用会在你主动下载时从 Hugging Face 获取本地检测模型，该请求由 Hugging Face 按其隐私政策处理；检测本身在本地运行，模型权重不随应用分发。</p>
@@ -102,7 +102,7 @@
     </ul>
 
     <h2>3. Biometrics</h2>
-    <p>Face ID / Touch ID is used solely to unlock the local credential vault. Biometric data never leaves your device, and we collect none.</p>
+    <p>Biometric unlock is available only on mobile (Android, iOS, and iPadOS). System biometrics such as Face ID, Touch ID, or fingerprint are used solely to unlock the local credential vault; the operating system performs the check, the result never leaves your device, and we collect no biometric data. The desktop app and browser mode do not offer biometric unlock.</p>
 
     <h2>4. AI Assistant</h2>
     <p>AI features use an OpenAI-compatible endpoint you configure, whether a local model or a third-party endpoint. Requests are sent by the NexTerm instance running AI: your device in desktop mode, or your deployed server in browser mode. Conversations, terminal output, and file content sent to a model are subject to that endpoint's privacy rules. AI conversations and run records are also stored by the corresponding NexTerm instance. If you use the optional AI privacy guard, the app downloads its local detection model from Hugging Face when you choose to download it; that request is handled under Hugging Face's privacy policy. Detection itself runs locally, and model weights are not bundled with the app.</p>
