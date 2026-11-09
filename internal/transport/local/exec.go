@@ -30,9 +30,10 @@ func (t *Transport) OpenExec(ctx context.Context, command string, options base.E
 	} else {
 		opCtx, cancel = context.WithCancel(ctx)
 	}
-	cmd := exec.Command(t.shell, shellArguments(t.loginShell, command)...)
+	shell, args := commandInvocation(t.shell, t.loginShell, command)
+	cmd := exec.Command(shell, args...)
 	cmd.Dir = t.cwd
-	cmd.Env = environmentFor(t.shell, t.env, false, "")
+	cmd.Env = environmentFor(shell, t.env, false, "")
 	channel, err := openExecChannel(opCtx, cancel, cmd, t.channelID("exec"), t.generation)
 	if err != nil {
 		return nil, err

@@ -149,7 +149,8 @@ func dockerFallbackShell(asset session.Asset) docker.Shell {
 }
 
 func dockerFallbackShellForGOOS(asset session.Asset, goos string) docker.Shell {
-	if asset.Kind == session.KindWinRM {
+	// Local exec on Windows always runs PowerShell, whatever the interactive shell is.
+	if asset.Kind == session.KindWinRM || asset.Kind == session.KindLocal && goos == "windows" {
 		return docker.ShellPowerShell
 	}
 	var options struct {
@@ -159,9 +160,6 @@ func dockerFallbackShellForGOOS(asset session.Asset, goos string) docker.Shell {
 		_ = json.Unmarshal(raw, &options)
 	}
 	if options.Shell == "" {
-		if asset.Kind == session.KindLocal && goos == "windows" {
-			return docker.ShellPowerShell
-		}
 		return docker.ShellPOSIX
 	}
 	if windowsShell(options.Shell) {
