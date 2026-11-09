@@ -162,6 +162,7 @@ const KIND_LABEL: Record<string, string> = {
   redis: "Redis",
   rdp: "RDP",
   vnc: "VNC",
+  telnet: "Telnet",
 };
 
 
@@ -2611,7 +2612,7 @@ export function AssetEditor({
   const keyAuth = authKind === "key" && kindFields.authMethod;
   const usesCred = kindFields.password
     ? !(kindFields.remote && remoteOptions.promptPassword)
-    : authKind === "password" || authKind === "keyboard-interactive";
+    : kindFields.authMethod && (authKind === "password" || authKind === "keyboard-interactive");
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
@@ -2863,6 +2864,10 @@ export function AssetEditor({
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
             : kindBaseOptions();
+      if (kindFields.terminalEncoding && !kindFields.sshAdvanced) {
+        if (encoding !== "utf-8") baseOptions.encoding = encoding;
+        else delete baseOptions.encoding;
+      }
       if (kindFields.via && viaAssetId) baseOptions.viaAssetId = viaAssetId;
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
@@ -2881,7 +2886,8 @@ export function AssetEditor({
       // 不使用密码 is an explicit stored choice that no group default overrides.
       // A host switched from SSH keeps its key or agent choice in state; these protocols authenticate only by password.
       const ownAuthKind = passwordKind && authKind !== "" ? "password" : authKind;
-      const savedAuthKind = groupKind === "local"
+      // A kind that authenticates inside its terminal (local, telnet) stores no authentication of its own.
+      const savedAuthKind = groupKind === "local" || (!kindFields.authMethod && !kindFields.password && !kindFields.username)
         ? "none"
         : passwordKind && credChoice === "none"
           ? "none"
@@ -3318,6 +3324,25 @@ export function AssetEditor({
                 )}
                 <span className="nx-hint ml-auto">{tr("只探测端口，不带凭据")}</span>
               </div>
+
+              {kindFields.plaintext && (
+                <div className="mb-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300" role="note">
+                  {tr("Telnet 不加密，用户名、密码和全部终端内容都以明文传输，只应在可信网络中使用；设备支持时请改用 SSH。")}
+                </div>
+              )}
+
+              {kindFields.terminalEncoding && !kindFields.sshAdvanced && (
+                <div className="nx-form-row">
+                  <label className="nx-label">{tr("终端编码")}</label>
+                  <Select
+                    ariaLabel={tr("终端编码")}
+                    value={encoding}
+                    onChange={setEncoding}
+                    options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
+                  />
+                  <div className="nx-hint mt-1.5">{tr("↳ 用户名和密码在终端里按设备提示输入。编码连接后自动应用，也可在终端「更多终端操作」中临时切换。")}</div>
+                </div>
+              )}
 
               {kindFields.username && (
               <div className="nx-form-row">

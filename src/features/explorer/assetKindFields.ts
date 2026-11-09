@@ -13,7 +13,8 @@ export type AssetFormKind =
   | "postgres"
   | "redis"
   | "rdp"
-  | "vnc";
+  | "vnc"
+  | "telnet";
 
 export type ViaTarget = "ssh" | "ssh-or-device";
 
@@ -34,6 +35,10 @@ export interface AssetKindFields {
   remote: "rdp" | "vnc" | null;
   // The optional Wake-on-LAN MAC and broadcast options.
   wake: boolean;
+  // The terminal encoding select outside the SSH advanced section, for terminal kinds without that section.
+  terminalEncoding: boolean;
+  // The protocol sends everything, passwords included, as plain text; the form warns about it.
+  plaintext: boolean;
 }
 
 const NONE: AssetKindFields = {
@@ -46,6 +51,8 @@ const NONE: AssetKindFields = {
   sshAdvanced: false,
   remote: null,
   wake: false,
+  terminalEncoding: false,
+  plaintext: false,
 };
 
 const DATABASE: AssetKindFields = { ...NONE, authMethod: false, password: true, via: "ssh" };
@@ -62,6 +69,8 @@ export const ASSET_KIND_FIELDS: Record<AssetFormKind, AssetKindFields> = {
   redis: { ...DATABASE, defaultPort: 6379 },
   rdp: { ...DATABASE, defaultPort: 3389, via: "ssh-or-device", remote: "rdp", wake: true },
   vnc: { ...DATABASE, defaultPort: 5900, username: false, via: "ssh-or-device", remote: "vnc", wake: true },
+  // Login happens inside the terminal: the device prompts for its own username and password.
+  telnet: { ...NONE, defaultPort: 23, username: false, authMethod: false, terminalEncoding: true, plaintext: true },
 };
 
 export function assetKindFields(kind: string): AssetKindFields {

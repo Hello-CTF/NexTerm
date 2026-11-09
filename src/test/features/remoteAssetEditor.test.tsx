@@ -362,3 +362,58 @@ describe("AssetEditor wake-on-LAN options", () => {
     expect(mounted!.container.querySelector('input[aria-label="唤醒 MAC 地址"]')).toBeNull();
   });
 });
+
+describe("AssetEditor telnet", () => {
+  it("defaults to port 23, warns that the protocol is unencrypted and asks for no credentials", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    expect((mounted!.container.querySelector('input[type="number"]') as HTMLInputElement).value).toBe("23");
+    expect(mounted!.container.querySelector('[role="note"]')?.textContent).toContain("Telnet 不加密");
+    const labels = [...mounted!.container.querySelectorAll("label.nx-label")].map((label) => label.textContent?.trim());
+    expect(labels).not.toContain("用户名");
+    expect(labels).not.toContain("密码");
+    expect(mounted!.container.querySelector('button[aria-label="认证方式"]')).toBeNull();
+    expect(mounted!.container.querySelector('button[aria-label="密码"]')).toBeNull();
+    expect(mounted!.container.textContent).not.toContain("高级选项");
+    expect(mounted!.container.querySelector('button[aria-label="终端编码"]')).not.toBeNull();
+  });
+
+  it("saves the host, port and encoding without credentials", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    fillRequiredFields("core-switch");
+    chooseSelectOption(mounted!.container, "终端编码", "gbk");
+    await save();
+    expect(createdPayload()).toMatchObject({
+      kind: "telnet",
+      host: "db.internal",
+      port: 23,
+      username: "",
+      authKind: "none",
+      credId: null,
+      options: { encoding: "gbk" },
+    });
+  });
+
+  it("drops the SSH-only options of a host switched to Telnet and keeps its encoding", async () => {
+    mountEditor({ ...sshAsset("sw-1", "edge-switch"), options: { startupCommand: "top", encoding: "big5" } });
+    await flush();
+    chooseKind("Telnet");
+    await flush();
+    await save();
+    const payload = updatedPayload();
+    expect(payload).toMatchObject({ kind: "telnet", port: 23, authKind: "none", credId: null });
+    expect(payload.options).toEqual({ encoding: "big5" });
+  });
+
+  it("removes the stored encoding when it is set back to UTF-8", async () => {
+    mountEditor(makeAsset({ id: "sw-2", kind: "telnet", port: 2323, username: "", authKind: "none", options: { encoding: "gbk" } }));
+    await flush();
+    chooseSelectOption(mounted!.container, "终端编码", "utf-8");
+    await save();
+    expect(updatedPayload()).toMatchObject({ kind: "telnet", port: 2323, options: {} });
+    expect((updatedPayload().options as Record<string, unknown>).encoding).toBeUndefined();
+  });
+});
