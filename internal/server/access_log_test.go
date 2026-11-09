@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -118,11 +119,16 @@ func TestAccessLogRecordsStatusAndOmitsQueryAndBody(t *testing.T) {
 
 func TestAccessLogPathMasksCredentialSegments(t *testing.T) {
 	for path, want := range map[string]string{
-		"/share/public/abc":    "/share/public/***",
-		"/share/preview/abc/x": "/share/preview/***/x",
-		"/share/previews":      "/share/previews",
-		"/share/preview/":      "/share/preview/",
-		"/rpc":                 "/rpc",
+		"/share/public/abc":        "/share/public/***",
+		"/share/preview/abc/x":     "/share/preview/***/x",
+		"/share/previews":          "/share/previews",
+		"/share/preview/":          "/share/preview/",
+		"/rpc":                     "/rpc",
+		"//share/preview/abc":      "/share/preview/***",
+		"/share/preview//abc":      "/share/preview/***",
+		"/share/./public/abc/":     "/share/public/***",
+		"/x/../share/public/a":     "/share/public/***",
+		"/static/share/public/abc": "/static/share/public/***",
 	} {
 		if got := accessLogPath(path); got != want {
 			t.Errorf("accessLogPath(%q) = %q, want %q", path, got, want)
@@ -220,5 +226,29 @@ func TestServerAccessLogUsesTrustedProxyClientIP(t *testing.T) {
 	record := sink.next(t)
 	if record["msg"] != "http request" || record["path"] != "/healthz" || record["client_ip"] != "198.51.100.4" || record["status"] != float64(response.StatusCode) {
 		t.Fatalf("record = %v", record)
+	}
+}
+
+func TestAccessLogRecordsPanickingHandlerAndRepanics(t *testing.T) {
+	for _, value := range []any{"handler exploded", http.ErrAbortHandler} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			sink := newAccessLogSink()
+			logger := slog.New(slog.NewJSONHandler(sink, nil))
+			handler := withAccessLog(logger, func(*http.Request) string { return "203.0.113.7" }, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				panic(value)
+			}))
+			var repanicked any
+			func() {
+				defer func() { repanicked = recover() }()
+				handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/boom", nil))
+			}()
+			if repanicked != value {
+				t.Fatalf("re-panic value = %v, want %v", repanicked, value)
+			}
+			record := sink.next(t)
+			if record["status"] != float64(http.StatusInternalServerError) || record["panic"] != true {
+				t.Fatalf("record = %v", record)
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -26,31 +27,42 @@ func ParseAccessLogEnv(getenv func(string) string) (bool, error) {
 	return enabled, nil
 }
 
-// tokenPathPrefixes are routes whose next path segment is a bearer credential.
-var tokenPathPrefixes = []string{"/share/preview/", "/share/public/"}
-
-// accessLogPath drops the query string and masks credential path segments; request bodies are never read.
-func accessLogPath(path string) string {
-	for _, prefix := range tokenPathPrefixes {
-		if rest, ok := strings.CutPrefix(path, prefix); ok && rest != "" {
-			if _, tail, found := strings.Cut(rest, "/"); found {
-				return prefix + "***/" + tail
-			}
-			return prefix + "***"
+// accessLogPath masks the path segment after /share/preview/ and /share/public/ (a bearer credential) wherever
+// it appears after cleaning, so doubled slashes or dot segments cannot slip a token past the mask. The query
+// string is not part of the input and request bodies are never read.
+func accessLogPath(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	segments := strings.Split(strings.TrimPrefix(path.Clean("/"+raw), "/"), "/")
+	masked := false
+	for i := 0; i+2 < len(segments); i++ {
+		if segments[i] == "share" && (segments[i+1] == "preview" || segments[i+1] == "public") {
+			segments[i+2] = "***"
+			masked = true
 		}
 	}
-	return path
+	if !masked {
+		return raw
+	}
+	return "/" + strings.Join(segments, "/")
 }
 
 // withAccessLog logs method, path, status, duration and client address once the handler returns. For an
 // upgraded (hijacked) connection the record is written when the connection ends and duration covers its lifetime.
+// A panicking handler is logged with panic=true (status 500 unless a status was already sent) and re-panics.
 func withAccessLog(logger *slog.Logger, clientIP func(*http.Request) string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		recorder := &accessLogRecorder{ResponseWriter: w}
 		defer func() {
+			recovered := recover()
 			status := recorder.status
-			if status == 0 {
+			switch {
+			case status != 0:
+			case recovered != nil:
+				status = http.StatusInternalServerError
+			default:
 				status = http.StatusOK
 			}
 			logger.LogAttrs(r.Context(), slog.LevelInfo, "http request",
@@ -61,7 +73,11 @@ func withAccessLog(logger *slog.Logger, clientIP func(*http.Request) string, nex
 				slog.Duration("duration", time.Since(start)),
 				slog.String("client_ip", clientIP(r)),
 				slog.Bool("upgraded", recorder.hijacked),
+				slog.Bool("panic", recovered != nil),
 			)
+			if recovered != nil {
+				panic(recovered)
+			}
 		}()
 		next.ServeHTTP(recorder, r)
 	})
