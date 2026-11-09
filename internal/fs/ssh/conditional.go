@@ -37,16 +37,11 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	if occupied {
 		return remoteAlreadyExists(expected)
 	}
-	temporary, err := f.uploadTemporary(ctx, remotePath, data, 0o600)
+	stage, err := f.uploadTemporary(ctx, remotePath, data, 0o600)
 	if err != nil {
 		return err
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = f.client.Remove(temporary)
-		}
-	}()
+	defer f.discardStaged(stage)
 	if f.conditionalPreVerifyHook != nil {
 		f.conditionalPreVerifyHook()
 	}
@@ -66,7 +61,7 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := f.conditionalLink(f.client, temporary, remotePath); err != nil {
+	if err := f.conditionalLink(f.client, stage.path, remotePath); err != nil {
 		if !sftpFailureProvenByServer(err) {
 			return &conditional.IndeterminateError{Expected: expected, New: conditional.VersionOf(data), Cause: fmt.Errorf("SFTP conditional create %s: %w", remotePath, err)}
 		}
@@ -75,8 +70,6 @@ func (f *FS) createFileVersion(ctx context.Context, remotePath string, data []by
 		}
 		return fmt.Errorf("SFTP conditional create %s (requires hardlink@openssh.com): %w", remotePath, err)
 	}
-	committed = true
-	_ = f.client.Remove(temporary)
 	return nil
 }
 
@@ -108,56 +101,92 @@ var (
 	errStageAttributes = errors.New("SFTP set temporary file attributes")
 )
 
-func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (string, error) {
+// staged is content written next to its target: path is the file, dir the private directory holding it, empty
+// when the server allowed no directory and the file sits directly beside the target with mode 0600.
+type staged struct {
+	path string
+	dir  string
+}
+
+// discardStaged removes whatever of the staging is still present; after a rename only the empty directory is.
+func (f *FS) discardStaged(stage staged) {
+	_ = f.client.Remove(stage.path)
+	if stage.dir != "" {
+		_ = f.client.RemoveDirectory(stage.dir)
+	}
+}
+
+func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (staged, error) {
 	return f.stageTemporary(ctx, remotePath, data, func(temporary string) error {
 		return f.client.Chmod(temporary, mode)
 	})
 }
 
-// stageTemporary writes data to a new sibling of remotePath created with O_EXCL, applies its attributes, syncs and
-// closes it. A failure to create the file wraps errStageCreate and a failure to apply attributes wraps
-// errStageAttributes; the temporary file is removed on every failure.
-func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte, attributes func(temporary string) error) (temporary string, err error) {
+// stageTemporary writes data next to remotePath without ever exposing it to other accounts. pkg/sftp opens files
+// without attributes, so a new file gets the server umask (typically 0644) and any account that opens it while the
+// content streams in keeps its handle afterwards. The file is therefore created inside a fresh sibling directory
+// verified as owner-only 0700; when the server refuses that directory, the file is created beside the target and
+// restricted to 0600 before the first byte is written. attributes then applies the final mode before the file is
+// synced and closed. A failure to create or restrict the file wraps errStageCreate, a failure of attributes wraps
+// errStageAttributes, and every failure removes what was staged.
+func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte, attributes func(temporary string) error) (stage staged, err error) {
 	var suffix [8]byte
 	_, _ = rand.Read(suffix[:])
-	temporary = path.Join(path.Dir(remotePath), "."+path.Base(remotePath)+".nexterm-tmp-"+hex.EncodeToString(suffix[:]))
-	file, err := f.client.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", errStageCreate, err)
+	name := "." + path.Base(remotePath) + ".nexterm-tmp-" + hex.EncodeToString(suffix[:])
+	sibling := path.Join(path.Dir(remotePath), name)
+	stage = staged{path: sibling}
+	if f.mkdirStage(f.client, sibling) == nil {
+		if verifyErr := f.verifyPrivateDir(sibling); verifyErr == nil {
+			stage = staged{path: path.Join(sibling, "content"), dir: sibling}
+		} else if info, lerr := f.client.Lstat(sibling); lerr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+			_ = f.client.RemoveDirectory(sibling)
+		}
 	}
-	// Failure returns clear the named result before deferred calls run, so cleanup holds its own copy of the name.
-	staged := temporary
+	file, err := f.client.OpenFile(stage.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		if stage.dir != "" {
+			_ = f.client.RemoveDirectory(stage.dir)
+		}
+		return staged{}, fmt.Errorf("%w: %w", errStageCreate, err)
+	}
+	// Failure returns clear the named result before deferred calls run, so cleanup holds its own copy.
+	cleanup := stage
 	defer func() {
 		if err != nil {
 			_ = file.Close()
-			_ = f.client.Remove(staged)
+			f.discardStaged(cleanup)
 		}
 	}()
+	if stage.dir == "" {
+		if err = file.Chmod(0o600); err != nil {
+			return staged{}, fmt.Errorf("%w: restrict before writing: %w", errStageCreate, err)
+		}
+	}
 	stop := context.AfterFunc(ctx, func() { _ = file.Close() })
 	defer stop()
 	if err = writeAll(ctx, file, data); err != nil {
-		return "", fmt.Errorf("SFTP stage write: %w", err)
+		return staged{}, fmt.Errorf("SFTP stage write: %w", err)
 	}
 	if f.stageWrittenHook != nil {
-		f.stageWrittenHook()
+		f.stageWrittenHook(stage.path)
 	}
 	if err = ctx.Err(); err != nil {
-		return "", err
+		return staged{}, err
 	}
-	if err = attributes(temporary); err != nil {
-		return "", fmt.Errorf("%w: %w", errStageAttributes, err)
+	if err = attributes(stage.path); err != nil {
+		return staged{}, fmt.Errorf("%w: %w", errStageAttributes, err)
 	}
 	if syncErr := file.Sync(); syncErr != nil {
 		var status *sftp.StatusError
 		if !errors.As(syncErr, &status) || status.FxCode() != sftp.ErrSSHFxOpUnsupported {
 			err = syncErr
-			return "", fmt.Errorf("SFTP stage sync: %w", err)
+			return staged{}, fmt.Errorf("SFTP stage sync: %w", err)
 		}
 	}
 	if err = file.Close(); err != nil {
-		return "", fmt.Errorf("SFTP stage close: %w", err)
+		return staged{}, fmt.Errorf("SFTP stage close: %w", err)
 	}
-	return temporary, nil
+	return stage, nil
 }
 
 var (

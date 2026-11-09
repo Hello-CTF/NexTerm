@@ -747,7 +747,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 func createFile(ctx context.Context, filesystem base.FileSystem, path string) error {
 	creator, ok := filesystem.(base.FileCreator)
 	if !ok {
-		return fmt.Errorf("%w: this file service cannot create a file without overwriting an existing one", base.ErrUnsupported)
+		return fmt.Errorf("%w: 当前文件服务无法在不覆盖同名文件的前提下新建文件", base.ErrUnsupported)
 	}
 	return creator.CreateFile(ctx, path)
 }

@@ -2,8 +2,6 @@ package ssh
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -19,15 +17,19 @@ const (
 	preservedModes = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 )
 
-// replaceFile commits data to remotePath without ever truncating the original: the content goes to an O_EXCL sibling
-// that takes the original's mode (and owner where the server allows chown), is synced and closed, and then replaces
-// the target with one rename. A cancel or disconnect before the rename leaves the original untouched.
+// replaceFile commits data to remotePath without ever truncating the original: the content is staged privately
+// (see stageTemporary), takes the original's mode and owner, is synced and closed, and then replaces the target with
+// one rename. A cancel or disconnect before the rename leaves the original untouched.
 //
-// A symlink is followed to its final target, which is replaced so the link itself survives. SFTP v3 reports no link
-// count, so a hard-linked target is replaced like any other file and its other names keep the previous content.
+// A symlink is followed to its final target, which is replaced so the link itself survives. The rename keeps the
+// content, mode (setuid and setgid included) and owner, but not ACLs, extended attributes or SELinux labels, and
+// SFTP v3 reports no link count, so a hard-linked target is detached from its other names. A crash between staging
+// and cleanup can leave a .nexterm-tmp- or .nexterm-replace- sibling behind.
+//
 // The write falls back to rewriting the file in place when the replacement cannot preserve what the original has:
-// a target that is not a regular file, a symlink that cannot be resolved lexically, a directory where no temporary
-// file can be created, or a server that refuses to apply the original's mode.
+// a target that is not a regular file, a symlink that cannot be resolved lexically, a directory where nothing can be
+// staged, a server that refuses the original's mode or owner, or a server that refuses the rename itself (a
+// bind-mounted file such as /etc/hosts in a container, a sticky directory, a locked Windows file).
 func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) error {
 	target, info, ok := f.replaceTarget(remotePath)
 	if !ok || (info != nil && !info.Mode().IsRegular()) {
@@ -37,8 +39,10 @@ func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) er
 	if info != nil {
 		mode = info.Mode() & preservedModes
 	}
-	temporary, err := f.stageTemporary(ctx, target, data, func(temporary string) error {
-		f.preserveOwner(temporary, info)
+	stage, err := f.stageTemporary(ctx, target, data, func(temporary string) error {
+		if err := f.preserveOwner(temporary, info); err != nil {
+			return err
+		}
 		return f.client.Chmod(temporary, mode)
 	})
 	if errors.Is(err, errStageCreate) || errors.Is(err, errStageAttributes) {
@@ -53,23 +57,35 @@ func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) er
 		}
 		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = f.client.Remove(temporary)
-		}
-	}()
+	defer f.discardStaged(stage)
 	if f.replacePreCommitHook != nil {
 		f.replacePreCommitHook()
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := f.commitReplace(temporary, target, info != nil); err != nil {
+	if err := f.commitReplace(ctx, stage.path, target, info != nil); err != nil {
+		if f.renameRefusedWithTargetIntact(err, target, info != nil) {
+			f.discardStaged(stage)
+			return f.writeInPlace(ctx, remotePath, data)
+		}
 		return fmt.Errorf("SFTP replace %s: %w", target, err)
 	}
-	committed = true
 	return nil
+}
+
+// renameRefusedWithTargetIntact reports a rename the server answered itself (so it did not happen) while the target
+// is still where it was; a lost response proves nothing, and a failed restore of a moved-aside original leaves the
+// target missing, so both surface instead.
+func (f *FS) renameRefusedWithTargetIntact(err error, target string, existed bool) bool {
+	if !sftpFailureProvenByServer(err) {
+		return false
+	}
+	_, lerr := f.client.Lstat(target)
+	if existed {
+		return lerr == nil
+	}
+	return errors.Is(lerr, fs.ErrNotExist)
 }
 
 // replaceTarget follows symlinks from remotePath to the file a write lands on. info is nil when that file does not
@@ -109,50 +125,46 @@ func containsParentSegment(link string) bool {
 	return false
 }
 
-// preserveOwner hands the temporary file the original's owner and group. A non-root account usually cannot chown to
-// another user, so a failure is ignored: the replacement then belongs to the writing account with the original mode.
-func (f *FS) preserveOwner(temporary string, original os.FileInfo) {
+// preserveOwner hands the temporary file the original's owner and group. A non-root account can usually only change
+// the group to one it belongs to; when the owner or group still differs afterwards, replacing would hand the file to
+// the writing account, so the error wraps errStageAttributes and the save rewrites the original in place.
+func (f *FS) preserveOwner(temporary string, original os.FileInfo) error {
 	if original == nil {
-		return
+		return nil
 	}
 	want, ok := original.Sys().(*sftp.FileStat)
 	if !ok {
-		return
+		return nil
 	}
-	current, err := f.client.Lstat(temporary)
-	if err != nil {
-		return
+	matches := func() (bool, error) {
+		current, err := f.client.Lstat(temporary)
+		if err != nil {
+			return false, err
+		}
+		have, ok := current.Sys().(*sftp.FileStat)
+		return ok && have.UID == want.UID && have.GID == want.GID, nil
 	}
-	if have, ok := current.Sys().(*sftp.FileStat); ok && have.UID == want.UID && have.GID == want.GID {
-		return
+	if same, err := matches(); err != nil || same {
+		return err
 	}
-	_ = f.client.Chown(temporary, int(want.UID), int(want.GID))
+	chownErr := f.chown(f.client, temporary, int(want.UID), int(want.GID))
+	if same, err := matches(); err != nil || same {
+		return err
+	}
+	return fmt.Errorf("keep owner %d:%d: %v", want.UID, want.GID, chownErr)
 }
 
-// commitReplace moves temporary over target. posix-rename@openssh.com replaces atomically. Without it, SFTP v3
-// rename refuses an existing target, so the original is first moved aside and is moved back if the second rename
-// fails; the target name is briefly absent but its content is never lost.
-func (f *FS) commitReplace(temporary, target string, existed bool) error {
-	if f.posixRenameSupported(f.client) {
-		return f.client.PosixRename(temporary, target)
-	}
+// commitReplace moves temporary over target: posix-rename replaces atomically, and a server without it gets
+// replaceAside, which keeps the original recoverable. A missing target needs only a plain rename.
+func (f *FS) commitReplace(ctx context.Context, temporary, target string, existed bool) error {
 	if !existed {
 		return f.client.Rename(temporary, target)
 	}
-	var suffix [8]byte
-	_, _ = rand.Read(suffix[:])
-	aside := path.Join(path.Dir(target), "."+path.Base(target)+".nexterm-old-"+hex.EncodeToString(suffix[:]))
-	if err := f.client.Rename(target, aside); err != nil {
-		return fmt.Errorf("move original aside: %w", err)
+	err := f.posixRename(f.client, temporary, target)
+	if posixRenameUnsupported(err) {
+		return f.replaceAside(ctx, temporary, target)
 	}
-	if err := f.client.Rename(temporary, target); err != nil {
-		if restoreErr := f.client.Rename(aside, target); restoreErr != nil {
-			return fmt.Errorf("%w; the original content is kept at %s (restore failed: %v)", err, aside, restoreErr)
-		}
-		return err
-	}
-	_ = f.client.Remove(aside)
-	return nil
+	return err
 }
 
 // writeInPlace truncates and rewrites remotePath through its existing inode.

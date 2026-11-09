@@ -36,7 +36,9 @@ type FS struct {
 	removeAside              func(*sftp.Client, string) error
 	conditionalPreVerifyHook func()
 	conditionalPreCommitHook func()
-	stageWrittenHook         func()
+	mkdirStage               func(*sftp.Client, string) error
+	chown                    func(*sftp.Client, string, int, int) error
+	stageWrittenHook         func(temporary string)
 	replacePreCommitHook     func()
 }
 
@@ -76,6 +78,12 @@ func New(client *sftp.Client, executor Executor) *FS {
 		},
 		removeAside: func(client *sftp.Client, path string) error {
 			return client.Remove(path)
+		},
+		mkdirStage: func(client *sftp.Client, path string) error {
+			return client.Mkdir(path)
+		},
+		chown: func(client *sftp.Client, path string, uid, gid int) error {
+			return client.Chown(path, uid, gid)
 		},
 	}
 }

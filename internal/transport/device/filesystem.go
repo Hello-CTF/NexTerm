@@ -133,7 +133,7 @@ func (f *fileSystem) CreateFile(ctx context.Context, path string) error {
 	defer done()
 	err = client.CreateFile(ctx, path)
 	if errors.Is(err, deviceproto.ErrProtocol) && strings.Contains(err.Error(), "unexpected request frame") {
-		return fmt.Errorf("%w: the device agent cannot create files exclusively; update the agent: %w", base.ErrUnsupported, err)
+		return fmt.Errorf("%w: 该设备代理版本过旧，无法安全新建文件（不会覆盖同名文件），请在设备上升级设备代理后重试: %w", base.ErrUnsupported, err)
 	}
 	return err
 }
