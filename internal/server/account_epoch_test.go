@@ -418,16 +418,19 @@ func TestAccountLoginAfterPasswordChangeFails(t *testing.T) {
 	}
 }
 
-// The login's epoch is captured at the authentication boundary under the
-// revocation lock: a password change attempted mid-login is serialized to
-// after the issuance, never landing between Authenticate and the epoch capture.
-func TestAccountLoginEpochCapturedAtAuthenticationAtomic(t *testing.T) {
+// The password is verified outside the revocation lock: a password change
+// can complete while a login sits between verification and issuance, and the
+// login then fails closed instead of issuing a session for the old password.
+func TestAccountLoginVerifiedBeforePasswordChangeFailsClosed(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	fixture.initSuperadmin(t, "alice", "password-alice")
 	aliceSession := fixture.login(t, "alice", "password-alice")
 
 	loginEntered := make(chan struct{})
 	releaseLogin := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseLogin) }) }
+	defer release()
 	restoreGate := SetAccountLoginGateForTest(func(context.Context, *account.User) {
 		close(loginEntered)
 		<-releaseLogin
@@ -444,43 +447,83 @@ func TestAccountLoginEpochCapturedAtAuthenticationAtomic(t *testing.T) {
 		t.Fatal("login did not reach the post-authenticate gate")
 	}
 
-	// A password change attempted now must wait for the in-flight login.
+	// The in-flight login does not hold the revocation lock.
+	if !fixture.server.accountRevocationMu.TryLock() {
+		t.Fatal("login holds the revocation lock while verifying the password")
+	}
+	fixture.server.accountRevocationMu.Unlock()
+
 	body, _, _ := envelopeBody(t, "password-alice-2")
-	changeDone := make(chan accountCall, 1)
-	go func() {
-		changeDone <- fixture.call(t, http.MethodPost, "/auth/password", mergeBody(body, map[string]any{
-			"old_password": "password-alice", "new_password": "password-alice-2",
-		}), aliceSession, aliceSession.csrf, nil)
-	}()
-	select {
-	case call := <-changeDone:
-		t.Fatalf("password change completed mid-login (epoch window is not atomic): %v", call.body)
-	case <-time.After(100 * time.Millisecond):
+	change := fixture.call(t, http.MethodPost, "/auth/password", mergeBody(body, map[string]any{
+		"old_password": "password-alice", "new_password": "password-alice-2",
+	}), aliceSession, aliceSession.csrf, nil)
+	if change.status != http.StatusOK {
+		t.Fatalf("password change mid-login status = %d body = %v", change.status, change.body)
 	}
 
-	close(releaseLogin)
+	release()
 	login := <-loginDone
-	if login.status != http.StatusOK {
-		t.Fatalf("in-flight login status = %d body = %v", login.status, login.body)
+	if login.status != http.StatusForbidden {
+		t.Fatalf("login verified before the password change status = %d body = %v, want 403", login.status, login.body)
 	}
-	change := <-changeDone
-	if change.status != http.StatusOK {
-		t.Fatalf("password change after login status = %d body = %v", change.status, change.body)
-	}
-	// The password change revoked every session except its own, including the
-	// just-issued login session.
-	var revoked bool
 	for _, cookie := range login.cookies {
-		if cookie.Name == sessionCookieName {
-			if _, err := fixture.accounts.ValidateSession(context.Background(), cookie.Value); err != nil {
-				revoked = true
-			}
+		if cookie.Name == sessionCookieName && cookie.Value != "" {
+			t.Fatal("login verified before the password change set a session cookie")
 		}
 	}
-	if !revoked {
-		t.Fatal("password change after the login did not revoke the new session")
+	restoreGate()
+	fixture.login(t, "alice", "password-alice-2")
+}
+
+// An account disabled while its login sits between verification and issuance
+// does not receive a session.
+func TestAccountLoginVerifiedBeforeDisableFailsClosed(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "root", "password-root")
+	bob, err := fixture.accounts.CreateUser(context.Background(), "bob", "", "password-bob")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := fixture.accounts.ValidateSession(context.Background(), aliceSession.cookie.Value); err != nil {
-		t.Fatalf("password change revoked its own session: %v", err)
+
+	restoreGate := SetAccountLoginGateForTest(func(ctx context.Context, user *account.User) {
+		if err := fixture.accounts.SetUserDisabled(ctx, user.ID, true); err != nil {
+			t.Errorf("disable mid-login: %v", err)
+		}
+	})
+	defer restoreGate()
+	login := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "bob", "password": "password-bob"}, nil, "", nil)
+	if login.status != http.StatusForbidden {
+		t.Fatalf("login of an account disabled mid-login status = %d body = %v, want 403", login.status, login.body)
+	}
+	sessions, err := fixture.accounts.ListUserSessions(context.Background(), bob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("account disabled mid-login holds %d sessions", len(sessions))
+	}
+}
+
+// Logins verify passwords concurrently and serialize only for issuance.
+func TestAccountLoginConcurrentLoginsSucceed(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "alice", "password-alice")
+	const logins = 4
+	results := make(chan int, logins)
+	var wg sync.WaitGroup
+	for i := 0; i < logins; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "alice", "password": "password-alice"}, nil, "", nil)
+			results <- call.status
+		}()
+	}
+	wg.Wait()
+	close(results)
+	for status := range results {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent login status = %d", status)
+		}
 	}
 }

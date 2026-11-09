@@ -38,6 +38,8 @@ const (
 	MinPasswordLength = 8
 	maxUsernameLength = 64
 	maxDisplayNameLen = 128
+
+	accountChangedMessage = "账号状态已变更，请重新登录"
 )
 
 type User struct {
@@ -211,4 +213,24 @@ func (a *Accounts) Authenticate(ctx context.Context, username, password string) 
 	}
 	user.LastLoginAt = now
 	return user, nil
+}
+
+// ConfirmAuthenticated re-reads a user returned by Authenticate and fails
+// closed when its password, state or reset flag changed since the password was
+// verified, so a login verified before a password change, reset or disable
+// cannot issue a session afterwards.
+func (a *Accounts) ConfirmAuthenticated(ctx context.Context, authenticated *User) (*User, error) {
+	current, err := a.GetUser(ctx, authenticated.ID)
+	if err != nil {
+		if ipc.NormalizeError(err).Code == ipc.CodeNotFound {
+			return nil, ipc.NewError(ipc.CodeForbidden, accountChangedMessage)
+		}
+		return nil, err
+	}
+	if subtle.ConstantTimeCompare([]byte(current.passwordHash), []byte(authenticated.passwordHash)) != 1 ||
+		current.State != authenticated.State || current.MustChangePassword != authenticated.MustChangePassword {
+		return nil, ipc.NewError(ipc.CodeForbidden, accountChangedMessage)
+	}
+	current.LastLoginAt = authenticated.LastLoginAt
+	return current, nil
 }

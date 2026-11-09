@@ -264,8 +264,8 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 }
 
 // accountLoginGate, when non-nil, runs after a successful Authenticate and
-// before the epoch capture. Tests use it to interpose a password change
-// mid-login.
+// before the epoch capture, outside the revocation lock. Tests use it to
+// interpose a password change mid-login.
 var accountLoginGate func(ctx context.Context, user *account.User)
 
 // SetAccountLoginGateForTest installs accountLoginGate and returns a restore
@@ -388,22 +388,28 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
-	// The whole authentication flow runs under the revocation lock: the epoch
-	// is captured at the authentication boundary, so a password change or
-	// revocation that lands after it fails the issuance check closed instead of
-	// signing a new session with stale credentials.
-	s.accountRevocationMu.Lock()
-	defer s.accountRevocationMu.Unlock()
-	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
+	// The password hash is verified outside the revocation lock so slow key
+	// derivation does not serialize every login with revocations. The lock is
+	// taken afterwards and the account is re-read: a password change, reset or
+	// disable that landed after verification fails the login closed, and one
+	// that lands after the epoch capture fails the issuance epoch check.
+	authenticated, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
 		writeAccountFailure(w, err)
 		return
 	}
 	if accountLoginGate != nil {
-		accountLoginGate(r.Context(), user)
+		accountLoginGate(r.Context(), authenticated)
 	}
-	epoch := s.accounts.Epoch(user.ID)
+	epoch := s.accounts.Epoch(authenticated.ID)
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	user, err := s.accounts.ConfirmAuthenticated(r.Context(), authenticated)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
