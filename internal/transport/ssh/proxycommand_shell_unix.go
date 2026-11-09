@@ -59,6 +59,10 @@ func (p *proxyCommandProcess) exitCode() int {
 	return p.cmd.ProcessState.ExitCode()
 }
 
+func isBrokenPipe(err error) bool {
+	return errors.Is(err, syscall.EPIPE)
+}
+
 func (p *proxyCommandProcess) close() error {
 	return nil
 }

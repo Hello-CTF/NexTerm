@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,7 @@ const (
 	// process exits, for when a background child keeps the pipe open.
 	proxyCommandStderrWait = time.Second
 	proxyCommandStderrTail = 4 << 10
+	proxyCommandExitGrace  = 2 * time.Second
 )
 
 func expandProxyCommand(command, host string, port int) string {
@@ -64,6 +66,29 @@ func (c *proxyCommandConn) Close() error {
 	return nil
 }
 
+// handshakeError explains a handshake that failed because the proxy command
+// exited. A proxy that is still running is relaying correctly, so the error
+// comes from the SSH peer and stays unchanged. It must run before Close, which
+// ends the process itself. When the stream closed, the grace period covers
+// the gap until the exited process is reaped.
+func (c *proxyCommandConn) handshakeError(err error) error {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || isBrokenPipe(err) {
+		timer := time.NewTimer(proxyCommandExitGrace)
+		defer timer.Stop()
+		select {
+		case <-c.waitDone:
+		case <-timer.C:
+			return err
+		}
+	}
+	select {
+	case <-c.waitDone:
+		return c.exitError(err)
+	default:
+		return err
+	}
+}
+
 // exitError wraps err with how the proxy command ended when it exited on its
 // own with a failure status or error output. It returns err unchanged while
 // the process runs or after Close had to kill it.
@@ -90,10 +115,19 @@ type proxyCommandExitError struct {
 	err    error
 }
 
+// failed reports whether the proxy command ended with a failure status, as
+// opposed to exiting cleanly after writing diagnostics.
+func (e *proxyCommandExitError) failed() bool { return e.code != 0 }
+
 func (e *proxyCommandExitError) Error() string {
-	status := "proxy command terminated abnormally"
-	if e.code >= 0 {
+	var status string
+	switch {
+	case e.code < 0:
+		status = "proxy command terminated abnormally"
+	case e.code > 0:
 		status = fmt.Sprintf("proxy command exited with status %d", e.code)
+	default:
+		status = "proxy command exited"
 	}
 	if e.stderr != "" {
 		status += " (" + e.stderr + ")"
@@ -104,9 +138,14 @@ func (e *proxyCommandExitError) Error() string {
 func (e *proxyCommandExitError) Unwrap() error { return e.err }
 
 func (e *proxyCommandExitError) userDetail() string {
-	detail := "。代理命令异常结束"
-	if e.code >= 0 {
+	var detail string
+	switch {
+	case e.code < 0:
+		detail = "。代理命令异常结束"
+	case e.code > 0:
 		detail = fmt.Sprintf("。代理命令以退出码 %d 结束", e.code)
+	default:
+		return fmt.Sprintf("。代理命令错误输出：%s", e.stderr)
 	}
 	if e.stderr != "" {
 		detail += fmt.Sprintf("，错误输出：%s", e.stderr)

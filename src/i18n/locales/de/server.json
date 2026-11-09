@@ -764,6 +764,7 @@
   "— %s（主题 %s，版本 %d%s）\n%s\n": "— %s (Thema %s, Version %d%s)\n%s\n",
   "。代理命令以退出码 %d 结束": ". Der Proxy-Befehl wurde mit Exit-Code %d beendet",
   "。代理命令异常结束": ". Der Proxy-Befehl wurde unerwartet beendet",
+  "。代理命令错误输出：%s": ". Fehlerausgabe des Proxy-Befehls: %s",
   "。原因：": ". Grund: ",
   "。服务器可能已重装，也可能被冒充；请先向管理员核对，确认无误后在终端中选择替换": ". Der Server wurde möglicherweise neu installiert oder wird nachgeahmt; bitte zuerst beim Administrator nachfragen und nach der Bestätigung im Terminal „Ersetzen“ wählen",
   "。连接测试不会自动信任指纹，请先打开该主机的终端核对并确认，然后重新测试": ". Der Verbindungstest vertraut Fingerabdrücken nicht automatisch; bitte zuerst das Terminal dieses Hosts öffnen, den Fingerabdruck prüfen und bestätigen und dann erneut testen",

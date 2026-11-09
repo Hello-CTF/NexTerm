@@ -117,6 +117,38 @@ func TestProxyCommandStderrKeepsBoundedTail(t *testing.T) {
 	}
 }
 
+func startedProxyCommand(t *testing.T, command string) *proxyCommandConn {
+	t.Helper()
+	conn, err := dialProxyCommand(context.Background(), command, "example.test", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyConn := conn.(*proxyCommandConn)
+	t.Cleanup(func() { _ = proxyConn.Close() })
+	return proxyConn
+}
+
+func TestProxyCommandDiagnosticsDoNotRelabelPeerHandshakeErrors(t *testing.T) {
+	// A relaying proxy that printed a warning and is still running.
+	running := startedProxyCommand(t, "echo 'Warning: Permanently added bastion' >&2; exec cat")
+	peerErr := errors.New("ssh: handshake failed: ssh: no common algorithm for key exchange")
+	got := classifyHandshakeError("target.example", 22, "proxy-command", "", running.handshakeError(peerErr))
+	if got.Kind != ErrorKindHandshake || strings.Contains(got.UserMessage(), "Warning") {
+		t.Fatalf("kind = %q, message = %q", got.Kind, got.UserMessage())
+	}
+
+	exited := startedProxyCommand(t, "echo 'Warning: Permanently added bastion' >&2; exit 0")
+	eofErr := fmt.Errorf("ssh: handshake failed: %w", io.EOF)
+	got = classifyHandshakeError("target.example", 22, "proxy-command", "", exited.handshakeError(eofErr))
+	if got.Kind != ErrorKindHandshake {
+		t.Fatalf("clean exit kind = %q, want %q", got.Kind, ErrorKindHandshake)
+	}
+	message := got.UserMessage()
+	if !strings.Contains(message, "Warning: Permanently added bastion") || strings.Contains(message, "退出码") {
+		t.Fatalf("clean exit message = %q", message)
+	}
+}
+
 func TestProxyCommandCleanExitAddsNoDetail(t *testing.T) {
 	conn, err := dialProxyCommand(context.Background(), "true", "example.test", 22)
 	if err != nil {

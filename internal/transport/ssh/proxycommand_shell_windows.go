@@ -49,7 +49,6 @@ func startProxyCommand(command string, stderr io.Writer) (*proxyCommandProcess, 
 		_ = stdinRead.Close()
 		_ = stdinWrite.Close()
 		_ = stdoutRead.Close()
-		_ = stderrRead.Close()
 		_ = stdoutWrite.Close()
 		return nil, nil, nil, proxyCommandStartError(err)
 	}
@@ -57,7 +56,6 @@ func startProxyCommand(command string, stderr io.Writer) (*proxyCommandProcess, 
 		_ = stdinRead.Close()
 		_ = stdinWrite.Close()
 		_ = stdoutRead.Close()
-		_ = stderrRead.Close()
 		_ = stdoutWrite.Close()
 		_ = stderrRead.Close()
 		_ = stderrWrite.Close()
@@ -183,6 +181,10 @@ func (p *proxyCommandProcess) wait() error {
 // exitCode is valid after wait returns; -1 means the exit code is unknown.
 func (p *proxyCommandProcess) exitCode() int {
 	return p.exit
+}
+
+func isBrokenPipe(err error) bool {
+	return errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_NO_DATA)
 }
 
 func (p *proxyCommandProcess) close() error {

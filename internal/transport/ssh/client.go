@@ -174,6 +174,9 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		err = connectCtx.Err()
 	}
 	if err != nil {
+		if proxyConn != nil && connectCtx.Err() == nil {
+			err = proxyConn.handshakeError(err)
+		}
 		netConn.Close()
 		if jumpClient != nil {
 			jumpClient.Close()
@@ -181,10 +184,6 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		proxy, jump := dialHopLabels(cfg, jumpClient != nil)
 		if connectCtx.Err() != nil {
 			return nil, newConnectError(contextErrorKind(connectCtx.Err()), "handshake", cfg.Host, cfg.Port, proxy, connectCtx.Err()).withJump(jump)
-		}
-		if proxyConn != nil {
-			// Close has reaped the process, so its exit status and stderr are final.
-			err = proxyConn.exitError(err)
 		}
 		return nil, classifyHandshakeError(cfg.Host, cfg.Port, proxy, jump, err)
 	}
