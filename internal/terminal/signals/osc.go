@@ -25,20 +25,69 @@ func (s *Scanner) dispatch(out []Event, payload []byte, now time.Time) []Event {
 }
 
 // osc9 handles `9;<text>`. ConEmu reuses OSC 9 for numbered subcommands
-// (`9;4;...` progress, `9;1;...` sleep, `9;9;...` cwd and so on), which are
-// not notifications and are filtered out. The filter also drops bodies that
-// are only a number ("42", "2024;done"); that is a deliberate trade-off,
-// counted in Stats.ConEmuFiltered.
+// (`9;1;...` sleep, `9;9;...` cwd and so on). `9;4;...` reports progress and
+// is parsed; the others are not notifications and are filtered out. The
+// filter also drops bodies that are only a number ("42", "2024;done"); that
+// is a deliberate trade-off, counted in Stats.ConEmuFiltered.
 func (s *Scanner) osc9(out []Event, text []byte, now time.Time) []Event {
 	if len(text) > MaxNotifyPayload {
 		s.stats.Oversize++
 		return out
+	}
+	if args, ok := bytes.CutPrefix(text, []byte("4")); ok && (len(args) == 0 || args[0] == ';') {
+		return s.progress(out, args, now)
 	}
 	if isConEmuSubcommand(text) {
 		s.stats.ConEmuFiltered++
 		return out
 	}
 	return s.notify(out, SourceOSC9, nil, text, now)
+}
+
+// progress handles the arguments of ConEmu's `9;4;<st>;<pr>` as Windows
+// Terminal and Ghostty read them: st 0 clears, 1 sets the value pr, 2 is an
+// error, 3 indeterminate and 4 paused. pr (0-100, larger values are clamped)
+// defaults to 0 for 1, is optional for 2 and 4 and ignored for 0 and 3.
+// Fields after pr are ignored. A missing or unknown st, or a pr that is not a
+// number, is malformed.
+func (s *Scanner) progress(out []Event, args []byte, now time.Time) []Event {
+	fields := bytes.Split(bytes.TrimPrefix(args, []byte(";")), []byte(";"))
+	st, ok := progressNumber(fields[0])
+	if len(args) == 0 || !ok || st >= len(progressStates) {
+		s.stats.Malformed++
+		return out
+	}
+	event := Event{Kind: KindProgress, Progress: progressStates[st], At: now, AtPrompt: s.atPrompt}
+	if len(fields) > 1 && len(fields[1]) > 0 {
+		value, ok := progressNumber(fields[1])
+		if !ok {
+			s.stats.Malformed++
+			return out
+		}
+		if st != 0 && st != 3 {
+			event.ProgressValue, event.HasProgressValue = min(value, 100), true
+		}
+	} else if st == 1 {
+		event.HasProgressValue = true
+	}
+	return append(out, event)
+}
+
+var progressStates = [...]string{ProgressClear, ProgressNormal, ProgressError, ProgressIndeterminate, ProgressPaused}
+
+// progressNumber parses a decimal field of at most six digits.
+func progressNumber(field []byte) (int, bool) {
+	if len(field) == 0 || len(field) > 6 {
+		return 0, false
+	}
+	n := 0
+	for _, b := range field {
+		if b < '0' || b > '9' {
+			return 0, false
+		}
+		n = n*10 + int(b-'0')
+	}
+	return n, true
 }
 
 func isConEmuSubcommand(text []byte) bool {

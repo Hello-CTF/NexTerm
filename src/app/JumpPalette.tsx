@@ -30,7 +30,7 @@ import { SshImportDialog } from "../features/explorer/SshImportDialog";
 import { useShell } from "./shell";
 import { workspaceLayoutTree } from "./paneLayout";
 import { resolveActivePane } from "./splitTree";
-import { TabAttentionBadge } from "./workspace/tabStrip";
+import { ProgressRing, TabAttentionBadge } from "./workspace/tabStrip";
 import { awarenessBadge, useTabAwareness } from "./sessionAwarenessStore";
 import { hideMobileHome } from "./shell/mobileHome";
 import { IconDownload, IconLoader, IconPlus, IconSave, IconSearch, IconTerminal, assetIcon } from "../ui/icons";
@@ -113,10 +113,15 @@ const SCOPE_TEXT: Record<JumpScope, { title: string; input: string; placeholder:
   },
 };
 
-// SessionAttentionBadge follows one session row's awareness state live; the row order stays frozen.
+// SessionAttentionBadge follows one session row's awareness state and progress live; the row order stays frozen.
 function SessionAttentionBadge({ terminalId }: { terminalId: string | null }) {
   const awareness = useTabAwareness(terminalId ?? undefined);
-  return <TabAttentionBadge badge={awarenessBadge(awareness)} />;
+  return (
+    <>
+      <TabAttentionBadge badge={awarenessBadge(awareness)} />
+      <ProgressRing progress={awareness?.progress} />
+    </>
+  );
 }
 
 // JumpPalette is the single keyboard-first palette for open and background sessions, hosts and commands.

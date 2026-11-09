@@ -19,6 +19,10 @@ type wantEvent struct {
 	Body    string `json:"body"`
 	Exit    int    `json:"exit"`
 	HasExit bool   `json:"has_exit"`
+	// Progress and Value describe a progress event; Value is absent when the
+	// event carries no percentage.
+	Progress string `json:"progress,omitempty"`
+	Value    *int   `json:"value,omitempty"`
 }
 
 type goldenCase struct {
@@ -44,10 +48,15 @@ func loadCases(t *testing.T) []goldenCase {
 func project(events []Event) []wantEvent {
 	out := make([]wantEvent, 0, len(events))
 	for _, e := range events {
-		out = append(out, wantEvent{
+		w := wantEvent{
 			Kind: e.Kind.String(), Source: e.Source, Title: e.Title, Body: e.Body,
-			Exit: e.ExitCode, HasExit: e.HasExitCode,
-		})
+			Exit: e.ExitCode, HasExit: e.HasExitCode, Progress: e.Progress,
+		}
+		if e.HasProgressValue {
+			value := e.ProgressValue
+			w.Value = &value
+		}
+		out = append(out, w)
 	}
 	return out
 }
@@ -259,9 +268,25 @@ func TestRawC1BytesAreIgnored(t *testing.T) {
 
 func TestConEmuFilterIsCounted(t *testing.T) {
 	s := NewScanner(Config{})
-	s.Feed([]byte("\x1b]9;4;1;50\x07\x1b]9;42\x07"), t0)
+	s.Feed([]byte("\x1b]9;9;C:\\x\x07\x1b]9;42\x07\x1b]9;4;1;50\x07"), t0)
 	if s.Stats().ConEmuFiltered != 2 {
 		t.Fatalf("stats = %+v", s.Stats())
+	}
+}
+
+func TestMalformedProgressIsCounted(t *testing.T) {
+	s := NewScanner(Config{})
+	events := s.Feed([]byte("\x1b]9;4\x07\x1b]9;4;\x07\x1b]9;4;5;10\x07\x1b]9;4;1;x\x07\x1b]9;4;-1\x07\x1b]9;4;1;1234567\x07"), t0)
+	if len(events) != 0 || s.Stats().Malformed != 6 {
+		t.Fatalf("events = %+v, stats = %+v", events, s.Stats())
+	}
+}
+
+func TestProgressCarriesAtPrompt(t *testing.T) {
+	s := NewScanner(Config{})
+	events := s.Feed([]byte("\x1b]133;C\x07\x1b]9;4;1;5\x07"), t0)
+	if len(events) != 2 || events[1].Kind != KindProgress || events[1].AtPrompt || !events[1].At.Equal(t0) {
+		t.Fatalf("events = %+v", events)
 	}
 }
 

@@ -31,7 +31,16 @@ import {
   IconMergeH,
   IconStop,
 } from "../../ui/icons";
-import { TabAttentionBadge, TabPersistenceMark, TabProductionBadge, TabStripItem, TabStripTitle, tabIcon, tabTooltip } from "./tabStrip";
+import {
+  TabAttentionBadge,
+  TabPersistenceMark,
+  TabProductionBadge,
+  TabProgress,
+  TabStripItem,
+  TabStripTitle,
+  tabIcon,
+  tabTooltip,
+} from "./tabStrip";
 import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
@@ -422,6 +431,7 @@ export function PaneGroup({
                 </span>
                 <TabPersistenceMark tab={t} part="icon" />
                 <TabAttentionBadge badge={attention} />
+                {t.kind === "terminal" && !t.exited && <TabProgress tabId={t.tabId} />}
                 <TabStripTitle tab={t} />
                 {t.kind === "terminal" && <TabProductionBadge sessionId={t.sessionId} />}
                 {t.closeError && (
