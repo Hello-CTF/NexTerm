@@ -437,7 +437,38 @@ func (c *remoteClient) do(request *http.Request, out any, csrf bool) (int, *ipc.
 	return status, rpcErr, err
 }
 
+// doWithHeader sends the request once more after a CSRF rejection: the server
+// rejects before running the handler, so the retry has no duplicate effects. The
+// token is re-read from /auth/me because it changes when the server's CSRF
+// key does (an upgrade or a restart without a key file), while the session
+// stays valid.
 func (c *remoteClient) doWithHeader(request *http.Request, out any, csrf bool) (int, http.Header, *ipc.Error, error) {
+	status, header, rpcErr, err := c.doOnce(request, out, csrf)
+	if err != nil || !csrf || !isCSRFRejection(status, rpcErr) || (request.Body != nil && request.GetBody == nil) {
+		return status, header, rpcErr, err
+	}
+	if _, meErr := c.me(request.Context()); meErr != nil {
+		return status, header, rpcErr, nil
+	}
+	retry := request.Clone(request.Context())
+	retry.Header.Del("Cookie")
+	if request.GetBody != nil {
+		body, bodyErr := request.GetBody()
+		if bodyErr != nil {
+			return status, header, rpcErr, nil
+		}
+		retry.Body = body
+	}
+	return c.doOnce(retry, out, csrf)
+}
+
+// isCSRFRejection matches the server's CSRF failure, whose message keeps the
+// "CSRF" keyword for clients to detect.
+func isCSRFRejection(status int, rpcErr *ipc.Error) bool {
+	return status == http.StatusForbidden && rpcErr != nil && rpcErr.Code == ipc.CodeForbidden && strings.Contains(rpcErr.Message, "CSRF")
+}
+
+func (c *remoteClient) doOnce(request *http.Request, out any, csrf bool) (int, http.Header, *ipc.Error, error) {
 	if c.cookieToken != "" {
 		request.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookieToken})
 	}

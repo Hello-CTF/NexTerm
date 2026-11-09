@@ -27,6 +27,9 @@ type Accounts struct {
 	// blockedMu guards blockedListeners, called after an account is disabled or reset so dependents can drop live channels.
 	blockedMu        sync.Mutex
 	blockedListeners []func(userID string)
+	// csrfSecret caches the CSRF token key derived by csrfKey.
+	csrfMu     sync.Mutex
+	csrfSecret []byte
 }
 
 // userTable centralizes the account table name for future storage backend changes.

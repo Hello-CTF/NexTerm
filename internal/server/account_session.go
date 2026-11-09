@@ -2,9 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,7 +17,6 @@ import (
 const (
 	sessionCookieName = "nexterm_session"
 	csrfHeaderName    = "X-NexTerm-CSRF"
-	csrfPurpose       = "nexterm-csrf-v1"
 	maxAccountBody    = 64 << 10
 
 	// Session and CSRF failures uniformly give the next step (refresh or re-login); wording stays consistent across server and fleet.
@@ -40,24 +36,10 @@ func accountIdentityFrom(ctx context.Context) *account.Identity {
 	return identity
 }
 
-// accountCSRFToken derives a stateless CSRF token per session: HMAC(sessionID).
-// The token expires in step when the session is revoked or expires; the server needs no extra storage.
-func accountCSRFToken(sessionID string) string {
-	mac := hmac.New(sha256.New, []byte(sessionID))
-	mac.Write([]byte(csrfPurpose))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func accountCSRFSafeEqual(sessionID, presented string) bool {
-	expected, err := hex.DecodeString(accountCSRFToken(sessionID))
-	if err != nil {
-		return false
-	}
-	provided, err := hex.DecodeString(presented)
-	if err != nil || len(provided) != len(expected) {
-		return false
-	}
-	return hmac.Equal(expected, provided)
+// accountCSRFSafeEqual checks the session's CSRF token; the derivation is
+// shared with the fleet routes through account.Accounts.
+func (s *Server) accountCSRFSafeEqual(sessionID, presented string) bool {
+	return s.accounts != nil && s.accounts.CSRFValid(sessionID, presented)
 }
 
 func sessionCookie(r *http.Request) (string, bool) {
@@ -256,7 +238,7 @@ func (s *Server) requireAccountCSRF(next http.Handler) http.Handler {
 			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 			return
 		}
-		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+		if !s.accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
 			s.logger.Warn("account csrf rejected", "path", r.URL.Path, "remote", clientIP(r))
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return

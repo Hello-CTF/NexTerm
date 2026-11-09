@@ -260,7 +260,11 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 		return accountSessionView{}, err
 	}
 	view.MFAEnabled = enabled
-	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
+	csrfToken, err := s.accounts.CSRFToken(sessionID)
+	if err != nil {
+		return accountSessionView{}, err
+	}
+	return accountSessionView{User: view, CSRFToken: csrfToken, MFARequired: required}, nil
 }
 
 // accountLoginGate, when non-nil, runs after a successful Authenticate and

@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -597,12 +598,27 @@ func TestRemoteAPIWriteCarriesCSRF(t *testing.T) {
 		t.Fatalf("write CSRF header = %q, want session token", seen)
 	}
 
-	// A write request with the cookie but no CSRF token must be rejected by the server with 403 and mapped to forbidden.
+	// The server rejects a write that carries the cookie but no CSRF token.
 	stale := &remoteClient{base: fixture.URL, cookieToken: client.cookieToken}
-	if _, err := stale.PutBaseURLs(context.Background(), entries); err == nil {
-		t.Fatal("write without CSRF token must fail")
-	} else {
-		requireCode(t, err, ipc.CodeForbidden)
+	body, err := json.Marshal(map[string]any{"base_urls": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPut, fixture.URL+"/fleet/base-urls", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	status, _, rpcErr, err := stale.doOnce(request, nil, false)
+	if err != nil || status != http.StatusForbidden || rpcErr == nil || rpcErr.Code != ipc.CodeForbidden {
+		t.Fatalf("write without CSRF token = %d %+v %v, want 403 forbidden", status, rpcErr, err)
+	}
+	// The client recovers by re-reading the session's token once.
+	if _, err := stale.PutBaseURLs(context.Background(), entries); err != nil {
+		t.Fatalf("write after CSRF refresh: %v", err)
+	}
+	if stale.csrfToken != client.csrfToken {
+		t.Fatalf("refreshed CSRF token = %q, want %q", stale.csrfToken, client.csrfToken)
 	}
 }
 

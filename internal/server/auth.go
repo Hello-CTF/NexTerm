@@ -69,7 +69,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeMFAEnrollmentRequired, mfaEnrollLockedMessage))
 						return
 					}
-					if unsafeAccountMethod(r) && !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+					if unsafeAccountMethod(r) && !s.accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
 						writeRPCError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 						return
 					}

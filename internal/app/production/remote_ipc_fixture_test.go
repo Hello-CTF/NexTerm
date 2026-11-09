@@ -115,7 +115,7 @@ func remoteTestTOTPCode(t *testing.T, secretBase32 string, at time.Time) string 
 	return fmt.Sprintf("%06d", value%1_000_000)
 }
 
-// remoteTestCSRF matches the derivation algorithm of internal/server account_session.go.
+// remoteTestCSRF derives a per-session token for this fake server; clients only echo it back.
 func remoteTestCSRF(sessionID string) string {
 	mac := hmac.New(sha256.New, []byte(sessionID))
 	mac.Write([]byte("nexterm-csrf-v1"))

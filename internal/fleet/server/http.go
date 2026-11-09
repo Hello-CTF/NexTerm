@@ -2,9 +2,6 @@ package fleetserver
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +17,6 @@ import (
 const (
 	sessionCookieName = "nexterm_session"
 	csrfHeaderName    = "X-NexTerm-CSRF"
-	csrfPurpose       = "nexterm-csrf-v1"
 	maxFleetBody      = 64 << 10
 )
 
@@ -35,25 +31,6 @@ func withIdentity(r *http.Request, identity *account.Identity) *http.Request {
 func identityFrom(r *http.Request) *account.Identity {
 	identity, _ := r.Context().Value(identityContextKey{}).(*account.Identity)
 	return identity
-}
-
-// fleetCSRFToken follows the same stateless derivation rule as the account session: HMAC(sessionID); it expires in sync with the session.
-func fleetCSRFToken(sessionID string) string {
-	mac := hmac.New(sha256.New, []byte(sessionID))
-	mac.Write([]byte(csrfPurpose))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func fleetCSRFSafeEqual(sessionID, presented string) bool {
-	expected, err := hex.DecodeString(fleetCSRFToken(sessionID))
-	if err != nil {
-		return false
-	}
-	provided, err := hex.DecodeString(presented)
-	if err != nil || len(provided) != len(expected) {
-		return false
-	}
-	return hmac.Equal(expected, provided)
 }
 
 func clientIP(r *http.Request) string {
@@ -260,7 +237,7 @@ func (s *Service) mfaEnrollLocked(r *http.Request) (bool, error) {
 func (s *Service) requireFleetCSRF(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity := identityFrom(r)
-		if identity == nil || !fleetCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+		if identity == nil || !s.accounts.CSRFValid(identity.SessionID, r.Header.Get(csrfHeaderName)) {
 			writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, "CSRF 校验失败：页面已过期，请刷新后重试")))
 			return
 		}
