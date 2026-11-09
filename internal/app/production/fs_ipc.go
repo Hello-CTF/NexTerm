@@ -32,9 +32,10 @@ const (
 // and localPath values of fs_upload/fs_download etc. are real local paths chosen by the user via system dialogs, used as-is.
 type StagedBlobResolver interface {
 	ResolveStagedPath(rel, userID string) (string, error)
-	// StagedWriteLimit returns the byte budget for a server-side write into a resolved staged path, or a
-	// user-facing error when the owner's staging quota or the disk threshold leaves no room.
-	StagedWriteLimit(path, userID string) (int64, error)
+	// ReserveStagedWrite grants and holds the byte budget for a server-side write into a resolved staged path until
+	// release is called, or returns a user-facing error when the owner's staging quota or the disk threshold leaves
+	// no room.
+	ReserveStagedWrite(path, userID string) (budget int64, release func(), err error)
 }
 
 // resolveStagedLocalPath resolves localPath as a staged reference to a server staged file in the server-side assembly.
@@ -63,21 +64,26 @@ func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path
 	return resolved, nil
 }
 
-// resolveStagedWriteTarget resolves a path the server is about to write to and returns its byte budget; zero
-// means unlimited, which is always the case on desktop where the path is the user's own choice.
-func resolveStagedWriteTarget(ctx context.Context, staged StagedBlobResolver, path string) (string, int64, error) {
+// resolveStagedWriteTarget resolves a path the server is about to write to and returns its byte budget with the
+// release of that budget, which the caller must call once the write is over; release is always non-nil and safe to
+// call more than once. A zero budget means unlimited, which is always the case on desktop where the path is the
+// user's own choice.
+func resolveStagedWriteTarget(ctx context.Context, staged StagedBlobResolver, path string) (string, int64, func(), error) {
 	resolved, err := resolveStagedLocalPath(ctx, staged, path)
 	if err != nil || staged == nil {
-		return resolved, 0, err
+		return resolved, 0, func() {}, err
 	}
 	userID, _ := ipc.UserIDFromContext(ctx)
-	limit, err := staged.StagedWriteLimit(resolved, userID)
+	limit, release, err := staged.ReserveStagedWrite(resolved, userID)
 	if err != nil {
-		return "", 0, ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{
+		return "", 0, func() {}, ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{
 			"resource": "local_staging", "reason": "staging_quota",
 		})
 	}
-	return resolved, limit, nil
+	if release == nil {
+		release = func() {}
+	}
+	return resolved, limit, release, nil
 }
 
 type fsTransferAttemptState uint8
@@ -670,10 +676,11 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return 0, fsIPCError("", err)
 				}
 				defer finish()
-				localPath, maxBytes, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
+				localPath, maxBytes, release, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
+				defer release()
 				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
@@ -693,10 +700,11 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return 0, fsIPCError("", err)
 				}
 				defer finish()
-				localPath, maxBytes, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
+				localPath, maxBytes, release, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
+				defer release()
 				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)

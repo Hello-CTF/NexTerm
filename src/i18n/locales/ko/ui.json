@@ -486,6 +486,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}{hostName}에서 다음 명령으로 프로세스 {name}(PID {pid}) {value}을(를) 수행합니다:\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}{hostName}에서 실행합니다:\n{script}{command}",
   "{what}失败（HTTP {status}）": "{what} 실패 (HTTP {status})",
+  "{what}失败（HTTP {status}）：{reason}": "{what} 실패 (HTTP {status}): {reason}",
   "{what}失败：服务端未返回 id / path": "{what} 실패: 서버가 id / path를 반환하지 않았습니다",
   "{what}已复制": "{what}을(를) 복사했습니다",
   "~/.ssh 目录": "~/.ssh 디렉터리",

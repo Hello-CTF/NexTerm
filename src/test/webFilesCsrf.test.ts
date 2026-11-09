@@ -38,6 +38,7 @@ let jarCookie = "";
 let currentCsrf = "csrf-1";
 let alwaysCsrfFail = false;
 let blobPostForbidden = false;
+let reserveQuotaFull = false;
 let blobSeq = 0;
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -92,6 +93,12 @@ beforeAll(async () => {
       if (req.method === "POST" && path.startsWith("/files/blob/reserve")) {
         if (sessionRejected(req, cookie, csrf)) {
           sendJSON(res, 403, { ok: false, error: { code: "forbidden", message: "CSRF 校验失败" } });
+          return;
+        }
+        if (reserveQuotaFull) {
+          // Mirrors http.Error: a plain-text reason followed by a newline.
+          res.writeHead(507, { "content-type": "text/plain; charset=utf-8" });
+          res.end("暂存空间已达上限，请等待已有传输完成或稍后重试\n");
           return;
         }
         handled.reserve += 1;
@@ -170,6 +177,7 @@ beforeEach(() => {
   currentCsrf = "csrf-1";
   alwaysCsrfFail = false;
   blobPostForbidden = false;
+  reserveQuotaFull = false;
   setCsrfToken(null);
   window.localStorage.setItem("nexterm.api", baseUrl);
 
@@ -285,6 +293,17 @@ describe("webFiles blob transfer session/CSRF contract", () => {
     expect(blobCalls()).toHaveLength(1);
     expect(meCalls()).toHaveLength(0);
     expect(handled.stage).toBe(0);
+  });
+
+  it("a refused reservation shows the server's reason instead of only the status", async () => {
+    reserveQuotaFull = true;
+
+    const failure = await requestSaveTarget("target.bin").catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("HTTP 507");
+    expect((failure as Error).message).toContain("暂存空间已达上限，请等待已有传输完成或稍后重试");
+    expect(handled.reserve).toBe(0);
   });
 
   it("reserveTarget and deleteBlob send the session CSRF header, and reserved blobs can be deleted", async () => {

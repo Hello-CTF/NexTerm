@@ -486,6 +486,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}將在 {hostName} 上{value}程序 {name}（PID {pid}），執行：\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}將在 {hostName} 上執行：\n{script}{command}",
   "{what}失败（HTTP {status}）": "{what}失敗（HTTP {status}）",
+  "{what}失败（HTTP {status}）：{reason}": "{what}失敗（HTTP {status}）：{reason}",
   "{what}失败：服务端未返回 id / path": "{what}失敗：伺服端未回傳 id / path",
   "{what}已复制": "{what}已複製",
   "~/.ssh 目录": "~/.ssh 目錄",

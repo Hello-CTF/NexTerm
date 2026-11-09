@@ -8,9 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 func newQuotaTestBlobStore(t *testing.T) *BlobStore {
@@ -56,7 +59,7 @@ func TestBlobStageQuotaIsPerOwner(t *testing.T) {
 	if recorder := stage("abcd", owner, false); recorder.Code != http.StatusInsufficientStorage {
 		t.Fatalf("unknown-length stage past quota = %d, want 507", recorder.Code)
 	}
-	if usage, entries, err := store.stageUsage(owner.UserID, ""); err != nil || usage != 8 || entries != 1 {
+	if usage, entries, err := store.stageUsage(owner.UserID, nil); err != nil || usage != 8 || entries != 1 {
 		t.Fatalf("owner usage after rejections = %d bytes, %d entries, %v; want the rejected uploads removed", usage, entries, err)
 	}
 	if recorder := stage("abcd", other, true); recorder.Code != http.StatusOK {
@@ -106,7 +109,7 @@ func TestBlobStageAndReserveHonorDiskThreshold(t *testing.T) {
 	}
 }
 
-func TestBlobStagedWriteLimit(t *testing.T) {
+func TestBlobReserveStagedWrite(t *testing.T) {
 	store := newQuotaTestBlobStore(t)
 	store.stageQuota = 100
 	store.downloadMax = 60
@@ -123,31 +126,158 @@ func TestBlobStagedWriteLimit(t *testing.T) {
 		return path
 	}
 	first := reserve()
-	if limit, err := store.StagedWriteLimit(first, owner.UserID); err != nil || limit != 60 {
-		t.Fatalf("limit with an empty quota = %d, %v; want the per-file cap 60", limit, err)
+	limit, release, err := store.ReserveStagedWrite(first, owner.UserID)
+	if err != nil || limit != 60 {
+		t.Fatalf("budget with an empty quota = %d, %v; want the per-file cap 60", limit, err)
 	}
 	if err := os.WriteFile(first, make([]byte, 70), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if limit, err := store.StagedWriteLimit(first, owner.UserID); err != nil || limit != 60 {
-		t.Fatalf("rewriting the same file = %d, %v; its own bytes must not count", limit, err)
-	}
 	second := reserve()
-	if limit, err := store.StagedWriteLimit(second, owner.UserID); err != nil || limit != 30 {
-		t.Fatalf("limit next to a 70-byte file = %d, %v; want the remaining 30", limit, err)
+	if limit, _, err := store.ReserveStagedWrite(second, owner.UserID); err != nil || limit != 40 {
+		t.Fatalf("budget next to a live 60-byte reservation = %d, %v; want 40, the reservation counting instead of the file", limit, err)
 	}
-	if limit, err := store.StagedWriteLimit(second, "user-other"); err != nil || limit != 60 {
-		t.Fatalf("another owner's limit = %d, %v; want an untouched quota", limit, err)
+	if _, _, err := store.ReserveStagedWrite(second, owner.UserID); !errors.Is(err, errBlobStageQuota) {
+		t.Fatalf("budget with the quota fully reserved = %v, want errBlobStageQuota", err)
 	}
-	if err := os.WriteFile(second, make([]byte, 30), 0o600); err != nil {
-		t.Fatal(err)
+	if limit, release, err := store.ReserveStagedWrite(second, "user-other"); err != nil || limit != 60 {
+		t.Fatalf("another owner's budget = %d, %v; want an untouched quota", limit, err)
+	} else {
+		release()
 	}
-	if _, err := store.StagedWriteLimit(filepath.Join(filepath.Dir(second), "other.bin"), owner.UserID); !errors.Is(err, errBlobStageQuota) {
-		t.Fatalf("limit with the quota used up = %v, want errBlobStageQuota", err)
+	release()
+	release()
+	usage, _, err := func() (int64, int, error) {
+		store.stageMu.Lock()
+		defer store.stageMu.Unlock()
+		return store.chargedUsageLocked(owner.UserID, "")
+	}()
+	if err != nil || usage != 70+40 {
+		t.Fatalf("charged usage after releasing the first write = %d, %v; want its 70 bytes on disk plus the second budget", usage, err)
 	}
 	store.diskUsage = func(string) (float64, error) { return 0.99, nil }
-	if _, err := store.StagedWriteLimit(first, owner.UserID); !errors.Is(err, errBlobStageDisk) {
-		t.Fatalf("limit past the disk threshold = %v, want errBlobStageDisk", err)
+	if _, _, err := store.ReserveStagedWrite(first, "user-third"); !errors.Is(err, errBlobStageDisk) {
+		t.Fatalf("budget past the disk threshold = %v, want errBlobStageDisk", err)
+	}
+}
+
+func TestBlobReserveStagedWriteConcurrentBudgetsStayWithinQuota(t *testing.T) {
+	store := newQuotaTestBlobStore(t)
+	store.stageQuota = 1000
+	store.downloadMax = 300
+	path := filepath.Join(store.stageRoot(), "target.bin")
+	const writers = 16
+	granted := make(chan int64, writers)
+	var ready, done sync.WaitGroup
+	start := make(chan struct{})
+	for range writers {
+		ready.Add(1)
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Done()
+			<-start
+			limit, _, err := store.ReserveStagedWrite(path, "user-owner")
+			if err != nil {
+				granted <- 0
+				return
+			}
+			granted <- limit
+		}()
+	}
+	ready.Wait()
+	close(start)
+	done.Wait()
+	close(granted)
+	var total int64
+	for limit := range granted {
+		total += limit
+	}
+	if total != store.stageQuota {
+		t.Fatalf("concurrent budgets total %d, want exactly the quota %d", total, store.stageQuota)
+	}
+}
+
+func TestBlobConcurrentUnknownLengthUploadsShareTheQuota(t *testing.T) {
+	store := newQuotaTestBlobStore(t)
+	store.stageQuota = 64
+	payload := strings.Repeat("x", 40)
+	const uploads = 4
+	codes := make(chan int, uploads)
+	var done sync.WaitGroup
+	for range uploads {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			recorder := httptest.NewRecorder()
+			store.Stage(recorder, blobRequest(http.MethodPost, "/files/blob?name=u.bin", unknownLength{strings.NewReader(payload)}, nil))
+			codes <- recorder.Code
+		}()
+	}
+	done.Wait()
+	close(codes)
+	accepted := 0
+	for code := range codes {
+		switch code {
+		case http.StatusOK:
+			accepted++
+		case http.StatusInsufficientStorage:
+		default:
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if usage, _, err := store.stageUsage("", nil); err != nil || usage > store.stageQuota || usage != int64(accepted*len(payload)) {
+		t.Fatalf("staged %d bytes for %d accepted uploads (%v); the quota is %d", usage, accepted, err, store.stageQuota)
+	}
+}
+
+func TestBlobSweepKeepsEntriesWithRecentWritesOrLiveReservations(t *testing.T) {
+	store := newQuotaTestBlobStore(t)
+	now := time.Now()
+	store.now = func() time.Time { return now }
+	old := now.Add(-3 * DefaultBlobTTL)
+	entry := func(name string) string {
+		t.Helper()
+		dir := filepath.Join(store.stageRoot(), ids.New())
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(dir, old, old); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	stale := entry("stale.bin")
+	written := entry("written.bin")
+	if err := os.Chtimes(written, now, now); err != nil {
+		t.Fatal(err)
+	}
+	reserved := entry("reserved.bin")
+	_, release, err := store.ReserveStagedWrite(reserved, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := store.SweepOnce(t.Context()); err != nil || removed != 1 {
+		t.Fatalf("sweep = %d, %v; want only the stale entry removed", removed, err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale entry survived: %v", err)
+	}
+	for _, path := range []string{written, reserved} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s was swept: %v", filepath.Base(path), err)
+		}
+	}
+	release()
+	if removed, err := store.SweepOnce(t.Context()); err != nil || removed != 1 {
+		t.Fatalf("sweep after release = %d, %v; want the released stale entry removed", removed, err)
 	}
 }
 

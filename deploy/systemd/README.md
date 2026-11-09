@@ -271,8 +271,12 @@ direct peer address is used.
 ## File staging limits
 
 In the browser, uploads, downloads, terminal recordings and log exports pass
-through temporary files under `NEXTERM_DATA_DIR/blobs`, removed two hours
-after their last change. These settings bound them (sizes in bytes):
+through temporary files under `NEXTERM_DATA_DIR/blobs`. A temporary file is
+removed two hours after it was last written, but not while a download,
+recording or export is still writing it. A write in progress counts against
+the account's quota with its whole allowance until it ends, so parallel
+transfers cannot add up past the quota. These settings bound them (sizes in
+bytes):
 
 - `NEXTERM_BLOB_MAX_BYTES`: one browser upload, default 256 MiB;
 - `NEXTERM_BLOB_STAGE_MAX_BYTES`: all temporary files of one account

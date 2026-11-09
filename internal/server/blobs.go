@@ -43,6 +43,7 @@ var (
 	errBlobStageQuota    = errors.New("暂存空间已达上限，请等待已有传输完成或稍后重试")
 	errBlobStageDisk     = errors.New("服务端磁盘使用率超过阈值，暂时无法暂存文件")
 	errBlobStageUsage    = errors.New("暂存空间用量获取失败，请稍后重试")
+	errBlobStageDir      = errors.New("暂存目录不可用，请稍后重试")
 )
 
 type BlobStore struct {
@@ -60,6 +61,13 @@ type BlobStore struct {
 	newID          func() string
 	now            func() time.Time
 	logger         *slog.Logger
+
+	// stageMu serializes staging admission so a check and the reservation it grants are atomic; reservations holds
+	// the byte budgets of staged writes still in flight, charged to their owner in place of the target's disk size.
+	stageMu         sync.Mutex
+	reservations    map[uint64]stageReservation
+	nextReservation uint64
+
 	// openAccess means the deployment shape has no request identity (auth=off/loopback listen/gateway);
 	// staged entries without owner metadata are allowed through; account shapes keep false, and ownerless entries are never accessible.
 	openAccess bool
@@ -69,6 +77,12 @@ type stagedBlob struct {
 	ID    string `json:"id"`
 	Path  string `json:"path"`
 	Bytes *int64 `json:"bytes,omitempty"`
+}
+
+type stageReservation struct {
+	owner string
+	path  string
+	bytes int64
 }
 
 type blobMeta struct {
@@ -210,15 +224,12 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
 		return
 	}
+	if !persist {
+		b.stageUpload(w, r, limit)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	root := b.stageRoot()
-	owner := requestOwner(r)
-	if !persist {
-		if err := b.checkStageAdmission(owner, r.ContentLength); err != nil {
-			writeStageError(w, err)
-			return
-		}
-	}
 	if persist {
 		b.persistMu.Lock()
 		defer b.persistMu.Unlock()
@@ -245,7 +256,6 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
 		return
 	}
-	// Owner metadata is written before the body so the staging quota counts an upload while it is in flight.
 	if err := b.writeOwnerMeta(dir, r); err != nil {
 		_ = os.RemoveAll(dir)
 		http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
@@ -281,9 +291,41 @@ func (b *BlobStore) Stage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "持久化存储用量获取失败，请稍后重试", http.StatusInternalServerError)
 			return
 		}
-	} else if err := b.checkStageUsageAfterWrite(owner); err != nil {
-		_ = os.RemoveAll(dir)
+	}
+	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name, Bytes: &written})
+}
+
+// stageUpload stores a temporary (non-persisted) upload. The owner's quota is charged up front with the declared
+// length, or with what the body may still grow to when the length is unknown, so concurrent uploads cannot
+// together exceed the quota; the charge is released once the bytes are on disk or the upload failed.
+func (b *BlobStore) stageUpload(w http.ResponseWriter, r *http.Request, limit int64) {
+	name := SafeBlobName(r.URL.Query().Get("name"))
+	dir, id, budget, release, err := b.admitStagedEntry(r, name, r.ContentLength, limit)
+	if err != nil {
 		writeStageError(w, err)
+		return
+	}
+	defer release()
+	r.Body = http.MaxBytesReader(w, r.Body, budget)
+	file, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		http.Error(w, "暂存文件创建失败，请稍后重试", http.StatusInternalServerError)
+		return
+	}
+	written, copyErr := io.CopyBuffer(file, r.Body, make([]byte, blobCopyBuffer))
+	closeErr := file.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.RemoveAll(dir)
+		var maxBytesErr *http.MaxBytesError
+		switch {
+		case errors.As(copyErr, &maxBytesErr) && budget < limit:
+			http.Error(w, errBlobStageQuota.Error(), http.StatusInsufficientStorage)
+		case errors.As(copyErr, &maxBytesErr):
+			http.Error(w, blobTooLargeMessage, http.StatusRequestEntityTooLarge)
+		default:
+			http.Error(w, "暂存写入失败，请稍后重试", http.StatusInternalServerError)
+		}
 		return
 	}
 	writeBlobJSON(w, stagedBlob{ID: id, Path: id + "/" + name, Bytes: &written})
@@ -296,21 +338,13 @@ func (b *BlobStore) Reserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	if err := b.checkStageAdmission(requestOwner(r), 0); err != nil {
+	name := SafeBlobName(r.URL.Query().Get("name"))
+	dir, id, _, release, err := b.admitStagedEntry(r, name, 0, 0)
+	if err != nil {
 		writeStageError(w, err)
 		return
 	}
-	dir, id, err := b.createItemDir(b.stageRoot())
-	if err != nil {
-		http.Error(w, "暂存目录不可用，请稍后重试", http.StatusInternalServerError)
-		return
-	}
-	if err := b.writeOwnerMeta(dir, r); err != nil {
-		_ = os.RemoveAll(dir)
-		http.Error(w, "无法为文件分配存储空间，请稍后重试", http.StatusInternalServerError)
-		return
-	}
-	name := SafeBlobName(r.URL.Query().Get("name"))
+	release()
 	path := filepath.Join(dir, name)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
@@ -452,52 +486,109 @@ func (b *BlobStore) ResolveStagedPath(rel, userID string) (string, error) {
 	return path, nil
 }
 
-// StagedWriteLimit returns how many bytes the server may write into the staged file at path (as returned by
-// ResolveStagedPath) on behalf of userID: the per-file cap, reduced to what is left of the owner's staging quota
-// not counting the file itself. It fails with a user-facing error when the quota is used up or the disk is past
-// its threshold. The budget is taken once per write, so concurrent writes of one owner can overshoot the quota by
-// at most one budget each.
-func (b *BlobStore) StagedWriteLimit(path, userID string) (int64, error) {
+// ReserveStagedWrite grants the byte budget for a write the server makes into the staged file at path (as returned
+// by ResolveStagedPath) on behalf of userID: the per-file cap, reduced to what is left of the owner's staging quota.
+// The budget is held against the quota, in place of the file's own size, until release is called; release is
+// idempotent, and afterwards the file counts with the size it actually reached. It fails with a user-facing error
+// when the quota is used up or the disk is past its threshold.
+func (b *BlobStore) ReserveStagedWrite(path, userID string) (int64, func(), error) {
+	b.stageMu.Lock()
+	defer b.stageMu.Unlock()
 	if err := b.checkDiskThreshold(); err != nil {
-		return 0, stageError(err)
+		return 0, nil, stageError(err)
 	}
-	usage, _, err := b.stageUsage(userID, path)
+	usage, _, err := b.chargedUsageLocked(userID, path)
 	if err != nil {
-		return 0, errBlobStageUsage
+		return 0, nil, errBlobStageUsage
 	}
 	remaining := b.stageQuotaBytes() - usage
 	if remaining <= 0 {
-		return 0, errBlobStageQuota
+		return 0, nil, errBlobStageQuota
 	}
-	return min(remaining, b.downloadMaxBytes()), nil
+	budget := min(remaining, b.downloadMaxBytes())
+	return budget, b.reserveLocked(userID, path, budget), nil
 }
 
-// checkStageAdmission rejects a new staged entry once the owner holds too many entries or bytes, or the disk is
-// past its threshold. incoming is the declared body length (zero or negative when unknown).
-func (b *BlobStore) checkStageAdmission(owner string, incoming int64) error {
-	usage, entries, err := b.stageUsage(owner, "")
+// admitStagedEntry creates a new staged entry for the request's owner when the entry count, the quota and the disk
+// threshold allow it. incoming is the declared body length (zero or negative when unknown) and limit the per-upload
+// cap; the returned budget is what the body may write, already charged to the owner until release is called.
+func (b *BlobStore) admitStagedEntry(r *http.Request, name string, incoming, limit int64) (string, string, int64, func(), error) {
+	owner := requestOwner(r)
+	b.stageMu.Lock()
+	defer b.stageMu.Unlock()
+	usage, entries, err := b.chargedUsageLocked(owner, "")
 	if err != nil {
-		return errBlobStageUsage
+		return "", "", 0, nil, errBlobStageUsage
 	}
-	quota := b.stageQuotaBytes()
-	if entries >= b.stageMaxEntries() || usage >= quota || incoming > 0 && usage+incoming > quota {
-		return errBlobStageQuota
+	remaining := b.stageQuotaBytes() - usage
+	budget := limit
+	if incoming > 0 {
+		budget = incoming
+	} else {
+		budget = min(limit, remaining)
+	}
+	if entries >= b.stageMaxEntries() || remaining <= 0 || budget > remaining {
+		return "", "", 0, nil, errBlobStageQuota
 	}
 	if err := b.checkDiskThreshold(); err != nil {
-		return stageError(err)
+		return "", "", 0, nil, stageError(err)
 	}
-	return nil
+	dir, id, err := b.createItemDir(b.stageRoot())
+	if err != nil {
+		return "", "", 0, nil, errBlobStageDir
+	}
+	if err := b.writeOwnerMeta(dir, r); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", "", 0, nil, errBlobStageDir
+	}
+	return dir, id, budget, b.reserveLocked(owner, filepath.Join(dir, name), budget), nil
 }
 
-func (b *BlobStore) checkStageUsageAfterWrite(owner string) error {
-	usage, _, err := b.stageUsage(owner, "")
-	if err != nil {
-		return errBlobStageUsage
+// chargedUsageLocked is the owner's staged bytes on disk plus the budgets still reserved; a file with a live
+// reservation, and the file at exclude, count through the reservation instead of their size. b.stageMu is held.
+func (b *BlobStore) chargedUsageLocked(owner, exclude string) (int64, int, error) {
+	skip := map[string]bool{}
+	if exclude != "" {
+		skip[exclude] = true
 	}
-	if usage > b.stageQuotaBytes() {
-		return errBlobStageQuota
+	var reserved int64
+	for _, reservation := range b.reservations {
+		if reservation.owner == owner {
+			skip[reservation.path] = true
+			reserved += reservation.bytes
+		}
 	}
-	return nil
+	usage, entries, err := b.stageUsage(owner, skip)
+	return usage + reserved, entries, err
+}
+
+// reserveLocked records a budget and returns its idempotent release. b.stageMu is held.
+func (b *BlobStore) reserveLocked(owner, path string, bytes int64) func() {
+	if b.reservations == nil {
+		b.reservations = map[uint64]stageReservation{}
+	}
+	b.nextReservation++
+	key := b.nextReservation
+	b.reservations[key] = stageReservation{owner: owner, path: path, bytes: bytes}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.stageMu.Lock()
+			delete(b.reservations, key)
+			b.stageMu.Unlock()
+		})
+	}
+}
+
+// reservedDirs lists the staged entry directories with a write still in flight; the sweeper leaves them alone.
+func (b *BlobStore) reservedDirs() map[string]bool {
+	b.stageMu.Lock()
+	defer b.stageMu.Unlock()
+	dirs := make(map[string]bool, len(b.reservations))
+	for _, reservation := range b.reservations {
+		dirs[filepath.Dir(reservation.path)] = true
+	}
+	return dirs
 }
 
 func stageError(err error) error {
@@ -508,7 +599,7 @@ func stageError(err error) error {
 }
 
 func writeStageError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errBlobStageUsage) {
+	if errors.Is(err, errBlobStageUsage) || errors.Is(err, errBlobStageDir) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -516,8 +607,8 @@ func writeStageError(w http.ResponseWriter, err error) {
 }
 
 // stageUsage sums the staged files and counts the staged entries owned by owner (empty for entries without owner
-// metadata), skipping the file at exclude. Entries removed concurrently by Delete or the sweeper are ignored.
-func (b *BlobStore) stageUsage(owner, exclude string) (int64, int, error) {
+// metadata), skipping the files in skip. Entries removed concurrently by Delete or the sweeper are ignored.
+func (b *BlobStore) stageUsage(owner string, skip map[string]bool) (int64, int, error) {
 	root := b.stageRoot()
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -549,8 +640,7 @@ func (b *BlobStore) stageUsage(owner, exclude string) (int64, int, error) {
 			if !file.Type().IsRegular() || file.Name() == blobMetaName {
 				continue
 			}
-			path := filepath.Join(dir, file.Name())
-			if path == exclude {
+			if skip[filepath.Join(dir, file.Name())] {
 				continue
 			}
 			info, err := file.Info()
@@ -721,17 +811,22 @@ func (b *BlobStore) SweepOnce(ctx context.Context) (int, error) {
 	}
 	now := b.now()
 	removed := 0
+	busy := b.reservedDirs()
 	var errs []error
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return removed, err
 		}
-		info, err := entry.Info()
+		dir := filepath.Join(root, entry.Name())
+		if busy[dir] {
+			continue
+		}
+		modified, err := newestModTime(dir, entry)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		age := now.Sub(info.ModTime())
+		age := now.Sub(modified)
 		if age < 0 || age <= b.ttl {
 			continue
 		}
@@ -742,6 +837,36 @@ func (b *BlobStore) SweepOnce(ctx context.Context) (int, error) {
 		removed++
 	}
 	return removed, errors.Join(errs...)
+}
+
+// newestModTime is the latest modification of a staged entry: its directory or any file in it, so a file that is
+// still being written keeps its entry alive.
+func newestModTime(dir string, entry os.DirEntry) (time.Time, error) {
+	info, err := entry.Info()
+	if err != nil {
+		return time.Time{}, err
+	}
+	newest := info.ModTime()
+	if !entry.IsDir() {
+		return newest, nil
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for _, file := range files {
+		fileInfo, err := file.Info()
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return time.Time{}, err
+		}
+		if fileInfo.ModTime().After(newest) {
+			newest = fileInfo.ModTime()
+		}
+	}
+	return newest, nil
 }
 
 func (b *BlobStore) RunSweeper(ctx context.Context) {

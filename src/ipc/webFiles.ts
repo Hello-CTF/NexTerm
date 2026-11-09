@@ -1,7 +1,7 @@
 
 import { WEB, httpUrl } from "./env";
 import { authedFetch } from "./serverAuth";
-import { t } from "../i18n";
+import { t, translateMessage } from "../i18n";
 
 export interface StagedRef {
   id: string;
@@ -94,8 +94,20 @@ export function pickBrowserFile(accept?: string): Promise<File | null> {
   });
 }
 
+// The blob routes reply to a refusal (quota, disk threshold, size limit) with a plain-text reason; JSON bodies
+// come from the shared auth middleware and keep the status-only message.
+async function refusalReason(res: Response): Promise<string> {
+  const text = (await res.text().catch(() => "")).trim();
+  if (!text || text.startsWith("{") || text.startsWith("<")) return "";
+  return translateMessage(text);
+}
+
 async function readStagedRef(res: Response, what: string): Promise<StagedRef> {
-  if (!res.ok) throw new Error(t("{what}失败（HTTP {status}）", { what, status: res.status }));
+  if (!res.ok) {
+    const reason = await refusalReason(res);
+    if (reason) throw new Error(t("{what}失败（HTTP {status}）：{reason}", { what, status: res.status, reason }));
+    throw new Error(t("{what}失败（HTTP {status}）", { what, status: res.status }));
+  }
   const body = (await res.json()) as { data?: Partial<StagedRef> };
   const id = body.data?.id;
   const path = body.data?.path;

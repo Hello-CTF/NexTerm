@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -37,13 +38,20 @@ func (r *fsEventRecorder) count(topic ipc.Topic) int {
 type fakeStagedBlobResolver struct {
 	dir     string
 	userIDs []string
-	// writeLimit is the budget StagedWriteLimit grants; writeErr refuses the write instead.
+	// writeLimit is the budget ReserveStagedWrite grants; writeErr refuses the write instead. reserved counts the
+	// budgets granted and not yet released.
 	writeLimit int64
 	writeErr   error
+	reserved   atomic.Int32
 }
 
-func (f *fakeStagedBlobResolver) StagedWriteLimit(string, string) (int64, error) {
-	return f.writeLimit, f.writeErr
+func (f *fakeStagedBlobResolver) ReserveStagedWrite(string, string) (int64, func(), error) {
+	if f.writeErr != nil {
+		return 0, nil, f.writeErr
+	}
+	f.reserved.Add(1)
+	var once sync.Once
+	return f.writeLimit, func() { once.Do(func() { f.reserved.Add(-1) }) }, nil
 }
 
 func (f *fakeStagedBlobResolver) ResolveStagedPath(rel, userID string) (string, error) {

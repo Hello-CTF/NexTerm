@@ -55,6 +55,9 @@ func TestFSTransferIPCStagedDownloadHonorsWriteBudget(t *testing.T) {
 	if info, err := os.Stat(reserved); err != nil || info.Size() != 0 {
 		t.Fatalf("oversize download wrote into staging: %v, %v", info, err)
 	}
+	if held := staged.reserved.Load(); held != 0 {
+		t.Fatalf("budgets held after the refused download = %d, want 0", held)
+	}
 
 	staged.writeLimit = 6
 	response := dispatchFSTransferTest(dispatcher, ctx, "fs_download", fsRequest{
@@ -62,6 +65,9 @@ func TestFSTransferIPCStagedDownloadHonorsWriteBudget(t *testing.T) {
 	}, nil)
 	if got := decodeFSTransferTest[int64](t, response); got != 6 {
 		t.Fatalf("download within budget = %d, want 6", got)
+	}
+	if held := staged.reserved.Load(); held != 0 {
+		t.Fatalf("budgets held after the download = %d, want 0", held)
 	}
 }
 
@@ -89,10 +95,11 @@ func TestFSTransferIPCStagedDownloadRefusedWhenQuotaExhausted(t *testing.T) {
 
 func TestResolveStagedWriteTargetIsUnlimitedOnDesktop(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "chosen.bin")
-	resolved, limit, err := resolveStagedWriteTarget(t.Context(), nil, path)
-	if err != nil || resolved != path || limit != 0 {
-		t.Fatalf("desktop write target = %q, %d, %v; want the path unchanged and no limit", resolved, limit, err)
+	resolved, limit, release, err := resolveStagedWriteTarget(t.Context(), nil, path)
+	if err != nil || resolved != path || limit != 0 || release == nil {
+		t.Fatalf("desktop write target = %q, %d, %v; want the path unchanged, no limit and a no-op release", resolved, limit, err)
 	}
+	release()
 }
 
 func TestExportLogMaxBytesClampsToBudget(t *testing.T) {

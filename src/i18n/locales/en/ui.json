@@ -534,6 +534,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}Will {value} process {name} (PID {pid}) on {hostName}, running:\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}Will run on {hostName}:\n{script}{command}",
   "{what}失败（HTTP {status}）": "{what} failed (HTTP {status})",
+  "{what}失败（HTTP {status}）：{reason}": "{what} failed (HTTP {status}): {reason}",
   "{what}失败：服务端未返回 id / path": "{what} failed: the server did not return an id / path",
   "{what}已复制": "{what} copied",
   "~/.ssh 目录": "~/.ssh directory",

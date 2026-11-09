@@ -518,7 +518,7 @@ type recordingStopTerminal struct {
 	feedCalls       int
 }
 
-func (t *recordingStopTerminal) StartRecordingLimited(string, int64) error {
+func (t *recordingStopTerminal) StartRecordingLimited(string, int64, func()) error {
 	t.startCalls++
 	t.stopNotified = false
 	t.failureNotified = false

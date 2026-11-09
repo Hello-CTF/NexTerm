@@ -39,10 +39,11 @@ func (s *terminalCommandService) exportTranscriptCast(ctx context.Context, input
 	if row.ContentOmitted {
 		return transcriptExportCastResult{}, ipc.BadParam(errors.New("该录像只同步了元数据，没有可导出的内容"))
 	}
-	path, maxBytes, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
+	path, maxBytes, release, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 	if err != nil {
 		return transcriptExportCastResult{}, err
 	}
+	defer release()
 	var summary asciicast.Result
 	err = atomicfile.Write(path, 0o600, func(out io.Writer) error {
 		var encodeErr error

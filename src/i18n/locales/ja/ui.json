@@ -486,6 +486,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}{hostName} 上でプロセス {name}（PID {pid}）を{value}します。実行内容：\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}{hostName} 上で実行します：\n{script}{command}",
   "{what}失败（HTTP {status}）": "{what}に失敗しました（HTTP {status}）",
+  "{what}失败（HTTP {status}）：{reason}": "{what}に失敗しました（HTTP {status}）：{reason}",
   "{what}失败：服务端未返回 id / path": "{what}に失敗しました：サーバーが id / path を返しませんでした",
   "{what}已复制": "{what}をコピーしました",
   "~/.ssh 目录": "~/.ssh ディレクトリ",

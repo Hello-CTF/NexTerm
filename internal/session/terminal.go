@@ -643,11 +643,12 @@ func (m *Manager) SetVisible(tabID string, visible bool) error {
 }
 
 func (m *Manager) StartRecording(tabID, path string) error {
-	return m.StartRecordingLimited(tabID, path, 0)
+	return m.StartRecordingLimited(tabID, path, 0, nil)
 }
 
 // StartRecordingLimited starts a recording that fails visibly once it has written maxBytes; zero means unlimited.
-func (m *Manager) StartRecordingLimited(tabID, path string, maxBytes int64) error {
+// release, when set, runs once the recording file closes; a caller seeing an error must still call it itself.
+func (m *Manager) StartRecordingLimited(tabID, path string, maxBytes int64, release func()) error {
 	tab, err := m.Tab(tabID)
 	if err != nil {
 		return err
@@ -659,7 +660,7 @@ func (m *Manager) StartRecordingLimited(tabID, path string, maxBytes int64) erro
 	}
 	defer tab.unlockFeed()
 	core, ok := tab.terminal.(interface {
-		StartRecordingLimited(string, int64) error
+		StartRecordingLimited(string, int64, func()) error
 	})
 	if !ok {
 		return ErrUnsupported
@@ -675,7 +676,7 @@ func (m *Manager) StartRecordingLimited(tabID, path string, maxBytes int64) erro
 			m.emit(ctx, TopicTerminalControl, event)
 		})
 	}
-	return core.StartRecordingLimited(path, maxBytes)
+	return core.StartRecordingLimited(path, maxBytes, release)
 }
 
 func (m *Manager) StopRecording(tabID string) (uint64, error) {
@@ -947,14 +948,14 @@ func (m *Manager) RawDumpFor(ctx context.Context, tabID string, maxBytes int) ([
 }
 
 func (m *Manager) StartRecordingFor(ctx context.Context, tabID, path string) error {
-	return m.StartRecordingLimitedFor(ctx, tabID, path, 0)
+	return m.StartRecordingLimitedFor(ctx, tabID, path, 0, nil)
 }
 
-func (m *Manager) StartRecordingLimitedFor(ctx context.Context, tabID, path string, maxBytes int64) error {
+func (m *Manager) StartRecordingLimitedFor(ctx context.Context, tabID, path string, maxBytes int64, release func()) error {
 	if _, err := m.TabFor(ctx, tabID); err != nil {
 		return err
 	}
-	return m.StartRecordingLimited(tabID, path, maxBytes)
+	return m.StartRecordingLimited(tabID, path, maxBytes, release)
 }
 
 func (m *Manager) StopRecordingFor(ctx context.Context, tabID string) (uint64, error) {

@@ -537,6 +537,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}Auf {hostName} wird der Prozess {name} (PID {pid}) {value}. Ausgeführt wird:\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}Auf {hostName} wird ausgeführt:\n{script}{command}",
   "{what}失败（HTTP {status}）": "{what} fehlgeschlagen (HTTP {status})",
+  "{what}失败（HTTP {status}）：{reason}": "{what} fehlgeschlagen (HTTP {status}): {reason}",
   "{what}失败：服务端未返回 id / path": "{what} fehlgeschlagen: Der Server hat keine id / path zurückgegeben",
   "{what}已复制": "{what} kopiert",
   "~/.ssh 目录": "Verzeichnis ~/.ssh",
