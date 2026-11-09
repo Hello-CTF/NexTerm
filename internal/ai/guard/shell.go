@@ -29,6 +29,8 @@ type pipeInput struct {
 	kind stdinKind
 	text string
 	ok   bool
+	// empty marks a stdinFile redirect from /dev/null, which supplies no input.
+	empty bool
 }
 
 type classifier struct {
@@ -466,7 +468,7 @@ func (c *classifier) classifyRedirect(r *syntax.Redirect) (Ruling, bool, string,
 		if isNetworkDevice(target) {
 			return Worst(ruling, Dangerous("重定向到网络设备")), false, "", nil
 		}
-		return ruling, false, "", &pipeInput{kind: stdinFile}
+		return ruling, false, "", &pipeInput{kind: stdinFile, empty: target == "/dev/null"}
 	case syntax.RdrInOut:
 		target, ruling := c.redirectTarget(r)
 		if isNetworkDevice(target) {
@@ -1092,7 +1094,7 @@ func (c *classifier) classifySimple(argv []string, stdin pipeInput) Ruling {
 		return c.classifyGit(args)
 	case "redis-cli", "valkey-cli":
 		result := classifyRedis(args)
-		if stdin.kind == stdinFile {
+		if stdin.kind == stdinFile && !stdin.empty {
 			return Worst(result, Dangerous("Redis 客户端执行重定向的命令文件，内容无法验证"))
 		}
 		if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
@@ -1296,7 +1298,7 @@ func containsDestructiveText(value string) bool {
 func (c *classifier) classifyDatabaseClient(name string, args []string, stdin pipeInput) Ruling {
 	result := Confirm(KindDBWrite, "数据库客户端可能修改数据")
 	var payloads []string
-	if stdin.kind == stdinFile {
+	if stdin.kind == stdinFile && !stdin.empty {
 		return Dangerous("数据库客户端执行重定向 SQL 文件")
 	}
 	if stdin.kind == stdinPipe || stdin.kind == stdinHeredoc {
@@ -2777,6 +2779,12 @@ func classifyRedis(args []string) Ruling {
 			}
 			continue
 		}
+		if !cluster {
+			// redis-cli stops option parsing at the command name; later words
+			// such as "-1" or "--pipe" are arguments of that command.
+			filtered = append(filtered, args[i:]...)
+			break
+		}
 		filtered = append(filtered, arg)
 	}
 	if cluster {
@@ -2811,7 +2819,7 @@ func classifyRedisCommand(filtered []string) Ruling {
 	}
 	command := strings.ToUpper(filtered[0])
 	switch command {
-	case "PING", "INFO", "DBSIZE", "EXISTS", "TYPE", "TTL", "PTTL", "GET", "MGET", "GETRANGE", "STRLEN", "HGET", "HGETALL", "HMGET", "HLEN", "HKEYS", "HVALS", "HEXISTS", "LRANGE", "LLEN", "LINDEX", "SMEMBERS", "SISMEMBER", "SMISMEMBER", "SCARD", "SRANDMEMBER", "ZRANGE", "ZRANK", "ZSCORE", "ZCARD", "ZCOUNT", "XRANGE", "XREVRANGE", "XLEN", "SCAN", "SSCAN", "HSCAN", "ZSCAN", "RANDOMKEY", "TIME", "OBJECT", "DUMP", "DEBUG":
+	case "PING", "INFO", "DBSIZE", "EXISTS", "TYPE", "TTL", "PTTL", "GET", "MGET", "GETRANGE", "STRLEN", "HGET", "HGETALL", "HMGET", "HLEN", "HKEYS", "HVALS", "HEXISTS", "LRANGE", "LLEN", "LINDEX", "SMEMBERS", "SISMEMBER", "SMISMEMBER", "SCARD", "SRANDMEMBER", "ZRANGE", "ZREVRANGE", "ZRANGEBYSCORE", "ZREVRANGEBYSCORE", "ZRANGEBYLEX", "ZREVRANGEBYLEX", "ZRANK", "ZREVRANK", "ZSCORE", "ZCARD", "ZCOUNT", "XRANGE", "XREVRANGE", "XLEN", "SCAN", "SSCAN", "HSCAN", "ZSCAN", "RANDOMKEY", "TIME", "OBJECT", "DUMP", "DEBUG":
 		if command == "DEBUG" {
 			return Confirm(KindDBWrite, "Redis DEBUG 可能改变服务状态")
 		}
