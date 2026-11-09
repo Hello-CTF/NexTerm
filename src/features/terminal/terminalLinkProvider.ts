@@ -452,7 +452,7 @@ function windowBounds(term: Terminal, y0: number): { first: number; last: number
 }
 
 /** Maps string indices of translateToString(true) to 0-based cell columns, with the cell width of each. */
-function cellMap(line: IBufferLine): { col: number[]; width: number[] } {
+export function cellMap(line: IBufferLine): { col: number[]; width: number[] } {
   const col: number[] = [];
   const width: number[] = [];
   for (let x = 0; x < line.length; x++) {

@@ -22,6 +22,7 @@
 ## Features
 
 - **Persistent terminals**: keep running when the app closes or the network drops
+- **Terminal tools**: command blocks, history replay, broadcast, splits, keyword highlighting
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
 - **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding
 - **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
