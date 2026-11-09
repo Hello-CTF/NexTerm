@@ -386,6 +386,26 @@
   .nx-tabstrip-scroll::-webkit-scrollbar {
     height: 0;
   }
+  /* Edge fades mark the ends of the strip that hide tabs (desktop; touch shells swipe the strip). */
+  .nx-tabstrip-scroll.has-overflow-left {
+    mask-image: linear-gradient(to right, transparent 0, #000 24px);
+  }
+  .nx-tabstrip-scroll.has-overflow-right {
+    mask-image: linear-gradient(to left, transparent 0, #000 24px);
+  }
+  .nx-tabstrip-scroll.has-overflow-left.has-overflow-right {
+    mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+  }
+
+  .nx-pane-zoom-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  }
 
   .nx-tabstrip.is-sub {
     background: color-mix(in srgb, var(--color-neutral-900) 94%, var(--color-neutral-950));

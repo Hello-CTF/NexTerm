@@ -445,6 +445,12 @@ export interface UiState {
   setActivePane: (paneId: string, workspaceId?: string) => void;
   focusPane: (direction: FocusDirection, workspaceId?: string) => string | null;
   setSplitRatio: (splitId: string, ratio: number, workspaceId?: string) => void;
+  /** Workspace id to the pane zoomed to fill it. UI-only: never persisted or synced. */
+  zoomedPanes: Record<string, string>;
+  /** Zooms the active pane to fill its workspace, or restores the layout; false when there is nothing to zoom. */
+  toggleZoomPane: (workspaceId?: string) => boolean;
+  /** Gives panes lined up in the same direction equal shares; false when the layout has no split to change. */
+  equalizeSplits: (workspaceId?: string) => boolean;
   /** Moves a tab into another pane of its workspace, at `index` of its tabs (default: the end). */
   moveTabToPane: (tabId: string, paneId: string, index?: number) => void;
   /**

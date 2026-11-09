@@ -503,6 +503,36 @@ describe("SplitView", () => {
     expect(onRatio).toHaveBeenLastCalledWith("right", 0.5);
   });
 
+  it("fills the workspace with a zoomed pane and keeps the other panes mounted but hidden", () => {
+    useUi.setState({ zoomedPanes: { ws: "top" } });
+    try {
+      renderView(nested(), false, "top");
+      expect(view!.container.querySelector('[role="separator"]')).toBeNull();
+      expect(view!.container.querySelector(".nx-split-view")!.getAttribute("data-zoomed-pane")).toBe("top");
+      const shown = view!.container.querySelector<HTMLElement>('[data-pane-id="top"]')!;
+      expect(shown.className).not.toContain("hidden");
+      expect(shown.style.inset).toBe("0px");
+      for (const id of ["left", "bottom"]) {
+        const hidden = view!.container.querySelector<HTMLElement>(`[data-pane-id="${id}"]`)!;
+        expect(hidden.className).toBe("hidden");
+        expect(hidden.querySelector(`#pane-${id}`)).not.toBeNull();
+      }
+    } finally {
+      act(() => useUi.setState({ zoomedPanes: {} }));
+    }
+  });
+
+  it("ignores a zoom whose pane is no longer the focused one", () => {
+    useUi.setState({ zoomedPanes: { ws: "top" } });
+    try {
+      renderView(nested(), false, "left");
+      expect(view!.container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+      expect(view!.container.querySelector<HTMLElement>('[data-pane-id="top"]')!.className).not.toContain("hidden");
+    } finally {
+      act(() => useUi.setState({ zoomedPanes: {} }));
+    }
+  });
+
   it("shows only the active pane, full size and without dividers, in single-pane mode", () => {
     renderView(nested(), true, "top");
     expect(view!.container.querySelector('[role="separator"]')).toBeNull();

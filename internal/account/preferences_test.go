@@ -76,6 +76,12 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.lockVault",
 		"keybinding.openSettings",
 		"keybinding.focusAiInput",
+		"keybinding.terminalFontIncrease",
+		"keybinding.terminalFontDecrease",
+		"keybinding.terminalFontReset",
+		"keybinding.toggleZoomPane",
+		"keybinding.equalizeSplits",
+		"keybinding.showShortcuts",
 	} {
 		if !declared[key] {
 			t.Errorf("required preference key %q is not declared", key)
@@ -109,6 +115,11 @@ func TestNormalizePreferenceBinding(t *testing.T) {
 		"Shift+p":             "Shift+p",
 		"Alt+1":               "Alt+1",
 		"Mod+Shift+ArrowLeft": "Mod+Shift+ArrowLeft",
+		"Mod+=":               "Mod+=",
+		"Mod+-":               "Mod+-",
+		"Mod+0":               "Mod+0",
+		"Mod+/":               "Mod+/",
+		"Mod+Shift+Enter":     "Mod+Shift+Enter",
 	}
 	for input, want := range valid {
 		got, ok := normalizePreferenceBinding(input)

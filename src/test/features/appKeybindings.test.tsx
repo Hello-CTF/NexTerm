@@ -65,6 +65,7 @@ import App from "../../app/App";
 import { useUi } from "../../app/store";
 import { getKeybinding, resetAllKeybindings, setKeybinding } from "../../app/keybindings";
 import { ALL_PROJECTS } from "../../app/projectFocus";
+import { defaultTerminalFontSize, getAppearancePrefs, setTerminalFontSize, TERMINAL_FONT_SIZE_MAX } from "../../app/preferences";
 
 function keyDown(target: EventTarget, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
   const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
@@ -363,6 +364,59 @@ describe("held app shortcuts outside the terminal", () => {
     await flush();
     const cleared = keyDown(window, "T", { code: "KeyT", ctrlKey: true, shiftKey: true });
     expect(cleared.defaultPrevented).toBe(false);
+  });
+
+  it("steps the terminal font size within its limits and resets it", async () => {
+    mounted = mountApp();
+    await flush();
+    setTerminalFontSize(14);
+    // jsdom runs as the web build, which adds Alt so the browser keeps Ctrl+= / Ctrl+- for page zoom.
+    expect(keyDown(window, "=", { code: "Equal", ctrlKey: true, altKey: true }).defaultPrevented).toBe(true);
+    expect(getAppearancePrefs().terminalFontSize).toBe(15);
+    keyDown(window, "-", { code: "Minus", ctrlKey: true, altKey: true });
+    keyDown(window, "-", { code: "Minus", ctrlKey: true, altKey: true });
+    expect(getAppearancePrefs().terminalFontSize).toBe(13);
+    setTerminalFontSize(TERMINAL_FONT_SIZE_MAX);
+    keyDown(window, "=", { code: "Equal", ctrlKey: true, altKey: true });
+    expect(getAppearancePrefs().terminalFontSize).toBe(TERMINAL_FONT_SIZE_MAX);
+    keyDown(window, "0", { code: "Digit0", ctrlKey: true, altKey: true });
+    expect(getAppearancePrefs().terminalFontSize).toBe(defaultTerminalFontSize());
+  });
+
+  it("zooms the active pane with its shortcut and restores the layout on the second press", async () => {
+    useUi.setState((state) => ({
+      zoomedPanes: {},
+      workspaces: state.workspaces.map((workspace) => ({
+        ...workspace,
+        panes: [
+          workspace.panes[0],
+          { id: "p2", activeTabId: "t4", tabs: [{ id: "t4", kind: "audit", title: "Audit 2", closable: true }] },
+        ],
+        activePaneId: "p2",
+      })),
+    }));
+    mounted = mountApp();
+    await flush();
+    const event = keyDown(window, "Enter", { code: "Enter", ctrlKey: true, shiftKey: true });
+    expect(event.defaultPrevented).toBe(true);
+    expect(useUi.getState().zoomedPanes).toEqual({ ws1: "p2" });
+    await flush();
+    expect(document.querySelector('[data-pane-id="p1"]')?.className).toBe("hidden");
+    expect(document.querySelector('[data-pane-id="p2"] [aria-pressed="true"]')).not.toBeNull();
+    keyDown(window, "Enter", { code: "Enter", ctrlKey: true, shiftKey: true });
+    expect(useUi.getState().zoomedPanes).toEqual({});
+  });
+
+  it("opens the shortcut cheat sheet with Mod+/ and closes it with Escape", async () => {
+    mounted = mountApp();
+    await flush();
+    keyDown(window, "/", { code: "Slash", ctrlKey: true });
+    await flush();
+    const sheet = document.querySelector<HTMLElement>('[role="dialog"][aria-labelledby]');
+    expect(sheet?.textContent).toContain("快捷键速查");
+    keyDown(sheet!.querySelector("input")!, "Escape");
+    await flush();
+    expect(document.querySelector('input[aria-label="筛选快捷键"]')).toBeNull();
   });
 
   it("ignores AltGr chords that happen to match a binding", async () => {

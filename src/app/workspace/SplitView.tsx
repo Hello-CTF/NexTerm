@@ -10,7 +10,7 @@ import {
 } from "react";
 import { clampSplitRatio, splitRatioAt, splitRatioForKey } from "../../features/terminal/workspaceLayout";
 import { createFrameCoalescer, RESIZE_END_EVENT, type FrameCoalescer } from "../../ui/ResizeHandle";
-import type { AppTab, Pane, Workspace } from "../store";
+import { useUi, zoomedPaneOf, type AppTab, type Pane, type Workspace } from "../store";
 import { isTouchShell } from "../shell/shellMode";
 import { workspaceLayoutTree } from "../paneLayout";
 import { paneIdsInOrder, paneRects, resolveActivePane, type Rect, type SplitDir, type SplitNode } from "../splitTree";
@@ -150,7 +150,10 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
   const tree = workspaceLayoutTree(workspace);
   const rects = new Map((tree ? paneRects(tree) : []).map((entry) => [entry.paneId, entry.rect]));
   const activePaneId = tree ? resolveActivePane(tree, workspace.activePaneId) : workspace.activePaneId;
-  const handles = tree && !singlePane ? splitHandles(tree) : [];
+  // A zoomed pane fills the workspace like the single-pane view; the other panes stay mounted but hidden.
+  const zoomedPaneId = useUi((state) => (singlePane ? null : zoomedPaneOf(workspace, state.zoomedPanes)));
+  const solo = singlePane || zoomedPaneId !== null;
+  const handles = tree && !solo ? splitHandles(tree) : [];
   const [strips, setStrips] = useState<Record<string, number>>({});
   const stripRefs = useRef(new Map<string, (element: HTMLElement | null) => void>());
   const stripElements = useRef(new Map<string, HTMLElement>());
@@ -210,12 +213,12 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
     const element = stripElements.current.get(activePaneId);
     const height = element?.offsetHeight ?? 0;
     if (height > 0) setStrips((current) => (current[activePaneId] === height ? current : { ...current, [activePaneId]: height }));
-  }, [activePaneId, singlePane]);
+  }, [activePaneId, solo]);
 
   const placement = workspace.panes.map((pane) => {
     const rect = rects.get(pane.id) ?? null;
-    const shown = singlePane ? pane.id === activePaneId : rect !== null;
-    return { pane, rect: singlePane ? null : rect, shown, focused: pane.id === activePaneId };
+    const shown = solo ? pane.id === activePaneId : rect !== null;
+    return { pane, rect: solo ? null : rect, shown, focused: pane.id === activePaneId };
   });
   // Tab content in a stable order: moving a tab between panes changes only its placement.
   const tabs = placement
@@ -225,7 +228,7 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
     })
     .sort((left, right) => (left.tab.id < right.tab.id ? -1 : left.tab.id > right.tab.id ? 1 : 0));
   const defaultStrip = defaultStripHeight();
-  const shownOrder = singlePane ? [activePaneId] : tree ? paneIdsInOrder(tree) : [];
+  const shownOrder = solo ? [activePaneId] : tree ? paneIdsInOrder(tree) : [];
 
   // Panes render chrome first and all tab content after it, keyed by tab id, so DOM order is not
   // reading order. Tab and Shift+Tab therefore walk the panes in on-screen order: each pane's strip,
@@ -254,7 +257,12 @@ export function SplitView({ workspace, singlePane, renderPane, renderTab, onActi
   };
 
   return (
-    <div ref={boxRef} className="nx-split-view relative h-full min-h-0" onKeyDown={onKeyDown}>
+    <div
+      ref={boxRef}
+      className="nx-split-view relative h-full min-h-0"
+      data-zoomed-pane={zoomedPaneId ?? undefined}
+      onKeyDown={onKeyDown}
+    >
       {placement.map(({ pane, rect, shown, focused }) => (
         <div
           key={pane.id}

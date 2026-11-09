@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import {
   useUi,
   requestCloseTab,
@@ -8,6 +8,7 @@ import {
   closeActionHint,
   hasCustomTitle,
   sanitizeRemoteTabTitle,
+  zoomedPaneOf,
   type AppTab,
   type Pane,
   type SplitDirection,
@@ -22,9 +23,12 @@ import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/Cont
 import {
   IconAlert,
   IconChevronLeft,
+  IconCheck,
+  IconChevronDown,
   IconChevronRight,
   IconClose,
   IconEdit,
+  IconMaximize,
   IconPlus,
   IconSplitH,
   IconSplitV,
@@ -75,6 +79,54 @@ function handleTablistKeyDown(
 
 function focusTab(tablist: Element | null, id: string): void {
   tablist?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`)?.focus();
+}
+
+interface StripOverflow {
+  left: boolean;
+  right: boolean;
+}
+
+const NO_OVERFLOW: StripOverflow = { left: false, right: false };
+
+// useTabStripOverflow tracks which ends of the horizontally scrolling tab strip hide tabs, and on desktop maps a
+// vertical wheel onto horizontal scrolling, since the strip shows no scrollbar.
+function useTabStripOverflow(ref: RefObject<HTMLDivElement | null>, enabled: boolean, tabCount: number): StripOverflow {
+  const [overflow, setOverflow] = useState<StripOverflow>(NO_OVERFLOW);
+  useEffect(() => {
+    const element = ref.current;
+    if (!enabled || !element) {
+      setOverflow(NO_OVERFLOW);
+      return;
+    }
+    const measure = () => {
+      const max = element.scrollWidth - element.clientWidth;
+      const next = { left: max > 1 && element.scrollLeft > 1, right: max > 1 && element.scrollLeft < max - 1 };
+      setOverflow((current) => (current.left === next.left && current.right === next.right ? current : next));
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (element.scrollWidth <= element.clientWidth) return;
+      event.preventDefault();
+      // Line-mode deltas (Firefox) count lines; scale them to roughly a short tab's width.
+      element.scrollLeft += event.deltaMode === 1 ? event.deltaY * 32 : event.deltaY;
+      measure();
+    };
+    measure();
+    element.addEventListener("scroll", measure, { passive: true });
+    element.addEventListener("wheel", onWheel, { passive: false });
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(measure);
+      observer.observe(element);
+      for (const child of element.children) observer.observe(child);
+    }
+    return () => {
+      element.removeEventListener("scroll", measure);
+      element.removeEventListener("wheel", onWheel);
+      observer?.disconnect();
+    };
+  }, [ref, enabled, tabCount]);
+  return overflow;
 }
 
 export interface PaneMoveTarget {
@@ -133,6 +185,12 @@ export function PaneGroup({
   const moveTabToPane = useUi((s) => s.moveTabToPane);
   const moveTabInPane = useUi((s) => s.moveTabInPane);
   const splitPaneWithTab = useUi((s) => s.splitPaneWithTab);
+  const toggleZoomPane = useUi((s) => s.toggleZoomPane);
+  // The single-pane view already shows one pane full size, so a zoom has no effect there.
+  const zoomed = useUi((s) => {
+    const workspace = !singlePane && workspaceId ? s.workspaces.find((w) => w.id === workspaceId) : undefined;
+    return workspace ? zoomedPaneOf(workspace, s.zoomedPanes) === pane.id : false;
+  });
   const moveTab = (fromIndex: number, toIndex: number) =>
     moveTabInPane(pane.id, fromIndex, toIndex);
   const activeTabId = pane.activeTabId ?? pane.tabs[pane.tabs.length - 1]?.id ?? null;
@@ -285,6 +343,24 @@ export function PaneGroup({
   };
 
   const tabScrollRef = useRef<HTMLDivElement>(null);
+  const overflow = useTabStripOverflow(tabScrollRef, !isTouchShell(), pane.tabs.length);
+
+  const openOverflowMenu = (x: number, y: number) => {
+    setMenu({
+      x,
+      y,
+      title: tr("全部标签页"),
+      items: pane.tabs.map((t): MenuItem => {
+        const Icon = tabIcon(t);
+        return {
+          kind: "item",
+          label: t.title,
+          icon: t.id === activeTabId ? <IconCheck size={12} /> : <Icon size={12} />,
+          onSelect: () => setActiveTab(t.id),
+        };
+      }),
+    });
+  };
   useEffect(() => {
     // Keep the active tab inside the horizontally scrollable strip (mobile widths overflow it).
     if (!activeTabId) return;
@@ -308,7 +384,7 @@ export function PaneGroup({
         }`}
       >
         <div
-          className="nx-tabstrip-scroll"
+          className={`nx-tabstrip-scroll${overflow.left ? " has-overflow-left" : ""}${overflow.right ? " has-overflow-right" : ""}`}
           ref={tabScrollRef}
           // A tab from another pane dropped on the strip but not on a tab joins the end of this pane.
           onDragOver={(e) => {
@@ -458,6 +534,21 @@ export function PaneGroup({
           })}
         </div>
         </div>
+        {(overflow.left || overflow.right) && (
+          <button
+            type="button"
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={tr("全部标签页")}
+            aria-label={tr("全部标签页")}
+            aria-haspopup="menu"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              openOverflowMenu(rect.left, rect.bottom);
+            }}
+          >
+            <IconChevronDown size={13} />
+          </button>
+        )}
         {canNewTerminal && (
           <button
             className="nx-tab-new"
@@ -516,6 +607,30 @@ export function PaneGroup({
               <IconSplitH size={14} />
             </button>
           </>
+        )}
+        {zoomed && (
+          <span className="nx-pane-zoom-badge" role="status">
+            {tr("已最大化")}
+          </span>
+        )}
+        {split && !singlePane && (
+          <button
+            type="button"
+            className={`nx-icon-btn nx-icon-btn-sm${zoomed ? " is-active" : ""}`}
+            aria-pressed={zoomed}
+            title={
+              zoomed
+                ? tr("还原窗格布局 ({value})", { value: kbLabel("toggleZoomPane") })
+                : tr("最大化窗格 ({value})", { value: kbLabel("toggleZoomPane") })
+            }
+            aria-label={zoomed ? tr("还原窗格布局") : tr("最大化窗格")}
+            onClick={() => {
+              if (!active) onActivate();
+              toggleZoomPane(workspaceId);
+            }}
+          >
+            <IconMaximize size={13} />
+          </button>
         )}
         {split && (
           <button

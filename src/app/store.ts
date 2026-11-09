@@ -71,6 +71,7 @@ export {
   sanitizeWorkspaceProblemText,
   selectConnectionProblem,
 } from "./store/problems";
+export { zoomedPaneOf } from "./store/workspaceSlice";
 export { consumeRestoredTakeover, defaultRightOpen, LEFT_WIDTH_RANGE, RIGHT_WIDTH_RANGE } from "./store/persistence";
 export {
   applySessionStatusEvent,

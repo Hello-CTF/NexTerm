@@ -126,6 +126,12 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.lockVault":              {kind: preferenceKindBinding},
 	"keybinding.openSettings":           {kind: preferenceKindBinding},
 	"keybinding.focusAiInput":           {kind: preferenceKindBinding},
+	"keybinding.terminalFontIncrease":   {kind: preferenceKindBinding},
+	"keybinding.terminalFontDecrease":   {kind: preferenceKindBinding},
+	"keybinding.terminalFontReset":      {kind: preferenceKindBinding},
+	"keybinding.toggleZoomPane":         {kind: preferenceKindBinding},
+	"keybinding.equalizeSplits":         {kind: preferenceKindBinding},
+	"keybinding.showShortcuts":          {kind: preferenceKindBinding},
 }
 
 // PreferenceKeys returns a copy of the whitelist keys, for the HTTP layer and tests to enumerate declared preferences.

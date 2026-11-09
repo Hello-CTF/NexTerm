@@ -800,6 +800,12 @@ export function setUiFontSize(value: number): void {
   commitAppearance({ ...appearance, uiFontPreset: next, uiFontScale: 1 });
 }
 
+/** The terminal font size this device starts from: the server default when set, else the builtin one. */
+export function defaultTerminalFontSize(): number {
+  const key = appearanceKey("terminalFontSize");
+  return parseTerminalFontSize(key in accountDefaults ? accountDefaults[key] : builtinAppearance("terminalFontSize"));
+}
+
 export function setTerminalFontSize(value: number): void {
   const next = parseTerminalFontSize(value);
   if (appearance.terminalFontSize === next) return;

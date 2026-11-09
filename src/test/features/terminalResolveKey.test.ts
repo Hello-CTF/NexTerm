@@ -71,6 +71,7 @@ afterEach(() => {
 });
 
 describe("resolveKey precedence (desktop)", () => {
+  // Platform-neutral rows. Mod rows press Cmd on macOS desktop and Ctrl elsewhere (see modRows).
   const shared: Array<[string, TerminalKeyEvent, KeyResolution]> = [
     ["Shift+Enter inserts a newline", ev("Enter", "Enter", { shiftKey: true }), bytes("\x1b\r")],
     ["Enter is xterm's", ev("Enter", "Enter"), PASS],
@@ -80,34 +81,62 @@ describe("resolveKey precedence (desktop)", () => {
     ["plain letters pass", ev("a", "KeyA"), PASS],
     ["Shift letters pass, also on repeat", ev("H", "KeyH", { shiftKey: true, repeat: true }), PASS],
     ["Ctrl+C passes to xterm", ev("c", "KeyC", { ctrlKey: true }), PASS],
-    ["Mod+Shift+P is the command palette", ev("P", "KeyP", { ctrlKey: true, shiftKey: true }), app("commandPalette")],
-    ["a held palette shortcut is dropped", ev("P", "KeyP", { ctrlKey: true, shiftKey: true, repeat: true }), app("commandPalette", true)],
-    ["a held split shortcut is dropped", ev("\\", "Backslash", { ctrlKey: true, repeat: true }), app("splitDown", true)],
-    ["a held close-pane shortcut is dropped", ev("W", "KeyW", { ctrlKey: true, shiftKey: true, repeat: true }), app("closePane", true)],
-    ["a held tab switch is dropped", ev("2", "Digit2", { ctrlKey: true, repeat: true }), app("switchTab", true, 2)],
-    ["a held lock shortcut is dropped", ev("L", "KeyL", { ctrlKey: true, shiftKey: true, repeat: true }), app("lockVault", true)],
-    ["a held sidebar toggle is dropped", ev("b", "KeyB", { ctrlKey: true, repeat: true }), app("toggleSidebar", true)],
-    ["workspace navigation repeats", ev("ArrowRight", "ArrowRight", { ctrlKey: true, altKey: true, repeat: true }), app("nextWorkspace")],
-    ["pane focus repeats", ev("ArrowUp", "ArrowUp", { ctrlKey: true, altKey: true, repeat: true }), app("focusPaneUp")],
-    ["Mod+Shift+T restores a closed tab", ev("T", "KeyT", { ctrlKey: true, shiftKey: true }), app("restoreClosedTab")],
     ["Ctrl+F stays with readline", ev("f", "KeyF", { ctrlKey: true }), PASS],
-    ["Mod+Shift+W closes the pane", ev("W", "KeyW", { ctrlKey: true, shiftKey: true }), app("closePane")],
-    ["Mod+Shift+\\ splits right", ev("|", "Backslash", { ctrlKey: true, shiftKey: true }), app("splitRight")],
-    ["Mod+\\ splits down (withholds SIGQUIT)", ev("\\", "Backslash", { ctrlKey: true }), app("splitDown")],
-    ["Mod+3 switches tab", ev("3", "Digit3", { ctrlKey: true }), app("switchTab", false, 3)],
     ["composition keys belong to the IME", ev("Enter", "Enter", { isComposing: true }), { kind: "ime", toXterm: false }],
     ["keyCode 229 stays with xterm's composition helper", ev("Process", "KeyP", { ctrlKey: true, shiftKey: true }, { keyCode: 229 }), { kind: "ime", toXterm: true }],
     ["IME beats an app shortcut", ev("P", "KeyP", { ctrlKey: true, shiftKey: true, isComposing: true }), { kind: "ime", toXterm: false }],
   ];
 
+  const modRows = (mac: boolean): Array<[string, TerminalKeyEvent, KeyResolution]> => {
+    const mod: Mods = mac ? { metaKey: true } : { ctrlKey: true };
+    return [
+      ["Mod+Shift+P is the command palette", ev("P", "KeyP", { ...mod, shiftKey: true }), app("commandPalette")],
+      ["a held palette shortcut is dropped", ev("P", "KeyP", { ...mod, shiftKey: true, repeat: true }), app("commandPalette", true)],
+      ["a held split shortcut is dropped", ev("\\", "Backslash", { ...mod, repeat: true }), app("splitDown", true)],
+      ["a held close-pane shortcut is dropped", ev("W", "KeyW", { ...mod, shiftKey: true, repeat: true }), app("closePane", true)],
+      ["a held tab switch is dropped", ev("2", "Digit2", { ...mod, repeat: true }), app("switchTab", true, 2)],
+      ["a held lock shortcut is dropped", ev("L", "KeyL", { ...mod, shiftKey: true, repeat: true }), app("lockVault", true)],
+      ["a held sidebar toggle is dropped", ev("b", "KeyB", { ...mod, repeat: true }), app("toggleSidebar", true)],
+      ["workspace navigation repeats", ev("ArrowRight", "ArrowRight", { ...mod, altKey: true, repeat: true }), app("nextWorkspace")],
+      ["pane focus repeats", ev("ArrowUp", "ArrowUp", { ...mod, altKey: true, repeat: true }), app("focusPaneUp")],
+      ["Mod+Shift+T restores a closed tab", ev("T", "KeyT", { ...mod, shiftKey: true }), app("restoreClosedTab")],
+      ["Mod+Shift+W closes the pane", ev("W", "KeyW", { ...mod, shiftKey: true }), app("closePane")],
+      ["Mod+Shift+\\ splits right", ev("|", "Backslash", { ...mod, shiftKey: true }), app("splitRight")],
+      ["Mod+\\ splits down", ev("\\", "Backslash", mod), app("splitDown")],
+      ["Mod+3 switches tab", ev("3", "Digit3", mod), app("switchTab", false, 3)],
+      ["Mod+= enlarges the terminal font", ev("=", "Equal", mod), app("terminalFontIncrease")],
+      ["Mod+- shrinks the terminal font", ev("-", "Minus", mod), app("terminalFontDecrease")],
+      ["Mod+0 resets the terminal font", ev("0", "Digit0", mod), app("terminalFontReset")],
+      ["Mod+Shift+Enter zooms the pane", ev("Enter", "Enter", { ...mod, shiftKey: true }), app("toggleZoomPane")],
+      ["Mod+/ (cheat sheet) is not withheld", ev("/", "Slash", mod), PASS],
+    ];
+  };
+
   for (const mac of [false, true]) {
-    for (const [name, event, expected] of shared) {
+    for (const [name, event, expected] of [...shared, ...modRows(mac)]) {
       it(`${mac ? "macOS" : "Linux/Windows"}: ${name}`, () => {
         setMac(mac);
         expect(resolveKey(event, ctx())).toEqual(expected);
       });
     }
   }
+
+  // Mod used to match Ctrl on macOS as well, which took the tmux prefix (Ctrl+B), readline keys and SIGQUIT from
+  // the terminal. On macOS desktop Mod is Cmd only, so these Ctrl chords reach the program.
+  it.each<[string, TerminalKeyEvent]>([
+    ["Ctrl+B (tmux prefix)", ev("b", "KeyB", { ctrlKey: true })],
+    ["Ctrl+W (delete word)", ev("w", "KeyW", { ctrlKey: true })],
+    ["Ctrl+T (transpose)", ev("t", "KeyT", { ctrlKey: true })],
+    ["Ctrl+J (newline)", ev("j", "KeyJ", { ctrlKey: true })],
+    ["Ctrl+\\ (SIGQUIT)", ev("\\", "Backslash", { ctrlKey: true })],
+    ["Ctrl+3", ev("3", "Digit3", { ctrlKey: true })],
+    ["Ctrl+Shift+P", ev("P", "KeyP", { ctrlKey: true, shiftKey: true })],
+  ])("macOS desktop leaves %s to the terminal", (_name, event) => {
+    setMac(true);
+    expect(resolveKey(event, ctx())).toEqual(PASS);
+    setMac(false);
+    expect(resolveKey(event, ctx())).toMatchObject({ kind: "app-shortcut" });
+  });
 
   it.each<[string, TerminalKeyEvent, KeyResolution, KeyResolution]>([
     ["Option/Alt+Left", ev("ArrowLeft", "ArrowLeft", { altKey: true }), bytes("\x1bb"), PASS],
