@@ -1,6 +1,5 @@
 /** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 
@@ -227,7 +226,7 @@ describe("AppearanceCard schemes and accent", () => {
     mounted = mount(createElement(AppearanceCard));
     const c = mounted.container;
     const input = c.querySelector('input[type="file"]') as HTMLInputElement;
-    const text = readFileSync(join(process.cwd(), "src/test/fixtures/terminal-schemes/Dracula.itermcolors"), "utf8");
+    const text = readFileSync("src/test/fixtures/terminal-schemes/Dracula.itermcolors", "utf8");
     const files = [new File([text], "Dracula.itermcolors"), new File(["background = #000000"], "broken.conf")];
     Object.defineProperty(input, "files", { configurable: true, value: files });
     await act(async () => {

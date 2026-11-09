@@ -408,10 +408,10 @@ type terminalCustomScheme struct {
 
 // normalizeTerminalCustomSchemes validates imported terminal color schemes: at most 20 schemes with unique
 // custom-* ids, a name of at most 48 characters without control characters, #rrggbb background, foreground and
-// 16 ANSI colors, and optional cursor and selection colors. Colors are stored in lower case.
+// 16 ANSI colors, and optional cursor and selection colors. Colors are stored in lower case. Fields this server
+// does not know are dropped instead of rejected, so a list saved by a newer client still syncs.
 func normalizeTerminalCustomSchemes(raw json.RawMessage) (string, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var schemes []terminalCustomScheme
 	if err := decoder.Decode(&schemes); err != nil || decoder.More() || schemes == nil || len(schemes) > maxTerminalCustomSchemes {
 		return "", false

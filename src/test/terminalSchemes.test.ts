@@ -1,6 +1,5 @@
 /** @vitest-environment jsdom */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   BUNDLED_SCHEMES,
@@ -10,6 +9,7 @@ import {
   MAX_SCHEME_IMPORT_BYTES,
   parseCustomSchemes,
   SchemeImportError,
+  stripJsonc,
   schemeKind,
 } from "../features/terminal/terminalSchemes";
 import {
@@ -22,10 +22,10 @@ import {
   XTERM_DARK_THEME,
 } from "../features/terminal/xtermTheme";
 
-const FIXTURES = join(process.cwd(), "src/test/fixtures/terminal-schemes");
+const FIXTURES = "src/test/fixtures/terminal-schemes";
 
 function fixture(name: string): string {
-  return readFileSync(join(FIXTURES, name), "utf8");
+  return readFileSync(`${FIXTURES}/${name}`, "utf8");
 }
 
 const ANSI16 = Array.from({ length: 16 }, (_, i) => `#0${i.toString(16)}0000`);
@@ -139,6 +139,19 @@ describe("scheme importers", () => {
     const all = importSchemeFile("settings.json", fixture("settings.json"));
     expect(all.map((item) => item.name)).toEqual(["Campbell", "One Half Light"]);
     expect(schemeKind(all[1].palette)).toBe("light");
+  });
+
+  it("imports a Windows Terminal settings.json written as JSONC", () => {
+    const [campbell] = importSchemeFile("settings.json", fixture("settings-jsonc.json"));
+    expect(campbell.name).toBe("Campbell");
+    expect(campbell.palette.ansi[15]).toBe("#f2f2f2");
+    expect(JSON.parse(stripJsonc('{"a": "x // y /* z */", "b": [1, 2, /* c */ ], // d\n}'))).toEqual({ a: "x // y /* z */", b: [1, 2] });
+  });
+
+  it("rejects an iTerm2 color with an empty component", () => {
+    const text = fixture("Dracula.itermcolors").replace(/(<key>Blue Component<\/key>\s*)<real>[0-9.]+<\/real>/, "$1<real></real>");
+    expect(text).toContain("<real></real>");
+    expect(() => importSchemeFile("Dracula.itermcolors", text)).toThrow(SchemeImportError);
   });
 
   it("imports Ghostty and kitty theme files", () => {

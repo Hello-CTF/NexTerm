@@ -48,6 +48,7 @@ func TestTerminalCustomSchemesPreference(t *testing.T) {
 
 	withCursor := scheme("custom-a1", "<Mine>")
 	withCursor["cursor"] = "#FFFFFF"
+	withCursor["bold"] = "#123456" // a field from a newer client is dropped, not rejected
 	got, err := validatePreferenceValue("appearance.terminalCustomSchemes", encode([]any{withCursor}))
 	if err != nil {
 		t.Fatal(err)
@@ -75,8 +76,6 @@ func TestTerminalCustomSchemesPreference(t *testing.T) {
 	badColor["background"] = "red"
 	badCursor := scheme("custom-a", "x")
 	badCursor["cursor"] = "#fff"
-	unknown := scheme("custom-a", "x")
-	unknown["bold"] = "#ffffff"
 	invalid := map[string]json.RawMessage{
 		"null":           json.RawMessage(`null`),
 		"object":         encode(scheme("custom-a", "x")),
@@ -89,7 +88,6 @@ func TestTerminalCustomSchemesPreference(t *testing.T) {
 		"15 ansi colors": encode([]any{shortANSI}),
 		"bad color":      encode([]any{badColor}),
 		"short cursor":   encode([]any{badCursor}),
-		"unknown field":  encode([]any{unknown}),
 		"trailing":       json.RawMessage(`[] []`),
 	}
 	for name, raw := range invalid {

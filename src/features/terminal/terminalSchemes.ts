@@ -233,8 +233,9 @@ function parseItermColors(text: string): SchemePalette {
     const entries = [...dict.children];
     for (let j = 0; j + 1 < entries.length; j += 2) {
       const component = entries[j].textContent?.trim() ?? "";
-      const raw = Number(entries[j + 1].textContent?.trim());
-      if (Number.isFinite(raw)) components[component] = raw;
+      const text = entries[j + 1].textContent?.trim() ?? "";
+      const raw = Number(text);
+      if (text !== "" && Number.isFinite(raw)) components[component] = raw;
     }
     const red = components["Red Component"];
     const green = components["Green Component"];
@@ -264,6 +265,40 @@ function parseWindowsTerminalScheme(value: unknown): ImportedScheme {
   set("selection", record.selectionBackground);
   WINDOWS_TERMINAL_ANSI.forEach((key, i) => set(`ansi${i}`, record[key]));
   return { name: typeof record.name === "string" ? record.name : "", palette: completePalette(colors, "json") };
+}
+
+// stripJsonc removes // and /* */ comments and trailing commas outside strings: Windows Terminal writes its
+// settings.json as JSONC. The second pass drops a comma that was followed by a comment.
+export function stripJsonc(text: string): string {
+  return stripJsoncPass(stripJsoncPass(text));
+}
+
+function stripJsoncPass(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      out += text.slice(i, j + 1);
+      i = j + 1;
+    } else if (ch === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+    } else if (ch === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 2;
+    } else if (ch === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] !== "}" && text[j] !== "]") out += ch;
+      i++;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return out;
 }
 
 function parseWindowsTerminal(text: string): ImportedScheme[] {
@@ -331,8 +366,8 @@ export function importSchemeFile(fileName: string, text: string): ImportedScheme
   let imported: ImportedScheme[];
   if (trimmed.startsWith("<")) {
     imported = [{ name: "", palette: parseItermColors(trimmed) }];
-  } else if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    imported = parseWindowsTerminal(trimmed);
+  } else if (/^[{[]/.test(stripJsonc(trimmed).trimStart())) {
+    imported = parseWindowsTerminal(stripJsonc(trimmed));
   } else {
     imported = [{ name: "", palette: parseKeyValueConf(trimmed) }];
   }
