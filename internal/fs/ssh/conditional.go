@@ -117,7 +117,7 @@ func (f *FS) discardStaged(stage staged) {
 }
 
 func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte, mode fs.FileMode) (staged, error) {
-	return f.stageTemporary(ctx, remotePath, data, func(temporary string) error {
+	return f.stageTemporary(ctx, remotePath, data, mode&0o044 != 0, func(temporary string) error {
 		return f.client.Chmod(temporary, mode)
 	})
 }
@@ -125,11 +125,14 @@ func (f *FS) uploadTemporary(ctx context.Context, remotePath string, data []byte
 // stageTemporary writes data next to remotePath without ever exposing it to other accounts. pkg/sftp opens files
 // without attributes, so a new file gets the server umask (typically 0644) and any account that opens it while the
 // content streams in keeps its handle afterwards. The file is therefore created inside a fresh sibling directory
-// verified as owner-only 0700; when the server refuses that directory, the file is created beside the target and
-// restricted to 0600 before the first byte is written. attributes then applies the final mode before the file is
-// synced and closed. A failure to create or restrict the file wraps errStageCreate, a failure of attributes wraps
-// errStageAttributes, and every failure removes what was staged.
-func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte, attributes func(temporary string) error) (stage staged, err error) {
+// verified as owner-only 0700. Without that directory a file beside the target is visible at the umask mode for the
+// round trip before it can be restricted, and an account watching the directory can open it then and read the
+// content later; that fallback is taken only when readable is true, meaning the content ends up readable by group or
+// other anyway, and the file is still restricted to 0600 before the first byte. Otherwise staging fails with
+// errStageCreate. attributes then applies the final mode before the file is synced and closed. A failure to create
+// or restrict the file wraps errStageCreate, a failure of attributes wraps errStageAttributes, and every failure
+// removes what was staged.
+func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte, readable bool, attributes func(temporary string) error) (stage staged, err error) {
 	var suffix [8]byte
 	_, _ = rand.Read(suffix[:])
 	name := "." + path.Base(remotePath) + ".nexterm-tmp-" + hex.EncodeToString(suffix[:])
@@ -141,6 +144,9 @@ func (f *FS) stageTemporary(ctx context.Context, remotePath string, data []byte,
 		} else if info, lerr := f.client.Lstat(sibling); lerr == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 			_ = f.client.RemoveDirectory(sibling)
 		}
+	}
+	if stage.dir == "" && !readable {
+		return staged{}, fmt.Errorf("%w: no private staging directory beside %s for content other accounts may not read", errStageCreate, remotePath)
 	}
 	file, err := f.client.OpenFile(stage.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {

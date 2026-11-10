@@ -28,7 +28,7 @@ const (
 //
 // The write falls back to rewriting the file in place when the replacement cannot preserve what the original has:
 // a target that is not a regular file, a symlink that cannot be resolved lexically, a directory where nothing can be
-// staged, a server that refuses the original's mode or owner, or a server that refuses the rename itself (a
+// staged or only a world-visible sibling could be staged for content that is not group or other readable, a server that refuses the original's mode or owner, or a server that refuses the rename itself (a
 // bind-mounted file such as /etc/hosts in a container, a sticky directory, a locked Windows file).
 func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) error {
 	target, info, ok := f.replaceTarget(remotePath)
@@ -39,7 +39,7 @@ func (f *FS) replaceFile(ctx context.Context, remotePath string, data []byte) er
 	if info != nil {
 		mode = info.Mode() & preservedModes
 	}
-	stage, err := f.stageTemporary(ctx, target, data, func(temporary string) error {
+	stage, err := f.stageTemporary(ctx, target, data, mode&0o044 != 0, func(temporary string) error {
 		if err := f.preserveOwner(temporary, info); err != nil {
 			return err
 		}

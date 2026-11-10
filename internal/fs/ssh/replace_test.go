@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
@@ -194,22 +195,35 @@ func stagedExposure(t *testing.T, root, temporary string) (file, dir fs.FileMode
 	return file, parent.Mode().Perm()
 }
 
+func refusePrivateStaging(filesystem *FS) {
+	filesystem.mkdirStage = func(*sftp.Client, string) error { return &sftp.StatusError{Code: uint32(sftp.ErrSSHFxFailure)} }
+}
+
 func TestStagedContentIsNeverReadableByOtherAccounts(t *testing.T) {
 	requirePOSIXFileModes(t)
 	for _, test := range []struct {
 		name       string
 		privateDir bool
+		mode       fs.FileMode
+		// staged reports whether the save goes through a staged copy at all; without one it rewrites in place.
+		staged bool
 	}{
-		{name: "inside a private staging directory", privateDir: true},
-		{name: "beside the target when no directory can be made"},
+		{name: "private target inside a private staging directory", privateDir: true, mode: 0o600, staged: true},
+		{name: "private target without a staging directory is rewritten in place", mode: 0o600},
+		{name: "group-only target without a staging directory is rewritten in place", mode: 0o620},
+		{name: "readable target beside itself, restricted before writing", mode: 0o644, staged: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			filesystem, root := newTestFS(t, nil)
 			if !test.privateDir {
-				filesystem.mkdirStage = func(*sftp.Client, string) error { return &sftp.StatusError{Code: uint32(sftp.ErrSSHFxFailure)} }
+				refusePrivateStaging(filesystem)
 			}
 			target := filepath.Join(root, "id_ed25519")
-			writeLocal(t, target, "old secret", 0o600)
+			writeLocal(t, target, "old secret", test.mode)
+			before, err := os.Lstat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var observed int
 			filesystem.stageWrittenHook = func(temporary string) {
 				observed++
@@ -227,13 +241,45 @@ func TestStagedContentIsNeverReadableByOtherAccounts(t *testing.T) {
 			if err := filesystem.WriteFile(t.Context(), target, []byte("new secret"), false); err != nil {
 				t.Fatal(err)
 			}
-			if observed != 1 {
-				t.Fatalf("staging hook ran %d times, want 1", observed)
+			after, err := os.Lstat(target)
+			if err != nil {
+				t.Fatal(err)
 			}
-			assertLocalFile(t, target, "new secret", 0o600)
+			if test.staged {
+				if observed != 1 || os.SameFile(before, after) {
+					t.Fatalf("staged copies = %d, same inode = %v; want one staged copy replacing the target", observed, os.SameFile(before, after))
+				}
+			} else if observed != 0 || !os.SameFile(before, after) {
+				t.Fatalf("staged copies = %d, same inode = %v; want an in-place rewrite and no sibling", observed, os.SameFile(before, after))
+			}
+			assertLocalFile(t, target, "new secret", test.mode)
 			assertNoRemoteTemporaryLeftovers(t, root)
 		})
 	}
+}
+
+func TestNewFilesNeverUseAVisibleSiblingWithoutAPrivateDirectory(t *testing.T) {
+	requirePOSIXFileModes(t)
+	filesystem, root := newTestFS(t, nil)
+	refusePrivateStaging(filesystem)
+	filesystem.stageWrittenHook = func(temporary string) {
+		t.Errorf("staged %s beside the target without a private directory", temporary)
+	}
+	saved := filepath.Join(root, "new.env")
+	if err := filesystem.WriteFile(t.Context(), saved, []byte("TOKEN=x"), false); err != nil {
+		t.Fatal(err)
+	}
+	assertLocalFile(t, saved, "TOKEN=x", 0o600)
+
+	created := filepath.Join(root, "created.env")
+	err := filesystem.WriteFileVersion(t.Context(), created, []byte("TOKEN=y"), false, conditional.Absent())
+	if err == nil || !strings.Contains(err.Error(), "no private staging directory") {
+		t.Fatalf("conditional create without a private directory = %v, want a clear refusal", err)
+	}
+	if _, statErr := os.Lstat(created); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Fatalf("refused conditional create left a target: %v", statErr)
+	}
+	assertNoRemoteTemporaryLeftovers(t, root)
 }
 
 func TestWriteFileVersionStagesPrivately(t *testing.T) {
