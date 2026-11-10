@@ -261,6 +261,11 @@ func (c *Client) WriteFile(ctx context.Context, path string, data []byte, backup
 	return stream.wait()
 }
 
+// CreateFile creates an empty file on the device, failing with fs.ErrExist when the path is occupied.
+func (c *Client) CreateFile(ctx context.Context, path string) error {
+	return c.unary(ctx, FrameCreateFile, PathMsg{Path: path})
+}
+
 func (c *Client) Mkdir(ctx context.Context, path string) error {
 	return c.unary(ctx, FrameMkdir, PathMsg{Path: path})
 }

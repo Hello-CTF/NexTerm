@@ -1232,6 +1232,14 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; Mode uint32 \"json:\\\"mode\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  mode: number;\n}" },
       output: { go: "any", ts: "unknown" },
     },
+    "fs_create": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "any", ts: "unknown" },
+    },
     "fs_delete": {
       scope: "fs",
       nested: false,
@@ -3802,6 +3810,13 @@ export interface IPCCommandTypeMap {
   sessionId: string;
   path: string;
   mode: number;
+};
+    output: unknown;
+  };
+  "fs_create": {
+    input: {
+  sessionId: string;
+  path: string;
 };
     output: unknown;
   };

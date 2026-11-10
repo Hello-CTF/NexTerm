@@ -3548,6 +3548,7 @@
   "无法写入本机剪贴板": "Could not write the local clipboard",
   "无法创建转发：{value}": "Cannot create forward: {value}",
   "无法创建：{problem}": "Cannot create: {problem}",
+  "无法创建：「{name}」已存在，原有内容未被修改。请换一个名称。": "Cannot create: \"{name}\" already exists and its content was left unchanged. Choose a different name.",
   "无法删除片段：{value}": "Cannot delete snippet: {value}",
   "无法判断影响，需要你确认": "The impact cannot be determined. Your confirmation is required.",
   "无法加载资产列表，最近连接暂不可用。": "Cannot load the asset list, so recent connections are unavailable.",

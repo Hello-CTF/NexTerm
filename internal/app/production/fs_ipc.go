@@ -566,6 +566,15 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "fs_create", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
+				filesystem, kind, err := filesystem(ctx, input.SessionID)
+				if err != nil {
+					return nil, fsIPCError(kind, err)
+				}
+				return nil, createFileIPCError(kind, createFile(ctx, filesystem, input.Path))
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "fs_mkdir", func(ctx context.Context, _ *ipc.Call, input fsRequest) (any, error) {
 				filesystem, kind, err := filesystem(ctx, input.SessionID)
 				if err == nil {
@@ -731,6 +740,25 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 		}
 	}
 	return nil
+}
+
+// createFile creates an empty file only through a backend that can refuse an existing path atomically; a plain write
+// would truncate whatever is already there.
+func createFile(ctx context.Context, filesystem base.FileSystem, path string) error {
+	creator, ok := filesystem.(base.FileCreator)
+	if !ok {
+		return fmt.Errorf("%w: 当前文件服务无法在不覆盖同名文件的前提下新建文件", base.ErrUnsupported)
+	}
+	return creator.CreateFile(ctx, path)
+}
+
+func createFileIPCError(kind string, err error) error {
+	if errors.Is(err, fs.ErrExist) {
+		return ipc.WrapError(ipc.Code("conflict"), "同名文件或目录已存在，未创建也未修改: "+err.Error(), err).WithDetail(map[string]any{
+			"resource": "path", "reason": "exists",
+		})
+	}
+	return fsIPCError(kind, err)
 }
 
 func fsIPCError(transportKind string, err error) error {

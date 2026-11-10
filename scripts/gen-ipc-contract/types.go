@@ -174,6 +174,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"docker_inspect":                  {{name: "SessionID"}, {name: "ContainerID"}},
 	"fs_checksum":                     {{name: "SessionID"}, {name: "Path"}, {name: "Algo", optional: true}},
 	"fs_chmod":                        {{name: "SessionID"}, {name: "Path"}, {name: "Mode"}},
+	"fs_create":                       {{name: "SessionID"}, {name: "Path"}},
 	"fs_delete":                       {{name: "SessionID"}, {name: "Path"}, {name: "IsDir"}},
 	"fs_download":                     {{name: "SessionID"}, {name: "RemotePath"}, {name: "LocalPath"}, {name: "Resume", optional: true}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
 	"fs_extract":                      {{name: "SessionID"}, {name: "Path"}},

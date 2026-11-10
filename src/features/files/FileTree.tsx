@@ -44,6 +44,7 @@ import { useFileOps } from "./useFileOps";
 import { useLongPress, useMultiSelect } from "./useMultiSelect";
 import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
+import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
@@ -758,6 +759,17 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     onSettled: () => refresh(),
   });
 
+  const existingNameMessage = (name: string) =>
+    t("无法创建：「{name}」已存在，原有内容未被修改。请换一个名称。", { name });
+
+  // rejectExistingName refuses a name the loaded listing already holds, using the session's case rules.
+  const rejectExistingName = (dir: string, name: string): boolean => {
+    const conflict = findConflict(name, dirMap.get(dir) ?? [], conflictCaseInsensitive(sessionKind ?? ""));
+    if (!conflict) return false;
+    pushToast("error", existingNameMessage(conflict.name));
+    return true;
+  };
+
   const newFileIn = async (dir: string) => {
     const name = await promptText(t("新建文件名"), "");
     if (name === null) return;
@@ -766,12 +778,19 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       pushToast("error", t("无法创建：{problem}", { problem }));
       return;
     }
+    if (rejectExistingName(dir, name)) return;
     const path = joinPath(dir, name);
     try {
-      await fsApi.write(sessionId, path, "", false);
+      // fs_create refuses an existing path atomically, so a name the listing has not shown yet is never truncated.
+      await fsApi.create(sessionId, path);
       refresh();
       pushToast("success", t("已创建 {path}", { path }));
     } catch (e) {
+      if ((e as { code?: unknown } | null)?.code === "conflict") {
+        refresh();
+        pushToast("error", existingNameMessage(name));
+        return;
+      }
       pushToast("error", t("创建失败：{value}", { value: describeError(e) }));
     }
   };
@@ -784,6 +803,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       pushToast("error", t("无法创建：{problem}", { problem }));
       return;
     }
+    if (rejectExistingName(dir, name)) return;
     const path = joinPath(dir, name);
     try {
       await fsApi.mkdir(sessionId, path);

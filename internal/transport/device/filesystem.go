@@ -123,6 +123,21 @@ func (f *fileSystem) WriteFile(ctx context.Context, path string, data []byte, ba
 	return client.WriteFile(ctx, path, data, backup)
 }
 
+// CreateFile creates an empty file exclusively. An agent that predates FrameCreateFile rejects the frame, which is
+// reported as unsupported so the caller never falls back to a truncating write.
+func (f *fileSystem) CreateFile(ctx context.Context, path string) error {
+	client, done, err := f.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	err = client.CreateFile(ctx, path)
+	if errors.Is(err, deviceproto.ErrProtocol) && strings.Contains(err.Error(), "unexpected request frame") {
+		return fmt.Errorf("%w: 该设备代理版本过旧，无法安全新建文件（不会覆盖同名文件），请在设备上升级设备代理后重试: %w", base.ErrUnsupported, err)
+	}
+	return err
+}
+
 func (f *fileSystem) Mkdir(ctx context.Context, path string) error {
 	client, done, err := f.client(ctx)
 	if err != nil {
@@ -323,4 +338,7 @@ func shellOperand(value string) string {
 	return value
 }
 
-var _ base.FileSystem = (*fileSystem)(nil)
+var (
+	_ base.FileSystem  = (*fileSystem)(nil)
+	_ base.FileCreator = (*fileSystem)(nil)
+)

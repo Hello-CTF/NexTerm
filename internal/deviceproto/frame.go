@@ -44,6 +44,8 @@ const (
 	FrameAccept
 	FrameRoots
 	FrameRootsReply
+	// FrameCreateFile creates an empty file exclusively; agents that predate it answer with a protocol error.
+	FrameCreateFile
 )
 
 const (

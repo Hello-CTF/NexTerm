@@ -555,6 +555,10 @@ func (f *sftpFileSystem) Mkdir(ctx context.Context, remotePath string) error {
 	return normalizeSFTPError(f.FS.Mkdir(ctx, f.sftpPath(remotePath)))
 }
 
+func (f *sftpFileSystem) CreateFile(ctx context.Context, remotePath string) error {
+	return normalizeSFTPError(f.FS.CreateFile(ctx, f.sftpPath(remotePath)))
+}
+
 func (f *sftpFileSystem) MkdirPrivate(ctx context.Context, remotePath string) error {
 	return normalizeSFTPError(f.FS.MkdirPrivate(ctx, f.sftpPath(remotePath)))
 }
@@ -655,5 +659,6 @@ func (c *Client) closeSFTP() {
 var (
 	_ base.FileSystem    = (*sftpFileSystem)(nil)
 	_ base.RootsProvider = (*sftpFileSystem)(nil)
+	_ base.FileCreator   = (*sftpFileSystem)(nil)
 	_ conditional.Writer = (*sftpFileSystem)(nil)
 )

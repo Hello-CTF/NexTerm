@@ -1070,6 +1070,9 @@ export const fsApi = {
     taskId?: string,
     attemptId?: string,
   ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
+  // create makes one empty file and fails with a conflict when anything already exists at the path.
+  create: (sessionId: string, path: string) =>
+    call("fs_create", { sessionId, path }) as Promise<void>,
   mkdir: (sessionId: string, path: string) =>
     call("fs_mkdir", { sessionId, path }) as Promise<void>,
   // mkdirPrivate creates one directory exclusively with mode 0700 and fails when anything already exists at the path.

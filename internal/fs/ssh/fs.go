@@ -36,6 +36,10 @@ type FS struct {
 	removeAside              func(*sftp.Client, string) error
 	conditionalPreVerifyHook func()
 	conditionalPreCommitHook func()
+	mkdirStage               func(*sftp.Client, string) error
+	chown                    func(*sftp.Client, string, int, int) error
+	stageWrittenHook         func(temporary string)
+	replacePreCommitHook     func()
 }
 
 // ClientOptions returns the SFTP client options NexTerm uses everywhere. Concurrent
@@ -74,6 +78,12 @@ func New(client *sftp.Client, executor Executor) *FS {
 		},
 		removeAside: func(client *sftp.Client, path string) error {
 			return client.Remove(path)
+		},
+		mkdirStage: func(client *sftp.Client, path string) error {
+			return client.Mkdir(path)
+		},
+		chown: func(client *sftp.Client, path string, uid, gid int) error {
+			return client.Chown(path, uid, gid)
 		},
 	}
 }
@@ -183,21 +193,7 @@ func (f *FS) WriteFile(ctx context.Context, remotePath string, data []byte, back
 			return fmt.Errorf("SFTP stat before backup: %w", err)
 		}
 	}
-	writer, err := f.OpenWrite(ctx, remotePath, false)
-	if err != nil {
-		return err
-	}
-	defer writer.Close()
-	if err := writeAll(ctx, writer, data); err != nil {
-		return fmt.Errorf("SFTP write %s: %w", remotePath, err)
-	}
-	if err := writer.Sync(); err != nil {
-		return fmt.Errorf("SFTP sync %s: %w", remotePath, err)
-	}
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("SFTP close %s: %w", remotePath, err)
-	}
-	return nil
+	return f.replaceFile(ctx, remotePath, data)
 }
 
 func (f *FS) Mkdir(ctx context.Context, remotePath string) error {

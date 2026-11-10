@@ -329,4 +329,5 @@ func (f *FileSystem) Size(ctx context.Context, path string) (int64, error) {
 var (
 	_ base.FileSystem    = (*FileSystem)(nil)
 	_ base.RootsProvider = (*FileSystem)(nil)
+	_ base.FileCreator   = (*FileSystem)(nil)
 )
