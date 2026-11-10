@@ -135,3 +135,50 @@ func TestServeBootstrapRealHTTPAndGracefulShutdown(t *testing.T) {
 		t.Fatalf("loopback warning = %q", stderr.String())
 	}
 }
+
+// Cancelling the serve context (SIGTERM) must deliver the going-away close to open WebSockets instead of dropping them.
+func TestServeCancelSendsGoingAway(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := core.New(core.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer, err := New(testConfig(t, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer httpServer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serveResult := make(chan error, 1)
+	go func() {
+		serveResult <- application.Serve(ctx, core.ServeConfig{
+			Listen: "127.0.0.1:0", Listener: listener, Transport: httpServer.Handler(),
+			CloseTransport: httpServer.CloseContext, Stderr: &bytes.Buffer{},
+		})
+	}()
+	dialCtx, stopDial := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopDial()
+	connection, _, err := websocket.Dial(dialCtx, "ws://"+listener.Addr().String()+"/ws/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	waitFor(t, func() bool { return httpServer.Events().SubscriberCount() == 1 })
+	cancel()
+	_, _, err = connection.Read(dialCtx)
+	if status := websocket.CloseStatus(err); status != websocket.StatusGoingAway {
+		t.Fatalf("close status = %v (%v), want going away", status, err)
+	}
+	select {
+	case err := <-serveResult:
+		if err != nil {
+			t.Fatalf("shutdown = %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Serve did not return after cancellation")
+	}
+}

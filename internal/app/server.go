@@ -68,22 +68,30 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}
 
 	handler := config.Transport
+	transportClosed := false
+	closeTransport := func() error {
+		if transportClosed || config.Transport == nil || config.CloseTransport == nil {
+			return nil
+		}
+		transportClosed = true
+		closeCtx, cancel := context.WithTimeout(context.Background(), transportCloseTimeout)
+		defer cancel()
+		return config.CloseTransport(closeCtx)
+	}
 	if handler == nil {
 		if !config.SyncOnly {
 			return fmt.Errorf("full server mode requires the server transport stack")
 		}
 		handler = mux
-	} else if config.CloseTransport != nil {
-		defer func() {
-			closeCtx, cancel := context.WithTimeout(context.Background(), transportCloseTimeout)
-			defer cancel()
-			returnErr = errors.Join(returnErr, config.CloseTransport(closeCtx))
-		}()
+	} else {
+		defer func() { returnErr = errors.Join(returnErr, closeTransport()) }()
 	}
 	if config.Stderr == nil {
 		config.Stderr = os.Stderr
 	}
 	WarnIfExposed(a.logger, config.Stderr, config.Listen, config.SyncOnly, config.Auth)
+	requestBase, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRequests()
 	readIdle, writeIdle := config.ReadIdleTimeout, config.WriteIdleTimeout
 	if readIdle <= 0 {
 		readIdle = defaultRequestReadIdleTimeout
@@ -96,8 +104,10 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		Handler:           withRequestTimeouts(readIdle, writeIdle, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// Requests outlive ctx until the transport has closed its WebSockets: a hijacked connection whose read
+		// context is cancelled is dropped without a close frame, so the going-away close would never arrive.
 		BaseContext: func(net.Listener) context.Context {
-			return ctx
+			return requestBase
 		},
 	}
 	serveResult := make(chan error, 1)
@@ -116,9 +126,11 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		}
 		return err
 	case <-ctx.Done():
+		transportErr := closeTransport()
+		cancelRequests()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		shutdownErr := server.Shutdown(shutdownCtx)
+		shutdownErr := errors.Join(transportErr, server.Shutdown(shutdownCtx))
 		serveErr := <-serveResult
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil

@@ -12,7 +12,7 @@ import (
 
 var errServerClosed = errors.New("server is closed")
 
-// shutdownCloseReason accompanies the 1001 going-away close frame sent on shutdown so clients reconnect promptly.
+// shutdownCloseReason accompanies the 1001 going-away close frame sent on shutdown.
 const shutdownCloseReason = "server shutting down"
 
 // socketEntry is one tracked connection. The account fields stay empty for
@@ -124,7 +124,7 @@ func (t *socketTracker) closeDevice(userID, deviceID string) {
 var goingAwayGrace = time.Second
 
 // closeAndWait stops accepting connections, sends every tracked WebSocket a
-// 1001 going-away close frame so clients reconnect promptly, and waits until
+// 1001 going-away close frame instead of dropping the connection, and waits until
 // all connections are released or ctx ends. Contexts are cancelled only after
 // the close handshake or goingAwayGrace, because a cancelled read drops the
 // TCP connection and could cut the frame off.

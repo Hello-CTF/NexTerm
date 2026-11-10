@@ -325,7 +325,9 @@ drop-in with `AmbientCapabilities=CAP_NET_BIND_SERVICE` and
 `nexterm-server.service` keeps `ProtectSystem=full` and a smaller set,
 because programs started from local terminals (open access with
 `NEXTERM_AUTH=off`, or `loopback` without a signed-in account) inherit the
-sandbox and sshfs mounts need `/dev/fuse` and the setuid `fusermount3`.
+sandbox (so setgid directories, `git init --shared=group` and realtime
+audio tools keep working there) and sshfs mounts need `/dev/fuse` and the
+setuid `fusermount3`.
 Unix sockets such as `/var/run/docker.sock` stay reachable under either
 unit. With accounts on, which disables local terminals and mounts, you can
 tighten it with
@@ -341,15 +343,16 @@ ProtectProc=invisible
 RestrictNamespaces=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
 CapabilityBoundingSet=
 ```
 
 `MemoryDenyWriteExecute=yes` is left out of that list because the optional
 local AI redaction loads the ONNX Runtime library into the server process.
 Both units allow 60 seconds for a stop: on shutdown the server sends open
-WebSockets a going-away close (code 1001) so clients reconnect at once, and
-drops connections that have not closed after a short grace period (10
-seconds at most).
+WebSockets a going-away close (code 1001) and drops connections that have
+not closed after a short grace period (10 seconds at most).
 
 ## Tuning and diagnostics
 
