@@ -148,8 +148,10 @@ export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "ui-language", section: "settings-appearance", label: t("界面语言"), description: t("简体中文、繁體中文、English、日本語等"), keywords: ["language", "locale", "i18n", t("语言"), t("語言"), "English", t("日本語"), "한국어", "Deutsch", "Français", "Español", "Русский"] },
   { id: "ui-theme", section: "settings-appearance", label: t("界面主题"), description: t("跟随系统、浅色或深色"), keywords: ["theme", "dark", "light", t("主题"), t("深色"), t("浅色")] },
+  { id: "ui-accent", section: "settings-appearance", label: t("强调色"), keywords: ["accent", "color", t("颜色"), t("主题色")] },
   { id: "ui-font-size", section: "settings-appearance", label: t("界面字号"), description: t("界面文字大小，可自定义"), keywords: ["font size", "scale", "zoom", t("字体"), t("字号"), t("缩放"), t("倍率"), t("文字大小")] },
   { id: "terminal-theme", section: "settings-appearance", label: t("终端与编辑器主题"), keywords: ["theme", "color scheme", t("配色"), t("主题")] },
+  { id: "terminal-scheme", section: "settings-appearance", label: t("终端配色"), description: t("深色和浅色终端各选一套配色，可导入 iTerm2、Windows Terminal、Ghostty 配色"), keywords: ["color scheme", "palette", "itermcolors", "windows terminal", "ghostty", "kitty", "catppuccin", "solarized", "dracula", "nord", "gruvbox", t("配色"), t("导入")] },
   { id: "terminal-font-size", section: "settings-appearance", label: t("终端字号"), keywords: ["font size", t("字体"), t("字号")] },
   { id: "terminal-font-family", section: "settings-appearance", label: t("终端字体"), keywords: ["font", "family", "cascadia", t("字体")] },
   { id: "terminal-contrast", section: "settings-appearance", label: t("终端对比度"), keywords: ["contrast", t("对比度")], panel: "appearance-advanced" },

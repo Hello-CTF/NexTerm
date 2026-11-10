@@ -25,7 +25,7 @@ import {
   type EarlierHistoryState,
   type TerminalHistoryInfo,
 } from "./earlierHistory";
-import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { activeXtermTheme, TERMINAL_FONT_STACKS } from "./xtermTheme";
 import { activateUnicode11 } from "./xtermAddons";
 import { t } from "../../i18n";
 
@@ -54,7 +54,7 @@ export function createReplayTerminal(cols: number, rows: number): { terminal: Te
     scrollback: EARLIER_HISTORY_SCROLLBACK,
     fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
     fontSize: appearance.terminalFontSize,
-    theme: xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast),
+    theme: activeXtermTheme(getResolvedTerminalTheme(), appearance),
     linkHandler: { activate: () => undefined },
   });
   activateUnicode11(terminal);

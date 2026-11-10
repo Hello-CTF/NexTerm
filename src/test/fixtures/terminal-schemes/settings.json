@@ -1,0 +1,50 @@
+{
+    "defaultProfile": "{00000000-0000-0000-0000-000000000000}",
+    "schemes": [
+        {
+            "name": "Campbell",
+            "background": "#0C0C0C",
+            "foreground": "#CCCCCC",
+            "cursorColor": "#FFFFFF",
+            "selectionBackground": "#FFFFFF",
+            "black": "#0C0C0C",
+            "red": "#C50F1F",
+            "green": "#13A10E",
+            "yellow": "#C19C00",
+            "blue": "#0037DA",
+            "purple": "#881798",
+            "cyan": "#3A96DD",
+            "white": "#CCCCCC",
+            "brightBlack": "#767676",
+            "brightRed": "#E74856",
+            "brightGreen": "#16C60C",
+            "brightYellow": "#F9F1A5",
+            "brightBlue": "#3B78FF",
+            "brightPurple": "#B4009E",
+            "brightCyan": "#61D6D6",
+            "brightWhite": "#F2F2F2"
+        },
+        {
+            "name": "One Half Light",
+            "background": "#FAFAFA",
+            "foreground": "#383A42",
+            "cursorColor": "#4F525D",
+            "black": "#383A42",
+            "red": "#E45649",
+            "green": "#50A14F",
+            "yellow": "#C18301",
+            "blue": "#0184BC",
+            "purple": "#A626A4",
+            "cyan": "#0997B3",
+            "white": "#FAFAFA",
+            "brightBlack": "#4F525D",
+            "brightRed": "#DF6C75",
+            "brightGreen": "#98C379",
+            "brightYellow": "#E4C07A",
+            "brightBlue": "#61AFEF",
+            "brightPurple": "#C577DD",
+            "brightCyan": "#56B5C1",
+            "brightWhite": "#FFFFFF"
+        }
+    ]
+}

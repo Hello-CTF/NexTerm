@@ -4,6 +4,14 @@ import { DESKTOP } from "../ipc/env";
 import { syncApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { t } from "../i18n";
+import { ACCENT_VARIABLE_NAMES, accentVariables, DEFAULT_ACCENT, parseAccentPreset, type AccentPreset } from "./accentPresets";
+import { parseCustomSchemes, SCHEME_ID_PATTERN, type CustomTerminalScheme } from "../features/terminal/terminalSchemes";
+import {
+  activeTerminalScheme,
+  DEFAULT_DARK_SCHEME_ID,
+  DEFAULT_LIGHT_SCHEME_ID,
+  isDefaultScheme,
+} from "../features/terminal/xtermTheme";
 
 const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 
@@ -610,6 +618,10 @@ export interface AppearancePrefs {
   terminalFontFamily: TerminalFontFamily;
   terminalTheme: TerminalThemePref;
   terminalContrast: TerminalContrast;
+  terminalSchemeDark: string;
+  terminalSchemeLight: string;
+  terminalCustomSchemes: CustomTerminalScheme[];
+  accent: AccentPreset;
 }
 
 export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5, 16, 18, 20];
@@ -635,6 +647,10 @@ const DEFAULT_APPEARANCE: AppearancePrefs = {
   terminalFontFamily: "cascadia",
   terminalTheme: "dark",
   terminalContrast: "standard",
+  terminalSchemeDark: DEFAULT_DARK_SCHEME_ID,
+  terminalSchemeLight: DEFAULT_LIGHT_SCHEME_ID,
+  terminalCustomSchemes: [],
+  accent: DEFAULT_ACCENT,
 };
 
 const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -645,7 +661,7 @@ function isMobileDevice(): boolean {
 }
 
 // builtinAppearance returns the builtin default of a field; the mobile terminal default font size is one step smaller than desktop.
-function builtinAppearance(field: keyof AppearancePrefs): number | string {
+function builtinAppearance(field: keyof AppearancePrefs): unknown {
   if (field === "terminalFontSize" && isMobileDevice()) return MOBILE_DEFAULT_TERMINAL_FONT_SIZE;
   return DEFAULT_APPEARANCE[field];
 }
@@ -657,7 +673,16 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   terminalFontFamily: "appearance.terminalFontFamily",
   terminalTheme: "appearance.terminalTheme",
   terminalContrast: "appearance.terminalContrast",
+  terminalSchemeDark: "appearance.terminalSchemeDark",
+  terminalSchemeLight: "appearance.terminalSchemeLight",
+  terminalCustomSchemes: "appearance.terminalCustomSchemes",
+  accent: "appearance.accent",
 };
+
+// Imported schemes are content, not a look: resetting the appearance keeps them.
+const APPEARANCE_RESET_FIELDS = (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).filter(
+  (field) => field !== "terminalCustomSchemes",
+);
 
 // Phones and tablets sync their terminal font size under a separate key, so tuning it for a small screen never changes the desktop value and vice versa.
 function appearanceKey(field: keyof AppearancePrefs): string {
@@ -712,6 +737,12 @@ function parseTerminalContrast(value: unknown): TerminalContrast {
     : DEFAULT_APPEARANCE.terminalContrast;
 }
 
+// A scheme id is kept as stored, even one this client does not know, so a scheme picked on a newer client
+// survives here; resolveTerminalScheme falls back to the NexTerm default while it cannot be found.
+function parseSchemeId(value: unknown, fallback: string): string {
+  return typeof value === "string" && SCHEME_ID_PATTERN.test(value) ? value : fallback;
+}
+
 function loadAppearance(): AppearancePrefs {
   let local: Record<string, unknown> = {};
   try {
@@ -731,6 +762,10 @@ function loadAppearance(): AppearancePrefs {
     terminalFontFamily: parseTerminalFontFamily(merged.terminalFontFamily),
     terminalTheme: parseTerminalTheme(merged.terminalTheme),
     terminalContrast: parseTerminalContrast(merged.terminalContrast),
+    terminalSchemeDark: parseSchemeId(merged.terminalSchemeDark, DEFAULT_DARK_SCHEME_ID),
+    terminalSchemeLight: parseSchemeId(merged.terminalSchemeLight, DEFAULT_LIGHT_SCHEME_ID),
+    terminalCustomSchemes: parseCustomSchemes(merged.terminalCustomSchemes),
+    accent: parseAccentPreset(merged.accent),
   };
 }
 
@@ -766,7 +801,7 @@ function mirrorAppearanceOverrides(): void {
     const local = (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
     let changed = false;
     for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
-      if (appearanceKey(field) in accountOverrides && local[field] !== appearance[field]) {
+      if (appearanceKey(field) in accountOverrides && !fieldEquals(field, local[field], appearance[field])) {
         local[field] = appearance[field];
         changed = true;
       }
@@ -776,31 +811,64 @@ function mirrorAppearanceOverrides(): void {
   }
 }
 
+// ACCENT_STORAGE_KEY mirrors the applied accent variables for the index.html bootstrap, so the first paint
+// already uses the synced accent.
+const ACCENT_STORAGE_KEY = "nexterm.accent.v1";
+
+function applyAccent(root: HTMLElement): void {
+  const vars = accentVariables(appearance.accent);
+  const names = Object.keys(vars);
+  for (const name of ACCENT_VARIABLE_NAMES) {
+    if (!(name in vars)) root.style.removeProperty(name);
+  }
+  for (const name of names) root.style.setProperty(name, vars[name]);
+  if (names.length > 0) root.dataset.nxAccent = appearance.accent;
+  else delete root.dataset.nxAccent;
+  try {
+    if (names.length > 0) localStorage.setItem(ACCENT_STORAGE_KEY, JSON.stringify(vars));
+    else localStorage.removeItem(ACCENT_STORAGE_KEY);
+  } catch {
+  }
+}
+
+function applyTerminalScheme(root: HTMLElement, resolved: ResolvedTerminalTheme): void {
+  const scheme = activeTerminalScheme(resolved, appearance);
+  if (isDefaultScheme(scheme.id)) {
+    delete root.dataset.nxTermScheme;
+    root.style.removeProperty("--nx-term-scheme-bg");
+    root.style.removeProperty("--nx-term-scheme-fg");
+    return;
+  }
+  root.dataset.nxTermScheme = scheme.id;
+  root.style.setProperty("--nx-term-scheme-bg", scheme.palette.background);
+  root.style.setProperty("--nx-term-scheme-fg", scheme.palette.foreground);
+}
+
 function applyAppearance(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  const resolved = getResolvedTerminalTheme();
   root.style.setProperty("--nx-ui-text-factor", String(uiTextFactor()));
-  root.dataset.nxTermTheme = getResolvedTerminalTheme();
+  root.dataset.nxTermTheme = resolved;
+  applyTerminalScheme(root, resolved);
+  applyAccent(root);
 }
 
 function notifyAppearance(): void {
   for (const listener of appearanceListeners) listener();
 }
 
+function fieldEquals(field: keyof AppearancePrefs, a: unknown, b: unknown): boolean {
+  return field === "terminalCustomSchemes" ? JSON.stringify(a) === JSON.stringify(b) : a === b;
+}
+
 function appearanceEquals(a: AppearancePrefs, b: AppearancePrefs): boolean {
-  return (
-    a.uiFontPreset === b.uiFontPreset &&
-    a.uiFontScale === b.uiFontScale &&
-    a.terminalFontSize === b.terminalFontSize &&
-    a.terminalFontFamily === b.terminalFontFamily &&
-    a.terminalTheme === b.terminalTheme &&
-    a.terminalContrast === b.terminalContrast
-  );
+  return (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).every((field) => fieldEquals(field, a[field], b[field]));
 }
 
 function commitAppearance(next: AppearancePrefs): void {
   const changedFields = (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).filter(
-    (field) => next[field] !== appearance[field],
+    (field) => !fieldEquals(field, next[field], appearance[field]),
   );
   appearance = next;
   try {
@@ -847,13 +915,45 @@ export function setTerminalContrast(value: TerminalContrast): void {
   commitAppearance({ ...appearance, terminalContrast: next });
 }
 
+export function setTerminalScheme(kind: ResolvedTerminalTheme, id: string): void {
+  if (!SCHEME_ID_PATTERN.test(id)) return;
+  const field = kind === "dark" ? "terminalSchemeDark" : "terminalSchemeLight";
+  if (appearance[field] === id) return;
+  commitAppearance({ ...appearance, [field]: id });
+}
+
+export function setAccent(value: AccentPreset): void {
+  const next = parseAccentPreset(value);
+  if (appearance.accent === next) return;
+  commitAppearance({ ...appearance, accent: next });
+}
+
+// setTerminalCustomSchemes stores the imported scheme list after the same validation the server applies; a
+// selection that pointed at a removed scheme returns to the NexTerm default of its kind.
+export function setTerminalCustomSchemes(list: CustomTerminalScheme[]): void {
+  const next = parseCustomSchemes(list);
+  const ids = new Set(next.map((item) => item.id));
+  const removed = (id: string) => id.startsWith("custom-") && !ids.has(id);
+  const updated: AppearancePrefs = {
+    ...appearance,
+    terminalCustomSchemes: next,
+    terminalSchemeDark: removed(appearance.terminalSchemeDark) ? DEFAULT_DARK_SCHEME_ID : appearance.terminalSchemeDark,
+    terminalSchemeLight: removed(appearance.terminalSchemeLight) ? DEFAULT_LIGHT_SCHEME_ID : appearance.terminalSchemeLight,
+  };
+  if (appearanceEquals(appearance, updated)) return;
+  commitAppearance(updated);
+}
+
 // resetAppearancePrefs clears device-local values and removes account appearance overrides, falling back to builtin/server global defaults.
+// Imported color schemes are kept.
 export function resetAppearancePrefs(): void {
   try {
-    localStorage.removeItem(APPEARANCE_KEY);
+    const kept = appearance.terminalCustomSchemes;
+    if (kept.length > 0) localStorage.setItem(APPEARANCE_KEY, JSON.stringify({ terminalCustomSchemes: kept }));
+    else localStorage.removeItem(APPEARANCE_KEY);
   } catch {
   }
-  const keys = [...(Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
+  const keys = [...APPEARANCE_RESET_FIELDS.map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
   if (accountStore) {
     void accountStore.deleteOverrides(keys).catch(() => undefined);
   }

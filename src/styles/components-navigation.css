@@ -398,4 +398,21 @@
     color: var(--nx-fg-strong);
     box-shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset;
   }
+  .nx-scheme-swatch {
+    min-width: 0;
+    padding: 3px;
+    border: 1px solid var(--nx-border);
+    border-radius: var(--radius-md);
+    color: var(--nx-fg-soft);
+    cursor: pointer;
+  }
+  .nx-scheme-swatch:hover {
+    border-color: var(--nx-border-strong);
+    color: var(--nx-fg-emphasis);
+  }
+  .nx-scheme-swatch.is-active {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
+    color: var(--nx-fg-strong);
+  }
 }
