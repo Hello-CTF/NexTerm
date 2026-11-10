@@ -43,9 +43,17 @@ export const TRANSFER_STATUS_LABEL: Record<TransferStatus, string> = {
   cancelled: t("已取消"),
 };
 
-// Upload targets whose filesystem folds filename case: winrm is always NTFS semantics; a local
-// session follows the backend OS, so a case-sensitive APFS volume may get an extra prompt.
-export function conflictCaseInsensitive(sessionKind: string): boolean {
+export interface ConflictTarget {
+  pathStyle?: string;
+  capabilities?: { caseInsensitive: boolean } | null;
+}
+
+// Upload targets whose filesystem folds filename case. The backend's declared capability decides, then a Windows
+// path style (an SSH server on Windows); without fs_roots, winrm is always NTFS semantics and a local session follows
+// the backend OS, so a case-sensitive APFS volume may get an extra prompt.
+export function conflictCaseInsensitive(sessionKind: string, target?: ConflictTarget | null): boolean {
+  if (target?.capabilities) return target.capabilities.caseInsensitive;
+  if (target?.pathStyle === "windows") return true;
   if (sessionKind === "winrm") return true;
   if (sessionKind === "local") return localSessionIsWindows() || localSessionIsMac();
   return false;

@@ -25,7 +25,9 @@ import {
   useUi,
 } from "../../app/store";
 import { useCoarsePointer } from "../../app/shell";
-import { fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
+import { isMac } from "../../app/platform";
+import { noteFsRoots } from "../../ipc/fsRootsCache";
+import { entryIsBrokenLink, entryIsDir, fileVisual, formatSize, isEditableFile, isExtractableArchive } from "./fileTypes";
 import {
   HOME,
   baseName,
@@ -36,13 +38,14 @@ import {
   isRoot,
   joinPath,
   norm,
-  normalizeTypedPath,
+  fsPathStyle,
+  resolveTypedPath,
   parentOf,
 } from "./pathUtils";
 import { TransferPanel } from "./TransferPanel";
 import { useFileOps } from "./useFileOps";
 import { useLongPress, useMultiSelect } from "./useMultiSelect";
-import { packDownloadSupported, validateEntryName } from "./fileOps";
+import { chmodSupport, extractSupported, packDownloadSupported, validateEntryName, windowsReadOnly } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { conflictCaseInsensitive, findConflict } from "./transferQueue";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
@@ -59,6 +62,7 @@ import {
   IconDrive,
   IconEdit,
   IconEye,
+  IconEyeOff,
   IconFilePlus,
   IconFoldAll,
   IconFolderPlus,
@@ -84,8 +88,8 @@ function sortEntries(list: FileEntryDto[]): FileEntryDto[] {
   const cached = sortedListings.get(list);
   if (cached) return cached;
   const sorted = [...list].sort((a, b) => {
-    const ad = a.kind === "dir" ? 0 : 1;
-    const bd = b.kind === "dir" ? 0 : 1;
+    const ad = entryIsDir(a) ? 0 : 1;
+    const bd = entryIsDir(b) ? 0 : 1;
     if (ad !== bd) return ad - bd;
     return entryCollator.compare(a.name, b.name);
   });
@@ -108,6 +112,7 @@ interface TreeView {
   root: string | null;
   expanded: string[];
   selected: string | null;
+  showHidden?: boolean;
 }
 const treeViewsByClient = new WeakMap<QueryClient, Map<string, TreeView>>();
 
@@ -154,7 +159,20 @@ type TreeRowActions = {
   reconnect: () => void;
   navigate: (event: ReactKeyboardEvent<HTMLElement>, path: string) => void;
   noteFocus: (path: string) => void;
+  goParent: () => void;
+  renameFrom: (entry: FileEntryDto, listKey: string) => void;
+  refresh: () => void;
 };
+
+// Delete everywhere, and Cmd+Backspace on macOS where the keyboard has no forward Delete key.
+function isDeleteKey(e: ReactKeyboardEvent<HTMLElement>): boolean {
+  return e.key === "Delete" || (e.key === "Backspace" && e.metaKey && isMac());
+}
+
+function isParentKey(e: ReactKeyboardEvent<HTMLElement>): boolean {
+  if (e.key === "Backspace") return !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+  return e.key === "ArrowUp" && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey;
+}
 
 type TreeRowProps = {
   entry?: FileEntryDto;
@@ -222,8 +240,14 @@ const TreeRow = memo(function TreeRow({
     );
   }
   if (!entry) return null;
-  const isDir = entry.kind === "dir";
-  const { Icon, tone } = fileVisual(entry.name, entry.kind);
+  const isDir = entryIsDir(entry);
+  const { Icon, tone } = fileVisual(entry.name, entry.kind, entry.targetKind);
+  const title =
+    entry.kind !== "symlink"
+      ? entry.path
+      : entryIsBrokenLink(entry)
+        ? t("{path} → {target}（无法解析链接目标，可能已失效）", { path: entry.path, target: entry.symlinkTarget ?? t("未知目标") })
+        : `${entry.path} → ${entry.symlinkTarget}`;
   return (
     <div
       role="treeitem"
@@ -273,10 +297,28 @@ const TreeRow = memo(function TreeRow({
           e.stopPropagation();
           return;
         }
-        if (!rootEntry && (e.key === "Delete" || e.key === "Backspace")) {
+        if (!rootEntry && isDeleteKey(e)) {
           e.preventDefault();
           e.stopPropagation();
           actions.deleteFrom(entry.path);
+          return;
+        }
+        if (isParentKey(e)) {
+          e.preventDefault();
+          e.stopPropagation();
+          actions.goParent();
+          return;
+        }
+        if (e.key === "F2" && !rootEntry) {
+          e.preventDefault();
+          e.stopPropagation();
+          actions.renameFrom(entry, dir);
+          return;
+        }
+        if (e.key === "F5") {
+          e.preventDefault();
+          e.stopPropagation();
+          actions.refresh();
           return;
         }
         if (e.key === "Enter") {
@@ -320,7 +362,8 @@ const TreeRow = memo(function TreeRow({
       }}
       onFocus={() => actions.noteFocus(entry.path)}
       onContextMenu={(e) => actions.openRowMenu(e, entry, dir, rootEntry)}
-      title={entry.kind === "symlink" ? `${entry.path} → ${entry.symlinkTarget}` : entry.path}
+      title={title}
+      data-broken-link={entryIsBrokenLink(entry) ? "" : undefined}
     >
       {multiMode && !rootEntry && (
         <input
@@ -353,7 +396,12 @@ const TreeRow = memo(function TreeRow({
       ) : (
         <Icon size={13} className={`shrink-0 ${tone}`} />
       )}
-      <span className="nx-row-name min-w-0 flex-auto truncate text-[12.5px]">{entry.name}</span>
+      <span
+        className={`nx-row-name min-w-0 flex-auto truncate text-[12.5px]${entryIsBrokenLink(entry) ? " italic text-neutral-500" : ""}`}
+      >
+        {entry.name}
+      </span>
+      {entryIsBrokenLink(entry) && <span className="nx-sr-only">{t("（链接目标无法解析）")}</span>}
       {coarse ? (
         multiMode ? null : <button
           className="nx-icon-btn nx-icon-btn-sm nx-row-more"
@@ -432,8 +480,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const leftOpen = useUi((s) => s.leftOpen);
   const leftWidth = useUi((s) => s.leftWidth);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
-  const packHidden = sessionKind !== undefined && !packDownloadSupported(sessionKind);
   const [initialView] = useState(() => treeViews(qc).get(sessionId));
+  const [showHidden, setShowHidden] = useState(initialView?.showHidden ?? false);
   const [rootChoice, setRoot] = useState<string | null>(initialView?.root ?? null);
   const [expanded, setExpanded] = useState<string[]>(initialView?.expanded ?? []);
   const multi = useMultiSelect(initialView?.selected ?? null);
@@ -448,7 +496,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const coarse = useCoarsePointer();
   const rootsQuery = useQuery({
     queryKey: ["fsRoots", sessionId],
-    queryFn: () => fsApi.roots(sessionId),
+    queryFn: async () => {
+      const roots = await fsApi.roots(sessionId);
+      noteFsRoots(sessionId, roots);
+      return roots;
+    },
     staleTime: LISTING_STALE_MS,
     gcTime: LISTING_GC_MS,
     refetchOnMount: initialView === undefined,
@@ -457,7 +509,12 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     retry: false,
   });
   const rootsData = rootsQuery.data;
-  const pathStyle = rootsData?.pathStyle ?? "unknown";
+  const pathStyle = fsPathStyle(rootsData?.pathStyle);
+  const capabilities = rootsData?.capabilities ?? null;
+  const packHidden =
+    (sessionKind !== undefined || capabilities !== null) && !packDownloadSupported(sessionKind ?? "", capabilities);
+  const canExtract = extractSupported(capabilities);
+  const chmodMode = chmodSupport(capabilities);
   const windowsComputer = rootsData?.supported === true && pathStyle === "windows";
   const environmentSettled =
     typeof fsApi.roots !== "function" || rootsQuery.isSuccess || rootsQuery.isError;
@@ -505,15 +562,19 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const commitEdit = () => {
-    const next = normalizeTypedPath(draft, pathStyle);
-    if (!next) {
-      if (draft.trim()) {
-        pushToast("error", t("Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）"));
-      }
-      setEditing(false);
+    const resolved = resolveTypedPath(draft, root, pathStyle, rootsData?.homePath ?? null);
+    setEditing(false);
+    if (!resolved) return;
+    if (!resolved.ok) {
+      pushToast(
+        "error",
+        resolved.reason === "driveRelative"
+          ? t("Windows 驱动器相对路径无法直接跳转，需要绝对路径（如 D:/Projects）")
+          : t("「此电脑」下不能输入相对路径，请输入绝对路径（如 D:/Projects）"),
+      );
       return;
     }
-    setEditing(false);
+    const next = resolved.path;
     if (next === root) return;
     follow.noteUserNavigation();
     setExpanded([]);
@@ -529,8 +590,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   }, [computer, environmentSettled, expanded, root, rootsSessionGone]);
 
   useEffect(() => {
-    saveTreeView(qc, sessionId, { root: rootChoice, expanded, selected });
-  }, [qc, sessionId, rootChoice, expanded, selected]);
+    saveTreeView(qc, sessionId, { root: rootChoice, expanded, selected, showHidden });
+  }, [qc, sessionId, rootChoice, expanded, selected, showHidden]);
 
   // Directories the restored view shows keep their cached listing when the tree mounts again; a directory the user navigates
   // to, or collapses and expands again, reads as usual. Declared before useQueries so the set is current when its observers subscribe.
@@ -566,6 +627,14 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     });
     return map;
   }, [dirs, results]);
+
+  // Hidden entries leave the rows only; conflict checks and lookups keep the complete listing.
+  const visibleDirMap = useMemo(() => {
+    if (showHidden) return dirMap;
+    const map = new Map<string, FileEntryDto[]>();
+    for (const [dir, list] of dirMap) map.set(dir, list.some((e) => e.hidden) ? list.filter((e) => !e.hidden) : list);
+    return map;
+  }, [dirMap, showHidden]);
 
   const dirErrors = useMemo(() => {
     const map = new Map<string, { message: string; gone: boolean }>();
@@ -637,10 +706,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     }[] = [];
     const open = new Set(expanded);
     const walk = (dir: string, depth: number) => {
-      const list = dirMap.get(dir) ?? [];
+      const list = visibleDirMap.get(dir) ?? [];
       list.forEach((entry, i) => {
         out.push({ entry, depth, dir, setSize: list.length, posInSet: i + 1 });
-        if (entry.kind === "dir" && open.has(entry.path)) {
+        if (entryIsDir(entry) && open.has(entry.path)) {
           walk(entry.path, depth + 1);
         }
       });
@@ -668,7 +737,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       walk(root, 0);
     }
     return out;
-  }, [computer, dirMap, root, expanded, dirErrors, rootsData]);
+  }, [computer, visibleDirMap, root, expanded, dirErrors, rootsData]);
 
   // Selected rows that left the visible listing (deleted elsewhere, collapsed, refreshed away) are forgotten once listings settle.
   const listingsSettled =
@@ -677,9 +746,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   useEffect(() => {
     if (!listingsSettled || computer) return;
     const live = new Set<string>();
-    for (const list of dirMap.values()) for (const entry of list) live.add(entry.path);
+    for (const list of visibleDirMap.values()) for (const entry of list) live.add(entry.path);
     prune(live);
-  }, [listingsSettled, computer, dirMap, prune]);
+  }, [listingsSettled, computer, visibleDirMap, prune]);
 
   // Visible entries in row order: the order Shift ranges and Select all follow.
   const orderedPaths = useMemo(
@@ -690,7 +759,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     () => rows.flatMap((r) => (r.entry && !r.rootEntry && sel.paths.has(r.entry.path) ? [r.entry] : [])),
     [rows, sel.paths],
   );
-  const pickedHasDir = pickedEntries.some((e) => e.kind === "dir");
+  const pickedHasDir = pickedEntries.some((e) => entryIsDir(e));
 
   const retryDir = (dir: string) => {
     void qc.invalidateQueries({ queryKey: ["fs", sessionId, dir] });
@@ -714,11 +783,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       setRoot(null);
       return;
     }
-    const normalized = norm(next);
+    const normalized = norm(next, pathStyle);
     const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
     setExpanded((prev) =>
       prev.filter((path) => {
-        const candidate = norm(path);
+        const candidate = norm(path, pathStyle);
         return candidate === normalized || candidate.startsWith(prefix);
       }),
     );
@@ -745,7 +814,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const targetDir = (): string => {
     if (selectedEntry) {
-      if (selectedEntry.kind === "dir") return selectedEntry.path;
+      if (entryIsDir(selectedEntry)) return selectedEntry.path;
       return parentOf(selectedEntry.path) ?? root ?? "";
     }
     return root ?? "";
@@ -773,7 +842,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const newFileIn = async (dir: string) => {
     const name = await promptText(t("新建文件名"), "");
     if (name === null) return;
-    const problem = validateEntryName(name);
+    const problem = validateEntryName(name, pathStyle);
     if (problem) {
       pushToast("error", t("无法创建：{problem}", { problem }));
       return;
@@ -798,7 +867,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const newDirIn = async (dir: string) => {
     const name = await promptText(t("新建目录名"), "");
     if (name === null) return;
-    const problem = validateEntryName(name);
+    const problem = validateEntryName(name, pathStyle);
     if (problem) {
       pushToast("error", t("无法创建：{problem}", { problem }));
       return;
@@ -883,8 +952,13 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
 
   const remove = async (path: string) => {
     const entry = findEntry(path);
+    // Only a real directory is deleted recursively; a link, even one to a directory, is removed by itself.
     const isDir = entry?.kind === "dir";
-    const tip = isDir ? t("\n\n目录会被递归删除，不可恢复。") : "";
+    const tip = isDir
+      ? t("\n\n目录会被递归删除，不可恢复。")
+      : entry?.kind === "symlink"
+        ? t("\n\n只删除链接本身，不影响它指向的目标。")
+        : "";
     if (!(await ask(t("删除 {path}？{tip}", { path, tip }), { kind: "warning" }))) return;
     try {
       await fsApi.delete(sessionId, path, isDir);
@@ -898,7 +972,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const batchDownload = async (files: FileEntryDto[]) => {
-    if (batchBusy.current || files.some((f) => f.kind === "dir")) return;
+    if (batchBusy.current || files.some((f) => entryIsDir(f))) return;
     batchBusy.current = true;
     try {
       let queued = 0;
@@ -923,7 +997,10 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const batchDelete = async (items: FileEntryDto[]) => {
     if (batchBusy.current || items.length === 0) return;
     const hasDir = items.some((x) => x.kind === "dir");
-    const tip = hasDir ? t("\n\n其中包含目录，目录会被递归删除，不可恢复。") : "";
+    const hasLink = items.some((x) => x.kind === "symlink");
+    const tip =
+      (hasDir ? t("\n\n其中包含目录，目录会被递归删除，不可恢复。") : "") +
+      (hasLink ? t("\n\n其中的链接只删除链接本身，不影响它指向的目标。") : "");
     if (!(await ask(t("删除选中的 {length} 项？{tip}", { length: items.length, tip }), { kind: "warning" }))) return;
     batchBusy.current = true;
     const deleted: string[] = [];
@@ -1093,27 +1170,45 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const remapAfterRename = (from: string, to: string) => {
-    const fromN = norm(from);
-    const toN = norm(to);
+    const fromN = norm(from, pathStyle);
+    const toN = norm(to, pathStyle);
+    // A backslash in a path written with Windows separators is kept in that style; on POSIX it is part of a name.
+    const windowsWritten = (p: string) =>
+      p.includes("\\") && norm(p, pathStyle) !== p;
     const styled = (target: string, styleOf: string) =>
-      styleOf.includes("\\") ? target.replace(/\//g, "\\") : target;
+      windowsWritten(styleOf) ? target.replace(/\//g, "\\") : target;
     const remap = (p: string) => {
-      const pn = norm(p);
+      const pn = norm(p, pathStyle);
       if (pn === fromN) return styled(toN, p);
       if (pn.startsWith(`${fromN}/`)) return styled(`${toN}${pn.slice(fromN.length)}`, p);
       return p;
     };
     multi.remap(remap);
     setExpanded((prev) => prev.map(remap));
-    if (root && (norm(root) === fromN || norm(root).startsWith(`${fromN}/`))) {
+    const rootN = root ? norm(root, pathStyle) : null;
+    if (root && rootN !== null && (rootN === fromN || rootN.startsWith(`${fromN}/`))) {
       setRoot(remap(root));
     }
   };
 
   const siblingsOf = (dir: string): FileEntryDto[] => dirMap.get(dir) ?? [];
 
+  const renameFrom = (entry: FileEntryDto, listKey: string) => {
+    if (fileOps.busy !== null) return;
+    void fileOps.renameEntry(entry, siblingsOf(listKey), listKey, remapAfterRename);
+  };
+
+  const goParent = () => {
+    if (root === null) return;
+    const up = parentOf(root);
+    if (!up && !(windowsComputer && isRoot(root))) return;
+    // Keep keyboard focus on the directory just left once the parent listing shows it.
+    pendingFocusRef.current = { path: root, at: Date.now() };
+    navigateRoot(up);
+  };
+
   const openBatchMenuAt = (x: number, y: number, items: FileEntryDto[]) => {
-    const hasDir = items.some((item) => item.kind === "dir");
+    const hasDir = items.some((item) => entryIsDir(item));
     setMenu({
       x,
       y,
@@ -1168,8 +1263,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       });
       return;
     }
-    const isDir = entry.kind === "dir";
+    const isDir = entryIsDir(entry);
     const dir = isDir ? entry.path : (parentOf(entry.path) ?? root ?? HOME);
+    const readOnly = chmodMode === "readonly" ? windowsReadOnly(entry.mode) === true : false;
     const items: MenuItem[] = [
       { kind: "group", label: t("终端") },
       {
@@ -1190,7 +1286,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       { kind: "group", label: isDir ? t("目录") : t("文件") },
     ];
     if (isDir) {
-      if (!packHidden) {
+      // Packing a link would archive the link, not the directory it points at.
+      if (!packHidden && entry.kind === "dir") {
         items.push({
           kind: "item",
           label: t("打包下载当前目录"),
@@ -1215,7 +1312,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         disabled: !isEditableFile(entry.name),
         onSelect: () => openLogTab(sessionId, entry.path),
       });
-      if (isExtractableArchive(entry.name)) {
+      if (canExtract && isExtractableArchive(entry.name)) {
         items.push({
           kind: "item",
           label: t("解压"),
@@ -1231,24 +1328,34 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         onSelect: () => void download(entry.path),
       });
     }
-    items.push(
-      {
-        kind: "item",
-        label: t("重命名"),
-        icon: <IconEdit size={13} />,
-        disabled: fileOps.busy !== null,
-        onSelect: () =>
-          void fileOps.renameEntry(entry, siblingsOf(listKey), listKey, remapAfterRename),
-      },
-      {
+    items.push({
+      kind: "item",
+      label: t("重命名"),
+      icon: <IconEdit size={13} />,
+      accel: "F2",
+      disabled: fileOps.busy !== null,
+      onSelect: () => renameFrom(entry, listKey),
+    });
+    if (chmodMode === "posix") {
+      items.push({
         kind: "item",
         label: t("权限…"),
         icon: <IconLock size={13} />,
         hint: "chmod",
         disabled: fileOps.busy !== null,
         onSelect: () => void fileOps.chmodEntry(entry, listKey),
-      },
-    );
+      });
+    } else if (chmodMode === "readonly" && entry.kind !== "symlink") {
+      // The attribute change would follow a link to its target, so links get no read-only toggle.
+      items.push({
+        kind: "item",
+        label: readOnly ? t("取消只读") : t("设为只读"),
+        icon: <IconLock size={13} />,
+        hint: readOnly ? t("当前只读") : undefined,
+        disabled: fileOps.busy !== null,
+        onSelect: () => void fileOps.setReadOnlyEntry(entry, listKey, !readOnly),
+      });
+    }
     if (!isDir) {
       items.push({
         kind: "item",
@@ -1501,6 +1608,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     noteFocus: (path) => {
       focusedPathRef.current = path;
     },
+    goParent,
+    renameFrom,
+    refresh,
   };
   // Stable proxies keep memoized rows from re-rendering when only parent closures change.
   const rowActions = useMemo<TreeRowActions>(() => {
@@ -1529,6 +1639,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       reconnect: call("reconnect"),
       navigate: call("navigate"),
       noteFocus: call("noteFocus"),
+      goParent: call("goParent"),
+      renameFrom: call("renameFrom"),
+      refresh: call("refresh"),
     };
   }, []);
 
@@ -1610,6 +1723,15 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           }}
         >
           <IconFoldAll size={14} />
+        </button>
+        <button
+          className={`nx-icon-btn nx-icon-btn-sm${showHidden ? " is-active" : ""}`}
+          title={showHidden ? t("显示隐藏文件：开") : t("显示隐藏文件：关")}
+          aria-label={t("显示隐藏文件")}
+          aria-pressed={showHidden}
+          onClick={() => setShowHidden((value) => !value)}
+        >
+          {showHidden ? <IconEye size={14} /> : <IconEyeOff size={14} />}
         </button>
         {follow.supported && (
           <button
@@ -1876,7 +1998,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           <>
             <span className="text-neutral-700">|</span>
             <span className="min-w-0 flex-1 truncate" title={selectedEntry.path}>
-              {selectedEntry.kind === "dir" ? t("目录") : formatSize(selectedEntry.size)}
+              {entryIsDir(selectedEntry) ? t("目录") : formatSize(selectedEntry.size)}
             </span>
           </>
         )}

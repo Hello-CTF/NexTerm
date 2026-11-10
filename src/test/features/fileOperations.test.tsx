@@ -248,9 +248,13 @@ import {
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
+  chmodSupport,
+  extractSupported,
   losesOwnerAccess,
+  packDownloadSupported,
   parseOctalMode,
   validateEntryName,
+  windowsReadOnly,
 } from "../../features/files/fileOps";
 import { useTransferStore } from "../../features/files/transferStore";
 import { FileTree } from "../../features/files/FileTree";
@@ -458,6 +462,43 @@ describe("fileOps preflight checks (pure functions)", () => {
     expect(validateEntryName("  ")).toMatch(/不能为空/);
     expect(validateEntryName(" x ")).toMatch(/首尾/);
     expect(validateEntryName("ok.txt")).toBeNull();
+  });
+
+  it("checks names against the target's rules", () => {
+    expect(validateEntryName("a\\b", "posix")).toBeNull();
+    expect(validateEntryName("a:b?.txt", "posix")).toBeNull();
+    expect(validateEntryName("CON", "posix")).toBeNull();
+    expect(validateEntryName("a/b", "posix")).toMatch(/路径分隔符/);
+    expect(validateEntryName("a\0b", "posix")).toMatch(/NUL/);
+
+    expect(validateEntryName("a\\b", "windows")).toMatch(/路径分隔符/);
+    for (const reserved of ["CON", "con.txt", "PRN", "AUX.log", "NUL", "COM1", "lpt9.tar.gz"]) {
+      expect(validateEntryName(reserved, "windows")).toMatch(/保留/);
+    }
+    expect(validateEntryName("COM0", "windows")).toBeNull();
+    expect(validateEntryName("CONSOLE.txt", "windows")).toBeNull();
+    expect(validateEntryName("name.", "windows")).toMatch(/点或空格/);
+    for (const bad of ["a<b", "a>b", 'a"b', "a|b", "a?b", "a*b", "a:b"]) {
+      expect(validateEntryName(bad, "windows")).toMatch(/Windows 名称不能包含/);
+    }
+    expect(validateEntryName("报告 (1).txt", "windows")).toBeNull();
+  });
+
+  it("gates pack, extract and chmod on the declared capabilities", () => {
+    const caps = { chmod: "readonly", pack: false, extract: false, caseInsensitive: true };
+    expect(packDownloadSupported("ssh", caps)).toBe(false);
+    expect(packDownloadSupported("winrm", { ...caps, pack: true })).toBe(true);
+    expect(packDownloadSupported("ssh")).toBe(true);
+    expect(packDownloadSupported("winrm")).toBe(false);
+    expect(extractSupported(caps)).toBe(false);
+    expect(extractSupported(null)).toBe(true);
+    expect(chmodSupport(caps)).toBe("readonly");
+    expect(chmodSupport({ ...caps, chmod: "none" })).toBe("none");
+    expect(chmodSupport(null)).toBe("posix");
+    expect(windowsReadOnly("-r--r--r--")).toBe(true);
+    expect(windowsReadOnly("-rw-rw-rw-")).toBe(false);
+    expect(windowsReadOnly("drwxrwxrwx")).toBe(false);
+    expect(windowsReadOnly("")).toBeNull();
   });
 
   it("accepts only octal digits in mode and rejects values above 0o777", () => {

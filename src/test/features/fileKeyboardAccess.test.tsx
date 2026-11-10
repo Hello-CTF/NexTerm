@@ -329,12 +329,12 @@ describe("FileTree keyboard accessibility", () => {
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/a.txt", false));
   });
 
-  it("explains recursive deletion for Backspace on a directory and deletes it with directory semantics after confirmation", async () => {
+  it("explains recursive deletion for Delete on a directory and deletes it with directory semantics after confirmation", async () => {
     const sub = itemByName(mounted!.container, "sub");
     act(() => sub.focus());
 
     mocks.ask.mockResolvedValueOnce(true);
-    keyDown(sub, "Backspace");
+    keyDown(sub, "Delete");
     await waitForRendered(() => expect(mocks.remove).toHaveBeenCalledWith(SID, "~/sub", true));
     expect(mocks.ask).toHaveBeenCalledWith(
       expect.stringContaining("递归删除，不可恢复"),

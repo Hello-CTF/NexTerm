@@ -1,5 +1,6 @@
 import { ask } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
+import { cachedFsRoots } from "../../ipc/fsRootsCache";
 import { useUi } from "../../app/store";
 import type { FileEntryDto } from "../../ipc/types";
 import { baseName } from "./pathUtils";
@@ -17,7 +18,7 @@ export async function checkUploadOverwrite(
 ): Promise<UploadOverwriteCheck> {
   const siblings = knownSiblings ?? (await fsApi.list(sessionId, dir));
   const kind = useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
-  const conflict = findConflict(baseName(remote), siblings, conflictCaseInsensitive(kind));
+  const conflict = findConflict(baseName(remote), siblings, conflictCaseInsensitive(kind, cachedFsRoots(sessionId)));
   if (!conflict) return "proceed";
   const detail = conflict.kind === "dir" ? t("目录") : t("文件 · {value}", { value: formatSize(conflict.size) });
   const ok = await ask(

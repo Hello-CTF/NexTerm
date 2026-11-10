@@ -6,6 +6,7 @@ import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 import { currentAuthSessionEpoch } from "./authSessionEpoch";
 import { notifyAssetDataChanged } from "./assetEvents";
+import { cachedFsRoots, noteFsRoots } from "./fsRootsCache";
 import type {
   ipcContractManifest,
   IPCCommandName,
@@ -1022,8 +1023,17 @@ export const assetApi = {
   knownHostRemove: (id: string) => call("known_host_remove", { id }) as Promise<void>,
 };
 
-function normEntryPath<T extends { path: string }>(e: T): T {
-  return { ...e, path: e.path.replace(/\\/g, "/") };
+// Backslashes are separators only on a Windows target; a POSIX filename may contain one. Before fs_roots has
+// answered, a path rooted at "/" or "~/" is taken as POSIX and any other (drive, UNC) as Windows, like norm() in
+// the file manager.
+function normFsPath(path: string, pathStyle: string | undefined): string {
+  if (pathStyle === "posix") return path;
+  if (pathStyle !== "windows" && (path.startsWith("/") || path === "~" || path.startsWith("~/"))) return path;
+  return path.replace(/\\/g, "/");
+}
+
+function normEntryPath<T extends { path: string }>(e: T, pathStyle: string | undefined): T {
+  return { ...e, path: normFsPath(e.path, pathStyle) };
 }
 
 export type FileRootDto = import("./generated/types").FSRootDTO;
@@ -1035,11 +1045,12 @@ export interface FileRootsDto extends Omit<import("./generated/types").FSRootsDT
 export const fsApi = {
   roots: async (sessionId: string) => {
     const result = await call("fs_roots", { sessionId });
+    noteFsRoots(sessionId, result);
     return {
       ...result,
       pathStyle: result.pathStyle as FileRootsDto["pathStyle"],
-      roots: result.roots.map(normEntryPath),
-      homePath: result.homePath?.replace(/\\/g, "/") ?? null,
+      roots: result.roots.map((root) => normEntryPath(root, result.pathStyle)),
+      homePath: result.homePath == null ? null : normFsPath(result.homePath, result.pathStyle),
     };
   },
   list: async (sessionId: string, path: string) => {
@@ -1047,7 +1058,8 @@ export const fsApi = {
       sessionId,
       path,
     });
-    return list.map(normEntryPath);
+    const pathStyle = cachedFsRoots(sessionId)?.pathStyle;
+    return list.map((entry) => normEntryPath(entry, pathStyle));
   },
   read: (sessionId: string, path: string, maxBytes?: number) =>
     call("fs_read", {
