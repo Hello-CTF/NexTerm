@@ -187,17 +187,26 @@ function CredentialDetail({
   const [revealed, setRevealed] = useState<RevealedCredential | null>(null);
   const [left, setLeft] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const timerRef = useRef<number | null>(null);
+  const revealingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  const clearRevealTimer = () => {
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    timerRef.current = null;
+  };
 
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
+      mountedRef.current = false;
+      clearRevealTimer();
     };
   }, []);
 
   const maskNow = () => {
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    timerRef.current = null;
+    clearRevealTimer();
     setRevealed(null);
     setLeft(0);
   };
@@ -207,21 +216,27 @@ function CredentialDetail({
       maskNow();
       return;
     }
+    // A reveal may wait on an unlock prompt; a second click must not start a second countdown.
+    if (revealingRef.current) return;
+    revealingRef.current = true;
+    setRevealing(true);
     try {
       const res = await vaultApi.revealCredential(cred.id);
+      if (!mountedRef.current) return;
+      clearRevealTimer();
+      const deadline = Date.now() + REVEAL_SECONDS * 1000;
       setRevealed(res);
       setLeft(REVEAL_SECONDS);
       timerRef.current = window.setInterval(() => {
-        setLeft((n) => {
-          if (n <= 1) {
-            maskNow();
-            return 0;
-          }
-          return n - 1;
-        });
+        const remaining = Math.ceil((deadline - Date.now()) / 1000);
+        if (remaining <= 0) maskNow();
+        else setLeft(remaining);
       }, 1000);
     } catch (e) {
-      pushToast("error", describeError(e));
+      if (mountedRef.current) pushToast("error", describeError(e));
+    } finally {
+      revealingRef.current = false;
+      if (mountedRef.current) setRevealing(false);
     }
   };
 
@@ -376,7 +391,7 @@ function CredentialDetail({
                   </pre>
                 )}
                 {!isRef && (
-                  <button className="nx-btn nx-btn-sm shrink-0" onClick={() => void reveal()}>
+                  <button className="nx-btn nx-btn-sm shrink-0" disabled={revealing} onClick={() => void reveal()}>
                     {revealed !== null ? <IconEyeOff size={12} /> : <IconEye size={12} />}
                     {revealed !== null ? t("隐藏") : t("显示")}
                   </button>
@@ -446,7 +461,7 @@ function CredentialDetail({
                   </span>
                   {cred.hasPassphrase && (
                     <>
-                      <button className="nx-btn nx-btn-sm shrink-0" onClick={() => void reveal()}>
+                      <button className="nx-btn nx-btn-sm shrink-0" disabled={revealing} onClick={() => void reveal()}>
                         {revealed !== null ? <IconEyeOff size={12} /> : <IconEye size={12} />}
                         {revealed !== null ? t("隐藏") : t("显示")}
                       </button>
