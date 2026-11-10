@@ -5577,6 +5577,7 @@
   "该主机没有安装 Docker（或不在 PATH 中）": "Auf diesem Host ist Docker nicht installiert (oder nicht im PATH)",
   "该主机没有安装 Docker，安装后请重试。": "Auf diesem Host ist Docker nicht installiert. Bitte nach der Installation erneut versuchen.",
   "该主机的会话列表可能已过时": "Die Sitzungsliste dieses Hosts ist möglicherweise veraltet",
+  "该主机的布局模板正在打开，请稍候": "Eine Layout-Vorlage für diesen Host wird bereits geöffnet, bitte warten",
   "该主机经跳板机连接，检查时将登录跳板机。": "Dieser Host wird über einen Jump-Host verbunden; bei der Prüfung wird der Jump-Host angemeldet.",
   "该任务所用的模型已被删除，请选择其他模型，或改回「跟随当前档案」。": "Das für diese Aufgabe verwendete Modell wurde gelöscht. Bitte wählen Sie ein anderes Modell oder stellen Sie wieder „Aktuellem Profil folgen“ ein.",
   "该会话已不可用，请重新查询后再打开终端": "Diese Sitzung ist nicht mehr verfügbar. Bitte erneut abfragen und dann das Terminal öffnen",

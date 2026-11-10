@@ -23,6 +23,9 @@ import { t } from "../i18n";
 /** How long a pane's terminal may take to attach before its startup snippet is skipped. */
 export const LAYOUT_TERMINAL_READY_TIMEOUT_MS = 60_000;
 
+// Asset ids whose template is being opened, so a second open of the same host cannot interleave with the first.
+const openingAssets = new Set<string>();
+
 export type OpenLayoutTemplateResult =
   | { ok: true; workspaceId: string; notices: string[] }
   | { ok: false; reason: "missing-asset" | "unsupported" | "occupied" | "canceled" | "failed"; message?: string };
@@ -49,17 +52,18 @@ function notifyNotices(template: LayoutTemplate, notices: readonly string[]): vo
   );
 }
 
-// terminalInPane returns the pane's terminal once it attached (its backend terminal id), null when it can no longer
-// attach (pane or tab gone, or the terminal ended), or undefined while it is still opening.
-function terminalInPane(workspaceId: string, paneId: string): string | null | undefined {
+// terminalOfTab returns the tab's terminal once it attached (its backend terminal id), null when it can no longer
+// attach (tab gone from the workspace, or the terminal ended), or undefined while it is still opening. The exact tab
+// is looked up anywhere in the workspace, so moving it to another pane does not matter and a different terminal is
+// never picked in its place.
+function terminalOfTab(workspaceId: string, storeTabId: string): string | null | undefined {
   const workspace = useUi.getState().workspaces.find((candidate) => candidate.id === workspaceId);
-  const pane = workspace?.panes.find((candidate) => candidate.id === paneId);
-  const tab = pane?.tabs.find((candidate) => candidate.kind === "terminal");
-  if (!tab || tab.dead || tab.exited) return null;
+  const tab = workspace?.panes.flatMap((pane) => pane.tabs).find((candidate) => candidate.id === storeTabId);
+  if (!tab || tab.kind !== "terminal" || tab.dead || tab.exited) return null;
   return tab.tabId ?? undefined;
 }
 
-function waitForPaneTerminal(workspaceId: string, paneId: string, timeoutMs: number): Promise<string | null> {
+function waitForTabTerminal(workspaceId: string, storeTabId: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value: string | null) => {
@@ -70,7 +74,7 @@ function waitForPaneTerminal(workspaceId: string, paneId: string, timeoutMs: num
       resolve(value);
     };
     const check = () => {
-      const state = terminalInPane(workspaceId, paneId);
+      const state = terminalOfTab(workspaceId, storeTabId);
       if (state !== undefined) finish(state);
     };
     const unsubscribe = useUi.subscribe(check);
@@ -136,6 +140,23 @@ export async function openLayoutTemplate(
   template: LayoutTemplate,
   options: { readyTimeoutMs?: number } = {},
 ): Promise<OpenLayoutTemplateResult> {
+  if (openingAssets.has(template.assetId)) {
+    const message = t("该主机的布局模板正在打开，请稍候");
+    useUi.getState().pushToast("info", message);
+    return { ok: false, reason: "occupied", message };
+  }
+  openingAssets.add(template.assetId);
+  try {
+    return await openTemplate(template, options);
+  } finally {
+    openingAssets.delete(template.assetId);
+  }
+}
+
+async function openTemplate(
+  template: LayoutTemplate,
+  options: { readyTimeoutMs?: number },
+): Promise<OpenLayoutTemplateResult> {
   const { pushToast } = useUi.getState();
   const epoch = useUi.getState().accountEpoch;
   const stale = () => useUi.getState().accountEpoch !== epoch;
@@ -191,11 +212,12 @@ export async function openLayoutTemplate(
   }));
 
   const notices: string[] = [];
+  const tabIds = new Map<string, string>();
   for (const [index, paneId] of paneIds.entries()) {
     if (stale()) return { ok: false, reason: "canceled" };
     if (!hostWorkspace(asset.id)?.panes.some((pane) => pane.id === paneId)) continue;
     try {
-      await openTerminalTab(session, undefined, paneId);
+      tabIds.set(paneId, await openTerminalTab(session, undefined, paneId));
     } catch (cause) {
       notices.push(t("窗格 {pane} 未能打开终端：{value}", { pane: index + 1, value: describeError(cause) }));
     }
@@ -207,7 +229,10 @@ export async function openLayoutTemplate(
     if (await confirmSnippetRuns(template, asset, runs)) {
       for (const run of runs) {
         if (stale()) return { ok: false, reason: "canceled" };
-        const tabId = await waitForPaneTerminal(workspace.id, run.paneId, options.readyTimeoutMs ?? LAYOUT_TERMINAL_READY_TIMEOUT_MS);
+        const storeTabId = tabIds.get(run.paneId);
+        const tabId = storeTabId
+          ? await waitForTabTerminal(workspace.id, storeTabId, options.readyTimeoutMs ?? LAYOUT_TERMINAL_READY_TIMEOUT_MS)
+          : null;
         if (stale()) return { ok: false, reason: "canceled" };
         if (!tabId) {
           notices.push(t("窗格 {pane} 的终端未就绪，未运行「{name}」", { pane: run.pane, name: run.snippet.name }));

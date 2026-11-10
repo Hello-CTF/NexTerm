@@ -63,13 +63,13 @@ function layoutNodeError(node: unknown, depth: number, panes: { count: number })
   if (raw.type === "leaf") {
     panes.count += 1;
     if (panes.count > LAYOUT_TEMPLATE_LIMITS.panes) return t("模板最多 {panes} 个窗格", { panes: LAYOUT_TEMPLATE_LIMITS.panes });
-    if (Object.keys(raw).some((key) => key !== "type" && key !== "snippetId")) return t("布局结构无效");
+    if ("dir" in raw || "ratio" in raw || "a" in raw || "b" in raw) return t("布局结构无效");
     if (raw.snippetId !== undefined && (typeof raw.snippetId !== "string" || !REF_PATTERN.test(raw.snippetId))) return t("启动片段无效");
     return null;
   }
   if (raw.type !== "split") return t("布局结构无效");
   if (depth >= LAYOUT_TEMPLATE_LIMITS.depth) return t("分屏最多嵌套 {depth} 层", { depth: LAYOUT_TEMPLATE_LIMITS.depth });
-  if (Object.keys(raw).some((key) => !["type", "dir", "ratio", "a", "b"].includes(key))) return t("布局结构无效");
+  if ("snippetId" in raw) return t("布局结构无效");
   if (raw.dir !== "row" && raw.dir !== "col") return t("布局结构无效");
   if (typeof raw.ratio !== "number" || !(raw.ratio >= SPLIT_RATIO_MIN && raw.ratio <= SPLIT_RATIO_MAX)) return t("布局结构无效");
   return layoutNodeError(raw.a, depth + 1, panes) ?? layoutNodeError(raw.b, depth + 1, panes);

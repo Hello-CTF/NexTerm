@@ -5601,6 +5601,7 @@
   "该主机没有安装 Docker（或不在 PATH 中）": "Docker n'est pas installé sur cet hôte (ou n'est pas dans le PATH)",
   "该主机没有安装 Docker，安装后请重试。": "Docker n'est pas installé sur cet hôte. Installez-le, puis réessayez.",
   "该主机的会话列表可能已过时": "La liste des sessions de cet hôte est peut-être obsolète",
+  "该主机的布局模板正在打开，请稍候": "Un modèle de disposition de cet hôte est déjà en cours d'ouverture, veuillez patienter",
   "该主机经跳板机连接，检查时将登录跳板机。": "Cet hôte se connecte via un hôte de rebond ; la vérification se connectera à l'hôte de rebond.",
   "该任务所用的模型已被删除，请选择其他模型，或改回「跟随当前档案」。": "Le modèle utilisé par cette tâche a été supprimé. Choisissez un autre modèle ou revenez à « Suivre le profil actuel ».",
   "该会话已不可用，请重新查询后再打开终端": "Cette session n'est plus disponible ; relancez la recherche avant d'ouvrir le terminal",

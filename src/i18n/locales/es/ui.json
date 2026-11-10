@@ -5628,6 +5628,7 @@
   "该主机没有安装 Docker（或不在 PATH 中）": "Este host no tiene Docker instalado (o no está en PATH)",
   "该主机没有安装 Docker，安装后请重试。": "Este host no tiene Docker instalado; instálelo e inténtelo de nuevo.",
   "该主机的会话列表可能已过时": "La lista de sesiones de este host podría estar desactualizada",
+  "该主机的布局模板正在打开，请稍候": "Ya se está abriendo una plantilla de diseño de este host, espere un momento",
   "该主机经跳板机连接，检查时将登录跳板机。": "Este host se conecta a través de un host de salto; la comprobación iniciará sesión en el host de salto.",
   "该任务所用的模型已被删除，请选择其他模型，或改回「跟随当前档案」。": "El modelo que usa esta tarea se ha eliminado; elija otro modelo o vuelva a «Seguir el perfil actual».",
   "该会话已不可用，请重新查询后再打开终端": "Esta sesión ya no está disponible; vuelva a consultar antes de abrir el terminal",

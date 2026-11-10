@@ -51,10 +51,10 @@ type layoutTemplateNode struct {
 
 // normalizeLayoutTemplates validates named workspace layout templates. A template references its host and pane
 // snippets by id only; whether they still exist is checked when the template is opened, so a template survives the
-// deletion of what it points at and the client reports the gap.
+// deletion of what it points at and the client reports the gap. Unknown fields are dropped rather than rejected, so a
+// device on an older build still saves the templates a newer one wrote; known fields stay strictly checked.
 func normalizeLayoutTemplates(raw json.RawMessage) (string, bool) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var templates []layoutTemplate
 	if err := decoder.Decode(&templates); err != nil || decoder.More() || templates == nil || len(templates) > maxLayoutTemplates {
 		return "", false

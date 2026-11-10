@@ -107,8 +107,6 @@ func TestLayoutTemplatesPreference(t *testing.T) {
 		"split snippet":     encodeLayoutTemplates(t, []any{layoutTemplateValue("a", map[string]any{"type": "split", "dir": "row", "ratio": 0.5, "snippetId": "s", "a": layoutLeaf(""), "b": layoutLeaf("")})}),
 		"bad snippet":       encodeLayoutTemplates(t, []any{layoutTemplateValue("a", layoutLeaf("s n"))}),
 		"unknown node type": encodeLayoutTemplates(t, []any{layoutTemplateValue("a", map[string]any{"type": "tab"})}),
-		"session id field":  encodeLayoutTemplates(t, []any{layoutTemplateValue("a", map[string]any{"type": "leaf", "sessionId": "live"})}),
-		"unknown field":     encodeLayoutTemplates(t, template(func(v map[string]any) { v["run"] = "rm -rf /" })),
 		"trailing values":   json.RawMessage(`[] []`),
 		"list too large":    encodeLayoutTemplates(t, bulkyLayoutTemplates()),
 	}
@@ -178,5 +176,25 @@ func TestLayoutTemplatesRoundTripPerUser(t *testing.T) {
 	}
 	if _, ok := read[layoutTemplatesKey]; ok {
 		t.Fatalf("cleared templates must be gone: %v", read)
+	}
+}
+
+func TestNormalizeLayoutTemplatesDropsUnknownFields(t *testing.T) {
+	leaf := layoutLeaf("snip")
+	leaf["sessionId"] = "live"
+	value := layoutTemplateValue("a", layoutSplit("row", 0.5, leaf, layoutLeaf("")))
+	value["run"] = "rm -rf /"
+	raw := encodeLayoutTemplates(t, []any{value})
+	got, err := validatePreferenceValue(layoutTemplatesKey, raw)
+	if err != nil {
+		t.Fatalf("template with unknown fields rejected: %v", err)
+	}
+	for _, key := range []string{"run", "sessionId", "rm -rf"} {
+		if strings.Contains(string(got), key) {
+			t.Fatalf("unknown field %q kept in %s", key, got)
+		}
+	}
+	if !strings.Contains(string(got), `"snippetId":"snip"`) {
+		t.Fatalf("known fields lost: %s", got)
 	}
 }

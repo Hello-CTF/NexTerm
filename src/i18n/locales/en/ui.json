@@ -5574,6 +5574,7 @@
   "该主机没有安装 Docker（或不在 PATH 中）": "Docker is not installed on this host (or is not in PATH)",
   "该主机没有安装 Docker，安装后请重试。": "Docker is not installed on this host. Install it and try again.",
   "该主机的会话列表可能已过时": "This host's session list may be out of date",
+  "该主机的布局模板正在打开，请稍候": "A layout template for this host is already opening, please wait",
   "该主机经跳板机连接，检查时将登录跳板机。": "This host connects through a jump host, so checking will sign in to the jump host.",
   "该任务所用的模型已被删除，请选择其他模型，或改回「跟随当前档案」。": "The model used by this task has been deleted. Choose another model, or switch back to \"Follow current profile\".",
   "该会话已不可用，请重新查询后再打开终端": "This session is no longer available. Query again before opening the terminal.",

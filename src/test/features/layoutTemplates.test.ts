@@ -51,7 +51,7 @@ import {
   type LayoutTemplate,
   type LayoutTemplateNode,
 } from "../../app/layoutTemplates";
-import { openLayoutTemplate, saveWorkspaceAsLayoutTemplate } from "../../app/layoutTemplateOpen";
+import { LAYOUT_TERMINAL_READY_TIMEOUT_MS, openLayoutTemplate, saveWorkspaceAsLayoutTemplate } from "../../app/layoutTemplateOpen";
 import { workspaceLayoutTree } from "../../app/paneLayout";
 import { paneRects, type SplitNode } from "../../app/splitTree";
 import type { Asset, SessionInfo } from "../../ipc/commands";
@@ -197,6 +197,21 @@ describe("layout template model", () => {
     expect(parseLayoutTemplates({})).toBeNull();
   });
 
+  it("keeps a template that carries fields from a newer build and drops those fields", () => {
+    const newer = {
+      ...template({ layout: { type: "split", dir: "row", ratio: 0.5, a: { type: "leaf", snippetId: "snip-1" }, b: { type: "leaf" } } }),
+      color: "red",
+    };
+    (newer.layout as unknown as Record<string, unknown>).label = "x";
+    ((newer.layout as { a: unknown }).a as Record<string, unknown>).cwd = "/srv";
+    const parsed = parseLayoutTemplates([newer]);
+    expect(parsed).toHaveLength(1);
+    expect(JSON.stringify(parsed)).not.toMatch(/color|label|cwd/);
+    expect(parsed![0].layout).toEqual({ type: "split", dir: "row", ratio: 0.5, a: { type: "leaf", snippetId: "snip-1" }, b: { type: "leaf" } });
+    // Known fields on the wrong node kind stay invalid.
+    expect(layoutTemplateError(template({ layout: { type: "leaf", dir: "row" } as unknown as LayoutTemplateNode }))).not.toBeNull();
+  });
+
   it("sets and clears the snippet of one pane in reading order", () => {
     const next = withPaneSnippet(THREE_PANES, 1, "snip-2");
     expect(layoutTemplatePanes(next).map((pane) => pane.snippetId)).toEqual(["snip-1", "snip-2", "snip-gone"]);
@@ -318,5 +333,103 @@ describe("opening a template", () => {
     expect(mocks.sessionConnect).not.toHaveBeenCalled();
     expect(useUi.getState().workspaces[0].panes).toHaveLength(1);
     expect(useUi.getState().activeWorkspaceId).toBe("ws-open");
+  });
+
+  describe("startup snippets", () => {
+    const ONE_PANE = (snippetId: string): LayoutTemplate => template({ layout: { type: "leaf", snippetId } });
+
+    it("skips a snippet that takes parameters and says so", async () => {
+      mocks.snippetList.mockResolvedValue([{ ...SNIPPET, body: "tail -n {{lines}} /var/log/app.log" }]);
+      const result = await openLayoutTemplate(ONE_PANE("snip-1"));
+      expect(result.ok && result.notices.join(" ")).toContain("带参数");
+      expect(mocks.ask).not.toHaveBeenCalled();
+      expect(mocks.terminalWrite).not.toHaveBeenCalled();
+    });
+
+    it("reports a missing snippet and opens an empty terminal", async () => {
+      const result = await openLayoutTemplate(ONE_PANE("snip-gone"));
+      expect(result.ok && result.notices.join(" ")).toContain("已不存在");
+      expect(terminalTabs(hostWorkspace()).flat()).toHaveLength(1);
+      expect(mocks.terminalWrite).not.toHaveBeenCalled();
+    });
+
+    it("runs every step of a multi-step snippet", async () => {
+      mocks.snippetList.mockResolvedValue([{ ...SNIPPET, steps: [{ command: "cd /srv" }, { command: "ls" }] }]);
+      const opening = openLayoutTemplate(ONE_PANE("snip-1"), { readyTimeoutMs: 5_000 });
+      await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+      attachTerminals();
+      expect((await opening).ok).toBe(true);
+      const written = mocks.terminalWrite.mock.calls.map((call) => new TextDecoder().decode(call[1])).join("");
+      expect(written).toContain("cd /srv");
+      expect(written).toContain("ls");
+    });
+
+    it("gives up after the readiness timeout without running the snippet", async () => {
+      vi.useFakeTimers();
+      try {
+        const opening = openLayoutTemplate(ONE_PANE("snip-1"));
+        await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+        await vi.advanceTimersByTimeAsync(LAYOUT_TERMINAL_READY_TIMEOUT_MS + 1);
+        const result = await opening;
+        expect(result.ok && result.notices.join(" ")).toContain("未就绪");
+        expect(mocks.terminalWrite).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("runs in the exact tab it opened even when tabs move or other terminals attach first", async () => {
+      const opening = openLayoutTemplate(ONE_PANE("snip-1"), { readyTimeoutMs: 5_000 });
+      await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+      const workspace = hostWorkspace()!;
+      const opened = workspace.panes[0].tabs[0];
+      // The user opens another terminal in the pane and moves it ahead of the template's tab.
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((candidate) => candidate.id !== workspace.id ? candidate : {
+          ...candidate,
+          panes: candidate.panes.map((pane) => ({
+            ...pane,
+            tabs: [{ id: "other", kind: "terminal" as const, title: "其他", sessionId: "s1", closable: true, tabId: "term-other" }, ...pane.tabs],
+          })),
+        }),
+      }));
+      useUi.getState().updateTab(opened.id, { tabId: "term-opened" });
+      expect((await opening).ok).toBe(true);
+      expect(mocks.terminalWrite).toHaveBeenCalledTimes(1);
+      expect(mocks.terminalWrite.mock.calls[0][0]).toBe("term-opened");
+    });
+
+    it("skips the run when its tab was closed during the wait", async () => {
+      const opening = openLayoutTemplate(ONE_PANE("snip-1"), { readyTimeoutMs: 5_000 });
+      await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalledTimes(1));
+      const workspace = hostWorkspace()!;
+      useUi.setState((state) => ({
+        workspaces: state.workspaces.map((candidate) => candidate.id !== workspace.id ? candidate : {
+          ...candidate,
+          panes: candidate.panes.map((pane) => ({
+            ...pane,
+            tabs: [{ id: "other", kind: "terminal" as const, title: "其他", sessionId: "s1", closable: true, tabId: "term-other" }],
+          })),
+        }),
+      }));
+      const result = await opening;
+      expect(result.ok && result.notices.join(" ")).toContain("未就绪");
+      expect(mocks.terminalWrite).not.toHaveBeenCalled();
+    });
+  });
+
+  it("refuses a second open of the same host while the first is still running", async () => {
+    const first = openLayoutTemplate(template(), { readyTimeoutMs: 5_000 });
+    const second = await openLayoutTemplate(template({ id: "lt-2" }));
+    expect(second).toMatchObject({ ok: false, reason: "occupied" });
+    mocks.ask.mockResolvedValue(false);
+    await vi.waitFor(() => expect(mocks.ask).toHaveBeenCalled());
+    expect((await first).ok).toBe(true);
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
+    // Once finished, the host is free for the occupied check to take over rather than the in-flight guard.
+    mocks.ask.mockClear();
+    const third = await openLayoutTemplate(template());
+    expect(third).toMatchObject({ ok: false, reason: "occupied" });
+    expect(mocks.sessionConnect).toHaveBeenCalledTimes(1);
   });
 });
