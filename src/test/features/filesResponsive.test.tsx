@@ -255,7 +255,7 @@ describe("touch More buttons reuse the same action menus", () => {
     expect(labels.some((l) => l.includes("删除"))).toBe(true);
 
     const rename = [...mounted!.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
-      (b) => b.textContent?.trim() === "重命名",
+      (b) => b.textContent?.trim().startsWith("重命名") === true,
     );
     if (!rename) throw new Error("rename item not found");
     click(rename);

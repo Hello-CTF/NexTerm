@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { fsApi } from "../../ipc/commands";
+import { cachedFsRoots } from "../../ipc/fsRootsCache";
 import { ask, askChoice, promptText } from "../../ui/dialogs";
 import { useUi, type AppTab } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { FileEntryDto } from "../../ipc/types";
-import { joinPath, parentOf } from "./pathUtils";
+import { fsPathStyle, joinPath, parentOf } from "./pathUtils";
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
@@ -14,6 +15,8 @@ import {
   octalDefaultFromEntry,
   parseOctalMode,
   validateEntryName,
+  WINDOWS_READONLY_MODE,
+  WINDOWS_WRITABLE_MODE,
 } from "./fileOps";
 import {
   beginFileEditorRename,
@@ -189,7 +192,7 @@ export function useFileOps(sessionId: string) {
       }
       const name = await promptText(tr("重命名 {path}", { path: entry.path }), entry.name);
       if (name === null || !alive(seq)) return;
-      const problem = validateEntryName(name);
+      const problem = validateEntryName(name, fsPathStyle(cachedFsRoots(sessionId)?.pathStyle));
       if (problem) {
         pushToast("error", tr("无法重命名：{problem}", { problem }));
         return;
@@ -213,7 +216,7 @@ export function useFileOps(sessionId: string) {
       const conflict = findConflict(
         name,
         siblings.filter((sibling) => sibling !== entry),
-        conflictCaseInsensitive(sessionKind),
+        conflictCaseInsensitive(sessionKind, cachedFsRoots(sessionId)),
       );
       if (conflict) {
         const go = await ask(
@@ -317,6 +320,29 @@ export function useFileOps(sessionId: string) {
     }
   };
 
+  // Windows targets honour only the read-only attribute, which the backend maps from the owner write bit.
+  const setReadOnlyEntry = async (entry: FileEntryDto, listKey: string, readOnly: boolean) => {
+    const seq = begin("chmod", entry.path);
+    if (seq === null) return;
+    try {
+      const go = await ask(
+        readOnly
+          ? tr("把 {path} 设为只读？之后无法再保存或修改它，直到取消只读。", { path: entry.path })
+          : tr("取消 {path} 的只读属性？", { path: entry.path }),
+        { title: tr("只读"), kind: "info" },
+      );
+      if (!go || !alive(seq)) return;
+      await fsApi.chmod(sessionId, entry.path, readOnly ? WINDOWS_READONLY_MODE : WINDOWS_WRITABLE_MODE);
+      if (!alive(seq)) return;
+      void qc.invalidateQueries({ queryKey: ["fs", sessionId, listKey] });
+      pushToast("success", readOnly ? tr("已设为只读：{path}", { path: entry.path }) : tr("已取消只读：{path}", { path: entry.path }));
+    } catch (e) {
+      if (alive(seq)) pushToast("error", tr("修改只读属性失败：{value}", { value: describeError(e) }));
+    } finally {
+      end(seq);
+    }
+  };
+
   const checksumEntry = async (entry: FileEntryDto) => {
     const seq = begin("checksum", entry.path);
     if (seq === null) return;
@@ -348,5 +374,5 @@ export function useFileOps(sessionId: string) {
     }
   };
 
-  return { busy, renameEntry, chmodEntry, checksumEntry };
+  return { busy, renameEntry, chmodEntry, setReadOnlyEntry, checksumEntry };
 }

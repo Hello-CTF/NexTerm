@@ -73,6 +73,15 @@ describe("conflictCaseInsensitive (case-insensitive target detection)", () => {
     expect(conflictCaseInsensitive("local")).toBe(true);
   });
 
+  it("follows the backend capability, then a Windows path style, before the session kind", () => {
+    const caps = (caseInsensitive: boolean) => ({ capabilities: { caseInsensitive } });
+    expect(conflictCaseInsensitive("ssh", { pathStyle: "windows" })).toBe(true);
+    expect(conflictCaseInsensitive("ssh", { pathStyle: "posix", ...caps(true) })).toBe(true);
+    expect(conflictCaseInsensitive("local", { pathStyle: "posix", ...caps(false) })).toBe(false);
+    expect(conflictCaseInsensitive("ssh", { pathStyle: "windows", ...caps(false) })).toBe(false);
+    expect(conflictCaseInsensitive("ssh", { pathStyle: "posix" })).toBe(false);
+  });
+
   it("always folds case for winrm sessions (NTFS semantics)", () => {
     expect(conflictCaseInsensitive("winrm")).toBe(true);
   });

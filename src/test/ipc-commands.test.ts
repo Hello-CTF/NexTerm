@@ -659,6 +659,24 @@ describe("desktop command envelopes", () => {
     });
     expect(requestAt(1)).toEqual({ cmd: "fs_roots", args: { sessionId: "session-empty" } });
   });
+
+  it("keeps backslashes in listing paths of a POSIX session and converts them for other sessions", async () => {
+    const listing = [{ name: "a\\b", path: "/srv/a\\b", kind: "file", size: 1, mode: "-rw-r--r--", owner: null, group: null, mtime: 0, symlinkTarget: null }];
+    runtime.Call.ByName.mockResolvedValueOnce({
+      ok: true,
+      data: { pathStyle: "posix", roots: [{ path: "/", label: "/" }], homePath: "/home/u", supported: true },
+    });
+    runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: listing });
+    runtime.Call.ByName.mockResolvedValueOnce({
+      ok: true,
+      data: [{ ...listing[0], name: "b", path: "C:\\srv\\b" }],
+    });
+    const { fsApi } = await import("../ipc/commands");
+
+    await fsApi.roots("session-posix");
+    await expect(fsApi.list("session-posix", "/srv")).resolves.toEqual([expect.objectContaining({ path: "/srv/a\\b" })]);
+    await expect(fsApi.list("session-unknown", "C:/srv")).resolves.toEqual([expect.objectContaining({ path: "C:/srv/b" })]);
+  });
 });
 
 describe("desktop transcript facade IPC contracts", () => {

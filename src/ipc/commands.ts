@@ -6,6 +6,7 @@ import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 import { currentAuthSessionEpoch } from "./authSessionEpoch";
 import { notifyAssetDataChanged } from "./assetEvents";
+import { cachedFsRoots, noteFsRoots } from "./fsRootsCache";
 import type {
   ipcContractManifest,
   IPCCommandName,
@@ -1022,8 +1023,14 @@ export const assetApi = {
   knownHostRemove: (id: string) => call("known_host_remove", { id }) as Promise<void>,
 };
 
-function normEntryPath<T extends { path: string }>(e: T): T {
-  return { ...e, path: e.path.replace(/\\/g, "/") };
+// Backslashes are separators only on a Windows target; a POSIX filename may contain one. Until fs_roots has
+// answered for a session its style is unknown and paths keep the Windows-tolerant normalization.
+function normFsPath(path: string, posix: boolean): string {
+  return posix ? path : path.replace(/\\/g, "/");
+}
+
+function normEntryPath<T extends { path: string }>(e: T, posix = false): T {
+  return { ...e, path: normFsPath(e.path, posix) };
 }
 
 export type FileRootDto = import("./generated/types").FSRootDTO;
@@ -1035,11 +1042,13 @@ export interface FileRootsDto extends Omit<import("./generated/types").FSRootsDT
 export const fsApi = {
   roots: async (sessionId: string) => {
     const result = await call("fs_roots", { sessionId });
+    noteFsRoots(sessionId, result);
+    const posix = result.pathStyle === "posix";
     return {
       ...result,
       pathStyle: result.pathStyle as FileRootsDto["pathStyle"],
-      roots: result.roots.map(normEntryPath),
-      homePath: result.homePath?.replace(/\\/g, "/") ?? null,
+      roots: result.roots.map((root) => normEntryPath(root, posix)),
+      homePath: result.homePath == null ? null : normFsPath(result.homePath, posix),
     };
   },
   list: async (sessionId: string, path: string) => {
@@ -1047,7 +1056,8 @@ export const fsApi = {
       sessionId,
       path,
     });
-    return list.map(normEntryPath);
+    const posix = cachedFsRoots(sessionId)?.pathStyle === "posix";
+    return list.map((entry) => normEntryPath(entry, posix));
   },
   read: (sessionId: string, path: string, maxBytes?: number) =>
     call("fs_read", {
