@@ -100,6 +100,9 @@ func run(args []string) int {
 	if len(args) > 0 && args[0] == "init-admin" {
 		return runInitAdmin(args[1:], os.Getenv, os.Stdout, os.Stderr)
 	}
+	if len(args) > 0 && args[0] == "backup" {
+		return runBackup(context.Background(), args[1:], os.Getenv, os.Stdout, os.Stderr)
+	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))

@@ -233,3 +233,12 @@ func TestParseCLIDebugCapture(t *testing.T) {
 		t.Fatal("usage must document --debug-capture")
 	}
 }
+
+func TestUsageListsBackupOnlyForServer(t *testing.T) {
+	if !strings.Contains(Usage("nexterm-server", CommandServe), "  backup ") {
+		t.Fatal("server usage must list the backup command")
+	}
+	if strings.Contains(Usage("nexterm-desktop", CommandDesktop), "  backup ") {
+		t.Fatal("desktop usage must not list the server-only backup command")
+	}
+}
