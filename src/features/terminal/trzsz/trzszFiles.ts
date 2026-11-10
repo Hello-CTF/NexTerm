@@ -19,6 +19,26 @@ const DOWNLOAD_ID = "trzsz_download";
 export const TRZSZ_BUFFERED_SAVE_MAX_BYTES = 128 << 20;
 // The desktop's local range read returns at most 4 MiB per call.
 const DESKTOP_READ_CHUNK_BYTES = 4 << 20;
+// Limits for one download (tsz) written through the app: a host decides what
+// it sends, so the number of files, their total size and the depth are bounded.
+export const TRZSZ_MAX_FILES = 10000;
+export const TRZSZ_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+export const TRZSZ_MAX_DEPTH = 32;
+// Free-name search for a file that already exists locally.
+const MAX_NAME_ATTEMPTS = 100;
+
+export interface TrzszTransferLimits {
+  files: number;
+  totalBytes: number;
+  depth: number;
+}
+
+// Bumped when a transfer is cancelled or torn down: a file still being
+// received at that moment is incomplete and must not be saved as a result.
+let abortEpoch = 0;
+export function markTrzszTransferAborted(): void {
+  abortEpoch += 1;
+}
 
 export interface TrzszRequestContext {
   // The host the request came from, when it can be told apart from other terminals.
@@ -41,6 +61,11 @@ export interface TrzszFileDeps {
   }>;
   readRange: (path: string, offset: number, maxBytes: number) => Promise<{ size: number; contentBase64: string }>;
   writeFile: (path: string, contentBase64: string) => Promise<{ exists?: boolean }>;
+  // Desktop: whether a local path is already taken, checked before content is sent.
+  pathExists: (path: string) => Promise<boolean>;
+  // Called when the user declines a request (the terminal is inferred from the running transfer).
+  declined?: () => void;
+  limits?: Partial<TrzszTransferLimits>;
   // Browser: file inputs and blob downloads.
   pickBrowserFiles: (directory: boolean) => Promise<File[] | null>;
   saveBlob: (name: string, blob: Blob) => Promise<boolean>;
@@ -93,8 +118,31 @@ function hostOf(deps: TrzszFileDeps): string {
   return deps.context().host || t("远端主机");
 }
 
+// One confirmation is shown at a time and at most one more waits behind it;
+// further requests are refused so a host cannot stack dialogs.
+let queued = 0;
+let turn: Promise<void> = Promise.resolve();
+
 async function confirmRequest(deps: TrzszFileDeps, message: string, title: string): Promise<void> {
-  if (!(await deps.ask(message, { title, kind: "warning" }))) abort();
+  if (queued >= 2) abort();
+  queued += 1;
+  const previous = turn;
+  let release!: () => void;
+  turn = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let ok = false;
+  try {
+    await previous;
+    ok = await deps.ask(message, { title, kind: "warning" });
+  } finally {
+    queued -= 1;
+    release();
+  }
+  if (!ok) {
+    deps.declined?.();
+    abort();
+  }
 }
 
 interface FileLike {
@@ -250,6 +298,7 @@ async function chooseUploadFolder(deps: TrzszFileDeps, native: Picker | undefine
 }
 
 const WINDOWS_RESERVED = /[<>:"|?*]/;
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 // Names come from the remote host: anything that could leave the chosen
@@ -257,7 +306,7 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 export function safeEntryName(name: string, windows: boolean): boolean {
   if (!name || name === "." || name === ".." || name.length > 255) return false;
   if (name.includes("/") || name.includes("\\") || CONTROL_CHARS.test(name)) return false;
-  if (windows && (WINDOWS_RESERVED.test(name) || /[. ]$/.test(name))) return false;
+  if (windows && (WINDOWS_RESERVED.test(name) || /[. ]$/.test(name) || WINDOWS_DEVICE.test(name))) return false;
   return true;
 }
 
@@ -271,7 +320,34 @@ interface SaveSink {
   allowDirectories: boolean;
 }
 
-function saveDirectory(deps: TrzszFileDeps, sink: SaveSink, segments: string[]): unknown {
+interface TransferBudget {
+  limits: TrzszTransferLimits;
+  files: number;
+  bytes: number;
+  exceeded: boolean;
+}
+
+function newBudget(deps: TrzszFileDeps): TransferBudget {
+  return {
+    limits: {
+      files: deps.limits?.files ?? TRZSZ_MAX_FILES,
+      totalBytes: deps.limits?.totalBytes ?? TRZSZ_MAX_TOTAL_BYTES,
+      depth: deps.limits?.depth ?? TRZSZ_MAX_DEPTH,
+    },
+    files: 0,
+    bytes: 0,
+    exceeded: false,
+  };
+}
+
+// Aborts the transfer (the error reaches trzsz.js and the terminal) and tells the user.
+function overBudget(deps: TrzszFileDeps, budget: TransferBudget, message: string): never {
+  budget.exceeded = true;
+  deps.notify("error", message);
+  throw new Error(message);
+}
+
+function saveDirectory(deps: TrzszFileDeps, sink: SaveSink, segments: string[], budget: TransferBudget): unknown {
   const name = segments[segments.length - 1];
   return {
     kind: "directory",
@@ -282,42 +358,70 @@ function saveDirectory(deps: TrzszFileDeps, sink: SaveSink, segments: string[]):
     },
     getFileHandle: async (child: string) => {
       if (!safeEntryName(child, deps.windows)) refuseName(child);
+      if (budget.exceeded) throw new Error(t("传输已超出限制"));
+      budget.files += 1;
+      if (budget.files > budget.limits.files) {
+        overBudget(deps, budget, t("文件数超过 {count} 个，已停止接收", { count: budget.limits.files }));
+      }
       const path = [...segments, child];
       return {
         kind: "file",
         name: child,
-        createWritable: async () => bufferedWriter(deps, sink, path),
+        createWritable: async () => bufferedWriter(deps, sink, path, budget),
       };
     },
     getDirectoryHandle: async (child: string) => {
       if (!safeEntryName(child, deps.windows)) refuseName(child);
       if (!sink.allowDirectories) throw new Error(t("此浏览器无法保存文件夹，请改用桌面端或支持文件系统访问的浏览器"));
-      return saveDirectory(deps, sink, [...segments, child]);
+      if (budget.exceeded) throw new Error(t("传输已超出限制"));
+      if (segments.length > budget.limits.depth) {
+        overBudget(deps, budget, t("文件夹层级超过 {count} 层，已停止接收", { count: budget.limits.depth }));
+      }
+      return saveDirectory(deps, sink, [...segments, child], budget);
     },
   };
 }
 
-function bufferedWriter(deps: TrzszFileDeps, sink: SaveSink, segments: string[]) {
+function bufferedWriter(deps: TrzszFileDeps, sink: SaveSink, segments: string[], budget: TransferBudget) {
   const parts: Uint8Array[] = [];
   let total = 0;
   let closed = false;
+  // Set when this file cannot be completed: it is never saved.
+  let failed = false;
+  const epoch = abortEpoch;
+  const wanted = segments[segments.length - 1];
   return {
     write: async (data: Uint8Array | ArrayBuffer | Blob) => {
+      if (failed) throw new Error(t("文件 {name} 已停止接收", { name: wanted }));
       const bytes = data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : new Uint8Array(data instanceof ArrayBuffer ? data : data.slice());
       total += bytes.length;
+      budget.bytes += bytes.length;
       if (total > TRZSZ_BUFFERED_SAVE_MAX_BYTES) {
+        failed = true;
         parts.length = 0;
         throw new Error(t("文件 {name} 超过 {size}，已停止接收", {
-          name: segments[segments.length - 1],
+          name: wanted,
           size: formatBytes(TRZSZ_BUFFERED_SAVE_MAX_BYTES),
         }));
+      }
+      if (budget.bytes > budget.limits.totalBytes) {
+        failed = true;
+        parts.length = 0;
+        overBudget(deps, budget, t("本次传输超过 {size}，已停止接收", { size: formatBytes(budget.limits.totalBytes) }));
       }
       parts.push(bytes);
     },
     // trzsz.js does not wait for close, so a failed save is reported here.
+    // It also closes a file whose transfer was cancelled; that one is dropped.
     close: async () => {
       if (closed) return;
       closed = true;
+      if (failed) return;
+      if (epoch !== abortEpoch) {
+        parts.length = 0;
+        deps.notify("info", t("传输已取消，未保存不完整的文件 {name}", { name: wanted }));
+        return;
+      }
       const joined = new Uint8Array(total);
       let offset = 0;
       for (const part of parts) {
@@ -325,7 +429,6 @@ function bufferedWriter(deps: TrzszFileDeps, sink: SaveSink, segments: string[])
         offset += part.length;
       }
       parts.length = 0;
-      const wanted = segments[segments.length - 1];
       try {
         const saved = await sink.save(segments, joined);
         if (saved !== wanted) deps.notify("info", t("本机已有 {name}，已另存为 {saved}", { name: wanted, saved }));
@@ -347,9 +450,12 @@ function desktopSink(deps: TrzszFileDeps, root: string): SaveSink {
       const parent = segments.slice(1, -1);
       const wanted = segments[segments.length - 1];
       // Never replace an existing file: take the first free name.0, name.1, ...
-      for (let attempt = -1; attempt < 1000; attempt += 1) {
+      // Free names are probed first so the content is sent once; a write that
+      // still reports a collision (a file created meanwhile) moves on.
+      for (let attempt = -1; attempt < MAX_NAME_ATTEMPTS; attempt += 1) {
         const name = attempt < 0 ? wanted : `${wanted}.${attempt}`;
         const path = [base, ...parent, name].join(separator);
+        if (await deps.pathExists(path)) continue;
         const result = await deps.writeFile(path, content);
         if (!result.exists) return name;
       }
@@ -381,8 +487,8 @@ async function chooseSaveFolder(deps: TrzszFileDeps, native: Picker | undefined,
   if (deps.desktop) {
     const root = await deps.openFolder();
     if (!root) abort();
-    return saveDirectory(deps, desktopSink(deps, root), [baseName(root) || root]);
+    return saveDirectory(deps, desktopSink(deps, root), [baseName(root) || root], newBudget(deps));
   }
   if (native) return native(options);
-  return saveDirectory(deps, browserSink(deps), [t("下载")]);
+  return saveDirectory(deps, browserSink(deps), [t("下载")], newBudget(deps));
 }

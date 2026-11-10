@@ -1,6 +1,6 @@
 import type { TrzszFilter, TrzszOptions } from "trzsz";
 import { nextTrzszTail, trzszRequestIn } from "./trzszDetect";
-import type { TrzszRequestContext } from "./trzszFiles";
+import { markTrzszTransferAborted, type TrzszRequestContext } from "./trzszFiles";
 import type { StreamMode } from "../streamClasses";
 import { t } from "../../../i18n";
 
@@ -31,6 +31,11 @@ export interface TrzszSessionOptions {
   pollMs?: number;
   // How long a recognized request may take to turn into a transfer.
   startTimeoutMs?: number;
+  // After a declined request further ones from this terminal are refused for this long.
+  refuseMs?: number;
+  // Declines in one terminal session after which trzsz stays off for it.
+  maxDeclines?: number;
+  now?: () => number;
 }
 
 export interface TrzszSession {
@@ -50,7 +55,14 @@ const EMPTY = new Uint8Array(0);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-const sessions = new Set<{ transferring: () => boolean; host: () => string | null }>();
+const sessions = new Set<{ transferring: () => boolean; host: () => string | null; declined: () => void }>();
+
+// The user declined a request. trzsz.js does not say which terminal asked, so
+// it is counted only while exactly one terminal has a transfer in progress.
+export function reportTrzszDeclined(): void {
+  const busy = [...sessions].filter((session) => session.transferring());
+  if (busy.length === 1) busy[0].declined();
+}
 
 // The host of the terminal a picker request belongs to. trzsz.js does not say
 // which terminal asks, so a name is given only while exactly one is transferring.
@@ -81,6 +93,25 @@ export function createTrzszSession(options: TrzszSessionOptions): TrzszSession {
   let armedAt = 0;
   let disposed = false;
   let columns = 0;
+  const refuseMs = options.refuseMs ?? 30_000;
+  const maxDeclines = options.maxDeclines ?? 3;
+  const now = options.now ?? Date.now;
+  let declines = 0;
+  let refuseUntil = 0;
+  let turnedOff = false;
+
+  const onDeclined = () => {
+    if (disposed) return;
+    declines += 1;
+    if (declines >= maxDeclines) {
+      turnedOff = true;
+      options.writeLocal(
+        t("\r\n\u001b[33m[trzsz] 已多次拒绝文件传输请求，此终端不再响应；如主机仍在等待，请按 Ctrl+C\u001b[0m\r\n"),
+      );
+      return;
+    }
+    refuseUntil = now() + refuseMs;
+  };
 
   // The progress bar follows the terminal width; it is checked as transfer
   // data arrives instead of subscribing to every resize.
@@ -93,7 +124,7 @@ export function createTrzszSession(options: TrzszSessionOptions): TrzszSession {
   };
 
   const transferring = () => filter?.isTransferringFiles() === true;
-  const registration = { transferring, host: options.host };
+  const registration = { transferring, host: options.host, declined: () => onDeclined() };
   sessions.add(registration);
 
   const setActive = (next: boolean) => {
@@ -169,6 +200,7 @@ export function createTrzszSession(options: TrzszSessionOptions): TrzszSession {
     handleOutput: (bytes, mode) => {
       if (filter && transferring()) {
         if (mode === "replay") {
+          markTrzszTransferAborted();
           filter.stopTransferringFiles();
           return false;
         }
@@ -184,6 +216,12 @@ export function createTrzszSession(options: TrzszSessionOptions): TrzszSession {
       const request = trzszRequestIn(tail, bytes);
       tail = nextTrzszTail(tail, bytes);
       if (!request) return false;
+      if (turnedOff) return false;
+      if (now() < refuseUntil) {
+        tail = EMPTY;
+        options.writeLocal(t("\r\n\u001b[33m[trzsz] 刚拒绝过文件传输，已自动拒绝此请求；如主机仍在等待，请按 Ctrl+C\u001b[0m\r\n"));
+        return false;
+      }
       if (!options.inputOwner()) {
         options.writeLocal(t("\r\n\u001b[33m[trzsz] 文件传输由最近在此终端输入的设备处理\u001b[0m\r\n"));
         return false;
@@ -198,17 +236,25 @@ export function createTrzszSession(options: TrzszSessionOptions): TrzszSession {
     },
     handleInput: (data) => {
       if (!filter || !transferring()) return false;
+      // Ctrl+C cancels the transfer: the file being received is incomplete.
+      if (data.includes("\u0003")) markTrzszTransferAborted();
       setActive(true);
       filter.processTerminalInput(data);
       return true;
     },
     active: transferring,
     cancel: () => {
-      if (transferring()) filter?.stopTransferringFiles();
+      if (transferring()) {
+        markTrzszTransferAborted();
+        filter?.stopTransferringFiles();
+      }
     },
     dispose: () => {
       if (disposed) return;
-      if (transferring()) filter?.stopTransferringFiles();
+      if (transferring()) {
+        markTrzszTransferAborted();
+        filter?.stopTransferringFiles();
+      }
       disposed = true;
       stopPoll();
       sessions.delete(registration);

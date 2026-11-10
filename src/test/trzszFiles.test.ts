@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TrzszFilter } from "trzsz/lib/trzsz.mjs";
 import {
   installTrzszPickers,
+  markTrzszTransferAborted,
   safeEntryName,
   TRZSZ_BUFFERED_SAVE_MAX_BYTES,
   uninstallTrzszPickers,
@@ -25,6 +26,7 @@ function deps(overrides: Partial<TrzszFileDeps> = {}): TrzszFileDeps {
     listFolder: vi.fn(async () => ({ name: "x", files: [], emptyDirs: [] })),
     readRange: vi.fn(async () => ({ size: 0, contentBase64: "" })),
     writeFile: vi.fn(async () => ({ exists: false })),
+    pathExists: vi.fn(async () => false),
     pickBrowserFiles: vi.fn(async () => null),
     saveBlob: vi.fn(async () => true),
     ...overrides,
@@ -60,12 +62,8 @@ describe("trzsz pickers", () => {
   });
 
   it("saves into the chosen desktop folder without replacing an existing file", async () => {
-    const writes: string[] = [];
     const d = deps({
-      writeFile: vi.fn(async (path: string) => {
-        writes.push(path);
-        return { exists: writes.length === 1 };
-      }),
+      pathExists: vi.fn(async (path: string) => path === "/home/me/Downloads/a.txt"),
     });
     const win: Win = {};
     installTrzszPickers(win, d);
@@ -73,9 +71,126 @@ describe("trzsz pickers", () => {
     const writer = await (await root.getFileHandle("a.txt", { create: true })).createWritable();
     await writer.write(new TextEncoder().encode("hi"));
     await writer.close();
-    expect(writes).toEqual(["/home/me/Downloads/a.txt", "/home/me/Downloads/a.txt.0"]);
-    expect(vi.mocked(d.writeFile).mock.calls[1][1]).toBe(btoa("hi"));
+    // The content is sent once, under the first free name.
+    expect(d.writeFile).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.writeFile).mock.calls[0]).toEqual(["/home/me/Downloads/a.txt.0", btoa("hi")]);
     expect(d.notify).toHaveBeenCalledWith("info", expect.stringContaining("a.txt.0"));
+  });
+
+  it("stops looking for a free name after a bounded number of tries", async () => {
+    const d = deps({ pathExists: vi.fn(async () => true) });
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    const root = await saveRoot(win);
+    const writer = await (await root.getFileHandle("a.txt")).createWritable();
+    await writer.write(new Uint8Array(1));
+    await writer.close();
+    expect(d.writeFile).not.toHaveBeenCalled();
+    expect(vi.mocked(d.pathExists).mock.calls.length).toBeLessThanOrEqual(101);
+    expect(d.notify).toHaveBeenCalledWith("error", expect.any(String));
+  });
+
+  it("saves nothing when a file went over the size limit before close", async () => {
+    const d = deps({ desktop: false });
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    const root = await saveRoot(win);
+    const writer = await (await root.getFileHandle("big.bin")).createWritable();
+    await expect(writer.write(new Uint8Array(TRZSZ_BUFFERED_SAVE_MAX_BYTES + 1))).rejects.toThrow();
+    // trzsz.js cleans up by closing the writer.
+    await writer.close();
+    expect(d.saveBlob).not.toHaveBeenCalled();
+    expect(d.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("does not save a file that was still being received when the transfer was cancelled", async () => {
+    const d = deps();
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    const root = await saveRoot(win);
+    const done = await (await root.getFileHandle("done.txt")).createWritable();
+    await done.write(new TextEncoder().encode("ok"));
+    await done.close();
+    const partial = await (await root.getFileHandle("part.txt")).createWritable();
+    await partial.write(new TextEncoder().encode("half"));
+    markTrzszTransferAborted();
+    await partial.close();
+    expect(d.writeFile).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(d.writeFile).mock.calls[0][0]).toBe("/home/me/Downloads/done.txt");
+    expect(d.notify).toHaveBeenCalledWith("info", expect.stringContaining("part.txt"));
+  });
+
+  it("refuses a second pending confirmation beyond one waiting", async () => {
+    let answer!: (ok: boolean) => void;
+    const ask = vi.fn(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    const d = deps({ ask });
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    const first = win.showDirectoryPicker!({ id: "trzsz_download" });
+    const second = win.showDirectoryPicker!({ id: "trzsz_download" });
+    const third = win.showDirectoryPicker!({ id: "trzsz_download" });
+    await expect(third).rejects.toMatchObject({ name: "AbortError" });
+    expect(ask).toHaveBeenCalledTimes(1);
+    answer(false);
+    await expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledTimes(2));
+    answer(false);
+    await expect(second).rejects.toMatchObject({ name: "AbortError" });
+    expect(d.declined).toBeUndefined();
+  });
+
+  it("reports a declined request", async () => {
+    const declined = vi.fn();
+    const d = deps({ ask: vi.fn(async () => false), declined });
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    await expect(win.showDirectoryPicker!({ id: "trzsz_download" })).rejects.toBeTruthy();
+    expect(declined).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects Windows device names only on Windows", () => {
+    for (const name of ["con", "NUL.txt", "com1", "LPT9.log", "aux.tar.gz"]) {
+      expect(safeEntryName(name, true)).toBe(false);
+      expect(safeEntryName(name, false)).toBe(true);
+    }
+    expect(safeEntryName("console.txt", true)).toBe(true);
+    expect(safeEntryName("com10", true)).toBe(true);
+  });
+
+  it("aborts a download past the file, depth or total size caps with a visible message", async () => {
+    const d = deps({ limits: { files: 2, depth: 2, totalBytes: 10 } });
+    const win: Win = {};
+    installTrzszPickers(win, d);
+    const root = (await saveRoot(win)) as unknown as {
+      getFileHandle: (n: string) => Promise<unknown>;
+      getDirectoryHandle: (n: string) => Promise<typeof root>;
+    };
+    await root.getFileHandle("1");
+    await root.getFileHandle("2");
+    await expect(root.getFileHandle("3")).rejects.toThrow();
+    expect(d.notify).toHaveBeenCalledWith("error", expect.any(String));
+
+    const d2 = deps({ limits: { depth: 2 } });
+    const win2: Win = {};
+    uninstallTrzszPickers();
+    installTrzszPickers(win2, d2);
+    const r2 = (await saveRoot(win2)) as unknown as { getDirectoryHandle: (n: string) => Promise<typeof r2> };
+    const level1 = await r2.getDirectoryHandle("a");
+    const level2 = await level1.getDirectoryHandle("b");
+    await expect(level2.getDirectoryHandle("c")).rejects.toThrow();
+    expect(d2.notify).toHaveBeenCalledWith("error", expect.any(String));
+
+    const d3 = deps({ limits: { totalBytes: 10 } });
+    const win3: Win = {};
+    uninstallTrzszPickers();
+    installTrzszPickers(win3, d3);
+    const r3 = await saveRoot(win3);
+    const w = await (await r3.getFileHandle("x")).createWritable();
+    await w.write(new Uint8Array(6));
+    await expect(w.write(new Uint8Array(6))).rejects.toThrow();
+    await w.close();
+    expect(d3.writeFile).not.toHaveBeenCalled();
+    expect(d3.notify).toHaveBeenCalledWith("error", expect.any(String));
   });
 
   it("refuses names from the host that leave the chosen folder", async () => {

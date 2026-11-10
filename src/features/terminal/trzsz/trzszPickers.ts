@@ -6,7 +6,7 @@ import { ask } from "../../../ui/dialogs";
 import { useUi } from "../../../app/store";
 import { isWindows } from "../../../app/platform";
 import { installTrzszPickers } from "./trzszFiles";
-import { currentTrzszRequestContext } from "./trzszSession";
+import { currentTrzszRequestContext, reportTrzszDeclined } from "./trzszSession";
 
 function pickInputFiles(directory: boolean): Promise<File[] | null> {
   return new Promise((resolve) => {
@@ -49,6 +49,15 @@ export function installDefaultTrzszPickers(): void {
     listFolder: (path) => localFileApi.listFolder(path),
     readRange: (path, offset, maxBytes) => localFileApi.readRange(path, offset, maxBytes),
     writeFile: (path, content) => localFileApi.write(path, content),
+    pathExists: async (path) => {
+      try {
+        await localFileApi.readRange(path, 0, 1);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    declined: reportTrzszDeclined,
     pickBrowserFiles: pickInputFiles,
     saveBlob: saveBrowserBlob,
   });

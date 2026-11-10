@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TrzszOptions } from "trzsz";
-import { createTrzszSession, currentTrzszRequestContext, type TrzszFilterLike, type TrzszSessionOptions } from "../features/terminal/trzsz/trzszSession";
+import { createTrzszSession, currentTrzszRequestContext, reportTrzszDeclined, type TrzszFilterLike, type TrzszSessionOptions } from "../features/terminal/trzsz/trzszSession";
 import { indexOfTrzszMagic, nextTrzszTail, trzszRequestIn } from "../features/terminal/trzsz/trzszDetect";
 
 const encoder = new TextEncoder();
@@ -170,5 +170,51 @@ describe("trzsz session", () => {
     two.session.handleOutput(bytes(REQUEST), "live");
     await flush();
     expect(currentTrzszRequestContext().host).toBeNull();
+  });
+
+  describe("declined requests", () => {
+    async function request(ctx: ReturnType<typeof setup>) {
+      ctx.session.handleOutput(bytes(REQUEST), "live");
+      await flush();
+    }
+    const decline = (ctx: ReturnType<typeof setup>) => {
+      reportTrzszDeclined();
+      ctx.session.cancel();
+    };
+
+    it("refuses requests for a while after a decline, then answers again", async () => {
+      let now = 1000;
+      const ctx = setup({ now: () => now, refuseMs: 30_000 });
+      await request(ctx);
+      expect(ctx.filters).toHaveLength(1);
+      decline(ctx);
+      now += 5000;
+      ctx.local.length = 0;
+      ctx.session.handleOutput(bytes(REQUEST), "live");
+      await flush();
+      expect(ctx.filters[0].transferring).toBe(false);
+      expect(ctx.local.join("")).toContain("trzsz");
+      now += 31_000;
+      ctx.session.handleOutput(bytes(REQUEST), "live");
+      await flush();
+      expect(ctx.filters[0].transferring).toBe(true);
+    });
+
+    it("turns trzsz off for the terminal after three declines", async () => {
+      let now = 1000;
+      const ctx = setup({ now: () => now });
+      for (let i = 0; i < 3; i += 1) {
+        ctx.session.handleOutput(bytes(REQUEST), "live");
+        await flush();
+        expect(ctx.filters[0].transferring).toBe(true);
+        ctx.local.length = 0;
+        decline(ctx);
+        now += 60_000;
+      }
+      expect(ctx.local.join("")).toContain("trzsz");
+      ctx.session.handleOutput(bytes(REQUEST), "live");
+      await flush();
+      expect(ctx.filters[0].transferring).toBe(false);
+    });
   });
 });
