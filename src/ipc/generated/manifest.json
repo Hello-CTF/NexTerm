@@ -1255,6 +1255,24 @@
       "channel": false,
       "stream": "none"
     },
+    "local_folder_authorize": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_folder_create": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_folder_entries": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "local_folder_list": {
       "scope": "local-file",
       "nested": false,

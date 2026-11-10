@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useUi } from "../../app/store";
 import { describeTarget } from "../../ui/dialogs";
 import { IconClose, IconDownload, IconUpload } from "../../ui/icons";
-import { progressPercent } from "./fileProgress";
+import { formatEta, progressPercent } from "./fileProgress";
+import { formatSize } from "./fileTypes";
 import { baseName } from "./pathUtils";
 import { TRANSFER_STATUS_LABEL } from "./transferQueue";
 import {
@@ -12,6 +13,7 @@ import {
   clearFinishedTransfers,
   restartTransferTask,
   resumeTransferTask,
+  transferEta,
   transferMatchesScope,
   useTransferStore,
   type ScopedTransferTask,
@@ -27,6 +29,13 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
       : `${task.remotePath} -> ${localPath}`;
   const percent = progressPercent(task);
   const active = task.status === "queued" || task.status === "running";
+  const eta = transferEta(task);
+  const rateText =
+    task.status === "running" && !task.cancelling && task.rateBps
+      ? eta === null
+        ? tr("{rate}/s", { rate: formatSize(Math.round(task.rateBps)) })
+        : tr("{rate}/s · 剩余 {eta}", { rate: formatSize(Math.round(task.rateBps)), eta: formatEta(eta) })
+      : null;
   return (
     <div className="px-3 py-1" data-task-key={task.id}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -48,6 +57,11 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
             aria-valuenow={percent}
           >
             <span className="nx-progress-bar" style={{ width: `${percent}%` }} />
+          </span>
+        )}
+        {rateText && (
+          <span className="shrink-0 whitespace-nowrap text-[10px] text-neutral-500" data-testid="transfer-rate">
+            {rateText}
           </span>
         )}
         <span

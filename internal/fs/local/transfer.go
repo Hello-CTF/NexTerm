@@ -141,7 +141,7 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	}
 	var reader io.Reader = source
 	if digest != nil {
-		reader = io.TeeReader(source, digest)
+		reader = rewindableHashingReader(source, digest, offset)
 	}
 	transferred, err = finishTransfer(ctx, reader, target, offset, total, options)
 	if err != nil {
@@ -367,7 +367,7 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 	}
 	var reader io.Reader = remote
 	if digest != nil {
-		reader = io.TeeReader(remote, digest)
+		reader = hashingSource(remote, digest)
 	}
 	transferred, err = finishTransfer(ctx, reader, local, offset, total, options)
 	if err != nil {
@@ -569,6 +569,19 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		interval = 200 * time.Millisecond
 	}
 	lastReport := time.Now()
+	advance := func(position int64) {
+		if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
+			reportTransferProgress(options, position, total, false)
+			lastReport = time.Now()
+		}
+	}
+	if handled, copied, err := pipelinedCopy(ctx, source, target, offset, total, advance); handled {
+		transferred = copied
+		if err != nil {
+			return transferred, err
+		}
+		return transferred, syncAndClose(target, &closed)
+	}
 	buffer := make([]byte, transferChunkSize)
 	for transferred < total {
 		if err := ctx.Err(); err != nil {
@@ -589,10 +602,7 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 			if writeErr != nil {
 				return transferred, writeErr
 			}
-			if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
-				reportTransferProgress(options, transferred, total, false)
-				lastReport = time.Now()
-			}
+			advance(transferred)
 		}
 		if errors.Is(readErr, io.EOF) {
 			if transferred < total {
@@ -607,15 +617,15 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 			time.Sleep(time.Millisecond)
 		}
 	}
+	return transferred, syncAndClose(target, &closed)
+}
+
+func syncAndClose(target base.RemoteWriter, closed *bool) error {
 	if err := target.Sync(); err != nil {
-		return transferred, err
+		return err
 	}
-	if err := target.Close(); err != nil {
-		closed = true
-		return transferred, err
-	}
-	closed = true
-	return transferred, nil
+	*closed = true
+	return target.Close()
 }
 
 func reportTransferProgress(options TransferOptions, transferred, total int64, done bool) {

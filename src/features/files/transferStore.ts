@@ -17,6 +17,9 @@ export { createTransferTaskId } from "./transferTaskId";
 export interface ScopedTransferTask extends TransferTask {
   hostId: string | null;
   targetName: string;
+  // rateBps is a smoothed transfer rate in bytes per second while the task runs.
+  rateBps?: number;
+  rateSample?: { at: number; transferred: number };
 }
 
 interface TransferTarget {
@@ -38,6 +41,9 @@ export interface DownloadItem {
   // pack downloads the directory at remotePath as a remote-built tar.gz.
   pack?: boolean;
 }
+
+// SkippedItem is a batch entry shown as skipped; reason says why when it is not a plain conflict skip.
+export type SkippedItem = (UploadItem | DownloadItem) & { reason?: string };
 
 interface TransferStoreState {
   tasks: ScopedTransferTask[];
@@ -92,7 +98,29 @@ function applyTransferProgress(task: ScopedTransferTask, event: FsProgressEvent)
   ) {
     return task;
   }
-  return { ...task, transferred: event.transferred, total: event.total };
+  return { ...task, ...nextRate(task, event.transferred), transferred: event.transferred, total: event.total };
+}
+
+const RATE_SAMPLE_MS = 500;
+const RATE_SMOOTHING = 0.3;
+
+function nextRate(task: ScopedTransferTask, transferred: number): Pick<ScopedTransferTask, "rateBps" | "rateSample"> {
+  const now = Date.now();
+  const sample = task.rateSample;
+  if (!sample || transferred < sample.transferred) {
+    return { rateBps: undefined, rateSample: { at: now, transferred } };
+  }
+  const elapsed = now - sample.at;
+  if (elapsed < RATE_SAMPLE_MS) return { rateBps: task.rateBps, rateSample: sample };
+  const instant = ((transferred - sample.transferred) * 1000) / elapsed;
+  const rateBps = task.rateBps === undefined ? instant : task.rateBps + RATE_SMOOTHING * (instant - task.rateBps);
+  return { rateBps, rateSample: { at: now, transferred } };
+}
+
+// transferEta returns the estimated seconds left for a running task, or null while unknown.
+export function transferEta(task: ScopedTransferTask): number | null {
+  if (task.status !== "running" || !task.rateBps || task.rateBps <= 0 || task.total <= 0) return null;
+  return Math.max(0, Math.ceil((task.total - task.transferred) / task.rateBps));
 }
 
 function ensureProgressSubscription(): void {
@@ -154,7 +182,7 @@ function enqueueBatch(
   sessionId: string,
   direction: TransferDirection,
   ready: (UploadItem | DownloadItem)[],
-  skipped: UploadItem[],
+  skipped: SkippedItem[],
   refreshDir?: string,
 ): string {
   ensureProgressSubscription();
@@ -164,8 +192,10 @@ function enqueueBatch(
   const tasks = [
     ...ready.map((item) => newTask(batchId, sessionId, target, direction, item, "queued", refreshDir)),
     ...skipped.map((item) => ({
-      ...newTask(batchId, sessionId, target, "upload", item, "skipped", refreshDir),
-      resultText: tr("已跳过：{remotePath}", { remotePath: item.remotePath }),
+      ...newTask(batchId, sessionId, target, direction, item, "skipped", refreshDir),
+      resultText: item.reason
+        ? tr("已跳过：{remotePath}（{reason}）", { remotePath: item.remotePath, reason: item.reason })
+        : tr("已跳过：{remotePath}", { remotePath: item.remotePath }),
     })),
   ];
   useTransferStore.setState((s) => ({ tasks: [...s.tasks, ...tasks] }));
@@ -189,6 +219,11 @@ export function enqueueUploadBatch(
 
 export function enqueueDownload(sessionId: string, item: DownloadItem): string {
   return enqueueBatch(sessionId, "download", [item], []);
+}
+
+// enqueueDownloadBatch queues downloads that settle as one batch; skipped entries stay visible in the panel.
+export function enqueueDownloadBatch(sessionId: string, downloads: DownloadItem[], skipped: SkippedItem[]): string {
+  return enqueueBatch(sessionId, "download", downloads, skipped);
 }
 
 export function enqueuePackDownload(sessionId: string, item: Omit<DownloadItem, "pack">): string {
@@ -504,7 +539,9 @@ function pump(): void {
       busyHosts.add(hostKey);
       useTransferStore.setState((state) => ({
         tasks: state.tasks.map((item) =>
-          item.id === task.id && item.status === "queued" ? { ...item, status: "running" as const } : item,
+          item.id === task.id && item.status === "queued"
+            ? { ...item, status: "running" as const, rateBps: undefined, rateSample: undefined }
+            : item,
         ),
       }));
       const epoch = transferEpoch;

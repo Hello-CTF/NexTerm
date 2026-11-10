@@ -669,6 +669,16 @@ func (r *remoteReader) Seek(offset int64, whence int) (int64, error) {
 	return r.file.Seek(offset, whence)
 }
 
+// PipelinedWriteTo streams the rest of the file to w while keeping up to
+// maxConcurrentRequests reads in flight, so throughput is not bounded by one
+// Read's worth of requests per round trip. It stops at the first error w returns.
+func (r *remoteReader) PipelinedWriteTo(w io.Writer) (int64, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.file.WriteTo(w)
+}
+
 func (r *remoteReader) Close() error {
 	r.closeOnce.Do(func() {
 		r.stop()
@@ -746,6 +756,71 @@ func (w *remoteWriter) writeSequential(p []byte) (int, error) {
 		}
 	}
 	return written, nil
+}
+
+type concurrentReaderFrom interface {
+	ReadFromWithConcurrency(io.Reader, int) (int64, error)
+}
+
+// PipelinedReadFrom writes everything r yields with up to maxConcurrentRequests
+// writes in flight, keeping the pipe full across chunk boundaries. Sequential
+// writers report base.ErrUnsupported before reading anything. When the server
+// rejects the concurrent writes and r can seek, the range is rewritten one
+// request at a time, as Write does.
+func (w *remoteWriter) PipelinedReadFrom(r io.Reader) (int64, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	file, ok := w.file.(concurrentReaderFrom)
+	if w.sequential || !ok {
+		return 0, base.ErrUnsupported
+	}
+	start := w.off
+	seeker, seekable := r.(io.Seeker)
+	var sourceStart int64
+	if seekable {
+		position, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			seekable = false
+		}
+		sourceStart = position
+	}
+	n, err := file.ReadFromWithConcurrency(r, maxConcurrentRequests)
+	if err == nil {
+		w.off = start + n
+		return n, nil
+	}
+	var status *sftp.StatusError
+	if w.ctx.Err() != nil || !seekable || !errors.As(err, &status) {
+		return n, err
+	}
+	if _, seekErr := seeker.Seek(sourceStart, io.SeekStart); seekErr != nil {
+		return n, err
+	}
+	if _, seekErr := w.file.Seek(start, io.SeekStart); seekErr != nil {
+		return n, err
+	}
+	w.sequential = true
+	w.off = start
+	buffer := make([]byte, uploadWriteSize)
+	var written int64
+	for {
+		read, readErr := r.Read(buffer)
+		if read > 0 {
+			m, writeErr := w.writeSequential(buffer[:read])
+			w.off += int64(m)
+			written += int64(m)
+			if writeErr != nil {
+				return written, writeErr
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, readErr
+		}
+	}
 }
 
 func (w *remoteWriter) Sync() error {
