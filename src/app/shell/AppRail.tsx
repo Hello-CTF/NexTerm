@@ -5,6 +5,7 @@ import { hideMobileHome, showMobileHome, useMobileHome } from "./mobileHome";
 import { useBackgroundSessionCount } from "../../features/terminal/backgroundSessionsAccess";
 import { mountUnavailableReason } from "../capabilities";
 import { deviceIdOfHost, isHostAssetKind, openHostDetail } from "../../features/hosts/hostDetail";
+import { hostToolsSupported } from "../../features/explorer/assetKindFields";
 import {
   IconActivity,
   IconBox,
@@ -61,6 +62,8 @@ export function AppRail({
   const leftOverride = useUi((s) => s.leftOverride);
   // Host tools act on the active workspace's session; without one they cannot run, so they are not offered.
   const hasHost = isHostWorkspace(workspace);
+  // A terminal-only host (Telnet) has no command channel for containers, mounts, forwarding or logs.
+  const hostTools = hasHost && hostToolsSupported(workspace?.assetKind);
   // The sidebar shows the file tree in a host workspace, so neither panel button is highlighted there.
   const railActive = resolveLeftView(workspace, leftMode, leftOverride);
   const { openBackground, openHistory, openDocker, openDatabase, openMount, openForward, openLogs } = actions;
@@ -133,7 +136,7 @@ export function AppRail({
       icon: IconClock,
       onClick: openHistory,
     },
-    ...(hasHost
+    ...(hostTools
       ? [
           {
             key: "docker",
@@ -155,7 +158,7 @@ export function AppRail({
           },
         ]
       : []),
-    ...(!hasHost || mountUnavailableReason()
+    ...(!hostTools || mountUnavailableReason()
       ? []
       : [{
           key: "mount",
@@ -164,7 +167,7 @@ export function AppRail({
           icon: IconDrive,
           onClick: openMount,
         }]),
-    ...(hasHost
+    ...(hostTools
       ? [
           {
             key: "forward",

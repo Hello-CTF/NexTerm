@@ -139,6 +139,16 @@ describe("SessionSidebar", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("shows no ports or files for a Telnet host, which has no command channel", async () => {
+    useUi.setState({ workspaces: [{ ...workspace, assetKind: "telnet" }] } as never);
+    const c = mountSidebar();
+    await Promise.resolve();
+    expect(c.textContent).not.toContain("最近文件");
+    expect(c.textContent).not.toContain("端口");
+    expect(mocks.list).not.toHaveBeenCalled();
+    expect(c.querySelector("[data-testid='blocks']")).not.toBeNull();
+  });
+
   it("explains missing command record support", () => {
     const c = mountSidebar({ commandBlocks: null });
     expect(c.textContent).toContain("不支持命令记录");

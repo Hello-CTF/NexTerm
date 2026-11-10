@@ -408,6 +408,27 @@ describe("AssetEditor telnet", () => {
     expect(payload.options).toEqual({ encoding: "big5" });
   });
 
+  it("stores local echo and CR LF only when they differ from the defaults", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    fillRequiredFields("smtp-test");
+    chooseSelectOption(mounted!.container, "本地回显", "始终本地显示");
+    click(field("回车发送 CR LF"));
+    await save();
+    expect(createdPayload().options).toEqual({ localEcho: "on", sendCrlf: true });
+
+    mounted?.unmount();
+    mocks.update.mockClear();
+    mountEditor(makeAsset({ id: "sw-3", kind: "telnet", port: 23, username: "", authKind: "none", options: { localEcho: "off", sendCrlf: true } }));
+    await flush();
+    expect(field("回车发送 CR LF").checked).toBe(true);
+    chooseSelectOption(mounted!.container, "本地回显", "自动");
+    click(field("回车发送 CR LF"));
+    await save();
+    expect(updatedPayload().options).toEqual({});
+  });
+
   it("removes the stored encoding when it is set back to UTF-8", async () => {
     mountEditor(makeAsset({ id: "sw-2", kind: "telnet", port: 2323, username: "", authKind: "none", options: { encoding: "gbk" } }));
     await flush();

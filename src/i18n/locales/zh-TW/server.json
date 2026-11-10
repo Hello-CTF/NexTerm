@@ -436,6 +436,7 @@
   "TOTP 密钥信封长度不合法": "TOTP 金鑰信封長度不合法",
   "TOTP 密钥解密失败": "TOTP 金鑰解密失敗",
   "TRUNCATE 会清空数据表": "TRUNCATE 會清空資料表",
+  "Telnet 本地回显设置无效，应为 auto、on 或 off": "Telnet 本機回顯設定無效，應為 auto、on 或 off",
   "Telnet 资产缺少主机地址": "Telnet 資產缺少主機位址",
   "Termius 密钥 %q 的材料不可用": "Termius 金鑰 %q 的內容無法使用",
   "URL 不允许包含账号密码": "URL 不允許包含帳號密碼",

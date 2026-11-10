@@ -436,6 +436,7 @@
   "TOTP 密钥信封长度不合法": "The TOTP key envelope length is invalid",
   "TOTP 密钥解密失败": "Failed to decrypt the TOTP key",
   "TRUNCATE 会清空数据表": "TRUNCATE empties tables",
+  "Telnet 本地回显设置无效，应为 auto、on 或 off": "Invalid Telnet local echo setting; use auto, on or off",
   "Telnet 资产缺少主机地址": "The Telnet asset has no host address",
   "Termius 密钥 %q 的材料不可用": "The material for Termius key %q is unavailable",
   "URL 不允许包含账号密码": "A URL cannot contain a username or password",

@@ -75,6 +75,9 @@ import {
   isRemoteDesktopKind,
   readRemoteDesktopOptions,
   optionsForKindChange,
+  readTelnetLocalEcho,
+  writeTelnetOptions,
+  type TelnetLocalEcho,
   validateResolution,
   writeRemoteDesktopOptions,
   type AssetFormKind,
@@ -2388,6 +2391,8 @@ export function AssetEditor({
     return TERMINAL_ENCODINGS.includes(normalized) ? normalized : "utf-8";
   });
   const [envText, setEnvText] = useState(() => formatEnvText(initial?.options?.env));
+  const [telnetEcho, setTelnetEcho] = useState<TelnetLocalEcho>(() => readTelnetLocalEcho(initial?.options));
+  const [sendCrlf, setSendCrlf] = useState(initial?.options?.sendCrlf === true);
   const [icon, setIcon] = useState(
     typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
   );
@@ -2855,7 +2860,7 @@ export function AssetEditor({
         // A kind without credentials (local) does not keep the one the asset had under its previous kind.
         credId = credChoice;
       }
-      const baseOptions =
+      let baseOptions: Record<string, unknown> =
         groupKind === "local"
           ? {
               ...(shell.trim() ? { shell: shell.trim() } : {}),
@@ -2868,6 +2873,7 @@ export function AssetEditor({
         if (encoding !== "utf-8") baseOptions.encoding = encoding;
         else delete baseOptions.encoding;
       }
+      if (kindFields.telnetOptions) baseOptions = writeTelnetOptions(baseOptions, telnetEcho, sendCrlf);
       if (kindFields.via && viaAssetId) baseOptions.viaAssetId = viaAssetId;
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
@@ -3341,6 +3347,43 @@ export function AssetEditor({
                     options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
                   />
                   <div className="nx-hint mt-1.5">{tr("↳ 用户名和密码在终端里按设备提示输入。编码连接后自动应用，也可在终端「更多终端操作」中临时切换。")}</div>
+                </div>
+              )}
+
+              {kindFields.telnetOptions && (
+                <div className="nx-form-row">
+                  <label className="nx-label">{tr("本地回显")}</label>
+                  <Select
+                    ariaLabel={tr("本地回显")}
+                    value={telnetEcho}
+                    onChange={(value) => setTelnetEcho(value as TelnetLocalEcho)}
+                    options={[
+                      { value: "auto", label: tr("自动（服务器不回显时本地显示）") },
+                      { value: "on", label: tr("始终本地显示") },
+                      { value: "off", label: tr("关闭") },
+                    ]}
+                  />
+                  <div className="nx-hint mt-1.5">{tr("↳ 输入的字符看不到时选「始终本地显示」，出现两遍时选「关闭」。")}</div>
+                </div>
+              )}
+
+              {kindFields.telnetOptions && (
+                <div className="nx-form-row">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] text-neutral-200">{tr("回车发送 CR LF")}</div>
+                      <p className="nx-hint mt-0.5">
+                        {tr("默认按 Telnet 标准发送 CR NUL；连接 SMTP、HTTP 等文本协议端口时开启。")}
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                      aria-label={tr("回车发送 CR LF")}
+                      checked={sendCrlf}
+                      onChange={(e) => setSendCrlf(e.target.checked)}
+                    />
+                  </label>
                 </div>
               )}
 

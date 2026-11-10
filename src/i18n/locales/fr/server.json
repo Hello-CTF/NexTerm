@@ -436,6 +436,7 @@
   "TOTP 密钥信封长度不合法": "Longueur d'enveloppe de clé TOTP invalide",
   "TOTP 密钥解密失败": "Échec du déchiffrement de la clé TOTP",
   "TRUNCATE 会清空数据表": "TRUNCATE vide les tables",
+  "Telnet 本地回显设置无效，应为 auto、on 或 off": "Réglage d'écho local Telnet invalide ; utilisez auto, on ou off",
   "Telnet 资产缺少主机地址": "L'actif Telnet n'a pas d'adresse d'hôte",
   "Termius 密钥 %q 的材料不可用": "Le matériel de la clé Termius %q n'est pas disponible",
   "URL 不允许包含账号密码": "L'URL ne peut pas contenir de nom d'utilisateur ni de mot de passe",
