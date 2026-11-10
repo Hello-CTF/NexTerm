@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ask } from "../../ui/dialogs";
 import { assetApi } from "../../ipc/commands";
@@ -10,6 +10,17 @@ import { LoadError } from "../../ui/LoadError";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
 import { useSnippetVariablePrompt } from "./SnippetVariablePrompt";
 import { MultiHostRunPanel } from "./MultiHostRunPanel";
+import {
+  DEFAULT_WAIT_TIMEOUT_MS,
+  MAX_WAIT_FOR_BYTES,
+  MAX_WAIT_TIMEOUT_MS,
+  MIN_WAIT_TIMEOUT_MS,
+  loadRegexEngine,
+  loadedRegexEngine,
+  regexPatternError,
+  waitPatternBytes,
+  type RegexEngine,
+} from "./snippetWaitFor";
 import {
   analyzeSnippetSteps,
   renderSnippetTemplate,
@@ -112,7 +123,8 @@ export function SnippetsPanel({ onClose }: { onClose: () => void }) {
     const epoch = useUi.getState().accountEpoch;
     const rendered = await prepareSnippet(s);
     if (rendered === null || useUi.getState().accountEpoch !== epoch) return;
-    if (await (action === "insert" ? insertSnippet(rendered) : executeSnippet(rendered))) onClose();
+    // A run that waits for output closes the panel when its first wait starts, so the terminal stays visible.
+    if (await (action === "insert" ? insertSnippet(rendered) : executeSnippet(rendered, { onWaiting: onClose }))) onClose();
   };
 
   const insert = async (s: Snippet) => run(s, "insert");
@@ -336,6 +348,114 @@ function blankStep(command = ""): EditorStep {
   return { id: newStepId(), name: "", command };
 }
 
+// The editor keeps a wait being edited as typed; saving drops a blank pattern together with its options.
+function cleanWait(step: EditorStep): EditorStep {
+  const { waitFor, waitForRegex, timeoutMs, ...rest } = step;
+  if (!waitFor || waitFor.trim() === "") return rest;
+  return {
+    ...rest,
+    waitFor,
+    ...(waitForRegex ? { waitForRegex: true } : {}),
+    ...(timeoutMs && timeoutMs !== DEFAULT_WAIT_TIMEOUT_MS ? { timeoutMs } : {}),
+  };
+}
+
+// The regex engine loads on first use; until then a regex wait cannot be checked or saved.
+function useRegexEngine(needed: boolean): { engine: RegexEngine | null; loadError: string | null } {
+  const [engine, setEngine] = useState<RegexEngine | null>(loadedRegexEngine);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!needed || engine) return;
+    let current = true;
+    loadRegexEngine().then(
+      (loaded) => {
+        if (current) setEngine(() => loaded);
+      },
+      (cause: unknown) => {
+        if (current) setLoadError(describeError(cause));
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [needed, engine]);
+  return { engine, loadError };
+}
+
+function stepWaitProblem(step: EditorStep, index: number, regex: { engine: RegexEngine | null; loadError: string | null }): string | null {
+  const pattern = step.waitFor ?? "";
+  if (pattern.trim() === "") return null;
+  if (waitPatternBytes(pattern) > MAX_WAIT_FOR_BYTES) {
+    return t("第 {value} 步的等待条件不能超过 {max} 字节", { value: index + 1, max: MAX_WAIT_FOR_BYTES });
+  }
+  if (step.timeoutMs !== undefined && (!Number.isFinite(step.timeoutMs) || step.timeoutMs < MIN_WAIT_TIMEOUT_MS || step.timeoutMs > MAX_WAIT_TIMEOUT_MS)) {
+    return t("第 {value} 步的超时须在 {min} 到 {max} 秒之间", { value: index + 1, min: MIN_WAIT_TIMEOUT_MS / 1000, max: MAX_WAIT_TIMEOUT_MS / 1000 });
+  }
+  if (step.waitForRegex !== true) return null;
+  if (regex.loadError !== null) return t("无法加载正则表达式引擎：{value}", { value: regex.loadError });
+  if (!regex.engine) return null;
+  const regexError = regexPatternError(regex.engine, pattern);
+  return regexError === null ? null : t("第 {value} 步的正则表达式无效：{error}", { value: index + 1, error: regexError });
+}
+
+function StepWaitFields({
+  step,
+  index,
+  problem,
+  onChange,
+}: {
+  step: EditorStep;
+  index: number;
+  problem: string | null;
+  onChange: (patch: Partial<EditorStep>) => void;
+}) {
+  const hasWait = (step.waitFor ?? "") !== "";
+  const seconds = (step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 1000;
+  return (
+    <div className="mt-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="nx-input min-w-40 flex-1 font-mono text-[11.5px]"
+          aria-label={t("步骤 {value} 等待输出", { value: index + 1 })}
+          placeholder={index === 0 ? t("执行前等待输出（可选），如 $ ") : t("等待上一步输出（可选），如 password:")}
+          value={step.waitFor ?? ""}
+          onChange={(e) => onChange({ waitFor: e.target.value })}
+        />
+        <label className="flex items-center gap-1.5 text-[11px] text-neutral-400">
+          <input
+            type="checkbox"
+            className="accent-blue-500"
+            aria-label={t("步骤 {value} 等待条件使用正则表达式", { value: index + 1 })}
+            checked={step.waitForRegex === true}
+            disabled={!hasWait}
+            onChange={(e) => onChange({ waitForRegex: e.target.checked || undefined })}
+          />
+          {t("正则")}
+        </label>
+        <label className="flex items-center gap-1.5 text-[11px] text-neutral-400">
+          {t("超时")}
+          <input
+            type="number"
+            className="nx-input w-16"
+            aria-label={t("步骤 {value} 等待超时（秒）", { value: index + 1 })}
+            min={MIN_WAIT_TIMEOUT_MS / 1000}
+            max={MAX_WAIT_TIMEOUT_MS / 1000}
+            step={1}
+            disabled={!hasWait}
+            value={Number.isFinite(seconds) ? seconds : ""}
+            onChange={(e) => {
+              const value = e.target.valueAsNumber;
+              onChange({ timeoutMs: Number.isFinite(value) ? Math.round(value * 1000) : Number.NaN });
+            }}
+          />
+          {t("秒")}
+        </label>
+      </div>
+      {problem && <div role="alert" className="mt-1 text-[11px] text-red-400">{problem}</div>}
+    </div>
+  );
+}
+
 function SnippetEditor({
   initial,
   onClose,
@@ -389,7 +509,12 @@ function SnippetEditor({
     setMulti(false);
   };
 
-  const valid = name.trim() !== "" && (multi ? steps.length > 0 && steps.every((step) => step.command.trim() !== "") : body.trim() !== "");
+  const regexWaits = multi && steps.some((step) => step.waitForRegex === true && (step.waitFor ?? "").trim() !== "");
+  const regex = useRegexEngine(regexWaits);
+  const waitProblems = multi ? steps.map((step, index) => stepWaitProblem(step, index, regex)) : [];
+  const valid =
+    name.trim() !== "" &&
+    (multi ? steps.length > 0 && steps.every((step) => step.command.trim() !== "") && waitProblems.every((problem) => problem === null) && (!regexWaits || regex.engine !== null) : body.trim() !== "");
 
   const requestClose = async () => {
     if (saving) return;
@@ -409,7 +534,11 @@ function SnippetEditor({
     if (saving) return;
     const n = name.trim();
     if (!valid) {
-      setError(multi ? t("名称不能为空，且每一步都要填写命令") : t("名称和内容都不能为空"));
+      setError(
+        multi
+          ? (waitProblems.find((problem) => problem !== null) ?? t("名称不能为空，且每一步都要填写命令"))
+          : t("名称和内容都不能为空"),
+      );
       return;
     }
     setSaving(true);
@@ -421,7 +550,7 @@ function SnippetEditor({
       const cleanDescription = (multi ? description : initial?.description ?? "").trim();
       const descriptionPatch = cleanDescription ? { description: cleanDescription } : {};
       if (multi) {
-        const cleanSteps = steps.map((step) => ({ ...step, name: step.name.trim() }));
+        const cleanSteps = steps.map((step) => cleanWait({ ...step, name: step.name.trim() }));
         const joined = cleanSteps.map((step) => step.command).join("\n");
         if (initial) {
           await assetApi.snippetUpdate(initial.id, n, joined, { ...descriptionPatch, steps: cleanSteps });
@@ -560,6 +689,7 @@ function SnippetEditor({
                       <input type="checkbox" className="accent-blue-500" aria-label={t("步骤 {value} 启用脚本交互指令", { value: index + 1 })} checked={step.interactive === true} onChange={(e) => updateStep(step.id, { interactive: e.target.checked || undefined })} />
                       {t("启用脚本交互指令（仅多主机执行；开启后该步骤输出中的 @NEXTERM: 行会被解释，并保持标准输入打开）")}
                     </label>
+                    <StepWaitFields step={step} index={index} problem={waitProblems[index] ?? null} onChange={(patch) => updateStep(step.id, patch)} />
                   </div>
                 ))}
                 <div>
@@ -574,6 +704,11 @@ function SnippetEditor({
                 {t("支持使用变量，运行时需填写：")}<code>{"{{service}}"}</code> {t("必填，")}<code>{"{{service=nginx}}"}</code> {t("或")} <code>{"{{service:nginx}}"}</code> {t("带默认值，")}<code>{"{{service|multiline}}"}</code> {t("多行输入。")}
                 {multi && t("多步片段的所有步骤共用同一组变量，只填写一次。")}
               </div>
+              {multi && (
+                <div className="mt-1">
+                  {t("在当前终端执行时，填写了等待输出的步骤会等终端出现该文本后再发送：第一步从当前屏幕开始匹配，之后匹配上一步发送后的输出（包括终端回显的上一步命令本身）；超时或取消会停止执行并提示。正则使用 RE2 语法和多行模式，不支持前后断言和反向引用。多主机执行逐步等待命令结束，不使用等待条件。")}
+                </div>
+              )}
               <div className="mt-1">
                 {t("自动填入当前主机信息：")}<code>{"{{asset.name}}"}</code> {t("名称、")}<code>{"{{asset.host}}"}</code> {t("地址、")}<code>{"{{asset.tags}}"}</code> {t("标签。")}
               </div>

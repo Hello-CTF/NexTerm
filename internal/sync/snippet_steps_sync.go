@@ -195,6 +195,11 @@ func (e *Engine) applySnippetStepsObject(ctx context.Context, plaintext []byte, 
 		if payload.UpdatedAt < local.UpdatedAt {
 			return false, false
 		}
+		if payload.UpdatedAt == local.UpdatedAt && local.Description == payload.Description && waitStrippedCopy(localSteps, steps) {
+			// A client that predates step wait conditions pushes back the same version without them: never let
+			// that erase them here.
+			return false, true
+		}
 	}
 	encoded, err := marshalObject(steps)
 	if err != nil {
@@ -225,6 +230,25 @@ func sameSnippetSteps(left, right []store.SnippetStep) bool {
 	}
 	for i := range left {
 		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// waitStrippedCopy reports whether received steps are the local ones with every wait condition removed, as an
+// older client re-encodes them.
+func waitStrippedCopy(local, received []store.SnippetStep) bool {
+	if len(local) != len(received) {
+		return false
+	}
+	for i := range local {
+		if received[i].WaitFor != "" || received[i].WaitForRegex || received[i].TimeoutMs != 0 {
+			return false
+		}
+		stripped := local[i]
+		stripped.WaitFor, stripped.WaitForRegex, stripped.TimeoutMs = "", false, 0
+		if stripped != received[i] {
 			return false
 		}
 	}

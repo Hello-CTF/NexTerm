@@ -212,7 +212,7 @@ func TestMultiStepSnippetSyncsBetweenDevices(t *testing.T) {
 	deviceB := newTestDevice(t)
 	steps := []store.SnippetStep{
 		{ID: "a", Name: "one", Command: "echo 1", Confirm: true},
-		{ID: "b", Name: "two", Description: "second", Command: "echo 2", Interactive: true},
+		{ID: "b", Name: "two", Description: "second", Command: "echo 2", Interactive: true, WaitFor: `[$#] $`, WaitForRegex: true, TimeoutMs: 30000},
 	}
 	created, err := deviceA.db.SnippetCreateContent(ctx, "multi", store.SnippetContent{Description: "d", Steps: steps}, nil, 0)
 	if err != nil {
@@ -274,6 +274,53 @@ func TestSnippetStepsPayloadWithInvalidStepsIsSkippedWithWarning(t *testing.T) {
 	got, err := instance.db.SnippetGet(ctx, created.ID)
 	if err != nil || got.Steps != "" {
 		t.Fatalf("invalid steps were written: %+v %v", got, err)
+	}
+}
+
+func TestOlderClientCompanionWithoutWaitConditionsKeepsThem(t *testing.T) {
+	ctx := context.Background()
+	instance := newTestInstance(t, false)
+	steps := []store.SnippetStep{
+		{ID: "a", Command: "ssh db"},
+		{ID: "b", Name: "password", Command: "hunter2", WaitFor: "Password:", TimeoutMs: 30000},
+	}
+	created, err := instance.db.SnippetCreateContent(ctx, "login", store.SnippetContent{Steps: steps}, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stripped := func(updatedAt int64) snippetStepsObject {
+		return snippetStepsObject{
+			ID: store.SnippetStepsObjectID(created.ID), SnippetID: created.ID, BodyHash: snippetBodyHash(created.Body), UpdatedAt: updatedAt,
+			Steps: []snippetStepObject{{ID: "a", Command: "ssh db"}, {ID: "b", Name: "password", Command: "hunter2"}},
+		}
+	}
+	localSteps := func() []store.SnippetStep {
+		t.Helper()
+		got, err := instance.db.SnippetGet(ctx, created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := store.DecodeSnippetSteps(got.Steps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+
+	// The same version re-encoded by a client that drops the wait fields.
+	same := stripped(created.UpdatedAt)
+	result := mustApplyObjects(t, instance, ApplyObject{ID: same.ID, Kind: KindSnippetSteps, Payload: applyPayload(t, same)})
+	requireApplyResult(t, result.Objects[0], ApplyResultIdentical)
+	if got := localSteps(); !sameSnippetSteps(got, steps) {
+		t.Fatalf("wait conditions were erased: %+v", got)
+	}
+
+	// A newer version is a real edit and still wins.
+	newer := stripped(created.UpdatedAt + 1000)
+	result = mustApplyObjects(t, instance, ApplyObject{ID: newer.ID, Kind: KindSnippetSteps, Payload: applyPayload(t, newer)})
+	requireApplyResult(t, result.Objects[0], ApplyResultApplied)
+	if got := localSteps(); len(got) != 2 || got[1].WaitFor != "" {
+		t.Fatalf("newer companion was not applied: %+v", got)
 	}
 }
 

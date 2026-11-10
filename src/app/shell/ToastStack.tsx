@@ -1,6 +1,7 @@
 import { useUi } from "../store";
 import { IconCheckCircle, IconClose, IconInfo, IconXCircle } from "../../ui/icons";
 import { t as tr } from "../../i18n";
+import { SnippetRunIndicator } from "../../features/explorer/SnippetRunIndicator";
 
 export function ToastStack() {
   const toasts = useUi((s) => s.toasts);
@@ -9,6 +10,7 @@ export function ToastStack() {
   const releaseToast = useUi((s) => s.releaseToast);
   return (
     <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col gap-2">
+      <SnippetRunIndicator />
       {toasts.map((t) => {
         const Icon = t.kind === "error" ? IconXCircle : t.kind === "success" ? IconCheckCircle : IconInfo;
         const tone =

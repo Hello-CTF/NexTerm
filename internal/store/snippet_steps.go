@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -12,17 +13,27 @@ const (
 	SnippetMaxNameBytes    = 512
 	SnippetMaxDescBytes    = 4096
 	SnippetMaxCommandBytes = 64 << 10
+	SnippetMaxWaitForBytes = 1024
+	// A step timeout of zero uses the client's default wait.
+	SnippetMinWaitTimeoutMs = 1000
+	SnippetMaxWaitTimeoutMs = 10 * 60 * 1000
 )
 
 // SnippetStep is one command of a multi-step snippet. Confirm asks for an
-// explicit confirmation before the step runs.
+// explicit confirmation before the step runs. WaitFor holds the step back,
+// while the user runs the snippet in a terminal, until that terminal's output
+// matches it (plain text, or a regular expression when WaitForRegex is set);
+// the run stops after TimeoutMs.
 type SnippetStep struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Command     string `json:"command"`
-	Confirm     bool   `json:"confirm,omitempty"`
-	Interactive bool   `json:"interactive,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Command      string `json:"command"`
+	Confirm      bool   `json:"confirm,omitempty"`
+	Interactive  bool   `json:"interactive,omitempty"`
+	WaitFor      string `json:"waitFor,omitempty"`
+	WaitForRegex bool   `json:"waitForRegex,omitempty"`
+	TimeoutMs    int64  `json:"timeoutMs,omitempty"`
 }
 
 // SnippetContent is the validated content a snippet write carries beyond its
@@ -57,6 +68,33 @@ func ValidateSnippetSteps(steps []SnippetStep) error {
 		}
 		if strings.TrimSpace(step.Command) == "" || len(step.Command) > SnippetMaxCommandBytes {
 			return badParam(fmt.Errorf("snippet step command must be non-empty and at most %d bytes", SnippetMaxCommandBytes))
+		}
+		if err := validateSnippetStepWait(step); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateSnippetStepWait bounds the wait condition. A regular expression must
+// compile as RE2: clients match it with an RE2 engine (linear time), never as a
+// JavaScript RegExp, so the stored syntax means the same everywhere.
+func validateSnippetStepWait(step SnippetStep) error {
+	if step.WaitFor == "" {
+		if step.WaitForRegex || step.TimeoutMs != 0 {
+			return badParam(fmt.Errorf("snippet step wait options require waitFor"))
+		}
+		return nil
+	}
+	if strings.TrimSpace(step.WaitFor) == "" || len(step.WaitFor) > SnippetMaxWaitForBytes {
+		return badParam(fmt.Errorf("snippet step waitFor must contain non-space text and at most %d bytes", SnippetMaxWaitForBytes))
+	}
+	if step.TimeoutMs != 0 && (step.TimeoutMs < SnippetMinWaitTimeoutMs || step.TimeoutMs > SnippetMaxWaitTimeoutMs) {
+		return badParam(fmt.Errorf("snippet step timeoutMs must be between %d and %d", SnippetMinWaitTimeoutMs, SnippetMaxWaitTimeoutMs))
+	}
+	if step.WaitForRegex {
+		if _, err := regexp.Compile(step.WaitFor); err != nil {
+			return badParam(fmt.Errorf("snippet step waitFor is not a valid regular expression: %w", err))
 		}
 	}
 	return nil

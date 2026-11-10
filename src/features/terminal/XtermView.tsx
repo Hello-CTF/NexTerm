@@ -41,6 +41,7 @@ import {
   type TerminalStreamBacklog,
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
+import { publishTerminalOutput, registerTerminalScreenSource } from "./terminalOutputTap";
 import { createTerminalResponseLimiter, isAutomaticTerminalReply } from "./terminalResponses";
 import { createUserInputGate } from "./userInputGate";
 import { pruneSpans, splitByClass, type StreamClassSpan, type StreamMode, type StreamRun } from "./streamClasses";
@@ -439,6 +440,20 @@ export function XtermView(props: XtermViewProps) {
 
     let kernelTabId = "";
     let disposed = false;
+    // A snippet run waiting for output starts from the screen text up to the cursor.
+    const unregisterScreenSource = registerTerminalScreenSource({
+      tabId: () => kernelTabId,
+      screenText: () => {
+        const buffer = term.buffer.active;
+        const lines: string[] = [];
+        for (let row = 0; row <= buffer.cursorY; row += 1) {
+          const line = buffer.getLine(buffer.baseY + row);
+          if (!line) continue;
+          lines.push(row === buffer.cursorY ? line.translateToString(false, 0, buffer.cursorX) : line.translateToString(true));
+        }
+        return lines.join("\n");
+      },
+    });
     const search = attachLazyAddons(
       term,
       {
@@ -1121,7 +1136,8 @@ export function XtermView(props: XtermViewProps) {
         // parses it with the right mode.
         let accepted = skipped;
         for (const run of classifyRuns(out, streamBytes + skipped)) {
-          if (!streamWriter.pushBytes(out.subarray(run.offset, run.offset + run.length), run.mode)) {
+          const runBytes = out.subarray(run.offset, run.offset + run.length);
+          if (!streamWriter.pushBytes(runBytes, run.mode)) {
             // Refused bytes are not counted in streamBytes: the resume anchor
             // must point at the last accepted byte so the replay resends them.
             // The refusal episode is sticky inside the writer until the next
@@ -1130,6 +1146,8 @@ export function XtermView(props: XtermViewProps) {
             return;
           }
           accepted += run.length;
+          // Redrawn history is not new output a running snippet could be waiting for.
+          if (run.mode !== "replay") publishTerminalOutput(kernelTabId, runBytes);
           if (!streamAnchor && run.mode === "replay") replayRemaining -= run.length;
         }
         streamBytes += bytes.length;
@@ -1638,6 +1656,7 @@ export function XtermView(props: XtermViewProps) {
     return () => {
       disposed = true;
       pauseNeeded = false;
+      unregisterScreenSource();
       if (pauseRetryTimer !== undefined) {
         window.clearTimeout(pauseRetryTimer);
         pauseRetryTimer = undefined;

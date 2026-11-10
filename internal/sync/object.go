@@ -186,12 +186,15 @@ type snippetStepsObject struct {
 }
 
 type snippetStepObject struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Command     string `json:"command"`
-	Confirm     bool   `json:"confirm,omitempty"`
-	Interactive bool   `json:"interactive,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Command      string `json:"command"`
+	Confirm      bool   `json:"confirm,omitempty"`
+	Interactive  bool   `json:"interactive,omitempty"`
+	WaitFor      string `json:"waitFor,omitempty"`
+	WaitForRegex bool   `json:"waitForRegex,omitempty"`
+	TimeoutMs    int64  `json:"timeoutMs,omitempty"`
 }
 
 type tombstoneObject struct {
