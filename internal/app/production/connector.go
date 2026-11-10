@@ -94,8 +94,11 @@ type productionAssetOptions struct {
 	InitialCommand     string `json:"initialCommand"`
 	StartupCommand     string `json:"startupCommand"`
 	Encoding           string `json:"encoding"`
-	DeviceID           string `json:"deviceId"`
-	UserID             string `json:"userId"`
+	// LocalEcho (auto, on, off) and SendCRLF are Telnet terminal options.
+	LocalEcho string `json:"localEcho"`
+	SendCRLF  bool   `json:"sendCrlf"`
+	DeviceID  string `json:"deviceId"`
+	UserID    string `json:"userId"`
 	// InheritedFrom maps an inherited field (store.InheritUsername, InheritAuth, InheritJump) to the name of the
 	// group that supplied it. It is set only by productionResolvedOptionMap, never read from stored options, so
 	// connection errors can name the group that owns the value.
@@ -494,7 +497,11 @@ func connectTelnet(ctx context.Context, options productionAssetOptions) (base.Tr
 	if strings.TrimSpace(options.Host) == "" {
 		return nil, ipc.BadParam(fmt.Errorf("Telnet 资产缺少主机地址"))
 	}
-	config := telnet.Config{Host: options.Host, Port: options.Port}
+	echo, err := telnet.ParseEchoMode(options.LocalEcho)
+	if err != nil {
+		return nil, ipc.BadParam(fmt.Errorf("Telnet 本地回显设置无效，应为 auto、on 或 off"))
+	}
+	config := telnet.Config{Host: options.Host, Port: options.Port, LocalEcho: echo, SendCRLF: options.SendCRLF}
 	if options.ConnectTimeout > 0 {
 		config.DialTimeout = time.Duration(options.ConnectTimeout) * time.Second
 	}

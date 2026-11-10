@@ -30,6 +30,10 @@ type Config struct {
 	DialTimeout time.Duration
 	// Dialer replaces the direct TCP dial, for example with a jump connection. Nil dials directly.
 	Dialer base.Dialer
+	// LocalEcho chooses who shows typed characters; empty is EchoAuto.
+	LocalEcho EchoMode
+	// SendCRLF sends Enter as CR LF instead of CR NUL, for line-based text services behind a Telnet port.
+	SendCRLF bool
 }
 
 func (c Config) normalized() (Config, error) {
@@ -46,6 +50,11 @@ func (c Config) normalized() (Config, error) {
 	if c.DialTimeout <= 0 {
 		c.DialTimeout = DefaultDialTimeout
 	}
+	echo, err := ParseEchoMode(string(c.LocalEcho))
+	if err != nil {
+		return c, err
+	}
+	c.LocalEcho = echo
 	return c, nil
 }
 
@@ -213,7 +222,7 @@ func (t *Transport) OpenPTY(ctx context.Context, options base.PTYOptions) (base.
 	if term == "" {
 		term = defaultTerm
 	}
-	conn := newConn(raw, term, uint16(min(options.Cols, 0xffff)), uint16(min(options.Rows, 0xffff)), t.generation)
+	conn := newConn(raw, connOptions{term: term, echo: t.config.LocalEcho, crlf: t.config.SendCRLF}, uint16(min(options.Cols, 0xffff)), uint16(min(options.Rows, 0xffff)), t.generation)
 	conn.onClose = func() { t.forget(conn) }
 	t.mu.Lock()
 	if t.closed {

@@ -59,6 +59,10 @@ func TestConnectTelnetAsset(t *testing.T) {
 	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam {
 		t.Fatalf("empty host = %+v, want bad_param", err)
 	}
+	_, err = connector.Connect(t.Context(), session.Asset{ID: "t1", Kind: session.KindTelnet, Options: map[string]any{"host": "h", "localEcho": "maybe"}}, 1)
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam {
+		t.Fatalf("invalid local echo = %+v, want bad_param", err)
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

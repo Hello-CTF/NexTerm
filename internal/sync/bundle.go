@@ -618,8 +618,12 @@ func (s *Service) ImportBundle(ctx context.Context, request ImportBundleRequest)
 		// survive the import. Everything else keeps the password default.
 		inheritsAuth := store.KindInheritsAuth(row.Kind) && row.GroupID != nil && strings.TrimSpace(*row.GroupID) != ""
 		if (row.AuthKind == nil || *row.AuthKind == "") && !inheritsAuth {
-			password := "password"
-			row.AuthKind = &password
+			// A Telnet device asks for its login inside the terminal, so the asset stores no authentication.
+			authKind := "password"
+			if row.Kind == "telnet" {
+				authKind = "none"
+			}
+			row.AuthKind = &authKind
 		}
 		if row.KeyPath != nil && strings.TrimSpace(*row.KeyPath) == "" {
 			row.KeyPath = nil

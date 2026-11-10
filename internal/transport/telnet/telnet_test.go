@@ -43,7 +43,8 @@ func newFakeServer(t *testing.T) *fakeServer {
 
 func (s *fakeServer) config() Config {
 	addr := s.listener.Addr().(*net.TCPAddr)
-	return Config{Host: addr.IP.String(), Port: addr.Port, DialTimeout: testTimeout}
+	// The protocol tests read exactly what the server sent; local echo has tests of its own.
+	return Config{Host: addr.IP.String(), Port: addr.Port, DialTimeout: testTimeout, LocalEcho: EchoOff}
 }
 
 func (s *fakeServer) accept(t *testing.T) net.Conn {
@@ -134,7 +135,12 @@ func expectOutput(t *testing.T, output <-chan []byte, want string) {
 
 func openTerminal(t *testing.T, server *fakeServer, cols, rows uint32) (base.Channel, net.Conn) {
 	t.Helper()
-	transport, err := Connect(context.Background(), server.config())
+	return openTerminalWith(t, server, server.config(), cols, rows)
+}
+
+func openTerminalWith(t *testing.T, server *fakeServer, config Config, cols, rows uint32) (base.Channel, net.Conn) {
+	t.Helper()
+	transport, err := Connect(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,6 +373,101 @@ func TestOpenPTYRejectsStaleGeneration(t *testing.T) {
 	}
 	if _, err := transport.OpenPTY(context.Background(), base.PTYOptions{ExpectedGeneration: transport.Generation() + 1}); !errors.Is(err, base.ErrStaleGeneration) {
 		t.Fatalf("stale generation: %v", err)
+	}
+}
+
+func TestLocalEchoWhileTheServerDoesNotEcho(t *testing.T) {
+	server := newFakeServer(t)
+	config := server.config()
+	config.LocalEcho = EchoAuto
+	channel, peer := openTerminalWith(t, server, config, 80, 24)
+	output := pump(channel)
+
+	// The server ignores DO ECHO: typed text shows locally, Enter starts a new line, Backspace and DEL erase a cell,
+	// and arrow keys and other control keys show nothing.
+	if _, err := channel.Write([]byte("ab\x7fc\x08d\x1b[A\x1bOB\x03\r")); err != nil {
+		t.Fatal(err)
+	}
+	expectBytes(t, peer, []byte("ab\x7fc\x08d\x1b[A\x1bOB\x03\r\x00"))
+	expectOutput(t, output, "ab\b \bc\b \bd\r\n")
+
+	// Server output and echo keep their order.
+	send(t, peer, 'o', 'k', '\r', '\n')
+	expectOutput(t, output, "ok\r\n")
+
+	// Once the server agrees to echo, local echo stops.
+	send(t, peer, cmdIAC, cmdWILL, optEcho, 'x')
+	expectOutput(t, output, "x")
+	if _, err := channel.Write([]byte("show\r")); err != nil {
+		t.Fatal(err)
+	}
+	expectBytes(t, peer, []byte("show\r\x00"))
+	send(t, peer, 'y')
+	expectOutput(t, output, "y")
+}
+
+func TestLocalEchoModes(t *testing.T) {
+	for _, tc := range []struct {
+		mode       EchoMode
+		serverEcho bool
+		want       string
+	}{
+		{EchoOn, true, "hi\r\n."},
+		{EchoOff, false, "."},
+	} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			server := newFakeServer(t)
+			config := server.config()
+			config.LocalEcho = tc.mode
+			channel, peer := openTerminalWith(t, server, config, 80, 24)
+			output := pump(channel)
+			if tc.serverEcho {
+				send(t, peer, cmdIAC, cmdWILL, optEcho, '.')
+				expectOutput(t, output, ".")
+				tc.want = tc.want[:len(tc.want)-1]
+			}
+			if _, err := channel.Write([]byte("hi\r\n")); err != nil {
+				t.Fatal(err)
+			}
+			expectBytes(t, peer, []byte("hi\r\n"))
+			if !tc.serverEcho {
+				send(t, peer, '.')
+			}
+			expectOutput(t, output, tc.want)
+		})
+	}
+	if _, err := ParseEchoMode("sometimes"); err == nil {
+		t.Fatal("unknown echo mode accepted")
+	}
+}
+
+func TestSendCRLF(t *testing.T) {
+	server := newFakeServer(t)
+	config := server.config()
+	config.SendCRLF = true
+	channel, peer := openTerminalWith(t, server, config, 80, 24)
+	if _, err := channel.Write([]byte("GET /\rHost: x\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	expectBytes(t, peer, []byte("GET /\r\nHost: x\r\n"))
+}
+
+func TestCanceledOpenDoesNotHandOutTheConnection(t *testing.T) {
+	server := newFakeServer(t)
+	transport, err := New(server.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	transport.config.Dialer = dialerFunc(func(dialCtx context.Context, network, address string) (net.Conn, error) {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(dialCtx, network, address)
+		cancel()
+		return conn, err
+	})
+	if _, err := transport.OpenPTY(ctx, base.PTYOptions{Cols: 80, Rows: 24}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenPTY after cancel: %v", err)
 	}
 }
 
