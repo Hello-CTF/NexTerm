@@ -248,7 +248,7 @@ func Usage(program string, defaultCommand Command) string {
 Commands:
   desktop       Run the Wails desktop application
   serve         Run the HTTP server (default for nexterm-server)
-
+%s
 Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
   --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
@@ -307,7 +307,16 @@ nexterm-desktop warns and uses the default):
   NEXTERM_ACCESS_LOG  1 logs one record per HTTP request on nexterm-server: method, path,
                       status, bytes, duration, and client IP (trusted-proxy aware); query
                       strings, request bodies, and share-link tokens are never logged
-`, program, defaultCommand)
+`, program, defaultCommand, serverSubcommands(defaultCommand))
+}
+
+// serverSubcommands lists the maintenance commands only nexterm-server has.
+func serverSubcommands(defaultCommand Command) string {
+	if defaultCommand != CommandServe {
+		return ""
+	}
+	return "  healthcheck   Probe /healthz and exit 0 when ready (nexterm-server healthcheck --help)\n" +
+		"  backup        Write a consistent SQLite snapshot (nexterm-server backup --help)\n"
 }
 
 func isStringFlag(name string) bool {

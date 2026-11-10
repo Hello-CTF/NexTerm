@@ -68,7 +68,7 @@
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。健康检查使用 `GET /livez`（存活，不访问数据库）和 `GET /healthz`（就绪：数据库不可达，或设置 `--require-vault` 而凭据库已锁定时返回 503；非回环且未以超级管理员登录的调用方只看到 `ok`、`service`、`version`），容器内可直接执行 `nexterm-server healthcheck`（就绪时退出码为 0，否则为 1）。服务日志写入 systemd 日志（`journalctl -u nexterm-server`），可用 `NEXTERM_LOG_LEVEL`、`NEXTERM_LOG_FORMAT`、`NEXTERM_LOG_FILE` 和 `NEXTERM_ACCESS_LOG` 调整。升级、回滚、反向代理、外部数据库、日志、多用户限制与可选的 Prometheus 指标见[服务端部署说明](deploy/systemd/README.md)。
+安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。健康检查使用 `GET /livez`（存活，不访问数据库）和 `GET /healthz`（就绪：数据库不可达，或设置 `--require-vault` 而凭据库已锁定时返回 503；非回环且未以超级管理员登录的调用方只看到 `ok`、`service`、`version`），容器内可直接执行 `nexterm-server healthcheck`（就绪时退出码为 0，否则为 1）。服务日志写入 systemd 日志（`journalctl -u nexterm-server`），可用 `NEXTERM_LOG_LEVEL`、`NEXTERM_LOG_FORMAT`、`NEXTERM_LOG_FILE` 和 `NEXTERM_ACCESS_LOG` 调整。升级、回滚、备份恢复、反向代理、外部数据库、日志、多用户限制与可选的 Prometheus 指标见[服务端部署说明](deploy/systemd/README.md)。
 
 ## 更多文档
 

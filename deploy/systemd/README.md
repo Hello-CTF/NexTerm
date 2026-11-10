@@ -24,8 +24,11 @@ through an SSH tunnel, `ssh -L 8080:127.0.0.1:8080 user@server`, then open
 `http://localhost:8080`, or put a TLS reverse proxy in front (see
 [Database settings](#database-settings) for the proxy trust settings).
 Settings live in `/etc/nexterm/nexterm.env`; run
-`systemctl restart nexterm-server` after changing them. Back up
-`/var/lib/nexterm`, `/etc/nexterm/master.key`, and any external database.
+`systemctl restart nexterm-server` after changing them. Take database
+backups with `nexterm-server backup` and keep the master key and TOTP key
+separately (see [Backup and restore](#backup-and-restore)); copying
+`/var/lib/nexterm` while the server runs can capture an inconsistent
+database.
 `nexterm-server --help` lists every option.
 
 `--auth off` disables accounts, administration and device routes: anyone who
@@ -168,7 +171,12 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   then `/lib/systemd/system/`) is consulted; lower-priority copies are
   removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
-  the units that were active. An interrupted upgrade keeps that original
+  the units that were active. With SQLite the active units are stopped
+  first and `data.db` with its `-wal`/`-shm` files is copied into
+  `/opt/nexterm/.rollback/db`, because the new version migrates the
+  database on start; the copy needs free space for one more database.
+  PostgreSQL, MySQL and MariaDB are not snapshotted: dump them before
+  upgrading. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the
   transaction and which units were active, and recovers legacy unit
   settings from the backup, so a retry never overwrites the rollback
@@ -178,7 +186,7 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 
 Options: `--source DIR` (payload directory, default the script's own),
 `--root DIR` (staged install prefix, for testing), `--rollback`,
-`--no-enable`. An interrupted first install is resumed by re-running the
+`--keep-database` (with `--rollback`), `--no-enable`, `-y`/`--yes`. An interrupted first install is resumed by re-running the
 script — including whether each env file predates the attempt, so an
 example env written by the interrupted run is never mistaken for explicit
 configuration — and finishes with `enable --now`.
@@ -223,21 +231,79 @@ and the master key are not touched. The replaced payload is kept in
 `/opt/nexterm/.rollback.failed` for inspection, and the backup is consumed,
 so a second consecutive rollback fails.
 
+When the upgrade saved a SQLite snapshot, the rollback also stops the
+running units and puts that snapshot back, because the older version may
+not run against the schema the newer one migrated. **Everything written
+since the upgrade is lost**; the replaced `data.db` files are kept in
+`/opt/nexterm/.rollback.failed/db`. The installer asks before doing this
+and, without a terminal, refuses unless `--yes` is given. Pass
+`--keep-database` to restore only the program files and keep the current
+database (the previous behavior). A remote database is never rolled back:
+restore it from your own dump if needed.
+
+## Backup and restore
+
+SQLite runs in WAL mode, so copying `data.db` while the server runs can
+produce a copy that does not match its `-wal` file. Use the backup command
+instead; it is safe while the service is running:
+
+```sh
+sudo install -d -m 0700 -o nexterm -g nexterm /var/backups/nexterm
+sudo -u nexterm /opt/nexterm/nexterm-server backup \
+  --data-dir /var/lib/nexterm --out /var/backups/nexterm/data.db
+```
+
+It writes a verified snapshot (`VACUUM INTO`, then `integrity_check`)
+atomically with mode 0600, plus `data.db.manifest.json` with the NexTerm
+version, time, size, SHA-256 and schema fingerprint. An existing file is
+replaced only with `--force`. `nexterm-server backup --help` lists the
+options and exit codes.
+
+The snapshot does **not** contain the keys that decrypt it. Back these up
+separately and keep them away from the database copy:
+
+- the vault master key: `NEXTERM_MASTER_KEY_FILE`, by default
+  `/etc/nexterm/master.key`;
+- the TOTP key `/var/lib/nexterm/totp.key`, which protects two-factor
+  secrets.
+
+Other files under the data directory (uploaded files in `files/`,
+`known_hosts.json`, ...) are not in the snapshot either; copy them while
+the service is stopped if you need them.
+
+With PostgreSQL, MySQL or MariaDB the command does not connect to the
+database: it prints a `pg_dump`, `mysqldump` or `mariadb-dump` command for
+the configured host and database (never the password) and exits 3.
+
+To restore a SQLite snapshot:
+
+```sh
+sudo systemctl stop nexterm-server
+sudo mkdir -m 0700 /var/lib/nexterm/replaced
+sudo sh -c 'mv /var/lib/nexterm/data.db* /var/lib/nexterm/replaced/'
+sudo install -m 0600 -o nexterm -g nexterm /var/backups/nexterm/data.db /var/lib/nexterm/data.db
+sudo systemctl start nexterm-server
+```
+
+Restore the master key and TOTP key that were in use when the snapshot was
+taken, and run a NexTerm version at least as new as the one in the
+manifest.
+
 ## Master key
 
 `install.sh` preserves the effective master key across installs and
 upgrades: an explicit `NEXTERM_MASTER_KEY_FILE` setting wins, then an
 existing `<data-dir>/master.key` (the server's own default location), then
 `/etc/nexterm/master.key`. A new key is generated only when none exists,
-and an existing key is never replaced. Back the key up together with
-`/var/lib/nexterm`; it cannot be recreated after credentials have been
+and an existing key is never replaced. Back the key up separately from
+the database backup; it cannot be recreated after credentials have been
 encrypted.
 
 ## Database settings
 
 `NEXTERM_DB` selects `sqlite` (the default), `postgres`, `mysql` or
-`mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; preserve that
-directory and `/etc/nexterm/master.key` when backing up. Run only one
+`mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; back it up as
+described in [Backup and restore](#backup-and-restore). Run only one
 server instance against the same database: login rate limits and
 second-factor lockouts are held in process memory, are not shared between
 instances, and reset on restart.
