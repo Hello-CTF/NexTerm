@@ -200,7 +200,7 @@ func EnsureRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 	if dir == "" {
 		return fmt.Errorf("remote directory path is empty")
 	}
-	trimmed := strings.TrimRight(dir, `/\`)
+	trimmed := strings.TrimRight(dir, base.PathSeparators(dir))
 	if trimmed == "" {
 		return nil
 	}
@@ -247,7 +247,7 @@ func verifyRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 	if err != nil {
 		return err
 	}
-	name := dir[strings.LastIndexAny(dir, `/\`)+1:]
+	name := dir[strings.LastIndexAny(dir, base.PathSeparators(dir))+1:]
 	for _, entry := range entries {
 		if entry.Name != name {
 			continue
@@ -261,11 +261,12 @@ func verifyRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 }
 
 func parentDir(remotePath string) string {
-	trimmed := strings.TrimRight(remotePath, `/\`)
+	separators := base.PathSeparators(remotePath)
+	trimmed := strings.TrimRight(remotePath, separators)
 	if trimmed == "" {
 		return ""
 	}
-	index := strings.LastIndexAny(trimmed, `/\`)
+	index := strings.LastIndexAny(trimmed, separators)
 	if index < 0 {
 		return ""
 	}
@@ -438,7 +439,7 @@ func remoteFileMetadata(ctx context.Context, filesystem base.FileSystem, remoteP
 		}
 		return base.FileEntry{}, false, err
 	}
-	name := remotePath[strings.LastIndexAny(remotePath, `/\`)+1:]
+	name := remotePath[strings.LastIndexAny(remotePath, base.PathSeparators(remotePath))+1:]
 	for _, entry := range entries {
 		if entry.Name != name {
 			continue
