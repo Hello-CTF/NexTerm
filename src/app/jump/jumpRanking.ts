@@ -20,41 +20,88 @@ export interface JumpRankOptions<T> {
 const SECTION_ORDER: Record<JumpSection, number> = { session: 0, host: 1, command: 2 };
 const ATTENTION_ORDER: Record<JumpAttention, number> = { needsMe: 0, justEnded: 1, other: 2 };
 
-function isSubsequence(text: string, needle: string): boolean {
-  let at = 0;
+// subsequencePositions returns the code-unit index of each needle character in text, matched greedily left to
+// right, or null when needle is not a subsequence of text.
+function subsequencePositions(text: string, needle: string): number[] | null {
+  if (needle.length === 0) return [];
+  const positions: number[] = [];
+  let index = 0;
   for (const char of text) {
-    if (char === needle[at]) at += 1;
-    if (at === needle.length) return true;
+    if (char === needle[positions.length]) positions.push(index);
+    if (positions.length === needle.length) return positions;
+    index += char.length;
   }
-  return needle.length === 0;
+  return null;
 }
 
-function tokenTier(label: string, keywords: string[], token: string): number | null {
-  if (label.startsWith(token)) return 0;
-  if (label.includes(token)) return 1;
-  if (keywords.some((keyword) => keyword.includes(token))) return 2;
-  if (isSubsequence(label, token)) return 3;
-  if (keywords.some((keyword) => isSubsequence(keyword, token))) return 4;
+export type MatchRange = readonly [start: number, end: number];
+
+interface TokenMatch {
+  tier: number;
+  // ranges are the matched spans of the label; a match found in a field has none.
+  ranges: MatchRange[];
+}
+
+function tokenMatch(label: string, keywords: string[], token: string): TokenMatch | null {
+  if (label.startsWith(token)) return { tier: 0, ranges: [[0, token.length]] };
+  const at = label.indexOf(token);
+  if (at >= 0) return { tier: 1, ranges: [[at, at + token.length]] };
+  if (keywords.some((keyword) => keyword.includes(token))) return { tier: 2, ranges: [] };
+  const positions = subsequencePositions(label, token);
+  if (positions) return { tier: 3, ranges: positions.map((position) => [position, position + 1] as const) };
+  if (keywords.some((keyword) => subsequencePositions(keyword, token) !== null)) return { tier: 4, ranges: [] };
   return null;
+}
+
+function queryTokens(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function lowerKeywords(candidate: Pick<JumpCandidate, "keywords">): string[] {
+  return (candidate.keywords ?? [])
+    .filter((keyword): keyword is string => Boolean(keyword))
+    .map((keyword) => keyword.toLowerCase());
 }
 
 // jumpMatchTier scores a candidate against a query; lower is better and null means no match. Every
 // whitespace-separated token must match, by name prefix, name substring, field substring, then as a
 // fuzzy subsequence of the name or of a field. The worst token decides the tier.
 export function jumpMatchTier(candidate: JumpCandidate, query: string): number | null {
-  const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = queryTokens(query);
   if (tokens.length === 0) return 0;
   const label = candidate.label.toLowerCase();
-  const keywords = (candidate.keywords ?? [])
-    .filter((keyword): keyword is string => Boolean(keyword))
-    .map((keyword) => keyword.toLowerCase());
+  const keywords = lowerKeywords(candidate);
   let worst = 0;
   for (const token of tokens) {
-    const tier = tokenTier(label, keywords, token);
-    if (tier === null) return null;
-    worst = Math.max(worst, tier);
+    const match = tokenMatch(label, keywords, token);
+    if (match === null) return null;
+    worst = Math.max(worst, match.tier);
   }
   return worst;
+}
+
+// jumpMatchRanges returns the spans of the label that the query matched, by the same rules as jumpMatchTier,
+// sorted and merged. Tokens matched only in a field contribute nothing; a non-matching query returns none.
+export function jumpMatchRanges(candidate: Pick<JumpCandidate, "label" | "keywords">, query: string): MatchRange[] {
+  const tokens = queryTokens(query);
+  const label = candidate.label.toLowerCase();
+  // Lowercasing can change the length of a few characters, which would shift the offsets.
+  if (tokens.length === 0 || label.length !== candidate.label.length) return [];
+  const keywords = lowerKeywords(candidate);
+  const ranges: MatchRange[] = [];
+  for (const token of tokens) {
+    const match = tokenMatch(label, keywords, token);
+    if (match === null) return [];
+    ranges.push(...match.ranges);
+  }
+  ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged: [number, number][] = [];
+  for (const [start, end] of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  return merged;
 }
 
 // rankJumpItems filters and orders palette candidates. An empty query groups by section (sessions,

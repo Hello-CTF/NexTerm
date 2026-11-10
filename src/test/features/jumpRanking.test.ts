@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { freezeOrder, jumpMatchTier, rankJumpItems, type JumpAttention, type JumpCandidate } from "../../app/jump/jumpRanking";
+import { freezeOrder, jumpMatchRanges, jumpMatchTier, rankJumpItems, type JumpAttention, type JumpCandidate } from "../../app/jump/jumpRanking";
 
 type Item = JumpCandidate & { id: string };
 
@@ -77,6 +77,25 @@ describe("rankJumpItems", () => {
     const before = ids(items);
     rankJumpItems(items, "web");
     expect(ids(items)).toEqual(before);
+  });
+});
+
+describe("jumpMatchRanges", () => {
+  it("marks the label span each tier matched", () => {
+    expect(jumpMatchRanges(item("a", "host", "Web-01"), "web")).toEqual([[0, 3]]);
+    expect(jumpMatchRanges(item("a", "host", "my-web-01"), "WEB")).toEqual([[3, 6]]);
+    expect(jumpMatchRanges(item("a", "host", "web-prod-01"), "wp1")).toEqual([[0, 1], [4, 5], [10, 11]]);
+  });
+
+  it("marks nothing for a token matched in a field, even when the label also holds it as a subsequence", () => {
+    expect(jumpMatchRanges(item("a", "host", "backend", { keywords: ["web.internal"] }), "web")).toEqual([]);
+    expect(jumpMatchRanges(item("a", "host", "bad", { keywords: ["bd.example"] }), "bd")).toEqual([]);
+  });
+
+  it("merges overlapping token spans and returns none when any token misses", () => {
+    expect(jumpMatchRanges(item("a", "host", "web-01"), "we eb 01")).toEqual([[0, 3], [4, 6]]);
+    expect(jumpMatchRanges(item("a", "host", "web-01"), "web zz")).toEqual([]);
+    expect(jumpMatchRanges(item("a", "host", "web-01"), "  ")).toEqual([]);
   });
 });
 

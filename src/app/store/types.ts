@@ -411,6 +411,10 @@ export interface UiState {
   queueAiRef: (ref: RefChip) => void;
   // Atomically drains the queue so only one panel receives the references.
   takeAiPendingRefs: () => RefChip[];
+  // A prompt for the visible AI composer to prefill (never send); a newer one replaces one not yet taken.
+  aiPendingPrompt: string | null;
+  queueAiPrompt: (text: string) => void;
+  takeAiPendingPrompt: () => string | null;
   aiRulePrefill: string | null;
   setAiRulePrefill: (v: string | null) => void;
   appDialog: AppDialogState | null;

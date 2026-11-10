@@ -114,7 +114,7 @@ describe("AiSidebar pending references", () => {
     localStorage.clear();
     useUi.setState({
       rightOpen: true, aiBusy: false, takeover: null, pushToast: mocks.toast,
-      workspaces: [], aiBoards: {}, sessions: [], activeWorkspaceId: null, aiPendingRefs: [],
+      workspaces: [], aiBoards: {}, sessions: [], activeWorkspaceId: null, aiPendingRefs: [], aiPendingPrompt: null,
     });
     view = mount(createElement(AiSidebar, { sessionId: "s1", tabId: "t1" }));
     await flush();
@@ -163,5 +163,20 @@ describe("AiSidebar pending references", () => {
     });
     await flush();
     expect(view!.container.querySelector("textarea")!.value).toBe("my own question");
+  });
+  it("prefills a queued prompt without sending it", async () => {
+    act(() => useUi.getState().queueAiPrompt("why is nginx slow"));
+    await flush();
+    expect(useUi.getState().aiPendingPrompt).toBeNull();
+    expect(view!.container.querySelector("textarea")!.value).toBe("why is nginx slow");
+    expect(mocks.chat).not.toHaveBeenCalled();
+  });
+
+  it("appends a queued prompt below a draft instead of replacing it", async () => {
+    setInputValue(view!.container.querySelector("textarea")!, "my draft");
+    act(() => useUi.getState().queueAiPrompt("disk usage"));
+    await flush();
+    expect(view!.container.querySelector("textarea")!.value).toBe("my draft\ndisk usage");
+    expect(mocks.chat).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import { useUi } from "../../app/store";
 import { ask } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { t } from "../../i18n";
+import { reportSettingVisible } from "./settingsIndex";
 
 const STATE_TEXT: Record<string, string> = {
   off: t("未开放"),
@@ -80,7 +81,10 @@ export function LocalHelperExposureSettings() {
     };
   }, []);
 
-  if (!status || (!status.enabled && (status.state === "unavailable" || !loggedIn))) return null;
+  const hidden = !status || (!status.enabled && (status.state === "unavailable" || !loggedIn));
+  // Settings search (and the jump palette) only offer this setting while it is shown.
+  useEffect(() => reportSettingVisible("local-helper-exposure", !hidden), [hidden]);
+  if (hidden || !status) return null;
 
   const toggle = async () => {
     if (busy) return;

@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { useUi } from "../../../app/store";
 import { IconList, IconEdit, IconAlert, IconLoader, IconClose, IconImage, IconKey, IconMonitor } from "../../../ui/icons";
 import { ProductionWriteRiskNotice } from "../../production/ProductionWarning";
 import { DESKTOP } from "../../../ipc/env";
@@ -16,7 +18,16 @@ import { t } from "../../../i18n";
 export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
   const privacyGuard = usePrivacyGuard();
   const imageNoticeSeen = usePrivacyImageNoticeSeen();
-  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen } = ctx;
+  const { planMode, editing, editSubmitting, input, submitEditResend, setEditing, activeRun, stop, follow, syncNotice, activeGeneration, activeRunRef, resyncRun, busy, hitlWaiting, conv, aiScopeProduction, refs, setRefs, images, setImages, slashMenuOpen, slashItems, slashEmptyText, slashIndex, setSlashIndex, modelQuery, skillOptions, atOpen, atItems, atIndex, setAtIndex, pickRef, inputRef, sessionId, onInputChange, onPaste, setAtOpen, steer, send, setModelPanelOpen, imageInputRef, onPickImages, conversationRuns, perm, permOpen, permError, permScope, setPermOpen, tabId, bindings, reclaimKeyLabel, runTakeover, modelPanelOpen, setInput } = ctx;
+  // A prompt queued elsewhere (the jump palette's "ask AI" row) prefills the visible composer; it is never sent.
+  const pendingPrompt = useUi((s) => s.aiPendingPrompt);
+  useEffect(() => {
+    if (pendingPrompt === null) return;
+    const text = useUi.getState().takeAiPendingPrompt();
+    if (!text) return;
+    setInput((prev) => (prev.trim() === "" ? text : `${prev.trimEnd()}\n${text}`));
+    inputRef.current?.focus();
+  }, [pendingPrompt, setInput, inputRef]);
   // Images are sent unchanged under the guard; tell the user once per device.
   const imageNoticeVisible = privacyGuard.enabled && images.length > 0 && !imageNoticeSeen;
   const sendMessage = () => {

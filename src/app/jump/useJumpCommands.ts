@@ -50,6 +50,8 @@ export interface JumpCommand {
   icon: typeof IconTerminal;
   // keepOpen leaves the palette open after running, for commands that change what it shows.
   keepOpen?: boolean;
+  // ephemeral commands (an id that names a position, such as the Nth link on screen) are not remembered for ranking.
+  ephemeral?: boolean;
   run: () => void;
 }
 

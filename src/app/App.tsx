@@ -221,6 +221,7 @@ function AppShell() {
       setEditingAsset: setPaletteEditingAsset,
       workspaceMenu: wsMenu,
       onCloseWorkspaceMenu: closeWorkspaceSwitcher,
+      onOpenAi: () => setRightOpen(true),
     },
   };
 

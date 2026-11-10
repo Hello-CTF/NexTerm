@@ -37,6 +37,8 @@ export interface AppDialogsProps {
   setEditingAsset: (asset: Asset | null) => void;
   workspaceMenu: ContextMenuState | null;
   onCloseWorkspaceMenu: () => void;
+  // onOpenAi shows the AI sidebar the way the shell does, including as the overlay drawer on narrow layouts.
+  onOpenAi: () => void;
 }
 
 // AppDialogs hosts the app-level overlays: the jump palette, the palette's asset editor,
@@ -48,6 +50,7 @@ export function AppDialogs({
   setEditingAsset,
   workspaceMenu,
   onCloseWorkspaceMenu,
+  onOpenAi,
 }: AppDialogsProps) {
   const queryClient = useQueryClient();
   return (
@@ -60,6 +63,7 @@ export function AppDialogs({
             onClose={() => setJumpScope(null)}
             onEditAsset={(asset) => setEditingAsset(asset)}
             attentionOf={jumpAttentionOf}
+            onOpenAi={onOpenAi}
           />
         </Lazy>
       )}

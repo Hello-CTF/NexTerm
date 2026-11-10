@@ -34,6 +34,9 @@ import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessS
 import type { TerminalAttentionEvent } from "../../ipc/events";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
 import type { Asset, SessionInfo } from "../../ipc/commands";
+import { onSettingsSection } from "../../features/settings/settingsNavigation";
+import { recordCommandUse } from "../../app/jump/commandRecency";
+import { isMac, setMacPlatform } from "../../app/platform";
 
 const WEB: Asset = {
   id: "a1",
@@ -505,5 +508,177 @@ describe("jump palette number keys and split", () => {
     setInputValue(combobox(view), "deploy");
     keyDown(combobox(view), "Enter");
     expect(useUi.getState().workspaces.find((item) => item.id === "ws-a")!.panes).toHaveLength(1);
+  });
+});
+
+describe("jump palette search extras", () => {
+  const sectionHeaders = (view: MountedView) =>
+    [...view.container.querySelectorAll<HTMLElement>("[data-command-section]")].map((header) => header.textContent);
+
+  it("lists matching settings under their own header and opens the exact setting", async () => {
+    const onClose = vi.fn();
+    const view = await mountPalette({ onClose });
+    expect(sectionHeaders(view)).not.toContain("设置");
+
+    setInputValue(combobox(view), "OSC 52");
+    expect(sectionHeaders(view)).toEqual(["设置"]);
+    const row = options(view).find((option) => option.textContent?.includes("允许远程主机写入剪贴板（OSC 52）"));
+    expect(row).toBeDefined();
+
+    const requests: [string, string | undefined][] = [];
+    const off = onSettingsSection((sectionId, itemId) => requests.push([sectionId, itemId]));
+    click(row!);
+    off();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(requests).toEqual([["settings-terminal", "osc52"]]);
+    const tabs = useUi.getState().workspaces.flatMap((item) => item.panes.flatMap((pane) => pane.tabs));
+    expect(tabs.some((tab) => tab.kind === "settings")).toBe(true);
+  });
+
+  it("offers to ask AI when nothing matches well and only prefills the composer", async () => {
+    const onClose = vi.fn();
+    useUi.setState({ rightOpen: false, aiPendingPrompt: null });
+    const view = await mountPalette({ onClose });
+
+    setInputValue(combobox(view), "logs");
+    expect(options(view).some((option) => option.textContent?.includes("问 AI"))).toBe(false);
+
+    setInputValue(combobox(view), "why is nginx slow");
+    const ask = options(view).find((option) => option.textContent?.includes("问 AI：why is nginx slow"));
+    expect(ask).toBeDefined();
+    expect(view.container.textContent).toContain("没有匹配的会话、主机或命令");
+
+    keyDown(combobox(view), "End");
+    keyDown(combobox(view), "Enter");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useUi.getState().aiPendingPrompt).toBe("why is nginx slow");
+    expect(useUi.getState().rightOpen).toBe(true);
+  });
+
+  it("marks the matched part of a row label", async () => {
+    const view = await mountPalette();
+    expect(view.container.querySelector(".nx-command-match")).toBeNull();
+    setInputValue(combobox(view), "dep");
+    const deploy = options(view).find((option) => option.textContent?.startsWith("deploy"))!;
+    expect([...deploy.querySelectorAll("mark.nx-command-match")].map((mark) => mark.textContent)).toEqual(["dep"]);
+  });
+
+  it("writes the Alt+N row hint the way the platform does", async () => {
+    const wasMac = isMac();
+    const hint = (view: MountedView) => options(view)[0].querySelector('[aria-hidden="true"].nx-command-hint')?.textContent;
+    try {
+      setMacPlatform(false);
+      let view = await mountPalette();
+      expect(hint(view)).toBe("Alt+1");
+      mounted?.unmount();
+      setMacPlatform(true);
+      view = await mountPalette();
+      expect(hint(view)).toBe("⌥1");
+    } finally {
+      setMacPlatform(wasMac);
+    }
+  });
+
+  it("puts recently used commands first within their section and remembers a run command", async () => {
+    const commandLabels = (view: MountedView) =>
+      optionLabels(view).filter((label) => label === "快速连接…" || label === "打开设置");
+    let view = await mountPalette();
+    expect(commandLabels(view)).toEqual(["快速连接…", "打开设置"]);
+    mounted?.unmount();
+
+    recordCommandUse("settings");
+    view = await mountPalette();
+    expect(commandLabels(view)).toEqual(["打开设置", "快速连接…"]);
+    const headers = sectionHeaders(view);
+    expect(new Set(headers).size).toBe(headers.length);
+    mounted?.unmount();
+
+    localStorage.clear();
+    view = await mountPalette();
+    setInputValue(combobox(view), "打开设置");
+    keyDown(combobox(view), "Enter");
+    expect(JSON.parse(localStorage.getItem("nexterm.commandRecency.v1") ?? "{}")).toHaveProperty("settings");
+  });
+});
+
+describe("jump palette with many hosts", () => {
+  const many = Array.from({ length: 5000 }, (_, index) => ({
+    ...WEB,
+    id: `host-${index}`,
+    name: `host-${String(index).padStart(4, "0")}`,
+    host: `10.1.${Math.floor(index / 250)}.${index % 250}`,
+  }));
+
+  // jsdom has no layout: give the listbox a viewport and each measured row a height, as a browser would.
+  function stubLayout(): () => void {
+    const height = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetHeight");
+    const width = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "offsetWidth");
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        if (this.getAttribute("role") === "listbox") return 340;
+        return this.hasAttribute("data-index") ? 34 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 560 });
+    return () => {
+      if (height) Object.defineProperty(HTMLElement.prototype, "offsetHeight", height);
+      if (width) Object.defineProperty(HTMLElement.prototype, "offsetWidth", width);
+    };
+  }
+
+  async function expectWindowedKeyboardReach(view: MountedView) {
+    expect(options(view).length).toBeGreaterThan(0);
+    expect(options(view).length).toBeLessThan(60);
+    expect(options(view)[0].getAttribute("aria-setsize")).toBe("5000");
+
+    keyDown(combobox(view), "End");
+    const active = combobox(view).getAttribute("aria-activedescendant");
+    expect(active).toBeTruthy();
+    const activeOption = document.getElementById(active!);
+    expect(activeOption?.getAttribute("aria-selected")).toBe("true");
+    expect(activeOption?.textContent).toContain("host-4999");
+    expect(options(view).length).toBeLessThan(60);
+
+    setInputValue(combobox(view), "host-12");
+    expect(options(view).length).toBeLessThan(60);
+    expect(optionLabels(view)[0]).toBe("host-1200");
+  }
+
+  it("renders only the rows in view while keyboard targeting still reaches every row", async () => {
+    mocks.list.mockResolvedValue(many);
+    const restore = stubLayout();
+    try {
+      const view = await mountPalette({ scope: "hosts" });
+      expect(view.container.querySelector("[data-index]")).not.toBeNull();
+      await expectWindowedKeyboardReach(view);
+    } finally {
+      restore();
+    }
+  });
+
+  it("moves a page at a time with PageDown and PageUp and stops at either end", async () => {
+    mocks.list.mockResolvedValue(many.slice(0, 20));
+    const view = await mountPalette({ scope: "hosts" });
+    const activeLabel = () => document.getElementById(combobox(view).getAttribute("aria-activedescendant")!)?.textContent ?? "";
+
+    keyDown(combobox(view), "PageDown");
+    expect(activeLabel()).toContain("host-0008");
+    keyDown(combobox(view), "PageDown");
+    keyDown(combobox(view), "PageDown");
+    expect(activeLabel()).toContain("host-0019");
+    keyDown(combobox(view), "PageUp");
+    expect(activeLabel()).toContain("host-0011");
+    keyDown(combobox(view), "PageUp");
+    const event = keyDown(combobox(view), "PageUp");
+    expect(event.defaultPrevented).toBe(true);
+    expect(activeLabel()).toContain("host-0000");
+  });
+
+  it("falls back to a bounded window while the list has no measured size", async () => {
+    mocks.list.mockResolvedValue(many);
+    const view = await mountPalette({ scope: "hosts" });
+    expect(view.container.querySelector("[data-index]")).toBeNull();
+    await expectWindowedKeyboardReach(view);
   });
 });

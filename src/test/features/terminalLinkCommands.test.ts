@@ -19,6 +19,9 @@ describe("terminalLinkCommands", () => {
 
     const links = commands.filter((c) => c.section === "当前终端链接");
     expect(links).toHaveLength(2);
+    // Their ids name a screen position, so palette ranking must not remember them; the panel command is stable.
+    expect(links.every((link) => link.ephemeral)).toBe(true);
+    expect(panel?.ephemeral).toBeFalsy();
     expect(links[0].label).toContain("a.example.com");
     expect(links[0].hint).toContain("see");
     links[0].run();

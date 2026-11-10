@@ -10,6 +10,8 @@ import {
 } from "../store";
 import { type SessionInfo } from "../../ipc/commands";
 import { wailsDragRegionStyle, wailsNoDragRegionStyle } from "../platform";
+import { formatBinding, useKeybindings } from "../keybindings";
+import { useShell } from "./useShell";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
 import { InboxButton } from "../../features/inbox/InboxButton";
 import {
@@ -20,6 +22,7 @@ import {
   IconInfo,
   IconLayers,
   IconLoader,
+  IconSearch,
   IconSettings,
   IconSparkles,
   IconXCircle,
@@ -68,6 +71,12 @@ function HeaderProductionMarker({ tab }: { tab: AppTab | null }) {
   );
 }
 
+// bindingKeys splits a formatted binding such as "Ctrl+Shift+K" into its keys, keeping a literal "+" key.
+function bindingKeys(binding: string | null): string[] {
+  if (!binding) return [];
+  return formatBinding(binding).split(/\+(?!$)/).filter(Boolean);
+}
+
 export interface AppHeaderProps {
   ws: Workspace | null | undefined;
   activeTab: AppTab | null;
@@ -96,6 +105,9 @@ export function AppHeader({
   const ActiveWsIcon = ws ? workspaceIcon(ws) : null;
   const wsStatus = useSessionStatus(ws?.sessionId);
   const wsLiveness = useSessionLiveness(ws?.sessionId);
+  const mobile = useShell() === "mobile";
+  const paletteKeys = bindingKeys(useKeybindings().commandPalette);
+  const paletteLabel = t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel });
   return (
     <header
       className="nx-app-header flex h-[36px] shrink-0 items-center gap-2 border-b border-neutral-800/60 bg-neutral-950 pl-2.5 pr-2.5"
@@ -149,6 +161,26 @@ export function AppHeader({
         </span>
       )}
       <div className="nx-spacer" data-wails-drag-region style={wailsDragRegionStyle} />
+      {!mobile && (
+        <button
+          type="button"
+          className="nx-header-search"
+          style={wailsNoDragRegionStyle}
+          title={paletteLabel}
+          aria-label={paletteLabel}
+          onClick={onOpenPalette}
+        >
+          <IconSearch size={13} className="shrink-0" />
+          <span className="nx-header-search-text">{t("搜索会话、主机或命令")}</span>
+          {paletteKeys.length > 0 && (
+            <span className="nx-header-search-keys" aria-hidden="true">
+              {paletteKeys.map((key, index) => (
+                <kbd key={index} className="nx-kbd">{key}</kbd>
+              ))}
+            </span>
+          )}
+        </button>
+      )}
       <InboxButton />
       <button
         className={`nx-icon-btn ${rightDockOpen ? "is-active" : ""}`} style={wailsNoDragRegionStyle}
@@ -159,14 +191,16 @@ export function AppHeader({
       >
         <IconSparkles size={15} />
       </button>
-      <button
-        className="nx-icon-btn" style={wailsNoDragRegionStyle}
-        title={t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel })}
-        aria-label={t("跳转面板 ({commandPaletteLabel})", { commandPaletteLabel })}
-        onClick={onOpenPalette}
-      >
-        <IconCommand size={15} />
-      </button>
+      {mobile && (
+        <button
+          className="nx-icon-btn" style={wailsNoDragRegionStyle}
+          title={paletteLabel}
+          aria-label={paletteLabel}
+          onClick={onOpenPalette}
+        >
+          <IconCommand size={15} />
+        </button>
+      )}
       {windowControls}
     </header>
   );

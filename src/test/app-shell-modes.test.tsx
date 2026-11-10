@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, createElement } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { flush, mount, type MountedView } from "./features/reactTestUtils";
+import { flush, flushUntil, mount, type MountedView } from "./features/reactTestUtils";
 
 const mocks = vi.hoisted(() => ({
   assetList: vi.fn(),
@@ -104,7 +104,18 @@ vi.mock("../features/explorer/AssetTree", () => ({
   AssetEditor: () => null,
 }));
 vi.mock("../features/fleet/DeviceSessionBoundary", () => ({ DeviceSessionBoundary: () => null }));
-vi.mock("../app/JumpPalette", () => ({ JumpPalette: () => null }));
+// The palette stub exposes only the shell's AI opener, which its ask-AI row calls.
+vi.mock("../app/JumpPalette", () => ({
+  JumpPalette: (props: { onOpenAi?: () => void; onClose: () => void }) =>
+    createElement("button", {
+      type: "button",
+      "data-palette-ask-ai": "",
+      onClick: () => {
+        props.onClose();
+        props.onOpenAi?.();
+      },
+    }),
+}));
 vi.mock("../app/TakeoverBanner", () => ({ TakeoverBanner: () => null }));
 vi.mock("../app/UpdateBanner", () => ({ UpdateBanner: () => null }));
 vi.mock("../app/DekUnlockBanner", () => ({ DekUnlockBanner: () => null }));
@@ -272,6 +283,21 @@ describe("app shell modes", () => {
     expect(backdrop).not.toBeNull();
     act(() => backdrop?.click());
     expect(document.querySelector('[role="navigation"][aria-label="左侧栏"]')).toBeNull();
+  });
+
+  it("compact: the jump palette opens the AI sidebar as the overlay drawer", async () => {
+    stubDevice(NARROW_WINDOW);
+    mounted = mountApp();
+    await flush();
+    expect(button("AI 助手")?.getAttribute("aria-pressed")).toBe("false");
+
+    act(() => document.querySelector<HTMLButtonElement>('button[aria-label^="跳转面板"]')?.click());
+    await flushUntil(() => document.querySelector("[data-palette-ask-ai]") !== null);
+    act(() => document.querySelector<HTMLButtonElement>("[data-palette-ask-ai]")!.click());
+    await flush();
+
+    expect(button("AI 助手")?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".nx-right-dock:not(.is-hidden)")).not.toBeNull();
   });
 
   it("mobile: overlay sidebars, no window controls, no double-click maximise and no local terminal", async () => {

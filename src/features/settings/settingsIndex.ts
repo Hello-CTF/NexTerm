@@ -9,6 +9,27 @@ import { isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { terminalDefaultUsesAccount } from "../../app/preferences";
 import { DESKTOP } from "../../ipc/env";
+import {
+  IconActivity,
+  IconAlert,
+  IconArchive,
+  IconBell,
+  IconBot,
+  IconCommand,
+  IconDownload,
+  IconFlag,
+  IconGlobe,
+  IconHistory,
+  IconLayers,
+  IconLock,
+  IconMonitor,
+  IconServer,
+  IconShield,
+  IconShieldCheck,
+  IconSparkles,
+  IconStar,
+  IconTerminal,
+} from "../../ui/icons";
 import { t } from "../../i18n";
 
 export type SettingsSectionId =
@@ -34,6 +55,42 @@ export type SettingsSectionId =
   | "settings-history"
   | "settings-bundle"
   | "settings-share";
+
+export type SettingsGroupId = "appearance" | "terminal" | "notifications" | "shortcuts" | "ai" | "security" | "account" | "app";
+
+export type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
+
+// The settings sections in navigation order. Kept here rather than in the settings view so the jump palette can
+// search and link to them without loading the view.
+const ALL_SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: t("外观"), icon: IconMonitor, group: "appearance" },
+  { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
+  { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
+  { id: "settings-keyword-highlight", label: t("关键词高亮"), icon: IconStar, group: "terminal" },
+  { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
+  { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-update", label: t("软件更新"), icon: IconDownload, group: "app" },
+  { id: "settings-diagnostics", label: t("诊断与调试"), icon: IconActivity, group: "app" },
+  { id: "settings-ai-model", label: t("模型"), icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: t("AI 信息脱敏"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-rules", label: t("AI 拦截规则"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
+  { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
+  { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
+  { id: "settings-app-lock", label: t("锁定 NexTerm"), icon: IconLock, group: "security" },
+  { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
+  { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
+  { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
+  { id: "settings-history", label: t("历史会话"), icon: IconHistory, group: "account" },
+  { id: "settings-bundle", label: t("资产包"), icon: IconArchive, group: "account" },
+  { id: "settings-share", label: t("分享"), icon: IconGlobe, group: "account" },
+] as const satisfies readonly SettingsSectionDef[];
+
+export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
+  if (section.id === "settings-update") return DESKTOP;
+  return true;
+});
 
 export interface SettingsSearchMeta {
   description: string;
@@ -145,6 +202,18 @@ export interface SettingsItem {
 
 export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 
+// Some settings render only in runtime states that are known after an async load (for example, while an account is
+// logged in). Their components report whether they render; search lists such an item only after it reported visible.
+const runtimeVisible = new Map<string, boolean>();
+
+export function reportSettingVisible(itemId: string, visible: boolean): void {
+  runtimeVisible.set(itemId, visible);
+}
+
+function reportedVisible(itemId: string): boolean {
+  return runtimeVisible.get(itemId) ?? false;
+}
+
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "ui-language", section: "settings-appearance", label: t("界面语言"), description: t("简体中文、繁體中文、English、日本語等"), keywords: ["language", "locale", "i18n", t("语言"), t("語言"), "English", t("日本語"), "한국어", "Deutsch", "Français", "Español", "Русский"] },
   { id: "ui-theme", section: "settings-appearance", label: t("界面主题"), description: t("跟随系统、浅色或深色"), keywords: ["theme", "dark", "light", t("主题"), t("深色"), t("浅色")] },
@@ -179,7 +248,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
   { id: "app-lock-idle", section: "settings-app-lock", label: t("闲置自动锁定 NexTerm"), keywords: ["lock screen", "idle", "timeout", t("锁屏"), t("锁定")] },
-  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
+  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP && reportedVisible("local-helper-exposure") },
 ];
 
 export type SettingsSearchResult =
