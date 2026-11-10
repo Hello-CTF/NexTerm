@@ -3277,7 +3277,6 @@
   "搜索": "Rechercher",
   "搜索主机 / 指纹": "Rechercher un hôte / une empreinte",
   "搜索仅过滤当前已加载分块": "La recherche ne filtre que les blocs actuellement chargés",
-  "搜索会话、主机、命令": "Rechercher sessions, hôtes, commandes",
   "搜索会话、主机或命令": "Rechercher une session, un hôte ou une commande",
   "搜索会话、主机或命令，或输入 user@host:port": "Rechercher une session, un hôte ou une commande, ou saisir user@host:port",
   "搜索全部表": "Rechercher dans toutes les tables",

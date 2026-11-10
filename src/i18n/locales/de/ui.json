@@ -3271,7 +3271,6 @@
   "搜索": "Suchen",
   "搜索主机 / 指纹": "Host / Fingerabdruck suchen",
   "搜索仅过滤当前已加载分块": "Die Suche filtert nur die aktuell geladenen Abschnitte",
-  "搜索会话、主机、命令": "Sitzungen, Hosts, Befehle suchen",
   "搜索会话、主机或命令": "Sitzungen, Hosts oder Befehle suchen",
   "搜索会话、主机或命令，或输入 user@host:port": "Sitzungen, Hosts oder Befehle suchen oder user@host:port eingeben",
   "搜索全部表": "Alle Tabellen durchsuchen",

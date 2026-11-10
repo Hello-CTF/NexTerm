@@ -171,7 +171,7 @@ export function AppHeader({
           onClick={onOpenPalette}
         >
           <IconSearch size={13} className="shrink-0" />
-          <span className="nx-header-search-text">{t("搜索会话、主机、命令")}</span>
+          <span className="nx-header-search-text">{t("搜索会话、主机或命令")}</span>
           {paletteKeys.length > 0 && (
             <span className="nx-header-search-keys" aria-hidden="true">
               {paletteKeys.map((key, index) => (

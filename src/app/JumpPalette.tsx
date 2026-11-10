@@ -71,6 +71,7 @@ const SETTINGS_RESULT_LIMIT = 6;
 // Longer lists render only the rows in view; short ones render whole, which keeps them simple to inspect.
 const VIRTUALIZE_AFTER = 60;
 const FALLBACK_WINDOW = 24;
+const PAGE_ROWS = 8;
 const VIRTUAL_INITIAL_RECT = { width: 560, height: 340 };
 // A query whose best row matched only as a fuzzy subsequence, or nothing, also offers asking AI.
 const STRONG_MATCH_TIER = 2;
@@ -187,12 +188,15 @@ export function JumpPalette({
   scope: initialScope = "all",
   onEditAsset,
   attentionOf,
+  onOpenAi,
 }: {
   onClose: () => void;
   scope?: JumpScope;
   onEditAsset?: (asset: Asset) => void;
   // attentionOf ranks sessions by attention state once the session awareness store provides it.
   attentionOf?: (session: JumpSessionEntry) => JumpAttention | undefined;
+  // onOpenAi opens the AI sidebar through the shell's docks, so an overlay layout shows it as its drawer.
+  onOpenAi?: () => void;
 }) {
   const [scope, setScope] = useState<JumpScope>(initialScope);
   const showAll = scope === "all";
@@ -616,9 +620,9 @@ export function JumpPalette({
   const askAi = (text: string) => {
     if (closedRef.current) return;
     closeOverlay();
-    const st = useUi.getState();
-    st.queueAiPrompt(text);
-    st.setRightOpen(true);
+    useUi.getState().queueAiPrompt(text);
+    if (onOpenAi) onOpenAi();
+    else useUi.getState().setRightOpen(true);
   };
 
   const runCommand = (command: JumpCommand) => {
@@ -679,7 +683,7 @@ export function JumpPalette({
         void jumpToSession(row.entry.target);
         return;
       case "command":
-        recordCommandUse(row.command.id);
+        if (!row.command.ephemeral) recordCommandUse(row.command.id);
         runCommand(row.command);
         return;
       case "setting":
@@ -741,6 +745,11 @@ export function JumpPalette({
     } else if (event.key === "End") {
       event.preventDefault();
       moveCursor(rows.length - 1);
+    } else if (event.key === "PageDown" || event.key === "PageUp") {
+      // A page moves a fixed number of rows and stops at either end instead of wrapping.
+      event.preventDefault();
+      const step = event.key === "PageDown" ? PAGE_ROWS : -PAGE_ROWS;
+      if (rows.length > 0) setCursor(Math.max(0, Math.min(rows.length - 1, activeIndex + step)));
     } else if (event.key === "Enter" && !event.repeat && rows[activeIndex]) {
       if (isEditableTarget(event.target)) {
         event.preventDefault();

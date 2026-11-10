@@ -657,6 +657,24 @@ describe("jump palette with many hosts", () => {
     }
   });
 
+  it("moves a page at a time with PageDown and PageUp and stops at either end", async () => {
+    mocks.list.mockResolvedValue(many.slice(0, 20));
+    const view = await mountPalette({ scope: "hosts" });
+    const activeLabel = () => document.getElementById(combobox(view).getAttribute("aria-activedescendant")!)?.textContent ?? "";
+
+    keyDown(combobox(view), "PageDown");
+    expect(activeLabel()).toContain("host-0008");
+    keyDown(combobox(view), "PageDown");
+    keyDown(combobox(view), "PageDown");
+    expect(activeLabel()).toContain("host-0019");
+    keyDown(combobox(view), "PageUp");
+    expect(activeLabel()).toContain("host-0011");
+    keyDown(combobox(view), "PageUp");
+    const event = keyDown(combobox(view), "PageUp");
+    expect(event.defaultPrevented).toBe(true);
+    expect(activeLabel()).toContain("host-0000");
+  });
+
   it("falls back to a bounded window while the list has no measured size", async () => {
     mocks.list.mockResolvedValue(many);
     const view = await mountPalette({ scope: "hosts" });

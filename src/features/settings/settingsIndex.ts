@@ -189,6 +189,18 @@ export interface SettingsItem {
 
 export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 
+// Some settings render only in runtime states that are known after an async load (for example, while an account is
+// logged in). Their components report whether they render; search lists such an item only after it reported visible.
+const runtimeVisible = new Map<string, boolean>();
+
+export function reportSettingVisible(itemId: string, visible: boolean): void {
+  runtimeVisible.set(itemId, visible);
+}
+
+function reportedVisible(itemId: string): boolean {
+  return runtimeVisible.get(itemId) ?? false;
+}
+
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "ui-language", section: "settings-appearance", label: t("界面语言"), description: t("简体中文、繁體中文、English、日本語等"), keywords: ["language", "locale", "i18n", t("语言"), t("語言"), "English", t("日本語"), "한국어", "Deutsch", "Français", "Español", "Русский"] },
   { id: "ui-theme", section: "settings-appearance", label: t("界面主题"), description: t("跟随系统、浅色或深色"), keywords: ["theme", "dark", "light", t("主题"), t("深色"), t("浅色")] },
@@ -217,7 +229,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
-  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
+  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP && reportedVisible("local-helper-exposure") },
 ];
 
 export type SettingsSearchResult =

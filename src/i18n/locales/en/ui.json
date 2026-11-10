@@ -3274,7 +3274,6 @@
   "搜索": "Search",
   "搜索主机 / 指纹": "Search hosts / fingerprints",
   "搜索仅过滤当前已加载分块": "Search filters only the chunks loaded so far",
-  "搜索会话、主机、命令": "Search sessions, hosts, commands",
   "搜索会话、主机或命令": "Search sessions, hosts or commands",
   "搜索会话、主机或命令，或输入 user@host:port": "Search sessions, hosts or commands, or enter user@host:port",
   "搜索全部表": "Search all tables",

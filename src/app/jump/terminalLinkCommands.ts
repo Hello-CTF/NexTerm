@@ -28,6 +28,7 @@ export function terminalLinkCommands(source: TerminalLinkSource, bindingHint?: s
       label: displayTerminalLink(link.url),
       hint: context || undefined,
       section: t("当前终端链接"),
+      ephemeral: true,
       icon: IconTerminal,
       run: () => source.open(link.url),
     });

@@ -41,7 +41,7 @@ describe("header search pill", () => {
     const pill = view.container.querySelector<HTMLButtonElement>(".nx-header-search");
     expect(pill).not.toBeNull();
     expect(pill!.getAttribute("aria-label")).toMatch(/^跳转面板/);
-    expect(pill!.textContent).toContain("搜索会话、主机、命令");
+    expect(pill!.textContent).toContain("搜索会话、主机或命令");
     expect([...pill!.querySelectorAll(".nx-kbd")].map((key) => key.textContent)).toEqual(["Ctrl", "Shift", "P"]);
     expect(pill!.style.getPropertyValue("--wails-draggable")).toBe("no-drag");
     click(pill!);

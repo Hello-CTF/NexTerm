@@ -3283,7 +3283,6 @@
   "搜索": "Buscar",
   "搜索主机 / 指纹": "Buscar host / huella",
   "搜索仅过滤当前已加载分块": "La búsqueda solo filtra los fragmentos ya cargados",
-  "搜索会话、主机、命令": "Buscar sesiones, hosts, comandos",
   "搜索会话、主机或命令": "Buscar sesiones, hosts o comandos",
   "搜索会话、主机或命令，或输入 user@host:port": "Busca sesiones, hosts o comandos, o escribe user@host:port",
   "搜索全部表": "Buscar en todas las tablas",
