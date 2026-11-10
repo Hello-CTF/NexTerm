@@ -65,6 +65,13 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		}
 		invocation.DebugCapture = enabled
 	}
+	if raw := strings.TrimSpace(getenv("NEXTERM_REQUIRE_VAULT")); raw != "" {
+		required, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Invocation{}, fmt.Errorf("invalid NEXTERM_REQUIRE_VAULT value %q (want 1 or 0)", raw)
+		}
+		invocation.RequireVault = required
+	}
 	dbMaxOpenConnsEnv := getenv("NEXTERM_DB_MAX_OPEN_CONNS")
 	commandSeen := false
 
@@ -245,7 +252,7 @@ Flags:
   --db-password-file PATH  Read the database password from a 0600 file
                       (env NEXTERM_DB_PASSWORD_FILE); rejected if DSN already contains a password
   --db-max-open-conns N  Remote database pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
-  --require-vault     Fail startup unless the credential vault unlocks
+  --require-vault     Fail startup unless the credential vault unlocks (env NEXTERM_REQUIRE_VAULT=1)
   --sync-only         Restrict the server to sync routes
   --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);
                       disabled by default, loopback only (a bare ":PORT" binds 127.0.0.1)
@@ -254,6 +261,20 @@ Flags:
                       (env NEXTERM_DEBUG_CAPTURE=1); output goes to <data-dir>/logs/debug-capture
   --version           Print the version
   -h, --help          Print this help
+
+Server environment (serve only):
+  NEXTERM_ALLOWED_ORIGINS  Extra origins (host[:port] patterns, comma separated) accepted
+                      besides the request Host; set it when a reverse proxy rewrites Host
+  NEXTERM_TRUSTED_PROXY_CIDRS  Proxy addresses (comma separated) whose X-Forwarded-Proto is trusted
+  NEXTERM_TRUST_FORWARDED_FOR  true/false; also trust X-Forwarded-For from those proxies
+  NEXTERM_WS_KEEPALIVE, NEXTERM_WS_PING_TIMEOUT, NEXTERM_WS_WRITE_TIMEOUT
+                      WebSocket ping interval (negative disables), pong wait and write
+                      deadline as Go durations (defaults 25s, 10s, 10s)
+  NEXTERM_WS_COMPRESSION  WebSocket compression override: takeover, nocontext or off
+  NEXTERM_EVENT_QUEUE_SIZE, NEXTERM_EVENT_BUFFER_SIZE
+                      Per-subscriber event queue and replay buffer length (defaults 64, 256)
+  NEXTERM_PPROF_CONTENTION  With pprof enabled, sample block/mutex profiles at rate N
+                      (1 records every event; default 0 = off)
 `, program, defaultCommand)
 }
 
