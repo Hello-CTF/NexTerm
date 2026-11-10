@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+// transportCloseTimeout bounds how long shutdown waits for open WebSockets to
+// finish their going-away close handshake before they are dropped.
+var transportCloseTimeout = 10 * time.Second
+
 type ServeConfig struct {
 	Listen         string
 	WebRoot        string
@@ -71,7 +75,9 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		handler = mux
 	} else if config.CloseTransport != nil {
 		defer func() {
-			returnErr = errors.Join(returnErr, config.CloseTransport(context.Background()))
+			closeCtx, cancel := context.WithTimeout(context.Background(), transportCloseTimeout)
+			defer cancel()
+			returnErr = errors.Join(returnErr, config.CloseTransport(closeCtx))
 		}()
 	}
 	if config.Stderr == nil {

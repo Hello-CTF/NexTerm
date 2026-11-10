@@ -89,14 +89,9 @@ func TestStartRejectsNonLoopback(t *testing.T) {
 }
 
 func TestStartServesEndpoints(t *testing.T) {
-	previousMutex := runtime.SetMutexProfileFraction(-1)
-	runtime.SetMutexProfileFraction(previousMutex)
-	server, err := Start(testLogger(), ":0")
+	server, err := start(testLogger(), ":0", func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
-	}
-	if rate := runtime.SetMutexProfileFraction(-1); rate != 1 {
-		t.Fatalf("mutex profile fraction after Start = %d, want 1", rate)
 	}
 	addr := server.Addr()
 	if addr == "" || !strings.HasPrefix(addr, "127.0.0.1:") {
@@ -118,6 +113,49 @@ func TestStartServesEndpoints(t *testing.T) {
 		response.Body.Close()
 		if err != nil || response.StatusCode != http.StatusOK || len(body) == 0 {
 			t.Fatalf("GET %s = %d, %d bytes, %v", path, response.StatusCode, len(body), err)
+		}
+	}
+}
+
+func TestStartContentionProfilingIsOptIn(t *testing.T) {
+	previousMutex := runtime.SetMutexProfileFraction(-1)
+	t.Cleanup(func() { runtime.SetMutexProfileFraction(previousMutex) })
+	runtime.SetMutexProfileFraction(0)
+	idle, err := start(testLogger(), ":0", func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate := runtime.SetMutexProfileFraction(-1); rate != 0 {
+		t.Fatalf("mutex profile fraction without %s = %d, want 0", EnvContention, rate)
+	}
+	if err := idle.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled, err := start(testLogger(), ":0", func(key string) string {
+		if key == EnvContention {
+			return "5"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rate := runtime.SetMutexProfileFraction(-1); rate != 5 {
+		t.Fatalf("mutex profile fraction with %s=5 = %d, want 5", EnvContention, rate)
+	}
+	if err := enabled.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rate := runtime.SetMutexProfileFraction(-1); rate != 0 {
+		t.Fatalf("mutex profile fraction after Close = %d, want 0", rate)
+	}
+}
+
+func TestStartRejectsInvalidContention(t *testing.T) {
+	for _, value := range []string{"yes", "-1", "1.5"} {
+		if _, err := start(testLogger(), ":0", func(string) string { return value }); err == nil {
+			t.Fatalf("%s=%q was accepted", EnvContention, value)
 		}
 	}
 }

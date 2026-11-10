@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -20,13 +21,13 @@ func TestSocketTrackerCloseSessionAndUser(t *testing.T) {
 	identity := func(user, session, device string) *account.Identity {
 		return &account.Identity{UserID: user, SessionID: session, DeviceID: device}
 	}
-	_, aRevoked, aRelease, err := tracker.trackAccount(ctx, identity("u1", "s1", "d1"))
+	_, aRevoked, aRelease, err := tracker.trackAccount(ctx, nil, identity("u1", "s1", "d1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, bRevoked, bRelease, _ := tracker.trackAccount(ctx, identity("u1", "s2", ""))
-	_, cRevoked, cRelease, _ := tracker.trackAccount(ctx, identity("u2", "s3", "d1"))
-	_, openRevoked, openRelease, _ := tracker.trackAccount(ctx, nil)
+	_, bRevoked, bRelease, _ := tracker.trackAccount(ctx, nil, identity("u1", "s2", ""))
+	_, cRevoked, cRelease, _ := tracker.trackAccount(ctx, nil, identity("u2", "s3", "d1"))
+	_, openRevoked, openRelease, _ := tracker.trackAccount(ctx, nil, nil)
 	defer openRelease()
 	defer cRelease()
 	closed := func(ch <-chan struct{}) bool {
@@ -75,7 +76,7 @@ func TestSocketTrackerCloseSessionAndUser(t *testing.T) {
 
 func TestSocketTrackerRejectsAfterClose(t *testing.T) {
 	var tracker socketTracker
-	_, _, release, err := tracker.trackAccount(context.Background(), &account.Identity{UserID: "u", SessionID: "s"})
+	_, _, release, err := tracker.trackAccount(context.Background(), nil, &account.Identity{UserID: "u", SessionID: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestSocketTrackerRejectsAfterClose(t *testing.T) {
 		defer tracker.mu.Unlock()
 		return tracker.closed
 	})
-	if _, _, _, err := tracker.trackAccount(context.Background(), nil); err == nil {
+	if _, _, _, err := tracker.trackAccount(context.Background(), nil, nil); err == nil {
 		t.Fatal("track after close must fail")
 	}
 	release()
@@ -349,4 +350,43 @@ func newAccountFixtureWithChannels(t *testing.T, channels ChannelBinder) *accoun
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{server: server, http: httpServer, accounts: accounts, db: database.DB(), client: &http.Client{}}
+}
+
+func TestSocketTrackerCloseAndWaitHonoursDeadline(t *testing.T) {
+	var tracker socketTracker
+	trackedCtx, _, release, err := tracker.trackAccount(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	// The connection is never released, so only the deadline can end the wait.
+	if err := tracker.closeAndWait(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("closeAndWait = %v, want the context deadline", err)
+	}
+	if trackedCtx.Err() == nil {
+		t.Fatal("closeAndWait must cancel the connections it gives up on")
+	}
+}
+
+func TestServerCloseSendsGoingAway(t *testing.T) {
+	server, httpServer := newTestHTTP(t, testConfig(t, false))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	connection, _, err := websocket.Dial(ctx, strings.Replace(httpServer.URL, "http", "ws", 1)+"/ws/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.CloseNow()
+	waitFor(t, func() bool { return server.Events().SubscriberCount() == 1 })
+	closed := make(chan error, 1)
+	go func() { closed <- server.CloseContext(ctx) }()
+	_, _, err = connection.Read(ctx)
+	if status := websocket.CloseStatus(err); status != websocket.StatusGoingAway {
+		t.Fatalf("close status = %v (%v), want going away", status, err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
 }

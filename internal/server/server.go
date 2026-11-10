@@ -490,7 +490,9 @@ func (s *Server) CloseContext(ctx context.Context) error {
 		if s.fleet != nil {
 			fleetErr = s.fleet.Close()
 		}
-		s.closeErr = errors.Join(s.events.Close(), s.sockets.closeAndWait(ctx), fleetErr)
+		// Sockets close first so event streams end with the going-away frame instead of a dropped connection.
+		socketsErr := s.sockets.closeAndWait(ctx)
+		s.closeErr = errors.Join(s.events.Close(), socketsErr, fleetErr)
 	})
 	return s.closeErr
 }

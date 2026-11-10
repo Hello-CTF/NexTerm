@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -172,5 +173,47 @@ func TestServeBufferedWriteThenLongWorkStillDelivers(t *testing.T) {
 	response.Body.Close()
 	if err != nil || string(body) != "early" {
 		t.Fatalf("body = %q err = %v", body, err)
+	}
+}
+
+func TestServeBoundsTransportClose(t *testing.T) {
+	previous := transportCloseTimeout
+	transportCloseTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { transportCloseTimeout = previous })
+	application, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- application.Serve(ctx, ServeConfig{
+			Listen: "127.0.0.1:0", Listener: listener, Transport: http.NewServeMux(), Stderr: io.Discard,
+			// A transport whose sockets never finish closing must not hold shutdown forever.
+			CloseTransport: func(ctx context.Context) error {
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		})
+	}()
+	// Wait until Serve is accepting requests so the shutdown path, not startup, handles the cancellation.
+	client := &http.Client{Timeout: 5 * time.Second}
+	response, err := client.Get("http://" + listener.Addr().String() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Serve error = %v, want the transport close deadline", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return after the transport close deadline")
 	}
 }
