@@ -15,6 +15,7 @@ export type SettingsSectionId =
   | "settings-appearance"
   | "settings-terminal"
   | "settings-state-rules"
+  | "settings-layout-templates"
   | "settings-notifications"
   | "settings-shortcuts"
   | "settings-quick-commands"
@@ -54,6 +55,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-notifications": {
     description: t("会话需要处理时在本机弹出系统通知"),
     keywords: ["notification", "notify", "bell", "inbox", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")],
+  },
+  "settings-layout-templates": {
+    description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"),
+    keywords: ["layout", "template", "arrangement", "split", "pane", "workspace", t("布局"), t("模板"), t("分屏"), t("窗格"), t("工作区"), t("启动片段")],
   },
   "settings-quick-commands": {
     description: t("在终端按键条中发送的常用命令"),
@@ -159,6 +164,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "system-notifications", section: "settings-notifications", label: t("系统通知"), description: t("会话需要处理或长时间命令结束时，在本机显示系统通知"), keywords: ["notification", "notify", "bell", "inbox", "osc9", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")] },
   { id: "state-rules-import", section: "settings-state-rules", label: t("导入或导出状态规则"), keywords: ["import", "export", "json", t("导入"), t("导出")] },
   { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
+  { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },
   { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },

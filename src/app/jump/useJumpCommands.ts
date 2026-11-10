@@ -17,6 +17,8 @@ import { terminalLinkCommands } from "./terminalLinkCommands";
 import { terminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
 import { workspaceLayoutTree } from "../paneLayout";
 import { resolveActivePane } from "../splitTree";
+import { canSaveLayoutTemplate, layoutTemplatePanes, useLayoutTemplates } from "../layoutTemplates";
+import { openLayoutTemplate, saveWorkspaceAsLayoutTemplate } from "../layoutTemplateOpen";
 import {
   IconActivity,
   IconClock,
@@ -27,6 +29,7 @@ import {
   IconEye,
   IconEyeOff,
   IconHistory,
+  IconLayers,
   IconMergeH,
   IconMonitor,
   IconNetwork,
@@ -85,6 +88,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
   const workspaces = useWorkspaceList();
   const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
   const { hiddenIds, showHidden } = useAssetVisibility();
+  const layoutTemplates = useLayoutTemplates();
   const bindings = useKeybindings();
   const keyHint = useCallback((id: KeybindingActionId, description?: string): string | undefined => {
     const binding = bindings[id];
@@ -428,6 +432,26 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         run: () => (hidden ? unhideAsset(asset) : hideAsset(asset)),
       });
     }
+    for (const template of layoutTemplates) {
+      list.push({
+        id: `layout-template-${template.id}`,
+        label: t("打开布局模板 {name}", { name: template.name }),
+        section: t("布局模板"),
+        hint: template.description || t("{count} 个窗格", { count: layoutTemplatePanes(template.layout).length }),
+        icon: IconLayers,
+        run: () => void openLayoutTemplate(template),
+      });
+    }
+    if (currentWorkspace && canSaveLayoutTemplate(currentWorkspace)) {
+      list.push({
+        id: "layout-template-save",
+        label: t("保存当前布局为模板"),
+        section: t("布局模板"),
+        hint: currentWorkspace.title,
+        icon: IconLayers,
+        run: () => void saveWorkspaceAsLayoutTemplate(currentWorkspace.id),
+      });
+    }
     for (const s of snippets) {
       // A multi-step snippet cannot be inserted; running it confirms each step that asks for it.
       const multi = isMultiStep(s);
@@ -452,6 +476,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
     snippets,
     hiddenIds,
     showHidden,
+    layoutTemplates,
     sessions,
     setSessions,
     addTab,

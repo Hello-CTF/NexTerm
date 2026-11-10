@@ -64,6 +64,7 @@ const (
 	preferenceKindBinding
 	preferenceKindKeyBar
 	preferenceKindQuickCommands
+	preferenceKindLayoutTemplates
 )
 
 type preferenceSpec struct {
@@ -98,6 +99,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
+	"workspace.layoutTemplates":         {kind: preferenceKindLayoutTemplates},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},
@@ -276,6 +278,10 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 		}
 	case preferenceKindQuickCommands:
 		if canonical, ok := normalizeQuickCommands(raw); ok {
+			return canonical, nil
+		}
+	case preferenceKindLayoutTemplates:
+		if canonical, ok := normalizeLayoutTemplates(raw); ok {
 			return canonical, nil
 		}
 	}

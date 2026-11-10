@@ -133,7 +133,7 @@ describe("Settings section navigation", () => {
     // Hidden groups stay mounted, so every section keeps a real target.
     for (const id of [
       "settings-appearance", "settings-terminal", "settings-state-rules", "settings-notifications", "settings-shortcuts",
-      "settings-quick-commands", "settings-ai-model", "settings-ai-rules",
+      "settings-quick-commands", "settings-layout-templates", "settings-ai-model", "settings-ai-rules",
       "settings-memory", "settings-vault", "settings-known-hosts", "settings-production",
       "settings-account", "settings-bundle", "settings-share",
     ]) {
@@ -173,7 +173,7 @@ describe("Settings section navigation", () => {
     act(() => showSettingsSection("settings-terminal"));
     await flush();
     expect(groupShown("terminal")).toBe(true);
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "终端", "状态规则", "通知", "快捷键与快捷命令", "AI", "安全", "账号与数据", "关于"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "终端", "状态规则", "布局模板", "通知", "快捷键与快捷命令", "AI", "安全", "账号与数据", "关于"]);
   });
 
   it("scrolls to a section of the open group from the TOC and marks it current", async () => {

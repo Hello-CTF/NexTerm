@@ -23,6 +23,7 @@
 
 - **Persistent terminals**: keep running when the app closes or the network drops
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
+- **Layout templates**: save a split layout, then reopen a host's terminals with it and run startup snippets
 - **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding
 - **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync

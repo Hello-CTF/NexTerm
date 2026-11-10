@@ -27,7 +27,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 			t.Fatalf("duplicate preference key %q", key)
 		}
 		declared[key] = true
-		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") && !strings.HasPrefix(key, "project.") {
+		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") && !strings.HasPrefix(key, "project.") && !strings.HasPrefix(key, "workspace.") {
 			t.Fatalf("unexpected preference key %q", key)
 		}
 	}

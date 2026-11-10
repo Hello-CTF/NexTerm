@@ -127,7 +127,8 @@ async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string
   return true;
 }
 
-export async function runSnippetAction(s: Snippet, action: SnippetAction): Promise<boolean> {
+// runSnippetAction acts on the active terminal, or on `target` (a terminal id) when the caller chose the terminal.
+export async function runSnippetAction(s: Snippet, action: SnippetAction, target?: { tabId: string }): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const label = ACTION_LABEL[action];
   if (isMultiStep(s)) {
@@ -135,16 +136,16 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
       pushToast("info", tr("多步片段只能执行，不能插入"));
       return false;
     }
-    const first = terminalTarget();
+    const first = target ?? terminalTarget();
     if ("blocked" in first) {
       pushToast("info", tr("{blocked}，才能{label}片段", { blocked: first.blocked, label }));
       return false;
     }
     return runSteps(s, s.steps ?? [], first.tabId);
   }
-  const target = terminalTarget();
-  if ("blocked" in target) {
-    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: target.blocked, label }));
+  const resolved = target ?? terminalTarget();
+  if ("blocked" in resolved) {
+    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: resolved.blocked, label }));
     return false;
   }
   const risk = insertRisk(s.body);
@@ -152,7 +153,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
   const payload =
     action === "execute" && !/[\r\n]$/.test(s.body) ? s.body + "\r" : s.body;
   try {
-    await terminalApi.write(target.tabId, new TextEncoder().encode(payload));
+    await terminalApi.write(resolved.tabId, new TextEncoder().encode(payload));
     pushToast(
       "success",
       action === "insert"
