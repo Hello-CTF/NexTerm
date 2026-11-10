@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"encoding"
 	"errors"
 	"fmt"
 	"hash"
@@ -43,6 +44,9 @@ func pipelinedCopy(ctx context.Context, source io.Reader, target base.RemoteWrit
 		if err == nil && reader.position < total {
 			err = io.ErrUnexpectedEOF
 		}
+		// On error reader.position counts bytes handed to the target, which can exceed the bytes
+		// the server acknowledged while writes are in flight. It is progress display only: resume
+		// takes the offset from the remote size, never from this value.
 		return true, reader.position, err
 	}
 	if pipelined, ok := source.(pipelinedSource); ok {
@@ -184,4 +188,57 @@ func (h *hashAfterWrite) Write(p []byte) (int, error) {
 		_, _ = h.digest.Write(p[:n])
 	}
 	return n, err
+}
+
+// rewindableHashingReader tees source into digest like io.TeeReader, but stays seekable: seeking back
+// to the position it was created at restores the digest to its state then. A target that gets its
+// pipelined writes rejected can then rewind the source and rewrite the range sequentially without
+// hashing the bytes of the failed attempt twice. It degrades to a plain tee when the digest cannot
+// snapshot its state.
+func rewindableHashingReader(source io.ReadSeeker, digest hash.Hash, position int64) io.Reader {
+	marshaler, ok := digest.(encoding.BinaryMarshaler)
+	unmarshaler, ok2 := digest.(encoding.BinaryUnmarshaler)
+	if !ok || !ok2 {
+		return io.TeeReader(source, digest)
+	}
+	state, err := marshaler.MarshalBinary()
+	if err != nil {
+		return io.TeeReader(source, digest)
+	}
+	return &rewindableHasher{source: source, digest: digest, restore: unmarshaler, state: state, start: position, position: position}
+}
+
+type rewindableHasher struct {
+	source   io.ReadSeeker
+	digest   hash.Hash
+	restore  encoding.BinaryUnmarshaler
+	state    []byte
+	start    int64
+	position int64
+}
+
+func (h *rewindableHasher) Read(p []byte) (int, error) {
+	n, err := h.source.Read(p)
+	if n > 0 {
+		_, _ = h.digest.Write(p[:n])
+		h.position += int64(n)
+	}
+	return n, err
+}
+
+func (h *rewindableHasher) Seek(offset int64, whence int) (int64, error) {
+	if whence == io.SeekCurrent && offset == 0 {
+		return h.position, nil
+	}
+	if whence != io.SeekStart || offset != h.start {
+		return 0, fmt.Errorf("unsupported hashed source seek %d/%d", offset, whence)
+	}
+	if _, err := h.source.Seek(offset, io.SeekStart); err != nil {
+		return 0, err
+	}
+	if err := h.restore.UnmarshalBinary(h.state); err != nil {
+		return 0, err
+	}
+	h.position = h.start
+	return h.position, nil
 }

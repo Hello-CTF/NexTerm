@@ -15,8 +15,9 @@ import { enqueueDownloadBatch, type DownloadItem, type SkippedItem } from "./tra
 
 export type DownloadConflictPolicy = "skip" | "overwrite" | "newer" | "rename";
 
-// Bounds one batch; it matches the backend's per-request folder limit.
-export const FOLDER_DOWNLOAD_MAX_ENTRIES = 20000;
+// The backend accepts 20000 folders per request and the picked folder itself is one of them, so a batch holds at
+// most one entry fewer.
+export const FOLDER_DOWNLOAD_MAX_ENTRIES = 19999;
 
 interface RemoteFile {
   remotePath: string;
@@ -50,7 +51,18 @@ function localCaseInsensitive(): boolean {
 function unusableLocalName(name: string): boolean {
   if (name === "" || name === "." || name === ".." || /[\\/\0]/.test(name)) return true;
   if (isWindows() && (/[<>:"|?*]/.test(name) || /[. ]$/.test(name))) return true;
+  if (isWindows() && WINDOWS_RESERVED_STEM.test(name.split(".")[0])) return true;
   return false;
+}
+
+// Device names Windows resolves to the device even with an extension (con.txt, NUL.tar.gz).
+const WINDOWS_RESERVED_STEM = /^(con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])$/i;
+
+function unusableNameReason(name: string): string {
+  if (isWindows() && WINDOWS_RESERVED_STEM.test(name.split(".")[0]) && !/[\\/\0<>:"|?*]/.test(name)) {
+    return t("名称是 Windows 保留设备名");
+  }
+  return t("名称无法在本机使用");
 }
 
 function localSeparator(root: string): string {
@@ -78,7 +90,7 @@ async function collectRemoteTree(sessionId: string, entries: FileEntryDto[], sig
     if (aborted(signal)) throw new FolderDownloadAborted();
     if (tree.files.length + tree.dirs.length >= FOLDER_DOWNLOAD_MAX_ENTRIES) throw new FolderDownloadTooLarge();
     if (unusableLocalName(entry.name)) {
-      skip(entry.path, t("名称无法在本机使用"));
+      skip(entry.path, unusableNameReason(entry.name));
       return;
     }
     const segments = [...prefix, entry.name];
@@ -120,8 +132,8 @@ interface LocalDir {
   entries: LocalEntry[];
 }
 
-async function inspectLocalDirs(paths: string[]): Promise<Map<string, LocalDir>> {
-  const listing = await localFileApi.listDirs(paths);
+async function inspectLocalDirs(token: string, paths: string[]): Promise<Map<string, LocalDir>> {
+  const listing = await localFileApi.listDirs(token, paths);
   return new Map(listing.dirs.map((dir) => [dir.path, { kind: dir.kind, entries: dir.entries }]));
 }
 
@@ -151,7 +163,7 @@ function findLocal(entries: LocalEntry[] | undefined, name: string, caseInsensit
 }
 
 // planFolderDownload maps the remote tree onto the picked local folder, settling every conflict with one answer.
-async function planFolderDownload(root: string, tree: RemoteTree): Promise<{ ready: DownloadItem[]; skipped: SkippedItem[]; dirs: string[] } | null> {
+async function planFolderDownload(root: string, token: string, tree: RemoteTree): Promise<{ ready: DownloadItem[]; skipped: SkippedItem[]; dirs: string[] } | null> {
   const ci = localCaseInsensitive();
   const skipped = [...tree.skipped];
   const dirPath = (segments: string[]) => joinLocal(root, segments);
@@ -163,12 +175,12 @@ async function planFolderDownload(root: string, tree: RemoteTree): Promise<{ rea
       neededDirs.set(dirPath(prefix), prefix);
     }
   }
-  const local = await inspectLocalDirs([...neededDirs.keys()]);
+  const local = await inspectLocalDirs(token, [...neededDirs.keys()]);
   // A folder the download needs is occupied by a file (or link) in the local tree: nothing below it can be written.
-  const blocked = new Set<string>();
+  const blocked = new Map<string, string>();
   for (const [path] of neededDirs) {
     const kind = local.get(path)?.kind;
-    if (kind !== undefined && kind !== "dir" && kind !== "missing") blocked.add(path);
+    if (kind !== undefined && kind !== "dir" && kind !== "missing") blocked.set(path, kind);
   }
   const blockedAncestor = (segments: string[]) => {
     for (let depth = 0; depth < segments.length; depth += 1) {
@@ -221,7 +233,10 @@ async function planFolderDownload(root: string, tree: RemoteTree): Promise<{ rea
     const dir = dirPath(parentSegments);
     const blocker = blockedAncestor(file.segments);
     if (blocker) {
-      skipped.push({ remotePath: file.remotePath, localPath: "", reason: t("本机「{blocker}」不是文件夹", { blocker }) });
+      const reason = blocked.get(blocker) === "symlink"
+        ? t("本机「{blocker}」是符号链接，不会写入其中", { blocker })
+        : t("本机「{blocker}」不是文件夹", { blocker });
+      skipped.push({ remotePath: file.remotePath, localPath: "", reason });
       continue;
     }
     if (claimedIn(dir).has(name)) {
@@ -280,6 +295,8 @@ export async function downloadToFolder(args: {
   sessionId: string;
   entries: FileEntryDto[];
   signal?: AbortSignal;
+  // Offered as the toast button while the remote tree is being listed; it should abort signal.
+  onCancel?: () => void;
 }): Promise<FolderDownloadOutcome> {
   const pushToast = useUi.getState().pushToast;
   let root: string | null;
@@ -291,7 +308,17 @@ export async function downloadToFolder(args: {
     return { status: "failed", error: message };
   }
   if (!root) return { status: "cancelled" };
-  pushToast("info", t("正在列出要下载的文件…"));
+  let token: string;
+  try {
+    const grant = await localFileApi.authorizeFolder(root);
+    token = grant.token;
+    root = grant.root;
+  } catch (error) {
+    const message = t("无法使用所选本机文件夹：{value}", { value: describeError(error) });
+    pushToast("error", message);
+    return { status: "failed", error: message };
+  }
+  pushToast("info", t("正在列出要下载的文件…"), args.onCancel ? { label: t("取消"), onSelect: args.onCancel } : undefined);
   let tree: RemoteTree;
   try {
     tree = await collectRemoteTree(args.sessionId, args.entries, args.signal);
@@ -312,7 +339,7 @@ export async function downloadToFolder(args: {
   }
   let plan: Awaited<ReturnType<typeof planFolderDownload>>;
   try {
-    plan = await planFolderDownload(root, tree);
+    plan = await planFolderDownload(root, token, tree);
   } catch (error) {
     const message = t("无法读取本机文件夹：{value}", { value: describeError(error) });
     pushToast("error", message);
@@ -327,7 +354,7 @@ export async function downloadToFolder(args: {
   if (plan.dirs.length > 0) {
     let failed: { path: string; error: string }[];
     try {
-      failed = (await localFileApi.createDirs(plan.dirs)).failed;
+      failed = (await localFileApi.createDirs(token, plan.dirs)).failed;
     } catch (error) {
       failed = plan.dirs.map((path) => ({ path, error: describeError(error) }));
     }
@@ -358,4 +385,10 @@ export async function downloadToFolder(args: {
     );
   }
   return { status: "queued", queued: ready.length, skipped: skipped.length, batchId };
+}
+
+// startFolderDownload is downloadToFolder with a cancel button on the listing toast, for menu call sites.
+export function startFolderDownload(sessionId: string, entries: FileEntryDto[]): Promise<FolderDownloadOutcome> {
+  const controller = new AbortController();
+  return downloadToFolder({ sessionId, entries, signal: controller.signal, onCancel: () => controller.abort() });
 }

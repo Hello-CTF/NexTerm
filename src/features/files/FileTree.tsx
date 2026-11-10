@@ -46,7 +46,7 @@ import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
-import { downloadToFolder, folderDownloadAvailable } from "./folderDownload";
+import { folderDownloadAvailable, startFolderDownload } from "./folderDownload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueuePackDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
 import {
@@ -1116,7 +1116,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
               icon: <IconDownload size={13} />,
               hint: t("保留目录结构"),
               disabled: sessionGone,
-              onSelect: () => void downloadToFolder({ sessionId, entries: items }),
+              onSelect: () => void startFolderDownload(sessionId, items),
             }]
           : []),
         { kind: "separator" },
@@ -1187,7 +1187,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           label: t("下载到文件夹…"),
           icon: <IconDownload size={13} />,
           hint: t("保留目录结构"),
-          onSelect: () => void downloadToFolder({ sessionId, entries: [entry] }),
+          onSelect: () => void startFolderDownload(sessionId, [entry]),
         });
       }
       if (!packHidden) {

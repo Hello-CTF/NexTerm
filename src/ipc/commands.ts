@@ -1156,10 +1156,12 @@ export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
 // files a remote desktop copied into a picked local folder.
 export const localFileApi = {
   listFolder: (path: string) => call("local_folder_list", { path }),
-  // Lists the entries of download target folders; a missing folder comes back with kind "missing".
-  listDirs: (paths: string[]) => call("local_folder_entries", { paths }),
+  // Grants access to a picked download folder; listDirs/createDirs only accept paths below the returned root.
+  authorizeFolder: (path: string) => call("local_folder_authorize", { path }),
+  // Lists the entries of download target folders; a missing folder comes back with kind "missing", a link as "symlink".
+  listDirs: (token: string, paths: string[]) => call("local_folder_entries", { token, paths }),
   // Creates download target folders with their parents and reports each folder that failed.
-  createDirs: (paths: string[]) => call("local_folder_create", { paths }),
+  createDirs: (token: string, paths: string[]) => call("local_folder_create", { token, paths }),
   read: (path: string, maxBytes?: number) =>
     call("local_file_read", {
       path,

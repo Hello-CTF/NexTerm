@@ -1569,6 +1569,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteRequest", ts: "LocalFileWriteRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteDTO", ts: "LocalFileWriteDTO" },
     },
+    "local_folder_authorize": {
+      scope: "local-file",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderAuthorizeRequest", ts: "LocalFolderAuthorizeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderAuthorizeDTO", ts: "LocalFolderAuthorizeDTO" },
+    },
     "local_folder_create": {
       scope: "local-file",
       nested: false,
@@ -4072,6 +4080,10 @@ export interface IPCCommandTypeMap {
   "local_file_write": {
     input: contractTypes.LocalFileWriteRequest;
     output: contractTypes.LocalFileWriteDTO;
+  };
+  "local_folder_authorize": {
+    input: contractTypes.LocalFolderAuthorizeRequest;
+    output: contractTypes.LocalFolderAuthorizeDTO;
   };
   "local_folder_create": {
     input: contractTypes.LocalDirsRequest;

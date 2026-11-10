@@ -1027,6 +1027,7 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "local_file_read", scope: "local-file", input: "LocalFileReadRequest", output: "FSReadDTO"},
 		{name: "local_file_read_range", scope: "local-file", input: "LocalFileReadRangeRequest", output: "FSRangeReadDTO"},
 		{name: "local_file_write", scope: "local-file", input: "LocalFileWriteRequest", output: "LocalFileWriteDTO"},
+		{name: "local_folder_authorize", scope: "local-file", input: "LocalFolderAuthorizeRequest", output: "LocalFolderAuthorizeDTO"},
 		{name: "local_folder_create", scope: "local-file", input: "LocalDirsRequest", output: "LocalDirsCreateDTO"},
 		{name: "local_folder_entries", scope: "local-file", input: "LocalDirsRequest", output: "LocalDirsListDTO"},
 		{name: "local_folder_list", scope: "local-file", input: "LocalFolderListRequest", output: "LocalFolderListDTO"},
@@ -1069,8 +1070,8 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 30 {
-		t.Fatalf("selected fs/local-file/mount command count = %d, want 30", len(selected))
+	if len(selected) != 31 {
+		t.Fatalf("selected fs/local-file/mount command count = %d, want 31", len(selected))
 	}
 	for name, command := range commands {
 		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")

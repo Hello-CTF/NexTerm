@@ -2,14 +2,19 @@ package production
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -59,7 +64,20 @@ type localFileReadRangeRequest struct {
 }
 
 type localDirsRequest struct {
+	// Token is the grant local_folder_authorize issued for the picked folder; every path must be inside it.
+	Token string   `json:"token"`
 	Paths []string `json:"paths"`
+}
+
+type localFolderAuthorizeRequest struct {
+	Path string `json:"path"`
+}
+
+// localFolderAuthorizeDTO carries the grant for a picked folder. Root is the symlink-resolved folder
+// the grant covers; the caller builds target paths below it.
+type localFolderAuthorizeDTO struct {
+	Token string `json:"token"`
+	Root  string `json:"root"`
 }
 
 // localDirEntryDTO is one entry of a local download target folder. Kind is "file", "dir",
@@ -101,7 +119,13 @@ const localDirsMaxPaths = 20000
 // desktop copied. Registered only in the desktop assembly; on the server they would
 // turn /rpc into an arbitrary server-filesystem listing/read channel.
 func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
+	grants := newLocalFolderGrants(time.Now)
 	registrations := []func() error{
+		func() error {
+			return ipc.Register(dispatcher, "local_folder_authorize", func(_ context.Context, _ *ipc.Call, input localFolderAuthorizeRequest) (localFolderAuthorizeDTO, error) {
+				return grants.authorize(input.Path)
+			})
+		},
 		func() error {
 			return ipc.Register(dispatcher, "local_folder_list", func(_ context.Context, _ *ipc.Call, input localFolderListRequest) (localFolderListDTO, error) {
 				return listLocalFolder(input.Path)
@@ -119,12 +143,20 @@ func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
 		},
 		func() error {
 			return ipc.Register(dispatcher, "local_folder_entries", func(ctx context.Context, _ *ipc.Call, input localDirsRequest) (localDirsListDTO, error) {
-				return listLocalDirs(ctx, input.Paths)
+				root, err := grants.resolve(input.Token)
+				if err != nil {
+					return localDirsListDTO{}, err
+				}
+				return listLocalDirs(ctx, root, input.Paths)
 			})
 		},
 		func() error {
 			return ipc.Register(dispatcher, "local_folder_create", func(ctx context.Context, _ *ipc.Call, input localDirsRequest) (localDirsCreateDTO, error) {
-				return createLocalDirs(ctx, input.Paths)
+				root, err := grants.resolve(input.Token)
+				if err != nil {
+					return localDirsCreateDTO{}, err
+				}
+				return createLocalDirs(ctx, root, input.Paths)
 			})
 		},
 		func() error {
@@ -299,13 +331,168 @@ func readLocalFileRange(path string, offset, maxBytes int64) (fsRangeReadDTO, er
 	}, nil
 }
 
-func validateLocalDirPaths(paths []string) error {
-	if len(paths) > localDirsMaxPaths {
-		return ipc.BadParam(fmt.Errorf("一次最多处理 %d 个本地目录", localDirsMaxPaths))
+// Grants live for the folder-download flow only: a short-lived token per picked folder, bounded in
+// number, so create/entries cannot be pointed at paths the user never picked. The native dialog runs
+// in the webview, so the backend learns the choice from the authorize call that follows the pick; the
+// token still confines every later request to that one folder.
+const (
+	localFolderGrantTTL = time.Hour
+	localFolderGrantMax = 32
+)
+
+type localFolderGrant struct {
+	root    string
+	expires time.Time
+}
+
+type localFolderGrants struct {
+	mu     sync.Mutex
+	now    func() time.Time
+	grants map[string]localFolderGrant
+}
+
+func newLocalFolderGrants(now func() time.Time) *localFolderGrants {
+	return &localFolderGrants{now: now, grants: map[string]localFolderGrant{}}
+}
+
+func (g *localFolderGrants) authorize(path string) (localFolderAuthorizeDTO, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return localFolderAuthorizeDTO{}, ipc.BadParam(fmt.Errorf("本地目录路径必须是绝对路径: %q", path))
 	}
+	root, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return localFolderAuthorizeDTO{}, localFolderError(err)
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return localFolderAuthorizeDTO{}, localFolderError(err)
+	}
+	if !info.IsDir() {
+		return localFolderAuthorizeDTO{}, ipc.BadParam(fmt.Errorf("%s 不是文件夹", path))
+	}
+	if filepath.Dir(root) == root {
+		return localFolderAuthorizeDTO{}, ipc.BadParam(fmt.Errorf("不能把磁盘根目录 %s 作为下载目标，请选择其中的文件夹", path))
+	}
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return localFolderAuthorizeDTO{}, err
+	}
+	token := hex.EncodeToString(raw[:])
+	now := g.now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for key, grant := range g.grants {
+		if !grant.expires.After(now) {
+			delete(g.grants, key)
+		}
+	}
+	for len(g.grants) >= localFolderGrantMax {
+		oldest, oldestKey := time.Time{}, ""
+		for key, grant := range g.grants {
+			if oldestKey == "" || grant.expires.Before(oldest) {
+				oldest, oldestKey = grant.expires, key
+			}
+		}
+		delete(g.grants, oldestKey)
+	}
+	g.grants[token] = localFolderGrant{root: root, expires: now.Add(localFolderGrantTTL)}
+	return localFolderAuthorizeDTO{Token: token, Root: root}, nil
+}
+
+func (g *localFolderGrants) resolve(token string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	grant, ok := g.grants[token]
+	if !ok || !grant.expires.After(g.now()) {
+		delete(g.grants, token)
+		return "", ipc.BadParam(fmt.Errorf("下载目标文件夹授权已失效，请重新选择文件夹"))
+	}
+	return grant.root, nil
+}
+
+// localDirRelative returns the segments of path below root. Paths must be absolute and, once cleaned,
+// lie inside root; the root itself yields no segments.
+func localDirRelative(root, path string) ([]string, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return nil, ipc.BadParam(fmt.Errorf("本地目录路径必须是绝对路径: %q", path))
+	}
+	rel, err := filepath.Rel(root, filepath.Clean(path))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return nil, ipc.BadParam(fmt.Errorf("路径 %s 不在所选下载文件夹内", path))
+	}
+	if rel == "." {
+		return nil, nil
+	}
+	return strings.Split(rel, string(filepath.Separator)), nil
+}
+
+func validateLocalDirPaths(root string, paths []string) ([][]string, error) {
+	if len(paths) > localDirsMaxPaths {
+		return nil, ipc.BadParam(fmt.Errorf("一次最多处理 %d 个本地目录", localDirsMaxPaths))
+	}
+	result := make([][]string, 0, len(paths))
 	for _, path := range paths {
-		if path == "" || !filepath.IsAbs(path) {
-			return ipc.BadParam(fmt.Errorf("本地目录路径必须是绝对路径: %q", path))
+		segments, err := localDirRelative(root, path)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, segments)
+	}
+	return result, nil
+}
+
+// errLocalSymlink marks a path that crosses a symlink below the granted root; downloads never write
+// through links.
+var errLocalSymlink = errors.New("路径包含符号链接，不会被跟随")
+
+// lstatBelow Lstats root/segments one component at a time and stops at the first symlink, so a link
+// inside the granted folder is never traversed. A missing component or a file in the middle reports
+// as fs.ErrNotExist/ENOTDIR from the failing component.
+func lstatBelow(root string, segments []string) (fs.FileInfo, error) {
+	current := root
+	var info fs.FileInfo
+	for i := 0; i <= len(segments); i++ {
+		if i > 0 {
+			current = filepath.Join(current, segments[i-1])
+		}
+		var err error
+		info, err = os.Lstat(current)
+		if err != nil {
+			return nil, err
+		}
+		if i < len(segments) {
+			if info.Mode()&fs.ModeSymlink != 0 {
+				return info, errLocalSymlink
+			}
+			if !info.IsDir() {
+				return nil, syscall.ENOTDIR
+			}
+		}
+	}
+	return info, nil
+}
+
+// mkdirBelow creates root/segments without traversing symlinks: every existing component must be a
+// real folder.
+func mkdirBelow(root string, segments []string) error {
+	current := root
+	for _, segment := range segments {
+		current = filepath.Join(current, segment)
+		info, err := os.Lstat(current)
+		switch {
+		case err == nil:
+			if info.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("%s: %w", current, errLocalSymlink)
+			}
+			if !info.IsDir() {
+				return &fs.PathError{Op: "mkdir", Path: current, Err: syscall.ENOTDIR}
+			}
+		case errors.Is(err, fs.ErrNotExist):
+			if err := os.Mkdir(current, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+				return err
+			}
+		default:
+			return err
 		}
 	}
 	return nil
@@ -325,19 +512,25 @@ func localEntryKind(mode fs.FileMode) string {
 }
 
 // listLocalDirs reports the entries of local folders a download writes into, so the frontend can
-// detect conflicts and pick free names before queueing. A missing folder is not an error.
-func listLocalDirs(ctx context.Context, paths []string) (localDirsListDTO, error) {
-	if err := validateLocalDirPaths(paths); err != nil {
+// detect conflicts and pick free names before queueing. A missing folder is not an error; a folder
+// that is a symlink, or sits below one, is reported as "symlink" and never followed.
+func listLocalDirs(ctx context.Context, root string, paths []string) (localDirsListDTO, error) {
+	relatives, err := validateLocalDirPaths(root, paths)
+	if err != nil {
 		return localDirsListDTO{}, err
 	}
 	result := localDirsListDTO{Dirs: make([]localDirListingDTO, 0, len(paths))}
-	for _, path := range paths {
+	for index, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return localDirsListDTO{}, err
 		}
 		listing := localDirListingDTO{Path: path, Kind: "missing", Entries: []localDirEntryDTO{}}
-		info, err := os.Lstat(path)
+		info, err := lstatBelow(root, relatives[index])
 		switch {
+		case errors.Is(err, errLocalSymlink):
+			listing.Kind = "symlink"
+			result.Dirs = append(result.Dirs, listing)
+			continue
 		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
 			// ENOTDIR: a parent is a file, so nothing can be at this path either.
 			result.Dirs = append(result.Dirs, listing)
@@ -345,14 +538,9 @@ func listLocalDirs(ctx context.Context, paths []string) (localDirsListDTO, error
 		case err != nil:
 			return localDirsListDTO{}, localFolderError(err)
 		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			if target, statErr := os.Stat(path); statErr == nil && target.IsDir() {
-				info = target
-			}
-		}
 		listing.Kind = localEntryKind(info.Mode())
 		if listing.Kind == "dir" {
-			entries, err := os.ReadDir(path)
+			entries, err := os.ReadDir(filepath.Join(append([]string{root}, relatives[index]...)...))
 			if err != nil {
 				return localDirsListDTO{}, localFolderError(err)
 			}
@@ -374,18 +562,20 @@ func listLocalDirs(ctx context.Context, paths []string) (localDirsListDTO, error
 	return result, nil
 }
 
-// createLocalDirs creates download target folders with their parents. Each failure is reported
-// per path so the files below it can be marked failed while the rest of the batch proceeds.
-func createLocalDirs(ctx context.Context, paths []string) (localDirsCreateDTO, error) {
-	if err := validateLocalDirPaths(paths); err != nil {
+// createLocalDirs creates download target folders with their parents inside the granted root, never
+// through a symlink. Each failure is reported per path so the files below it can be marked failed
+// while the rest of the batch proceeds.
+func createLocalDirs(ctx context.Context, root string, paths []string) (localDirsCreateDTO, error) {
+	relatives, err := validateLocalDirPaths(root, paths)
+	if err != nil {
 		return localDirsCreateDTO{}, err
 	}
 	result := localDirsCreateDTO{Failed: []localDirCreateFailureDTO{}}
-	for _, path := range paths {
+	for index, path := range paths {
 		if err := ctx.Err(); err != nil {
 			return localDirsCreateDTO{}, err
 		}
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := mkdirBelow(root, relatives[index]); err != nil {
 			result.Failed = append(result.Failed, localDirCreateFailureDTO{Path: path, Error: err.Error()})
 		}
 	}

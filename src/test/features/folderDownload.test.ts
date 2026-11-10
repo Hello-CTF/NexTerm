@@ -33,13 +33,17 @@ const h = vi.hoisted(() => ({
   onList: null as ((path: string) => void) | null,
   progress: null as ((event: unknown) => void) | null,
   holdDownloads: false,
+  windows: false,
+  authorized: [] as { path: string; token: string }[],
+  tokens: [] as string[],
+  cancel: null as (() => void) | null,
   held: [] as (() => void)[],
 }));
 
 vi.mock("../../ipc/env", () => ({ WEB: false, TRANSPORT: "wails" }));
 vi.mock("../../app/platform", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../app/platform")>();
-  return { ...actual, isMac: () => false, isWindows: () => false };
+  return { ...actual, isMac: () => false, isWindows: () => h.windows };
 });
 
 vi.mock("../../ui/dialogs", async (importOriginal) => {
@@ -60,7 +64,10 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 vi.mock("../../app/store", () => ({
   useUi: {
     getState: () => ({
-      pushToast: (level: string, text: string) => h.toasts.push({ level, text }),
+      pushToast: (level: string, text: string, action?: { onSelect: () => void }) => {
+        h.toasts.push({ level, text });
+        if (action) h.cancel = action.onSelect;
+      },
       sessions: [{ id: "s1", kind: "ssh", name: "host" }],
       workspaces: [],
     }),
@@ -91,17 +98,22 @@ vi.mock("../../ipc/commands", () => ({
     cancel: async () => true,
   },
   localFileApi: {
-    listDirs: async (paths: string[]) => ({
+    authorizeFolder: async (path: string) => {
+      h.authorized.push({ path, token: "tok" });
+      return { token: "tok", root: path };
+    },
+    listDirs: async (_token: string, paths: string[]) => ({
       dirs: paths.map((path) => ({ path, kind: h.local[path]?.kind ?? "missing", entries: h.local[path]?.entries ?? [] })),
     }),
-    createDirs: async (paths: string[]) => {
+    createDirs: async (token: string, paths: string[]) => {
+      h.tokens.push(token);
       h.created.push(paths);
       return { failed: h.createFailures };
     },
   },
 }));
 
-import { downloadToFolder } from "../../features/files/folderDownload";
+import { downloadToFolder, FOLDER_DOWNLOAD_MAX_ENTRIES, startFolderDownload } from "../../features/files/folderDownload";
 import { formatEta } from "../../features/files/fileProgress";
 import { resetTransferQueue, transferEta, useTransferStore } from "../../features/files/transferStore";
 
@@ -142,6 +154,10 @@ beforeEach(() => {
   h.toasts = [];
   h.onList = null;
   h.holdDownloads = false;
+  h.windows = false;
+  h.authorized = [];
+  h.tokens = [];
+  h.cancel = null;
   h.remote = {
     "/r/proj": [
       dir("/r/proj/sub"),
@@ -278,6 +294,61 @@ describe("downloadToFolder", () => {
     await settle();
     expect(h.downloads).toEqual(["/r/proj/ok->/dl/proj/ok"]);
     expect(taskSummary().filter((task) => task.status === "skipped")).toHaveLength(2);
+  });
+
+  it("skips Windows device names even with an extension and says why", async () => {
+    h.windows = true;
+    h.remote["/r/proj"] = [file("/r/proj/NUL.txt", 1, 1), file("/r/proj/com1.tar.gz", 1, 1), file("/r/proj/com\u00b9", 1, 1), file("/r/proj/console.txt", 1, 1)];
+    await downloadToFolder({ sessionId: "s1", entries: [proj] });
+    await settle();
+    expect(h.downloads).toEqual(["/r/proj/console.txt->/dl/proj/console.txt"]);
+    const skipped = taskSummary().filter((task) => task.status === "skipped");
+    expect(skipped).toHaveLength(3);
+    expect(skipped.every((task) => task.text?.includes("保留设备名"))).toBe(true);
+  });
+
+  it("keeps device names on non-Windows hosts", async () => {
+    h.remote["/r/proj"] = [file("/r/proj/nul.txt", 1, 1)];
+    await downloadToFolder({ sessionId: "s1", entries: [proj] });
+    await settle();
+    expect(h.downloads).toEqual(["/r/proj/nul.txt->/dl/proj/nul.txt"]);
+  });
+
+  it("presents the grant for the picked folder to every local call", async () => {
+    await downloadToFolder({ sessionId: "s1", entries: [proj] });
+    await settle();
+    expect(h.authorized).toEqual([{ path: "/dl", token: "tok" }]);
+    expect(h.tokens).toEqual(["tok"]);
+  });
+
+  it("does not write below a local symlink and says so", async () => {
+    h.local["/dl/proj"] = { kind: "symlink", entries: [] };
+    await downloadToFolder({ sessionId: "s1", entries: [proj, top] });
+    await settle();
+    expect(h.downloads).toEqual(["/r/top.txt->/dl/top.txt"]);
+    expect(h.created.flat()).toEqual([]);
+    const a = taskSummary().find((task) => task.remote === "/r/proj/a.txt");
+    expect(a?.status).toBe("skipped");
+    expect(a?.text).toContain("符号链接");
+  });
+
+  it("refuses a batch that, with the picked folder, exceeds the backend folder limit", async () => {
+    h.remote["/r/proj"] = Array.from({ length: FOLDER_DOWNLOAD_MAX_ENTRIES + 1 }, (_, i) => file(`/r/proj/f${i}`, 1, 1));
+    const outcome = await downloadToFolder({ sessionId: "s1", entries: [proj] });
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(h.created).toEqual([]);
+  });
+
+  it("offers a cancel button while the remote tree is listed", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    h.onList = () => { release(); };
+    const running = startFolderDownload("s1", [proj, top]);
+    await gate;
+    expect(h.cancel).not.toBeNull();
+    h.cancel?.();
+    expect(await running).toEqual({ status: "cancelled" });
+    expect(useTransferStore.getState().tasks).toEqual([]);
   });
 
   it("marks files below a folder that could not be created as skipped", async () => {

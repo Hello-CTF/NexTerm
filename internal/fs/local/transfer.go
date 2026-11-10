@@ -138,7 +138,7 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	}
 	var reader io.Reader = source
 	if digest != nil {
-		reader = io.TeeReader(source, digest)
+		reader = rewindableHashingReader(source, digest, offset)
 	}
 	transferred, err = finishTransfer(ctx, reader, target, offset, total, options)
 	if err != nil {

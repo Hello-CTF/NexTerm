@@ -1935,6 +1935,7 @@ export type LocalDirsListDTO = {
 };
 
 export type LocalDirsRequest = {
+  token: string;
   paths: string[];
 };
 
@@ -1958,6 +1959,15 @@ export type LocalFileWriteDTO = {
 export type LocalFileWriteRequest = {
   path: string;
   contentBase64: string;
+};
+
+export type LocalFolderAuthorizeDTO = {
+  token: string;
+  root: string;
+};
+
+export type LocalFolderAuthorizeRequest = {
+  path: string;
 };
 
 export type LocalFolderFileDTO = {
