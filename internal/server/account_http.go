@@ -390,7 +390,17 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	key := loginThrottleKey(r, request.Username)
 	ipKey := ipThrottleKey(r, "login-ip")
 	userKey := loginUserThrottleKey(request.Username)
-	if !s.accountThrottle.loginIP.Allow(ipKey) || !s.accountThrottle.loginUser.Allow(userKey) || !s.accountThrottle.login.Allow(key) {
+	// Every bucket is checked before any spends an attempt, so a request one
+	// bucket refuses costs the others nothing. A client that already logged in
+	// to this account from this address is exempt from the per-username
+	// backoff, which only exists to slow guessing spread over many addresses.
+	knownClient := s.knownLoginClients.Contains(key)
+	admitted := s.accountThrottle.loginIP.Peek(ipKey) && s.accountThrottle.login.Peek(key) &&
+		(knownClient || s.accountThrottle.loginUser.Peek(userKey))
+	if admitted {
+		admitted = s.accountThrottle.loginIP.Allow(ipKey) && s.accountThrottle.login.Allow(key)
+	}
+	if !admitted {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
@@ -435,6 +445,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountThrottle.login.RecordSuccess(key)
 	s.accountThrottle.loginUser.RecordSuccess(userKey)
+	s.knownLoginClients.Add(key)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 

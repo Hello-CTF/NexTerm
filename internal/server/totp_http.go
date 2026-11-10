@@ -368,6 +368,7 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	s.accountThrottle.mfa.RecordSuccess(key)
 	if entry.loginKey != "" {
 		s.accountThrottle.login.RecordSuccess(entry.loginKey)
+		s.knownLoginClients.Add(entry.loginKey)
 	}
 	s.mfaTickets.delete(request.Ticket)
 	user, err := s.accounts.GetUser(r.Context(), entry.userID)

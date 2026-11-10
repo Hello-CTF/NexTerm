@@ -126,8 +126,24 @@ func sessionClientName(r *http.Request) string {
 	}
 }
 
+// throttleAddress is the client address throttles key on. IPv6 clients are
+// grouped by /64, the smallest prefix a single site usually holds, so one
+// host cannot rotate through its prefix to get fresh buckets.
+func throttleAddress(r *http.Request) string {
+	ip := clientIP(r)
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return ip
+	}
+	prefix, err := addr.WithZone("").Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
+}
+
 func loginThrottleKey(r *http.Request, username string) string {
-	return "login|" + strings.ToLower(username) + "|" + clientIP(r)
+	return "login|" + strings.ToLower(username) + "|" + throttleAddress(r)
 }
 
 func loginUserThrottleKey(username string) string {
@@ -135,11 +151,11 @@ func loginUserThrottleKey(username string) string {
 }
 
 func recoveryThrottleKey(r *http.Request, username string) string {
-	return "recovery|" + strings.ToLower(username) + "|" + clientIP(r)
+	return "recovery|" + strings.ToLower(username) + "|" + throttleAddress(r)
 }
 
 func ipThrottleKey(r *http.Request, scope string) string {
-	return scope + "|" + clientIP(r)
+	return scope + "|" + throttleAddress(r)
 }
 
 // accountGuard resolves the session cookie into a server-derived identity.

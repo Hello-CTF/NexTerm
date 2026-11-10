@@ -91,7 +91,7 @@ func TestLoginThrottleCapacityBoundedAndEvicts(t *testing.T) {
 
 	for i := 0; i < total; i++ {
 		key := "user:flood-" + strconv.Itoa(i)
-		throttle.guard(key, *now)
+		throttle.Allow(key)
 	}
 	if len(throttle.entries) > loginGuardMaxEntries {
 		t.Fatalf("entries=%d exceed hard cap after re-touch", len(throttle.entries))
@@ -122,13 +122,21 @@ func testPolicyThrottle(policy ThrottlePolicy) (*LoginThrottle, *time.Time) {
 	return throttle, &now
 }
 
-// The per-username bucket tolerates a streak before backing off, caps the
-// backoff short so the real user is delayed rather than locked out, and
-// forgets the streak after a quiet period.
+// The per-username bucket counts failures only, tolerates a streak before
+// backing off, caps the backoff short, and forgets the streak after a quiet
+// period.
 func TestLoginUserThrottlePolicyBacksOffWithShortCap(t *testing.T) {
 	policy := LoginUserThrottlePolicy
 	throttle, now := testPolicyThrottle(policy)
 	key := "login-user|alice"
+	for i := 0; i < 1000; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d without failures refused", i+1)
+		}
+	}
+	if len(throttle.entries) != 0 {
+		t.Fatalf("attempts without failures created %d guards", len(throttle.entries))
+	}
 	for i := 0; i < policy.FreeFailures; i++ {
 		if !throttle.Allow(key) {
 			t.Fatalf("attempt %d refused within the free streak", i+1)
@@ -156,6 +164,25 @@ func TestLoginUserThrottlePolicyBacksOffWithShortCap(t *testing.T) {
 	throttle.RecordFailure(key)
 	if !throttle.Allow(key) {
 		t.Fatal("decayed streak still backs off on the first new failure")
+	}
+}
+
+func TestKnownClientsExpireAndEvictOldest(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	known := NewKnownClients(2, time.Hour)
+	known.now = func() time.Time { return now }
+	known.Add("a")
+	known.Add("b")
+	if !known.Contains("a") || !known.Contains("b") || known.Contains("c") {
+		t.Fatal("known set lookup wrong")
+	}
+	known.Add("c")
+	if known.Contains("a") {
+		t.Fatal("oldest key kept beyond capacity")
+	}
+	now = now.Add(time.Hour)
+	if known.Contains("b") || known.Contains("c") {
+		t.Fatal("expired key still known")
 	}
 }
 

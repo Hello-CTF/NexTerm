@@ -234,12 +234,17 @@ func TestLoginThrottlePerAddressAcrossUsernames(t *testing.T) {
 	}
 }
 
-// Failures against one username from many addresses back the username off,
-// so distributed guessing cannot bypass the per-address buckets.
+// Failures against one username from many addresses back the username off
+// for addresses it has not logged in from, so distributed guessing cannot
+// bypass the per-address buckets; an address that already logged in to the
+// account is exempt, so the guessing cannot lock the user out.
 func TestLoginThrottlePerUsernameAcrossAddresses(t *testing.T) {
 	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
 	fixture.createUser(t, "root", "password-a1")
 	fixture.createUser(t, "other", "password-b1")
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.10"); call.status != http.StatusOK {
+		t.Fatalf("usual address login status = %d body = %v", call.status, call.body)
+	}
 	throttled := false
 	for i := 0; i < 100 && !throttled; i++ {
 		call := fixture.loginVia(t, "wrong-password", "203.0.113."+strconv.Itoa(i+1))
@@ -257,8 +262,52 @@ func TestLoginThrottlePerUsernameAcrossAddresses(t *testing.T) {
 	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusTooManyRequests {
 		t.Fatalf("backed-off username login from a fresh address status = %d", call.status)
 	}
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.10"); call.status != http.StatusOK {
+		t.Fatalf("login from an address that logged in before status = %d body = %v", call.status, call.body)
+	}
 	other := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "other", "password": "password-b1"}, nil, "", map[string]string{"X-Forwarded-For": "198.51.100.4"})
 	if other.status != http.StatusOK {
 		t.Fatalf("unrelated username login status = %d body = %v", other.status, other.body)
+	}
+}
+
+// One address hammering a username is refused by its own narrow bucket; those
+// refused requests must not spend the per-username bucket, so the user still
+// logs in from any other address.
+func TestLoginThrottleRefusedAttemptsDoNotLockUsernameOut(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	for i := 0; i < 200; i++ {
+		call := fixture.loginVia(t, "wrong-password", "203.0.113.9")
+		if call.status != http.StatusForbidden && call.status != http.StatusTooManyRequests {
+			t.Fatalf("hammering login status = %d body = %v", call.status, call.body)
+		}
+	}
+	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusOK {
+		t.Fatalf("login from a fresh address after one address hammered the username status = %d body = %v", call.status, call.body)
+	}
+}
+
+// Addresses inside one IPv6 /64 share the per-address bucket.
+func TestLoginThrottleGroupsIPv6By64(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	throttled := false
+	for i := 0; i < 200 && !throttled; i++ {
+		address := "2001:db8:1:2::" + strconv.FormatInt(int64(i+1), 16)
+		call := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "spray-" + strconv.Itoa(i), "password": "wrong-password"}, nil, "", map[string]string{"X-Forwarded-For": address})
+		switch call.status {
+		case http.StatusTooManyRequests:
+			throttled = true
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("spray login status = %d body = %v", call.status, call.body)
+		}
+	}
+	if !throttled {
+		t.Fatal("rotating addresses inside one /64 escaped the per-address bucket")
+	}
+	if call := fixture.loginVia(t, "password-a1", "2001:db8:1:3::1"); call.status != http.StatusOK {
+		t.Fatalf("login from another /64 status = %d body = %v", call.status, call.body)
 	}
 }
