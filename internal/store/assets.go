@@ -105,6 +105,9 @@ func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) 
 	if err := validateAssetPasteOptions(input.OptionsJSON); err != nil {
 		return AssetRow{}, err
 	}
+	if err := validateAssetShellOptions(input.OptionsJSON); err != nil {
+		return AssetRow{}, err
+	}
 	if err := validateAssetWakeOptions(input.OptionsJSON, ""); err != nil {
 		return AssetRow{}, err
 	}
@@ -226,6 +229,9 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
+			if err := validateAssetShellOptions(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
 			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
@@ -310,6 +316,9 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 		}
 		if patch.OptionsJSON != nil {
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
+			if err := validateAssetShellOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
 			if err := validateAssetWakeOptions(*patch.OptionsJSON, current.OptionsJSON); err != nil {

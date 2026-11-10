@@ -2878,6 +2878,13 @@ export type SessionInfoDTO = {
   staleConfig: boolean;
 };
 
+export type ShellProfile = {
+  id: string;
+  name: string;
+  path: string;
+  args: string[];
+};
+
 export type SkippedNewerEntry = {
   kind: string;
   id: string;

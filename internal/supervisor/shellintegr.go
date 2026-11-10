@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
+
+// hostGOOS is a variable so tests can exercise the Windows branch on any host.
+var hostGOOS = runtime.GOOS
 
 type shellLaunch struct {
 	command []string
@@ -19,7 +24,18 @@ func wrapShellIntegration(command, env []string) (shellLaunch, bool) {
 		return shellLaunch{}, false
 	}
 	shell, err := shellintegr.Detect(command[0])
-	if err != nil || !interactiveShellArgs(command[1:]) {
+	if err != nil {
+		return shellLaunch{}, false
+	}
+	if shell == shellintegr.ShellPowerShell {
+		return wrapPowerShell(command, env)
+	}
+	// Follow-up: the bash wrapper passes Windows backslash rcfile paths to msys bash.exe, which is untested
+	// there, so Windows bash (Git Bash) keeps launching unwrapped.
+	if shell == shellintegr.ShellBash && hostGOOS == "windows" {
+		return shellLaunch{}, false
+	}
+	if !interactiveShellArgs(command[1:]) {
 		return shellLaunch{}, false
 	}
 	launch, err := shellintegr.Wrap(shell, command[0])
@@ -38,6 +54,32 @@ func wrapShellIntegration(command, env []string) (shellLaunch, bool) {
 		}
 	}
 	return wrapped, true
+}
+
+// wrapPowerShell wraps an interactive PowerShell whose only arguments are startup switches the wrapper can keep:
+// -Login (pwsh on Unix, which requires it first) and -NoProfile are passed on in their original order, and
+// -NoLogo is dropped because the wrapper adds it. Any other argument (-Command, -File, a script) is a custom
+// launch, which runs unwrapped.
+func wrapPowerShell(command, env []string) (shellLaunch, bool) {
+	preserved := make([]string, 0, len(command)-1)
+	for _, arg := range command[1:] {
+		switch strings.ToLower(arg) {
+		case "-nologo":
+		case "-login", "-l", "-noprofile":
+			preserved = append(preserved, arg)
+		default:
+			return shellLaunch{}, false
+		}
+	}
+	launch, err := shellintegr.Wrap(shellintegr.ShellPowerShell, command[0])
+	if err != nil {
+		return shellLaunch{}, false
+	}
+	return shellLaunch{
+		command: append(append([]string{launch.Path}, preserved...), launch.Args...),
+		env:     append(append([]string(nil), env...), launch.Env...),
+		cleanup: launch.Cleanup,
+	}, true
 }
 
 func interactiveShellArgs(args []string) bool {

@@ -151,6 +151,8 @@ try {
     Invoke-TargetedGoTest -Package './internal/pty' -Test 'TestConPTYCloseWhileExecAlive'
     Invoke-TargetedGoTest -Package './internal/transport/local' -Test 'TestConcurrentExecDoesNotWaitForSibling'
     Invoke-TargetedGoTest -Package './internal/transport/local' -Test 'TestExecIgnoresInteractiveCmdShell'
+    Invoke-TargetedGoTest -Package './internal/transport/local' -Test 'TestShellProfilesOnWindowsHost'
+    Invoke-TargetedGoTest -Package './internal/terminal/shellintegr' -Test 'TestWrappedPowerShellReportsCWDAndCommands' -RequiredSubtests @('pwsh', 'powershell')
     Invoke-TargetedGoTest -Package './internal/update' -Test 'TestWindowsPayloadWithLoadedRuntimeDLL' -RequiredSubtests @('success', 'installer_error')
     Invoke-TargetedGoTest -Package './internal/fleet/agent' -Test 'TestReplaceScriptWindowsExecutes' -RequiredSubtests @('successful_swap_restarts_and_cleans_up', 'failed_swap_rolls_back_without_restarting', 'real_restart_block_logs_schtasks_outcome')
 

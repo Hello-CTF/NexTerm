@@ -83,6 +83,8 @@ import {
 import { fleetClient } from "../fleet/clients";
 import { RemoteDesktopFields } from "./RemoteDesktopFields";
 import { WakeFields } from "./WakeFields";
+import { LocalShellFields } from "./LocalShellFields";
+import { formatShellArgs, parseShellArgs, readShellArgs, shellArgsError } from "./shellArgs";
 import {
   GroupDefaultsFields,
   groupDefaultsFrom,
@@ -2327,6 +2329,8 @@ export function AssetEditor({
   const [shell, setShell] = useState(
     typeof initial?.options?.shell === "string" ? (initial.options.shell as string) : "",
   );
+  const [shellArgs, setShellArgs] = useState(() => formatShellArgs(readShellArgs(initial?.options)));
+  const shellArgsProblem = shellArgsError(parseShellArgs(shellArgs));
   const [cwd, setCwd] = useState(
     typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
   );
@@ -2724,6 +2728,7 @@ export function AssetEditor({
       setWakeShowErrors(true);
       return;
     }
+    if (kind === "asset" && groupKind === "local" && shellArgsProblem) return;
     if (kind === "asset" && groupKind === "rdp" && remoteOptions.resolution === "fixed") {
       const problem = validateResolution(remoteOptions.width, remoteOptions.height);
       setResolutionError(problem);
@@ -2858,6 +2863,7 @@ export function AssetEditor({
         groupKind === "local"
           ? {
               ...(shell.trim() ? { shell: shell.trim() } : {}),
+              ...(parseShellArgs(shellArgs).length > 0 ? { shellArgs: parseShellArgs(shellArgs) } : {}),
               ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
             }
           : groupKind === "ssh" || groupKind === "docker"
@@ -3228,15 +3234,13 @@ export function AssetEditor({
 
           {kind === "asset" && groupKind === "local" && (
             <>
-              <div className="nx-form-row">
-                <label className="nx-label">{tr("默认 Shell")}</label>
-                <input
-                  className="nx-input font-mono text-[12px]"
-                  value={shell}
-                  onChange={(e) => setShell(e.target.value)}
-                  placeholder={tr("留空使用账户登录 shell（Windows 为 pwsh，未安装时为 powershell.exe）；填写后优先于账户设置")}
-                />
-              </div>
+              <LocalShellFields
+                shell={shell}
+                args={shellArgs}
+                argsError={shellArgsProblem}
+                onShellChange={setShell}
+                onArgsChange={setShellArgs}
+              />
               <div className="nx-form-row">
                 <label className="nx-label">{tr("起始目录")}</label>
                 <input

@@ -69,6 +69,7 @@ type productionAssetOptions struct {
 	CredID                string            `json:"credId"`
 	Password              string            `json:"password"`
 	Shell                 string            `json:"shell"`
+	ShellArgs             []string          `json:"shellArgs"`
 	CWD                   string            `json:"cwd"`
 	Env                   map[string]string `json:"env"`
 	Proxy                 string            `json:"proxy"`
@@ -184,7 +185,10 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		if c.restricted(ctx) {
 			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备")
 		}
-		transport = local.NewWithConfig(local.Config{Shell: options.Shell, CWD: options.CWD, Env: options.Env})
+		if err := store.ValidateShellArgs(options.ShellArgs); err != nil {
+			return nil, ipc.BadParam(err)
+		}
+		transport = local.NewWithConfig(local.Config{Shell: options.Shell, ShellArgs: options.ShellArgs, CWD: options.CWD, Env: options.Env})
 	case session.KindSSH, session.KindDocker:
 		transport, err = c.connectSSH(ctx, asset.ID, options, generation)
 		err = annotateInheritedConnectError(options, err)

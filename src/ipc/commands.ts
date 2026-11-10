@@ -1185,6 +1185,14 @@ export const localFileApi = {
   writeClipboardImage: (pngBase64: string) => call("clipboard_write_image", { pngBase64 }),
 };
 
+export type LocalShellProfile = import("./generated/types").ShellProfile;
+
+// Shells a local asset can run on the host that runs local terminals (the desktop, or a single-user server);
+// a multi-user server refuses it like local assets themselves.
+export const localShellApi = {
+  profiles: () => call("local_shell_profiles"),
+};
+
 export const mountApi = {
   capability: () => call("mount_capability"),
   list: (options: { sessionId: string; forceRefresh?: boolean }) =>
