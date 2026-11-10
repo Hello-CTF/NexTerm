@@ -259,7 +259,7 @@ func TestExecBatchRerunCommandProductionConfirmation(t *testing.T) {
 		"asset-production": {ID: "asset-production", Name: "Production API", Tags: "env:production"},
 	}), auditor)
 	dispatcher := ipc.NewDispatcher()
-	if err := registerExecBatchCommands(dispatcher, service, nil); err != nil {
+	if err := registerExecBatchCommands(dispatcher, service, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := registerExecBatchProgressCommands(dispatcher, service); err != nil {

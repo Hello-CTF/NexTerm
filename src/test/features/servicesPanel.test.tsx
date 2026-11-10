@@ -112,8 +112,8 @@ afterEach(() => {
 
 async function mountAndLoad(): Promise<void> {
   mocks.list.mockResolvedValue(batch([
-    { result: result("s1"), systemd: "supported", units: [nginx, postgres] },
-    { result: result("s2", { status: "exit_error", exitCode: 1, stderr: "sudo: a password is required" }), systemd: "unknown", failureKind: "sudo", units: [] },
+    { result: result("s1"), platform: "systemd", systemd: "supported", units: [nginx, postgres] },
+    { result: result("s2", { status: "exit_error", exitCode: 1, stderr: "sudo: a password is required" }), platform: "systemd", systemd: "unknown", failureKind: "sudo", units: [] },
   ]));
   mounted = mount(createElement(ServicesPanel, { targets, sessions }));
   click(target("s1"));
@@ -145,7 +145,7 @@ describe("ServicesPanel", () => {
 
   it("runs a row action with the parsed unit and only its owning host", async () => {
     await mountAndLoad();
-    mocks.action.mockResolvedValue(batch([{ result: result("s1"), systemd: "supported", units: [] }]));
+    mocks.action.mockResolvedValue(batch([{ result: result("s1"), platform: "systemd", systemd: "supported", units: [] }]));
     const row = panel().container.querySelector('tr[data-unit="nginx.service"]');
     if (!row) throw new Error("nginx row not found");
     clickButton(row, "重启");
@@ -228,8 +228,8 @@ describe("ServicesPanel", () => {
 
   it("marks hosts without systemd unsupported and opens journal through the R-1 stream API", async () => {
     mocks.list.mockResolvedValue(batch([
-      { result: result("s1"), systemd: "supported", units: [nginx] },
-      { result: result("s2", { status: "exit_error", exitCode: 127, stderr: "systemctl: command not found" }), systemd: "unsupported", failureKind: "systemd", units: [] },
+      { result: result("s1"), platform: "systemd", systemd: "supported", units: [nginx] },
+      { result: result("s2", { status: "exit_error", exitCode: 127, stderr: "systemctl: command not found" }), platform: "systemd", systemd: "unsupported", failureKind: "systemd", units: [] },
     ]));
     mounted = mount(createElement(ServicesPanel, { targets, sessions }));
     click(target("s1"));
@@ -252,5 +252,34 @@ describe("ServicesPanel", () => {
     mounted = undefined;
     await flush();
     expect(mocks.logCancel).toHaveBeenCalledWith("journal-run");
+  });
+
+  it("lists Windows services with state labels and Windows-only row actions, and restarts one by name", async () => {
+    const spooler: ServiceUnit = { name: "Spooler", load: "", active: "Running", sub: "", description: "Print Spooler", startMode: "Delayed", pid: 2412 };
+    mocks.list.mockResolvedValue(batch([
+      { result: result("s1"), platform: "windows", systemd: "unknown", units: [spooler] },
+    ]));
+    mocks.action.mockResolvedValue(batch([
+      { result: result("s1", { stdout: "Spooler: Running" }), platform: "windows", systemd: "unknown", units: [] },
+    ]));
+    mounted = mount(createElement(ServicesPanel, { targets, sessions }));
+    click(target("s1"));
+    clickButton(panel().container, "加载服务");
+    await flushUntil(() => panel().container.querySelector('tr[data-unit="Spooler"]') !== null);
+    const text = panel().container.textContent ?? "";
+    expect(text).toContain("1 个 Windows 服务");
+    expect(text).toContain("运行中");
+    expect(text).toContain("自动（延迟）");
+    expect(text).not.toContain("unsupported：无 systemd");
+    const row = panel().container.querySelector('tr[data-unit="Spooler"]');
+    if (!row) throw new Error("Spooler row not found");
+    const labels = Array.from(row.querySelectorAll("button")).map((button) => button.textContent);
+    expect(labels).toEqual(expect.arrayContaining(["重启", "设为手动启动"]));
+    expect(labels).not.toContain("journal");
+    expect(labels).not.toContain("重载");
+    clickButton(row, "重启");
+    await flushUntil(() => mocks.action.mock.calls.length === 1);
+    expect(mocks.action.mock.calls[0][0]).toMatchObject({ sessionIds: ["s1"], unit: "Spooler", action: "restart" });
+    await flushUntil(() => panel().container.textContent?.includes("服务操作逐目标结果") ?? false);
   });
 });

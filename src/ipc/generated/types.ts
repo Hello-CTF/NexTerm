@@ -2820,6 +2820,7 @@ export type ScreenInsets = {
 
 export type ServiceHostResult = {
   result: ExecBatchResult;
+  platform: string;
   systemd: string;
   failureKind?: string;
   units: ServiceUnit[];
@@ -2837,6 +2838,8 @@ export type ServiceUnit = {
   active: string;
   sub: string;
   description: string;
+  startMode?: string;
+  pid?: number;
 };
 
 export type SessionAggregateRequest = {

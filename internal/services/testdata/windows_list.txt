@@ -1,0 +1,2 @@
+@@nexterm-services windows
+[{"name":"Spooler","displayName":"Print Spooler","state":"Running","startMode":"Auto","delayed":false,"pid":2412},{"name":"wuauserv","displayName":"Windows Update","state":"Stopped","startMode":"Manual","delayed":false,"pid":0},{"name":"BITS","displayName":"Background Intelligent Transfer Service","state":"Running","startMode":"Auto","delayed":true,"pid":1180},{"name":"Fax","displayName":"傳真 \"Fax\"","state":"Stopped","startMode":"Disabled","delayed":false,"pid":0}]

@@ -19,6 +19,15 @@ import { Select } from "../../ui/Select";
 import { pickSavePath } from "../../ui/dialogs";
 import { IconChevronDown, IconCopy, IconDownload, IconInfo, IconPlay, IconServer, IconSettings, IconStop, IconTrash } from "../../ui/icons";
 import { LogPopover } from "./LogPopover";
+import {
+  changeSourceKind,
+  defaultSourceDraft,
+  isWindowsAsset,
+  SOURCE_KIND_LABELS,
+  SOURCE_PLACEHOLDERS,
+  sourceKindOptions,
+  type SourceDraft,
+} from "./logSources";
 import { assetTagValues } from "../explorer/assetSearch";
 import { TargetSetPicker, type TargetSetPickerTarget } from "../execbatch/TargetSetPicker";
 import {
@@ -39,11 +48,6 @@ const MAX_LINES = 50_000;
 const STOP_CONFIRM_TIMEOUT_MS = 31_000;
 const STOP_CONFIRM_ERROR = t("日志流已停止，但结束状态未确认；未收到的末尾事件已放弃。");
 const CANCEL_UNCONFIRMED_ERROR = t("取消未确认，远端可能仍在运行。");
-
-interface SourceDraft {
-  kind: LogTailSourceKind;
-  value: string;
-}
 
 interface SourceViewStatus {
   status: LogTailSourceStatus | "idle";
@@ -85,19 +89,7 @@ function allSourcesTerminal(
 }
 
 const INFO_TEXT =
-  t("只执行只读日志命令，无需生产确认；仅支持已连接的 SSH 和非 Windows 受管设备。");
-
-const SOURCE_KIND_LABELS: Record<LogTailSourceKind, string> = {
-  file: t("文件"),
-  journal: "journalctl",
-  docker: t("Docker 容器"),
-};
-
-const SOURCE_PLACEHOLDERS: Record<LogTailSourceKind, string> = {
-  file: "/var/log/app.log",
-  journal: "nginx.service",
-  docker: "container-name",
-};
+  t("只执行只读日志命令，无需生产确认；仅支持已连接的 SSH 和受管设备。Windows 主机请选择 Windows 事件日志。");
 
 function workspaceIncludesSession(workspace: Workspace, sessionId: string): boolean {
   if (workspace.sessionId === sessionId) return true;
@@ -131,6 +123,7 @@ function collectTargets(
         tags: assetTagValues(asset?.tags ?? ""),
         workspaceNames: [...new Set(sources.map((workspace) => workspace.title || workspace.id))],
         envCount: assetEnvCount(asset),
+        windows: isWindowsAsset(asset),
       };
     });
 }
@@ -308,7 +301,7 @@ export function MultiHostLogTail({
     const nextRunSources: RunSource[] = [];
     for (const sessionId of selectedIds) {
       const target = targetsById.get(sessionId);
-      const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
+      const draft = drafts[sessionId] ?? defaultSourceDraft(target?.windows === true);
       if (!draft.value.trim()) {
         setHostsOpen(true);
         setRunError(t("请填写目标「{value}」的日志来源", { value: target?.label ?? sessionId }));
@@ -506,7 +499,7 @@ export function MultiHostLogTail({
               <div className="flex flex-col gap-2">
                 {selectedIds.map((sessionId) => {
                   const target = targets.find((candidate) => candidate.id === sessionId);
-                  const draft = drafts[sessionId] ?? { kind: "file" as const, value: "" };
+                  const draft = drafts[sessionId] ?? defaultSourceDraft(target?.windows === true);
                   return (
                     <div key={sessionId} className="flex min-w-0 flex-wrap items-center gap-2 rounded border border-neutral-800/70 p-2 sm:flex-nowrap">
                       <span className={`w-24 shrink-0 truncate text-[11px] ${hostColor(sessionId)}`} title={target?.label}>
@@ -521,10 +514,10 @@ export function MultiHostLogTail({
                         onChange={(value) =>
                           setDrafts((current) => ({
                             ...current,
-                            [sessionId]: { ...draft, kind: value as LogTailSourceKind },
+                            [sessionId]: changeSourceKind(draft, value as LogTailSourceKind),
                           }))
                         }
-                        options={Object.entries(SOURCE_KIND_LABELS).map(([kind, label]) => ({ value: kind, label }))}
+                        options={sourceKindOptions(target?.windows === true)}
                       />
                       <input
                         className="nx-input nx-input-sm min-w-[8rem] flex-1 basis-full font-mono sm:basis-0"

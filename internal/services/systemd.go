@@ -28,7 +28,7 @@ func ParseSystemdUnits(output string) []ServiceUnit {
 }
 
 func systemdHostResult(result execbatch.Result, list bool) ServiceHostResult {
-	host := ServiceHostResult{Result: result, Systemd: "unknown", Units: []ServiceUnit{}}
+	host := ServiceHostResult{Result: result, Platform: PlatformSystemd, Systemd: "unknown", Units: []ServiceUnit{}}
 	if result.Status == execbatch.StatusSuccess {
 		host.Systemd = "supported"
 		if list {
