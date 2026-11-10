@@ -2221,6 +2221,9 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 	if transcript {
 		m.transcriptOutput(feedCtx, tab, data)
 	}
+	tab.mu.Lock()
+	cwdBefore := tab.cwd
+	tab.mu.Unlock()
 	if _, changed := tab.observeCWD(data, generation); changed {
 		tab.mu.Lock()
 		event := tab.controlEventLocked()
@@ -2246,7 +2249,7 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 			m.emit(withCoalescibleControl(feedCtx), TopicTerminalControl, titleEvent)
 		}
 	}
-	m.observeCommand(tab, data, replay)
+	m.observeCommand(tab, data, replay, cwdBefore)
 	type outputTarget struct {
 		channelID  string
 		subscriber subscriber

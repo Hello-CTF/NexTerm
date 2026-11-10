@@ -661,6 +661,7 @@ export type CommandSearchItemDTO = {
   tabId: string;
   assetId: string;
   command: string;
+  cwd: string;
   source: string;
   exitCode: number | null;
   startedAt: number;
@@ -671,6 +672,7 @@ export type CommandSearchItemDTO = {
 export type CommandSearchRequest = {
   text: string;
   assetId: string | null;
+  cwd: string | null;
   startedFrom: number | null;
   startedTo: number | null;
   limit: number;

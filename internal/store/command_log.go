@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store/model"
@@ -19,10 +20,30 @@ type CommandLogInput struct {
 	AssetID    string
 	UserID     string
 	Command    string
+	Cwd        string
 	Source     string
 	ExitCode   *int
 	StartedAt  int64
 	FinishedAt int64
+}
+
+// MaxCommandCwdBytes bounds the stored working directory; a longer report is
+// stored as unknown rather than truncated, so a cwd filter never matches a
+// directory the command did not run in.
+const MaxCommandCwdBytes = 1024
+
+// commandCwd normalizes an OSC 7 directory for storage. Invalid UTF-8 is
+// replaced the same way JSON encoding replaces it on its way to the client,
+// so the directory the client filters by is the one stored; NUL bytes, which
+// PostgreSQL text rejects, make the directory unknown.
+func commandCwd(cwd string) string {
+	if !utf8.ValidString(cwd) {
+		cwd = strings.ToValidUTF8(cwd, "\uFFFD")
+	}
+	if len(cwd) > MaxCommandCwdBytes || strings.IndexByte(cwd, 0) >= 0 {
+		return ""
+	}
+	return cwd
 }
 
 type CommandLogQuery struct {
@@ -45,7 +66,7 @@ func (s *Store) CommandLogInsert(ctx context.Context, input CommandLogInput) err
 	}
 	row := CommandLogRow{
 		SessionID: input.SessionID, TabID: input.TabID, AssetID: input.AssetID, UserID: userID,
-		Command: input.Command, Source: input.Source, ExitCode: exitCode, StartedAt: input.StartedAt, FinishedAt: input.FinishedAt,
+		Command: input.Command, Cwd: commandCwd(input.Cwd), Source: input.Source, ExitCode: exitCode, StartedAt: input.StartedAt, FinishedAt: input.FinishedAt,
 	}
 	if err := query.Use(s.db).CommandLog.WithContext(ctx).Create(&row); err != nil {
 		return dbError(err)
@@ -100,8 +121,10 @@ func (s *Store) CommandLogQuery(ctx context.Context, filter CommandLogQuery) ([]
 }
 
 type CommandLogSearch struct {
-	Text        string
-	AssetID     *string
+	Text    string
+	AssetID *string
+	// Cwd, when set, keeps only commands that started in exactly this directory.
+	Cwd         *string
 	StartedFrom *int64
 	StartedTo   *int64
 	Limit       int64
@@ -146,6 +169,12 @@ func (s *Store) CommandLogSearch(ctx context.Context, filter CommandLogSearch) (
 	}
 	if filter.AssetID != nil {
 		q = q.Where(command.AssetID.Eq(*filter.AssetID))
+	}
+	if filter.Cwd != nil {
+		if len(*filter.Cwd) > MaxCommandCwdBytes {
+			return nil, false, badParam(fmt.Errorf("command search directory is too long"))
+		}
+		q = q.Where(command.Cwd.Eq(*filter.Cwd))
 	}
 	if filter.StartedFrom != nil {
 		q = q.Where(command.StartedAt.Gte(*filter.StartedFrom))

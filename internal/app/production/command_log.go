@@ -22,6 +22,7 @@ func (s commandLogSink) RecordCommand(ctx context.Context, record session.Comman
 		AssetID:    record.AssetID,
 		UserID:     record.UserID,
 		Command:    record.Command,
+		Cwd:        record.Cwd,
 		Source:     record.Source,
 		ExitCode:   record.ExitCode,
 		StartedAt:  record.StartedAt.UnixMilli(),

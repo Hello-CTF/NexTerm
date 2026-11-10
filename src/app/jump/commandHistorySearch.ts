@@ -1,4 +1,5 @@
 import type { Asset } from "../../ipc/commands";
+import type { Workspace } from "../store";
 import { t } from "../../i18n";
 
 export const COMMAND_SEARCH_PAGE = 100;
@@ -35,4 +36,41 @@ export function hostLabelFor(assetId: string, assets: Pick<Asset, "id" | "name">
   if (asset) return asset.name;
   if (assetId.startsWith("device/")) return t("设备");
   return t("已删除的主机");
+}
+
+// How many newer entries a command from the active terminal's directory may move ahead of.
+export const CWD_RANK_BOOST = 3;
+
+export interface ActiveTerminal {
+  // Backend terminal id, the key of its OSC 7 directory reports.
+  tabId: string;
+  assetId: string;
+}
+
+// activeTerminal resolves the terminal the user is looking at: the active tab of the active pane in the active workspace.
+export function activeTerminal(state: {
+  workspaces: Pick<Workspace, "id" | "assetId" | "activePaneId" | "panes">[];
+  activeWorkspaceId: string | null;
+}): ActiveTerminal | null {
+  const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+  if (!ws?.assetId) return null;
+  const pane = ws.panes.find((p) => p.id === ws.activePaneId) ?? ws.panes[0];
+  const tab = pane?.tabs.find((candidate) => candidate.id === pane.activeTabId);
+  if (!tab || tab.kind !== "terminal" || !tab.tabId) return null;
+  return { tabId: tab.tabId, assetId: ws.assetId };
+}
+
+// rankByCwd gives commands that ran in the given directory of the given host a small lift over newer ones,
+// keeping every other entry in its recency order. It ranks one page at a time so loading more never reshuffles
+// the rows already shown.
+export function rankByCwd<T extends { assetId: string; cwd: string }>(
+  page: T[],
+  here: { assetId: string; cwd: string } | null,
+  boost = CWD_RANK_BOOST,
+): T[] {
+  if (!here || here.cwd === "") return page;
+  return page
+    .map((entry, index) => ({ entry, index, score: index - (entry.assetId === here.assetId && entry.cwd === here.cwd ? boost + 0.5 : 0) }))
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .map(({ entry }) => entry);
 }
