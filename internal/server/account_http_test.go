@@ -1234,3 +1234,28 @@ END`); err != nil {
 		t.Fatalf("register retry status=%d body=%v", call.status, call.body)
 	}
 }
+
+// The session tag stays the same for one login session and differs between
+// sessions, and it does not expose the session ID.
+func TestAccountSessionTagIdentifiesSession(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "root", "password-t1")
+	first := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": "password-t1"}, nil, "", nil)
+	session := captureSession(t, first)
+	tag, _ := first.body["session_tag"].(string)
+	me := fixture.call(t, http.MethodGet, "/auth/me", nil, session, "", nil)
+	if tag == "" || me.body["session_tag"] != tag {
+		t.Fatalf("session tag login=%q me=%v", tag, me.body["session_tag"])
+	}
+	second := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": "password-t1"}, nil, "", nil)
+	if second.body["session_tag"] == tag {
+		t.Fatal("two login sessions share a session tag")
+	}
+	identity, err := fixture.accounts.ValidateSession(context.Background(), session.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tag, identity.SessionID) {
+		t.Fatal("session tag exposes the session ID")
+	}
+}

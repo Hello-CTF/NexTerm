@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -245,6 +247,10 @@ type accountInitRequest struct {
 type accountSessionView struct {
 	User      accountUserView `json:"user"`
 	CSRFToken string          `json:"csrf_token"`
+	// SessionTag identifies the login session without revealing its ID, so a
+	// client can tell a refreshed CSRF token for the same session from a new
+	// session.
+	SessionTag string `json:"session_tag"`
 	// MFARequired delivers the mfa_required policy with the session, letting the frontend gate unbound sessions into forced binding.
 	MFARequired bool `json:"mfa_required"`
 }
@@ -264,7 +270,15 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 	if err != nil {
 		return accountSessionView{}, err
 	}
-	return accountSessionView{User: view, CSRFToken: csrfToken, MFARequired: required}, nil
+	return accountSessionView{User: view, CSRFToken: csrfToken, SessionTag: accountSessionTag(sessionID), MFARequired: required}, nil
+}
+
+// accountSessionTag is a one-way tag of the session ID. Unlike the CSRF token
+// it does not depend on a server key, so it stays the same when that key
+// changes.
+func accountSessionTag(sessionID string) string {
+	digest := sha256.Sum256([]byte("nexterm-session-tag\x00" + sessionID))
+	return hex.EncodeToString(digest[:16])
 }
 
 // accountLoginGate, when non-nil, runs after a successful Authenticate and
