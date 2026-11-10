@@ -168,6 +168,9 @@ type accountThrottles struct {
 	mfa       *account.LoginThrottle
 }
 
+// HealthSummary is the payload every caller may read.
+type HealthSummary = core.HealthSummary
+
 type Health struct {
 	OK               bool             `json:"ok"`
 	Service          string           `json:"service"`
@@ -342,6 +345,7 @@ func New(config Config) (*Server, error) {
 func (s *Server) routes(config Config) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.serveHealth)
+	mux.HandleFunc("GET /livez", s.serveLive)
 	s.mountAccountRoutes(mux)
 	if config.SyncObjects != nil && s.accounts != nil {
 		inject := func(next http.Handler) http.Handler {
@@ -420,7 +424,19 @@ func writeRPCError(w http.ResponseWriter, status int, err *ipc.Error) {
 	_ = json.NewEncoder(w).Encode(ipc.Failure(err))
 }
 
+// serveLive answers liveness without touching the database or the vault, so a
+// supervisor can tell a hung process from a dependency outage.
+func (s *Server) serveLive(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(HealthSummary{OK: true, Service: "nexterm-server", Version: s.version})
+}
+
+// serveHealth is the readiness probe: 503 when the database ping fails or a
+// required vault is locked. Only loopback callers and superadmin sessions see
+// the detailed payload; everyone else gets HealthSummary.
 func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
+	ready := true
 	var vaultStatus any
 	if s.vaultStatus != nil {
 		status, err := s.vaultStatus(r.Context())
@@ -429,6 +445,43 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 		} else {
 			vaultStatus = status
 		}
+	}
+	if s.options.RequireVault && !core.VaultUnlocked(vaultStatus) {
+		ready = false
+	}
+	var dbHealth *DBHealth
+	if s.db != nil {
+		pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
+		pingStart := time.Now()
+		pingErr := s.db.DB().PingContext(pingCtx)
+		pingCancel()
+		stats := s.db.DB().Stats()
+		dbHealth = &DBHealth{
+			Backend: string(s.db.Backend()),
+			PingOK:  pingErr == nil,
+			PingMS:  time.Since(pingStart).Milliseconds(),
+			Pool: &DBPoolStats{
+				OpenConnections: stats.OpenConnections,
+				InUse:           stats.InUse,
+				Idle:            stats.Idle,
+				WaitCount:       stats.WaitCount,
+			},
+		}
+		if pingErr != nil {
+			ready = false
+			s.logger.Warn("database ping failed", "error", pingErr)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+	if !s.healthDetailAllowed(r) {
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(HealthSummary{OK: ready, Service: "nexterm-server", Version: s.version})
+		return
 	}
 	var retention *RetentionHealth
 	if s.retention != nil {
@@ -454,36 +507,47 @@ func (s *Server) serveHealth(w http.ResponseWriter, r *http.Request) {
 			commands = s.peerDispatcher.Len()
 		}
 	}
-	var dbHealth *DBHealth
-	if s.db != nil {
-		pingCtx, pingCancel := context.WithTimeout(r.Context(), 2*time.Second)
-		pingStart := time.Now()
-		pingErr := s.db.DB().PingContext(pingCtx)
-		pingCancel()
-		stats := s.db.DB().Stats()
-		dbHealth = &DBHealth{
-			Backend: string(s.db.Backend()),
-			PingOK:  pingErr == nil,
-			PingMS:  time.Since(pingStart).Milliseconds(),
-			Pool: &DBPoolStats{
-				OpenConnections: stats.OpenConnections,
-				InUse:           stats.InUse,
-				Idle:            stats.Idle,
-				WaitCount:       stats.WaitCount,
-			},
-		}
-		if pingErr != nil {
-			s.logger.Warn("database ping failed", "error", pingErr)
-		}
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(Health{
-		OK: true, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
+		OK: ready, Service: "nexterm-server", Version: s.version, SyncOnly: s.options.SyncOnly,
 		Commands: commands, EventSubscribers: s.events.SubscriberCount(),
 		LiveChannels: channelStats.LiveChannels, PendingChannels: channelStats.PendingChannels,
 		WebRoot: webRoot, Vault: vaultStatus, Retention: retention, DB: dbHealth,
 	})
+}
+
+// healthDetailAllowed admits a loopback caller (directly, or through trusted
+// proxies whose forwarded chain resolves to loopback) or a superadmin session.
+// A forwarding header from an untrusted loopback peer means a local reverse
+// proxy relayed a remote caller, so it does not count as loopback.
+func (s *Server) healthDetailAllowed(r *http.Request) bool {
+	if s.loopbackCaller(r) {
+		return true
+	}
+	if s.accounts == nil {
+		return false
+	}
+	token, ok := sessionCookie(r)
+	if !ok {
+		return false
+	}
+	// CheckSession is read-only: polling /healthz must neither keep a session alive nor write to the database.
+	identity, err := s.accounts.CheckSession(r.Context(), token)
+	return err == nil && identity.Role == account.RoleSuperadmin
+}
+
+func (s *Server) loopbackCaller(r *http.Request) bool {
+	resolved, err := netip.ParseAddr(clientIP(r))
+	if err != nil || !resolved.Unmap().IsLoopback() {
+		return false
+	}
+	forwarded := r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != ""
+	if !forwarded {
+		return true
+	}
+	// Only X-Forwarded-For is resolved through trusted proxies, so the loopback result must come from it.
+	peer, err := netip.ParseAddr(realip.RemoteHost(r))
+	return err == nil && s.options.TrustForwardedFor && s.realIP.Trusted(peer) && r.Header.Get("X-Forwarded-For") != ""
 }
 
 func (s *Server) Handler() http.Handler { return s.handler }

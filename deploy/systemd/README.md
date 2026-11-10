@@ -282,6 +282,36 @@ entries. `NEXTERM_TRUST_FORWARDED_FOR` accepts `1`/`0` or `true`/`false`;
 any other value stops startup. Listed origins receive credentialed CORS
 responses, so list only origins you control.
 
+A reverse proxy on the same host must send `X-Forwarded-For` (or `Forwarded`
+/ `X-Real-IP`) on every request. Without one, a proxied remote caller looks
+like a direct loopback caller and receives the detailed `/healthz` payload
+(see Health checks below).
+
+## Health checks
+
+- `GET /livez` answers 200 while the process serves HTTP and touches neither
+  the database nor the vault. Use it for liveness (restart on failure).
+- `GET /healthz` is the readiness probe. It returns 503 with `"ok":false`
+  when the database ping fails, or when `--require-vault` is set and the
+  vault is locked; otherwise 200.
+- Both are public, so callers that are not on loopback and hold no
+  super-admin session get only `ok`, `service` and `version`. The detailed
+  payload (vault state, database pool, channel counts, web root, retention)
+  is returned to direct loopback callers, to callers that trusted proxies
+  report as loopback through `X-Forwarded-For` (see the reverse proxy notes
+  above), and to signed-in super-admins. A request from a loopback peer
+  that carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP` without being a
+  trusted proxy counts as remote, so a local reverse proxy must send one of
+  those headers.
+- `nexterm-server healthcheck [--url URL | --listen ADDRESS] [--timeout 5s]`
+  probes `/healthz` without curl and exits 0 when ready, 1 when unreachable
+  or unhealthy, and 2 on usage errors. The target is `--url`, else
+  `http://<listen>/healthz` built from `--listen`, then `NEXTERM_LISTEN`, then
+  `0.0.0.0:8080`, with a wildcard host replaced by loopback. Pass the same
+  `--listen` value the server uses when it is not set through the
+  environment. It suits a container health check such as
+  `HEALTHCHECK CMD ["nexterm-server", "healthcheck"]`.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode

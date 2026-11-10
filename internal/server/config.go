@@ -30,6 +30,8 @@ type Options struct {
 	TrustedProxyCIDRs []string
 	// TrustForwardedFor lets peers inside TrustedProxyCIDRs supply the client address via X-Forwarded-For.
 	TrustForwardedFor bool
+	// RequireVault makes /healthz report unavailable (503) while the vault is locked.
+	RequireVault bool
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {

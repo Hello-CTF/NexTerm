@@ -34,7 +34,7 @@ func (s *Server) transportGuard(next http.Handler) http.Handler {
 			w.Header().Add("Vary", "Origin")
 		}
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-			if s.options.SyncOnly && r.URL.Path != "/sync/rpc" && r.URL.Path != "/healthz" {
+			if s.options.SyncOnly && r.URL.Path != "/sync/rpc" && r.URL.Path != "/healthz" && r.URL.Path != "/livez" {
 				http.NotFound(w, r)
 				return
 			}

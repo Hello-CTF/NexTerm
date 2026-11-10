@@ -68,6 +68,9 @@ func (r Resolver) ClientIP(req *http.Request) string {
 	return nearest.String()
 }
 
+// RemoteHost returns the direct peer address of req without consulting forwarding headers.
+func RemoteHost(req *http.Request) string { return remoteHost(req) }
+
 func remoteHost(req *http.Request) string {
 	host, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {

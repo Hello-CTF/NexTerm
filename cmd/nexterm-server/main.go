@@ -53,6 +53,19 @@ func startupContextForAuth(ctx context.Context, auth, listen string) context.Con
 	return ctx
 }
 
+const serverUsageSupplement = `
+Server subcommands:
+  healthcheck   Probe a running server's /healthz; exit 0 when ready, 1 otherwise
+                (see "nexterm-server healthcheck --help")
+
+Health endpoints:
+  GET /livez    Liveness: answers 200 while the process serves HTTP, no database access
+  GET /healthz  Readiness: 503 when the database ping fails, or when --require-vault is
+                set and the vault is locked. Callers that are not on loopback (directly
+                or through NEXTERM_TRUSTED_PROXY_CIDRS) and hold no superadmin session
+                see only ok, service and version
+`
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -115,6 +128,9 @@ func run(args []string) int {
 	if len(args) > 0 && args[0] == "init-admin" {
 		return runInitAdmin(args[1:], os.Getenv, os.Stdout, os.Stderr)
 	}
+	if len(args) > 0 && args[0] == "healthcheck" {
+		return runHealthcheck(args[1:], os.Getenv, os.Stdout, os.Stderr)
+	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
@@ -122,6 +138,7 @@ func run(args []string) int {
 	}
 	if invocation.Help {
 		fmt.Fprint(os.Stdout, core.Usage("nexterm-server", core.CommandServe))
+		fmt.Fprint(os.Stdout, serverUsageSupplement)
 		return 0
 	}
 	if invocation.Version {
@@ -380,6 +397,7 @@ func run(args []string) int {
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
 			TrustForwardedFor: trustXFF,
+			RequireVault:      invocation.RequireVault,
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,
@@ -455,6 +473,7 @@ func run(args []string) int {
 		Transport:      transport.Handler(),
 		CloseTransport: transport.CloseContext,
 		Stderr:         os.Stderr,
+		RequireVault:   invocation.RequireVault,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("server stopped", "error", err)
 		return 1
