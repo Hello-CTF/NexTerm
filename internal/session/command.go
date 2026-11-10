@@ -8,7 +8,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
-	"github.com/mattn/go-runewidth"
 )
 
 // Command sources recorded in the command log.
@@ -199,7 +198,7 @@ func commandLineFromSnapshot(snapshot terminal.Snapshot) string {
 	// The command row is the last row of a possibly wrapped input line: while
 	// the row above is completely filled the input spilled into the current
 	// top row, so keep collecting upward, newest row last.
-	for start > 0 && runewidth.StringWidth(lines[start-1]) >= snapshot.Cols && row-start+1 < maxCommandWrapRows {
+	for start > 0 && terminal.StringWidth(lines[start-1]) >= snapshot.Cols && row-start+1 < maxCommandWrapRows {
 		start--
 	}
 	parts := make([]string, 0, row-start+1)

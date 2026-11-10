@@ -33,7 +33,7 @@ vi.mock("@xterm/xterm", () => ({
     constructor(options?: unknown) {
       this.options = options;
       // The offscreen terminal that builds the seek index is not the view's terminal.
-      if (!(options as { allowProposedApi?: boolean } | undefined)?.allowProposedApi) {
+      if ((options as { disableStdin?: boolean } | undefined)?.disableStdin) {
         terminalMocks.instances.push(this as unknown as FakeTerminal);
       }
     }

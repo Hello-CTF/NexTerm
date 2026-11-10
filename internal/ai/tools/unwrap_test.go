@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 // Unwrap decides soft-wrapped continuation by terminal cell width, not rune
@@ -17,8 +17,8 @@ func TestUnwrapLinesUsesCellWidth(t *testing.T) {
 	if len(rendered) != 2 {
 		t.Fatalf("rendered lines = %d, want 2: %q", len(rendered), rendered)
 	}
-	if runewidth.StringWidth(rendered[0]) != 80 || runewidth.StringWidth(rendered[1]) != 2 {
-		t.Fatalf("cell widths = %d, %d", runewidth.StringWidth(rendered[0]), runewidth.StringWidth(rendered[1]))
+	if terminal.StringWidth(rendered[0]) != 80 || terminal.StringWidth(rendered[1]) != 2 {
+		t.Fatalf("cell widths = %d, %d", terminal.StringWidth(rendered[0]), terminal.StringWidth(rendered[1]))
 	}
 	joined := unwrapLines(rendered, 80)
 	if len(joined) != 1 || joined[0] != strings.Repeat("界", 41) {

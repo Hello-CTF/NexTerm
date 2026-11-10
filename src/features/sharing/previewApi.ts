@@ -75,6 +75,15 @@ export interface PreviewSnapshot {
   rows: number;
 }
 
+// snapshotEscape renders the current screen snapshot into a blank terminal: text lines spread from the top-left, then
+// the cursor moves to the snapshot position. The snapshot carries no character attributes (the server screen model stores text only).
+export function snapshotEscape(snapshot: PreviewSnapshot): string {
+  const text = snapshot.lines.join("\r\n");
+  const row = Math.max(0, Math.trunc(snapshot.cursorRow)) + 1;
+  const col = Math.max(0, Math.trunc(snapshot.cursorCol)) + 1;
+  return `${text}\x1b[${row};${col}H`;
+}
+
 export interface PreviewFailure {
   code: string;
   message: string;

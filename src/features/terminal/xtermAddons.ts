@@ -1,9 +1,22 @@
 import type { Terminal } from "@xterm/xterm";
 import type { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { createTerminalLinkProvider, type TerminalLinkProviderHandlers } from "./terminalLinkProvider";
 import { createWebglController, type GpuAccelerationMode, type WebglHost } from "./webglPolicy";
 
 export type WebLinks = TerminalLinkProviderHandlers;
+
+/**
+ * Measures characters with the Unicode 11 table instead of xterm's default Unicode 6 one, which draws most emoji in
+ * one cell while shells and the server screen model (internal/terminal/width.go) give them two. Every terminal that
+ * shows session output calls this before its first write; it needs the allowProposedApi option.
+ */
+export function activateUnicode11(term: Terminal): void {
+  // Partial test doubles have no unicode handling and keep their defaults.
+  if (!("unicode" in term)) return;
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = "11";
+}
 
 /**
  * The search addon is fetched with dynamic import() after the terminal is mounted so it stays

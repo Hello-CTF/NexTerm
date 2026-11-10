@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { activateUnicode11 } from "./xtermAddons";
 
 import { transcriptApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
@@ -87,10 +88,12 @@ export function TranscriptReplayView({
     if (!container) return;
     const terminal = new Terminal({
       disableStdin: true,
+      allowProposedApi: true,
       scrollback: 5000,
       fontSize: window.innerWidth <= NARROW_VIEWPORT_PX ? 11 : 12,
       theme: REPLAY_THEME,
     });
+    activateUnicode11(terminal);
     terminal.open(container);
     terminalRef.current = terminal;
     return () => {
