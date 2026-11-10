@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
@@ -350,7 +351,8 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeMFALocked(w)
 		return
 	}
-	valid, err := s.accounts.VerifyTOTPLoginCode(r.Context(), entry.userID, request.Code)
+	verifyCtx, recoveryUsed := account.TrackRecoveryCodeUse(r.Context())
+	valid, err := s.accounts.VerifyTOTPLoginCode(verifyCtx, entry.userID, request.Code)
 	if err != nil {
 		s.mfaLock.release(entry.userID)
 		writeAccountFailure(w, err)
@@ -362,7 +364,13 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 			s.auditMFALockout(r, entry.userID, fails, until, level)
 		}
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "验证码错误"))
+		s.auditLoginFailure(r, "totp", entry.userID, "rejected")
 		return
+	}
+	method := "totp"
+	if recoveryUsed() {
+		method = "recovery_code"
+		s.auditRecoveryCodeUse(r, entry.userID, "login")
 	}
 	s.mfaLock.success(entry.userID)
 	s.accountThrottle.mfa.RecordSuccess(key)
@@ -375,9 +383,11 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
-	s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch)
+	audits.loginSuccess(user.ID, s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch), method)
 }
 
 type accountTOTPStatusView struct {
@@ -427,6 +437,8 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Serialize with revocations: the pending binding's epoch note and the
 	// setup write must not interleave with a revocation bump.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	if err := s.revalidateTOTPBindingSession(r); err != nil {
@@ -442,9 +454,10 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, enabledErr)
 		return
 	}
+	verifyCtx, recoveryUsed := account.TrackRecoveryCodeUse(r.Context())
 	if enabled && request.Reverify != "" {
 		locked, attemptErr := s.mfaAttempt(r, identity.UserID, func() (verifyErr error) {
-			secret, uri, verifyErr = s.accounts.BeginTOTPSetup(r.Context(), identity.UserID, request.Reverify)
+			secret, uri, verifyErr = s.accounts.BeginTOTPSetup(verifyCtx, identity.UserID, request.Reverify)
 			return verifyErr
 		})
 		if locked {
@@ -464,6 +477,9 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
+	if recoveryUsed() {
+		audits.recoveryCodeUse(identity.UserID, "rebind")
+	}
 	writeAccountJSON(w, http.StatusOK, accountTOTPSetupView{Secret: secret, OTPAuthURI: uri})
 }
 
@@ -500,12 +516,16 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 	// Serialize with revocations: the pending-epoch check and the confirm
 	// transaction must span the same boundary as an epoch bump, so a
 	// revocation cannot land between the check and the commit.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	if err := s.revalidateTOTPBindingSession(r); err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
+	// A confirm on an account that already had a bound secret replaces it.
+	enabledBefore, _ := s.accounts.TOTPEnabled(r.Context(), identity.UserID)
 	var codes []string
 	locked, err := s.mfaAttempt(r, identity.UserID, func() (confirmErr error) {
 		codes, confirmErr = s.accounts.ConfirmTOTPSetup(r.Context(), identity.UserID, request.Code)
@@ -521,6 +541,7 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
+	audits.self(identity.UserID, "totp_enable", map[string]any{"rebind": enabledBefore})
 	writeAccountJSON(w, http.StatusOK, map[string][]string{"recovery_codes": codes})
 }
 
@@ -540,8 +561,9 @@ func (s *Server) serveAccountTOTPDisable(w http.ResponseWriter, r *http.Request)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "尝试过于频繁，请稍后再试"))
 		return
 	}
+	verifyCtx, recoveryUsed := account.TrackRecoveryCodeUse(r.Context())
 	locked, err := s.mfaAttempt(r, identity.UserID, func() error {
-		return s.accounts.DisableTOTP(r.Context(), identity.UserID, request.Code)
+		return s.accounts.DisableTOTP(verifyCtx, identity.UserID, request.Code)
 	})
 	if locked {
 		writeMFALocked(w)
@@ -553,5 +575,11 @@ func (s *Server) serveAccountTOTPDisable(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
+	method := "totp"
+	if recoveryUsed() {
+		method = "recovery_code"
+		s.auditRecoveryCodeUse(r, identity.UserID, "disable")
+	}
+	s.auditSelf(r, identity.UserID, "totp_disable", map[string]any{"method": method})
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

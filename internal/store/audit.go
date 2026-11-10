@@ -8,6 +8,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/outcome"
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
 	"gorm.io/gorm"
 )
 
@@ -61,9 +62,28 @@ func (s *Store) auditInsert(ctx context.Context, db *gorm.DB, input AuditInput) 
 	return nil
 }
 
+// auditSourceAuth is the source of account audit records. A failed login for a
+// name that matches no account has no owner, so only a superadmin asking for
+// this source explicitly also sees those unowned rows; every other query keeps
+// the plain owner scope.
+const auditSourceAuth = "auth"
+
+func (s *Store) auditOwnerConditions(ctx context.Context, filter AuditQuery) []gen.Condition {
+	audit := query.Use(s.db).AuditRow
+	conditions := ownerConditions(ctx, audit.TableName())
+	ownerID := ipc.OwnerID(ctx)
+	if ownerID == "" || filter.Source == nil || *filter.Source != auditSourceAuth {
+		return conditions
+	}
+	if role, ok := ipc.RoleFromContext(ctx); !ok || role != "superadmin" {
+		return conditions
+	}
+	return []gen.Condition{audit.WithContext(ctx).Where(audit.OwnerID.Eq(ownerID)).Or(audit.OwnerID.Eq(""))}
+}
+
 func (s *Store) AuditCount(ctx context.Context, filter AuditQuery) (int64, error) {
 	audit := query.Use(s.db).AuditRow
-	q := audit.WithContext(ctx).Where(ownerConditions(ctx, audit.TableName())...)
+	q := audit.WithContext(ctx).Where(s.auditOwnerConditions(ctx, filter)...)
 	if filter.SessionID != nil {
 		q = q.Where(audit.SessionID.Eq(*filter.SessionID))
 	}
@@ -89,7 +109,7 @@ func (s *Store) AuditQuery(ctx context.Context, filter AuditQuery) ([]AuditRow, 
 		limit = 200
 	}
 	audit := query.Use(s.db).AuditRow
-	q := audit.WithContext(ctx).Where(ownerConditions(ctx, audit.TableName())...)
+	q := audit.WithContext(ctx).Where(s.auditOwnerConditions(ctx, filter)...)
 	if filter.SessionID != nil {
 		q = q.Where(audit.SessionID.Eq(*filter.SessionID))
 	}

@@ -418,7 +418,11 @@ func (a *Accounts) consumeRecoveryCode(ctx context.Context, userID, code string)
 	if err != nil {
 		return false, dbError(err)
 	}
-	return info.RowsAffected > 0, nil
+	if info.RowsAffected == 0 {
+		return false, nil
+	}
+	markRecoveryCodeUsed(ctx)
+	return true, nil
 }
 
 func (a *Accounts) DisableTOTP(ctx context.Context, userID, code string) error {

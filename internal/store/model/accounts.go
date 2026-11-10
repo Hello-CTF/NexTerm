@@ -51,7 +51,7 @@ type UserSession struct {
 	TokenHash  string      `gorm:"column:token_hash;not null;size:191;uniqueIndex:idx_user_session_token_hash" json:"tokenHash"`
 	CreatedAt  int64       `gorm:"column:created_at;not null" json:"createdAt"`
 	TouchedAt  int64       `gorm:"column:touched_at;not null" json:"touchedAt"`
-	ExpiresAt  int64       `gorm:"column:expires_at;not null" json:"expiresAt"`
+	ExpiresAt  int64       `gorm:"column:expires_at;not null;index:idx_user_session_expires" json:"expiresAt"`
 	RevokedAt  *int64      `gorm:"column:revoked_at" json:"revokedAt"`
 	User       AppUser     `gorm:"foreignKey:UserID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
 	Device     *UserDevice `gorm:"foreignKey:DeviceID;references:ID;constraint:OnDelete:SET NULL" json:"-"`

@@ -25,18 +25,20 @@ interface AuditEntry {
   durationMs: number | null;
 }
 
-type SourceFilter = "" | "user" | "ai" | "fleet";
+type SourceFilter = "" | "user" | "ai" | "fleet" | "auth";
 
 const FILTERS: { value: SourceFilter; label: string }[] = [
   { value: "", label: t("全部") },
   { value: "user", label: t("用户") },
   { value: "ai", label: "AI" },
   { value: "fleet", label: t("设备") },
+  { value: "auth", label: t("账号") },
 ];
 
 function sourceLabel(source: string): string {
   if (source === "ai") return "AI";
   if (source === "fleet") return t("设备");
+  if (source === "auth") return t("账号");
   return t("用户");
 }
 
