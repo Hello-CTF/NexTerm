@@ -181,7 +181,7 @@ func (s *Server) serveSharePreview(page http.Handler) http.HandlerFunc {
 			return
 		}
 		conn.SetReadLimit(previewViewerReadLimit)
-		ctx, release, err := s.sockets.track(r.Context())
+		ctx, release, err := s.sockets.track(r.Context(), socketKindPreview)
 		if err != nil {
 			_ = conn.CloseNow()
 			return

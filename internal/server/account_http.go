@@ -385,6 +385,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	key := loginThrottleKey(r, request.Username)
 	if !s.accountThrottle.login.Allow(key) {
+		s.metrics.login(loginStepPassword, loginThrottled)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
@@ -397,6 +398,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
+		s.metrics.login(loginStepPassword, passwordLoginResult(err))
 		writeAccountFailure(w, err)
 		return
 	}
@@ -406,6 +408,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	epoch := s.accounts.Epoch(user.ID)
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
+		s.metrics.login(loginStepPassword, loginError)
 		writeAccountFailure(w, err)
 		return
 	}
@@ -416,10 +419,12 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
 		}
+		s.metrics.login(loginStepPassword, loginMFARequired)
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
 	s.accountThrottle.login.RecordSuccess(key)
+	s.metrics.login(loginStepPassword, loginSuccess)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 

@@ -13,6 +13,7 @@ var errServerClosed = errors.New("server is closed")
 // socketEntry is one tracked connection. The account fields stay empty for
 // open-access and gateway connections, which never close per user or session.
 type socketEntry struct {
+	kind     string
 	cancel   context.CancelFunc
 	userID   string
 	session  string
@@ -31,8 +32,19 @@ type socketTracker struct {
 	wg      sync.WaitGroup
 }
 
-func (t *socketTracker) track(parent context.Context) (context.Context, func(), error) {
-	ctx, _, release, err := t.trackAccount(parent, nil)
+// Socket kinds label the live connection gauge; the set is closed.
+const (
+	socketKindEvents        = "events"
+	socketKindChannel       = "channel"
+	socketKindRemoteDesktop = "remote_desktop"
+	socketKindPreview       = "preview"
+	socketKindRemoteSession = "remote_session"
+)
+
+var socketKinds = []string{socketKindEvents, socketKindChannel, socketKindRemoteDesktop, socketKindPreview, socketKindRemoteSession}
+
+func (t *socketTracker) track(parent context.Context, kind string) (context.Context, func(), error) {
+	ctx, _, release, err := t.trackAccount(parent, kind, nil)
 	return ctx, release, err
 }
 
@@ -40,7 +52,7 @@ func (t *socketTracker) track(parent context.Context) (context.Context, func(), 
 // connection's login session or device is revoked; the owner is expected to
 // close the socket with a close code instead of just dropping it, so the
 // context is deliberately not cancelled by a revocation.
-func (t *socketTracker) trackAccount(parent context.Context, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
+func (t *socketTracker) trackAccount(parent context.Context, kind string, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -49,7 +61,7 @@ func (t *socketTracker) trackAccount(parent context.Context, identity *account.I
 	t.nextID++
 	id := t.nextID
 	ctx, cancel := context.WithCancel(parent)
-	entry := &socketEntry{cancel: cancel, revoked: make(chan struct{})}
+	entry := &socketEntry{kind: kind, cancel: cancel, revoked: make(chan struct{})}
 	if identity != nil {
 		entry.userID, entry.session, entry.deviceID = identity.UserID, identity.SessionID, identity.DeviceID
 	}
@@ -70,6 +82,20 @@ func (t *socketTracker) trackAccount(parent context.Context, identity *account.I
 			t.wg.Done()
 		})
 	}, nil
+}
+
+// countByKind returns the live connections per kind, with every known kind present.
+func (t *socketTracker) countByKind() map[string]int {
+	counts := make(map[string]int, len(socketKinds))
+	for _, kind := range socketKinds {
+		counts[kind] = 0
+	}
+	t.mu.Lock()
+	for _, entry := range t.entries {
+		counts[entry.kind]++
+	}
+	t.mu.Unlock()
+	return counts
 }
 
 func (t *socketTracker) revokeMatching(match func(*socketEntry) bool) {

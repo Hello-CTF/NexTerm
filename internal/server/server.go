@@ -150,6 +150,8 @@ type Server struct {
 	revokeUserSessions        func(context.Context, string, string, ...func() error) ([]string, error)
 	accountExecutionAdmission func(context.Context, string, *account.Identity, func() error) error
 
+	metrics *serverMetrics
+
 	readGate func()
 }
 
@@ -305,6 +307,7 @@ func New(config Config) (*Server, error) {
 		remoteDesktop:             config.RemoteDesktop,
 		accountCleanup:            config.AccountCleanup,
 		accountCleanupPrepare:     config.AccountCleanupPrepare,
+		metrics:                   newServerMetrics(),
 	}
 	if config.Accounts != nil {
 		s.revokeUserSessions = config.Accounts.RevokeUserSessionsWithIDs
@@ -325,7 +328,7 @@ func New(config Config) (*Server, error) {
 		s.preferences = account.NewPreferences(config.Settings)
 	}
 
-	s.handler = s.transportGuard(s.routes(config))
+	s.handler = s.metrics.countRequests(s.transportGuard(captureRoute(s.routes(config))))
 	return s, nil
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/metrics"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
@@ -91,6 +92,7 @@ func trustedProxyCIDRs() []string {
 }
 
 func run(args []string) int {
+	startedAt := time.Now()
 	if len(args) > 0 && args[0] == supervisor.HelperCommand {
 		return supervisor.RunHelperCLI(args[1:])
 	}
@@ -417,6 +419,20 @@ func run(args []string) int {
 			_ = alertEvaluator.Shutdown(shutdownCtx)
 		}()
 	}
+	metricsServer, err := metrics.Start(logger.Logger, invocation.MetricsAddr, invocation.MetricsAllowRemote, func(w *metrics.Writer) {
+		metrics.WriteProcess(w, startedAt, version.Version)
+		transport.WriteMetrics(w)
+		writeRuntimeMetrics(w, &application.Services)
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 1
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = metricsServer.Close(shutdownCtx)
+	}()
 	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
 			logger.Error("vault is required but unavailable", "error", err, "hint", vaultMasterKeyHint)

@@ -284,3 +284,27 @@ machine or read its files on an account's behalf:
 
 Only open access lifts these limits: `--auth off`, or `--auth loopback`
 listening on loopback when no account is signed in.
+
+## Prometheus metrics
+
+`nexterm-server` can expose Prometheus text metrics at `/metrics` on a
+separate listener. It is disabled by default. Enable it with
+`--metrics-addr 127.0.0.1:9464` or `NEXTERM_METRICS_ADDR=127.0.0.1:9464` (for
+example in the unit's environment file). A bare `:9464` binds `127.0.0.1`.
+The endpoint has no authentication, so any non-loopback address, wildcards
+included, is refused at startup unless `NEXTERM_METRICS_ALLOW_REMOTE=1` is
+set; in that case restrict access with a firewall or a private network.
+
+Exposed series: process (goroutines, heap, GC, uptime, build info), database
+connection pool, WebSocket connections per kind, live terminal tabs by kind
+and persistence, connected device agents, active port forwards, HTTP request
+counts and latency per route template, and login success and failure counters.
+Labels come from small fixed sets: no user names, session IDs, device IDs, or
+request paths appear in any label.
+
+```yaml
+scrape_configs:
+  - job_name: nexterm-server
+    static_configs:
+      - targets: ["127.0.0.1:9464"]
+```
