@@ -292,3 +292,35 @@ func TestDecodeClientText(t *testing.T) {
 		}
 	}
 }
+
+func TestClientWalkSkipsSymlinksAndCapsDepth(t *testing.T) {
+	t.Parallel()
+	outside := t.TempDir()
+	body, err := os.ReadFile(filepath.Join(clientFixture("xshell", "Sessions"), "跳板机.xsh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "linked.xsh"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(outside, "linked.xsh"), filepath.Join(dir, "linked.xsh")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	if _, err := PreviewXshell(dir, nil, nil, Limits{}); !errors.Is(err, ErrNoClientSessions) {
+		t.Fatalf("symlinked session was followed: err = %v", err)
+	}
+	deep := dir
+	for i := 0; i < maxClientDepth+2; i++ {
+		deep = filepath.Join(deep, "d")
+	}
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(deep, "deep.xsh"), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PreviewXshell(dir, nil, nil, Limits{}); !errors.Is(err, ErrNoClientSessions) {
+		t.Fatalf("too-deep session was read: err = %v", err)
+	}
+}

@@ -1,6 +1,8 @@
 package production
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -133,15 +135,67 @@ func TestSSHImportClientApplyCreatesFolderGroups(t *testing.T) {
 
 func TestSSHImportClientSourcesAreDesktopOnly(t *testing.T) {
 	t.Parallel()
-	dispatcher, _, _, _ := sshImportPreviewTestRig(t, false)
-	for _, source := range []string{"putty", "mobaxterm", "xshell", "securecrt"} {
-		for _, command := range []string{"ssh_import_preview", "ssh_import_apply"} {
-			body := `{"args":{"source":"` + source + `","path":` + strconvQuote(sshImportClientFixture("mobaxterm", "MobaXterm.ini")) + `,"hosts":[],"keys":[]}}`
-			response := dispatchStoreTest(dispatcher, command, body)
-			if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-				t.Fatalf("server %s %s = %+v, want unsupported", command, source, response)
+	owned := ipc.WithUserID(context.Background(), "user-1")
+	cases := []struct {
+		name      string
+		desktop   bool
+		multiUser bool
+		ctx       context.Context
+	}{
+		{"server", false, false, context.Background()},
+		{"multi-user", true, true, context.Background()},
+		{"owner-scoped", true, false, owned},
+	}
+	for _, tc := range cases {
+		dispatcher, database, credentialVault, _ := sshImportPreviewTestRig(t, tc.desktop)
+		dispatcher = ipc.NewDispatcher()
+		if err := registerSSHImportCommands(dispatcher, database, credentialVault, tc.desktop, tc.multiUser); err != nil {
+			t.Fatal(err)
+		}
+		for _, source := range []string{"putty", "mobaxterm", "xshell", "securecrt"} {
+			for _, command := range []string{"ssh_import_preview", "ssh_import_apply"} {
+				body := `{"args":{"source":"` + source + `","path":` + strconvQuote(sshImportClientFixture("mobaxterm", "MobaXterm.ini")) + `,"hosts":[],"keys":[]}}`
+				response := dispatcher.Dispatch(tc.ctx, ipc.Request{Command: command, Args: json.RawMessage(body)}, ipc.Environment{})
+				if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
+					t.Fatalf("%s %s %s = %+v, want unsupported", tc.name, command, source, response)
+				}
 			}
 		}
+	}
+}
+
+func TestSSHImportClientApplyRollsBackGroupsAndAssets(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	dispatcher, database, _, _ := sshImportTestRig(t)
+	path := sshImportClientFixture("mobaxterm", "MobaXterm.ini")
+	preview := sshImportPreview(t, dispatcher, `{"args":{"source":"mobaxterm","path":`+strconvQuote(path)+`}}`)
+	groupsBefore, err := database.GroupList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetsBefore, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Creating the Staging group fails after earlier groups and assets were written in the same transaction.
+	if err := database.GORM().Exec(`CREATE TRIGGER fail_staging BEFORE INSERT ON asset_group WHEN NEW.name = 'Staging' BEGIN SELECT RAISE(ABORT, 'forced group failure'); END`).Error; err != nil {
+		t.Fatal(err)
+	}
+	_, response := sshImportApply(t, dispatcher, `{"args":{"source":"mobaxterm","path":`+strconvQuote(path)+`,`+sshImportSelectAll(preview)+`}}`)
+	if response.OK {
+		t.Fatal("apply succeeded despite the forced group failure")
+	}
+	groupsAfter, err := database.GroupList(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetsAfter, err := database.AssetList(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groupsAfter) != len(groupsBefore) || len(assetsAfter) != len(assetsBefore) {
+		t.Fatalf("import left partial state: groups %d -> %d, assets %d -> %d", len(groupsBefore), len(groupsAfter), len(assetsBefore), len(assetsAfter))
 	}
 }
 

@@ -18,8 +18,10 @@ import (
 // Session files of other clients are read whole; a session directory of a few
 // thousand hosts stays far below these bounds.
 const (
-	maxClientFileBytes = 16 << 20
-	maxClientFiles     = 10000
+	maxClientFileBytes  = 16 << 20
+	maxClientFiles      = 10000
+	maxClientDepth      = 16
+	maxClientTotalBytes = 64 << 20
 )
 
 // Import sources for the session stores of other SSH clients.
@@ -273,6 +275,7 @@ func walkClientSessions(dir, ext string, c *clientCollector, visit func(file, gr
 		return fmt.Errorf("sshconfig: %s is not a directory", dir)
 	}
 	files := 0
+	var total int64
 	found := false
 	err = filepath.WalkDir(dir, func(file string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -285,13 +288,35 @@ func walkClientSessions(dir, ext string, c *clientCollector, visit func(file, gr
 			}
 			return nil
 		}
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ext) {
+		if entry.IsDir() {
+			if rel, relErr := filepath.Rel(dir, file); relErr == nil && rel != "." && strings.Count(filepath.ToSlash(rel), "/")+1 > maxClientDepth {
+				c.diagnose("limit-depth", file, "目录层级超过上限 %d，已跳过 %s", maxClientDepth, file)
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ext) {
+			return nil
+		}
+		// Lstat keeps the walk inside the chosen folder: symlinked files are not followed.
+		if li, lerr := os.Lstat(file); lerr != nil || !li.Mode().IsRegular() {
+			c.diagnose("file-unreadable", file, "无法读取 %s，已跳过", file)
 			return nil
 		}
 		if files >= maxClientFiles {
 			if !c.result.Truncated {
 				c.result.Truncated = true
 				c.diagnose("limit-truncated", file, "会话文件数量超过上限 %d", maxClientFiles)
+			}
+			return filepath.SkipAll
+		}
+		if info, serr := entry.Info(); serr == nil {
+			total += info.Size()
+		}
+		if total > maxClientTotalBytes {
+			if !c.result.Truncated {
+				c.result.Truncated = true
+				c.diagnose("limit-truncated", file, "会话文件总大小超过上限 %d 字节", int64(maxClientTotalBytes))
 			}
 			return filepath.SkipAll
 		}
