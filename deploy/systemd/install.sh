@@ -113,6 +113,7 @@ FAILED_DIR="$OPT_DIR/.rollback.failed"
 SERVER_UNIT="nexterm-server.service"
 ONLYSERVER_UNIT="nexterm-onlyserver.service"
 UNITS="$SERVER_UNIT $ONLYSERVER_UNIT"
+PATHS_DROPIN="$ONLYSERVER_UNIT.d/50-nexterm-paths.conf"
 BINARIES="nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64 nexterm-helper-linux-armv7 nexterm-helper-linux-riscv64 nexterm-helper-linux-loong64 nexterm-helper-darwin-amd64 nexterm-helper-darwin-arm64 nexterm-helper-windows-amd64.exe nexterm-helper-windows-arm64.exe"
 ENV_KEYS="NEXTERM_LISTEN NEXTERM_AUTH NEXTERM_DATA_DIR NEXTERM_WEB_ROOT NEXTERM_MASTER_KEY_FILE NEXTERM_DB"
 REAL_ROOT=0
@@ -867,6 +868,11 @@ backup_current() {
       fi
     done
   done
+  if [ -f "$UNIT_DIR/$PATHS_DROPIN" ]; then
+    rel="${UNIT_DIR#$ROOT_PREFIX}/$PATHS_DROPIN"
+    mkdir -p "$BACKUP_DIR/units$(dirname "$rel")"
+    cp -p "$UNIT_DIR/$PATHS_DROPIN" "$BACKUP_DIR/units/$rel"
+  fi
   : > "$BACKUP_DIR/active-units"
   for unit in $ACTIVE_UNITS; do
     printf '%s\n' "$unit" >> "$BACKUP_DIR/active-units"
@@ -1126,6 +1132,57 @@ ensure_master_key() {
   done
 }
 
+# The sync-only unit runs with ProtectSystem=strict and ProtectHome=yes. systemd
+# cannot read paths from the EnvironmentFile, so a data directory outside the
+# unit's StateDirectory goes into ReadWritePaths= and configured paths under a
+# home directory relax ProtectHome to read-only, through a drop-in this
+# installer owns: it is rewritten on every run and removed when not needed.
+install_paths_dropin() {
+  fail_at dropin
+  local env_file="$ETC_DIR/onlyserver.env" file="$UNIT_DIR/$PATHS_DROPIN" wd key value data_dir="" home=0 content=""
+  if ! wd="$(unit_working_dir "$UNIT_DIR/$ONLYSERVER_UNIT")"; then
+    die "cannot parse WorkingDirectory in ${UNIT_DIR#$ROOT_PREFIX}/$ONLYSERVER_UNIT (systemd requires an absolute path)"
+  fi
+  for key in NEXTERM_DATA_DIR NEXTERM_MASTER_KEY_FILE NEXTERM_DB_PASSWORD_FILE; do
+    if ! value="$(env_get "$env_file" "$key")"; then
+      die "cannot parse $key in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
+    fi
+    if [ -z "$value" ]; then
+      [ "$key" = "NEXTERM_DATA_DIR" ] || continue
+      value="data"
+    fi
+    case "$value" in /*) ;; *) value="$(join_path "$wd" "$value")" ;; esac
+    value="$(lex_clean "$value")"
+    if [ "$key" = "NEXTERM_DATA_DIR" ]; then data_dir="$value"; fi
+    case "$value" in /home|/home/*|/root|/root/*|/run/user|/run/user/*) home=1 ;; esac
+  done
+  case "$data_dir" in
+    /var/lib/nexterm|/var/lib/nexterm/*) ;;
+    *)
+      # Quoted with the optional-path dash inside; systemd expands % specifiers, so % doubles.
+      content="ReadWritePaths=\"-$(printf '%s' "$data_dir" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g')\"
+"
+      ;;
+  esac
+  if [ "$home" -eq 1 ]; then
+    content="${content}ProtectHome=read-only
+"
+  fi
+  if [ -z "$content" ]; then
+    if [ -f "$file" ]; then
+      rm -f "$file"
+      rmdir "$(dirname "$file")" 2>/dev/null || true
+      log "removed ${file#$ROOT_PREFIX} (the sync-only unit's defaults cover the configured paths)"
+    fi
+    return 0
+  fi
+  install -d -m 0755 "$(dirname "$file")"
+  printf '# Managed by install.sh from %s; rewritten on every install.\n[Service]\n%s' "${env_file#$ROOT_PREFIX}" "$content" > "$file.new"
+  chmod 0644 "$file.new"
+  mv -f "$file.new" "$file"
+  log "wrote ${file#$ROOT_PREFIX} for the configured paths of the sync-only unit"
+}
+
 reload_systemd() {
   fail_at daemon-reload
   "$SYSTEMCTL" daemon-reload
@@ -1356,6 +1413,7 @@ run_install() {
   install_units
   ensure_env_files
   ensure_master_key
+  install_paths_dropin
   bootstrap_admin
   reload_systemd
   manage_services
@@ -1419,6 +1477,11 @@ run_rollback() {
       fi
     done
   done
+  if [ -f "$UNIT_DIR/$PATHS_DROPIN" ] && [ ! -f "$BACKUP_DIR/units/etc/systemd/system/$PATHS_DROPIN" ]; then
+    rm -f "$UNIT_DIR/$PATHS_DROPIN"
+    rmdir "$(dirname "$UNIT_DIR/$PATHS_DROPIN")" 2>/dev/null || true
+    log "removed etc/systemd/system/$PATHS_DROPIN (not part of the previous payload)"
+  fi
   for f in $BINARIES; do
     if [ -f "$BACKUP_DIR/$f" ]; then install -m 0755 "$BACKUP_DIR/$f" "$OPT_DIR/$f"; fi
   done

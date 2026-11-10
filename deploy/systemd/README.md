@@ -268,6 +268,19 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+The server rejects browser requests and WebSockets whose `Origin` does not
+match the request `Host`. Make the proxy forward the public host name
+(nginx: `proxy_set_header Host $host;`, plus `proxy_http_version 1.1;`,
+`proxy_set_header Upgrade $http_upgrade;` and
+`proxy_set_header Connection "upgrade";` for WebSockets). If the proxy must
+rewrite `Host` to the upstream address, list the public origins in
+`NEXTERM_ALLOWED_ORIGINS` instead, comma separated: `host[:port]` patterns
+such as `nexterm.example.com` match any scheme, patterns with `://` such as
+`https://nexterm.example.com` match the scheme too, and `*` wildcards are
+allowed. Setting it replaces the built-in `localhost:*` and `127.0.0.1:*`
+entries. `NEXTERM_TRUST_FORWARDED_FOR` accepts `1`/`0` or `true`/`false`;
+any other value stops startup.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
@@ -284,3 +297,77 @@ machine or read its files on an account's behalf:
 
 Only open access lifts these limits: `--auth off`, or `--auth loopback`
 listening on loopback when no account is signed in.
+
+## Vault requirement
+
+Set `NEXTERM_REQUIRE_VAULT=1` (or pass `--require-vault`) to stop startup
+when the credential vault cannot be unlocked with the master key, instead of
+starting with stored credentials unavailable. The shipped `nexterm.env`
+enables it for new installs (upgrades keep their env file); set it to `0`
+only while recovering a lost or mismatched key.
+
+## Service sandboxing
+
+`nexterm-onlyserver.service` runs fully sandboxed: `ProtectSystem=strict`
+with only `/var/lib/nexterm` writable, `ProtectHome=yes`, no capabilities,
+`NoNewPrivileges=yes`, private `/tmp` and `/dev`, IPv4/IPv6/Unix sockets
+only, a `@system-service` system call filter and
+`MemoryDenyWriteExecute=yes`. When `onlyserver.env` sets a data directory
+elsewhere, or a data directory, master key or database password file under
+`/home`, `/root` or `/run/user`, the installer writes
+`/etc/systemd/system/nexterm-onlyserver.service.d/50-nexterm-paths.conf`
+with the matching `ReadWritePaths=` and `ProtectHome=read-only`, and removes
+it again when the defaults suffice. Do not edit that file; put your own
+settings in a separate drop-in. To listen on a port below 1024, add a
+drop-in with `AmbientCapabilities=CAP_NET_BIND_SERVICE` and
+`CapabilityBoundingSet=CAP_NET_BIND_SERVICE`.
+
+`nexterm-server.service` keeps `ProtectSystem=full` and a smaller set,
+because programs started from local terminals (open access with
+`NEXTERM_AUTH=off`, or `loopback` without a signed-in account) inherit the
+sandbox and sshfs mounts need `/dev/fuse` and the setuid `fusermount3`.
+Unix sockets such as `/var/run/docker.sock` stay reachable under either
+unit. With accounts on, which disables local terminals and mounts, you can
+tighten it with
+`systemctl edit nexterm-server.service`:
+
+```ini
+[Service]
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+```
+
+`MemoryDenyWriteExecute=yes` is left out of that list because the optional
+local AI redaction loads the ONNX Runtime library into the server process.
+Both units allow 60 seconds for a stop: on shutdown the server sends open
+WebSockets a going-away close (code 1001) so clients reconnect at once, and
+drops connections that have not closed after a short grace period (10
+seconds at most).
+
+## Tuning and diagnostics
+
+These optional variables go in the env file of either unit:
+
+- `NEXTERM_WS_KEEPALIVE` (default `25s`), `NEXTERM_WS_PING_TIMEOUT`
+  (`10s`) and `NEXTERM_WS_WRITE_TIMEOUT` (`10s`) are Go durations for the
+  WebSocket ping interval, the wait for its pong and the write deadline. A
+  negative keepalive disables pings; raise it when an idle-timeout proxy
+  allows longer gaps, lower it when the proxy closes idle connections
+  sooner than 25 seconds.
+- `NEXTERM_WS_COMPRESSION` overrides WebSocket compression: `takeover`,
+  `nocontext` (less memory per connection) or `off`.
+- `NEXTERM_EVENT_QUEUE_SIZE` (default 64) is the per-connection event queue
+  length and `NEXTERM_EVENT_BUFFER_SIZE` (default 256) the number of recent
+  events kept for clients that reconnect.
+- `NEXTERM_PPROF_ADDR` serves Go pprof endpoints, loopback only unless an
+  explicit wildcard is given. Block and mutex profiles stay off unless
+  `NEXTERM_PPROF_CONTENTION=N` is also set: it samples about one blocking
+  event per N nanoseconds spent blocked and one in N mutex contention events
+  (`1` records everything and slows a busy server).
