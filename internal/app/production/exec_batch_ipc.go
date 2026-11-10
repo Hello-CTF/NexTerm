@@ -69,7 +69,7 @@ func newExecBatchIPCService(sessions *session.Manager, assets execBatchAssetRead
 	}
 }
 
-func registerExecBatchCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Service, history *store.Store) error {
+func registerExecBatchCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Service, history *store.Store, sessions *session.Manager) error {
 	var reader execBatchHistoryReader
 	if history != nil {
 		reader = history
@@ -77,7 +77,7 @@ func registerExecBatchCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Se
 	if err := (&execBatchIPCService{batches: batches, history: reader}).register(dispatcher); err != nil {
 		return err
 	}
-	return registerServiceCommands(dispatcher, batches)
+	return registerServiceCommands(dispatcher, batches, sessions)
 }
 
 func (s *execBatchIPCService) register(dispatcher *ipc.Dispatcher) error {
@@ -130,7 +130,9 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 		return execbatch.Target{}, err
 	}
 	info := connected.Info()
-	if info.Kind != session.KindSSH && info.Kind != session.KindDevice {
+	powerShell := execbatch.PowerShellTargetsAllowed(ctx)
+	psKind := powerShell && (info.Kind == session.KindWinRM || info.Kind == session.KindLocal)
+	if info.Kind != session.KindSSH && info.Kind != session.KindDevice && !psKind {
 		return execbatch.Target{}, fmt.Errorf("%w: %s is %s", execbatch.ErrUnsupported, sessionID, info.Kind)
 	}
 	if info.Status != session.StatusConnected {
@@ -147,7 +149,7 @@ func (r execBatchResolver) Resolve(ctx context.Context, sessionID string) (execb
 		SessionID: info.ID, SessionName: info.Name, AssetID: info.AssetID,
 		Transport: transport, Generation: transport.Generation(),
 	}
-	if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
+	if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" && !powerShell {
 		return execbatch.Target{}, unsupportedReason{message: "Windows 设备暂不支持批量执行（命令按 POSIX shell 编写），请改用终端手动操作", sentinel: execbatch.ErrUnsupported}
 	}
 	if info.Kind == session.KindDevice {

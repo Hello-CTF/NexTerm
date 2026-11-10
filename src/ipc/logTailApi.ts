@@ -1,7 +1,7 @@
 import { call } from "./commands";
 import { bytesToBase64 } from "../ui/base64";
 
-export type LogTailSourceKind = "file" | "journal" | "docker";
+export type LogTailSourceKind = "file" | "journal" | "docker" | "winevent";
 export type LogTailSourceStatus = "queued" | "starting" | "running" | "exited" | "failed" | "canceled";
 
 export interface LogTailSource {

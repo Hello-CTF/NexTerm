@@ -26,6 +26,7 @@
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
 - **Layout templates**: save a split layout, then reopen a host's terminals with it and run startup snippets
 - **Everyday ops**: remote files (including trzsz in-terminal transfer), Docker, MySQL / PostgreSQL / Redis, port forwarding, live host monitoring
+- **Windows ops**: manage Windows services and follow Windows event logs through PowerShell
 - **Every connection**: SSH, WinRM, Telnet, local shells, managed devices, RDP / VNC
 - **Easy migration**: import hosts from OpenSSH config, Termius, PuTTY, MobaXterm, Xshell, SecureCRT
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync

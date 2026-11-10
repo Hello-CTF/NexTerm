@@ -315,7 +315,7 @@ func productionModules(services ProductionServices) []Module {
 				if err := services.terminalCommands.registerTranscripts(dispatcher); err != nil {
 					return err
 				}
-				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
+				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store, services.Sessions); err != nil {
 					return err
 				}
 				if services.Store != nil {

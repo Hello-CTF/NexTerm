@@ -191,7 +191,7 @@ describe("ProcessFinderPanel", () => {
       batchId: "batch-2", command: "kill -TERM -- 1201",
       hosts: [{
         result: execResult("s1", { status: "exit_error", exitCode: 1, stderr: "sudo: a password is required" }),
-        systemd: "unknown", failureKind: "sudo", units: [],
+        platform: "systemd", systemd: "unknown", failureKind: "sudo", units: [],
       }],
     };
     mocks.kill.mockRejectedValueOnce({
@@ -239,7 +239,7 @@ describe("ProcessFinderPanel", () => {
       batchId: "batch-2", command: "kill -TERM -- 1201",
       hosts: [{
         result: execResult("s1", { status: "success", exitCode: 0 }),
-        systemd: "unknown", failureKind: undefined, units: [],
+        platform: "systemd", systemd: "unknown", failureKind: undefined, units: [],
       }],
     };
     mocks.kill.mockRejectedValueOnce({

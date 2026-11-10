@@ -162,7 +162,20 @@ describe("MultiHostLogTail", () => {
     mounted = mountPanel();
     expect(target("s5").disabled).toBe(false);
     expect(panel().container.textContent).toContain("edge-device");
-    expect(panel().container.querySelector('[aria-label*="非 Windows 受管设备"]')).not.toBeNull();
+    expect(panel().container.querySelector('[aria-label*="Windows 主机请选择 Windows 事件日志"]')).not.toBeNull();
+  });
+
+  it("starts a Windows event log source by default for assets with a PowerShell shell", async () => {
+    mocks.assetList.mockResolvedValue([{ id: "win-asset", name: "Win", kind: "ssh", options: { shell: "powershell.exe" } }]);
+    mounted = mountWithClient(createElement(MultiHostLogTail, {
+      sessions: [{ id: "w1", assetId: "win-asset", name: "win-host", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+    }));
+    await flush();
+    click(target("w1"));
+    expect(source("Win").value).toBe("System");
+    clickButton(panel().container, "开始跟随");
+    await flushUntil(() => mocks.start.mock.calls.length === 1);
+    expect(mocks.start.mock.calls[0][0].sources).toEqual([{ sourceId: "w1", sessionId: "w1", kind: "winevent", value: "System" }]);
   });
 
   it("preselects connected initial targets and drops local or offline ones", () => {

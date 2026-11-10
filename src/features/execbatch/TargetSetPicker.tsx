@@ -10,6 +10,8 @@ export interface TargetSetPickerTarget {
   tags: string[];
   workspaceNames: string[];
   envCount: number;
+  /** The asset record marks the host as Windows (WinRM, or SSH with a PowerShell shell). */
+  windows?: boolean;
 }
 
 export function filterTargetSet(

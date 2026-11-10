@@ -1,9 +1,9 @@
 package hostprocs
 
 import (
-	"encoding/base64"
 	"strconv"
-	"unicode/utf16"
+
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 )
 
 const sentinelPrefix = "@@nexterm-procs "
@@ -61,12 +61,7 @@ $el=-1;if($p.CreationDate){$el=[int64]($now-$p.CreationDate).TotalSeconds}
 [pscustomobject]@{cpuOk=$cpuOk;userOk=$userOk;memTotalKiB=$total;items=$items}|ConvertTo-Json -Compress -Depth 4`
 
 func encodePowerShell(script string) string {
-	units := utf16.Encode([]rune(script))
-	raw := make([]byte, 0, len(units)*2)
-	for _, u := range units {
-		raw = append(raw, byte(u), byte(u>>8))
-	}
-	return "powershell -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(raw)
+	return psquote.ShortCommand(script)
 }
 
 var windowsListCommand = encodePowerShell(windowsScript)

@@ -30,6 +30,7 @@
 - **文件、容器与数据库**：SFTP/WinRM/设备文件浏览与在线编辑（可按资产开启覆盖前 `.nexterm-bak` 备份，作用于 AI 写文件与 Compose 重新部署）；Docker 容器、日志与镜像，可按时间合并多个容器的日志，Compose 重新部署前显示要执行的命令和目录、确认后才执行，SSH 主机上可转发并打开容器发布的端口；MySQL/MariaDB、PostgreSQL 与 Redis；本地转发与 SOCKS5；从 `~/.ssh/config` 或 Termius（仅 macOS）导入主机，桌面版还可导入 PuTTY（Windows 注册表或 `.reg` 导出）、MobaXterm（`MobaXterm.ini`）、Xshell（`.xsh` 会话文件夹）与 SecureCRT（`Sessions` 文件夹）的 SSH 会话，来源文件夹映射为分组；导入前预览冲突，不导入密码与 `.ppk` 私钥。
 - **远程桌面**：RDP 和 VNC 资产在 NexTerm 内打开，可经 SSH 主机或受管设备中转；服务器的 TLS 证书在首次连接时确认指纹后固定，证书变化时拒绝连接并要求重新确认；可手动收发文本剪贴板（可按资产关闭），支持只读查看和发送组合键，RDP 服务器支持时还可在连接中临时调整分辨率；连接记录写入审计日志。VNC 服务器不提供 X.509 TLS 时连接不加密，建议经 SSH 主机中转。
 - **主机诊断**：主机详情页查看监听端口和进程（可搜索、分页，端口可按对外或仅本机筛选，端口和进程可互相跳转，进程可按树状查看，结束进程需确认并写入审计日志），从主机发起 TCP 或 HTTP 连通性测试，并搜索该主机已录制的终端输出。端口发现默认关闭；开启后终端连接期间定期在远端执行 `ss`/`netstat`，发现新端口时提示，点击后才建立只绑定 127.0.0.1 的临时转发，会话关闭时移除；浏览器模式下转发建在服务器上，只有服务器本机能访问。
+- **主机服务与日志**：服务管理页对 Linux 主机列出并操作 systemd 服务，对 Windows 主机（SSH 到 Windows OpenSSH、WinRM、本机 Windows）通过 PowerShell 列出服务，并启动、停止、重启或修改启动类型，Windows 与 Linux 主机需分开选择；写操作与 systemd 一样受生产环境确认保护并写入审计日志。多主机日志可跟随 journalctl、文件、Docker 容器，Windows 主机可跟随 System、Application 等事件日志（SSH 与受管设备；WinRM 暂不支持跟随），读取受限的日志（如 Security）时需要管理员或「Event Log Readers」权限，被拒绝时会在该主机结果中提示。
 
 ## 设备、分享与自托管
 

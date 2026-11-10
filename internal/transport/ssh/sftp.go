@@ -2,8 +2,6 @@ package ssh
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,10 +11,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
@@ -339,12 +337,7 @@ func windowsExecResultError(result base.ExecResult) error {
 }
 
 func powerShellCommand(shell, script string) string {
-	units := utf16.Encode([]rune(script))
-	encoded := make([]byte, len(units)*2)
-	for index, unit := range units {
-		binary.LittleEndian.PutUint16(encoded[index*2:], unit)
-	}
-	return shell + " -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(encoded)
+	return psquote.Command(shell, script)
 }
 
 func (f *sftpFileSystem) posixEnvironment(ctx context.Context) (*sftpEnvironment, error) {

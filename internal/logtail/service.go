@@ -267,6 +267,10 @@ func (s *Service) executeSource(run *activeRun, source Source, semaphore chan st
 		run.emitStatus(run.ctx, source, StatusFailed, "连接已断开，请重新连接后再试")
 		return
 	}
+	if message := platformMismatch(target.Platform, source.Kind); message != "" {
+		run.emitStatus(run.ctx, source, StatusFailed, message)
+		return
+	}
 	opener, ok := target.Transport.(base.ExecStreamTransport)
 	if !ok {
 		run.emitStatus(run.ctx, source, StatusFailed, "当前连接不支持流式执行，无法跟随日志")
@@ -433,4 +437,14 @@ func (a *lineAssembler) Flush() error {
 	line := strings.TrimSuffix(strings.ToValidUTF8(string(a.pending), "�"), "\r")
 	a.pending = nil
 	return a.emit(line)
+}
+
+func platformMismatch(platform string, kind SourceKind) string {
+	switch {
+	case platform == PlatformWindows && kind != SourceWinEvent:
+		return "Windows 主机只能跟随 Windows 事件日志（tail、journalctl、docker 命令依赖 POSIX 工具）"
+	case platform == PlatformPOSIX && kind == SourceWinEvent:
+		return "Windows 事件日志只能用于 Windows 主机"
+	}
+	return ""
 }

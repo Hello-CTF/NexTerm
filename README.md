@@ -26,6 +26,7 @@
 - **AI 助手**：读取终端、文件和容器排查问题，写操作经你确认
 - **布局模板**：保存分屏布局，按模板打开主机的多个终端并运行启动片段
 - **日常运维**：远程文件（含 trzsz 终端内传输）、Docker、MySQL / PostgreSQL / Redis、端口转发、主机实时监控
+- **Windows 运维**：通过 PowerShell 管理 Windows 服务，并跟随 Windows 事件日志
 - **所有连接**：SSH、WinRM、Telnet、本机终端、受管设备、RDP / VNC
 - **迁移方便**：从 OpenSSH 配置、Termius、PuTTY、MobaXterm、Xshell、SecureCRT 导入主机
 - **自托管**：多用户、双因素认证、审计日志、加密同步

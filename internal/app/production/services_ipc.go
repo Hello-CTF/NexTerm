@@ -3,22 +3,57 @@ package production
 import (
 	"context"
 	"errors"
+	"runtime"
 
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
+	"github.com/Hello-CTF/NexTerm/internal/hostports"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	hostservices "github.com/Hello-CTF/NexTerm/internal/services"
+	"github.com/Hello-CTF/NexTerm/internal/session"
+	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 )
 
 type servicesIPCService struct {
 	services *hostservices.Service
 }
 
-func registerServiceCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Service) error {
+// registerServiceCommands serves the host services panel. With a session manager, Windows hosts are managed
+// through PowerShell; without one every host is treated as systemd.
+func registerServiceCommands(dispatcher *ipc.Dispatcher, batches *execbatch.Service, sessions *session.Manager) error {
 	var executor hostservices.Executor
 	if batches != nil {
 		executor = batches
 	}
-	return (&servicesIPCService{services: hostservices.New(executor)}).register(dispatcher)
+	service := hostservices.New(executor)
+	if sessions != nil {
+		service.WithPlatformResolver(servicesPlatformResolver(sessions))
+	}
+	return (&servicesIPCService{services: service}).register(dispatcher)
+}
+
+// servicesPlatformResolver reuses the Windows detection of the process and port views: WinRM, a local session
+// on Windows, a Windows device agent, or an SSH asset configured with a Windows shell.
+func servicesPlatformResolver(sessions *session.Manager) hostservices.PlatformResolver {
+	return func(ctx context.Context, _ string, sessionID string) (string, error) {
+		connected, err := sessions.SessionFor(ctx, sessionID)
+		if err != nil {
+			return "", session.IPCError(err)
+		}
+		shell := hostPortsShellForGOOS(connected.Asset(), runtime.GOOS)
+		if connected.Asset().Kind == session.KindDevice {
+			transport, err := sessions.TransportFor(ctx, sessionID)
+			if err != nil {
+				return "", session.IPCError(err)
+			}
+			if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
+				shell = hostports.ShellPowerShell
+			}
+		}
+		if shell == hostports.ShellPowerShell {
+			return hostservices.PlatformWindows, nil
+		}
+		return hostservices.PlatformSystemd, nil
+	}
 }
 
 func (s *servicesIPCService) register(dispatcher *ipc.Dispatcher) error {

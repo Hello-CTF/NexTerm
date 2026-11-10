@@ -3,6 +3,7 @@ package production
 import (
 	"context"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/logtail"
 	"net"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestExecBatchResolverRejectsWindowsDevicesInPlainLanguage(t *testing.T) {
 	}
 }
 
-func TestLogTailResolverAcceptsLinuxDeviceAndExplainsWindows(t *testing.T) {
+func TestLogTailResolverAcceptsLinuxDeviceAndMarksWindowsForEventLogsOnly(t *testing.T) {
 	ctx := ipcWithUser("owner-a")
 	linux, linuxSession := newDeviceSessionRig(t, "linux")
 	target, err := logTailResolver{sessions: linux.manager}.Resolve(ctx, linuxSession)
@@ -74,12 +75,15 @@ func TestLogTailResolverAcceptsLinuxDeviceAndExplainsWindows(t *testing.T) {
 	}
 
 	windows, windowsSession := newDeviceSessionRig(t, "windows")
-	_, err = logTailResolver{sessions: windows.manager}.Resolve(ctx, windowsSession)
-	if !errors.Is(err, session.ErrUnsupported) {
-		t.Fatalf("windows device err = %v, want ErrUnsupported", err)
+	if target.Platform != logtail.PlatformPOSIX {
+		t.Fatalf("linux device platform = %q", target.Platform)
 	}
-	if strings.Contains(err.Error(), "capability") {
-		t.Fatalf("message should not expose the English sentinel: %q", err.Error())
+	winTarget, err := logTailResolver{sessions: windows.manager}.Resolve(ctx, windowsSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winTarget.Platform != logtail.PlatformWindows {
+		t.Fatalf("windows device platform = %q, want %q", winTarget.Platform, logtail.PlatformWindows)
 	}
 }
 
