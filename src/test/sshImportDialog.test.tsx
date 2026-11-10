@@ -125,7 +125,10 @@ const PREVIEW: SshImportPreviewDto = {
       warnings: [],
     },
   ],
-  diagnostics: [{ code: "host-pattern-skipped", source: "~/.ssh/config:12", message: "Wildcard pattern skipped" }],
+  diagnostics: [
+    { code: "host-pattern-skipped", source: "~/.ssh/config:12", message: "Wildcard pattern skipped" },
+    { code: "duplicate-alias", source: "~/.ssh/config:20", message: "Host merged" },
+  ],
   truncated: false,
 };
 
@@ -224,7 +227,9 @@ describe("SSH import dialog", () => {
     expect(text).toContain("新增");
     expect(text).toContain("重复 · 跳过");
     expect(text).toContain("别名冲突");
-    expect(text).toContain("通配 Host 已跳过");
+    expect(text).toContain("通配 Host 不单独导入");
+    expect(text).toContain("重复的 Host 已合并");
+    expect(text).not.toContain("duplicate-alias");
     expect(text).toContain("3 台主机（1 台可新增）");
 
     const bastionBox = mounted.container.querySelector<HTMLInputElement>(

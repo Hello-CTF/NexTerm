@@ -20,7 +20,7 @@ import { normalizeAssetTags } from "./assetSearch";
 import { Select } from "../../ui/Select";
 import { useServerAccountRestrictions } from "../auth/useServerAccountRestrictions";
 import { ServerRestrictionNote } from "../auth/ServerRestrictionNote";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 type Phase = "form" | "loading" | "preview" | "applying" | "done";
 
@@ -33,8 +33,17 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 const DIAGNOSTIC_LABELS: Record<string, string> = {
-  "host-pattern-skipped": t("通配 Host 已跳过"),
+  "host-pattern-skipped": t("通配 Host 不单独导入"),
   "match-skipped": t("Match 块已跳过"),
+  "duplicate-alias": t("重复的 Host 已合并"),
+  "invalid-port": t("端口无效"),
+  "hostname-token-unsupported": t("HostName 变量未展开"),
+  "include-cycle": t("Include 循环引用"),
+  "include-depth-exceeded": t("Include 嵌套过深"),
+  "include-ignored": t("Include 已忽略"),
+  "include-out-of-bounds": t("Include 超出允许目录"),
+  "file-too-large": t("文件过大"),
+  "unsupported-key-type": t("不支持的密钥类型"),
   "key-unreadable": t("文件无法读取"),
   "symlink-unresolved": t("符号链接无法解析"),
   "symlink-escape": t("符号链接指向扫描目录外"),
@@ -430,7 +439,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                 {applyResult.warnings.length > 0 && (
                   <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300">
                     {applyResult.warnings.map((warning, index) => (
-                      <div key={index}>{warning}</div>
+                      <div key={index}>{translateMessage(warning)}</div>
                     ))}
                   </div>
                 )}
@@ -559,7 +568,7 @@ function PreviewBody({
               <div key={index} className="flex items-start gap-2 text-[11.5px] text-neutral-500">
                 <IconAlert size={12} className="mt-0.5 shrink-0" />
                 <span>
-                  <span className="text-neutral-400">{DIAGNOSTIC_LABELS[diagnostic.code] ?? diagnostic.code}</span> · {diagnostic.message}
+                  <span className="text-neutral-400">{DIAGNOSTIC_LABELS[diagnostic.code] ?? diagnostic.code}</span> · {translateMessage(diagnostic.message)}
                 </span>
               </div>
             ))}
@@ -603,7 +612,7 @@ function Warnings({ warnings }: { warnings: string[] }) {
   return (
     <div className="mt-1 text-[11px] text-amber-300">
       {warnings.map((warning, index) => (
-        <div key={index}>{warning}</div>
+        <div key={index}>{translateMessage(warning)}</div>
       ))}
     </div>
   );

@@ -97,6 +97,7 @@ func TestInventorySSHWatchResyncRemoveIdempotenceAndManualSafety(t *testing.T) {
 	includedPath := filepath.Join(dir, "conf.d", "extra.conf")
 	writeInventoryTestFile(t, mainPath, "Include "+includedPath+"\nHost alpha\n  HostName 10.0.0.1\n  User deploy\n")
 	writeInventoryTestFile(t, includedPath, "Host beta\n  HostName 10.0.0.2\n  IdentityFile "+filepath.Join(dir, "id_ed25519")+"\n")
+	writeInventoryTestFile(t, filepath.Join(dir, "id_ed25519"), "key placeholder\n")
 	manual, err := database.AssetCreate(ctx, store.AssetInput{Kind: "ssh", Name: "manual", Host: stringPointerForInventory("manual.example"), OptionsJSON: "{}"})
 	if err != nil {
 		t.Fatal(err)

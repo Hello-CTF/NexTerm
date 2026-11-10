@@ -1,0 +1,28 @@
+# Directives before the first Host apply to every host.
+Port 2200
+
+Host web
+    HostName %h.example.com
+    User webuser
+
+Host db
+    HostName db-%%1.example.com
+
+# A repeated block merges into the first; values set earlier win.
+Host web
+    HostName ignored.example.com
+    IdentityFile ~/.ssh/web_key
+
+Host * !bastion
+    ProxyJump bastion
+
+Host bastion
+    HostName bastion.example.com
+
+Host tok
+    HostName %n.example.com
+    Port 2222
+
+Host *
+    User deploy
+    IdentityFile ~/.ssh/id_default

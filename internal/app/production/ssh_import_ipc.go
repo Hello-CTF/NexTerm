@@ -410,18 +410,106 @@ func (p *sshImportPlanner) serverSSHRoot() string {
 	return filepath.Join(home, ".ssh")
 }
 
+// blockUnmappableJumps blocks hosts whose ProxyJump cannot be stored as asset jump links. Asset jumps chain
+// recursively, so "ProxyJump b,c" (connect b, then c, then the host) maps to host -> c -> b: every hop after the
+// first must be a host this import creates that has no other jump of its own. A host whose jump target gets blocked
+// here is blocked too.
 func blockUnmappableJumps(preview *sshconfig.ImportPreview) {
-	for i := range preview.Hosts {
-		host := &preview.Hosts[i]
-		if host.Action != sshconfig.PlanAdd && host.Action != sshconfig.PlanConflictAlias {
+	hosts := preview.Hosts
+	canonical := map[string]int{}
+	for i := range hosts {
+		if hosts[i].Action != sshconfig.PlanAdd {
 			continue
 		}
-		if len(sshImportJumpHops(host.ProxyJump)) <= 1 {
-			continue
+		lower := strings.ToLower(hosts[i].Alias)
+		if _, ok := canonical[lower]; !ok {
+			canonical[lower] = i
 		}
-		host.Action = sshconfig.PlanBlockedJump
-		host.Warnings = append(host.Warnings, "多跳 ProxyJump 暂不支持自动映射；该主机未导入，请拆分为单跳后重试，或手动添加主机并配置跳板")
 	}
+	for {
+		changed := false
+		required := map[int]string{}
+		for i := range hosts {
+			host := &hosts[i]
+			if host.Action != sshconfig.PlanAdd && host.Action != sshconfig.PlanConflictAlias {
+				continue
+			}
+			problem, links := sshImportJumpChainProblem(hosts, canonical, required, i)
+			if problem == "" {
+				for idx, prev := range links {
+					required[idx] = prev
+				}
+				continue
+			}
+			host.Action = sshconfig.PlanBlockedJump
+			host.Warnings = append(host.Warnings, problem)
+			changed = true
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+// sshImportJumpChainProblem explains why the ProxyJump of hosts[self] cannot be mapped, or returns the jump links
+// (middle hop index -> lower-cased predecessor alias) its chain needs. required holds the links other mappable
+// chains already claimed.
+func sshImportJumpChainProblem(hosts []sshconfig.HostPreview, canonical map[string]int, required map[int]string, self int) (string, map[int]string) {
+	raw := hosts[self].ProxyJump
+	hops := sshImportJumpHops(raw)
+	for _, hop := range hops {
+		if idx, ok := canonical[strings.ToLower(hop)]; ok && idx != self && hosts[idx].Action == sshconfig.PlanBlockedJump {
+			return fmt.Sprintf("跳板 %q 不可导入，该主机未导入", hop), nil
+		}
+	}
+	if len(hops) <= 1 {
+		return "", nil
+	}
+	// The connector counts the target asset in its chain, so a host can have at most maxJumpAssetHops-1 jump hosts.
+	if maxHops := maxJumpAssetHops - 1; len(hops) > maxHops {
+		return fmt.Sprintf("多跳 ProxyJump %s 超过跳板链上限 %d；该主机未导入", raw, maxHops), nil
+	}
+	links := map[int]string{}
+	for k := 1; k < len(hops); k++ {
+		mid, prev := hops[k], hops[k-1]
+		idx, ok := canonical[strings.ToLower(mid)]
+		if !ok {
+			return fmt.Sprintf("多跳 ProxyJump %s 无法自动映射：中间跳板 %q 不是本次新增的主机；该主机未导入，可为 %q 配置跳板 %q 后改用单跳，或手动添加该主机", raw, mid, mid, prev), nil
+		}
+		own := sshImportJumpHops(hosts[idx].ProxyJump)
+		if len(own) > 1 || len(own) == 1 && !strings.EqualFold(own[0], prev) {
+			return fmt.Sprintf("多跳 ProxyJump %s 无法自动映射：中间跳板 %q 自己的 ProxyJump 是 %s，而不是 %q；该主机未导入", raw, mid, hosts[idx].ProxyJump, prev), nil
+		}
+		lowerPrev := strings.ToLower(prev)
+		if want, ok := required[idx]; ok && want != lowerPrev {
+			return fmt.Sprintf("多跳 ProxyJump %s 无法自动映射：中间跳板 %q 已被另一台主机的多跳链要求经由 %q；该主机未导入", raw, mid, want), nil
+		}
+		if want, ok := links[idx]; ok && want != lowerPrev {
+			return fmt.Sprintf("多跳 ProxyJump %s 无法自动映射：中间跳板 %q 在链中出现多次；该主机未导入", raw, mid), nil
+		}
+		links[idx] = lowerPrev
+	}
+	// Follow the jumps the links produce from this host; a revisited host means the chain loops.
+	next := func(idx int) (int, bool) {
+		jump := ""
+		if prev, ok := links[idx]; ok {
+			jump = prev
+		} else if prev, ok := required[idx]; ok {
+			jump = prev
+		} else if own := sshImportJumpHops(hosts[idx].ProxyJump); len(own) > 0 {
+			jump = strings.ToLower(own[len(own)-1])
+		}
+		target, ok := canonical[jump]
+		return target, ok
+	}
+	visited := map[int]bool{self: true}
+	for node, ok := next(self); ok; node, ok = next(node) {
+		if visited[node] {
+			return fmt.Sprintf("多跳 ProxyJump %s 无法自动映射：映射后的跳板链形成循环；该主机未导入", raw), nil
+		}
+		visited[node] = true
+	}
+	return "", links
 }
 
 func (p *sshImportPlanner) loadExisting(ctx context.Context) (sshImportExisting, error) {
@@ -795,6 +883,7 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 	}
 	applied := make([]appliedHost, 0, len(input.Hosts))
 	assetIDByAlias := map[string]string{}
+	createdIDByAlias := map[string]string{}
 	overwrittenAssetIDs := map[string]bool{}
 	type hostOutcome struct {
 		Alias  string `json:"alias"`
@@ -816,6 +905,9 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 			applied = append(applied, appliedHost{item: item, assetID: id})
 			if _, ok := assetIDByAlias[strings.ToLower(item.Alias)]; !ok {
 				assetIDByAlias[strings.ToLower(item.Alias)] = id
+			}
+			if _, ok := createdIDByAlias[strings.ToLower(item.Alias)]; !ok {
+				createdIDByAlias[strings.ToLower(item.Alias)] = id
 			}
 			result.AssetsCreated++
 			outcome.Action = "created"
@@ -857,7 +949,7 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 		if done.item.ProxyJump == "" {
 			continue
 		}
-		if err := p.mapProxyJump(ctx, tx, done.item, done.assetID, plan, assetIDByAlias, result); err != nil {
+		if err := p.mapProxyJump(ctx, tx, done.item, done.assetID, plan, assetIDByAlias, createdIDByAlias, result); err != nil {
 			return fmt.Errorf("主机 %q 的跳板映射写入失败: %w", done.item.Alias, err)
 		}
 	}
@@ -1016,20 +1108,52 @@ func (p *sshImportPlanner) overwriteHost(ctx context.Context, tx *gorm.DB, plan 
 	return err
 }
 
-func (p *sshImportPlanner) mapProxyJump(ctx context.Context, tx *gorm.DB, item *sshconfig.HostPreview, assetID string, plan *sshImportPlan, assetIDByAlias map[string]string, result *sshImportApplyDTO) error {
+// mapProxyJump stores the host's ProxyJump as asset jump links. For "ProxyJump b,c" the host jumps through c and c,
+// which the preview requires to be created by this import without a jump of its own, through b. The chain is checked
+// against what this import actually wrote before any link is stored, so a skipped hop never leaves a partial chain.
+func (p *sshImportPlanner) mapProxyJump(ctx context.Context, tx *gorm.DB, item *sshconfig.HostPreview, assetID string, plan *sshImportPlan, assetIDByAlias, createdIDByAlias map[string]string, result *sshImportApplyDTO) error {
 	hops := sshImportJumpHops(item.ProxyJump)
-	if len(hops) != 1 {
+	if len(hops) == 0 {
 		return nil
 	}
-	target := strings.ToLower(hops[0])
-	jumpID, ok := plan.existing.assetIDByName[target]
-	if !ok {
-		jumpID, ok = assetIDByAlias[target]
+	resolve := func(hop string) (string, bool) {
+		target := strings.ToLower(hop)
+		if id, ok := plan.existing.assetIDByName[target]; ok {
+			return id, true
+		}
+		id, ok := assetIDByAlias[target]
+		return id, ok
 	}
+	last := hops[len(hops)-1]
+	jumpID, ok := resolve(last)
 	if !ok {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("主机 %q 的跳板 %q 未能解析，已导入但未设置跳板", item.Alias, hops[0]))
+		result.Warnings = append(result.Warnings, fmt.Sprintf("主机 %q 的跳板 %q 未能解析，已导入但未设置跳板", item.Alias, last))
 		return nil
 	}
+	type link struct{ assetID, jumpID string }
+	links := make([]link, 0, len(hops)-1)
+	for k := len(hops) - 1; k >= 1; k-- {
+		midID, created := createdIDByAlias[strings.ToLower(hops[k])]
+		if !created {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("主机 %q 的多跳跳板 %q 未在本次导入中新增，已导入但未设置跳板", item.Alias, hops[k]))
+			return nil
+		}
+		prevID, ok := resolve(hops[k-1])
+		if !ok {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("主机 %q 的跳板 %q 未能解析，已导入但未设置跳板", item.Alias, hops[k-1]))
+			return nil
+		}
+		links = append(links, link{assetID: midID, jumpID: prevID})
+	}
+	for _, l := range links {
+		if err := p.setAssetJump(ctx, tx, l.assetID, l.jumpID); err != nil {
+			return err
+		}
+	}
+	return p.setAssetJump(ctx, tx, assetID, jumpID)
+}
+
+func (p *sshImportPlanner) setAssetJump(ctx context.Context, tx *gorm.DB, assetID, jumpID string) error {
 	row, err := p.database.AssetGetTx(ctx, tx, assetID)
 	if err != nil {
 		return err
