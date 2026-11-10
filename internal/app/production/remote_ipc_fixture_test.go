@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,13 +115,6 @@ func remoteTestTOTPCode(t *testing.T, secretBase32 string, at time.Time) string 
 	return fmt.Sprintf("%06d", value%1_000_000)
 }
 
-// remoteTestCSRF derives a per-session token for this fake server; clients only echo it back.
-func remoteTestCSRF(sessionID string) string {
-	mac := hmac.New(sha256.New, []byte(sessionID))
-	mac.Write([]byte("nexterm-csrf-v1"))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
 type remoteTestIdentityKey struct{}
 
 func remoteTestWriteJSON(w http.ResponseWriter, status int, payload any) {
@@ -177,7 +168,7 @@ func newRemoteTestMux(t *testing.T, f *remoteTestAccounts) http.Handler {
 	csrf := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			identity, _ := r.Context().Value(remoteTestIdentityKey{}).(*account.Identity)
-			if identity == nil || r.Header.Get("X-NexTerm-CSRF") != remoteTestCSRF(identity.SessionID) {
+			if identity == nil || !f.accounts.CSRFValid(identity.SessionID, r.Header.Get("X-NexTerm-CSRF")) {
 				remoteTestWriteError(w, http.StatusForbidden, ipc.CodeForbidden, "CSRF 校验失败：页面已过期，请刷新后重试")
 				return
 			}
