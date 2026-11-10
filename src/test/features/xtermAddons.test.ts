@@ -37,8 +37,9 @@ beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", (cb: () => void) => setTimeout(cb, 0) as unknown as number);
   vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
   vi.stubGlobal("window", globalThis);
-  (globalThis as { requestIdleCallback?: unknown }).requestIdleCallback = (cb: () => void) =>
-    setTimeout(cb, 0) as unknown as number;
+  // xterm's idle task queue reads the deadline, so the stub passes one.
+  (globalThis as { requestIdleCallback?: unknown }).requestIdleCallback = (cb: (deadline: IdleDeadline) => void) =>
+    setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0) as unknown as number;
   (globalThis as { cancelIdleCallback?: unknown }).cancelIdleCallback = (id: number) => clearTimeout(id);
 });
 
@@ -122,13 +123,83 @@ describe("attachLazyAddons", () => {
     const term = fakeTerm();
     const api = attachLazyAddons(term as never, noopHandlers, () => false);
     expect(term.registerLinkProvider).toHaveBeenCalledTimes(1);
-    api.findNext("needle");
+    api.findNext("needle", { caseSensitive: true });
     await flushUntil(() => term.loadAddon.mock.calls.length === 1);
     const search = term.loadAddon.mock.calls
       .map(([addon]) => addon as { findNext?: ReturnType<typeof vi.fn> })
       .find((addon) => addon.findNext);
     await flushUntil(() => (search?.findNext?.mock.calls.length ?? 0) === 1);
-    expect(search?.findNext).toHaveBeenCalledWith("needle");
+    expect(search?.findNext).toHaveBeenCalledWith("needle", { caseSensitive: true });
+  });
+
+  it("forwards result changes to listeners and clears decorations", async () => {
+    const clearDecorations = vi.fn();
+    let fire: ((results: { resultIndex: number; resultCount: number }) => void) | undefined;
+    const { attachLazyAddons } = await loadModule({
+      search: () => ({
+        SearchAddon: class {
+          findNext = vi.fn();
+          findPrevious = vi.fn();
+          clearDecorations = clearDecorations;
+          onDidChangeResults = (listener: typeof fire) => {
+            fire = listener;
+            return { dispose: () => undefined };
+          };
+        },
+      }),
+    });
+    const term = fakeTerm();
+    const api = attachLazyAddons(term as never, noopHandlers, () => false);
+    const seen: { resultIndex: number; resultCount: number }[] = [];
+    const off = api.onResults((results) => seen.push(results));
+    await flushUntil(() => fire !== undefined);
+    fire?.({ resultIndex: 0, resultCount: 3 });
+    off();
+    fire?.({ resultIndex: 1, resultCount: 3 });
+    expect(seen).toEqual([{ resultIndex: 0, resultCount: 3 }]);
+    api.clear();
+    expect(clearDecorations).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts matches with the real search addon and terminal", async () => {
+    vi.resetModules();
+    vi.doUnmock("@xterm/addon-search");
+    const { Terminal } = await import("@xterm/xterm");
+    const { attachLazyAddons, searchDecorationsFor } = await import("../../features/terminal/xtermAddons");
+    const term = new Terminal({ cols: 40, rows: 5, allowProposedApi: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    term.open(host);
+    vi.spyOn(term, "registerLinkProvider").mockImplementation(() => ({ dispose: () => undefined }));
+    const api = attachLazyAddons(term, noopHandlers, () => false);
+    await new Promise<void>((resolve) => term.write("foo bar Foo\r\nfoobar\r\n", resolve));
+    const seen: { resultIndex: number; resultCount: number }[] = [];
+    api.onResults((results) => seen.push(results));
+    const decorations = searchDecorationsFor("dark");
+    api.findNext("foo", { decorations });
+    await flushUntil(() => seen.length === 1);
+    expect(seen[0]).toEqual({ resultIndex: 0, resultCount: 3 });
+    // The addon re-highlights a repeated term only after clear(), which the pane runs when options change.
+    api.clear();
+    api.findNext("foo", { caseSensitive: true, wholeWord: true, decorations });
+    await flushUntil(() => seen.length === 2);
+    expect(seen[1].resultCount).toBe(1);
+    api.findNext("zzz", { decorations });
+    await flushUntil(() => seen.length === 3);
+    expect(seen[2].resultCount).toBe(0);
+    term.dispose();
+    host.remove();
+  });
+
+  it("gives search decorations #RRGGBB backgrounds for both terminal themes", async () => {
+    const { searchDecorationsFor } = await loadModule({});
+    for (const theme of ["dark", "light"] as const) {
+      const decorations = searchDecorationsFor(theme);
+      expect(decorations.matchBackground).toMatch(/^#[0-9a-f]{6}$/);
+      expect(decorations.activeMatchBackground).toMatch(/^#[0-9a-f]{6}$/);
+      expect(decorations.activeMatchBackground).not.toBe(decorations.matchBackground);
+    }
+    expect(searchDecorationsFor("dark").matchBackground).not.toBe(searchDecorationsFor("light").matchBackground);
   });
 
   it("finds a URL through the registered provider in a real terminal", async () => {

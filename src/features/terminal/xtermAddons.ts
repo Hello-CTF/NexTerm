@@ -1,6 +1,7 @@
 import type { Terminal } from "@xterm/xterm";
-import type { SearchAddon } from "@xterm/addon-search";
+import type { ISearchOptions, ISearchResultChangeEvent, SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import type { ResolvedTerminalTheme } from "../../app/preferences";
 import { createTerminalLinkProvider, type TerminalLinkProviderHandlers } from "./terminalLinkProvider";
 import { createWebglController, type GpuAccelerationMode, type WebglHost } from "./webglPolicy";
 
@@ -24,9 +25,43 @@ export function activateUnicode11(term: Terminal): void {
  * while they arrive, and a failed import leaves that baseline in place.
  */
 
+export interface TerminalSearchFlags {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+}
+
+export type TerminalSearchResults = ISearchResultChangeEvent;
+
+// The addon highlights and counts at most this many matches; resultIndex is -1 past it.
+export const SEARCH_HIGHLIGHT_LIMIT = 1000;
+
+// Decoration backgrounds must be #RRGGBB. Matches sit under the text, the active match on top of the selection.
+export function searchDecorationsFor(theme: ResolvedTerminalTheme): NonNullable<ISearchOptions["decorations"]> {
+  return theme === "light"
+    ? {
+        matchBackground: "#f6e3a1",
+        matchBorder: "#c99a2e",
+        matchOverviewRuler: "#c99a2e",
+        activeMatchBackground: "#f2b84b",
+        activeMatchBorder: "#8a5a00",
+        activeMatchColorOverviewRuler: "#8a5a00",
+      }
+    : {
+        matchBackground: "#4a3f22",
+        matchBorder: "#9c8448",
+        matchOverviewRuler: "#9c8448",
+        activeMatchBackground: "#8a6a1f",
+        activeMatchBorder: "#f0d27a",
+        activeMatchColorOverviewRuler: "#f0d27a",
+      };
+}
+
 export interface LazySearch {
-  findNext(term: string): void;
-  findPrevious(term: string): void;
+  findNext(term: string, options?: ISearchOptions): void;
+  findPrevious(term: string, options?: ISearchOptions): void;
+  clear(): void;
+  onResults(listener: (results: TerminalSearchResults) => void): () => void;
 }
 
 export function attachLazyAddons(
@@ -35,13 +70,18 @@ export function attachLazyAddons(
   isDisposed: () => boolean,
 ): LazySearch {
   let search: SearchAddon | null = null;
+  const resultListeners = new Set<(results: TerminalSearchResults) => void>();
   let searchPromise: Promise<SearchAddon | null> | null = null;
   const loadSearch = (): Promise<SearchAddon | null> => {
     searchPromise ??= import("@xterm/addon-search").then(
       ({ SearchAddon }) => {
         if (isDisposed()) return null;
-        search = new SearchAddon();
+        search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
         term.loadAddon(search);
+        // Partial test doubles may not carry the event.
+        search.onDidChangeResults?.((results) => {
+          for (const listener of resultListeners) listener(results);
+        });
         return search;
       },
       () => null,
@@ -65,8 +105,14 @@ export function attachLazyAddons(
     });
   };
   return {
-    findNext: (text) => run((addon) => addon.findNext(text)),
-    findPrevious: (text) => run((addon) => addon.findPrevious(text)),
+    findNext: (text, options) => run((addon) => addon.findNext(text, options)),
+    findPrevious: (text, options) => run((addon) => addon.findPrevious(text, options)),
+    // Clearing before the addon arrives has nothing to clear; partial test doubles may lack the method.
+    clear: () => search?.clearDecorations?.(),
+    onResults: (listener) => {
+      resultListeners.add(listener);
+      return () => resultListeners.delete(listener);
+    },
   };
 }
 

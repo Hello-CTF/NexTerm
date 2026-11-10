@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
-import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
+import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest, type TerminalSearchApi } from "./XtermView";
+import { SEARCH_HIGHLIGHT_LIMIT, type TerminalSearchFlags, type TerminalSearchResults } from "./xtermAddons";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
@@ -107,6 +108,7 @@ import type { TerminalStreamBacklog } from "./terminalStream";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { copyText, readText } from "../../ui/clipboard";
+import { copyTextWithToast } from "../../ui/copyWithToast";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { clipText } from "../../ui/textClip";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -123,6 +125,7 @@ import {
   IconPanelRight,
   IconMergeH,
   IconPlug,
+  IconSettings,
   IconRefresh,
   IconSave,
   IconSearch,
@@ -144,6 +147,23 @@ export interface TerminalPaneProps {
 }
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
+const SEARCH_DEBOUNCE_MS = 150;
+
+function regexSyntaxError(pattern: string): string | null {
+  try {
+    new RegExp(pattern, "g");
+    return null;
+  } catch (e) {
+    return describeError(e);
+  }
+}
+
+function searchCountLabel(results: TerminalSearchResults): string {
+  if (results.resultCount === 0) return tr("无结果");
+  const total = results.resultCount >= SEARCH_HIGHLIGHT_LIMIT ? `${SEARCH_HIGHLIGHT_LIMIT}+` : String(results.resultCount);
+  if (results.resultIndex < 0) return tr("{count} 个匹配", { count: total });
+  return `${results.resultIndex + 1}/${total}`;
+}
 
 function isStoreTabDead(id: string): boolean {
   return useUi
@@ -328,6 +348,11 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [linkPanel, setLinkPanel] = useState<ExtractedLink[] | null>(null);
   const [query, setQuery] = useState("");
+  const [searchFlags, setSearchFlags] = useState<TerminalSearchFlags>({ caseSensitive: false, wholeWord: false, regex: false });
+  const [searchResults, setSearchResults] = useState<TerminalSearchResults | null>(null);
+  // Narrow panes fold the option toggles into one popover so the input keeps its width.
+  const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
+  const searchOptionsRef = useRef<HTMLDivElement>(null);
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
@@ -401,14 +426,40 @@ export function TerminalPane({
   const controlRefreshGen = useRef(0);
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
-  const searchApi = useRef<{
-    findNext: (t: string) => void;
-    findPrevious: (t: string) => void;
-  } | null>(null);
+  const searchApi = useRef<TerminalSearchApi | null>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
   const composerRef = useRef<HTMLInputElement | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchRegexError = searchFlags.regex && query ? regexSyntaxError(query) : null;
+  // "refresh" re-runs the term from the current match (typing, toggles); next/previous step to another match.
+  const runSearch = (direction: "next" | "previous" | "refresh", text = query) => {
+    const api = searchApi.current;
+    if (!api) return;
+    if (!text || (searchFlags.regex && regexSyntaxError(text))) {
+      api.clear();
+      setSearchResults(null);
+      return;
+    }
+    if (direction === "previous") {
+      api.findPrevious(text, searchFlags);
+      return;
+    }
+    if (direction === "refresh") api.clear();
+    api.findNext(text, searchFlags);
+  };
+  const runSearchRef = useRef(runSearch);
+  runSearchRef.current = runSearch;
+  // Searching for the term already shown steps to its next match; a new term searches as typing does.
+  const searchFor = (text: string) => {
+    if (searchOpen && text === query) runSearch("next", text);
+    else setQuery(text);
+    setSearchOpen(true);
+  };
+  const searchOpenRef = useRef(searchOpen);
+  searchOpenRef.current = searchOpen;
+  const searchForRef = useRef(searchFor);
+  searchForRef.current = searchFor;
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const exitedMayRun = useUi((s) => {
     for (const w of s.workspaces) for (const p of w.panes) {
@@ -1015,10 +1066,7 @@ export function TerminalPane({
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
       if (selected) {
-        const first = selected.split("\n")[0];
-        setQuery(first);
-        setSearchOpen(true);
-        window.setTimeout(() => searchApi.current?.findNext(first), 60);
+        searchForRef.current(selected.split("\n")[0]);
       } else {
         setSearchOpen(true);
       }
@@ -1027,6 +1075,54 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // Search as the user types or toggles an option; closing removes the highlights.
+  useEffect(() => {
+    if (!searchOpen) {
+      searchApi.current?.clear();
+      setSearchResults(null);
+      setSearchOptionsOpen(false);
+      return;
+    }
+    const timer = window.setTimeout(() => runSearchRef.current("refresh", query), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchOpen, query, searchFlags]);
+
+  useEffect(() => {
+    if (!searchOptionsOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && searchOptionsRef.current?.contains(e.target)) return;
+      setSearchOptionsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [searchOptionsOpen]);
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    handleRef.current?.focus();
+  };
+
+  const searchFlagsActive = searchFlags.caseSensitive || searchFlags.wholeWord || searchFlags.regex;
+  const searchFlagButtons = (
+    [
+      ["caseSensitive", "Aa", tr("区分大小写")],
+      ["wholeWord", "ab", tr("全字匹配")],
+      ["regex", ".*", tr("正则表达式")],
+    ] as const
+  ).map(([flag, glyph, label]) => (
+    <button
+      key={flag}
+      type="button"
+      className={`nx-icon-btn font-mono text-[11px] ${searchFlags[flag] ? "bg-neutral-800 text-neutral-100" : ""}`}
+      aria-label={label}
+      aria-pressed={searchFlags[flag]}
+      title={label}
+      onClick={() => setSearchFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}
+    >
+      {flag === "wholeWord" ? <span className="underline underline-offset-2">{glyph}</span> : glyph}
+    </button>
+  ));
 
   // Closes the sidebar when this pane shows it; otherwise moves it here and keeps it open.
   const toggleSidebarHere = useCallback(() => {
@@ -2015,7 +2111,7 @@ export function TerminalPane({
             kind: "item",
             label: tr("复制当前目录"),
             hint: cwd,
-            onSelect: () => void copyText(cwd).catch(() => undefined),
+            onSelect: () => void copyTextWithToast(cwd),
           },
         ] satisfies MenuItem[])
       : []),
@@ -2038,9 +2134,12 @@ export function TerminalPane({
       icon: <IconSearch size={13} />,
       accel: searchBindingLabel,
       onSelect: () => {
-        const next = !searchOpen;
-        setSearchOpen(next);
-        if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        if (searchOpen) {
+          closeSearch();
+          return;
+        }
+        setSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
     },
     {
@@ -2248,7 +2347,7 @@ export function TerminalPane({
         label: tr("复制"),
         icon: <IconCopy size={13} />,
         disabled: !hasSel,
-        onSelect: () => void copyText(selected).catch(() => undefined),
+        onSelect: () => void copyTextWithToast(selected),
       },
       {
         kind: "item",
@@ -2278,9 +2377,7 @@ export function TerminalPane({
         accel: searchBindingLabel,
         disabled: !hasSel,
         onSelect: () => {
-          setQuery(firstLine);
-          setSearchOpen(true);
-          window.setTimeout(() => searchApi.current?.findNext(firstLine), 60);
+          searchFor(firstLine);
         },
       },
       {
@@ -2535,7 +2632,7 @@ export function TerminalPane({
           className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={tr("搜索终端内容 ({searchBindingLabel})", { searchBindingLabel })}
           aria-pressed={searchOpen}
-          onClick={() => setSearchOpen((v) => !v)}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
         >
           <IconSearch size={13} />
           {tr("搜索")}
@@ -2652,7 +2749,7 @@ export function TerminalPane({
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
             title={tr("复制录制错误")}
-            onClick={() => void copyText(recording.safeError || tr("未知错误")).catch(() => undefined)}
+            onClick={() => void copyTextWithToast(recording.safeError || tr("未知错误"))}
           >
             {tr("复制错误")}
           </button>
@@ -2661,7 +2758,7 @@ export function TerminalPane({
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
               title={tr("复制录制路径")}
-              onClick={() => void copyText(recording.path || "").catch(() => undefined)}
+              onClick={() => void copyTextWithToast(recording.path || "")}
             >
               {tr("复制路径")}
             </button>
@@ -2689,7 +2786,7 @@ export function TerminalPane({
 
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 bg-neutral-900/70 px-2.5 py-1.5">
-          <div className="nx-field max-w-[260px] @max-[560px]:max-w-none @max-[560px]:flex-1">
+          <div className="nx-field max-w-[260px] @max-[560px]:min-w-0 @max-[560px]:max-w-none @max-[560px]:flex-1">
             <span className="nx-field-icon">
               <IconSearch size={12} />
             </span>
@@ -2699,19 +2796,70 @@ export function TerminalPane({
               className="nx-input nx-input-sm"
               placeholder={tr("搜索终端内容…")}
               value={query}
+              aria-invalid={searchRegexError ? true : undefined}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && e.shiftKey) searchApi.current?.findPrevious(query);
-                else if (e.key === "Enter") searchApi.current?.findNext(query);
-                if (e.key === "Escape") setSearchOpen(false);
+                // Enter that commits an IME composition must not jump to a match.
+                if (isImeKeyEvent(e)) return;
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  runSearch(e.shiftKey ? "previous" : "next");
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeSearch();
+                }
               }}
             />
           </div>
+          <div className="flex shrink-0 items-center gap-1.5 @max-[560px]:hidden" data-testid="terminal-search-flags">
+            {searchFlagButtons}
+          </div>
+          <div ref={searchOptionsRef} className="relative hidden shrink-0 @max-[560px]:block">
+            <button
+              type="button"
+              className={`nx-icon-btn ${searchOptionsOpen || searchFlagsActive ? "bg-neutral-800 text-neutral-100" : ""}`}
+              aria-label={tr("搜索选项")}
+              title={tr("搜索选项")}
+              aria-haspopup="true"
+              aria-expanded={searchOptionsOpen}
+              onClick={() => setSearchOptionsOpen((open) => !open)}
+            >
+              <IconSettings size={13} />
+            </button>
+            {searchOptionsOpen && (
+              <div
+                className="absolute right-0 top-full z-20 mt-1 flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-1 shadow-lg"
+                data-testid="terminal-search-options"
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape" || isImeKeyEvent(e)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchOptionsOpen(false);
+                  searchInputRef.current?.focus();
+                }}
+              >
+                {searchFlagButtons}
+              </div>
+            )}
+          </div>
+          {query && (
+            <span
+              className={`min-w-0 shrink truncate whitespace-nowrap text-[11px] tabular-nums ${
+                searchRegexError || searchResults?.resultCount === 0 ? "text-red-300" : "text-neutral-400"
+              }`}
+              role="status"
+              aria-live="polite"
+              data-testid="terminal-search-status"
+              title={searchRegexError ?? undefined}
+            >
+              {searchRegexError ? tr("正则表达式无效") : searchResults ? searchCountLabel(searchResults) : ""}
+            </span>
+          )}
           <button
             className="nx-icon-btn"
             aria-label={tr("上一个匹配")}
             title={tr("上一个")}
-            onClick={() => searchApi.current?.findPrevious(query)}
+            onClick={() => runSearch("previous")}
           >
             <IconArrowUp size={13} />
           </button>
@@ -2719,12 +2867,12 @@ export function TerminalPane({
             className="nx-icon-btn"
             aria-label={tr("下一个匹配")}
             title={tr("下一个")}
-            onClick={() => searchApi.current?.findNext(query)}
+            onClick={() => runSearch("next")}
           >
             <IconArrowDown size={13} />
           </button>
           <div className="nx-spacer @max-[560px]:hidden" />
-          <button className="nx-icon-btn" aria-label={tr("关闭搜索")} title={tr("关闭搜索")} onClick={() => setSearchOpen(false)}>
+          <button className="nx-icon-btn" aria-label={tr("关闭搜索")} title={tr("关闭搜索")} onClick={closeSearch}>
             <IconClose size={12} />
           </button>
         </div>
@@ -2887,7 +3035,11 @@ export function TerminalPane({
               onLinkMenu={openLinkMenu}
               registerSearch={(api) => {
                 searchApi.current = api;
+                // A rebuilt terminal (reconnect, reattach) has no highlights: search its buffer again.
+                if (searchOpenRef.current) runSearchRef.current("refresh");
+                else setSearchResults(null);
               }}
+              onSearchResults={setSearchResults}
             />
           </div>
 

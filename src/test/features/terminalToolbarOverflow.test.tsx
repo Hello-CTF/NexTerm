@@ -104,6 +104,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: () => {},
           findPrevious: () => {},
+          clear: () => {},
         });
         (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);

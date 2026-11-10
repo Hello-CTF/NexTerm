@@ -315,6 +315,7 @@
   "{blocked}，已停止「{name}」：已执行到第 {done} 步": "{blocked}, « {name} » arrêté : exécuté jusqu'à l'étape {done}",
   "{blocked}，才能{label}片段": "{blocked} avant de pouvoir {label} le snippet",
   "{blocked}，才能填入命令": "{blocked} avant de pouvoir saisir la commande",
+  "{count} 个匹配": "{count} résultats",
   "{count} 个可恢复": {
     "one": "{count} récupérable",
     "other": "{count} récupérables"
@@ -1230,6 +1231,7 @@
   "免确认": "Sans confirmation",
   "免确认授权": "Autorisations sans confirmation",
   "全不选": "Tout désélectionner",
+  "全字匹配": "Mot entier",
   "全局 AI 权限": "Autorisations IA globales",
   "全局默认": "Par défaut global",
   "全屏": "Plein écran",
@@ -3477,6 +3479,7 @@
   "搜索这台主机的历史终端输出，回车开始": "Rechercher dans l'historique de sortie du terminal de cet hôte ; appuyez sur Entrée pour lancer",
   "搜索进程": "Rechercher des processus",
   "搜索选中内容的首行": "Rechercher la première ligne de la sélection",
+  "搜索选项": "Options de recherche",
   "摘要：{summary}": "Résumé : {summary}",
   "撤销": "Révoquer",
   "撤销 ({value}+Z)": "Annuler ({value}+Z)",
@@ -3818,6 +3821,7 @@
   "无法锁定凭据库。请重试。": "Impossible de verrouiller le coffre d'identifiants. Veuillez réessayer.",
   "无符合当前搜索或过滤条件的设备。": "Aucun appareil ne correspond à la recherche ou au filtre actuels.",
   "无经由该主机或指向其地址的数据库资产。": "Aucune ressource de base de données ne passe par cet hôte ni ne pointe vers son adresse.",
+  "无结果": "Aucun résultat",
   "无输出": "Aucune sortie",
   "无（终端默认不发送）": "Aucune (le terminal n'envoie rien par défaut)",
   "日志": "Journaux",
@@ -4536,6 +4540,7 @@
   "正则表达式": "Expression régulière",
   "正则表达式写法有误，当前显示未过滤的日志。请检查括号和转义符是否成对（技术详情：{detail}）": "L'expression régulière est incorrecte ; les journaux affichés ne sont pas filtrés. Vérifiez que les parenthèses et les caractères d'échappement sont bien appariés (détails techniques : {detail}).",
   "正则表达式无效：{error}": "Expression régulière invalide : {error}",
+  "正则表达式无效": "Expression régulière non valide",
   "正则（RE2）": "Regex (RE2)",
   "正在上传 {length} 个文件到该主机的 {terminalDir}…{value}": {
     "one": "Téléversement de {length} fichier vers {terminalDir} sur cet hôte…{value}",

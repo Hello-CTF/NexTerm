@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal, type IWindowsPty } from "@xterm/xterm";
-import { activateUnicode11, attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
+import {
+  activateUnicode11,
+  attachLazyAddons,
+  scheduleWebglRenderer,
+  searchDecorationsFor,
+  type TerminalSearchFlags,
+  type TerminalSearchResults,
+  type WebglRenderer,
+} from "./xtermAddons";
 import { attachSessionKeywordHighlight, type KeywordHighlighter } from "./keywordHighlight";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
@@ -30,6 +38,7 @@ import {
   waitAccountPreferences,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
+  type ResolvedTerminalTheme,
 } from "../../app/preferences";
 import { activeXtermTheme, TERMINAL_FONT_STACKS } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
@@ -132,6 +141,13 @@ export interface TerminalHandle {
 
 export type { TerminalLinkMenuRequest } from "./terminalLinks";
 
+export interface TerminalSearchApi {
+  findNext: (text: string, flags: TerminalSearchFlags) => void;
+  findPrevious: (text: string, flags: TerminalSearchFlags) => void;
+  // Removes the highlights and forgets the last term, so the next search starts at the current match.
+  clear: () => void;
+}
+
 export interface XtermViewProps {
   sessionId: string;
   tabId: string;
@@ -176,7 +192,9 @@ export interface XtermViewProps {
   visible?: boolean;
   onAttach?: (kernelTabId: string) => void;
   onAttachFailed?: (code: string) => void;
-  registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
+  registerSearch?: (api: TerminalSearchApi) => void;
+  // Match count and active match of the open search; decorations make the addon report them.
+  onSearchResults?: (results: TerminalSearchResults) => void;
   onData?: (data: string) => void;
   onBlocks?: (blocks: CommandBlock[]) => void;
   // The block whose command line scrolled above the viewport while its output still fills the top, or null.
@@ -231,6 +249,8 @@ export function XtermView(props: XtermViewProps) {
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const webglRef = useRef<WebglRenderer | null>(null);
   const highlightRef = useRef<KeywordHighlighter | null>(null);
+  // Re-colours the open search's highlights after a terminal theme change.
+  const refreshSearchThemeRef = useRef<(() => void) | null>(null);
   const outputRef = useRef<ScheduledTerminalOutput | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
@@ -261,6 +281,7 @@ export function XtermView(props: XtermViewProps) {
   const onTouchTapRef = useRef(props.onTouchTap);
   const onLinkMenuRef = useRef(props.onLinkMenu);
   const registerSearchRef = useRef(props.registerSearch);
+  const onSearchResultsRef = useRef(props.onSearchResults);
   // Mount-effect inputs that must not rebuild the terminal when they change:
   // visibility and resize updates flow through their dedicated effects, and
   // the WinRM mode is fixed for the tab's lifetime.
@@ -297,6 +318,7 @@ export function XtermView(props: XtermViewProps) {
   onTouchTapRef.current = props.onTouchTap;
   onLinkMenuRef.current = props.onLinkMenu;
   registerSearchRef.current = props.registerSearch;
+  onSearchResultsRef.current = props.onSearchResults;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
   followerRef.current.following = props.canResize === false;
@@ -1651,10 +1673,30 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);
     pasteHost.addEventListener("drop", onDropCapture, true);
+    // Each search takes the decoration colours of the current terminal theme. The addon keeps the colours of the
+    // search that drew the highlights, so a theme change redraws them from the last term (refreshSearchThemeRef).
+    let lastSearch: { text: string; flags: TerminalSearchFlags; theme: ResolvedTerminalTheme } | null = null;
+    const searchOptions = (text: string, flags: TerminalSearchFlags) => {
+      const theme = getResolvedTerminalTheme();
+      lastSearch = { text, flags, theme };
+      return { ...flags, decorations: searchDecorationsFor(theme) };
+    };
+    const offSearchResults = search.onResults((results) => onSearchResultsRef.current?.(results));
     registerSearchRef.current?.({
-      findNext: (t) => search.findNext(t),
-      findPrevious: (t) => search.findPrevious(t),
+      findNext: (text, flags) => search.findNext(text, searchOptions(text, flags)),
+      findPrevious: (text, flags) => search.findPrevious(text, searchOptions(text, flags)),
+      clear: () => {
+        lastSearch = null;
+        search.clear();
+      },
     });
+    refreshSearchThemeRef.current = () => {
+      if (!lastSearch || lastSearch.theme === getResolvedTerminalTheme()) return;
+      const { text, flags } = lastSearch;
+      // Without the cached term the search starts at the current match, so it stays selected.
+      search.clear();
+      search.findNext(text, searchOptions(text, flags));
+    };
 
     let measureFrame: number | null = null;
     let finalFrame = false;
@@ -1733,6 +1775,8 @@ export function XtermView(props: XtermViewProps) {
       followerTimerRef.current = undefined;
       osc7Disposable.dispose();
       terminalTargets.dispose();
+      offSearchResults();
+      refreshSearchThemeRef.current = null;
       links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();
@@ -1787,6 +1831,7 @@ export function XtermView(props: XtermViewProps) {
       term.options.fontFamily = fontFamily;
       if (fontMetricsChanged) fitIfSized(true);
       term.options.theme = activeXtermTheme(getResolvedTerminalTheme(), prefs);
+      refreshSearchThemeRef.current?.();
     };
     return subscribeAppearancePrefs(applyAppearance);
   }, []);
