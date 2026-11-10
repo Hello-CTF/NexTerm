@@ -1439,13 +1439,16 @@ func TestServeRDPLegacyTLSIsOptIn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("server never completed a handshake")
 	}
-	var legacy any
+	var legacy, version any
 	for _, event := range allowed.audit.snapshot() {
-		if event.Kind == AuditConnect {
+		switch event.Kind {
+		case AuditConnect:
 			legacy = event.Payload["legacyTLS"]
+		case AuditDisconnect:
+			version = event.Payload["tlsVersion"]
 		}
 	}
-	if legacy != true {
-		t.Fatalf("connect audit legacyTLS = %v, want true", legacy)
+	if legacy != true || version != "TLS 1.0" {
+		t.Fatalf("audit legacyTLS = %v, tlsVersion = %v; want true, TLS 1.0", legacy, version)
 	}
 }

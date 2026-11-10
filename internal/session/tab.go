@@ -604,8 +604,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 			}
 		}
 	case KindSSH:
-		shell = ClassifyShellProgram(assetShellOption(session.asset.Options))
-		if detector, ok := transport.Transport.(remoteShellDetector); ok && shell == ShellUnknown {
+		// The SSH form writes no shell option; only what a probe of the host learned counts.
+		if detector, ok := transport.Transport.(remoteShellDetector); ok {
 			detectShell = func() Shell { return ClassifyShellProgram(detector.DetectedShell()) }
 			shell = detectShell()
 		}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   assetKindFields,
   isRemoteDesktopKind,
+  optionsForKindChange,
   readRemoteDesktopOptions,
   validateResolution,
   writeRemoteDesktopOptions,
@@ -64,6 +65,11 @@ describe("remote desktop options", () => {
     expect(readRemoteDesktopOptions("rdp", rdp)).toMatchObject({ clipboardAutoSync: false, commandAsCtrl: false });
     expect(writeRemoteDesktopOptions("vnc", {}, { ...readRemoteDesktopOptions("vnc", undefined), commandAsCtrl: true })).toEqual({ commandAsCtrl: true });
     expect(writeRemoteDesktopOptions("rdp", { clipboardAutoSync: false, commandAsCtrl: false }, readRemoteDesktopOptions("rdp", undefined))).toEqual({});
+  });
+
+  it("drops the local shell and start directory when a local asset becomes another kind", () => {
+    expect(optionsForKindChange("local", "ssh", { shell: "pwsh", cwd: "C:/work", icon: "server" })).toEqual({ icon: "server" });
+    expect(optionsForKindChange("local", "local", { shell: "pwsh" })).toEqual({ shell: "pwsh" });
   });
 
   it("stores legacy TLS only for RDP and only when it is on", () => {

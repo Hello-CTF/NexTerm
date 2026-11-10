@@ -244,6 +244,7 @@
   "[引用]": "[Verweis]",
   "authorized_keys 公钥行": "Public-Key-Zeile für authorized_keys",
   "authorized_keys 路径": "authorized_keys-Pfad",
+  "cmd 不能把网络路径设为当前目录": "cmd kann einen Netzwerkpfad nicht als aktuelles Verzeichnis verwenden",
   "cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}": "cron besteht aus 5 Feldern (Minute Stunde Tag Monat Wochentag), Standard ist UTC, Zeitlimit 60 Sekunden; während der Deaktivierung verpasste Aufgaben werden nicht nachgeholt. {value}",
   "cron 表达式": "cron-Ausdruck",
   "df -v · 手动刷新": "df -v · Manuell aktualisieren",

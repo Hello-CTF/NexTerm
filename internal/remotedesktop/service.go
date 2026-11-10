@@ -3,6 +3,7 @@ package remotedesktop
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -568,6 +569,7 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 		return s.verifyCertificate(connCtx, asset, chain, leaf)
 	}
 	connected := false
+	tlsVersion := ""
 	switch asset.Kind {
 	case KindRDP:
 		err = s.rdp.Serve(connCtx, RDPSession{
@@ -576,6 +578,7 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 				connected = true
 				s.audit(connCtx, AuditConnect, asset.ID, map[string]any{"protocol": KindRDP, "host": asset.Host, "port": asset.Port, "viaAssetId": options.ViaAssetID, "legacyTLS": options.LegacyTLS})
 			},
+			Secured: func(version uint16) { tlsVersion = tls.VersionName(version) },
 		})
 	case KindVNC:
 		err = s.serveVNC(connCtx, fc, asset, options, t.password, dial, verify, func() {
@@ -584,7 +587,11 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 		})
 	}
 	if connected {
-		s.audit(context.WithoutCancel(connCtx), AuditDisconnect, asset.ID, map[string]any{"protocol": asset.Kind, "durationMs": s.now().Sub(started).Milliseconds(), "error": errorSummary(err)})
+		payload := map[string]any{"protocol": asset.Kind, "durationMs": s.now().Sub(started).Milliseconds(), "error": errorSummary(err)}
+		if tlsVersion != "" {
+			payload["tlsVersion"] = tlsVersion
+		}
+		s.audit(context.WithoutCancel(connCtx), AuditDisconnect, asset.ID, payload)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		if !connected {

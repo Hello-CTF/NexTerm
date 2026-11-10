@@ -244,6 +244,7 @@
   "[引用]": "[Reference]",
   "authorized_keys 公钥行": "authorized_keys public key line",
   "authorized_keys 路径": "authorized_keys path",
+  "cmd 不能把网络路径设为当前目录": "cmd cannot make a network path its current directory",
   "cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}": "cron has 5 fields (minute hour day month weekday), defaults to UTC, and times out after 60 seconds. Runs missed while disabled are not made up. {value}",
   "cron 表达式": "Cron expression",
   "df -v · 手动刷新": "df -v · Manual refresh",

@@ -30,6 +30,8 @@ type RDPSession struct {
 	// LegacyTLS also accepts TLS 1.0 and 1.1 and RSA key exchange, for hosts such as unpatched Windows 7 and Server
 	// 2008 R2 that offer nothing newer. It is the asset's explicit choice.
 	LegacyTLS bool
+	// Secured is called with the negotiated TLS version once the upstream handshake succeeds (for audit).
+	Secured func(version uint16)
 }
 
 // RDPEngine is the swappable RDP back end. The shipped one is an RDCleanPath proxy for IronRDP (WASM).
@@ -154,6 +156,9 @@ func (rdCleanPathEngine) Serve(ctx context.Context, session RDPSession) error {
 	}
 	defer up.close()
 	upstream, tlsConn, confirm, chain, leaf := up.conn, up.tls, up.confirm, up.chain, up.leaf
+	if session.Secured != nil {
+		session.Secured(tlsConn.ConnectionState().Version)
+	}
 	if len(chain) == 0 {
 		_ = client.WriteFrame(newRDCleanPathGeneralError())
 		return userErr("RDP 服务器没有提供证书")

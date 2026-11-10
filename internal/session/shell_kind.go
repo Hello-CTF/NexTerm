@@ -1,9 +1,6 @@
 package session
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "strings"
 
 // remoteShellDetector is a connection that may have learned the default shell of the host (an SSH connection whose
 // file browser probed a Windows host). It answers from what it already knows and never runs a probe of its own.
@@ -11,10 +8,28 @@ type remoteShellDetector interface {
 	DetectedShell() string
 }
 
+func wslLauncher(program string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(program, "/", `\`))
+	base := normalized[strings.LastIndex(normalized, `\`)+1:]
+	base = strings.TrimSuffix(base, ".exe")
+	if base == "wsl" {
+		return true
+	}
+	if normalized == "bash.exe" {
+		// Windows resolves a bare bash.exe to System32's WSL launcher first.
+		return true
+	}
+	return base == "bash" && (strings.Contains(normalized, `\system32\`) || strings.Contains(normalized, `\sysnative\`) || strings.Contains(normalized, `\windowsapps\`))
+}
+
 // ClassifyShellProgram names the command language of a shell given as a program name or path. Paths may use either
 // separator; Windows names are matched without regard to case or an .exe suffix.
 func ClassifyShellProgram(program string) Shell {
 	name := strings.TrimSpace(program)
+	// WSL's launchers run a Linux shell that cannot change into the Windows paths the file browser shows.
+	if wslLauncher(name) {
+		return ShellUnknown
+	}
 	if index := strings.LastIndexAny(name, `/\`); index >= 0 {
 		name = name[index+1:]
 	}
@@ -30,23 +45,4 @@ func ClassifyShellProgram(program string) Shell {
 		return ShellPOSIX
 	}
 	return ShellUnknown
-}
-
-// assetShellOption is the shell an asset's options name, or "" when they name none.
-func assetShellOption(options any) string {
-	if options == nil {
-		return ""
-	}
-	if typed, ok := options.(map[string]any); ok {
-		value, _ := typed["shell"].(string)
-		return value
-	}
-	var decoded struct {
-		Shell string `json:"shell"`
-	}
-	raw, err := json.Marshal(options)
-	if err != nil || json.Unmarshal(raw, &decoded) != nil {
-		return ""
-	}
-	return decoded.Shell
 }

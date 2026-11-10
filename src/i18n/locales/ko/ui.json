@@ -244,6 +244,7 @@
   "[引用]": "[참조]",
   "authorized_keys 公钥行": "authorized_keys 공개 키 줄",
   "authorized_keys 路径": "authorized_keys 경로",
+  "cmd 不能把网络路径设为当前目录": "cmd는 네트워크 경로를 현재 디렉터리로 설정할 수 없습니다",
   "cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}": "cron은 5개 필드(분 시 일 월 요일)이며 기본값은 UTC, 시간 제한은 60초입니다. 비활성화된 동안 놓친 작업은 다시 실행되지 않습니다.{value}",
   "cron 表达式": "cron 표현식",
   "df -v · 手动刷新": "df -v · 수동 새로 고침",

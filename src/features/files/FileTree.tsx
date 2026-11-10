@@ -965,7 +965,9 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         ? t("目录包含控制字符")
         : failure === "unquotable"
           ? t("目录包含 cmd 无法安全引用的字符（\" 或 %）")
-          : t("无法确认当前终端 Shell");
+          : failure === "unc"
+            ? t("cmd 不能把网络路径设为当前目录")
+            : t("无法确认当前终端 Shell");
     void copyText(dir)
       .then(() => {
         pushToast(

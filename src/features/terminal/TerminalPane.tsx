@@ -2725,7 +2725,9 @@ export function TerminalPane({
                         ? tr("目录包含控制字符")
                         : failure === "unquotable"
                           ? tr("目录包含 cmd 无法安全引用的字符（\" 或 %）")
-                          : tr("无法确认当前终端 Shell");
+                          : failure === "unc"
+                            ? tr("cmd 不能把网络路径设为当前目录")
+                            : tr("无法确认当前终端 Shell");
                     void copyText(pending)
                       .then(() => {
                         pushToast(

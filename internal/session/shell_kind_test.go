@@ -20,6 +20,10 @@ func TestClassifyShellProgram(t *testing.T) {
 		{"/bin/bash", ShellPOSIX},
 		{`C:\Program Files\Git\bin\bash.exe`, ShellPOSIX},
 		{"/usr/bin/fish", ShellUnknown},
+		{`C:\Windows\System32\bash.exe`, ShellUnknown},
+		{`C:\Windows\System32\wsl.exe`, ShellUnknown},
+		{"wsl", ShellUnknown},
+		{"bash.exe", ShellUnknown},
 		{"", ShellUnknown},
 	} {
 		if got := ClassifyShellProgram(test.program); got != test.want {
@@ -54,13 +58,13 @@ func openShellTestSession(t *testing.T, asset Asset, transport base.Transport) (
 	return manager, connected
 }
 
-func TestSSHTabShellFromAssetOption(t *testing.T) {
+func TestSSHTabShellIgnoresLocalShellOption(t *testing.T) {
 	transport := &detectingTestTransport{fakeTransport: newFakeTransport(KindSSH, 1)}
-	transport.detected.Store("powershell.exe")
-	asset := Asset{ID: "win", Kind: KindSSH, Options: map[string]any{"shell": `C:\Windows\System32\cmd.exe`}}
+	// A shell option left over from a local asset says nothing about the remote login shell.
+	asset := Asset{ID: "linux", Kind: KindSSH, Options: map[string]any{"shell": "pwsh"}}
 	manager, connected := openShellTestSession(t, asset, transport)
-	if got := openTestTab(t, manager, connected, "client-a", "shell-a").Info().Shell; got != ShellCmd {
-		t.Fatalf("shell = %q, want cmd from the asset option", got)
+	if got := openTestTab(t, manager, connected, "client-a", "shell-a").Info().Shell; got != ShellUnknown {
+		t.Fatalf("shell = %q, want unknown", got)
 	}
 }
 

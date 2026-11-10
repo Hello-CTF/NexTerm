@@ -832,8 +832,11 @@ describe("FileTree shell-aware terminal navigation", () => {
     expect(mocks.lineExec).not.toHaveBeenCalled();
   });
 
-  it.each(["cmd", "unknown"] as const)("does not inject into a %s terminal it cannot address safely", async (shell) => {
-    const dir = shell === "cmd" ? "//server/share/100%" : "D:/Project [x]";
+  it.each([
+    { shell: "cmd" as const, dir: "C:/100%" },
+    { shell: "cmd" as const, dir: "//server/share/Project [x]" },
+    { shell: "unknown" as const, dir: "D:/Project [x]" },
+  ])("does not inject $dir into a $shell terminal it cannot address safely", async ({ shell, dir }) => {
     seedWorkspace({ assetId: "asset-1" });
     useUi.getState().updateTab("t1", { tabId: "k1", shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);

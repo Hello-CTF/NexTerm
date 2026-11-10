@@ -179,6 +179,8 @@ const SSH_OPTION_KEYS = [
   "pasteNoRandomDir",
   "backupBeforeOverwrite",
 ];
+// Options the local terminal form writes; on another kind they would describe a shell that does not run there.
+const LOCAL_OPTION_KEYS = ["shell", "cwd"];
 const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly", "legacyTLS"];
 
 // optionsForKindChange drops the options the previous kind's form wrote when an asset changes kind, so a host switched
@@ -190,5 +192,6 @@ export function optionsForKindChange(from: string, to: string, options: Record<s
   const toFields = assetKindFields(to);
   if (fromFields.sshAdvanced && !toFields.sshAdvanced) for (const key of SSH_OPTION_KEYS) delete next[key];
   if (fromFields.remote && !toFields.remote) for (const key of REMOTE_DESKTOP_OPTION_KEYS) delete next[key];
+  if (from === "local") for (const key of LOCAL_OPTION_KEYS) delete next[key];
   return next;
 }

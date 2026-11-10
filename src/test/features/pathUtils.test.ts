@@ -148,9 +148,9 @@ describe("directory command generation", () => {
     });
   });
 
-  it("switches drive and directory in cmd, with pushd for UNC paths", () => {
+  it("switches drive and directory in cmd and refuses UNC paths", () => {
     expect(directoryCommandFor("D:/Project [x]/a & b", "cmd")).toEqual({ command: 'cd /d "D:\\Project [x]\\a & b"', failure: null });
-    expect(directoryCommandFor("//server/share/dir", "cmd")).toEqual({ command: 'pushd "\\\\server\\share\\dir"', failure: null });
+    expect(directoryCommandFor("//server/share/dir", "cmd")).toEqual({ command: null, failure: "unc" });
   });
 
   it("refuses cmd paths that double quotes cannot protect", () => {

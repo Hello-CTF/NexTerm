@@ -244,6 +244,7 @@
   "[引用]": "[引用]",
   "authorized_keys 公钥行": "authorized_keys 公開金鑰行",
   "authorized_keys 路径": "authorized_keys 路徑",
+  "cmd 不能把网络路径设为当前目录": "cmd 無法將網路路徑設為目前目錄",
   "cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}": "cron 為 5 段（分 時 日 月 週），預設 UTC、逾時 60 秒；停用期間錯過的工作不會補做。{value}",
   "cron 表达式": "cron 運算式",
   "df -v · 手动刷新": "df -v · 手動重新整理",

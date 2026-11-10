@@ -244,6 +244,7 @@
   "[引用]": "[Referencia]",
   "authorized_keys 公钥行": "Línea de clave pública de authorized_keys",
   "authorized_keys 路径": "Ruta de authorized_keys",
+  "cmd 不能把网络路径设为当前目录": "cmd no puede usar una ruta de red como directorio actual",
   "cron 为 5 段（分 时 日 月 周），默认 UTC、超时 60 秒；停用期间错过的任务不会补做。{value}": "cron tiene 5 campos (minuto hora día mes día de la semana), usa UTC por defecto y un tiempo de espera de 60 s; las tareas omitidas mientras está desactivado no se recuperan. {value}",
   "cron 表达式": "Expresión cron",
   "df -v · 手动刷新": "df -v · Actualización manual",
