@@ -210,6 +210,7 @@ func TestBackupCommandPrintsRemoteDumpCommandWithoutPassword(t *testing.T) {
 		{"postgres", "postgres://nexterm:s3cret-pw@db.example:5433/nexterm_prod?sslmode=verify-full", []string{"pg_dump", "--host=db.example", "--port=5433", "--username=nexterm", "--dbname=nexterm_prod"}},
 		{"mysql", "nexterm:s3cret-pw@tcp(db.example:3307)/nexterm_prod?parseTime=true", []string{"mysqldump", "--host=db.example", "--port=3307", "--user=nexterm", "nexterm_prod"}},
 		{"mariadb", "nexterm:s3cret-pw@tcp(db.example:3306)/nexterm_prod", []string{"mariadb-dump", "--host=db.example"}},
+		{"mysql", "nexterm:s3cret-pw@unix(/run/mysqld/mysqld.sock)/nexterm_prod", []string{"mysqldump", "--socket=/run/mysqld/mysqld.sock", "--user=nexterm"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.db, func(t *testing.T) {
@@ -230,6 +231,32 @@ func TestBackupCommandPrintsRemoteDumpCommandWithoutPassword(t *testing.T) {
 				t.Fatalf("remote backend must not write %s (err=%v)", out, err)
 			}
 		})
+	}
+}
+
+func TestShellWordQuotesAllButLiteralPlaceholders(t *testing.T) {
+	for value, want := range map[string]string{
+		"<host>": "<host>", "<database>": "<database>",
+		"<a;rm -rf x>": "'<a;rm -rf x>'", "<$(id)>": "'<$(id)>'", "a b": "'a b'", "": "''", "plain-1.2": "plain-1.2",
+	} {
+		if got := shellWord(value); got != want {
+			t.Errorf("shellWord(%q) = %q, want %q", value, got, want)
+		}
+	}
+}
+
+func TestBackupCommandRejectsSidecarThroughSymlinkedDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "data.db"), []byte("x"), 0o600); err != nil {
+		t.Skip(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dataDir, link); err != nil {
+		t.Skip(err)
+	}
+	code, _, stderr := runBackupForTest(t, map[string]string{"NEXTERM_DATA_DIR": dataDir}, "--out", filepath.Join(link, "data.db-wal"))
+	if code != 2 || !strings.Contains(stderr, "sidecar") {
+		t.Fatalf("exit %d, stderr %s", code, stderr)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/applog"
@@ -61,7 +62,7 @@ NexTerm version at least as new as the one in the manifest.
 
 Exit codes:
   0  snapshot written
-  1  snapshot failed; FILE was not changed
+  1  snapshot failed; FILE is unchanged unless the error says it was written
   2  usage error, or FILE exists without --force
   3  remote database backend; dump it with the printed command
 
@@ -187,7 +188,7 @@ func runBackup(ctx context.Context, args []string, getenv func(string) string, s
 		fmt.Fprintln(stderr, "nexterm-server backup:", applog.RedactText(err.Error()))
 		return 1
 	}
-	sidecar := filepath.Dir(out) == filepath.Dir(source) && strings.HasPrefix(filepath.Base(out), filepath.Base(source)+"-")
+	sidecar := realDir(out) == realDir(source) && strings.HasPrefix(filepath.Base(out), filepath.Base(source)+"-")
 	if sameFile(source, out) || sidecar {
 		fmt.Fprintln(stderr, "nexterm-server backup: --out must not be the live database or one of its sidecar files")
 		return 2
@@ -263,7 +264,7 @@ func writeSQLiteBackup(ctx context.Context, source, out, manifestPath string, fo
 		return backupManifest{}, err
 	}
 	if err := placeFile(stagedManifest, manifestPath, true); err != nil {
-		return backupManifest{}, err
+		return backupManifest{}, fmt.Errorf("the database snapshot was written to %s but its manifest could not be: %w", out, err)
 	}
 	syncDir(filepath.Dir(out))
 	return manifest, nil
@@ -271,18 +272,39 @@ func writeSQLiteBackup(ctx context.Context, source, out, manifestPath string, fo
 
 // placeFile moves staged to target. Without replace it links instead of
 // renaming, so an existing target is never overwritten, even one created
-// after the up-front check.
+// after the up-front check. Filesystems without hard links (vfat, exFAT, SMB,
+// some FUSE mounts) fall back to a rename after an existence check.
 func placeFile(staged, target string, replace bool) error {
 	if replace {
 		return os.Rename(staged, target)
 	}
-	if err := os.Link(staged, target); err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return fmt.Errorf("%s already exists; pass --force to replace it", target)
-		}
+	err := os.Link(staged, target)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		return fmt.Errorf("%s already exists; pass --force to replace it", target)
+	}
+	if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EXDEV) {
 		return fmt.Errorf("place %s: %w", target, err)
 	}
+	if _, statErr := os.Lstat(target); statErr == nil {
+		return fmt.Errorf("%s already exists; pass --force to replace it", target)
+	}
+	if renameErr := os.Rename(staged, target); renameErr != nil {
+		return fmt.Errorf("place %s: %w", target, renameErr)
+	}
 	return nil
+}
+
+// realDir returns the symlink-resolved directory holding path, or the
+// lexical directory when it cannot be resolved.
+func realDir(path string) string {
+	dir := filepath.Dir(path)
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return dir
 }
 
 func syncAndHash(path string) (int64, string, error) {
@@ -360,7 +382,7 @@ func printRemoteDumpGuidance(w io.Writer, backend store.Backend, options backupO
 		out = "nexterm.dump"
 	}
 	fmt.Fprintf(w, "nexterm-server backup: the %s backend is not dumped by this command; back it up with the database's own tool, for example:\n", backend)
-	host, port, user, database := remoteDSNParts(backend, options.dbDSN)
+	host, port, user, database, socket := remoteDSNParts(backend, options.dbDSN)
 	switch backend {
 	case store.BackendPostgres:
 		fmt.Fprintf(w, "  pg_dump --format=custom --file=%s --host=%s --port=%s --username=%s --dbname=%s\n",
@@ -371,15 +393,19 @@ func printRemoteDumpGuidance(w io.Writer, backend store.Backend, options backupO
 		if backend == store.BackendMariaDB {
 			tool = "mariadb-dump"
 		}
-		fmt.Fprintf(w, "  %s --single-transaction --routines --host=%s --port=%s --user=%s --password %s > %s\n",
-			tool, shellWord(host), shellWord(port), shellWord(user), shellWord(database), shellWord(out))
+		endpoint := fmt.Sprintf("--host=%s --port=%s", shellWord(host), shellWord(port))
+		if socket != "" {
+			endpoint = "--socket=" + shellWord(socket)
+		}
+		fmt.Fprintf(w, "  %s --single-transaction --routines %s --user=%s --password %s > %s\n",
+			tool, endpoint, shellWord(user), shellWord(database), shellWord(out))
 		fmt.Fprintln(w, "  restore: load the dump with the mysql/mariadb client while the service is stopped")
 	}
 	fmt.Fprintln(w, "  the password is not shown; supply it through the tool's own prompt or password file")
 	fmt.Fprintln(w, "nexterm-server backup: the dump does not contain the vault master key or <data-dir>/totp.key; back them up separately and securely")
 }
 
-func remoteDSNParts(backend store.Backend, dsn string) (host, port, user, database string) {
+func remoteDSNParts(backend store.Backend, dsn string) (host, port, user, database, socket string) {
 	host, port, user, database = "<host>", "<port>", "<user>", "<database>"
 	pick := func(value string, target *string) {
 		if value != "" {
@@ -406,7 +432,9 @@ func remoteDSNParts(backend store.Backend, dsn string) (host, port, user, databa
 		if err != nil {
 			return
 		}
-		if h, p, err := net.SplitHostPort(config.Addr); err == nil {
+		if config.Net == "unix" {
+			socket = config.Addr
+		} else if h, p, err := net.SplitHostPort(config.Addr); err == nil {
 			pick(h, &host)
 			pick(p, &port)
 		} else {
@@ -418,13 +446,14 @@ func remoteDSNParts(backend store.Backend, dsn string) (host, port, user, databa
 	return
 }
 
-// shellWord quotes a value for a POSIX shell when it needs it; placeholders
-// like <host> are left for the operator to replace.
+// shellWord quotes a value for a POSIX shell when it needs it; the four
+// literal placeholders (<host>, <port>, <user>, <database>) are left for the operator to replace.
 func shellWord(value string) string {
 	if value == "" {
 		return "''"
 	}
-	if strings.HasPrefix(value, "<") && strings.HasSuffix(value, ">") {
+	switch value {
+	case "<host>", "<port>", "<user>", "<database>":
 		return value
 	}
 	for _, r := range value {

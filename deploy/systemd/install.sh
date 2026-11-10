@@ -950,7 +950,7 @@ snapshot_databases() {
     for f in "$db" "$db-wal" "$db-shm"; do
       if [ -f "$f" ]; then
         cp -p "$f" "$BACKUP_DIR/db/$name/" ||
-          die "cannot copy $f into the rollback backup (check free space); the services are stopped and the new payload is installed: fix the problem and re-run, or run --rollback"
+          die "cannot copy $f into the rollback backup (check free space); the services are stopped and nothing new is installed yet: fix the problem and re-run, or run --rollback"
       fi
     done
     printf '%s\n' "$db" > "$BACKUP_DIR/db/$name/path"
@@ -1413,6 +1413,7 @@ run_install() {
       capture_active_units
     fi
     backup_current
+    snapshot_databases
   else
     if [ ! -f "$INCOMPLETE_MARKER" ]; then
       : > "$INCOMPLETE_MARKER"
@@ -1433,7 +1434,6 @@ run_install() {
   install_units
   ensure_env_files
   ensure_master_key
-  snapshot_databases
   bootstrap_admin
   reload_systemd
   manage_services
@@ -1516,6 +1516,7 @@ restore_databases() {
     for f in "$db" "$db-wal" "$db-shm"; do
       if [ -f "$f" ]; then mv "$f" "$FAILED_DIR/db/$name/"; fi
     done
+    fail_at db-restore
     for f in "$dir"/*; do
       case "$(basename "$f")" in path) continue ;; esac
       cp -p "$f" "$(dirname "$db")/"
@@ -1548,6 +1549,13 @@ run_rollback() {
   fi
   fail_at rollback
   install -d -m 0755 "$OPT_DIR"
+  # A database kept by an earlier rollback may be the only copy of the data
+  # written since that upgrade, so it is moved aside and never deleted.
+  if [ -d "$FAILED_DIR/db" ]; then
+    local kept="$OPT_DIR/.rollback.failed-db.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    mv "$FAILED_DIR/db" "$kept"
+    log "kept the database saved by an earlier rollback in ${kept#$ROOT_PREFIX}"
+  fi
   rm -rf "$FAILED_DIR"
   install -d -m 0700 "$FAILED_DIR"
   local f rel unit
@@ -1586,5 +1594,8 @@ run_rollback() {
 if [ "$ROLLBACK" -eq 1 ]; then
   run_rollback
 else
+  if [ "$KEEP_DATABASE" -eq 1 ]; then
+    log "WARNING: --keep-database only applies with --rollback and is ignored"
+  fi
   run_install
 fi

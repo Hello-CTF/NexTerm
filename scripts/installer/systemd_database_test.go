@@ -3,6 +3,7 @@
 package installer
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -103,4 +104,24 @@ func TestSystemdRollbackKeepDatabase(t *testing.T) {
 	expect(t, strings.Contains(got.stdout, "keeping the current database"), "stdout: %s", got.stdout)
 	expect(t, s.read("var/lib/nexterm/data.db") == "migrated-by-v2\n", "--keep-database must not touch the database")
 	expect(t, strings.Contains(s.read("opt/nexterm/nexterm-server"), "v1"), "program files must still roll back")
+}
+
+func TestSystemdRollbackNeverDeletesReplacedDatabase(t *testing.T) {
+	s, v2, _ := upgradeWithDatabase(t)
+	s.write("var/lib/nexterm/data.db", "migrated-by-v2\n")
+	// The first restore fails after the live database was moved aside.
+	s.mustFail(v2, installOptions{args: []string{"--rollback", "--yes"}, failAt: "db-restore"})
+	expect(t, s.read("opt/nexterm/.rollback.failed/db/nexterm/data.db") == "migrated-by-v2\n", "the replaced database must be kept after a failed restore")
+	// A second rollback must not delete that only copy.
+	s.mustInstall(v2, installOptions{args: []string{"--rollback", "--yes"}})
+	expect(t, s.read("var/lib/nexterm/data.db") == dbBeforeUpgrade, "database not restored by the second rollback")
+	found := false
+	entries, err := os.ReadDir(s.path("opt/nexterm"))
+	expect(t, err == nil, "read dir: %v", err)
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".rollback.failed-db.") && s.read("opt/nexterm/"+entry.Name()+"/nexterm/data.db") == "migrated-by-v2\n" {
+			found = true
+		}
+	}
+	expect(t, found, "the database from the failed first rollback was deleted")
 }
