@@ -38,7 +38,9 @@ type remoteAPIFixture struct {
 	logins     atomic.Int64
 
 	failNextDevices401 atomic.Bool
-	lastWriteCSRF      atomic.Value
+	// requireDevice makes /auth/login refuse clients without a valid login device cookie, like a username in backoff.
+	requireDevice atomic.Bool
+	lastWriteCSRF atomic.Value
 }
 
 func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
@@ -148,6 +150,9 @@ func (f *remoteAPIFixture) writeSession(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/"})
+	if device, err := f.accounts.LoginDeviceToken(user, time.Hour); err == nil {
+		http.SetCookie(w, &http.Cookie{Name: loginDeviceCookieName, Value: device, Path: "/"})
+	}
 	view := f.userView(user)
 	view["mfa_enabled"] = mfaEnabled
 	writeSyncJSON(w, http.StatusOK, map[string]any{
@@ -164,6 +169,13 @@ func (f *remoteAPIFixture) serveLogin(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeSyncError(w, http.StatusBadRequest, ipc.BadParam(err))
 		return
+	}
+	if f.requireDevice.Load() {
+		cookie, err := r.Cookie(loginDeviceCookieName)
+		if err != nil || !f.accounts.LoginDeviceKnown(cookie.Value, request.Username) {
+			writeSyncError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
+			return
+		}
 	}
 	user, err := f.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {

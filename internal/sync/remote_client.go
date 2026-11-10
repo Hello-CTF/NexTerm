@@ -24,7 +24,9 @@ import (
 // Session cookie and CSRF header are wire constants agreed with the internal/server account routes.
 const (
 	sessionCookieName = "nexterm_session"
-	csrfHeaderName    = "X-NexTerm-CSRF"
+	// loginDeviceCookieName carries the signed login device token that lets a known client skip the per-username login backoff.
+	loginDeviceCookieName = "nexterm_login_device"
+	csrfHeaderName        = "X-NexTerm-CSRF"
 	// accountStateResetRequired is the wire constant for the account view user.state (internal/account StateResetRequired).
 	accountStateResetRequired = "reset_required"
 )
@@ -37,6 +39,8 @@ type remoteClient struct {
 	insecure    bool
 	cookieToken string
 	csrfToken   string
+	// deviceToken is the login device token; it outlives the session cookie across logout and expiry.
+	deviceToken string
 }
 
 // RemoteConfig holds the remote account connection parameters needed for one sync.
@@ -86,6 +90,9 @@ func (c *remoteClient) login(ctx context.Context, username, password string) (*l
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-NexTerm-Client", "desktop")
+	if c.deviceToken != "" {
+		request.AddCookie(&http.Cookie{Name: loginDeviceCookieName, Value: c.deviceToken})
+	}
 	response, err := syncHTTPClient(c.insecure).Do(request)
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
@@ -142,12 +149,17 @@ func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error
 	return c.holdSession(response, session.CSRFToken)
 }
 
-// holdSession takes the login response's session cookie and CSRF token into memory.
+// holdSession takes the login response's session cookie, login device token and CSRF token into memory.
 func (c *remoteClient) holdSession(response *http.Response, csrfToken string) error {
 	cookie := ""
 	for _, candidate := range response.Cookies() {
-		if candidate.Name == sessionCookieName {
+		switch candidate.Name {
+		case sessionCookieName:
 			cookie = candidate.Value
+		case loginDeviceCookieName:
+			if candidate.Value != "" && candidate.MaxAge >= 0 {
+				c.deviceToken = candidate.Value
+			}
 		}
 	}
 	if cookie == "" {

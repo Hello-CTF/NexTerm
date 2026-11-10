@@ -20,6 +20,7 @@ import (
 const (
 	settingLink                 = "sync.link"
 	settingLinkSession          = "sync.link.session"
+	settingLinkDevice           = "sync.link.device"
 	defaultBackgroundSyncPeriod = time.Minute
 	syncRoundCompleteTopic      = "sync://round-complete"
 )
