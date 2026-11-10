@@ -141,6 +141,24 @@ func TestCommandTrackerAcrossChunkBoundaries(t *testing.T) {
 	}
 }
 
+func TestCommandTrackerReportsPrecedingDirectory(t *testing.T) {
+	tr := NewCommandTracker()
+	reports, _, _ := tr.ObserveReports([]byte("\x1b]133;B\x07\x1b]7;file://h/etc\x07\x1b]133;D;0\x07\x1b]7;file://h/srv/a%20b\x1b\\\x1b]133;A\x07"))
+	if len(reports) != 3 {
+		t.Fatalf("reports = %+v", reports)
+	}
+	if reports[0].HasCWD || reports[0].CWD != "" {
+		t.Fatalf("a start before any OSC 7 in the chunk carries no directory: %+v", reports[0])
+	}
+	if !reports[1].HasCWD || reports[1].CWD != "/etc" || !reports[2].HasCWD || reports[2].CWD != "/srv/a b" {
+		t.Fatalf("reports must carry the last preceding directory: %+v", reports)
+	}
+	next, _, _ := tr.ObserveReports([]byte("\x1b]133;B\x07"))
+	if len(next) != 1 || next[0].HasCWD {
+		t.Fatalf("directory evidence is per chunk: %+v", next)
+	}
+}
+
 func TestCommandTrackerByteByByte(t *testing.T) {
 	stream := append(append([]byte("\x1b]0;t\x07x"), osc133("B")...), osc133("D;5")...)
 	tr := NewCommandTracker()

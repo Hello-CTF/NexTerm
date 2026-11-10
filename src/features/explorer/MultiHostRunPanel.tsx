@@ -524,6 +524,11 @@ export function MultiHostRunPanel({ snippet, onClose, onBack }: { snippet: Snipp
             <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_280px]">
             <div className="min-w-0">
               {snippet.description && <p className="mb-2 text-[11.5px] text-neutral-400">{snippet.description}</p>}
+              {snippet.steps?.some((step) => step.waitFor) && (
+                <p className="nx-hint mb-2" role="note" data-testid="multi-host-wait-ignored">
+                  {t("多主机执行时每一步都会等上一步的命令结束再开始，步骤里的“等待输出”条件不会使用。")}
+                </p>
+              )}
               <ScriptDirectiveHelp />
               <div className="mb-3 flex flex-col gap-2" aria-label={t("片段步骤")}>
                 {steps.map((step, index) => (

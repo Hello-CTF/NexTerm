@@ -21,12 +21,14 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 		"--env", "MYSQL_ROOT_PASSWORD="+password,
 		"--env", "MYSQL_ROOT_HOST=%",
 		"--env", "MYSQL_DATABASE=nexterm_test",
-		"--volume", tlsFiles.dir+":/tls:ro",
+		"--volume", tlsFiles.dir+":/tls-src:ro",
+		"--entrypoint", "bash",
 		"mysql:8.4",
-		"--require-secure-transport=ON",
-		"--ssl-ca=/tls/ca.crt",
-		"--ssl-cert=/tls/server.crt",
-		"--ssl-key=/tls/server.key",
+		// The key is 0600 and owned by the host user; mysqld runs as mysql and needs its own copy.
+		"-c", "mkdir -p /tls && cp /tls-src/ca.crt /tls-src/server.crt /tls-src/server.key /tls/ && "+
+			"chown -R mysql:mysql /tls && chmod 600 /tls/server.key && "+
+			"exec docker-entrypoint.sh mysqld --require-secure-transport=ON "+
+			"--ssl-ca=/tls/ca.crt --ssl-cert=/tls/server.crt --ssl-key=/tls/server.key",
 	)
 	tlsConfig, err := makeTLSConfig(container.host, tlsFiles.options)
 	if err != nil {
@@ -91,6 +93,10 @@ func TestMySQL84DockerIntegration(t *testing.T) {
 	update := mustMySQLQuery(t, service, connID, "UPDATE m18_types SET txt = 'updated' WHERE id = 1", 0, 5*time.Second)
 	if update.RowsAffected != 1 {
 		t.Fatalf("UPDATE rowsAffected=%d", update.RowsAffected)
+	}
+	update = mustMySQLQuery(t, service, connID, "-- note\nWITH target AS (SELECT 1 AS id) UPDATE m18_types JOIN target ON m18_types.id = target.id SET txt = 'cte'", 0, 5*time.Second)
+	if update.RowsAffected != 1 || len(update.Columns) != 0 {
+		t.Fatalf("WITH ... UPDATE result: %+v", update)
 	}
 
 	result = mustMySQLQuery(t, service, connID, "(SELECT 1);", 0, 5*time.Second)

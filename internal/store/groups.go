@@ -66,6 +66,22 @@ func (s *Store) GroupCreate(ctx context.Context, input GroupInput) (AssetGroupRo
 	return s.GroupGet(ctx, id)
 }
 
+// GroupCreateTx creates a group without connection defaults inside tx, so an import that files assets into new groups
+// rolls the groups back with the assets.
+func (s *Store) GroupCreateTx(ctx context.Context, tx *gorm.DB, parentID *string, name string) (AssetGroupRow, error) {
+	if parentID != nil {
+		if _, err := s.groupReference(ctx, tx, *parentID); err != nil {
+			return AssetGroupRow{}, err
+		}
+	}
+	now := ids.NowMS()
+	row := AssetGroupRow{ID: ids.New(), ParentID: parentID, Name: name, CreatedAt: now, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}
+	if err := query.Use(tx).AssetGroupRow.WithContext(ctx).Create(&row); err != nil {
+		return AssetGroupRow{}, dbError(err)
+	}
+	return row, nil
+}
+
 func (s *Store) GroupUpdate(ctx context.Context, id string, patch GroupPatch) (AssetGroupRow, error) {
 	row, err := s.GroupGet(ctx, id)
 	if err != nil {

@@ -61,6 +61,18 @@ export type AggregateSession = {
   attached?: boolean;
 };
 
+export type AiCommandGenerateDTO = {
+  command: string;
+};
+
+export type AiCommandGenerateRequest = {
+  prompt: string;
+  cwd?: string;
+  host?: string;
+  os?: string;
+  shell?: string;
+};
+
 export type AnswerNote = {
   stepNumber: number;
   sessionId: string;
@@ -294,6 +306,7 @@ export type AttentionEvent = {
   exitCode?: number | null;
   title?: string;
   body?: string;
+  progress?: SessionProgress | null;
   lastInputClient?: string;
   version: number;
 };
@@ -649,6 +662,7 @@ export type CommandSearchItemDTO = {
   tabId: string;
   assetId: string;
   command: string;
+  cwd: string;
   source: string;
   exitCode: number | null;
   startedAt: number;
@@ -659,6 +673,7 @@ export type CommandSearchItemDTO = {
 export type CommandSearchRequest = {
   text: string;
   assetId: string | null;
+  cwd: string | null;
   startedFrom: number | null;
   startedTo: number | null;
   limit: number;
@@ -1311,6 +1326,13 @@ export type FSCancelRequest = {
   attemptId?: string;
 };
 
+export type FSCapabilitiesDTO = {
+  chmod: string;
+  pack: boolean;
+  extract: boolean;
+  caseInsensitive: boolean;
+};
+
 export type FSChunkUploadBeginDTO = {
   uploadId: string;
   chunkSize: number;
@@ -1331,6 +1353,8 @@ export type FSEntryDTO = {
   group: string | null;
   mtime: number;
   symlinkTarget: string | null;
+  targetKind?: string;
+  hidden?: boolean;
 };
 
 export type FSRangeReadDTO = {
@@ -1357,6 +1381,7 @@ export type FSRootsDTO = {
   roots: FSRootDTO[];
   homePath: string | null;
   supported: boolean;
+  capabilities?: FSCapabilitiesDTO | null;
 };
 
 export type FindRequest = {
@@ -1592,6 +1617,58 @@ export type HostLive = {
 export type HostMessage = {
   level: string;
   text: string;
+};
+
+export type HostMonitorDisk = {
+  mount: string;
+  filesystem: string;
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usedPercent: number;
+};
+
+export type HostMonitorLoad = {
+  one: number;
+  five: number;
+  fifteen: number;
+};
+
+export type HostMonitorMemory = {
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  swapTotalBytes: number;
+  swapUsedBytes: number;
+};
+
+export type HostMonitorNetInterface = {
+  name: string;
+  rxBytes: number;
+  txBytes: number;
+  rxRate?: number | null;
+  txRate?: number | null;
+};
+
+export type HostMonitorSampleArgs = {
+  sessionId: string;
+};
+
+export type HostMonitorSnapshot = {
+  status: string;
+  reason?: string;
+  platform?: string;
+  sampledAt: number;
+  intervalMs: number;
+  retryAfterMs?: number;
+  cpuPercent?: number | null;
+  cpuCount?: number;
+  memory?: HostMonitorMemory | null;
+  load?: HostMonitorLoad | null;
+  network: HostMonitorNetInterface[];
+  disks: HostMonitorDisk[];
+  disksUnavailable?: boolean;
+  uptimeSeconds?: number | null;
 };
 
 export type HostPortListener = {
@@ -1908,6 +1985,37 @@ export type Listener = {
   program: string;
 };
 
+export type LocalDirCreateFailureDTO = {
+  path: string;
+  error: string;
+};
+
+export type LocalDirEntryDTO = {
+  name: string;
+  kind: string;
+  size: number;
+  mtimeMs: number;
+};
+
+export type LocalDirListingDTO = {
+  path: string;
+  kind: string;
+  entries: LocalDirEntryDTO[];
+};
+
+export type LocalDirsCreateDTO = {
+  failed: LocalDirCreateFailureDTO[];
+};
+
+export type LocalDirsListDTO = {
+  dirs: LocalDirListingDTO[];
+};
+
+export type LocalDirsRequest = {
+  token: string;
+  paths: string[];
+};
+
 export type LocalFileReadRangeRequest = {
   path: string;
   offset: number;
@@ -1928,6 +2036,15 @@ export type LocalFileWriteDTO = {
 export type LocalFileWriteRequest = {
   path: string;
   contentBase64: string;
+};
+
+export type LocalFolderAuthorizeDTO = {
+  token: string;
+  root: string;
+};
+
+export type LocalFolderAuthorizeRequest = {
+  path: string;
 };
 
 export type LocalFolderFileDTO = {
@@ -2820,6 +2937,7 @@ export type ScreenInsets = {
 
 export type ServiceHostResult = {
   result: ExecBatchResult;
+  platform: string;
   systemd: string;
   failureKind?: string;
   units: ServiceUnit[];
@@ -2837,6 +2955,8 @@ export type ServiceUnit = {
   active: string;
   sub: string;
   description: string;
+  startMode?: string;
+  pid?: number;
 };
 
 export type SessionAggregateRequest = {
@@ -2866,6 +2986,18 @@ export type SessionInfoDTO = {
   nextRetryAt?: string | null;
   liveness?: string;
   staleConfig: boolean;
+};
+
+export type SessionProgress = {
+  state: string;
+  value?: number | null;
+};
+
+export type ShellProfile = {
+  id: string;
+  name: string;
+  path: string;
+  args: string[];
 };
 
 export type SkippedNewerEntry = {
@@ -2919,6 +3051,9 @@ export type SnippetStep = {
   command: string;
   confirm?: boolean;
   interactive?: boolean;
+  waitFor?: string;
+  waitForRegex?: boolean;
+  timeoutMs?: number;
 };
 
 export type SnippetStepObject = {
@@ -2928,6 +3063,9 @@ export type SnippetStepObject = {
   command: string;
   confirm?: boolean;
   interactive?: boolean;
+  waitFor?: string;
+  waitForRegex?: boolean;
+  timeoutMs?: number;
 };
 
 export type Spec = {
@@ -2950,6 +3088,7 @@ export type SshImportApplyDTO = {
   assetsUpdated: number;
   credentialsCreated: number;
   credentialsUpdated: number;
+  groupsCreated: number;
   skipped: number;
   warnings: string[];
 };
@@ -2981,6 +3120,7 @@ export type SshImportHostDTO = {
   keyFingerprint: string;
   proxyJump: string;
   authMethod: string;
+  group: string;
   source: string;
   action: string;
   warnings: string[];
@@ -3419,6 +3559,21 @@ export type TranscriptExportCastResult = {
   bytes: number;
   events: number;
   timingEstimated: boolean;
+};
+
+export type TranscriptExportTextRequest = {
+  id: string;
+  path: string;
+  timestamps?: boolean;
+  timeZone?: string;
+  utcOffsetMinutes?: number | null;
+};
+
+export type TranscriptExportTextResult = {
+  path: string;
+  bytes: number;
+  lines: number;
+  fullScreenSegments: number;
 };
 
 export type TranscriptHostDTO = {

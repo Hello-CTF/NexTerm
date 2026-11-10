@@ -144,6 +144,7 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		output string
 	}{
 		{name: "app_platform", scope: "platform", input: "Record<string, never>", output: "string"},
+		{name: "app_windows_build", scope: "platform", input: "Record<string, never>", output: "number"},
 		{name: "desktop_tray_get", scope: "platform", input: "Record<string, never>", output: "DesktopTrayDTO"},
 		{name: "desktop_tray_set", scope: "platform", input: "DesktopTraySetRequest", output: "DesktopTrayDTO"},
 		{name: "system_insets", scope: "platform", input: "Record<string, never>", output: "ScreenInsets"},
@@ -192,8 +193,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 17 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 17", len(selected))
+	if len(selected) != 18 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 18", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {
@@ -439,6 +440,7 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		{name: "transcript_search_host", input: "TranscriptHostSearchRequest", output: "TranscriptHostSearchResult"},
 		{name: "transcript_delete", input: "TranscriptIDRequest", output: "unknown"},
 		{name: "transcript_export_cast", input: "TranscriptExportCastRequest", output: "TranscriptExportCastResult"},
+		{name: "transcript_export_text", input: "TranscriptExportTextRequest", output: "TranscriptExportTextResult"},
 		{name: "transcript_sync_opt_in", input: "TranscriptSyncOptInRequest", output: "Record<string, never>"},
 		{name: "transcript_star", input: "TranscriptStarRequest", output: "unknown"},
 		{name: "transcript_usage", input: "TranscriptCutoffRequest", output: "TranscriptUsageDTO"},
@@ -477,8 +479,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 13 {
-		t.Fatalf("selected transcript command count = %d, want 13", len(selected))
+	if len(selected) != 14 {
+		t.Fatalf("selected transcript command count = %d, want 14", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {
@@ -1007,6 +1009,7 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "fs_cancel", scope: "fs", input: "FSCancelRequest", output: "boolean"},
 		{name: "fs_checksum", scope: "fs", input: structType("sessionId: string;", "path: string;", "algo?: string;"), output: "string"},
 		{name: "fs_chmod", scope: "fs", input: structType("sessionId: string;", "path: string;", "mode: number;"), output: "unknown"},
+		{name: "fs_create", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "unknown"},
 		{name: "fs_delete", scope: "fs", input: structType("sessionId: string;", "path: string;", "isDir: boolean;"), output: "unknown"},
 		{name: "fs_download", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "localPath: string;", "resume?: boolean;", "taskId?: string;", "attemptId?: string;"), output: "number"},
 		{name: "fs_extract", scope: "fs", input: structType("sessionId: string;", "path: string;"), output: "string"},
@@ -1027,7 +1030,11 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "local_file_read", scope: "local-file", input: "LocalFileReadRequest", output: "FSReadDTO"},
 		{name: "local_file_read_range", scope: "local-file", input: "LocalFileReadRangeRequest", output: "FSRangeReadDTO"},
 		{name: "local_file_write", scope: "local-file", input: "LocalFileWriteRequest", output: "LocalFileWriteDTO"},
+		{name: "local_folder_authorize", scope: "local-file", input: "LocalFolderAuthorizeRequest", output: "LocalFolderAuthorizeDTO"},
+		{name: "local_folder_create", scope: "local-file", input: "LocalDirsRequest", output: "LocalDirsCreateDTO"},
+		{name: "local_folder_entries", scope: "local-file", input: "LocalDirsRequest", output: "LocalDirsListDTO"},
 		{name: "local_folder_list", scope: "local-file", input: "LocalFolderListRequest", output: "LocalFolderListDTO"},
+		{name: "local_shell_profiles", scope: "local-shell", input: "Record<string, never>", output: "ShellProfile[]"},
 		{name: "mount_capability", scope: "mount", input: "Record<string, never>", output: "string | null"},
 		{name: "mount_create", scope: "mount", nested: true, input: "MountCreateArgs", output: "MountEntryDTO"},
 		{name: "mount_list", scope: "mount", input: "MountListRequest", output: "MountEntryDTO[]"},
@@ -1067,15 +1074,15 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 28 {
-		t.Fatalf("selected fs/local-file/mount command count = %d, want 28", len(selected))
+	if len(selected) != 33 {
+		t.Fatalf("selected fs/local-file/local-shell/mount command count = %d, want 33", len(selected))
 	}
 	for name, command := range commands {
-		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")
+		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "local_shell_") || strings.HasPrefix(name, "mount_")
 		if inventory && !selected[name] {
 			t.Errorf("command %q is missing from the fs/local-file/mount vertical inventory", name)
 		}
-		if (command.Scope == "fs" || command.Scope == "local-file" || command.Scope == "mount") && !selected[name] {
+		if (command.Scope == "fs" || command.Scope == "local-file" || command.Scope == "local-shell" || command.Scope == "mount") && !selected[name] {
 			t.Errorf("unexpected command %q joined the fs/local-file/mount vertical scopes", name)
 		}
 	}
@@ -1700,6 +1707,18 @@ func TestHostPortsVerticalContracts(t *testing.T) {
 		"HostProbeArgs":       {"ProbeRequest &", "sessionId: string;", "dryRun?: boolean;"},
 		"ProbeRequest":        {"method: string;"},
 		"HostProbeResult":     {"command: string;", "script?: string;", "ran: boolean;", "ok: boolean;", "output: string;", "durationMs: number;"},
+	})
+}
+
+func TestHostMonitorVerticalContracts(t *testing.T) {
+	checkVerticalScope(t, "host-monitor", []verticalWant{
+		{name: "host_monitor_sample", input: "HostMonitorSampleArgs", output: "HostMonitorSnapshot"},
+	}, map[string][]string{
+		"HostMonitorSampleArgs": {"sessionId: string;"},
+		"HostMonitorSnapshot": {"status: string;", "reason?: string;", "intervalMs: number;", "retryAfterMs?: number;", "cpuPercent?: number | null;",
+			"memory?: HostMonitorMemory | null;", "load?: HostMonitorLoad | null;", "network: HostMonitorNetInterface[];", "disks: HostMonitorDisk[];"},
+		"HostMonitorNetInterface": {"name: string;", "rxRate?: number | null;", "txRate?: number | null;"},
+		"HostMonitorDisk":         {"mount: string;", "usedPercent: number;"},
 	})
 }
 

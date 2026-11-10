@@ -347,3 +347,42 @@ func TestRemoteSessionsAbsentInSyncOnly(t *testing.T) {
 		t.Fatalf("delete (sync-only) status = %d, want 404", response.StatusCode)
 	}
 }
+
+// TestRemoteFeedClosesOnLogout: the feed is an account socket, so revoking the login session that opened it closes
+// it with a policy-violation code while a feed of another session of the same user stays open.
+func TestRemoteFeedClosesOnLogout(t *testing.T) {
+	f := newPreviewFixture(t)
+	f.createUser(t, "alice")
+	alice := f.login(t, "alice", "password-alice")
+	other := f.login(t, "alice", "password-alice")
+	revokedID := createRemoteViaAPI(t, f, alice, "revoked-terminal")
+	keptID := createRemoteViaAPI(t, f, other, "kept-terminal")
+
+	revoked, status := dialRemoteFeed(t, f.http.URL, revokedID, remoteFeedHeaders(alice))
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("feed handshake = %d", status)
+	}
+	defer func() { _ = revoked.CloseNow() }()
+	kept, status := dialRemoteFeed(t, f.http.URL, keptID, remoteFeedHeaders(other))
+	if status != http.StatusSwitchingProtocols {
+		t.Fatalf("feed handshake = %d", status)
+	}
+	defer func() { _ = kept.CloseNow() }()
+
+	if call := f.call(t, http.MethodPost, "/auth/logout", nil, alice, alice.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("logout status = %d body = %v", call.status, call.body)
+	}
+	readCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, _, err := revoked.Read(readCtx); websocket.CloseStatus(err) != websocket.StatusPolicyViolation {
+		t.Fatalf("revoked feed read err = %v, want policy violation close", err)
+	}
+	// The other session's feed still carries output into its shell.
+	if err := kept.Write(context.Background(), websocket.MessageBinary, []byte("still-here")); err != nil {
+		t.Fatalf("kept feed write: %v", err)
+	}
+	waitFor(t, func() bool {
+		snapshot, err := f.manager.TerminalSnapshot(keptID)
+		return err == nil && strings.Contains(strings.Join(snapshot.Lines, "\n"), "still-here")
+	})
+}

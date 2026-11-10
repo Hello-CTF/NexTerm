@@ -1,5 +1,6 @@
 import { askChoice } from "../../ui/dialogs";
 import { fsApi } from "../../ipc/commands";
+import { cachedFsRoots } from "../../ipc/fsRootsCache";
 import { WEB } from "../../ipc/env";
 import { dropStaged, stageFile } from "../../ipc/webFiles";
 import { useUi } from "../../app/store";
@@ -26,6 +27,11 @@ interface PolicyAnswer {
 
 function sessionKindOf(sessionId: string): string {
   return useUi.getState().sessions.find((s) => s.id === sessionId)?.kind ?? "";
+}
+
+// sessionConflictCaseInsensitive follows what the session's fs_roots reported, falling back to the session kind.
+export function sessionConflictCaseInsensitive(sessionId: string): boolean {
+  return conflictCaseInsensitive(sessionKindOf(sessionId), cachedFsRoots(sessionId));
 }
 
 async function askConflictPolicy(
@@ -80,7 +86,7 @@ export async function enqueueUploadWithConflicts(args: {
   refreshDir?: string;
 }): Promise<boolean> {
   const siblings = args.knownSiblings ?? (await fsApi.list(args.sessionId, args.dir));
-  const ci = conflictCaseInsensitive(sessionKindOf(args.sessionId));
+  const ci = sessionConflictCaseInsensitive(args.sessionId);
   const taken = takenNames(
     siblings.map((e) => e.name),
     ci,
@@ -271,7 +277,7 @@ export async function enqueueFolderUpload(args: {
   knownSiblings?: FileEntryDto[];
 }): Promise<boolean> {
   const siblings = args.knownSiblings ?? (await fsApi.list(args.sessionId, args.dir));
-  const ci = conflictCaseInsensitive(sessionKindOf(args.sessionId));
+  const ci = sessionConflictCaseInsensitive(args.sessionId);
   const pushToast = useUi.getState().pushToast;
   let folderName = args.folderName;
   const top = findConflict(folderName, siblings, ci);

@@ -1,0 +1,2 @@
+@@nexterm-services windows
+{"name":"Spooler","displayName":"Print Spooler","state":"Running","startMode":"Auto","delayed":false,"pid":2412}

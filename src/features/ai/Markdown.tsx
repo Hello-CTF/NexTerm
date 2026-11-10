@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { StreamParser } from "@codemirror/language";
-import { IconCopy } from "../../ui/icons";
+import { IconCopy, IconTerminal } from "../../ui/icons";
 import { copyText } from "../../ui/clipboard";
 import { useUi } from "../../app/store";
 import { safeWebUrl } from "./urlSafety";
@@ -12,6 +12,7 @@ import {
   spanClasses,
 } from "./codeHighlight";
 import { ensureHighlightTheme } from "./highlightTheme";
+import { activeTerminalInsertTarget, insertCommandAtPrompt, selectHasActiveTerminal } from "../terminal/insertCommand";
 import { t as tr } from "../../i18n";
 
 type Block =
@@ -263,11 +264,32 @@ function CodeBody({ lang, code }: { lang: string; code: string }) {
 
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const pushToast = useUi((s) => s.pushToast);
+  const canInsert = useUi(selectHasActiveTerminal);
   ensureHighlightTheme();
+  const insert = () => {
+    const target = activeTerminalInsertTarget();
+    if (!target) {
+      pushToast("info", tr("请先打开一个终端"));
+      return;
+    }
+    void insertCommandAtPrompt(target, code).then((ok) => {
+      if (ok) pushToast("success", tr("已填入终端，确认后按回车执行"));
+    });
+  };
   return (
     <div className="nx-md-pre">
       <div className="nx-md-pre-bar">
         <span className="nx-md-pre-lang">{lang || "text"}</span>
+        {canInsert && (
+          <button
+            className="nx-icon-btn nx-icon-btn-sm"
+            title={tr("插入到终端（不自动执行）")}
+            aria-label={tr("插入到终端")}
+            onClick={insert}
+          >
+            <IconTerminal size={11} />
+          </button>
+        )}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={tr("复制代码")}

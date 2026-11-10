@@ -1,3 +1,4 @@
+import { clearFsRoots } from "../../ipc/fsRootsCache";
 import { sessionApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { createHelperOperationState } from "../../features/terminal/helperOperationState";
@@ -73,6 +74,7 @@ export function createSessionSlice(set: UiSet, get: UiGet) {
       advanceWorkspaceProblemResetGeneration();
       recordingsEpoch += 1;
       abnormalDisconnectNotices.clear();
+      clearFsRoots();
       sessionStatusEvidenceMap.clear();
       get().cancelAccountDialogs();
       set((state) => ({
@@ -102,6 +104,7 @@ export function createSessionSlice(set: UiSet, get: UiGet) {
       advanceWorkspaceProblemResetGeneration();
       recordingsEpoch += 1;
       abnormalDisconnectNotices.clear();
+      clearFsRoots();
       forgetDurableReadiness();
       sessionStatusEvidenceMap.clear();
       get().cancelAccountDialogs();

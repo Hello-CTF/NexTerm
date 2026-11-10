@@ -24,7 +24,7 @@ import {
   type AssetProbeResultDTO,
   type DeployPublicKeyRequest,
 } from "./maintenanceApi";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 const MAX_TARGETS = 64;
 // Per-asset requests are issued by a small worker pool so a cancel can stop queueing between assets.
@@ -156,7 +156,7 @@ export function describeLoginResult(
     if (result.kind === "port_only" || (assetKind !== "ssh" && assetKind !== "docker" && assetKind !== "local" && !database)) {
       return {
         ...base, tone: "partial", status: t("仅端口通"), retryable: false,
-        detail: `${result.error || t("仅确认端口可以连通，没有验证账号和密码")}（${result.durationMs} ms）`,
+        detail: `${result.error ? translateMessage(result.error) : t("仅确认端口可以连通，没有验证账号和密码")}（${result.durationMs} ms）`,
       };
     }
     if (assetKind === "local") {
@@ -181,7 +181,7 @@ export function describeLoginResult(
     tone: known?.tone ?? "fail",
     status: known?.status ?? t("连接失败"),
     retryable: known?.retryable ?? true,
-    detail: result.error || t("未获取到失败原因，请重试"),
+    detail: result.error ? translateMessage(result.error) : t("未获取到失败原因，请重试"),
   };
 }
 

@@ -22,3 +22,4 @@ Before installing an update, the desktop app verifies the Minisign signature of 
 - `--auth off` disables accounts, administration and device routes; anyone who can reach the listen address can operate the server, so never use it on a public network.
 - A multi-user server does not run commands on the server machine or read its files on an account's behalf. See the [server guide](../deploy/systemd/README.md) for reverse proxy and `X-Forwarded-For` trust rules and the scope of login rate limits.
 - A VNC connection is unencrypted when the server offers no X.509 TLS, so route it through an SSH host; RDP and VNC TLS certificates are pinned after you confirm the fingerprint once.
+- RDP accepts only TLS 1.2 and newer by default; TLS 1.0/1.1 is accepted only when the asset turns on "Allow legacy TLS (1.0/1.1)", meant for old hosts that cannot be upgraded, and such connections are marked legacyTLS in the audit log.

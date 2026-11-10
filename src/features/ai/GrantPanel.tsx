@@ -88,6 +88,7 @@ const ASSET_KIND_LABEL: Record<string, string> = {
   mysql: "MySQL",
   postgres: "PostgreSQL",
   redis: "Redis",
+  telnet: "Telnet",
   device: tr("设备"),
 };
 

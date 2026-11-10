@@ -20,6 +20,10 @@ func defaultShellChoice() (shell string, login bool, source, note string) {
 	return choice.Path, choice.Login, string(choice.Source), choice.Note
 }
 
+func commandInvocation(shell string, login bool, command string) (string, []string) {
+	return shell, shellArguments(login, command)
+}
+
 func shellArguments(login bool, command string) []string {
 	if !login {
 		return []string{"-c", command}

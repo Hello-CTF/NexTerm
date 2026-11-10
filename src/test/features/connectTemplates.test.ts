@@ -79,7 +79,7 @@ describe("connectTemplates", () => {
         null,
         "junk",
         { name: "Missing id" },
-        { id: "x", name: "Invalid kind", kind: "telnet" },
+        { id: "x", name: "Invalid kind", kind: "gopher" },
         { id: "t1", name: "Complete", kind: "ssh" },
       ]),
     );

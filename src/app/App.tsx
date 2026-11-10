@@ -21,6 +21,7 @@ import { useOverlayDocks } from "./shell/useOverlayDocks";
 import { useSyncStatusSummary, useVaultStatus } from "./shell/useStatusBarState";
 import { useWorkspaceActions } from "./shell/useWorkspaceActions";
 import { useWorkspaceSwitcher } from "./shell/useWorkspaceSwitcher";
+import { AppLockLayer } from "./AppLockScreen";
 import { t as tr } from "../i18n";
 
 // Shell helpers keep their historical App exports for existing importers.
@@ -36,9 +37,12 @@ export {
 
 export default function App() {
   return (
-    <ErrorBoundary title={tr("应用界面发生错误")}>
-      <AppShell />
-    </ErrorBoundary>
+    <>
+      <ErrorBoundary title={tr("应用界面发生错误")}>
+        <AppShell />
+      </ErrorBoundary>
+      <AppLockLayer />
+    </>
   );
 }
 
@@ -217,6 +221,7 @@ function AppShell() {
       setEditingAsset: setPaletteEditingAsset,
       workspaceMenu: wsMenu,
       onCloseWorkspaceMenu: closeWorkspaceSwitcher,
+      onOpenAi: () => setRightOpen(true),
     },
   };
 

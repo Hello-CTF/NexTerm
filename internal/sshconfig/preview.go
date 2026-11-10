@@ -34,15 +34,18 @@ type ExistingKey struct {
 }
 
 type HostPreview struct {
-	Alias           string
-	Hostname        string
-	Port            int
-	Username        string
-	IdentityFiles   []string
-	KeyName         string
-	KeyFingerprint  string
-	ProxyJump       string
-	AuthMethod      string
+	Alias          string
+	Hostname       string
+	Port           int
+	Username       string
+	IdentityFiles  []string
+	KeyName        string
+	KeyFingerprint string
+	ProxyJump      string
+	AuthMethod     string
+	// Group is the slash-separated folder path the source client filed the
+	// session under; empty for OpenSSH and Termius imports.
+	Group           string
 	Source          string
 	Action          PlanAction
 	Warnings        []string
@@ -81,25 +84,37 @@ type endpoint struct {
 }
 
 func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []ExistingKey, limits Limits) *ImportPreview {
+	return previewHosts("ssh-config", result, existing, existingKeys, limits)
+}
+
+// previewHosts plans hosts that reference private keys by file path: OpenSSH config and the session files of other
+// clients, which share the duplicate, conflict, key and jump planning.
+func previewHosts(source string, result *Result, existing []ExistingAsset, existingKeys []ExistingKey, limits Limits) *ImportPreview {
 	limits = withDefaultLimits(limits)
-	preview := &ImportPreview{Source: "ssh-config", Diagnostics: result.Diagnostics}
+	preview := &ImportPreview{Source: source, Diagnostics: result.Diagnostics}
 	existingByName, existingByEndpoint := indexExistingAssets(existing)
 	batchNames := map[string]endpoint{}
 	batchEndpoints := map[endpoint]string{}
 	hosts := make([]HostPreview, 0, len(result.Hosts))
+	reportedIdentities := map[string]bool{}
 	for _, host := range result.Hosts {
 		item := HostPreview{
 			Alias:         host.Alias,
 			Hostname:      host.Hostname,
 			Port:          host.Port,
 			Username:      host.Username,
-			IdentityFiles: DedupeIdentityFiles(host.IdentityFiles),
+			IdentityFiles: preview.usableIdentityFiles(host.IdentityFiles, reportedIdentities),
 			ProxyJump:     host.ProxyJump,
+			Group:         host.Group,
 			Source:        host.Source,
 			Action:        PlanAdd,
+			Warnings:      slices.Clone(host.Warnings),
 		}
-		if len(item.IdentityFiles) > 0 {
+		switch {
+		case len(item.IdentityFiles) > 0:
 			item.AuthMethod = "key"
+		case host.AuthMethod == "password":
+			item.AuthMethod = "password"
 		}
 		planHostAction(&item, existingByName, existingByEndpoint, batchNames, batchEndpoints)
 		ep := endpointOf(item.Hostname, item.Port, item.Username)
@@ -117,6 +132,24 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 	return preview
 }
 
+// usableIdentityFiles keeps the identity files that exist and reports each skipped one once, so a host without a
+// usable file falls back to agent auth instead of a key path OpenSSH would ignore.
+func (preview *ImportPreview) usableIdentityFiles(paths []string, reported map[string]bool) []string {
+	usable, skipped := UsableIdentityFiles(paths)
+	for _, path := range skipped {
+		if reported[path] {
+			continue
+		}
+		reported[path] = true
+		preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
+			Code:    "key-unreadable",
+			Source:  path,
+			Message: "IdentityFile 不存在或无法读取，已忽略",
+		})
+	}
+	return usable
+}
+
 func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, existingByEndpoint map[endpoint]ExistingAsset, batchNames map[string]endpoint, batchEndpoints map[endpoint]string) {
 	lower := strings.ToLower(item.Alias)
 	ep := endpointOf(item.Hostname, item.Port, item.Username)
@@ -127,7 +160,7 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 			item.Action = PlanSkipDuplicate
 		} else {
 			item.Action = PlanConflictAlias
-			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q already used by an existing asset with a different endpoint", item.Alias))
+			item.Warnings = append(item.Warnings, fmt.Sprintf("别名 %q 已被地址不同的现有资产使用", item.Alias))
 		}
 		return
 	}
@@ -135,22 +168,22 @@ func planHostAction(item *HostPreview, existingByName map[string]ExistingAsset, 
 		item.TargetID = conflict.ID
 		item.TargetUpdatedAt = conflict.UpdatedAt
 		item.Action = PlanConflictEndpoint
-		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d already imported as %q", item.Hostname, item.Port, conflict.Name))
+		item.Warnings = append(item.Warnings, fmt.Sprintf("地址 %s:%d 已作为 %q 导入", item.Hostname, item.Port, conflict.Name))
 		return
 	}
 	if prevEp, ok := batchNames[lower]; ok {
 		if prevEp == ep {
 			item.Action = PlanSkipDuplicate
-			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q duplicates an earlier entry in this import", item.Alias))
+			item.Warnings = append(item.Warnings, fmt.Sprintf("别名 %q 与本次导入中较早的条目重复", item.Alias))
 		} else {
 			item.Action = PlanConflictAlias
-			item.Warnings = append(item.Warnings, fmt.Sprintf("alias %q is also used by a different host in this import", item.Alias))
+			item.Warnings = append(item.Warnings, fmt.Sprintf("别名 %q 在本次导入中也被另一台主机使用", item.Alias))
 		}
 		return
 	}
 	if _, ok := batchEndpoints[ep]; ok {
 		item.Action = PlanConflictEndpoint
-		item.Warnings = append(item.Warnings, fmt.Sprintf("endpoint %s:%d appears more than once in this import", item.Hostname, item.Port))
+		item.Warnings = append(item.Warnings, fmt.Sprintf("地址 %s:%d 在本次导入中出现多次", item.Hostname, item.Port))
 	}
 }
 
@@ -174,7 +207,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 	inspected := 0
 	for _, path := range paths {
 		if inspected >= limits.MaxKeys {
-			truncate(preview, "key count exceeds %d", limits.MaxKeys)
+			truncate(preview, "密钥数量超过上限 %d", limits.MaxKeys)
 			break
 		}
 		inspected++
@@ -183,7 +216,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{
 				Code:    "key-unreadable",
 				Source:  path,
-				Message: "identity file cannot be inspected",
+				Message: "IdentityFile 无法检查",
 			})
 			continue
 		}
@@ -192,7 +225,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 			Fingerprint: info.Fingerprint,
 			KeyType:     info.KeyType,
 			Path:        path,
-			Source:      "ssh-config",
+			Source:      preview.Source,
 			Action:      PlanAdd,
 		}
 		decideKeyAction(&item, seenFingerprints, existingByName, existingFPNames, batchNames)
@@ -220,10 +253,10 @@ func decideKeyAction(item *KeyPreview, seenFingerprints map[string]bool, existin
 		item.TargetID = existing.ID
 		item.TargetUpdatedAt = existing.UpdatedAt
 		item.Action = PlanConflictAlias
-		item.Warnings = append(item.Warnings, fmt.Sprintf("key name %q already used by a key with a different fingerprint", name))
+		item.Warnings = append(item.Warnings, fmt.Sprintf("密钥名称 %q 已被指纹不同的密钥使用", name))
 	case batchNames[strings.ToLower(name)]:
 		item.Action = PlanConflictAlias
-		item.Warnings = append(item.Warnings, fmt.Sprintf("key name %q is also used by a different key in this import", name))
+		item.Warnings = append(item.Warnings, fmt.Sprintf("密钥名称 %q 在本次导入中也被另一个密钥使用", name))
 	}
 }
 
@@ -253,7 +286,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 		imported := hosts[i].Action == PlanAdd
 		for _, hop := range jumpHops(hosts[i].ProxyJump) {
 			if strings.EqualFold(hop, hosts[i].Alias) {
-				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q is the host itself", hop))
+				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("跳板 %q 是该主机自身", hop))
 				blocked[i] = true
 				continue
 			}
@@ -263,7 +296,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 			}
 			target, ok := canonicalAdd[lower]
 			if !ok {
-				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q matches no imported or existing host", hop))
+				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("跳板 %q 不匹配任何导入的或现有的主机", hop))
 				blocked[i] = true
 				continue
 			}
@@ -293,7 +326,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 					}
 				}
 				for _, n := range stack[start:] {
-					warning := fmt.Sprintf("proxy jump cycle through %q", hosts[next].Alias)
+					warning := fmt.Sprintf("跳板链经由 %q 形成循环", hosts[next].Alias)
 					if !containsString(hosts[n].Warnings, warning) {
 						hosts[n].Warnings = append(hosts[n].Warnings, warning)
 					}
@@ -324,7 +357,7 @@ func validateProxyJumps(hosts []HostPreview, existing []ExistingAsset) {
 					continue
 				}
 				blocked[i] = true
-				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("proxy jump target %q is not importable", hosts[target].Alias))
+				hosts[i].Warnings = append(hosts[i].Warnings, fmt.Sprintf("跳板 %q 不可导入", hosts[target].Alias))
 				changed = true
 				break
 			}

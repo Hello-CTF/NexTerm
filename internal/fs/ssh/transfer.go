@@ -26,6 +26,9 @@ type TransferOptions struct {
 	// MaxBytesPerSecond caps the upload rate so a background transfer cannot starve
 	// interactive traffic sharing the same SSH connection. Zero means unlimited.
 	MaxBytesPerSecond int64
+	// MaxBytes caps the size of a downloaded file; zero means unlimited. A source larger than the cap is
+	// refused before anything is written.
+	MaxBytes int64
 }
 
 // PaceWriter limits the sustained write rate of w. A non-positive rate returns w unchanged.
@@ -233,6 +236,9 @@ func (f *FS) Download(ctx context.Context, remotePath, localPath string, options
 	}
 	defer remote.Close()
 	total := remote.Size()
+	if options.MaxBytes > 0 && total > options.MaxBytes {
+		return 0, base.ErrTransferTooLarge
+	}
 	var offset int64
 	targetExists := false
 	if options.Resume {

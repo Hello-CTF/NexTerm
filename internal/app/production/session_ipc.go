@@ -403,6 +403,8 @@ type liveTabDTO struct {
 	DetachedSinceOpen bool   `json:"detachedSinceOpen,omitempty"`
 	Durable           bool   `json:"durable,omitempty"`
 	State             string `json:"state,omitempty"`
+	// Shell is the tab's command language as the backend knows it now, which an SSH tab can learn after it opened.
+	Shell string `json:"shell,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -759,7 +761,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedTabDTO{}, terminalIPCError(durable.ErrNotFound)
 				}
 				if !validTabID(input.TabID) {
-					return attachedTabDTO{}, ipc.BadParam(errors.New("invalid terminal tab id"))
+					return attachedTabDTO{}, ipc.BadParam(errors.New("终端标签页 ID 无效"))
 				}
 				return attachedTabDTO{}, terminalIPCError(session.ErrTabNotFound)
 			})
@@ -957,6 +959,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, WindowTitle: info.WindowTitle, TitleChangedAt: info.TitleChangedAt,
 						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
+						Shell: string(info.Shell),
 					})
 				}
 				return result, nil
@@ -1022,11 +1025,23 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_record_start", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (any, error) {
 				ctx = productionSessionRequestContext(ctx)
-				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				path, maxBytes, release, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return nil, err
 				}
-				return nil, terminalIPCError(s.sessions.StartRecordingFor(ctx, input.TabID, path))
+				// A staged target is charged by its budget alone, so it must start empty rather than be appended to.
+				if s.stagedBlobs != nil {
+					if err := os.Truncate(path, 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+						release()
+						return nil, terminalIPCError(err)
+					}
+				}
+				// The recording owns release from here on and runs it when its file closes.
+				if err := s.sessions.StartRecordingLimitedFor(ctx, input.TabID, path, maxBytes, release); err != nil {
+					release()
+					return nil, terminalIPCError(err)
+				}
+				return nil, nil
 			})
 		},
 		func() error {
@@ -1046,11 +1061,12 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		func() error {
 			return ipc.Register(dispatcher, "terminal_export_log", func(ctx context.Context, _ *ipc.Call, input terminalIDRequest) (uint64, error) {
 				ctx = productionSessionRequestContext(ctx)
-				path, err := resolveStagedLocalPath(ctx, s.stagedBlobs, input.Path)
+				path, limit, release, err := resolveStagedWriteTarget(ctx, s.stagedBlobs, input.Path)
 				if err != nil {
 					return 0, err
 				}
-				value, err := s.sessions.ExportLogFor(ctx, input.TabID, path, input.MaxBytes)
+				defer release()
+				value, err := s.sessions.ExportLogFor(ctx, input.TabID, path, exportLogMaxBytes(input.MaxBytes, limit))
 				return value, terminalIPCError(err)
 			})
 		},
@@ -1213,6 +1229,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 		return json.RawMessage(row.OptionsJSON), true
 	}
 	if err := registerFSCommandsWithAssets(dispatcher, s.sessions, s.stagedBlobs, assetOptions, s.fsUploads); err != nil {
+		return err
+	}
+	if err := registerLocalShellProfiles(dispatcher, func(ctx context.Context) bool {
+		if s.sshConnector == nil {
+			return ipc.OwnerID(ctx) != ""
+		}
+		return s.sshConnector.restricted(ctx)
+	}); err != nil {
 		return err
 	}
 	if !s.desktop {

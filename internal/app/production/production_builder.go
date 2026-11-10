@@ -21,6 +21,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/skills"
 	"github.com/Hello-CTF/NexTerm/internal/docker"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor"
 	"github.com/Hello-CTF/NexTerm/internal/hostports"
 	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -153,6 +154,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	dockerService := config.Docker
 	var hostPortsService *hostports.Service
 	var hostProcsService *hostprocs.Service
+	var hostMonitorService *hostmonitor.Service
 	var forwardService *forward.Service
 	var forwardRuntime *forwardRuntime
 	fsUploads := newFSChunkUploadRegistry(config.Config.Logger)
@@ -218,6 +220,9 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 					if hostProcsService != nil {
 						forgetHostPortsOnStatus(hostProcsService.Forget, status)
 					}
+					if hostMonitorService != nil {
+						forgetHostPortsOnStatus(hostMonitorService.Forget, status)
+					}
 					if forwardService != nil {
 						switch status.Status {
 						case session.StatusReconnecting:
@@ -259,6 +264,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 	}
 	hostPortsService = newProductionHostPortsServiceWithAudit(sessionManager, database)
 	hostProcsService = newProductionHostProcsService(sessionManager, database)
+	hostMonitorService = newProductionHostMonitorService(sessionManager)
 	deviceInstall := loadDeviceInstall(config.DataDir, config.Config.Logger)
 	syncService := syncservice.New(database, credentialVault, syncservice.WithDeviceInstall(deviceInstall), syncservice.WithMetadata(config.Config.Version, config.Desktop), syncservice.WithGatewayAuthKey(os.Getenv("NEXTERM_GATEWAY_AUTH")), syncservice.WithEvents(config.Config.Events), syncservice.WithProfilesReload(profileManager.Reload), syncservice.WithLogger(config.Config.Logger))
 	syncService.SetStateRulesChanged(func(ctx context.Context) { stateRules.changed(ipc.OwnerID(ctx)) })
@@ -404,7 +410,7 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		}}),
 		Sessions:  sessionManager,
 		Forward:   forwardService,
-		hostPorts: hostPortsService, hostProcs: hostProcsService,
+		hostPorts: hostPortsService, hostProcs: hostProcsService, hostMonitor: hostMonitorService,
 		Docker: dockerService, Retention: retention, hostKeys: hostKeys, sshConnector: sshConnector, dataDir: config.DataDir,
 		desktop:        config.Desktop,
 		multiUser:      !shared,

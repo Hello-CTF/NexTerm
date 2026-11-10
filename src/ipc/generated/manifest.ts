@@ -26,6 +26,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_command_generate": {
+      scope: "ai-command",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.aiCommandGenerateRequest", ts: "AiCommandGenerateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.aiCommandGenerateDTO", ts: "AiCommandGenerateDTO" },
+    },
     "ai_confirm": {
       nested: false,
       channel: true,
@@ -459,6 +467,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{Version *string \"json:\\\"version\\\"\"}", ts: "{\n  version: string | null;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
+    },
+    "app_windows_build": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "uint32", ts: "number" },
     },
     "asset_create": {
       scope: "asset",
@@ -1232,6 +1248,14 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; Mode uint32 \"json:\\\"mode\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  mode: number;\n}" },
       output: { go: "any", ts: "unknown" },
     },
+    "fs_create": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n}" },
+      output: { go: "any", ts: "unknown" },
+    },
     "fs_delete": {
       scope: "fs",
       nested: false,
@@ -1416,6 +1440,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs", ts: "HostProbeArgs" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult", ts: "HostProbeResult" },
     },
+    "host_monitor_sample": {
+      scope: "host-monitor",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/hostmonitor.SampleArgs", ts: "HostMonitorSampleArgs" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/hostmonitor.Snapshot", ts: "HostMonitorSnapshot" },
+    },
     "host_ports_list": {
       scope: "host-ports",
       nested: false,
@@ -1569,6 +1601,30 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteRequest", ts: "LocalFileWriteRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFileWriteDTO", ts: "LocalFileWriteDTO" },
     },
+    "local_folder_authorize": {
+      scope: "local-file",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderAuthorizeRequest", ts: "LocalFolderAuthorizeRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localFolderAuthorizeDTO", ts: "LocalFolderAuthorizeDTO" },
+    },
+    "local_folder_create": {
+      scope: "local-file",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localDirsRequest", ts: "LocalDirsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localDirsCreateDTO", ts: "LocalDirsCreateDTO" },
+    },
+    "local_folder_entries": {
+      scope: "local-file",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localDirsRequest", ts: "LocalDirsRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localDirsListDTO", ts: "LocalDirsListDTO" },
+    },
     "local_folder_list": {
       scope: "local-file",
       nested: false,
@@ -1632,6 +1688,14 @@ export const ipcContractManifest = {
       stream: "none",
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperStatusDTO", ts: "LocalHelperStatusDTO" },
+    },
+    "local_shell_profiles": {
+      scope: "local-shell",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/transport/local.ShellProfile", ts: "ShellProfile[]" },
     },
     "log_tail_cancel": {
       scope: "log-tail",
@@ -2925,6 +2989,14 @@ export const ipcContractManifest = {
       input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastRequest", ts: "TranscriptExportCastRequest" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportCastResult", ts: "TranscriptExportCastResult" },
     },
+    "transcript_export_text": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportTextRequest", ts: "TranscriptExportTextRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptExportTextResult", ts: "TranscriptExportTextResult" },
+    },
     "transcript_hosts": {
       scope: "transcript",
       nested: false,
@@ -3202,6 +3274,10 @@ export type IPCTypedCommandName = Exclude<keyof typeof ipcContractManifest.comma
 export type IPCCommandName = keyof typeof ipcContractManifest.commands;
 
 export interface IPCCommandTypeMap {
+  "ai_command_generate": {
+    input: contractTypes.AiCommandGenerateRequest;
+    output: contractTypes.AiCommandGenerateDTO;
+  };
   "ai_grant_list": {
     input: Record<string, never>;
     output: contractTypes.DeviceGrant[];
@@ -3360,6 +3436,10 @@ export interface IPCCommandTypeMap {
   version: string | null;
 };
     output: contractTypes.UpdateResult;
+  };
+  "app_windows_build": {
+    input: Record<string, never>;
+    output: number;
   };
   "asset_create": {
     input: contractTypes.AssetInputRequest;
@@ -3805,6 +3885,13 @@ export interface IPCCommandTypeMap {
 };
     output: unknown;
   };
+  "fs_create": {
+    input: {
+  sessionId: string;
+  path: string;
+};
+    output: unknown;
+  };
   "fs_delete": {
     input: {
   sessionId: string;
@@ -3981,6 +4068,10 @@ export interface IPCCommandTypeMap {
     input: contractTypes.HostProbeArgs;
     output: contractTypes.HostProbeResult;
   };
+  "host_monitor_sample": {
+    input: contractTypes.HostMonitorSampleArgs;
+    output: contractTypes.HostMonitorSnapshot;
+  };
   "host_ports_list": {
     input: contractTypes.HostPortsListArgs;
     output: contractTypes.HostPortsListResult;
@@ -4057,6 +4148,18 @@ export interface IPCCommandTypeMap {
     input: contractTypes.LocalFileWriteRequest;
     output: contractTypes.LocalFileWriteDTO;
   };
+  "local_folder_authorize": {
+    input: contractTypes.LocalFolderAuthorizeRequest;
+    output: contractTypes.LocalFolderAuthorizeDTO;
+  };
+  "local_folder_create": {
+    input: contractTypes.LocalDirsRequest;
+    output: contractTypes.LocalDirsCreateDTO;
+  };
+  "local_folder_entries": {
+    input: contractTypes.LocalDirsRequest;
+    output: contractTypes.LocalDirsListDTO;
+  };
   "local_folder_list": {
     input: contractTypes.LocalFolderListRequest;
     output: contractTypes.LocalFolderListDTO;
@@ -4088,6 +4191,10 @@ export interface IPCCommandTypeMap {
   "local_helper_status": {
     input: Record<string, never>;
     output: contractTypes.LocalHelperStatusDTO;
+  };
+  "local_shell_profiles": {
+    input: Record<string, never>;
+    output: contractTypes.ShellProfile[];
   };
   "log_tail_cancel": {
     input: contractTypes.LogTailCancelRequest;
@@ -4662,6 +4769,10 @@ export interface IPCCommandTypeMap {
   "transcript_export_cast": {
     input: contractTypes.TranscriptExportCastRequest;
     output: contractTypes.TranscriptExportCastResult;
+  };
+  "transcript_export_text": {
+    input: contractTypes.TranscriptExportTextRequest;
+    output: contractTypes.TranscriptExportTextResult;
   };
   "transcript_hosts": {
     input: Record<string, never>;

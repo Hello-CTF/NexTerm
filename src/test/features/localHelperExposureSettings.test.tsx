@@ -9,6 +9,10 @@ const mocks = vi.hoisted(() => ({
   setExposure: vi.fn(),
   syncStatus: vi.fn(),
 }));
+vi.mock("../../ipc/env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../ipc/env")>()),
+  DESKTOP: true,
+}));
 vi.mock("../../ui/dialogs", () => ({ ask: mocks.ask, askChoiceRemember: vi.fn() }));
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
@@ -21,6 +25,13 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 import { LocalHelperExposureSettings } from "../../features/settings/LocalHelperExposureSettings";
 import { useUi } from "../../app/store";
 import { flush, mount } from "./reactTestUtils";
+import { SETTINGS_SECTIONS, searchSettings } from "../../features/settings/settingsIndex";
+
+function searchFindsExposure(): boolean {
+  return searchSettings("开放本机终端", SETTINGS_SECTIONS).some(
+    (result) => result.kind === "item" && result.itemId === "local-helper-exposure",
+  );
+}
 
 function checkbox(container: HTMLElement): HTMLInputElement | null {
   return container.querySelector<HTMLInputElement>('input[aria-label="向服务端账号开放本机终端"]');
@@ -52,6 +63,8 @@ describe("local terminal exposure setting", () => {
     try {
       await flush();
       expect(checkbox(off.container)).toBeNull();
+      // Settings search and the jump palette must not link to a setting that is not shown.
+      expect(searchFindsExposure()).toBe(false);
     } finally {
       off.unmount();
     }
@@ -60,6 +73,7 @@ describe("local terminal exposure setting", () => {
     try {
       await flush();
       expect(checkbox(on.container)?.checked).toBe(true);
+      expect(searchFindsExposure()).toBe(true);
       expect(on.container.textContent).toContain("未登录服务端账号");
     } finally {
       on.unmount();

@@ -66,6 +66,55 @@ func TestListParsesArrayFixtures(t *testing.T) {
 	}
 }
 
+func TestListReportsHiddenAttributesAndLinks(t *testing.T) {
+	executor := &fakeExecutor{result: success(`[` +
+		`{"n":"hidden.txt","d":false,"l":1,"m":"2026-10-02T12:00:00Z","h":true,"k":"","t":""},` +
+		`{"n":"junction","d":true,"l":null,"m":"2026-10-02T12:00:00Z","h":false,"k":"Junction","t":"D:\\data"},` +
+		`{"n":"link.txt","d":false,"l":0,"m":"2026-10-02T12:00:00Z","h":false,"k":"SymbolicLink","t":"C:\\a.txt"},` +
+		`{"n":"placeholder","d":false,"l":5,"m":"2026-10-02T12:00:00Z","h":false,"k":"","t":""}]`)}
+	entries, err := New(executor).List(context.Background(), `C:\root`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(executor.scripts[0], "$_.Attributes") {
+		t.Fatalf("list script does not read attributes: %s", executor.scripts[0])
+	}
+	got := map[string]base.FileEntry{}
+	for _, entry := range entries {
+		got[entry.Name] = entry
+	}
+	if entry := got["hidden.txt"]; !entry.Hidden || entry.Kind != base.FileFile {
+		t.Fatalf("hidden.txt = %+v", entry)
+	}
+	if entry := got["junction"]; entry.Kind != base.FileSymlink || entry.TargetKind != base.FileDirectory || entry.SymlinkTarget != `D:\data` {
+		t.Fatalf("junction = %+v", entry)
+	}
+	if entry := got["link.txt"]; entry.Kind != base.FileSymlink || entry.TargetKind != base.FileFile || entry.SymlinkTarget != `C:\a.txt` {
+		t.Fatalf("link.txt = %+v", entry)
+	}
+	if entry := got["placeholder"]; entry.Kind != base.FileFile || entry.Hidden || entry.TargetKind != "" {
+		t.Fatalf("placeholder = %+v", entry)
+	}
+}
+
+func TestDeleteRemovesLinksWithoutRecursingIntoTargets(t *testing.T) {
+	for _, isDir := range []bool{false, true} {
+		executor := &fakeExecutor{result: success("")}
+		if err := New(executor).Delete(context.Background(), `C:\O'Brien\link`, isDir); err != nil {
+			t.Fatal(err)
+		}
+		script := executor.scripts[0]
+		if !strings.Contains(script, `Get-Item -LiteralPath 'C:\O''Brien\link' -Force`) ||
+			!strings.Contains(script, "$__nextermItem.LinkType -in 'SymbolicLink','Junction'") ||
+			!strings.Contains(script, "$__nextermItem.Delete()") {
+			t.Fatalf("delete script lacks the link branch: %s", script)
+		}
+		if isDir != strings.Contains(script, "-Recurse") {
+			t.Fatalf("isDir=%v delete script recursion mismatch: %s", isDir, script)
+		}
+	}
+}
+
 func TestListUsesStableJSONAndUnlimitedFileOutput(t *testing.T) {
 	executor := &fakeExecutor{result: success("[]")}
 	filesystem := New(executor)
@@ -261,6 +310,9 @@ func TestRootsUsesTargetFileSystemDrives(t *testing.T) {
 	}
 	if roots.PathStyle != base.PathStyleWindows || !roots.Supported || roots.HomePath != `C:\Users\alice` {
 		t.Fatalf("roots environment = %+v", roots)
+	}
+	if want := (base.FileCapabilities{Chmod: base.ChmodNone, CaseInsensitive: true}); roots.Capabilities != want {
+		t.Fatalf("capabilities = %+v, want %+v", roots.Capabilities, want)
 	}
 	if len(roots.Roots) != 2 || roots.Roots[0].Path != `C:\` || roots.Roots[0].Label != "C:" || roots.Roots[1].Path != `\\server\share` || roots.Roots[1].Label != "Z:" {
 		t.Fatalf("target roots = %+v", roots.Roots)

@@ -67,7 +67,7 @@ func newUpdateHarness(t *testing.T, current, latest string, stdin string, termin
 		return &Upgrader{
 			BaseURL: h.release.URL + "/download", Executable: h.target, PublicKey: testReleaseKey.PublicKeyFile(),
 			MaxAttempts: 1, Backoff: time.Millisecond,
-			sleep: instantSleep, scheduleReplace: captureReplace(&h.replaced),
+			sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&h.replaced),
 		}
 	}
 	cliExecutable = func() (string, error) { return h.target, nil }

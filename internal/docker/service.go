@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 )
 
@@ -156,6 +157,7 @@ func (s *Service) statsSDK(ctx context.Context, backend Backend) (string, error)
 	jobs := make(chan int)
 	lines := make([][]byte, len(containers))
 	errs := make([]error, len(containers))
+	gone := make([]bool, len(containers))
 	var workers sync.WaitGroup
 	workers.Add(workerCount)
 	for range workerCount {
@@ -165,6 +167,10 @@ func (s *Service) statsSDK(ctx context.Context, backend Backend) (string, error)
 				stats, operationErr := backend.ContainerStats(ctx, containers[index].ID)
 				if operationErr == nil {
 					lines[index], operationErr = formatStats(stats, containers[index])
+				} else if cerrdefs.IsNotFound(operationErr) && ctx.Err() == nil {
+					// The container exited or was removed after the listing; it has no stats to report.
+					gone[index] = true
+					continue
 				}
 				if operationErr != nil {
 					errs[index] = operationErr
@@ -185,10 +191,13 @@ func (s *Service) statsSDK(ctx context.Context, backend Backend) (string, error)
 	}
 	close(jobs)
 	workers.Wait()
+	if index := firstStatsError(errs); index >= 0 {
+		return "", fmt.Errorf("stats for %s: %w", containers[index].ID, errs[index])
+	}
 	var output bytes.Buffer
 	for index, line := range lines {
-		if errs[index] != nil {
-			return "", fmt.Errorf("stats for %s: %w", containers[index].ID, errs[index])
+		if gone[index] {
+			continue
 		}
 		if ctx.Err() != nil && len(line) == 0 {
 			return "", ctx.Err()
@@ -197,6 +206,24 @@ func (s *Service) statsSDK(ctx context.Context, backend Backend) (string, error)
 		output.WriteByte('\n')
 	}
 	return output.String(), nil
+}
+
+// firstStatsError returns the index of the error to report: the first one that is not a cancellation, because a
+// failing container cancels the calls still in flight, or the first error at all. It returns -1 without errors.
+func firstStatsError(errs []error) int {
+	first := -1
+	for index, err := range errs {
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, context.Canceled) {
+			return index
+		}
+		if first < 0 {
+			first = index
+		}
+	}
+	return first
 }
 
 func (s *Service) Action(ctx context.Context, request ActionRequest) error {

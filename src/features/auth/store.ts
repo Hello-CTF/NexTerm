@@ -91,6 +91,11 @@ interface AuthState {
   changePassword: (oldPassword: string, newPassword: string) => Promise<RecoveryKeyIssue>;
   recoveryReset: (username: string, recoveryKey: string, newPassword: string) => Promise<void>;
   unlockDEK: (password: string) => Promise<void>;
+  /**
+   * Proves the signed-in user knows the account password by opening the account's data key envelope locally; the
+   * password never leaves the browser. A data key opened this way is adopted when none was unlocked yet.
+   */
+  verifyPassword: (password: string) => Promise<void>;
   lockDEK: () => void;
   clearPendingRecoveryKey: () => void;
   clearError: () => void;
@@ -206,7 +211,7 @@ type AuthSet = (partial: Partial<AuthState>) => void;
 // finishPasswordLogin is the shared wrap-up after password authentication: record the CSRF token, fetch/init the DEK envelope, and enter the app.
 // An unenrolled session under the mfa_required policy enters the forced enrollment gate (the server has already locked the session to enrollment only).
 async function finishPasswordLogin(set: AuthSet, session: AccountSession, password: string): Promise<void> {
-  setCsrfToken(session.csrf_token);
+  setCsrfToken(session.csrf_token, session.session_tag);
   set({ user: session.user });
   if (session.user.state === "reset_required") {
     set({ gate: "reset_required" });
@@ -361,7 +366,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       if (password) {
         await finishPasswordLogin(set, session, password);
       } else {
-        setCsrfToken(session.csrf_token);
+        setCsrfToken(session.csrf_token, session.session_tag);
         set({ user: session.user, gate: "ready" });
         syncPreferenceStore(true);
       }
@@ -519,6 +524,17 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ error: toAppError(e) });
       throw e;
     }
+  },
+
+  verifyPassword: async (password) => {
+    const dek = await fetchAndUnwrapDEK(password);
+    if (get().dek !== null) {
+      zeroize(dek);
+      return;
+    }
+    set({ dek });
+    const userId = get().user?.id;
+    if (userId) persistDek(userId, dek);
   },
 
   lockDEK: () => {

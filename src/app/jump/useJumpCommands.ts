@@ -17,6 +17,9 @@ import { terminalLinkCommands } from "./terminalLinkCommands";
 import { terminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
 import { workspaceLayoutTree } from "../paneLayout";
 import { resolveActivePane } from "../splitTree";
+import { requestAppLock } from "../appLock";
+import { canSaveLayoutTemplate, layoutTemplatePanes, useLayoutTemplates } from "../layoutTemplates";
+import { openLayoutTemplate, saveWorkspaceAsLayoutTemplate } from "../layoutTemplateOpen";
 import {
   IconActivity,
   IconClock,
@@ -27,6 +30,8 @@ import {
   IconEye,
   IconEyeOff,
   IconHistory,
+  IconLock,
+  IconLayers,
   IconMergeH,
   IconMonitor,
   IconNetwork,
@@ -48,6 +53,8 @@ export interface JumpCommand {
   icon: typeof IconTerminal;
   // keepOpen leaves the palette open after running, for commands that change what it shows.
   keepOpen?: boolean;
+  // ephemeral commands (an id that names a position, such as the Nth link on screen) are not remembered for ranking.
+  ephemeral?: boolean;
   run: () => void;
 }
 
@@ -85,6 +92,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
   const workspaces = useWorkspaceList();
   const activeWorkspaceId = useUi((s) => s.activeWorkspaceId);
   const { hiddenIds, showHidden } = useAssetVisibility();
+  const layoutTemplates = useLayoutTemplates();
   const bindings = useKeybindings();
   const keyHint = useCallback((id: KeybindingActionId, description?: string): string | undefined => {
     const binding = bindings[id];
@@ -306,6 +314,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true }),
       },
+      {
+        id: "lock-app",
+        label: t("锁定 NexTerm"),
+        hint: keyHint("lockApp", t("遮挡界面，输入密码后解锁；终端继续运行")),
+        icon: IconLock,
+        run: () => void requestAppLock(),
+      },
       ...(backgroundAvailable ? [{
         id: "background",
         label: t("打开后台会话"),
@@ -428,6 +443,26 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         run: () => (hidden ? unhideAsset(asset) : hideAsset(asset)),
       });
     }
+    for (const template of layoutTemplates) {
+      list.push({
+        id: `layout-template-${template.id}`,
+        label: t("打开布局模板 {name}", { name: template.name }),
+        section: t("布局模板"),
+        hint: template.description || t("{count} 个窗格", { count: layoutTemplatePanes(template.layout).length }),
+        icon: IconLayers,
+        run: () => void openLayoutTemplate(template),
+      });
+    }
+    if (currentWorkspace && canSaveLayoutTemplate(currentWorkspace)) {
+      list.push({
+        id: "layout-template-save",
+        label: t("保存当前布局为模板"),
+        section: t("布局模板"),
+        hint: currentWorkspace.title,
+        icon: IconLayers,
+        run: () => void saveWorkspaceAsLayoutTemplate(currentWorkspace.id),
+      });
+    }
     for (const s of snippets) {
       // A multi-step snippet cannot be inserted; running it confirms each step that asks for it.
       const multi = isMultiStep(s);
@@ -452,6 +487,7 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
     snippets,
     hiddenIds,
     showHidden,
+    layoutTemplates,
     sessions,
     setSessions,
     addTab,

@@ -9,6 +9,7 @@
 @import "./styles/components-workspace.css";
 @import "./styles/components-navigation.css";
 @import "./styles/components-misc.css";
+@import "./styles/motion.css";
 @import "./styles/overrides.css";
 @import "./styles/shell.css";
 @import "./styles/responsive.css";

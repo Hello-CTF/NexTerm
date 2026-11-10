@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
-import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest } from "./XtermView";
+import { XtermView, type TerminalHandle, type TerminalLinkMenuRequest, type TerminalSearchApi } from "./XtermView";
+import { SEARCH_HIGHLIGHT_LIMIT, type TerminalSearchFlags, type TerminalSearchResults } from "./xtermAddons";
 import { EARLIER_HISTORY_PANEL_ATTRIBUTE, EarlierHistory } from "./EarlierHistoryPanel";
 import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } from "./earlierHistory";
 import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
 import type { DetectedTarget } from "./terminalLinkProvider";
 import { buildTargetMenu } from "./terminalTargetMenu";
+import { hostToolsSupported } from "../explorer/assetKindFields";
 import { terminalIntegrations } from "./terminalIntegrations";
 import { TerminalLinkPanel } from "./TerminalLinkPanel";
 import { registerTerminalLinkSource } from "./terminalLinkRegistry";
@@ -21,6 +23,7 @@ import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
+import { startTerminalQuickSelect } from "./terminalTargets";
 import { PersistenceHintBar } from "./PersistenceHintBar";
 import { PortDiscoveryBanner } from "../preview/PortDiscoveryBanner";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
@@ -52,6 +55,13 @@ import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmatio
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import type { CommandBlock } from "./commandBlocks";
+import { StickyCommandHeader } from "./StickyCommandHeader";
+import { FailedCommandChip, failedCommandBlock } from "./FailedCommandChip";
+import { AiCommandPrompt, type AiCommandContext } from "./AiCommandPrompt";
+import { insertCommandAtPrompt, registerTerminalBufferProbe, type CommandInsertTarget } from "./insertCommand";
+import { explainCommandBlock } from "./commandBlockActions";
+import { commandShortcutActive } from "./commandShortcuts";
+import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import {
   terminalApi,
   fsApi,
@@ -98,6 +108,7 @@ import type { TerminalStreamBacklog } from "./terminalStream";
 import { ask, askChoice, finishSave, pickSavePath, promptText } from "../../ui/dialogs";
 import { describeError } from "../../ui/errorText";
 import { copyText, readText } from "../../ui/clipboard";
+import { copyTextWithToast } from "../../ui/copyWithToast";
 import { hasActiveOverlay, isEditableTarget, isImeKeyEvent } from "../../ui/DialogHost";
 import { clipText } from "../../ui/textClip";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
@@ -114,9 +125,11 @@ import {
   IconPanelRight,
   IconMergeH,
   IconPlug,
+  IconSettings,
   IconRefresh,
   IconSave,
   IconSearch,
+  IconSparkles,
   IconSplitH,
   IconSplitV,
   IconZap,
@@ -134,6 +147,23 @@ export interface TerminalPaneProps {
 }
 
 const ENCODINGS = ["utf-8", "gbk", "gb18030", "big5", "latin1"];
+const SEARCH_DEBOUNCE_MS = 150;
+
+function regexSyntaxError(pattern: string): string | null {
+  try {
+    new RegExp(pattern, "g");
+    return null;
+  } catch (e) {
+    return describeError(e);
+  }
+}
+
+function searchCountLabel(results: TerminalSearchResults): string {
+  if (results.resultCount === 0) return tr("无结果");
+  const total = results.resultCount >= SEARCH_HIGHLIGHT_LIMIT ? `${SEARCH_HIGHLIGHT_LIMIT}+` : String(results.resultCount);
+  if (results.resultIndex < 0) return tr("{count} 个匹配", { count: total });
+  return `${results.resultIndex + 1}/${total}`;
+}
 
 function isStoreTabDead(id: string): boolean {
   return useUi
@@ -318,9 +348,18 @@ export function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [linkPanel, setLinkPanel] = useState<ExtractedLink[] | null>(null);
   const [query, setQuery] = useState("");
+  const [searchFlags, setSearchFlags] = useState<TerminalSearchFlags>({ caseSensitive: false, wholeWord: false, regex: false });
+  const [searchResults, setSearchResults] = useState<TerminalSearchResults | null>(null);
+  // Narrow panes fold the option toggles into one popover so the input keeps its width.
+  const [searchOptionsOpen, setSearchOptionsOpen] = useState(false);
+  const searchOptionsRef = useRef<HTMLDivElement>(null);
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
+  // The block pinned at the top while its command line is scrolled away, and the failed block whose chip was closed.
+  const [stickyBlockIndex, setStickyBlockIndex] = useState<number | null>(null);
+  const [dismissedFailure, setDismissedFailure] = useState<number | null>(null);
+  const [aiCommandOpen, setAiCommandOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [assetDraft, setAssetDraft] = useState<{ kind: "ssh"; name: string; host: string; port: number } | null>(null);
   const [control, setControl] = useState<{
@@ -387,14 +426,40 @@ export function TerminalPane({
   const controlRefreshGen = useRef(0);
   const kernelTabIdRef = useRef<string | null>(null);
   kernelTabIdRef.current = kernelTabId;
-  const searchApi = useRef<{
-    findNext: (t: string) => void;
-    findPrevious: (t: string) => void;
-  } | null>(null);
+  const searchApi = useRef<TerminalSearchApi | null>(null);
   const handleRef = useRef<TerminalHandle | null>(null);
   const composerRef = useRef<HTMLInputElement | null>(null);
   const paneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchRegexError = searchFlags.regex && query ? regexSyntaxError(query) : null;
+  // "refresh" re-runs the term from the current match (typing, toggles); next/previous step to another match.
+  const runSearch = (direction: "next" | "previous" | "refresh", text = query) => {
+    const api = searchApi.current;
+    if (!api) return;
+    if (!text || (searchFlags.regex && regexSyntaxError(text))) {
+      api.clear();
+      setSearchResults(null);
+      return;
+    }
+    if (direction === "previous") {
+      api.findPrevious(text, searchFlags);
+      return;
+    }
+    if (direction === "refresh") api.clear();
+    api.findNext(text, searchFlags);
+  };
+  const runSearchRef = useRef(runSearch);
+  runSearchRef.current = runSearch;
+  // Searching for the term already shown steps to its next match; a new term searches as typing does.
+  const searchFor = (text: string) => {
+    if (searchOpen && text === query) runSearch("next", text);
+    else setQuery(text);
+    setSearchOpen(true);
+  };
+  const searchOpenRef = useRef(searchOpen);
+  searchOpenRef.current = searchOpen;
+  const searchForRef = useRef(searchFor);
+  searchForRef.current = searchFor;
   const exitedCloseBtnRef = useRef<HTMLButtonElement>(null);
   const exitedMayRun = useUi((s) => {
     for (const w of s.workspaces) for (const p of w.panes) {
@@ -458,6 +523,7 @@ export function TerminalPane({
   );
   const helperOperation = useUi((s) => s.helperOperations.operations[storeTabId]);
   const regularReason = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.regularReason);
+  const tabShell = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.shell);
   const helperRetryPending = useUi((s) => s.helperRetries[sessionId]?.tabId === storeTabId);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
@@ -1000,10 +1066,7 @@ export function TerminalPane({
       e.stopPropagation();
       const selected = (handleRef.current?.getSelection() ?? "").trim();
       if (selected) {
-        const first = selected.split("\n")[0];
-        setQuery(first);
-        setSearchOpen(true);
-        window.setTimeout(() => searchApi.current?.findNext(first), 60);
+        searchForRef.current(selected.split("\n")[0]);
       } else {
         setSearchOpen(true);
       }
@@ -1012,6 +1075,54 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // Search as the user types or toggles an option; closing removes the highlights.
+  useEffect(() => {
+    if (!searchOpen) {
+      searchApi.current?.clear();
+      setSearchResults(null);
+      setSearchOptionsOpen(false);
+      return;
+    }
+    const timer = window.setTimeout(() => runSearchRef.current("refresh", query), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchOpen, query, searchFlags]);
+
+  useEffect(() => {
+    if (!searchOptionsOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Node && searchOptionsRef.current?.contains(e.target)) return;
+      setSearchOptionsOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [searchOptionsOpen]);
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    handleRef.current?.focus();
+  };
+
+  const searchFlagsActive = searchFlags.caseSensitive || searchFlags.wholeWord || searchFlags.regex;
+  const searchFlagButtons = (
+    [
+      ["caseSensitive", "Aa", tr("区分大小写")],
+      ["wholeWord", "ab", tr("全字匹配")],
+      ["regex", ".*", tr("正则表达式")],
+    ] as const
+  ).map(([flag, glyph, label]) => (
+    <button
+      key={flag}
+      type="button"
+      className={`nx-icon-btn font-mono text-[11px] ${searchFlags[flag] ? "bg-neutral-800 text-neutral-100" : ""}`}
+      aria-label={label}
+      aria-pressed={searchFlags[flag]}
+      title={label}
+      onClick={() => setSearchFlags((flags) => ({ ...flags, [flag]: !flags[flag] }))}
+    >
+      {flag === "wholeWord" ? <span className="underline underline-offset-2">{glyph}</span> : glyph}
+    </button>
+  ));
 
   // Closes the sidebar when this pane shows it; otherwise moves it here and keeps it open.
   const toggleSidebarHere = useCallback(() => {
@@ -1098,6 +1209,56 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, [openLinkPanel]);
+
+  const copyLastOutput = useCallback(() => {
+    const output = handleRef.current?.selectLastOutput?.();
+    if (!output) {
+      pushToast("info", tr("没有可复制的命令输出"));
+      return;
+    }
+    void copyText(output.text).then(
+      () => pushToast("success", tr("已复制命令 #{index} 的输出", { index: output.index })),
+      (e: unknown) => pushToast("error", tr("复制失败：{value}", { value: describeError(e) })),
+    );
+  }, [pushToast]);
+
+  const blockKeysRef = useRef({ blocksSupported, copyLastOutput });
+  blockKeysRef.current = { blocksSupported, copyLastOutput };
+  // Command navigation and AI generation shortcuts act only while the terminal itself has focus.
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isImeKeyEvent(e)) return;
+      if (!(e.target instanceof Element) || !e.target.closest(".xterm")) return;
+      if (e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      const { blocksSupported: supported, copyLastOutput: copyOutput } = blockKeysRef.current;
+      const actions = {
+        generateCommand: () => setAiCommandOpen(true),
+        previousPrompt: () => handleRef.current?.navigateBlock("prev"),
+        nextPrompt: () => handleRef.current?.navigateBlock("next"),
+        copyLastOutput: copyOutput,
+      } as const;
+      const action = (Object.keys(actions) as Array<keyof typeof actions>).find((id) => matchKeybinding(e, id));
+      if (!action) return;
+      // An alternate-screen program, or a terminal without command blocks, keeps the chord.
+      const state = { normalBuffer: handleRef.current?.bufferType?.() !== "alternate", blocks: supported };
+      if (!commandShortcutActive(action, state)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Holding the chord repeats prompt navigation only.
+      if (e.repeat && action !== "previousPrompt" && action !== "nextPrompt") return;
+      actions[action]();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Lets command insertion from outside the pane (AI code blocks) see a full-screen program in front.
+  useEffect(() => {
+    if (!kernelTabId) return;
+    return registerTerminalBufferProbe(kernelTabId, () => handleRef.current?.bufferType?.());
+  }, [kernelTabId]);
 
   useEffect(
     () =>
@@ -1697,6 +1858,11 @@ export function TerminalPane({
         pushToast("info", tr("当前终端类型不支持粘贴上传文件，请在文件面板中上传"));
         return;
       }
+      // A Telnet terminal has no file channel at all.
+      if (!hostToolsSupported(sessionKind)) {
+        pushToast("info", tr("这个终端无法接收文件：Telnet 连接没有文件传输通道"));
+        return;
+      }
       if (!kernelTabId) return;
       const { accepted, skipped } = splitOversizedFiles(files);
       const notes: string[] = [];
@@ -1945,7 +2111,7 @@ export function TerminalPane({
             kind: "item",
             label: tr("复制当前目录"),
             hint: cwd,
-            onSelect: () => void copyText(cwd).catch(() => undefined),
+            onSelect: () => void copyTextWithToast(cwd),
           },
         ] satisfies MenuItem[])
       : []),
@@ -1968,10 +2134,20 @@ export function TerminalPane({
       icon: <IconSearch size={13} />,
       accel: searchBindingLabel,
       onSelect: () => {
-        const next = !searchOpen;
-        setSearchOpen(next);
-        if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
+        if (searchOpen) {
+          closeSearch();
+          return;
+        }
+        setSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
+    },
+    {
+      kind: "item",
+      label: tr("快速选择"),
+      accel: formatBinding(bindings.terminalQuickSelect),
+      // After the menu closes, so the overlay's keyboard handling starts with the terminal focused.
+      onSelect: () => window.setTimeout(() => startTerminalQuickSelect(storeTabId), 0),
     },
     ...(previewShareEnabled && kernelTabId
       ? ([
@@ -1993,6 +2169,7 @@ export function TerminalPane({
             label: tr("上一条命令"),
             icon: <IconArrowUp size={13} />,
             disabled: !blocks.length,
+            hint: formatBinding(bindings.previousPrompt) || undefined,
             onSelect: () => handleRef.current?.navigateBlock("prev"),
           },
           {
@@ -2000,7 +2177,24 @@ export function TerminalPane({
             label: tr("下一条命令"),
             icon: <IconArrowDown size={13} />,
             disabled: !blocks.length,
+            hint: formatBinding(bindings.nextPrompt) || undefined,
             onSelect: () => handleRef.current?.navigateBlock("next"),
+          },
+          {
+            kind: "item",
+            label: tr("复制上一条命令的输出"),
+            icon: <IconCopy size={13} />,
+            disabled: !blocks.some((b) => b.endedAt !== null),
+            hint: formatBinding(bindings.copyLastOutput) || undefined,
+            onSelect: copyLastOutput,
+          },
+          {
+            kind: "item",
+            label: tr("用 AI 生成命令"),
+            icon: <IconSparkles size={13} />,
+            disabled: !kernelTabId,
+            hint: formatBinding(bindings.generateCommand) || undefined,
+            onSelect: () => setAiCommandOpen(true),
           },
           {
             kind: "item",
@@ -2122,6 +2316,7 @@ export function TerminalPane({
       openHostDetail,
       openAssetDraft: setAssetDraft,
       createLocalForward: terminalIntegrations().createLocalForward,
+      forwardSupported: hostToolsSupported(sessionKind),
       openForwardTab: (id) =>
         useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: tr("端口转发"), sessionId: id, closable: true }),
       copy: copyText,
@@ -2152,7 +2347,7 @@ export function TerminalPane({
         label: tr("复制"),
         icon: <IconCopy size={13} />,
         disabled: !hasSel,
-        onSelect: () => void copyText(selected).catch(() => undefined),
+        onSelect: () => void copyTextWithToast(selected),
       },
       {
         kind: "item",
@@ -2182,9 +2377,7 @@ export function TerminalPane({
         accel: searchBindingLabel,
         disabled: !hasSel,
         onSelect: () => {
-          setQuery(firstLine);
-          setSearchOpen(true);
-          window.setTimeout(() => searchApi.current?.findNext(firstLine), 60);
+          searchFor(firstLine);
         },
       },
       {
@@ -2292,6 +2485,36 @@ export function TerminalPane({
     });
   };
 
+  const aiCommandContext: AiCommandContext = {
+    cwd: cwd ?? undefined,
+    host: sessionName,
+    shell: tabShell && tabShell !== "unknown" ? tabShell : undefined,
+    os:
+      tabShell === "powershell" || tabShell === "cmd"
+        ? "windows"
+        : sessionKind === "local"
+          ? localSessionIsWindows()
+            ? "windows"
+            : localSessionIsMac()
+              ? "macos"
+              : "linux"
+          : undefined,
+  };
+  const aiCommandTarget: CommandInsertTarget | null =
+    kernelTabId && !attachDead && !control?.exited
+      ? {
+          tabId: kernelTabId,
+          hostLabel: sessionName,
+          productionEnvironment: productionClassification?.production ? productionClassification.environment : null,
+        }
+      : null;
+  const closeAiCommand = () => {
+    setAiCommandOpen(false);
+    window.setTimeout(() => handleRef.current?.focus(), 0);
+  };
+  const stickyBlock = blocksSupported && stickyBlockIndex !== null ? blocks.find((b) => b.index === stickyBlockIndex) : undefined;
+  const failedBlock = blocksSupported && !aiCommandOpen ? failedCommandBlock(blocks, dismissedFailure) : null;
+
   const commandBlockProps = {
     kernelTabId,
     sourceLabel: title,
@@ -2303,7 +2526,7 @@ export function TerminalPane({
   };
 
   return (
-    <div ref={paneRef} className={`nx-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
+    <div ref={paneRef} className={`nx-pane nx-terminal-pane bg-term @container/term${productionClassification?.production ? " nx-pane-production" : ""}`}>
       <div className="nx-toolbar nx-term-toolbar">
         <span className="nx-toolbar-title" title={title}>{title}</span>
         <span
@@ -2409,7 +2632,7 @@ export function TerminalPane({
           className={`nx-btn nx-btn-ghost nx-btn-sm @max-[560px]:hidden ${searchOpen ? "bg-neutral-800 text-neutral-100" : ""}`}
           title={tr("搜索终端内容 ({searchBindingLabel})", { searchBindingLabel })}
           aria-pressed={searchOpen}
-          onClick={() => setSearchOpen((v) => !v)}
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
         >
           <IconSearch size={13} />
           {tr("搜索")}
@@ -2526,7 +2749,7 @@ export function TerminalPane({
             type="button"
             className="nx-btn nx-btn-ghost nx-btn-sm"
             title={tr("复制录制错误")}
-            onClick={() => void copyText(recording.safeError || tr("未知错误")).catch(() => undefined)}
+            onClick={() => void copyTextWithToast(recording.safeError || tr("未知错误"))}
           >
             {tr("复制错误")}
           </button>
@@ -2535,7 +2758,7 @@ export function TerminalPane({
               type="button"
               className="nx-btn nx-btn-ghost nx-btn-sm"
               title={tr("复制录制路径")}
-              onClick={() => void copyText(recording.path || "").catch(() => undefined)}
+              onClick={() => void copyTextWithToast(recording.path || "")}
             >
               {tr("复制路径")}
             </button>
@@ -2563,7 +2786,7 @@ export function TerminalPane({
 
       {searchOpen && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-800/60 bg-neutral-900/70 px-2.5 py-1.5">
-          <div className="nx-field max-w-[260px] @max-[560px]:max-w-none @max-[560px]:flex-1">
+          <div className="nx-field max-w-[260px] @max-[560px]:min-w-0 @max-[560px]:max-w-none @max-[560px]:flex-1">
             <span className="nx-field-icon">
               <IconSearch size={12} />
             </span>
@@ -2573,19 +2796,70 @@ export function TerminalPane({
               className="nx-input nx-input-sm"
               placeholder={tr("搜索终端内容…")}
               value={query}
+              aria-invalid={searchRegexError ? true : undefined}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && e.shiftKey) searchApi.current?.findPrevious(query);
-                else if (e.key === "Enter") searchApi.current?.findNext(query);
-                if (e.key === "Escape") setSearchOpen(false);
+                // Enter that commits an IME composition must not jump to a match.
+                if (isImeKeyEvent(e)) return;
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  runSearch(e.shiftKey ? "previous" : "next");
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  closeSearch();
+                }
               }}
             />
           </div>
+          <div className="flex shrink-0 items-center gap-1.5 @max-[560px]:hidden" data-testid="terminal-search-flags">
+            {searchFlagButtons}
+          </div>
+          <div ref={searchOptionsRef} className="relative hidden shrink-0 @max-[560px]:block">
+            <button
+              type="button"
+              className={`nx-icon-btn ${searchOptionsOpen || searchFlagsActive ? "bg-neutral-800 text-neutral-100" : ""}`}
+              aria-label={tr("搜索选项")}
+              title={tr("搜索选项")}
+              aria-haspopup="true"
+              aria-expanded={searchOptionsOpen}
+              onClick={() => setSearchOptionsOpen((open) => !open)}
+            >
+              <IconSettings size={13} />
+            </button>
+            {searchOptionsOpen && (
+              <div
+                className="absolute right-0 top-full z-20 mt-1 flex items-center gap-1 rounded-md border border-neutral-800 bg-neutral-900 p-1 shadow-lg"
+                data-testid="terminal-search-options"
+                onKeyDown={(e) => {
+                  if (e.key !== "Escape" || isImeKeyEvent(e)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchOptionsOpen(false);
+                  searchInputRef.current?.focus();
+                }}
+              >
+                {searchFlagButtons}
+              </div>
+            )}
+          </div>
+          {query && (
+            <span
+              className={`min-w-0 shrink truncate whitespace-nowrap text-[11px] tabular-nums ${
+                searchRegexError || searchResults?.resultCount === 0 ? "text-red-300" : "text-neutral-400"
+              }`}
+              role="status"
+              aria-live="polite"
+              data-testid="terminal-search-status"
+              title={searchRegexError ?? undefined}
+            >
+              {searchRegexError ? tr("正则表达式无效") : searchResults ? searchCountLabel(searchResults) : ""}
+            </span>
+          )}
           <button
             className="nx-icon-btn"
             aria-label={tr("上一个匹配")}
             title={tr("上一个")}
-            onClick={() => searchApi.current?.findPrevious(query)}
+            onClick={() => runSearch("previous")}
           >
             <IconArrowUp size={13} />
           </button>
@@ -2593,12 +2867,12 @@ export function TerminalPane({
             className="nx-icon-btn"
             aria-label={tr("下一个匹配")}
             title={tr("下一个")}
-            onClick={() => searchApi.current?.findNext(query)}
+            onClick={() => runSearch("next")}
           >
             <IconArrowDown size={13} />
           </button>
           <div className="nx-spacer @max-[560px]:hidden" />
-          <button className="nx-icon-btn" aria-label={tr("关闭搜索")} title={tr("关闭搜索")} onClick={() => setSearchOpen(false)}>
+          <button className="nx-icon-btn" aria-label={tr("关闭搜索")} title={tr("关闭搜索")} onClick={closeSearch}>
             <IconClose size={12} />
           </button>
         </div>
@@ -2723,9 +2997,11 @@ export function TerminalPane({
                     const reason =
                       failure === "control"
                         ? tr("目录包含控制字符")
-                        : failure === "unsupported"
-                          ? tr("当前终端 Shell 暂不支持自动切换目录")
-                          : tr("无法确认当前终端 Shell");
+                        : failure === "unquotable"
+                          ? tr("目录包含 cmd 无法安全引用的字符（\" 或 %）")
+                          : failure === "unc"
+                            ? tr("cmd 不能把网络路径设为当前目录")
+                            : tr("无法确认当前终端 Shell");
                     void copyText(pending)
                       .then(() => {
                         pushToast(
@@ -2744,6 +3020,7 @@ export function TerminalPane({
                 void refreshControl(id);
               }}
               onBlocks={blocksSupported ? setBlocks : undefined}
+              onStickyBlock={blocksSupported ? setStickyBlockIndex : undefined}
               onTitle={handleOscTitle}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
@@ -2760,9 +3037,36 @@ export function TerminalPane({
               onLinkMenu={openLinkMenu}
               registerSearch={(api) => {
                 searchApi.current = api;
+                // A rebuilt terminal (reconnect, reattach) has no highlights: search its buffer again.
+                if (searchOpenRef.current) runSearchRef.current("refresh");
+                else setSearchResults(null);
               }}
+              onSearchResults={setSearchResults}
             />
           </div>
+
+          {stickyBlock && (
+            <StickyCommandHeader block={stickyBlock} onLocate={(index) => handleRef.current?.scrollToBlock(index)} />
+          )}
+          {failedBlock && (
+            <FailedCommandChip
+              block={failedBlock}
+              onDismiss={(block) => setDismissedFailure(block.index)}
+              onExplain={(block) => {
+                if (explainCommandBlock(block, handleRef.current?.copyBlock(block.index) ?? "", title)) {
+                  setDismissedFailure(block.index);
+                }
+              }}
+            />
+          )}
+          {aiCommandOpen && (
+            <AiCommandPrompt
+              context={aiCommandContext}
+              target={aiCommandTarget}
+              onClose={closeAiCommand}
+              onInsert={(command) => (aiCommandTarget ? insertCommandAtPrompt(aiCommandTarget, command) : Promise.resolve(false))}
+            />
+          )}
 
           {/* Overlays at the top of the screen: taking layout height would resize the PTY. */}
           {controlSupported && !control?.exited && (
@@ -2974,7 +3278,10 @@ export function TerminalPane({
       )}
 
       <TerminalKeysBar
-        onSend={(data) => void sendData(data)}
+        onSend={(data) => {
+          if (handleRef.current?.copyModeActive?.()) return;
+          void sendData(data);
+        }}
         onFocus={() => handleRef.current?.focus()}
         onSendText={(text, submit) => {
           const handle = handleRef.current;

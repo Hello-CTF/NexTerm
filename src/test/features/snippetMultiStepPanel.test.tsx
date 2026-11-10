@@ -236,6 +236,78 @@ describe("multi-step snippets in the snippets panel", () => {
     expect(patch.steps ?? []).toEqual([]);
   });
 
+  it("saves a step's wait condition and timeout, leaving steps without one unchanged", async () => {
+    await openPanel();
+    click(byLabel("编辑片段「deploy app」"));
+    await flush();
+    expect(byLabel<HTMLInputElement>("步骤 2 等待超时（秒）").disabled).toBe(true);
+    setInputValue(byLabel<HTMLInputElement>("步骤 2 等待输出"), "[$#] $");
+    click(byLabel("步骤 2 等待条件使用正则表达式"));
+    setInputValue(byLabel<HTMLInputElement>("步骤 2 等待超时（秒）"), "30");
+    // The regex engine loads before a regex wait can be saved.
+    await waitForRendered(() =>
+      expect([...document.body.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存")?.disabled).toBe(false),
+    );
+    clickButton(document.body, "保存");
+    await flush();
+    const patch = mocks.snippetUpdate.mock.calls[0][3];
+    expect(patch.steps[0]).toEqual(MULTI.steps[0]);
+    expect(patch.steps[1]).toEqual({ ...MULTI.steps[1], waitFor: "[$#] $", waitForRegex: true, timeoutMs: 30000 });
+  });
+
+  it("shows a stored wait condition and drops it with its options when the pattern is cleared", async () => {
+    mocks.snippetList.mockResolvedValue([{
+      ...structuredClone(MULTI),
+      steps: [MULTI.steps[0], { ...MULTI.steps[1], waitFor: "Password:", timeoutMs: 5000 }],
+    }, structuredClone(SINGLE)]);
+    await openPanel();
+    click(byLabel("编辑片段「deploy app」"));
+    await flush();
+    expect(byLabel<HTMLInputElement>("步骤 2 等待输出").value).toBe("Password:");
+    expect(byLabel<HTMLInputElement>("步骤 2 等待超时（秒）").value).toBe("5");
+    expect(byLabel<HTMLInputElement>("步骤 2 等待条件使用正则表达式").checked).toBe(false);
+    setInputValue(byLabel<HTMLInputElement>("步骤 2 等待输出"), "");
+    clickButton(document.body, "保存");
+    await flush();
+    const step = mocks.snippetUpdate.mock.calls[0][3].steps[1];
+    expect(step).toEqual(MULTI.steps[1]);
+    expect(step).not.toHaveProperty("timeoutMs");
+  });
+
+  it("blocks saving an invalid wait regex or timeout and says why", async () => {
+    await openPanel();
+    click(byLabel("编辑片段「deploy app」"));
+    await flush();
+    const save = () => [...document.body.querySelectorAll("button")].find((b) => b.textContent?.trim() === "保存")!;
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "(");
+    await flush();
+    expect(save().disabled).toBe(false);
+    click(byLabel("步骤 1 等待条件使用正则表达式"));
+    await waitForRendered(() => expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("第 1 步的正则表达式无效"));
+    expect(save().disabled).toBe(true);
+    // A lookahead is valid JavaScript but not RE2, which the store and the matcher use.
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "(?=a)");
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("第 1 步的正则表达式无效");
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "(?i)^ok$");
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    expect(save().disabled).toBe(false);
+    click(byLabel("步骤 1 等待条件使用正则表达式"));
+    // The limit counts UTF-8 bytes, as the store does.
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "密".repeat(342));
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("1024 字节");
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待输出"), "密".repeat(341));
+    await flush();
+    expect(document.body.querySelector('[role="alert"]')).toBeNull();
+    setInputValue(byLabel<HTMLInputElement>("步骤 1 等待超时（秒）"), "0");
+    await flush();
+    expect(save().disabled).toBe(true);
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain("第 1 步的超时");
+    expect(mocks.snippetUpdate).not.toHaveBeenCalled();
+  });
+
   it("moves and deletes steps in the editor", async () => {
     await openPanel();
     click(byLabel("编辑片段「deploy app」"));

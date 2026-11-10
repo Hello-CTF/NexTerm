@@ -19,9 +19,11 @@ type Module struct {
 }
 
 type Config struct {
-	Name            string
-	Version         string
-	GOOS            string
+	Name    string
+	Version string
+	GOOS    string
+	// WindowsBuild reports the Windows build number of this host, or 0 elsewhere; nil reads the host.
+	WindowsBuild    func() uint32
 	Events          ipc.Emitter
 	Streams         ipc.StreamFactory
 	VaultStatus     VaultStatusFunc
@@ -38,6 +40,7 @@ type Application struct {
 	name            string
 	version         string
 	goos            string
+	windowsBuild    func() uint32
 	vaultStatus     VaultStatusFunc
 	retentionStatus RetentionStatusFunc
 	logger          *slog.Logger
@@ -59,6 +62,9 @@ func New(config Config) (*Application, error) {
 	if config.GOOS == "" {
 		config.GOOS = runtime.GOOS
 	}
+	if config.WindowsBuild == nil {
+		config.WindowsBuild = hostWindowsBuild
+	}
 	if config.Streams == nil {
 		config.Streams = ipc.StreamFactoryFuncs{}
 	}
@@ -77,6 +83,7 @@ func New(config Config) (*Application, error) {
 		name:            config.Name,
 		version:         config.Version,
 		goos:            config.GOOS,
+		windowsBuild:    config.WindowsBuild,
 		vaultStatus:     config.VaultStatus,
 		retentionStatus: config.RetentionStatus,
 		logger:          config.Logger,
@@ -96,6 +103,12 @@ func New(config Config) (*Application, error) {
 	}
 	if err := ipc.Register(a.Dispatcher, "app_platform", func(_ context.Context, _ *ipc.Call, _ struct{}) (string, error) {
 		return a.goos, nil
+	}); err != nil {
+		return nil, err
+	}
+	// Local terminals run in ConPTY on a Windows host; xterm.js adapts its reflow and wrapping to the build.
+	if err := ipc.Register(a.Dispatcher, "app_windows_build", func(_ context.Context, _ *ipc.Call, _ struct{}) (uint32, error) {
+		return a.windowsBuild(), nil
 	}); err != nil {
 		return nil, err
 	}

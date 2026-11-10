@@ -1,0 +1,102 @@
+/* Enter motion for floating surfaces, and the toast exit. Durations and easings come from the
+   motion tokens; a11y.css turns all of it off under prefers-reduced-motion. No fill mode keeps the
+   resting transform at none, so a fixed-position descendant is not re-anchored once the animation ends. */
+@layer components {
+  .nx-overlay {
+    animation: nx-fade-in var(--nx-dur-base) var(--nx-ease-out);
+  }
+
+  .nx-modal {
+    animation: nx-pop-in var(--nx-dur-base) var(--nx-ease-out);
+  }
+
+  .nx-modal.nx-command-modal {
+    animation-name: nx-command-in;
+  }
+
+  .nx-menu,
+  .nx-submenu,
+  .nx-popover {
+    transform-origin: top left;
+    animation: nx-pop-in var(--nx-dur-fast) var(--nx-ease-out);
+  }
+
+  .nx-submenu.is-flip,
+  .nx-popover.right-0,
+  .nx-inbox-panel.nx-popover {
+    transform-origin: top right;
+  }
+
+  .nx-popover.left-1\/2 {
+    transform-origin: center top;
+  }
+
+  .nx-toast {
+    animation: nx-toast-in var(--nx-dur-base) var(--nx-ease-out);
+  }
+
+  .nx-toast.is-leaving {
+    pointer-events: none;
+    animation: nx-toast-out var(--nx-dur-fast) var(--nx-ease-in-out) forwards;
+  }
+
+  .nx-toast-progress {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: currentColor;
+    opacity: 0.35;
+    transform-origin: left center;
+    transform: scaleX(var(--nx-toast-left, 1));
+    animation: nx-toast-countdown var(--nx-toast-ms, 0ms) linear forwards;
+  }
+
+  .nx-toast[data-held] .nx-toast-progress {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes nx-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes nx-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+@keyframes nx-command-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+}
+
+@keyframes nx-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes nx-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(12px) scale(0.98);
+  }
+}
+
+@keyframes nx-toast-countdown {
+  from {
+    transform: scaleX(var(--nx-toast-left, 1));
+  }
+  to {
+    transform: scaleX(0);
+  }
+}

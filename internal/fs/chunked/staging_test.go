@@ -271,3 +271,16 @@ func TestParseStagingNameAcceptsParamsKind(t *testing.T) {
 		t.Fatal("unknown kind accepted")
 	}
 }
+
+func TestStagingKeepsPOSIXBackslashNames(t *testing.T) {
+	remote := `/srv/a\b.bin`
+	if got := chunked.StagingDir(remote); got != "/srv" {
+		t.Fatalf("StagingDir(%q) = %q, want /srv", remote, got)
+	}
+	if got, want := chunked.StagingPath(remote, "id", "manifest"), `/srv/.a\b.bin.nexterm-id.manifest`; got != want {
+		t.Fatalf("StagingPath(%q) = %q, want %q", remote, got, want)
+	}
+	if got, want := chunked.StagingPath(`C:\srv\a.bin`, "id", "manifest"), `C:\srv\.a.bin.nexterm-id.manifest`; got != want {
+		t.Fatalf("StagingPath on a Windows path = %q, want %q", got, want)
+	}
+}

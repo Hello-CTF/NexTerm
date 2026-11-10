@@ -160,6 +160,21 @@ export function RemoteDesktopFields({
         checked={values.commandAsCtrl}
         onChange={(commandAsCtrl) => onChange({ commandAsCtrl })}
       />
+      {protocol === "rdp" && (
+        <>
+          <ToggleRow
+            label={t("允许旧版 TLS（1.0/1.1）")}
+            hint={t("仅用于无法升级的旧主机，例如未打补丁的 Windows 7 或 Server 2008 R2。")}
+            checked={values.legacyTLS}
+            onChange={(legacyTLS) => onChange({ legacyTLS })}
+          />
+          {values.legacyTLS && (
+            <p role="note" className="nx-hint -mt-1 text-amber-300">
+              {t("TLS 1.0/1.1 已不再安全，可能被中间人降级或解密，连接会记入审计日志。请尽快升级主机并关闭此选项。")}
+            </p>
+          )}
+        </>
+      )}
       {protocol === "vnc" && (
         <ToggleRow
           label={t("默认只读")}

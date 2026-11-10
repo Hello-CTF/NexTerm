@@ -22,10 +22,15 @@
 ## 核心特性
 
 - **持久终端**：关闭 App 或断网后继续运行，回来接管并补回输出
+- **终端工具**：命令块、历史回放、命令广播、分屏、关键词高亮
 - **AI 助手**：读取终端、文件和容器排查问题，写操作经你确认
-- **日常运维**：远程文件、Docker、MySQL / PostgreSQL / Redis、端口转发
-- **所有连接**：SSH、WinRM、本机终端、受管设备、RDP / VNC
+- **布局模板**：保存分屏布局，按模板打开主机的多个终端并运行启动片段
+- **日常运维**：远程文件（含 trzsz 终端内传输）、Docker、MySQL / PostgreSQL / Redis、端口转发、主机实时监控
+- **Windows 运维**：通过 PowerShell 管理 Windows 服务，并跟随 Windows 事件日志
+- **所有连接**：SSH、WinRM、Telnet、本机终端、受管设备、RDP / VNC
+- **迁移方便**：从 OpenSSH 配置、Termius、PuTTY、MobaXterm、Xshell、SecureCRT 导入主机
 - **自托管**：多用户、双因素认证、审计日志、加密同步
+- **锁定界面**：离开时锁定 NexTerm，终端在后台继续运行，锁定期间的通知不显示内容
 - **多语言界面**：简体中文、繁體中文、English、日本語、한국어、Deutsch、Français、Español、Русский
 
 同步不是端到端加密：登录时密码会发送给服务端，请只登录你信任的服务端并使用 HTTPS（详见[安全说明](docs/security.md)）。完整功能见[功能说明](docs/features.md)。
@@ -67,7 +72,7 @@
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。升级、回滚、反向代理、外部数据库和多用户限制见[服务端部署说明](deploy/systemd/README.md)。
+安装输出会打印一次超级管理员 `admin` 的初始密码。服务默认只监听 `127.0.0.1:8080`，执行 `ssh -L 8080:127.0.0.1:8080 用户@服务器` 后打开 `http://localhost:8080`。健康检查使用 `GET /livez`（存活，不访问数据库）和 `GET /healthz`（就绪：数据库不可达，或设置 `--require-vault` 而凭据库已锁定时返回 503；非回环且未以超级管理员登录的调用方只看到 `ok`、`service`、`version`），容器内可直接执行 `nexterm-server healthcheck`（就绪时退出码为 0，否则为 1）。服务日志写入 systemd 日志（`journalctl -u nexterm-server`），可用 `NEXTERM_LOG_LEVEL`、`NEXTERM_LOG_FORMAT`、`NEXTERM_LOG_FILE` 和 `NEXTERM_ACCESS_LOG` 调整。升级、回滚、备份恢复、反向代理、外部数据库、日志、多用户限制、可选的 Prometheus 指标，以及浏览器上传下载和录制使用的暂存空间上限（每个账号默认 2 GiB，`NEXTERM_BLOB_STAGE_MAX_BYTES` 等环境变量）见[服务端部署说明](deploy/systemd/README.md)。
 
 ## 更多文档
 

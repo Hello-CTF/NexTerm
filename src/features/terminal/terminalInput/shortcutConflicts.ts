@@ -1,6 +1,8 @@
 import {
   KEYBINDING_ACTIONS,
+  defaultExtraBindings,
   TERMINAL_WITHHELD_ACTIONS,
+  modIsMetaOnly,
   parseBinding,
   type KeybindingAction,
   type KeybindingSnapshot,
@@ -83,6 +85,8 @@ export function xtermChordBytes(chord: TerminalChord, mac: boolean): string | nu
     return modifier === 1 ? `${ESC}[${arrow}` : `${ESC}[1;${modifier}${arrow}`;
   }
   if (key === "Tab") return shift ? `${ESC}[Z` : KEY_BYTES.Tab;
+  // xterm's default encoder sends CR for Enter whatever Ctrl and Shift say.
+  if (key === "Enter") return alt ? `${ESC}${KEY_BYTES.Enter}` : KEY_BYTES.Enter;
   if (key === "Escape" || key === "Enter" || key === "Backspace") {
     if (ctrl || shift) return null;
     const base = KEY_BYTES[key];
@@ -114,12 +118,13 @@ function chordLabel(chord: TerminalChord): string {
   return parts.join("+");
 }
 
-function terminalChord(binding: string, mac: boolean): TerminalChord | null {
+function terminalChord(binding: string, mac: boolean, web: boolean): TerminalChord | null {
   const parsed = parseBinding(binding);
   if (!parsed) return null;
-  // Cmd (macOS) and Meta/Super chords produce no terminal input; Mod also matches Ctrl, which does.
-  const ctrl = parsed.mod || parsed.ctrl || (parsed.primary && !mac);
-  if (!ctrl && (parsed.meta || parsed.primary)) return null;
+  // Cmd (macOS) and Meta/Super chords produce no terminal input. Mod also matches Ctrl, which does, except on
+  // macOS desktop where Mod is Cmd only.
+  const ctrl = (parsed.mod && !modIsMetaOnly(mac, web)) || parsed.ctrl || (parsed.primary && !mac);
+  if (!ctrl && (parsed.meta || parsed.primary || parsed.mod)) return null;
   return { ctrl, shift: parsed.shift, alt: parsed.alt, key: parsed.key };
 }
 
@@ -145,12 +150,9 @@ export function terminalShortcutConflicts(
     const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
     const binding = bindings[id];
     if (!action || binding === null) continue;
-    const candidates = [binding];
-    if (!web && mac && action.macDefaultBinding && binding === action.defaultBinding) {
-      candidates.push(action.macDefaultBinding);
-    }
+    const candidates = [binding, ...defaultExtraBindings(action, binding, mac, web)];
     for (const candidate of candidates) {
-      const chord = terminalChord(candidate, mac);
+      const chord = terminalChord(candidate, mac, web);
       if (!chord) continue;
       const label = chordLabel(chord);
       if (seen.has(label)) continue;

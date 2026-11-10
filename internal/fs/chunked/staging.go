@@ -62,7 +62,7 @@ func StagingDir(remotePath string) string {
 // be read is reported without params: it can never match, and the reaper
 // still sees its files.
 func ScanStaging(ctx context.Context, destination base.FileSystem, remotePath string) ([]StagedUpload, error) {
-	baseName := remotePath[strings.LastIndexAny(remotePath, `/\`)+1:]
+	baseName := remotePath[strings.LastIndexAny(remotePath, base.PathSeparators(remotePath))+1:]
 	prefix := "." + baseName + stagingMarker
 	entries, err := destination.List(ctx, StagingDir(remotePath))
 	if errors.Is(err, fs.ErrNotExist) {

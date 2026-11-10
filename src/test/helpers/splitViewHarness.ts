@@ -32,6 +32,7 @@ export function lazyPanelsMock() {
     AiSidebar: stub("ai"),
     AssetTree: stub("assets"),
     CredentialsSidebar: stub("credentials"),
+    FileTree: stub("files"),
     BackgroundSessions: stub("background"),
     TranscriptHistoryPanel: stub("history"),
     MountPanel: stub("mount"),

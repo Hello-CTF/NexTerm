@@ -1,13 +1,63 @@
 import { describe, expect, it } from "vitest";
 import {
+  baseName,
   crumbsOf,
   directoryCommandFor,
   isRoot,
   joinPath,
+  norm,
   normalizeTypedPath,
   parentOf,
   resolveRemotePath,
+  resolveTypedPath,
 } from "../../features/files/pathUtils";
+
+describe("POSIX backslash names", () => {
+  it("keeps a backslash as a filename character on POSIX paths", () => {
+    expect(norm(String.raw`/home/u/a\b`, "posix")).toBe(String.raw`/home/u/a\b`);
+    expect(norm(String.raw`/home/u/a\b`)).toBe(String.raw`/home/u/a\b`);
+    expect(baseName(String.raw`/home/u/a\b`)).toBe(String.raw`a\b`);
+    expect(parentOf(String.raw`/home/u/a\b`)).toBe("/home/u");
+    expect(joinPath("/home/u", String.raw`a\b`)).toBe(String.raw`/home/u/a\b`);
+  });
+
+  it("still treats a backslash as a separator on Windows paths", () => {
+    expect(norm(String.raw`C:\Users\a`)).toBe("C:/Users/a");
+    expect(norm(String.raw`\Users\a`, "windows")).toBe("/Users/a");
+  });
+});
+
+describe("typed path resolution", () => {
+  it("resolves relative input against the shown directory", () => {
+    expect(resolveTypedPath("src", "/home/u/project", "posix")).toEqual({ ok: true, path: "/home/u/project/src" });
+    expect(resolveTypedPath("./src/", "/home/u", "posix")).toEqual({ ok: true, path: "/home/u/src" });
+    expect(resolveTypedPath("../etc", "/home/u", "posix")).toEqual({ ok: true, path: "/home/etc" });
+    expect(resolveTypedPath("../../..", "/home/u", "posix")).toEqual({ ok: true, path: "/" });
+    expect(resolveTypedPath("logs", "D:/", "windows")).toEqual({ ok: true, path: "D:/logs" });
+    expect(resolveTypedPath(String.raw`a\b`, "/srv", "posix")).toEqual({ ok: true, path: String.raw`/srv/a\b` });
+  });
+
+  it("keeps absolute input and reports what cannot be resolved", () => {
+    expect(resolveTypedPath("/etc/", "/home/u", "posix")).toEqual({ ok: true, path: "/etc" });
+    expect(resolveTypedPath("D:relative", "C:/", "windows")).toEqual({ ok: false, reason: "driveRelative" });
+    expect(resolveTypedPath("logs", null, "windows")).toEqual({ ok: false, reason: "noBase" });
+    expect(resolveTypedPath("   ", "/", "posix")).toBeNull();
+  });
+
+  it("expands home forms only when the backend reported a home path", () => {
+    expect(resolveTypedPath("~/docs", "/", "posix", "/home/u")).toEqual({ ok: true, path: "/home/u/docs" });
+    expect(resolveTypedPath("~", "/", "posix", "/home/u")).toEqual({ ok: true, path: "/home/u" });
+    expect(resolveTypedPath("$HOME/docs", "/", "posix", "/home/u")).toEqual({ ok: true, path: "/home/u/docs" });
+    expect(resolveTypedPath("${HOME}", "/", "posix", "/home/u")).toEqual({ ok: true, path: "/home/u" });
+    expect(resolveTypedPath(String.raw`%USERPROFILE%\Desktop`, "C:/", "windows", "C:/Users/u")).toEqual({
+      ok: true,
+      path: "C:/Users/u/Desktop",
+    });
+    expect(resolveTypedPath("~/docs", "/", "posix", null)).toEqual({ ok: true, path: "~/docs" });
+    expect(resolveTypedPath("$HOME", "/srv", "posix", null)).toEqual({ ok: true, path: "/srv/$HOME" });
+    expect(resolveTypedPath("%USERPROFILE%", "/", "posix", "/home/u")).toEqual({ ok: true, path: "/%USERPROFILE%" });
+  });
+});
 
 describe("Windows path handling", () => {
   it("normalizes directory separators before joining", () => {
@@ -148,10 +198,18 @@ describe("directory command generation", () => {
     });
   });
 
-  it("does not generate commands for cmd or unknown shells", () => {
-    for (const path of ["C:/Users/test", "//server/share/dir"]) {
-      expect(directoryCommandFor(path, "cmd")).toEqual({ command: null, failure: "unsupported" });
+  it("switches drive and directory in cmd and refuses UNC paths", () => {
+    expect(directoryCommandFor("D:/Project [x]/a & b", "cmd")).toEqual({ command: 'cd /d "D:\\Project [x]\\a & b"', failure: null });
+    expect(directoryCommandFor("//server/share/dir", "cmd")).toEqual({ command: null, failure: "unc" });
+  });
+
+  it("refuses cmd paths that double quotes cannot protect", () => {
+    for (const path of ['C:/a"b', "C:/100%PATH%"]) {
+      expect(directoryCommandFor(path, "cmd")).toEqual({ command: null, failure: "unquotable" });
     }
+  });
+
+  it("does not generate commands for unknown shells", () => {
     expect(directoryCommandFor("D:/Project", "unknown")).toEqual({
       command: null,
       failure: "unknown",

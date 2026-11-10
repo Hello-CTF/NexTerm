@@ -200,7 +200,7 @@ func TestSSHImportConflictVersionCheckedInsideTransaction(t *testing.T) {
 	input := sshImportApplyRequest{Source: "ssh-config", Path: configPath,
 		Hosts: []sshImportItemAction{{ID: hostIDs[0], Action: "overwrite"}}, Keys: []sshImportItemAction{}}
 	err = database.GORM().WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
-		return planner.applyWrites(t.Context(), tx, plan, input, &result)
+		return planner.applyWrites(t.Context(), tx, plan, input, nil, &result)
 	})
 	if err == nil || !strings.Contains(err.Error(), "重新预览") {
 		t.Fatalf("transaction version check error = %v, want re-preview", err)

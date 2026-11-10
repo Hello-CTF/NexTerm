@@ -1,0 +1,85 @@
+.nx-quick-select {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  background: rgb(0 0 0 / 0.18);
+}
+
+.nx-quick-select-mark {
+  position: absolute;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--color-accent, #516cd6) 28%, transparent);
+  pointer-events: none;
+}
+
+.nx-quick-select-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: #f5c542;
+  color: #1a1a1a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: lowercase;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+}
+
+.nx-quick-select-label[data-typed="true"] {
+  background: #ff9f43;
+}
+
+.nx-quick-select-label[data-dim="true"] {
+  opacity: 0.25;
+}
+
+.nx-quick-select-bar {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--nx-border-strong);
+  border-radius: 6px;
+  background: var(--nx-bg-pane);
+  color: var(--nx-fg-tertiary);
+  font-size: calc(12px * var(--nx-ui-text-factor, 1));
+}
+
+.nx-quick-select-bar > span {
+  margin-right: auto;
+}
+
+.nx-quick-select-mode,
+.nx-quick-select-close {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--nx-border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--nx-fg);
+}
+
+.nx-quick-select-mode[aria-pressed="true"] {
+  border-color: var(--color-accent, #516cd6);
+  color: var(--color-accent, #516cd6);
+}
+
+@media (pointer: coarse) {
+  .nx-quick-select-label {
+    min-width: 22px;
+    min-height: 22px;
+    justify-content: center;
+    font-size: 14px;
+  }
+}

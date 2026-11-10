@@ -19,6 +19,8 @@ const harness = vi.hoisted(() => ({
   write: vi.fn(),
   resize: vi.fn(),
   flush: vi.fn(),
+  searchNext: vi.fn(),
+  searchClear: vi.fn(),
 }));
 
 vi.mock("@xterm/xterm", () => ({
@@ -73,8 +75,9 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-webgl", () => ({ WebglAddon: class {} }));
 vi.mock("@xterm/addon-search", () => ({
   SearchAddon: class {
-    findNext() {}
+    findNext = harness.searchNext;
     findPrevious() {}
+    clearDecorations = harness.searchClear;
   },
 }));
 vi.mock("../features/terminal/commandBlocks", () => ({
@@ -133,6 +136,7 @@ vi.mock("../ipc/env", () => ({ clientId: () => "me", WEB: false }));
 
 import {
   XtermView,
+  type TerminalSearchApi,
   XTERM_DARK_THEME,
   XTERM_LIGHT_THEME,
   xtermThemeFor,
@@ -150,10 +154,14 @@ import {
   setTerminalContrast,
   setTerminalFontFamily,
   setTerminalFontSize,
+  setTerminalScheme,
   setTerminalScrollback,
   setTerminalTheme,
 } from "../app/preferences";
 import { setThemeMode } from "../app/theme";
+import { setBackendOS, setLocalWindowsBuild } from "../app/platform";
+import { useUi } from "../app/store";
+import type { SessionInfo } from "../ipc/commands";
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -169,14 +177,14 @@ async function flushWork(): Promise<void> {
   });
 }
 
-async function show(): Promise<void> {
+async function show(props: Partial<Parameters<typeof XtermView>[0]> = {}): Promise<void> {
   if (!root) {
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
   }
   await act(async () => {
-    root?.render(createElement(XtermView, { sessionId: "session", tabId: "pending" }));
+    root?.render(createElement(XtermView, { sessionId: "session", tabId: "pending", ...props }));
   });
   await flushWork();
 }
@@ -224,6 +232,8 @@ beforeEach(() => {
     exited: false,
   });
   harness.resize.mockReset().mockResolvedValue(undefined);
+  harness.searchNext.mockReset();
+  harness.searchClear.mockReset();
   harness.flush.mockReset().mockResolvedValue(undefined);
   harness.write.mockReset().mockResolvedValue(undefined);
   harness.detach.mockReset().mockResolvedValue(undefined);
@@ -441,6 +451,34 @@ describe("XtermView appearance hot updates", () => {
     );
   });
 
+  it("redraws open search highlights in the colours of a new terminal theme", async () => {
+    const { searchDecorationsFor } = await import("../features/terminal/xtermAddons");
+    let api: TerminalSearchApi | null = null;
+    await show({ registerSearch: (registered) => (api = registered) });
+    const flags = { caseSensitive: false, wholeWord: false, regex: false };
+    act(() => api?.findNext("needle", flags));
+    await flushWork();
+    expect(harness.searchNext).toHaveBeenLastCalledWith(
+      "needle",
+      expect.objectContaining({ decorations: searchDecorationsFor("dark") }),
+    );
+    harness.searchNext.mockClear();
+    harness.searchClear.mockClear();
+
+    act(() => setTerminalTheme("light"));
+    expect(harness.searchClear).toHaveBeenCalledTimes(1);
+    expect(harness.searchNext).toHaveBeenCalledWith(
+      "needle",
+      expect.objectContaining({ decorations: searchDecorationsFor("light") }),
+    );
+
+    // A closed search is not brought back by a later theme change.
+    act(() => api?.clear());
+    harness.searchNext.mockClear();
+    act(() => setTerminalTheme("dark"));
+    expect(harness.searchNext).not.toHaveBeenCalled();
+  });
+
   it("stays on dark when the interface theme flips and the pref is not following", async () => {
     await show();
     const term = harness.terminals[0];
@@ -473,6 +511,29 @@ describe("XtermView appearance hot updates", () => {
     );
   });
 
+  it("hot-updates the color scheme of the active slot and keeps the other slot for later", async () => {
+    await show();
+    const term = harness.terminals[0];
+    const theme = () => term.options.theme as Record<string, string>;
+
+    act(() => setTerminalScheme("dark", "gruvbox-dark"));
+    expect(theme().background).toBe("#282828");
+    expect(theme().brightYellow).toBe("#fabd2f");
+    expect(theme().cursor).toBe("#ebdbb2");
+
+    act(() => setTerminalScheme("light", "catppuccin-latte"));
+    expect(theme().background).toBe("#282828");
+
+    act(() => setTerminalTheme("light"));
+    expect(theme().background).toBe("#eff1f5");
+    expect(theme().red).toBe("#d20f39");
+    expect(harness.terminals).toHaveLength(1);
+
+    act(() => setTerminalScheme("light", "nexterm-light"));
+    expect(theme().background).toBe(XTERM_LIGHT_THEME.background);
+    expect(theme().cursor).toBe("#516cd6");
+  });
+
   it("does not recompute geometry when the font size is unchanged", async () => {
     await show();
     const term = harness.terminals[0];
@@ -498,5 +559,40 @@ describe("XtermView scrollback preference", () => {
     expect(term.options.scrollback).toBe(10_000);
     act(() => setTerminalScrollback(50_000));
     expect(term.options.scrollback).toBe(50_000);
+  });
+});
+
+describe("xterm ConPTY options", () => {
+  afterEach(() => {
+    setBackendOS(null);
+    setLocalWindowsBuild(null);
+    useUi.setState({ sessions: [] });
+  });
+
+  function useSession(kind: SessionInfo["kind"]): void {
+    useUi.setState({ sessions: [{ id: "session", assetId: null, name: "session", kind, status: "connected", tabs: [], createdAt: 1 }] });
+  }
+
+  it("declares ConPTY with the backend build for local tabs of a Windows backend", async () => {
+    setBackendOS("windows");
+    setLocalWindowsBuild(22631);
+    useSession("local");
+    await show();
+    expect(harness.terminals[0].options.windowsPty).toEqual({ backend: "conpty", buildNumber: 22631 });
+  });
+
+  it("leaves remote tabs and other backends without a Windows PTY", async () => {
+    setBackendOS("windows");
+    setLocalWindowsBuild(22631);
+    useSession("ssh");
+    await show();
+    expect(harness.terminals[0].options.windowsPty).toBeUndefined();
+    act(() => root?.unmount());
+    root = null;
+
+    setBackendOS("linux");
+    useSession("local");
+    await show();
+    expect(harness.terminals[1].options.windowsPty).toBeUndefined();
   });
 });

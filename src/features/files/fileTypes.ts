@@ -3,7 +3,9 @@ import {
   IconCode,
   IconDatabase,
   IconFile,
+  IconFileLink,
   IconFolder,
+  IconFolderLink,
   IconImage,
   IconSettings,
   IconTerminal,
@@ -74,9 +76,28 @@ export interface FileVisual {
   tone: string;
 }
 
-export function fileVisual(name: string, kind: string): FileVisual {
+interface EntryKinds {
+  kind: string;
+  targetKind?: string;
+}
+
+// A symlink whose target is a directory browses like a directory; deleting it still removes only the link.
+export function entryIsDir(entry: EntryKinds): boolean {
+  return entry.kind === "dir" || (entry.kind === "symlink" && entry.targetKind === "dir");
+}
+
+// A symlink without a resolved target kind points at nothing the backend could reach (dangling or inaccessible).
+export function entryIsBrokenLink(entry: EntryKinds): boolean {
+  return entry.kind === "symlink" && !entry.targetKind;
+}
+
+export function fileVisual(name: string, kind: string, targetKind?: string): FileVisual {
   if (kind === "dir") return { Icon: IconFolder, tone: "text-amber-400/90" };
-  if (kind === "symlink") return { Icon: IconFile, tone: "text-blue-300" };
+  if (kind === "symlink") {
+    if (targetKind === "dir") return { Icon: IconFolderLink, tone: "text-amber-300/90" };
+    if (!targetKind) return { Icon: IconFileLink, tone: "text-red-400/80" };
+    return { Icon: IconFileLink, tone: "text-blue-300" };
+  }
 
   const ext = extOf(name);
   const lower = name.toLowerCase();

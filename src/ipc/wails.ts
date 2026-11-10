@@ -189,6 +189,16 @@ export async function openWailsFile(
   return selected || null;
 }
 
+export async function openWailsFiles(): Promise<string[]> {
+  const { Dialogs } = await runtime();
+  const selected = await Dialogs.OpenFile({
+    AllowsMultipleSelection: true,
+    CanChooseFiles: true,
+    CanChooseDirectories: false,
+  });
+  return Array.isArray(selected) ? selected.filter((path) => typeof path === "string" && path !== "") : [];
+}
+
 export async function openWailsFolder(): Promise<string | null> {
   const { Dialogs } = await runtime();
   const selected = await Dialogs.OpenFile({

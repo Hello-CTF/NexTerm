@@ -97,7 +97,13 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 	tabID := requireAttachedTabID(t, attachResponse)
 	stream := factory.at("staged-record", 0)
 
+	if err := os.WriteFile(filepath.Join(staged.dir, "rec.log"), []byte("stale-content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	requireProductionNull(t, dispatchDurableTest(t, production, "terminal_record_start", `{"tabId":"`+tabID+`","path":"staged-id/rec.log"}`, "", "client-a"))
+	if held := staged.reserved.Load(); held != 1 {
+		t.Fatalf("budgets held while recording = %d, want 1", held)
+	}
 	writeDurableTestCommand(t, production, tabID, "staged-record-marker", "client-a")
 	waitForProductionOutput(t, stream, "staged-record-marker")
 	stopResponse := dispatchDurableTest(t, production, "terminal_record_stop", `{"tabId":"`+tabID+`"}`, "", "client-a")
@@ -107,8 +113,11 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 		t.Fatal("recorded bytes = 0")
 	}
 	recordedData, err := os.ReadFile(filepath.Join(staged.dir, "rec.log"))
-	if err != nil || !bytes.Contains(recordedData, []byte("staged-record-marker")) {
-		t.Fatalf("recorded staged file = %q, %v", recordedData, err)
+	if err != nil || !bytes.Contains(recordedData, []byte("staged-record-marker")) || bytes.Contains(recordedData, []byte("stale-content")) {
+		t.Fatalf("recorded staged file = %q, %v; want a fresh recording", recordedData, err)
+	}
+	if held := staged.reserved.Load(); held != 0 {
+		t.Fatalf("budgets held after the recording stopped = %d, want 0", held)
 	}
 
 	exportResponse := dispatchDurableTest(t, production, "terminal_export_log", `{"tabId":"`+tabID+`","path":"staged-id/export.log","maxBytes":262144}`, "", "client-a")
@@ -117,6 +126,9 @@ func TestProductionTerminalRecordAndExportResolveStagedPaths(t *testing.T) {
 	exportedData, err := os.ReadFile(filepath.Join(staged.dir, "export.log"))
 	if err != nil || !bytes.Contains(exportedData, []byte("staged-record-marker")) {
 		t.Fatalf("exported staged file = %q, %v", exportedData, err)
+	}
+	if held := staged.reserved.Load(); held != 0 {
+		t.Fatalf("budgets held after the export = %d, want 0", held)
 	}
 
 	rejected := dispatchDurableTest(t, production, "terminal_record_start", `{"tabId":"`+tabID+`","path":"/tmp/rec.log"}`, "", "client-a")

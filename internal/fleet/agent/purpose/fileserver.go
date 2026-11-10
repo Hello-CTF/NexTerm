@@ -65,6 +65,10 @@ func (s *FileServer) ServeConn(ctx context.Context, conn net.Conn) error {
 		return s.serveReadRange(ctx, conn, payload)
 	case deviceproto.FrameWriteFile:
 		return s.serveWriteFile(ctx, conn, payload)
+	case deviceproto.FrameCreateFile:
+		return s.serveUnary(conn, payload, func(msg deviceproto.PathMsg) error {
+			return s.files.CreateFile(ctx, msg.Path)
+		})
 	case deviceproto.FrameMkdir:
 		return s.serveUnary(conn, payload, func(msg deviceproto.PathMsg) error {
 			return s.files.Mkdir(ctx, msg.Path)

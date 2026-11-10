@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { TERMINAL_FONT_STACKS, XTERM_DARK_THEME } from "../terminal/xtermTheme";
-import { scheduleWebglRenderer } from "../terminal/xtermAddons";
+import { activateUnicode11, scheduleWebglRenderer } from "../terminal/xtermAddons";
 import { createSelectionAutoCopy } from "../terminal/selectionAutoCopy";
 import { isAutomaticTerminalReply } from "../terminal/terminalResponses";
 import { createUserInputGate } from "../terminal/userInputGate";
@@ -43,10 +43,12 @@ export function PublicShareTerminal(props: PublicShareTerminalProps) {
       fontSize: 14,
       cursorBlink: true,
       disableStdin: readOnlyRef.current ?? false,
+      allowProposedApi: true,
       theme: XTERM_DARK_THEME,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    activateUnicode11(term);
     termRef.current = term;
     term.open(host);
     let disposed = false;

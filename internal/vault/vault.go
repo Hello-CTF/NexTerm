@@ -43,6 +43,9 @@ type Status struct {
 	SystemProtection bool   `json:"systemProtection"`
 }
 
+// IsUnlocked lets packages that cannot import vault check a status value through an interface.
+func (s Status) IsUnlocked() bool { return s.Unlocked }
+
 type Option func(*Vault)
 
 type autoLockTickerFactory func(time.Duration) (<-chan time.Time, func())

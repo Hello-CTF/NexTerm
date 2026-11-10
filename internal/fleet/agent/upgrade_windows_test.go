@@ -40,10 +40,10 @@ func TestReplaceScriptWindowsExecutes(t *testing.T) {
 		_ = os.Remove(marker)
 		_ = os.Remove(logPath)
 		scriptPath := filepath.Join(dir, "replace.ps1")
-		body := renderReplaceScriptWindows(windowsReplaceScript{
-			NewPath: newPath, TargetPath: target, WaitPID: pid, WaitTimeoutSeconds: 5, LogPath: logPath,
-			RestartBlock: restartBlock,
-		})
+		plan := newReplacePlan(newPath, target, "1.2.3", logPath, pid)
+		plan.WaitTimeoutSeconds = 5
+		plan.HealthTimeoutSeconds = 2
+		body := renderReplaceScriptWindows(windowsReplaceScript{replacePlan: plan, RestartBlock: restartBlock, StopBlock: "nxLog 'stop'"})
 		if err := os.WriteFile(scriptPath, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -89,6 +89,47 @@ func TestReplaceScriptWindowsExecutes(t *testing.T) {
 		}
 		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("rollback must not run the restart block")
+		}
+	})
+
+	confirmed := func(extra string) string { return "$script:nxRestarted = $true" + extra }
+
+	t.Run("confirmed restart without a health marker rolls back", func(t *testing.T) {
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		_ = os.Remove(target + upgradeFailedSuffix)
+		restartBlock = confirmed("")
+		t.Cleanup(func() { restartBlock = "Set-Content -LiteralPath " + psQuote(marker) + " -Value ok" })
+		run(t)
+		content, err := os.ReadFile(target)
+		if err != nil || strings.TrimSpace(string(content)) != "old-binary" {
+			t.Fatalf("rollback must restore the old binary, target = %q, %v", content, err)
+		}
+		if failures := readUpgradeFailures(target); len(failures) != 1 || failures[0].Version != "1.2.3" {
+			t.Fatalf("failure record = %+v", failures)
+		}
+	})
+
+	t.Run("confirmed restart with a health marker keeps the new binary", func(t *testing.T) {
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		restartBlock = confirmed("; Set-Content -LiteralPath " + psQuote(target+upgradeHealthySuffix) + " -Value '1.2.3' -NoNewline")
+		t.Cleanup(func() { restartBlock = "Set-Content -LiteralPath " + psQuote(marker) + " -Value ok" })
+		run(t)
+		content, err := os.ReadFile(target)
+		if err != nil || string(content) != "new-binary" {
+			t.Fatalf("target = %q, %v", content, err)
+		}
+		if _, err := os.Stat(target + upgradeBackupSuffix); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("backup must be removed once the new agent is healthy")
 		}
 	})
 

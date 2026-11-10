@@ -27,7 +27,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 			t.Fatalf("duplicate preference key %q", key)
 		}
 		declared[key] = true
-		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") && !strings.HasPrefix(key, "project.") {
+		if !strings.HasPrefix(key, "appearance.") && !strings.HasPrefix(key, "input.") && !strings.HasPrefix(key, "keybinding.") && !strings.HasPrefix(key, "terminal.") && !strings.HasPrefix(key, "project.") && !strings.HasPrefix(key, "workspace.") {
 			t.Fatalf("unexpected preference key %q", key)
 		}
 	}
@@ -46,8 +46,10 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.linkActivation",
 		"terminal.linkOpenMode",
 		"terminal.portDiscovery",
+		"terminal.hostMonitor",
 		"terminal.confirmMultilinePaste",
 		"terminal.durableHistoryMiB",
+		"terminal.keywordHighlights",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -72,10 +74,20 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.switchTab",
 		"keybinding.restoreClosedTab",
 		"keybinding.terminalSearch",
+		"keybinding.terminalQuickSelect",
+		"keybinding.terminalLinks",
+		"keybinding.sessionSidebar",
 		"keybinding.reclaimTakeover",
 		"keybinding.lockVault",
+		"keybinding.lockApp",
 		"keybinding.openSettings",
 		"keybinding.focusAiInput",
+		"keybinding.terminalFontIncrease",
+		"keybinding.terminalFontDecrease",
+		"keybinding.terminalFontReset",
+		"keybinding.toggleZoomPane",
+		"keybinding.equalizeSplits",
+		"keybinding.showShortcuts",
 	} {
 		if !declared[key] {
 			t.Errorf("required preference key %q is not declared", key)
@@ -109,6 +121,11 @@ func TestNormalizePreferenceBinding(t *testing.T) {
 		"Shift+p":             "Shift+p",
 		"Alt+1":               "Alt+1",
 		"Mod+Shift+ArrowLeft": "Mod+Shift+ArrowLeft",
+		"Mod+=":               "Mod+=",
+		"Mod+-":               "Mod+-",
+		"Mod+0":               "Mod+0",
+		"Mod+/":               "Mod+/",
+		"Mod+Shift+Enter":     "Mod+Shift+Enter",
 	}
 	for input, want := range valid {
 		got, ok := normalizePreferenceBinding(input)
@@ -144,6 +161,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.linkActivation":        `"click"`,
 		"terminal.linkOpenMode":          `"ask"`,
 		"terminal.portDiscovery":         `"on"`,
+		"terminal.hostMonitor":           `"on"`,
 		"terminal.confirmMultilinePaste": `"unbracketed"`,
 		"keybinding.closeTab":            `"Mod+Shift+w"`,
 		"keybinding.closeTab:null":       "null",
@@ -204,6 +222,7 @@ func TestValidatePreferenceValue(t *testing.T) {
 		"terminal.linkActivation":        {`"ctrl"`, `"Click"`, `"double"`, "1", "null", "true"},
 		"terminal.linkOpenMode":          {`"browser"`, `"System"`, "1", "null", "true"},
 		"terminal.portDiscovery":         {`"auto"`, `"On"`, "true", "1", "null"},
+		"terminal.hostMonitor":           {`"auto"`, `"On"`, "true", "1", "null"},
 		"terminal.confirmMultilinePaste": {"true", "false", `"false"`, `"Always"`, `"ask"`, "0", "null"},
 		"keybinding.closeTab":            {`"p"`, `"Mod+Mod+p"`, `"Mod+Primary+p"`, "1", "true", `{"key":"Mod+p"}`},
 	}
@@ -234,6 +253,7 @@ func TestNavigationKeybindingPreferences(t *testing.T) {
 		{key: "keybinding.previousTab", input: `"Shift+Mod+["`, want: `"Mod+Shift+["`},
 		{key: "keybinding.focusUpperPane", input: `"Alt+Mod+ArrowUp"`, want: `"Mod+Alt+ArrowUp"`},
 		{key: "keybinding.focusLowerPane", input: `"Alt+Mod+ArrowDown"`, want: `"Mod+Alt+ArrowDown"`},
+		{key: "keybinding.lockApp", input: `"Shift+Mod+L"`, want: `"Mod+Shift+l"`},
 	}
 	for _, test := range tests {
 		t.Run("validate "+test.key, func(t *testing.T) {
@@ -513,6 +533,19 @@ func TestTerminalKeyBarPreference(t *testing.T) {
 	} {
 		if got, err := validatePreferenceValue("terminal.keyBar", json.RawMessage(raw)); err == nil {
 			t.Fatalf("key bar %s accepted as %q", raw, got)
+		}
+	}
+}
+
+func TestTerminalKeywordHighlightsPreference(t *testing.T) {
+	want := `{"presets":["errors"],"rules":[{"id":"r1","pattern":"FAIL","regex":false,"caseSensitive":true,"wholeWord":true,"foreground":"red","background":"","underline":false,"enabled":true}]}`
+	got, err := validatePreferenceValue("terminal.keywordHighlights", json.RawMessage(want))
+	if err != nil || got != want {
+		t.Fatalf("keyword highlights=(%q,%v) want %q", got, err, want)
+	}
+	for _, raw := range []string{`null`, `[]`, `{"rules":[{"id":"r1","pattern":"(","regex":true,"foreground":"red","enabled":true}]}`} {
+		if got, err := validatePreferenceValue("terminal.keywordHighlights", json.RawMessage(raw)); err == nil {
+			t.Fatalf("keyword highlights %s accepted as %q", raw, got)
 		}
 	}
 }

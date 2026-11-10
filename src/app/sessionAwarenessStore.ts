@@ -18,7 +18,28 @@ export interface SessionAwareness {
   // The text of the notification behind a needs_me state with reason notify.
   title?: string;
   body?: string;
+  // The progress the program reports with OSC 9;4, independent of the state.
+  progress?: TerminalProgress;
   version: number;
+}
+
+export type TerminalProgressState = "normal" | "error" | "indeterminate" | "paused";
+
+export interface TerminalProgress {
+  state: TerminalProgressState;
+  // The percentage (0-100); absent when unknown, always for indeterminate.
+  value?: number;
+}
+
+const PROGRESS_STATES: ReadonlySet<string> = new Set(["normal", "error", "indeterminate", "paused"]);
+
+// toProgress drops a progress state this client does not know rather than guessing how to draw it.
+function toProgress(progress: TerminalAttentionEvent["progress"]): TerminalProgress | undefined {
+  if (!progress || !PROGRESS_STATES.has(progress.state)) return undefined;
+  const state = progress.state as TerminalProgressState;
+  const value = progress.value;
+  if (state === "indeterminate" || typeof value !== "number" || !Number.isFinite(value)) return { state };
+  return { state, value: Math.min(100, Math.max(0, Math.round(value))) };
 }
 
 const STATES: ReadonlySet<string> = new Set(["running", "needs_me", "just_finished", "idle", "exited", "unknown"]);
@@ -42,7 +63,15 @@ function isGuessedAttention(event: TerminalAttentionEvent): boolean {
 
 export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
   if (isGuessedAttention(event)) {
-    return { state: "running", source: event.source, since: event.since, seen: true, notable: false, version: event.version };
+    return {
+      state: "running",
+      source: event.source,
+      since: event.since,
+      seen: true,
+      notable: false,
+      progress: toProgress(event.progress),
+      version: event.version,
+    };
   }
   return {
     // A state this client does not know is shown as unknown rather than guessed.
@@ -55,6 +84,7 @@ export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
     exitCode: event.exitCode,
     title: event.title || undefined,
     body: event.body || undefined,
+    progress: toProgress(event.progress),
     version: event.version,
   };
 }
@@ -99,6 +129,25 @@ export function useTabAwareness(tabId: string | undefined): SessionAwareness | u
 
 export function tabAwareness(tabId: string): SessionAwareness | undefined {
   return useAwarenessStore.getState().byTabId.get(tabId);
+}
+
+export function useTabProgress(tabId: string | undefined): TerminalProgress | undefined {
+  return useAwarenessStore((state) => (tabId ? state.byTabId.get(tabId)?.progress : undefined));
+}
+
+// progressLabel names a progress for screen readers and tooltips.
+export function progressLabel(progress: TerminalProgress): string {
+  const value = progress.value;
+  switch (progress.state) {
+    case "normal":
+      return t("进度 {value}%", { value: value ?? 0 });
+    case "error":
+      return value === undefined ? t("进度出错") : t("进度出错（{value}%）", { value });
+    case "paused":
+      return value === undefined ? t("进度已暂停") : t("进度已暂停（{value}%）", { value });
+    case "indeterminate":
+      return t("进行中，进度未知");
+  }
 }
 
 // needsAttention: the user has not yet seen a state that asks for them.

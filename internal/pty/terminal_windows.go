@@ -18,6 +18,10 @@ import (
 
 var windowsUpdateProcThreadAttribute = windows.NewLazySystemDLL("kernel32.dll").NewProc("UpdateProcThreadAttribute")
 
+// windowsPseudoConsoleResizeQuirk keeps ConPTY from repainting the whole buffer on resize, which would
+// duplicate reflowed lines in xterm.js. Builds that predate the flag ignore it.
+const windowsPseudoConsoleResizeQuirk = 0x2
+
 type windowsTerminal struct {
 	conpty  *windowsConPty
 	process *Process
@@ -78,17 +82,18 @@ func updateWindowsPseudoConsoleAttribute(attributes *windows.ProcThreadAttribute
 }
 
 func newWindowsConPty(cols, rows uint32) (*windowsConPty, error) {
-	security := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), InheritHandle: 1}
+	// The pseudoconsole duplicates the pipe ends it needs, so none is inheritable: an inheritable master end
+	// would leak into concurrently started children and keep the console from closing.
 	c := &windowsConPty{consoleDone: make(chan struct{})}
-	if err := windows.CreatePipe(&c.inputRead, &c.inputWrite, security, 0); err != nil {
+	if err := windows.CreatePipe(&c.inputRead, &c.inputWrite, nil, 0); err != nil {
 		return nil, err
 	}
-	if err := windows.CreatePipe(&c.outputRead, &c.outputWrite, security, 0); err != nil {
+	if err := windows.CreatePipe(&c.outputRead, &c.outputWrite, nil, 0); err != nil {
 		_ = c.closeHandles()
 		return nil, err
 	}
 	size := windows.Coord{X: int16(cols), Y: int16(rows)}
-	if err := windows.CreatePseudoConsole(size, c.inputRead, c.outputWrite, 0, &c.hpc); err != nil {
+	if err := windows.CreatePseudoConsole(size, c.inputRead, c.outputWrite, windowsPseudoConsoleResizeQuirk, &c.hpc); err != nil {
 		_ = c.closeHandles()
 		return nil, err
 	}

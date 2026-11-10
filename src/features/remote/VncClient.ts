@@ -192,8 +192,8 @@ export class VncClient implements RemoteClient {
     for (const code of [...codes].reverse()) this.sendKey(code, false);
   }
 
-  sendText(text: string): void {
-    if (!this.rfb || this.rfb.viewOnly) return;
+  sendText(text: string): number {
+    if (!this.rfb || this.rfb.viewOnly) return 0;
     for (const char of text) {
       const point = char.codePointAt(0) ?? 0;
       // X11 keysyms for Unicode characters beyond Latin-1 are 0x01000000 + the code point.
@@ -201,6 +201,7 @@ export class VncClient implements RemoteClient {
       this.rfb.sendKey(keysym, null, true);
       this.rfb.sendKey(keysym, null, false);
     }
+    return 0;
   }
 
   releaseAllKeys(): void {

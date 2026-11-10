@@ -344,20 +344,30 @@ func (s *inventoryService) sshConfigItems(ctx context.Context, path string) ([]s
 	for _, diagnostic := range parsed.Diagnostics {
 		warnings = append(warnings, fmt.Sprintf("%s: %s", diagnostic.Source, diagnostic.Message))
 	}
+	skippedIdentities := map[string]bool{}
 	for _, host := range parsed.Hosts {
 		port := int32(host.Port)
 		username := host.Username
 		hostname := host.Hostname
+		// OpenSSH skips absent identity files, and a wildcard IdentityFile reaches every host: only an existing
+		// file switches a host from agent to key auth.
+		identityFiles, skipped := sshconfig.UsableIdentityFiles(host.IdentityFiles)
+		for _, path := range skipped {
+			if !skippedIdentities[path] {
+				skippedIdentities[path] = true
+				warnings = append(warnings, fmt.Sprintf("%s: %s", path, "IdentityFile 不存在或无法读取，已忽略"))
+			}
+		}
 		authKind := "agent"
 		var keyPath *string
-		if len(host.IdentityFiles) > 0 {
+		if len(identityFiles) > 0 {
 			authKind = "key"
-			keyPath = &host.IdentityFiles[0]
+			keyPath = &identityFiles[0]
 		}
 		authKindPtr := &authKind
 		target := map[string]any{
 			"type": "ssh-config", "alias": host.Alias, "proxyJump": host.ProxyJump,
-			"identityFiles": append([]string(nil), host.IdentityFiles...), "sourcePath": host.Source,
+			"identityFiles": identityFiles, "sourcePath": host.Source,
 		}
 		options := map[string]any{"inventoryTarget": target}
 		hops := sshImportJumpHops(host.ProxyJump)

@@ -49,6 +49,20 @@ func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 	return result, nil
 }
 
+// Capabilities describes the local filesystem of a goos host: Windows maps chmod to the read-only attribute, and
+// Windows and macOS default to case-insensitive names. PackDownload is implemented here; extraction is not.
+func Capabilities(goos string) base.FileCapabilities {
+	capabilities := base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true}
+	switch goos {
+	case "windows":
+		capabilities.Chmod = base.ChmodReadOnly
+		capabilities.CaseInsensitive = true
+	case "darwin", "ios":
+		capabilities.CaseInsensitive = true
+	}
+	return capabilities
+}
+
 func (f *FileSystem) LocalPath(path string) string {
 	return real(path)
 }
@@ -88,19 +102,19 @@ func (f *FileSystem) List(ctx context.Context, path string) ([]base.FileEntry, e
 	for _, entry := range entries {
 		path := filepath.Join(root, entry.Name())
 		item := base.FileEntry{Name: entry.Name(), Path: path, Kind: base.FileOther}
-		info, err := os.Lstat(path)
+		info, err := entry.Info()
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			info, err = os.Lstat(path)
+		}
 		if err != nil {
 			result = append(result, item)
 			continue
 		}
-		item.Kind = fileKind(info.Mode())
 		item.Size = info.Size()
 		item.Mode = info.Mode()
 		item.ModTime = info.ModTime()
 		item.Owner, item.Group = ownerGroup(info)
-		if info.Mode()&os.ModeSymlink != 0 {
-			item.SymlinkTarget, _ = os.Readlink(path)
-		}
+		classifyEntry(path, info, &item)
 		result = append(result, item)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -110,6 +124,20 @@ func (f *FileSystem) List(ctx context.Context, path string) ([]base.FileEntry, e
 		return result[i].Name < result[j].Name
 	})
 	return result, nil
+}
+
+// classifyEntry fills Kind, Hidden, SymlinkTarget and TargetKind from the entry's own metadata, following links
+// only to learn what they point at.
+func classifyEntry(path string, info fs.FileInfo, item *base.FileEntry) {
+	item.Kind = platformFileKind(path, info)
+	item.Hidden = platformHidden(item.Name, info)
+	if item.Kind != base.FileSymlink {
+		return
+	}
+	item.SymlinkTarget, _ = os.Readlink(path)
+	if target, err := os.Stat(path); err == nil {
+		item.TargetKind = base.TargetKindOf(target.Mode())
+	}
 }
 
 func fileKind(mode fs.FileMode) base.FileKind {
@@ -309,4 +337,7 @@ func (f *FileSystem) FileMode(ctx context.Context, path string) (fs.FileMode, er
 	return info.Mode(), nil
 }
 
-var _ base.FileSystem = (*FileSystem)(nil)
+var (
+	_ base.FileSystem  = (*FileSystem)(nil)
+	_ base.FileCreator = (*FileSystem)(nil)
+)

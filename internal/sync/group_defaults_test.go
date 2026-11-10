@@ -243,7 +243,11 @@ func TestBundleKeepsEmptyAuthKindOfInheritingAssetDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := source.service.ExportBundle(ctx, ExportBundleRequest{AssetIDs: []string{inheriting.ID, loose.ID}})
+	telnetAsset, err := source.db.AssetCreate(ctx, store.AssetInput{Kind: "telnet", Name: "switch", Host: &host, OptionsJSON: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := source.service.ExportBundle(ctx, ExportBundleRequest{AssetIDs: []string{inheriting.ID, loose.ID, telnetAsset.ID}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,5 +266,10 @@ func TestBundleKeepsEmptyAuthKindOfInheritingAssetDatabase(t *testing.T) {
 	other, err := target.db.AssetGet(ctx, loose.ID)
 	if err != nil || deref(other.AuthKind) != "password" {
 		t.Fatalf("ungrouped asset authKind = %v, %v", other.AuthKind, err)
+	}
+	// A Telnet asset logs in inside its terminal and stores no authentication.
+	device, err := target.db.AssetGet(ctx, telnetAsset.ID)
+	if err != nil || deref(device.AuthKind) != "none" {
+		t.Fatalf("telnet asset authKind = %v, %v", device.AuthKind, err)
 	}
 }

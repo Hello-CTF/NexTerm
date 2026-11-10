@@ -20,12 +20,16 @@ var nextGeneration atomic.Uint64
 
 type Config struct {
 	Shell string
-	CWD   string
-	Env   map[string]string
+	// ShellArgs are the arguments the interactive shell starts with, such as "-d Ubuntu" for wsl.exe. Exec
+	// commands do not use them.
+	ShellArgs []string
+	CWD       string
+	Env       map[string]string
 }
 
 type Transport struct {
 	shell         string
+	shellArgs     []string
 	loginShell    bool
 	shellSource   string
 	shellNote     string
@@ -61,6 +65,7 @@ func NewWithConfig(config Config) *Transport {
 	}
 	return &Transport{
 		shell:       shell,
+		shellArgs:   append([]string(nil), config.ShellArgs...),
 		loginShell:  loginShell,
 		shellSource: shellSource,
 		shellNote:   shellNote,

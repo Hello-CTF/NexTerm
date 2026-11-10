@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
@@ -104,6 +105,42 @@ func TestCommandLogSearchFiltersAndPagingDatabase(t *testing.T) {
 	rows, more, err = db.CommandLogSearch(ctx, store.CommandLogSearch{Limit: 2, Offset: 4})
 	if err != nil || len(rows) != 1 || more || rows[0].Command != "cmd 0" {
 		t.Fatalf("last page rows=%+v more=%v err=%v", rows, more, err)
+	}
+}
+
+func TestCommandLogSearchCwdDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+	long := "/" + strings.Repeat("d", store.MaxCommandCwdBytes)
+	row := func(user, command, cwd string, started int64) store.CommandLogInput {
+		return store.CommandLogInput{SessionID: "s-" + user, TabID: "t", AssetID: "a", UserID: user, Command: command, Cwd: cwd, Source: "terminal", StartedAt: started}
+	}
+	insertCommands(t, db, ctx,
+		row("u-a", "make", "/srv/项目", 1000),
+		row("u-a", "make test", "/srv/项目/sub", 1001),
+		row("u-a", "make lint", "/SRV/项目", 1002),
+		row("u-a", "uptime", "", 1003),
+		row("u-a", "toolong", long, 1004),
+		row("u-a", "badbytes", "/tmp/\xff", 1005),
+		row("u-a", "nul", "/tmp/\x00x", 1006),
+		row("u-b", "make other", "/srv/项目", 1007),
+	)
+	if got := searchCommands(t, db, ctx, store.CommandLogSearch{Cwd: auditPtr("/srv/项目")}); !sameStrings(got, []string{"make", "make other"}) {
+		t.Fatalf("cwd filter must match the exact directory only: %q", got)
+	}
+	owned := ipc.WithUserID(ctx, "u-a")
+	rows, _, err := db.CommandLogSearch(owned, store.CommandLogSearch{Text: "make", Cwd: auditPtr("/srv/项目")})
+	if err != nil || len(rows) != 1 || rows[0].Command != "make" || rows[0].Cwd != "/srv/项目" {
+		t.Fatalf("owner-scoped cwd rows=%+v err=%v", rows, err)
+	}
+	if got := searchCommands(t, db, owned, store.CommandLogSearch{Cwd: auditPtr("")}); !sameStrings(got, []string{"uptime", "toolong", "nul"}) {
+		t.Fatalf("unknown and unstorable directories must be stored empty: %q", got)
+	}
+	if got := searchCommands(t, db, owned, store.CommandLogSearch{Cwd: auditPtr("/tmp/�")}); !sameStrings(got, []string{"badbytes"}) {
+		t.Fatalf("invalid UTF-8 must be stored as the client sees it: %q", got)
+	}
+	if _, _, err := db.CommandLogSearch(ctx, store.CommandLogSearch{Cwd: auditPtr(long)}); err == nil {
+		t.Fatal("expected error for oversized cwd filter")
 	}
 }
 

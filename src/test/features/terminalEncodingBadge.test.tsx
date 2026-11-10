@@ -266,7 +266,17 @@ describe("pending directory navigation", () => {
     expect(harness.write).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["cmd", "unknown"] as const)(
+  it("changes to a pending directory in a cmd terminal with cd /d", async () => {
+    harness.attachShell = "cmd";
+    useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]" });
+    mountPane();
+
+    await waitFor(() => expect(harness.write).toHaveBeenCalledTimes(1));
+    expect(new TextDecoder().decode(harness.write.mock.calls[0][1])).toBe('cd /d "D:\\Project [x]"\n');
+    expect(harness.copy).not.toHaveBeenCalled();
+  });
+
+  it.each(["unknown"] as const)(
     "does not inject a pending directory into a %s terminal",
     async (shell) => {
       harness.attachShell = shell;
@@ -285,7 +295,7 @@ describe("pending directory navigation", () => {
   );
 
   it("surfaces a pending directory copy failure", async () => {
-    harness.attachShell = "cmd";
+    harness.attachShell = "unknown";
     harness.copy.mockRejectedValueOnce(new Error("clipboard denied"));
     useUi.getState().updateTab("t1", { pendingDirectory: "D:/Project [x]" });
     mountPane();

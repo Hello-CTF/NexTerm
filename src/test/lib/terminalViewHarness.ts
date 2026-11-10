@@ -31,6 +31,7 @@ export const harness = {
   // When set, the fake terminal answers DA1 and DSR 6 queries through onData
   // at the moment the write that carries them is parsed (its callback runs).
   emitReplies: false,
+  terminalPrefs: {} as Record<string, unknown>,
   reopenCb: null as (() => void) | null,
   feedInput: vi.fn(),
   feedOSC133: vi.fn(),
@@ -211,7 +212,7 @@ export const eventsModule = () => ({
 
 export const envModule = () => ({ WEB: false, clientId: () => "me" });
 
-export const keybindingsModule = () => ({ matchAppKeybinding: () => null });
+export const keybindingsModule = () => ({ matchAppKeybinding: () => null, matchKeybinding: () => false });
 
 export const storeModule = () => ({
   useUi: {
@@ -231,7 +232,7 @@ export const preferencesModule = () => ({
   getAppearancePrefs: () => ({ terminalFontSize: 13 }),
   getInputPrefs: () => ({ selectionAutoCopy: false }),
   terminalDefaultUsesAccount: () => false,
-  getTerminalPrefs: () => ({ closeAction: "ask", defaultMode: "durable", gpuAcceleration: "auto" }),
+  getTerminalPrefs: () => ({ closeAction: "ask", defaultMode: "durable", gpuAcceleration: "auto", ...harness.terminalPrefs }),
   subscribeTerminalPrefs: () => () => undefined,
   waitAccountPreferences: () => null,
   getResolvedTerminalTheme: () => "dark",

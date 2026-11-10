@@ -94,6 +94,42 @@ func TestCommandLogRecordsLifecycleDrivesAStructuredRecord(t *testing.T) {
 	}
 }
 
+// TestCommandLogRecordsStartDirectory: each command records the OSC 7
+// directory it started in, in stream order, even when a fast "cd" and the
+// next prompt's directory report arrive in the same chunk as its start.
+func TestCommandLogRecordsStartDirectory(t *testing.T) {
+	sink := &fakeCommandSink{}
+	_, tab, channel, _ := openCommandTestTab(t, sink, "")
+
+	if err := channel.emit([]byte("ls\r\n\x1b]133;B\x1b\\\x1b]133;D;0\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.snapshot()) == 1 })
+	if err := channel.emit([]byte("\x1b]7;file://h/home/u\x1b\\\x1b]133;A\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return tab.Info().Cwd == "/home/u" })
+	if err := channel.emit([]byte("cd /etc\r\n\x1b]133;B\x1b\\\x1b]133;D;0\x1b\\\x1b]7;file://h/etc\x1b\\\x1b]133;A\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.snapshot()) == 2 })
+	if err := channel.emit([]byte("\x1b]7;file://h/var/log\x1b\\\x1b]133;A\x1b\\cat x\r\n\x1b]133;B\x1b\\\x1b]133;D;0\x1b\\")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.snapshot()) == 3 })
+
+	records := sink.snapshot()
+	want := []string{"", "/home/u", "/var/log"}
+	for i, record := range records {
+		if record.Cwd != want[i] {
+			t.Fatalf("record %d (%q) cwd = %q, want %q", i, record.Command, record.Cwd, want[i])
+		}
+	}
+	if tab.Info().Cwd != "/var/log" {
+		t.Fatalf("tab cwd = %q", tab.Info().Cwd)
+	}
+}
+
 // TestCommandLogIgnores133FreeStream: a shell without OSC 133 produces no command
 // records and does not record plain output either.
 func TestCommandLogIgnores133FreeStream(t *testing.T) {

@@ -121,8 +121,8 @@ func TestDockerFallbackShellLocalDefault(t *testing.T) {
 		{name: "darwin default", goos: "darwin", want: docker.ShellPOSIX},
 		{name: "windows explicit powershell", goos: "windows", options: map[string]any{"shell": "powershell.exe"}, want: docker.ShellPowerShell},
 		{name: "windows explicit pwsh", goos: "windows", options: map[string]any{"shell": "pwsh"}, want: docker.ShellPowerShell},
-		{name: "windows explicit bash", goos: "windows", options: map[string]any{"shell": `C:\msys64\bin\bash.exe`}, want: docker.ShellPOSIX},
-		{name: "windows explicit cmd", goos: "windows", options: map[string]any{"shell": "cmd.exe"}, want: docker.ShellPOSIX},
+		{name: "windows explicit bash", goos: "windows", options: map[string]any{"shell": `C:\msys64\bin\bash.exe`}, want: docker.ShellPowerShell},
+		{name: "windows explicit cmd", goos: "windows", options: map[string]any{"shell": "cmd.exe"}, want: docker.ShellPowerShell},
 		{name: "linux explicit pwsh", goos: "linux", options: map[string]any{"shell": "pwsh"}, want: docker.ShellPowerShell},
 		{name: "linux explicit bash", goos: "linux", options: map[string]any{"shell": "/bin/bash"}, want: docker.ShellPOSIX},
 	} {

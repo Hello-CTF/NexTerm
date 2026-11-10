@@ -317,12 +317,12 @@ describe("skills mock backend contract", () => {
 
 describe("SkillsCard", () => {
   let mounted: MountedView | undefined;
-  let toast: Mock<(kind: "info" | "error" | "success", text: string) => void>;
+  let toast: Mock<(kind: "info" | "warning" | "error" | "success", text: string) => void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     document.body.replaceChildren();
-    toast = vi.fn<(kind: "info" | "error" | "success", text: string) => void>();
+    toast = vi.fn<(kind: "info" | "warning" | "error" | "success", text: string) => void>();
     useUi.setState({ pushToast: toast });
   });
   afterEach(() => {

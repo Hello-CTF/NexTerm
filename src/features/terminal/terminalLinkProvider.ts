@@ -39,7 +39,7 @@ export interface DetectedTarget {
   segment: LinkRowSegment;
 }
 
-interface LogicalLine {
+export interface LogicalLine {
   text: string;
   rows: number[];
   offsets: number[];
@@ -101,7 +101,7 @@ function cellWidth(text: string, from = 0, to = text.length): number {
   return w;
 }
 
-function buildLogicalLines(rows: TextRow[]): LogicalLine[] {
+export function buildLogicalLines(rows: TextRow[]): LogicalLine[] {
   const lines: LogicalLine[] = [];
   let cur: LogicalLine | null = null;
   rows.forEach((row, index) => {
@@ -132,7 +132,7 @@ function columnOf(rows: TextRow[], line: LogicalLine, index: number): number {
   return cellWidth(text, 0, index - line.offsets[slot]);
 }
 
-function segmentsOf(line: LogicalLine, start: number, end: number, group: number): LinkRowSegment[] {
+export function segmentsOf(line: LogicalLine, start: number, end: number, group: number): LinkRowSegment[] {
   const out: LinkRowSegment[] = [];
   for (let slot = 0; slot < line.rows.length; slot++) {
     const rowStart = line.offsets[slot];
@@ -430,7 +430,7 @@ function lineAt(term: Terminal, row: number): IBufferLine | undefined {
   return term.buffer.active.getLine(row);
 }
 
-function windowBounds(term: Terminal, y0: number): { first: number; last: number } {
+export function windowBounds(term: Terminal, y0: number): { first: number; last: number } {
   const buf = term.buffer.active;
   const WINDOW_LOGICAL_LINES = maxContinuationRows(term.cols);
   const WINDOW_MAX_PHYSICAL_ROWS = WINDOW_LOGICAL_LINES * 2 + CONTEXT_PHYSICAL_SLACK;
@@ -452,7 +452,7 @@ function windowBounds(term: Terminal, y0: number): { first: number; last: number
 }
 
 /** Maps string indices of translateToString(true) to 0-based cell columns, with the cell width of each. */
-function cellMap(line: IBufferLine): { col: number[]; width: number[] } {
+export function cellMap(line: IBufferLine): { col: number[]; width: number[] } {
   const col: number[] = [];
   const width: number[] = [];
   for (let x = 0; x < line.length; x++) {
@@ -469,7 +469,7 @@ function cellMap(line: IBufferLine): { col: number[]; width: number[] } {
   return { col, width };
 }
 
-function cellRange(map: { col: number[]; width: number[] }, seg: LinkRowSegment, y: number): IBufferRange {
+export function cellRange(map: { col: number[]; width: number[] }, seg: LinkRowSegment, y: number): IBufferRange {
   const startCell = map.col[seg.start] ?? seg.start;
   const lastIdx = seg.end - 1;
   const endCell = (map.col[lastIdx] ?? lastIdx) + (map.width[lastIdx] ?? 1);
@@ -477,7 +477,7 @@ function cellRange(map: { col: number[]; width: number[] }, seg: LinkRowSegment,
 }
 
 /** Splits segments into soft-wrapped runs; hard-wrapped and boxed pieces stay separate. */
-function softRuns(segments: LinkRowSegment[]): LinkRowSegment[][] {
+export function softRuns(segments: LinkRowSegment[]): LinkRowSegment[][] {
   const runs: LinkRowSegment[][] = [];
   for (const seg of segments) {
     const run = runs[runs.length - 1];

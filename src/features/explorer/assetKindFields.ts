@@ -13,7 +13,8 @@ export type AssetFormKind =
   | "postgres"
   | "redis"
   | "rdp"
-  | "vnc";
+  | "vnc"
+  | "telnet";
 
 export type ViaTarget = "ssh" | "ssh-or-device";
 
@@ -34,6 +35,12 @@ export interface AssetKindFields {
   remote: "rdp" | "vnc" | null;
   // The optional Wake-on-LAN MAC and broadcast options.
   wake: boolean;
+  // The terminal encoding select outside the SSH advanced section, for terminal kinds without that section.
+  terminalEncoding: boolean;
+  // The protocol sends everything, passwords included, as plain text; the form warns about it.
+  plaintext: boolean;
+  // The Telnet terminal options: local echo and what Enter sends.
+  telnetOptions: boolean;
 }
 
 const NONE: AssetKindFields = {
@@ -46,6 +53,9 @@ const NONE: AssetKindFields = {
   sshAdvanced: false,
   remote: null,
   wake: false,
+  terminalEncoding: false,
+  plaintext: false,
+  telnetOptions: false,
 };
 
 const DATABASE: AssetKindFields = { ...NONE, authMethod: false, password: true, via: "ssh" };
@@ -62,17 +72,27 @@ export const ASSET_KIND_FIELDS: Record<AssetFormKind, AssetKindFields> = {
   redis: { ...DATABASE, defaultPort: 6379 },
   rdp: { ...DATABASE, defaultPort: 3389, via: "ssh-or-device", remote: "rdp", wake: true },
   vnc: { ...DATABASE, defaultPort: 5900, username: false, via: "ssh-or-device", remote: "vnc", wake: true },
+  // Login happens inside the terminal: the device prompts for its own username and password.
+  telnet: { ...NONE, defaultPort: 23, username: false, authMethod: false, terminalEncoding: true, plaintext: true, telnetOptions: true },
 };
 
 export function assetKindFields(kind: string): AssetKindFields {
   return ASSET_KIND_FIELDS[kind as AssetFormKind] ?? NONE;
 }
 
+// Kinds whose connection is only a terminal: no command channel and no file service, so the file tree, host ports,
+// containers, forwarding and logs have nothing to work with.
+const TERMINAL_ONLY_KINDS = new Set(["telnet"]);
+
+export function hostToolsSupported(kind: string | null | undefined): boolean {
+  return !kind || !TERMINAL_ONLY_KINDS.has(kind);
+}
+
 export function isRemoteDesktopKind(kind: string): kind is "rdp" | "vnc" {
   return kind === "rdp" || kind === "vnc";
 }
 
-// Options the remote desktop form edits. The backend reads viaAssetId, promptPassword, domain, width and height;
+// Options the remote desktop form edits. The backend reads viaAssetId, promptPassword, domain, width, height and legacyTLS;
 // clipboard, clipboardAutoSync, commandAsCtrl and viewOnly are read by the client.
 export interface RemoteDesktopOptions {
   domain: string;
@@ -83,6 +103,8 @@ export interface RemoteDesktopOptions {
   // On a Mac, Command is sent as Ctrl; see defaultCommandAsCtrl.
   commandAsCtrl: boolean;
   viewOnly: boolean;
+  // RDP only: also accept TLS 1.0/1.1 for hosts that offer nothing newer.
+  legacyTLS: boolean;
   resolution: "follow" | "fixed";
   width: number;
   height: number;
@@ -113,6 +135,7 @@ export function readRemoteDesktopOptions(kind: string, options: Record<string, u
     commandAsCtrl: typeof raw.commandAsCtrl === "boolean" ? raw.commandAsCtrl : defaultCommandAsCtrl(kind),
     // A VNC session starts read-only only when asked; the default is a normal session.
     viewOnly: raw.viewOnly === true,
+    legacyTLS: kind === "rdp" && raw.legacyTLS === true,
     resolution: kind === "rdp" && fixed ? "fixed" : "follow",
     width: fixed ? width : DEFAULT_RESOLUTION.width,
     height: fixed ? height : DEFAULT_RESOLUTION.height,
@@ -135,12 +158,14 @@ export function writeRemoteDesktopOptions(
   delete options.clipboardAutoSync;
   delete options.commandAsCtrl;
   delete options.viewOnly;
+  delete options.legacyTLS;
   if (values.promptPassword) options.promptPassword = true;
   if (!values.clipboard) options.clipboard = false;
   if (!values.clipboardAutoSync) options.clipboardAutoSync = false;
   if (values.commandAsCtrl !== defaultCommandAsCtrl(kind)) options.commandAsCtrl = values.commandAsCtrl;
   if (kind === "rdp") {
     if (values.domain.trim()) options.domain = values.domain.trim();
+    if (values.legacyTLS) options.legacyTLS = true;
     if (values.resolution === "fixed") {
       options.width = values.width;
       options.height = values.height;
@@ -174,7 +199,28 @@ const SSH_OPTION_KEYS = [
   "pasteNoRandomDir",
   "backupBeforeOverwrite",
 ];
-const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly"];
+const TELNET_OPTION_KEYS = ["localEcho", "sendCrlf"];
+export const TELNET_LOCAL_ECHO = ["auto", "on", "off"] as const;
+export type TelnetLocalEcho = (typeof TELNET_LOCAL_ECHO)[number];
+
+export function readTelnetLocalEcho(options: Record<string, unknown> | undefined): TelnetLocalEcho {
+  const value = options?.localEcho;
+  return value === "on" || value === "off" ? value : "auto";
+}
+
+// writeTelnetOptions stores only the values that differ from the defaults (auto echo, CR NUL).
+export function writeTelnetOptions(base: Record<string, unknown>, localEcho: TelnetLocalEcho, sendCrlf: boolean): Record<string, unknown> {
+  const options = { ...base };
+  if (localEcho !== "auto") options.localEcho = localEcho;
+  else delete options.localEcho;
+  if (sendCrlf) options.sendCrlf = true;
+  else delete options.sendCrlf;
+  return options;
+}
+
+// Options the local terminal form writes; on another kind they would describe a shell that does not run there.
+const LOCAL_OPTION_KEYS = ["shell", "cwd"];
+const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly", "legacyTLS"];
 
 // optionsForKindChange drops the options the previous kind's form wrote when an asset changes kind, so a host switched
 // from SSH to RDP (or back) does not keep hidden settings the new form can neither show nor clear.
@@ -185,5 +231,8 @@ export function optionsForKindChange(from: string, to: string, options: Record<s
   const toFields = assetKindFields(to);
   if (fromFields.sshAdvanced && !toFields.sshAdvanced) for (const key of SSH_OPTION_KEYS) delete next[key];
   if (fromFields.remote && !toFields.remote) for (const key of REMOTE_DESKTOP_OPTION_KEYS) delete next[key];
+  if (from === "local") for (const key of LOCAL_OPTION_KEYS) delete next[key];
+  if (fromFields.telnetOptions && !toFields.telnetOptions) for (const key of TELNET_OPTION_KEYS) delete next[key];
+  if (fromFields.terminalEncoding && !toFields.terminalEncoding && !toFields.sshAdvanced) delete next.encoding;
   return next;
 }

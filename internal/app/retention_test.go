@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"io"
 	"log/slog"
 	"math"
@@ -99,14 +100,14 @@ func TestStoreRetentionPolicyFromAppSettings(t *testing.T) {
 	t.Cleanup(func() { _ = database.Close() })
 	source := StoreRetentionPolicy(database)
 	policy, err := source.RetentionPolicy(ctx)
-	if err != nil || retentionEnabled(policy) {
+	if err != nil || retentionEnabled(policy) || policy.UserSessionMaxAge != UserSessionRetentionMaxAge {
 		t.Fatalf("missing setting policy = %+v, %v", policy, err)
 	}
 	if err := database.SettingSet(ctx, RetentionSettingKey, `{"auditMaxAgeMs":60000,"auditMaxCount":3,"recordingMaxAgeMs":120000,"recordingMaxCount":4}`); err != nil {
 		t.Fatal(err)
 	}
 	policy, err = source.RetentionPolicy(ctx)
-	want := store.RetentionPolicy{AuditMaxAge: time.Minute, AuditMaxCount: 3, RecordingMaxAge: 2 * time.Minute, RecordingMaxCount: 4}
+	want := store.RetentionPolicy{AuditMaxAge: time.Minute, AuditMaxCount: 3, RecordingMaxAge: 2 * time.Minute, RecordingMaxCount: 4, UserSessionMaxAge: UserSessionRetentionMaxAge}
 	if err != nil || policy != want {
 		t.Fatalf("configured policy = %+v, %v; want %+v", policy, err, want)
 	}
@@ -358,5 +359,34 @@ func TestRetentionRunnerStartupReconcileRunsWithRetentionDisabled(t *testing.T) 
 	}
 	if err := runner.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRetentionRunnerPrunesSessionsWithRetentionDisabled(t *testing.T) {
+	stored := &fakeRetentionStore{}
+	runner := retentionTestRunner(t, stored, store.RetentionPolicy{UserSessionMaxAge: UserSessionRetentionMaxAge})
+	if err := runner.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	waitRetention(t, func() bool {
+		status, _ := runner.Status(context.Background())
+		return status.LastAttemptAt != nil
+	})
+	status, err := runner.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := stored.snapshot()
+	if calls != 1 || status.Enabled || status.LastError != "" {
+		t.Fatalf("session-only retention calls = %d, status = %+v", calls, status)
+	}
+	if err := runner.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUserSessionRetentionFollowsLoginSessionLifetime(t *testing.T) {
+	if loginSessionAbsoluteTTL != account.SessionAbsoluteTTL {
+		t.Fatalf("loginSessionAbsoluteTTL = %v, want account.SessionAbsoluteTTL %v", loginSessionAbsoluteTTL, account.SessionAbsoluteTTL)
 	}
 }

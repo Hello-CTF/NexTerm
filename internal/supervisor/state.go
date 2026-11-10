@@ -38,6 +38,13 @@ const (
 	// to that input, such as a line editor's failed completion, rather than
 	// a request for attention.
 	bellEchoWindow = time.Second
+	// progressInterval is the minimum spacing between reported progress
+	// changes; changes in between are coalesced into one trailing report.
+	progressInterval = 250 * time.Millisecond
+	// progressStale is how long a progress report stays shown without a new
+	// one, so a program that exits without clearing it does not leave it
+	// behind; Ghostty uses the same timeout.
+	progressStale = 15 * time.Second
 )
 
 // stateOptions configures a stateTracker.
@@ -92,6 +99,11 @@ type stateOptions struct {
 //     shell prompt, or after settle of quiet elsewhere;
 //   - input clears needs_me and just_finished and inspects again after the
 //     next pause;
+//   - OSC 9;4 sets the progress shown alongside the state. Changes are
+//     reported at most every progressInterval; a command start or end, the
+//     exit or progressStale without a report clears it. The first error
+//     report of a progress makes the session needs_me (reason
+//     progress_error) like a notification;
 //   - process exit makes it exited.
 type stateTracker struct {
 	opts stateOptions
@@ -117,6 +129,21 @@ type stateTracker struct {
 	// notifyTitle and notifyBody are the text of the notification behind a
 	// needs_me state.
 	notifyTitle, notifyBody string
+
+	// progress is the program's OSC 9;4 progress, nil when none; progressAt
+	// is when it was last reported. progressErrorRaised is set once an error
+	// report of the current progress asked for attention.
+	progress            *base.SessionProgress
+	progressAt          time.Time
+	progressErrorRaised bool
+	// progressSent is when a change last reached clients; progressDirty
+	// marks a progress change held back by progressInterval.
+	progressSent  time.Time
+	progressDirty bool
+	// progressDue is when progressTick next has work, zero when nothing is
+	// armed; with timers progressTimer fires then.
+	progressDue   time.Time
+	progressTimer *time.Timer
 
 	// active is set by output or input since the last idle inspection and
 	// lastActivity is when it happened. settling is set when that inspection
@@ -211,6 +238,10 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 		t.heldCheck = now.Add(t.opts.settle)
 	}
 	t.activityLocked(now)
+	if changed {
+		// The change carries the current progress.
+		t.progressSentLocked(now)
+	}
 	t.mu.Unlock()
 	if changed {
 		t.changed()
@@ -219,6 +250,8 @@ func (t *stateTracker) output(p []byte, now time.Time) {
 
 func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 	switch event.Kind {
+	case signals.KindProgress:
+		return t.progressLocked(event, now)
 	case signals.KindBell:
 		// A bell answering recent input or rung by the shell's line editor
 		// is kept as an event but does not ask for attention.
@@ -247,8 +280,10 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 		t.reason, t.notifyTitle, t.notifyBody = "notify", title, body
 	case signals.KindCommandStart:
 		t.signalPending, t.finishedPending = false, false
+		t.clearProgressLocked(now)
 		t.setLocked(base.SessionRunning, base.ConfidenceSignal, "command_start", now)
 	case signals.KindCommandEnd:
+		t.clearProgressLocked(now)
 		var code *int
 		if event.HasExitCode {
 			value := event.ExitCode
@@ -267,6 +302,133 @@ func (t *stateTracker) signalLocked(event signals.Event, now time.Time) bool {
 		return false
 	}
 	return true
+}
+
+// progressLocked applies an OSC 9;4 report and reports whether clients
+// should be told now; a change within progressInterval of the last one is
+// held for progressTick. An error or paused report without a value keeps the
+// value shown before.
+func (t *stateTracker) progressLocked(event signals.Event, now time.Time) bool {
+	if event.Progress == signals.ProgressClear {
+		if t.progress == nil {
+			return false
+		}
+		t.progress, t.progressErrorRaised = nil, false
+		return t.progressChangedLocked(now)
+	}
+	next := &base.SessionProgress{State: event.Progress}
+	switch {
+	case event.HasProgressValue:
+		value := event.ProgressValue
+		next.Value = &value
+	case event.Progress != signals.ProgressIndeterminate && t.progress != nil:
+		next.Value = t.progress.Clone().Value
+	}
+	changed := !t.progress.Equal(next)
+	t.progress, t.progressAt = next, now
+	if next.State == base.ProgressError && !t.progressErrorRaised {
+		// One request for attention per progress: a program that keeps
+		// reporting its error, or flips between error and normal, does not
+		// ask again until the progress is cleared.
+		asking := t.state == base.SessionNeedsMe && t.reason == "progress_error" && !t.seen
+		t.progressErrorRaised = true
+		t.signalPending, t.finishedPending, t.seen = true, false, false
+		moved := t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "progress_error", now)
+		t.reason, t.notifyTitle, t.notifyBody = "progress_error", "", ""
+		if moved || !asking {
+			t.progressSentLocked(now)
+			t.armProgressLocked(now)
+			return true
+		}
+		// Still asking for the same unseen error (a clear and error loop):
+		// only the progress changed, which is coalesced like any other.
+	}
+	if !changed {
+		// A repeated report only keeps the progress from going stale.
+		t.armProgressLocked(now)
+		return false
+	}
+	return t.progressChangedLocked(now)
+}
+
+// progressChangedLocked reports a progress change at once when the last one
+// is progressInterval old, and otherwise holds it for progressTick.
+func (t *stateTracker) progressChangedLocked(now time.Time) bool {
+	if t.progressSent.IsZero() || now.Before(t.progressSent) || now.Sub(t.progressSent) >= progressInterval {
+		t.progressSentLocked(now)
+		t.armProgressLocked(now)
+		return true
+	}
+	t.progressDirty = true
+	t.armProgressLocked(now)
+	return false
+}
+
+// progressSentLocked records that clients are told the current progress.
+func (t *stateTracker) progressSentLocked(now time.Time) {
+	t.progressSent, t.progressDirty = now, false
+}
+
+// clearProgressLocked drops the progress for a change reported at once.
+func (t *stateTracker) clearProgressLocked(now time.Time) {
+	t.progress, t.progressErrorRaised = nil, false
+	t.progressSentLocked(now)
+	t.armProgressLocked(now)
+}
+
+// armProgressLocked schedules progressTick for the held change or the stale
+// timeout, whichever comes first, and stops the timer when neither is due.
+func (t *stateTracker) armProgressLocked(now time.Time) {
+	var due time.Time
+	if t.progressDirty {
+		due = t.progressSent.Add(progressInterval)
+	}
+	if t.progress != nil {
+		if stale := t.progressAt.Add(progressStale); due.IsZero() || stale.Before(due) {
+			due = stale
+		}
+	}
+	t.progressDue = due
+	if !t.opts.timers {
+		return
+	}
+	if due.IsZero() {
+		if t.progressTimer != nil {
+			t.progressTimer.Stop()
+		}
+		return
+	}
+	wait := max(due.Sub(now), 0)
+	if t.progressTimer == nil {
+		t.progressTimer = time.AfterFunc(wait, func() { t.progressTick(time.Now()) })
+		return
+	}
+	t.progressTimer.Reset(wait)
+}
+
+// progressTick reports a held progress change and clears a stale progress.
+func (t *stateTracker) progressTick(now time.Time) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return
+	}
+	changed := false
+	if t.progress != nil && !now.Before(t.progressAt.Add(progressStale)) {
+		t.progress, t.progressErrorRaised = nil, false
+		changed = true
+	}
+	if t.progressDirty && !now.Before(t.progressSent.Add(progressInterval)) {
+		changed = true
+	}
+	if changed {
+		t.progressSentLocked(now)
+	}
+	t.armProgressLocked(now)
+	t.mu.Unlock()
+	if changed {
+		t.changed()
+	}
 }
 
 // input records bytes written to the session by any client and clears
@@ -517,6 +679,10 @@ func (t *stateTracker) exit(code *int, now time.Time) {
 	if t.timer != nil {
 		t.timer.Stop()
 	}
+	t.progress, t.progressErrorRaised, t.progressDirty, t.progressDue = nil, false, false, time.Time{}
+	if t.progressTimer != nil {
+		t.progressTimer.Stop()
+	}
 	t.mu.Unlock()
 	t.changed()
 }
@@ -606,6 +772,7 @@ func (t *stateTracker) snapshot(withEvents bool, after uint64) *SessionState {
 		Seen:         t.seen,
 		Title:        t.notifyTitle,
 		Body:         t.notifyBody,
+		Progress:     t.progress.Clone(),
 		LastEventSeq: t.lastSeq,
 	}
 	if withEvents {

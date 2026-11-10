@@ -9,6 +9,11 @@ import (
 )
 
 const (
+	PlatformWindows = "windows"
+	PlatformPOSIX   = "posix"
+)
+
+const (
 	DefaultConcurrency = 4
 	MaxConcurrency     = 32
 	MaxSources         = 64
@@ -31,6 +36,8 @@ const (
 	SourceFile    SourceKind = "file"
 	SourceJournal SourceKind = "journal"
 	SourceDocker  SourceKind = "docker"
+	// SourceWinEvent follows a Windows Event Log channel (System, Application, ...) through PowerShell.
+	SourceWinEvent SourceKind = "winevent"
 )
 
 type Source struct {
@@ -92,8 +99,11 @@ type Event struct {
 type Target struct {
 	SessionID   string
 	SessionName string
-	Transport   base.Transport
-	Generation  uint64
+	// Platform is "windows" or "posix" when the resolver knows the host's platform, "" otherwise. A host known
+	// to be Windows only follows Windows event logs; a host known to be POSIX never does.
+	Platform   string
+	Transport  base.Transport
+	Generation uint64
 }
 
 type Resolver interface {

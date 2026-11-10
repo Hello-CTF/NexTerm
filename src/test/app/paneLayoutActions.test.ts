@@ -17,7 +17,7 @@ vi.mock("../../ipc/commands", () => ({
 }));
 
 import type { AppTab, Pane, Workspace } from "../../app/store";
-import { useUi } from "../../app/store";
+import { useUi, zoomedPaneOf } from "../../app/store";
 import { syncWorkspaceTree, withLayoutTree, workspaceLayoutTree, workspacePaneOrder } from "../../app/paneLayout";
 import { findPanePath, paneRects, SPLIT_TREE_MAX_DEPTH, type SplitNode } from "../../app/splitTree";
 
@@ -358,5 +358,79 @@ describe("split a pane with a dragged tab", () => {
     expect(current().panes.find((item) => item.id === right)!.tabs.map((tab) => tab.id)).toEqual(["b", "a"]);
     useUi.getState().moveTabToPane("c", right, 99);
     expect(current().panes.find((item) => item.id === right)!.tabs.map((tab) => tab.id)).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("pane zoom and equalize", () => {
+  const zoomed = () => zoomedPaneOf(current(), useUi.getState().zoomedPanes);
+
+  beforeEach(() => {
+    useUi.setState({ zoomedPanes: {} });
+  });
+
+  it("zooms the active pane and restores the layout on the second toggle", () => {
+    const right = useUi.getState().splitPane("right")!;
+    expect(useUi.getState().toggleZoomPane()).toBe(true);
+    expect(zoomed()).toBe(right);
+    expect(useUi.getState().toggleZoomPane()).toBe(true);
+    expect(zoomed()).toBeNull();
+  });
+
+  it("has nothing to zoom in a single-pane workspace", () => {
+    expect(useUi.getState().toggleZoomPane()).toBe(false);
+    expect(zoomed()).toBeNull();
+  });
+
+  it("leaves the zoom when focus moves to another pane, the zoomed pane closes or a split is made", () => {
+    const right = useUi.getState().splitPane("right")!;
+    useUi.getState().toggleZoomPane();
+    useUi.getState().setActivePane("p1");
+    expect(zoomed()).toBeNull();
+
+    useUi.getState().toggleZoomPane();
+    expect(zoomed()).toBe("p1");
+    useUi.getState().closePane("p1");
+    expect(zoomed()).toBeNull();
+    expect(useUi.getState().zoomedPanes).toEqual({});
+
+    useUi.getState().splitPane("right", right);
+    useUi.getState().toggleZoomPane();
+    expect(zoomed()).not.toBeNull();
+    useUi.getState().splitPane("down");
+    expect(zoomed()).toBeNull();
+  });
+
+  it("does not bring back a zoom lapsed by activating a tab in another pane", () => {
+    const right = useUi.getState().splitPane("right")!;
+    useUi.getState().addTab(file("right-tab"), right);
+    useUi.getState().setActivePane("p1");
+    useUi.getState().toggleZoomPane();
+    expect(zoomed()).toBe("p1");
+    // A palette jump activates the tab directly, moving focus without setActivePane.
+    useUi.getState().setActiveTab("right-tab");
+    expect(current().activePaneId).toBe(right);
+    expect(useUi.getState().zoomedPanes).toEqual({});
+    useUi.getState().setActivePane("p1");
+    expect(zoomed()).toBeNull();
+  });
+
+  it("keeps the zoom out of the workspace model", () => {
+    useUi.getState().splitPane("right");
+    useUi.getState().toggleZoomPane();
+    expect(JSON.stringify(current())).not.toContain("zoom");
+  });
+
+  it("equalizes the split ratios of the active workspace", () => {
+    const right = useUi.getState().splitPane("right")!;
+    useUi.getState().splitPane("right", right);
+    const outer = tree();
+    if (outer.type !== "split") throw new Error("expected a split");
+    useUi.getState().setSplitRatio(outer.id, 0.8);
+    expect(useUi.getState().equalizeSplits()).toBe(true);
+    for (const entry of paneRects(tree())) expect(entry.rect.width).toBeCloseTo(1 / 3);
+  });
+
+  it("reports nothing to equalize without a split", () => {
+    expect(useUi.getState().equalizeSplits()).toBe(false);
   });
 });

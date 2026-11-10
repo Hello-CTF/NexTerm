@@ -469,7 +469,7 @@ func (u *Upload) cleanupParamsAfterFailedFirstChunk(destination base.FileSystem)
 }
 
 func StagingPath(remotePath, uploadID, kind string) string {
-	index := strings.LastIndexAny(remotePath, `/\`)
+	index := strings.LastIndexAny(remotePath, base.PathSeparators(remotePath))
 	return remotePath[:index+1] + "." + remotePath[index+1:] + ".nexterm-" + uploadID + "." + kind
 }
 
@@ -608,7 +608,7 @@ func TargetMode(ctx context.Context, destination base.FileSystem, remotePath str
 	if err != nil {
 		return 0, err
 	}
-	name := remotePath[strings.LastIndexAny(remotePath, `/\`)+1:]
+	name := remotePath[strings.LastIndexAny(remotePath, base.PathSeparators(remotePath))+1:]
 	for _, entry := range entries {
 		if entry.Name == name {
 			return entry.Mode.Perm(), nil
@@ -627,7 +627,7 @@ func ensureRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 	if dir == "" {
 		return nil
 	}
-	trimmed := strings.TrimRight(dir, `/\`)
+	trimmed := strings.TrimRight(dir, base.PathSeparators(dir))
 	if trimmed == "" {
 		return nil
 	}
@@ -654,11 +654,12 @@ func ensureRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 }
 
 func parentDir(remotePath string) string {
-	trimmed := strings.TrimRight(remotePath, `/\`)
+	separators := base.PathSeparators(remotePath)
+	trimmed := strings.TrimRight(remotePath, separators)
 	if trimmed == "" {
 		return ""
 	}
-	index := strings.LastIndexAny(trimmed, `/\`)
+	index := strings.LastIndexAny(trimmed, separators)
 	if index < 0 {
 		return ""
 	}

@@ -205,3 +205,59 @@ export function MetricTrendChart({ kind, samples, latest, windowStart, windowEnd
     </svg>
   );
 }
+
+const SPARK_W = 120;
+const SPARK_H = 24;
+
+export const SPARKLINE_STROKES = {
+  cpu: KIND_META.cpu.stroke,
+  mem: KIND_META.mem.stroke,
+  disk: KIND_META.disk.stroke,
+  rx: "stroke-green-400",
+  tx: "stroke-violet-400",
+} as const;
+
+// Compact unlabelled line for a live metric, newest value on the right. Values are scaled against max (100 for
+// percentages) or, without it, the largest value shown; null breaks the line.
+export function MetricSparkline({
+  values,
+  max,
+  label,
+  stroke = SPARKLINE_STROKES.cpu,
+}: {
+  values: readonly (number | null)[];
+  max?: number;
+  label: string;
+  stroke?: string;
+}) {
+  const top = max ?? Math.max(0, ...values.map((v) => v ?? 0));
+  const step = values.length > 1 ? SPARK_W / (values.length - 1) : 0;
+  const y = (v: number) => SPARK_H - 1 - (top > 0 ? Math.min(1, Math.max(0, v / top)) : 0) * (SPARK_H - 2);
+  const segments: string[][] = [[]];
+  values.forEach((v, i) => {
+    if (v === null || !Number.isFinite(v)) {
+      if (segments[segments.length - 1].length > 0) segments.push([]);
+      return;
+    }
+    segments[segments.length - 1].push(`${(i * step).toFixed(1)},${y(v).toFixed(1)}`);
+  });
+  return (
+    <svg role="img" aria-label={label} viewBox={`0 0 ${SPARK_W} ${SPARK_H}`} preserveAspectRatio="none" className="h-6 w-full">
+      <line x1={0} x2={SPARK_W} y1={SPARK_H - 0.5} y2={SPARK_H - 0.5} className="stroke-neutral-800" strokeWidth="1" />
+      {segments
+        .filter((seg) => seg.length > 1)
+        .map((seg) => (
+          <polyline
+            key={seg[0]}
+            points={seg.join(" ")}
+            fill="none"
+            className={stroke}
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ))}
+    </svg>
+  );
+}

@@ -1,7 +1,8 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createElement } from "react";
+import { act, createElement } from "react";
+import { EditorView } from "@codemirror/view";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   click,
@@ -251,9 +252,13 @@ describe("DbPanel copy", () => {
     await flushUntil(() => text().includes("mydb"));
     expect(text()).toContain("输入 SQL");
     const run = mounted.container.querySelector<HTMLButtonElement>(
-      'button[title="运行整段 SQL，或只运行选中部分（一次只执行一条语句）"]',
+      'button[title="运行光标所在的语句，或只运行选中部分（一次只执行一条语句）"]',
     );
     expect(run).not.toBeNull();
+    const view = EditorView.findFromDOM(mounted.container.querySelector<HTMLElement>(".cm-editor")!)!;
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: "UPDATE t SET x = 1;" } });
+    });
     expect(run!.textContent).toContain("运行");
     click(run!);
     await flushUntil(() => text().includes("运行成功"));

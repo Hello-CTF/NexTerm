@@ -456,6 +456,9 @@ func TestSSHPOSIXRootsComeFromTargetSFTP(t *testing.T) {
 	if roots.PathStyle != base.PathStylePOSIX || !roots.Supported || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" || roots.HomePath == "" {
 		t.Fatalf("POSIX roots = %+v", roots)
 	}
+	if want := (base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true}); roots.Capabilities != want {
+		t.Fatalf("POSIX capabilities = %+v, want %+v", roots.Capabilities, want)
+	}
 }
 
 type targetExecutor struct {
@@ -549,6 +552,9 @@ func TestSSHWindowsRootsAndSFTPPathStyles(t *testing.T) {
 			if roots.PathStyle != base.PathStyleWindows || !roots.Supported || roots.HomePath != `C:\Users\alice` || len(roots.Roots) != 2 || roots.Roots[0].Path != `C:\` || roots.Roots[1].Path != `D:\` {
 				t.Fatalf("Windows roots = %+v", roots)
 			}
+			if want := (base.FileCapabilities{Chmod: base.ChmodReadOnly, CaseInsensitive: true}); roots.Capabilities != want {
+				t.Fatalf("Windows capabilities = %+v, want %+v", roots.Capabilities, want)
+			}
 			if got := filesystem.sftpPath(`D:\work\file.txt`); got != prefix+"D:/work/file.txt" {
 				t.Fatalf("drive path = %q", got)
 			}
@@ -574,6 +580,40 @@ func TestSSHWindowsRootsAndSFTPPathStyles(t *testing.T) {
 				t.Fatalf("probe script = %s", script)
 			}
 		})
+	}
+}
+
+func TestSSHWindowsProbeLearnsDefaultShell(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		openSSH       bool
+		registryShell string
+		want          string
+	}{
+		{name: "Win32-OpenSSH default", openSSH: true, want: "cmd.exe"},
+		{name: "Win32-OpenSSH DefaultShell", openSSH: true, registryShell: `C:\Program Files\PowerShell\7\pwsh.exe`, want: `C:\Program Files\PowerShell\7\pwsh.exe`},
+		{name: "other Windows server", registryShell: `C:\Windows\System32\cmd.exe`, want: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &targetExecutor{}
+			executor.handle = func(string) (base.ExecResult, error) {
+				output := strings.TrimSuffix(windowsRootsOutput(`C:\Users\alice`, [2]string{"C", `C:\`}), "}") + fmt.Sprintf(`,"shell":%q}`, test.registryShell)
+				return targetResult(output, 0), nil
+			}
+			filesystem := &sftpFileSystem{executor: executor, realPath: &targetRealPath{home: "C:/Users/alice"}, openSSHForWindows: test.openSSH}
+			if got := filesystem.detectedShell(); got != "" {
+				t.Fatalf("shell before the probe = %q", got)
+			}
+			if _, err := filesystem.Roots(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := filesystem.detectedShell(); got != test.want {
+				t.Fatalf("detected shell = %q, want %q", got, test.want)
+			}
+		})
+	}
+	if !openSSHForWindowsVersion("SSH-2.0-OpenSSH_for_Windows_9.5") || openSSHForWindowsVersion("SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13") {
+		t.Fatal("Win32-OpenSSH server version not recognized")
 	}
 }
 
@@ -838,7 +878,7 @@ func TestSSHWindowsSFTPFileOperationsAndUNC(t *testing.T) {
 		t.Skip("the virtual Windows SFTP namespace fixture uses POSIX filename semantics")
 	}
 	client, root := newPathTestSFTPClient(t)
-	filesystem := newSFTPFileSystem(client, nil)
+	filesystem := newSFTPFileSystem(client, nil, "")
 	filesystem.target = &sftpEnvironment{pathStyle: base.PathStyleWindows, mapWindowsPaths: true}
 	ctx := context.Background()
 	if err := os.Mkdir(filepath.Join(root, "C:"), 0o700); err != nil {
@@ -932,7 +972,7 @@ func TestSSHWindowsArchiveOperationsAreUnsupported(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			client, _ := newPathTestSFTPClient(t)
 			executor := &targetExecutor{result: targetResult("", 0)}
-			filesystem := newSFTPFileSystem(client, executor)
+			filesystem := newSFTPFileSystem(client, executor, "")
 			filesystem.target = &sftpEnvironment{pathStyle: base.PathStyleWindows, drivePrefix: testCase.drivePrefix, mapWindowsPaths: true}
 			if _, err := filesystem.PackDownload(context.Background(), testCase.remotePath, filepath.Join(t.TempDir(), "out.tar.gz"), sshfs.TransferOptions{}); !errors.Is(err, base.ErrUnsupported) {
 				t.Fatalf("PackDownload error = %v, want unsupported", err)
@@ -950,7 +990,7 @@ func TestSSHWindowsArchiveOperationsAreUnsupported(t *testing.T) {
 func TestSSHPOSIXArchiveOperationsDelegate(t *testing.T) {
 	client, _ := newPathTestSFTPClient(t)
 	executor := &targetExecutor{}
-	filesystem := newSFTPFileSystem(client, executor)
+	filesystem := newSFTPFileSystem(client, executor, "")
 	filesystem.target = &sftpEnvironment{pathStyle: base.PathStylePOSIX}
 	packErr := errors.New("stop after pack delegation")
 	executor.handle = func(command string) (base.ExecResult, error) {

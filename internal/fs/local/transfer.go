@@ -35,6 +35,9 @@ type TransferOptions struct {
 	TaskID           string
 	ProgressInterval time.Duration
 	Progress         func(Progress)
+	// MaxBytes caps the size of a downloaded file; zero means unlimited. Download writes at most the size the
+	// source reports, so a source larger than the cap is refused before anything is written.
+	MaxBytes int64
 }
 
 type localPathMapper interface {
@@ -138,7 +141,7 @@ func Upload(ctx context.Context, localPath string, destination base.FileSystem, 
 	}
 	var reader io.Reader = source
 	if digest != nil {
-		reader = io.TeeReader(source, digest)
+		reader = rewindableHashingReader(source, digest, offset)
 	}
 	transferred, err = finishTransfer(ctx, reader, target, offset, total, options)
 	if err != nil {
@@ -200,7 +203,7 @@ func EnsureRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 	if dir == "" {
 		return fmt.Errorf("remote directory path is empty")
 	}
-	trimmed := strings.TrimRight(dir, `/\`)
+	trimmed := strings.TrimRight(dir, base.PathSeparators(dir))
 	if trimmed == "" {
 		return nil
 	}
@@ -247,7 +250,7 @@ func verifyRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 	if err != nil {
 		return err
 	}
-	name := dir[strings.LastIndexAny(dir, `/\`)+1:]
+	name := dir[strings.LastIndexAny(dir, base.PathSeparators(dir))+1:]
 	for _, entry := range entries {
 		if entry.Name != name {
 			continue
@@ -261,11 +264,12 @@ func verifyRemoteDir(ctx context.Context, destination base.FileSystem, dir strin
 }
 
 func parentDir(remotePath string) string {
-	trimmed := strings.TrimRight(remotePath, `/\`)
+	separators := base.PathSeparators(remotePath)
+	trimmed := strings.TrimRight(remotePath, separators)
 	if trimmed == "" {
 		return ""
 	}
-	index := strings.LastIndexAny(trimmed, `/\`)
+	index := strings.LastIndexAny(trimmed, separators)
 	if index < 0 {
 		return ""
 	}
@@ -299,6 +303,9 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 		return 0, fmt.Errorf("download source %s has a negative size", remotePath)
 	}
 	total = size
+	if options.MaxBytes > 0 && size > options.MaxBytes {
+		return 0, base.ErrTransferTooLarge
+	}
 	var offset int64
 	targetExists := false
 	var initialSource base.FileEntry
@@ -360,7 +367,7 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 	}
 	var reader io.Reader = remote
 	if digest != nil {
-		reader = io.TeeReader(remote, digest)
+		reader = hashingSource(remote, digest)
 	}
 	transferred, err = finishTransfer(ctx, reader, local, offset, total, options)
 	if err != nil {
@@ -438,7 +445,7 @@ func remoteFileMetadata(ctx context.Context, filesystem base.FileSystem, remoteP
 		}
 		return base.FileEntry{}, false, err
 	}
-	name := remotePath[strings.LastIndexAny(remotePath, `/\`)+1:]
+	name := remotePath[strings.LastIndexAny(remotePath, base.PathSeparators(remotePath))+1:]
 	for _, entry := range entries {
 		if entry.Name != name {
 			continue
@@ -562,6 +569,19 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 		interval = 200 * time.Millisecond
 	}
 	lastReport := time.Now()
+	advance := func(position int64) {
+		if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
+			reportTransferProgress(options, position, total, false)
+			lastReport = time.Now()
+		}
+	}
+	if handled, copied, err := pipelinedCopy(ctx, source, target, offset, total, advance); handled {
+		transferred = copied
+		if err != nil {
+			return transferred, err
+		}
+		return transferred, syncAndClose(target, &closed)
+	}
 	buffer := make([]byte, transferChunkSize)
 	for transferred < total {
 		if err := ctx.Err(); err != nil {
@@ -582,10 +602,7 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 			if writeErr != nil {
 				return transferred, writeErr
 			}
-			if options.Progress != nil && interval > 0 && time.Since(lastReport) >= interval {
-				reportTransferProgress(options, transferred, total, false)
-				lastReport = time.Now()
-			}
+			advance(transferred)
 		}
 		if errors.Is(readErr, io.EOF) {
 			if transferred < total {
@@ -600,15 +617,15 @@ func finishTransfer(ctx context.Context, source io.Reader, target base.RemoteWri
 			time.Sleep(time.Millisecond)
 		}
 	}
+	return transferred, syncAndClose(target, &closed)
+}
+
+func syncAndClose(target base.RemoteWriter, closed *bool) error {
 	if err := target.Sync(); err != nil {
-		return transferred, err
+		return err
 	}
-	if err := target.Close(); err != nil {
-		closed = true
-		return transferred, err
-	}
-	closed = true
-	return transferred, nil
+	*closed = true
+	return target.Close()
 }
 
 func reportTransferProgress(options TransferOptions, transferred, total int64, done bool) {

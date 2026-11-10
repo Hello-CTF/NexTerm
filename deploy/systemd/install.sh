@@ -6,6 +6,7 @@ ROOT_PREFIX="/"
 ROLLBACK=0
 ENABLE=1
 ASSUME_YES=0
+KEEP_DATABASE=0
 
 usage() {
   cat <<'INSTALL_HELP_EOF'
@@ -63,6 +64,10 @@ legacy unit flags (--listen, --auth, --data-dir, --web-root,
 discarded, legacy unit copies under /usr/lib/systemd/system or
 /lib/systemd/system are removed, the previous payload is saved to
 /opt/nexterm/.rollback, and only units that were active are restarted.
+For a SQLite database the units are stopped before the restart and
+data.db (with its -wal/-shm files) is copied into the rollback backup, so
+--rollback can return to the pre-upgrade database. PostgreSQL, MySQL and
+MariaDB are not snapshotted: dump them before upgrading.
 An interrupted upgrade keeps its original rollback backup, env-origin
 record, active-unit list, and pending legacy migrations across retries;
 an interrupted first install records the same env origin and resumes,
@@ -71,9 +76,15 @@ finishing with enable --now.
 Options:
   --source DIR   release payload directory (default: this script's directory)
   --root DIR     filesystem prefix for a staged install (default: /)
-  --rollback     restore the payload saved by the previous upgrade
+  --rollback     restore the payload saved by the previous upgrade, and the
+                 SQLite database snapshot taken by it: data written since
+                 that upgrade is lost (the replaced database is kept in
+                 /opt/nexterm/.rollback.failed/db); asks for confirmation
+  --keep-database  with --rollback, keep the current database and restore
+                 only the program files
   --no-enable    do not enable and start nexterm-server on first install
   -y, --yes      do not ask for confirmation when upgrading from before 1.3.0
+                 or when --rollback restores the database snapshot
   -h, --help     show this help
 
 Test hooks (see the Go tests in scripts/installer):
@@ -92,6 +103,7 @@ while [ $# -gt 0 ]; do
     --root) ROOT_PREFIX="$2"; shift 2 ;;
     --root=*) ROOT_PREFIX="${1#*=}"; shift ;;
     --rollback) ROLLBACK=1; shift ;;
+    --keep-database) KEEP_DATABASE=1; shift ;;
     --no-enable) ENABLE=0; shift ;;
     -y|--yes) ASSUME_YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -113,6 +125,7 @@ FAILED_DIR="$OPT_DIR/.rollback.failed"
 SERVER_UNIT="nexterm-server.service"
 ONLYSERVER_UNIT="nexterm-onlyserver.service"
 UNITS="$SERVER_UNIT $ONLYSERVER_UNIT"
+PATHS_DROPIN="$ONLYSERVER_UNIT.d/50-nexterm-paths.conf"
 BINARIES="nexterm-server nexterm-helper-linux-amd64 nexterm-helper-linux-arm64 nexterm-helper-linux-armv7 nexterm-helper-linux-riscv64 nexterm-helper-linux-loong64 nexterm-helper-darwin-amd64 nexterm-helper-darwin-arm64 nexterm-helper-windows-amd64.exe nexterm-helper-windows-arm64.exe"
 ENV_KEYS="NEXTERM_LISTEN NEXTERM_AUTH NEXTERM_DATA_DIR NEXTERM_WEB_ROOT NEXTERM_MASTER_KEY_FILE NEXTERM_DB"
 REAL_ROOT=0
@@ -867,6 +880,11 @@ backup_current() {
       fi
     done
   done
+  if [ -f "$UNIT_DIR/$PATHS_DROPIN" ]; then
+    rel="${UNIT_DIR#$ROOT_PREFIX}/$PATHS_DROPIN"
+    mkdir -p "$BACKUP_DIR/units$(dirname "$rel")"
+    cp -p "$UNIT_DIR/$PATHS_DROPIN" "$BACKUP_DIR/units/$rel"
+  fi
   : > "$BACKUP_DIR/active-units"
   for unit in $ACTIVE_UNITS; do
     printf '%s\n' "$unit" >> "$BACKUP_DIR/active-units"
@@ -881,6 +899,85 @@ backup_current() {
   done
   : > "$BACKUP_DIR/pending"
   log "saved previous payload to $BACKUP_DIR"
+}
+
+# service_db_path NAME prints the SQLite database file the NAME.env
+# configuration opens, resolved like the server resolves it. It returns 2
+# for a remote database backend and 1 when nothing can be resolved.
+service_db_path() {
+  local name="$1" env_file="$ETC_DIR/$1.env" db data_dir="" wd unit file line
+  if [ "$name" = "nexterm" ]; then wd="$WORKING_DIR_NEXTERM"; unit="$SERVER_UNIT"; else wd="$WORKING_DIR_ONLYSERVER"; unit="$ONLYSERVER_UNIT"; fi
+  if [ -f "$env_file" ]; then
+    db="$(env_get "$env_file" NEXTERM_DB)" || return 1
+    case "$(printf '%s' "$db" | tr '[:upper:]' '[:lower:]')" in
+      ""|sqlite) ;;
+      *) return 2 ;;
+    esac
+    data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)" || return 1
+  else
+    # A legacy install has no env file yet: use what its unit passes to the
+    # server, else the server defaults (<working dir>/data).
+    file="$(pick_effective_unit "$unit" "$ROOT_PREFIX" || true)"
+    if [ -n "$file" ]; then
+      wd="$(unit_working_dir "$file")" || return 1
+      while IFS= read -r line; do
+        case "$line" in NEXTERM_DATA_DIR=*) data_dir="${line#NEXTERM_DATA_DIR=}" ;; esac
+      done < <(capture_legacy_values "$file" 2>/dev/null || true)
+    fi
+  fi
+  [ -n "$data_dir" ] || data_dir="$(join_path "$wd" data)"
+  resolve_path "$(join_path "$data_dir" data.db)" "$wd"
+}
+
+# snapshot_databases copies each SQLite database into the rollback backup
+# while its units are stopped, so the copy matches what the old binary last
+# wrote and --rollback can restore it before the new binary migrates it. An
+# interrupted upgrade keeps the snapshot of its first attempt.
+snapshot_databases() {
+  fail_at db-snapshot
+  [ "$MODE" = "upgrade" ] || return 0
+  if [ -f "$BACKUP_DIR/db/complete" ]; then
+    log "preserving the database snapshot from the interrupted upgrade"
+    return 0
+  fi
+  local name db rc seen="" databases="" unit f
+  for name in nexterm onlyserver; do
+    rc=0
+    db="$(service_db_path "$name")" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      log "NOTE: ${ETC_DIR#$ROOT_PREFIX}/$name.env uses a remote database; it is not snapshotted and --rollback cannot undo its schema changes (dump it with pg_dump or mysqldump first)"
+      continue
+    fi
+    if [ "$rc" -eq 0 ] && [ ! -f "$db" ] && [ ! -f "$ETC_DIR/$name.env" ] && [ "$name" = "nexterm" ]; then
+      log "NOTE: no SQLite database found at ${db#$ROOT_PREFIX}; nothing to snapshot"
+    fi
+    [ "$rc" -eq 0 ] && [ -f "$db" ] || continue
+    case " $seen " in *" $db "*) continue ;; esac
+    seen="$seen $db"
+    databases="$databases $name"
+  done
+  rm -rf "$BACKUP_DIR/db"
+  install -d -m 0700 "$BACKUP_DIR/db"
+  if [ -n "$databases" ]; then
+    for unit in $ACTIVE_UNITS; do
+      "$SYSTEMCTL" stop "$unit"
+      log "stopped $unit to snapshot its database"
+    done
+  fi
+  for name in $databases; do
+    db="$(service_db_path "$name")"
+    install -d -m 0700 "$BACKUP_DIR/db/$name"
+    for f in "$db" "$db-wal" "$db-shm"; do
+      if [ -f "$f" ]; then
+        cp -p "$f" "$BACKUP_DIR/db/$name/" ||
+          die "cannot copy $f into the rollback backup (check free space); the services are stopped and nothing new is installed yet: fix the problem and re-run, or run --rollback"
+      fi
+    done
+    printf '%s\n' "$db" > "$BACKUP_DIR/db/$name/path"
+    log "saved database ${db#$ROOT_PREFIX} to the rollback backup"
+  done
+  date -u '+%Y-%m-%dT%H:%M:%SZ' > "$BACKUP_DIR/db/taken-at"
+  : > "$BACKUP_DIR/db/complete"
 }
 
 install_binaries() {
@@ -1117,13 +1214,64 @@ ensure_master_key() {
       if [ "$MODE" = "upgrade" ]; then
         log "WARNING: $key_file was missing and has been regenerated; credentials encrypted under an older key cannot be recovered"
       fi
-      log "generated $key_file (back it up with ${DATA_DIR#$ROOT_PREFIX}; it cannot be recreated)"
+      log "generated $key_file (back it up separately from the database; it cannot be recreated)"
     fi
     if [ "$key_file" != "$configured" ] || ! env_has_key "$env_file" NEXTERM_MASTER_KEY_FILE; then
       env_set "$env_file" NEXTERM_MASTER_KEY_FILE "$key_file"
       log "configured NEXTERM_MASTER_KEY_FILE=$key_file in ${env_file#$ROOT_PREFIX}"
     fi
   done
+}
+
+# The sync-only unit runs with ProtectSystem=strict and ProtectHome=yes. systemd
+# cannot read paths from the EnvironmentFile, so a data directory outside the
+# unit's StateDirectory goes into ReadWritePaths= and configured paths under a
+# home directory relax ProtectHome to read-only, through a drop-in this
+# installer owns: it is rewritten on every run and removed when not needed.
+install_paths_dropin() {
+  fail_at dropin
+  local env_file="$ETC_DIR/onlyserver.env" file="$UNIT_DIR/$PATHS_DROPIN" wd key value data_dir="" home=0 content=""
+  if ! wd="$(unit_working_dir "$UNIT_DIR/$ONLYSERVER_UNIT")"; then
+    die "cannot parse WorkingDirectory in ${UNIT_DIR#$ROOT_PREFIX}/$ONLYSERVER_UNIT (systemd requires an absolute path)"
+  fi
+  for key in NEXTERM_DATA_DIR NEXTERM_MASTER_KEY_FILE NEXTERM_DB_PASSWORD_FILE; do
+    if ! value="$(env_get "$env_file" "$key")"; then
+      die "cannot parse $key in ${env_file#$ROOT_PREFIX} (unsupported EnvironmentFile syntax); fix the file and re-run"
+    fi
+    if [ -z "$value" ]; then
+      [ "$key" = "NEXTERM_DATA_DIR" ] || continue
+      value="data"
+    fi
+    case "$value" in /*) ;; *) value="$(join_path "$wd" "$value")" ;; esac
+    value="$(lex_clean "$value")"
+    if [ "$key" = "NEXTERM_DATA_DIR" ]; then data_dir="$value"; fi
+    case "$value" in /home|/home/*|/root|/root/*|/run/user|/run/user/*) home=1 ;; esac
+  done
+  case "$data_dir" in
+    /var/lib/nexterm|/var/lib/nexterm/*) ;;
+    *)
+      # Quoted with the optional-path dash inside; systemd expands % specifiers, so % doubles.
+      content="ReadWritePaths=\"-$(printf '%s' "$data_dir" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/%/%%/g')\"
+"
+      ;;
+  esac
+  if [ "$home" -eq 1 ]; then
+    content="${content}ProtectHome=read-only
+"
+  fi
+  if [ -z "$content" ]; then
+    if [ -f "$file" ]; then
+      rm -f "$file"
+      rmdir "$(dirname "$file")" 2>/dev/null || true
+      log "removed ${file#$ROOT_PREFIX} (the sync-only unit's defaults cover the configured paths)"
+    fi
+    return 0
+  fi
+  install -d -m 0755 "$(dirname "$file")"
+  printf '# Managed by install.sh from %s; rewritten on every install.\n[Service]\n%s' "${env_file#$ROOT_PREFIX}" "$content" > "$file.new"
+  chmod 0644 "$file.new"
+  mv -f "$file.new" "$file"
+  log "wrote ${file#$ROOT_PREFIX} for the configured paths of the sync-only unit"
 }
 
 reload_systemd() {
@@ -1336,6 +1484,7 @@ run_install() {
       capture_active_units
     fi
     backup_current
+    snapshot_databases
   else
     if [ ! -f "$INCOMPLETE_MARKER" ]; then
       : > "$INCOMPLETE_MARKER"
@@ -1356,6 +1505,7 @@ run_install() {
   install_units
   ensure_env_files
   ensure_master_key
+  install_paths_dropin
   bootstrap_admin
   reload_systemd
   manage_services
@@ -1389,6 +1539,64 @@ print_next_steps() {
   log "  upgrade: run the installer again; undo the last upgrade with --rollback"
 }
 
+# saved_databases prints the names of the database snapshots in the
+# rollback backup.
+saved_databases() {
+  local dir
+  [ -f "$BACKUP_DIR/db/complete" ] || return 0
+  for dir in "$BACKUP_DIR"/db/*/; do
+    if [ -f "$dir/path" ]; then basename "$dir"; fi
+  done
+}
+
+# confirm_database_restore asks before --rollback discards the data written
+# since the upgrade. Without --yes it needs a terminal; otherwise it fails
+# before anything is changed.
+confirm_database_restore() {
+  local answer taken
+  taken="$(cat "$BACKUP_DIR/db/taken-at" 2>/dev/null || printf 'unknown time')"
+  log "WARNING: --rollback restores the database snapshot taken before the upgrade ($taken)."
+  log "WARNING: everything written since then (accounts, assets, settings, sessions, audit) is lost; the current database is kept in ${FAILED_DIR#$ROOT_PREFIX}/db."
+  [ "$ASSUME_YES" = "1" ] && return 0
+  if [ -t 0 ]; then
+    read -r -p "install: restore the database snapshot? [y/N] " answer || answer=""
+  elif [ "$REAL_ROOT" -eq 1 ] && { : </dev/tty; } 2>/dev/null; then
+    read -r -p "install: restore the database snapshot? [y/N] " answer </dev/tty || answer=""
+  else
+    die "restoring the database snapshot needs confirmation; nothing was changed. Re-run with --yes to restore it, or with --keep-database to restore only the program files"
+  fi
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) die "rollback cancelled; nothing was changed (re-run with --yes, or with --keep-database to keep the current database)" ;;
+  esac
+}
+
+restore_databases() {
+  local databases="$1" name db dir unit f
+  [ -n "$databases" ] || return 0
+  for unit in $UNITS; do
+    if unit_active "$unit"; then
+      "$SYSTEMCTL" stop "$unit"
+      log "stopped $unit to restore its database"
+      case " $ACTIVE_UNITS " in *" $unit "*) ;; *) ACTIVE_UNITS="$ACTIVE_UNITS $unit" ;; esac
+    fi
+  done
+  for name in $databases; do
+    dir="$BACKUP_DIR/db/$name"
+    db="$(cat "$dir/path")"
+    install -d -m 0700 "$FAILED_DIR/db/$name"
+    for f in "$db" "$db-wal" "$db-shm"; do
+      if [ -f "$f" ]; then mv "$f" "$FAILED_DIR/db/$name/"; fi
+    done
+    fail_at db-restore
+    for f in "$dir"/*; do
+      case "$(basename "$f")" in path) continue ;; esac
+      cp -p "$f" "$(dirname "$db")/"
+    done
+    log "restored database ${db#$ROOT_PREFIX} from the pre-upgrade snapshot"
+  done
+}
+
 run_rollback() {
   fail_at preflight
   [ -d "$BACKUP_DIR" ] || die "no rollback backup found at ${BACKUP_DIR#$ROOT_PREFIX}"
@@ -1401,8 +1609,25 @@ run_rollback() {
   if ! load_saved_active_units; then
     capture_active_units
   fi
+  local databases
+  databases="$(saved_databases | tr '\n' ' ')"
+  if [ -n "$databases" ]; then
+    if [ "$KEEP_DATABASE" -eq 1 ]; then
+      log "WARNING: keeping the current database (--keep-database); the restored version runs against the schema the newer version migrated, which it may not support"
+      databases=""
+    else
+      confirm_database_restore
+    fi
+  fi
   fail_at rollback
   install -d -m 0755 "$OPT_DIR"
+  # A database kept by an earlier rollback may be the only copy of the data
+  # written since that upgrade, so it is moved aside and never deleted.
+  if [ -d "$FAILED_DIR/db" ]; then
+    local kept="$OPT_DIR/.rollback.failed-db.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    mv "$FAILED_DIR/db" "$kept"
+    log "kept the database saved by an earlier rollback in ${kept#$ROOT_PREFIX}"
+  fi
   rm -rf "$FAILED_DIR"
   install -d -m 0700 "$FAILED_DIR"
   local f rel unit
@@ -1419,6 +1644,11 @@ run_rollback() {
       fi
     done
   done
+  if [ -f "$UNIT_DIR/$PATHS_DROPIN" ] && [ ! -f "$BACKUP_DIR/units/etc/systemd/system/$PATHS_DROPIN" ]; then
+    rm -f "$UNIT_DIR/$PATHS_DROPIN"
+    rmdir "$(dirname "$UNIT_DIR/$PATHS_DROPIN")" 2>/dev/null || true
+    log "removed etc/systemd/system/$PATHS_DROPIN (not part of the previous payload)"
+  fi
   for f in $BINARIES; do
     if [ -f "$BACKUP_DIR/$f" ]; then install -m 0755 "$BACKUP_DIR/$f" "$OPT_DIR/$f"; fi
   done
@@ -1430,6 +1660,7 @@ run_rollback() {
       install -m 0644 "$BACKUP_DIR/units/$rel" "$ROOT_PREFIX/$rel"
     done)
   fi
+  restore_databases "$databases"
   reload_systemd
   manage_services
   rm -rf "$BACKUP_DIR"
@@ -1440,5 +1671,8 @@ run_rollback() {
 if [ "$ROLLBACK" -eq 1 ]; then
   run_rollback
 else
+  if [ "$KEEP_DATABASE" -eq 1 ]; then
+    log "WARNING: --keep-database only applies with --rollback and is ignored"
+  fi
   run_install
 fi

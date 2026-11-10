@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor"
 	"github.com/Hello-CTF/NexTerm/internal/hostports"
 	"github.com/Hello-CTF/NexTerm/internal/hostprocs"
 	"github.com/Hello-CTF/NexTerm/internal/hub"
@@ -71,6 +72,7 @@ type ProductionServices struct {
 	Docker        *docker.Service
 	hostPorts     *hostports.Service
 	hostProcs     *hostprocs.Service
+	hostMonitor   *hostmonitor.Service
 	Retention     *RetentionRunner
 	Guard         *guard.Manager
 	Agent         *agent.Runner
@@ -313,7 +315,7 @@ func productionModules(services ProductionServices) []Module {
 				if err := services.terminalCommands.registerTranscripts(dispatcher); err != nil {
 					return err
 				}
-				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store); err != nil {
+				if err := registerExecBatchCommands(dispatcher, services.ExecBatches, services.Store, services.Sessions); err != nil {
 					return err
 				}
 				if services.Store != nil {
@@ -361,6 +363,12 @@ func productionModules(services ProductionServices) []Module {
 		}
 		modules = append(modules, Module{Name: "state-rules", RegisterCommands: services.stateRules.registerCommands})
 	}
+	// Registered without the AI runtime too, so the terminal can say that AI is unavailable.
+	aiCommands := &aiCommandRuntime{}
+	if services.Profiles != nil {
+		aiCommands.model = aiCommandModelFactory(aiModelFactory(services.Profiles))
+	}
+	modules = append(modules, Module{Name: "ai-command", RegisterCommands: aiCommands.registerCommands})
 	if services.Sessions != nil {
 		localHelper := services.LocalHelper
 		exposureController := services.LocalHelperExposure
@@ -429,6 +437,9 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.hostProcs != nil {
 		modules = append(modules, hostProcsModule(services.hostProcs))
+	}
+	if services.hostMonitor != nil {
+		modules = append(modules, hostMonitorModule(services.hostMonitor))
 	}
 	if module, ok := previewModule(services.desktop); ok {
 		modules = append(modules, module)

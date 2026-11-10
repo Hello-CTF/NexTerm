@@ -53,9 +53,22 @@ const wasm = vi.hoisted(() => {
       return { transferId: index, completion: blob ? Promise.resolve(blob) : Promise.reject(new Error("transfer failed")) };
     }
   }
+  class InputTransaction {
+    events: unknown[] = [];
+    addEvent(event: unknown) {
+      this.events.push(event);
+    }
+  }
+  // DeviceEvent stands in for the wasm events, which carry the whole character; IronRDP encodes it as UTF-16.
+  const DeviceEvent = {
+    unicodePressed: (unicode: string) => `down:${unicode}`,
+    unicodeReleased: (unicode: string) => `up:${unicode}`,
+  };
   const state = {
     remoteCallback: null as ((data: ClipboardData) => void) | null,
     pastes: [] as ClipboardData[],
+    inputs: [] as InputTransaction[],
+    applyInputs: true,
     ClipboardData,
     FileTransfer,
     fileChannel: false,
@@ -76,10 +89,11 @@ const wasm = vi.hoisted(() => {
         onClipboardPaste: async (data: ClipboardData) => {
           state.pastes.push(data);
         },
+        ...(state.applyInputs ? { applyInputs: (transaction: InputTransaction) => state.inputs.push(transaction) } : {}),
       };
     }
   }
-  return { state, Backend: { SessionBuilder, ClipboardData }, FileTransfer };
+  return { state, Backend: { SessionBuilder, ClipboardData, InputTransaction, DeviceEvent }, FileTransfer };
 });
 
 vi.mock("../../features/remote/remoteSocket", () => ({
@@ -261,6 +275,16 @@ async function connected(opts = options(), cb = callbacks()) {
   const client = new RdpClient(stage, opts, cb);
   await client.connect();
   return { client, cb };
+}
+
+// Builds the session through the module, the way the component does, so the client holds the wasm session.
+function connectThroughModule() {
+  wasm.state.inputs = [];
+  scenario.connect = async () => {
+    const element = document.querySelector("iron-remote-desktop") as HTMLElement & { module: { SessionBuilder: new () => { connect(): Promise<unknown> } } };
+    await new element.module.SessionBuilder().connect();
+    return { run: () => new Promise(() => undefined) };
+  };
 }
 
 const calls = (name: string) => scenario.builderCalls.filter(([key]) => key === name).map(([, value]) => value);
@@ -680,12 +704,27 @@ describe("RdpClient input", () => {
     expect(events.map((event) => `${event.type}:${event.code}`)).toEqual(["keydown:AltLeft", "keydown:Tab", "keyup:Tab", "keyup:AltLeft"]);
   });
 
-  it("types text through Unicode mode and skips characters that do not fit one code unit", async () => {
+  it("types text through Unicode mode and sends characters beyond one code unit to the session directly", async () => {
+    connectThroughModule();
     const { client } = await connected();
     const events = keyEvents();
-    client.sendText("a\u{1F600}b");
+    expect(client.sendText("a\u{1F600}b")).toBe(0);
     expect(events.map((event) => `${event.type}:${event.key}`)).toEqual(["keydown:a", "keyup:a", "keydown:b", "keyup:b"]);
+    expect(wasm.state.inputs.map((transaction) => transaction.events)).toEqual([["down:\u{1F600}", "up:\u{1F600}"]]);
     expect(scenario.ui.setKeyboardUnicodeMode.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("counts characters it cannot send when the session takes no direct input", async () => {
+    wasm.state.applyInputs = false;
+    connectThroughModule();
+    try {
+      const { client } = await connected();
+      const events = keyEvents();
+      expect(client.sendText("a\u{1F600}\u{1F44D}")).toBe(2);
+      expect(events.map((event) => `${event.type}:${event.key}`)).toEqual(["keydown:a", "keyup:a"]);
+    } finally {
+      wasm.state.applyInputs = true;
+    }
   });
 
   it("restores normal keyboard mode even if typing fails", async () => {

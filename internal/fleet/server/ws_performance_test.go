@@ -69,7 +69,7 @@ func runPipeBridgeSupervisorFrames(tb testing.TB, frames int, benchmark *testing
 	pipeDone := make(chan struct{})
 	go func() {
 		defer close(pipeDone)
-		pipeBridge(userServer, bridge)
+		pipeBridge(context.Background(), userServer, bridge)
 	}()
 	writeErr := make(chan error, 1)
 	targetBytes := frames * len(frame)

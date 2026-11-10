@@ -510,6 +510,30 @@ func TestFileServerRejectsUnknownFrame(t *testing.T) {
 	}
 }
 
+func TestFileServerCreateFileIsExclusive(t *testing.T) {
+	h := newFileHarness(t)
+	ctx := h.ctx
+	file := filepath.Join(h.root, "nginx.conf")
+	h.run(t, func(c *deviceproto.Client) error {
+		return c.CreateFile(ctx, file)
+	})
+	if data, err := os.ReadFile(file); err != nil || len(data) != 0 {
+		t.Fatalf("created file = %q, %v; want an empty file", data, err)
+	}
+	if err := os.WriteFile(file, []byte("keep me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.run(t, func(c *deviceproto.Client) error {
+		if err := c.CreateFile(ctx, file); !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("CreateFile over an existing file = %v; want fs.ErrExist", err)
+		}
+		return nil
+	})
+	if data, err := os.ReadFile(file); err != nil || string(data) != "keep me" {
+		t.Fatalf("existing file after refused create = %q, %v", data, err)
+	}
+}
+
 func TestFileServerServeClaimsBridge(t *testing.T) {
 	ends := make(chan net.Conn, 1)
 	var gotBridge, gotPurpose string

@@ -391,6 +391,16 @@ func TestFileSystemRootsProtocolError(t *testing.T) {
 	}
 }
 
+// An agent that predates FrameCreateFile answers with its unknown-frame protocol error; the client reports it as
+// unsupported instead of leaving the caller free to retry with a truncating write.
+func TestFileSystemCreateFileOnAnOlderAgentIsUnsupported(t *testing.T) {
+	filesystem := (scriptedFileSystem{}).filesystem()
+	err := filesystem.CreateFile(context.Background(), "/srv/new.conf")
+	if !errors.Is(err, base.ErrUnsupported) {
+		t.Fatalf("CreateFile on an older agent = %v; want base.ErrUnsupported", err)
+	}
+}
+
 func TestFileSystemRootsBridgeFailure(t *testing.T) {
 	bridgeErr := errors.New("bridge unavailable")
 	filesystem := (scriptedFileSystem{bridgeErr: bridgeErr}).filesystem()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
@@ -50,6 +51,26 @@ func (f *FileSystem) WriteFile(ctx context.Context, path string, data []byte, ba
 	script := "$ErrorActionPreference='Stop'; " + resolvePath(path) + backupClause + "[IO.File]::WriteAllBytes($__nextermPath, [Convert]::FromBase64String('" + encoded + "'))"
 	_, err := f.execute(ctx, script)
 	return err
+}
+
+// CreateFile creates an empty file with FileMode.CreateNew, which the OS refuses atomically when the path exists.
+func (f *FileSystem) CreateFile(ctx context.Context, path string) error {
+	script := "$ErrorActionPreference='Stop'; " + resolvePath(path) +
+		"if (Test-Path -LiteralPath $__nextermPath) { 'exists' } else { " +
+		"try { [IO.File]::Open($__nextermPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None).Close(); 'created' } " +
+		"catch [IO.IOException] { if (Test-Path -LiteralPath $__nextermPath) { 'exists' } else { throw } } }"
+	output, err := f.execute(ctx, script)
+	if err != nil {
+		return err
+	}
+	switch output {
+	case "created":
+		return nil
+	case "exists":
+		return fmt.Errorf("WinRM create %s: %w", path, fs.ErrExist)
+	default:
+		return fmt.Errorf("unexpected WinRM create response %q", output)
+	}
 }
 
 func (f *FileSystem) OpenRead(ctx context.Context, _ string) (base.RemoteReader, error) {

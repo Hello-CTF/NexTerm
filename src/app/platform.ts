@@ -84,6 +84,17 @@ export function localSessionIsWindows(): boolean {
   return backendOS === null ? windowsPlatform : backendOS === "windows";
 }
 
+// The Windows build of the backend that runs local terminals in ConPTY; null when it is not Windows or unknown.
+let localWindowsBuild: number | null = null;
+
+export function setLocalWindowsBuild(build: unknown): void {
+  localWindowsBuild = typeof build === "number" && Number.isInteger(build) && build > 0 ? build : null;
+}
+
+export function localConptyBuild(): number | null {
+  return localSessionIsWindows() ? localWindowsBuild : null;
+}
+
 export function localSessionIsMac(): boolean {
   return backendOS === null ? macPlatform : backendOS === "macos" || backendOS === "darwin";
 }

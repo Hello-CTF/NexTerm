@@ -100,6 +100,33 @@ func DedupeIdentityFiles(paths []string) []string {
 	return out
 }
 
+// UsableIdentityFiles splits deduplicated identity files into those that can be opened as regular files and those
+// OpenSSH would silently skip because they are absent or unreadable. A wildcard IdentityFile reaches every host, so
+// choosing key auth from a skipped path would replace a working agent login with a broken key path.
+func UsableIdentityFiles(paths []string) (usable, skipped []string) {
+	usable = []string{}
+	for _, path := range DedupeIdentityFiles(paths) {
+		if identityFileUsable(path) {
+			usable = append(usable, path)
+		} else {
+			skipped = append(skipped, path)
+		}
+	}
+	return usable, skipped
+}
+
+func identityFileUsable(path string) bool {
+	if rejectNonRegular(path) != nil {
+		return false
+	}
+	f, err := openSharedDelete(path)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	return true
+}
+
 func readKeyFileBounded(path string) ([]byte, error) {
 	if err := rejectNonRegular(path); err != nil {
 		return nil, err

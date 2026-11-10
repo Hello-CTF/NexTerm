@@ -4,7 +4,7 @@ import {
   type PreviewControlState,
   type PreviewFailure,
   type PreviewReady,
-  type PreviewSnapshot,
+  snapshotEscape,
 } from "./previewApi";
 import { PublicShareTerminal, type PublicShareTerminalHandle } from "./PublicShareTerminal";
 import { t } from "../../i18n";
@@ -52,15 +52,6 @@ function formatExpiry(expiresAt: number): string | null {
   const date = new Date(expiresAt);
   if (Number.isNaN(date.getTime())) return null;
   return t("有效期至 {toLocaleString}", { toLocaleString: date.toLocaleString() });
-}
-
-// snapshotEscape renders the current screen snapshot into a blank terminal: text lines spread from the top-left, then
-// the cursor moves to the snapshot position. The snapshot carries no character attributes (the server screen model stores text only).
-function snapshotEscape(snapshot: PreviewSnapshot): string {
-  const text = snapshot.lines.join("\r\n");
-  const row = Math.max(0, Math.trunc(snapshot.cursorRow)) + 1;
-  const col = Math.max(0, Math.trunc(snapshot.cursorCol)) + 1;
-  return `${text}\x1b[${row};${col}H`;
 }
 
 function controlBadge(writable: boolean, controlState: PreviewControlState): { text: string; tone: string } {

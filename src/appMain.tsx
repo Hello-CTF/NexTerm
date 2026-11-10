@@ -16,7 +16,7 @@ import { openDeepLink } from "./app/deepLink";
 import { applySessionStatusEvent, noteHelperProgress, probeForegroundSessions, useUi } from "./app/store";
 import { installForegroundResume } from "./app/foregroundResume";
 import { onRemoteChange } from "./app/layout";
-import { applyBackendPlatform } from "./app/platform";
+import { applyBackendPlatform, setLocalWindowsBuild } from "./app/platform";
 import { installLongPressContextMenu } from "./app/longPress";
 import { installInputCapitalization } from "./app/inputCapitalization";
 import { setMountUnavailableReason } from "./app/capabilities";
@@ -137,6 +137,7 @@ async function bootstrapApp(): Promise<void> {
     ]);
     applyBackendPlatform(os, DESKTOP);
     setMountUnavailableReason(mountReason);
+    if (os === "windows") setLocalWindowsBuild(await systemApi.windowsBuild());
   } catch {
   }
   mount(

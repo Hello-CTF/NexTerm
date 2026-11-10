@@ -86,6 +86,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: () => {},
           findPrevious: () => {},
+          clear: () => {},
         });
       }, []);
       return <div data-testid="xterm-mock" />;

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
 
 func TestAuditCountAndQueryOptionalFilters(t *testing.T) {
@@ -67,5 +69,45 @@ func TestAuditCountAndQueryOptionalFilters(t *testing.T) {
 	secondPage, err := db.AuditQuery(ctx, AuditQuery{Limit: 2, Offset: 2})
 	if err != nil || len(secondPage) != 1 || secondPage[0].Kind != "connect" {
 		t.Fatalf("second page rows=%+v err=%v", secondPage, err)
+	}
+}
+
+func TestAuditUnownedAuthRowsAreVisibleOnlyToSuperadminAuthQuery(t *testing.T) {
+	base := context.Background()
+	db := testStore(t)
+	admin := ipc.WithRole(ipc.WithUserID(base, "admin"), "superadmin")
+	member := ipc.WithRole(ipc.WithUserID(base, "member"), "member")
+	for _, row := range []struct {
+		ctx    context.Context
+		source string
+	}{
+		{ipc.WithUserID(base, "admin"), "auth"},
+		{ipc.WithUserID(base, "member"), "auth"},
+		{base, "auth"},
+		{base, "user"},
+	} {
+		if err := db.AuditInsert(row.ctx, AuditInput{Source: row.source, Kind: "login_failure", Payload: map[string]any{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(ctx context.Context, source *string) int64 {
+		n, err := db.AuditCount(ctx, AuditQuery{Source: source})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := db.AuditQuery(ctx, AuditQuery{Source: source})
+		if err != nil || int64(len(rows)) != n {
+			t.Fatalf("query rows=%d count=%d err=%v", len(rows), n, err)
+		}
+		return n
+	}
+	if got := count(admin, ptr("auth")); got != 2 {
+		t.Fatalf("superadmin auth view = %d, want own + unowned", got)
+	}
+	if got := count(admin, nil); got != 1 {
+		t.Fatalf("superadmin unfiltered view = %d, want own only", got)
+	}
+	if got := count(member, ptr("auth")); got != 1 {
+		t.Fatalf("member auth view = %d, want own only", got)
 	}
 }

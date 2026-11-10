@@ -22,10 +22,15 @@
 ## Features
 
 - **Persistent terminals**: keep running when the app closes or the network drops
+- **Terminal tools**: command blocks, history replay, broadcast, splits, keyword highlighting
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
-- **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding
-- **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
+- **Layout templates**: save a split layout, then reopen a host's terminals with it and run startup snippets
+- **Everyday ops**: remote files (including trzsz in-terminal transfer), Docker, MySQL / PostgreSQL / Redis, port forwarding, live host monitoring
+- **Windows ops**: manage Windows services and follow Windows event logs through PowerShell
+- **Every connection**: SSH, WinRM, Telnet, local shells, managed devices, RDP / VNC
+- **Easy migration**: import hosts from OpenSSH config, Termius, PuTTY, MobaXterm, Xshell, SecureCRT
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync
+- **Lock screen**: lock NexTerm while away; terminals keep running and notifications show no content
 - **Nine interface languages**: Simplified and Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian
 
 Sync is not end-to-end encrypted: the password reaches the server at sign-in, so sign in only to servers you trust, over HTTPS (see [Security](docs/security.en.md)). See [Features](docs/features.en.md) for the full list.
@@ -69,7 +74,7 @@ On a glibc-based Linux with systemd (amd64 / arm64), run:
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-The installer prints the initial password of the `admin` super-admin once. The service listens on `127.0.0.1:8080` by default: run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`. See the [server guide](deploy/systemd/README.md) for upgrades, rollback, reverse proxies, external databases, and multi-user limits.
+The installer prints the initial password of the `admin` super-admin once. The service listens on `127.0.0.1:8080` by default: run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`. For health checks use `GET /livez` (liveness, no database access) and `GET /healthz` (readiness: 503 when the database is unreachable, or when `--require-vault` is set and the vault is locked; callers that are not on loopback and not signed in as super-admin see only `ok`, `service` and `version`); inside a container, `nexterm-server healthcheck` exits 0 when ready and 1 otherwise. The service logs to the systemd journal (`journalctl -u nexterm-server`); `NEXTERM_LOG_LEVEL`, `NEXTERM_LOG_FORMAT`, `NEXTERM_LOG_FILE`, and `NEXTERM_ACCESS_LOG` adjust logging. See the [server guide](deploy/systemd/README.md) for upgrades, rollback, backup and restore, reverse proxies, external databases, health checks, logging, multi-user limits, the optional Prometheus metrics endpoint, and the staging limits for browser uploads, downloads and recordings (2 GiB per account by default, set with `NEXTERM_BLOB_STAGE_MAX_BYTES` and related variables).
 
 ## More documentation
 

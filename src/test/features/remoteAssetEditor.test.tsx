@@ -202,6 +202,27 @@ describe("AssetEditor remote desktop kinds", () => {
     expect(createdPayload()).toMatchObject({ kind: "rdp", options: { clipboardAutoSync: false, commandAsCtrl: false } });
   });
 
+  it("offers legacy TLS only for RDP, warns while it is on, and saves it", async () => {
+    mountEditor();
+    chooseKind("RDP");
+    await flush();
+    fillRequiredFields("win7");
+    expect(field("允许旧版 TLS（1.0/1.1）").checked).toBe(false);
+    expect(mounted!.container.querySelector('[role="note"]')).toBeNull();
+    click(field("允许旧版 TLS（1.0/1.1）"));
+    await flush();
+    expect(mounted!.container.querySelector('[role="note"]')?.textContent).toContain("不再安全");
+    await save();
+    expect(createdPayload()).toMatchObject({ kind: "rdp", options: { legacyTLS: true } });
+  });
+
+  it("does not offer legacy TLS for VNC", async () => {
+    mountEditor();
+    chooseKind("VNC");
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="允许旧版 TLS（1.0/1.1）"]')).toBeNull();
+  });
+
   it("saves an RDP asset with its domain, fixed resolution and options", async () => {
     mountEditor();
     chooseKind("RDP");
@@ -360,5 +381,81 @@ describe("AssetEditor wake-on-LAN options", () => {
     mountEditor(makeAsset());
     await flush();
     expect(mounted!.container.querySelector('input[aria-label="唤醒 MAC 地址"]')).toBeNull();
+  });
+});
+
+describe("AssetEditor telnet", () => {
+  it("defaults to port 23, warns that the protocol is unencrypted and asks for no credentials", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    expect((mounted!.container.querySelector('input[type="number"]') as HTMLInputElement).value).toBe("23");
+    expect(mounted!.container.querySelector('[role="note"]')?.textContent).toContain("Telnet 不加密");
+    const labels = [...mounted!.container.querySelectorAll("label.nx-label")].map((label) => label.textContent?.trim());
+    expect(labels).not.toContain("用户名");
+    expect(labels).not.toContain("密码");
+    expect(mounted!.container.querySelector('button[aria-label="认证方式"]')).toBeNull();
+    expect(mounted!.container.querySelector('button[aria-label="密码"]')).toBeNull();
+    expect(mounted!.container.textContent).not.toContain("高级选项");
+    expect(mounted!.container.querySelector('button[aria-label="终端编码"]')).not.toBeNull();
+  });
+
+  it("saves the host, port and encoding without credentials", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    fillRequiredFields("core-switch");
+    chooseSelectOption(mounted!.container, "终端编码", "gbk");
+    await save();
+    expect(createdPayload()).toMatchObject({
+      kind: "telnet",
+      host: "db.internal",
+      port: 23,
+      username: "",
+      authKind: "none",
+      credId: null,
+      options: { encoding: "gbk" },
+    });
+  });
+
+  it("drops the SSH-only options of a host switched to Telnet and keeps its encoding", async () => {
+    mountEditor({ ...sshAsset("sw-1", "edge-switch"), options: { startupCommand: "top", encoding: "big5" } });
+    await flush();
+    chooseKind("Telnet");
+    await flush();
+    await save();
+    const payload = updatedPayload();
+    expect(payload).toMatchObject({ kind: "telnet", port: 23, authKind: "none", credId: null });
+    expect(payload.options).toEqual({ encoding: "big5" });
+  });
+
+  it("stores local echo and CR LF only when they differ from the defaults", async () => {
+    mountEditor();
+    chooseKind("Telnet");
+    await flush();
+    fillRequiredFields("smtp-test");
+    chooseSelectOption(mounted!.container, "本地回显", "始终本地显示");
+    click(field("回车发送 CR LF"));
+    await save();
+    expect(createdPayload().options).toEqual({ localEcho: "on", sendCrlf: true });
+
+    mounted?.unmount();
+    mocks.update.mockClear();
+    mountEditor(makeAsset({ id: "sw-3", kind: "telnet", port: 23, username: "", authKind: "none", options: { localEcho: "off", sendCrlf: true } }));
+    await flush();
+    expect(field("回车发送 CR LF").checked).toBe(true);
+    chooseSelectOption(mounted!.container, "本地回显", "自动");
+    click(field("回车发送 CR LF"));
+    await save();
+    expect(updatedPayload().options).toEqual({});
+  });
+
+  it("removes the stored encoding when it is set back to UTF-8", async () => {
+    mountEditor(makeAsset({ id: "sw-2", kind: "telnet", port: 2323, username: "", authKind: "none", options: { encoding: "gbk" } }));
+    await flush();
+    chooseSelectOption(mounted!.container, "终端编码", "utf-8");
+    await save();
+    expect(updatedPayload()).toMatchObject({ kind: "telnet", port: 2323, options: {} });
+    expect((updatedPayload().options as Record<string, unknown>).encoding).toBeUndefined();
   });
 });

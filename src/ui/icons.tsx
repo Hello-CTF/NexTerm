@@ -93,6 +93,21 @@ export const IconFolderOpen = (p: IconProps) => (
   </Svg>
 );
 
+export const IconFolderLink = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 6.5A2 2 0 0 1 5.5 4.5h3.3a2 2 0 0 1 1.6.8l1 1.4h7.1a2 2 0 0 1 2 2v8.3a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+    <path d="M9 16v-1.5a2 2 0 0 1 2-2h4M13.5 10.5l2 2-2 2" />
+  </Svg>
+);
+
+export const IconFileLink = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M15 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7z" />
+    <path d="M14 2.5V7a1 1 0 0 0 1 1h4.5" />
+    <path d="M8.5 18v-1.5a2 2 0 0 1 2-2h4M13 12.5l2 2-2 2" />
+  </Svg>
+);
+
 export const IconFile = (p: IconProps) => (
   <Svg {...p}>
     <path d="M15 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7z" />
@@ -648,6 +663,7 @@ export const KIND_ICON_MAP = {
   redis: IconLayers,
   rdp: IconDesktop,
   vnc: IconDesktop,
+  telnet: IconNetwork,
 } as const;
 
 export type AssetKind = keyof typeof KIND_ICON_MAP;

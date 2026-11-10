@@ -27,6 +27,10 @@ type Accounts struct {
 	// blockedMu guards blockedListeners, called after an account is disabled or reset so dependents can drop live channels.
 	blockedMu        sync.Mutex
 	blockedListeners []func(userID string)
+	// csrfSecret caches the root of the server keys derived by serverKey.
+	csrfMu     sync.Mutex
+	csrfSecret []byte
+	serverKeys map[string][]byte
 }
 
 // userTable centralizes the account table name for future storage backend changes.
@@ -80,6 +84,8 @@ func New(db *gorm.DB, options ...Option) *Accounts {
 	for _, option := range options {
 		option(a)
 	}
+	// Build the unknown-user hash now so the first such login is not slower.
+	dummyPasswordHash()
 	return a
 }
 

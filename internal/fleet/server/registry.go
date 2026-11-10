@@ -116,6 +116,13 @@ func (r *Registry) AgentOnline(deviceID string) bool {
 	return r.controls[deviceID] != nil
 }
 
+// OnlineCount reports how many device control channels are registered.
+func (r *Registry) OnlineCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.controls)
+}
+
 // StateDigest returns the supervisor state digest reported by the device control channel hello;
 // the second return value is false when the device is offline or has not reported one.
 func (r *Registry) StateDigest(deviceID string) (string, bool) {

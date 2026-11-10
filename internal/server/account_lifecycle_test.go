@@ -54,7 +54,7 @@ func newAccountCleanupFixture(t *testing.T, cleanup AccountCleanupFunc) *account
 	config := testConfig(t, false)
 	config.Options.Auth = AuthOn
 	config.Options.Listen = "127.0.0.1:0"
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	config.AccountCleanup = cleanup
 	config.AccountCleanupPrepare = func(ctx context.Context, ownerID, cleanupID string) (func(...string), func(), error) {

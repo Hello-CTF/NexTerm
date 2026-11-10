@@ -152,7 +152,11 @@ describe("Command palette reachability and quick connect", () => {
     const view = await mountPalette({ onClose: vi.fn() });
     await waitForRendered(() => expect(mocks.probeBatch).toHaveBeenCalledTimes(1));
     setInputValue(searchInput(view.container), "probe web-01");
-    expect(view.container.textContent).not.toContain("probe web-01");
+    // Only the ask-AI offer may repeat the query; no asset action matches it.
+    const matching = [...view.container.querySelectorAll('[role="option"]')].filter((option) =>
+      option.textContent?.includes("probe web-01"),
+    );
+    expect(matching.map((option) => option.textContent)).toEqual([expect.stringContaining("问 AI：probe web-01")]);
   });
 
   it("switches to the hosts scope in place from the quick connect action", async () => {

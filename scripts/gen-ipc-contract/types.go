@@ -27,12 +27,19 @@ type typeRegistry struct {
 }
 
 var tsNameOverrides = map[string]string{
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Disk":                         "HostMonitorDisk",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Load":                         "HostMonitorLoad",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Memory":                       "HostMonitorMemory",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.NetInterface":                 "HostMonitorNetInterface",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.SampleArgs":                   "HostMonitorSampleArgs",
+	"github.com/Hello-CTF/NexTerm/internal/hostmonitor.Snapshot":                     "HostMonitorSnapshot",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.Listener":                       "HostPortListener",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ListArgs":                       "HostPortsListArgs",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ListResult":                     "HostPortsListResult",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeArgs":                      "HostProbeArgs",
 	"github.com/Hello-CTF/NexTerm/internal/hostports.ProbeResult":                    "HostProbeResult",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCancelRequest":           "FSCancelRequest",
+	"github.com/Hello-CTF/NexTerm/internal/app/production.fsCapabilitiesDTO":         "FSCapabilitiesDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadBeginDTO":     "FSChunkUploadBeginDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsChunkUploadProgressDTO":  "FSChunkUploadProgressDTO",
 	"github.com/Hello-CTF/NexTerm/internal/app/production.fsEntryDTO":                "FSEntryDTO",
@@ -173,6 +180,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"docker_inspect":                  {{name: "SessionID"}, {name: "ContainerID"}},
 	"fs_checksum":                     {{name: "SessionID"}, {name: "Path"}, {name: "Algo", optional: true}},
 	"fs_chmod":                        {{name: "SessionID"}, {name: "Path"}, {name: "Mode"}},
+	"fs_create":                       {{name: "SessionID"}, {name: "Path"}},
 	"fs_delete":                       {{name: "SessionID"}, {name: "Path"}, {name: "IsDir"}},
 	"fs_download":                     {{name: "SessionID"}, {name: "RemotePath"}, {name: "LocalPath"}, {name: "Resume", optional: true}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
 	"fs_extract":                      {{name: "SessionID"}, {name: "Path"}},

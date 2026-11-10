@@ -24,8 +24,11 @@ through an SSH tunnel, `ssh -L 8080:127.0.0.1:8080 user@server`, then open
 `http://localhost:8080`, or put a TLS reverse proxy in front (see
 [Database settings](#database-settings) for the proxy trust settings).
 Settings live in `/etc/nexterm/nexterm.env`; run
-`systemctl restart nexterm-server` after changing them. Back up
-`/var/lib/nexterm`, `/etc/nexterm/master.key`, and any external database.
+`systemctl restart nexterm-server` after changing them. Take database
+backups with `nexterm-server backup` and keep the master key and TOTP key
+separately (see [Backup and restore](#backup-and-restore)); copying
+`/var/lib/nexterm` while the server runs can capture an inconsistent
+database.
 `nexterm-server --help` lists every option.
 
 `--auth off` disables accounts, administration and device routes: anyone who
@@ -168,7 +171,12 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
   then `/lib/systemd/system/`) is consulted; lower-priority copies are
   removed without applying their values;
 - saves the previous payload to `/opt/nexterm/.rollback` and restarts only
-  the units that were active. An interrupted upgrade keeps that original
+  the units that were active. With SQLite the active units are stopped
+  first and `data.db` with its `-wal`/`-shm` files is copied into
+  `/opt/nexterm/.rollback/db`, because the new version migrates the
+  database on start; the copy needs free space for one more database.
+  PostgreSQL, MySQL and MariaDB are not snapshotted: dump them before
+  upgrading. An interrupted upgrade keeps that original
   backup across retries, records whether each env file predates the
   transaction and which units were active, and recovers legacy unit
   settings from the backup, so a retry never overwrites the rollback
@@ -178,7 +186,7 @@ An upgrade (detected from an existing `/opt/nexterm/nexterm-server`,
 
 Options: `--source DIR` (payload directory, default the script's own),
 `--root DIR` (staged install prefix, for testing), `--rollback`,
-`--no-enable`. An interrupted first install is resumed by re-running the
+`--keep-database` (with `--rollback`), `--no-enable`, `-y`/`--yes`. An interrupted first install is resumed by re-running the
 script — including whether each env file predates the attempt, so an
 example env written by the interrupted run is never mistaken for explicit
 configuration — and finishes with `enable --now`.
@@ -223,21 +231,79 @@ and the master key are not touched. The replaced payload is kept in
 `/opt/nexterm/.rollback.failed` for inspection, and the backup is consumed,
 so a second consecutive rollback fails.
 
+When the upgrade saved a SQLite snapshot, the rollback also stops the
+running units and puts that snapshot back, because the older version may
+not run against the schema the newer one migrated. **Everything written
+since the upgrade is lost**; the replaced `data.db` files are kept in
+`/opt/nexterm/.rollback.failed/db`. The installer asks before doing this
+and, without a terminal, refuses unless `--yes` is given. Pass
+`--keep-database` to restore only the program files and keep the current
+database (the previous behavior). A remote database is never rolled back:
+restore it from your own dump if needed.
+
+## Backup and restore
+
+SQLite runs in WAL mode, so copying `data.db` while the server runs can
+produce a copy that does not match its `-wal` file. Use the backup command
+instead; it is safe while the service is running:
+
+```sh
+sudo install -d -m 0700 -o nexterm -g nexterm /var/backups/nexterm
+sudo -u nexterm /opt/nexterm/nexterm-server backup \
+  --data-dir /var/lib/nexterm --out /var/backups/nexterm/data.db
+```
+
+It writes a verified snapshot (`VACUUM INTO`, then `integrity_check`)
+atomically with mode 0600, plus `data.db.manifest.json` with the NexTerm
+version, time, size, SHA-256 and schema fingerprint. An existing file is
+replaced only with `--force`. `nexterm-server backup --help` lists the
+options and exit codes.
+
+The snapshot does **not** contain the keys that decrypt it. Back these up
+separately and keep them away from the database copy:
+
+- the vault master key: `NEXTERM_MASTER_KEY_FILE`, by default
+  `/etc/nexterm/master.key`;
+- the TOTP key `/var/lib/nexterm/totp.key`, which protects two-factor
+  secrets.
+
+Other files under the data directory (uploaded files in `files/`,
+`known_hosts.json`, ...) are not in the snapshot either; copy them while
+the service is stopped if you need them.
+
+With PostgreSQL, MySQL or MariaDB the command does not connect to the
+database: it prints a `pg_dump`, `mysqldump` or `mariadb-dump` command for
+the configured host and database (never the password) and exits 3.
+
+To restore a SQLite snapshot:
+
+```sh
+sudo systemctl stop nexterm-server
+sudo mkdir -m 0700 /var/lib/nexterm/replaced
+sudo sh -c 'mv /var/lib/nexterm/data.db* /var/lib/nexterm/replaced/'
+sudo install -m 0600 -o nexterm -g nexterm /var/backups/nexterm/data.db /var/lib/nexterm/data.db
+sudo systemctl start nexterm-server
+```
+
+Restore the master key and TOTP key that were in use when the snapshot was
+taken, and run a NexTerm version at least as new as the one in the
+manifest.
+
 ## Master key
 
 `install.sh` preserves the effective master key across installs and
 upgrades: an explicit `NEXTERM_MASTER_KEY_FILE` setting wins, then an
 existing `<data-dir>/master.key` (the server's own default location), then
 `/etc/nexterm/master.key`. A new key is generated only when none exists,
-and an existing key is never replaced. Back the key up together with
-`/var/lib/nexterm`; it cannot be recreated after credentials have been
+and an existing key is never replaced. Back the key up separately from
+the database backup; it cannot be recreated after credentials have been
 encrypted.
 
 ## Database settings
 
 `NEXTERM_DB` selects `sqlite` (the default), `postgres`, `mysql` or
-`mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; preserve that
-directory and `/etc/nexterm/master.key` when backing up. Run only one
+`mariadb`. SQLite stores its data under `NEXTERM_DATA_DIR`; back it up as
+described in [Backup and restore](#backup-and-restore). Run only one
 server instance against the same database: login rate limits and
 second-factor lockouts are held in process memory, are not shared between
 instances, and reset on restart.
@@ -268,6 +334,97 @@ chained proxies, list every hop in `NEXTERM_TRUSTED_PROXY_CIDRS`; the server
 takes the rightmost address that is not in that list. Without it only the
 direct peer address is used.
 
+The server rejects browser requests and WebSockets whose `Origin` does not
+match the request `Host`. Make the proxy forward the public host name
+(nginx: `proxy_set_header Host $host;`, plus `proxy_http_version 1.1;`,
+`proxy_set_header Upgrade $http_upgrade;` and
+`proxy_set_header Connection "upgrade";` for WebSockets). If the proxy must
+rewrite `Host` to the upstream address, list the public origins in
+`NEXTERM_ALLOWED_ORIGINS` instead, comma separated: `host[:port]` patterns
+such as `nexterm.example.com` match any scheme, patterns with `://` such as
+`https://nexterm.example.com` match the scheme too, and `*` wildcards are
+allowed. Setting it replaces the built-in `localhost:*` and `127.0.0.1:*`
+entries. `NEXTERM_TRUST_FORWARDED_FOR` accepts `1`/`0` or `true`/`false`;
+any other value stops startup. Listed origins receive credentialed CORS
+responses, so list only origins you control.
+
+A reverse proxy on the same host must send `X-Forwarded-For` (or `Forwarded`
+/ `X-Real-IP`) on every request. Without one, a proxied remote caller looks
+like a direct loopback caller and receives the detailed `/healthz` payload
+(see Health checks below).
+
+## Health checks
+
+- `GET /livez` answers 200 while the process serves HTTP and touches neither
+  the database nor the vault. Use it for liveness (restart on failure).
+- `GET /healthz` is the readiness probe. It returns 503 with `"ok":false`
+  when the database ping fails, or when `--require-vault` is set and the
+  vault is locked; otherwise 200.
+- Both are public, so callers that are not on loopback and hold no
+  super-admin session get only `ok`, `service` and `version`. The detailed
+  payload (vault state, database pool, channel counts, web root, retention)
+  is returned to direct loopback callers, to callers that trusted proxies
+  report as loopback through `X-Forwarded-For` (see the reverse proxy notes
+  above), and to signed-in super-admins. A request from a loopback peer
+  that carries `X-Forwarded-For`, `Forwarded` or `X-Real-IP` without being a
+  trusted proxy counts as remote, so a local reverse proxy must send one of
+  those headers.
+- `nexterm-server healthcheck [--url URL | --listen ADDRESS] [--timeout 5s]`
+  probes `/healthz` without curl and exits 0 when ready, 1 when unreachable
+  or unhealthy, and 2 on usage errors. The target is `--url`, else
+  `http://<listen>/healthz` built from `--listen`, then `NEXTERM_LISTEN`, then
+  `0.0.0.0:8080`, with a wildcard host replaced by loopback. Pass the same
+  `--listen` value the server uses when it is not set through the
+  environment. It suits a container health check such as
+  `HEALTHCHECK CMD ["nexterm-server", "healthcheck"]`.
+
+## Logging
+
+The units send the server's stderr to the journal: read it with
+`journalctl -u nexterm-server` (or `nexterm-onlyserver`). Because records
+already reach the journal, the default `NEXTERM_LOG_FILE=auto` does not also
+write `/var/lib/nexterm/logs/nexterm.log` when stderr is the systemd journal.
+Set `NEXTERM_LOG_FILE=on` to keep the file as well, or `off` to never write
+it. Outside systemd (containers, manual runs) `auto` writes the file. The file
+rotates at 10 MB and keeps five backups (`nexterm.log.1` to `nexterm.log.5`).
+
+- `NEXTERM_LOG_LEVEL`: `debug`, `info` (default), `warn` or `error`.
+- `NEXTERM_LOG_FORMAT`: `text` (default) or `json`.
+- `NEXTERM_ACCESS_LOG=1`: one record per HTTP request with method, path,
+  status, bytes, duration and client address. The client address follows
+  `NEXTERM_TRUSTED_PROXY_CIDRS` and `NEXTERM_TRUST_FORWARDED_FOR` as above.
+  Query strings, request bodies and share-link tokens in paths are never
+  logged. WebSocket connections are logged when they close, with their
+  lifetime as the duration.
+
+An invalid value for any of these stops the server at startup with exit
+code 2 and names the variable.
+
+## File staging limits
+
+In the browser, uploads, downloads, terminal recordings and log exports pass
+through temporary files under `NEXTERM_DATA_DIR/blobs`. A temporary file is
+removed two hours after it was last written, but not while a download,
+recording or export is still writing it. A write in progress counts against
+the account's quota with its whole allowance until it ends, so parallel
+transfers cannot add up past the quota. These settings bound them (sizes in
+bytes):
+
+- `NEXTERM_BLOB_MAX_BYTES`: one browser upload, default 256 MiB;
+- `NEXTERM_BLOB_STAGE_MAX_BYTES`: all temporary files of one account
+  together, default 2 GiB; each account may also hold at most 1000 staged
+  entries at a time;
+- `NEXTERM_BLOB_DOWNLOAD_MAX_BYTES`: one file the server writes for the
+  browser (file and folder downloads, terminal recordings, log and recording
+  exports), default 2 GiB. A larger download is refused before anything is
+  written, and a recording stops with an error once it reaches the limit;
+- `NEXTERM_BLOB_PERSIST_MAX_BYTES`: all persisted uploads together,
+  default 1 GiB;
+- `NEXTERM_BLOB_DISK_MAX_PERCENT`: new staged or persisted files are refused
+  once the data disk is this full, default 90.
+
+The desktop app does not use these limits.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
@@ -284,3 +441,104 @@ machine or read its files on an account's behalf:
 
 Only open access lifts these limits: `--auth off`, or `--auth loopback`
 listening on loopback when no account is signed in.
+
+## Vault requirement
+
+Set `NEXTERM_REQUIRE_VAULT=1` (or pass `--require-vault`) to stop startup
+when the credential vault cannot be unlocked with the master key, instead of
+starting with stored credentials unavailable. The shipped `nexterm.env`
+enables it for new installs (upgrades keep their env file); set it to `0`
+only while recovering a lost or mismatched key.
+
+## Service sandboxing
+
+`nexterm-onlyserver.service` runs fully sandboxed: `ProtectSystem=strict`
+with only `/var/lib/nexterm` writable, `ProtectHome=yes`, no capabilities,
+`NoNewPrivileges=yes`, private `/tmp` and `/dev`, IPv4/IPv6/Unix sockets
+only, a `@system-service` system call filter and
+`MemoryDenyWriteExecute=yes`. When `onlyserver.env` sets a data directory
+elsewhere, or a data directory, master key or database password file under
+`/home`, `/root` or `/run/user`, the installer writes
+`/etc/systemd/system/nexterm-onlyserver.service.d/50-nexterm-paths.conf`
+with the matching `ReadWritePaths=` and `ProtectHome=read-only`, and removes
+it again when the defaults suffice. Do not edit that file; put your own
+settings in a separate drop-in. To listen on a port below 1024, add a
+drop-in with `AmbientCapabilities=CAP_NET_BIND_SERVICE` and
+`CapabilityBoundingSet=CAP_NET_BIND_SERVICE`.
+
+`nexterm-server.service` keeps `ProtectSystem=full` and a smaller set,
+because programs started from local terminals (open access with
+`NEXTERM_AUTH=off`, or `loopback` without a signed-in account) inherit the
+sandbox (so setgid directories, `git init --shared=group` and realtime
+audio tools keep working there) and sshfs mounts need `/dev/fuse` and the
+setuid `fusermount3`.
+Unix sockets such as `/var/run/docker.sock` stay reachable under either
+unit. With accounts on, which disables local terminals and mounts, you can
+tighten it with
+`systemctl edit nexterm-server.service`:
+
+```ini
+[Service]
+NoNewPrivileges=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+CapabilityBoundingSet=
+```
+
+`MemoryDenyWriteExecute=yes` is left out of that list because the optional
+local AI redaction loads the ONNX Runtime library into the server process.
+Both units allow 60 seconds for a stop: on shutdown the server sends open
+WebSockets a going-away close (code 1001) and drops connections that have
+not closed after a short grace period (10 seconds at most).
+
+## Tuning and diagnostics
+
+These optional variables go in the env file of either unit:
+
+- `NEXTERM_WS_KEEPALIVE` (default `25s`), `NEXTERM_WS_PING_TIMEOUT`
+  (`10s`) and `NEXTERM_WS_WRITE_TIMEOUT` (`10s`) are Go durations for the
+  WebSocket ping interval, the wait for its pong and the write deadline. A
+  negative keepalive disables pings; raise it when an idle-timeout proxy
+  allows longer gaps, lower it when the proxy closes idle connections
+  sooner than 25 seconds.
+- `NEXTERM_WS_COMPRESSION` overrides WebSocket compression: `takeover`,
+  `nocontext` (less memory per connection) or `off`.
+- `NEXTERM_EVENT_QUEUE_SIZE` (default 64) is the per-connection event queue
+  length and `NEXTERM_EVENT_BUFFER_SIZE` (default 256) the number of recent
+  events kept for clients that reconnect.
+- `NEXTERM_PPROF_ADDR` serves Go pprof endpoints, loopback only unless an
+  explicit wildcard is given. Block and mutex profiles stay off unless
+  `NEXTERM_PPROF_CONTENTION=N` is also set: it samples about one blocking
+  event per N nanoseconds spent blocked and one in N mutex contention events
+  (`1` records everything and slows a busy server).
+
+## Prometheus metrics
+
+`nexterm-server` can expose Prometheus text metrics at `/metrics` on a
+separate listener. It is disabled by default. Enable it with
+`--metrics-addr 127.0.0.1:9464` or `NEXTERM_METRICS_ADDR=127.0.0.1:9464` (for
+example in the unit's environment file). A bare `:9464` binds `127.0.0.1`.
+The endpoint has no authentication, so any non-loopback address, wildcards
+included, is refused at startup unless `NEXTERM_METRICS_ALLOW_REMOTE=1` is
+set; in that case restrict access with a firewall or a private network.
+
+Exposed series: process (goroutines, heap, GC, uptime, build info), database
+connection pool, WebSocket connections per kind, live terminal tabs by kind
+and persistence, connected device agents, active port forwards, HTTP request
+counts and latency per route template, and login success and failure counters.
+Labels come from small fixed sets: no user names, session IDs, device IDs, or
+request paths appear in any label.
+
+```yaml
+scrape_configs:
+  - job_name: nexterm-server
+    static_configs:
+      - targets: ["127.0.0.1:9464"]
+```

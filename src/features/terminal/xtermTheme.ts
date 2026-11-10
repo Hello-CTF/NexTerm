@@ -1,4 +1,6 @@
+import type { ITheme } from "@xterm/xterm";
 import type { ResolvedTerminalTheme, TerminalContrast, TerminalFontFamily } from "../../app/preferences";
+import { BUNDLED_SCHEMES, mixHex, schemeKind, type CustomTerminalScheme, type SchemeKind, type SchemePalette } from "./terminalSchemes";
 
 // Colour emoji families follow the generic family as glyph fallbacks only. The UI's
 // "NexTerm Emoji" alias (styles/base.css) is deliberately absent: terminal programs lay out
@@ -179,4 +181,114 @@ const XTERM_THEMES = {
 
 export function xtermThemeFor(resolved: ResolvedTerminalTheme, contrast: TerminalContrast = "standard") {
   return XTERM_THEMES[resolved][contrast];
+}
+
+export const DEFAULT_DARK_SCHEME_ID = "nexterm-dark";
+export const DEFAULT_LIGHT_SCHEME_ID = "nexterm-light";
+
+export interface TerminalScheme {
+  id: string;
+  name: string;
+  kind: SchemeKind;
+  palette: SchemePalette;
+  custom: boolean;
+}
+
+const ANSI_THEME_KEYS = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+function nextermScheme(id: string, kind: SchemeKind): TerminalScheme {
+  const theme = XTERM_THEMES[kind].standard;
+  return {
+    id,
+    name: kind === "dark" ? "NexTerm Dark" : "NexTerm Light",
+    kind,
+    palette: {
+      background: theme.background,
+      foreground: theme.foreground,
+      selection: theme.selectionBackground,
+      ansi: ANSI_THEME_KEYS.map((key) => theme[key]),
+    },
+    custom: false,
+  };
+}
+
+const NEXTERM_SCHEMES: readonly TerminalScheme[] = [
+  nextermScheme(DEFAULT_DARK_SCHEME_ID, "dark"),
+  nextermScheme(DEFAULT_LIGHT_SCHEME_ID, "light"),
+];
+
+const BUILTIN_SCHEMES: readonly TerminalScheme[] = [
+  ...NEXTERM_SCHEMES,
+  ...BUNDLED_SCHEMES.map((item) => ({ ...item, kind: schemeKind(item.palette), custom: false })),
+];
+
+export function isDefaultScheme(id: string): boolean {
+  return id === DEFAULT_DARK_SCHEME_ID || id === DEFAULT_LIGHT_SCHEME_ID;
+}
+
+// terminalSchemeCatalog lists the NexTerm defaults, the bundled schemes and the imported ones, in that order.
+export function terminalSchemeCatalog(custom: readonly CustomTerminalScheme[] = []): TerminalScheme[] {
+  return [
+    ...BUILTIN_SCHEMES,
+    ...custom.map(({ id, name, ...palette }) => ({ id, name, kind: schemeKind(palette), palette, custom: true })),
+  ];
+}
+
+// resolveTerminalScheme picks the scheme selected for a light or dark terminal; an unknown id, a deleted custom
+// scheme or one of the other kind falls back to the NexTerm default of that kind.
+export function resolveTerminalScheme(kind: SchemeKind, id: string, custom: readonly CustomTerminalScheme[] = []): TerminalScheme {
+  const found = terminalSchemeCatalog(custom).find((item) => item.id === id && item.kind === kind);
+  return found ?? NEXTERM_SCHEMES[kind === "dark" ? 0 : 1];
+}
+
+export interface TerminalSchemePrefs {
+  terminalContrast: TerminalContrast;
+  terminalSchemeDark: string;
+  terminalSchemeLight: string;
+  terminalCustomSchemes: readonly CustomTerminalScheme[];
+}
+
+export function activeTerminalScheme(resolved: ResolvedTerminalTheme, prefs: TerminalSchemePrefs): TerminalScheme {
+  return resolveTerminalScheme(
+    resolved,
+    resolved === "dark" ? prefs.terminalSchemeDark : prefs.terminalSchemeLight,
+    prefs.terminalCustomSchemes,
+  );
+}
+
+function paletteTheme(palette: SchemePalette): ITheme {
+  const theme: ITheme = {
+    background: palette.background,
+    foreground: palette.foreground,
+    cursorAccent: palette.background,
+    selectionBackground: palette.selection ?? mixHex(palette.foreground, palette.background, 0.25),
+    scrollbarSliderBackground: mixHex(palette.foreground, palette.background, 0.2),
+    scrollbarSliderHoverBackground: mixHex(palette.foreground, palette.background, 0.3),
+    scrollbarSliderActiveBackground: mixHex(palette.foreground, palette.background, 0.4),
+  };
+  ANSI_THEME_KEYS.forEach((key, i) => {
+    theme[key] = palette.ansi[i];
+  });
+  if (palette.cursor) theme.cursor = palette.cursor;
+  return theme;
+}
+
+export function accentColor(): string {
+  if (typeof document === "undefined") return "#516cd6";
+  const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
+  return v || "#516cd6";
+}
+
+// xtermThemeForScheme maps a scheme to xterm options. The contrast setting picks the variants of the NexTerm
+// defaults; other schemes keep their published palette. A scheme without its own cursor uses the app accent.
+export function xtermThemeForScheme(scheme: TerminalScheme, contrast: TerminalContrast = "standard"): ITheme {
+  const theme: ITheme = isDefaultScheme(scheme.id) ? { ...XTERM_THEMES[scheme.kind][contrast] } : paletteTheme(scheme.palette);
+  return { ...theme, cursor: theme.cursor ?? accentColor() };
+}
+
+export function activeXtermTheme(resolved: ResolvedTerminalTheme, prefs: TerminalSchemePrefs): ITheme {
+  return xtermThemeForScheme(activeTerminalScheme(resolved, prefs), prefs.terminalContrast);
 }

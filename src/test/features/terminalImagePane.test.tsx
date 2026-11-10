@@ -126,7 +126,7 @@ import { useUi, type AppTab } from "../../app/store";
 
 let mounted: MountedView | undefined;
 
-function seedTab(kind: "ssh" | "winrm" | "docker" = "ssh") {
+function seedTab(kind: "ssh" | "winrm" | "docker" | "telnet" = "ssh") {
   const tab: AppTab = {
     id: "t1",
     kind: "terminal",
@@ -171,7 +171,7 @@ function sized(name: string, size: number, type = "application/octet-stream"): F
   return file;
 }
 
-function mountPane(kind: "ssh" | "winrm" | "docker" = "ssh", extra: Record<string, unknown> = {}) {
+function mountPane(kind: "ssh" | "winrm" | "docker" | "telnet" = "ssh", extra: Record<string, unknown> = {}) {
   seedTab(kind);
   mounted = mount(
     createElement(TerminalPane, { sessionId: "s1", title: "web-01", storeTabId: "t1", resumeTabId: "kernel-1", ...extra }),
@@ -705,6 +705,16 @@ describe("TerminalPane file paste orchestration", () => {
 
     expect(useUi.getState().toasts.at(-1)?.text).toContain("不支持粘贴上传文件");
     expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+  });
+
+  it("tells a Telnet terminal it cannot receive files and uploads nothing", async () => {
+    mountPane("telnet");
+
+    await pasteImages([new File(["x"], "a.txt")]);
+
+    expect(useUi.getState().toasts.at(-1)?.text).toContain("无法接收文件");
+    expect(mocks.fsMkdirPrivate).not.toHaveBeenCalled();
+    expect(mocks.fsWrite).not.toHaveBeenCalled();
   });
 
   it("reports skipped folders and unreadable entries next to the uploaded files", async () => {

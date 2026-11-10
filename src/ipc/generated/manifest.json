@@ -25,6 +25,12 @@
       "channel": false,
       "stream": "none"
     },
+    "ai_command_generate": {
+      "scope": "ai-command",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "ai_confirm": {
       "nested": false,
       "channel": true,
@@ -399,6 +405,12 @@
     },
     "app_update_install": {
       "scope": "update",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "app_windows_build": {
+      "scope": "platform",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -979,6 +991,12 @@
       "channel": false,
       "stream": "none"
     },
+    "fs_create": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "fs_delete": {
       "scope": "fs",
       "nested": false,
@@ -1117,6 +1135,12 @@
       "channel": false,
       "stream": "none"
     },
+    "host_monitor_sample": {
+      "scope": "host-monitor",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "host_ports_list": {
       "scope": "host-ports",
       "nested": false,
@@ -1231,6 +1255,24 @@
       "channel": false,
       "stream": "none"
     },
+    "local_folder_authorize": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_folder_create": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_folder_entries": {
+      "scope": "local-file",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "local_folder_list": {
       "scope": "local-file",
       "nested": false,
@@ -1275,6 +1317,12 @@
     },
     "local_helper_status": {
       "scope": "local-helper",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "local_shell_profiles": {
+      "scope": "local-shell",
       "nested": false,
       "channel": false,
       "stream": "none"
@@ -2277,6 +2325,12 @@
       "stream": "none"
     },
     "transcript_export_cast": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "transcript_export_text": {
       "scope": "transcript",
       "nested": false,
       "channel": false,

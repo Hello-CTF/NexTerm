@@ -104,6 +104,7 @@ vi.mock("../../features/terminal/XtermView", async () => {
         (registerSearchRef.current as ((api: unknown) => void) | undefined)?.({
           findNext: () => {},
           findPrevious: () => {},
+          clear: () => {},
         });
         (onAttachRef.current as ((id: string) => void) | undefined)?.("kernel-1");
       }, []);
@@ -226,8 +227,11 @@ describe("terminal toolbar overflow", () => {
 
     expect(menuLabels()).toEqual([
       "搜索终端内容",
+      "快速选择",
       "上一条命令",
       "下一条命令",
+      "复制上一条命令的输出",
+      "用 AI 生成命令",
       "命令列表",
       "广播到当前分屏",
       "广播到全部终端",
@@ -314,7 +318,7 @@ describe("terminal toolbar overflow", () => {
 
     keyDown(document.activeElement as Element, "ArrowDown");
     await flush();
-    expect(document.activeElement?.textContent).toContain("命令列表");
+    expect(document.activeElement?.textContent).toContain("快速选择");
 
     keyDown(document.activeElement as Element, "ArrowUp");
     await flush();

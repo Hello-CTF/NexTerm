@@ -34,6 +34,8 @@ import { fallbackPaneAfterClose, treeWithoutPane, withLayoutTree, workspaceLayou
 import { edgeSplit, EDGE_LABEL } from "../tabDropZone";
 import {
   closePane as closeTreePane,
+  equalizeRatios,
+  findPanePath,
   focusNeighbor,
   paneRects,
   resolveActivePane,
@@ -86,9 +88,42 @@ function otherPaneFor(workspace: Workspace): string | null {
   return workspace.panes.find((pane) => pane.id !== active)?.id ?? null;
 }
 
+/**
+ * The pane that fills `workspace`, or null. A zoom only holds while its pane is the focused one of a split
+ * layout, so a change of focus, a closed pane or a single remaining pane always shows the whole layout.
+ */
+export function zoomedPaneOf(workspace: Workspace, zoomedPanes: Record<string, string>): string | null {
+  const zoomed = zoomedPanes[workspace.id];
+  if (!zoomed || workspace.panes.length < 2 || zoomed !== workspace.activePaneId) return null;
+  const tree = workspaceLayoutTree(workspace);
+  return tree && findPanePath(tree, zoomed) ? zoomed : null;
+}
+
+/**
+ * Drops every zoom that no longer holds (see zoomedPaneOf), keeping the same object when all hold. Run after each
+ * workspace change, so a zoom lapsed by any path (a tab activated in another pane, a pane removed) never returns
+ * when its pane is focused again.
+ */
+export function pruneZoomedPanes(workspaces: readonly Workspace[], zoomedPanes: Record<string, string>): Record<string, string> {
+  const lapsed = Object.keys(zoomedPanes).filter((id) => {
+    const workspace = workspaces.find((candidate) => candidate.id === id);
+    return !workspace || zoomedPaneOf(workspace, zoomedPanes) === null;
+  });
+  return lapsed.length === 0 ? zoomedPanes : withoutZoom(zoomedPanes, ...lapsed);
+}
+
+// withoutZoom drops the zoom of the given workspaces, keeping the same object when none is zoomed.
+function withoutZoom(zoomedPanes: Record<string, string>, ...workspaceIds: (string | null | undefined)[]): Record<string, string> {
+  if (!workspaceIds.some((id) => id && id in zoomedPanes)) return zoomedPanes;
+  const next = { ...zoomedPanes };
+  for (const id of workspaceIds) if (id) delete next[id];
+  return next;
+}
+
 export function createWorkspaceSlice(set: UiSet, get: UiGet) {
   return {
     workspaces: [],
+    zoomedPanes: {},
     activeWorkspaceId: null,
     activeProject: ALL_PROJECTS,
     projectInventory: null,
@@ -365,6 +400,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
             ? withLayoutTree({ ...x, panes: [...x.panes, pane], activePaneId: pane.id }, next)
             : x,
         ),
+        zoomedPanes: withoutZoom(s2.zoomedPanes, w.id),
       }));
       const session = st.sessions.find((x) => x.id === w.sessionId);
       if (session) void openTerminalTab(session, undefined, pane.id);
@@ -415,6 +451,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
             ? withLayoutTree({ ...x, panes: [...x.panes, pane], activePaneId: pane.id }, next)
             : x,
         ),
+        zoomedPanes: withoutZoom(s2.zoomedPanes, id),
       }));
       get().addTab(tab, pane.id);
     },
@@ -449,18 +486,61 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
           };
           return tree ? withLayoutTree(next, tree) : next;
         });
-        return changed ? { workspaces } : {};
+        return changed ? { workspaces, zoomedPanes: withoutZoom(st.zoomedPanes, id) } : {};
       }),
 
     setActivePane: (paneId, workspaceId) =>
       set((st) => {
         const id = workspaceId ?? st.activeWorkspaceId;
+        // Focusing another pane leaves the zoom: the pane it moves to would otherwise be hidden.
+        const zoomed = id ? st.zoomedPanes[id] : undefined;
         return {
           workspaces: st.workspaces.map((w) =>
             w.id === id && w.panes.some((p) => p.id === paneId) ? { ...w, activePaneId: paneId } : w,
           ),
+          ...(zoomed && zoomed !== paneId ? { zoomedPanes: withoutZoom(st.zoomedPanes, id) } : {}),
         };
       }),
+
+    toggleZoomPane: (workspaceId) => {
+      const st = get();
+      const id = workspaceId ?? st.activeWorkspaceId;
+      const w = id ? st.workspaces.find((x) => x.id === id) : undefined;
+      if (!w) return false;
+      if (zoomedPaneOf(w, st.zoomedPanes)) {
+        set((s2) => ({ zoomedPanes: withoutZoom(s2.zoomedPanes, w.id) }));
+        return true;
+      }
+      const tree = workspaceLayoutTree(w);
+      if (!tree || w.panes.length < 2) return false;
+      const active = resolveActivePane(tree, w.activePaneId);
+      set((s2) => ({
+        workspaces: active === w.activePaneId ? s2.workspaces : s2.workspaces.map((x) => (x.id === w.id ? { ...x, activePaneId: active } : x)),
+        zoomedPanes: { ...s2.zoomedPanes, [w.id]: active },
+      }));
+      return true;
+    },
+
+    clearZoomPane: (workspaceId) =>
+      set((st) => {
+        const next = withoutZoom(st.zoomedPanes, workspaceId);
+        return next === st.zoomedPanes ? {} : { zoomedPanes: next };
+      }),
+
+    equalizeSplits: (workspaceId) => {
+      const st = get();
+      const id = workspaceId ?? st.activeWorkspaceId;
+      const w = id ? st.workspaces.find((x) => x.id === id) : undefined;
+      const tree = w ? workspaceLayoutTree(w) : null;
+      if (!w || !tree || tree.type === "leaf") return false;
+      const next = equalizeRatios(tree);
+      // Equalizing shows the whole layout, so a zoom ends here too.
+      set((s2) => ({
+        ...(next === tree ? {} : { workspaces: s2.workspaces.map((x) => (x.id === w.id ? withLayoutTree(x, next) : x)) }),
+        zoomedPanes: withoutZoom(s2.zoomedPanes, w.id),
+      }));
+      return true;
+    },
 
     focusPane: (direction, workspaceId) => {
       const st = get();
@@ -530,6 +610,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
           x.id === w.id ? withLayoutTree({ ...x, panes, activePaneId: created.id }, next) : x,
         ),
         activeWorkspaceId: w.id,
+        zoomedPanes: withoutZoom(s2.zoomedPanes, w.id),
       }));
       return created.id;
     },
@@ -565,7 +646,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
           const closed = { ...moved, panes: moved.panes.filter((pane) => pane.id !== hit.pane.id) };
           return tree ? withLayoutTree(closed, tree) : closed;
         });
-        return { workspaces, activeWorkspaceId: hit.workspace.id };
+        return { workspaces, activeWorkspaceId: hit.workspace.id, zoomedPanes: withoutZoom(st.zoomedPanes, hit.workspace.id) };
       }),
 
     moveWorkspace: (fromIndex, toIndex) =>

@@ -22,7 +22,7 @@ type scopeSpec struct {
 }
 
 var contractScopes = []scopeSpec{
-	{name: "platform", commands: []string{"app_platform", "desktop_tray_get", "desktop_tray_set", "system_insets",
+	{name: "platform", commands: []string{"app_platform", "app_windows_build", "desktop_tray_get", "desktop_tray_set", "system_insets",
 		"system_notification_status", "system_notification_request", "system_notify", "system_notification_remove"}},
 	{name: "update", commands: []string{"app_update_check", "app_update_install", "app_restart", "app_update_channel_get", "app_update_channel_set"}},
 	{name: "biometric", commands: []string{"biometric_status", "biometric_unlock", "biometric_enable", "biometric_disable"}},
@@ -50,6 +50,7 @@ var contractScopes = []scopeSpec{
 	{name: "wake", prefixes: []string{"wake_"}},
 	{name: "preview-share", prefixes: []string{"preview_share_"}},
 	{name: "host-ports", commands: []string{"host_connectivity_test", "host_ports_list"}},
+	{name: "host-monitor", commands: []string{"host_monitor_sample"}},
 	{name: "preview", commands: []string{"preview_embed_check"}},
 	{name: "sync", commands: []string{
 		"sync_apply_objects",
@@ -86,6 +87,7 @@ var contractScopes = []scopeSpec{
 	{name: "transcript", commands: []string{
 		"transcript_delete",
 		"transcript_export_cast",
+		"transcript_export_text",
 		"transcript_hosts",
 		"transcript_list",
 		"transcript_purge",
@@ -127,6 +129,7 @@ var contractScopes = []scopeSpec{
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
+	{name: "ai-command", commands: []string{"ai_command_generate"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
 	{name: "host-processes", commands: []string{"host_process_kill", "host_processes_list"}},
 	{name: "docker", prefixes: []string{"docker_"}},
@@ -134,6 +137,7 @@ var contractScopes = []scopeSpec{
 	{name: "redis", prefixes: []string{"redis_"}},
 	{name: "fs", prefixes: []string{"fs_"}},
 	{name: "local-file", prefixes: []string{"local_file_", "local_folder_"}},
+	{name: "local-shell", commands: []string{"local_shell_profiles"}},
 	{name: "local-helper", prefixes: []string{"local_helper_"}},
 	{name: "clipboard", commands: []string{"clipboard_write_image"}},
 	{name: "mount", prefixes: []string{"mount_"}},

@@ -75,6 +75,9 @@ import {
   isRemoteDesktopKind,
   readRemoteDesktopOptions,
   optionsForKindChange,
+  readTelnetLocalEcho,
+  writeTelnetOptions,
+  type TelnetLocalEcho,
   validateResolution,
   writeRemoteDesktopOptions,
   type AssetFormKind,
@@ -83,6 +86,8 @@ import {
 import { fleetClient } from "../fleet/clients";
 import { RemoteDesktopFields } from "./RemoteDesktopFields";
 import { WakeFields } from "./WakeFields";
+import { LocalShellFields } from "./LocalShellFields";
+import { formatShellArgs, parseShellArgs, readShellArgs, shellArgsError } from "./shellArgs";
 import {
   GroupDefaultsFields,
   groupDefaultsFrom,
@@ -162,6 +167,7 @@ const KIND_LABEL: Record<string, string> = {
   redis: "Redis",
   rdp: "RDP",
   vnc: "VNC",
+  telnet: "Telnet",
 };
 
 
@@ -2327,6 +2333,8 @@ export function AssetEditor({
   const [shell, setShell] = useState(
     typeof initial?.options?.shell === "string" ? (initial.options.shell as string) : "",
   );
+  const [shellArgs, setShellArgs] = useState(() => formatShellArgs(readShellArgs(initial?.options)));
+  const shellArgsProblem = shellArgsError(parseShellArgs(shellArgs));
   const [cwd, setCwd] = useState(
     typeof initial?.options?.cwd === "string" ? (initial.options.cwd as string) : "",
   );
@@ -2387,6 +2395,8 @@ export function AssetEditor({
     return TERMINAL_ENCODINGS.includes(normalized) ? normalized : "utf-8";
   });
   const [envText, setEnvText] = useState(() => formatEnvText(initial?.options?.env));
+  const [telnetEcho, setTelnetEcho] = useState<TelnetLocalEcho>(() => readTelnetLocalEcho(initial?.options));
+  const [sendCrlf, setSendCrlf] = useState(initial?.options?.sendCrlf === true);
   const [icon, setIcon] = useState(
     typeof initial?.options?.icon === "string" ? (initial.options.icon as string) : "",
   );
@@ -2611,7 +2621,7 @@ export function AssetEditor({
   const keyAuth = authKind === "key" && kindFields.authMethod;
   const usesCred = kindFields.password
     ? !(kindFields.remote && remoteOptions.promptPassword)
-    : authKind === "password" || authKind === "keyboard-interactive";
+    : kindFields.authMethod && (authKind === "password" || authKind === "keyboard-interactive");
   const credKind = "password";
   const hasBoundPassphrase = boundCred?.kind === "passphrase";
 
@@ -2724,6 +2734,7 @@ export function AssetEditor({
       setWakeShowErrors(true);
       return;
     }
+    if (kind === "asset" && groupKind === "local" && shellArgsProblem) return;
     if (kind === "asset" && groupKind === "rdp" && remoteOptions.resolution === "fixed") {
       const problem = validateResolution(remoteOptions.width, remoteOptions.height);
       setResolutionError(problem);
@@ -2854,15 +2865,21 @@ export function AssetEditor({
         // A kind without credentials (local) does not keep the one the asset had under its previous kind.
         credId = credChoice;
       }
-      const baseOptions =
+      let baseOptions: Record<string, unknown> =
         groupKind === "local"
           ? {
               ...(shell.trim() ? { shell: shell.trim() } : {}),
+              ...(parseShellArgs(shellArgs).length > 0 ? { shellArgs: parseShellArgs(shellArgs) } : {}),
               ...(cwd.trim() ? { cwd: cwd.trim() } : {}),
             }
           : groupKind === "ssh" || groupKind === "docker"
             ? sshConnectivityOptions()
             : kindBaseOptions();
+      if (kindFields.terminalEncoding && !kindFields.sshAdvanced) {
+        if (encoding !== "utf-8") baseOptions.encoding = encoding;
+        else delete baseOptions.encoding;
+      }
+      if (kindFields.telnetOptions) baseOptions = writeTelnetOptions(baseOptions, telnetEcho, sendCrlf);
       if (kindFields.via && viaAssetId) baseOptions.viaAssetId = viaAssetId;
       else delete baseOptions.viaAssetId;
       if (icon.trim()) baseOptions.icon = icon.trim();
@@ -2881,7 +2898,8 @@ export function AssetEditor({
       // 不使用密码 is an explicit stored choice that no group default overrides.
       // A host switched from SSH keeps its key or agent choice in state; these protocols authenticate only by password.
       const ownAuthKind = passwordKind && authKind !== "" ? "password" : authKind;
-      const savedAuthKind = groupKind === "local"
+      // A kind that authenticates inside its terminal (local, telnet) stores no authentication of its own.
+      const savedAuthKind = groupKind === "local" || (!kindFields.authMethod && !kindFields.password && !kindFields.username)
         ? "none"
         : passwordKind && credChoice === "none"
           ? "none"
@@ -3228,15 +3246,13 @@ export function AssetEditor({
 
           {kind === "asset" && groupKind === "local" && (
             <>
-              <div className="nx-form-row">
-                <label className="nx-label">{tr("默认 Shell")}</label>
-                <input
-                  className="nx-input font-mono text-[12px]"
-                  value={shell}
-                  onChange={(e) => setShell(e.target.value)}
-                  placeholder={tr("留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置")}
-                />
-              </div>
+              <LocalShellFields
+                shell={shell}
+                args={shellArgs}
+                argsError={shellArgsProblem}
+                onShellChange={setShell}
+                onArgsChange={setShellArgs}
+              />
               <div className="nx-form-row">
                 <label className="nx-label">{tr("起始目录")}</label>
                 <input
@@ -3318,6 +3334,62 @@ export function AssetEditor({
                 )}
                 <span className="nx-hint ml-auto">{tr("只探测端口，不带凭据")}</span>
               </div>
+
+              {kindFields.plaintext && (
+                <div className="mb-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-300" role="note">
+                  {tr("Telnet 不加密，用户名、密码和全部终端内容都以明文传输，只应在可信网络中使用；设备支持时请改用 SSH。")}
+                </div>
+              )}
+
+              {kindFields.terminalEncoding && !kindFields.sshAdvanced && (
+                <div className="nx-form-row">
+                  <label className="nx-label">{tr("终端编码")}</label>
+                  <Select
+                    ariaLabel={tr("终端编码")}
+                    value={encoding}
+                    onChange={setEncoding}
+                    options={TERMINAL_ENCODINGS.map((option) => ({ value: option, label: option }))}
+                  />
+                  <div className="nx-hint mt-1.5">{tr("↳ 用户名和密码在终端里按设备提示输入。编码连接后自动应用，也可在终端「更多终端操作」中临时切换。")}</div>
+                </div>
+              )}
+
+              {kindFields.telnetOptions && (
+                <div className="nx-form-row">
+                  <label className="nx-label">{tr("本地回显")}</label>
+                  <Select
+                    ariaLabel={tr("本地回显")}
+                    value={telnetEcho}
+                    onChange={(value) => setTelnetEcho(value as TelnetLocalEcho)}
+                    options={[
+                      { value: "auto", label: tr("自动（服务器不回显时本地显示）") },
+                      { value: "on", label: tr("始终本地显示") },
+                      { value: "off", label: tr("不本地显示") },
+                    ]}
+                  />
+                  <div className="nx-hint mt-1.5">{tr("↳ 输入的字符看不到时选「始终本地显示」，出现两遍时选「不本地显示」。")}</div>
+                </div>
+              )}
+
+              {kindFields.telnetOptions && (
+                <div className="nx-form-row">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[12.5px] text-neutral-200">{tr("回车发送 CR LF")}</div>
+                      <p className="nx-hint mt-0.5">
+                        {tr("默认按 Telnet 标准发送 CR NUL；连接 SMTP、HTTP 等文本协议端口时开启。")}
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                      aria-label={tr("回车发送 CR LF")}
+                      checked={sendCrlf}
+                      onChange={(e) => setSendCrlf(e.target.checked)}
+                    />
+                  </label>
+                </div>
+              )}
 
               {kindFields.username && (
               <div className="nx-form-row">

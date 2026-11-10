@@ -53,6 +53,8 @@ function detachBlockOf(
   // durable is undefined until the backend reports it; retainable decides until then.
   // Until the durable flag arrives, a remote tab that reports itself as not retainable is a regular PTY too.
   if ((kind === "ssh" || (!kind && assetKind === "ssh")) && (t.durable === false || (t.durable === undefined && t.retainable === false))) return "regular";
+  // A Telnet terminal is always temporary: it is the connection itself.
+  if (kind === "telnet" || (!kind && assetKind === "telnet")) return "regular";
   if (t.retainable === true) return null;
   if (kind === "local" || (!kind && assetKind === "local")) {
     return t.retainable === undefined && t.durable === undefined ? "unattached" : "local";

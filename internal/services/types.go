@@ -50,19 +50,26 @@ type KillRequest struct {
 	ProductionConfirmation *execbatch.ProductionConfirmation `json:"productionConfirmation,omitempty"`
 }
 
+// ServiceUnit is one service. On Windows, Active holds the service state (Running, Stopped, Paused or a
+// pending state), Description the display name, and Load and Sub stay empty.
 type ServiceUnit struct {
 	Name        string `json:"name"`
 	Load        string `json:"load"`
 	Active      string `json:"active"`
 	Sub         string `json:"sub"`
 	Description string `json:"description"`
+	// StartMode is the Windows startup type: Auto, Delayed, Manual, Disabled, Boot or System.
+	StartMode string `json:"startMode,omitempty"`
+	PID       int    `json:"pid,omitempty"`
 }
 
 type ServiceHostResult struct {
-	Result      execbatch.Result `json:"result"`
-	Systemd     string           `json:"systemd"`
-	FailureKind string           `json:"failureKind,omitempty"`
-	Units       []ServiceUnit    `json:"units"`
+	Result execbatch.Result `json:"result"`
+	// Platform is PlatformSystemd or PlatformWindows: which commands ran on the host.
+	Platform    string        `json:"platform"`
+	Systemd     string        `json:"systemd"`
+	FailureKind string        `json:"failureKind,omitempty"`
+	Units       []ServiceUnit `json:"units"`
 }
 
 type ServiceOperationBatch struct {

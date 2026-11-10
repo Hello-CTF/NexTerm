@@ -266,8 +266,9 @@ func (c *wsConn) SetWriteDeadline(time.Time) error { return nil }
 
 var _ net.Conn = (*wsConn)(nil)
 
-// pipeBridge shuttles bytes bidirectionally between the user-side websocket and the agent bridge byte stream until either side ends.
-func pipeBridge(user *websocket.Conn, bridge *wsConn) {
+// pipeBridge shuttles bytes bidirectionally between the user-side websocket and the agent bridge byte stream until either
+// side ends or ctx is done. A revoked login session closes the user side with a policy-violation code.
+func pipeBridge(ctx context.Context, user *websocket.Conn, bridge *wsConn) {
 	done := make(chan struct{}, 2)
 	go func() {
 		defer func() { done <- struct{}{} }()
@@ -299,7 +300,16 @@ func pipeBridge(user *websocket.Conn, bridge *wsConn) {
 			}
 		}
 	}()
-	<-done
-	_ = bridge.Close()
-	_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
+	select {
+	case <-done:
+		_ = bridge.Close()
+		_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
+	case <-ctx.Done():
+		_ = bridge.Close()
+		if errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
+			_ = user.Close(websocket.StatusPolicyViolation, bridgeSessionReloginMessage)
+			return
+		}
+		_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
+	}
 }

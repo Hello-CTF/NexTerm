@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/highlight"
 )
 
 // PreferenceStore is the minimal read/write subset of the setting table, injected by the wiring layer as *store.Store.
@@ -64,6 +65,10 @@ const (
 	preferenceKindBinding
 	preferenceKindKeyBar
 	preferenceKindQuickCommands
+	preferenceKindKeywordHighlights
+	preferenceKindSchemeID
+	preferenceKindCustomSchemes
+	preferenceKindLayoutTemplates
 )
 
 type preferenceSpec struct {
@@ -87,6 +92,10 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"appearance.terminalTheme":          {kind: preferenceKindEnumString, strings: []string{"dark", "light", "interface"}},
 	"appearance.terminalContrast":       {kind: preferenceKindEnumString, strings: []string{"standard", "high", "maximum"}},
 	"appearance.themeMode":              {kind: preferenceKindEnumString, strings: []string{"system", "light", "dark"}},
+	"appearance.terminalSchemeDark":     {kind: preferenceKindSchemeID},
+	"appearance.terminalSchemeLight":    {kind: preferenceKindSchemeID},
+	"appearance.terminalCustomSchemes":  {kind: preferenceKindCustomSchemes},
+	"appearance.accent":                 {kind: preferenceKindEnumString, strings: []string{"indigo", "blue", "teal", "green", "violet"}},
 	"input.selectionAutoCopy":           {kind: preferenceKindBool},
 	"terminal.closeAction":              {kind: preferenceKindEnumString, strings: []string{"ask", "kill", "detach"}},
 	"terminal.defaultMode":              {kind: preferenceKindEnumString, strings: []string{"durable", "regular"}},
@@ -94,10 +103,13 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.linkActivation":           {kind: preferenceKindEnumString, strings: []string{"modifier", "click"}},
 	"terminal.linkOpenMode":             {kind: preferenceKindEnumString, strings: []string{"system", "app", "ask"}},
 	"terminal.portDiscovery":            {kind: preferenceKindEnumString, strings: []string{"off", "on"}},
+	"terminal.hostMonitor":              {kind: preferenceKindEnumString, strings: []string{"off", "on"}},
 	"terminal.confirmMultilinePaste":    {kind: preferenceKindEnumString, strings: []string{"unbracketed", "always", "never"}},
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
+	"terminal.keywordHighlights":        {kind: preferenceKindKeywordHighlights},
+	"workspace.layoutTemplates":         {kind: preferenceKindLayoutTemplates},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},
@@ -122,10 +134,20 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.switchTab":              {kind: preferenceKindBinding},
 	"keybinding.restoreClosedTab":       {kind: preferenceKindBinding},
 	"keybinding.terminalSearch":         {kind: preferenceKindBinding},
+	"keybinding.terminalQuickSelect":    {kind: preferenceKindBinding},
+	"keybinding.terminalLinks":          {kind: preferenceKindBinding},
+	"keybinding.sessionSidebar":         {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":        {kind: preferenceKindBinding},
 	"keybinding.lockVault":              {kind: preferenceKindBinding},
+	"keybinding.lockApp":                {kind: preferenceKindBinding},
 	"keybinding.openSettings":           {kind: preferenceKindBinding},
 	"keybinding.focusAiInput":           {kind: preferenceKindBinding},
+	"keybinding.terminalFontIncrease":   {kind: preferenceKindBinding},
+	"keybinding.terminalFontDecrease":   {kind: preferenceKindBinding},
+	"keybinding.terminalFontReset":      {kind: preferenceKindBinding},
+	"keybinding.toggleZoomPane":         {kind: preferenceKindBinding},
+	"keybinding.equalizeSplits":         {kind: preferenceKindBinding},
+	"keybinding.showShortcuts":          {kind: preferenceKindBinding},
 }
 
 // PreferenceKeys returns a copy of the whitelist keys, for the HTTP layer and tests to enumerate declared preferences.
@@ -278,6 +300,25 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 		if canonical, ok := normalizeQuickCommands(raw); ok {
 			return canonical, nil
 		}
+	case preferenceKindKeywordHighlights:
+		canonical, err := highlight.Normalize(raw)
+		if err != nil {
+			return "", ipc.BadParam(fmt.Errorf("偏好 %q 的值不合法: %w", key, err))
+		}
+		return canonical, nil
+	case preferenceKindSchemeID:
+		var value string
+		if err := json.Unmarshal(raw, &value); err == nil && terminalSchemeIDPattern.MatchString(value) {
+			return strconv.Quote(value), nil
+		}
+	case preferenceKindCustomSchemes:
+		if canonical, ok := normalizeTerminalCustomSchemes(raw); ok {
+			return canonical, nil
+		}
+	case preferenceKindLayoutTemplates:
+		if canonical, ok := normalizeLayoutTemplates(raw); ok {
+			return canonical, nil
+		}
 	}
 	return "", invalidPreferenceValue(key)
 }
@@ -363,6 +404,94 @@ func validQuickCommandLabel(label string) bool {
 
 func validQuickCommandText(text string) bool {
 	return text != "" && len(text) <= maxQuickCommandTextBytes && utf8.ValidString(text) && !strings.ContainsRune(text, 0)
+}
+
+// Limits of the imported terminal color schemes, mirrored by src/features/terminal/terminalSchemes.ts. A full
+// list stays far below the 64 KiB account request body.
+const (
+	maxTerminalCustomSchemes      = 20
+	maxTerminalSchemeName         = 48
+	maxTerminalCustomSchemesBytes = 16 << 10
+)
+
+// Scheme ids are not checked against the client catalog, so a scheme bundled by a newer client survives on an
+// older one, which shows its default scheme until the id is known.
+var (
+	terminalSchemeIDPattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+	terminalCustomSchemeIDPattern = regexp.MustCompile(`^custom-[a-z0-9]{1,24}$`)
+	terminalSchemeColorPattern    = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+type terminalCustomScheme struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Background string   `json:"background"`
+	Foreground string   `json:"foreground"`
+	Cursor     string   `json:"cursor,omitempty"`
+	Selection  string   `json:"selection,omitempty"`
+	ANSI       []string `json:"ansi"`
+}
+
+// normalizeTerminalCustomSchemes validates imported terminal color schemes: at most 20 schemes with unique
+// custom-* ids, a name of at most 48 characters without control characters, #rrggbb background, foreground and
+// 16 ANSI colors, and optional cursor and selection colors. Colors are stored in lower case. Fields this server
+// does not know are dropped instead of rejected, so a list saved by a newer client still syncs.
+func normalizeTerminalCustomSchemes(raw json.RawMessage) (string, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var schemes []terminalCustomScheme
+	if err := decoder.Decode(&schemes); err != nil || decoder.More() || schemes == nil || len(schemes) > maxTerminalCustomSchemes {
+		return "", false
+	}
+	seen := make(map[string]bool, len(schemes))
+	for i := range schemes {
+		scheme := &schemes[i]
+		if !terminalCustomSchemeIDPattern.MatchString(scheme.ID) || seen[scheme.ID] || !validTerminalSchemeName(scheme.Name) || len(scheme.ANSI) != 16 {
+			return "", false
+		}
+		seen[scheme.ID] = true
+		colors := []*string{&scheme.Background, &scheme.Foreground}
+		for j := range scheme.ANSI {
+			colors = append(colors, &scheme.ANSI[j])
+		}
+		for _, color := range colors {
+			if !terminalSchemeColorPattern.MatchString(*color) {
+				return "", false
+			}
+			*color = strings.ToLower(*color)
+		}
+		for _, color := range []*string{&scheme.Cursor, &scheme.Selection} {
+			if *color == "" {
+				continue
+			}
+			if !terminalSchemeColorPattern.MatchString(*color) {
+				return "", false
+			}
+			*color = strings.ToLower(*color)
+		}
+	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(schemes); err != nil {
+		return "", false
+	}
+	canonical := strings.TrimSuffix(out.String(), "\n")
+	if len(canonical) > maxTerminalCustomSchemesBytes {
+		return "", false
+	}
+	return canonical, true
+}
+
+func validTerminalSchemeName(name string) bool {
+	if strings.TrimSpace(name) == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > maxTerminalSchemeName {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func invalidPreferenceValue(key string) error {

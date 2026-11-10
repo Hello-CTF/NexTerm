@@ -1,15 +1,12 @@
 package hostports
 
 import (
-	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 )
@@ -152,16 +149,7 @@ func probeCommandAndScript(shell Shell, req ProbeRequest) (string, string, error
 	}
 	// cmd.exe must not see the script: the base64 alphabet contains no character cmd treats specially.
 	script := powerShellProbe(req, host)
-	return "powershell -NoProfile -NonInteractive -EncodedCommand " + encodePowerShell(script), script, nil
-}
-
-func encodePowerShell(script string) string {
-	units := utf16.Encode([]rune(script))
-	raw := make([]byte, 2*len(units))
-	for i, u := range units {
-		binary.LittleEndian.PutUint16(raw[2*i:], u)
-	}
-	return base64.StdEncoding.EncodeToString(raw)
+	return psquote.ShortCommand(script), script, nil
 }
 
 func posixProbe(req ProbeRequest, host string) string {

@@ -10,8 +10,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"time"
 )
+
+// transportCloseTimeout bounds how long shutdown waits for open WebSockets to
+// finish their going-away close handshake before they are dropped.
+var transportCloseTimeout = 10 * time.Second
 
 type ServeConfig struct {
 	Listen         string
@@ -22,12 +27,22 @@ type ServeConfig struct {
 	Transport      http.Handler
 	CloseTransport func(context.Context) error
 	Stderr         io.Writer
+	// RequireVault makes /healthz report unavailable (503) while the vault is locked.
+	RequireVault bool
 
 	// Listener replaces the listener opened for Listen; nil keeps ListenAndServe behavior.
 	Listener net.Listener
 	// ReadIdleTimeout and WriteIdleTimeout bound request-body and response-write stalls; zero uses one minute.
 	ReadIdleTimeout  time.Duration
 	WriteIdleTimeout time.Duration
+}
+
+// HealthSummary is the /healthz payload every caller may read: fleet agents check
+// ok and service, and clients read version for one-line agent install commands.
+type HealthSummary struct {
+	OK      bool   `json:"ok"`
+	Service string `json:"service"`
+	Version string `json:"version"`
 }
 
 type Health struct {
@@ -55,29 +70,37 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 	}()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_ = json.NewEncoder(w).Encode(a.health(r.Context(), config))
-	})
+	mux.HandleFunc("GET /healthz", a.serveHealth(config))
+	mux.HandleFunc("GET /livez", a.serveLive)
 	if !config.SyncOnly && config.Static != nil {
 		mux.Handle("/", config.Static)
 	}
 
 	handler := config.Transport
+	transportClosed := false
+	closeTransport := func() error {
+		if transportClosed || config.Transport == nil || config.CloseTransport == nil {
+			return nil
+		}
+		transportClosed = true
+		closeCtx, cancel := context.WithTimeout(context.Background(), transportCloseTimeout)
+		defer cancel()
+		return config.CloseTransport(closeCtx)
+	}
 	if handler == nil {
 		if !config.SyncOnly {
 			return fmt.Errorf("full server mode requires the server transport stack")
 		}
 		handler = mux
-	} else if config.CloseTransport != nil {
-		defer func() {
-			returnErr = errors.Join(returnErr, config.CloseTransport(context.Background()))
-		}()
+	} else {
+		defer func() { returnErr = errors.Join(returnErr, closeTransport()) }()
 	}
 	if config.Stderr == nil {
 		config.Stderr = os.Stderr
 	}
 	WarnIfExposed(a.logger, config.Stderr, config.Listen, config.SyncOnly, config.Auth)
+	requestBase, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRequests()
 	readIdle, writeIdle := config.ReadIdleTimeout, config.WriteIdleTimeout
 	if readIdle <= 0 {
 		readIdle = defaultRequestReadIdleTimeout
@@ -90,8 +113,12 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		Handler:           withRequestTimeouts(readIdle, writeIdle, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// net/http reports accept failures, handler panics and protocol misuse here; keep them in the app log.
+		ErrorLog: slog.NewLogLogger(a.logger.With("component", "http").Handler(), slog.LevelWarn),
+		// Requests outlive ctx until the transport has closed its WebSockets: a hijacked connection whose read
+		// context is cancelled is dropped without a close frame, so the going-away close would never arrive.
 		BaseContext: func(net.Listener) context.Context {
-			return ctx
+			return requestBase
 		},
 	}
 	serveResult := make(chan error, 1)
@@ -110,15 +137,40 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		}
 		return err
 	case <-ctx.Done():
+		transportErr := closeTransport()
+		cancelRequests()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		shutdownErr := server.Shutdown(shutdownCtx)
+		shutdownErr := errors.Join(transportErr, server.Shutdown(shutdownCtx))
 		serveErr := <-serveResult
 		if errors.Is(serveErr, http.ErrServerClosed) {
 			serveErr = nil
 		}
 		return errors.Join(shutdownErr, serveErr)
 	}
+}
+
+// serveHealth is the readiness probe of the transport-less sync-only mux.
+func (a *Application) serveHealth(config ServeConfig) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		health := a.health(r.Context(), config)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if !health.OK {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		if !directLoopbackPeer(r) {
+			_ = json.NewEncoder(w).Encode(HealthSummary{OK: health.OK, Service: health.Service, Version: health.Version})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(health)
+	}
+}
+
+func (a *Application) serveLive(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(HealthSummary{OK: true, Service: "nexterm-server", Version: a.version})
 }
 
 func (a *Application) health(ctx context.Context, config ServeConfig) Health {
@@ -148,9 +200,36 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 	}
 	commands := a.Dispatcher.Len()
 	return Health{
-		OK: true, Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
+		OK: !config.RequireVault || VaultUnlocked(vault), Service: "nexterm-server", Version: a.version, SyncOnly: config.SyncOnly,
 		Commands: commands, WebRoot: webRoot, Vault: vault, Retention: retention,
 	}
+}
+
+// VaultUnlocked reports whether a vault status value (vault.Status or a pointer to it) describes an unlocked vault.
+// It matches an interface so this package does not import internal/vault, which would make vault's own tests
+// (which reach this package through internal/upgrade) an import cycle.
+func VaultUnlocked(status any) bool {
+	unlocked, ok := status.(interface{ IsUnlocked() bool })
+	if !ok {
+		return false
+	}
+	if value := reflect.ValueOf(status); value.Kind() == reflect.Pointer && value.IsNil() {
+		return false
+	}
+	return unlocked.IsUnlocked()
+}
+
+// directLoopbackPeer reports a loopback peer that did not relay another caller.
+func directLoopbackPeer(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("Forwarded") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func LoopbackListen(address string) bool {

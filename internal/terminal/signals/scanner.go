@@ -1,5 +1,6 @@
 // Package signals extracts terminal-standard attention signals (BEL, OSC 9,
-// OSC 777, OSC 99 and OSC 133 command boundaries) from a PTY output stream.
+// OSC 777, OSC 99, OSC 9;4 progress and OSC 133 command boundaries) from a
+// PTY output stream.
 //
 // The scanner is a byte-level state machine: it never modifies, buffers or
 // re-scans the stream, so the events it produces do not depend on how the
@@ -26,6 +27,8 @@ const (
 	KindCommandStart
 	// KindCommandEnd is the end of a command (OSC 133 D).
 	KindCommandEnd
+	// KindProgress is a progress report (ConEmu OSC 9;4).
+	KindProgress
 )
 
 func (k Kind) String() string {
@@ -38,6 +41,8 @@ func (k Kind) String() string {
 		return "command_start"
 	case KindCommandEnd:
 		return "command_end"
+	case KindProgress:
+		return "progress"
 	}
 	return "unknown"
 }
@@ -47,6 +52,15 @@ const (
 	SourceOSC9   = "osc9"
 	SourceOSC777 = "osc777"
 	SourceOSC99  = "osc99"
+)
+
+// Progress states of a KindProgress event.
+const (
+	ProgressClear         = "clear"
+	ProgressNormal        = "normal"
+	ProgressError         = "error"
+	ProgressIndeterminate = "indeterminate"
+	ProgressPaused        = "paused"
 )
 
 // Event is one signal observed in the stream, in stream order.
@@ -60,6 +74,12 @@ type Event struct {
 	// false when the shell reported the end without a code.
 	ExitCode    int
 	HasExitCode bool
+	// Progress is set for KindProgress. ProgressValue (0-100) is valid when
+	// HasProgressValue is set: always for normal, when the program sent one
+	// for error and paused, never for clear and indeterminate.
+	Progress         string
+	ProgressValue    int
+	HasProgressValue bool
 	// Duration is set for KindCommandEnd: the time between the Feed call that
 	// saw the command start and the Feed call that saw its end.
 	Duration time.Duration
@@ -105,9 +125,11 @@ type Config struct {
 type Stats struct {
 	// Oversize counts payloads dropped for exceeding a size limit.
 	Oversize uint64
-	// Malformed counts recognised notification payloads that were invalid.
+	// Malformed counts recognised notification and progress payloads that
+	// were invalid.
 	Malformed uint64
-	// ConEmuFiltered counts OSC 9 payloads dropped as ConEmu subcommands.
+	// ConEmuFiltered counts OSC 9 payloads dropped as ConEmu subcommands
+	// other than progress (9;4).
 	// The filter also matches notification bodies that are only a number
 	// (for example "42" or "2024;done"); that trade-off is deliberate, and
 	// this counter keeps those drops visible.

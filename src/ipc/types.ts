@@ -135,7 +135,7 @@ status: string, tabs: Array<string>, createdAt: number, };
 
 export type SessionStatusEvent = { sessionId: string, status: string, error: string | null, version: number, };
 
-export type SnippetStep = { id: string, name: string, description?: string, command: string, confirm?: boolean, interactive?: boolean, };
+export type SnippetStep = { id: string, name: string, description?: string, command: string, confirm?: boolean, interactive?: boolean, waitFor?: string, waitForRegex?: boolean, timeoutMs?: number, };
 
 export type SnippetDto = { id: string, groupId: string | null, name: string, body: string, sort: number, createdAt: number, updatedAt: number, description: string, steps: Array<SnippetStep>, };
 
@@ -259,8 +259,8 @@ export type VaultStatusDto = import("./generated/types").VaultStatus;
 export type SshImportAction = "add" | "skip-duplicate" | "conflict-alias" | "conflict-endpoint" | "blocked-jump";
 
 export type SshImportHostDto = { id: string, alias: string, hostname: string, port: number, username: string,
-identityFiles: string[], keyName: string, keyFingerprint: string, proxyJump: string, authMethod: string, source: string,
-action: SshImportAction, warnings: string[], };
+identityFiles: string[], keyName: string, keyFingerprint: string, proxyJump: string, authMethod: string, group?: string,
+source: string, action: SshImportAction, warnings: string[], };
 
 export type SshImportKeyDto = { id: string, aliases: string[], fingerprint: string, keyType: string,
 path: string, source: string, action: SshImportAction, warnings: string[], };
@@ -271,7 +271,7 @@ export type SshImportPreviewDto = { source: string, path: string,
 hosts: SshImportHostDto[], keys: SshImportKeyDto[], diagnostics: SshImportDiagnosticDto[], truncated: boolean, };
 
 export type SshImportApplyDto = { assetsCreated: number, assetsUpdated: number,
-credentialsCreated: number, credentialsUpdated: number, skipped: number, warnings: string[], };
+credentialsCreated: number, credentialsUpdated: number, groupsCreated?: number, skipped: number, warnings: string[], };
 
 export type GeneratedKeyDto = import("./generated/types").GeneratedKeyDTO;
 

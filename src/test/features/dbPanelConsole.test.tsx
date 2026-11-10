@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
+import { EditorView } from "@codemirror/view";
 import {
   click,
   clickButton,
@@ -100,6 +101,15 @@ function mountMysql(): void {
   mounted = mount(createElement(DbPanel, { connId: "c1", kind: "mysql" }));
 }
 
+function setSql(sql: string): void {
+  const element = mounted?.container.querySelector<HTMLElement>(".cm-editor");
+  const view = element ? EditorView.findFromDOM(element) : null;
+  if (!view) throw new Error("SQL editor not found");
+  act(() => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: sql } });
+  });
+}
+
 function cmdInput(): HTMLInputElement {
   const input = mounted?.container.querySelector<HTMLInputElement>('input[aria-label="Redis 命令"]');
   if (!input) throw new Error("command input not found");
@@ -154,15 +164,63 @@ describe("DbPanel Redis console accessibility", () => {
     expect(mocks.ask).not.toHaveBeenCalled();
   });
 
-  it("the hint explains the dangerous-command confirmation rule and the quoting limitation", async () => {
+  it("the hint explains the dangerous-command confirmation rule, quoting and history", async () => {
     mountRedis();
     await expandConsole();
     const text = mounted!.container.textContent ?? "";
     expect(text).toContain("使用 Redis 命令协议，不支持 SQL");
     expect(text).toContain("危险命令执行前需要确认");
     expect(text).toContain("其余命令直接执行");
-    expect(text).toContain("不支持引号");
+    expect(text).toContain("参数可用引号包裹");
+    expect(text).not.toContain("不支持引号");
     expect(text).not.toContain("没有确认步骤");
+  });
+});
+
+function pressKey(input: HTMLInputElement, key: string, init: KeyboardEventInit = {}): void {
+  act(() => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+  });
+}
+
+describe("DbPanel Redis console arguments and history", () => {
+  it("sends quoted arguments as single redis-cli style arguments", async () => {
+    mountRedis();
+    await expandConsole();
+    setInputValue(cmdInput(), `SET greeting "hello world\\n" 'it\\'s'`);
+    pressEnter(cmdInput());
+    await flushUntil(() => mocks.redisCommand.mock.calls.length === 1);
+    expect(mocks.redisCommand).toHaveBeenCalledWith("c1", ["SET", "greeting", "hello world\n", "it's"]);
+  });
+
+  it("shows unbalanced quotes as an error without sending the command", async () => {
+    mountRedis();
+    await expandConsole();
+    setInputValue(cmdInput(), 'SET k "open');
+    pressEnter(cmdInput());
+    await flushUntil(() => statusOut()?.textContent?.includes("引号不匹配") === true);
+    expect(mocks.redisCommand).not.toHaveBeenCalled();
+  });
+
+  it("walks command history with the arrow keys and ignores them during composition", async () => {
+    mountRedis();
+    await expandConsole();
+    for (const command of ["GET a", "GET b"]) {
+      setInputValue(cmdInput(), command);
+      pressEnter(cmdInput());
+      await flushUntil(() => mocks.redisCommand.mock.calls.at(-1)?.[1]?.join(" ") === command);
+    }
+    setInputValue(cmdInput(), "GET dr");
+    pressKey(cmdInput(), "ArrowUp", { isComposing: true });
+    expect(cmdInput().value).toBe("GET dr");
+    pressKey(cmdInput(), "ArrowUp");
+    expect(cmdInput().value).toBe("GET b");
+    pressKey(cmdInput(), "ArrowUp");
+    expect(cmdInput().value).toBe("GET a");
+    pressKey(cmdInput(), "ArrowDown");
+    expect(cmdInput().value).toBe("GET b");
+    pressKey(cmdInput(), "ArrowDown");
+    expect(cmdInput().value).toBe("GET dr");
   });
 });
 
@@ -343,6 +401,7 @@ describe("DbPanel MySQL accessibility", () => {
     expect(mounted!.container.querySelector(".cm-content")?.getAttribute("aria-label")).toBe(
       "SQL 编辑器",
     );
+    setSql("SELECT 42;");
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("运行"),
     );
@@ -354,16 +413,51 @@ describe("DbPanel MySQL accessibility", () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it("the run button and empty state truthfully state the single-statement limitation", async () => {
+  it("the run button and empty state state that the statement under the cursor runs", async () => {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("运行"),
     );
+    expect(run?.title).toContain("运行光标所在的语句");
     expect(run?.title).toContain("一次只执行一条语句");
     const text = mounted!.container.textContent ?? "";
-    expect(text).toContain("按 Ctrl+Enter 运行");
-    expect(text).toContain("一次只执行一条语句");
+    expect(text).toContain("+Enter 运行光标所在的语句");
+    expect(text).not.toContain("运行整段");
+  });
+});
+
+describe("DbPanel SQL statement under the cursor", () => {
+  function editorView(): EditorView {
+    return EditorView.findFromDOM(mounted!.container.querySelector<HTMLElement>(".cm-editor")!)!;
+  }
+
+  function runButton(): HTMLButtonElement {
+    const run = [...mounted!.container.querySelectorAll("button")].find((b) => b.textContent?.includes("运行"));
+    if (!run) throw new Error("run button not found");
+    return run;
+  }
+
+  it("runs only the statement under the cursor when nothing is selected", async () => {
+    mountMysql();
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    setSql("SELECT 1;\nSELECT 'a;b';\nSELECT 3;");
+    act(() => {
+      editorView().dispatch({ selection: { anchor: 13 } });
+    });
+    click(runButton());
+    await flushUntil(() => mocks.query.mock.calls.length === 1);
+    expect(mocks.query).toHaveBeenCalledWith("c1", "SELECT 'a;b';");
+  });
+
+  it("tells the user when there is no statement to run", async () => {
+    mountMysql();
+    await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    setSql("-- only a comment\n");
+    click(runButton());
+    await flushUntil(() => mocks.toast.mock.calls.length > 0);
+    expect(mocks.toast).toHaveBeenCalledWith("info", "没有可运行的 SQL 语句");
+    expect(mocks.query).not.toHaveBeenCalled();
   });
 });
 
@@ -371,6 +465,7 @@ describe("DbPanel MySQL copy-CSV feedback", () => {
   async function runQuery(): Promise<void> {
     mountMysql();
     await flushUntil(() => mounted!.container.querySelector(".cm-content") !== null);
+    setSql("SELECT 42;");
     const run = [...mounted!.container.querySelectorAll("button")].find((b) =>
       b.textContent?.includes("运行"),
     );

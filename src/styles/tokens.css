@@ -70,6 +70,11 @@
 }
 
 :root {
+  --nx-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --nx-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --nx-dur-fast: 120ms;
+  --nx-dur-base: 180ms;
+
   --nx-host-1: #60a5fa;
   --nx-host-2: #22d3ee;
   --nx-host-3: #4ade80;
@@ -352,4 +357,58 @@
 
 :root[data-nx-theme="light"][data-nx-term-theme="light"] .nx-term-overlay-warn {
   color: var(--nx-fg-warning);
+}
+
+/* Accent presets (src/app/accentPresets.ts): the preferences module sets data-nx-accent and the
+   --nx-accent-{dark,light}-* values on the root for a non-default preset; each scope picks the scale of its
+   own interface or terminal theme. */
+:root[data-nx-accent] {
+  --color-accent: var(--nx-accent-dark-accent);
+  --color-blue-50: var(--nx-accent-dark-50);
+  --color-blue-300: var(--nx-accent-dark-300);
+  --color-blue-400: var(--nx-accent-dark-400);
+  --color-blue-500: var(--nx-accent-dark-500);
+  --color-blue-600: var(--nx-accent-dark-600);
+  --color-blue-700: var(--nx-accent-dark-700);
+  --color-blue-900: var(--nx-accent-dark-900);
+}
+
+:root[data-nx-accent][data-nx-theme="light"] {
+  --color-accent: var(--nx-accent-light-accent);
+  --color-blue-50: var(--nx-accent-light-50);
+  --color-blue-300: var(--nx-accent-light-300);
+  --color-blue-400: var(--nx-accent-light-400);
+  --color-blue-500: var(--nx-accent-light-500);
+  --color-blue-600: var(--nx-accent-light-600);
+  --color-blue-700: var(--nx-accent-light-700);
+  --color-blue-900: var(--nx-accent-light-900);
+}
+
+:root[data-nx-accent][data-nx-theme="light"] .bg-term {
+  --color-accent: var(--nx-accent-dark-accent);
+  --color-blue-50: var(--nx-accent-dark-50);
+  --color-blue-300: var(--nx-accent-dark-300);
+  --color-blue-400: var(--nx-accent-dark-400);
+  --color-blue-500: var(--nx-accent-dark-500);
+  --color-blue-600: var(--nx-accent-dark-600);
+  --color-blue-700: var(--nx-accent-dark-700);
+  --color-blue-900: var(--nx-accent-dark-900);
+}
+
+:root[data-nx-accent][data-nx-term-theme="light"] .bg-term {
+  --color-accent: var(--nx-accent-light-accent);
+  --color-blue-50: var(--nx-accent-light-50);
+  --color-blue-300: var(--nx-accent-light-300);
+  --color-blue-400: var(--nx-accent-light-400);
+  --color-blue-500: var(--nx-accent-light-500);
+  --color-blue-600: var(--nx-accent-light-600);
+  --color-blue-700: var(--nx-accent-light-700);
+  --color-blue-900: var(--nx-accent-light-900);
+}
+
+/* A selected terminal color scheme other than the NexTerm defaults paints the whole terminal pane with its own
+   background and foreground (set as --nx-term-scheme-* on the root). */
+:root[data-nx-term-scheme] .nx-terminal-pane.bg-term {
+  --color-term: var(--nx-term-scheme-bg);
+  --nx-term-fg: var(--nx-term-scheme-fg);
 }

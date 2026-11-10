@@ -26,20 +26,36 @@ export type KeybindingActionId =
   | "restoreClosedTab"
   | "terminalSearch"
   | "terminalLinks"
+  | "terminalCopyMode"
+  | "terminalQuickSelect"
   | "sessionSidebar"
+  | "previousPrompt"
+  | "nextPrompt"
+  | "copyLastOutput"
+  | "generateCommand"
   | "reclaimTakeover"
   | "openSettings"
   | "focusAiInput"
-  | "lockVault";
+  | "lockVault"
+  | "lockApp"
+  | "terminalFontIncrease"
+  | "terminalFontDecrease"
+  | "terminalFontReset"
+  | "toggleZoomPane"
+  | "equalizeSplits"
+  | "showShortcuts";
 
 export interface KeybindingAction {
   id: KeybindingActionId;
   label: string;
-  defaultBinding: string;
+  /** null leaves the action unbound until the user assigns a chord. */
+  defaultBinding: string | null;
   /** An extra chord that also triggers the action on macOS desktop while the default binding is in effect. */
   macDefaultBinding?: string;
   /** The default on macOS (desktop and web) in place of defaultBinding. */
   macBinding?: string;
+  /** Extra desktop chords that also trigger the action while the default binding is in effect. */
+  desktopExtraBindings?: string[];
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
@@ -66,12 +82,37 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
+  // WezTerm's copy mode chord; Ctrl+Shift+X sends nothing to the program in the terminal.
+  { id: "terminalCopyMode", label: t("终端复制模式"), defaultBinding: "Mod+Shift+x" },
+  { id: "terminalQuickSelect", label: t("终端快速选择（复制或插入屏幕上的路径、链接、哈希）"), defaultBinding: "Mod+Shift+y" },
   { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
+  { id: "previousPrompt", label: t("跳到上一条命令"), defaultBinding: "Mod+Shift+ArrowUp" },
+  { id: "nextPrompt", label: t("跳到下一条命令"), defaultBinding: "Mod+Shift+ArrowDown" },
+  { id: "copyLastOutput", label: t("选中并复制上一条命令的输出"), defaultBinding: "Mod+Shift+o" },
+  // Ctrl+I is Tab in a terminal, and browsers keep Ctrl+Shift+I for developer tools, so only macOS uses Cmd+I.
+  { id: "generateCommand", label: t("用 AI 生成命令"), defaultBinding: "Ctrl+Shift+g", macBinding: "Primary+i" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },
   { id: "openSettings", label: t("打开设置"), defaultBinding: "Mod+," },
   { id: "focusAiInput", label: t("聚焦 AI 输入框"), defaultBinding: "Mod+Shift+a" },
   { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
+  // Mod+Shift+L already locks the vault, so locking the whole app has no default chord.
+  { id: "lockApp", label: t("锁定 NexTerm"), defaultBinding: null },
+  // Browsers keep Ctrl+= / Ctrl+- / Ctrl+0 for page zoom, so the web build adds Alt.
+  // Mod+Shift+= is Ctrl/Cmd+Plus on most layouts. The web build adds none: there Ctrl+Shift+Alt+= equalizes the splits.
+  {
+    id: "terminalFontIncrease",
+    label: t("增大终端字号"),
+    defaultBinding: WEB ? "Ctrl+Alt+=" : "Mod+=",
+    desktopExtraBindings: ["Mod+Shift+="],
+  },
+  { id: "terminalFontDecrease", label: t("减小终端字号"), defaultBinding: WEB ? "Ctrl+Alt+-" : "Mod+-" },
+  { id: "terminalFontReset", label: t("重置终端字号"), defaultBinding: WEB ? "Ctrl+Alt+0" : "Mod+0" },
+  { id: "toggleZoomPane", label: t("最大化 / 还原当前窗格"), defaultBinding: "Mod+Shift+Enter" },
+  { id: "equalizeSplits", label: t("均分所有窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+=" : "Mod+Alt+=" },
+  // Not withheld from a focused terminal: Ctrl+/ is readline's undo, so the terminal keeps any chord it encodes and
+  // the cheat sheet opens only where the chord reaches the app (elsewhere, or as Cmd+/ on macOS).
+  { id: "showShortcuts", label: t("快捷键速查"), defaultBinding: "Mod+/" },
 ];
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
@@ -97,10 +138,16 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "openSettings",
   "focusAiInput",
   "lockVault",
+  "lockApp",
+  "terminalFontIncrease",
+  "terminalFontDecrease",
+  "terminalFontReset",
+  "toggleZoomPane",
+  "equalizeSplits",
 ];
 
-// Actions that repeat while held: moving between tabs, workspaces and panes. Every other app shortcut runs once per
-// press, so holding it cannot open, close or split repeatedly.
+// Actions that repeat while held: moving between tabs, workspaces and panes, and stepping the terminal font size.
+// Every other app shortcut runs once per press, so holding it cannot open, close or split repeatedly.
 const REPEATABLE_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingActionId>([
   "nextTab",
   "previousTab",
@@ -110,6 +157,8 @@ const REPEATABLE_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingAc
   "focusPaneRight",
   "focusPaneUp",
   "focusPaneDown",
+  "terminalFontIncrease",
+  "terminalFontDecrease",
 ]);
 
 export function keybindingRepeats(id: KeybindingActionId): boolean {
@@ -117,7 +166,7 @@ export function keybindingRepeats(id: KeybindingActionId): boolean {
 }
 
 /** The built-in default binding of an action on the current (or given) platform. */
-export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string {
+export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string | null {
   return mac && action.macBinding ? action.macBinding : action.defaultBinding;
 }
 
@@ -193,6 +242,11 @@ function logicalEventKey(event: KeyEventLike): string | null {
   if (code === "BracketRight") return "]";
   // Shift turns the key into "|" on most layouts; the physical key keeps Mod+Shift+\ bindable.
   if (code === "Backslash") return "\\";
+  // The physical keys keep Mod+= and Mod+- bindable on layouts that put other characters there.
+  if (code === "Equal") return "=";
+  if (code === "Minus") return "-";
+  // The keypad plus types "+", which cannot be bound; it stands for "=", the unshifted plus key (Mod+= zooms in).
+  if (code === "NumpadAdd") return "=";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -285,13 +339,21 @@ export function formatBindingAria(binding: string | null): string | null {
   return parts.join("+");
 }
 
+/**
+ * Whether Mod means Cmd alone. On macOS desktop Ctrl stays with the terminal (tmux prefix, readline), so Mod is Cmd;
+ * the web build keeps the Ctrl fallback because the browser reserves many Cmd chords.
+ */
+export function modIsMetaOnly(mac = isMac(), web = WEB): boolean {
+  return mac && !web;
+}
+
 export function matchBinding(event: KeyEventLike, binding: string): boolean {
   const parsed = parseBinding(binding);
   if (!parsed) return false;
   if (event.shiftKey !== parsed.shift) return false;
   if (event.altKey !== parsed.alt) return false;
   if (parsed.mod) {
-    if (!event.ctrlKey && !event.metaKey) return false;
+    if (modIsMetaOnly() ? !event.metaKey : !event.ctrlKey && !event.metaKey) return false;
   } else if (parsed.primary) {
     const primaryDown = isMac() ? event.metaKey : event.ctrlKey;
     const otherDown = isMac() ? event.ctrlKey : event.metaKey;
@@ -318,13 +380,17 @@ export function captureBinding(event: KeyEventLike): CaptureResult {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return { kind: "modifier" };
   const key = logicalEventKey(event);
   if (key === null) return { kind: "invalid", reason: t("无法识别按键 {key}", { key: event.key }) };
-  const mod = event.ctrlKey || event.metaKey;
+  // On macOS desktop a captured Ctrl stays a literal Ctrl, since Mod there matches Cmd only.
+  const metaOnly = modIsMetaOnly();
+  const mod = metaOnly ? event.metaKey : event.ctrlKey || event.metaKey;
+  const ctrl = metaOnly && event.ctrlKey && !event.metaKey;
   const named = NAMED_KEYS.has(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
-  if (!mod && !event.shiftKey && !event.altKey && !named) {
+  if (!mod && !ctrl && !event.shiftKey && !event.altKey && !named) {
     return { kind: "invalid", reason: t("单个按键需要至少一个修饰键（Ctrl / Shift / Alt）") };
   }
   const parts: string[] = [];
   if (mod) parts.push("Mod");
+  else if (ctrl) parts.push("Ctrl");
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
   parts.push(key);
@@ -354,7 +420,7 @@ export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | nu
 const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
 const ACTIONS_BY_ID = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a]));
 
-function builtinDefault(id: KeybindingActionId): string | undefined {
+function builtinDefault(id: KeybindingActionId): string | null | undefined {
   const action = ACTIONS_BY_ID.get(id);
   return action ? defaultBindingFor(action) : undefined;
 }
@@ -527,17 +593,20 @@ export function useKeybindings(): KeybindingSnapshot {
   return useSyncExternalStore(subscribeKeybindings, getKeybindings);
 }
 
+/**
+ * The chords that trigger `action` besides `binding`: the macOS desktop tab chords and the desktop extras, all only
+ * while the default binding is in effect.
+ */
+export function defaultExtraBindings(action: KeybindingAction, binding: string | null, mac = isMac(), web = WEB): string[] {
+  if (web || binding === null || binding !== action.defaultBinding) return [];
+  return [...(mac && action.macDefaultBinding ? [action.macDefaultBinding] : []), ...(action.desktopExtraBindings ?? [])];
+}
+
 function matchActionBinding(event: KeyEventLike, id: KeybindingActionId): boolean {
   const binding = currentSnapshot()[id];
   if (binding !== null && matchBinding(event, binding)) return true;
-  const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
-  return Boolean(
-    action?.macDefaultBinding &&
-    binding === action.defaultBinding &&
-    !WEB &&
-    isMac() &&
-    matchBinding(event, action.macDefaultBinding),
-  );
+  const action = ACTIONS_BY_ID.get(id);
+  return action ? defaultExtraBindings(action, binding).some((extra) => matchBinding(event, extra)) : false;
 }
 
 export function matchKeybinding(event: KeyEventLike, id: KeybindingActionId): boolean {
@@ -576,16 +645,27 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
  * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
  * terminal pane intercepts before xterm. Listed in match precedence order.
  */
-export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks", "sessionSidebar"];
+const TERMINAL_PANE_ACTIONS: readonly KeybindingActionId[] = [
+  "terminalSearch",
+  "terminalLinks",
+  "terminalCopyMode",
+  "terminalQuickSelect",
+  "sessionSidebar",
+  "previousPrompt",
+  "nextPrompt",
+  "copyLastOutput",
+  "generateCommand",
+];
+
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, ...TERMINAL_PANE_ACTIONS];
 
 /** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
 export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
   const hit = matchAppKeybinding(event);
   if (hit) return hit;
   if (isAltGraph(event)) return null;
-  if (matchActionBinding(event, "terminalSearch")) return { action: "terminalSearch", digit: null };
-  if (matchActionBinding(event, "terminalLinks")) return { action: "terminalLinks", digit: null };
-  return matchActionBinding(event, "sessionSidebar") ? { action: "sessionSidebar", digit: null } : null;
+  const action = TERMINAL_PANE_ACTIONS.find((id) => matchActionBinding(event, id));
+  return action ? { action, digit: null } : null;
 }
 
 export interface KeybindingConflict {
@@ -608,7 +688,8 @@ function modifiersOverlap(a: ParsedBinding, b: ParsedBinding, mac: boolean): boo
   if (ka === kb) return true;
   const pair = new Set([ka, kb]);
   if (pair.has("none")) return false;
-  if (pair.has("mod")) return true;
+  // On macOS desktop Mod is Cmd only, so it shares chords with Meta and Primary but not with Ctrl.
+  if (pair.has("mod")) return !(modIsMetaOnly(mac) && pair.has("ctrl"));
   if (pair.has("primary") && pair.has("ctrl")) return !mac;
   if (pair.has("primary") && pair.has("meta")) return mac;
   if (pair.has("ctrl") && pair.has("meta")) return true;
@@ -635,10 +716,7 @@ export function bindingConflicts(
 ): KeybindingConflict[] {
   const parsed = KEYBINDING_ACTIONS.flatMap((action) => {
     const binding = bindings[action.id];
-    const candidates = [
-      binding,
-      !WEB && mac && binding === action.defaultBinding ? action.macDefaultBinding : undefined,
-    ];
+    const candidates = [binding, ...defaultExtraBindings(action, binding, mac)];
     return candidates
       .filter((candidate): candidate is string => Boolean(candidate))
       .map((candidate) => ({ action, binding: candidate }));

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/metrics"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -41,6 +42,11 @@ type Invocation struct {
 	DebugCapture   bool
 	Help           bool
 	Version        bool
+
+	// MetricsAddr serves Prometheus metrics (nexterm-server only);
+	// MetricsAllowRemote lets it bind a non-loopback host.
+	MetricsAddr        string
+	MetricsAllowRemote bool
 }
 
 func ParseCLI(args []string, defaultCommand Command, getenv func(string) string) (Invocation, error) {
@@ -57,13 +63,26 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		DBDSN:          getenv("NEXTERM_DB_DSN"),
 		DBPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
 		PprofAddr:      getenv(pprof.EnvAddr),
+		MetricsAddr:    getenv(metrics.EnvAddr),
 	}
+	allowRemote, err := metrics.ParseAllowRemote(getenv(metrics.EnvAllowRemote))
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.MetricsAllowRemote = allowRemote
 	if raw := strings.TrimSpace(getenv("NEXTERM_DEBUG_CAPTURE")); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
 			return Invocation{}, fmt.Errorf("invalid NEXTERM_DEBUG_CAPTURE value %q (want 1 or 0)", raw)
 		}
 		invocation.DebugCapture = enabled
+	}
+	if raw := strings.TrimSpace(getenv("NEXTERM_REQUIRE_VAULT")); raw != "" {
+		required, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Invocation{}, fmt.Errorf("invalid NEXTERM_REQUIRE_VAULT value %q (want 1 or 0)", raw)
+		}
+		invocation.RequireVault = required
 	}
 	dbMaxOpenConnsEnv := getenv("NEXTERM_DB_MAX_OPEN_CONNS")
 	commandSeen := false
@@ -151,6 +170,8 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 				invocation.DBMaxOpenConns = parsed
 			case "--pprof-addr":
 				invocation.PprofAddr = value
+			case "--metrics-addr":
+				invocation.MetricsAddr = value
 			}
 			continue
 		}
@@ -177,6 +198,9 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 			return Invocation{}, err
 		}
 		if _, err := pprof.NormalizeAddr(invocation.PprofAddr); err != nil {
+			return Invocation{}, err
+		}
+		if _, err := metrics.NormalizeAddr(invocation.MetricsAddr, invocation.MetricsAllowRemote); err != nil {
 			return Invocation{}, err
 		}
 		switch invocation.Auth {
@@ -224,7 +248,7 @@ func Usage(program string, defaultCommand Command) string {
 Commands:
   desktop       Run the Wails desktop application
   serve         Run the HTTP server (default for nexterm-server)
-
+%s
 Flags:
   --listen ADDRESS    HTTP listen address (env NEXTERM_LISTEN)
   --data-dir PATH     Data directory (env NEXTERM_DATA_DIR)
@@ -245,22 +269,68 @@ Flags:
   --db-password-file PATH  Read the database password from a 0600 file
                       (env NEXTERM_DB_PASSWORD_FILE); rejected if DSN already contains a password
   --db-max-open-conns N  Remote database pool size (env NEXTERM_DB_MAX_OPEN_CONNS, default 16)
-  --require-vault     Fail startup unless the credential vault unlocks
+  --require-vault     Fail startup unless the credential vault unlocks (env NEXTERM_REQUIRE_VAULT=1)
   --sync-only         Restrict the server to sync routes
   --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);
                       disabled by default, loopback only (a bare ":PORT" binds 127.0.0.1)
                       unless an explicit wildcard like 0.0.0.0 is given
+  --metrics-addr ADDR Serve Prometheus metrics at /metrics on ADDR, nexterm-server only
+                      (env NEXTERM_METRICS_ADDR); disabled by default, loopback only
+                      (a bare ":PORT" binds 127.0.0.1) unless NEXTERM_METRICS_ALLOW_REMOTE=1
   --debug-capture     Record profiles and verbose redacted logs for this run only
                       (env NEXTERM_DEBUG_CAPTURE=1); output goes to <data-dir>/logs/debug-capture
   --version           Print the version
   -h, --help          Print this help
-`, program, defaultCommand)
+
+Server environment (serve only):
+  NEXTERM_ALLOWED_ORIGINS  Extra origins (host[:port] patterns, comma separated) accepted
+                      besides the request Host; set it when a reverse proxy rewrites Host
+  NEXTERM_TRUSTED_PROXY_CIDRS  Proxy addresses (comma separated) whose X-Forwarded-Proto is trusted
+  NEXTERM_TRUST_FORWARDED_FOR  true/false; also trust X-Forwarded-For from those proxies
+  NEXTERM_WS_KEEPALIVE, NEXTERM_WS_PING_TIMEOUT, NEXTERM_WS_WRITE_TIMEOUT
+                      WebSocket ping interval (negative disables), pong wait and write
+                      deadline as Go durations (defaults 25s, 10s, 10s)
+  NEXTERM_WS_COMPRESSION  WebSocket compression override: takeover, nocontext or off
+  NEXTERM_EVENT_QUEUE_SIZE, NEXTERM_EVENT_BUFFER_SIZE
+                      Per-subscriber event queue and replay buffer length (defaults 64, 256)
+  NEXTERM_PPROF_CONTENTION  With pprof enabled, sample block/mutex profiles at rate N
+                      (1 records every event; default 0 = off)
+
+Logging environment (an invalid value stops nexterm-server with exit code 2;
+nexterm-desktop warns and uses the default):
+  NEXTERM_LOG_LEVEL   debug, info, warn, or error (default info)
+  NEXTERM_LOG_FORMAT  text or json (default text)
+  NEXTERM_LOG_FILE    auto, on, or off (default auto): writes <data-dir>/logs/nexterm.log,
+                      rotated at 10 MB with 5 backups (nexterm.log.1 ... .5); auto skips
+                      the file for nexterm-server when stderr is the systemd journal
+                      (JOURNAL_STREAM), so records are stored once
+  NEXTERM_ACCESS_LOG  1 logs one record per HTTP request on nexterm-server: method, path,
+                      status, bytes, duration, and client IP (trusted-proxy aware); query
+                      strings, request bodies, and share-link tokens are never logged
+
+Browser file staging (serve only, environment variables, sizes in bytes):
+  NEXTERM_BLOB_MAX_BYTES           One browser upload (default 268435456 = 256 MiB)
+  NEXTERM_BLOB_PERSIST_MAX_BYTES   All persisted uploads together (default 1073741824 = 1 GiB)
+  NEXTERM_BLOB_STAGE_MAX_BYTES     One account's temporary staged files together (default 2147483648 = 2 GiB)
+  NEXTERM_BLOB_DOWNLOAD_MAX_BYTES  One file the server writes for the browser: file and folder downloads,
+                                   terminal recordings and log exports (default 2147483648 = 2 GiB)
+  NEXTERM_BLOB_DISK_MAX_PERCENT    Refuse new staged files once the data disk is this full (default 90)
+`, program, defaultCommand, serverSubcommands(defaultCommand))
+}
+
+// serverSubcommands lists the maintenance commands only nexterm-server has.
+func serverSubcommands(defaultCommand Command) string {
+	if defaultCommand != CommandServe {
+		return ""
+	}
+	return "  healthcheck   Probe /healthz and exit 0 when ready (nexterm-server healthcheck --help)\n" +
+		"  backup        Write a consistent SQLite snapshot (nexterm-server backup --help)\n"
 }
 
 func isStringFlag(name string) bool {
 	switch name {
 	case "--listen", "--data-dir", "--web-root", "--master-key-file", "--auth",
-		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns", "--pprof-addr":
+		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns", "--pprof-addr", "--metrics-addr":
 		return true
 	default:
 		return false

@@ -336,8 +336,9 @@ describe("command palette asset secondary actions", () => {
     setInputValue(searchInput(mounted!.container), "web-01");
     await flush();
     expect(
+      // The ask-AI row repeats the query on purpose; it is not a host row.
       [...mounted!.container.querySelectorAll('[role="option"]')].some((o) =>
-        o.textContent?.includes("web-01"),
+        o.textContent?.includes("web-01") && !o.textContent.includes("问 AI"),
       ),
     ).toBe(false);
   });

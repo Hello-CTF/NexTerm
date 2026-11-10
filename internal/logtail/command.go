@@ -13,6 +13,9 @@ func sourceCommand(source Source) (string, error) {
 	if len(value) > MaxSourceValueSize || strings.ContainsAny(value, "\x00\r\n") {
 		return "", fmt.Errorf("%w: source value must be one line of at most %d bytes without NUL", ErrInvalid, MaxSourceValueSize)
 	}
+	if source.Kind == SourceWinEvent {
+		return winEventCommand(value)
+	}
 	quoted := quoteShell(value)
 	switch source.Kind {
 	case SourceFile:

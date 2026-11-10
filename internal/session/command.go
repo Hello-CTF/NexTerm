@@ -8,7 +8,6 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
-	"github.com/mattn/go-runewidth"
 )
 
 // Command sources recorded in the command log.
@@ -27,11 +26,13 @@ const (
 
 // CommandRecord is one audited command executed in a terminal tab.
 type CommandRecord struct {
-	SessionID  string
-	TabID      string
-	AssetID    string
-	UserID     string
-	Command    string
+	SessionID string
+	TabID     string
+	AssetID   string
+	UserID    string
+	Command   string
+	// Cwd is the OSC 7 directory the command started in; empty when unknown.
+	Cwd        string
 	Source     string
 	ExitCode   *int
 	StartedAt  time.Time
@@ -55,6 +56,7 @@ func (f CommandSinkFunc) RecordCommand(ctx context.Context, record CommandRecord
 type pendingCommand struct {
 	sequence  uint64
 	command   string
+	cwd       string
 	startedAt time.Time
 }
 
@@ -66,8 +68,11 @@ const maxCommandWrapRows = 8
 // records finished commands through the manager's sink, and stores the
 // latest lifecycle snapshot. Callers must hold the tab feed gate: the
 // tracker is not safe for concurrent use. The recording, replay, and
-// subscriber bytes are untouched.
-func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool) {
+// subscriber bytes are untouched. cwdBefore is the tab directory known before
+// data was observed: a command takes the last OSC 7 report preceding its
+// start in stream order, so a fast "cd" whose next prompt arrives in the same
+// chunk still records the directory it ran in.
+func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool, cwdBefore string) {
 	reports, state, _ := tab.commandTrack.ObserveReports(data)
 	// Replayed history keeps the lifecycle snapshot current but never records
 	// commands: they were recorded when they ran.
@@ -79,7 +84,11 @@ func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool) {
 				// The previous command never reported a finish; close it with an
 				// unknown exit code instead of dropping it.
 				m.finishCommand(tab, now, nil)
-				m.startCommand(tab, report.Sequence, now)
+				cwd := cwdBefore
+				if report.HasCWD {
+					cwd = report.CWD
+				}
+				m.startCommand(tab, report.Sequence, now, cwd)
 			case report.Letter == 'D' || report.Letter == 'A':
 				var exitCode *int
 				if pending := tab.pendingCmd; pending != nil && report.Sequence == pending.sequence && report.HasExitCode {
@@ -95,7 +104,7 @@ func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool) {
 	tab.mu.Unlock()
 }
 
-func (m *Manager) startCommand(tab *Tab, sequence uint64, now time.Time) {
+func (m *Manager) startCommand(tab *Tab, sequence uint64, now time.Time, cwd string) {
 	if m.commands == nil {
 		return
 	}
@@ -103,7 +112,7 @@ func (m *Manager) startCommand(tab *Tab, sequence uint64, now time.Time) {
 	if command == "" {
 		return
 	}
-	tab.pendingCmd = &pendingCommand{sequence: sequence, command: command, startedAt: now}
+	tab.pendingCmd = &pendingCommand{sequence: sequence, command: command, cwd: cwd, startedAt: now}
 }
 
 func (m *Manager) finishCommand(tab *Tab, now time.Time, exitCode *int) {
@@ -121,6 +130,7 @@ func (m *Manager) finishCommand(tab *Tab, now time.Time, exitCode *int) {
 		AssetID:    tab.session.asset.ID,
 		UserID:     tab.session.userID,
 		Command:    pending.command,
+		Cwd:        pending.cwd,
 		Source:     CommandSourceTerminal,
 		ExitCode:   exitCode,
 		StartedAt:  pending.startedAt,
@@ -199,7 +209,7 @@ func commandLineFromSnapshot(snapshot terminal.Snapshot) string {
 	// The command row is the last row of a possibly wrapped input line: while
 	// the row above is completely filled the input spilled into the current
 	// top row, so keep collecting upward, newest row last.
-	for start > 0 && runewidth.StringWidth(lines[start-1]) >= snapshot.Cols && row-start+1 < maxCommandWrapRows {
+	for start > 0 && terminal.StringWidth(lines[start-1]) >= snapshot.Cols && row-start+1 < maxCommandWrapRows {
 		start--
 	}
 	parts := make([]string, 0, row-start+1)

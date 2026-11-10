@@ -86,6 +86,9 @@ func TestRemoteParentDir(t *testing.T) {
 		`C:\a\b`:     `C:\a`,
 		`C:\a`:       `C:\`,
 		`C:\`:        "",
+		`/a/b\c.txt`: "/a",
+		`/a\b`:       "/",
+		`~/a\b`:      "~",
 	}
 	for path, want := range cases {
 		if got := parentDir(path); got != want {

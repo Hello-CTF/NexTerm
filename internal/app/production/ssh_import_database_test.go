@@ -262,7 +262,7 @@ func TestSSHImportRejectsSoftDeletedTargetDatabase(t *testing.T) {
 	result := sshImportApplyDTO{Warnings: []string{}}
 	input := sshImportApplyRequest{Source: "ssh-config", Path: fixture.configPath, Hosts: hosts, Keys: keys}
 	err = fixture.database.GORM().WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
-		return fixture.planner.applyWrites(t.Context(), tx, plan, input, &result)
+		return fixture.planner.applyWrites(t.Context(), tx, plan, input, nil, &result)
 	})
 	if err == nil || !strings.Contains(err.Error(), "重新预览") {
 		t.Fatalf("soft-deleted target error = %v, want re-preview", err)

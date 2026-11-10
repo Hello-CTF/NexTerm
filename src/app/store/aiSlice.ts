@@ -23,6 +23,13 @@ export function createAiSlice(set: UiSet, get: UiGet) {
       if (taken.length > 0) set({ aiPendingRefs: [] });
       return taken;
     },
+    aiPendingPrompt: null,
+    queueAiPrompt: (text) => set({ aiPendingPrompt: text }),
+    takeAiPendingPrompt: () => {
+      const taken = get().aiPendingPrompt;
+      if (taken !== null) set({ aiPendingPrompt: null });
+      return taken;
+    },
     aiRulePrefill: null,
     setAiRulePrefill: (v) => set({ aiRulePrefill: v }),
     setAiBusy: (v) => set({ aiBusy: v }),
@@ -35,7 +42,7 @@ export function createAiSlice(set: UiSet, get: UiGet) {
       const tabIds = Object.values(get().aiBoards).flatMap((board) => board.tabs.map((tab) => tab.id));
       clearAiTabRuns(tabIds);
       get().setTakeover(null);
-      set((state) => ({ aiBoards: {}, aiPendingRefs: [], aiBusy: false, aiAccountEpoch: state.aiAccountEpoch + 1 }));
+      set((state) => ({ aiBoards: {}, aiPendingRefs: [], aiPendingPrompt: null, aiBusy: false, aiAccountEpoch: state.aiAccountEpoch + 1 }));
     },
     ensureAiBoard: (key) => {
       const existing = get().aiBoards[key];

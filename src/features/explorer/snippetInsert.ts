@@ -4,6 +4,20 @@ import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import type { SnippetStep } from "../../ipc/types";
 import { t as tr } from "../../i18n";
+import { readTerminalScreen, subscribeTerminalOutput } from "../terminal/terminalOutputTap";
+import {
+  createOutputTail,
+  createRegexMatcher,
+  createTextMatcher,
+  loadRegexEngine,
+  regexPatternError,
+  stepWaitTimeoutMs,
+  waitForOutput,
+  type OutputTail,
+  type RegexEngine,
+  type StepMatcher,
+} from "./snippetWaitFor";
+import { beginSnippetRun, type SnippetRunHandle } from "./snippetRuns";
 
 export interface Snippet {
   id: string;
@@ -89,15 +103,134 @@ function stepTargetState(tabId: string): string | null {
   return tr("原终端已关闭");
 }
 
-async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string): Promise<boolean> {
+function stepLabel(step: SnippetStep, index: number): string {
+  const name = step.name.trim();
+  return name ? tr("第 {value} 步「{name}」", { value: index + 1, name }) : tr("第 {value} 步", { value: index + 1 });
+}
+
+export interface SnippetRunOptions {
+  // Run in this terminal instead of the active one.
+  tabId?: string;
+  // Called once when the run first waits for terminal output, so a dialog that started it can get out of the way.
+  onWaiting?: () => void;
+}
+
+// Terminals with a snippet run that waits for output.
+const waitingTabs = new Set<string>();
+
+async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string, options: SnippetRunOptions): Promise<boolean> {
   const pushToast = useUi.getState().pushToast;
   const epoch = useUi.getState().accountEpoch;
   if (steps.some((step) => insertRisk(step.command) === "control")) {
     if (!(await confirmRisk(s, "control", "execute"))) return false;
   }
+  if (!steps.some((step) => step.waitFor)) return sendSteps(s, steps, tabId, epoch, null, options);
+  // Two runs waiting on one terminal would race for the same output.
+  if (waitingTabs.has(tabId)) {
+    pushToast("info", tr("当前终端已有片段正在等待输出，请等它结束或取消后再执行「{name}」", { name: s.name }));
+    return false;
+  }
+  waitingTabs.add(tabId);
+  try {
+    return await runWaitingSteps(s, steps, tabId, epoch, options);
+  } finally {
+    waitingTabs.delete(tabId);
+  }
+}
+
+async function runWaitingSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string, epoch: number, options: SnippetRunOptions): Promise<boolean> {
+  const pushToast = useUi.getState().pushToast;
+  let engine: RegexEngine | null = null;
+  if (steps.some((step) => step.waitFor && step.waitForRegex)) {
+    try {
+      engine = await loadRegexEngine();
+    } catch (cause) {
+      pushToast("error", tr("无法加载正则表达式引擎，未执行「{name}」：{value}", { name: s.name, value: describeError(cause) }));
+      return false;
+    }
+    if (useUi.getState().accountEpoch !== epoch) return false;
+  }
+  // Wait patterns are checked before anything is sent, so a bad one never leaves the run half done.
+  const matchers = new Map<number, StepMatcher>();
+  for (const [index, step] of steps.entries()) {
+    if (!step.waitFor) continue;
+    if (step.waitForRegex && engine) {
+      const problem = regexPatternError(engine, step.waitFor);
+      if (problem !== null) {
+        pushToast("error", tr("「{name}」{step}的等待条件不是有效的正则表达式，未执行任何步骤：{value}", { name: s.name, step: stepLabel(step, index), value: problem }));
+        return false;
+      }
+      matchers.set(index, createRegexMatcher(engine, step.waitFor));
+    } else {
+      matchers.set(index, createTextMatcher(step.waitFor));
+    }
+  }
+  // The first wait starts from the current screen; every later one sees only the output after the previous step.
+  const tail = createOutputTail();
+  tail.append(readTerminalScreen(tabId) ?? "");
+  const unsubscribeOutput = subscribeTerminalOutput(tabId, tail.appendBytes);
+  const abort = new AbortController();
+  const run = beginSnippetRun({ name: s.name, total: steps.length, cancel: () => abort.abort() });
+  // A closed or ended terminal and an account switch end a wait at once instead of after its timeout.
+  const unsubscribeUi = useUi.subscribe((state) => {
+    if (state.accountEpoch !== epoch || stepTargetState(tabId)) abort.abort();
+  });
+  try {
+    return await sendSteps(s, steps, tabId, epoch, { tail, matchers, signal: abort.signal, run }, options);
+  } finally {
+    unsubscribeUi();
+    unsubscribeOutput();
+    run.end();
+  }
+}
+
+interface StepWaits {
+  tail: OutputTail;
+  matchers: ReadonlyMap<number, StepMatcher>;
+  signal: AbortSignal;
+  run: SnippetRunHandle;
+}
+
+async function sendSteps(
+  s: Snippet,
+  steps: readonly SnippetStep[],
+  tabId: string,
+  epoch: number,
+  waits: StepWaits | null,
+  options: SnippetRunOptions,
+): Promise<boolean> {
+  const pushToast = useUi.getState().pushToast;
+  let notifiedWaiting = false;
   for (const [index, step] of steps.entries()) {
     const done = index;
     if (useUi.getState().accountEpoch !== epoch) return false;
+    const matcher = waits?.matchers.get(index);
+    if (waits && matcher && step.waitFor) {
+      waits.run.update({ step: index + 1, waitingFor: step.waitFor });
+      if (!notifiedWaiting) {
+        notifiedWaiting = true;
+        options.onWaiting?.();
+      }
+      const timeoutMs = stepWaitTimeoutMs(step);
+      const outcome = await waitForOutput(waits.tail, matcher, timeoutMs, waits.signal);
+      waits.run.update({ waitingFor: null });
+      if (useUi.getState().accountEpoch !== epoch) return false;
+      if (outcome === "timeout") {
+        pushToast("error", tr("「{name}」{step}等待输出「{pattern}」超时（{seconds} 秒），已停止：已执行到第 {done} 步", {
+          name: s.name, step: stepLabel(step, index), pattern: step.waitFor, seconds: Math.round(timeoutMs / 100) / 10, done,
+        }));
+        return false;
+      }
+      if (outcome === "cancelled") {
+        const blocked = stepTargetState(tabId);
+        pushToast("info", blocked
+          ? tr("{blocked}，已停止「{name}」：已执行到第 {done} 步", { blocked, name: s.name, done })
+          : tr("已取消「{name}」：已执行到第 {done} 步", { name: s.name, done }));
+        return false;
+      }
+    } else {
+      waits?.run.update({ step: index + 1 });
+    }
     if (step.confirm) {
       const title = step.name.trim() ? `「${step.name.trim()}」` : "";
       const ok = await ask(
@@ -115,7 +248,14 @@ async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string
       pushToast("info", tr("{blocked}，已停止「{name}」：已执行到第 {done} 步", { blocked, name: s.name, done }));
       return false;
     }
+    // Cancelled while a confirmation was open.
+    if (waits?.signal.aborted) {
+      pushToast("info", tr("已取消「{name}」：已执行到第 {done} 步", { name: s.name, done }));
+      return false;
+    }
     const payload = /[\r\n]$/.test(step.command) ? step.command : step.command + "\r";
+    // Output that arrives from here on belongs to this step.
+    waits?.tail.clear();
     try {
       await terminalApi.write(tabId, new TextEncoder().encode(payload));
     } catch (e) {
@@ -127,7 +267,9 @@ async function runSteps(s: Snippet, steps: readonly SnippetStep[], tabId: string
   return true;
 }
 
-export async function runSnippetAction(s: Snippet, action: SnippetAction): Promise<boolean> {
+// runSnippetAction acts on the active terminal, or on options.tabId (a terminal id) when the caller chose the terminal.
+export async function runSnippetAction(s: Snippet, action: SnippetAction, options: SnippetRunOptions = {}): Promise<boolean> {
+  const target = options.tabId ? { tabId: options.tabId } : undefined;
   const pushToast = useUi.getState().pushToast;
   const label = ACTION_LABEL[action];
   if (isMultiStep(s)) {
@@ -135,16 +277,16 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
       pushToast("info", tr("多步片段只能执行，不能插入"));
       return false;
     }
-    const first = terminalTarget();
+    const first = target ?? terminalTarget();
     if ("blocked" in first) {
       pushToast("info", tr("{blocked}，才能{label}片段", { blocked: first.blocked, label }));
       return false;
     }
-    return runSteps(s, s.steps ?? [], first.tabId);
+    return runSteps(s, s.steps ?? [], first.tabId, options);
   }
-  const target = terminalTarget();
-  if ("blocked" in target) {
-    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: target.blocked, label }));
+  const resolved = target ?? terminalTarget();
+  if ("blocked" in resolved) {
+    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: resolved.blocked, label }));
     return false;
   }
   const risk = insertRisk(s.body);
@@ -152,7 +294,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction): Promi
   const payload =
     action === "execute" && !/[\r\n]$/.test(s.body) ? s.body + "\r" : s.body;
   try {
-    await terminalApi.write(target.tabId, new TextEncoder().encode(payload));
+    await terminalApi.write(resolved.tabId, new TextEncoder().encode(payload));
     pushToast(
       "success",
       action === "insert"
@@ -178,6 +320,6 @@ export function insertSnippet(s: Snippet): Promise<boolean> {
   return runSnippetAction(s, "insert");
 }
 
-export function executeSnippet(s: Snippet): Promise<boolean> {
-  return runSnippetAction(s, "execute");
+export function executeSnippet(s: Snippet, options?: SnippetRunOptions): Promise<boolean> {
+  return runSnippetAction(s, "execute", options);
 }

@@ -59,6 +59,11 @@ type Report struct {
 	// Started is true only for a B that transitioned the tracker to running,
 	// i.e. a deduplicated repeat B is reported with Started false.
 	Started bool
+	// CWD is the last OSC 7 directory reported earlier in the same observed
+	// chunk, in stream order; HasCWD is false when none preceded the report,
+	// in which case the directory known before the chunk still applies.
+	CWD    string
+	HasCWD bool
 }
 
 // Observe scans p for OSC 133 sequences without modifying p. It returns the
@@ -76,9 +81,13 @@ func (t *CommandTracker) Observe(p []byte) (CommandState, bool) {
 func (t *CommandTracker) ObserveReports(p []byte) ([]Report, CommandState, bool) {
 	before := t.state
 	var reports []Report
+	cwd, hasCWD := "", false
 	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
 		if report, ok := t.ObservePayload(payload); ok {
+			report.CWD, report.HasCWD = cwd, hasCWD
 			reports = append(reports, report)
+		} else if dir, ok := parseOSC7(payload); ok {
+			cwd, hasCWD = dir, true
 		}
 	})
 	t.pending = append(t.pending[:0], tail...)

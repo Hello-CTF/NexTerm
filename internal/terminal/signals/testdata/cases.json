@@ -92,14 +92,46 @@
   ]
  },
  {
-  "name": "osc9_conemu_progress",
+  "name": "osc9_progress_bel",
   "input": "\u001b]9;4;1;50\u0007",
+  "events": [{"kind": "progress", "progress": "normal", "value": 50}]
+ },
+ {
+  "name": "osc9_progress_clear_st",
+  "input": "\u001b]9;4;0\u001b\\",
+  "events": [{"kind": "progress", "progress": "clear"}]
+ },
+ {
+  "name": "osc9_progress_c1_st_and_text_around",
+  "input": "50%\r\u001b]9;4;1;75\u009cdone\u001b]9;4;0;0\u0007",
+  "events": [{"kind": "progress", "progress": "normal", "value": 75}, {"kind": "progress", "progress": "clear"}]
+ },
+ {
+  "name": "osc9_progress_states",
+  "input": "\u001b]9;4;2;40\u0007\u001b]9;4;2\u0007\u001b]9;4;3;80\u0007\u001b]9;4;4;10\u0007\u001b]9;4;4\u0007\u001b]9;4;1\u0007",
+  "events": [
+   {"kind": "progress", "progress": "error", "value": 40},
+   {"kind": "progress", "progress": "error"},
+   {"kind": "progress", "progress": "indeterminate"},
+   {"kind": "progress", "progress": "paused", "value": 10},
+   {"kind": "progress", "progress": "paused"},
+   {"kind": "progress", "progress": "normal", "value": 0}
+  ]
+ },
+ {
+  "name": "osc9_progress_clamped_and_extra_fields",
+  "input": "\u001b]9;4;1;250\u0007\u001b]9;4;1;007;extra\u0007",
+  "events": [{"kind": "progress", "progress": "normal", "value": 100}, {"kind": "progress", "progress": "normal", "value": 7}]
+ },
+ {
+  "name": "osc9_progress_invalid_dropped",
+  "input": "\u001b]9;4\u0007\u001b]9;4;7;10\u0007\u001b]9;4;1;5x\u0007\u001b]9;4;a\u0007\u001b]9;4;1;5\u001bX\u0007",
   "events": []
  },
  {
-  "name": "osc9_conemu_progress_clear",
-  "input": "\u001b]9;4;0\u001b\\",
-  "events": []
+  "name": "osc9_progress_bel_inside_is_terminator_not_bell",
+  "input": "\u001b]9;4;3\u0007\u0007",
+  "events": [{"kind": "progress", "progress": "indeterminate"}, {"kind": "bell"}]
  },
  {
   "name": "osc9_conemu_bare_number",

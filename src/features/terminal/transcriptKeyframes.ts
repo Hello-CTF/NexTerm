@@ -1,5 +1,6 @@
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
+import { activateUnicode11 } from "./xtermAddons";
 
 import {
   parseResizePayload,
@@ -29,6 +30,7 @@ export function createXtermKeyframeSource(): KeyframeSource {
   const terminal = new Terminal({ scrollback: KEYFRAME_SCROLLBACK, allowProposedApi: true });
   const serializer = new SerializeAddon();
   terminal.loadAddon(serializer);
+  activateUnicode11(terminal);
   return {
     write: (data, callback) => terminal.write(data, callback),
     resize: (cols, rows) => terminal.resize(cols, rows),

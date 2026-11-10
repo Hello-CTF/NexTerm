@@ -4,6 +4,8 @@ import type { TranscriptSummary } from "./commands";
 export interface CommandSearchRequest {
   text: string;
   assetId?: string | null;
+  // Exact directory the command started in, from OSC 7; null searches every directory.
+  cwd?: string | null;
   startedFrom?: number | null;
   startedTo?: number | null;
   limit?: number;
@@ -16,6 +18,8 @@ export interface CommandSearchItem {
   tabId: string;
   assetId: string;
   command: string;
+  // Directory the command started in; empty when the shell never reported one.
+  cwd: string;
   source: string;
   exitCode: number | null;
   startedAt: number;
@@ -61,6 +65,7 @@ export const commandSearchApi = {
     const result = (await call("command_search", {
       ...request,
       assetId: request.assetId ?? null,
+      cwd: request.cwd ?? null,
       startedFrom: request.startedFrom ?? null,
       startedTo: request.startedTo ?? null,
       limit: request.limit ?? 0,
@@ -73,6 +78,7 @@ export const commandSearchApi = {
         tabId: item.tabId,
         assetId: item.assetId,
         command: item.command,
+        cwd: item.cwd ?? "",
         source: item.source,
         exitCode: item.exitCode ?? null,
         startedAt: item.startedAt,

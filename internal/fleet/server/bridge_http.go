@@ -1,6 +1,8 @@
 package fleetserver
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
@@ -58,16 +60,33 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 		writeFleetJSON(w, http.StatusForbidden, ipc.Failure(ipc.NewError(ipc.CodeForbidden, purposeUnsupportedMessage(purpose))))
 		return
 	}
+	// The relay is registered under its login session before the session is rechecked, so a revocation that lands
+	// after the cookie was validated either fails this check or reaches the registered relay.
+	var token string
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		token = cookie.Value
+	}
+	ctx, release := s.bridges.track(r.Context(), identity, token)
+	defer release()
+	if s.bridges.sessionInvalid(r.Context(), identity, token) || errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
+		release()
+		writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, bridgeSessionReloginMessage)))
+		return
+	}
 	user, err := websocket.Accept(w, r, wscompress.Accept(wscompress.ForBridge(purpose), nil))
 	if err != nil {
 		return
 	}
 	// deviceproto frames can reach 256KiB+overhead on the wire; the default 32KiB read limit would tear the bridge.
 	user.SetReadLimit(1 << 20)
-	bridge, err := s.registry.RequestBridge(r.Context(), deviceID, purpose)
+	bridge, err := s.registry.RequestBridge(ctx, deviceID, purpose)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
+			_ = user.Close(websocket.StatusPolicyViolation, bridgeSessionReloginMessage)
+			return
+		}
 		_ = user.Close(websocket.StatusPolicyViolation, "device bridge unavailable")
 		return
 	}
-	pipeBridge(user, bridge.(*wsConn))
+	pipeBridge(ctx, user, bridge.(*wsConn))
 }

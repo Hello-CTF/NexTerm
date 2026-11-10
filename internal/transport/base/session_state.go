@@ -11,8 +11,9 @@ import (
 const (
 	// SessionRunning: output arrived within the idle threshold.
 	SessionRunning = "running"
-	// SessionNeedsMe: the program rang the bell or sent a notification
-	// (confidence signal), or a user state rule matched (confidence rule).
+	// SessionNeedsMe: the program rang the bell, sent a notification or
+	// reported a progress error (confidence signal), or a user state rule
+	// matched (confidence rule).
 	SessionNeedsMe = "needs_me"
 	// SessionJustFinished: the shell reported a command end (OSC 133 D).
 	SessionJustFinished = "just_finished"
@@ -46,7 +47,8 @@ type SessionState struct {
 	// Confidence is ConfidenceSignal or ConfidenceRule.
 	Confidence string `json:"confidence"`
 	// Reason names the input that caused the state: bell, notify,
-	// rule, command_end, command_start, output, input, quiet or exit.
+	// progress_error (an OSC 9;4 error report), rule, command_end,
+	// command_start, output, input, quiet or exit.
 	Reason string `json:"reason,omitempty"`
 	// RuleID is the user state rule that set the state (confidence rule).
 	// RuleKeys is that rule's optional key sequence, offered while it holds
@@ -70,6 +72,9 @@ type SessionState struct {
 	// other state or reason.
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+	// Progress is the progress the program last reported with OSC 9;4; nil
+	// when none is shown. It is independent of State.
+	Progress *SessionProgress `json:"progress,omitempty"`
 	// LastEventSeq is the sequence of the newest event of this session.
 	// Sequences are monotonic across all sessions of one helper generation.
 	LastEventSeq uint64 `json:"last_event_seq,omitempty"`
@@ -79,6 +84,51 @@ type SessionState struct {
 	// EventsDropped reports that events after the requested sequence were
 	// evicted from the helper's ring or left out to bound the reply size.
 	EventsDropped bool `json:"events_dropped,omitempty"`
+}
+
+// Progress states of a SessionProgress.
+const (
+	ProgressNormal        = "normal"
+	ProgressError         = "error"
+	ProgressIndeterminate = "indeterminate"
+	ProgressPaused        = "paused"
+)
+
+// SessionProgress is a progress report of the program in a session (ConEmu
+// OSC 9;4, as Windows Terminal and Ghostty show it). It is cleared by the
+// program, by a command start or end (OSC 133 C or D), by the process exit,
+// and when the program sends no report for the helper's stale timeout.
+type SessionProgress struct {
+	// State is normal, error, indeterminate or paused.
+	State string `json:"state"`
+	// Value is the percentage (0-100); nil when unknown, which is always the
+	// case for indeterminate.
+	Value *int `json:"value,omitempty"`
+}
+
+// Equal reports whether p and other describe the same progress; nil is no
+// progress.
+func (p *SessionProgress) Equal(other *SessionProgress) bool {
+	if p == nil || other == nil {
+		return p == other
+	}
+	if p.State != other.State || (p.Value == nil) != (other.Value == nil) {
+		return false
+	}
+	return p.Value == nil || *p.Value == *other.Value
+}
+
+// Clone returns a copy that shares nothing with p.
+func (p *SessionProgress) Clone() *SessionProgress {
+	if p == nil {
+		return nil
+	}
+	clone := &SessionProgress{State: p.State}
+	if p.Value != nil {
+		value := *p.Value
+		clone.Value = &value
+	}
+	return clone
 }
 
 // DurableStateReporter is implemented by durable attachments whose helper

@@ -40,7 +40,7 @@ func TestEveryNativeTextIsComplete(t *testing.T) {
 		for name, value := range map[string]string{
 			"TrayOpen": text.TrayOpen, "TrayQuit": text.TrayQuit, "StartupTitle": text.StartupTitle, "StartupLead": text.StartupLead,
 			"StartupError": text.StartupError, "StartupDataDir": text.StartupDataDir, "StartupNext": text.StartupNext,
-			"StartupRetry": text.StartupRetry, "StartupNote": text.StartupNote,
+			"StartupRetry": text.StartupRetry, "StartupNote": text.StartupNote, "StartupLogsConsole": text.StartupLogsConsole,
 		} {
 			if strings.TrimSpace(value) == "" {
 				t.Errorf("%s: %s is empty", locale, name)

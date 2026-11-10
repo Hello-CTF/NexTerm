@@ -33,6 +33,8 @@ export interface AccountStatus {
 export interface AccountSession {
   user: AccountUser;
   csrf_token: string;
+  /** Stable tag of the login session; absent from servers that predate it. */
+  session_tag?: string;
   /** mfa_required policy: when enabled and user.mfa_enabled is false, the session is locked to completing TOTP enrollment only. */
   mfa_required: boolean;
 }
@@ -145,14 +147,19 @@ export const SESSION_IDENTITY_CHANGED_EVENT = "nexterm:auth-session-changed";
 export const MFA_ENROLLMENT_REQUIRED_EVENT = "nexterm:mfa-enrollment-required";
 
 let csrfToken: string | null = null;
+let csrfSessionKey: string | null = null;
 let hasHeldCsrfToken = false;
 let sessionResponseSequence = 0;
 
-export function setCsrfToken(token: string | null): void {
-  // The CSRF token derives from the login session ID. A changed nonempty token is a new
-  // cookie session even when its user ID is the same.
-  if (csrfToken !== token && (csrfToken !== null || hasHeldCsrfToken)) advanceAuthSessionEpoch();
+export function setCsrfToken(token: string | null, sessionTag?: string): void {
+  // A changed login session advances the epoch even when its user ID is the same. The
+  // session tag identifies it; without one (older servers) the token stands in. A new
+  // token under the same tag is a refreshed token for the same session (the server's
+  // CSRF key changed), so requests started before it stay valid.
+  const sessionKey = token === null ? null : sessionTag ? `tag:${sessionTag}` : `token:${token}`;
+  if (csrfSessionKey !== sessionKey && (csrfSessionKey !== null || hasHeldCsrfToken)) advanceAuthSessionEpoch();
   csrfToken = token;
+  csrfSessionKey = sessionKey;
   if (token !== null) hasHeldCsrfToken = true;
 }
 
@@ -255,7 +262,7 @@ function b64(data: Uint8Array): string {
 function rememberSession(session: AccountSession, sequence: number, startedEpoch: number): AccountSession {
   ensureAuthEpoch(startedEpoch);
   if (sequence !== sessionResponseSequence) return session;
-  setCsrfToken(session.csrf_token);
+  setCsrfToken(session.csrf_token, session.session_tag);
   if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
     window.dispatchEvent(new CustomEvent(SESSION_IDENTITY_CHANGED_EVENT, { detail: session }));
   }

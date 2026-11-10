@@ -41,7 +41,7 @@ func newAccountFixtureListen(t *testing.T, auth, listen string) *accountFixture 
 	config := testConfig(t, false)
 	config.Options.Auth = auth
 	config.Options.Listen = listen
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	server, httpServer := newTestHTTP(t, config)
 	return &accountFixture{
@@ -383,8 +383,13 @@ func TestAccountHTTPCookieSecurityAttributes(t *testing.T) {
 	if proxyResponse.StatusCode != http.StatusOK {
 		t.Fatalf("proxy login status=%d", proxyResponse.StatusCode)
 	}
-	if len(proxyResponse.Cookies()) != 1 || !proxyResponse.Cookies()[0].Secure {
-		t.Fatalf("trusted HTTPS proxy login cookie = %+v", proxyResponse.Cookies())
+	if len(proxyResponse.Cookies()) == 0 {
+		t.Fatal("trusted HTTPS proxy login set no cookies")
+	}
+	for _, cookie := range proxyResponse.Cookies() {
+		if !cookie.Secure {
+			t.Fatalf("trusted HTTPS proxy login cookie %s = %+v, want Secure", cookie.Name, cookie)
+		}
 	}
 }
 
@@ -1066,6 +1071,7 @@ func TestAccountHTTPCORSDevFrontend(t *testing.T) {
 	fixture := newAccountFixture(t, AuthOn)
 	fixture.initSuperadmin(t, "root", "password-o1")
 	const devOrigin = "http://localhost:1420"
+	fixture.server.options.AllowedOrigins = []string{devOrigin}
 
 	preflight, err := http.NewRequest(http.MethodOptions, fixture.http.URL+"/admin/settings", nil)
 	if err != nil {
@@ -1231,5 +1237,30 @@ END`); err != nil {
 	call = fixture.call(t, http.MethodPost, "/auth/register", registerBody, nil, "", nil)
 	if call.status != http.StatusOK {
 		t.Fatalf("register retry status=%d body=%v", call.status, call.body)
+	}
+}
+
+// The session tag stays the same for one login session and differs between
+// sessions, and it does not expose the session ID.
+func TestAccountSessionTagIdentifiesSession(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	fixture.initSuperadmin(t, "root", "password-t1")
+	first := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": "password-t1"}, nil, "", nil)
+	session := captureSession(t, first)
+	tag, _ := first.body["session_tag"].(string)
+	me := fixture.call(t, http.MethodGet, "/auth/me", nil, session, "", nil)
+	if tag == "" || me.body["session_tag"] != tag {
+		t.Fatalf("session tag login=%q me=%v", tag, me.body["session_tag"])
+	}
+	second := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": "password-t1"}, nil, "", nil)
+	if second.body["session_tag"] == tag {
+		t.Fatal("two login sessions share a session tag")
+	}
+	identity, err := fixture.accounts.ValidateSession(context.Background(), session.cookie.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tag, identity.SessionID) {
+		t.Fatal("session tag exposes the session ID")
 	}
 }

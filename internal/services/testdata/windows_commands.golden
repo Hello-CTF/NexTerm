@@ -1,0 +1,76 @@
+=== list
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+Write-Output '@@nexterm-services windows'
+$items=@(Get-CimInstance Win32_Service | ForEach-Object {[pscustomobject]@{name=[string]$_.Name;displayName=[string]$_.DisplayName;state=[string]$_.State;startMode=[string]$_.StartMode;delayed=[bool]$_.DelayedAutoStart;pid=[int]$_.ProcessId}})
+ConvertTo-Json -InputObject $items -Compress
+=== status
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Get-CimInstance Win32_Service | Where-Object {$_.Name -eq $svc.Name} | Format-List Name,DisplayName,State,StartMode,DelayedAutoStart,ProcessId,StartName,PathName,Description | Out-String -Width 4096
+=== start
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Start-Service -InputObject $svc
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-Service -Name $svc.Name).Status)
+=== stop
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Stop-Service -InputObject $svc
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-Service -Name $svc.Name).Status)
+=== restart
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Restart-Service -InputObject $svc
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-Service -Name $svc.Name).Status)
+=== set-automatic
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Set-Service -Name $svc.Name -StartupType Automatic
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-CimInstance Win32_Service | Where-Object {$_.Name -eq $svc.Name}).StartMode)
+=== set-manual
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Set-Service -Name $svc.Name -StartupType Manual
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-CimInstance Win32_Service | Where-Object {$_.Name -eq $svc.Name}).StartMode)
+=== set-disabled
+$ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
+try{[Console]::OutputEncoding=[Text.Encoding]::UTF8}catch{}
+$name='Spooler'
+$svc=@(Get-Service | Where-Object {$_.Name -eq $name})
+if($svc.Count -ne 1){[Console]::Error.WriteLine('service not found: '+$name);exit 3}
+$svc=$svc[0]
+Set-Service -Name $svc.Name -StartupType Disabled
+Write-Output ('{0}: {1}' -f $svc.Name,(Get-CimInstance Win32_Service | Where-Object {$_.Name -eq $svc.Name}).StartMode)

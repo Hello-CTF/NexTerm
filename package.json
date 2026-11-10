@@ -38,13 +38,16 @@
     "@xterm/addon-fit": "0.12.0-beta.311",
     "@xterm/addon-search": "0.17.0-beta.310",
     "@xterm/addon-serialize": "0.15.0-beta.310",
+    "@xterm/addon-unicode11": "0.10.0-beta.310",
     "@xterm/addon-webgl": "0.20.0-beta.309",
     "@xterm/xterm": "6.1.0-beta.315",
     "codemirror": "^6.0.2",
     "fzstd": "^0.1.1",
     "lucide-react": "^1.53.0",
+    "re2js": "2.9.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "trzsz": "1.1.6",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

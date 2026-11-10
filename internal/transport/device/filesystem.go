@@ -27,6 +27,8 @@ const archiveExecTimeout = 10 * time.Minute
 type fileSystem struct {
 	dial func(ctx context.Context) (net.Conn, error)
 	exec func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error)
+	// platform is the agent's GOOS when known; empty means a POSIX agent.
+	platform string
 }
 
 // FileSystem returns the device filesystem surface. It does not probe: each
@@ -40,8 +42,18 @@ func (t *Transport) FileSystem(ctx context.Context) (base.FileSystem, error) {
 		dial: func(ctx context.Context) (net.Conn, error) {
 			return t.dial(ctx, deviceproto.PurposeFile)
 		},
-		exec: t.Exec,
+		exec:     t.Exec,
+		platform: t.platform,
 	}, nil
+}
+
+// capabilities derives the device filesystem surface from the agent platform rather than the agent's reply, so
+// agents that predate capability reporting get the same answer. Archives run POSIX tar through the device shell.
+func (f *fileSystem) capabilities() base.FileCapabilities {
+	capabilities := fslocal.Capabilities(f.platform)
+	capabilities.Pack = f.platform != "windows"
+	capabilities.Extract = f.platform != "windows"
+	return capabilities
 }
 
 // client dials one operation bridge; done releases it.
@@ -59,7 +71,12 @@ func (f *fileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 		return base.FileSystemRoots{}, err
 	}
 	defer done()
-	return client.Roots(ctx)
+	roots, err := client.Roots(ctx)
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	roots.Capabilities = f.capabilities()
+	return roots, nil
 }
 
 func (f *fileSystem) List(ctx context.Context, path string) ([]base.FileEntry, error) {
@@ -68,7 +85,14 @@ func (f *fileSystem) List(ctx context.Context, path string) ([]base.FileEntry, e
 		return nil, err
 	}
 	defer done()
-	return client.List(ctx, path)
+	entries, err := client.List(ctx, path)
+	if f.platform != "windows" {
+		// Agents that predate the hidden flag still follow the POSIX dot convention.
+		for index := range entries {
+			entries[index].Hidden = entries[index].Hidden || base.DotHidden(entries[index].Name)
+		}
+	}
+	return entries, err
 }
 
 func (f *fileSystem) ReadFile(ctx context.Context, path string, maxBytes int64) ([]byte, error) {
@@ -97,6 +121,21 @@ func (f *fileSystem) WriteFile(ctx context.Context, path string, data []byte, ba
 	}
 	defer done()
 	return client.WriteFile(ctx, path, data, backup)
+}
+
+// CreateFile creates an empty file exclusively. An agent that predates FrameCreateFile rejects the frame, which is
+// reported as unsupported so the caller never falls back to a truncating write.
+func (f *fileSystem) CreateFile(ctx context.Context, path string) error {
+	client, done, err := f.client(ctx)
+	if err != nil {
+		return err
+	}
+	defer done()
+	err = client.CreateFile(ctx, path)
+	if errors.Is(err, deviceproto.ErrProtocol) && strings.Contains(err.Error(), "unexpected request frame") {
+		return fmt.Errorf("%w: 该设备代理版本过旧，无法安全新建文件（不会覆盖同名文件），请在设备上升级设备代理后重试: %w", base.ErrUnsupported, err)
+	}
+	return err
 }
 
 func (f *fileSystem) Mkdir(ctx context.Context, path string) error {
@@ -259,6 +298,7 @@ func (f *fileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 		return 0, fmt.Errorf("create device archive: command output exceeded safety limit")
 	}
 	return fslocal.Download(ctx, f, temporary, localPath, fslocal.TransferOptions{
+		MaxBytes: options.MaxBytes,
 		Progress: func(progress fslocal.Progress) {
 			if options.Progress != nil {
 				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
@@ -299,4 +339,7 @@ func shellOperand(value string) string {
 	return value
 }
 
-var _ base.FileSystem = (*fileSystem)(nil)
+var (
+	_ base.FileSystem  = (*fileSystem)(nil)
+	_ base.FileCreator = (*fileSystem)(nil)
+)

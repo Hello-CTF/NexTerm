@@ -147,7 +147,7 @@ func TestParseCLIAuthMode(t *testing.T) {
 
 func TestUsageIncludesSharedServerFlags(t *testing.T) {
 	usage := Usage("nexterm-server", CommandServe)
-	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault", "--pprof-addr", "NEXTERM_PPROF_ADDR"} {
+	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault", "--pprof-addr", "NEXTERM_PPROF_ADDR", "NEXTERM_LOG_LEVEL", "NEXTERM_LOG_FORMAT", "NEXTERM_LOG_FILE", "NEXTERM_ACCESS_LOG", "NEXTERM_BLOB_STAGE_MAX_BYTES", "NEXTERM_BLOB_DOWNLOAD_MAX_BYTES"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q: %q", want, usage)
 		}
@@ -231,5 +231,41 @@ func TestParseCLIDebugCapture(t *testing.T) {
 	}
 	if !strings.Contains(Usage("x", CommandServe), "--debug-capture") {
 		t.Fatal("usage must document --debug-capture")
+	}
+}
+
+func TestParseCLIRequireVaultEnv(t *testing.T) {
+	env := func(value string) func(string) string {
+		return func(key string) string {
+			if key == "NEXTERM_REQUIRE_VAULT" {
+				return value
+			}
+			return ""
+		}
+	}
+	for value, want := range map[string]bool{"": false, "1": true, "true": true, "0": false, "false": false} {
+		invocation, err := ParseCLI(nil, CommandServe, env(value))
+		if err != nil || invocation.RequireVault != want {
+			t.Fatalf("NEXTERM_REQUIRE_VAULT=%q = %v, %v; want %v", value, invocation.RequireVault, err, want)
+		}
+	}
+	if _, err := ParseCLI(nil, CommandServe, env("yes please")); err == nil {
+		t.Fatal("invalid NEXTERM_REQUIRE_VAULT was accepted")
+	}
+	// The flag overrides the environment in both directions.
+	if invocation, err := ParseCLI([]string{"--require-vault=false"}, CommandServe, env("1")); err != nil || invocation.RequireVault {
+		t.Fatalf("--require-vault=false over env = %v, %v", invocation.RequireVault, err)
+	}
+	if invocation, err := ParseCLI([]string{"--require-vault"}, CommandServe, env("0")); err != nil || !invocation.RequireVault {
+		t.Fatalf("--require-vault over env = %v, %v", invocation.RequireVault, err)
+	}
+}
+
+func TestUsageListsBackupOnlyForServer(t *testing.T) {
+	if !strings.Contains(Usage("nexterm-server", CommandServe), "  backup ") {
+		t.Fatal("server usage must list the backup command")
+	}
+	if strings.Contains(Usage("nexterm-desktop", CommandDesktop), "  backup ") {
+		t.Fatal("desktop usage must not list the server-only backup command")
 	}
 }

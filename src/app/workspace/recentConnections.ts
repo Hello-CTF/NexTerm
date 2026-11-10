@@ -48,6 +48,8 @@ export function assetKindName(kind: string): string {
       return "RDP";
     case "vnc":
       return "VNC";
+    case "telnet":
+      return "Telnet";
     default:
       return kind;
   }

@@ -10,8 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	// Browser viewers report IANA zones (transcript text timestamps); server hosts such as minimal containers may ship no
+	// zone database.
+	_ "time/tzdata"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"
@@ -24,6 +28,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/metrics"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/remotedesktop"
@@ -52,6 +57,19 @@ func startupContextForAuth(ctx context.Context, auth, listen string) context.Con
 	return ctx
 }
 
+const serverUsageSupplement = `
+Server subcommands:
+  healthcheck   Probe a running server's /healthz; exit 0 when ready, 1 otherwise
+                (see "nexterm-server healthcheck --help")
+
+Health endpoints:
+  GET /livez    Liveness: answers 200 while the process serves HTTP, no database access
+  GET /healthz  Readiness: 503 when the database ping fails, or when --require-vault is
+                set and the vault is locked. Callers that are not on loopback (directly
+                or through NEXTERM_TRUSTED_PROXY_CIDRS) and hold no superadmin session
+                see only ok, service and version
+`
+
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
@@ -67,9 +85,9 @@ func main() {
 // which feeds both transportGuard and the WebSocket OriginPatterns, so one
 // setting takes effect on both paths.
 //
-// When unset it returns nil so the Server keeps the upstream localhost default
-// (fallback happens only when `allowedOrigins == nil`; returning an empty
-// slice would override the default).
+// When unset only same-origin requests are admitted. A browser frontend served
+// from another origin, such as the Vite dev server, must be listed explicitly
+// (NEXTERM_ALLOWED_ORIGINS=http://localhost:1420).
 func allowedOrigins() []string {
 	var origins []string
 	for _, item := range strings.Split(os.Getenv("NEXTERM_ALLOWED_ORIGINS"), ",") {
@@ -90,7 +108,22 @@ func trustedProxyCIDRs() []string {
 	return cidrs
 }
 
+// trustForwardedFor reads NEXTERM_TRUST_FORWARDED_FOR as a boolean; an unrecognized value fails startup instead of
+// silently leaving X-Forwarded-For untrusted.
+func trustForwardedFor(getenv func(string) string) (bool, error) {
+	raw := strings.TrimSpace(getenv("NEXTERM_TRUST_FORWARDED_FOR"))
+	if raw == "" {
+		return false, nil
+	}
+	trust, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid NEXTERM_TRUST_FORWARDED_FOR value %q (want 1 or 0)", raw)
+	}
+	return trust, nil
+}
+
 func run(args []string) int {
+	startedAt := time.Now()
 	if len(args) > 0 && args[0] == supervisor.HelperCommand {
 		return supervisor.RunHelperCLI(args[1:])
 	}
@@ -100,6 +133,12 @@ func run(args []string) int {
 	if len(args) > 0 && args[0] == "init-admin" {
 		return runInitAdmin(args[1:], os.Getenv, os.Stdout, os.Stderr)
 	}
+	if len(args) > 0 && args[0] == "healthcheck" {
+		return runHealthcheck(args[1:], os.Getenv, os.Stdout, os.Stderr)
+	}
+	if len(args) > 0 && args[0] == "backup" {
+		return runBackup(context.Background(), args[1:], os.Getenv, os.Stdout, os.Stderr)
+	}
 	invocation, err := core.ParseCLI(args, core.CommandServe, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
@@ -107,6 +146,7 @@ func run(args []string) int {
 	}
 	if invocation.Help {
 		fmt.Fprint(os.Stdout, core.Usage("nexterm-server", core.CommandServe))
+		fmt.Fprint(os.Stdout, serverUsageSupplement)
 		return 0
 	}
 	if invocation.Version {
@@ -133,9 +173,17 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
-	logger, logErr := applog.NewLogger(paths, os.Stderr)
+	logOptions, err := applog.ParseEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
+	logOptions.SkipFileUnderJournal = true
+	logger, logErr := applog.NewLoggerWithOptions(paths, os.Stderr, logOptions)
 	if logErr != nil {
 		logger.Warn("file logging is unavailable; using console only", "error", logErr)
+	} else if logger.FilePath() == "" {
+		logger.Info("file logging is off; records go to stderr only", "logFile", logOptions.File)
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
@@ -186,6 +234,11 @@ func run(args []string) int {
 
 	ctx, stop := platform.NotifyContext(context.Background())
 	defer stop()
+	trustXFF, err := trustForwardedFor(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
 	webSocket, err := server.ParseWebSocketEnv(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
@@ -197,6 +250,11 @@ func run(args []string) int {
 		return 2
 	}
 	bufferSize, err := server.ParseEventBufferEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
+	accessLog, err := server.ParseAccessLogEnv(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
@@ -359,7 +417,9 @@ func run(args []string) int {
 			Auth:              invocation.Auth,
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
-			TrustForwardedFor: os.Getenv("NEXTERM_TRUST_FORWARDED_FOR") == "1",
+			TrustForwardedFor: trustXFF,
+			RequireVault:      invocation.RequireVault,
+			AccessLog:         accessLog,
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,
@@ -377,7 +437,7 @@ func run(args []string) int {
 		Previews:              previewService,
 		Spectator:             application.Services.Sessions,
 		DB:                    healthDB,
-		AccountConnections:    accountConnectionClosersFor(application.Services),
+		AccountConnections:    accountConnectionClosersFor(application.Services, fleetService),
 		RemoteDesktop:         remoteDesktopServer(application.Services.RemoteDesktop),
 		AccountCleanup:        application.CleanupAccount,
 		AccountCleanupPrepare: application.PrepareAccountCleanup,
@@ -417,6 +477,20 @@ func run(args []string) int {
 			_ = alertEvaluator.Shutdown(shutdownCtx)
 		}()
 	}
+	metricsServer, err := metrics.Start(logger.Logger, invocation.MetricsAddr, invocation.MetricsAllowRemote, func(w *metrics.Writer) {
+		metrics.WriteProcess(w, startedAt, version.Version)
+		transport.WriteMetrics(w)
+		writeRuntimeMetrics(w, &application.Services)
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 1
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = metricsServer.Close(shutdownCtx)
+	}()
 	if invocation.RequireVault {
 		if err := server.BootstrapVaultRequired(ctx, application.Services.Vault, masterKey); err != nil {
 			logger.Error("vault is required but unavailable", "error", err, "hint", vaultMasterKeyHint)
@@ -435,6 +509,7 @@ func run(args []string) int {
 		Transport:      transport.Handler(),
 		CloseTransport: transport.CloseContext,
 		Stderr:         os.Stderr,
+		RequireVault:   invocation.RequireVault,
 	}); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("server stopped", "error", err)
 		return 1
@@ -748,13 +823,16 @@ func openInitAdminStore(ctx context.Context, options initAdminOptions, dataDir s
 // accountConnectionClosers releases the per-login-session resources of every service that holds connections.
 type accountConnectionClosers []interface{ CloseAccountSession(string) error }
 
-func accountConnectionClosersFor(services production.ProductionServices) accountConnectionClosers {
+func accountConnectionClosersFor(services production.ProductionServices, fleet *fleetserver.Service) accountConnectionClosers {
 	var closers accountConnectionClosers
 	if services.Database != nil {
 		closers = append(closers, services.Database)
 	}
 	if services.RemoteDesktop != nil {
 		closers = append(closers, services.RemoteDesktop)
+	}
+	if fleet != nil {
+		closers = append(closers, fleet)
 	}
 	return closers
 }
@@ -764,6 +842,15 @@ func (closers accountConnectionClosers) CloseAccountUser(userID, exceptSession s
 	for _, closer := range closers {
 		if user, ok := closer.(interface{ CloseAccountUser(string, string) }); ok {
 			user.CloseAccountUser(userID, exceptSession)
+		}
+	}
+}
+
+// CloseAccountDevice fans out to the services that can end the connections of sessions bound to a revoked login device.
+func (closers accountConnectionClosers) CloseAccountDevice(userID, deviceID string) {
+	for _, closer := range closers {
+		if device, ok := closer.(interface{ CloseAccountDevice(string, string) }); ok {
+			device.CloseAccountDevice(userID, deviceID)
 		}
 	}
 }

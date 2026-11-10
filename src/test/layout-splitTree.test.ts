@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   closePane,
   createLeaf,
+  equalizeRatios,
   findLeaf,
   findNodePath,
   findPanePath,
@@ -171,6 +172,35 @@ describe("split tree operations", () => {
     }
     expect(treeDepth(tree)).toBe(SPLIT_TREE_MAX_DEPTH);
     expect(movePane(tree, "L1", `p${SPLIT_TREE_MAX_DEPTH - 1}`, { dir: "row", side: "after" }, newId)).toBe(tree);
+  });
+});
+
+describe("equalizeRatios", () => {
+  it("gives three side-by-side panes a third each", () => {
+    const tree = split("root", "row", leaf("A"), split("right", "row", leaf("B"), leaf("C"), 0.8), 0.2);
+    const widths = paneRects(equalizeRatios(tree)).map((entry) => entry.rect.width);
+    for (const width of widths) expect(width).toBeCloseTo(1 / 3);
+  });
+
+  it("counts the wider side of a perpendicular split and keeps shape and ids", () => {
+    const tree = split("root", "row", leaf("A", "keepA"), split("right", "col", leaf("B"), split("bottom", "row", leaf("C"), leaf("D"), 0.3), 0.7), 0.25);
+    const next = equalizeRatios(tree);
+    const rects = Object.fromEntries(paneRects(next).map((entry) => [entry.paneId, entry.rect]));
+    // A sits beside a column whose widest row holds two panes: A takes a third, C and D a third each.
+    expect(rects.A.width).toBeCloseTo(1 / 3);
+    expect(rects.C.width).toBeCloseTo(1 / 3);
+    expect(rects.D.width).toBeCloseTo(1 / 3);
+    expect(rects.B.height).toBeCloseTo(0.5);
+    expect(paneIdsInOrder(next)).toEqual(paneIdsInOrder(tree));
+    expect(findLeaf(next, "A")?.leaf.id).toBe("keepA");
+    expect(isValidTree(next)).toBe(true);
+  });
+
+  it("returns the same tree when it is already even, and leaves a single leaf alone", () => {
+    const even = split("root", "col", leaf("A"), leaf("B"));
+    expect(equalizeRatios(even)).toBe(even);
+    const solo = leaf("A");
+    expect(equalizeRatios(solo)).toBe(solo);
   });
 });
 

@@ -2,9 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -19,9 +16,13 @@ import (
 
 const (
 	sessionCookieName = "nexterm_session"
-	csrfHeaderName    = "X-NexTerm-CSRF"
-	csrfPurpose       = "nexterm-csrf-v1"
-	maxAccountBody    = 64 << 10
+	// loginDeviceCookieName marks a client that completed a login; it only
+	// exempts the client from the per-username login backoff.
+	loginDeviceCookieName = "nexterm_login_device"
+	loginDeviceCookiePath = "/auth"
+	loginDeviceCookieTTL  = 180 * 24 * time.Hour
+	csrfHeaderName        = "X-NexTerm-CSRF"
+	maxAccountBody        = 64 << 10
 
 	// Session and CSRF failures uniformly give the next step (refresh or re-login); wording stays consistent across server and fleet.
 	// The CSRF text must keep the "CSRF" keyword: the frontend isCsrfRejection (src/ipc/commands.ts, webFiles.ts) relies on it to detect and auto-refresh/retry.
@@ -40,24 +41,10 @@ func accountIdentityFrom(ctx context.Context) *account.Identity {
 	return identity
 }
 
-// accountCSRFToken derives a stateless CSRF token per session: HMAC(sessionID).
-// The token expires in step when the session is revoked or expires; the server needs no extra storage.
-func accountCSRFToken(sessionID string) string {
-	mac := hmac.New(sha256.New, []byte(sessionID))
-	mac.Write([]byte(csrfPurpose))
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func accountCSRFSafeEqual(sessionID, presented string) bool {
-	expected, err := hex.DecodeString(accountCSRFToken(sessionID))
-	if err != nil {
-		return false
-	}
-	provided, err := hex.DecodeString(presented)
-	if err != nil || len(provided) != len(expected) {
-		return false
-	}
-	return hmac.Equal(expected, provided)
+// accountCSRFSafeEqual checks the session's CSRF token; the derivation is
+// shared with the fleet routes through account.Accounts.
+func (s *Server) accountCSRFSafeEqual(sessionID, presented string) bool {
+	return s.accounts != nil && s.accounts.CSRFValid(sessionID, presented)
 }
 
 func sessionCookie(r *http.Request) (string, bool) {
@@ -98,6 +85,28 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token 
 		MaxAge:   int(account.SessionAbsoluteTTL / time.Second),
 	}
 	http.SetCookie(w, cookie)
+}
+
+func (s *Server) setLoginDeviceCookie(w http.ResponseWriter, r *http.Request, user *account.User) {
+	token, err := s.accounts.LoginDeviceToken(user, loginDeviceCookieTTL)
+	if err != nil {
+		s.logger.Warn("login device token issue failed", "error", err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginDeviceCookieName,
+		Value:    token,
+		Path:     loginDeviceCookiePath,
+		HttpOnly: true,
+		Secure:   s.requestTLS(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(loginDeviceCookieTTL / time.Second),
+	})
+}
+
+func (s *Server) loginDeviceKnown(r *http.Request, username string) bool {
+	cookie, err := r.Cookie(loginDeviceCookieName)
+	return err == nil && cookie.Value != "" && s.accounts.LoginDeviceKnown(cookie.Value, username)
 }
 
 func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
@@ -144,16 +153,36 @@ func sessionClientName(r *http.Request) string {
 	}
 }
 
+// throttleAddress is the client address throttles key on. IPv6 clients are
+// grouped by /64, the smallest prefix a single site usually holds, so one
+// host cannot rotate through its prefix to get fresh buckets.
+func throttleAddress(r *http.Request) string {
+	ip := clientIP(r)
+	addr, err := netip.ParseAddr(ip)
+	if err != nil || !addr.Is6() || addr.Is4In6() {
+		return ip
+	}
+	prefix, err := addr.WithZone("").Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
+}
+
 func loginThrottleKey(r *http.Request, username string) string {
-	return "login|" + strings.ToLower(username) + "|" + clientIP(r)
+	return "login|" + strings.ToLower(username) + "|" + throttleAddress(r)
+}
+
+func loginUserThrottleKey(username string) string {
+	return "login-user|" + strings.ToLower(username)
 }
 
 func recoveryThrottleKey(r *http.Request, username string) string {
-	return "recovery|" + strings.ToLower(username) + "|" + clientIP(r)
+	return "recovery|" + strings.ToLower(username) + "|" + throttleAddress(r)
 }
 
 func ipThrottleKey(r *http.Request, scope string) string {
-	return scope + "|" + clientIP(r)
+	return scope + "|" + throttleAddress(r)
 }
 
 // accountGuard resolves the session cookie into a server-derived identity.
@@ -252,7 +281,7 @@ func (s *Server) requireAccountCSRF(next http.Handler) http.Handler {
 			writeAccountError(w, http.StatusUnauthorized, ipc.NewError(ipc.CodeForbidden, sessionReloginMessage))
 			return
 		}
-		if !accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
+		if !s.accountCSRFSafeEqual(identity.SessionID, r.Header.Get(csrfHeaderName)) {
 			s.logger.Warn("account csrf rejected", "path", r.URL.Path, "remote", clientIP(r))
 			writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, csrfRefreshMessage))
 			return

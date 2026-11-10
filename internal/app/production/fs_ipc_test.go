@@ -358,8 +358,9 @@ func TestProductionFSRootsDTOAndFallbacks(t *testing.T) {
 			{Path: `C:\`, Label: "C:"},
 			{Path: `D:\`, Label: "D:"},
 		},
-		HomePath:  `C:\Users\test`,
-		Supported: true,
+		HomePath:     `C:\Users\test`,
+		Supported:    true,
+		Capabilities: base.FileCapabilities{Chmod: base.ChmodReadOnly, CaseInsensitive: true},
 	}
 	for _, testCase := range []struct {
 		name       string
@@ -369,24 +370,24 @@ func TestProductionFSRootsDTOAndFallbacks(t *testing.T) {
 		{
 			name:       "windows DTO",
 			filesystem: rootsFakeFileSystem{FileSystem: fakeProviderFileSystem{}, roots: windowsRoots},
-			want:       `{"pathStyle":"windows","roots":[{"path":"C:\\","label":"C:"},{"path":"D:\\","label":"D:"}],"homePath":"C:\\Users\\test","supported":true}`,
+			want:       `{"pathStyle":"windows","roots":[{"path":"C:\\","label":"C:"},{"path":"D:\\","label":"D:"}],"homePath":"C:\\Users\\test","supported":true,"capabilities":{"chmod":"readonly","pack":false,"extract":false,"caseInsensitive":true}}`,
 		},
 		{
 			name: "supported empty roots",
 			filesystem: rootsFakeFileSystem{FileSystem: fakeProviderFileSystem{}, roots: base.FileSystemRoots{
 				PathStyle: base.PathStyleWindows, Roots: []base.FileRoot{}, Supported: true,
 			}},
-			want: `{"pathStyle":"windows","roots":[],"homePath":null,"supported":true}`,
+			want: `{"pathStyle":"windows","roots":[],"homePath":null,"supported":true,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 		{
 			name:       "missing roots capability",
 			filesystem: fakeProviderFileSystem{},
-			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false}`,
+			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 		{
 			name:       "explicit unsupported",
 			filesystem: rootsFakeFileSystem{FileSystem: fakeProviderFileSystem{}, err: base.ErrUnsupported},
-			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false}`,
+			want:       `{"pathStyle":"unknown","roots":[],"homePath":null,"supported":false,"capabilities":{"chmod":"none","pack":false,"extract":false,"caseInsensitive":false}}`,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1077,6 +1078,7 @@ func newProductionHTTPBoundaryFixture(t *testing.T) *productionHTTPBoundaryFixtu
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}, ProductionServices{
 		Store: database, Sessions: manager, Docker: newProductionDockerService(manager, database),
+		hostMonitor: newProductionHostMonitorService(manager),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1192,6 +1194,7 @@ func TestProductionFSAndDockerHTTPAccountBoundaries(t *testing.T) {
 		{name: "docker image remove", command: "docker_image_remove", args: map[string]any{"sessionId": fixture.sessionID, "image": "nginx:latest"}},
 		{name: "docker inspect", command: "docker_inspect", args: map[string]any{"sessionId": fixture.sessionID, "containerId": "c1"}},
 		{name: "docker stats", command: "docker_stats", args: sessionArgs()},
+		{name: "host monitor sample", command: "host_monitor_sample", args: sessionArgs()},
 		{name: "docker container list dir", command: "docker_container_list_dir", args: map[string]any{
 			"sessionId": fixture.sessionID, "containerId": "c1", "path": "/",
 		}},

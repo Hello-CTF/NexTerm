@@ -8,6 +8,18 @@ The Linux server and the Windows desktop are `CGO_ENABLED=0` binaries built with
 
 Mobile builds stage the same pinned runtime: Android copies `libonnxruntime.so` into `jniLibs`, and iOS links the static ONNX Runtime pod into `onnxruntime.framework` with Xcode. Native inference currently requires macOS 13.4, iOS/iPadOS 15.1, or Android API 24; the app keeps its existing minimum OS and checks compatibility before loading the optional runtime.
 
+## Browser frontend against a local server
+
+`nexterm-server` accepts browser requests only from its own origin. To run the Vite dev server (`pnpm dev`, port 1420) against a local server, allow that origin explicitly and point the page at the server:
+
+```sh
+NEXTERM_ALLOWED_ORIGINS=http://localhost:1420 go run ./cmd/nexterm-server --listen 127.0.0.1:8080
+```
+
+Then open `http://localhost:1420/?api=http://localhost:8080`. Listed origins receive credentialed CORS responses, so do not list origins you do not control.
+
+## Test databases
+
 The Compose file provides disposable, loopback-only test databases with the same major versions and test-only credentials as CI. No application data is mounted.
 
 ```sh

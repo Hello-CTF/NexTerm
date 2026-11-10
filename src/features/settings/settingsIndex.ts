@@ -9,12 +9,35 @@ import { isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { terminalDefaultUsesAccount } from "../../app/preferences";
 import { DESKTOP } from "../../ipc/env";
+import {
+  IconActivity,
+  IconAlert,
+  IconArchive,
+  IconBell,
+  IconBot,
+  IconCommand,
+  IconDownload,
+  IconFlag,
+  IconGlobe,
+  IconHistory,
+  IconLayers,
+  IconLock,
+  IconMonitor,
+  IconServer,
+  IconShield,
+  IconShieldCheck,
+  IconSparkles,
+  IconStar,
+  IconTerminal,
+} from "../../ui/icons";
 import { t } from "../../i18n";
 
 export type SettingsSectionId =
   | "settings-appearance"
   | "settings-terminal"
   | "settings-state-rules"
+  | "settings-keyword-highlight"
+  | "settings-layout-templates"
   | "settings-notifications"
   | "settings-shortcuts"
   | "settings-quick-commands"
@@ -26,12 +49,50 @@ export type SettingsSectionId =
   | "settings-ai-skills"
   | "settings-memory"
   | "settings-vault"
+  | "settings-app-lock"
   | "settings-known-hosts"
   | "settings-production"
   | "settings-account"
   | "settings-history"
   | "settings-bundle"
   | "settings-share";
+
+export type SettingsGroupId = "appearance" | "terminal" | "notifications" | "shortcuts" | "ai" | "security" | "account" | "app";
+
+export type SettingsSectionDef = { id: SettingsSectionId; label: string; icon: typeof IconMonitor; group: SettingsGroupId };
+
+// The settings sections in navigation order. Kept here rather than in the settings view so the jump palette can
+// search and link to them without loading the view.
+const ALL_SETTINGS_SECTIONS = [
+  { id: "settings-appearance", label: t("外观"), icon: IconMonitor, group: "appearance" },
+  { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
+  { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
+  { id: "settings-keyword-highlight", label: t("关键词高亮"), icon: IconStar, group: "terminal" },
+  { id: "settings-layout-templates", label: t("布局模板"), icon: IconLayers, group: "terminal" },
+  { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
+  { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
+  { id: "settings-update", label: t("软件更新"), icon: IconDownload, group: "app" },
+  { id: "settings-diagnostics", label: t("诊断与调试"), icon: IconActivity, group: "app" },
+  { id: "settings-ai-model", label: t("模型"), icon: IconSparkles, group: "ai" },
+  { id: "settings-ai-privacy", label: t("AI 信息脱敏"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-rules", label: t("AI 拦截规则"), icon: IconShield, group: "ai" },
+  { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
+  { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
+  { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
+  { id: "settings-app-lock", label: t("锁定 NexTerm"), icon: IconLock, group: "security" },
+  { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
+  { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
+  { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
+  { id: "settings-history", label: t("历史会话"), icon: IconHistory, group: "account" },
+  { id: "settings-bundle", label: t("资产包"), icon: IconArchive, group: "account" },
+  { id: "settings-share", label: t("分享"), icon: IconGlobe, group: "account" },
+] as const satisfies readonly SettingsSectionDef[];
+
+export const SETTINGS_SECTIONS: readonly SettingsSectionDef[] = ALL_SETTINGS_SECTIONS.filter((section) => {
+  if (section.id === "settings-update") return DESKTOP;
+  return true;
+});
 
 export interface SettingsSearchMeta {
   description: string;
@@ -51,9 +112,17 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     description: t("按屏幕内容纠正会话状态（需要处理、运行中、空闲）的规则"),
     keywords: ["state", "rule", "needs attention", "attention", "badge", "regex", "pattern", t("状态"), t("规则"), t("需要处理"), t("徽章"), t("误报"), t("正则"), t("标记"), "test", t("测试")],
   },
+  "settings-keyword-highlight": {
+    description: t("按关键词或正则表达式为终端输出着色"),
+    keywords: ["highlight", "keyword", "color", "regex", "error", "warning", "ip", "uuid", t("高亮"), t("关键词"), t("颜色"), t("正则"), t("错误"), t("警告")],
+  },
   "settings-notifications": {
     description: t("会话需要处理时在本机弹出系统通知"),
     keywords: ["notification", "notify", "bell", "inbox", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")],
+  },
+  "settings-layout-templates": {
+    description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"),
+    keywords: ["layout", "template", "arrangement", "split", "pane", "workspace", t("布局"), t("模板"), t("分屏"), t("窗格"), t("工作区"), t("启动片段")],
   },
   "settings-quick-commands": {
     description: t("在终端按键条中发送的常用命令"),
@@ -95,6 +164,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     description: t("用密码保护凭据，闲置自动锁定"),
     keywords: ["credential", "vault", "password", "lock", "encrypt", t("凭据"), t("密码"), t("加密"), t("锁定"), t("保险库"), t("安全")],
   },
+  "settings-app-lock": {
+    description: t("隐藏整个界面直到输入密码，闲置自动锁定"),
+    keywords: ["lock", "lock screen", "idle", "away", "privacy", t("锁定"), t("锁屏"), t("离开"), t("闲置"), t("隐私")],
+  },
   "settings-known-hosts": {
     description: t("已信任的 SSH 主机指纹"),
     keywords: ["known hosts", "fingerprint", "ssh", "trust", "host key", t("指纹"), t("信任"), t("主机")],
@@ -135,11 +208,25 @@ export interface SettingsItem {
 
 export type SettingsPanelId = "appearance-advanced" | "terminal-advanced";
 
+// Some settings render only in runtime states that are known after an async load (for example, while an account is
+// logged in). Their components report whether they render; search lists such an item only after it reported visible.
+const runtimeVisible = new Map<string, boolean>();
+
+export function reportSettingVisible(itemId: string, visible: boolean): void {
+  runtimeVisible.set(itemId, visible);
+}
+
+function reportedVisible(itemId: string): boolean {
+  return runtimeVisible.get(itemId) ?? false;
+}
+
 export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "ui-language", section: "settings-appearance", label: t("界面语言"), description: t("简体中文、繁體中文、English、日本語等"), keywords: ["language", "locale", "i18n", t("语言"), t("語言"), "English", t("日本語"), "한국어", "Deutsch", "Français", "Español", "Русский"] },
   { id: "ui-theme", section: "settings-appearance", label: t("界面主题"), description: t("跟随系统、浅色或深色"), keywords: ["theme", "dark", "light", t("主题"), t("深色"), t("浅色")] },
+  { id: "ui-accent", section: "settings-appearance", label: t("强调色"), keywords: ["accent", "color", t("颜色"), t("主题色")] },
   { id: "ui-font-size", section: "settings-appearance", label: t("界面字号"), description: t("界面文字大小，可自定义"), keywords: ["font size", "scale", "zoom", t("字体"), t("字号"), t("缩放"), t("倍率"), t("文字大小")] },
   { id: "terminal-theme", section: "settings-appearance", label: t("终端与编辑器主题"), keywords: ["theme", "color scheme", t("配色"), t("主题")] },
+  { id: "terminal-scheme", section: "settings-appearance", label: t("终端配色"), description: t("深色和浅色终端各选一套配色，可导入 iTerm2、Windows Terminal、Ghostty 配色"), keywords: ["color scheme", "palette", "itermcolors", "windows terminal", "ghostty", "kitty", "catppuccin", "solarized", "dracula", "nord", "gruvbox", t("配色"), t("导入")] },
   { id: "terminal-font-size", section: "settings-appearance", label: t("终端字号"), keywords: ["font size", t("字体"), t("字号")] },
   { id: "terminal-font-family", section: "settings-appearance", label: t("终端字体"), keywords: ["font", "family", "cascadia", t("字体")] },
   { id: "terminal-contrast", section: "settings-appearance", label: t("终端对比度"), keywords: ["contrast", t("对比度")], panel: "appearance-advanced" },
@@ -152,6 +239,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "copy-on-select", section: "settings-terminal", label: t("选中自动复制"), keywords: ["copy", "select", "clipboard", t("复制"), t("剪贴板")] },
   { id: "terminal-link-activation", section: "settings-terminal", label: t("链接打开方式"), description: t("Ctrl/Cmd+单击或单击打开终端中的链接"), keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", t("链接"), t("超链接"), t("单击")] },
   { id: "terminal-link-open-mode", section: "settings-terminal", label: t("链接打开位置"), description: t("http/https 链接在系统浏览器、NexTerm 内打开，或每次询问"), keywords: ["link", "url", "browser", "preview", "iframe", "open", t("链接"), t("浏览器"), t("预览"), t("内置"), t("打开位置")], available: () => !isMobileShell() },
+  { id: "terminal-trzsz", section: "settings-terminal", label: t("trzsz 文件传输"), description: t("远端运行 trz / tsz 时在终端内上传或下载文件"), keywords: ["trzsz", "trz", "tsz", "rz", "sz", "zmodem", "upload", "download", "transfer", t("上传"), t("下载"), t("文件传输")] },
   { id: "terminal-port-discovery", section: "settings-terminal", label: t("端口发现"), description: t("检测远端新监听的端口，并提示一键转发"), keywords: ["port", "discovery", "forward", "listen", "ss", "netstat", t("端口"), t("发现"), t("转发"), t("监听")] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: t("终端 GPU 加速"), description: t("自动、开启或关闭 WebGL 渲染"), keywords: ["gpu", "webgl", "render", "renderer", "acceleration", t("硬件加速"), t("渲染")], panel: "terminal-advanced" },
   { id: "terminal-scrollback", section: "settings-terminal", label: t("终端回滚行数"), description: t("每个终端在本机保留的滚动历史行数"), keywords: ["scrollback", "history", "buffer", "lines", t("滚动"), t("回滚"), t("历史"), t("行数")], panel: "terminal-advanced" },
@@ -159,11 +247,15 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "system-notifications", section: "settings-notifications", label: t("系统通知"), description: t("会话需要处理或长时间命令结束时，在本机显示系统通知"), keywords: ["notification", "notify", "bell", "inbox", "osc9", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")] },
   { id: "state-rules-import", section: "settings-state-rules", label: t("导入或导出状态规则"), keywords: ["import", "export", "json", t("导入"), t("导出")] },
   { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
+  { id: "keyword-highlight-presets", section: "settings-keyword-highlight", label: t("内置预设"), description: t("错误、警告、成功、IPv4 地址和 UUID 的高亮"), keywords: ["preset", "error", "warning", "ip", "uuid", t("预设")] },
+  { id: "keyword-highlight-preview", section: "settings-keyword-highlight", label: t("高亮预览"), keywords: ["preview", "sample", t("预览"), t("示例")] },
+  { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },
   { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
-  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
+  { id: "app-lock-idle", section: "settings-app-lock", label: t("闲置自动锁定 NexTerm"), keywords: ["lock screen", "idle", "timeout", t("锁屏"), t("锁定")] },
+  { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP && reportedVisible("local-helper-exposure") },
 ];
 
 export type SettingsSearchResult =

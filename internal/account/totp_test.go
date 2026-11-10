@@ -31,14 +31,17 @@ func TestTOTPRFC6238Vectors(t *testing.T) {
 		{20000000000, "353130"},
 	}
 	for _, vector := range vectors {
-		if !verifyTOTPCode(secret, vector.code, vector.unix) {
+		if step, ok := verifyTOTPCode(secret, vector.code, vector.unix); !ok || step != vector.unix/totpPeriodSeconds {
 			t.Fatalf("RFC6238 vector failed at %d: %s", vector.unix, vector.code)
 		}
 	}
-	if verifyTOTPCode(secret, "287082", 59+2*totpPeriodSeconds) {
+	if _, ok := verifyTOTPCode(secret, "287082", 59+2*totpPeriodSeconds); ok {
 		t.Fatal("code outside ±1 window accepted")
 	}
-	if verifyTOTPCode(secret, "12345", 59) || verifyTOTPCode(secret, "abcdef", 59) {
+	if _, ok := verifyTOTPCode(secret, "12345", 59); ok {
+		t.Fatal("malformed code accepted")
+	}
+	if _, ok := verifyTOTPCode(secret, "abcdef", 59); ok {
 		t.Fatal("malformed code accepted")
 	}
 }
@@ -94,6 +97,7 @@ func TestTOTPSetupConfirmLifecycle(t *testing.T) {
 		t.Fatal("second confirm accepted without new setup")
 	}
 
+	*now += totpPeriodSeconds * 1000
 	secret2, _, err := a.BeginTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, *now/1000))
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +105,7 @@ func TestTOTPSetupConfirmLifecycle(t *testing.T) {
 	if secret2 == secret {
 		t.Fatal("re-setup reused the same secret")
 	}
+	*now += totpPeriodSeconds * 1000
 	codes2, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret2, *now/1000))
 	if err != nil {
 		t.Fatal(err)
@@ -130,9 +135,16 @@ func TestTOTPLoginVerification(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err != nil || valid {
+		t.Fatalf("setup confirmation code replayed for login: %v %v", valid, err)
+	}
+	*now += totpPeriodSeconds * 1000
 	valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, *now/1000))
 	if err != nil || !valid {
 		t.Fatalf("valid TOTP code rejected: %v %v", valid, err)
+	}
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err != nil || valid {
+		t.Fatalf("TOTP code accepted twice: %v %v", valid, err)
 	}
 	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, "123456"); err != nil || valid {
 		t.Fatalf("wrong code accepted: %v %v", valid, err)
@@ -155,6 +167,10 @@ func TestTOTPLoginVerification(t *testing.T) {
 	if err := a.DisableTOTP(ctx, user.ID, "000000"); err == nil {
 		t.Fatal("disable with wrong code accepted")
 	}
+	if err := a.DisableTOTP(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err == nil {
+		t.Fatal("disable accepted a replayed TOTP code")
+	}
+	*now += totpPeriodSeconds * 1000
 	if err := a.DisableTOTP(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err != nil {
 		t.Fatal(err)
 	}

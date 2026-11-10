@@ -7,7 +7,7 @@ import { systemNotifier, type SystemNotificationStatus } from "./systemNotificat
 import { t } from "../../i18n";
 
 const CATEGORIES: readonly { key: Exclude<keyof NotificationPrefs, "system">; label: string; hint: string }[] = [
-  { key: "needsMe", label: t("需要处理"), hint: t("终端响铃，或程序发出通知") },
+  { key: "needsMe", label: t("需要处理"), hint: t("终端响铃、程序发出通知或报告进度出错") },
   { key: "finished", label: t("长命令结束"), hint: t("运行 10 秒以上的命令结束（需要 shell 集成）") },
   { key: "ai", label: t("AI 通知"), hint: t("AI 助手的通知，仅在窗口不在前台时显示") },
   { key: "deviceAlerts", label: t("设备告警"), hint: t("受管设备的磁盘、内存、CPU 或离线告警及恢复") },

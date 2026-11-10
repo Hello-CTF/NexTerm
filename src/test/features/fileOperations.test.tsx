@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   read: vi.fn(),
   readRange: vi.fn(),
   write: vi.fn(),
+  create: vi.fn(),
   rename: vi.fn(),
   chmod: vi.fn(),
   checksum: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       read: mocks.read,
       readRange: mocks.readRange,
       write: mocks.write,
+      create: mocks.create,
       rename: mocks.rename,
       chmod: mocks.chmod,
       checksum: mocks.checksum,
@@ -246,9 +248,13 @@ import {
 import {
   CHECKSUM_ALGOS,
   DEFAULT_CHECKSUM_ALGO,
+  chmodSupport,
+  extractSupported,
   losesOwnerAccess,
+  packDownloadSupported,
   parseOctalMode,
   validateEntryName,
+  windowsReadOnly,
 } from "../../features/files/fileOps";
 import { useTransferStore } from "../../features/files/transferStore";
 import { FileTree } from "../../features/files/FileTree";
@@ -424,6 +430,7 @@ beforeEach(() => {
   );
   mocks.readRange.mockRejectedValue({ code: "unsupported", message: "unsupported" });
   mocks.write.mockResolvedValue(undefined);
+  mocks.create.mockResolvedValue(undefined);
   mocks.mkdir.mockResolvedValue(undefined);
   mocks.rename.mockResolvedValue(undefined);
   mocks.chmod.mockResolvedValue(undefined);
@@ -455,6 +462,43 @@ describe("fileOps preflight checks (pure functions)", () => {
     expect(validateEntryName("  ")).toMatch(/不能为空/);
     expect(validateEntryName(" x ")).toMatch(/首尾/);
     expect(validateEntryName("ok.txt")).toBeNull();
+  });
+
+  it("checks names against the target's rules", () => {
+    expect(validateEntryName("a\\b", "posix")).toBeNull();
+    expect(validateEntryName("a:b?.txt", "posix")).toBeNull();
+    expect(validateEntryName("CON", "posix")).toBeNull();
+    expect(validateEntryName("a/b", "posix")).toMatch(/路径分隔符/);
+    expect(validateEntryName("a\0b", "posix")).toMatch(/NUL/);
+
+    expect(validateEntryName("a\\b", "windows")).toMatch(/路径分隔符/);
+    for (const reserved of ["CON", "con.txt", "PRN", "AUX.log", "NUL", "COM1", "lpt9.tar.gz"]) {
+      expect(validateEntryName(reserved, "windows")).toMatch(/保留/);
+    }
+    expect(validateEntryName("COM0", "windows")).toBeNull();
+    expect(validateEntryName("CONSOLE.txt", "windows")).toBeNull();
+    expect(validateEntryName("name.", "windows")).toMatch(/点或空格/);
+    for (const bad of ["a<b", "a>b", 'a"b', "a|b", "a?b", "a*b", "a:b"]) {
+      expect(validateEntryName(bad, "windows")).toMatch(/Windows 名称不能包含/);
+    }
+    expect(validateEntryName("报告 (1).txt", "windows")).toBeNull();
+  });
+
+  it("gates pack, extract and chmod on the declared capabilities", () => {
+    const caps = { chmod: "readonly", pack: false, extract: false, caseInsensitive: true };
+    expect(packDownloadSupported("ssh", caps)).toBe(false);
+    expect(packDownloadSupported("winrm", { ...caps, pack: true })).toBe(true);
+    expect(packDownloadSupported("ssh")).toBe(true);
+    expect(packDownloadSupported("winrm")).toBe(false);
+    expect(extractSupported(caps)).toBe(false);
+    expect(extractSupported(null)).toBe(true);
+    expect(chmodSupport(caps)).toBe("readonly");
+    expect(chmodSupport({ ...caps, chmod: "none" })).toBe("none");
+    expect(chmodSupport(null)).toBe("posix");
+    expect(windowsReadOnly("-r--r--r--")).toBe(true);
+    expect(windowsReadOnly("-rw-rw-rw-")).toBe(false);
+    expect(windowsReadOnly("drwxrwxrwx")).toBe(false);
+    expect(windowsReadOnly("")).toBeNull();
   });
 
   it("accepts only octal digits in mode and rejects values above 0o777", () => {
@@ -1566,7 +1610,7 @@ describe("name preflight checks for new files and folders", () => {
   const invalidNames = ["..", "a/b", "a\\b", " name ", "a\0b"];
 
   for (const [label, ariaLabel, rpc] of [
-    ["new file", "新建文件", "write"],
+    ["new file", "新建文件", "create"],
     ["new directory", "新建目录", "mkdir"],
   ] as const) {
     it(`FileTree ${label} rejects dangerous names before joinPath`, async () => {
@@ -1590,7 +1634,55 @@ describe("name preflight checks for new files and folders", () => {
     await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
     mocks.promptText.mockResolvedValue("ok.txt");
     click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/ok.txt", "", false));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/ok.txt"));
+  });
+});
+
+describe("existing names for new files and folders", () => {
+  for (const [label, ariaLabel, rpc] of [
+    ["new file", "新建文件", "create"],
+    ["new directory", "新建目录", "mkdir"],
+  ] as const) {
+    it(`FileTree ${label} refuses a name the listing already holds and never writes`, async () => {
+      mounted = mountTree();
+      await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+      mocks.promptText.mockResolvedValue("a.txt");
+      click(mounted.container.querySelector(`button[aria-label="${ariaLabel}"]`)!);
+      await flush();
+      expect(mocks[rpc]).not.toHaveBeenCalled();
+      expect(mocks.write).not.toHaveBeenCalled();
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("「a.txt」已存在，原有内容未被修改"));
+      expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
+    });
+  }
+
+  it("winrm: a new file name that differs only by case is refused", async () => {
+    act(() => {
+      useUi.setState({
+        sessions: [{ id: SID, assetId: null, name: "h", kind: "winrm", status: "connected", tabs: [], createdAt: 1 }],
+      });
+    });
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.promptText.mockResolvedValue("A.TXT");
+    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    await flush();
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("「a.txt」已存在"));
+  });
+
+  it("reports a backend conflict for a name the listing did not show instead of claiming success", async () => {
+    mounted = mountTree();
+    await waitFor(() => expect(rowByPath(mounted!.container, "~/a.txt")).toBeTruthy());
+    mocks.create.mockRejectedValueOnce({ code: "conflict", message: "同名文件或目录已存在，未创建也未修改" });
+    mocks.promptText.mockResolvedValue("nginx.conf");
+    click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/nginx.conf"));
+    await waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith("error", expect.stringContaining("「nginx.conf」已存在，原有内容未被修改")),
+    );
+    expect(mocks.write).not.toHaveBeenCalled();
+    expect(mocks.toast).not.toHaveBeenCalledWith("success", expect.anything());
   });
 });
 
@@ -1640,7 +1732,7 @@ describe("selection and expansion state after FileTree navigation", () => {
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh.txt");
     click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/fresh.txt", "", false));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "/fresh.txt"));
 
     click(mounted.container.querySelector('button[aria-label="回到家目录 (~)"]')!);
     await waitFor(() => expect(rowByPath(mounted!.container, "~/sub")).toBeTruthy());
@@ -1658,7 +1750,7 @@ describe("selection and expansion state after FileTree navigation", () => {
     expect(mounted.container.querySelectorAll('[aria-selected="true"]')).toHaveLength(0);
     mocks.promptText.mockResolvedValue("fresh.txt");
     click(mounted.container.querySelector('button[aria-label="新建文件"]')!);
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/fresh.txt", "", false));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/fresh.txt"));
   });
 
   it("create actions do not use the previous directory's selection after breadcrumb navigation", async () => {
@@ -2408,7 +2500,7 @@ describe("context menus: blank-area entries and wiring", () => {
     }
     mocks.promptText.mockResolvedValue("blank.txt");
     clickMenuItem(mounted!.container, "新建空白文件");
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/blank.txt", "", false));
+    await waitFor(() => expect(mocks.create).toHaveBeenCalledWith(SID, "~/blank.txt"));
     await waitFor(() => expect(mocks.list.mock.calls.length).toBeGreaterThan(1));
     expect(mocks.toast).toHaveBeenCalledWith("success", expect.stringContaining("已创建"));
 

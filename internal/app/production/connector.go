@@ -18,6 +18,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/telnet"
 	"github.com/Hello-CTF/NexTerm/internal/transport/winrm"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -69,6 +70,7 @@ type productionAssetOptions struct {
 	CredID                string            `json:"credId"`
 	Password              string            `json:"password"`
 	Shell                 string            `json:"shell"`
+	ShellArgs             []string          `json:"shellArgs"`
 	CWD                   string            `json:"cwd"`
 	Env                   map[string]string `json:"env"`
 	Proxy                 string            `json:"proxy"`
@@ -93,8 +95,11 @@ type productionAssetOptions struct {
 	InitialCommand     string `json:"initialCommand"`
 	StartupCommand     string `json:"startupCommand"`
 	Encoding           string `json:"encoding"`
-	DeviceID           string `json:"deviceId"`
-	UserID             string `json:"userId"`
+	// LocalEcho (auto, on, off) and SendCRLF are Telnet terminal options.
+	LocalEcho string `json:"localEcho"`
+	SendCRLF  bool   `json:"sendCrlf"`
+	DeviceID  string `json:"deviceId"`
+	UserID    string `json:"userId"`
 	// InheritedFrom maps an inherited field (store.InheritUsername, InheritAuth, InheritJump) to the name of the
 	// group that supplied it. It is set only by productionResolvedOptionMap, never read from stored options, so
 	// connection errors can name the group that owns the value.
@@ -184,7 +189,10 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		if c.restricted(ctx) {
 			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持本地终端资产（会在服务器上启动 shell），请改用 SSH 资产或设备")
 		}
-		transport = local.NewWithConfig(local.Config{Shell: options.Shell, CWD: options.CWD, Env: options.Env})
+		if err := store.ValidateShellArgs(options.ShellArgs); err != nil {
+			return nil, ipc.BadParam(err)
+		}
+		transport = local.NewWithConfig(local.Config{Shell: options.Shell, ShellArgs: options.ShellArgs, CWD: options.CWD, Env: options.Env})
 	case session.KindSSH, session.KindDocker:
 		transport, err = c.connectSSH(ctx, asset.ID, options, generation)
 		err = annotateInheritedConnectError(options, err)
@@ -192,6 +200,8 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		transport, err = c.connectWinRM(ctx, options)
 	case session.KindDevice:
 		transport, err = c.connectDevice(ctx, options, generation)
+	case session.KindTelnet:
+		transport, err = connectTelnet(ctx, options)
 	case session.KindRDP, session.KindVNC:
 		err = ipc.NewError(ipc.CodeUnsupported, "RDP/VNC 资产不支持终端连接，请使用远程桌面打开")
 	default:
@@ -273,7 +283,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 		}
 	}
 	if options.Host == "" {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset host is required"))
+		return ssh.Config{}, ipc.BadParam(errors.New("SSH 资产缺少主机地址"))
 	}
 	if options.Port == 0 {
 		options.Port = 22
@@ -314,7 +324,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 	case "agent":
 		config.Auth = ssh.AuthConfig{Method: ssh.AuthAgent, AgentSocket: options.AgentSocket}
 	default:
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset authentication method is required"))
+		return ssh.Config{}, ipc.BadParam(errors.New("SSH 资产缺少认证方式"))
 	}
 	config.Auth.AgentSocket = options.AgentSocket
 	if options.JumpAssetID != "" {
@@ -334,25 +344,25 @@ func (c *productionConnector) jumpConfig(ctx context.Context, jumpAssetID string
 func (c *productionConnector) jumpConfigHop(ctx context.Context, jumpAssetID string, generation uint64, chain []string, strict bool) (ssh.Config, error) {
 	for _, visited := range chain {
 		if visited == jumpAssetID {
-			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset cycle: %s", strings.Join(append(chain, jumpAssetID), " -> ")))
+			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产形成循环: %s", strings.Join(append(chain, jumpAssetID), " -> ")))
 		}
 	}
 	if len(chain) >= maxJumpAssetHops {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump chain exceeds %d assets", maxJumpAssetHops))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板链超过 %d 个资产", maxJumpAssetHops))
 	}
 	row, err := c.database.AssetGetResolved(ctx, jumpAssetID)
 	if err != nil {
 		var appErr *ipc.Error
 		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
-			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s does not exist", jumpAssetID))
+			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产 %s 不存在", jumpAssetID))
 		}
 		return ssh.Config{}, fmt.Errorf("load SSH jump asset: %w", err)
 	}
 	if row.DeletedAt != nil {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s is deleted", row.Name))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产「%s」已删除", row.Name))
 	}
 	if row.Kind != session.KindSSH && row.Kind != session.KindDocker {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s must be an SSH asset", row.Name))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产「%s」必须是 SSH 资产", row.Name))
 	}
 	options, err := productionAssetOptionsFromRow(row)
 	if err != nil {
@@ -418,7 +428,7 @@ func productionAssetOptionsFromRow(row store.ResolvedAsset) (productionAssetOpti
 		return options, ipc.BadParam(err)
 	}
 	if err := json.Unmarshal(raw, &options); err != nil {
-		return options, ipc.BadParam(fmt.Errorf("invalid SSH asset options: %w", err))
+		return options, ipc.BadParam(fmt.Errorf("SSH 资产连接选项无效: %w", err))
 	}
 	return options, nil
 }
@@ -427,7 +437,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 	auth := ssh.AuthConfig{Method: ssh.AuthKey, KeyPath: options.KeyPath, CertPath: options.CertPath}
 	if options.CredID == "" {
 		if auth.KeyPath == "" {
-			return auth, ipc.BadParam(fmt.Errorf("SSH key path or private-key credential is required"))
+			return auth, ipc.BadParam(errors.New("SSH 私钥认证需要私钥路径或私钥凭据"))
 		}
 		return auth, nil
 	}
@@ -442,7 +452,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 		return auth, nil
 	}
 	if row.Kind != vault.KindPrivateKey {
-		return auth, ipc.BadParam(fmt.Errorf("credential %s is not a private key", row.Name))
+		return auth, ipc.BadParam(fmt.Errorf("凭据「%s」不是私钥", row.Name))
 	}
 	payload := vault.ParsePrivateKeyPayload(secret)
 	auth.Passphrase = stringValue(payload.Passphrase)
@@ -454,7 +464,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 		return auth, nil
 	}
 	if payload.Key == nil || strings.TrimSpace(*payload.Key) == "" {
-		return auth, ipc.BadParam(fmt.Errorf("private-key credential %s has no key content or path", row.Name))
+		return auth, ipc.BadParam(fmt.Errorf("私钥凭据「%s」没有私钥内容或路径", row.Name))
 	}
 	auth.KeyPEM = []byte(*payload.Key)
 	return auth, nil
@@ -483,6 +493,32 @@ func (c *productionConnector) connectWinRM(ctx context.Context, options producti
 	})
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
+	}
+	return transport, nil
+}
+
+func connectTelnet(ctx context.Context, options productionAssetOptions) (base.Transport, error) {
+	if strings.TrimSpace(options.Host) == "" {
+		return nil, ipc.BadParam(fmt.Errorf("Telnet 资产缺少主机地址"))
+	}
+	echo, err := telnet.ParseEchoMode(options.LocalEcho)
+	if err != nil {
+		return nil, ipc.BadParam(fmt.Errorf("Telnet 本地回显设置无效，应为 auto、on 或 off"))
+	}
+	config := telnet.Config{Host: options.Host, Port: options.Port, LocalEcho: echo, SendCRLF: options.SendCRLF}
+	if options.ConnectTimeout > 0 {
+		config.DialTimeout = time.Duration(options.ConnectTimeout) * time.Second
+	}
+	transport, err := telnet.Connect(ctx, config)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		code := ipc.CodeIO
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = ipc.CodeTimeout
+		}
+		return nil, ipc.WrapError(code, fmt.Sprintf("无法连接 Telnet 服务器，请检查地址、端口和网络: %v", err), err)
 	}
 	return transport, nil
 }

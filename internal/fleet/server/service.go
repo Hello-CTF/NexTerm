@@ -92,6 +92,9 @@ type Service struct {
 
 	shareRevalidateInterval time.Duration
 
+	// bridges tracks owner bridge relays per login session for revocation and the periodic session recheck.
+	bridges *bridgeSessions
+
 	sessionList sessionListState
 
 	// skewMu guards skews: the latest out-of-range device clock offset per device (in memory only).
@@ -147,6 +150,7 @@ func New(config Config, options ...Option) (*Service, error) {
 		onlineDevices: make(map[string]bool),
 
 		shareRevalidateInterval: defaultShareRevalidateInterval,
+		bridges:                 newBridgeSessions(config.Accounts.CheckSession),
 	}
 	sharingService, err := sharing.New(sharing.Config{DB: config.DB, Accounts: config.Accounts},
 		sharing.WithAgentProbe(func(ctx context.Context, deviceID string) error {

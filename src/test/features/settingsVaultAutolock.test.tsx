@@ -61,7 +61,7 @@ function withClient(node: React.ReactElement): MountedView {
 }
 
 function autoLockInput(): HTMLInputElement | null {
-  return mounted?.container.querySelector<HTMLInputElement>('section input[type="number"]') ?? null;
+  return mounted?.container.querySelector<HTMLInputElement>('#settings-vault input[type="number"]') ?? null;
 }
 
 beforeEach(() => {

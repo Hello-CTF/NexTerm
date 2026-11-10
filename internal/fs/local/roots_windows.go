@@ -24,7 +24,7 @@ func platformRoots() (base.FileSystemRoots, error) {
 		path := string(rune('A'+drive)) + `:\`
 		roots = append(roots, base.FileRoot{Path: path, Label: path[:2]})
 	}
-	return base.FileSystemRoots{PathStyle: base.PathStyleWindows, Roots: roots, Supported: true}, nil
+	return base.FileSystemRoots{PathStyle: base.PathStyleWindows, Roots: roots, Supported: true, Capabilities: Capabilities("windows")}, nil
 }
 
 func normalizeFilesystemError(err error) error {

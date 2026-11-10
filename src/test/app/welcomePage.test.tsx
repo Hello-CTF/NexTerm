@@ -9,7 +9,18 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   connectLocal: vi.fn(),
   shell: vi.fn(() => "desktop"),
+  web: null as boolean | null,
 }));
+
+vi.mock("../../ipc/env", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../ipc/env")>();
+  return {
+    ...actual,
+    get WEB() {
+      return mocks.web ?? actual.WEB;
+    },
+  };
+});
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ipc/commands")>();
@@ -59,6 +70,7 @@ beforeEach(() => {
   document.body.replaceChildren();
   localStorage.clear();
   mocks.shell.mockReturnValue("desktop");
+  mocks.web = null;
   useConnectHistory.setState({ entries: {} });
   useAssetVisibility.setState({ hiddenIds: [] });
   useUi.setState({ workspaces: [], activeWorkspaceId: null });
@@ -87,6 +99,33 @@ describe("WelcomePage", () => {
     await waitForRendered(() => expect(document.querySelector('[aria-label="开始使用"]')).toBeTruthy());
     expect(document.querySelector('[aria-label="最近连接"]')).toBeNull();
     expect(buttons().map((b) => b.textContent)).toEqual(expect.arrayContaining(["快速连接", "新建资产"]));
+  });
+
+  it("offers importing hosts from the SSH config on a desktop first run", async () => {
+    mocks.web = false;
+    mocks.list.mockResolvedValue([]);
+    mountWelcome();
+    await waitForRendered(() => expect(document.querySelector('[aria-label="开始使用"]')).toBeTruthy());
+    const importButton = buttons().find((b) => b.textContent === "从 SSH 配置导入");
+    expect(importButton?.className).toContain("nx-btn-primary");
+    click(importButton!);
+    await waitForRendered(() => expect(document.querySelector('[role="dialog"]')).toBeTruthy());
+  });
+
+  it("leaves the SSH config import out of the mobile and browser first runs", async () => {
+    mocks.web = false;
+    mocks.shell.mockReturnValue("mobile");
+    mocks.list.mockResolvedValue([]);
+    mountWelcome();
+    await waitForRendered(() => expect(document.querySelector('[aria-label="开始使用"]')).toBeTruthy());
+    expect(buttons().some((b) => b.textContent === "从 SSH 配置导入")).toBe(false);
+    mounted?.unmount();
+
+    mocks.web = true;
+    mocks.shell.mockReturnValue("desktop");
+    mountWelcome();
+    await waitForRendered(() => expect(document.querySelector('[aria-label="开始使用"]')).toBeTruthy());
+    expect(buttons().some((b) => b.textContent === "从 SSH 配置导入")).toBe(false);
   });
 
   it("shows an empty recent list gracefully when assets exist but nothing was connected yet", async () => {

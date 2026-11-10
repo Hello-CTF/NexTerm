@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
-import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
+import { Terminal, type IWindowsPty } from "@xterm/xterm";
+import {
+  activateUnicode11,
+  attachLazyAddons,
+  scheduleWebglRenderer,
+  searchDecorationsFor,
+  type TerminalSearchFlags,
+  type TerminalSearchResults,
+  type WebglRenderer,
+} from "./xtermAddons";
+import { attachSessionKeywordHighlight, type KeywordHighlighter } from "./keywordHighlight";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
 import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
@@ -13,6 +22,7 @@ import { assetApi, call, dockerApi, terminalApi } from "../../ipc/commands";
 import { describeError } from "../../ui/errorText";
 import { IconArrowDown } from "../../ui/icons";
 import { RESIZE_END_EVENT } from "../../ui/ResizeHandle";
+import { localConptyBuild } from "../../app/platform";
 import { useUi } from "../../app/store";
 import {
   resetTerminalLinesBelow,
@@ -28,9 +38,11 @@ import {
   waitAccountPreferences,
   getResolvedTerminalTheme,
   subscribeAppearancePrefs,
+  type ResolvedTerminalTheme,
 } from "../../app/preferences";
-import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { activeXtermTheme, TERMINAL_FONT_STACKS } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
+import { commandShortcutActive } from "./commandShortcuts";
 import {
   createTerminalStreamWriter,
   STREAM_HIGH_WATER_BYTES,
@@ -38,6 +50,7 @@ import {
   type TerminalStreamBacklog,
 } from "./terminalStream";
 import { terminalOutputScheduler, type ScheduledTerminalOutput } from "./outputScheduler";
+import { publishTerminalOutput, registerTerminalScreenSource } from "./terminalOutputTap";
 import { createTerminalResponseLimiter, isAutomaticTerminalReply } from "./terminalResponses";
 import { createUserInputGate } from "./userInputGate";
 import { pruneSpans, splitByClass, type StreamClassSpan, type StreamMode, type StreamRun } from "./streamClasses";
@@ -49,6 +62,7 @@ import {
   type TerminalLinkMenuRequest,
 } from "./terminalLinks";
 import { terminalLinkDeps } from "./terminalLinkActions";
+import { attachTerminalTargets } from "./terminalTargets";
 import { extractTerminalLinks, type DetectedTarget, type ExtractedLink } from "./terminalLinkProvider";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
@@ -63,13 +77,13 @@ import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
 import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
 import { t as tr } from "../../i18n";
+import { copyModePassesInput, createCopyMode, type CopyModeController } from "./copyMode";
+import { CopyModeOverlay } from "./CopyModeOverlay";
+import { isTouchShell } from "../../app/shell";
+import { createTrzszSession } from "./trzsz/trzszSession";
+import { setTrzszTransferActive } from "./trzsz/trzszActivity";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
-
-function accentColor(): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue("--color-accent").trim();
-  return v || "#516cd6";
-}
 
 // overflow: clip (not hidden) also forbids programmatic scrolling, so focusing the helper textarea cannot shift it.
 const XTERM_HOST_STYLE = { overflow: "clip" } as const;
@@ -99,6 +113,10 @@ export interface TerminalHandle {
   copyBlock: (index: number) => string;
   scrollToBlock: (index: number) => void;
   navigateBlock: (dir: "prev" | "next") => number | null;
+  // Selects the output of the most recent finished command and returns it; null when none is left in the buffer.
+  selectLastOutput?: () => { index: number; text: string } | null;
+  // Which buffer is in front: "alternate" while a full-screen program (vim, less, tmux) runs.
+  bufferType?: () => "normal" | "alternate";
   clearBlocks: () => void;
   clear: () => void;
   getSelection: () => string;
@@ -108,6 +126,8 @@ export interface TerminalHandle {
   paste: (text: string, submit?: boolean) => void;
   /** Whether the program in the terminal turned on bracketed paste (DECSET 2004), read live. */
   bracketedPasteMode: () => boolean;
+  /** Whether keyboard copy mode is active: it freezes input from every local source, but not broadcast from other terminals. */
+  copyModeActive?: () => boolean;
   dimensions: () => { cols: number; rows: number };
   // The link target (URL or OSC 8 target) under the pointer, if any.
   hoveredLink: () => string | null;
@@ -120,6 +140,13 @@ export interface TerminalHandle {
 }
 
 export type { TerminalLinkMenuRequest } from "./terminalLinks";
+
+export interface TerminalSearchApi {
+  findNext: (text: string, flags: TerminalSearchFlags) => void;
+  findPrevious: (text: string, flags: TerminalSearchFlags) => void;
+  // Removes the highlights and forgets the last term, so the next search starts at the current match.
+  clear: () => void;
+}
 
 export interface XtermViewProps {
   sessionId: string;
@@ -165,9 +192,13 @@ export interface XtermViewProps {
   visible?: boolean;
   onAttach?: (kernelTabId: string) => void;
   onAttachFailed?: (code: string) => void;
-  registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
+  registerSearch?: (api: TerminalSearchApi) => void;
+  // Match count and active match of the open search; decorations make the addon report them.
+  onSearchResults?: (results: TerminalSearchResults) => void;
   onData?: (data: string) => void;
   onBlocks?: (blocks: CommandBlock[]) => void;
+  // The block whose command line scrolled above the viewport while its output still fills the top, or null.
+  onStickyBlock?: (index: number | null) => void;
   onHandle?: (h: TerminalHandle) => void;
   onTitle?: (title: string) => void;
   onClipboard?: (payload: string) => void;
@@ -183,6 +214,14 @@ export interface XtermViewProps {
    */
   onTouchTap?: () => boolean;
   onLinkMenu?: (request: TerminalLinkMenuRequest) => void;
+}
+
+// A local terminal of a Windows backend runs in ConPTY; xterm.js adapts reflow and wrapped-line detection to its build.
+function localWindowsPty(sessionId: string, containerId: string | undefined): IWindowsPty | undefined {
+  const buildNumber = localConptyBuild();
+  if (buildNumber === null || containerId) return undefined;
+  const session = useUi.getState().sessions.find((candidate) => candidate.id === sessionId);
+  return session?.kind === "local" ? { backend: "conpty", buildNumber } : undefined;
 }
 
 // The scrollback badge subscribes to the per-tab view store with the narrow selector:
@@ -209,6 +248,9 @@ export function XtermView(props: XtermViewProps) {
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const webglRef = useRef<WebglRenderer | null>(null);
+  const highlightRef = useRef<KeywordHighlighter | null>(null);
+  // Re-colours the open search's highlights after a terminal theme change.
+  const refreshSearchThemeRef = useRef<(() => void) | null>(null);
   const outputRef = useRef<ScheduledTerminalOutput | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
@@ -216,9 +258,13 @@ export function XtermView(props: XtermViewProps) {
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
+  const [copyMode, setCopyMode] = useState<{ controller: CopyModeController; term: Terminal } | null>(null);
+  const [trzszActive, setTrzszActive] = useState(false);
+  const cancelTrzszRef = useRef<(() => void) | null>(null);
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
   const onBlocksRef = useRef(props.onBlocks);
+  const onStickyBlockRef = useRef(props.onStickyBlock);
   const onHandleRef = useRef(props.onHandle);
   const onAttachRef = useRef(props.onAttach);
   const onAttachInfoRef = useRef(props.onAttachInfo);
@@ -235,6 +281,7 @@ export function XtermView(props: XtermViewProps) {
   const onTouchTapRef = useRef(props.onTouchTap);
   const onLinkMenuRef = useRef(props.onLinkMenu);
   const registerSearchRef = useRef(props.registerSearch);
+  const onSearchResultsRef = useRef(props.onSearchResults);
   // Mount-effect inputs that must not rebuild the terminal when they change:
   // visibility and resize updates flow through their dedicated effects, and
   // the WinRM mode is fixed for the tab's lifetime.
@@ -254,6 +301,7 @@ export function XtermView(props: XtermViewProps) {
   const winrmRef = useRef(props.winrm);
   const lastFitViewportRef = useRef<{ widthPx: number; heightPx: number } | null>(null);
   onBlocksRef.current = props.onBlocks;
+  onStickyBlockRef.current = props.onStickyBlock;
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
   onAttachInfoRef.current = props.onAttachInfo;
@@ -270,6 +318,7 @@ export function XtermView(props: XtermViewProps) {
   onTouchTapRef.current = props.onTouchTap;
   onLinkMenuRef.current = props.onLinkMenu;
   registerSearchRef.current = props.registerSearch;
+  onSearchResultsRef.current = props.onSearchResults;
   visibleRef.current = props.visible;
   canResizeRef.current = props.canResize;
   followerRef.current.following = props.canResize === false;
@@ -343,7 +392,9 @@ export function XtermView(props: XtermViewProps) {
       onInactiveClick: (message) => useUi.getState().pushToast("info", message),
       hasSelection: () => termRef.current?.hasSelection() ?? false,
     });
+    const windowsPty = localWindowsPty(sessionId, containerId);
     const term = new Terminal({
+      ...(windowsPty ? { windowsPty } : {}),
       scrollback: getTerminalPrefs().scrollback,
       allowProposedApi: true,
       scrollbar: { width: 10 },
@@ -351,10 +402,11 @@ export function XtermView(props: XtermViewProps) {
       fontSize: appearance.terminalFontSize,
       // Hidden panes do not blink: the blink timer would keep scheduling repaints.
       cursorBlink: visibleRef.current !== false,
-      theme: { ...xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast), cursor: accentColor() },
+      theme: activeXtermTheme(getResolvedTerminalTheme(), appearance),
       vtExtensions: { kittyKeyboard },
       linkHandler: links.linkHandler,
     });
+    activateUnicode11(term);
     termRef.current = term;
     const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
       if (sessionHost === null) {
@@ -378,11 +430,51 @@ export function XtermView(props: XtermViewProps) {
     });
     // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
     const touchScroll = attachTouchScroll(term, hostRef.current);
+    // Created before the keyboard input below: its capture listeners on the host must run first to withhold keys.
+    const copyMode = createCopyMode(term, hostRef.current, {
+      copy: (text) =>
+        copyText(text).then(
+          () => onSelectionCopyRef.current?.(text, null),
+          (error: unknown) => onSelectionCopyRef.current?.("", error),
+        ),
+      available: () => !isTouchShell(),
+      focus: () => term.focus(),
+    });
+    setCopyMode({ controller: copyMode, term });
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
-    const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
+    const detachTerminalInput = attachTerminalInput(term, hostRef.current, {
+      kittyKeyboard,
+      withholds: (action) =>
+        commandShortcutActive(action, {
+          normalBuffer: term.buffer.active.type === "normal",
+          blocks: onBlocksRef.current !== undefined,
+        }),
+    });
+
+    // Path links register before the URL provider so they take precedence over its host:port targets.
+    const terminalTargets = attachTerminalTargets(term, hostRef.current, {
+      sessionId,
+      containerId,
+      viewKey: () => viewKeyRef.current,
+      insert: (text) => pasteText(text),
+    });
 
     let kernelTabId = "";
     let disposed = false;
+    // A snippet run waiting for output starts from the screen text up to the cursor.
+    const unregisterScreenSource = registerTerminalScreenSource({
+      tabId: () => kernelTabId,
+      screenText: () => {
+        const buffer = term.buffer.active;
+        const lines: string[] = [];
+        for (let row = 0; row <= buffer.cursorY; row += 1) {
+          const line = buffer.getLine(buffer.baseY + row);
+          if (!line) continue;
+          lines.push(row === buffer.cursorY ? line.translateToString(false, 0, buffer.cursorX) : line.translateToString(true));
+        }
+        return lines.join("\n");
+      },
+    });
     const search = attachLazyAddons(
       term,
       {
@@ -408,6 +500,8 @@ export function XtermView(props: XtermViewProps) {
       }
     });
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
+    const highlights = attachSessionKeywordHighlight(term, { assetId: attachedAssetId ?? undefined, visible: () => visibleRef.current !== false });
+    highlightRef.current = highlights;
     const applyGrid = (grid: TerminalGrid) => {
       resizeTerminalToGridPreservingSelection(term, grid);
       if (followerRef.current.following) applyFollowerFont(term, hostRef.current, followerRef.current);
@@ -420,7 +514,9 @@ export function XtermView(props: XtermViewProps) {
     gridRef.current = coordinator;
     fitIfSized();
 
-    const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list));
+    const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list), {
+      onSticky: (index) => onStickyBlockRef.current?.(index),
+    });
     // Input goes over the channel socket when the server supports it (small ordered frames, bursts merged). The
     // channel is created later in this effect; it is only read when input is actually sent.
     const writeTabInput = (data: string) => {
@@ -430,6 +526,10 @@ export function XtermView(props: XtermViewProps) {
       );
     };
     const sendInput = (data: string, blockText = data) => {
+      // Pastes, composer text and uploaded file links are input too: copy mode withholds them from the program.
+      if (copyMode.isActive()) return;
+      // A running trzsz transfer owns the stream: text from the composer or key bar is held back.
+      if (trzsz.handleInput(data)) return;
       blocks.feedInput(blockText);
       if (!kernelTabId) return;
       coordinator.noteInput();
@@ -478,22 +578,27 @@ export function XtermView(props: XtermViewProps) {
       });
     };
     const scrollDisposable = term.onScroll(scheduleUiFlush);
+    const pasteText = (text: string, submit = false) => {
+      if (copyMode.isActive()) return;
+      // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
+      touchScroll.stop();
+      term.scrollToBottom();
+      sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
+    };
     onHandleRef.current?.({
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
       navigateBlock: (dir) => blocks.navigate(dir),
+      selectLastOutput: () => blocks.selectLastOutput(),
+      bufferType: () => term.buffer.active.type,
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
       fit: () => fitIfSized(),
-      paste: (text, submit = false) => {
-        // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
-        touchScroll.stop();
-        term.scrollToBottom();
-        sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
-      },
+      paste: pasteText,
       bracketedPasteMode: () => term.modes.bracketedPasteMode,
+      copyModeActive: () => copyMode.isActive(),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
       hoveredLink: () => links.hovered(),
       openLink,
@@ -522,6 +627,7 @@ export function XtermView(props: XtermViewProps) {
       attachmentId?: number;
     }) => {
       ephemeral = info.ephemeral;
+      if (info.shell) trzszShell = info.shell;
       // Adopt the response's incarnation only when it is newer than the one
       // already learned from the ordered stream: a deferred stale response
       // must never override the current attachment identity.
@@ -981,6 +1087,33 @@ export function XtermView(props: XtermViewProps) {
         },
       },
     );
+    // trz / tsz transfers. Protocol replies go straight to this tab, never
+    // through onData, so a transfer is never broadcast.
+    let trzszShell: string | undefined;
+    let trzszTabId = "";
+    const trzsz = createTrzszSession({
+      enabled: () => getTerminalPrefs().trzsz,
+      inputOwner: () => inputOwner,
+      windowsShell: () => trzszShell === "powershell" || trzszShell === "cmd",
+      columns: () => term.cols,
+      host: () => useUi.getState().sessions.find((session) => session.id === sessionId)?.name ?? null,
+      sendToServer: (bytes) => {
+        const tabId = kernelTabId;
+        if (!tabId) return;
+        sendChannelInput(channel, tabId, bytes, (data) => terminalApi.write(tabId, data));
+      },
+      writeLocal: (text) => streamWriter.writeLocalText(text),
+      onActiveChange: (active) => {
+        if (active) trzszTabId = kernelTabId;
+        setTrzszTransferActive(trzszTabId, active);
+        if (!active) trzszTabId = "";
+        if (!disposed) setTrzszActive(active);
+      },
+      onError: (error) => {
+        useUi.getState().pushToast("error", tr("无法启动 trzsz 文件传输：{value}", { value: describeError(error) }));
+      },
+    });
+    cancelTrzszRef.current = () => trzsz.cancel();
     // Automatic query replies (DA/DSR/CPR reports and friends) are answered
     // by xterm itself through onData. They pass a byte-rate limiter so a query
     // flood from the host cannot flood the upstream channel; suppression is
@@ -1054,7 +1187,13 @@ export function XtermView(props: XtermViewProps) {
         // parses it with the right mode.
         let accepted = skipped;
         for (const run of classifyRuns(out, streamBytes + skipped)) {
-          if (!streamWriter.pushBytes(out.subarray(run.offset, run.offset + run.length), run.mode)) {
+          const runBytes = out.subarray(run.offset, run.offset + run.length);
+          // Bytes a trzsz transfer consumed are accepted without reaching xterm.
+          if (trzsz.handleOutput(runBytes, run.mode)) {
+            accepted += run.length;
+            continue;
+          }
+          if (!streamWriter.pushBytes(runBytes, run.mode)) {
             // Refused bytes are not counted in streamBytes: the resume anchor
             // must point at the last accepted byte so the replay resends them.
             // The refusal episode is sticky inside the writer until the next
@@ -1063,6 +1202,8 @@ export function XtermView(props: XtermViewProps) {
             return;
           }
           accepted += run.length;
+          // Redrawn history is not new output a running snippet could be waiting for.
+          if (run.mode !== "replay") publishTerminalOutput(kernelTabId, runBytes);
           if (!streamAnchor && run.mode === "replay") replayRemaining -= run.length;
         }
         streamBytes += bytes.length;
@@ -1102,6 +1243,8 @@ export function XtermView(props: XtermViewProps) {
         if (control.historyFrom !== undefined || control.expired || !resumed) {
           setTerminalHistoryView(viewKeyRef.current, { from: control.historyFrom ?? null });
         }
+        // A new attachment replays or resumes the screen under the copy cursor: leave copy mode.
+        copyMode.exit();
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();
@@ -1408,8 +1551,12 @@ export function XtermView(props: XtermViewProps) {
       // A reply xterm produced while parsing replayed output answers a query
       // the live shell is not asking now: drop it.
       if (parseMode !== "live" && !userInput.active() && isAutomaticTerminalReply(raw)) return;
+      // Copy mode freezes input: only automatic replies and focus reports reach the program.
+      if (copyMode.isActive() && !copyModePassesInput(raw) && (userInput.active() || !isAutomaticTerminalReply(raw))) return;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
+      // While a trzsz transfer runs, keys reach only trzsz.js (Ctrl+C cancels it).
+      if (trzsz.handleInput(data)) return;
       blocks.feedInput(data);
       // Local keys and pastes check that the PTY still has this view's size; automatic replies do not count.
       if (userInput.active()) gridRef.current?.noteInput();
@@ -1420,7 +1567,8 @@ export function XtermView(props: XtermViewProps) {
       scheduleUiFlush();
     });
     const autoCopy = createSelectionAutoCopy({
-      isEnabled: () => getInputPrefs().selectionAutoCopy,
+      // Copy mode selects as the cursor moves; it copies on y only.
+      isEnabled: () => getInputPrefs().selectionAutoCopy && !copyMode.isActive(),
       getSelection: () => term.getSelection(),
       onCopied: (text) => onSelectionCopyRef.current?.(text, null),
       onError: (error) => onSelectionCopyRef.current?.("", error),
@@ -1525,10 +1673,30 @@ export function XtermView(props: XtermViewProps) {
     pasteHost.addEventListener("paste", onPasteCapture, true);
     pasteHost.addEventListener("dragover", onDragOver);
     pasteHost.addEventListener("drop", onDropCapture, true);
+    // Each search takes the decoration colours of the current terminal theme. The addon keeps the colours of the
+    // search that drew the highlights, so a theme change redraws them from the last term (refreshSearchThemeRef).
+    let lastSearch: { text: string; flags: TerminalSearchFlags; theme: ResolvedTerminalTheme } | null = null;
+    const searchOptions = (text: string, flags: TerminalSearchFlags) => {
+      const theme = getResolvedTerminalTheme();
+      lastSearch = { text, flags, theme };
+      return { ...flags, decorations: searchDecorationsFor(theme) };
+    };
+    const offSearchResults = search.onResults((results) => onSearchResultsRef.current?.(results));
     registerSearchRef.current?.({
-      findNext: (t) => search.findNext(t),
-      findPrevious: (t) => search.findPrevious(t),
+      findNext: (text, flags) => search.findNext(text, searchOptions(text, flags)),
+      findPrevious: (text, flags) => search.findPrevious(text, searchOptions(text, flags)),
+      clear: () => {
+        lastSearch = null;
+        search.clear();
+      },
     });
+    refreshSearchThemeRef.current = () => {
+      if (!lastSearch || lastSearch.theme === getResolvedTerminalTheme()) return;
+      const { text, flags } = lastSearch;
+      // Without the cached term the search starts at the current match, so it stays selected.
+      search.clear();
+      search.findNext(text, searchOptions(text, flags));
+    };
 
     let measureFrame: number | null = null;
     let finalFrame = false;
@@ -1566,6 +1734,7 @@ export function XtermView(props: XtermViewProps) {
     return () => {
       disposed = true;
       pauseNeeded = false;
+      unregisterScreenSource();
       if (pauseRetryTimer !== undefined) {
         window.clearTimeout(pauseRetryTimer);
         pauseRetryTimer = undefined;
@@ -1581,6 +1750,8 @@ export function XtermView(props: XtermViewProps) {
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
       if (uiFrame !== null) cancelAnimationFrame(uiFrame);
       responses.dispose();
+      trzsz.dispose();
+      cancelTrzszRef.current = null;
       window.removeEventListener(RESIZE_END_EVENT, onFinalResize);
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);
@@ -1596,11 +1767,16 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchend", onTapEnd, true);
       pasteHost.removeEventListener("touchcancel", onTapCancel, true);
       detachLinkLongPress();
+      copyMode.dispose();
+      setCopyMode(null);
       touchScroll.dispose();
       detachFollowerGestures();
       if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
       followerTimerRef.current = undefined;
       osc7Disposable.dispose();
+      terminalTargets.dispose();
+      offSearchResults();
+      refreshSearchThemeRef.current = null;
       links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();
@@ -1618,6 +1794,8 @@ export function XtermView(props: XtermViewProps) {
       unsubscribeGpuPreference();
       webgl.cancel();
       webglRef.current = null;
+      highlights.dispose();
+      highlightRef.current = null;
       output.dispose();
       outputRef.current = null;
       term.dispose();
@@ -1629,8 +1807,11 @@ export function XtermView(props: XtermViewProps) {
     const connected = props.sessionConnected === true;
     const wasConnected = previousSessionConnected.current;
     previousSessionConnected.current = connected;
-    if (!wasConnected && connected) reattachRef.current?.();
-  }, [props.sessionConnected]);
+    if (!wasConnected && connected) {
+      copyMode?.controller.exit();
+      reattachRef.current?.();
+    }
+  }, [props.sessionConnected, copyMode]);
 
   // The scrollback badge lives in the root view store: drop this pane's entry when the
   // view unmounts or its view key changes, so a closed tab never leaks a stale value.
@@ -1649,7 +1830,8 @@ export function XtermView(props: XtermViewProps) {
       if (canResizeRef.current !== false) term.options.fontSize = prefs.terminalFontSize;
       term.options.fontFamily = fontFamily;
       if (fontMetricsChanged) fitIfSized(true);
-      term.options.theme = { ...xtermThemeFor(getResolvedTerminalTheme(), prefs.terminalContrast), cursor: accentColor() };
+      term.options.theme = activeXtermTheme(getResolvedTerminalTheme(), prefs);
+      refreshSearchThemeRef.current?.();
     };
     return subscribeAppearancePrefs(applyAppearance);
   }, []);
@@ -1664,6 +1846,7 @@ export function XtermView(props: XtermViewProps) {
     const tabId = kernelTabIdRef.current;
     if (tabId) void terminalApi.setVisible(tabId, visible).catch(() => undefined);
     if (!visible) return;
+    highlightRef.current?.refresh();
     const raf = requestAnimationFrame(() => fitIfSized());
     return () => cancelAnimationFrame(raf);
   }, [props.visible, props.tabId]);
@@ -1738,6 +1921,18 @@ export function XtermView(props: XtermViewProps) {
         />
       )}
       <LinesBelowBadge tabId={viewKey} onJump={scrollToBottom} />
+      {copyMode && <CopyModeOverlay controller={copyMode.controller} term={copyMode.term} />}
+      {trzszActive && (
+        <div
+          role="status"
+          className="absolute right-3 top-2 z-10 flex items-center gap-2 rounded-md border border-neutral-700/80 bg-neutral-800/95 px-2.5 py-1.5 text-[12px] text-neutral-100 shadow-lg"
+        >
+          <span>{tr("trzsz 文件传输中，Ctrl+C 可取消")}</span>
+          <button type="button" className="nx-btn nx-btn-sm" onClick={() => cancelTrzszRef.current?.()}>
+            {tr("取消传输")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

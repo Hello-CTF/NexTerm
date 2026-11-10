@@ -387,9 +387,35 @@ describe("browser navigation keybindings", () => {
 describe("catalog sanity", () => {
   it("every action default parses", () => {
     for (const action of KEYBINDING_ACTIONS) {
+      // An action without a default stays unbound until the user assigns a chord.
+      if (action.defaultBinding === null) continue;
       expect(parseBinding(action.defaultBinding), action.id).not.toBeNull();
       expect(normalizeBinding(action.defaultBinding), action.id).toBe(action.defaultBinding);
     }
+  });
+});
+
+describe("lock NexTerm shortcut", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetAllKeybindings();
+    loadKeybindings();
+  });
+
+  it("is unbound by default, leaving Mod+Shift+L to the vault lock", () => {
+    expect(getKeybinding("lockApp")).toBeNull();
+    const hit = matchAppKeybinding(keyEvent({ key: "L", code: "KeyL", ctrlKey: true, shiftKey: true }));
+    expect(hit?.action).toBe("lockVault");
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "lockApp"))).toEqual([]);
+  });
+
+  it("matches once the user assigns a chord, also inside a focused terminal", () => {
+    setKeybinding("lockApp", "Mod+Alt+l");
+    const event = keyEvent({ key: "l", code: "KeyL", ctrlKey: true, altKey: true });
+    expect(matchAppKeybinding(event)?.action).toBe("lockApp");
+    expect(matchTerminalWithheldKeybinding(event)?.action).toBe("lockApp");
+    resetKeybinding("lockApp");
+    expect(getKeybinding("lockApp")).toBeNull();
   });
 });
 
@@ -416,5 +442,26 @@ describe("session sidebar shortcut", () => {
 
   it("does not conflict with another default action", () => {
     expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "sessionSidebar"))).toEqual([]);
+  });
+});
+
+describe("command block and AI command shortcuts", () => {
+  it("are withheld from a focused terminal off macOS", () => {
+    const cases: Array<[Partial<KeyEventLike> & { key: string }, string]> = [
+      [{ key: "ArrowUp", code: "ArrowUp", ctrlKey: true, shiftKey: true }, "previousPrompt"],
+      [{ key: "ArrowDown", code: "ArrowDown", ctrlKey: true, shiftKey: true }, "nextPrompt"],
+      [{ key: "O", code: "KeyO", ctrlKey: true, shiftKey: true }, "copyLastOutput"],
+      [{ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true }, "generateCommand"],
+    ];
+    for (const [event, action] of cases) {
+      expect(matchTerminalWithheldKeybinding(keyEvent(event))).toEqual({ action, digit: null });
+    }
+    // Plain Ctrl+I stays Tab for the shell.
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "i", code: "KeyI", ctrlKey: true }))).toBeNull();
+  });
+
+  it("do not conflict with another default action", () => {
+    const ids = ["previousPrompt", "nextPrompt", "copyLastOutput", "generateCommand"];
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => ids.includes(a.id)))).toEqual([]);
   });
 });

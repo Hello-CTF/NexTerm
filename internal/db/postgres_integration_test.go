@@ -98,6 +98,10 @@ func TestPostgres16DockerIntegration(t *testing.T) {
 	if update.RowsAffected != 1 {
 		t.Fatalf("UPDATE rowsAffected=%d", update.RowsAffected)
 	}
+	returning := mustPostgresQuery(t, service, connID, "WITH target AS (SELECT 1 AS id) UPDATE p16_types SET txt = 'returning' FROM target WHERE p16_types.id = target.id RETURNING p16_types.id, txt", 0, 5*time.Second)
+	if !reflect.DeepEqual(returning.Columns, []string{"id", "txt"}) || !reflect.DeepEqual(returning.Rows, [][]any{{int64(1), "returning"}}) {
+		t.Fatalf("UPDATE RETURNING result: %+v", returning)
+	}
 
 	mustPostgresQuery(t, service, connID, "CREATE VIEW p16_types_view AS SELECT id, txt FROM p16_types", 0, 5*time.Second)
 

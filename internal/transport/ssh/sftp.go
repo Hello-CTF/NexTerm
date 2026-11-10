@@ -2,8 +2,6 @@ package ssh
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,16 +10,17 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode/utf16"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 )
 
-const windowsRootsScript = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; try { $windows=[Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT; $supported=$false; $items=@(); $userProfile=''; if ($windows) { $userProfile=[Environment]::GetFolderPath('UserProfile'); $provider=Get-PSProvider -PSProvider FileSystem -ErrorAction SilentlyContinue; if ($null -ne $provider) { $supported=$true; $items=@(Get-PSDrive -PSProvider FileSystem | ForEach-Object { [PSCustomObject]@{n=$_.Name;r=$_.Root} }) } }; $result=[PSCustomObject]@{windows=$windows;supported=$supported;status='ok';kind='';message='';home=$userProfile;roots=$items} } catch { $exception=$_.Exception; while ($null -ne $exception.InnerException) { $exception=$exception.InnerException }; $kind='io'; $message=$exception.Message; if ($exception -is [System.UnauthorizedAccessException] -or $message -match '(?i)access.*denied|permission denied') { $kind='permission' } elseif ($message -match '(?i)device is not ready|no media|device not connected') { $kind='no_media' } elseif ($exception -is [System.IO.DriveNotFoundException] -or $message -match '(?i)does not exist|cannot find drive') { $kind='not_found' }; $result=[PSCustomObject]@{windows=($windows -eq $true);supported=$false;status='error';kind=$kind;message=$message;home='';roots=@()} }; ConvertTo-Json -InputObject $result -Compress -Depth 4"
+const windowsRootsScript = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; try { $windows=[Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT; $supported=$false; $items=@(); $userProfile=''; $defaultShell=''; if ($windows) { $userProfile=[Environment]::GetFolderPath('UserProfile'); $provider=Get-PSProvider -PSProvider FileSystem -ErrorAction SilentlyContinue; if ($null -ne $provider) { $supported=$true; $items=@(Get-PSDrive -PSProvider FileSystem | ForEach-Object { [PSCustomObject]@{n=$_.Name;r=$_.Root} }) }; try { $defaultShell=[string](Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\OpenSSH' -Name DefaultShell -ErrorAction Stop).DefaultShell } catch { $defaultShell='' } }; $result=[PSCustomObject]@{windows=$windows;supported=$supported;status='ok';kind='';message='';home=$userProfile;roots=$items;shell=$defaultShell} } catch { $exception=$_.Exception; while ($null -ne $exception.InnerException) { $exception=$exception.InnerException }; $kind='io'; $message=$exception.Message; if ($exception -is [System.UnauthorizedAccessException] -or $message -match '(?i)access.*denied|permission denied') { $kind='permission' } elseif ($message -match '(?i)device is not ready|no media|device not connected') { $kind='no_media' } elseif ($exception -is [System.IO.DriveNotFoundException] -or $message -match '(?i)does not exist|cannot find drive') { $kind='not_found' }; $result=[PSCustomObject]@{windows=($windows -eq $true);supported=$false;status='error';kind=$kind;message=$message;home='';roots=@()} }; ConvertTo-Json -InputObject $result -Compress -Depth 4"
 
 type sftpState struct {
 	client     *sftp.Client
@@ -39,6 +38,8 @@ type sftpEnvironment struct {
 	drivePrefix     string
 	homePath        string
 	mapWindowsPaths bool
+	// terminalShell is the program an interactive session of the host runs, when the probe could tell.
+	terminalShell string
 }
 
 type sftpFileSystem struct {
@@ -47,6 +48,8 @@ type sftpFileSystem struct {
 	realPath    sftpRealPath
 	environment sync.RWMutex
 	target      *sftpEnvironment
+	// openSSHForWindows records a Win32-OpenSSH server, whose interactive shell is its DefaultShell setting.
+	openSSHForWindows bool
 }
 
 type windowsRootsDocument struct {
@@ -57,6 +60,8 @@ type windowsRootsDocument struct {
 	Message   string              `json:"message"`
 	Home      string              `json:"home"`
 	Roots     []windowsListedRoot `json:"roots"`
+	// Shell is the DefaultShell value of HKLM\SOFTWARE\OpenSSH, empty when it is unset.
+	Shell string `json:"shell"`
 }
 
 type windowsListedRoot struct {
@@ -64,8 +69,37 @@ type windowsListedRoot struct {
 	Root string `json:"r"`
 }
 
-func newSFTPFileSystem(client *sftp.Client, executor sshfs.Executor) *sftpFileSystem {
-	return &sftpFileSystem{FS: sshfs.New(client, executor), executor: executor, realPath: client}
+func newSFTPFileSystem(client *sftp.Client, executor sshfs.Executor, serverVersion string) *sftpFileSystem {
+	return &sftpFileSystem{FS: sshfs.New(client, executor), executor: executor, realPath: client, openSSHForWindows: openSSHForWindowsVersion(serverVersion)}
+}
+
+func openSSHForWindowsVersion(version string) bool {
+	return strings.Contains(version, "OpenSSH_for_Windows")
+}
+
+// DetectedShell is the interactive shell of the host as an earlier file system probe learned it, or "" when no probe
+// has finished or it could not tell. It never starts a probe and never waits for one.
+func (c *Client) DetectedShell() string {
+	if !c.sftpMu.TryLock() {
+		return ""
+	}
+	state := c.sftp
+	c.sftpMu.Unlock()
+	if state == nil || state.filesystem == nil {
+		return ""
+	}
+	return state.filesystem.detectedShell()
+}
+
+func (f *sftpFileSystem) detectedShell() string {
+	if !f.environment.TryRLock() {
+		return ""
+	}
+	defer f.environment.RUnlock()
+	if f.target == nil {
+		return ""
+	}
+	return f.target.terminalShell
 }
 
 func (c *Client) FileSystem(ctx context.Context) (base.FileSystem, error) {
@@ -125,7 +159,7 @@ func (c *Client) sftpFilesystem(ctx context.Context) (*sftpFileSystem, error) {
 		return nil, ctx.Err()
 	}
 	state := &sftpState{client: client, session: session}
-	state.filesystem = newSFTPFileSystem(client, c)
+	state.filesystem = newSFTPFileSystem(client, c, string(c.ssh.ServerVersion()))
 	c.sftp = state
 	failed = false
 	return state.filesystem, nil
@@ -138,10 +172,11 @@ func (f *sftpFileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error
 	}
 	if environment.pathStyle == base.PathStylePOSIX {
 		return base.FileSystemRoots{
-			PathStyle: base.PathStylePOSIX,
-			Roots:     []base.FileRoot{{Path: "/", Label: "/"}},
-			HomePath:  environment.homePath,
-			Supported: true,
+			PathStyle:    base.PathStylePOSIX,
+			Roots:        []base.FileRoot{{Path: "/", Label: "/"}},
+			HomePath:     environment.homePath,
+			Supported:    true,
+			Capabilities: sftpCapabilities(base.PathStylePOSIX),
 		}, nil
 	}
 	if environment.pathStyle != base.PathStyleWindows {
@@ -167,7 +202,18 @@ func (f *sftpFileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error
 		}
 		document = &current
 	}
-	return windowsRootsFromDocument(*document)
+	roots, err := windowsRootsFromDocument(*document)
+	roots.Capabilities = sftpCapabilities(base.PathStyleWindows)
+	return roots, err
+}
+
+// sftpCapabilities describes an SFTP target by path style. POSIX hosts run tar for archives; Windows OpenSSH maps
+// chmod to the read-only attribute, has no archive support here and compares names case-insensitively.
+func sftpCapabilities(style base.PathStyle) base.FileCapabilities {
+	if style == base.PathStyleWindows {
+		return base.FileCapabilities{Chmod: base.ChmodReadOnly, CaseInsensitive: true}
+	}
+	return base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true}
 }
 
 func (f *sftpFileSystem) targetEnvironment(ctx context.Context) (*sftpEnvironment, *windowsRootsDocument, error) {
@@ -291,12 +337,7 @@ func windowsExecResultError(result base.ExecResult) error {
 }
 
 func powerShellCommand(shell, script string) string {
-	units := utf16.Encode([]rune(script))
-	encoded := make([]byte, len(units)*2)
-	for index, unit := range units {
-		binary.LittleEndian.PutUint16(encoded[index*2:], unit)
-	}
-	return shell + " -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(encoded)
+	return psquote.Command(shell, script)
 }
 
 func (f *sftpFileSystem) posixEnvironment(ctx context.Context) (*sftpEnvironment, error) {
@@ -315,6 +356,13 @@ func (f *sftpFileSystem) posixEnvironment(ctx context.Context) (*sftpEnvironment
 
 func (f *sftpFileSystem) windowsEnvironment(ctx context.Context, shell string, document windowsRootsDocument) (*sftpEnvironment, error) {
 	environment := &sftpEnvironment{pathStyle: base.PathStyleWindows, powerShell: shell, homePath: document.Home}
+	if f.openSSHForWindows {
+		// Win32-OpenSSH runs cmd.exe unless DefaultShell names another program.
+		environment.terminalShell = strings.TrimSpace(document.Shell)
+		if environment.terminalShell == "" {
+			environment.terminalShell = "cmd.exe"
+		}
+	}
 	if len(document.Roots) == 0 {
 		return environment, nil
 	}
@@ -542,12 +590,30 @@ func (f *sftpFileSystem) Mkdir(ctx context.Context, remotePath string) error {
 	return normalizeSFTPError(f.FS.Mkdir(ctx, f.sftpPath(remotePath)))
 }
 
+func (f *sftpFileSystem) CreateFile(ctx context.Context, remotePath string) error {
+	return normalizeSFTPError(f.FS.CreateFile(ctx, f.sftpPath(remotePath)))
+}
+
 func (f *sftpFileSystem) MkdirPrivate(ctx context.Context, remotePath string) error {
 	return normalizeSFTPError(f.FS.MkdirPrivate(ctx, f.sftpPath(remotePath)))
 }
 
 func (f *sftpFileSystem) Rename(ctx context.Context, from, to string) error {
 	return normalizeSFTPError(f.FS.Rename(ctx, f.sftpPath(from), f.sftpPath(to)))
+}
+
+func (f *sftpFileSystem) AtomicRename(ctx context.Context, from, to string) error {
+	return normalizeSFTPError(f.FS.AtomicRename(ctx, f.sftpPath(from), f.sftpPath(to)))
+}
+
+func (f *sftpFileSystem) FileMode(ctx context.Context, remotePath string) (fs.FileMode, error) {
+	mode, err := f.FS.FileMode(ctx, f.sftpPath(remotePath))
+	return mode, normalizeSFTPError(err)
+}
+
+func (f *sftpFileSystem) ModTime(ctx context.Context, remotePath string) (time.Time, error) {
+	modTime, err := f.FS.ModTime(ctx, f.sftpPath(remotePath))
+	return modTime, normalizeSFTPError(err)
 }
 
 func (f *sftpFileSystem) Delete(ctx context.Context, remotePath string, directory bool) error {
@@ -628,5 +694,6 @@ func (c *Client) closeSFTP() {
 var (
 	_ base.FileSystem    = (*sftpFileSystem)(nil)
 	_ base.RootsProvider = (*sftpFileSystem)(nil)
+	_ base.FileCreator   = (*sftpFileSystem)(nil)
 	_ conditional.Writer = (*sftpFileSystem)(nil)
 )

@@ -159,7 +159,7 @@ describe("App semantic tokens", () => {
     mounted = mountApp();
     await flush();
 
-    const toast = [...mounted.container.querySelectorAll<HTMLElement>(".nx-toasts > div")].find(
+    const toast = [...mounted.container.querySelectorAll<HTMLElement>(".nx-toasts .nx-toast")].find(
       (element) => element.textContent?.includes("保存成功"),
     );
     expect(toast).toBeDefined();

@@ -6,6 +6,7 @@ import { authedFetch } from "./serverAuth";
 import { callDesktop } from "./wails";
 import { currentAuthSessionEpoch } from "./authSessionEpoch";
 import { notifyAssetDataChanged } from "./assetEvents";
+import { cachedFsRoots, noteFsRoots } from "./fsRootsCache";
 import type {
   ipcContractManifest,
   IPCCommandName,
@@ -272,6 +273,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 
 export const systemApi = {
   platform: () => call("app_platform"),
+  windowsBuild: () => call("app_windows_build"),
   insets: () => call("system_insets"),
   // Operating system notifications through the desktop bridge; the server and mobile builds report them unsupported.
   notificationStatus: () => call("system_notification_status"),
@@ -461,6 +463,8 @@ export interface LiveTabInfo {
   durable?: boolean;
   // The helper's attention state of a durable tab; absent when none is reported.
   state?: SessionAttentionState;
+  // The tab's command language as the backend knows it now; an SSH tab can learn it after it opened.
+  shell?: TerminalShell;
 }
 
 export type SessionAttentionState = "running" | "needs_me" | "just_finished" | "idle" | "exited";
@@ -860,6 +864,10 @@ export const transcriptApi = {
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
   exportCast: (id: string, path: string) =>
     call("transcript_export_cast", { id, path }) as Promise<import("./generated/types").TranscriptExportCastResult>,
+  // Plain-text export rendered by the backend. Browser mode passes the viewer's zone for the optional per-line timestamps
+  // (IANA name, offset as fallback); without it the backend formats them in its own local zone.
+  exportText: (id: string, path: string, options: { timestamps: boolean; timeZone?: string; utcOffsetMinutes?: number }) =>
+    call("transcript_export_text", { id, path, ...options }) as Promise<import("./generated/types").TranscriptExportTextResult>,
   star: (id: string, starred: boolean) => call("transcript_star", { id, starred }) as unknown as Promise<void>,
   // What a purge of the transcripts that ended before endedBefore (ms) would delete, plus overall usage.
   usage: (endedBefore: number) => call("transcript_usage", { endedBefore }),
@@ -890,7 +898,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "rdp" | "vnc" | "device";
+  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "rdp" | "vnc" | "telnet" | "device";
   name: string;
   host: string | null;
   port: number | null;
@@ -1022,8 +1030,17 @@ export const assetApi = {
   knownHostRemove: (id: string) => call("known_host_remove", { id }) as Promise<void>,
 };
 
-function normEntryPath<T extends { path: string }>(e: T): T {
-  return { ...e, path: e.path.replace(/\\/g, "/") };
+// Backslashes are separators only on a Windows target; a POSIX filename may contain one. Before fs_roots has
+// answered, a path rooted at "/" or "~/" is taken as POSIX and any other (drive, UNC) as Windows, like norm() in
+// the file manager.
+function normFsPath(path: string, pathStyle: string | undefined): string {
+  if (pathStyle === "posix") return path;
+  if (pathStyle !== "windows" && (path.startsWith("/") || path === "~" || path.startsWith("~/"))) return path;
+  return path.replace(/\\/g, "/");
+}
+
+function normEntryPath<T extends { path: string }>(e: T, pathStyle: string | undefined): T {
+  return { ...e, path: normFsPath(e.path, pathStyle) };
 }
 
 export type FileRootDto = import("./generated/types").FSRootDTO;
@@ -1035,11 +1052,12 @@ export interface FileRootsDto extends Omit<import("./generated/types").FSRootsDT
 export const fsApi = {
   roots: async (sessionId: string) => {
     const result = await call("fs_roots", { sessionId });
+    noteFsRoots(sessionId, result);
     return {
       ...result,
       pathStyle: result.pathStyle as FileRootsDto["pathStyle"],
-      roots: result.roots.map(normEntryPath),
-      homePath: result.homePath?.replace(/\\/g, "/") ?? null,
+      roots: result.roots.map((root) => normEntryPath(root, result.pathStyle)),
+      homePath: result.homePath == null ? null : normFsPath(result.homePath, result.pathStyle),
     };
   },
   list: async (sessionId: string, path: string) => {
@@ -1047,7 +1065,8 @@ export const fsApi = {
       sessionId,
       path,
     });
-    return list.map(normEntryPath);
+    const pathStyle = cachedFsRoots(sessionId)?.pathStyle;
+    return list.map((entry) => normEntryPath(entry, pathStyle));
   },
   read: (sessionId: string, path: string, maxBytes?: number) =>
     call("fs_read", {
@@ -1070,6 +1089,9 @@ export const fsApi = {
     taskId?: string,
     attemptId?: string,
   ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
+  // create makes one empty file and fails with a conflict when anything already exists at the path.
+  create: (sessionId: string, path: string) =>
+    call("fs_create", { sessionId, path }) as Promise<void>,
   mkdir: (sessionId: string, path: string) =>
     call("fs_mkdir", { sessionId, path }) as Promise<void>,
   // mkdirPrivate creates one directory exclusively with mode 0700 and fails when anything already exists at the path.
@@ -1156,6 +1178,12 @@ export type LocalFolderListDto = import("./generated/types").LocalFolderListDTO;
 // files a remote desktop copied into a picked local folder.
 export const localFileApi = {
   listFolder: (path: string) => call("local_folder_list", { path }),
+  // Grants access to a picked download folder; listDirs/createDirs only accept paths below the returned root.
+  authorizeFolder: (path: string) => call("local_folder_authorize", { path }),
+  // Lists the entries of download target folders; a missing folder comes back with kind "missing", a link as "symlink".
+  listDirs: (token: string, paths: string[]) => call("local_folder_entries", { token, paths }),
+  // Creates download target folders with their parents and reports each folder that failed.
+  createDirs: (token: string, paths: string[]) => call("local_folder_create", { token, paths }),
   read: (path: string, maxBytes?: number) =>
     call("local_file_read", {
       path,
@@ -1167,6 +1195,14 @@ export const localFileApi = {
   write: (path: string, contentBase64: string) => call("local_file_write", { path, contentBase64 }),
   // Puts a PNG on the system clipboard (macOS and Linux desktop), where the webview cannot write images itself.
   writeClipboardImage: (pngBase64: string) => call("clipboard_write_image", { pngBase64 }),
+};
+
+export type LocalShellProfile = import("./generated/types").ShellProfile;
+
+// Shells a local asset can run on the host that runs local terminals (the desktop, or a single-user server);
+// a multi-user server refuses it like local assets themselves.
+export const localShellApi = {
+  profiles: () => call("local_shell_profiles"),
 };
 
 export const mountApi = {
@@ -1686,7 +1722,8 @@ export const vaultApi = {
     }) as Promise<import("./types").GeneratedKeyDto>,
 };
 
-export type SshImportSource = "ssh-config" | "termius" | "ssh-home";
+export type SshImportClientSource = "putty" | "mobaxterm" | "xshell" | "securecrt";
+export type SshImportSource = "ssh-config" | "termius" | "ssh-home" | SshImportClientSource;
 export type SshImportItemAction = "import" | "overwrite" | "skip";
 
 export const sshImportApi = {

@@ -10,6 +10,7 @@ import (
 type commandSearchRequest struct {
 	Text        string  `json:"text"`
 	AssetID     *string `json:"assetId"`
+	Cwd         *string `json:"cwd"`
 	StartedFrom *int64  `json:"startedFrom"`
 	StartedTo   *int64  `json:"startedTo"`
 	Limit       int64   `json:"limit"`
@@ -22,6 +23,7 @@ type commandSearchItemDTO struct {
 	TabID        string  `json:"tabId"`
 	AssetID      string  `json:"assetId"`
 	Command      string  `json:"command"`
+	Cwd          string  `json:"cwd"`
 	Source       string  `json:"source"`
 	ExitCode     *int32  `json:"exitCode"`
 	StartedAt    int64   `json:"startedAt"`
@@ -59,7 +61,7 @@ type transcriptHostSearchResult struct {
 func (s *terminalCommandService) registerSearch(dispatcher *ipc.Dispatcher) error {
 	if err := ipc.Register(dispatcher, "command_search", func(ctx context.Context, _ *ipc.Call, input commandSearchRequest) (commandSearchResult, error) {
 		rows, hasMore, err := s.database.CommandLogSearch(ctx, store.CommandLogSearch{
-			Text: input.Text, AssetID: input.AssetID, StartedFrom: input.StartedFrom, StartedTo: input.StartedTo,
+			Text: input.Text, AssetID: input.AssetID, Cwd: input.Cwd, StartedFrom: input.StartedFrom, StartedTo: input.StartedTo,
 			Limit: input.Limit, Offset: input.Offset,
 		})
 		if err != nil {
@@ -69,7 +71,7 @@ func (s *terminalCommandService) registerSearch(dispatcher *ipc.Dispatcher) erro
 		for _, row := range rows {
 			result.Items = append(result.Items, commandSearchItemDTO{
 				ID: row.ID, SessionID: row.SessionID, TabID: row.TabID, AssetID: row.AssetID,
-				Command: row.Command, Source: row.Source, ExitCode: row.ExitCode,
+				Command: row.Command, Cwd: row.Cwd, Source: row.Source, ExitCode: row.ExitCode,
 				StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, TranscriptID: row.TranscriptID,
 			})
 		}

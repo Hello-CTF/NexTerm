@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha1"
@@ -37,7 +38,9 @@ type remoteAPIFixture struct {
 	logins     atomic.Int64
 
 	failNextDevices401 atomic.Bool
-	lastWriteCSRF      atomic.Value
+	// requireDevice makes /auth/login refuse clients without a valid login device cookie, like a username in backoff.
+	requireDevice atomic.Bool
+	lastWriteCSRF atomic.Value
 }
 
 func newRemoteAPIFixture(t *testing.T) *remoteAPIFixture {
@@ -102,7 +105,10 @@ func (f *remoteAPIFixture) bindTOTP(t *testing.T, username, password string) str
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, testTOTPCode(t, secret, time.Now())); err != nil {
+	// Confirm with the previous step's code (inside the window) so the code of
+	// the current step stays unused for the login that follows: accepted codes
+	// are single-use.
+	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, testTOTPCode(t, secret, time.Now().Add(-30*time.Second))); err != nil {
 		t.Fatal(err)
 	}
 	return secret
@@ -144,6 +150,9 @@ func (f *remoteAPIFixture) writeSession(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: token, Path: "/"})
+	if device, err := f.accounts.LoginDeviceToken(user, time.Hour); err == nil {
+		http.SetCookie(w, &http.Cookie{Name: loginDeviceCookieName, Value: device, Path: "/"})
+	}
 	view := f.userView(user)
 	view["mfa_enabled"] = mfaEnabled
 	writeSyncJSON(w, http.StatusOK, map[string]any{
@@ -160,6 +169,13 @@ func (f *remoteAPIFixture) serveLogin(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeSyncError(w, http.StatusBadRequest, ipc.BadParam(err))
 		return
+	}
+	if f.requireDevice.Load() {
+		cookie, err := r.Cookie(loginDeviceCookieName)
+		if err != nil || !f.accounts.LoginDeviceKnown(cookie.Value, request.Username) {
+			writeSyncError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
+			return
+		}
 	}
 	user, err := f.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
@@ -594,12 +610,27 @@ func TestRemoteAPIWriteCarriesCSRF(t *testing.T) {
 		t.Fatalf("write CSRF header = %q, want session token", seen)
 	}
 
-	// A write request with the cookie but no CSRF token must be rejected by the server with 403 and mapped to forbidden.
+	// The server rejects a write that carries the cookie but no CSRF token.
 	stale := &remoteClient{base: fixture.URL, cookieToken: client.cookieToken}
-	if _, err := stale.PutBaseURLs(context.Background(), entries); err == nil {
-		t.Fatal("write without CSRF token must fail")
-	} else {
-		requireCode(t, err, ipc.CodeForbidden)
+	body, err := json.Marshal(map[string]any{"base_urls": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodPut, fixture.URL+"/fleet/base-urls", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	status, _, rpcErr, err := stale.doOnce(request, nil, false)
+	if err != nil || status != http.StatusForbidden || rpcErr == nil || rpcErr.Code != ipc.CodeForbidden {
+		t.Fatalf("write without CSRF token = %d %+v %v, want 403 forbidden", status, rpcErr, err)
+	}
+	// The client recovers by re-reading the session's token once.
+	if _, err := stale.PutBaseURLs(context.Background(), entries); err != nil {
+		t.Fatalf("write after CSRF refresh: %v", err)
+	}
+	if stale.csrfToken != client.csrfToken {
+		t.Fatalf("refreshed CSRF token = %q, want %q", stale.csrfToken, client.csrfToken)
 	}
 }
 

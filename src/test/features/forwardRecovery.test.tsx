@@ -26,7 +26,7 @@ function fakeApi(overrides: Partial<ForwardStartupRecoveryApi> = {}): ForwardSta
 }
 
 let mounted: MountedView | undefined;
-let toast: Mock<(kind: "info" | "error" | "success", text: string) => void>;
+let toast: Mock<(kind: "info" | "warning" | "error" | "success", text: string) => void>;
 
 beforeEach(() => {
   vi.clearAllMocks();

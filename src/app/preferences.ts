@@ -4,6 +4,14 @@ import { DESKTOP } from "../ipc/env";
 import { syncApi } from "../ipc/commands";
 import { listenEvent } from "../ipc/events";
 import { t } from "../i18n";
+import { ACCENT_VARIABLE_NAMES, accentVariables, DEFAULT_ACCENT, parseAccentPreset, type AccentPreset } from "./accentPresets";
+import { parseCustomSchemes, SCHEME_ID_PATTERN, type CustomTerminalScheme } from "../features/terminal/terminalSchemes";
+import {
+  activeTerminalScheme,
+  DEFAULT_DARK_SCHEME_ID,
+  DEFAULT_LIGHT_SCHEME_ID,
+  isDefaultScheme,
+} from "../features/terminal/xtermTheme";
 
 const THEME_MODE_PREFERENCE_KEY = "appearance.themeMode";
 
@@ -277,6 +285,9 @@ export type TerminalLinkActivation = "modifier" | "click";
 export type TerminalLinkOpenMode = "system" | "app" | "ask";
 // on polls the host for listening ports while a terminal is open; it runs a command on the host, so it defaults to off.
 export type TerminalPortDiscovery = "off" | "on";
+// on samples the host's CPU, memory, network and disks while the session sidebar is open; it runs a command on the
+// host every few seconds, so it defaults to off.
+export type TerminalHostMonitor = "off" | "on";
 // When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
 // bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
 // every multi-line paste; never does not ask.
@@ -294,10 +305,14 @@ export interface TerminalPrefs {
   linkActivation: TerminalLinkActivation;
   linkOpenMode: TerminalLinkOpenMode;
   portDiscovery: TerminalPortDiscovery;
+  hostMonitor: TerminalHostMonitor;
   confirmMultilinePaste: TerminalMultilinePasteConfirm;
   scrollback: TerminalScrollback;
   // MiB of output the host keeps per new durable terminal; null keeps the helper default.
   durableHistoryMiB: number | null;
+  // Answers trz / tsz (trzsz) transfer requests in live output; every transfer is still confirmed. A device
+  // setting: it decides what this device's file system takes part in, so it is never synced.
+  trzsz: boolean;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -307,6 +322,7 @@ const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
 const TERMINAL_LINK_OPEN_MODE_KEY = "terminal.linkOpenMode";
 const TERMINAL_PORT_DISCOVERY_KEY = "terminal.portDiscovery";
+const TERMINAL_HOST_MONITOR_KEY = "terminal.hostMonitor";
 const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
 const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
 // The helper's own history limit per durable terminal when the account sets none.
@@ -318,9 +334,11 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   linkActivation: "modifier",
   linkOpenMode: "system",
   portDiscovery: "off",
+  hostMonitor: "off",
   confirmMultilinePaste: "unbracketed",
   scrollback: 10_000,
   durableHistoryMiB: null,
+  trzsz: true,
 };
 
 // Any value that is not one of the options, including a missing one, is the default.
@@ -358,6 +376,7 @@ function loadTerminal(): TerminalPrefs {
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
   const openMode = preferenceValue<unknown>(TERMINAL_LINK_OPEN_MODE_KEY, local.linkOpenMode, TERMINAL_DEFAULTS.linkOpenMode);
   const portDiscovery = preferenceValue<unknown>(TERMINAL_PORT_DISCOVERY_KEY, local.portDiscovery, TERMINAL_DEFAULTS.portDiscovery);
+  const hostMonitor = preferenceValue<unknown>(TERMINAL_HOST_MONITOR_KEY, local.hostMonitor, TERMINAL_DEFAULTS.hostMonitor);
   // A signed-in account reads only its own layers (override, then server default) once they have loaded: a device
   // value saved by another account in this browser must not decide whether this account is asked before pasting.
   // Until then, including on desktop where the store is registered before it is known whether a sync account exists
@@ -376,9 +395,11 @@ function loadTerminal(): TerminalPrefs {
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
     linkOpenMode: openMode === "app" || openMode === "ask" ? openMode : TERMINAL_DEFAULTS.linkOpenMode,
     portDiscovery: portDiscovery === "on" ? "on" : TERMINAL_DEFAULTS.portDiscovery,
+    hostMonitor: hostMonitor === "on" ? "on" : TERMINAL_DEFAULTS.hostMonitor,
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
     scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
+    trzsz: local.trzsz !== false,
   };
 }
 
@@ -496,6 +517,22 @@ export function setTerminalPortDiscovery(value: TerminalPortDiscovery): void {
   for (const listener of terminalListeners) listener();
 }
 
+export function setTerminalHostMonitor(value: TerminalHostMonitor): void {
+  if (terminalPrefs.hostMonitor === value) return;
+  terminalPrefs = { ...terminalPrefs, hostMonitor: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, hostMonitor: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_HOST_MONITOR_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_HOST_MONITOR_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
 export function setTerminalScrollback(value: TerminalScrollback): void {
   if (terminalPrefs.scrollback === value) return;
   terminalPrefs = { ...terminalPrefs, scrollback: value };
@@ -503,6 +540,18 @@ export function setTerminalScrollback(value: TerminalScrollback): void {
     const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
     const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, scrollback: value }));
+  } catch {
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalTrzsz(value: boolean): void {
+  if (terminalPrefs.trzsz === value) return;
+  terminalPrefs = { ...terminalPrefs, trzsz: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, trzsz: value }));
   } catch {
   }
   for (const listener of terminalListeners) listener();
@@ -586,6 +635,10 @@ export interface AppearancePrefs {
   terminalFontFamily: TerminalFontFamily;
   terminalTheme: TerminalThemePref;
   terminalContrast: TerminalContrast;
+  terminalSchemeDark: string;
+  terminalSchemeLight: string;
+  terminalCustomSchemes: CustomTerminalScheme[];
+  accent: AccentPreset;
 }
 
 export const UI_FONT_PRESETS: readonly UiFontPreset[] = [12, 13, 14.5, 16, 18, 20];
@@ -611,6 +664,10 @@ const DEFAULT_APPEARANCE: AppearancePrefs = {
   terminalFontFamily: "cascadia",
   terminalTheme: "dark",
   terminalContrast: "standard",
+  terminalSchemeDark: DEFAULT_DARK_SCHEME_ID,
+  terminalSchemeLight: DEFAULT_LIGHT_SCHEME_ID,
+  terminalCustomSchemes: [],
+  accent: DEFAULT_ACCENT,
 };
 
 const MOBILE_DEFAULT_TERMINAL_FONT_SIZE = 12;
@@ -621,7 +678,7 @@ function isMobileDevice(): boolean {
 }
 
 // builtinAppearance returns the builtin default of a field; the mobile terminal default font size is one step smaller than desktop.
-function builtinAppearance(field: keyof AppearancePrefs): number | string {
+function builtinAppearance(field: keyof AppearancePrefs): unknown {
   if (field === "terminalFontSize" && isMobileDevice()) return MOBILE_DEFAULT_TERMINAL_FONT_SIZE;
   return DEFAULT_APPEARANCE[field];
 }
@@ -633,7 +690,16 @@ const APPEARANCE_PREF_KEYS: Record<keyof AppearancePrefs, string> = {
   terminalFontFamily: "appearance.terminalFontFamily",
   terminalTheme: "appearance.terminalTheme",
   terminalContrast: "appearance.terminalContrast",
+  terminalSchemeDark: "appearance.terminalSchemeDark",
+  terminalSchemeLight: "appearance.terminalSchemeLight",
+  terminalCustomSchemes: "appearance.terminalCustomSchemes",
+  accent: "appearance.accent",
 };
+
+// Imported schemes are content, not a look: resetting the appearance keeps them.
+const APPEARANCE_RESET_FIELDS = (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).filter(
+  (field) => field !== "terminalCustomSchemes",
+);
 
 // Phones and tablets sync their terminal font size under a separate key, so tuning it for a small screen never changes the desktop value and vice versa.
 function appearanceKey(field: keyof AppearancePrefs): string {
@@ -688,6 +754,12 @@ function parseTerminalContrast(value: unknown): TerminalContrast {
     : DEFAULT_APPEARANCE.terminalContrast;
 }
 
+// A scheme id is kept as stored, even one this client does not know, so a scheme picked on a newer client
+// survives here; resolveTerminalScheme falls back to the NexTerm default while it cannot be found.
+function parseSchemeId(value: unknown, fallback: string): string {
+  return typeof value === "string" && SCHEME_ID_PATTERN.test(value) ? value : fallback;
+}
+
 function loadAppearance(): AppearancePrefs {
   let local: Record<string, unknown> = {};
   try {
@@ -707,6 +779,10 @@ function loadAppearance(): AppearancePrefs {
     terminalFontFamily: parseTerminalFontFamily(merged.terminalFontFamily),
     terminalTheme: parseTerminalTheme(merged.terminalTheme),
     terminalContrast: parseTerminalContrast(merged.terminalContrast),
+    terminalSchemeDark: parseSchemeId(merged.terminalSchemeDark, DEFAULT_DARK_SCHEME_ID),
+    terminalSchemeLight: parseSchemeId(merged.terminalSchemeLight, DEFAULT_LIGHT_SCHEME_ID),
+    terminalCustomSchemes: parseCustomSchemes(merged.terminalCustomSchemes),
+    accent: parseAccentPreset(merged.accent),
   };
 }
 
@@ -742,7 +818,7 @@ function mirrorAppearanceOverrides(): void {
     const local = (raw ? JSON.parse(raw) : {}) as Record<string, unknown>;
     let changed = false;
     for (const field of Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]) {
-      if (appearanceKey(field) in accountOverrides && local[field] !== appearance[field]) {
+      if (appearanceKey(field) in accountOverrides && !fieldEquals(field, local[field], appearance[field])) {
         local[field] = appearance[field];
         changed = true;
       }
@@ -752,31 +828,65 @@ function mirrorAppearanceOverrides(): void {
   }
 }
 
+// ACCENT_STORAGE_KEY mirrors the applied accent variables for the index.html bootstrap, so the first paint
+// already uses the synced accent.
+const ACCENT_STORAGE_KEY = "nexterm.accent.v1";
+
+function applyAccent(root: HTMLElement): void {
+  const vars = accentVariables(appearance.accent);
+  const names = Object.keys(vars);
+  for (const name of ACCENT_VARIABLE_NAMES) {
+    if (!(name in vars)) root.style.removeProperty(name);
+  }
+  for (const name of names) root.style.setProperty(name, vars[name]);
+  if (names.length > 0) root.dataset.nxAccent = appearance.accent;
+  else delete root.dataset.nxAccent;
+  try {
+    if (names.length > 0) localStorage.setItem(ACCENT_STORAGE_KEY, JSON.stringify(vars));
+    else localStorage.removeItem(ACCENT_STORAGE_KEY);
+  } catch {
+  }
+}
+
+function applyTerminalScheme(root: HTMLElement, resolved: ResolvedTerminalTheme): void {
+  const scheme = activeTerminalScheme(resolved, appearance);
+  if (isDefaultScheme(scheme.id)) {
+    delete root.dataset.nxTermScheme;
+    root.style.removeProperty("--nx-term-scheme-bg");
+    root.style.removeProperty("--nx-term-scheme-fg");
+    return;
+  }
+  root.dataset.nxTermScheme = scheme.id;
+  root.style.setProperty("--nx-term-scheme-bg", scheme.palette.background);
+  root.style.setProperty("--nx-term-scheme-fg", scheme.palette.foreground);
+}
+
 function applyAppearance(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  const resolved = getResolvedTerminalTheme();
   root.style.setProperty("--nx-ui-text-factor", String(uiTextFactor()));
-  root.dataset.nxTermTheme = getResolvedTerminalTheme();
+  root.dataset.nxTermTheme = resolved;
+  applyTerminalScheme(root, resolved);
+  applyAccent(root);
 }
 
 function notifyAppearance(): void {
   for (const listener of appearanceListeners) listener();
 }
 
-function appearanceEquals(a: AppearancePrefs, b: AppearancePrefs): boolean {
-  return (
-    a.uiFontPreset === b.uiFontPreset &&
-    a.uiFontScale === b.uiFontScale &&
-    a.terminalFontSize === b.terminalFontSize &&
-    a.terminalFontFamily === b.terminalFontFamily &&
-    a.terminalTheme === b.terminalTheme &&
-    a.terminalContrast === b.terminalContrast
-  );
+function fieldEquals(field: keyof AppearancePrefs, a: unknown, b: unknown): boolean {
+  return field === "terminalCustomSchemes" ? JSON.stringify(a) === JSON.stringify(b) : a === b;
 }
 
-function commitAppearance(next: AppearancePrefs): void {
+function appearanceEquals(a: AppearancePrefs, b: AppearancePrefs): boolean {
+  return (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).every((field) => fieldEquals(field, a[field], b[field]));
+}
+
+// deferAccountWrite updates the account override cache at once but leaves the request to the caller.
+function commitAppearance(next: AppearancePrefs, options: { deferAccountWrite?: boolean } = {}): void {
   const changedFields = (Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).filter(
-    (field) => next[field] !== appearance[field],
+    (field) => !fieldEquals(field, next[field], appearance[field]),
   );
   appearance = next;
   try {
@@ -787,11 +897,60 @@ function commitAppearance(next: AppearancePrefs): void {
   if (accountStore && changedFields.length > 0) {
     const set: Record<string, unknown> = {};
     for (const field of changedFields) set[appearanceKey(field)] = next[field];
-    void accountStore.putOverrides(set).catch(() => undefined);
+    if (!options.deferAccountWrite) void accountStore.putOverrides(set).catch(() => undefined);
     patchAccountOverrideCache(set, []);
   }
   applyAppearance();
   if (changedFields.length > 0) notifyAppearance();
+}
+
+// A held zoom key steps the size many times a second; the account write waits until the steps settle.
+const FONT_STEP_SYNC_DELAY_MS = 400;
+let fontStepSync: ReturnType<typeof setTimeout> | null = null;
+
+function cancelFontStepSync(): void {
+  if (fontStepSync === null) return;
+  clearTimeout(fontStepSync);
+  fontStepSync = null;
+}
+
+/**
+ * Changes the terminal font size by `delta` within its limits. The size applies at once; with an account it syncs
+ * as one override write after the steps pause, so holding the zoom key sends a single request.
+ */
+export function stepTerminalFontSize(delta: number): void {
+  const next = parseTerminalFontSize(appearance.terminalFontSize + delta);
+  if (appearance.terminalFontSize === next) return;
+  commitAppearance({ ...appearance, terminalFontSize: next }, { deferAccountWrite: true });
+  if (!accountStore) return;
+  cancelFontStepSync();
+  fontStepSync = setTimeout(() => {
+    fontStepSync = null;
+    const store = accountStore;
+    if (store) void store.putOverrides({ [appearanceKey("terminalFontSize")]: appearance.terminalFontSize }).catch(() => undefined);
+  }, FONT_STEP_SYNC_DELAY_MS);
+}
+
+/** Drops this device's and the account's terminal font size, so the size follows the server or builtin default again. */
+export function resetTerminalFontSize(): void {
+  cancelFontStepSync();
+  try {
+    const raw = localStorage.getItem(APPEARANCE_KEY);
+    const local = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    if (local && "terminalFontSize" in local) {
+      delete local.terminalFontSize;
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(local));
+    }
+  } catch {
+  }
+  const key = appearanceKey("terminalFontSize");
+  if (accountStore) void accountStore.deleteOverrides([key]).catch(() => undefined);
+  patchAccountOverrideCache({}, [key]);
+  const next = loadAppearance();
+  const changed = !appearanceEquals(appearance, next);
+  appearance = next;
+  applyAppearance();
+  if (changed) notifyAppearance();
 }
 
 export function setUiFontSize(value: number): void {
@@ -823,13 +982,46 @@ export function setTerminalContrast(value: TerminalContrast): void {
   commitAppearance({ ...appearance, terminalContrast: next });
 }
 
+export function setTerminalScheme(kind: ResolvedTerminalTheme, id: string): void {
+  if (!SCHEME_ID_PATTERN.test(id)) return;
+  const field = kind === "dark" ? "terminalSchemeDark" : "terminalSchemeLight";
+  if (appearance[field] === id) return;
+  commitAppearance({ ...appearance, [field]: id });
+}
+
+export function setAccent(value: AccentPreset): void {
+  const next = parseAccentPreset(value);
+  if (appearance.accent === next) return;
+  commitAppearance({ ...appearance, accent: next });
+}
+
+// setTerminalCustomSchemes stores the imported scheme list after the same validation the server applies; a
+// selection that pointed at a removed scheme returns to the NexTerm default of its kind.
+export function setTerminalCustomSchemes(list: CustomTerminalScheme[]): void {
+  const next = parseCustomSchemes(list);
+  const ids = new Set(next.map((item) => item.id));
+  const removed = (id: string) => id.startsWith("custom-") && !ids.has(id);
+  const updated: AppearancePrefs = {
+    ...appearance,
+    terminalCustomSchemes: next,
+    terminalSchemeDark: removed(appearance.terminalSchemeDark) ? DEFAULT_DARK_SCHEME_ID : appearance.terminalSchemeDark,
+    terminalSchemeLight: removed(appearance.terminalSchemeLight) ? DEFAULT_LIGHT_SCHEME_ID : appearance.terminalSchemeLight,
+  };
+  if (appearanceEquals(appearance, updated)) return;
+  commitAppearance(updated);
+}
+
 // resetAppearancePrefs clears device-local values and removes account appearance overrides, falling back to builtin/server global defaults.
+// Imported color schemes are kept.
 export function resetAppearancePrefs(): void {
+  cancelFontStepSync();
   try {
-    localStorage.removeItem(APPEARANCE_KEY);
+    const kept = appearance.terminalCustomSchemes;
+    if (kept.length > 0) localStorage.setItem(APPEARANCE_KEY, JSON.stringify({ terminalCustomSchemes: kept }));
+    else localStorage.removeItem(APPEARANCE_KEY);
   } catch {
   }
-  const keys = [...(Object.keys(APPEARANCE_PREF_KEYS) as (keyof AppearancePrefs)[]).map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
+  const keys = [...APPEARANCE_RESET_FIELDS.map(appearanceKey), THEME_MODE_PREFERENCE_KEY];
   if (accountStore) {
     void accountStore.deleteOverrides(keys).catch(() => undefined);
   }

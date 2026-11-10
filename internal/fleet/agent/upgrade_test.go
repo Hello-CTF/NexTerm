@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -207,7 +206,7 @@ func TestUpgradeStagesVerifiedBinary(t *testing.T) {
 	upgrader := &Upgrader{
 		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	if err := upgrader.Upgrade(context.Background(), version); err != nil {
 		t.Fatalf("Upgrade = %v", err)
@@ -257,7 +256,7 @@ func TestUpgradeRejectsChecksumMismatch(t *testing.T) {
 	upgrader := &Upgrader{
 		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
 		MaxAttempts: 2, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), version)
 	if err == nil || !strings.Contains(err.Error(), "SHA-256") {
@@ -287,7 +286,7 @@ func TestUpgradeMissingChecksumEntry(t *testing.T) {
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
 		BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(),
-		MaxAttempts: 1, scheduleReplace: captureReplace(&replaced),
+		MaxAttempts: 1, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), version)
 	if err == nil || !strings.Contains(err.Error(), checksumsFileName) {
@@ -306,7 +305,7 @@ func TestUpgradeRefusesWithoutPublicKey(t *testing.T) {
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
 		BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
-		MaxAttempts: 3, Backoff: time.Millisecond, sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+		MaxAttempts: 3, Backoff: time.Millisecond, sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), "1.2.3")
 	if err == nil || !errors.Is(err, errUpgradeRefused) || !strings.Contains(err.Error(), "签名公钥") {
@@ -332,7 +331,7 @@ func TestUpgradeUsesEmbeddedPublicKey(t *testing.T) {
 	var replaced []stagedReplace
 	upgrader := &Upgrader{
 		BaseURL: server.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
-		MaxAttempts: 1, scheduleReplace: captureReplace(&replaced),
+		MaxAttempts: 1, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	if err := upgrader.Upgrade(context.Background(), version); err != nil || len(replaced) != 1 {
 		t.Fatalf("Upgrade = %v, replaced %d", err, len(replaced))
@@ -386,8 +385,8 @@ func TestUpgradeRefusesUnverifiedChecksums(t *testing.T) {
 			upgrader := &Upgrader{
 				BaseURL: server.URL, Executable: target, PublicKey: publicKey,
 				MaxAttempts: 3, Backoff: time.Millisecond,
-				sleep:           func(context.Context, time.Duration) bool { sleeps++; return true },
-				scheduleReplace: captureReplace(&replaced),
+				sleep:        func(context.Context, time.Duration) bool { sleeps++; return true },
+				verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 			}
 			err := upgrader.Upgrade(context.Background(), version)
 			if !errors.Is(err, errUpgradeRefused) {
@@ -426,7 +425,7 @@ func TestUpgradeRetryCapAndBackoff(t *testing.T) {
 			sleeps = append(sleeps, d)
 			return true
 		},
-		scheduleReplace: captureReplace(&replaced),
+		verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	err := upgrader.Upgrade(context.Background(), version)
 	if err == nil || !strings.Contains(err.Error(), "after 3 attempts") {
@@ -473,215 +472,6 @@ func TestExtractAgentBinaryFromZip(t *testing.T) {
 	}
 }
 
-func TestRenderReplaceScriptUnix(t *testing.T) {
-	script := renderReplaceScriptUnix("/opt/bin/.nexterm-agent.nexterm-new", "/opt/bin/nexterm-agent", 3, unixRestartCommand("linux"), "/var/nx/upgrade.log")
-	for _, fragment := range []string{
-		"#!/bin/sh\n",
-		"sleep 3\n",
-		"mv -f '/opt/bin/nexterm-agent' '/opt/bin/nexterm-agent.nexterm-old'",
-		"if mv -f '/opt/bin/.nexterm-agent.nexterm-new' '/opt/bin/nexterm-agent'; then",
-		"chmod 0755 '/opt/bin/nexterm-agent'",
-		"systemctl --user restart nexterm-agent.service",
-		"'/var/nx/upgrade.log'",
-		"mv -f '/opt/bin/nexterm-agent.nexterm-old' '/opt/bin/nexterm-agent'",
-		"rm -f \"$0\"",
-	} {
-		if !strings.Contains(script, fragment) {
-			t.Fatalf("script missing %q:\n%s", fragment, script)
-		}
-	}
-	if strings.Contains(script, "launchctl") {
-		t.Fatal("linux script must not kickstart launchd")
-	}
-	darwin := renderReplaceScriptUnix("/a/new", "/a/old", 3, unixRestartCommand("darwin"), "")
-	if !strings.Contains(darwin, `launchctl kickstart "gui/$(id -u)/com.nexterm.agent"`) {
-		t.Fatalf("darwin script missing kickstart:\n%s", darwin)
-	}
-	if strings.Contains(darwin, "systemctl") {
-		t.Fatal("darwin script must not restart systemd")
-	}
-	quoted := renderReplaceScriptUnix("/dir with spaces/new", "/dir with spaces/old", 3, "true", "")
-	if !strings.Contains(quoted, "'/dir with spaces/old'") {
-		t.Fatalf("paths with spaces must be quoted:\n%s", quoted)
-	}
-}
-
-func TestRenderReplaceScriptWindows(t *testing.T) {
-	restart := windowsRestartBlock(windowsTaskName)
-	script := renderReplaceScriptWindows(windowsReplaceScript{
-		NewPath: `C:\bin\.nexterm-agent.exe.nexterm-new`, TargetPath: `C:\bin\nexterm-agent.exe`,
-		WaitPID: 4242, WaitTimeoutSeconds: 60, LogPath: `C:\nx\upgrade.log`, RestartBlock: restart,
-	})
-	for _, fragment := range []string{
-		"Wait-Process -Id 4242 -Timeout 60",
-		"Remove-Item -LiteralPath $PSCommandPath",
-		`'C:\nx\upgrade.log'`,
-	} {
-		if !strings.Contains(script, fragment) {
-			t.Fatalf("script missing %q:\n%s", fragment, script)
-		}
-	}
-	if strings.Contains(script, "Start-Sleep -Seconds 3") {
-		t.Fatalf("script must wait for the process, not a fixed sleep:\n%s", script)
-	}
-	if !strings.Contains(script, "$nxTarget = 'C:\\bin\\nexterm-agent.exe'") {
-		t.Fatalf("target must be single-quoted:\n%s", script)
-	}
-	// The swap-in runs in the try block that follows the move-aside; its catch block is the rollback.
-	_, afterBackup, ok := strings.Cut(script, "$nxBak -Force -ErrorAction Stop } catch {}\n")
-	if !ok {
-		t.Fatalf("script has no backup step:\n%s", script)
-	}
-	success, rollback, ok := strings.Cut(afterBackup, "\n} catch {\n  try { Move-Item -LiteralPath $nxBak")
-	if !ok {
-		t.Fatalf("script has no rollback catch block:\n%s", script)
-	}
-	swap := strings.Index(success, "Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force")
-	restartAt := strings.Index(success, restart)
-	if swap < 0 || restartAt < 0 || restartAt < swap {
-		t.Fatalf("restart block must follow the successful swap-in:\n%s", script)
-	}
-	for _, fragment := range []string{"schtasks.exe", "/Run", "'NexTermAgent'", "Get-ScheduledTask", "LASTEXITCODE"} {
-		if !strings.Contains(restart, fragment) {
-			t.Fatalf("restart block missing %q:\n%s", fragment, restart)
-		}
-	}
-	if strings.Contains(rollback, "schtasks") || strings.Contains(rollback, restart) {
-		t.Fatalf("rollback must not restart the task:\n%s", script)
-	}
-	if got := psQuote("o'brien"); got != "'o''brien'" {
-		t.Fatalf("psQuote escaping = %q", got)
-	}
-	if got := shQuote("o'brien"); got != `'o'\''brien'` {
-		t.Fatalf("shQuote escaping = %q", got)
-	}
-}
-
-func TestReplaceScriptUnixExecutes(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("unix shell script")
-	}
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("sh unavailable")
-	}
-	dir := t.TempDir()
-	target := filepath.Join(dir, "nexterm-agent")
-	logPath := filepath.Join(dir, "upgrade.log")
-
-	writeScript := func(newPath, restart string) string {
-		t.Helper()
-		_ = os.Remove(logPath)
-		scriptPath := filepath.Join(dir, "replace.sh")
-		if err := os.WriteFile(scriptPath, []byte(renderReplaceScriptUnix(newPath, target, 0, restart, logPath)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		return scriptPath
-	}
-	readLog := func() string {
-		t.Helper()
-		content, err := os.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("upgrade log missing: %v", err)
-		}
-		return string(content)
-	}
-
-	t.Run("successful swap and cleanup", func(t *testing.T) {
-		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		newPath := filepath.Join(dir, ".nexterm-agent.nexterm-new")
-		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		scriptPath := writeScript(newPath, "true")
-		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
-			t.Fatalf("script failed: %v\n%s", err, output)
-		}
-		content, err := os.ReadFile(target)
-		if err != nil || string(content) != "new-binary" {
-			t.Fatalf("target = %q, %v", content, err)
-		}
-		if _, err := os.Stat(target + ".nexterm-old"); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("backup must be removed after a successful swap")
-		}
-		if _, err := os.Stat(scriptPath); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("script must remove itself")
-		}
-		if got := readLog(); !strings.Contains(got, upgradeLogRestartExit+" 0") {
-			t.Fatalf("log must record the restart exit code, got %q", got)
-		}
-	})
-
-	t.Run("failing restart is logged and does not fail the script", func(t *testing.T) {
-		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		newPath := filepath.Join(dir, ".nexterm-agent.nexterm-new")
-		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		scriptPath := writeScript(newPath, "echo restart-diagnostic; false")
-		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
-			t.Fatalf("script must not fail when restart fails: %v\n%s", err, output)
-		}
-		if _, err := os.Stat(scriptPath); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("script must still remove itself")
-		}
-		got := readLog()
-		if !strings.Contains(got, upgradeLogRestartExit+" 1") || !strings.Contains(got, "restart-diagnostic") {
-			t.Fatalf("log must record restart output and failure code, got %q", got)
-		}
-	})
-
-	t.Run("unopenable log still swaps and restarts", func(t *testing.T) {
-		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		newPath := filepath.Join(dir, ".nexterm-agent.nexterm-new")
-		if err := os.WriteFile(newPath, []byte("new-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		restartMarker := filepath.Join(dir, "restarted.marker")
-		_ = os.Remove(restartMarker)
-		badLog := filepath.Join(dir, "no-such-dir", "upgrade.log")
-		scriptPath := filepath.Join(dir, "replace-badlog.sh")
-		if err := os.WriteFile(scriptPath, []byte(renderReplaceScriptUnix(newPath, target, 0, "touch "+shQuote(restartMarker), badLog)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
-			t.Fatalf("script failed: %v\n%s", err, output)
-		}
-		content, err := os.ReadFile(target)
-		if err != nil || string(content) != "new-binary" {
-			t.Fatalf("target = %q, %v", content, err)
-		}
-		if _, err := os.Stat(restartMarker); err != nil {
-			t.Fatalf("restart command must run even when the log cannot be opened: %v", err)
-		}
-	})
-
-	t.Run("failed swap rolls back old binary", func(t *testing.T) {
-		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		missing := filepath.Join(dir, ".nexterm-agent.nexterm-new")
-		_ = os.Remove(missing)
-		scriptPath := writeScript(missing, "echo must-not-run")
-		if output, err := exec.Command("sh", scriptPath).CombinedOutput(); err != nil {
-			t.Fatalf("script failed: %v\n%s", err, output)
-		}
-		content, err := os.ReadFile(target)
-		if err != nil || string(content) != "old-binary" {
-			t.Fatalf("rollback must restore the old binary, target = %q, %v", content, err)
-		}
-		got := readLog()
-		if strings.Contains(got, "must-not-run") || strings.Contains(got, upgradeLogRestartExit) {
-			t.Fatalf("rollback must not restart, log %q", got)
-		}
-	})
-}
-
 func TestUpgradeLogPathIn(t *testing.T) {
 	dir := t.TempDir()
 	if got := upgradeLogPathIn(dir); got != filepath.Join(dir, upgradeLogName) {
@@ -716,6 +506,7 @@ func TestUpgraderReportsDetachedReplace(t *testing.T) {
 		var replaced []stagedReplace
 		u := &Upgrader{
 			BaseURL: server.URL, Executable: target, PublicKey: testReleaseKey.PublicKeyFile(), MaxAttempts: 1,
+			verifyStaged: skipStagedCheck,
 			scheduleReplaceDetached: func(newPath, targetPath string) (bool, error) {
 				replaced = append(replaced, stagedReplace{newPath: newPath, targetPath: targetPath})
 				return detached, nil

@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("../ipc/commands", () => ({ call: mocks.call }));
 
 import { auditTimelineApi } from "../ipc/auditTimelineApi";
+import { hostMonitorApi } from "../ipc/hostMonitorApi";
 import { hostPortsApi } from "../ipc/hostPortsApi";
 import { hostProcessesApi } from "../ipc/hostProcessesApi";
 import { previewApi } from "../ipc/previewApi";
@@ -27,6 +28,15 @@ describe("auditTimelineApi", () => {
     mocks.call.mockResolvedValueOnce(null).mockResolvedValueOnce({});
     await expect(auditTimelineApi.page({})).resolves.toEqual({ items: [], nextCursor: null });
     await expect(auditTimelineApi.page({})).resolves.toEqual({ items: [], nextCursor: null });
+  });
+});
+
+describe("hostMonitorApi", () => {
+  it("samples by session id", async () => {
+    const snapshot = { status: "ok", sampledAt: 1, intervalMs: 3000, network: [], disks: [] };
+    mocks.call.mockResolvedValue(snapshot);
+    await expect(hostMonitorApi.sample("s1")).resolves.toBe(snapshot);
+    expect(mocks.call).toHaveBeenCalledWith("host_monitor_sample", { sessionId: "s1" });
   });
 });
 
@@ -92,26 +102,26 @@ describe("commandSearchApi", () => {
     mocks.call.mockResolvedValue({ items: [], hasMore: false });
     await commandSearchApi.search({ text: "ls" });
     expect(mocks.call).toHaveBeenCalledWith("command_search", {
-      text: "ls", assetId: null, startedFrom: null, startedTo: null, limit: 0, offset: 0,
+      text: "ls", assetId: null, cwd: null, startedFrom: null, startedTo: null, limit: 0, offset: 0,
     });
   });
 
   it("keeps given filters and maps items, nulling absent optional fields and dropping extras", async () => {
     mocks.call.mockResolvedValue({
       items: [
-        { id: 1, sessionId: "s", tabId: "t", assetId: "a", command: "ls", source: "user", exitCode: 0, startedAt: 1, finishedAt: 2, transcriptId: "tr", extra: "x" },
+        { id: 1, sessionId: "s", tabId: "t", assetId: "a", command: "ls", cwd: "/srv", source: "user", exitCode: 0, startedAt: 1, finishedAt: 2, transcriptId: "tr", extra: "x" },
         { id: 2, sessionId: "s", tabId: "t", assetId: "a", command: "pwd", source: "ai", startedAt: 3, finishedAt: 4 },
       ],
       hasMore: 1,
     });
-    const result = await commandSearchApi.search({ text: "l", assetId: "a", startedFrom: 1, startedTo: 9, limit: 10, offset: 5 });
+    const result = await commandSearchApi.search({ text: "l", assetId: "a", cwd: "/srv", startedFrom: 1, startedTo: 9, limit: 10, offset: 5 });
     expect(mocks.call).toHaveBeenCalledWith("command_search", {
-      text: "l", assetId: "a", startedFrom: 1, startedTo: 9, limit: 10, offset: 5,
+      text: "l", assetId: "a", cwd: "/srv", startedFrom: 1, startedTo: 9, limit: 10, offset: 5,
     });
     expect(result.hasMore).toBe(true);
     expect(result.items[0]).not.toHaveProperty("extra");
-    expect(result.items[0]).toMatchObject({ exitCode: 0, transcriptId: "tr" });
-    expect(result.items[1]).toMatchObject({ exitCode: null, transcriptId: null });
+    expect(result.items[0]).toMatchObject({ exitCode: 0, transcriptId: "tr", cwd: "/srv" });
+    expect(result.items[1]).toMatchObject({ exitCode: null, transcriptId: null, cwd: "" });
   });
 
   it("treats a missing items list as empty", async () => {

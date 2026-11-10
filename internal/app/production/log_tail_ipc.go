@@ -143,11 +143,15 @@ func (r logTailResolver) Resolve(ctx context.Context, sessionID string) (logtail
 	if !transport.IsAlive() {
 		return logtail.Target{}, fmt.Errorf("%w: %s transport is not alive", session.ErrDisconnected, sessionID)
 	}
-	if deviceTransport, ok := transport.(*device.Transport); ok && deviceTransport.Platform() == "windows" {
-		return logtail.Target{}, unsupportedReason{message: "Windows 设备暂不支持日志跟随（跟随命令依赖 POSIX 工具 tail/journalctl），请改用终端或文件浏览器查看", sentinel: session.ErrUnsupported}
+	platform := ""
+	if deviceTransport, ok := transport.(*device.Transport); ok {
+		platform = logtail.PlatformPOSIX
+		if deviceTransport.Platform() == "windows" {
+			platform = logtail.PlatformWindows
+		}
 	}
 	return logtail.Target{
-		SessionID: info.ID, SessionName: info.Name,
+		SessionID: info.ID, SessionName: info.Name, Platform: platform,
 		Transport: transport, Generation: transport.Generation(),
 	}, nil
 }

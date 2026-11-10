@@ -258,11 +258,16 @@ export interface CloseTabReport {
 
 export interface ToastItem {
   id: number;
-  kind: "info" | "error" | "success";
+  kind: "info" | "warning" | "error" | "success";
   text: string;
   action?: ToastAction;
   // detail is the raw technical text, shown only after the user opens 「详情」.
   detail?: string;
+  // duration is the full auto-dismiss time; remaining is what was left when the timer last started or was held.
+  // The countdown bar draws from them, and held freezes it while the timer is paused.
+  duration?: number;
+  remaining?: number;
+  held?: boolean;
 }
 
 export interface TextPromptState {
@@ -411,6 +416,10 @@ export interface UiState {
   queueAiRef: (ref: RefChip) => void;
   // Atomically drains the queue so only one panel receives the references.
   takeAiPendingRefs: () => RefChip[];
+  // A prompt for the visible AI composer to prefill (never send); a newer one replaces one not yet taken.
+  aiPendingPrompt: string | null;
+  queueAiPrompt: (text: string) => void;
+  takeAiPendingPrompt: () => string | null;
   aiRulePrefill: string | null;
   setAiRulePrefill: (v: string | null) => void;
   appDialog: AppDialogState | null;
@@ -445,6 +454,14 @@ export interface UiState {
   setActivePane: (paneId: string, workspaceId?: string) => void;
   focusPane: (direction: FocusDirection, workspaceId?: string) => string | null;
   setSplitRatio: (splitId: string, ratio: number, workspaceId?: string) => void;
+  /** Workspace id to the pane zoomed to fill it. UI-only: never persisted or synced. */
+  zoomedPanes: Record<string, string>;
+  /** Zooms the active pane to fill its workspace, or restores the layout; false when there is nothing to zoom. */
+  toggleZoomPane: (workspaceId?: string) => boolean;
+  /** Restores the layout of a zoomed workspace; no-op when it is not zoomed. */
+  clearZoomPane: (workspaceId: string) => void;
+  /** Gives panes lined up in the same direction equal shares; false when the layout has no split to change. */
+  equalizeSplits: (workspaceId?: string) => boolean;
   /** Moves a tab into another pane of its workspace, at `index` of its tabs (default: the end). */
   moveTabToPane: (tabId: string, paneId: string, index?: number) => void;
   /**

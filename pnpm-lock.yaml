@@ -56,6 +56,9 @@ importers:
       '@xterm/addon-serialize':
         specifier: 0.15.0-beta.310
         version: 0.15.0-beta.310(@xterm/xterm@6.1.0-beta.315)
+      '@xterm/addon-unicode11':
+        specifier: 0.10.0-beta.310
+        version: 0.10.0-beta.310(@xterm/xterm@6.1.0-beta.315)
       '@xterm/addon-webgl':
         specifier: 0.20.0-beta.309
         version: 0.20.0-beta.309(@xterm/xterm@6.1.0-beta.315)
@@ -71,12 +74,18 @@ importers:
       lucide-react:
         specifier: ^1.53.0
         version: 1.53.0(@types/react@19.3.0)(react@19.3.0)
+      re2js:
+        specifier: 2.9.0
+        version: 2.9.0
       react:
         specifier: ^19.0.0
         version: 19.3.0
       react-dom:
         specifier: ^19.0.0
         version: 19.3.0(react@19.3.0)
+      trzsz:
+        specifier: 1.1.6
+        version: 1.1.6
       zustand:
         specifier: ^5.0.3
         version: 5.0.15(@types/react@19.3.0)(react@19.3.0)
@@ -887,6 +896,11 @@ packages:
     peerDependencies:
       '@xterm/xterm': ^6.1.0-beta.315
 
+  '@xterm/addon-unicode11@0.10.0-beta.310':
+    resolution: {integrity: sha512-kQQIWMaQX7ViV1ofrYQnydR4/yNqCgOXYSYXG+x9pvNFU5/3KzZbqeQOXuM1y3cZYzR+Mw2cy3oRp/ssnK9cww==}
+    peerDependencies:
+      '@xterm/xterm': ^6.1.0-beta.315
+
   '@xterm/addon-webgl@0.20.0-beta.309':
     resolution: {integrity: sha512-xr69GVLQPmYHLrPzGOl+oapEIDhaYbLCZALL+0qcEI71UW/EmmawweI6RloQsVxIKbMrujH9Xb5KOAqP7BTFSQ==}
     peerDependencies:
@@ -1450,6 +1464,10 @@ packages:
     resolution: {integrity: sha512-+Owyggi9IxT1ePKGafcI87ubSmxol6smwJ+RAHDQlx9+9cPwFWDiKFFCPuWhr9ignlGpZ9vDQLw67N4dcTVFEA==}
     engines: {node: '>=20'}
 
+  re2js@2.9.0:
+    resolution: {integrity: sha512-rZpqkd4ETP3GrQ5mDLzADr14OleeKdb/40lG84WE8absRfsVLJpWt2ifjtYYeoPqeouIkcxhTlurxIXfR5kR5Q==}
+    engines: {node: '>=20.0.0'}
+
   react-dom@19.3.0:
     resolution: {integrity: sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==}
     peerDependencies:
@@ -1539,6 +1557,10 @@ packages:
   tr46@7.0.0:
     resolution: {integrity: sha512-BcDSDW+SIGWVOns1Zm6Yg91q9AEj7eaID0QDY9oIqJD1A8dscNwMcl9Sms2DeuWCNov1X0/oXanHGYQBSLwZsg==}
     engines: {node: ^22.14.0 || >=24.0.0}
+
+  trzsz@1.1.6:
+    resolution: {integrity: sha512-UkUk7xQ96ZNWhmkpqDJxAzi2Zk52siPdHlitI+JtxwpEpYTR98KK/j0CoVrk3DWoLXeFqxNutSeUIOVzP1Eosg==}
+    hasBin: true
 
   ts-api-utils@2.5.0:
     resolution: {integrity: sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==}
@@ -2414,6 +2436,10 @@ snapshots:
     dependencies:
       '@xterm/xterm': 6.1.0-beta.315
 
+  '@xterm/addon-unicode11@0.10.0-beta.310(@xterm/xterm@6.1.0-beta.315)':
+    dependencies:
+      '@xterm/xterm': 6.1.0-beta.315
+
   '@xterm/addon-webgl@0.20.0-beta.309(@xterm/xterm@6.1.0-beta.315)':
     dependencies:
       '@xterm/xterm': 6.1.0-beta.315
@@ -2956,6 +2982,8 @@ snapshots:
     dependencies:
       hookified: 2.2.0
 
+  re2js@2.9.0: {}
+
   react-dom@19.3.0(react@19.3.0):
     dependencies:
       react: 19.3.0
@@ -3036,6 +3064,8 @@ snapshots:
   tr46@7.0.0:
     dependencies:
       punycode: 2.3.1
+
+  trzsz@1.1.6: {}
 
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:

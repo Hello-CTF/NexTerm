@@ -97,10 +97,11 @@ func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 		return base.FileSystemRoots{}, fmt.Errorf("WinRM home path is not absolute: %q", document.Home)
 	}
 	result := base.FileSystemRoots{
-		PathStyle: base.PathStyleWindows,
-		Roots:     make([]base.FileRoot, 0, len(document.Roots)),
-		HomePath:  document.Home,
-		Supported: true,
+		PathStyle:    base.PathStyleWindows,
+		Roots:        make([]base.FileRoot, 0, len(document.Roots)),
+		HomePath:     document.Home,
+		Supported:    true,
+		Capabilities: Capabilities(),
 	}
 	for _, root := range document.Roots {
 		if !windowsAbsolutePath(root.Root) {
@@ -119,6 +120,12 @@ func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 		return strings.ToUpper(result.Roots[i].Path) < strings.ToUpper(result.Roots[j].Path)
 	})
 	return result, nil
+}
+
+// Capabilities describes WinRM targets: chmod and archive operations are not implemented and Windows names are
+// case-insensitive.
+func Capabilities() base.FileCapabilities {
+	return base.FileCapabilities{Chmod: base.ChmodNone, CaseInsensitive: true}
 }
 
 func windowsAbsolutePath(value string) bool {
@@ -176,6 +183,10 @@ type listedEntry struct {
 	Dir     bool   `json:"d"`
 	Size    int64  `json:"l"`
 	ModTime string `json:"m"`
+	Hidden  bool   `json:"h"`
+	// LinkType and Target are filled only for reparse points.
+	LinkType string `json:"k"`
+	Target   string `json:"t"`
 }
 
 func parseList(path, output string) ([]base.FileEntry, error) {
@@ -205,13 +216,21 @@ func parseList(path, output string) ([]base.FileEntry, error) {
 		if strings.HasSuffix(path, `\`) || strings.HasSuffix(path, "/") {
 			fullPath = path + entry.Name
 		}
-		result = append(result, base.FileEntry{
+		item := base.FileEntry{
 			Name:    entry.Name,
 			Path:    fullPath,
 			Kind:    kind,
 			Size:    size,
 			ModTime: modTime,
-		})
+			Hidden:  entry.Hidden,
+		}
+		if entry.LinkType == "SymbolicLink" || entry.LinkType == "Junction" {
+			// The link's own directory attribute tells what it points at; a broken target is not detected here.
+			item.TargetKind = kind
+			item.Kind = base.FileSymlink
+			item.SymlinkTarget = entry.Target
+		}
+		result = append(result, item)
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if (result[i].Kind == base.FileDirectory) != (result[j].Kind == base.FileDirectory) {
@@ -224,7 +243,7 @@ func parseList(path, output string) ([]base.FileEntry, error) {
 
 func (f *FileSystem) List(ctx context.Context, path string) ([]base.FileEntry, error) {
 	quoted := quoteLiteral(path)
-	output, err := f.execute(ctx, "$ErrorActionPreference='Stop'; $items=@(Get-ChildItem -Force -LiteralPath "+quoted+" | ForEach-Object { [PSCustomObject]@{ n=$_.Name; d=$_.PSIsContainer; l=$_.Length; m=$_.LastWriteTimeUtc.ToString('o') } }); ConvertTo-Json -InputObject $items -Compress")
+	output, err := f.execute(ctx, "$ErrorActionPreference='Stop'; $items=@(Get-ChildItem -Force -LiteralPath "+quoted+" | ForEach-Object { $a=[int]$_.Attributes; $r=($a -band 1024) -ne 0; [PSCustomObject]@{ n=$_.Name; d=$_.PSIsContainer; l=$_.Length; m=$_.LastWriteTimeUtc.ToString('o'); h=($a -band 6) -ne 0; k=$(if ($r) { [string]$_.LinkType } else { '' }); t=$(if ($r) { [string](@($_.Target)[0]) } else { '' }) } }); ConvertTo-Json -InputObject $items -Compress")
 	if err != nil {
 		return nil, err
 	}
@@ -242,11 +261,17 @@ func (f *FileSystem) Rename(ctx context.Context, from, to string) error {
 }
 
 func (f *FileSystem) Delete(ctx context.Context, path string, isDir bool) error {
-	command := "Remove-Item -LiteralPath " + quoteLiteral(path) + " -Force"
+	quoted := quoteLiteral(path)
+	remove := "Remove-Item -LiteralPath " + quoted + " -Force"
 	if isDir {
-		command = "Remove-Item -LiteralPath " + quoteLiteral(path) + " -Recurse -Force"
+		remove = "Remove-Item -LiteralPath " + quoted + " -Recurse -Force"
 	}
-	_, err := f.execute(ctx, "$ErrorActionPreference='Stop'; "+command)
+	// A symlink or junction is removed as the link itself: FileSystemInfo.Delete never recurses into the
+	// target and, unlike Remove-Item on Windows PowerShell 5.1, does not prompt for a junction. Other reparse
+	// points (cloud placeholders) are ordinary files or folders and keep the recursive removal.
+	command := "$ErrorActionPreference='Stop'; $__nextermItem=Get-Item -LiteralPath " + quoted + " -Force; " +
+		"if (($__nextermItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -and ($__nextermItem.LinkType -in 'SymbolicLink','Junction')) { $__nextermItem.Delete() } else { " + remove + " }"
+	_, err := f.execute(ctx, command)
 	return err
 }
 
@@ -304,4 +329,5 @@ func (f *FileSystem) Size(ctx context.Context, path string) (int64, error) {
 var (
 	_ base.FileSystem    = (*FileSystem)(nil)
 	_ base.RootsProvider = (*FileSystem)(nil)
+	_ base.FileCreator   = (*FileSystem)(nil)
 )

@@ -85,7 +85,7 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 				diagnostics = append(diagnostics, Diagnostic{
 					Code:    "limit-truncated",
 					Source:  dir,
-					Message: fmt.Sprintf("directory entry count exceeds %d", limits.MaxFiles),
+					Message: fmt.Sprintf("目录条目数量超过上限 %d", limits.MaxFiles),
 				})
 			}
 			break
@@ -97,7 +97,7 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 				diagnostics = append(diagnostics, Diagnostic{
 					Code:    "limit-truncated",
 					Source:  dir,
-					Message: fmt.Sprintf("key count exceeds %d", limits.MaxKeys),
+					Message: fmt.Sprintf("密钥数量超过上限 %d", limits.MaxKeys),
 				})
 			}
 			break
@@ -123,18 +123,18 @@ func ScanHome(dir string, limits Limits) ([]ScannedKey, []Diagnostic, error) {
 func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved string, isSymlink, ok bool) {
 	info, err := os.Lstat(path)
 	if err != nil {
-		*diagnostics = append(*diagnostics, Diagnostic{Code: "key-unreadable", Source: path, Message: "file cannot be inspected"})
+		*diagnostics = append(*diagnostics, Diagnostic{Code: "key-unreadable", Source: path, Message: "文件无法检查"})
 		return "", false, false
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := filepath.EvalSymlinks(path)
 		if err != nil {
-			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-unresolved", Source: path, Message: "symlink target cannot be resolved"})
+			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-unresolved", Source: path, Message: "无法解析符号链接的目标"})
 			return "", false, false
 		}
 		rel, ok := homePathRel(dir, target)
 		if !ok {
-			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-escape", Source: path, Message: "symlink points outside the scanned directory"})
+			*diagnostics = append(*diagnostics, Diagnostic{Code: "symlink-escape", Source: path, Message: "符号链接指向扫描目录之外"})
 			return "", false, false
 		}
 		resolved = filepath.Join(dir, rel)
@@ -157,24 +157,24 @@ func resolveHomeEntry(dir, path string, diagnostics *[]Diagnostic) (resolved str
 func inspectHomeKey(path, name string) (ScannedKey, string, string) {
 	data, err := readKeyFileBounded(path)
 	if err != nil {
-		return ScannedKey{}, "key-unreadable", "file cannot be read within the size limit"
+		return ScannedKey{}, "key-unreadable", "文件超过大小上限或无法读取"
 	}
 	fingerprint, keyType, encrypted, ferr := fingerprintKeyMaterial(data)
 	if ferr == nil {
 		if !supportedHomeKeyType(keyType) {
-			return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", keyType)
+			return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("密钥类型 %q 暂不支持导入", keyType)
 		}
 		return ScannedKey{Path: path, Name: name, Fingerprint: fingerprint, KeyType: keyType, Encrypted: encrypted}, "", ""
 	}
 	if !encrypted {
-		return ScannedKey{}, "unsupported-file", "not a supported private key; skipped"
+		return ScannedKey{}, "unsupported-file", "不是受支持的私钥，已跳过"
 	}
 	pub, err := parsePublicKeySibling(path)
 	if err != nil {
-		return ScannedKey{}, "encrypted-key-unreadable", "encrypted private key has no readable public part or .pub sibling to fingerprint and is skipped"
+		return ScannedKey{}, "encrypted-key-unreadable", "加密私钥缺少可读取的公钥部分或同名 .pub 文件，无法计算指纹，已跳过"
 	}
 	if !supportedHomeKeyType(pub.Type()) {
-		return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("key type %q is not supported for import", pub.Type())
+		return ScannedKey{}, "unsupported-key-type", fmt.Sprintf("密钥类型 %q 暂不支持导入", pub.Type())
 	}
 	return ScannedKey{Path: path, Name: name, Fingerprint: ssh.FingerprintSHA256(pub), KeyType: pub.Type(), Encrypted: true}, "", ""
 }
@@ -224,7 +224,7 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 	scanned, diagnostics, err := ScanHome(dir, limits)
 	if err != nil {
 		if os.IsNotExist(err) {
-			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{Code: "home-missing", Source: dir, Message: "SSH directory does not exist"})
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{Code: "home-missing", Source: dir, Message: "SSH 目录不存在"})
 			return preview, nil
 		}
 		return nil, fmt.Errorf("sshconfig: scan %s: %w", dir, err)
@@ -236,7 +236,7 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 	if _, err := os.Stat(configPath); err == nil {
 		result, err := Parse(configPath, limits)
 		if err != nil {
-			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{Code: "config-unparsed", Source: configPath, Message: "SSH config could not be parsed; its hosts are not imported"})
+			preview.Diagnostics = append(preview.Diagnostics, Diagnostic{Code: "config-unparsed", Source: configPath, Message: "SSH 配置文件无法解析，其中的主机未导入"})
 		} else {
 			hosts = result.Hosts
 			preview.Diagnostics = append(preview.Diagnostics, result.Diagnostics...)
@@ -247,13 +247,14 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 	batchNames := map[string]endpoint{}
 	batchEndpoints := map[endpoint]string{}
 	hostPreviews := make([]HostPreview, 0, len(hosts))
+	reportedIdentities := map[string]bool{}
 	for _, host := range hosts {
 		item := HostPreview{
 			Alias:         host.Alias,
 			Hostname:      host.Hostname,
 			Port:          host.Port,
 			Username:      host.Username,
-			IdentityFiles: DedupeIdentityFiles(host.IdentityFiles),
+			IdentityFiles: preview.usableIdentityFiles(host.IdentityFiles, reportedIdentities),
 			ProxyJump:     host.ProxyJump,
 			Source:        host.Source,
 			Action:        PlanAdd,
@@ -289,7 +290,7 @@ func PreviewHome(dir string, existing []ExistingAsset, existingKeys []ExistingKe
 			Action:      PlanAdd,
 		}
 		if key.Encrypted {
-			item.Warnings = append(item.Warnings, "private key is passphrase-protected; it will be imported as a file reference, bind a credential for the passphrase")
+			item.Warnings = append(item.Warnings, "私钥受口令保护，将作为文件引用导入；请绑定凭据以提供口令")
 		}
 		decideKeyAction(&item, seenFingerprints, existingKeyByName, existingFPNames, batchKeyNames)
 		seenFingerprints[item.Fingerprint] = true

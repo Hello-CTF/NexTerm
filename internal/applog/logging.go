@@ -13,35 +13,81 @@ import (
 
 type Logger struct {
 	*slog.Logger
-	file  *os.File
-	level *slog.LevelVar
-	tee   *teeState
+	file     *rotatingFile
+	filePath string
+	level    *slog.LevelVar
+	tee      *teeState
 }
 
+// NewLogger writes text records at Info level and above to stderr and to the rotating log file.
 func NewLogger(paths platform.Paths, stderr io.Writer) (*Logger, error) {
+	return NewLoggerWithOptions(paths, stderr, DefaultOptions())
+}
+
+// NewLoggerWithOptions builds the logger described by options. When the log file cannot be opened the logger
+// still writes to stderr and the error is returned; a file sink skipped on purpose is not an error.
+func NewLoggerWithOptions(paths platform.Paths, stderr io.Writer, options Options) (*Logger, error) {
 	if stderr == nil {
 		stderr = io.Discard
 	}
 	writer := stderr
-	var file *os.File
-	err := os.MkdirAll(paths.LogDir, 0o700)
-	if err == nil {
-		file, err = os.OpenFile(paths.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	var file *rotatingFile
+	var err error
+	if fileSinkWanted(options, stderr) {
+		err = os.MkdirAll(paths.LogDir, 0o700)
 		if err == nil {
-			writer = io.MultiWriter(stderr, file)
+			maxBackups := options.MaxBackups
+			if maxBackups == 0 && options.MaxFileBytes == 0 {
+				maxBackups = DefaultMaxBackups
+			}
+			file, err = openRotatingFile(paths.LogFile, options.MaxFileBytes, maxBackups, stderr)
+			if err == nil {
+				writer = io.MultiWriter(stderr, file)
+			}
 		}
 	}
 	level := &slog.LevelVar{}
-	level.Set(slog.LevelInfo)
+	level.Set(options.Level)
 	tee := &teeState{}
-	primary := slog.NewTextHandler(writer, &slog.HandlerOptions{Level: level})
+	handlerOptions := &slog.HandlerOptions{Level: level}
+	var primary slog.Handler
+	if options.Format == FormatJSON {
+		primary = slog.NewJSONHandler(writer, handlerOptions)
+	} else {
+		primary = slog.NewTextHandler(writer, handlerOptions)
+	}
 	logger := &Logger{
 		Logger: slog.New(NewRedactingHandler(newFanoutHandler(primary, tee))),
 		file:   file,
 		level:  level,
 		tee:    tee,
 	}
+	if file != nil {
+		logger.filePath = paths.LogFile
+	}
 	return logger, err
+}
+
+func fileSinkWanted(options Options, stderr io.Writer) bool {
+	switch options.File {
+	case FileOff:
+		return false
+	case FileOn:
+		return true
+	}
+	if !options.SkipFileUnderJournal || options.JournalStream == "" {
+		return true
+	}
+	f, ok := stderr.(*os.File)
+	return !ok || !stderrIsJournal(options.JournalStream, f)
+}
+
+// FilePath returns the log file being written, or "" when records only go to stderr.
+func (l *Logger) FilePath() string {
+	if l == nil {
+		return ""
+	}
+	return l.filePath
 }
 
 // Level exposes the level of the primary sinks (console and log file); it defaults to Info.

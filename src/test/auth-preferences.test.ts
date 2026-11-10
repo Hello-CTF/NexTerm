@@ -654,7 +654,7 @@ describe("production path: flat HTTP preference-store contract", () => {
     resetAppearancePrefs();
     await vi.waitFor(() =>
       expect(prefsMocks.put).toHaveBeenCalledWith({
-        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalFontFamily", "appearance.terminalTheme", "appearance.terminalContrast", "appearance.themeMode"],
+        clear: ["appearance.uiFontPreset", "appearance.uiFontScale", "appearance.terminalFontSize", "appearance.terminalFontFamily", "appearance.terminalTheme", "appearance.terminalContrast", "appearance.terminalSchemeDark", "appearance.terminalSchemeLight", "appearance.accent", "appearance.themeMode"],
       }),
     );
     // After clearing, falls back to defaults with no leftover cleared account overrides
