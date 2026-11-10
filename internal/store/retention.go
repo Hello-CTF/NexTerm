@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -273,14 +274,23 @@ func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (r
 	return result, nil
 }
 
+// enforceRetentionBatches runs login session cleanup last and independently:
+// a failure in the earlier tables does not skip it, and its own failure is
+// joined with theirs instead of hiding it.
 func (s *Store) enforceRetentionBatches(ctx context.Context, policy RetentionPolicy, now time.Time, result *RetentionResult) error {
-	if policy.UserSessionMaxAge > 0 {
-		deleted, err := s.enforceUserSessionRetention(ctx, policy.UserSessionMaxAge, now)
-		result.UserSessionsDeleted += deleted
-		if err != nil {
-			return fmt.Errorf("user session retention: %w", err)
-		}
+	tablesErr := s.enforceRetentionTables(ctx, policy, now, result)
+	if policy.UserSessionMaxAge <= 0 {
+		return tablesErr
 	}
+	deleted, err := s.enforceUserSessionRetention(ctx, policy.UserSessionMaxAge, now)
+	result.UserSessionsDeleted += deleted
+	if err != nil {
+		err = fmt.Errorf("user session retention: %w", err)
+	}
+	return errors.Join(tablesErr, err)
+}
+
+func (s *Store) enforceRetentionTables(ctx context.Context, policy RetentionPolicy, now time.Time, result *RetentionResult) error {
 	if policy.ExecBatchMaxAge > 0 || policy.ExecBatchMaxCount > 0 {
 		deleted, err := s.enforceExecBatchRetention(ctx, policy, now)
 		result.ExecBatchesDeleted += deleted

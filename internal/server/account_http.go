@@ -444,13 +444,15 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		s.accountThrottle.loginIP.RecordFailure(ipKey)
 		s.accountThrottle.loginUser.RecordFailure(userKey)
 		writeAccountFailure(w, err)
-		s.auditPasswordLoginFailure(r, request.Username)
+		s.auditPasswordLoginFailure(r, request.Username, err)
 		return
 	}
 	if accountLoginGate != nil {
 		accountLoginGate(r.Context(), authenticated)
 	}
 	epoch := s.accounts.Epoch(authenticated.ID)
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	user, err := s.accounts.ConfirmAuthenticated(r.Context(), authenticated)
@@ -476,7 +478,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	// The per-username streak is left alone: one success must not let an
 	// attacker who shares the account's name restart guessing.
 	s.accountThrottle.login.RecordSuccess(key)
-	s.auditLoginSuccess(r, user.ID, s.writeAccountSession(w, r, user, request.DeviceID, epoch), "password")
+	audits.loginSuccess(user.ID, s.writeAccountSession(w, r, user, request.DeviceID, epoch), "password")
 }
 
 type accountRegisterRequest struct {
@@ -541,6 +543,8 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	}
 	// Serialize with logins and envelope uploads: the recovery reset revokes
 	// sessions and bumps the account epoch as one atomic generation change.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ResetPasswordWithRecovery(r.Context(), request.Username, request.RecoveryKey, request.NewPassword, request.toEnvelopes())
@@ -552,7 +556,7 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	s.accountThrottle.recovery.RecordSuccess(key)
 	if user, lookupErr := s.accounts.GetUserByUsername(r.Context(), request.Username); lookupErr == nil && user != nil {
 		s.unlockMFA(r, user.ID, "recovery_reset", "")
-		s.auditSelf(r, user.ID, "password_recovery_reset", nil)
+		audits.self(user.ID, "password_recovery_reset", nil)
 		s.closeUserConnections(user.ID, "")
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -768,6 +772,8 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 	}
 	// Serialize with logins and envelope uploads: the password change revokes
 	// sessions and bumps the account epoch as one atomic generation change.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	err := s.accounts.ChangePassword(r.Context(), identity.UserID, request.OldPassword, request.NewPassword, request.toEnvelopes(), identity.SessionID)
@@ -776,7 +782,7 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.unlockMFA(r, identity.UserID, "password_change", "")
-	s.auditSelf(r, identity.UserID, "password_change", map[string]any{"session_id": identity.SessionID})
+	audits.self(identity.UserID, "password_change", map[string]any{"session_id": identity.SessionID})
 	s.closeUserConnections(identity.UserID, identity.SessionID)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

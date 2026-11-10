@@ -364,7 +364,7 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 			s.auditMFALockout(r, entry.userID, fails, until, level)
 		}
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "验证码错误"))
-		s.auditLoginFailure(r, "totp", "", entry.userID, "rejected")
+		s.auditLoginFailure(r, "totp", entry.userID, "rejected")
 		return
 	}
 	method := "totp"
@@ -383,9 +383,11 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
-	s.auditLoginSuccess(r, user.ID, s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch), method)
+	audits.loginSuccess(user.ID, s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch), method)
 }
 
 type accountTOTPStatusView struct {
@@ -435,6 +437,8 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	// Serialize with revocations: the pending binding's epoch note and the
 	// setup write must not interleave with a revocation bump.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	if err := s.revalidateTOTPBindingSession(r); err != nil {
@@ -474,7 +478,7 @@ func (s *Server) serveAccountTOTPSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
 	if recoveryUsed() {
-		s.auditRecoveryCodeUse(r, identity.UserID, "rebind")
+		audits.recoveryCodeUse(identity.UserID, "rebind")
 	}
 	writeAccountJSON(w, http.StatusOK, accountTOTPSetupView{Secret: secret, OTPAuthURI: uri})
 }
@@ -512,6 +516,8 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 	// Serialize with revocations: the pending-epoch check and the confirm
 	// transaction must span the same boundary as an epoch bump, so a
 	// revocation cannot land between the check and the commit.
+	audits := s.newAuditQueue(r)
+	defer audits.flush()
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	if err := s.revalidateTOTPBindingSession(r); err != nil {
@@ -535,7 +541,7 @@ func (s *Server) serveAccountTOTPConfirm(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.accountThrottle.mfa.RecordSuccess(key)
-	s.auditSelf(r, identity.UserID, "totp_enable", map[string]any{"rebind": enabledBefore})
+	audits.self(identity.UserID, "totp_enable", map[string]any{"rebind": enabledBefore})
 	writeAccountJSON(w, http.StatusOK, map[string][]string{"recovery_codes": codes})
 }
 

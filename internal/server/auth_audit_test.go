@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func TestAuthAuditRecordsAccountAndAdminActions(t *testing.T) {
 			unknown = row
 		}
 	}
-	expectAudit(t, unknown, "", map[string]any{"username_hash": fixture.accounts.AuditPseudonym("typed-secret-name"), "username_length": len("typed-secret-name")})
+	expectAudit(t, unknown, "", map[string]any{"username_hash": fixture.accounts.AuditPseudonym("typed-secret-name")})
 
 	fixture.resetLoginThrottles()
 	second := fixture.login(t, "bob", "password-bob1")
@@ -363,7 +364,7 @@ func TestAuthAuditFailedLoginsDoNotFloodAudit(t *testing.T) {
 	// Call the audit hook directly so the request throttle does not stop the attempts first.
 	for i := 0; i < loginFailureAuditPerKey+5; i++ {
 		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-		fixture.server.auditPasswordLoginFailure(request, "erin")
+		fixture.server.auditPasswordLoginFailure(request, "erin", nil)
 	}
 	rows := fixture.rows(t)
 	if got := countKind(rows, "login_failure"); got != loginFailureAuditPerKey {
@@ -377,7 +378,7 @@ func TestLoginFailureAuditGroupsIPv6ByNetwork(t *testing.T) {
 	for i := 0; i < loginFailureAuditPerKey+3; i++ {
 		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
 		request.RemoteAddr = fmt.Sprintf("[2001:db8:1:2::%x]:4000", i+1)
-		fixture.server.auditPasswordLoginFailure(request, "frank")
+		fixture.server.auditPasswordLoginFailure(request, "frank", nil)
 	}
 	rows := fixture.rows(t)
 	if got := countKind(rows, "login_failure"); got != loginFailureAuditPerKey {
@@ -399,5 +400,52 @@ func TestLoginFailureAuditGroupsIPv6ByNetwork(t *testing.T) {
 	}
 	if key("192.0.2.1:4000") == key("192.0.2.2:4000") {
 		t.Fatal("IPv4 addresses must stay distinct")
+	}
+}
+
+func TestAuthAuditWritesHappenOutsideRevocationLock(t *testing.T) {
+	fixture := newAuthAuditFixture(t)
+	admin, _ := fixture.initSuperadmin(t, "root", "password-root1")
+	call := fixture.call(t, http.MethodPost, "/admin/users", map[string]any{"username": "bob", "password": "password-bob1", "display_name": "Bob"}, admin, admin.csrf, nil)
+	if call.status != http.StatusOK {
+		t.Fatalf("create status=%d body=%v", call.status, call.body)
+	}
+	var writes, heldWrites atomic.Int32
+	inner := fixture.server.audit
+	fixture.server.audit = func(ctx context.Context, source, kind string, payload map[string]any) error {
+		writes.Add(1)
+		if fixture.server.accountRevocationMu.TryLock() {
+			fixture.server.accountRevocationMu.Unlock()
+		} else {
+			heldWrites.Add(1)
+		}
+		return inner(ctx, source, kind, payload)
+	}
+	bob := fixture.login(t, "bob", "password-bob1")
+	body, _, _ := envelopeBody(t, "password-bob2")
+	body = mergeBody(body, map[string]any{"old_password": "password-bob1", "new_password": "password-bob2"})
+	if call := fixture.call(t, http.MethodPost, "/auth/password", body, bob, bob.csrf, nil); call.status != http.StatusOK {
+		t.Fatalf("password change status=%d body=%v", call.status, call.body)
+	}
+	if writes.Load() < 2 {
+		t.Fatalf("expected login_success and password_change writes, got %d", writes.Load())
+	}
+	if held := heldWrites.Load(); held != 0 {
+		t.Fatalf("%d audit writes ran while accountRevocationMu was held", held)
+	}
+}
+
+func TestAuthAuditPasswordFailureSkipsNonCredentialErrors(t *testing.T) {
+	fixture := newAuthAuditFixture(t)
+	fixture.createUser(t, "gina", "password-gina1")
+	request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+	fixture.server.auditPasswordLoginFailure(request, "gina", ipc.NewError(ipc.CodeInternal, "database busy"))
+	if got := countKind(fixture.rows(t), "login_failure"); got != 0 {
+		t.Fatalf("non-credential error wrote %d failure rows", got)
+	}
+	fixture.server.auditPasswordLoginFailure(request, "gina", ipc.NewError(ipc.CodeForbidden, "用户名或密码错误"))
+	row := fixture.only(t, "login_failure")
+	if _, ok := row.payload["username_length"]; ok {
+		t.Fatalf("payload must not carry the attempted name length: %v", row.payload)
 	}
 }

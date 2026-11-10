@@ -27,9 +27,11 @@ const (
 	// counted and reported as suppressed by the first record of the next window.
 	loginFailureAuditPerKey = 5
 	// loginFailureAuditGlobal bounds the failure records per window across all
-	// keys, so a distributed attempt cannot flood audit_log or push older rows
-	// out under a count-based retention limit.
-	loginFailureAuditGlobal  = 200
+	// keys. It limits the write rate of a distributed attempt (at most
+	// 60 rows per 15 minutes, about 5.7k a day); it does not stop those rows
+	// from counting against a count-based audit retention limit, which an
+	// operator who needs to keep older rows should pair with an age limit.
+	loginFailureAuditGlobal  = 60
 	loginFailureAuditMaxKeys = 4096
 )
 
@@ -82,29 +84,19 @@ func (s *Server) auditLoginSuccess(r *http.Request, userID, sessionID, method st
 	s.auditSelf(r, userID, "login_success", map[string]any{"session_id": sessionID, "method": method})
 }
 
-// auditLoginFailure records a rejected password or second-factor step,
-// aggregated per account (or attempted name) and the client address the login
-// throttles key on (IPv6 grouped by /64); the record keeps the full address.
-func (s *Server) auditLoginFailure(r *http.Request, stage, username, userID, reason string) {
-	if s.audit == nil || s.loginFailureAudit == nil {
+// auditLoginFailure records a rejected second-factor step for a known account,
+// aggregated per account and the client address the login throttles key on
+// (IPv6 grouped by /64); the record keeps the full address.
+func (s *Server) auditLoginFailure(r *http.Request, stage, userID, reason string) {
+	if s.audit == nil || s.loginFailureAudit == nil || userID == "" {
 		return
 	}
-	payload := map[string]any{"stage": stage, "reason": reason}
-	owner := ""
-	var key string
-	if userID != "" {
-		owner = userID
-		key = "u|" + userID + "|" + throttleAddress(r)
-		payload["target_user_id"] = userID
-	} else {
-		pseudonym := ""
-		if s.accounts != nil {
-			pseudonym = s.accounts.AuditPseudonym(username)
-		}
-		key = "n|" + pseudonym + "|" + throttleAddress(r)
-		payload["username_hash"] = pseudonym
-		payload["username_length"] = utf8.RuneCountInString(username)
-	}
+	s.recordLoginFailure(r, "u|"+userID+"|"+throttleAddress(r), userID, map[string]any{
+		"stage": stage, "reason": reason, "target_user_id": userID,
+	})
+}
+
+func (s *Server) recordLoginFailure(r *http.Request, key, owner string, payload map[string]any) {
 	record, failures, suppressed := s.loginFailureAudit.admit(key)
 	if !record {
 		return
@@ -116,22 +108,79 @@ func (s *Server) auditLoginFailure(r *http.Request, stage, username, userID, rea
 	s.auditAuth(r, owner, "login_failure", payload)
 }
 
-// auditPasswordLoginFailure classifies a failed password step without
-// revealing anything about the attempt beyond whether the name is an account.
-func (s *Server) auditPasswordLoginFailure(r *http.Request, username string) {
-	if s.audit == nil {
+// auditPasswordLoginFailure records a failed password step. Aggregation runs
+// first, keyed on the normalized attempted name and the throttle address, so a
+// flood costs no account lookup once its key is suppressed. Only credential
+// failures are audited: authErr from a busy database says nothing about the
+// attempt. The record reveals nothing beyond whether the name is an account.
+func (s *Server) auditPasswordLoginFailure(r *http.Request, username string, authErr error) {
+	if s.audit == nil || s.loginFailureAudit == nil {
 		return
 	}
+	if authErr != nil && ipc.NormalizeError(authErr).Code != ipc.CodeForbidden {
+		return
+	}
+	pseudonym := ""
+	if s.accounts != nil {
+		pseudonym = s.accounts.AuditPseudonym(username)
+	}
+	record, failures, suppressed := s.loginFailureAudit.admit("p|" + pseudonym + "|" + throttleAddress(r))
+	if !record {
+		return
+	}
+	payload := map[string]any{"stage": "password", "failures": failures}
+	if suppressed > 0 {
+		payload["suppressed_before"] = suppressed
+	}
+	owner := ""
 	user, err := s.accounts.GetUserByUsername(r.Context(), username)
-	if err != nil || user == nil {
-		s.auditLoginFailure(r, "password", username, "", "unknown_user")
-		return
+	switch {
+	case err != nil || user == nil:
+		payload["reason"] = "unknown_user"
+		payload["username_hash"] = pseudonym
+	case user.State == account.StateDisabled:
+		owner = user.ID
+		payload["reason"] = "disabled"
+		payload["target_user_id"] = user.ID
+	default:
+		owner = user.ID
+		payload["reason"] = "rejected"
+		payload["target_user_id"] = user.ID
 	}
-	reason := "rejected"
-	if user.State == account.StateDisabled {
-		reason = "disabled"
+	s.auditAuth(r, owner, "login_failure", payload)
+}
+
+// auditQueue collects audit records a handler produces while it holds
+// accountRevocationMu. Register flush with defer before taking the lock so the
+// records are written after it is released and a slow audit write never blocks
+// logins and revocations.
+type auditQueue struct {
+	s     *Server
+	r     *http.Request
+	items []func()
+}
+
+func (s *Server) newAuditQueue(r *http.Request) *auditQueue {
+	return &auditQueue{s: s, r: r}
+}
+
+func (q *auditQueue) self(userID, kind string, payload map[string]any) {
+	q.items = append(q.items, func() { q.s.auditSelf(q.r, userID, kind, payload) })
+}
+
+func (q *auditQueue) loginSuccess(userID, sessionID, method string) {
+	q.items = append(q.items, func() { q.s.auditLoginSuccess(q.r, userID, sessionID, method) })
+}
+
+func (q *auditQueue) recoveryCodeUse(userID, purpose string) {
+	q.items = append(q.items, func() { q.s.auditRecoveryCodeUse(q.r, userID, purpose) })
+}
+
+func (q *auditQueue) flush() {
+	for _, item := range q.items {
+		item()
 	}
-	s.auditLoginFailure(r, "password", username, user.ID, reason)
+	q.items = nil
 }
 
 type loginFailureAuditEntry struct {
