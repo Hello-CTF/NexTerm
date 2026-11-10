@@ -23,7 +23,12 @@ type lockoutAudit struct {
 	payloads []map[string]any
 }
 
+// record keeps only the second-factor lock records; the sign-in and account
+// records written along the way are covered by auth_audit_test.go.
 func (a *lockoutAudit) record(_ context.Context, source, kind string, payload map[string]any) error {
+	if kind != "totp_lockout" && kind != "totp_unlock" {
+		return nil
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.source = append(a.source, source)

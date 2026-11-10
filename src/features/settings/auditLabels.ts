@@ -1,5 +1,6 @@
 import { t } from "../../i18n";
-// Chinese labels for fleet device audit kinds (audit_log.asset_id holds the device ID).
+// Chinese labels for audit kinds: fleet device kinds (audit_log.asset_id holds the device ID) and
+// account kinds (source "auth": sign-in, sessions, password, two-step verification and administrator actions).
 export const KIND_LABELS: Record<string, string> = {
   device_enroll: t("设备接入"),
   device_online: t("设备上线"),
@@ -11,4 +12,21 @@ export const KIND_LABELS: Record<string, string> = {
   device_terminal: t("设备终端"),
   device_alert_fired: t("设备告警触发"),
   device_alert_resolved: t("设备告警恢复"),
+  login_success: t("登录成功"),
+  login_failure: t("登录失败"),
+  logout: t("退出登录"),
+  logout_all: t("退出全部会话"),
+  session_revoke: t("撤销登录会话"),
+  password_change: t("修改密码"),
+  password_recovery_reset: t("用恢复密钥重置密码"),
+  totp_enable: t("开启两步验证"),
+  totp_disable: t("关闭两步验证"),
+  totp_recovery_code_used: t("使用两步验证恢复码"),
+  totp_lockout: t("两步验证已锁定"),
+  totp_unlock: t("两步验证已解锁"),
+  admin_create_user: t("管理员创建用户"),
+  admin_disable_user: t("管理员禁用用户"),
+  admin_reset_user: t("管理员重置用户"),
+  admin_put_settings: t("管理员修改账号设置"),
+  admin_put_preferences: t("管理员修改默认偏好"),
 };

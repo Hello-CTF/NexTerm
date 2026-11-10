@@ -146,7 +146,11 @@ func (s *Server) adminRoutes() []adminRoute {
 
 func (s *Server) mountAdminRoutes(mux *http.ServeMux) {
 	for _, route := range s.adminRoutes() {
-		handler := s.requireSuperadmin(route.handler)
+		inner := route.handler
+		if route.csrfRequired {
+			inner = s.auditAdminRoute(route.name, inner)
+		}
+		handler := s.requireSuperadmin(inner)
 		if route.csrfRequired {
 			handler = s.requireAccountCSRF(handler)
 		}
@@ -297,32 +301,34 @@ func SetAccountLoginGateForTest(gate func(ctx context.Context, user *account.Use
 // writeAccountSession issues the session under the caller-held revocation lock
 // (the account async-boundary mutex). The epoch re-check fails the issuance
 // closed when a revocation, password change, reset, or disable committed after
-// the caller captured the generation at the authentication boundary.
-func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string, epoch uint64) {
+// the caller captured the generation at the authentication boundary. It
+// returns the issued session ID, or "" when no session was issued.
+func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, user *account.User, deviceID string, epoch uint64) string {
 	if !s.accounts.CheckEpoch(user.ID, epoch) {
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
-		return
+		return ""
 	}
 	// Stamp the login first so a store error leaves no orphaned session behind.
 	if err := s.accounts.RecordLogin(r.Context(), user); err != nil {
 		writeAccountFailure(w, err)
-		return
+		return ""
 	}
 	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
 		ClientName: sessionClientName(r), Origin: clientIP(r),
 	})
 	if err != nil {
 		writeAccountFailure(w, err)
-		return
+		return ""
 	}
 	s.setLoginDeviceCookie(w, r, user)
 	view, err := s.newAccountSessionView(r, user, session.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
-		return
+		return ""
 	}
 	s.setSessionCookie(w, r, token)
 	writeAccountJSON(w, http.StatusOK, view)
+	return session.ID
 }
 
 func (s *Server) serveAccountInit(w http.ResponseWriter, r *http.Request) {
@@ -438,6 +444,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		s.accountThrottle.loginIP.RecordFailure(ipKey)
 		s.accountThrottle.loginUser.RecordFailure(userKey)
 		writeAccountFailure(w, err)
+		s.auditPasswordLoginFailure(r, request.Username)
 		return
 	}
 	if accountLoginGate != nil {
@@ -469,7 +476,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	// The per-username streak is left alone: one success must not let an
 	// attacker who shares the account's name restart guessing.
 	s.accountThrottle.login.RecordSuccess(key)
-	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
+	s.auditLoginSuccess(r, user.ID, s.writeAccountSession(w, r, user, request.DeviceID, epoch), "password")
 }
 
 type accountRegisterRequest struct {
@@ -545,6 +552,7 @@ func (s *Server) serveAccountRecoveryReset(w http.ResponseWriter, r *http.Reques
 	s.accountThrottle.recovery.RecordSuccess(key)
 	if user, lookupErr := s.accounts.GetUserByUsername(r.Context(), request.Username); lookupErr == nil && user != nil {
 		s.unlockMFA(r, user.ID, "recovery_reset", "")
+		s.auditSelf(r, user.ID, "password_recovery_reset", nil)
 		s.closeUserConnections(user.ID, "")
 	}
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -595,6 +603,7 @@ func (s *Server) serveAccountLogout(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.auditSelf(r, identity.UserID, "logout", map[string]any{"session_id": identity.SessionID})
 	s.closeAccountConnections(identity.SessionID)
 	s.clearSessionCookie(w, r)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -630,6 +639,7 @@ func (s *Server) serveAccountLogoutAll(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	s.auditSelf(r, identity.UserID, "logout_all", map[string]any{"session_id": identity.SessionID, "revoked": len(sessionIDs)})
 	for _, sessionID := range sessionIDs {
 		s.closeAccountConnections(sessionID)
 	}
@@ -691,6 +701,7 @@ func (s *Server) serveAccountSessionRevoke(w http.ResponseWriter, r *http.Reques
 		writeAccountFailure(w, err)
 		return
 	}
+	s.auditSelf(r, identity.UserID, "session_revoke", map[string]any{"session_id": sessionID, "current": sessionID == identity.SessionID})
 	s.closeAccountConnections(sessionID)
 	if sessionID == identity.SessionID {
 		s.clearSessionCookie(w, r)
@@ -765,6 +776,7 @@ func (s *Server) serveAccountPasswordChange(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.unlockMFA(r, identity.UserID, "password_change", "")
+	s.auditSelf(r, identity.UserID, "password_change", map[string]any{"session_id": identity.SessionID})
 	s.closeUserConnections(identity.UserID, identity.SessionID)
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -896,6 +908,11 @@ func (s *Server) serveAdminUserCreate(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	fields := []string{"username", "password"}
+	if request.DisplayName != "" {
+		fields = append(fields, "display_name")
+	}
+	noteAdminAudit(r, user.ID, fields...)
 	writeAccountJSON(w, http.StatusOK, map[string]accountUserView{"user": newAccountUserView(user)})
 }
 
@@ -914,6 +931,7 @@ func (s *Server) serveAdminUserDisable(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	noteAdminAudit(r, target, "state")
 	s.closeUserConnections(target, "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -932,6 +950,7 @@ func (s *Server) serveAdminUserReset(w http.ResponseWriter, r *http.Request) {
 		adminID = identity.UserID
 	}
 	s.unlockMFA(r, r.PathValue("id"), "admin_reset", adminID)
+	noteAdminAudit(r, r.PathValue("id"), "state", "must_change_password", "data_key", "totp", "sessions")
 	s.closeUserConnections(r.PathValue("id"), "")
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -967,7 +986,15 @@ func (s *Server) serveAdminSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
+	// Only the field names whose value changes are recorded; a failed read
+	// counts the submitted field as changed.
+	if current, err := s.accounts.RegistrationEnabled(r.Context()); err != nil || current != request.RegistrationOpen {
+		noteAdminAudit(r, "", "registration_open")
+	}
 	if request.MFARequired != nil {
+		if current, err := s.accounts.MFARequired(r.Context()); err != nil || current != *request.MFARequired {
+			noteAdminAudit(r, "", "mfa_required")
+		}
 		if err := s.accounts.SetMFARequired(r.Context(), *request.MFARequired); err != nil {
 			writeAccountFailure(w, err)
 			return

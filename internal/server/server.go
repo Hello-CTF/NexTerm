@@ -126,10 +126,12 @@ type Server struct {
 	webSocket       WebSocketConfig
 	preferences     *account.Preferences
 	audit           AuditFunc
-	assetOwner      AssetOwnerFunc
-	fleet           *fleetserver.Service
-	previews        *sharing.Service
-	spectator       PreviewSpectator
+	// loginFailureAudit bounds the login failure records written to audit.
+	loginFailureAudit *loginFailureAuditor
+	assetOwner        AssetOwnerFunc
+	fleet             *fleetserver.Service
+	previews          *sharing.Service
+	spectator         PreviewSpectator
 	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
@@ -297,9 +299,10 @@ func New(config Config) (*Server, error) {
 			register:  account.NewLoginThrottle(),
 			mfa:       account.NewLoginThrottle(),
 		},
-		mfaTickets:     newMFATicketStore(),
-		mfaLock:        newMFALockout(),
-		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
+		mfaTickets:        newMFATicketStore(),
+		mfaLock:           newMFALockout(),
+		loginFailureAudit: newLoginFailureAuditor(),
+		gatewayAuthKey:    config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),

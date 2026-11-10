@@ -109,5 +109,9 @@ func (s *Server) serveAdminPreferencesPut(w http.ResponseWriter, r *http.Request
 		writeAccountFailure(w, err)
 		return
 	}
+	for key := range request.Set {
+		noteAdminAudit(r, "", key)
+	}
+	noteAdminAudit(r, "", request.Clear...)
 	writeAccountJSON(w, http.StatusOK, preferenceDefaultsView{Defaults: defaults})
 }
