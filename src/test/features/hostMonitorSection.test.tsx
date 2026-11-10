@@ -75,6 +75,14 @@ describe("HostMonitorSection", () => {
     expect(container.querySelector("[role='meter']")?.getAttribute("aria-valuenow")).toBe("50");
   });
 
+  it("says when disks are no longer read", async () => {
+    setTerminalHostMonitor("on");
+    mocks.sample.mockResolvedValue({ ...snapshot, disks: [], disksUnavailable: true });
+    const container = render(workspace("a1"));
+    await waitForRendered(() => expect(container.querySelector("[data-testid='host-monitor-disks-unavailable']")).not.toBeNull());
+    expect(container.querySelector("[role='meter']")).toBeNull();
+  });
+
   it("shows an unsupported host instead of an error", async () => {
     setTerminalHostMonitor("on");
     mocks.sample.mockResolvedValue({ status: "unsupported", reason: "主机监控目前只支持 Linux 主机", platform: "Darwin", sampledAt: 0, intervalMs: 0, network: [], disks: [] });

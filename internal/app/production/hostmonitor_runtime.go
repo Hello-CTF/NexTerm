@@ -24,15 +24,13 @@ func newProductionHostMonitorService(sessions *session.Manager) *hostmonitor.Ser
 		if err != nil {
 			return hostmonitor.Target{}, session.IPCError(err)
 		}
-		shell := hostPortsShellForGOOS(connected.Asset(), runtime.GOOS)
-		if deviceTransport, ok := transport.(*device.Transport); ok {
-			shell = hostports.ShellPOSIX
-			if deviceTransport.Platform() == "windows" {
-				shell = hostports.ShellPowerShell
-			}
-		}
 		target := hostmonitor.Target{Runner: transport}
-		if shell == hostports.ShellPowerShell {
+		// A fleet device reports its own metrics, which the sidebar shows instead; nothing is run on it.
+		if _, ok := transport.(*device.Transport); ok || connected.Asset().Kind == session.KindDevice {
+			target.Unsupported = "受管设备使用设备上报的指标，不在主机上采样"
+			return target, nil
+		}
+		if hostPortsShellForGOOS(connected.Asset(), runtime.GOOS) == hostports.ShellPowerShell {
 			target.Unsupported = "主机监控目前只支持 Linux 主机"
 		}
 		return target, nil

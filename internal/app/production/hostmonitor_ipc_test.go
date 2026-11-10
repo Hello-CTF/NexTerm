@@ -22,7 +22,7 @@ func newHostMonitorDispatcher(t *testing.T) (*ipc.Dispatcher, *session.Manager, 
 	var commands atomic.Int32
 	transport := newExecBatchTestTransport(func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
 		code := 0
-		if command == hostmonitor.SampleCommand() {
+		if command == hostmonitor.SampleCommand(true) {
 			commands.Add(1)
 			return base.ExecResult{Stdout: hostMonitorLinuxOutput, ExitCode: &code}, nil
 		}
@@ -70,6 +70,19 @@ func TestHostMonitorIPCPowerShellHostIsUnsupportedWithoutRunning(t *testing.T) {
 	dispatcher, manager, commands := newHostMonitorDispatcher(t)
 	ownerA := ipc.WithUserID(t.Context(), "owner-a")
 	connected, err := manager.ConnectFor(ownerA, session.Asset{ID: "asset-win", Name: "win-1", Kind: session.KindSSH, Options: map[string]any{"shell": "powershell"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := decodeExecBatchTest[hostmonitor.Snapshot](t, dispatchExecBatchTest(dispatcher, ownerA, "host_monitor_sample", hostmonitor.SampleArgs{SessionID: connected.ID}))
+	if snapshot.Status != hostmonitor.StatusUnsupported || commands.Load() != 0 {
+		t.Fatalf("snapshot = %+v, commands %d", snapshot, commands.Load())
+	}
+}
+
+func TestHostMonitorIPCDeviceSessionIsUnsupportedWithoutRunning(t *testing.T) {
+	dispatcher, manager, commands := newHostMonitorDispatcher(t)
+	ownerA := ipc.WithUserID(t.Context(), "owner-a")
+	connected, err := manager.ConnectFor(ownerA, session.Asset{ID: "device/dev-1", Name: "dev-1", Kind: session.KindDevice})
 	if err != nil {
 		t.Fatal(err)
 	}

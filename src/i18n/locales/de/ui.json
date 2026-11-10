@@ -4945,6 +4945,7 @@
   "确认（所有设备）": "Bestätigen (alle Geräte)",
   "磁盘": "Laufwerk",
   "磁盘使用率": "Laufwerksauslastung",
+  "磁盘信息不可用：df 在主机上超时，本次会话不再读取磁盘。": "Datenträgerdaten nicht verfügbar: df hat auf dem Host das Zeitlimit überschritten, in dieser Sitzung werden keine Datenträger mehr gelesen.",
   "磁盘占用": "Laufwerksbelegung",
   "磁盘挂载": "Laufwerkseinbindung",
   "磁盘挂载由本机 sshfs / net use 直连远端实现，设备代理没有对应的数据通道，设备会话暂无法使用。": "Die Laufwerkseinbindung nutzt eine direkte Verbindung von sshfs / net use dieses Rechners zum Remote-Host. Der Geräte-Agent hat dafür keinen Datenkanal, daher sind Gerätesitzungen vorerst nicht verfügbar.",

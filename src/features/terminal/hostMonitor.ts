@@ -31,8 +31,15 @@ interface Poller {
   timer: ReturnType<typeof setTimeout> | null;
   failures: number;
   released: boolean;
+  inflight: boolean;
+  // When the next sample is due, in epoch milliseconds; null once the host is not asked again.
+  dueAt: number | null;
+  lastRunAt: number;
   state: HostMonitorState;
 }
+
+// Resuming from a hidden page samples at once unless a sample just ran.
+const RESUME_MIN_GAP_MS = 1_000;
 
 const pollers = new Map<string, Poller>();
 const subscribers = new Map<string, Set<() => void>>();
@@ -58,10 +65,45 @@ function pointOf(snapshot: HostMonitorSnapshot): HostMonitorPoint {
   };
 }
 
-function schedule(p: Poller, delay: number) {
-  if (p.released) return;
+function clearTimer(p: Poller) {
   if (p.timer) clearTimeout(p.timer);
-  p.timer = setTimeout(() => void poll(p), delay);
+  p.timer = null;
+}
+
+// Nothing runs on the host while the page is hidden (minimized window, background tab); the due time is kept so
+// becoming visible again resumes the poller, and a backoff still waits out its remaining delay.
+function arm(p: Poller) {
+  clearTimer(p);
+  if (p.released || p.inflight || p.dueAt === null || document.hidden) return;
+  p.timer = setTimeout(() => void poll(p), Math.max(0, p.dueAt - Date.now()));
+}
+
+function schedule(p: Poller, delay: number) {
+  p.dueAt = Date.now() + delay;
+  arm(p);
+}
+
+function resumeAll() {
+  for (const p of pollers.values()) {
+    if (document.hidden) {
+      clearTimer(p);
+      continue;
+    }
+    if (p.released || p.inflight || p.dueAt === null || p.timer) continue;
+    // A poller that fell due while hidden samples now, unless it ran a moment ago.
+    if (p.dueAt <= Date.now() && Date.now() - p.lastRunAt < RESUME_MIN_GAP_MS) p.dueAt = p.lastRunAt + RESUME_MIN_GAP_MS;
+    arm(p);
+  }
+}
+
+let listening = false;
+
+function listen(on: boolean) {
+  if (on === listening || typeof document === "undefined") return;
+  listening = on;
+  const method = on ? "addEventListener" : "removeEventListener";
+  document[method]("visibilitychange", resumeAll);
+  window[method]("focus", resumeAll);
 }
 
 export function retryDelay(failures: number): number {
@@ -70,9 +112,13 @@ export function retryDelay(failures: number): number {
 
 async function poll(p: Poller) {
   p.timer = null;
-  if (p.released) return;
+  if (p.released || p.inflight) return;
+  if (document.hidden) return;
+  p.inflight = true;
+  p.lastRunAt = Date.now();
   try {
     const snapshot = await hostMonitorApi.sample(p.sessionId);
+    p.inflight = false;
     if (p.released) return;
     p.failures = 0;
     if (snapshot.status === "ok") {
@@ -83,6 +129,7 @@ async function poll(p: Poller) {
     }
     if (snapshot.status === "unsupported" || snapshot.intervalMs <= 0) {
       // An unsupported host is never asked again while the monitor stays open.
+      p.dueAt = null;
       update(p, { snapshot, error: null, retryAt: null });
       return;
     }
@@ -90,6 +137,7 @@ async function poll(p: Poller) {
     update(p, { snapshot, error: null, retryAt: Date.now() + wait });
     schedule(p, wait);
   } catch (error) {
+    p.inflight = false;
     if (p.released) return;
     p.failures += 1;
     const wait = retryDelay(p.failures);
@@ -102,9 +150,10 @@ async function poll(p: Poller) {
 export function acquireHostMonitor(sessionId: string): () => void {
   let p = pollers.get(sessionId);
   if (!p) {
-    p = { sessionId, refs: 0, timer: null, failures: 0, released: false, state: EMPTY };
+    p = { sessionId, refs: 0, timer: null, failures: 0, released: false, inflight: false, dueAt: Date.now(), lastRunAt: 0, state: EMPTY };
     pollers.set(sessionId, p);
-    void poll(p);
+    listen(true);
+    arm(p);
   }
   p.refs += 1;
   const owner = p;
@@ -115,9 +164,9 @@ export function acquireHostMonitor(sessionId: string): () => void {
     owner.refs -= 1;
     if (owner.refs > 0) return;
     owner.released = true;
-    if (owner.timer) clearTimeout(owner.timer);
-    owner.timer = null;
+    clearTimer(owner);
     if (pollers.get(sessionId) === owner) pollers.delete(sessionId);
+    if (pollers.size === 0) listen(false);
     owner.state = EMPTY;
     notify(sessionId);
   };

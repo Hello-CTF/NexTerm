@@ -95,6 +95,11 @@ function LiveMetrics({ snapshot, history }: { snapshot: HostMonitorSnapshot; his
           <MetricSparkline values={txSeries} max={netMax} label={t("上行趋势")} stroke={SPARKLINE_STROKES.tx} />
         </div>
       )}
+      {snapshot.disksUnavailable && (
+        <p className="nx-hint m-0 text-[11px]" data-testid="host-monitor-disks-unavailable">
+          {t("磁盘信息不可用：df 在主机上超时，本次会话不再读取磁盘。")}
+        </p>
+      )}
       {snapshot.disks.length > 0 && (
         <div className="flex min-w-0 flex-col gap-1">
           <span className="nx-hint text-[11px]">{t("磁盘")}</span>

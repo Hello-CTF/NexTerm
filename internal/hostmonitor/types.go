@@ -61,11 +61,13 @@ type Snapshot struct {
 	// RetryAfterMs is how long the service waits before it runs the command again after a failure.
 	RetryAfterMs int64 `json:"retryAfterMs,omitempty"`
 
-	CPUPercent    *float64       `json:"cpuPercent,omitempty"`
-	CPUCount      int            `json:"cpuCount,omitempty"`
-	Memory        *Memory        `json:"memory,omitempty"`
-	Load          *Load          `json:"load,omitempty"`
-	Network       []NetInterface `json:"network"`
-	Disks         []Disk         `json:"disks"`
-	UptimeSeconds *float64       `json:"uptimeSeconds,omitempty"`
+	CPUPercent *float64       `json:"cpuPercent,omitempty"`
+	CPUCount   int            `json:"cpuCount,omitempty"`
+	Memory     *Memory        `json:"memory,omitempty"`
+	Load       *Load          `json:"load,omitempty"`
+	Network    []NetInterface `json:"network"`
+	Disks      []Disk         `json:"disks"`
+	// DisksUnavailable is set once df ran too long on the host; disks are then no longer read for the session.
+	DisksUnavailable bool     `json:"disksUnavailable,omitempty"`
+	UptimeSeconds    *float64 `json:"uptimeSeconds,omitempty"`
 }

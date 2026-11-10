@@ -1642,6 +1642,7 @@ export type HostMonitorSnapshot = {
   load?: HostMonitorLoad | null;
   network: HostMonitorNetInterface[];
   disks: HostMonitorDisk[];
+  disksUnavailable?: boolean;
   uptimeSeconds?: number | null;
 };
 

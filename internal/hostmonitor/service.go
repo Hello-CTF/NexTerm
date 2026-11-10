@@ -53,6 +53,9 @@ type sessionState struct {
 	unsupported *Snapshot
 	// running is closed when the sample in flight finishes.
 	running chan struct{}
+	// noDisks is set once df ran too long on the host (or the whole sample timed out while it was part of it);
+	// df is then left out for the rest of the session so a hung mount cannot pin a remote process per sample.
+	noDisks bool
 }
 
 type Service struct {
@@ -142,14 +145,18 @@ func (s *Service) Sample(ctx context.Context, sessionID string) (Snapshot, error
 		done := make(chan struct{})
 		state.running = done
 		prev, prevAt := state.raw, state.rawAt
+		withDisks := !state.noDisks
 		s.mu.Unlock()
 
-		snapshot, raw, outcome := s.run(ctx, target, prev, prevAt)
+		snapshot, raw, outcome, timedOut := s.run(ctx, target, prev, prevAt, withDisks)
 
 		s.mu.Lock()
 		state.running = nil
 		close(done)
 		finished := s.now()
+		if withDisks && (timedOut || raw.DisksTimedOut) {
+			state.noDisks = true
+		}
 		switch outcome {
 		case outcomeCanceled:
 			s.mu.Unlock()
@@ -164,6 +171,10 @@ func (s *Service) Sample(ctx context.Context, sessionID string) (Snapshot, error
 		case outcomeOK:
 			state.failures = 0
 			state.raw, state.rawAt = &raw, finished
+			snapshot.DisksUnavailable = state.noDisks
+			if state.noDisks {
+				snapshot.Disks = []Disk{}
+			}
 		}
 		state.last, state.lastAt = snapshot, finished
 		s.mu.Unlock()
@@ -180,24 +191,27 @@ const (
 	outcomeCanceled
 )
 
-func (s *Service) run(ctx context.Context, target Target, prev *Raw, prevAt time.Time) (Snapshot, Raw, outcome) {
+// run executes one sample. timedOut reports that the command ran out of time, which is how a host without a
+// usable timeout command shows a hung df.
+func (s *Service) run(ctx context.Context, target Target, prev *Raw, prevAt time.Time, withDisks bool) (Snapshot, Raw, outcome, bool) {
 	ctx, cancel := context.WithTimeout(ctx, sampleTimeout)
 	defer cancel()
-	res, err := target.Runner.Exec(ctx, SampleCommand(), base.ExecOptions{Timeout: sampleTimeout, Limits: base.OutputLimits{Stdout: maxOutput}})
+	res, err := target.Runner.Exec(ctx, SampleCommand(withDisks), base.ExecOptions{Timeout: sampleTimeout, Limits: base.OutputLimits{Stdout: maxOutput}})
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			return Snapshot{}, Raw{}, outcomeCanceled
+			return Snapshot{}, Raw{}, outcomeCanceled, false
 		}
-		return failedSnapshot(fmt.Sprintf("采样失败：%v", err)), Raw{}, outcomeFailed
+		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+		return failedSnapshot(fmt.Sprintf("采样失败：%v", err)), Raw{}, outcomeFailed, timedOut
 	}
 	raw, err := ParseOutput(dropCutLine(res.Stdout, res.Truncated))
 	switch {
 	case errors.Is(err, ErrNoSentinel):
-		return withInterval(unsupportedSnapshot("主机没有可用的 POSIX sh（例如 Windows OpenSSH），无法采集指标", ""), 0), Raw{}, outcomeUnsupported
+		return withInterval(unsupportedSnapshot("主机没有可用的 POSIX sh（例如 Windows OpenSSH），无法采集指标", ""), 0), Raw{}, outcomeUnsupported, false
 	case err == nil && raw.OS != "Linux":
-		return withInterval(unsupportedSnapshot("主机监控目前只支持 Linux 主机", raw.OS), 0), Raw{}, outcomeUnsupported
+		return withInterval(unsupportedSnapshot("主机监控目前只支持 Linux 主机", raw.OS), 0), Raw{}, outcomeUnsupported, false
 	case err != nil:
-		return failedSnapshot("无法读取主机指标：/proc 不可读"), Raw{}, outcomeFailed
+		return failedSnapshot("无法读取主机指标：/proc 不可读"), raw, outcomeFailed, false
 	}
 	var wall time.Duration
 	if prev != nil {
@@ -205,7 +219,7 @@ func (s *Service) run(ctx context.Context, target Target, prev *Raw, prevAt time
 	}
 	snapshot := Compute(prev, raw, wall)
 	snapshot.SampledAt = s.now().UnixMilli()
-	return withInterval(snapshot, DefaultInterval), raw, outcomeOK
+	return withInterval(snapshot, DefaultInterval), raw, outcomeOK, false
 }
 
 func failedSnapshot(reason string) Snapshot {

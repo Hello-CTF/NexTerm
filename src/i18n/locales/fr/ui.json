@@ -4951,6 +4951,7 @@
   "确认（所有设备）": "Acquitter (tous les appareils)",
   "磁盘": "Disque",
   "磁盘使用率": "Utilisation du disque",
+  "磁盘信息不可用：df 在主机上超时，本次会话不再读取磁盘。": "Disques indisponibles : df a expiré sur l'hôte, les disques ne sont plus lus pendant cette session.",
   "磁盘占用": "Espace disque utilisé",
   "磁盘挂载": "Montage de disque",
   "磁盘挂载由本机 sshfs / net use 直连远端实现，设备代理没有对应的数据通道，设备会话暂无法使用。": "Le montage de disque utilise sshfs / net use depuis cet ordinateur vers l'hôte distant ; l'agent d'appareil n'a pas de canal de données correspondant, les sessions d'appareil ne sont donc pas encore disponibles.",

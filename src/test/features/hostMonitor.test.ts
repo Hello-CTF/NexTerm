@@ -113,6 +113,71 @@ describe("host monitor poller", () => {
   });
 });
 
+describe("host monitor poller while the page is hidden", () => {
+  let hidden = false;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mocks.sample.mockReset();
+    hidden = false;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+  });
+
+  function setHidden(value: boolean) {
+    hidden = value;
+    document.dispatchEvent(new Event("visibilitychange"));
+  }
+
+  it("runs nothing while hidden and resumes once when visible again", async () => {
+    mocks.sample.mockResolvedValue(ok(1, 1));
+    const release = acquireHostMonitor("h1");
+    await flush();
+    expect(mocks.sample).toHaveBeenCalledTimes(1);
+
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL_MS * 10);
+    expect(mocks.sample).toHaveBeenCalledTimes(1);
+
+    setHidden(false);
+    // A focus event right after the visibility change must not start a second sample.
+    window.dispatchEvent(new Event("focus"));
+    await flush();
+    expect(mocks.sample).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL_MS);
+    expect(mocks.sample).toHaveBeenCalledTimes(3);
+    release();
+  });
+
+  it("does not start while hidden", async () => {
+    mocks.sample.mockResolvedValue(ok(1, 1));
+    hidden = true;
+    const release = acquireHostMonitor("h2");
+    await vi.advanceTimersByTimeAsync(DEFAULT_INTERVAL_MS * 3);
+    expect(mocks.sample).not.toHaveBeenCalled();
+    setHidden(false);
+    await flush();
+    expect(mocks.sample).toHaveBeenCalledTimes(1);
+    release();
+  });
+
+  it("keeps a backoff after becoming visible", async () => {
+    mocks.sample.mockRejectedValue(new Error("boom"));
+    const release = acquireHostMonitor("h3");
+    await flush();
+    expect(mocks.sample).toHaveBeenCalledTimes(1);
+    setHidden(true);
+    setHidden(false);
+    await flush();
+    expect(mocks.sample).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(retryDelay(1));
+    expect(mocks.sample).toHaveBeenCalledTimes(2);
+    release();
+  });
+});
+
 describe("host monitor preference", () => {
   beforeEach(() => {
     localStorage.clear();

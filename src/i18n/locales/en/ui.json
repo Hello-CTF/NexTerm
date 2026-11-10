@@ -4927,6 +4927,7 @@
   "确认（所有设备）": "Acknowledge (all devices)",
   "磁盘": "Disk",
   "磁盘使用率": "Disk usage",
+  "磁盘信息不可用：df 在主机上超时，本次会话不再读取磁盘。": "Disk usage unavailable: df timed out on the host, so disks are no longer read in this session.",
   "磁盘占用": "Disk usage",
   "磁盘挂载": "Disk mount",
   "磁盘挂载由本机 sshfs / net use 直连远端实现，设备代理没有对应的数据通道，设备会话暂无法使用。": "Disk mounts connect directly to the remote host through local sshfs / net use. The device agent has no matching data channel, so device sessions are not available yet.",

@@ -36,6 +36,8 @@ type Raw struct {
 	Net      []netCounters
 	Uptime   *float64
 	Disks    []Disk
+	// DisksTimedOut is set when the host stopped df for running too long.
+	DisksTimedOut bool
 }
 
 // ParseOutput splits the output of SampleCommand into its sections and parses each one. A section that fails
@@ -53,8 +55,11 @@ func ParseOutput(stdout string) (Raw, error) {
 		if rest, ok := strings.CutPrefix(line, sentinelPrefix); ok {
 			name, value, _ := strings.Cut(rest, " ")
 			current = name
-			if name == sectionOS {
+			switch name {
+			case sectionOS:
 				raw.OS = strings.TrimSpace(value)
+			case sectionDFTimeout:
+				raw.DisksTimedOut = true
 			}
 			continue
 		}

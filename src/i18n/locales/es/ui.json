@@ -4984,6 +4984,7 @@
   "确认（所有设备）": "Confirmar (todos los dispositivos)",
   "磁盘": "Disco",
   "磁盘使用率": "Uso de disco",
+  "磁盘信息不可用：df 在主机上超时，本次会话不再读取磁盘。": "Discos no disponibles: df agotó el tiempo en el host, los discos ya no se leen en esta sesión.",
   "磁盘占用": "Espacio en disco",
   "磁盘挂载": "Montaje de disco",
   "磁盘挂载由本机 sshfs / net use 直连远端实现，设备代理没有对应的数据通道，设备会话暂无法使用。": "El montaje de disco se realiza con sshfs / net use desde este equipo directamente al extremo remoto; el agente de dispositivo no tiene un canal de datos equivalente, por lo que las sesiones de dispositivo aún no pueden usarlo.",
