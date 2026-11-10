@@ -71,7 +71,7 @@ describe("ToastStack", () => {
     }
   });
 
-  it("announces errors in an alert region and other kinds in a polite status region", () => {
+  it("keeps errors apart from other kinds without live roles (the announcer speaks)", () => {
     const view = mount(createElement(ToastStack));
     try {
       act(() => {
@@ -79,11 +79,9 @@ describe("ToastStack", () => {
         useUi.getState().pushToast("warning", "careful");
         useUi.getState().pushToast("error", "broken");
       });
-      const status = view.container.querySelector('[role="status"]')!;
-      const alert = view.container.querySelector('[role="alert"]')!;
-      expect(status.getAttribute("aria-live")).toBe("polite");
-      expect(status.getAttribute("aria-label")).toBe("通知");
-      expect(alert.getAttribute("aria-label")).toBe("错误通知");
+      const status = view.container.querySelector('[data-toast-region="status"]')!;
+      const alert = view.container.querySelector('[data-toast-region="alert"]')!;
+      expect(view.container.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length).toBe(0);
       expect(status.textContent).toContain("note");
       expect(status.textContent).toContain("careful");
       expect(status.textContent).not.toContain("broken");
@@ -177,19 +175,6 @@ describe("ToastStack", () => {
 });
 
 describe("ToastStack accessibility and focus", () => {
-  it("announces only additions in both live regions", () => {
-    const view = mount(createElement(ToastStack));
-    try {
-      for (const selector of ['[role="status"]', '[role="alert"]']) {
-        const region = view.container.querySelector(selector)!;
-        expect(region.getAttribute("aria-atomic")).toBe("false");
-        expect(region.getAttribute("aria-relevant")).toBe("additions");
-      }
-    } finally {
-      view.unmount();
-    }
-  });
-
   it("returns focus to the previously focused element when the focused toast is dismissed", () => {
     const outside = document.createElement("button");
     document.body.appendChild(outside);

@@ -12,6 +12,7 @@ const realInnerWidth = window.innerWidth;
 let mounted: MountedView | undefined;
 let menuHeight = 200;
 let anchorTop = 705;
+let submenuHeight = 200;
 
 beforeEach(() => {
   menuHeight = 200;
@@ -31,9 +32,11 @@ beforeEach(() => {
     return realGetComputedStyle.call(window, element, pseudo);
   });
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains("nx-submenu")) return submenuHeight;
     return this.classList.contains("nx-menu") ? menuHeight : 0;
   });
   vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+    if (this.classList.contains("nx-submenu")) return 100;
     return this.classList.contains("nx-menu") ? 200 : 0;
   });
 });
@@ -58,6 +61,7 @@ function mountMainMenu(onClose: () => void = vi.fn()): HTMLElement {
 }
 
 function openSubmenu(naturalHeight: number, onClose: () => void = vi.fn(), nested = false): HTMLElement {
+  submenuHeight = naturalHeight;
   const realGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
     if (this.classList.contains("nx-menu-row")) {

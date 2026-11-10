@@ -105,18 +105,19 @@ export function ToastStack({ children }: { children?: ReactNode }) {
     others.at(-1)?.querySelector<HTMLElement>("button[data-toast-close]")?.focus();
   }, []);
 
+  // The regions are not live: the app's announcer speaks toasts once, and a live role here would repeat them.
   const alerts = shown.filter((e) => e.toast.kind === "error");
   const statuses = shown.filter((e) => e.toast.kind !== "error");
   return (
     <div ref={stackRef} className="nx-toasts pointer-events-none fixed right-4 flex flex-col">
       <SnippetRunIndicator />
       {children}
-      <div className="nx-toast-region" role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions" aria-label={tr("通知")}>
+      <div className="nx-toast-region" data-toast-region="status">
         {statuses.map((e) => (
           <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} restoreFocus={restoreFocus} />
         ))}
       </div>
-      <div className="nx-toast-region" role="alert" aria-live="assertive" aria-atomic="false" aria-relevant="additions" aria-label={tr("错误通知")}>
+      <div className="nx-toast-region" data-toast-region="alert">
         {alerts.map((e) => (
           <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} restoreFocus={restoreFocus} />
         ))}

@@ -28,6 +28,7 @@ export const COVERAGE_GATE: CoverageOptions = {
     "src/app/capabilities.ts",
     "src/features/files/DeviceSessionNotice.tsx",
     "src/features/logs/logTailTab.ts",
+    "src/features/terminal/LayoutTemplatesEditor.tsx",
     "src/features/terminal/gridRuntimeAdapter.ts",
     "src/ipc/bundleFiles.ts",
     "src/ipc/forwardRuleApi.ts",
