@@ -759,7 +759,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 					return attachedTabDTO{}, terminalIPCError(durable.ErrNotFound)
 				}
 				if !validTabID(input.TabID) {
-					return attachedTabDTO{}, ipc.BadParam(errors.New("invalid terminal tab id"))
+					return attachedTabDTO{}, ipc.BadParam(errors.New("终端标签页 ID 无效"))
 				}
 				return attachedTabDTO{}, terminalIPCError(session.ErrTabNotFound)
 			})

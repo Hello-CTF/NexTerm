@@ -277,7 +277,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 		}
 	}
 	if options.Host == "" {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset host is required"))
+		return ssh.Config{}, ipc.BadParam(errors.New("SSH 资产缺少主机地址"))
 	}
 	if options.Port == 0 {
 		options.Port = 22
@@ -318,7 +318,7 @@ func (c *productionConnector) sshConfigHop(ctx context.Context, options producti
 	case "agent":
 		config.Auth = ssh.AuthConfig{Method: ssh.AuthAgent, AgentSocket: options.AgentSocket}
 	default:
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH asset authentication method is required"))
+		return ssh.Config{}, ipc.BadParam(errors.New("SSH 资产缺少认证方式"))
 	}
 	config.Auth.AgentSocket = options.AgentSocket
 	if options.JumpAssetID != "" {
@@ -338,25 +338,25 @@ func (c *productionConnector) jumpConfig(ctx context.Context, jumpAssetID string
 func (c *productionConnector) jumpConfigHop(ctx context.Context, jumpAssetID string, generation uint64, chain []string, strict bool) (ssh.Config, error) {
 	for _, visited := range chain {
 		if visited == jumpAssetID {
-			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset cycle: %s", strings.Join(append(chain, jumpAssetID), " -> ")))
+			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产形成循环: %s", strings.Join(append(chain, jumpAssetID), " -> ")))
 		}
 	}
 	if len(chain) >= maxJumpAssetHops {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump chain exceeds %d assets", maxJumpAssetHops))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板链超过 %d 个资产", maxJumpAssetHops))
 	}
 	row, err := c.database.AssetGetResolved(ctx, jumpAssetID)
 	if err != nil {
 		var appErr *ipc.Error
 		if errors.As(err, &appErr) && appErr.Code == ipc.CodeNotFound {
-			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s does not exist", jumpAssetID))
+			return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产 %s 不存在", jumpAssetID))
 		}
 		return ssh.Config{}, fmt.Errorf("load SSH jump asset: %w", err)
 	}
 	if row.DeletedAt != nil {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s is deleted", row.Name))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产「%s」已删除", row.Name))
 	}
 	if row.Kind != session.KindSSH && row.Kind != session.KindDocker {
-		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH jump asset %s must be an SSH asset", row.Name))
+		return ssh.Config{}, ipc.BadParam(fmt.Errorf("SSH 跳板资产「%s」必须是 SSH 资产", row.Name))
 	}
 	options, err := productionAssetOptionsFromRow(row)
 	if err != nil {
@@ -422,7 +422,7 @@ func productionAssetOptionsFromRow(row store.ResolvedAsset) (productionAssetOpti
 		return options, ipc.BadParam(err)
 	}
 	if err := json.Unmarshal(raw, &options); err != nil {
-		return options, ipc.BadParam(fmt.Errorf("invalid SSH asset options: %w", err))
+		return options, ipc.BadParam(fmt.Errorf("SSH 资产连接选项无效: %w", err))
 	}
 	return options, nil
 }
@@ -431,7 +431,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 	auth := ssh.AuthConfig{Method: ssh.AuthKey, KeyPath: options.KeyPath, CertPath: options.CertPath}
 	if options.CredID == "" {
 		if auth.KeyPath == "" {
-			return auth, ipc.BadParam(fmt.Errorf("SSH key path or private-key credential is required"))
+			return auth, ipc.BadParam(errors.New("SSH 私钥认证需要私钥路径或私钥凭据"))
 		}
 		return auth, nil
 	}
@@ -446,7 +446,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 		return auth, nil
 	}
 	if row.Kind != vault.KindPrivateKey {
-		return auth, ipc.BadParam(fmt.Errorf("credential %s is not a private key", row.Name))
+		return auth, ipc.BadParam(fmt.Errorf("凭据「%s」不是私钥", row.Name))
 	}
 	payload := vault.ParsePrivateKeyPayload(secret)
 	auth.Passphrase = stringValue(payload.Passphrase)
@@ -458,7 +458,7 @@ func (c *productionConnector) keyAuth(ctx context.Context, options productionAss
 		return auth, nil
 	}
 	if payload.Key == nil || strings.TrimSpace(*payload.Key) == "" {
-		return auth, ipc.BadParam(fmt.Errorf("private-key credential %s has no key content or path", row.Name))
+		return auth, ipc.BadParam(fmt.Errorf("私钥凭据「%s」没有私钥内容或路径", row.Name))
 	}
 	auth.KeyPEM = []byte(*payload.Key)
 	return auth, nil

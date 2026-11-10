@@ -303,17 +303,17 @@ func TestProductionSSHJumpAssetCycleAndValidation(t *testing.T) {
 
 	selfID := createConnectorTestAsset(t, production, "self", "127.0.0.1", target.port(), "password", credID, "")
 	setConnectorTestAssetOptions(t, production, selfID, `{"jumpAssetId":"`+selfID+`"}`)
-	requireConnectorConnectError(t, production, selfID, "cycle")
+	requireConnectorConnectError(t, production, selfID, selfID+" -> "+selfID)
 
 	firstID := createConnectorTestAsset(t, production, "first", "127.0.0.1", target.port(), "password", credID, "")
 	secondID := createConnectorTestAsset(t, production, "second", "127.0.0.1", target.port(), "password", credID, "")
 	setConnectorTestAssetOptions(t, production, firstID, `{"jumpAssetId":"`+secondID+`"}`)
 	setConnectorTestAssetOptions(t, production, secondID, `{"jumpAssetId":"`+firstID+`"}`)
-	requireConnectorConnectError(t, production, firstID, "cycle")
+	requireConnectorConnectError(t, production, firstID, firstID+" -> "+secondID)
 
 	missingID := createConnectorTestAsset(t, production, "missing-hop", "127.0.0.1", target.port(), "password", credID,
 		`{"jumpAssetId":"01J0NEXTERMMISSINGASSET000001"}`)
-	requireConnectorConnectError(t, production, missingID, "does not exist")
+	requireConnectorConnectError(t, production, missingID, "01J0NEXTERMMISSINGASSET000001")
 
 	winrmResponse := dispatchHostKeyTest(t, production, "asset_create",
 		`{"args":{"kind":"winrm","name":"winrm-hop","host":"127.0.0.1","port":5985,"username":"test"}}`)
@@ -321,13 +321,13 @@ func TestProductionSSHJumpAssetCycleAndValidation(t *testing.T) {
 	requireStoreTestResponse(t, winrmResponse, &winrmAsset)
 	wrongKindID := createConnectorTestAsset(t, production, "wrong-kind-hop", "127.0.0.1", target.port(), "password", credID,
 		`{"jumpAssetId":"`+winrmAsset.ID+`"}`)
-	requireConnectorConnectError(t, production, wrongKindID, "must be an SSH asset")
+	requireConnectorConnectError(t, production, wrongKindID, "必须是 SSH 资产")
 
 	deletedID := createConnectorTestAsset(t, production, "deleted-hop", "127.0.0.1", target.port(), "password", credID, "")
 	requireProductionNullHostKey(t, dispatchHostKeyTest(t, production, "asset_delete", `{"id":"`+deletedID+`"}`))
 	goneID := createConnectorTestAsset(t, production, "gone-hop", "127.0.0.1", target.port(), "password", credID,
 		`{"jumpAssetId":"`+deletedID+`"}`)
-	requireConnectorConnectError(t, production, goneID, "deleted")
+	requireConnectorConnectError(t, production, goneID, "已删除")
 }
 
 func (r *ipcEventRecorder) connectProgress() []ipc.ConnectProgressEvent {

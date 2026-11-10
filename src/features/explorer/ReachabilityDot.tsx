@@ -1,6 +1,6 @@
 import { IconLoader } from "../../ui/icons";
 import type { ReachabilityEntry } from "./assetReachability";
-import { t } from "../../i18n";
+import { t, translateMessage } from "../../i18n";
 
 export function ReachabilityDot({ entry }: { entry: ReachabilityEntry | undefined }) {
   if (!entry) return null;
@@ -26,7 +26,7 @@ export function ReachabilityDot({ entry }: { entry: ReachabilityEntry | undefine
       className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400"
       role="img"
       aria-label={t("不可达")}
-      title={t("不可达：{value}", { value: entry.error ?? t("未知原因") })}
+      title={t("不可达：{value}", { value: entry.error ? translateMessage(entry.error) : t("未知原因") })}
     />
   );
 }

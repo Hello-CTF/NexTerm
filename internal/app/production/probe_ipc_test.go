@@ -432,10 +432,10 @@ func testProductionAssetProbeBatchJumpConfigFailures(t *testing.T, production *P
 	if len(batch.Results) != 2 {
 		t.Fatalf("batch results = %+v", batch.Results)
 	}
-	if result := batch.Results[0]; result.Kind != "config" || !strings.Contains(result.Error, "does not exist") {
+	if result := batch.Results[0]; result.Kind != "config" || !strings.Contains(result.Error, "missing-jump") {
 		t.Fatalf("missing jump result = %+v", result)
 	}
-	if result := batch.Results[1]; result.Kind != "config" || !strings.Contains(result.Error, "cycle") {
+	if result := batch.Results[1]; result.Kind != "config" || !strings.Contains(result.Error, "循环") {
 		t.Fatalf("jump cycle result = %+v", result)
 	}
 
