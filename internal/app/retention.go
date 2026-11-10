@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -153,6 +154,10 @@ func TranscriptRetentionPolicy(ctx context.Context, database *store.Store) (stor
 	return policy, nil
 }
 
+// UserSessionRetentionMaxAge deletes login sessions created more than a week
+// past their absolute lifetime; it applies whatever the retention setting is.
+const UserSessionRetentionMaxAge = account.SessionAbsoluteTTL + 7*24*time.Hour
+
 func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 	return RetentionPolicySourceFunc(func(ctx context.Context) (store.RetentionPolicy, error) {
 		raw, found, err := database.SettingGet(ctx, RetentionSettingKey)
@@ -160,7 +165,7 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 			return store.RetentionPolicy{}, err
 		}
 		if !found || strings.TrimSpace(raw) == "" {
-			return store.RetentionPolicy{}, nil
+			return store.RetentionPolicy{UserSessionMaxAge: UserSessionRetentionMaxAge}, nil
 		}
 		var settings retentionSettings
 		if err := json.Unmarshal([]byte(raw), &settings); err != nil {
@@ -194,6 +199,7 @@ func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 			CommandMaxCount:   settings.CommandMaxCount,
 			ExecBatchMaxAge:   execBatchAge,
 			ExecBatchMaxCount: settings.ExecBatchMaxCount,
+			UserSessionMaxAge: UserSessionRetentionMaxAge,
 		}
 		if settings.CommandFollowTranscript {
 			transcript, err := TranscriptRetentionPolicy(ctx, database)
@@ -309,7 +315,7 @@ func (r *RetentionRunner) enforce(ctx context.Context) {
 	attemptedAt := time.Now().UTC()
 	policy, err := r.policy.RetentionPolicy(attemptCtx)
 	enabled := retentionEnabled(policy)
-	if err == nil && enabled {
+	if err == nil && (enabled || policy.UserSessionMaxAge > 0) {
 		_, err = r.store.EnforceRetention(attemptCtx, policy)
 	}
 	r.mu.Lock()

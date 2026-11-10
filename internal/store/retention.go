@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/store/query"
+	"gorm.io/gen"
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
 )
@@ -22,14 +23,26 @@ type RetentionPolicy struct {
 	CommandMaxCount   int64
 	ExecBatchMaxAge   time.Duration
 	ExecBatchMaxCount int64
+	// UserSessionMaxAge enables login session cleanup: it is the absolute
+	// session lifetime plus a margin, set by the wiring layer independently of
+	// the user's retention setting.
+	UserSessionMaxAge time.Duration
 }
 
+const (
+	// UserSessionExpiredGrace keeps an expired login session this long before deletion.
+	UserSessionExpiredGrace = 7 * 24 * time.Hour
+	// UserSessionRevokedGrace keeps a revoked login session this long before deletion.
+	UserSessionRevokedGrace = 30 * 24 * time.Hour
+)
+
 type RetentionResult struct {
-	AuditDeleted       int64 `json:"auditDeleted"`
-	RecordingsDeleted  int64 `json:"recordingsDeleted"`
-	AIRunsDeleted      int64 `json:"aiRunsDeleted"`
-	CommandsDeleted    int64 `json:"commandsDeleted"`
-	ExecBatchesDeleted int64 `json:"execBatchesDeleted"`
+	AuditDeleted        int64 `json:"auditDeleted"`
+	RecordingsDeleted   int64 `json:"recordingsDeleted"`
+	AIRunsDeleted       int64 `json:"aiRunsDeleted"`
+	CommandsDeleted     int64 `json:"commandsDeleted"`
+	ExecBatchesDeleted  int64 `json:"execBatchesDeleted"`
+	UserSessionsDeleted int64 `json:"userSessionsDeleted"`
 }
 
 type RetentionStatus struct {
@@ -212,11 +225,12 @@ func retentionMilliseconds(duration time.Duration) float64 {
 
 func (p RetentionPolicy) validate() error {
 	for name, value := range map[string]time.Duration{
-		"audit max age":      p.AuditMaxAge,
-		"recording max age":  p.RecordingMaxAge,
-		"AI run max age":     p.AIRunMaxAge,
-		"command max age":    p.CommandMaxAge,
-		"exec batch max age": p.ExecBatchMaxAge,
+		"audit max age":        p.AuditMaxAge,
+		"recording max age":    p.RecordingMaxAge,
+		"AI run max age":       p.AIRunMaxAge,
+		"command max age":      p.CommandMaxAge,
+		"exec batch max age":   p.ExecBatchMaxAge,
+		"user session max age": p.UserSessionMaxAge,
 	} {
 		if value < 0 {
 			return fmt.Errorf("%s must not be negative", name)
@@ -241,7 +255,8 @@ func (p RetentionPolicy) empty() bool {
 		p.RecordingMaxAge == 0 && p.RecordingMaxCount == 0 &&
 		p.AIRunMaxAge == 0 && p.AIRunMaxCount == 0 &&
 		p.CommandMaxAge == 0 && p.CommandMaxCount == 0 &&
-		p.ExecBatchMaxAge == 0 && p.ExecBatchMaxCount == 0
+		p.ExecBatchMaxAge == 0 && p.ExecBatchMaxCount == 0 &&
+		p.UserSessionMaxAge == 0
 }
 
 func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (result RetentionResult, returnErr error) {
@@ -259,6 +274,13 @@ func (s *Store) EnforceRetention(ctx context.Context, policy RetentionPolicy) (r
 }
 
 func (s *Store) enforceRetentionBatches(ctx context.Context, policy RetentionPolicy, now time.Time, result *RetentionResult) error {
+	if policy.UserSessionMaxAge > 0 {
+		deleted, err := s.enforceUserSessionRetention(ctx, policy.UserSessionMaxAge, now)
+		result.UserSessionsDeleted += deleted
+		if err != nil {
+			return fmt.Errorf("user session retention: %w", err)
+		}
+	}
 	if policy.ExecBatchMaxAge > 0 || policy.ExecBatchMaxCount > 0 {
 		deleted, err := s.enforceExecBatchRetention(ctx, policy, now)
 		result.ExecBatchesDeleted += deleted
@@ -487,6 +509,36 @@ func (s *Store) cleanupRetentionHITL(ctx context.Context) error {
 type retentionBatchOutcome struct {
 	selected int
 	deleted  int64
+}
+
+// enforceUserSessionRetention deletes login sessions that can no longer
+// authenticate: expired for longer than UserSessionExpiredGrace, revoked for
+// longer than UserSessionRevokedGrace, or created before maxAge (the absolute
+// lifetime plus a margin). No table references user_session, and the session
+// row only references its user and device, so deleting it cascades nowhere.
+func (s *Store) enforceUserSessionRetention(ctx context.Context, maxAge time.Duration, now time.Time) (int64, error) {
+	expiredBefore := now.Add(-UserSessionExpiredGrace).UnixMilli()
+	revokedBefore := now.Add(-UserSessionRevokedGrace).UnixMilli()
+	createdBefore := now.Add(-maxAge).UnixMilli()
+	eligible := func(ctx context.Context, tx *gorm.DB) gen.Condition {
+		session := query.Use(tx).UserSession
+		return session.WithContext(ctx).Where(session.ExpiresAt.Lt(expiredBefore)).
+			Or(session.RevokedAt.IsNotNull(), session.RevokedAt.Lt(revokedBefore)).
+			Or(session.CreatedAt.Lt(createdBefore))
+	}
+	return retentionDeleteBatches(ctx, s, "user_session", "expired",
+		func(tx *gorm.DB) ([]string, error) {
+			session := query.Use(tx).UserSession
+			ids := make([]string, 0, retentionBatchSize)
+			err := session.WithContext(ctx).Where(eligible(ctx, tx)).Order(session.ID.Asc()).Limit(retentionBatchSize).Pluck(session.ID, &ids)
+			return ids, err
+		},
+		func(tx *gorm.DB, ids []string) (int64, error) {
+			session := query.Use(tx).UserSession
+			info, err := session.WithContext(ctx).Where(session.ID.In(ids...)).Where(eligible(ctx, tx)).Delete()
+			return info.RowsAffected, err
+		},
+	)
 }
 
 func retentionDeleteBatches[T any](
