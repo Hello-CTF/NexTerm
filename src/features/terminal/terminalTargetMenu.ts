@@ -12,6 +12,8 @@ export interface TargetMenuDeps {
   createLocalForward?: (request: { sessionId: string; host: string; port: number }) => void | Promise<void>;
   // Fallback: the session's port forwarding tab.
   openForwardTab: (sessionId: string) => void;
+  // False for a session without a command channel (Telnet), which cannot forward ports.
+  forwardSupported?: boolean;
   copy: (text: string) => Promise<void>;
   toast: (kind: "info" | "success" | "error", text: string) => void;
   describeError: (error: unknown) => string;
@@ -57,7 +59,7 @@ export function buildTargetMenu(target: DetectedTarget, deps: TargetMenuDeps): M
       },
     );
   }
-  if (target.kind === "hostport" && target.port !== undefined) {
+  if (target.kind === "hostport" && target.port !== undefined && deps.forwardSupported !== false) {
     const port = target.port;
     items.push({
       kind: "item",

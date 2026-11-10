@@ -40,7 +40,7 @@ import { t } from "../../i18n";
 
 const POLL_MS = 5000;
 const PAGE_BYTES = 512 * 1024;
-const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm"]);
+const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm", "telnet"]);
 
 interface LoadedChunk {
   seq: number;

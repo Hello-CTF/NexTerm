@@ -25,7 +25,7 @@
 - **终端工具**：命令块、历史回放、命令广播、分屏、关键词高亮
 - **AI 助手**：读取终端、文件和容器排查问题，写操作经你确认
 - **日常运维**：远程文件（含 trzsz 终端内传输）、Docker、MySQL / PostgreSQL / Redis、端口转发、主机实时监控
-- **所有连接**：SSH、WinRM、本机终端、受管设备、RDP / VNC
+- **所有连接**：SSH、WinRM、Telnet、本机终端、受管设备、RDP / VNC
 - **迁移方便**：从 OpenSSH 配置、Termius、PuTTY、MobaXterm、Xshell、SecureCRT 导入主机
 - **自托管**：多用户、双因素认证、审计日志、加密同步
 - **锁定界面**：离开时锁定 NexTerm，终端在后台继续运行，锁定期间的通知不显示内容

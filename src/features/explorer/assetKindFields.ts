@@ -13,7 +13,8 @@ export type AssetFormKind =
   | "postgres"
   | "redis"
   | "rdp"
-  | "vnc";
+  | "vnc"
+  | "telnet";
 
 export type ViaTarget = "ssh" | "ssh-or-device";
 
@@ -34,6 +35,12 @@ export interface AssetKindFields {
   remote: "rdp" | "vnc" | null;
   // The optional Wake-on-LAN MAC and broadcast options.
   wake: boolean;
+  // The terminal encoding select outside the SSH advanced section, for terminal kinds without that section.
+  terminalEncoding: boolean;
+  // The protocol sends everything, passwords included, as plain text; the form warns about it.
+  plaintext: boolean;
+  // The Telnet terminal options: local echo and what Enter sends.
+  telnetOptions: boolean;
 }
 
 const NONE: AssetKindFields = {
@@ -46,6 +53,9 @@ const NONE: AssetKindFields = {
   sshAdvanced: false,
   remote: null,
   wake: false,
+  terminalEncoding: false,
+  plaintext: false,
+  telnetOptions: false,
 };
 
 const DATABASE: AssetKindFields = { ...NONE, authMethod: false, password: true, via: "ssh" };
@@ -62,10 +72,20 @@ export const ASSET_KIND_FIELDS: Record<AssetFormKind, AssetKindFields> = {
   redis: { ...DATABASE, defaultPort: 6379 },
   rdp: { ...DATABASE, defaultPort: 3389, via: "ssh-or-device", remote: "rdp", wake: true },
   vnc: { ...DATABASE, defaultPort: 5900, username: false, via: "ssh-or-device", remote: "vnc", wake: true },
+  // Login happens inside the terminal: the device prompts for its own username and password.
+  telnet: { ...NONE, defaultPort: 23, username: false, authMethod: false, terminalEncoding: true, plaintext: true, telnetOptions: true },
 };
 
 export function assetKindFields(kind: string): AssetKindFields {
   return ASSET_KIND_FIELDS[kind as AssetFormKind] ?? NONE;
+}
+
+// Kinds whose connection is only a terminal: no command channel and no file service, so the file tree, host ports,
+// containers, forwarding and logs have nothing to work with.
+const TERMINAL_ONLY_KINDS = new Set(["telnet"]);
+
+export function hostToolsSupported(kind: string | null | undefined): boolean {
+  return !kind || !TERMINAL_ONLY_KINDS.has(kind);
 }
 
 export function isRemoteDesktopKind(kind: string): kind is "rdp" | "vnc" {
@@ -174,6 +194,25 @@ const SSH_OPTION_KEYS = [
   "pasteNoRandomDir",
   "backupBeforeOverwrite",
 ];
+const TELNET_OPTION_KEYS = ["localEcho", "sendCrlf"];
+export const TELNET_LOCAL_ECHO = ["auto", "on", "off"] as const;
+export type TelnetLocalEcho = (typeof TELNET_LOCAL_ECHO)[number];
+
+export function readTelnetLocalEcho(options: Record<string, unknown> | undefined): TelnetLocalEcho {
+  const value = options?.localEcho;
+  return value === "on" || value === "off" ? value : "auto";
+}
+
+// writeTelnetOptions stores only the values that differ from the defaults (auto echo, CR NUL).
+export function writeTelnetOptions(base: Record<string, unknown>, localEcho: TelnetLocalEcho, sendCrlf: boolean): Record<string, unknown> {
+  const options = { ...base };
+  if (localEcho !== "auto") options.localEcho = localEcho;
+  else delete options.localEcho;
+  if (sendCrlf) options.sendCrlf = true;
+  else delete options.sendCrlf;
+  return options;
+}
+
 const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly"];
 
 // optionsForKindChange drops the options the previous kind's form wrote when an asset changes kind, so a host switched
@@ -185,5 +224,7 @@ export function optionsForKindChange(from: string, to: string, options: Record<s
   const toFields = assetKindFields(to);
   if (fromFields.sshAdvanced && !toFields.sshAdvanced) for (const key of SSH_OPTION_KEYS) delete next[key];
   if (fromFields.remote && !toFields.remote) for (const key of REMOTE_DESKTOP_OPTION_KEYS) delete next[key];
+  if (fromFields.telnetOptions && !toFields.telnetOptions) for (const key of TELNET_OPTION_KEYS) delete next[key];
+  if (fromFields.terminalEncoding && !toFields.terminalEncoding && !toFields.sshAdvanced) delete next.encoding;
   return next;
 }

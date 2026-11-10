@@ -117,7 +117,8 @@ type Tab struct {
 	durable    base.DurableAttachment
 	ephemeral  bool
 	retainable bool
-	// regularRemote marks an SSH tab on a plain PTY: it ends with its connection, so it can never run in the background.
+	// regularRemote marks an SSH tab on a plain PTY or a Telnet tab: it ends with its connection, so it can never run
+	// in the background.
 	regularRemote bool
 	shell         Shell
 
@@ -596,7 +597,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	}
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal, fanout: m.newOutputFanout(),
-		ephemeral: options.Ephemeral, retainable: options.Retainable, regularRemote: kind == KindSSH && options.Durable == nil, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
+		ephemeral: options.Ephemeral, retainable: options.Retainable, regularRemote: (kind == KindSSH || kind == KindTelnet) && options.Durable == nil, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		exited: options.Durable != nil && options.Durable.Recover && options.Durable.RecoveredExited,
 		shell:  shell,

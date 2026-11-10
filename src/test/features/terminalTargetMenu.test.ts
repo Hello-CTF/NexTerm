@@ -58,6 +58,15 @@ describe("buildTargetMenu", () => {
     ]);
   });
 
+  it("offers no forwarding on a session that cannot forward (Telnet)", () => {
+    expect(labels(buildTargetMenu(hostport("10.0.0.5", 8080), { ...makeDeps(), forwardSupported: false }))).toEqual([
+      "# 地址 10.0.0.5:8080",
+      "打开已有资产",
+      "新建 SSH 资产",
+      "复制地址",
+    ]);
+  });
+
   it("recognises IPv4 and IPv6 only", () => {
     expect(isIpAddress("192.168.1.1")).toBe(true);
     expect(isIpAddress("fe80::1")).toBe(true);

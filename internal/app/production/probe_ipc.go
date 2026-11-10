@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/telnet"
 )
 
 const (
@@ -294,7 +295,7 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 		return result
 	}
 	switch target.kind {
-	case session.KindSSH, session.KindDocker, session.KindWinRM, session.KindRDP, session.KindVNC, "mysql", "postgres", "redis":
+	case session.KindSSH, session.KindDocker, session.KindWinRM, session.KindTelnet, session.KindRDP, session.KindVNC, "mysql", "postgres", "redis":
 	default:
 		result.Kind = "unsupported"
 		result.Error = fmt.Sprintf("%s 类型的资产不支持连通性检测", target.kind)
@@ -365,6 +366,8 @@ func (s *terminalCommandService) probeSSHReachability(ctx context.Context, targe
 		switch target.kind {
 		case session.KindWinRM:
 			port = 5985
+		case session.KindTelnet:
+			port = telnet.DefaultPort
 		case session.KindRDP:
 			port = 3389
 		case session.KindVNC:

@@ -2,7 +2,9 @@ import { isHostAssetKind } from "../../features/hosts/hostDetail";
 import { describe, expect, it } from "vitest";
 import {
   assetKindFields,
+  hostToolsSupported,
   isRemoteDesktopKind,
+  optionsForKindChange,
   readRemoteDesktopOptions,
   validateResolution,
   writeRemoteDesktopOptions,
@@ -106,5 +108,19 @@ describe("host detail", () => {
     expect(isHostAssetKind("rdp")).toBe(false);
     expect(isHostAssetKind("vnc")).toBe(false);
     expect(isHostAssetKind("ssh")).toBe(true);
+  });
+});
+
+describe("telnet kind", () => {
+  it("is a terminal-only host without files or a command channel", () => {
+    expect(hostToolsSupported("telnet")).toBe(false);
+    for (const kind of ["ssh", "local", "winrm", "device", undefined]) expect(hostToolsSupported(kind)).toBe(true);
+  });
+
+  it("drops the Telnet options when the asset becomes another kind", () => {
+    const options = { localEcho: "on", sendCrlf: true, encoding: "gbk", icon: "router" };
+    expect(optionsForKindChange("telnet", "ssh", options)).toEqual({ encoding: "gbk", icon: "router" });
+    expect(optionsForKindChange("telnet", "rdp", options)).toEqual({ icon: "router" });
+    expect(optionsForKindChange("telnet", "telnet", options)).toEqual(options);
   });
 });

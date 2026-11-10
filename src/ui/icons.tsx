@@ -663,6 +663,7 @@ export const KIND_ICON_MAP = {
   redis: IconLayers,
   rdp: IconDesktop,
   vnc: IconDesktop,
+  telnet: IconNetwork,
 } as const;
 
 export type AssetKind = keyof typeof KIND_ICON_MAP;

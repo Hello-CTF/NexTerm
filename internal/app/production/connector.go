@@ -18,6 +18,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/local"
 	"github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/transport/telnet"
 	"github.com/Hello-CTF/NexTerm/internal/transport/winrm"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -94,8 +95,11 @@ type productionAssetOptions struct {
 	InitialCommand     string `json:"initialCommand"`
 	StartupCommand     string `json:"startupCommand"`
 	Encoding           string `json:"encoding"`
-	DeviceID           string `json:"deviceId"`
-	UserID             string `json:"userId"`
+	// LocalEcho (auto, on, off) and SendCRLF are Telnet terminal options.
+	LocalEcho string `json:"localEcho"`
+	SendCRLF  bool   `json:"sendCrlf"`
+	DeviceID  string `json:"deviceId"`
+	UserID    string `json:"userId"`
 	// InheritedFrom maps an inherited field (store.InheritUsername, InheritAuth, InheritJump) to the name of the
 	// group that supplied it. It is set only by productionResolvedOptionMap, never read from stored options, so
 	// connection errors can name the group that owns the value.
@@ -196,6 +200,8 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 		transport, err = c.connectWinRM(ctx, options)
 	case session.KindDevice:
 		transport, err = c.connectDevice(ctx, options, generation)
+	case session.KindTelnet:
+		transport, err = connectTelnet(ctx, options)
 	case session.KindRDP, session.KindVNC:
 		err = ipc.NewError(ipc.CodeUnsupported, "RDP/VNC 资产不支持终端连接，请使用远程桌面打开")
 	default:
@@ -487,6 +493,32 @@ func (c *productionConnector) connectWinRM(ctx context.Context, options producti
 	})
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeWinRM, err.Error(), err)
+	}
+	return transport, nil
+}
+
+func connectTelnet(ctx context.Context, options productionAssetOptions) (base.Transport, error) {
+	if strings.TrimSpace(options.Host) == "" {
+		return nil, ipc.BadParam(fmt.Errorf("Telnet 资产缺少主机地址"))
+	}
+	echo, err := telnet.ParseEchoMode(options.LocalEcho)
+	if err != nil {
+		return nil, ipc.BadParam(fmt.Errorf("Telnet 本地回显设置无效，应为 auto、on 或 off"))
+	}
+	config := telnet.Config{Host: options.Host, Port: options.Port, LocalEcho: echo, SendCRLF: options.SendCRLF}
+	if options.ConnectTimeout > 0 {
+		config.DialTimeout = time.Duration(options.ConnectTimeout) * time.Second
+	}
+	transport, err := telnet.Connect(ctx, config)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		code := ipc.CodeIO
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = ipc.CodeTimeout
+		}
+		return nil, ipc.WrapError(code, fmt.Sprintf("无法连接 Telnet 服务器，请检查地址、端口和网络: %v", err), err)
 	}
 	return transport, nil
 }

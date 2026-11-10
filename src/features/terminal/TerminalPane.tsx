@@ -5,6 +5,7 @@ import { NO_TERMINAL_HISTORY, terminalHistoryInfo, type TerminalHistoryInfo } fr
 import { cleanTerminalLink, displayTerminalLink, planTerminalLink } from "./terminalLinks";
 import type { DetectedTarget } from "./terminalLinkProvider";
 import { buildTargetMenu } from "./terminalTargetMenu";
+import { hostToolsSupported } from "../explorer/assetKindFields";
 import { terminalIntegrations } from "./terminalIntegrations";
 import { TerminalLinkPanel } from "./TerminalLinkPanel";
 import { registerTerminalLinkSource } from "./terminalLinkRegistry";
@@ -1761,6 +1762,11 @@ export function TerminalPane({
         pushToast("info", tr("当前终端类型不支持粘贴上传文件，请在文件面板中上传"));
         return;
       }
+      // A Telnet terminal has no file channel at all.
+      if (!hostToolsSupported(sessionKind)) {
+        pushToast("info", tr("这个终端无法接收文件：Telnet 连接没有文件传输通道"));
+        return;
+      }
       if (!kernelTabId) return;
       const { accepted, skipped } = splitOversizedFiles(files);
       const notes: string[] = [];
@@ -2211,6 +2217,7 @@ export function TerminalPane({
       openHostDetail,
       openAssetDraft: setAssetDraft,
       createLocalForward: terminalIntegrations().createLocalForward,
+      forwardSupported: hostToolsSupported(sessionKind),
       openForwardTab: (id) =>
         useUi.getState().addTab({ id: nextTabId(`forward-${id}`), kind: "forward", title: tr("端口转发"), sessionId: id, closable: true }),
       copy: copyText,

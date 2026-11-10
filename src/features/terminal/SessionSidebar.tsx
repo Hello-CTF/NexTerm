@@ -4,6 +4,7 @@ import { useClosedTabs } from "../../app/closedTabs";
 import { PortsSection } from "../hosts/PortsSection";
 import { HostMonitorSection } from "./HostMonitorSection";
 import { IconChevronDown, IconChevronRight, IconClose, IconFile, IconFolder, IconSparkles } from "../../ui/icons";
+import { hostToolsSupported } from "../explorer/assetKindFields";
 import { t } from "../../i18n";
 
 const FILE_LIMIT = 10;
@@ -90,6 +91,8 @@ export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, vi
   }, [entries, workspace]);
 
   const hostWorkspace = isHostWorkspace(workspace);
+  // A terminal-only host (Telnet) has no command channel for the port list and no files.
+  const hostTools = hostToolsSupported(workspace?.assetKind);
   const openExplorer = () => {
     const ui = useUi.getState();
     ui.setLeftOverride(null);
@@ -119,6 +122,7 @@ export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, vi
         </button>
       </div>
 
+      {hostTools && (
       <div className="shrink-0 overflow-y-auto border-b border-neutral-800/60 max-h-[45%]">
         {portsOpen ? (
           <div className="p-2">
@@ -176,6 +180,7 @@ export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, vi
           </div>
         </Collapsible>
       </div>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col">
         {commandBlocks ?? <p className="nx-hint m-0 p-3 text-[12px]">{t("此终端不支持命令记录。")}</p>}

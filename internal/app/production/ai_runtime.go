@@ -519,7 +519,7 @@ func resolveProductionAssetSession(ctx context.Context, services *ProductionServ
 		expectedKind = asset.Kind
 	}
 	switch expectedKind {
-	case session.KindLocal, session.KindSSH, session.KindDocker, session.KindWinRM, session.KindDevice:
+	case session.KindLocal, session.KindSSH, session.KindDocker, session.KindWinRM, session.KindDevice, session.KindTelnet:
 	default:
 		return "", ipc.NewError(ipc.CodeUnsupported, "该资产类型不支持创建终端")
 	}

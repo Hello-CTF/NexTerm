@@ -2,6 +2,7 @@ package production
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"testing"
 
@@ -48,5 +49,44 @@ func TestConnectRejectsMismatchedAssetOptions(t *testing.T) {
 	}
 	if !strings.HasPrefix(appErr.Message, "参数错误: 会话资产选项无效: ") {
 		t.Fatalf("mismatched options message = %q", appErr.Message)
+	}
+}
+
+func TestConnectTelnetAsset(t *testing.T) {
+	connector := &productionConnector{}
+	_, err := connector.Connect(t.Context(), session.Asset{ID: "t1", Kind: session.KindTelnet, Options: map[string]any{}}, 1)
+	var appErr *ipc.Error
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam {
+		t.Fatalf("empty host = %+v, want bad_param", err)
+	}
+	_, err = connector.Connect(t.Context(), session.Asset{ID: "t1", Kind: session.KindTelnet, Options: map[string]any{"host": "h", "localEcho": "maybe"}}, 1)
+	if !errors.As(err, &appErr) || appErr.Code != ipc.CodeBadParam {
+		t.Fatalf("invalid local echo = %+v, want bad_param", err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().(*net.TCPAddr)
+	_ = listener.Close()
+	_, err = connector.Connect(t.Context(), session.Asset{ID: "t1", Kind: session.KindTelnet, Options: map[string]any{"host": "127.0.0.1", "port": address.Port}}, 1)
+	if !errors.As(err, &appErr) || !strings.Contains(appErr.Message, "Telnet") {
+		t.Fatalf("closed port = %+v, want a Telnet connect error", err)
+	}
+
+	listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	address = listener.Addr().(*net.TCPAddr)
+	transport, err := connector.Connect(t.Context(), session.Asset{ID: "t1", Kind: session.KindTelnet, Options: map[string]any{"host": "127.0.0.1", "port": address.Port, "encoding": "gbk"}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	if transport.Kind() != session.KindTelnet {
+		t.Fatalf("transport kind = %s", transport.Kind())
 	}
 }

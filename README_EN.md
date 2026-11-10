@@ -25,7 +25,7 @@
 - **Terminal tools**: command blocks, history replay, broadcast, splits, keyword highlighting
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
 - **Everyday ops**: remote files (including trzsz in-terminal transfer), Docker, MySQL / PostgreSQL / Redis, port forwarding, live host monitoring
-- **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
+- **Every connection**: SSH, WinRM, Telnet, local shells, managed devices, RDP / VNC
 - **Easy migration**: import hosts from OpenSSH config, Termius, PuTTY, MobaXterm, Xshell, SecureCRT
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync
 - **Lock screen**: lock NexTerm while away; terminals keep running and notifications show no content

@@ -353,7 +353,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	if asset.Kind == KindRDP || asset.Kind == KindVNC {
 		return nil, fmt.Errorf("%w: %w", ErrUnsupported, ipc.NewError(ipc.CodeUnsupported, "RDP/VNC 资产不支持终端连接，请使用远程桌面打开"))
 	}
-	if asset.Kind != KindLocal && asset.Kind != KindSSH && asset.Kind != KindDocker && asset.Kind != KindWinRM && asset.Kind != KindDevice {
+	if asset.Kind != KindLocal && asset.Kind != KindSSH && asset.Kind != KindDocker && asset.Kind != KindWinRM && asset.Kind != KindDevice && asset.Kind != KindTelnet {
 		return nil, fmt.Errorf("%w: asset kind %s", ErrUnsupported, asset.Kind)
 	}
 	if m.connector == nil {

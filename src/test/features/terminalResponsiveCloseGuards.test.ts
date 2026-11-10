@@ -512,6 +512,28 @@ describe("kill danger actions", () => {
   });
 });
 
+describe("telnet tabs are temporary terminals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setTerminalCloseAction("detach");
+  });
+
+  it("close offers only ending the terminal, never the background", async () => {
+    const tab = { ...terminal(), retainable: false };
+    seed([{ id: "p", tabs: [tab], activeTabId: tab.id }], "telnet");
+    mocks.askChoice.mockResolvedValueOnce("kill");
+
+    await requestCloseTab(tab.id);
+
+    expect(mocks.askChoice).toHaveBeenCalledTimes(1);
+    const [message, options] = mocks.askChoice.mock.calls[0];
+    expect(message).toContain("临时终端");
+    expect(options.choices.map((choice: { key: string }) => choice.key)).toEqual(["kill"]);
+    expect(mocks.closeTab).toHaveBeenCalledWith("kernel-terminal", "kill");
+    expect(toastText()).not.toContain("已转入后台");
+  });
+});
+
 describe("winrm ephemeral line tabs share the no-detach path", () => {
   beforeEach(() => {
     vi.clearAllMocks();

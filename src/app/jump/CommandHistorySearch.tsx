@@ -24,7 +24,7 @@ import {
 } from "./commandHistorySearch";
 import { t } from "../../i18n";
 
-const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm"]);
+const TERMINAL_ASSET_KINDS = new Set(["ssh", "local", "docker", "winrm", "telnet"]);
 
 export type CommandHistoryKeyHandler = (event: ReactKeyboardEvent<HTMLElement>) => void;
 

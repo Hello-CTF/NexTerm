@@ -896,7 +896,7 @@ export const layoutApi = {
 export interface Asset {
   id: string;
   groupId: string | null;
-  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "rdp" | "vnc" | "device";
+  kind: "ssh" | "winrm" | "local" | "docker" | "docker-context" | "kubernetes" | "mysql" | "postgres" | "redis" | "rdp" | "vnc" | "telnet" | "device";
   name: string;
   host: string | null;
   port: number | null;
