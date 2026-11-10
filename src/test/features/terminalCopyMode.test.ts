@@ -272,4 +272,25 @@ describe("terminal copy mode", () => {
     keys(s, "q");
     expect(toBottom).toHaveBeenCalled();
   });
+  it("leaves copy mode when the program resets the terminal", async () => {
+    const s = setup();
+    await s.write("hello\r\n$ ");
+    enterChord(s);
+    expect(s.copy.isActive()).toBe(true);
+    await s.write("\x1bc");
+    expect(s.copy.isActive()).toBe(false);
+  });
+
+  it("treats a printable AltGr character as a plain key", async () => {
+    const s = setup();
+    await s.write("abc def\r\n$ ");
+    enterChord(s);
+    keys(s, "k0");
+    const altGr = new KeyboardEvent("keydown", { key: "$", code: "Digit4", ctrlKey: true, altKey: true, bubbles: true, cancelable: true });
+    Object.defineProperty(altGr, "getModifierState", { value: (name: string) => name === "AltGraph" });
+    s.term.textarea!.dispatchEvent(altGr);
+    // "$" moves to the end of the line like the plain key.
+    expect(s.copy.state().cursor.x).toBe(6);
+    expect(s.copy.isActive()).toBe(true);
+  });
 });

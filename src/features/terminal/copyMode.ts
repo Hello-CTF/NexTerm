@@ -373,9 +373,9 @@ export function createCopyMode(term: Terminal, host: HTMLElement, options: CopyM
   const exit = () => {
     if (!current.active) return;
     term.clearSelection();
+    for (const d of disposables.splice(0)) d.dispose();
     marker?.dispose();
     marker = undefined;
-    for (const d of disposables.splice(0)) d.dispose();
     rel = { cursor: { x: 0, y: 0 }, anchor: null };
     current = { active: false, cursor: { x: 0, y: 0 }, kind: "none", anchor: null, prompt: null, message: null };
     term.scrollToBottom();
@@ -398,6 +398,17 @@ export function createCopyMode(term: Terminal, host: HTMLElement, options: CopyM
     const buf = buffer();
     term.clearSelection();
     marker = term.registerMarker(0);
+    // Trimming the anchor off a full scrollback loses the reference for every position: end copy mode.
+    if (marker) disposables.push(marker.onDispose(() => exit()));
+    // A full reset (RIS) clears the screen under the cursor; the sequence still reaches the default handler.
+    if (term.parser?.registerEscHandler) {
+      disposables.push(
+        term.parser.registerEscHandler({ final: "c" }, () => {
+          exit();
+          return false;
+        }),
+      );
+    }
     // Watched only while active: switching to or from the alternate screen ends copy mode, a resize re-clamps.
     disposables.push(term.buffer.onBufferChange(() => exit()));
     disposables.push(
@@ -438,7 +449,9 @@ export function createCopyMode(term: Terminal, host: HTMLElement, options: CopyM
     const cursor = absolute(rel.cursor);
     const cols = term.cols;
     const ctrl = event.ctrlKey && !event.metaKey && !event.altKey;
-    const plain = !event.ctrlKey && !event.metaKey && !event.altKey;
+    // AltGr reports ctrl+alt on Windows: a printable character from it is a plain key.
+    const altGr = event.ctrlKey && event.altKey && !event.metaKey && event.key.length === 1 && event.getModifierState?.("AltGraph") === true;
+    const plain = altGr || (!event.ctrlKey && !event.metaKey && !event.altKey);
     const vertical = (dy: number) => {
       const y = cursor.y + dy;
       const row = clampPoint({ x: 0, y }).y;

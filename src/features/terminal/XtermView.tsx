@@ -111,6 +111,8 @@ export interface TerminalHandle {
   paste: (text: string, submit?: boolean) => void;
   /** Whether the program in the terminal turned on bracketed paste (DECSET 2004), read live. */
   bracketedPasteMode: () => boolean;
+  /** Whether keyboard copy mode is active: it freezes input from every local source, but not broadcast from other terminals. */
+  copyModeActive?: () => boolean;
   dimensions: () => { cols: number; rows: number };
   // The link target (URL or OSC 8 target) under the pointer, if any.
   hoveredLink: () => string | null;
@@ -445,6 +447,8 @@ export function XtermView(props: XtermViewProps) {
       );
     };
     const sendInput = (data: string, blockText = data) => {
+      // Pastes, composer text and uploaded file links are input too: copy mode withholds them from the program.
+      if (copyMode.isActive()) return;
       blocks.feedInput(blockText);
       if (!kernelTabId) return;
       coordinator.noteInput();
@@ -503,12 +507,14 @@ export function XtermView(props: XtermViewProps) {
       focus: () => term.focus(),
       fit: () => fitIfSized(),
       paste: (text, submit = false) => {
+        if (copyMode.isActive()) return;
         // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
         touchScroll.stop();
         term.scrollToBottom();
         sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
       },
       bracketedPasteMode: () => term.modes.bracketedPasteMode,
+      copyModeActive: () => copyMode.isActive(),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
       hoveredLink: () => links.hovered(),
       openLink,
@@ -1117,6 +1123,8 @@ export function XtermView(props: XtermViewProps) {
         if (control.historyFrom !== undefined || control.expired || !resumed) {
           setTerminalHistoryView(viewKeyRef.current, { from: control.historyFrom ?? null });
         }
+        // A new attachment replays or resumes the screen under the copy cursor: leave copy mode.
+        copyMode.exit();
         if (control.expired) {
           term.clearSelection();
           streamWriter.resetStream();
@@ -1649,8 +1657,11 @@ export function XtermView(props: XtermViewProps) {
     const connected = props.sessionConnected === true;
     const wasConnected = previousSessionConnected.current;
     previousSessionConnected.current = connected;
-    if (!wasConnected && connected) reattachRef.current?.();
-  }, [props.sessionConnected]);
+    if (!wasConnected && connected) {
+      copyMode?.controller.exit();
+      reattachRef.current?.();
+    }
+  }, [props.sessionConnected, copyMode]);
 
   // The scrollback badge lives in the root view store: drop this pane's entry when the
   // view unmounts or its view key changes, so a closed tab never leaks a stale value.

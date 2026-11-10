@@ -2974,7 +2974,10 @@ export function TerminalPane({
       )}
 
       <TerminalKeysBar
-        onSend={(data) => void sendData(data)}
+        onSend={(data) => {
+          if (handleRef.current?.copyModeActive?.()) return;
+          void sendData(data);
+        }}
         onFocus={() => handleRef.current?.focus()}
         onSendText={(text, submit) => {
           const handle = handleRef.current;

@@ -1,4 +1,5 @@
-import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";import type { Terminal } from "@xterm/xterm";
+import { useEffect, useReducer, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import type { Terminal } from "@xterm/xterm";
 import type { CopyModeController } from "./copyMode";
 import { t } from "../../i18n";
 
