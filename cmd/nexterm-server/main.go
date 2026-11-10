@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	// Browser viewers report IANA zones (transcript text timestamps); server hosts such as minimal containers may ship no
+	// zone database.
+	_ "time/tzdata"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/ai/owner"

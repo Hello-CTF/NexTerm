@@ -190,6 +190,11 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 			})
 		},
 		func() error {
+			return ipc.Register(dispatcher, "transcript_export_text", func(ctx context.Context, _ *ipc.Call, input transcriptExportTextRequest) (transcriptExportTextResult, error) {
+				return s.exportTranscriptText(ctx, input)
+			})
+		},
+		func() error {
 			return ipc.Register(dispatcher, "transcript_delete", func(ctx context.Context, _ *ipc.Call, input transcriptIDRequest) (any, error) {
 				if err := store.EnsureID(input.ID); err != nil {
 					return nil, err

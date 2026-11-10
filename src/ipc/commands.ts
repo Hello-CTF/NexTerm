@@ -862,6 +862,10 @@ export const transcriptApi = {
     call("transcript_sync_opt_in", { id, optIn }) as unknown as Promise<void>,
   exportCast: (id: string, path: string) =>
     call("transcript_export_cast", { id, path }) as Promise<import("./generated/types").TranscriptExportCastResult>,
+  // Plain-text export rendered by the backend. Browser mode passes the viewer's zone for the optional per-line timestamps
+  // (IANA name, offset as fallback); without it the backend formats them in its own local zone.
+  exportText: (id: string, path: string, options: { timestamps: boolean; timeZone?: string; utcOffsetMinutes?: number }) =>
+    call("transcript_export_text", { id, path, ...options }) as Promise<import("./generated/types").TranscriptExportTextResult>,
   star: (id: string, starred: boolean) => call("transcript_star", { id, starred }) as unknown as Promise<void>,
   // What a purge of the transcripts that ended before endedBefore (ms) would delete, plus overall usage.
   usage: (endedBefore: number) => call("transcript_usage", { endedBefore }),
