@@ -161,7 +161,7 @@ tasks:
     cmds:
       - go run ./scripts/test-database --check
       - node scripts/check-placeholders.mjs
-      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs scripts/check-semver.test.mjs scripts/i18n.test.mjs scripts/lib/release-signing.test.mjs
+      - node --test .github/scripts/go-shards.test.mjs .github/scripts/ci-plan.test.mjs .github/scripts/release-retention.test.mjs scripts/check-semver.test.mjs scripts/i18n.test.mjs scripts/lib/release-signing.test.mjs
 
   check:ci-quality:
     summary: Run shared static Go, generated artifact, bindings and script quality gates
