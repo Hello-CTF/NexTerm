@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal, type IWindowsPty } from "@xterm/xterm";
-import { attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
+import { activateUnicode11, attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
 import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
@@ -366,6 +366,7 @@ export function XtermView(props: XtermViewProps) {
       vtExtensions: { kittyKeyboard },
       linkHandler: links.linkHandler,
     });
+    activateUnicode11(term);
     termRef.current = term;
     const osc7Disposable = term.parser.registerOscHandler(7, (data) => {
       if (sessionHost === null) {

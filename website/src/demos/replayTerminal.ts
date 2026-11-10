@@ -2,6 +2,7 @@ import { useEffect, useRef, type RefObject } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { activateUnicode11 } from "../../../src/features/terminal/xtermAddons";
 import { REPLAY_THEME, type ReplayChunk, type ReplaySink, type TranscriptReplay } from "../../../src/features/terminal/transcriptReplay";
 
 const encoder = new TextEncoder();
@@ -25,6 +26,7 @@ export function useReplayTerminal(container: RefObject<HTMLDivElement | null>, r
     if (!host) return;
     const terminal = new Terminal({
       disableStdin: true,
+      allowProposedApi: true,
       cursorBlink: false,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "Cascadia Code", Consolas, "SFMono-Regular", monospace',
       fontSize: host.clientWidth < 520 ? 11 : 12,
@@ -34,6 +36,7 @@ export function useReplayTerminal(container: RefObject<HTMLDivElement | null>, r
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    activateUnicode11(terminal);
     terminal.open(host);
     terminalRef.current = terminal;
     fit.fit();

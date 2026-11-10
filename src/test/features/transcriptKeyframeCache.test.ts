@@ -130,6 +130,14 @@ describe("keyframe cache", () => {
     expect(await loadCachedKeyframes("rec", "fp")).toBeNull();
   });
 
+  it("misses for an entry built with the Unicode 6 widths of the first format", async () => {
+    await saveCachedKeyframes("rec", "fp", [frame(0)]);
+    fake.rows.get("rec")!.version = 1;
+    expect(await loadCachedKeyframes("rec", "fp")).toBeNull();
+    await saveCachedKeyframes("rec", "fp", [frame(1)]);
+    expect(await loadCachedKeyframes("rec", "fp")).toEqual([frame(1)]);
+  });
+
   it("replaces the frames of a recording that was saved again", async () => {
     await saveCachedKeyframes("rec", "fp1", [frame(0)]);
     await saveCachedKeyframes("rec", "fp2", [frame(1), frame(2)]);

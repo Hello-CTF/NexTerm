@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
-	"github.com/mattn/go-runewidth"
 )
 
 const (
@@ -83,7 +82,7 @@ func unwrapLines(lines []string, cols int) []string {
 	var current strings.Builder
 	for _, line := range lines {
 		current.WriteString(line)
-		if runewidth.StringWidth(line) >= cols {
+		if terminal.StringWidth(line) >= cols {
 			continue
 		}
 		joined = append(joined, current.String())

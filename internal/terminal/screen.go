@@ -7,7 +7,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
-	"github.com/mattn/go-runewidth"
 )
 
 const ScrollbackLines = 100_000
@@ -415,13 +414,10 @@ func (s *screen) print(r rune) {
 		s.put(r, 1)
 		return
 	}
-	w := runewidth.RuneWidth(r)
+	w := RuneWidth(r)
 	if w <= 0 {
 		s.putCombining(r)
 		return
-	}
-	if w > 2 {
-		w = 2
 	}
 	s.put(r, w)
 }

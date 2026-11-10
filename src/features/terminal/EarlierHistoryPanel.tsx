@@ -26,6 +26,7 @@ import {
   type TerminalHistoryInfo,
 } from "./earlierHistory";
 import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
+import { activateUnicode11 } from "./xtermAddons";
 import { t } from "../../i18n";
 
 // Alternate screen switches (DECSET/DECRST 47, 1047, 1049) are ignored so a
@@ -48,6 +49,7 @@ export function createReplayTerminal(cols: number, rows: number): { terminal: Te
     cols,
     rows,
     disableStdin: true,
+    allowProposedApi: true,
     cursorBlink: false,
     scrollback: EARLIER_HISTORY_SCROLLBACK,
     fontFamily: TERMINAL_FONT_STACKS[appearance.terminalFontFamily],
@@ -55,6 +57,7 @@ export function createReplayTerminal(cols: number, rows: number): { terminal: Te
     theme: xtermThemeFor(getResolvedTerminalTheme(), appearance.terminalContrast),
     linkHandler: { activate: () => undefined },
   });
+  activateUnicode11(terminal);
   const ignoreAltScreen = (params: (number | number[])[]) =>
     params.some((param) => typeof param === "number" && ALT_SCREEN_MODES.has(param));
   const handlers: IDisposable[] = [
