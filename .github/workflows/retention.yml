@@ -1,11 +1,11 @@
 # Release retention: deletes old releases and their assets but keeps their tags (release-notes.mjs derives ranges
 # from tags). Self-hosted servers download the agent and SHA256SUMS of their own exact version from the release, and
-# agents self-upgrade to the server's version, so a release stays while people may still run it. Kept: drafts, the
-# GitHub latest release, the release just published, the newest patch of every minor line, the newest 10 stable
-# releases, stable releases published within 365 days, and the newest release candidate while it is newer than the
-# newest stable release. Publishing a release candidate deletes the earlier ones; publishing a stable release deletes
-# the release candidates up to its version. Older stable patches are deleted. .github/scripts/release-retention.mjs holds
-# the selection and its tests. Workflow runs are pruned to the newest completed run per workflow.
+# agents self-upgrade to the server's version, so the newest 3 stable releases stay as an upgrade grace window. Kept:
+# drafts, the GitHub latest release, the release just published, the newest 3 stable releases, and the newest release
+# candidate while it is newer than the newest stable release. Publishing a release candidate deletes the earlier ones;
+# publishing a stable release deletes the release candidates up to its version and stable releases beyond the newest 3.
+# .github/scripts/release-retention.mjs holds the selection and its tests. Workflow runs are pruned to the newest
+# completed run per workflow.
 name: Retention
 
 on:
