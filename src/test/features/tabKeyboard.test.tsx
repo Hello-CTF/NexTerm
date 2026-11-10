@@ -351,7 +351,7 @@ describe("rail and toast accessibility", () => {
     act(() => {
       useUi.getState().pushToast("success", "已保存");
     });
-    const toast = mounted.container.querySelector<HTMLElement>(".nx-toasts > div");
+    const toast = mounted.container.querySelector<HTMLElement>(".nx-toast");
     expect(toast).not.toBeNull();
     expect(toast?.textContent).toContain("已保存");
     expect(toast?.className).toContain("nx-alert-success");

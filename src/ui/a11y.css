@@ -117,6 +117,22 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  .nx-overlay,
+  .nx-modal,
+  .nx-modal.nx-command-modal,
+  .nx-menu,
+  .nx-submenu,
+  .nx-popover,
+  .nx-toast,
+  .nx-toast.is-leaving {
+    animation: none;
+  }
+
+  /* A countdown that cannot move would read as a stuck timer. */
+  .nx-toast-progress {
+    display: none;
+  }
 }
 
 @media (prefers-contrast: more) {

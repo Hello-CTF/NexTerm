@@ -395,7 +395,8 @@ function SubMenu({
     const element = ref.current;
     const row = element?.parentElement;
     if (!element || !row) return;
-    const rect = element.getBoundingClientRect();
+    // offset sizes ignore the scale animation that getBoundingClientRect would measure.
+    const rect = { width: element.offsetWidth, height: element.offsetHeight };
     const anchor = row.getBoundingClientRect();
     const safeBottom = measureSafeBottom();
     const maxHeight = menuAvailableHeight(window.innerHeight, safeBottom);

@@ -70,6 +70,11 @@
 }
 
 :root {
+  --nx-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --nx-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --nx-dur-fast: 120ms;
+  --nx-dur-base: 180ms;
+
   --nx-host-1: #60a5fa;
   --nx-host-2: #22d3ee;
   --nx-host-3: #4ade80;

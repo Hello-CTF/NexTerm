@@ -112,12 +112,14 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       const existing = get().toasts.find((t) => t.kind === kind && t.text === text);
       if (existing) get().dismissToast(existing.id);
       const id = toastSeq++;
-      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action, detail: kind === "error" ? detailForText(text) ?? undefined : undefined }].slice(-TOAST_LIMIT) }));
+      // An error or a toast with a button needs time to read or act on; a warning sits in between.
+      const duration = kind === "error" || action ? 8000 : kind === "warning" ? 6000 : 3500;
+      const detail = kind === "error" ? detailForText(text) ?? undefined : undefined;
+      set((st) => ({ toasts: [...st.toasts, { id, kind, text, action, detail, duration, remaining: duration }].slice(-TOAST_LIMIT) }));
       for (const key of [...toastTimers.keys()]) {
         if (!get().toasts.some((t) => t.id === key)) clearToastTimer(key);
       }
-      // An error or a toast with a button needs time to read or act on.
-      startToastTimer(id, kind === "error" || action ? 8000 : 3500, () => get().dismissToast(id));
+      startToastTimer(id, duration, () => get().dismissToast(id));
     },
     dismissToast: (id) => {
       clearToastTimer(id);
@@ -129,11 +131,14 @@ export function createUiSlice(set: UiSet, get: UiGet) {
       window.clearTimeout(timer.handle);
       timer.handle = undefined;
       timer.remaining = Math.max(1500, timer.remaining - (Date.now() - timer.startedAt));
+      const remaining = timer.remaining;
+      set((st) => ({ toasts: st.toasts.map((t) => (t.id === id ? { ...t, held: true, remaining } : t)) }));
     },
     releaseToast: (id) => {
       const timer = toastTimers.get(id);
       if (!timer || timer.handle !== undefined) return;
       startToastTimer(id, timer.remaining, timer.onExpire);
+      set((st) => ({ toasts: st.toasts.map((t) => (t.id === id ? { ...t, held: false } : t)) }));
     },
   } satisfies Partial<UiState>;
 }

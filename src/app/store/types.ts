@@ -258,11 +258,16 @@ export interface CloseTabReport {
 
 export interface ToastItem {
   id: number;
-  kind: "info" | "error" | "success";
+  kind: "info" | "warning" | "error" | "success";
   text: string;
   action?: ToastAction;
   // detail is the raw technical text, shown only after the user opens 「详情」.
   detail?: string;
+  // duration is the full auto-dismiss time; remaining is what was left when the timer last started or was held.
+  // The countdown bar draws from them, and held freezes it while the timer is paused.
+  duration?: number;
+  remaining?: number;
+  held?: boolean;
 }
 
 export interface TextPromptState {
