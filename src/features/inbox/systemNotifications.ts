@@ -2,6 +2,7 @@ import { systemApi } from "../../ipc/commands";
 import { WEB } from "../../ipc/env";
 import { EVENTS, listenEvent, type NotificationClickEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
+import { redactLockedNotification } from "../../app/appLockState";
 import { t } from "../../i18n";
 
 export type NotificationPermissionState = "granted" | "denied" | "prompt";
@@ -133,11 +134,26 @@ export function createBrowserNotifier(api: BrowserNotificationCtor | null = brow
   };
 }
 
+// lockAware withholds what a notification says while NexTerm is locked: the system shows one "NexTerm 已锁定"
+// notification with a count instead of terminal text, host names or AI output.
+export function lockAware(inner: SystemNotifier): SystemNotifier {
+  return {
+    status: () => inner.status(),
+    ...(inner.knownStatus ? { knownStatus: inner.knownStatus } : {}),
+    request: () => inner.request(),
+    show: (notification) => inner.show(redactLockedNotification(notification)),
+    remove: (id) => inner.remove(id),
+    onClick: (handler) => inner.onClick(handler),
+  };
+}
+
 let notifier: SystemNotifier | null = null;
+let wrapped: { inner: SystemNotifier; outer: SystemNotifier } | null = null;
 
 export function systemNotifier(): SystemNotifier {
   notifier ??= WEB ? createBrowserNotifier() : createDesktopNotifier();
-  return notifier;
+  if (wrapped?.inner !== notifier) wrapped = { inner: notifier, outer: lockAware(notifier) };
+  return wrapped.outer;
 }
 
 export function setSystemNotifierForTest(next: SystemNotifier | null): void {

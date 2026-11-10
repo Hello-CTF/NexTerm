@@ -74,6 +74,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"keybinding.terminalSearch",
 		"keybinding.reclaimTakeover",
 		"keybinding.lockVault",
+		"keybinding.lockApp",
 		"keybinding.openSettings",
 		"keybinding.focusAiInput",
 	} {
@@ -234,6 +235,7 @@ func TestNavigationKeybindingPreferences(t *testing.T) {
 		{key: "keybinding.previousTab", input: `"Shift+Mod+["`, want: `"Mod+Shift+["`},
 		{key: "keybinding.focusUpperPane", input: `"Alt+Mod+ArrowUp"`, want: `"Mod+Alt+ArrowUp"`},
 		{key: "keybinding.focusLowerPane", input: `"Alt+Mod+ArrowDown"`, want: `"Mod+Alt+ArrowDown"`},
+		{key: "keybinding.lockApp", input: `"Shift+Mod+L"`, want: `"Mod+Shift+l"`},
 	}
 	for _, test := range tests {
 		t.Run("validate "+test.key, func(t *testing.T) {

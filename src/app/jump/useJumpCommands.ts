@@ -17,6 +17,7 @@ import { terminalLinkCommands } from "./terminalLinkCommands";
 import { terminalLinkSource } from "../../features/terminal/terminalLinkRegistry";
 import { workspaceLayoutTree } from "../paneLayout";
 import { resolveActivePane } from "../splitTree";
+import { requestAppLock } from "../appLock";
 import {
   IconActivity,
   IconClock,
@@ -27,6 +28,7 @@ import {
   IconEye,
   IconEyeOff,
   IconHistory,
+  IconLock,
   IconMergeH,
   IconMonitor,
   IconNetwork,
@@ -305,6 +307,13 @@ export function useJumpCommands({ assets, snippets, onEditAsset, onShowHosts }: 
         hint: t("AI / 凭据库"),
         icon: IconSettings,
         run: () => addTab({ id: "settings", kind: "settings", title: t("设置"), closable: true }),
+      },
+      {
+        id: "lock-app",
+        label: t("锁定 NexTerm"),
+        hint: keyHint("lockApp", t("遮挡界面，输入密码后解锁；终端继续运行")),
+        icon: IconLock,
+        run: () => void requestAppLock(),
       },
       ...(backgroundAvailable ? [{
         id: "background",

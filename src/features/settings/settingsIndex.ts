@@ -26,6 +26,7 @@ export type SettingsSectionId =
   | "settings-ai-skills"
   | "settings-memory"
   | "settings-vault"
+  | "settings-app-lock"
   | "settings-known-hosts"
   | "settings-production"
   | "settings-account"
@@ -95,6 +96,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
     description: t("用密码保护凭据，闲置自动锁定"),
     keywords: ["credential", "vault", "password", "lock", "encrypt", t("凭据"), t("密码"), t("加密"), t("锁定"), t("保险库"), t("安全")],
   },
+  "settings-app-lock": {
+    description: t("隐藏整个界面直到输入密码，闲置自动锁定"),
+    keywords: ["lock", "lock screen", "idle", "away", "privacy", t("锁定"), t("锁屏"), t("离开"), t("闲置"), t("隐私")],
+  },
   "settings-known-hosts": {
     description: t("已信任的 SSH 主机指纹"),
     keywords: ["known hosts", "fingerprint", "ssh", "trust", "host key", t("指纹"), t("信任"), t("主机")],
@@ -163,6 +168,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },
   { id: "vault-auto-lock", section: "settings-vault", label: t("闲置自动锁定"), keywords: ["lock", "idle", "timeout", t("锁定"), t("凭据")] },
+  { id: "app-lock-idle", section: "settings-app-lock", label: t("闲置自动锁定 NexTerm"), keywords: ["lock screen", "idle", "timeout", t("锁屏"), t("锁定")] },
   { id: "local-helper-exposure", section: "settings-account", label: t("向服务端账号开放本机终端"), description: t("让同一账号的浏览器和手机接管本机终端"), keywords: ["expose", "remote", "local terminal", t("开放"), t("本机终端"), t("远程")], available: () => DESKTOP },
 ];
 

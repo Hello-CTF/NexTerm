@@ -27,6 +27,7 @@
 - **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
 - **Easy migration**: import hosts from OpenSSH config, Termius, PuTTY, MobaXterm, Xshell, SecureCRT
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync
+- **Lock screen**: lock NexTerm while away; terminals keep running and notifications show no content
 - **Nine interface languages**: Simplified and Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian
 
 Sync is not end-to-end encrypted: the password reaches the server at sign-in, so sign in only to servers you trust, over HTTPS (see [Security](docs/security.en.md)). See [Features](docs/features.en.md) for the full list.
