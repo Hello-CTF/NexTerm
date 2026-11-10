@@ -9,9 +9,11 @@ import (
 	"syscall"
 )
 
-func startProxyCommand(command string) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
+func startProxyCommand(command string, stderr io.Writer) (*proxyCommandProcess, io.WriteCloser, io.ReadCloser, error) {
 	cmd := exec.Command("sh", "-c", command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stderr = stderr
+	cmd.WaitDelay = proxyCommandStderrWait
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, nil, proxyCommandStartError(err)
@@ -46,6 +48,19 @@ func (p *proxyCommandProcess) kill() error {
 
 func (p *proxyCommandProcess) wait() error {
 	return p.cmd.Wait()
+}
+
+// exitCode is valid after wait returns; -1 means the process did not exit
+// normally.
+func (p *proxyCommandProcess) exitCode() int {
+	if p.cmd.ProcessState == nil {
+		return -1
+	}
+	return p.cmd.ProcessState.ExitCode()
+}
+
+func isBrokenPipe(err error) bool {
+	return errors.Is(err, syscall.EPIPE)
 }
 
 func (p *proxyCommandProcess) close() error {

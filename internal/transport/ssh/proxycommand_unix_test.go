@@ -4,9 +4,11 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,5 +62,103 @@ func TestProxyCommandCloseKillsProcessGroup(t *testing.T) {
 	}
 	if proxyConn.proc.cmd.ProcessState == nil {
 		t.Fatal("proxy command Wait did not record a process state")
+	}
+}
+
+func TestProxyCommandFailureReportsExitStatusAndStderr(t *testing.T) {
+	cfg := Config{
+		Host:              "bastion.example",
+		Port:              22,
+		User:              "test",
+		Auth:              AuthConfig{Method: AuthPassword, Password: "secret"},
+		HostKeys:          NewMemoryHostKeyStore(),
+		AutoAcceptUnknown: true,
+		ConnectTimeout:    5 * time.Second,
+		KeepAliveInterval: -1,
+		ProxyCommand:      "sh -c 'echo boom >&2; exit 3'",
+	}
+	_, err := Connect(context.Background(), cfg)
+	var connectErr *ConnectError
+	if !errors.As(err, &connectErr) {
+		t.Fatalf("error = %T %v, want *ConnectError", err, err)
+	}
+	if connectErr.Kind != ErrorKindProxy {
+		t.Fatalf("kind = %q, want %q (%v)", connectErr.Kind, ErrorKindProxy, err)
+	}
+	for _, want := range []string{"exited with status 3", "boom"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err.Error(), want)
+		}
+	}
+	message := connectErr.UserMessage()
+	for _, want := range []string{"退出码 3", "boom"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("user message %q does not contain %q", message, want)
+		}
+	}
+}
+
+func TestProxyCommandStderrKeepsBoundedTail(t *testing.T) {
+	conn, err := dialProxyCommand(context.Background(), "head -c 10000 /dev/zero | tr '\\0' a >&2; printf tail >&2; exit 1", "example.test", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyConn := conn.(*proxyCommandConn)
+	if err := proxyConn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	stderr := proxyConn.stderr.String()
+	if len(stderr) != proxyCommandStderrTail || !strings.HasSuffix(stderr, "tail") {
+		t.Fatalf("stderr tail has %d bytes ending %q", len(stderr), stderr[max(0, len(stderr)-8):])
+	}
+	var exitErr *proxyCommandExitError
+	if !errors.As(proxyConn.exitError(io.EOF), &exitErr) || exitErr.code != 1 {
+		t.Fatalf("exit error = %v", proxyConn.exitError(io.EOF))
+	}
+}
+
+func startedProxyCommand(t *testing.T, command string) *proxyCommandConn {
+	t.Helper()
+	conn, err := dialProxyCommand(context.Background(), command, "example.test", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyConn := conn.(*proxyCommandConn)
+	t.Cleanup(func() { _ = proxyConn.Close() })
+	return proxyConn
+}
+
+func TestProxyCommandDiagnosticsDoNotRelabelPeerHandshakeErrors(t *testing.T) {
+	// A relaying proxy that printed a warning and is still running.
+	running := startedProxyCommand(t, "echo 'Warning: Permanently added bastion' >&2; exec cat")
+	peerErr := errors.New("ssh: handshake failed: ssh: no common algorithm for key exchange")
+	got := classifyHandshakeError("target.example", 22, "proxy-command", "", running.handshakeError(peerErr))
+	if got.Kind != ErrorKindHandshake || strings.Contains(got.UserMessage(), "Warning") {
+		t.Fatalf("kind = %q, message = %q", got.Kind, got.UserMessage())
+	}
+
+	exited := startedProxyCommand(t, "echo 'Warning: Permanently added bastion' >&2; exit 0")
+	eofErr := fmt.Errorf("ssh: handshake failed: %w", io.EOF)
+	got = classifyHandshakeError("target.example", 22, "proxy-command", "", exited.handshakeError(eofErr))
+	if got.Kind != ErrorKindHandshake {
+		t.Fatalf("clean exit kind = %q, want %q", got.Kind, ErrorKindHandshake)
+	}
+	message := got.UserMessage()
+	if !strings.Contains(message, "Warning: Permanently added bastion") || strings.Contains(message, "退出码") {
+		t.Fatalf("clean exit message = %q", message)
+	}
+}
+
+func TestProxyCommandCleanExitAddsNoDetail(t *testing.T) {
+	conn, err := dialProxyCommand(context.Background(), "true", "example.test", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyConn := conn.(*proxyCommandConn)
+	if err := proxyConn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := proxyConn.exitError(io.EOF); got != io.EOF {
+		t.Fatalf("exit error = %v, want io.EOF unchanged", got)
 	}
 }

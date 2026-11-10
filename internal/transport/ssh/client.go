@@ -162,6 +162,7 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 			return nil, classifyDialError(cfg.Host, cfg.Port, err)
 		}
 	}
+	proxyConn, _ := netConn.(*proxyCommandConn)
 	counted := &countingConn{Conn: netConn}
 	netConn = counted
 	stop := context.AfterFunc(connectCtx, func() { netConn.Close() })
@@ -173,6 +174,9 @@ func connect(ctx context.Context, cfg Config, depth, hops int, progress func(Con
 		err = connectCtx.Err()
 	}
 	if err != nil {
+		if proxyConn != nil && connectCtx.Err() == nil {
+			err = proxyConn.handshakeError(err)
+		}
 		netConn.Close()
 		if jumpClient != nil {
 			jumpClient.Close()

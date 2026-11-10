@@ -95,6 +95,10 @@ func (e *ConnectError) UserMessage() string {
 	}
 	message.WriteString("失败：")
 	message.WriteString(userGuidanceForKind(e.Kind))
+	var exitErr *proxyCommandExitError
+	if errors.As(e, &exitErr) {
+		message.WriteString(exitErr.userDetail())
+	}
 	return message.String()
 }
 
@@ -228,6 +232,12 @@ func classifyHandshakeError(host string, port int, proxy, jump string, err error
 	if strings.Contains(err.Error(), "unable to authenticate") {
 		return newConnectError(ErrorKindAuth, "authentication", host, port, proxy, err).withJump(jump)
 	}
+	var exitErr *proxyCommandExitError
+	if errors.As(err, &exitErr) && exitErr.failed() {
+		connectErr := newConnectError(ErrorKindProxy, "proxy command", host, port, proxy, err).withJump(jump)
+		connectErr.Hint = "Check the ProxyCommand and its error output"
+		return connectErr
+	}
 	kind, classified := classifyErrorKind(err)
 	if !classified {
 		kind = ErrorKindHandshake
@@ -241,7 +251,7 @@ func classifyJumpDialError(host string, port int, jump string, err error) *Conne
 		kind = ErrorKindNetwork
 		var openErr *gossh.OpenChannelError
 		if errors.As(err, &openErr) {
-			kind = classifyJumpDialMessage(openErr.Message)
+			kind = ClassifyChannelOpenMessage(openErr.Message)
 		}
 	}
 	connectErr := newConnectError(kind, "jump dial", host, port, "", err).withJump(jump)
@@ -259,18 +269,24 @@ func classifyJumpDialError(host string, port int, jump string, err error) *Conne
 	return connectErr
 }
 
-func classifyJumpDialMessage(message string) ErrorKind {
+// ClassifyChannelOpenMessage classifies the message of a rejected
+// direct-tcpip channel. OpenSSH sends the strerror or getaddrinfo text of the
+// failed connect as the message.
+func ClassifyChannelOpenMessage(message string) ErrorKind {
 	lowered := strings.ToLower(message)
 	switch {
 	case strings.Contains(lowered, "refused"):
 		return ErrorKindRefused
 	case strings.Contains(lowered, "timed out"), strings.Contains(lowered, "timeout"):
 		return ErrorKindTimeout
-	case strings.Contains(lowered, "no route"):
+	case strings.Contains(lowered, "no route"),
+		strings.Contains(lowered, "unreachable"),
+		strings.Contains(lowered, "host is down"):
 		return ErrorKindUnreachable
 	case strings.Contains(lowered, "name or service not known"),
 		strings.Contains(lowered, "temporary failure in name resolution"),
-		strings.Contains(lowered, "nodename nor servname"):
+		strings.Contains(lowered, "nodename nor servname"),
+		strings.Contains(lowered, "no address associated"):
 		return ErrorKindDNS
 	}
 	return ErrorKindNetwork

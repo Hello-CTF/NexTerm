@@ -16,6 +16,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/session"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type Service struct {
@@ -693,6 +694,9 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 			return conn, nil
 		}
 		lastErr = err
+		if !retryableUpstreamError(err) {
+			break
+		}
 		if attempt+1 < s.reconnect.Attempts {
 			timer := time.NewTimer(s.reconnect.Backoff)
 			select {
@@ -704,6 +708,15 @@ func (s *Service) openUpstream(ctx context.Context, sessionID, target string) (n
 		}
 	}
 	return nil, fmt.Errorf("SSH 转发连接 %s 失败: %w", target, lastErr)
+}
+
+// retryableUpstreamError reports whether a later attempt may succeed. A
+// channel-open rejection is the remote host's definite answer; other failures,
+// including a per-attempt timeout, may recover with a reconnected dialer. The
+// caller's context bounds the retries.
+func retryableUpstreamError(err error) bool {
+	var openErr *gossh.OpenChannelError
+	return !errors.As(err, &openErr)
 }
 
 type forwarder struct {
