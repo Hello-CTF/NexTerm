@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal, type IWindowsPty } from "@xterm/xterm";
 import { activateUnicode11, attachLazyAddons, scheduleWebglRenderer, type WebglRenderer } from "./xtermAddons";
+import { attachSessionKeywordHighlight, type KeywordHighlighter } from "./keywordHighlight";
 import { attachTerminalInput } from "./terminalInput/attachTerminalInput";
 import { kittyKeyboardSwitch } from "./terminalInput/kittyKeyboard";
 import { applyStickyModifiersToTyped } from "./terminalInput/stickyModifiers";
@@ -231,6 +232,7 @@ export function XtermView(props: XtermViewProps) {
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
   const webglRef = useRef<WebglRenderer | null>(null);
+  const highlightRef = useRef<KeywordHighlighter | null>(null);
   const outputRef = useRef<ScheduledTerminalOutput | null>(null);
   const onGeometryRef = useRef<(() => void) | null>(null);
   const kernelTabIdRef = useRef<string>("");
@@ -462,6 +464,8 @@ export function XtermView(props: XtermViewProps) {
       }
     });
     const attachedAssetId = useUi.getState().sessions.find((session) => session.id === sessionId)?.assetId;
+    const highlights = attachSessionKeywordHighlight(term, { assetId: attachedAssetId ?? undefined, visible: () => visibleRef.current !== false });
+    highlightRef.current = highlights;
     const applyGrid = (grid: TerminalGrid) => {
       resizeTerminalToGridPreservingSelection(term, grid);
       if (followerRef.current.following) applyFollowerFont(term, hostRef.current, followerRef.current);
@@ -1689,6 +1693,8 @@ export function XtermView(props: XtermViewProps) {
       unsubscribeGpuPreference();
       webgl.cancel();
       webglRef.current = null;
+      highlights.dispose();
+      highlightRef.current = null;
       output.dispose();
       outputRef.current = null;
       term.dispose();
@@ -1738,6 +1744,7 @@ export function XtermView(props: XtermViewProps) {
     const tabId = kernelTabIdRef.current;
     if (tabId) void terminalApi.setVisible(tabId, visible).catch(() => undefined);
     if (!visible) return;
+    highlightRef.current?.refresh();
     const raf = requestAnimationFrame(() => fitIfSized());
     return () => cancelAnimationFrame(raf);
   }, [props.visible, props.tabId]);

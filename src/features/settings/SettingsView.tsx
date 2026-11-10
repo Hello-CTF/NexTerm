@@ -51,6 +51,7 @@ import { MemoryCard } from "./MemoryCard";
 import { ProductionSettingsPanel } from "../production/ProductionSettingsPanel";
 import { ShortcutsCard } from "./ShortcutsCard";
 import { SessionRulesCard } from "./SessionRulesCard";
+import { KeywordHighlightCard } from "./KeywordHighlightCard";
 import { SkillsCard } from "./SkillsCard";
 import { productionSkillsApi } from "./skillsApi";
 import { SyncCard } from "./SyncCard";
@@ -77,6 +78,7 @@ import {
   IconCommand,
   IconDownload,
   IconFlag,
+  IconStar,
   IconGlobe,
   IconInfo,
   IconLayers,
@@ -120,6 +122,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-appearance", label: t("外观"), icon: IconMonitor, group: "appearance" },
   { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
   { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
+  { id: "settings-keyword-highlight", label: t("关键词高亮"), icon: IconStar, group: "terminal" },
   { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
   { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
   { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
@@ -918,6 +921,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         <div id="settings-state-rules" className="scroll-mt-12">
           <SessionRulesCard />
         </div>
+
+        <KeywordHighlightCard />
         </div>
 
         <div className="flex flex-col gap-4" hidden={group !== "notifications"} data-settings-group="notifications">

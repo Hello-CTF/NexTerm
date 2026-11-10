@@ -48,6 +48,7 @@ func TestPreferenceKeysWhitelist(t *testing.T) {
 		"terminal.portDiscovery",
 		"terminal.confirmMultilinePaste",
 		"terminal.durableHistoryMiB",
+		"terminal.keywordHighlights",
 		"keybinding.commandPalette",
 		"keybinding.quickConnect",
 		"keybinding.newTerminal",
@@ -516,6 +517,19 @@ func TestTerminalKeyBarPreference(t *testing.T) {
 	} {
 		if got, err := validatePreferenceValue("terminal.keyBar", json.RawMessage(raw)); err == nil {
 			t.Fatalf("key bar %s accepted as %q", raw, got)
+		}
+	}
+}
+
+func TestTerminalKeywordHighlightsPreference(t *testing.T) {
+	want := `{"presets":["errors"],"rules":[{"id":"r1","pattern":"FAIL","regex":false,"caseSensitive":true,"wholeWord":true,"foreground":"red","background":"","underline":false,"enabled":true}]}`
+	got, err := validatePreferenceValue("terminal.keywordHighlights", json.RawMessage(want))
+	if err != nil || got != want {
+		t.Fatalf("keyword highlights=(%q,%v) want %q", got, err, want)
+	}
+	for _, raw := range []string{`null`, `[]`, `{"rules":[{"id":"r1","pattern":"(","regex":true,"foreground":"red","enabled":true}]}`} {
+		if got, err := validatePreferenceValue("terminal.keywordHighlights", json.RawMessage(raw)); err == nil {
+			t.Fatalf("keyword highlights %s accepted as %q", raw, got)
 		}
 	}
 }

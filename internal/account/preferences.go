@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/terminal/highlight"
 )
 
 // PreferenceStore is the minimal read/write subset of the setting table, injected by the wiring layer as *store.Store.
@@ -64,6 +65,7 @@ const (
 	preferenceKindBinding
 	preferenceKindKeyBar
 	preferenceKindQuickCommands
+	preferenceKindKeywordHighlights
 )
 
 type preferenceSpec struct {
@@ -98,6 +100,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
+	"terminal.keywordHighlights":        {kind: preferenceKindKeywordHighlights},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},
@@ -280,6 +283,12 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 		if canonical, ok := normalizeQuickCommands(raw); ok {
 			return canonical, nil
 		}
+	case preferenceKindKeywordHighlights:
+		canonical, err := highlight.Normalize(raw)
+		if err != nil {
+			return "", ipc.BadParam(fmt.Errorf("偏好 %q 的值不合法: %w", key, err))
+		}
+		return canonical, nil
 	}
 	return "", invalidPreferenceValue(key)
 }
