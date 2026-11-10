@@ -3,6 +3,8 @@ import { aiCommandApi, type AiCommandGenerateRequest } from "../../ipc/aiCommand
 import { modelApi } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
+import { copyText } from "../../ui/clipboard";
+import { insertRisk } from "../explorer/snippetInsert";
 import { IconClose, IconLoader, IconSparkles } from "../../ui/icons";
 import type { CommandInsertTarget } from "./insertCommand";
 import { t } from "../../i18n";
@@ -89,6 +91,17 @@ export function AiCommandPrompt({
     }
   };
 
+  // A multi-line or control-character command is never typed into the terminal (it would run), only copied.
+  const insertable = phase.kind === "result" && insertRisk(phase.command) === "none";
+  const copyResult = () => {
+    if (phase.kind !== "result") return;
+    const pushToast = useUi.getState().pushToast;
+    void copyText(phase.command).then(
+      () => pushToast("success", t("已复制到剪贴板")),
+      (cause: unknown) => pushToast("error", t("复制失败：{value}", { value: describeError(cause) })),
+    );
+  };
+
   const openAiSidebar = () => {
     useUi.getState().setRightOpen(true);
     onClose();
@@ -124,8 +137,9 @@ export function AiCommandPrompt({
           onKeyDown={(e) => {
             if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
             e.preventDefault();
-            if (phase.kind === "result") void insert();
-            else generate();
+            if (phase.kind !== "result") generate();
+            else if (insertable) void insert();
+            else copyResult();
           }}
         />
         <button className="nx-icon-btn nx-icon-btn-sm" aria-label={t("关闭")} title={t("关闭（Esc）")} onClick={onClose}>
@@ -169,14 +183,24 @@ export function AiCommandPrompt({
           )}
           <div className="flex items-center gap-1.5">
             <span className="min-w-0 flex-1 px-0.5 text-[10.5px] text-neutral-500">
-              {target ? t("填入后不会自动执行，请检查后再按回车。") : t("当前终端已断开或已结束")}
+              {!insertable
+                ? t("命令有多行或包含控制字符，填入会直接执行，只能复制后手动粘贴。")
+                : target
+                  ? t("填入后不会自动执行，请检查后再按回车。")
+                  : t("当前终端已断开或已结束")}
             </span>
             <button className="nx-btn nx-btn-ghost nx-btn-xs" onClick={generate}>
               {t("重新生成")}
             </button>
-            <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={!target || inserting} onClick={() => void insert()}>
-              {t("填入终端")}
-            </button>
+            {insertable ? (
+              <button className="nx-btn nx-btn-primary nx-btn-xs" disabled={!target || inserting} onClick={() => void insert()}>
+                {t("填入终端")}
+              </button>
+            ) : (
+              <button className="nx-btn nx-btn-primary nx-btn-xs" onClick={copyResult}>
+                {t("复制命令")}
+              </button>
+            )}
           </div>
         </div>
       ) : (

@@ -48,6 +48,18 @@ function disposeSlot(slot: MarkerSlot): void {
 export interface CommandBlockManagerOptions {
   // Reports the block whose output fills the top of the viewport while its command line is scrolled out of view.
   onSticky?: (index: number | null) => void;
+  // Schedules the sticky update after scrolling, so a burst of output lines costs one update per frame. Defaults to
+  // requestAnimationFrame; returns a cancel function.
+  scheduleFrame?: (callback: () => void) => () => void;
+}
+
+function defaultScheduleFrame(callback: () => void): () => void {
+  if (typeof requestAnimationFrame === "function") {
+    const id = requestAnimationFrame(callback);
+    return () => cancelAnimationFrame(id);
+  }
+  const id = setTimeout(callback, 16);
+  return () => clearTimeout(id);
 }
 
 export class CommandBlockManager {
@@ -64,12 +76,15 @@ export class CommandBlockManager {
   private readonly onSticky?: (index: number | null) => void;
   private sticky: number | null = null;
   private readonly scrollListener?: IDisposable;
+  private readonly scheduleFrame: (callback: () => void) => () => void;
+  private cancelStickyFrame: (() => void) | null = null;
 
   constructor(term: Terminal, onUpdate: (blocks: CommandBlock[]) => void, options: CommandBlockManagerOptions = {}) {
     this.term = term;
     this.onUpdate = onUpdate;
     this.onSticky = options.onSticky;
-    if (this.onSticky) this.scrollListener = term.onScroll?.(() => this.updateSticky());
+    this.scheduleFrame = options.scheduleFrame ?? defaultScheduleFrame;
+    if (this.onSticky) this.scrollListener = term.onScroll?.(() => this.scheduleSticky());
   }
 
   feedInput(data: string): void {
@@ -284,16 +299,28 @@ export class CommandBlockManager {
     const slot = this.slots[position];
     const buf = this.term.buffer.active;
     const cursor = buf.baseY + buf.cursorY;
-    let to = b.endLine;
+    const start = slot?.marker.line ?? b.startLine;
+    if (start < 0) return null;
+    // Read live from the markers: a block ends where the next one starts, the last one at the cursor.
+    const next = position + 1 < this.blocks.length ? (this.slots[position + 1]?.marker.line ?? this.blocks[position + 1].startLine) : null;
+    let to = next === null ? cursor : Math.max(start, next - 1);
     if (slot?.endMarker && !slot.endMarker.isDisposed && slot.endMarker.line >= 0) {
       to = Math.min(to, slot.endMarker.line - (slot.endInclusive ? 0 : 1));
     } else if (position === this.blocks.length - 1 && b.endedAt !== null) {
       // The cursor line of a finished last block already holds the next prompt.
       to = Math.min(to, cursor - 1);
     }
-    const from = b.startLine + 1;
+    const from = start + 1;
     if (to < from) return null;
     return { from, to: Math.min(to, from + MAX_BLOCK_LINES) };
+  }
+
+  private scheduleSticky(): void {
+    if (this.cancelStickyFrame || this.disposed) return;
+    this.cancelStickyFrame = this.scheduleFrame(() => {
+      this.cancelStickyFrame = null;
+      this.updateSticky();
+    });
   }
 
   private updateSticky(): void {
@@ -311,8 +338,8 @@ export class CommandBlockManager {
     for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
       const start = this.slots[i]?.marker.line ?? this.blocks[i].startLine;
       if (start < 0 || start >= top) continue;
-      // The latest block that starts above the viewport is sticky only while its output still reaches the top.
-      this.syncEndLines();
+      // The latest block that starts above the viewport is sticky only while its output still reaches the top. The
+      // scan stops there, so at the bottom of a long output it reads only the last block.
       const range = this.outputRange(i);
       return range && range.to >= top ? this.blocks[i].index : null;
     }
@@ -425,5 +452,7 @@ export class CommandBlockManager {
     this.clear();
     this.disposed = true;
     this.scrollListener?.dispose();
+    this.cancelStickyFrame?.();
+    this.cancelStickyFrame = null;
   }
 }

@@ -1,5 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
-import { matchTerminalWithheldKeybinding } from "../../../app/keybindings";
+import { matchTerminalWithheldKeybinding, type AppKeybindingHit, type KeyEventLike, type KeybindingActionId } from "../../../app/keybindings";
 import { getCtrlVPaste } from "../../../app/preferences";
 import { isMac, isWindows } from "../../../app/platform";
 import { attachImeTextInput } from "../imeTextInput";
@@ -12,6 +12,11 @@ export interface TerminalInputOptions {
   /** Whether the engine delivers the composition-committing Enter after compositionend; detected when omitted. */
   webkitCommitEnter?: boolean;
   now?: () => number;
+  /**
+   * Whether a withheld action acts right now; when it returns false the chord goes to the program instead (for
+   * example command block navigation while an alternate-screen editor runs). All withheld actions act when omitted.
+   */
+  withholds?: (action: KeybindingActionId) => boolean;
 }
 
 /**
@@ -34,6 +39,11 @@ export function attachTerminalInput(
   options: TerminalInputOptions,
 ): () => void {
   const now = options.now ?? (() => performance.now());
+  const withholds = options.withholds;
+  const matchAppShortcut = (event: KeyEventLike): AppKeybindingHit | null => {
+    const hit = matchTerminalWithheldKeybinding(event);
+    return hit && withholds && !withholds(hit.action) ? null : hit;
+  };
   const webkitCommitEnter = options.webkitCommitEnter ?? isWebKitEngine(navigator.userAgent);
   // WebKit's committing Enter: "pending" from compositionend until the next keydown (at most one Enter is taken),
   // "swallowing" from that Enter's keydown until its keyup so its keypress is withheld too.
@@ -84,7 +94,7 @@ export function attachTerminalInput(
     const pending = commitEnterPending(event);
     const resolution = resolveKey(event, {
       mac: isMac(),
-      matchAppShortcut: matchTerminalWithheldKeybinding,
+      matchAppShortcut,
       commitEnterPending: pending,
       kittyKeyboard: kittyKeyboardActive(term, options.kittyKeyboard),
       windows: isWindows(),

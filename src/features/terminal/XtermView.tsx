@@ -31,6 +31,7 @@ import {
 } from "../../app/preferences";
 import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
+import { commandShortcutActive } from "./commandShortcuts";
 import {
   createTerminalStreamWriter,
   STREAM_HIGH_WATER_BYTES,
@@ -101,6 +102,8 @@ export interface TerminalHandle {
   navigateBlock: (dir: "prev" | "next") => number | null;
   // Selects the output of the most recent finished command and returns it; null when none is left in the buffer.
   selectLastOutput?: () => { index: number; text: string } | null;
+  // Which buffer is in front: "alternate" while a full-screen program (vim, less, tmux) runs.
+  bufferType?: () => "normal" | "alternate";
   clearBlocks: () => void;
   clear: () => void;
   getSelection: () => string;
@@ -385,7 +388,14 @@ export function XtermView(props: XtermViewProps) {
     // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
     const touchScroll = attachTouchScroll(term, hostRef.current);
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
-    const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
+    const detachTerminalInput = attachTerminalInput(term, hostRef.current, {
+      kittyKeyboard,
+      withholds: (action) =>
+        commandShortcutActive(action, {
+          normalBuffer: term.buffer.active.type === "normal",
+          blocks: onBlocksRef.current !== undefined,
+        }),
+    });
 
     let kernelTabId = "";
     let disposed = false;
@@ -491,6 +501,7 @@ export function XtermView(props: XtermViewProps) {
       scrollToBlock: (index) => blocks.scrollTo(index),
       navigateBlock: (dir) => blocks.navigate(dir),
       selectLastOutput: () => blocks.selectLastOutput(),
+      bufferType: () => term.buffer.active.type,
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),

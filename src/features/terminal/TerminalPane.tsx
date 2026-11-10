@@ -55,8 +55,9 @@ import type { CommandBlock } from "./commandBlocks";
 import { StickyCommandHeader } from "./StickyCommandHeader";
 import { FailedCommandChip, failedCommandBlock } from "./FailedCommandChip";
 import { AiCommandPrompt, type AiCommandContext } from "./AiCommandPrompt";
-import { insertCommandAtPrompt, type CommandInsertTarget } from "./insertCommand";
+import { insertCommandAtPrompt, registerTerminalBufferProbe, type CommandInsertTarget } from "./insertCommand";
 import { explainCommandBlock } from "./commandBlockActions";
+import { commandShortcutActive } from "./commandShortcuts";
 import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import {
   terminalApi,
@@ -1134,24 +1135,32 @@ export function TerminalPane({
       if (!(e.target instanceof Element) || !e.target.closest(".xterm")) return;
       if (e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
       const { blocksSupported: supported, copyLastOutput: copyOutput } = blockKeysRef.current;
-      let run: (() => void) | null = null;
-      if (matchKeybinding(e, "generateCommand")) {
-        run = e.repeat ? () => undefined : () => setAiCommandOpen(true);
-      } else if (supported && matchKeybinding(e, "previousPrompt")) {
-        run = () => handleRef.current?.navigateBlock("prev");
-      } else if (supported && matchKeybinding(e, "nextPrompt")) {
-        run = () => handleRef.current?.navigateBlock("next");
-      } else if (supported && matchKeybinding(e, "copyLastOutput")) {
-        run = e.repeat ? () => undefined : copyOutput;
-      }
-      if (!run) return;
+      const actions = {
+        generateCommand: () => setAiCommandOpen(true),
+        previousPrompt: () => handleRef.current?.navigateBlock("prev"),
+        nextPrompt: () => handleRef.current?.navigateBlock("next"),
+        copyLastOutput: copyOutput,
+      } as const;
+      const action = (Object.keys(actions) as Array<keyof typeof actions>).find((id) => matchKeybinding(e, id));
+      if (!action) return;
+      // An alternate-screen program, or a terminal without command blocks, keeps the chord.
+      const state = { normalBuffer: handleRef.current?.bufferType?.() !== "alternate", blocks: supported };
+      if (!commandShortcutActive(action, state)) return;
       e.preventDefault();
       e.stopPropagation();
-      run();
+      // Holding the chord repeats prompt navigation only.
+      if (e.repeat && action !== "previousPrompt" && action !== "nextPrompt") return;
+      actions[action]();
     };
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, []);
+
+  // Lets command insertion from outside the pane (AI code blocks) see a full-screen program in front.
+  useEffect(() => {
+    if (!kernelTabId) return;
+    return registerTerminalBufferProbe(kernelTabId, () => handleRef.current?.bufferType?.());
+  }, [kernelTabId]);
 
   useEffect(
     () =>

@@ -27,7 +27,9 @@ vi.mock("../../ui/dialogs", async (importOriginal) => ({
 import { FailedCommandChip, failedCommandBlock } from "../../features/terminal/FailedCommandChip";
 import { StickyCommandHeader } from "../../features/terminal/StickyCommandHeader";
 import { AiCommandPrompt } from "../../features/terminal/AiCommandPrompt";
-import { insertCommandAtPrompt, type CommandInsertTarget } from "../../features/terminal/insertCommand";
+import { insertCommandAtPrompt, registerTerminalBufferProbe, type CommandInsertTarget } from "../../features/terminal/insertCommand";
+import { insertRisk } from "../../features/explorer/snippetInsert";
+import { commandShortcutActive } from "../../features/terminal/commandShortcuts";
 import { Markdown } from "../../features/ai/Markdown";
 import type { CommandBlock } from "../../features/terminal/commandBlocks";
 import { useUi } from "../../app/store";
@@ -131,7 +133,73 @@ describe("insertCommandAtPrompt", () => {
   });
 });
 
+describe("insert guard", () => {
+  it("classifies escape sequences, embedded carriage returns and C1 controls", () => {
+    // A bracketed-paste end marker followed by Enter would leave paste mode and run the text.
+    expect(insertRisk("ls\x1b[201~\r")).toBe("execute");
+    expect(insertRisk("echo a\rrm -rf b")).toBe("execute");
+    expect(insertRisk("printf \x1b[2J")).toBe("control");
+    expect(insertRisk("ls \u009b2J")).toBe("control");
+    expect(insertRisk("ls\u0085pwd")).toBe("control");
+    expect(insertRisk("du -sh * | sort -h")).toBe("none");
+  });
+
+  it("refuses all of them at the prompt and writes nothing", async () => {
+    for (const text of ["ls\x1b[201~\r", "echo a\rrm -rf b", "printf \x1b[2J", "ls \u009b2J", "ls\u0085pwd"]) {
+      await expect(insertCommandAtPrompt(target, text)).resolves.toBe(false);
+    }
+    expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("refuses while a full-screen program is in front and types again once it exits", async () => {
+    let buffer: "normal" | "alternate" = "alternate";
+    const unregister = registerTerminalBufferProbe("k1", () => buffer);
+    try {
+      await expect(insertCommandAtPrompt(target, "uptime")).resolves.toBe(false);
+      expect(mocks.write).not.toHaveBeenCalled();
+      const toast = useUi.getState().toasts.at(-1);
+      expect(toast?.text).toContain("全屏程序");
+      expect(toast?.action?.label).toBe("复制命令");
+      buffer = "normal";
+      await expect(insertCommandAtPrompt(target, "uptime")).resolves.toBe(true);
+      expect(written()).toEqual([["k1", "uptime"]]);
+    } finally {
+      unregister();
+    }
+  });
+});
+
+describe("command shortcut availability", () => {
+  it("leaves block shortcuts to alternate-screen programs and to terminals without blocks", () => {
+    for (const action of ["previousPrompt", "nextPrompt", "copyLastOutput"] as const) {
+      expect(commandShortcutActive(action, { normalBuffer: true, blocks: true })).toBe(true);
+      expect(commandShortcutActive(action, { normalBuffer: false, blocks: true })).toBe(false);
+      expect(commandShortcutActive(action, { normalBuffer: true, blocks: false })).toBe(false);
+    }
+    expect(commandShortcutActive("generateCommand", { normalBuffer: true, blocks: false })).toBe(true);
+    expect(commandShortcutActive("generateCommand", { normalBuffer: false, blocks: true })).toBe(false);
+    expect(commandShortcutActive("commandPalette", { normalBuffer: false, blocks: false })).toBe(true);
+  });
+});
+
 describe("AI command prompt", () => {
+  it("offers copying instead of inserting a multi-line result", async () => {
+    mocks.generate.mockResolvedValue({ command: "cd /tmp\nls" });
+    const onInsert = vi.fn(async () => true);
+    const container = render(<AiCommandPrompt context={{}} target={target} onInsert={onInsert} onClose={vi.fn()} />);
+    await flush();
+    const input = container.querySelector<HTMLInputElement>("input")!;
+    setInputValue(input, "two steps");
+    pressEnter(input);
+    await waitFor(() => expect(container.querySelector("[data-testid='ai-command-result']")).not.toBeNull());
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toContain("复制命令");
+    expect(labels).not.toContain("填入终端");
+    pressEnter(input);
+    await flush();
+    expect(onInsert).not.toHaveBeenCalled();
+  });
+
   it("generates a command from the description and context, then inserts it on confirm", async () => {
     mocks.generate.mockResolvedValue({ command: "du -sh * | sort -h" });
     const onInsert = vi.fn(async () => true);

@@ -328,3 +328,32 @@ describe("XtermView app-level shortcut passthrough", () => {
     expect(handledByXterm({ key: "Y", code: "KeyY", ctrlKey: true, shiftKey: true })).toBe(true);
   });
 });
+
+describe("XtermView command block shortcuts", () => {
+  const blockChords: KeyboardEventInit[] = [
+    { key: "ArrowUp", code: "ArrowUp", ctrlKey: true, shiftKey: true },
+    { key: "ArrowDown", code: "ArrowDown", ctrlKey: true, shiftKey: true },
+    { key: "O", code: "KeyO", ctrlKey: true, shiftKey: true },
+  ];
+  const generateChord: KeyboardEventInit = { key: "G", code: "KeyG", ctrlKey: true, shiftKey: true };
+  const bufferOf = () => (harness.terminals[0] as unknown as { buffer: { active: { type: string } } }).buffer.active;
+
+  it("withholds them from the shell prompt of a terminal with command blocks", async () => {
+    await show({ sessionId: "session", tabId: "pending", onBlocks: () => undefined });
+    for (const chord of [...blockChords, generateChord]) expect(handledByXterm(chord)).toBe(false);
+  });
+
+  it("passes them to a full-screen program on the alternate screen", async () => {
+    await show({ sessionId: "session", tabId: "pending", onBlocks: () => undefined });
+    bufferOf().type = "alternate";
+    for (const chord of [...blockChords, generateChord]) expect(handledByXterm(chord)).toBe(true);
+    bufferOf().type = "normal";
+    expect(handledByXterm(blockChords[0])).toBe(false);
+  });
+
+  it("passes the block chords through in a terminal without command blocks (WinRM)", async () => {
+    await show({ sessionId: "session", tabId: "pending", winrm: true });
+    for (const chord of blockChords) expect(handledByXterm(chord)).toBe(true);
+    expect(handledByXterm(generateChord)).toBe(false);
+  });
+});

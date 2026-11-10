@@ -16,6 +16,27 @@ export interface CommandInsertTarget {
   productionEnvironment: string | null;
 }
 
+// Each mounted terminal reports which buffer is in front, keyed by its kernel tab id.
+const bufferProbes = new Map<string, () => "normal" | "alternate" | undefined>();
+
+export function registerTerminalBufferProbe(tabId: string, probe: () => "normal" | "alternate" | undefined): () => void {
+  bufferProbes.set(tabId, probe);
+  return () => {
+    if (bufferProbes.get(tabId) === probe) bufferProbes.delete(tabId);
+  };
+}
+
+function copyAction(command: string) {
+  return {
+    label: t("复制命令"),
+    onSelect: () => {
+      void copyText(command).catch((cause: unknown) => {
+        useUi.getState().pushToast("error", t("复制失败：{value}", { value: describeError(cause) }));
+      });
+    },
+  };
+}
+
 type WorkspaceSelection = { workspaces: Workspace[]; activeWorkspaceId: string | null };
 
 // activeTerminalTab is the terminal tab of the active pane in the active workspace, as terminalTarget() picks it.
@@ -57,14 +78,12 @@ export async function insertCommandAtPrompt(target: CommandInsertTarget, rawComm
     return false;
   }
   if (insertRisk(command) !== "none") {
-    pushToast("info", t("命令包含换行或控制字符，未填入终端"), {
-      label: t("复制命令"),
-      onSelect: () => {
-        void copyText(command).catch((cause: unknown) => {
-          useUi.getState().pushToast("error", t("复制失败：{value}", { value: describeError(cause) }));
-        });
-      },
-    });
+    pushToast("info", t("命令包含换行或控制字符，未填入终端"), copyAction(command));
+    return false;
+  }
+  // A full-screen program (vim, less, a pager or REPL) would take the text as keystrokes, not as a shell command.
+  if (bufferProbes.get(target.tabId)?.() === "alternate") {
+    pushToast("info", t("终端里正在运行全屏程序，未填入命令；请退出该程序后再试"), copyAction(command));
     return false;
   }
   if (target.productionEnvironment !== null) {
