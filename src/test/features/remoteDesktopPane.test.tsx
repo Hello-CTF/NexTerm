@@ -830,6 +830,18 @@ describe("RemoteDesktopPane", () => {
       expect(vi.mocked(client.sendKey).mock.calls.map((call) => call[0])).toEqual(["Backspace", "Backspace"]);
     });
 
+    it("says how many typed characters the remote desktop could not receive", async () => {
+      await mountPane();
+      const client = (await mocks.createClient.mock.results[0].value) as FakeClient;
+      vi.mocked(client.sendText).mockReturnValueOnce(1);
+      const input = document.querySelector<HTMLInputElement>("input[aria-label='远程键盘输入']")!;
+      await act(async () => {
+        input.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: "a\u{1F600}", bubbles: true }));
+      });
+      expect(client.sendText).toHaveBeenCalledWith("a\u{1F600}");
+      expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toBe("1 个字符无法发送到远程桌面，已跳过");
+    });
+
     it("offers Enter and Backspace on the key bar", async () => {
       await mountPane();
       const labels = [...document.querySelectorAll("[data-testid='remote-keys-bar'] button")].map((button) => button.textContent);

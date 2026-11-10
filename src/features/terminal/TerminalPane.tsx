@@ -2997,9 +2997,11 @@ export function TerminalPane({
                     const reason =
                       failure === "control"
                         ? tr("目录包含控制字符")
-                        : failure === "unsupported"
-                          ? tr("当前终端 Shell 暂不支持自动切换目录")
-                          : tr("无法确认当前终端 Shell");
+                        : failure === "unquotable"
+                          ? tr("目录包含 cmd 无法安全引用的字符（\" 或 %）")
+                          : failure === "unc"
+                            ? tr("cmd 不能把网络路径设为当前目录")
+                            : tr("无法确认当前终端 Shell");
                     void copyText(pending)
                       .then(() => {
                         pushToast(

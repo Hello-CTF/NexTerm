@@ -390,6 +390,7 @@
   "RDCleanPath 请求缺少 X.224 连接请求": "La requête RDCleanPath ne contient pas de demande de connexion X.224",
   "RDP 代理请求无效": "Requête de proxy RDP invalide",
   "RDP 服务器不支持 TLS/NLA 安全层（仅支持标准 RDP 安全），无法连接": "Le serveur RDP ne prend pas en charge la couche de sécurité TLS/NLA (seule la sécurité RDP standard est prise en charge), connexion impossible",
+  "RDP 服务器只支持 TLS 1.0/1.1。若这是无法升级的旧系统（如未打补丁的 Windows 7 或 Server 2008 R2），可在资产设置中开启「允许旧版 TLS」": "Le serveur RDP ne prend en charge que TLS 1.0/1.1. S'il s'agit d'un ancien système impossible à mettre à jour (comme Windows 7 ou Server 2008 R2 sans correctifs), activez « Autoriser l'ancien TLS » dans les paramètres de l'actif",
   "RDP 服务器没有提供证书": "Le serveur RDP n'a pas fourni de certificat",
   "RDP 服务器没有返回 X.224 连接确认": "Le serveur RDP n'a pas renvoyé de confirmation de connexion X.224",
   "RDP 服务器返回了无效的 TPKT 报文": "Le serveur RDP a renvoyé un paquet TPKT invalide",

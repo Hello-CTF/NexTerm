@@ -198,10 +198,18 @@ describe("directory command generation", () => {
     });
   });
 
-  it("does not generate commands for cmd or unknown shells", () => {
-    for (const path of ["C:/Users/test", "//server/share/dir"]) {
-      expect(directoryCommandFor(path, "cmd")).toEqual({ command: null, failure: "unsupported" });
+  it("switches drive and directory in cmd and refuses UNC paths", () => {
+    expect(directoryCommandFor("D:/Project [x]/a & b", "cmd")).toEqual({ command: 'cd /d "D:\\Project [x]\\a & b"', failure: null });
+    expect(directoryCommandFor("//server/share/dir", "cmd")).toEqual({ command: null, failure: "unc" });
+  });
+
+  it("refuses cmd paths that double quotes cannot protect", () => {
+    for (const path of ['C:/a"b', "C:/100%PATH%"]) {
+      expect(directoryCommandFor(path, "cmd")).toEqual({ command: null, failure: "unquotable" });
     }
+  });
+
+  it("does not generate commands for unknown shells", () => {
     expect(directoryCommandFor("D:/Project", "unknown")).toEqual({
       command: null,
       failure: "unknown",

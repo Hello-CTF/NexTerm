@@ -29,6 +29,16 @@ interface WasmClipboardData {
 interface WasmSession {
   onClipboardPaste(content: WasmClipboardData): Promise<void>;
   invokeExtension?(ext: unknown): unknown;
+  applyInputs?(transaction: WasmInputTransaction): void;
+}
+
+interface WasmInputTransaction {
+  addEvent(event: unknown): void;
+}
+
+interface WasmInputApi {
+  InputTransaction: new () => WasmInputTransaction;
+  DeviceEvent: { unicodePressed(unicode: string): unknown; unicodeReleased(unicode: string): unknown };
 }
 
 interface FileTransferLike {
@@ -201,6 +211,7 @@ export class RdpClient implements RemoteClient {
   private ui: UserInteraction | null = null;
   private wasmSession: WasmSession | null = null;
   private clipboardDataCtor: (new () => WasmClipboardData) | null = null;
+  private inputApi: WasmInputApi | null = null;
   private remoteClipboard: WasmClipboardData | null = null;
   // Files the remote side copied last, as its file channel listed them; saved on the toolbar's fetch.
   private remoteFiles: RemoteFileEntry[] | null = null;
@@ -334,6 +345,11 @@ export class RdpClient implements RemoteClient {
       return rawBackend;
     }
     this.clipboardDataCtor = RawClipboardData;
+    const RawInputTransaction = rawBackend?.InputTransaction as WasmInputApi["InputTransaction"] | undefined;
+    const RawDeviceEvent = rawBackend?.DeviceEvent as Partial<WasmInputApi["DeviceEvent"]> | undefined;
+    if (typeof RawInputTransaction === "function" && typeof RawDeviceEvent?.unicodePressed === "function" && typeof RawDeviceEvent.unicodeReleased === "function") {
+      this.inputApi = { InputTransaction: RawInputTransaction, DeviceEvent: RawDeviceEvent as WasmInputApi["DeviceEvent"] };
+    }
     const FileTransferCtor = rdp.RdpFileTransferProvider as (new () => FileTransferLike) | undefined;
     // eslint-disable-next-line @typescript-eslint/no-this-alias -- needed inside the SessionBuilder constructor function
     const client = this;
@@ -653,20 +669,38 @@ export class RdpClient implements RemoteClient {
     }
   }
 
-  sendText(text: string): void {
-    if (this.viewOnly || !this.connected || !this.ui) return;
+  sendText(text: string): number {
+    if (this.viewOnly || !this.connected || !this.ui) return 0;
     if (!this.hasFocus()) this.focus();
+    let skipped = 0;
     this.ui.setKeyboardUnicodeMode(true);
     try {
       for (const char of text) {
-        if (char.length !== 1) continue;
-        for (const type of ["keydown", "keyup"]) {
-          window.dispatchEvent(new KeyboardEvent(type, { key: char, code: "", bubbles: true, cancelable: true, composed: true }));
+        if (char.length === 1) {
+          for (const type of ["keydown", "keyup"]) {
+            window.dispatchEvent(new KeyboardEvent(type, { key: char, code: "", bubbles: true, cancelable: true, composed: true }));
+          }
+        } else if (!this.sendUnicodeDirect(char)) {
+          skipped += 1;
         }
       }
     } finally {
       this.ui.setKeyboardUnicodeMode(false);
     }
+    return skipped;
+  }
+
+  // The component only types keys whose name is one UTF-16 code unit, so a character outside the Basic Multilingual
+  // Plane (an emoji, say) goes to the session directly; IronRDP sends it as its two surrogate code units.
+  private sendUnicodeDirect(char: string): boolean {
+    const session = this.wasmSession;
+    const api = this.inputApi;
+    if (!api || typeof session?.applyInputs !== "function") return false;
+    const transaction = new api.InputTransaction();
+    transaction.addEvent(api.DeviceEvent.unicodePressed(char));
+    transaction.addEvent(api.DeviceEvent.unicodeReleased(char));
+    session.applyInputs(transaction);
+    return true;
   }
 
   releaseAllKeys(): void {

@@ -68,6 +68,21 @@ describe("remote desktop options", () => {
     expect(writeRemoteDesktopOptions("rdp", { clipboardAutoSync: false, commandAsCtrl: false }, readRemoteDesktopOptions("rdp", undefined))).toEqual({});
   });
 
+  it("drops the local shell and start directory when a local asset becomes another kind", () => {
+    expect(optionsForKindChange("local", "ssh", { shell: "pwsh", cwd: "C:/work", icon: "server" })).toEqual({ icon: "server" });
+    expect(optionsForKindChange("local", "local", { shell: "pwsh" })).toEqual({ shell: "pwsh" });
+  });
+
+  it("stores legacy TLS only for RDP and only when it is on", () => {
+    expect(readRemoteDesktopOptions("rdp", undefined).legacyTLS).toBe(false);
+    const on = writeRemoteDesktopOptions("rdp", {}, { ...readRemoteDesktopOptions("rdp", undefined), legacyTLS: true });
+    expect(on).toEqual({ legacyTLS: true });
+    expect(readRemoteDesktopOptions("rdp", on).legacyTLS).toBe(true);
+    expect(writeRemoteDesktopOptions("rdp", on, readRemoteDesktopOptions("rdp", undefined))).toEqual({});
+    expect(readRemoteDesktopOptions("vnc", { legacyTLS: true }).legacyTLS).toBe(false);
+    expect(writeRemoteDesktopOptions("vnc", { legacyTLS: true }, readRemoteDesktopOptions("vnc", undefined))).toEqual({});
+  });
+
   it("reads a fixed resolution only when both sides are set", () => {
     expect(readRemoteDesktopOptions("rdp", { width: 1280, height: 720 })).toMatchObject({ resolution: "fixed", width: 1280, height: 720 });
     expect(readRemoteDesktopOptions("rdp", { width: 1280 }).resolution).toBe("follow");

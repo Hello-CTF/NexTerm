@@ -463,6 +463,8 @@ export interface LiveTabInfo {
   durable?: boolean;
   // The helper's attention state of a durable tab; absent when none is reported.
   state?: SessionAttentionState;
+  // The tab's command language as the backend knows it now; an SSH tab can learn it after it opened.
+  shell?: TerminalShell;
 }
 
 export type SessionAttentionState = "running" | "needs_me" | "just_finished" | "idle" | "exited";

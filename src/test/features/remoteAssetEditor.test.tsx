@@ -202,6 +202,27 @@ describe("AssetEditor remote desktop kinds", () => {
     expect(createdPayload()).toMatchObject({ kind: "rdp", options: { clipboardAutoSync: false, commandAsCtrl: false } });
   });
 
+  it("offers legacy TLS only for RDP, warns while it is on, and saves it", async () => {
+    mountEditor();
+    chooseKind("RDP");
+    await flush();
+    fillRequiredFields("win7");
+    expect(field("允许旧版 TLS（1.0/1.1）").checked).toBe(false);
+    expect(mounted!.container.querySelector('[role="note"]')).toBeNull();
+    click(field("允许旧版 TLS（1.0/1.1）"));
+    await flush();
+    expect(mounted!.container.querySelector('[role="note"]')?.textContent).toContain("不再安全");
+    await save();
+    expect(createdPayload()).toMatchObject({ kind: "rdp", options: { legacyTLS: true } });
+  });
+
+  it("does not offer legacy TLS for VNC", async () => {
+    mountEditor();
+    chooseKind("VNC");
+    await flush();
+    expect(mounted!.container.querySelector('input[aria-label="允许旧版 TLS（1.0/1.1）"]')).toBeNull();
+  });
+
   it("saves an RDP asset with its domain, fixed resolution and options", async () => {
     mountEditor();
     chooseKind("RDP");
