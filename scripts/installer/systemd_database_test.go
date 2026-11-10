@@ -125,3 +125,37 @@ func TestSystemdRollbackNeverDeletesReplacedDatabase(t *testing.T) {
 	}
 	expect(t, found, "the database from the failed first rollback was deleted")
 }
+
+func TestSystemdLegacyUpgradeWithoutEnvSnapshotsDefaultDatabase(t *testing.T) {
+	s := newSandbox(t, stubOptions{})
+	seedLegacyUnit(s, legacyUnitWithoutDataDir())
+	s.write("var/lib/nexterm/data/data.db", dbBeforeUpgrade)
+	s.write("var/lib/nexterm/data/data.db-wal", walBeforeUpgrade)
+	got := s.mustInstall(s.payload("v2"), installOptions{active: "nexterm-server.service"})
+	expect(t, s.read("opt/nexterm/.rollback/db/nexterm/data.db") == dbBeforeUpgrade, "default database not snapshotted: %s", got.stdout)
+	expect(t, s.read("opt/nexterm/.rollback/db/nexterm/data.db-wal") == walBeforeUpgrade, "WAL not snapshotted")
+	expect(t, s.exists("opt/nexterm/.rollback/db/complete"), "snapshot not marked complete")
+}
+
+func TestSystemdLegacyUpgradeWithoutEnvHonoursUnitDataDir(t *testing.T) {
+	s := newSandbox(t, stubOptions{})
+	seedLegacyUnit(s, legacyUnitWith("--data-dir /var/lib/nexterm", "--data-dir /srv/nx"))
+	s.write("srv/nx/data.db", dbBeforeUpgrade)
+	s.mustInstall(s.payload("v2"), installOptions{active: "nexterm-server.service"})
+	expect(t, s.read("opt/nexterm/.rollback/db/nexterm/data.db") == dbBeforeUpgrade, "unit data dir database not snapshotted")
+}
+
+func TestSystemdLegacyUpgradeWithoutEnvNotesMissingDatabase(t *testing.T) {
+	s := newSandbox(t, stubOptions{})
+	seedLegacyUnit(s, legacyUnitWithoutDataDir())
+	got := s.mustInstall(s.payload("v2"), installOptions{})
+	expect(t, strings.Contains(got.stdout, "NOTE: no SQLite database found"), "stdout: %s", got.stdout)
+	expect(t, !s.exists("opt/nexterm/.rollback/db/nexterm"), "nothing to snapshot")
+}
+
+// legacyUnitWithoutDataDir is a legacy inline-flag unit that relies on the
+// server default <WorkingDirectory>/data.
+func legacyUnitWithoutDataDir() string {
+	unit := strings.Replace(legacyUnit, "  --data-dir /var/lib/nexterm \\\n", "", 1)
+	return strings.Replace(unit, "EnvironmentFile=-/etc/nexterm/nexterm.env", "EnvironmentFile=-/etc/nexterm/nexterm.env\nWorkingDirectory=/var/lib/nexterm", 1)
+}

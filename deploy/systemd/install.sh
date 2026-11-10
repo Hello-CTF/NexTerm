@@ -899,15 +899,26 @@ backup_current() {
 # configuration opens, resolved like the server resolves it. It returns 2
 # for a remote database backend and 1 when nothing can be resolved.
 service_db_path() {
-  local name="$1" env_file="$ETC_DIR/$1.env" db data_dir wd
-  [ -f "$env_file" ] || return 1
-  db="$(env_get "$env_file" NEXTERM_DB)" || return 1
-  case "$(printf '%s' "$db" | tr '[:upper:]' '[:lower:]')" in
-    ""|sqlite) ;;
-    *) return 2 ;;
-  esac
-  data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)" || return 1
-  if [ "$name" = "nexterm" ]; then wd="$WORKING_DIR_NEXTERM"; else wd="$WORKING_DIR_ONLYSERVER"; fi
+  local name="$1" env_file="$ETC_DIR/$1.env" db data_dir="" wd unit file line
+  if [ "$name" = "nexterm" ]; then wd="$WORKING_DIR_NEXTERM"; unit="$SERVER_UNIT"; else wd="$WORKING_DIR_ONLYSERVER"; unit="$ONLYSERVER_UNIT"; fi
+  if [ -f "$env_file" ]; then
+    db="$(env_get "$env_file" NEXTERM_DB)" || return 1
+    case "$(printf '%s' "$db" | tr '[:upper:]' '[:lower:]')" in
+      ""|sqlite) ;;
+      *) return 2 ;;
+    esac
+    data_dir="$(env_get "$env_file" NEXTERM_DATA_DIR)" || return 1
+  else
+    # A legacy install has no env file yet: use what its unit passes to the
+    # server, else the server defaults (<working dir>/data).
+    file="$(pick_effective_unit "$unit" "$ROOT_PREFIX" || true)"
+    if [ -n "$file" ]; then
+      wd="$(unit_working_dir "$file")" || return 1
+      while IFS= read -r line; do
+        case "$line" in NEXTERM_DATA_DIR=*) data_dir="${line#NEXTERM_DATA_DIR=}" ;; esac
+      done < <(capture_legacy_values "$file" 2>/dev/null || true)
+    fi
+  fi
   [ -n "$data_dir" ] || data_dir="$(join_path "$wd" data)"
   resolve_path "$(join_path "$data_dir" data.db)" "$wd"
 }
@@ -930,6 +941,9 @@ snapshot_databases() {
     if [ "$rc" -eq 2 ]; then
       log "NOTE: ${ETC_DIR#$ROOT_PREFIX}/$name.env uses a remote database; it is not snapshotted and --rollback cannot undo its schema changes (dump it with pg_dump or mysqldump first)"
       continue
+    fi
+    if [ "$rc" -eq 0 ] && [ ! -f "$db" ] && [ ! -f "$ETC_DIR/$name.env" ] && [ "$name" = "nexterm" ]; then
+      log "NOTE: no SQLite database found at ${db#$ROOT_PREFIX}; nothing to snapshot"
     fi
     [ "$rc" -eq 0 ] && [ -f "$db" ] || continue
     case " $seen " in *" $db "*) continue ;; esac
