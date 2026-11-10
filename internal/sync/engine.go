@@ -200,6 +200,8 @@ type Engine struct {
 	sessionMu sync.Mutex
 	session   *remoteSession
 	pending   map[string]*pendingLinkLogin
+	// device is the in-memory copy of the saved login device token.
+	device *persistedDevice
 
 	transcriptCacheMu sync.RWMutex
 	transcriptCache   map[string]transcriptCacheEntry
@@ -342,7 +344,7 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 	if cached != nil {
 		e.dropSession(cached.key)
 	}
-	client, err := newRemoteClient(config)
+	client, err := e.newLoginClient(ctx, config)
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +364,7 @@ func (e *Engine) ensureSession(ctx context.Context, config RemoteConfig) (*remot
 // establishSession completes session onboarding after the password channel has passed: fetch the identity and DEK envelope, unwrap the DEK,
 // cache the session, and persist it as a durable session.
 func (e *Engine) establishSession(ctx context.Context, config RemoteConfig, client *remoteClient, password string) (*remoteSession, error) {
+	e.rememberDevice(ctx, config, client.deviceToken)
 	userID, err := client.me(ctx)
 	if err != nil {
 		return nil, err

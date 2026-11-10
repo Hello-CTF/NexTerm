@@ -225,6 +225,51 @@ describe("web /rpc CSRF transport", () => {
     expect(authApi.getCsrfToken()).toBe("csrf-2");
   });
 
+  it("retries with a refreshed token when /auth/me reports the same login session", async () => {
+    useWebTransport();
+    let rpcAttempts = 0;
+    const calls = captureFetch((url) => {
+      if (url.includes("/auth/me")) {
+        return {
+          status: 200,
+          body: JSON.stringify({ user: { id: "u-1", username: "alice" }, csrf_token: "csrf-2", session_tag: "tag-1" }),
+        };
+      }
+      rpcAttempts += 1;
+      if (rpcAttempts === 1) return { status: 403, body: RPC_CSRF_FAILURE };
+      return { status: 200, body: JSON.stringify({ ok: true, data: [{ id: "a-1" }] }) };
+    });
+    const { commands, authApi } = await importWeb();
+    authApi.setCsrfToken("csrf-1", "tag-1");
+
+    await expect(commands.assetApi.list()).resolves.toEqual([{ id: "a-1" }]);
+
+    const rpcCalls = calls.filter((call) => call.url === "/rpc");
+    expect(rpcCalls.map((call) => call.headers["X-NexTerm-CSRF"])).toEqual(["csrf-1", "csrf-2"]);
+    expect(authApi.getCsrfToken()).toBe("csrf-2");
+  });
+
+  it("does not replay an old RPC when /auth/me reports a different session tag", async () => {
+    useWebTransport();
+    let rpcAttempts = 0;
+    const calls = captureFetch((url) => {
+      if (url.includes("/auth/me")) {
+        return {
+          status: 200,
+          body: JSON.stringify({ user: { id: "u-1", username: "alice" }, csrf_token: "csrf-2", session_tag: "tag-2" }),
+        };
+      }
+      rpcAttempts += 1;
+      if (rpcAttempts === 1) return { status: 403, body: RPC_CSRF_FAILURE };
+      return { status: 200, body: JSON.stringify({ ok: true, data: [] }) };
+    });
+    const { commands, authApi } = await importWeb();
+    authApi.setCsrfToken("csrf-1", "tag-1");
+
+    await expect(commands.assetApi.list()).rejects.toMatchObject({ code: "account_changed" });
+    expect(calls.filter((call) => call.url === "/rpc")).toHaveLength(1);
+  });
+
   it("does not retry again when the retry still returns CSRF 403", async () => {
     useWebTransport();
     const calls = captureFetch((url) => {

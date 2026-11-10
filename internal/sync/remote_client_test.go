@@ -127,3 +127,44 @@ func TestRemoteClientNamesAWebPageInsteadOfJSON(t *testing.T) {
 		t.Fatalf("ListSessions error = %v, want it to name the web page", err)
 	}
 }
+
+// A held CSRF token goes stale when the server's CSRF key changes while the
+// session stays valid; the client re-reads the token once and resends the
+// write with its original body.
+func TestRemoteClientRefreshesStaleCSRFTokenOnce(t *testing.T) {
+	var pushes atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/auth/me":
+			_, _ = io.WriteString(w, `{"user":{"id":"user-1"},"csrf_token":"fresh"}`)
+		case "/sync/v2/push":
+			pushes.Add(1)
+			cookies := r.Header.Values("Cookie")
+			if len(cookies) != 1 || cookies[0] != sessionCookieName+"=cookie" {
+				t.Errorf("push cookies = %q", cookies)
+			}
+			if r.Header.Get(csrfHeaderName) != "fresh" {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"ok":false,"error":{"code":"forbidden","message":"CSRF 校验失败：页面已过期，请刷新后重试"}}`)
+				return
+			}
+			var request PushRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.KnownHead != "head" {
+				t.Errorf("retried push body = %+v, %v", request, err)
+			}
+			_ = json.NewEncoder(w).Encode(PushResponse{Protocol: ProtocolVersion, Head: "next", MaxSeq: 1, Applied: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := &remoteClient{base: server.URL, cookieToken: "cookie", csrfToken: "stale"}
+	response, err := client.push(context.Background(), "head", []WireObject{{ID: "obj-1", Blob: []byte("x")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Applied != 1 || pushes.Load() != 2 || client.csrfToken != "fresh" {
+		t.Fatalf("push response = %+v pushes = %d token = %q", response, pushes.Load(), client.csrfToken)
+	}
+}

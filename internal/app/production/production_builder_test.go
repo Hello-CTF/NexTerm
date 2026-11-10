@@ -427,7 +427,11 @@ func newProductionChannelFixture(t *testing.T) *productionChannelFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return productionChannelAccount{userID: user.ID, cookie: token, csrf: remoteTestCSRF(accountSession.ID)}
+		csrf, err := accounts.CSRFToken(accountSession.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return productionChannelAccount{userID: user.ID, cookie: token, csrf: csrf}
 	}
 	fixture := &productionChannelFixture{production: application, u1: newAccount("u1"), u2: newAccount("u2")}
 	transport, err := server.New(server.Config{

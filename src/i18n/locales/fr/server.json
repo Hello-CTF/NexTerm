@@ -1166,6 +1166,7 @@
   "前端性能数据已达上限": "Les données de performance du frontend ont atteint la limite",
   "加密私钥缺少可读取的公钥部分或同名 .pub 文件，无法计算指纹，已跳过": "La clé privée chiffrée n'a ni partie publique lisible ni fichier .pub correspondant pour calculer l'empreinte ; ignorée",
   "加密错误: ": "Erreur de chiffrement : ",
+  "加密错误: CSRF 密钥生成失败": "Erreur de chiffrement : échec de la génération de la clé CSRF",
   "加密错误: DPAPI protect 失败: ": "Erreur de chiffrement : échec de DPAPI protect : ",
   "加密错误: DPAPI unprotect 失败: ": "Erreur de chiffrement : échec de DPAPI unprotect : ",
   "加密错误: DPAPI 信封为空": "Erreur de chiffrement : l'enveloppe DPAPI est vide",

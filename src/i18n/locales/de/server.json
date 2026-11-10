@@ -1166,6 +1166,7 @@
   "前端性能数据已达上限": "Die Frontend-Leistungsdaten haben das Limit erreicht",
   "加密私钥缺少可读取的公钥部分或同名 .pub 文件，无法计算指纹，已跳过": "Der verschlüsselte private Schlüssel hat keinen lesbaren öffentlichen Teil und keine passende .pub-Datei für den Fingerabdruck; übersprungen",
   "加密错误: ": "Verschlüsselungsfehler: ",
+  "加密错误: CSRF 密钥生成失败": "Verschlüsselungsfehler: Erzeugen des CSRF-Schlüssels fehlgeschlagen",
   "加密错误: DPAPI protect 失败: ": "Verschlüsselungsfehler: DPAPI protect fehlgeschlagen: ",
   "加密错误: DPAPI unprotect 失败: ": "Verschlüsselungsfehler: DPAPI unprotect fehlgeschlagen: ",
   "加密错误: DPAPI 信封为空": "Verschlüsselungsfehler: DPAPI-Umschlag ist leer",

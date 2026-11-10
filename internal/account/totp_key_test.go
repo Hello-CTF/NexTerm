@@ -99,7 +99,12 @@ func TestTOTPRebindReverify(t *testing.T) {
 		t.Fatalf("wrong password accepted: %v", err)
 	}
 
-	// The current TOTP code can be used to rebind; confirming invalidates all old recovery codes and issues new ones.
+	// The setup confirmation code cannot be replayed as the rebind credential.
+	if _, _, err := a.BeginTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, *now/1000)); err == nil {
+		t.Fatal("replayed confirmation code accepted for rebind")
+	}
+	// A current TOTP code can be used to rebind; confirming invalidates all old recovery codes and issues new ones.
+	*now += totpPeriodSeconds * 1000
 	secret2, _, err := a.BeginTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, *now/1000))
 	if err != nil {
 		t.Fatal(err)

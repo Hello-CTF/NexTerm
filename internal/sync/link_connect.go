@@ -47,7 +47,7 @@ func (e *Engine) Connect(ctx context.Context, config RemoteConfig) (LinkConnectR
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 	key := remoteConfigKey(config)
-	client, err := newRemoteClient(config)
+	client, err := e.newLoginClient(ctx, config)
 	if err != nil {
 		return LinkConnectResult{}, err
 	}

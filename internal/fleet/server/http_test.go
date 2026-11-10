@@ -57,9 +57,13 @@ func (f *httpFixture) session(t *testing.T, user *account.User) *httpSession {
 	if err != nil {
 		t.Fatal(err)
 	}
+	csrf, err := f.accounts.CSRFToken(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return &httpSession{
 		cookie: &http.Cookie{Name: sessionCookieName, Value: token},
-		csrf:   fleetCSRFToken(session.ID),
+		csrf:   csrf,
 		user:   user,
 	}
 }

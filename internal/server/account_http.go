@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -245,6 +247,10 @@ type accountInitRequest struct {
 type accountSessionView struct {
 	User      accountUserView `json:"user"`
 	CSRFToken string          `json:"csrf_token"`
+	// SessionTag identifies the login session without revealing its ID, so a
+	// client can tell a refreshed CSRF token for the same session from a new
+	// session.
+	SessionTag string `json:"session_tag"`
 	// MFARequired delivers the mfa_required policy with the session, letting the frontend gate unbound sessions into forced binding.
 	MFARequired bool `json:"mfa_required"`
 }
@@ -260,12 +266,24 @@ func (s *Server) newAccountSessionView(r *http.Request, user *account.User, sess
 		return accountSessionView{}, err
 	}
 	view.MFAEnabled = enabled
-	return accountSessionView{User: view, CSRFToken: accountCSRFToken(sessionID), MFARequired: required}, nil
+	csrfToken, err := s.accounts.CSRFToken(sessionID)
+	if err != nil {
+		return accountSessionView{}, err
+	}
+	return accountSessionView{User: view, CSRFToken: csrfToken, SessionTag: accountSessionTag(sessionID), MFARequired: required}, nil
+}
+
+// accountSessionTag is a one-way tag of the session ID. Unlike the CSRF token
+// it does not depend on a server key, so it stays the same when that key
+// changes.
+func accountSessionTag(sessionID string) string {
+	digest := sha256.Sum256([]byte("nexterm-session-tag\x00" + sessionID))
+	return hex.EncodeToString(digest[:16])
 }
 
 // accountLoginGate, when non-nil, runs after a successful Authenticate and
-// before the epoch capture. Tests use it to interpose a password change
-// mid-login.
+// before the epoch capture, outside the revocation lock. Tests use it to
+// interpose a password change mid-login.
 var accountLoginGate func(ctx context.Context, user *account.User)
 
 // SetAccountLoginGateForTest installs accountLoginGate and returns a restore
@@ -285,6 +303,11 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
 		return
 	}
+	// Stamp the login first so a store error leaves no orphaned session behind.
+	if err := s.accounts.RecordLogin(r.Context(), user); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
 		ClientName: sessionClientName(r), Origin: clientIP(r),
 	})
@@ -292,6 +315,7 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountFailure(w, err)
 		return
 	}
+	s.setLoginDeviceCookie(w, r, user)
 	view, err := s.newAccountSessionView(r, user, session.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
@@ -384,26 +408,49 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := loginThrottleKey(r, request.Username)
-	if !s.accountThrottle.login.Allow(key) {
+	ipKey := ipThrottleKey(r, "login-ip")
+	userKey := loginUserThrottleKey(request.Username)
+	// Every bucket is checked before any spends an attempt, so a request one
+	// bucket refuses costs the others nothing. A client holding a login device
+	// token for this account is exempt from the per-username backoff, which
+	// only exists to slow guessing spread over many addresses, and from the
+	// shared overflow guards of full tables; its own guards still apply.
+	var admitted bool
+	if s.loginDeviceKnown(r, request.Username) {
+		admitted = s.accountThrottle.loginIP.PeekOwn(ipKey) && s.accountThrottle.login.PeekOwn(key) &&
+			s.accountThrottle.loginIP.AllowOwn(ipKey) && s.accountThrottle.login.AllowOwn(key)
+	} else {
+		admitted = s.accountThrottle.loginIP.Peek(ipKey) && s.accountThrottle.login.Peek(key) && s.accountThrottle.loginUser.Peek(userKey) &&
+			s.accountThrottle.loginIP.Allow(ipKey) && s.accountThrottle.login.Allow(key)
+	}
+	if !admitted {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
-	// The whole authentication flow runs under the revocation lock: the epoch
-	// is captured at the authentication boundary, so a password change or
-	// revocation that lands after it fails the issuance check closed instead of
-	// signing a new session with stale credentials.
-	s.accountRevocationMu.Lock()
-	defer s.accountRevocationMu.Unlock()
-	user, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
+	// The password hash is verified outside the revocation lock so slow key
+	// derivation does not serialize every login with revocations. The lock is
+	// taken afterwards and the account is re-read: a password change, reset or
+	// disable that landed after verification fails the login closed, and one
+	// that lands after the epoch capture fails the issuance epoch check.
+	authenticated, err := s.accounts.Authenticate(r.Context(), request.Username, request.Password)
 	if err != nil {
 		s.accountThrottle.login.RecordFailure(key)
+		s.accountThrottle.loginIP.RecordFailure(ipKey)
+		s.accountThrottle.loginUser.RecordFailure(userKey)
 		writeAccountFailure(w, err)
 		return
 	}
 	if accountLoginGate != nil {
-		accountLoginGate(r.Context(), user)
+		accountLoginGate(r.Context(), authenticated)
 	}
-	epoch := s.accounts.Epoch(user.ID)
+	epoch := s.accounts.Epoch(authenticated.ID)
+	s.accountRevocationMu.Lock()
+	defer s.accountRevocationMu.Unlock()
+	user, err := s.accounts.ConfirmAuthenticated(r.Context(), authenticated)
+	if err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
@@ -419,6 +466,8 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
+	// The per-username streak is left alone: one success must not let an
+	// attacker who shares the account's name restart guessing.
 	s.accountThrottle.login.RecordSuccess(key)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }

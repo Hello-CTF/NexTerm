@@ -91,7 +91,7 @@ func TestLoginThrottleCapacityBoundedAndEvicts(t *testing.T) {
 
 	for i := 0; i < total; i++ {
 		key := "user:flood-" + strconv.Itoa(i)
-		throttle.guard(key, *now)
+		throttle.Allow(key)
 	}
 	if len(throttle.entries) > loginGuardMaxEntries {
 		t.Fatalf("entries=%d exceed hard cap after re-touch", len(throttle.entries))
@@ -112,5 +112,81 @@ func TestLoginThrottleCapacityBoundedAndEvicts(t *testing.T) {
 	}
 	if idle != 0 {
 		t.Fatalf("idle entries linger: %d", idle)
+	}
+}
+
+func testPolicyThrottle(policy ThrottlePolicy) (*LoginThrottle, *time.Time) {
+	now := time.Unix(1_700_000_000, 0)
+	throttle := NewLoginThrottleWithPolicy(policy)
+	throttle.now = func() time.Time { return now }
+	return throttle, &now
+}
+
+// The per-username bucket counts failures only, tolerates a streak before
+// backing off, caps the backoff short, and forgets the streak after a quiet
+// period.
+func TestLoginUserThrottlePolicyBacksOffWithShortCap(t *testing.T) {
+	policy := LoginUserThrottlePolicy
+	throttle, now := testPolicyThrottle(policy)
+	key := "login-user|alice"
+	for i := 0; i < 1000; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d without failures refused", i+1)
+		}
+	}
+	if len(throttle.entries) != 0 {
+		t.Fatalf("attempts without failures created %d guards", len(throttle.entries))
+	}
+	for i := 0; i < policy.FreeFailures; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d refused within the free streak", i+1)
+		}
+		throttle.RecordFailure(key)
+	}
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused right after the free streak")
+	}
+	throttle.RecordFailure(key)
+	if throttle.Allow(key) {
+		t.Fatal("failure past the free streak did not back off")
+	}
+	for i := 0; i < 20; i++ {
+		*now = now.Add(policy.BackoffMax)
+		if !throttle.Allow(key) {
+			t.Fatalf("round %d still refused after the backoff cap", i)
+		}
+		throttle.RecordFailure(key)
+	}
+	*now = now.Add(policy.BackoffMax + policy.FailureDecay)
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused after the streak decayed")
+	}
+	throttle.RecordFailure(key)
+	if !throttle.Allow(key) {
+		t.Fatal("decayed streak still backs off on the first new failure")
+	}
+}
+
+func TestLoginIPThrottlePolicyAdmitsMoreThanPerCredential(t *testing.T) {
+	policy := LoginIPThrottlePolicy
+	throttle, now := testPolicyThrottle(policy)
+	key := "login-ip|192.0.2.7"
+	for i := 0; i < policy.FreeFailures; i++ {
+		if !throttle.Allow(key) {
+			t.Fatalf("attempt %d refused within the free streak", i+1)
+		}
+		throttle.RecordFailure(key)
+		*now = now.Add(2 * time.Second)
+	}
+	if !throttle.Allow(key) {
+		t.Fatal("attempt refused right after the free streak")
+	}
+	throttle.RecordFailure(key)
+	if throttle.Allow(key) {
+		t.Fatal("address past the free streak did not back off")
+	}
+	*now = now.Add(policy.BackoffBase)
+	if !throttle.Allow(key) {
+		t.Fatal("address still refused after the first backoff")
 	}
 }

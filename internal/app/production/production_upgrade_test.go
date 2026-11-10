@@ -81,7 +81,9 @@ func TestProductionUpgradePreservesLegacyAccountAndSecretsDatabase(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := accounts.ConfirmTOTPSetup(ctx, admin.ID, remoteTestTOTPCode(t, totpSecret, time.Now())); err != nil {
+	// Confirm with the previous step's code: accepted codes are single-use, so the
+	// current step stays free for the login that follows.
+	if _, err := accounts.ConfirmTOTPSetup(ctx, admin.ID, remoteTestTOTPCode(t, totpSecret, time.Now().Add(-30*time.Second))); err != nil {
 		t.Fatal(err)
 	}
 

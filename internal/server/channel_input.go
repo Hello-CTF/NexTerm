@@ -112,7 +112,12 @@ func (s *Server) channelInputReader(r *http.Request, connection *websocket.Conn,
 		req.Method = http.MethodPost
 		req.Header = req.Header.Clone()
 		if identity != nil {
-			req.Header.Set(csrfHeaderName, accountCSRFToken(identity.SessionID))
+			token, err := s.accounts.CSRFToken(identity.SessionID)
+			if err != nil {
+				_ = connection.CloseNow()
+				return
+			}
+			req.Header.Set(csrfHeaderName, token)
 		}
 		recorder := &statusRecorder{header: http.Header{}}
 		handler.ServeHTTP(recorder, req)

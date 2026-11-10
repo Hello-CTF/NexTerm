@@ -69,7 +69,7 @@ func newAccountExecLifecycleFixture(t *testing.T, batches *execbatch.Service) *a
 	config.Dispatcher = dispatcher
 	config.Options.Auth = AuthOn
 	config.Options.Listen = "127.0.0.1:0"
-	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	accounts := account.New(database.GORM(), account.WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")), withTestTOTPClock())
 	config.Accounts = accounts
 	config.AccountCleanup = func(ctx context.Context, ownerID, cleanupID string, sessionIDs ...string) error {
 		batches.CancelOwner(ctx, ownerID, cleanupID, nil, sessionIDs...)

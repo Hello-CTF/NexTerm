@@ -155,6 +155,32 @@ func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 		t.Fatalf("untrusted Origin status = %d", response.StatusCode)
 	}
 
+	// By default only the server's own origin is admitted, including other
+	// loopback origins such as a dev server.
+	for origin, want := range map[string]int{httpServer.URL: http.StatusOK, "http://localhost:1420": http.StatusForbidden, "http://127.0.0.1:1420": http.StatusForbidden} {
+		request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Origin", origin)
+		response, err = httpServer.Client().Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != want {
+			t.Fatalf("default Origin %s status = %d, want %d", origin, response.StatusCode, want)
+		}
+		if want == http.StatusForbidden && response.Header.Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("default Origin %s received credentialed CORS headers", origin)
+		}
+	}
+
+	// A dev frontend origin is admitted once listed explicitly.
+	config := testConfig(t, false)
+	config.Options.AllowedOrigins = []string{"http://localhost:1420"}
+	_, httpServer = newTestHTTP(t, config)
 	request, err = http.NewRequest(http.MethodPost, httpServer.URL+"/rpc", strings.NewReader(`{"cmd":"app_info","args":{}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +218,9 @@ func TestRPCContentTypeAndOriginAdmission(t *testing.T) {
 }
 
 func TestSyncOnlyPreflightDoesNotCreateExtraRoutes(t *testing.T) {
-	_, httpServer := newTestHTTP(t, testConfig(t, true))
+	config := testConfig(t, true)
+	config.Options.AllowedOrigins = []string{"http://localhost:1420"}
+	_, httpServer := newTestHTTP(t, config)
 	for path, expected := range map[string]int{"/sync/rpc": http.StatusNoContent, "/rpc": http.StatusNotFound, "/ws/events": http.StatusNotFound} {
 		request, err := http.NewRequest(http.MethodOptions, httpServer.URL+path, nil)
 		if err != nil {

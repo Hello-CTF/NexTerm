@@ -30,6 +30,7 @@ func newUserTOTP(db *gorm.DB, opts ...gen.DOOption) userTOTP {
 	_userTOTP.UserID = field.NewString(tableName, "user_id")
 	_userTOTP.SecretEnvelope = field.NewBytes(tableName, "secret_envelope")
 	_userTOTP.PendingSecretEnvelope = field.NewBytes(tableName, "pending_secret_envelope")
+	_userTOTP.LastStep = field.NewInt64(tableName, "last_step")
 	_userTOTP.CreatedAt = field.NewInt64(tableName, "created_at")
 	_userTOTP.UpdatedAt = field.NewInt64(tableName, "updated_at")
 	_userTOTP.User = userTOTPBelongsToUser{
@@ -50,6 +51,7 @@ type userTOTP struct {
 	UserID                field.String
 	SecretEnvelope        field.Bytes
 	PendingSecretEnvelope field.Bytes
+	LastStep              field.Int64
 	CreatedAt             field.Int64
 	UpdatedAt             field.Int64
 	User                  userTOTPBelongsToUser
@@ -72,6 +74,7 @@ func (u *userTOTP) updateTableName(table string) *userTOTP {
 	u.UserID = field.NewString(table, "user_id")
 	u.SecretEnvelope = field.NewBytes(table, "secret_envelope")
 	u.PendingSecretEnvelope = field.NewBytes(table, "pending_secret_envelope")
+	u.LastStep = field.NewInt64(table, "last_step")
 	u.CreatedAt = field.NewInt64(table, "created_at")
 	u.UpdatedAt = field.NewInt64(table, "updated_at")
 
@@ -98,10 +101,11 @@ func (u *userTOTP) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (u *userTOTP) fillFieldMap() {
-	u.fieldMap = make(map[string]field.Expr, 6)
+	u.fieldMap = make(map[string]field.Expr, 7)
 	u.fieldMap["user_id"] = u.UserID
 	u.fieldMap["secret_envelope"] = u.SecretEnvelope
 	u.fieldMap["pending_secret_envelope"] = u.PendingSecretEnvelope
+	u.fieldMap["last_step"] = u.LastStep
 	u.fieldMap["created_at"] = u.CreatedAt
 	u.fieldMap["updated_at"] = u.UpdatedAt
 

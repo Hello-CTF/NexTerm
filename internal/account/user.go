@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -38,6 +39,8 @@ const (
 	MinPasswordLength = 8
 	maxUsernameLength = 64
 	maxDisplayNameLen = 128
+
+	accountChangedMessage = "账号状态已变更，请重新登录"
 )
 
 type User struct {
@@ -92,6 +95,33 @@ func verifyPassword(encoded, password string) bool {
 	}
 	key := argon2.IDKey([]byte(password), salt, uint32(timeParam), uint32(memory), uint8(threads), uint32(len(expected)))
 	return subtle.ConstantTimeCompare(key, expected) == 1
+}
+
+// dummyPassword holds a hash with the current argon2id costs. Logins for an
+// unknown username verify against it so they take as long as a wrong password
+// for an existing account. It uses a fixed salt, so building it cannot fail
+// and never falls back to an instant answer.
+var dummyPassword struct {
+	mu     sync.Mutex
+	params vault.Argon2Params
+	hash   string
+}
+
+var dummyPasswordSalt = []byte("nexterm/unknown-user/salt")
+
+func dummyPasswordHash() string {
+	params := vault.PasswordArgon2()
+	dummyPassword.mu.Lock()
+	defer dummyPassword.mu.Unlock()
+	if dummyPassword.hash == "" || dummyPassword.params != params {
+		key := argon2.IDKey([]byte("nexterm-unknown-user"), dummyPasswordSalt, params.Time, params.MemoryKiB, params.Threads, argon2KeyLength)
+		dummyPassword.params = params
+		dummyPassword.hash = fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+			params.MemoryKiB, params.Time, params.Threads,
+			base64.RawStdEncoding.EncodeToString(dummyPasswordSalt),
+			base64.RawStdEncoding.EncodeToString(key))
+	}
+	return dummyPassword.hash
 }
 
 func validateUsername(username string) error {
@@ -196,6 +226,7 @@ func (a *Accounts) GetUserByUsername(ctx context.Context, username string) (*Use
 func (a *Accounts) Authenticate(ctx context.Context, username, password string) (*User, error) {
 	user, err := a.GetUserByUsername(ctx, username)
 	if err != nil {
+		verifyPassword(dummyPasswordHash(), password)
 		return nil, ipc.NewError(ipc.CodeForbidden, "用户名或密码错误")
 	}
 	if !verifyPassword(user.passwordHash, password) {
@@ -204,11 +235,36 @@ func (a *Accounts) Authenticate(ctx context.Context, username, password string) 
 	if user.State == StateDisabled {
 		return nil, ipc.NewError(ipc.CodeForbidden, "账号已禁用")
 	}
+	return user, nil
+}
+
+// ConfirmAuthenticated re-reads a user returned by Authenticate and fails
+// closed when its password, state or reset flag changed since the password was
+// verified, so a login verified before a password change, reset or disable
+// cannot issue a session afterwards.
+func (a *Accounts) ConfirmAuthenticated(ctx context.Context, authenticated *User) (*User, error) {
+	current, err := a.GetUser(ctx, authenticated.ID)
+	if err != nil {
+		if ipc.NormalizeError(err).Code == ipc.CodeNotFound {
+			return nil, ipc.NewError(ipc.CodeForbidden, accountChangedMessage)
+		}
+		return nil, err
+	}
+	if subtle.ConstantTimeCompare([]byte(current.passwordHash), []byte(authenticated.passwordHash)) != 1 ||
+		current.State != authenticated.State || current.MustChangePassword != authenticated.MustChangePassword {
+		return nil, ipc.NewError(ipc.CodeForbidden, accountChangedMessage)
+	}
+	return current, nil
+}
+
+// RecordLogin stamps last_login_at once a login has issued a session, after
+// every factor passed.
+func (a *Accounts) RecordLogin(ctx context.Context, user *User) error {
 	now := a.now()
 	appUser := query.Use(a.db).AppUser
 	if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(user.ID)).UpdateColumns(map[string]any{"last_login_at": now}); err != nil {
-		return nil, dbError(err)
+		return dbError(err)
 	}
 	user.LastLoginAt = now
-	return user, nil
+	return nil
 }

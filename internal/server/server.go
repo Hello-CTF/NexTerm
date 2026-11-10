@@ -154,11 +154,16 @@ type Server struct {
 }
 
 type accountThrottles struct {
-	login    *account.LoginThrottle
-	recovery *account.LoginThrottle
-	init     *account.LoginThrottle
-	register *account.LoginThrottle
-	mfa      *account.LoginThrottle
+	// login is keyed by username and client address; loginIP and loginUser
+	// bound attempts per address across usernames and per username across
+	// addresses.
+	login     *account.LoginThrottle
+	loginIP   *account.LoginThrottle
+	loginUser *account.LoginThrottle
+	recovery  *account.LoginThrottle
+	init      *account.LoginThrottle
+	register  *account.LoginThrottle
+	mfa       *account.LoginThrottle
 }
 
 type Health struct {
@@ -276,19 +281,21 @@ func New(config Config) (*Server, error) {
 			return config.Vault.Status(), nil
 		}
 	}
-	allowedOrigins := config.Options.AllowedOrigins
-	if allowedOrigins == nil {
-		allowedOrigins = defaultAllowedOrigins
-	}
-	config.Options.AllowedOrigins = append([]string(nil), allowedOrigins...)
+	// Only same-origin requests are admitted unless origins are listed: a
+	// credentialed cross-origin default would let any local page drive the API.
+	config.Options.AllowedOrigins = append([]string(nil), config.Options.AllowedOrigins...)
 
 	s := &Server{
 		options: config.Options, realIP: realip.NewResolver(trustedProxyCIDRs, config.Options.TrustForwardedFor), dispatcher: config.Dispatcher, peerDispatcher: config.PeerDispatcher, environment: config.Environment,
 		accounts: config.Accounts,
 		accountThrottle: accountThrottles{
-			login: account.NewLoginThrottle(), recovery: account.NewLoginThrottle(),
-			init: account.NewLoginThrottle(), register: account.NewLoginThrottle(),
-			mfa: account.NewLoginThrottle(),
+			login:     account.NewLoginThrottle(),
+			loginIP:   account.NewLoginThrottleWithPolicy(account.LoginIPThrottlePolicy),
+			loginUser: account.NewLoginThrottleWithPolicy(account.LoginUserThrottlePolicy),
+			recovery:  account.NewLoginThrottle(),
+			init:      account.NewLoginThrottle(),
+			register:  account.NewLoginThrottle(),
+			mfa:       account.NewLoginThrottle(),
 		},
 		mfaTickets:     newMFATicketStore(),
 		mfaLock:        newMFALockout(),

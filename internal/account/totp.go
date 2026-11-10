@@ -76,13 +76,14 @@ func hotp(secret []byte, counter uint64) uint32 {
 	return value % 1_000_000
 }
 
-func verifyTOTPCode(secret []byte, code string, nowSeconds int64) bool {
+// verifyTOTPCode returns the time step whose code matches within the window.
+func verifyTOTPCode(secret []byte, code string, nowSeconds int64) (int64, bool) {
 	if len(code) != totpDigits {
-		return false
+		return 0, false
 	}
 	for i := 0; i < len(code); i++ {
 		if code[i] < '0' || code[i] > '9' {
-			return false
+			return 0, false
 		}
 	}
 	counter := uint64(nowSeconds / totpPeriodSeconds)
@@ -93,10 +94,10 @@ func verifyTOTPCode(secret []byte, code string, nowSeconds int64) bool {
 		}
 		expected := fmt.Sprintf("%0*d", totpDigits, hotp(secret, candidate))
 		if subtle.ConstantTimeCompare([]byte(expected), []byte(code)) == 1 {
-			return true
+			return int64(candidate), true
 		}
 	}
-	return false
+	return 0, false
 }
 
 func totpAAD(userID string) []byte {
@@ -310,7 +311,8 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 	if err != nil {
 		return nil, err
 	}
-	if !verifyTOTPCode(secret, code, a.now()/1000) {
+	step, ok := verifyTOTPCode(secret, code, a.now()/1000)
+	if !ok {
 		return nil, ipc.NewError(ipc.CodeForbidden, "验证码错误")
 	}
 	codes, err := generateRecoveryCodes()
@@ -329,7 +331,7 @@ func (a *Accounts) ConfirmTOTPSetup(ctx context.Context, userID, code string) ([
 		}
 		info, err := totp.WithContext(ctx).
 			Where(totp.UserID.Eq(userID), totp.PendingSecretEnvelope.Eq(pending)).
-			UpdateColumns(map[string]any{"secret_envelope": pending, "pending_secret_envelope": nil, "updated_at": now})
+			UpdateColumns(map[string]any{"secret_envelope": pending, "pending_secret_envelope": nil, "last_step": step, "updated_at": now})
 		if err != nil {
 			return dbError(err)
 		}
@@ -376,10 +378,24 @@ func (a *Accounts) VerifyTOTPLoginCode(ctx context.Context, userID, code string)
 	if err != nil {
 		return false, err
 	}
-	if verifyTOTPCode(secret, code, a.now()/1000) {
-		return true, nil
+	if step, ok := verifyTOTPCode(secret, code, a.now()/1000); ok {
+		return a.claimTOTPStep(ctx, userID, row.SecretEnvelope, step)
 	}
 	return a.consumeRecoveryCode(ctx, userID, code)
+}
+
+// claimTOTPStep records step as the newest accepted step of the bound secret.
+// The conditional update succeeds only when no code of this or a later step
+// was accepted before, so a code is single-use even across concurrent requests.
+func (a *Accounts) claimTOTPStep(ctx context.Context, userID string, envelope []byte, step int64) (bool, error) {
+	userTOTP := query.Use(a.db).UserTOTP
+	info, err := userTOTP.WithContext(ctx).
+		Where(userTOTP.UserID.Eq(userID), userTOTP.SecretEnvelope.Eq(envelope), userTOTP.LastStep.Lt(step)).
+		UpdateColumns(map[string]any{"last_step": step})
+	if err != nil {
+		return false, dbError(err)
+	}
+	return info.RowsAffected > 0, nil
 }
 
 func (a *Accounts) consumeRecoveryCode(ctx context.Context, userID, code string) (bool, error) {

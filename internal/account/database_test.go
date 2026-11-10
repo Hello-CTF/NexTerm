@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -70,8 +71,12 @@ func TestDatabaseAccountCoreFlows(t *testing.T) {
 	if _, err := a.GetUserByUsername(ctx, "ALICE"); err != nil {
 		t.Fatalf("case-insensitive lookup failed: %v", err)
 	}
-	if _, err := a.Authenticate(ctx, "aLiCe", "synthetic-password-1"); err != nil {
+	authenticated, err := a.Authenticate(ctx, "aLiCe", "synthetic-password-1")
+	if err != nil {
 		t.Fatalf("case-insensitive login failed: %v", err)
+	}
+	if err := a.RecordLogin(ctx, authenticated); err != nil {
+		t.Fatal(err)
 	}
 	loaded, err := a.GetUser(ctx, alice.ID)
 	if err != nil {
@@ -425,4 +430,73 @@ func TestDatabaseConcurrentDeviceRevoke(t *testing.T) {
 		t.Fatalf("concurrent device revoke succeeded %d times, want exactly 1", succeeded)
 	}
 	requireCode(t, validateErr(a, ctx, token), ipc.CodeForbidden)
+}
+
+// A TOTP code is accepted once: the conditional last_step update rejects a
+// replay of the same code, an older code, and all but one of concurrent
+// verifications of the same code on every backend.
+func TestDatabaseTOTPCodeSingleUse(t *testing.T) {
+	db := dbtest.NewFixture(t).OpenStore(t)
+	now := int64(1_700_000_000_000)
+	a := New(db.GORM(), WithNow(func() int64 { return now }), WithTOTPKeyFile(filepath.Join(t.TempDir(), "totp.key")))
+	ctx := context.Background()
+	user, err := a.CreateUser(ctx, "totp-db-user", "", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, err := a.BeginTOTPSetup(ctx, user.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ConfirmTOTPSetup(ctx, user.ID, totpCodeForTest(t, secret, now/1000)); err != nil {
+		t.Fatal(err)
+	}
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, now/1000)); err != nil || valid {
+		t.Fatalf("confirmation code replayed: %v %v", valid, err)
+	}
+
+	now += 2 * totpPeriodSeconds * 1000
+	code := totpCodeForTest(t, secret, now/1000)
+	const racers = 8
+	var wg sync.WaitGroup
+	results := make(chan bool, racers)
+	errs := make(chan error, racers)
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, code)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- valid
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	accepted := 0
+	for valid := range results {
+		if valid {
+			accepted++
+		}
+	}
+	if accepted != 1 {
+		t.Fatalf("concurrent verifications of one code accepted %d times, want 1", accepted)
+	}
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, code); err != nil || valid {
+		t.Fatalf("code accepted again: %v %v", valid, err)
+	}
+	// The previous step is still inside the window but older than the accepted one.
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, now/1000-totpPeriodSeconds)); err != nil || valid {
+		t.Fatalf("older step accepted after a newer one: %v %v", valid, err)
+	}
+	now += totpPeriodSeconds * 1000
+	if valid, err := a.VerifyTOTPLoginCode(ctx, user.ID, totpCodeForTest(t, secret, now/1000)); err != nil || !valid {
+		t.Fatalf("next step rejected: %v %v", valid, err)
+	}
 }
