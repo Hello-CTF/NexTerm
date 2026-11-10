@@ -1029,6 +1029,7 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "local_file_read_range", scope: "local-file", input: "LocalFileReadRangeRequest", output: "FSRangeReadDTO"},
 		{name: "local_file_write", scope: "local-file", input: "LocalFileWriteRequest", output: "LocalFileWriteDTO"},
 		{name: "local_folder_list", scope: "local-file", input: "LocalFolderListRequest", output: "LocalFolderListDTO"},
+		{name: "local_shell_profiles", scope: "local-shell", input: "Record<string, never>", output: "ShellProfile[]"},
 		{name: "mount_capability", scope: "mount", input: "Record<string, never>", output: "string | null"},
 		{name: "mount_create", scope: "mount", nested: true, input: "MountCreateArgs", output: "MountEntryDTO"},
 		{name: "mount_list", scope: "mount", input: "MountListRequest", output: "MountEntryDTO[]"},
@@ -1068,15 +1069,15 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 28 {
-		t.Fatalf("selected fs/local-file/mount command count = %d, want 28", len(selected))
+	if len(selected) != 29 {
+		t.Fatalf("selected fs/local-file/local-shell/mount command count = %d, want 29", len(selected))
 	}
 	for name, command := range commands {
-		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "mount_")
+		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "local_shell_") || strings.HasPrefix(name, "mount_")
 		if inventory && !selected[name] {
 			t.Errorf("command %q is missing from the fs/local-file/mount vertical inventory", name)
 		}
-		if (command.Scope == "fs" || command.Scope == "local-file" || command.Scope == "mount") && !selected[name] {
+		if (command.Scope == "fs" || command.Scope == "local-file" || command.Scope == "local-shell" || command.Scope == "mount") && !selected[name] {
 			t.Errorf("unexpected command %q joined the fs/local-file/mount vertical scopes", name)
 		}
 	}

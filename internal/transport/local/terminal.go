@@ -12,7 +12,7 @@ import (
 )
 
 func (t *Transport) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Channel, error) {
-	return t.openPTY(ctx, t.shell, nil, options)
+	return t.openPTY(ctx, t.shell, append([]string(nil), t.shellArgs...), options)
 }
 
 func (t *Transport) OpenCommandPTY(ctx context.Context, command string, options base.PTYOptions) (base.Channel, error) {
@@ -43,7 +43,7 @@ func (t *Transport) openPTY(ctx context.Context, shell string, args []string, op
 }
 
 // DurableLaunch is what a local terminal run by the local helper starts with:
-// the same shell and directory as OpenPTY. SHELL and PATH are passed explicitly: the long-lived helper
+// the same shell, arguments and directory as OpenPTY. SHELL and PATH are passed explicitly: the long-lived helper
 // may have been started with a stale or minimal environment, so new terminals must not depend on it.
 // The helper resolves the rest of the login environment itself.
 func (t *Transport) DurableLaunch() (command []string, dir string, env []string) {
@@ -60,5 +60,5 @@ func (t *Transport) DurableLaunch() (command []string, dir string, env []string)
 	for key, value := range t.env {
 		env = append(env, key+"="+value)
 	}
-	return []string{t.shell}, t.cwd, env
+	return append([]string{t.shell}, t.shellArgs...), t.cwd, env
 }

@@ -20,6 +20,12 @@ func TestDetect(t *testing.T) {
 		{"/bin/bash", ShellBash},
 		{"fish", ShellFish},
 		{"/usr/local/bin/fish", ShellFish},
+		{"bash.exe", ShellBash},
+		{`C:\Program Files\Git\bin\bash.EXE`, ShellBash},
+		{"pwsh", ShellPowerShell},
+		{"/usr/bin/pwsh", ShellPowerShell},
+		{`C:\Program Files\PowerShell\7\pwsh.exe`, ShellPowerShell},
+		{`C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe`, ShellPowerShell},
 	}
 	for _, tt := range tests {
 		got, err := Detect(tt.path)
@@ -27,7 +33,7 @@ func TestDetect(t *testing.T) {
 			t.Errorf("Detect(%q) = %q, %v; want %q, nil", tt.path, got, err, tt.want)
 		}
 	}
-	for _, path := range []string{"sh", "/bin/sh", "tcsh", "dash", ""} {
+	for _, path := range []string{"sh", "/bin/sh", "tcsh", "dash", "", "cmd.exe", `C:\Windows\System32\wsl.exe`, "bash.exe.bak"} {
 		if _, err := Detect(path); err == nil {
 			t.Errorf("Detect(%q) succeeded; want error", path)
 		}

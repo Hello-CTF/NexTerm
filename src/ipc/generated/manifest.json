@@ -1285,6 +1285,12 @@
       "channel": false,
       "stream": "none"
     },
+    "local_shell_profiles": {
+      "scope": "local-shell",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "log_tail_cancel": {
       "scope": "log-tail",
       "nested": false,

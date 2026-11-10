@@ -1,5 +1,5 @@
 // Package shellintegr injects a cwd-reporting and command-boundary wrapper
-// into interactive zsh, bash, and fish sessions, and parses the resulting
+// into interactive zsh, bash, fish, and PowerShell sessions, and parses the resulting
 // OSC 7 cwd reports and OSC 133 command lifecycle sequences back out of the
 // terminal byte stream.
 //
@@ -25,16 +25,31 @@ const (
 	ShellZsh  Shell = "zsh"
 	ShellBash Shell = "bash"
 	ShellFish Shell = "fish"
+	// ShellPowerShell covers PowerShell 7 (pwsh) and Windows PowerShell 5.1 (powershell).
+	ShellPowerShell Shell = "powershell"
 )
 
 // Detect maps a shell binary path or name to a supported Shell. Shells
 // without a wrapper return an error so callers can launch them unwrapped.
+// Both path separators are accepted and a .exe suffix is ignored in any case,
+// so a Windows path is detected the same way on every host.
 func Detect(path string) (Shell, error) {
-	switch shell := Shell(filepath.Base(path)); shell {
-	case ShellZsh, ShellBash, ShellFish:
-		return shell, nil
+	switch name := ExecutableName(path); name {
+	case "zsh", "bash", "fish":
+		return Shell(name), nil
+	case "pwsh", "powershell":
+		return ShellPowerShell, nil
 	}
 	return "", fmt.Errorf("shellintegr: unsupported shell %q", path)
+}
+
+// ExecutableName returns the lower-case base name of a shell path without a .exe suffix.
+func ExecutableName(path string) string {
+	name := strings.TrimSpace(path)
+	if index := strings.LastIndexAny(name, `/\`); index >= 0 {
+		name = name[index+1:]
+	}
+	return strings.TrimSuffix(strings.ToLower(name), ".exe")
 }
 
 // Launch describes an interactive shell process with cwd reporting enabled.
@@ -101,6 +116,11 @@ func Wrap(shell Shell, path string) (*Launch, error) {
 			return fail(err)
 		}
 		launch.Args = []string{"-i", "--init-command", "source '" + filepath.Join(dir, "nexterm.fish") + "'"}
+	case ShellPowerShell:
+		if err := write(PowerShellIntegrationFile, powerShellIntegration); err != nil {
+			return fail(err)
+		}
+		launch.Args = PowerShellArgs(filepath.Join(dir, PowerShellIntegrationFile))
 	default:
 		return fail(fmt.Errorf("shellintegr: unsupported shell %q", shell))
 	}

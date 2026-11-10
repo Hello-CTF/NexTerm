@@ -1641,6 +1641,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.localHelperStatusDTO", ts: "LocalHelperStatusDTO" },
     },
+    "local_shell_profiles": {
+      scope: "local-shell",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/transport/local.ShellProfile", ts: "ShellProfile[]" },
+    },
     "log_tail_cancel": {
       scope: "log-tail",
       nested: false,
@@ -4100,6 +4108,10 @@ export interface IPCCommandTypeMap {
   "local_helper_status": {
     input: Record<string, never>;
     output: contractTypes.LocalHelperStatusDTO;
+  };
+  "local_shell_profiles": {
+    input: Record<string, never>;
+    output: contractTypes.ShellProfile[];
   };
   "log_tail_cancel": {
     input: contractTypes.LogTailCancelRequest;

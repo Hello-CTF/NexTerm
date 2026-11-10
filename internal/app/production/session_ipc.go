@@ -1215,6 +1215,14 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 	if err := registerFSCommandsWithAssets(dispatcher, s.sessions, s.stagedBlobs, assetOptions, s.fsUploads); err != nil {
 		return err
 	}
+	if err := registerLocalShellProfiles(dispatcher, func(ctx context.Context) bool {
+		if s.sshConnector == nil {
+			return ipc.OwnerID(ctx) != ""
+		}
+		return s.sshConnector.restricted(ctx)
+	}); err != nil {
+		return err
+	}
 	if !s.desktop {
 		return nil
 	}
