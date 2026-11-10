@@ -16,9 +16,9 @@ const release = (tag, daysAgo, extra = {}) => ({
   ...extra,
 });
 const tagsOf = (list) => list.map((entry) => entry.tag).sort();
-const plan = (releases, options = {}) => planRetention(releases, { now: NOW, ...options });
+const plan = (releases, options = {}) => planRetention(releases, options);
 
-test("the newest patch of every minor line survives however old it is", () => {
+test("only the newest stable releases survive, across minor lines", () => {
   const releases = [
     release("v1.0.0", 900),
     release("v1.0.1", 890),
@@ -26,21 +26,16 @@ test("the newest patch of every minor line survives however old it is", () => {
     release("v1.1.3", 700),
     release("v1.1.2", 710),
   ];
-  const { remove } = plan(releases, { keepRecent: 1, keepDays: 30 });
-  assert.deepEqual(tagsOf(remove), ["v1.0.0", "v1.1.0", "v1.1.2"]);
+  const { keep, remove } = plan(releases);
+  assert.deepEqual(tagsOf(keep), ["v1.1.0", "v1.1.2", "v1.1.3"]);
+  assert.deepEqual(tagsOf(remove), ["v1.0.0", "v1.0.1"]);
 });
 
-test("the newest stable releases survive even when they are old patches", () => {
+test("the stable grace window size is configurable", () => {
   const releases = Array.from({ length: 15 }, (_, patch) => release(`v2.3.${patch}`, 1000 - patch));
-  const { keep, remove } = plan(releases, { keepRecent: 10, keepDays: 30 });
+  const { keep, remove } = plan(releases, { keepRecent: 10 });
   assert.deepEqual(tagsOf(keep), Array.from({ length: 10 }, (_, i) => `v2.3.${i + 5}`).sort());
   assert.deepEqual(tagsOf(remove), ["v2.3.0", "v2.3.1", "v2.3.2", "v2.3.3", "v2.3.4"]);
-});
-
-test("stable releases published within the retention window survive", () => {
-  const releases = [release("v3.0.0", 400), release("v3.0.1", 200), release("v3.0.2", 100), release("v3.0.3", 1)];
-  const { remove } = plan(releases, { keepRecent: 1, keepDays: 365 });
-  assert.deepEqual(tagsOf(remove), ["v3.0.0"]);
 });
 
 test("only the newest release candidate newer than the latest stable survives", () => {
@@ -64,18 +59,26 @@ test("publishing a release candidate deletes the previous release candidate only
   assert.deepEqual(tagsOf(keep), ["v1.0.0", "v1.1.0-rc.2"]);
 });
 
-test("publishing a stable release deletes its release candidates and keeps older stable releases", () => {
+test("publishing a stable release deletes its release candidates and stable releases beyond the newest three", () => {
   const releases = [
-    release("v1.0.0", 60),
-    release("v1.0.1", 30),
+    release("v1.0.0", 90),
+    release("v1.0.1", 60),
+    release("v1.0.2", 30),
     release("v1.1.0-rc.1", 10),
     release("v1.1.0-rc.2", 5),
     release("v1.1.0", 0),
   ];
-  const current = releases[4].id;
+  const current = releases[5].id;
   const { keep, remove } = plan(releases, { keepIds: [String(current)] });
-  assert.deepEqual(tagsOf(remove), ["v1.1.0-rc.1", "v1.1.0-rc.2"]);
-  assert.deepEqual(tagsOf(keep), ["v1.0.0", "v1.0.1", "v1.1.0"]);
+  assert.deepEqual(tagsOf(remove), ["v1.0.0", "v1.1.0-rc.1", "v1.1.0-rc.2"]);
+  assert.deepEqual(tagsOf(keep), ["v1.0.1", "v1.0.2", "v1.1.0"]);
+});
+
+test("publishing a release candidate deletes release candidates of earlier versions too", () => {
+  const releases = [release("v1.0.0", 30), release("v1.0.1-rc.1", 25), release("v1.1.0-rc.1", 0)];
+  const current = releases[2].id;
+  const { remove } = plan(releases, { keepIds: [String(current)] });
+  assert.deepEqual(tagsOf(remove), ["v1.0.1-rc.1"]);
 });
 
 test("only the newest release candidate is kept before any stable release exists", () => {
@@ -94,7 +97,7 @@ test("pinned ids, drafts and unrecognised tags are never deleted", () => {
     release("nightly", 1000),
     release("v1.0.0-beta.1", 1000),
   ];
-  const { keep, remove } = plan(releases, { keepIds: [String(old.id)], keepRecent: 1, keepDays: 30 });
+  const { keep, remove } = plan(releases, { keepIds: [String(old.id)], keepRecent: 1 });
   assert.deepEqual(tagsOf(remove), ["v1.0.1-rc.1"]);
   assert.ok(tagsOf(keep).includes("v1.0.0"));
   assert.ok(tagsOf(keep).includes("v9.9.9"));

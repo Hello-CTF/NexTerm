@@ -5,20 +5,18 @@
 // that people may still run must keep their assets.
 //
 // Kept: drafts, releases whose tag is not a vX.Y.Z or vX.Y.Z-rc.N release version, the ids passed with --keep (the
-// GitHub latest release and the one just published), the newest patch of every major.minor line, the newest
-// KEEP_RECENT stable releases, stable releases published within KEEP_DAYS, and the newest release candidate while it is
-// newer than the newest stable release. Everything else is pruned: older stable patches, every release candidate once a
-// stable release of the same or a newer version ships, and earlier release candidates once a newer one is published.
+// GitHub latest release and the one just published), the newest KEEP_RECENT stable releases (a grace window for
+// self-hosted servers that have not upgraded yet), and the newest release candidate while it is newer than the newest
+// stable release. Everything else is pruned: older stable releases, every release candidate once a stable release of the
+// same or a newer version ships, and earlier release candidates once a newer one is published.
 //
-// Input on stdin: the releases as one JSON array or as one JSON object per line with id, tag_name, draft and
-// published_at. Output on stdout: the ids to delete, one per line. Each decision is logged on stderr.
+// Input on stdin: the releases as one JSON array or as one JSON object per line with id, tag_name and draft; other
+// fields are ignored. Output on stdout: the ids to delete, one per line. Each decision is logged on stderr.
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseReleaseVersion } from "../../scripts/lib/semver.mjs";
 
-export const KEEP_RECENT = 10;
-export const KEEP_DAYS = 365;
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const KEEP_RECENT = 3;
 
 function versionOf(tag) {
   if (typeof tag !== "string" || !tag.startsWith("v")) return null;
@@ -42,7 +40,7 @@ function compareCore(a, b) {
 }
 
 // planRetention returns { keep, remove }, each a list of { id, tag, reason }, ordered newest version first.
-export function planRetention(releases, { keepIds = [], now = Date.now(), keepRecent = KEEP_RECENT, keepDays = KEEP_DAYS } = {}) {
+export function planRetention(releases, { keepIds = [], keepRecent = KEEP_RECENT } = {}) {
   const pinned = new Set(keepIds.map(String).filter(Boolean));
   const keep = [];
   const remove = [];
@@ -52,7 +50,7 @@ export function planRetention(releases, { keepIds = [], now = Date.now(), keepRe
     const version = versionOf(release.tag_name);
     if (release.draft) keep.push({ ...entry, reason: "draft" });
     else if (!version) keep.push({ ...entry, reason: "tag is not a release version" });
-    else versioned.push({ ...entry, version, published: Date.parse(release.published_at ?? "") });
+    else versioned.push({ ...entry, version });
   }
   versioned.sort((a, b) => compareVersions(b.version, a.version) || String(b.id).localeCompare(String(a.id)));
 
@@ -60,30 +58,18 @@ export function planRetention(releases, { keepIds = [], now = Date.now(), keepRe
   const newestStable = stable[0]?.version;
   const newestCandidate = versioned.find((release) => release.version.rc !== null);
   const recent = new Set(stable.slice(0, keepRecent));
-  const lineHeads = new Set();
-  const seenLines = new Set();
-  for (const release of stable) {
-    const line = `${release.version.core[0]}.${release.version.core[1]}`;
-    if (!seenLines.has(line)) {
-      seenLines.add(line);
-      lineHeads.add(release);
-    }
-  }
-  const cutoff = now - keepDays * DAY_MS;
 
   for (const release of versioned) {
-    const { version, published, ...entry } = release;
+    const { version, ...entry } = release;
     let reason = null;
     if (pinned.has(String(release.id))) reason = "latest or just published";
     else if (version.rc !== null) {
       if (release === newestCandidate && (!newestStable || compareCore(version, newestStable) > 0)) {
         reason = "newest release candidate, newer than the latest stable";
       }
-    } else if (lineHeads.has(release)) reason = "newest patch of its minor line";
-    else if (recent.has(release)) reason = `one of the newest ${keepRecent} stable releases`;
-    else if (!Number.isFinite(published) || published >= cutoff) reason = `published within ${keepDays} days`;
+    } else if (recent.has(release)) reason = `one of the newest ${keepRecent} stable releases`;
     if (reason) keep.push({ ...entry, reason });
-    else remove.push({ ...entry, reason: version.rc !== null ? "superseded release candidate" : "older stable patch" });
+    else remove.push({ ...entry, reason: version.rc !== null ? "superseded release candidate" : "older stable release" });
   }
   return { keep, remove };
 }
