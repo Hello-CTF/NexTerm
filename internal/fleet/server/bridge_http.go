@@ -69,6 +69,7 @@ func (s *Service) serveDeviceBridgeRelay(w http.ResponseWriter, r *http.Request)
 	ctx, release := s.bridges.track(r.Context(), identity, token)
 	defer release()
 	if s.bridges.sessionInvalid(r.Context(), identity, token) || errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
+		release()
 		writeFleetJSON(w, http.StatusUnauthorized, ipc.Failure(ipc.NewError(ipc.CodeForbidden, bridgeSessionReloginMessage)))
 		return
 	}

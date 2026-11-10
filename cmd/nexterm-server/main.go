@@ -771,6 +771,15 @@ func (closers accountConnectionClosers) CloseAccountUser(userID, exceptSession s
 	}
 }
 
+// CloseAccountDevice fans out to the services that can end the connections of sessions bound to a revoked login device.
+func (closers accountConnectionClosers) CloseAccountDevice(userID, deviceID string) {
+	for _, closer := range closers {
+		if device, ok := closer.(interface{ CloseAccountDevice(string, string) }); ok {
+			device.CloseAccountDevice(userID, deviceID)
+		}
+	}
+}
+
 func (closers accountConnectionClosers) CloseAccountSession(sessionID string) error {
 	var errs []error
 	for _, closer := range closers {

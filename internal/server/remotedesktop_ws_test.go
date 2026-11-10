@@ -143,3 +143,23 @@ func TestCloseUserConnectionsReachesServicesThatSupportIt(t *testing.T) {
 	}
 	(&Server{}).closeUserConnections("u1", "") // no closer configured
 }
+
+type deviceCloseRecorder struct {
+	user, device string
+	calls        int
+}
+
+func (r *deviceCloseRecorder) CloseAccountSession(string) error { return nil }
+func (r *deviceCloseRecorder) CloseAccountDevice(user, device string) {
+	r.user, r.device = user, device
+	r.calls++
+}
+
+func TestCloseDeviceConnectionsReachesServicesThatSupportIt(t *testing.T) {
+	recorder := &deviceCloseRecorder{}
+	(&Server{accountConnections: recorder}).closeDeviceConnections("u1", "laptop")
+	if recorder.calls != 1 || recorder.user != "u1" || recorder.device != "laptop" {
+		t.Fatalf("recorder = %+v", recorder)
+	}
+	(&Server{}).closeDeviceConnections("u1", "laptop") // no closer configured
+}

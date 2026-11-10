@@ -683,6 +683,15 @@ func (s *Server) closeUserConnections(userID, exceptSession string) {
 	}
 }
 
+// closeDeviceConnections ends the live connections of a user's login sessions bound to a revoked login device.
+// Only services that implement CloseAccountDevice take part; the others rely on their periodic session recheck.
+func (s *Server) closeDeviceConnections(userID, deviceID string) {
+	s.sockets.closeDevice(userID, deviceID)
+	if closer, ok := s.accountConnections.(interface{ CloseAccountDevice(string, string) }); ok {
+		closer.CloseAccountDevice(userID, deviceID)
+	}
+}
+
 func (s *Server) closeAccountConnections(sessionID string) {
 	s.sockets.closeSession(sessionID)
 	if s.accountConnections == nil {
@@ -806,7 +815,7 @@ func (s *Server) serveAccountDeviceRevoke(w http.ResponseWriter, r *http.Request
 		writeAccountFailure(w, err)
 		return
 	}
-	s.sockets.closeDevice(identity.UserID, r.PathValue("id"))
+	s.closeDeviceConnections(identity.UserID, r.PathValue("id"))
 	writeAccountJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

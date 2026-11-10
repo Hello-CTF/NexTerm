@@ -205,4 +205,30 @@ func TestBridgeRelayRejectsSessionRevokedBeforeRegistration(t *testing.T) {
 	if response := f.call(t, http.MethodGet, "/fleet/devices/"+f.deviceID+"/bridge", nil, session, ""); response.status != http.StatusUnauthorized {
 		t.Fatalf("relay after revocation: HTTP %d %v", response.status, response.body)
 	}
+	f.service.bridges.mu.Lock()
+	remaining := len(f.service.bridges.sessions)
+	f.service.bridges.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("refused relay left %d tracked sessions", remaining)
+	}
+}
+
+// Revoking a login device closes the relays of sessions bound to it and keeps the user's other relays.
+func TestBridgeRelayClosesWithRevokedLoginDevice(t *testing.T) {
+	f, _, unbound := newBridgeRelayFixture(t, "relay-device")
+	device, err := f.accounts.RegisterDevice(context.Background(), unbound.user.ID, "laptop", "desktop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, session, err := f.accounts.IssueSession(context.Background(), unbound.user.ID, device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := &httpSession{id: session.ID, cookie: &http.Cookie{Name: sessionCookieName, Value: token}, user: unbound.user}
+	revoked := f.open(t, bound)
+	kept := f.open(t, unbound)
+
+	f.service.CloseAccountDevice(unbound.user.ID, device.ID)
+	revoked.assertRevoked(t)
+	kept.assertFlows(t)
 }

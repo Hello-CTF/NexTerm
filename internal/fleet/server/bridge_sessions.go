@@ -33,9 +33,10 @@ type bridgeSessions struct {
 }
 
 type bridgeSession struct {
-	userID string
-	relays map[uint64]context.CancelCauseFunc
-	stop   context.CancelFunc
+	userID   string
+	deviceID string
+	relays   map[uint64]context.CancelCauseFunc
+	stop     context.CancelFunc
 }
 
 func newBridgeSessions(check func(context.Context, string) (*account.Identity, error)) *bridgeSessions {
@@ -69,7 +70,7 @@ func (b *bridgeSessions) track(parent context.Context, identity *account.Identit
 	entry := b.sessions[identity.SessionID]
 	if entry == nil {
 		superviseCtx, stop := context.WithCancel(context.Background())
-		entry = &bridgeSession{userID: identity.UserID, relays: make(map[uint64]context.CancelCauseFunc), stop: stop}
+		entry = &bridgeSession{userID: identity.UserID, deviceID: identity.DeviceID, relays: make(map[uint64]context.CancelCauseFunc), stop: stop}
 		b.sessions[identity.SessionID] = entry
 		ticks, stopTicks := b.ticker(b.interval)
 		go b.supervise(superviseCtx, ticks, stopTicks, identity, token)
@@ -132,6 +133,12 @@ func (b *bridgeSessions) revokeUser(userID, exceptSession string) {
 	})
 }
 
+func (b *bridgeSessions) revokeDevice(userID, deviceID string) {
+	b.revokeMatching(func(_ string, entry *bridgeSession) bool {
+		return entry.userID == userID && entry.deviceID == deviceID
+	})
+}
+
 // revokeMatching removes the matching sessions from the table, so no new relay joins them, and cancels their relays.
 func (b *bridgeSessions) revokeMatching(match func(string, *bridgeSession) bool) {
 	b.mu.Lock()
@@ -165,5 +172,12 @@ func (s *Service) CloseAccountSession(sessionID string) error {
 func (s *Service) CloseAccountUser(userID, exceptSession string) {
 	if userID != "" {
 		s.bridges.revokeUser(userID, exceptSession)
+	}
+}
+
+// CloseAccountDevice closes the owner bridge relays of the user's login sessions bound to a revoked login device.
+func (s *Service) CloseAccountDevice(userID, deviceID string) {
+	if userID != "" && deviceID != "" {
+		s.bridges.revokeDevice(userID, deviceID)
 	}
 }

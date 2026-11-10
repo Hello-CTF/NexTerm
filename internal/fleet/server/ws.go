@@ -306,10 +306,10 @@ func pipeBridge(ctx context.Context, user *websocket.Conn, bridge *wsConn) {
 		_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
 	case <-ctx.Done():
 		_ = bridge.Close()
-		reason := "bridge closed"
 		if errors.Is(context.Cause(ctx), errBridgeSessionRevoked) {
-			reason = bridgeSessionReloginMessage
+			_ = user.Close(websocket.StatusPolicyViolation, bridgeSessionReloginMessage)
+			return
 		}
-		_ = user.Close(websocket.StatusPolicyViolation, reason)
+		_ = user.Close(websocket.StatusNormalClosure, "bridge closed")
 	}
 }
