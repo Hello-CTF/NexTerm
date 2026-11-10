@@ -1135,6 +1135,12 @@
       "channel": false,
       "stream": "none"
     },
+    "host_monitor_sample": {
+      "scope": "host-monitor",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "host_ports_list": {
       "scope": "host-ports",
       "nested": false,

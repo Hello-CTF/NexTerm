@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn() }));
 vi.mock("../ipc/commands", () => ({ call: mocks.call }));
 
 import { auditTimelineApi } from "../ipc/auditTimelineApi";
+import { hostMonitorApi } from "../ipc/hostMonitorApi";
 import { hostPortsApi } from "../ipc/hostPortsApi";
 import { hostProcessesApi } from "../ipc/hostProcessesApi";
 import { previewApi } from "../ipc/previewApi";
@@ -27,6 +28,15 @@ describe("auditTimelineApi", () => {
     mocks.call.mockResolvedValueOnce(null).mockResolvedValueOnce({});
     await expect(auditTimelineApi.page({})).resolves.toEqual({ items: [], nextCursor: null });
     await expect(auditTimelineApi.page({})).resolves.toEqual({ items: [], nextCursor: null });
+  });
+});
+
+describe("hostMonitorApi", () => {
+  it("samples by session id", async () => {
+    const snapshot = { status: "ok", sampledAt: 1, intervalMs: 3000, network: [], disks: [] };
+    mocks.call.mockResolvedValue(snapshot);
+    await expect(hostMonitorApi.sample("s1")).resolves.toBe(snapshot);
+    expect(mocks.call).toHaveBeenCalledWith("host_monitor_sample", { sessionId: "s1" });
   });
 });
 

@@ -277,6 +277,9 @@ export type TerminalLinkActivation = "modifier" | "click";
 export type TerminalLinkOpenMode = "system" | "app" | "ask";
 // on polls the host for listening ports while a terminal is open; it runs a command on the host, so it defaults to off.
 export type TerminalPortDiscovery = "off" | "on";
+// on samples the host's CPU, memory, network and disks while the session sidebar is open; it runs a command on the
+// host every few seconds, so it defaults to off.
+export type TerminalHostMonitor = "off" | "on";
 // When a multi-line paste is confirmed first: unbracketed asks only when the program in the terminal has not turned on
 // bracketed paste (a bracketed paste reaches the shell as one paste instead of running line by line); always asks for
 // every multi-line paste; never does not ask.
@@ -294,6 +297,7 @@ export interface TerminalPrefs {
   linkActivation: TerminalLinkActivation;
   linkOpenMode: TerminalLinkOpenMode;
   portDiscovery: TerminalPortDiscovery;
+  hostMonitor: TerminalHostMonitor;
   confirmMultilinePaste: TerminalMultilinePasteConfirm;
   scrollback: TerminalScrollback;
   // MiB of output the host keeps per new durable terminal; null keeps the helper default.
@@ -307,6 +311,7 @@ const TERMINAL_GPU_ACCELERATION_KEY = "terminal.gpuAcceleration";
 const TERMINAL_LINK_ACTIVATION_KEY = "terminal.linkActivation";
 const TERMINAL_LINK_OPEN_MODE_KEY = "terminal.linkOpenMode";
 const TERMINAL_PORT_DISCOVERY_KEY = "terminal.portDiscovery";
+const TERMINAL_HOST_MONITOR_KEY = "terminal.hostMonitor";
 const TERMINAL_CONFIRM_MULTILINE_PASTE_KEY = "terminal.confirmMultilinePaste";
 const TERMINAL_DURABLE_HISTORY_KEY = "terminal.durableHistoryMiB";
 // The helper's own history limit per durable terminal when the account sets none.
@@ -318,6 +323,7 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   linkActivation: "modifier",
   linkOpenMode: "system",
   portDiscovery: "off",
+  hostMonitor: "off",
   confirmMultilinePaste: "unbracketed",
   scrollback: 10_000,
   durableHistoryMiB: null,
@@ -358,6 +364,7 @@ function loadTerminal(): TerminalPrefs {
   const links = preferenceValue<unknown>(TERMINAL_LINK_ACTIVATION_KEY, local.linkActivation, TERMINAL_DEFAULTS.linkActivation);
   const openMode = preferenceValue<unknown>(TERMINAL_LINK_OPEN_MODE_KEY, local.linkOpenMode, TERMINAL_DEFAULTS.linkOpenMode);
   const portDiscovery = preferenceValue<unknown>(TERMINAL_PORT_DISCOVERY_KEY, local.portDiscovery, TERMINAL_DEFAULTS.portDiscovery);
+  const hostMonitor = preferenceValue<unknown>(TERMINAL_HOST_MONITOR_KEY, local.hostMonitor, TERMINAL_DEFAULTS.hostMonitor);
   // A signed-in account reads only its own layers (override, then server default) once they have loaded: a device
   // value saved by another account in this browser must not decide whether this account is asked before pasting.
   // Until then, including on desktop where the store is registered before it is known whether a sync account exists
@@ -376,6 +383,7 @@ function loadTerminal(): TerminalPrefs {
     linkActivation: links === "click" ? "click" : TERMINAL_DEFAULTS.linkActivation,
     linkOpenMode: openMode === "app" || openMode === "ask" ? openMode : TERMINAL_DEFAULTS.linkOpenMode,
     portDiscovery: portDiscovery === "on" ? "on" : TERMINAL_DEFAULTS.portDiscovery,
+    hostMonitor: hostMonitor === "on" ? "on" : TERMINAL_DEFAULTS.hostMonitor,
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
     scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
@@ -492,6 +500,22 @@ export function setTerminalPortDiscovery(value: TerminalPortDiscovery): void {
   if (accountStore) {
     void accountStore.putOverrides({ [TERMINAL_PORT_DISCOVERY_KEY]: value }).catch(() => undefined);
     patchAccountOverrideCache({ [TERMINAL_PORT_DISCOVERY_KEY]: value }, []);
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalHostMonitor(value: TerminalHostMonitor): void {
+  if (terminalPrefs.hostMonitor === value) return;
+  terminalPrefs = { ...terminalPrefs, hostMonitor: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, hostMonitor: value }));
+  } catch {
+  }
+  if (accountStore) {
+    void accountStore.putOverrides({ [TERMINAL_HOST_MONITOR_KEY]: value }).catch(() => undefined);
+    patchAccountOverrideCache({ [TERMINAL_HOST_MONITOR_KEY]: value }, []);
   }
   for (const listener of terminalListeners) listener();
 }

@@ -1618,6 +1618,58 @@ export type HostMessage = {
   text: string;
 };
 
+export type HostMonitorDisk = {
+  mount: string;
+  filesystem: string;
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  usedPercent: number;
+};
+
+export type HostMonitorLoad = {
+  one: number;
+  five: number;
+  fifteen: number;
+};
+
+export type HostMonitorMemory = {
+  totalBytes: number;
+  usedBytes: number;
+  availableBytes: number;
+  swapTotalBytes: number;
+  swapUsedBytes: number;
+};
+
+export type HostMonitorNetInterface = {
+  name: string;
+  rxBytes: number;
+  txBytes: number;
+  rxRate?: number | null;
+  txRate?: number | null;
+};
+
+export type HostMonitorSampleArgs = {
+  sessionId: string;
+};
+
+export type HostMonitorSnapshot = {
+  status: string;
+  reason?: string;
+  platform?: string;
+  sampledAt: number;
+  intervalMs: number;
+  retryAfterMs?: number;
+  cpuPercent?: number | null;
+  cpuCount?: number;
+  memory?: HostMonitorMemory | null;
+  load?: HostMonitorLoad | null;
+  network: HostMonitorNetInterface[];
+  disks: HostMonitorDisk[];
+  disksUnavailable?: boolean;
+  uptimeSeconds?: number | null;
+};
+
 export type HostPortListener = {
   proto: string;
   address: string;

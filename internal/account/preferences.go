@@ -96,6 +96,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.linkActivation":           {kind: preferenceKindEnumString, strings: []string{"modifier", "click"}},
 	"terminal.linkOpenMode":             {kind: preferenceKindEnumString, strings: []string{"system", "app", "ask"}},
 	"terminal.portDiscovery":            {kind: preferenceKindEnumString, strings: []string{"off", "on"}},
+	"terminal.hostMonitor":              {kind: preferenceKindEnumString, strings: []string{"off", "on"}},
 	"terminal.confirmMultilinePaste":    {kind: preferenceKindEnumString, strings: []string{"unbracketed", "always", "never"}},
 	"terminal.durableHistoryMiB":        {kind: preferenceKindIntRange, min: 1, max: 1024},
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},

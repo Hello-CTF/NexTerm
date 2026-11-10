@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { isHostWorkspace, restoreClosedTab, useUi } from "../../app/store";
 import { useClosedTabs } from "../../app/closedTabs";
 import { PortsSection } from "../hosts/PortsSection";
+import { HostMonitorSection } from "./HostMonitorSection";
 import { IconChevronDown, IconChevronRight, IconClose, IconFile, IconFolder, IconSparkles } from "../../ui/icons";
 import { t } from "../../i18n";
 
@@ -137,6 +138,10 @@ export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, vi
             {t("端口")}
           </button>
         )}
+
+        <Collapsible label={t("主机监控")}>
+          <HostMonitorSection workspace={workspace} visible={visible} />
+        </Collapsible>
 
         <Collapsible label={t("最近文件")}>
           <div className="flex flex-col gap-1.5">
