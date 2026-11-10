@@ -144,6 +144,7 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 		output string
 	}{
 		{name: "app_platform", scope: "platform", input: "Record<string, never>", output: "string"},
+		{name: "app_windows_build", scope: "platform", input: "Record<string, never>", output: "number"},
 		{name: "desktop_tray_get", scope: "platform", input: "Record<string, never>", output: "DesktopTrayDTO"},
 		{name: "desktop_tray_set", scope: "platform", input: "DesktopTraySetRequest", output: "DesktopTrayDTO"},
 		{name: "system_insets", scope: "platform", input: "Record<string, never>", output: "ScreenInsets"},
@@ -192,8 +193,8 @@ func TestPlatformUpdateBiometricVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 17 {
-		t.Fatalf("selected platform/update/biometric command count = %d, want 17", len(selected))
+	if len(selected) != 18 {
+		t.Fatalf("selected platform/update/biometric command count = %d, want 18", len(selected))
 	}
 	for name, command := range commands {
 		if (command.Scope == "platform" || command.Scope == "update" || command.Scope == "biometric") && !selected[name] {

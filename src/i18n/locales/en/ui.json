@@ -4802,7 +4802,7 @@
   "留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。": "Leave empty to use ~/.ssh/config. Files it includes with Include are read as well.",
   "留空使用服务器上的 ~/.ssh/config，不会读取浏览器所在电脑的文件。": "Leave empty to use ~/.ssh/config on the server. Files on the computer running the browser are not read.",
   "留空使用用户主目录": "Leave empty to use the user's home directory",
-  "留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置": "Leave empty to use the account's login shell (pwsh on Windows). If filled in, it takes precedence over account settings.",
+  "留空使用账户登录 shell（Windows 为 pwsh，未安装时为 powershell.exe）；填写后优先于账户设置": "Leave empty to use the account's login shell (pwsh on Windows, or powershell.exe when pwsh is not installed). If filled in, it takes precedence over account settings.",
   "留空使用默认路径。": "Leave empty to use the default path.",
   "留空则不修改已保存的密码": "Leave empty to keep the saved password",
   "留空则不设置": "Leave empty to leave unset",

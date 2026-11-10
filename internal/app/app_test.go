@@ -14,6 +14,9 @@ func TestApplicationCoreCommandsAndModuleComposition(t *testing.T) {
 		Name:    "NexTerm",
 		Version: "1.2.3",
 		GOOS:    "test-os",
+		WindowsBuild: func() uint32 {
+			return 22631
+		},
 		VaultStatus: func(context.Context) (any, error) {
 			return map[string]any{"unlocked": false}, nil
 		},
@@ -63,6 +66,10 @@ func TestApplicationCoreCommandsAndModuleComposition(t *testing.T) {
 	response = application.Dispatcher.Dispatch(context.Background(), ipc.Request{Command: "app_platform"}, ipc.Environment{})
 	if string(response.Data) != `"test-os"` {
 		t.Fatalf("app_platform = %s", response.Data)
+	}
+	response = application.Dispatcher.Dispatch(context.Background(), ipc.Request{Command: "app_windows_build"}, ipc.Environment{})
+	if string(response.Data) != "22631" {
+		t.Fatalf("app_windows_build = %s", response.Data)
 	}
 	response = application.Dispatcher.Dispatch(context.Background(), ipc.Request{Command: "example_echo", Args: json.RawMessage(`"hello"`)}, ipc.Environment{})
 	if string(response.Data) != `"hello"` {

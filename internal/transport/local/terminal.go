@@ -12,22 +12,22 @@ import (
 )
 
 func (t *Transport) OpenPTY(ctx context.Context, options base.PTYOptions) (base.Channel, error) {
-	return t.openPTY(ctx, nil, options)
+	return t.openPTY(ctx, t.shell, nil, options)
 }
 
 func (t *Transport) OpenCommandPTY(ctx context.Context, command string, options base.PTYOptions) (base.Channel, error) {
-	args := shellArguments(t.loginShell, command)
-	return t.openPTY(ctx, args, options)
+	shell, args := commandInvocation(t.shell, t.loginShell, command)
+	return t.openPTY(ctx, shell, args, options)
 }
 
-func (t *Transport) openPTY(ctx context.Context, args []string, options base.PTYOptions) (base.Channel, error) {
+func (t *Transport) openPTY(ctx context.Context, shell string, args []string, options base.PTYOptions) (base.Channel, error) {
 	if err := t.check(ctx, options.ExpectedGeneration); err != nil {
 		return nil, err
 	}
-	env := environmentFor(t.shell, t.env, true, options.Term)
-	env = append(env, shellintegr.BashBannerEnv(runtime.GOOS, t.shell, env)...)
+	env := environmentFor(shell, t.env, true, options.Term)
+	env = append(env, shellintegr.BashBannerEnv(runtime.GOOS, shell, env)...)
 	session, err := pty.Start(ctx, pty.Config{
-		Path:       t.shell,
+		Path:       shell,
 		Args:       args,
 		Dir:        t.cwd,
 		Env:        env,

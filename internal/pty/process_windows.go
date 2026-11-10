@@ -50,21 +50,29 @@ func startWindowsProcess(cmd *exec.Cmd, options windowsStartOptions) (*Process, 
 	environment := windowsEnvironmentBlock(cmd.Env)
 	startup := new(windows.StartupInfoEx)
 	startup.Flags = windows.STARTF_USESTDHANDLES
+	// A ConPTY child gets its console from the pseudoconsole attribute and inherits nothing. Any other child
+	// inherits exactly its own standard handles through PROC_THREAD_ATTRIBUTE_HANDLE_LIST: with a plain
+	// bInheritHandles it would also inherit every inheritable handle of a concurrent start, and an exec
+	// would not see EOF until an unrelated sibling holding its pipe ends exited.
 	inherit := false
+	attributes := options.attributes
 	if !options.conPTY {
 		inherit = true
-		if err := windowsProcessHandles(cmd, &startup.StartupInfo); err != nil {
+		handles, err := windowsProcessHandles(cmd, &startup.StartupInfo)
+		if err != nil {
 			return nil, err
 		}
+		defer handles.close()
+		attributes = handles.attributes
 	}
 	flags := uint32(windows.CREATE_SUSPENDED | windows.CREATE_UNICODE_ENVIRONMENT | windows.CREATE_NEW_PROCESS_GROUP)
 	if options.noWindow {
 		flags |= windows.CREATE_NO_WINDOW
 	}
 	startup.Cb = uint32(unsafe.Sizeof(startup.StartupInfo))
-	if options.attributes != nil {
+	if attributes != nil {
 		startup.Cb = uint32(unsafe.Sizeof(*startup))
-		startup.ProcThreadAttributeList = options.attributes.List()
+		startup.ProcThreadAttributeList = attributes.List()
 		flags |= windows.EXTENDED_STARTUPINFO_PRESENT
 	}
 	var processInfo windows.ProcessInformation
@@ -137,7 +145,16 @@ func startWindowsProcess(cmd *exec.Cmd, options windowsStartOptions) (*Process, 
 	}), nil
 }
 
-func windowsProcessHandles(cmd *exec.Cmd, startup *windows.StartupInfo) error {
+// windowsChildHandles are inheritable duplicates of a child's standard handles and the attribute list that
+// restricts inheritance to them. The caller's handles are left as they are and closed by the caller.
+type windowsChildHandles struct {
+	handles    []windows.Handle
+	attributes *windows.ProcThreadAttributeListContainer
+}
+
+func windowsProcessHandles(cmd *exec.Cmd, startup *windows.StartupInfo) (*windowsChildHandles, error) {
+	child := &windowsChildHandles{}
+	currentProcess := windows.CurrentProcess()
 	for _, stream := range []struct {
 		name   string
 		value  any
@@ -149,15 +166,39 @@ func windowsProcessHandles(cmd *exec.Cmd, startup *windows.StartupInfo) error {
 	} {
 		file, ok := stream.value.(*os.File)
 		if !ok || file == nil {
-			return fmt.Errorf("Windows process %s must be an *os.File", stream.name)
+			child.close()
+			return nil, fmt.Errorf("Windows process %s must be an *os.File", stream.name)
 		}
-		handle := windows.Handle(file.Fd())
-		if err := windows.SetHandleInformation(handle, windows.HANDLE_FLAG_INHERIT, windows.HANDLE_FLAG_INHERIT); err != nil {
-			return err
+		var duplicate windows.Handle
+		if err := windows.DuplicateHandle(currentProcess, windows.Handle(file.Fd()), currentProcess, &duplicate, 0, true, windows.DUPLICATE_SAME_ACCESS); err != nil {
+			child.close()
+			return nil, fmt.Errorf("duplicate Windows process %s: %w", stream.name, err)
 		}
-		*stream.target = handle
+		child.handles = append(child.handles, duplicate)
+		*stream.target = duplicate
 	}
-	return nil
+	attributes, err := windows.NewProcThreadAttributeList(1)
+	if err != nil {
+		child.close()
+		return nil, err
+	}
+	child.attributes = attributes
+	if err := attributes.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&child.handles[0]), uintptr(len(child.handles))*unsafe.Sizeof(child.handles[0])); err != nil {
+		child.close()
+		return nil, err
+	}
+	return child, nil
+}
+
+func (c *windowsChildHandles) close() {
+	if c.attributes != nil {
+		c.attributes.Delete()
+		c.attributes = nil
+	}
+	for _, handle := range c.handles {
+		_ = windows.CloseHandle(handle)
+	}
+	c.handles = nil
 }
 
 func windowsCommandLine(cmd *exec.Cmd) string {

@@ -273,6 +273,7 @@ async function callWeb<T>(cmd: string, args?: Record<string, unknown>): Promise<
 
 export const systemApi = {
   platform: () => call("app_platform"),
+  windowsBuild: () => call("app_windows_build"),
   insets: () => call("system_insets"),
   // Operating system notifications through the desktop bridge; the server and mobile builds report them unsupported.
   notificationStatus: () => call("system_notification_status"),

@@ -4859,7 +4859,7 @@
   "留空使用 ~/.ssh/config，会一并读取其中 Include 的文件。": "Déjalo vacío para usar ~/.ssh/config; también se leerán los archivos que incluya con Include.",
   "留空使用服务器上的 ~/.ssh/config，不会读取浏览器所在电脑的文件。": "Déjalo vacío para usar ~/.ssh/config del servidor; no se leen archivos del equipo donde está el navegador.",
   "留空使用用户主目录": "Déjalo vacío para usar el directorio personal del usuario",
-  "留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置": "Déjalo vacío para usar el shell de inicio de sesión de la cuenta (pwsh en Windows); si lo rellenas, tiene prioridad sobre la configuración de la cuenta",
+  "留空使用账户登录 shell（Windows 为 pwsh，未安装时为 powershell.exe）；填写后优先于账户设置": "Déjalo vacío para usar el shell de inicio de sesión de la cuenta (pwsh en Windows, o powershell.exe si pwsh no está instalado); si lo rellenas, tiene prioridad sobre la configuración de la cuenta",
   "留空使用默认路径。": "Déjalo vacío para usar la ruta por defecto.",
   "留空则不修改已保存的密码": "Déjalo vacío para no cambiar la contraseña guardada",
   "留空则不设置": "Déjalo vacío para no definirlo",

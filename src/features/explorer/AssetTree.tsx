@@ -3234,7 +3234,7 @@ export function AssetEditor({
                   className="nx-input font-mono text-[12px]"
                   value={shell}
                   onChange={(e) => setShell(e.target.value)}
-                  placeholder={tr("留空使用账户登录 shell（Windows 为 pwsh）；填写后优先于账户设置")}
+                  placeholder={tr("留空使用账户登录 shell（Windows 为 pwsh，未安装时为 powershell.exe）；填写后优先于账户设置")}
                 />
               </div>
               <div className="nx-form-row">

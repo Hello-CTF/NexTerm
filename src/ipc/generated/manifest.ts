@@ -460,6 +460,14 @@ export const ipcContractManifest = {
       input: { go: "struct{Version *string \"json:\\\"version\\\"\"}", ts: "{\n  version: string | null;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/update.Result", ts: "UpdateResult" },
     },
+    "app_windows_build": {
+      scope: "platform",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "struct{}", ts: "Record<string, never>" },
+      output: { go: "uint32", ts: "number" },
+    },
     "asset_create": {
       scope: "asset",
       nested: true,
@@ -3368,6 +3376,10 @@ export interface IPCCommandTypeMap {
   version: string | null;
 };
     output: contractTypes.UpdateResult;
+  };
+  "app_windows_build": {
+    input: Record<string, never>;
+    output: number;
   };
   "asset_create": {
     input: contractTypes.AssetInputRequest;
