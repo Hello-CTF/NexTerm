@@ -187,7 +187,7 @@ func postgresDescribe(ctx context.Context, connection *postgresConnection, schem
 }
 
 func queryPostgres(ctx context.Context, database *sql.DB, statement string, limit uint64, timeout time.Duration) (QueryResult, error) {
-	return querySQL(ctx, database, statement, limit, timeout, postgresJSONValue)
+	return querySQL(ctx, database, statement, sqlDialectPostgres, limit, timeout, postgresJSONValue)
 }
 
 func postgresSchema(ctx context.Context, connection *postgresConnection, schema string) (string, error) {

@@ -199,23 +199,52 @@ func TestMySQLJSONValuesAreLossless(t *testing.T) {
 
 func TestStatementReturnsRowsSkipsComments(t *testing.T) {
 	for statement, want := range map[string]bool{
-		" SELECT 1":                                         true,
-		"/* hint */ SHOW DATABASES":                         true,
-		"/* hint */ (SELECT 1 UNION SELECT 2);":             true,
-		"(SELECT 1);":                                       true,
-		"(TABLE items)":                                     true,
-		"(VALUES ROW(1))":                                   true,
-		"-- note\n UPDATE t SET x=1":                        false,
-		"# note\nDELETE FROM t":                             false,
-		"WITH x AS (SELECT 1) SELECT * FROM x":              true,
-		"WITH x AS (SELECT 1) UPDATE items SET enabled = 0": false,
-		"WITH RECURSIVE x AS (SELECT 1) DELETE FROM items":  false,
-		"WITH x AS (SELECT ')') SELECT * FROM x":            true,
-		"INSERT INTO t VALUES (1)":                          false,
+		" SELECT 1":                                          true,
+		"/* hint */ SHOW DATABASES":                          true,
+		"/* hint */ (SELECT 1 UNION SELECT 2);":              true,
+		"(SELECT 1);":                                        true,
+		"(TABLE items)":                                      true,
+		"(VALUES ROW(1))":                                    true,
+		"-- note\n UPDATE t SET x=1":                         false,
+		"# note\nDELETE FROM t":                              false,
+		"WITH x AS (SELECT 1) SELECT * FROM x":               true,
+		"WITH x AS (SELECT 1) UPDATE items SET enabled = 0":  false,
+		"WITH RECURSIVE x AS (SELECT 1) DELETE FROM items":   false,
+		"WITH x AS (SELECT ')') SELECT * FROM x":             true,
+		"WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x": false,
+		"INSERT INTO t VALUES (1)":                           false,
+		// MariaDB RETURNING clauses return rows.
+		"INSERT INTO t VALUES (1) RETURNING id":                 true,
+		"DELETE FROM t WHERE id = 1 RETURNING *;":               true,
+		"REPLACE INTO t VALUES (1) returning id":                true,
+		"INSERT INTO t VALUES ('returning')":                    false,
+		"INSERT INTO t VALUES (\"x\\\" RETURNING\")":            false,
+		"INSERT INTO `returning` VALUES (1)":                    false,
+		"UPDATE t SET note = 'it''s returning' WHERE id = 1":    false,
+		"UPDATE t SET my_returning = 1":                         false,
+		"DELETE FROM t /* RETURNING id */":                      false,
+		"DELETE FROM t -- RETURNING id\n":                       false,
+		"DELETE FROM t # RETURNING id\n":                        false,
+		"DELETE FROM t; SELECT 1 RETURNING":                     false,
+		"INSERT INTO t SELECT * FROM (SELECT 1 AS returning) s": false,
+		"/* a /* b */ SELECT 1":                                 true,
+		"--1\nSELECT 1":                                         false,
 	} {
-		if got := statementReturnsRows(statement); got != want {
+		if got := statementReturnsRows(statement, sqlDialectMySQL); got != want {
 			t.Errorf("statementReturnsRows(%q)=%v want %v", statement, got, want)
 		}
+	}
+}
+
+func TestMySQLReturningUsesRowsPath(t *testing.T) {
+	rows := newFakeRows([]string{"id"}, []string{"INT"}, [][]driver.Value{{[]byte("5")}})
+	state := &fakeSQLState{query: func(context.Context, string) (driver.Rows, error) { return rows, nil }}
+	result, err := queryMySQL(context.Background(), newFakeSQLDB(t, state), "INSERT INTO items (name) VALUES ('a') RETURNING id", 0, time.Second)
+	if err != nil || result.Error != nil {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if len(state.queries) != 1 || len(state.execs) != 0 || len(result.Rows) != 1 || result.Rows[0][0] != int64(5) {
+		t.Fatalf("result=%+v queries=%v execs=%v", result, state.queries, state.execs)
 	}
 }
 

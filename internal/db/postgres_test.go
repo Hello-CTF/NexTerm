@@ -117,6 +117,49 @@ func TestPostgresQueryRowsAffected(t *testing.T) {
 	}
 }
 
+func TestPostgresStatementReturnsRows(t *testing.T) {
+	for statement, want := range map[string]bool{
+		"INSERT INTO t (v) VALUES (1) RETURNING id":                                             true,
+		"UPDATE t SET v = 2 WHERE id = 1 RETURNING *":                                           true,
+		"DELETE FROM t RETURNING id;":                                                           true,
+		"WITH d AS (DELETE FROM t RETURNING id) SELECT count(*) FROM d":                         true,
+		"WITH s AS (SELECT 1 AS id) UPDATE t SET v = 0 FROM s WHERE t.id = s.id RETURNING t.id": true,
+		"WITH s AS (SELECT 1 AS id) UPDATE t SET v = 0 FROM s WHERE t.id = s.id":                false,
+		"WITH d AS (DELETE FROM t RETURNING id) INSERT INTO log SELECT id FROM d":               false,
+		"INSERT INTO t VALUES ('C:\\') RETURNING id":                                            true,
+		"INSERT INTO t VALUES (E'it\\'s returning')":                                            false,
+		"INSERT INTO t VALUES ($$ RETURNING $$)":                                                false,
+		"INSERT INTO t VALUES ($body$ it's RETURNING $body$) RETURNING id":                      true,
+		"UPDATE t SET v = $1 WHERE id = $2 RETURNING v":                                         true,
+		"UPDATE t SET \"returning\" = 1":                                                        false,
+		"UPDATE t SET v = 1 /* outer /* inner */ RETURNING id */":                               false,
+		"UPDATE t SET v = 1 --RETURNING id":                                                     false,
+		"UPDATE t SET v = 5 # 1 RETURNING v":                                                    true,
+		"INSERT INTO t VALUES (1)":                                                              false,
+		"--note\nSELECT 1":                                                                      true,
+		"/* a /* b */ c */ SELECT 1":                                                            true,
+		"--note\nINSERT INTO t VALUES (1) RETURNING id":                                         true,
+		"-- note\n/* x */ UPDATE t SET v = 1":                                                   false,
+		"/* unterminated /* */ SELECT 1":                                                        false,
+	} {
+		if got := statementReturnsRows(statement, sqlDialectPostgres); got != want {
+			t.Errorf("statementReturnsRows(%q)=%v want %v", statement, got, want)
+		}
+	}
+}
+
+func TestPostgresReturningUsesRowsPath(t *testing.T) {
+	rows := newFakeRows([]string{"id"}, []string{"INT8"}, [][]driver.Value{{int64(9)}})
+	state := &fakeSQLState{query: func(context.Context, string) (driver.Rows, error) { return rows, nil }}
+	result, err := queryPostgres(context.Background(), newFakeSQLDB(t, state), "WITH s AS (SELECT 1) UPDATE items SET enabled = false RETURNING id", 0, time.Second)
+	if err != nil || result.Error != nil {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if len(state.queries) != 1 || len(state.execs) != 0 || len(result.Rows) != 1 || !reflect.DeepEqual(result.Columns, []string{"id"}) {
+		t.Fatalf("result=%+v queries=%v execs=%v", result, state.queries, state.execs)
+	}
+}
+
 func TestPostgresQueryEmptyRowsKeepsColumns(t *testing.T) {
 	rows := newFakeRows([]string{"id", "name"}, []string{"INT8", "TEXT"}, nil)
 	state := &fakeSQLState{query: func(context.Context, string) (driver.Rows, error) { return rows, nil }}
