@@ -63,6 +63,8 @@ import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
 import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
 import { t as tr } from "../../i18n";
+import { createTrzszSession } from "./trzsz/trzszSession";
+import { setTrzszTransferActive } from "./trzsz/trzszActivity";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -216,6 +218,8 @@ export function XtermView(props: XtermViewProps) {
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
+  const [trzszActive, setTrzszActive] = useState(false);
+  const cancelTrzszRef = useRef<(() => void) | null>(null);
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
   const onBlocksRef = useRef(props.onBlocks);
@@ -430,6 +434,8 @@ export function XtermView(props: XtermViewProps) {
       );
     };
     const sendInput = (data: string, blockText = data) => {
+      // A running trzsz transfer owns the stream: text from the composer or key bar is held back.
+      if (trzsz.handleInput(data)) return;
       blocks.feedInput(blockText);
       if (!kernelTabId) return;
       coordinator.noteInput();
@@ -522,6 +528,7 @@ export function XtermView(props: XtermViewProps) {
       attachmentId?: number;
     }) => {
       ephemeral = info.ephemeral;
+      if (info.shell) trzszShell = info.shell;
       // Adopt the response's incarnation only when it is newer than the one
       // already learned from the ordered stream: a deferred stale response
       // must never override the current attachment identity.
@@ -981,6 +988,33 @@ export function XtermView(props: XtermViewProps) {
         },
       },
     );
+    // trz / tsz transfers. Protocol replies go straight to this tab, never
+    // through onData, so a transfer is never broadcast.
+    let trzszShell: string | undefined;
+    let trzszTabId = "";
+    const trzsz = createTrzszSession({
+      enabled: () => getTerminalPrefs().trzsz,
+      inputOwner: () => inputOwner,
+      windowsShell: () => trzszShell === "powershell" || trzszShell === "cmd",
+      columns: () => term.cols,
+      host: () => useUi.getState().sessions.find((session) => session.id === sessionId)?.name ?? null,
+      sendToServer: (bytes) => {
+        const tabId = kernelTabId;
+        if (!tabId) return;
+        sendChannelInput(channel, tabId, bytes, (data) => terminalApi.write(tabId, data));
+      },
+      writeLocal: (text) => streamWriter.writeLocalText(text),
+      onActiveChange: (active) => {
+        if (active) trzszTabId = kernelTabId;
+        setTrzszTransferActive(trzszTabId, active);
+        if (!active) trzszTabId = "";
+        if (!disposed) setTrzszActive(active);
+      },
+      onError: (error) => {
+        useUi.getState().pushToast("error", tr("无法启动 trzsz 文件传输：{value}", { value: describeError(error) }));
+      },
+    });
+    cancelTrzszRef.current = () => trzsz.cancel();
     // Automatic query replies (DA/DSR/CPR reports and friends) are answered
     // by xterm itself through onData. They pass a byte-rate limiter so a query
     // flood from the host cannot flood the upstream channel; suppression is
@@ -1054,7 +1088,13 @@ export function XtermView(props: XtermViewProps) {
         // parses it with the right mode.
         let accepted = skipped;
         for (const run of classifyRuns(out, streamBytes + skipped)) {
-          if (!streamWriter.pushBytes(out.subarray(run.offset, run.offset + run.length), run.mode)) {
+          const chunk = out.subarray(run.offset, run.offset + run.length);
+          // Bytes a trzsz transfer consumed are accepted without reaching xterm.
+          if (trzsz.handleOutput(chunk, run.mode)) {
+            accepted += run.length;
+            continue;
+          }
+          if (!streamWriter.pushBytes(chunk, run.mode)) {
             // Refused bytes are not counted in streamBytes: the resume anchor
             // must point at the last accepted byte so the replay resends them.
             // The refusal episode is sticky inside the writer until the next
@@ -1410,6 +1450,8 @@ export function XtermView(props: XtermViewProps) {
       if (parseMode !== "live" && !userInput.active() && isAutomaticTerminalReply(raw)) return;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
+      // While a trzsz transfer runs, keys reach only trzsz.js (Ctrl+C cancels it).
+      if (trzsz.handleInput(data)) return;
       blocks.feedInput(data);
       // Local keys and pastes check that the PTY still has this view's size; automatic replies do not count.
       if (userInput.active()) gridRef.current?.noteInput();
@@ -1581,6 +1623,8 @@ export function XtermView(props: XtermViewProps) {
       if (measureFrame !== null) cancelAnimationFrame(measureFrame);
       if (uiFrame !== null) cancelAnimationFrame(uiFrame);
       responses.dispose();
+      trzsz.dispose();
+      cancelTrzszRef.current = null;
       window.removeEventListener(RESIZE_END_EVENT, onFinalResize);
       window.removeEventListener("resize", onWindowResize);
       window.visualViewport?.removeEventListener("resize", onWindowResize);
@@ -1738,6 +1782,17 @@ export function XtermView(props: XtermViewProps) {
         />
       )}
       <LinesBelowBadge tabId={viewKey} onJump={scrollToBottom} />
+      {trzszActive && (
+        <div
+          role="status"
+          className="absolute right-3 top-2 z-10 flex items-center gap-2 rounded-md border border-neutral-700/80 bg-neutral-800/95 px-2.5 py-1.5 text-[12px] text-neutral-100 shadow-lg"
+        >
+          <span>{tr("trzsz 文件传输中，Ctrl+C 可取消")}</span>
+          <button type="button" className="nx-btn nx-btn-sm" onClick={() => cancelTrzszRef.current?.()}>
+            {tr("取消传输")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

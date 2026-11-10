@@ -45,6 +45,7 @@
     "lucide-react": "^1.53.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "trzsz": "1.1.6",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

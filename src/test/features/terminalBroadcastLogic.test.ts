@@ -21,6 +21,7 @@ import {
 import { useUi } from "../../app/store";
 import { cleanupDeviceSessions } from "../../features/fleet/deviceSessionCleanup";
 import { setTerminalCloseAction } from "../../app/preferences";
+import { setTrzszTransferActive } from "../../features/terminal/trzsz/trzszActivity";
 
 vi.mock("../../ipc/commands", () => ({
   assetApi: {},
@@ -129,6 +130,20 @@ describe("collectBroadcastCandidates", () => {
     expect(byId.get("t4")?.ineligibleReason).toBe("WinRM 非交互终端不支持广播");
     expect(byId.get("t6")?.ineligibleReason).toBe("终端尚未连接");
     expect(byId.get("t7")?.ineligibleReason).toBe("主机未连接");
+  });
+
+  it("skips a terminal while a trzsz transfer runs in it", () => {
+    const ws = workspace([{ id: "p1", tabs: [termTab("t1", "s1"), termTab("t2", "s1")] }]);
+    setTrzszTransferActive("k-t2", true);
+    try {
+      const byId = new Map(collectBroadcastCandidates([ws], [session("s1", "ssh")]).map((c) => [c.storeTabId, c]));
+      expect(byId.get("t1")?.eligible).toBe(true);
+      expect(byId.get("t2")?.eligible).toBe(false);
+      expect(byId.get("t2")?.ineligibleReason).toBe("正在通过 trzsz 传输文件");
+    } finally {
+      setTrzszTransferActive("k-t2", false);
+    }
+    expect(collectBroadcastCandidates([ws], [session("s1", "ssh")]).every((c) => c.eligible)).toBe(true);
   });
 
   it("includes connected terminals outside the current target set from two workspaces", () => {

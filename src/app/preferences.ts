@@ -298,6 +298,9 @@ export interface TerminalPrefs {
   scrollback: TerminalScrollback;
   // MiB of output the host keeps per new durable terminal; null keeps the helper default.
   durableHistoryMiB: number | null;
+  // Answers trz / tsz (trzsz) transfer requests in live output; every transfer is still confirmed. A device
+  // setting: it decides what this device's file system takes part in, so it is never synced.
+  trzsz: boolean;
 }
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
@@ -321,6 +324,7 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   confirmMultilinePaste: "unbracketed",
   scrollback: 10_000,
   durableHistoryMiB: null,
+  trzsz: true,
 };
 
 // Any value that is not one of the options, including a missing one, is the default.
@@ -379,6 +383,7 @@ function loadTerminal(): TerminalPrefs {
     confirmMultilinePaste: normalizeMultilinePasteConfirm(confirmPaste),
     scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
+    trzsz: local.trzsz !== false,
   };
 }
 
@@ -503,6 +508,18 @@ export function setTerminalScrollback(value: TerminalScrollback): void {
     const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
     const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, scrollback: value }));
+  } catch {
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalTrzsz(value: boolean): void {
+  if (terminalPrefs.trzsz === value) return;
+  terminalPrefs = { ...terminalPrefs, trzsz: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, trzsz: value }));
   } catch {
   }
   for (const listener of terminalListeners) listener();
