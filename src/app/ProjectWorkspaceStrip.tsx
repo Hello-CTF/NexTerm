@@ -19,6 +19,8 @@ import { TabAttentionBadge } from "./workspace/tabStrip";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../ui/ContextMenu";
 import type { AssetGroup } from "../ipc/commands";
 import { IconClose, IconDatabase, IconLayers, IconRefresh, IconSettings, assetIcon } from "../ui/icons";
+import { canSaveLayoutTemplate } from "./layoutTemplates";
+import { saveWorkspaceAsLayoutTemplate } from "./layoutTemplateOpen";
 import { t } from "../i18n";
 
 const WORKSPACE_DRAG_MIME = "application/x-nexterm-workspace";
@@ -84,6 +86,14 @@ function WorkspaceStripTab({
         icon: <IconRefresh size={13} />,
         hint: statusLabel ?? undefined,
         onSelect: () => void reconnectWorkspaceConnection(workspace.id),
+      }, { kind: "separator" });
+    }
+    if (canSaveLayoutTemplate(workspace)) {
+      items.push({
+        kind: "item",
+        label: t("保存当前布局为模板"),
+        icon: <IconLayers size={13} />,
+        onSelect: () => void saveWorkspaceAsLayoutTemplate(workspace.id),
       }, { kind: "separator" });
     }
     items.push(

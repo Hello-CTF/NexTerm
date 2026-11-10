@@ -37,6 +37,7 @@ export type SettingsSectionId =
   | "settings-terminal"
   | "settings-state-rules"
   | "settings-keyword-highlight"
+  | "settings-layout-templates"
   | "settings-notifications"
   | "settings-shortcuts"
   | "settings-quick-commands"
@@ -67,6 +68,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-terminal", label: t("终端"), icon: IconTerminal, group: "terminal" },
   { id: "settings-state-rules", label: t("状态规则"), icon: IconFlag, group: "terminal" },
   { id: "settings-keyword-highlight", label: t("关键词高亮"), icon: IconStar, group: "terminal" },
+  { id: "settings-layout-templates", label: t("布局模板"), icon: IconLayers, group: "terminal" },
   { id: "settings-notifications", label: t("通知"), icon: IconBell, group: "notifications" },
   { id: "settings-shortcuts", label: t("快捷键"), icon: IconCommand, group: "shortcuts" },
   { id: "settings-quick-commands", label: t("快捷命令"), icon: IconCommand, group: "shortcuts" },
@@ -117,6 +119,10 @@ export const SECTION_SEARCH: Record<SettingsSectionId, SettingsSearchMeta> = {
   "settings-notifications": {
     description: t("会话需要处理时在本机弹出系统通知"),
     keywords: ["notification", "notify", "bell", "inbox", t("通知"), t("系统通知"), t("响铃"), t("铃铛"), t("收件箱")],
+  },
+  "settings-layout-templates": {
+    description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"),
+    keywords: ["layout", "template", "arrangement", "split", "pane", "workspace", t("布局"), t("模板"), t("分屏"), t("窗格"), t("工作区"), t("启动片段")],
   },
   "settings-quick-commands": {
     description: t("在终端按键条中发送的常用命令"),
@@ -243,6 +249,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "state-rules-status", section: "settings-state-rules", label: t("各主机的规则状态"), description: t("各主机的持久终端是否已应用当前规则"), keywords: ["push", "helper", "host", t("下发"), t("主机"), t("组件"), t("生效")] },
   { id: "keyword-highlight-presets", section: "settings-keyword-highlight", label: t("内置预设"), description: t("错误、警告、成功、IPv4 地址和 UUID 的高亮"), keywords: ["preset", "error", "warning", "ip", "uuid", t("预设")] },
   { id: "keyword-highlight-preview", section: "settings-keyword-highlight", label: t("高亮预览"), keywords: ["preview", "sample", t("预览"), t("示例")] },
+  { id: "layout-templates", section: "settings-layout-templates", label: t("布局模板"), description: t("保存工作区分屏布局，按模板打开主机终端并运行启动片段"), keywords: ["layout", "template", "arrangement", "split", t("布局"), t("模板"), t("分屏")] },
   { id: "quick-commands", section: "settings-quick-commands", label: t("快捷命令"), description: t("在终端按键条中发送的常用命令"), keywords: ["quick command", "snippet", "macro", t("命令"), t("常用命令"), t("片段"), t("按键条")] },
   { id: "memory-mode", section: "settings-memory", label: t("AI 使用记忆"), description: t("引用记忆、允许记忆工具或关闭"), keywords: ["memory", "inject", "tool", t("记忆"), t("记忆工具"), t("引用")] },
   { id: "vault-password", section: "settings-vault", label: t("用密码保护凭据"), keywords: ["password", "credential", "vault", t("密码"), t("凭据")] },

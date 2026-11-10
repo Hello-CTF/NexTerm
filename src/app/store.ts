@@ -58,6 +58,7 @@ export {
   GLOBAL_AI_BOARD_KEY,
   isGlobalToolTab,
   isToolTabKind,
+  makePane,
   migrateToolTabs,
   nextTabId,
   hostHistoryTab,

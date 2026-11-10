@@ -109,6 +109,8 @@ function stepLabel(step: SnippetStep, index: number): string {
 }
 
 export interface SnippetRunOptions {
+  // Run in this terminal instead of the active one.
+  tabId?: string;
   // Called once when the run first waits for terminal output, so a dialog that started it can get out of the way.
   onWaiting?: () => void;
 }
@@ -265,7 +267,9 @@ async function sendSteps(
   return true;
 }
 
+// runSnippetAction acts on the active terminal, or on options.tabId (a terminal id) when the caller chose the terminal.
 export async function runSnippetAction(s: Snippet, action: SnippetAction, options: SnippetRunOptions = {}): Promise<boolean> {
+  const target = options.tabId ? { tabId: options.tabId } : undefined;
   const pushToast = useUi.getState().pushToast;
   const label = ACTION_LABEL[action];
   if (isMultiStep(s)) {
@@ -273,16 +277,16 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction, option
       pushToast("info", tr("多步片段只能执行，不能插入"));
       return false;
     }
-    const first = terminalTarget();
+    const first = target ?? terminalTarget();
     if ("blocked" in first) {
       pushToast("info", tr("{blocked}，才能{label}片段", { blocked: first.blocked, label }));
       return false;
     }
     return runSteps(s, s.steps ?? [], first.tabId, options);
   }
-  const target = terminalTarget();
-  if ("blocked" in target) {
-    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: target.blocked, label }));
+  const resolved = target ?? terminalTarget();
+  if ("blocked" in resolved) {
+    pushToast("info", tr("{blocked}，才能{label}片段", { blocked: resolved.blocked, label }));
     return false;
   }
   const risk = insertRisk(s.body);
@@ -290,7 +294,7 @@ export async function runSnippetAction(s: Snippet, action: SnippetAction, option
   const payload =
     action === "execute" && !/[\r\n]$/.test(s.body) ? s.body + "\r" : s.body;
   try {
-    await terminalApi.write(target.tabId, new TextEncoder().encode(payload));
+    await terminalApi.write(resolved.tabId, new TextEncoder().encode(payload));
     pushToast(
       "success",
       action === "insert"

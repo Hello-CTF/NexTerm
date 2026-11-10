@@ -68,6 +68,7 @@ const (
 	preferenceKindKeywordHighlights
 	preferenceKindSchemeID
 	preferenceKindCustomSchemes
+	preferenceKindLayoutTemplates
 )
 
 type preferenceSpec struct {
@@ -108,6 +109,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
 	"terminal.keywordHighlights":        {kind: preferenceKindKeywordHighlights},
+	"workspace.layoutTemplates":         {kind: preferenceKindLayoutTemplates},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
 	"keybinding.newTerminal":            {kind: preferenceKindBinding},
@@ -311,6 +313,10 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 		}
 	case preferenceKindCustomSchemes:
 		if canonical, ok := normalizeTerminalCustomSchemes(raw); ok {
+			return canonical, nil
+		}
+	case preferenceKindLayoutTemplates:
+		if canonical, ok := normalizeLayoutTemplates(raw); ok {
 			return canonical, nil
 		}
 	}

@@ -125,13 +125,13 @@ function sessionTerminalCount(sessionId: string): number {
 // openTerminalTab is the explicit "new terminal" action. It opens a durable terminal when the session's durable
 // helper is ready; while the helper is still preparing or unavailable it opens a regular terminal without waiting for
 // the helper and records the reason on the tab, so the degradation is visible. The mode decision itself is bounded
-// (see regularTerminalReason).
+// (see regularTerminalReason). It resolves to the new tab's store id.
 export async function openTerminalTab(
   session: SessionInfo,
   title?: string,
   paneId?: string,
   options?: { directory?: string },
-) {
+): Promise<string> {
   const pending = pendingTerminalOpens.get(session.id) ?? 0;
   const number = sessionTerminalCount(session.id) + pending + 1;
   pendingTerminalOpens.set(session.id, pending + 1);
@@ -150,9 +150,10 @@ export async function openTerminalTab(
     title: session.name,
     assetKind: session.kind,
   });
+  const id = nextTabId(`term-${session.id}`);
   useUi.getState().addTab(
     {
-      id: nextTabId(`term-${session.id}`),
+      id,
       kind: "terminal",
       title: title ?? tr("终端 {number}", { number }),
       sessionId: session.id,
@@ -162,6 +163,7 @@ export async function openTerminalTab(
     },
     paneId,
   );
+  return id;
 }
 
 export function findTab(id: string): { tab: AppTab; ws: Workspace } | null {
