@@ -84,6 +84,12 @@ func (a *fakeAuditor) Audit(_ context.Context, event AuditEvent) error {
 	return nil
 }
 
+func (a *fakeAuditor) snapshot() []AuditEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.events)
+}
+
 func (a *fakeAuditor) kinds() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -391,6 +397,7 @@ type rdpServerOptions struct {
 	Selected    uint32
 	GotRequest  chan<- []byte
 	MinVersion  uint16 // 0 means TLS 1.2
+	MaxVersion  uint16 // 0 means the newest version
 	Versions    chan<- uint16
 	Connections *atomic.Int32
 	// ResetTLS12 drops the connection on a hello that does not offer TLS 1.3, like a middlebox that cannot parse 1.2.
@@ -415,7 +422,7 @@ func rdpServerWith(t testing.TB, opts rdpServerOptions) (string, int) {
 		binary.LittleEndian.PutUint32(confirm[15:], opts.Selected)
 		_, _ = conn.Write(confirm)
 		c := opts.Cert()
-		config := &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: minVersion}
+		config := &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: minVersion, MaxVersion: opts.MaxVersion}
 		if opts.ResetTLS12 {
 			config.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 				if !slices.Contains(hello.SupportedVersions, uint16(tls.VersionTLS13)) {
@@ -1275,7 +1282,12 @@ func TestCloseAccountUserWithNothingSparedClosesConnectionsWithoutLoginSession(t
 // serveRDPOnce runs one RDCleanPath exchange against host:port and returns the client-visible response and Serve error.
 func serveRDPOnce(t *testing.T, f *fixture, host string, port int) (*rdCleanPathPDU, error) {
 	t.Helper()
-	f.resolver.set(Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+	return serveRDPOnceWith(t, f, Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port})
+}
+
+func serveRDPOnceWith(t *testing.T, f *fixture, asset Asset) (*rdCleanPathPDU, error) {
+	t.Helper()
+	f.resolver.set(asset)
 	prepared, err := f.svc.Prepare(userCtx("u1", "s1"), "r1")
 	if err != nil {
 		t.Fatal(err)
@@ -1391,5 +1403,49 @@ func TestServeRDPFallsBackWhenTLS12HelloIsDropped(t *testing.T) {
 	}
 	if got := conns.Load(); got != 2 {
 		t.Fatalf("upstream connections = %d, want 2", got)
+	}
+}
+
+func TestServeRDPLegacyTLSIsOptIn(t *testing.T) {
+	cert, der := newTestCertificate(t, "rdp-tls10")
+	versions := make(chan uint16, 4)
+	host, port := rdpServerWith(t, rdpServerOptions{
+		Cert: func() tls.Certificate { return cert }, Selected: protoHybridEx,
+		MinVersion: tls.VersionTLS10, MaxVersion: tls.VersionTLS10, Versions: versions,
+	})
+	pin := host + ":" + strconv.Itoa(port) + "/" + certKeyTypeRDP
+
+	refused := newFixture(t)
+	refused.certs.pinned[pin] = fingerprintOf(der)
+	pdu, err := serveRDPOnce(t, refused, host, port)
+	if err == nil || pdu.Error == nil || !pdu.Error.HasTLS || pdu.Error.TLSAlert != tlsAlertProtocolVersion {
+		t.Fatalf("default connection to a TLS 1.0 host: pdu=%+v err=%v", pdu.Error, err)
+	}
+	if !strings.Contains(errorSummary(err), "允许旧版 TLS") {
+		t.Fatalf("refusal does not point at the option: %v", err)
+	}
+
+	allowed := newFixture(t)
+	allowed.certs.pinned[pin] = fingerprintOf(der)
+	pdu, err = serveRDPOnceWith(t, allowed, Asset{ID: "r1", OwnerID: "u1", Kind: KindRDP, Host: host, Port: port, OptionsJSON: `{"legacyTLS":true}`})
+	if err != nil || pdu.Error != nil {
+		t.Fatalf("legacy TLS connection: pdu=%+v err=%v", pdu.Error, err)
+	}
+	select {
+	case version := <-versions:
+		if version != tls.VersionTLS10 {
+			t.Fatalf("TLS version = 0x%x, want 0x%x", version, tls.VersionTLS10)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never completed a handshake")
+	}
+	var legacy any
+	for _, event := range allowed.audit.snapshot() {
+		if event.Kind == AuditConnect {
+			legacy = event.Payload["legacyTLS"]
+		}
+	}
+	if legacy != true {
+		t.Fatalf("connect audit legacyTLS = %v, want true", legacy)
 	}
 }

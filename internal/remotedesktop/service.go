@@ -571,10 +571,10 @@ func (s *Service) Serve(ctx context.Context, fc FrameConn, ident Identity, ticke
 	switch asset.Kind {
 	case KindRDP:
 		err = s.rdp.Serve(connCtx, RDPSession{
-			Client: fc, First: first, Dial: dial, Addr: joinAddr(asset.Host, asset.Port), VerifyCert: verify,
+			Client: fc, First: first, Dial: dial, Addr: joinAddr(asset.Host, asset.Port), VerifyCert: verify, LegacyTLS: options.LegacyTLS,
 			Dialed: func() {
 				connected = true
-				s.audit(connCtx, AuditConnect, asset.ID, map[string]any{"protocol": KindRDP, "host": asset.Host, "port": asset.Port, "viaAssetId": options.ViaAssetID})
+				s.audit(connCtx, AuditConnect, asset.ID, map[string]any{"protocol": KindRDP, "host": asset.Host, "port": asset.Port, "viaAssetId": options.ViaAssetID, "legacyTLS": options.LegacyTLS})
 			},
 		})
 	case KindVNC:

@@ -72,7 +72,7 @@ export function isRemoteDesktopKind(kind: string): kind is "rdp" | "vnc" {
   return kind === "rdp" || kind === "vnc";
 }
 
-// Options the remote desktop form edits. The backend reads viaAssetId, promptPassword, domain, width and height;
+// Options the remote desktop form edits. The backend reads viaAssetId, promptPassword, domain, width, height and legacyTLS;
 // clipboard, clipboardAutoSync, commandAsCtrl and viewOnly are read by the client.
 export interface RemoteDesktopOptions {
   domain: string;
@@ -83,6 +83,8 @@ export interface RemoteDesktopOptions {
   // On a Mac, Command is sent as Ctrl; see defaultCommandAsCtrl.
   commandAsCtrl: boolean;
   viewOnly: boolean;
+  // RDP only: also accept TLS 1.0/1.1 for hosts that offer nothing newer.
+  legacyTLS: boolean;
   resolution: "follow" | "fixed";
   width: number;
   height: number;
@@ -113,6 +115,7 @@ export function readRemoteDesktopOptions(kind: string, options: Record<string, u
     commandAsCtrl: typeof raw.commandAsCtrl === "boolean" ? raw.commandAsCtrl : defaultCommandAsCtrl(kind),
     // A VNC session starts read-only only when asked; the default is a normal session.
     viewOnly: raw.viewOnly === true,
+    legacyTLS: kind === "rdp" && raw.legacyTLS === true,
     resolution: kind === "rdp" && fixed ? "fixed" : "follow",
     width: fixed ? width : DEFAULT_RESOLUTION.width,
     height: fixed ? height : DEFAULT_RESOLUTION.height,
@@ -135,12 +138,14 @@ export function writeRemoteDesktopOptions(
   delete options.clipboardAutoSync;
   delete options.commandAsCtrl;
   delete options.viewOnly;
+  delete options.legacyTLS;
   if (values.promptPassword) options.promptPassword = true;
   if (!values.clipboard) options.clipboard = false;
   if (!values.clipboardAutoSync) options.clipboardAutoSync = false;
   if (values.commandAsCtrl !== defaultCommandAsCtrl(kind)) options.commandAsCtrl = values.commandAsCtrl;
   if (kind === "rdp") {
     if (values.domain.trim()) options.domain = values.domain.trim();
+    if (values.legacyTLS) options.legacyTLS = true;
     if (values.resolution === "fixed") {
       options.width = values.width;
       options.height = values.height;
@@ -174,7 +179,7 @@ const SSH_OPTION_KEYS = [
   "pasteNoRandomDir",
   "backupBeforeOverwrite",
 ];
-const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly"];
+const REMOTE_DESKTOP_OPTION_KEYS = ["domain", "width", "height", "promptPassword", "clipboard", "clipboardAutoSync", "commandAsCtrl", "viewOnly", "legacyTLS"];
 
 // optionsForKindChange drops the options the previous kind's form wrote when an asset changes kind, so a host switched
 // from SSH to RDP (or back) does not keep hidden settings the new form can neither show nor clear.

@@ -313,6 +313,10 @@ func newRDCleanPathWSAError(wsa uint16) []byte {
 	return (&rdCleanPathPDU{Version: rdCleanPathVersion1, Error: &rdCleanPathError{Code: rdCleanPathGeneralError, WSAError: wsa, HasWSA: true}}).marshal()
 }
 
+func newRDCleanPathTLSError(alert uint8) []byte {
+	return (&rdCleanPathPDU{Version: rdCleanPathVersion1, Error: &rdCleanPathError{Code: rdCleanPathGeneralError, TLSAlert: alert, HasTLS: true}}).marshal()
+}
+
 func newRDCleanPathGeneralError() []byte {
 	return (&rdCleanPathPDU{Version: rdCleanPathVersion1, Error: &rdCleanPathError{Code: rdCleanPathGeneralError}}).marshal()
 }

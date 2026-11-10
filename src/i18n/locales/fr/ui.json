@@ -225,6 +225,7 @@
   "SSH、WinRM、文件、Docker、数据库和 AI，集中在一个工作台": "SSH, WinRM, fichiers, Docker, bases de données et IA, réunis dans un seul espace de travail",
   "SSH、WinRM、远程桌面、文件、Docker、数据库和 AI，集中在一个工作台": "SSH, WinRM, bureau à distance, fichiers, Docker, bases de données et IA, réunis dans un seul espace de travail",
   "TCP 拨号": "Connexion TCP",
+  "TLS 1.0/1.1 已不再安全，可能被中间人降级或解密，连接会记入审计日志。请尽快升级主机并关闭此选项。": "TLS 1.0/1.1 n'est plus sûr et peut être rétrogradé ou déchiffré par un attaquant intermédiaire ; les connexions sont enregistrées dans le journal d'audit. Mettez à jour l'hôte et désactivez cette option dès que possible.",
   "TLS 校验失败": "Échec de la vérification TLS",
   "Termius 密钥无法解析": "La clé Termius n'a pas pu être analysée",
   "Termius 导入目前仅支持 macOS": "L'import Termius n'est actuellement pris en charge que sur macOS",
@@ -288,6 +289,10 @@
   "{count} 个可恢复": {
     "one": "{count} récupérable",
     "other": "{count} récupérables"
+  },
+  "{count} 个字符无法发送到远程桌面，已跳过": {
+    "one": "{count} caractère n'a pas pu être envoyé au bureau à distance et a été ignoré",
+    "other": "{count} caractères n'ont pas pu être envoyés au bureau à distance et ont été ignorés"
   },
   "{count} 条": "{count} éléments",
   "{danglingCredAssets} 条资产引用的凭据不在包内；若本机也没有同 ID 凭据，导入后引用将被清除，需重新关联凭据。": {
@@ -917,6 +922,7 @@
   "仅清单记录": "Inventaire seulement",
   "仅生成预览，不会写入资产或凭据": "Génère seulement un aperçu, sans rien écrire dans les ressources ni les identifiants",
   "仅用于匹配旧系统的校验值": "Utilisé uniquement pour correspondre à la somme de contrôle d'anciens systèmes",
+  "仅用于无法升级的旧主机，例如未打补丁的 Windows 7 或 Server 2008 R2。": "Uniquement pour les anciens hôtes impossibles à mettre à jour, comme Windows 7 ou Server 2008 R2 sans correctifs.",
   "仅界面隐藏": "Masqué dans l'interface uniquement",
   "仅确认端口可以连通，没有验证账号和密码": "Confirme seulement que le port est joignable, sans vérifier le compte ni le mot de passe",
   "仅端口通": "Port joignable seulement",
@@ -1129,6 +1135,7 @@
   "允许定时任务使用此规则": "Autoriser les tâches planifiées à utiliser cette règle",
   "允许控制": "Autoriser le contrôle",
   "允许新建终端、文件和端口转发连接": "Autorise la création de terminaux, de fichiers et de connexions de redirection de port",
+  "允许旧版 TLS（1.0/1.1）": "Autoriser l'ancien TLS (1.0/1.1)",
   "允许明文 HTTP 或跳过 TLS 校验": "Autoriser HTTP en clair ou ignorer la vérification TLS",
   "允许明文 HTTP 或跳过 TLS 校验，仅限内网或自签名证书环境": "Autoriser HTTP en clair ou ignorer la vérification TLS, réservé aux réseaux internes ou aux certificats auto-signés",
   "允许本次": "Autoriser cette fois",
@@ -2889,7 +2896,6 @@
   "当前目标环境为": "L'environnement cible actuel est",
   "当前窗格无标签页": "Le volet actuel n'a aucun onglet",
   "当前终端": "Terminal actuel",
-  "当前终端 Shell 暂不支持自动切换目录": "Le shell du terminal actuel ne prend pas encore en charge le changement automatique de dossier",
   "当前终端已断开或已结束": "Le terminal actuel est déconnecté ou terminé",
   "当前终端没有可识别的链接": "Aucun lien reconnaissable dans le terminal actuel",
   "当前终端类型不支持粘贴上传文件，请在文件面板中上传": "Ce type de terminal ne prend pas en charge l'envoi de fichiers par collage. Envoyez-les depuis le panneau de fichiers.",
@@ -4828,6 +4834,7 @@
   "监视": "Surveillance",
   "监视：AI 持续观察指定终端，出现指定输出或进程结束时将收到通知。不再需要时可取消。": "Surveillance : l'IA observe en continu le terminal indiqué et vous notifie lorsque la sortie indiquée apparaît ou qu'un processus se termine. Vous pouvez l'annuler quand elle n'est plus nécessaire.",
   "目录": "Dossier",
+  "目录包含 cmd 无法安全引用的字符（\" 或 %）": "Le répertoire contient des caractères que cmd ne peut pas citer sans risque (\" ou %)",
   "目录包含控制字符": "Le chemin du dossier contient des caractères de contrôle",
   "目录请单独打包下载": "Téléchargez les dossiers séparément sous forme d'archive",
   "目标": "Destination",
@@ -5596,6 +5603,7 @@
   "说明（可选）": "Description (facultatif)",
   "请从上方列表选择要查看的主机，以免查看到其他主机的记录。": "Choisissez l'hôte à consulter dans la liste ci-dessus, afin de ne pas afficher les enregistrements d'un autre hôte.",
   "请从目标主机重新打开后台会话": "Rouvrez la session en arrière-plan depuis l'hôte cible",
+  "请优先为主机安装更新以启用 TLS 1.2。若是无法升级的旧系统（如未打补丁的 Windows 7 或 Server 2008 R2），可在资产设置中开启“允许旧版 TLS（1.0/1.1）”后重新连接。": "Installez d'abord les mises à jour sur l'hôte pour activer TLS 1.2. Pour un ancien système impossible à mettre à jour (comme Windows 7 ou Server 2008 R2 sans correctifs), activez « Autoriser l'ancien TLS (1.0/1.1) » dans les paramètres de l'actif, puis reconnectez-vous.",
   "请信任该主机的证书后重新连接。": "Faites confiance au certificat de cet hôte, puis reconnectez-vous.",
   "请先从资产树打开目标主机，才能查看它上面的后台会话": "Ouvrez d'abord l'hôte cible depuis l'arborescence des ressources pour voir ses sessions en arrière-plan",
   "请先从资产树打开该主机": "Ouvrez d'abord cet hôte depuis l'arborescence des ressources",
@@ -5948,6 +5956,7 @@
   "进行中的记录在结束后才能开启同步": "Un enregistrement en cours ne peut être synchronisé qu'une fois terminé",
   "进行中的预览": "Aperçus en cours",
   "远程": "Distant",
+  "远程主机只支持旧版 TLS（1.0/1.1）": "L'hôte distant ne prend en charge que l'ancien TLS (1.0/1.1)",
   "远程主机在握手阶段中断了连接": "L'hôte distant a interrompu la connexion pendant la négociation",
   "远程主机在身份验证（CredSSP/NLA）阶段拒绝了登录，原因未给出。请检查用户名、密码和域是否正确（域可留空或填主机名），并确认该账户允许远程桌面登录。": "L'hôte distant a refusé la connexion lors de l'authentification (CredSSP/NLA) sans en indiquer la raison. Vérifiez que le nom d'utilisateur, le mot de passe et le domaine sont corrects (le domaine peut rester vide ou contenir le nom de l'hôte) et que le compte est autorisé à se connecter au bureau à distance.",
   "远程主机尚未确认这次分辨率调整，所选分辨率尚未生效。{NOTICE_RECONNECT}": "L'hôte distant n'a pas encore confirmé ce changement de résolution ; la résolution choisie n'est pas encore appliquée. {NOTICE_RECONNECT}",

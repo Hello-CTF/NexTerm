@@ -56,6 +56,8 @@ type Options struct {
 	Domain         string `json:"domain"`
 	Width          int    `json:"width"`
 	Height         int    `json:"height"`
+	// LegacyTLS lets an RDP connection fall back to TLS 1.0/1.1 for hosts that offer nothing newer.
+	LegacyTLS bool `json:"legacyTLS"`
 }
 
 func ParseOptions(raw string) (Options, error) {

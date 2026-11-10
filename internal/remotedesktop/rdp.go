@@ -6,10 +6,11 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -26,6 +27,9 @@ type RDPSession struct {
 	VerifyCert func(chain [][]byte, leaf *x509.Certificate) error
 	// Dialed is called once the upstream connection is established (for audit).
 	Dialed func()
+	// LegacyTLS also accepts TLS 1.0 and 1.1 and RSA key exchange, for hosts such as unpatched Windows 7 and Server
+	// 2008 R2 that offer nothing newer. It is the asset's explicit choice.
+	LegacyTLS bool
 }
 
 // RDPEngine is the swappable RDP back end. The shipped one is an RDCleanPath proxy for IronRDP (WASM).
@@ -179,8 +183,6 @@ func joinAddr(host string, port int) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-var _ = fmt.Sprintf
-
 type rdpUpstream struct {
 	conn    net.Conn
 	tls     *tls.Conn
@@ -191,7 +193,8 @@ type rdpUpstream struct {
 }
 
 // connectUpstream dials the host, repeats the X.224 negotiation and completes the TLS handshake. maxVersion 0 allows
-// every supported version. On failure it returns the RDCleanPath frame to send to the client, if any, and whether\n// the failure happened in the TLS handshake.
+// every supported version. On failure it returns the RDCleanPath frame to send to the client, if any, and whether
+// the failure happened in the TLS handshake.
 func connectUpstream(ctx context.Context, session RDPSession, x224 []byte, maxVersion uint16, first bool) (*rdpUpstream, []byte, bool, error) {
 	upstream, err := session.Dial(ctx)
 	if err != nil {
@@ -227,7 +230,7 @@ func connectUpstream(ctx context.Context, session RDPSession, x224 []byte, maxVe
 	}
 
 	up := &rdpUpstream{conn: upstream, confirm: confirm, close: closeAll}
-	up.tls = tls.Client(upstream, &tls.Config{
+	config := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 		// Windows Schannel rejects CredSSP over TLS 1.3, so offer 1.2 first; the caller retries without the cap.
 		MaxVersion: maxVersion,
@@ -243,10 +246,45 @@ func connectUpstream(ctx context.Context, session RDPSession, x224 []byte, maxVe
 			}
 			return nil
 		},
-	})
+	}
+	if session.LegacyTLS {
+		config.MinVersion = tls.VersionTLS10
+		config.CipherSuites = legacyCipherSuites()
+	}
+	up.tls = tls.Client(upstream, config)
 	if err := up.tls.HandshakeContext(ctx); err != nil {
 		closeAll()
+		if !session.LegacyTLS && isTLSVersionRefusal(err) {
+			return nil, newRDCleanPathTLSError(tlsAlertProtocolVersion), true, userErr("RDP 服务器只支持 TLS 1.0/1.1。若这是无法升级的旧系统（如未打补丁的 Windows 7 或 Server 2008 R2），可在资产设置中开启「允许旧版 TLS」")
+		}
 		return nil, newRDCleanPathGeneralError(), true, userErrWrap("与 RDP 服务器的 TLS 握手失败", err)
 	}
 	return up, nil, false, nil
+}
+
+const tlsAlertProtocolVersion = 70
+
+// isTLSVersionRefusal reports a handshake that failed only because the two sides share no TLS version: the server
+// answered with an older version than this side accepts, or sent a protocol_version alert. crypto/tls reports
+// neither as a typed error, so its messages are matched.
+func isTLSVersionRefusal(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, "server selected unsupported protocol version") || strings.Contains(text, "protocol version not supported")
+}
+
+// legacyCipherSuites adds the RSA key exchange suites Go leaves out by default to its secure TLS 1.0-1.2 suites; old
+// Schannel versions may offer nothing else.
+func legacyCipherSuites() []uint16 {
+	var suites []uint16
+	for _, suite := range tls.CipherSuites() {
+		if slices.ContainsFunc(suite.SupportedVersions, func(version uint16) bool { return version <= tls.VersionTLS12 }) {
+			suites = append(suites, suite.ID)
+		}
+	}
+	for _, id := range []uint16{tls.TLS_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_RSA_WITH_AES_256_GCM_SHA384, tls.TLS_RSA_WITH_AES_128_CBC_SHA, tls.TLS_RSA_WITH_AES_256_CBC_SHA} {
+		if !slices.Contains(suites, id) {
+			suites = append(suites, id)
+		}
+	}
+	return suites
 }

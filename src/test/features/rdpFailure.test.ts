@@ -71,6 +71,12 @@ describe("describeRdpFailure", () => {
     expect(describeRdpFailure(rdp({ rdpKind: 4 })).title).toContain("握手");
   });
 
+  it("points a host that offers only TLS 1.0/1.1 at the legacy TLS option", () => {
+    const text = describeRdpFailure(rdp({ rdpKind: 4, tlsAlert: 70 }));
+    expect(text.title).toContain("旧版 TLS");
+    expect(text.advice).toContain("允许旧版 TLS（1.0/1.1）");
+  });
+
   it("maps the connector state error honestly, with a retry hint and the raw text", () => {
     const raw = "[invalid state (this is a bug) @ crates/ironrdp-connector/src/lib.rs:405] general error";
     const text = describeRdpFailure(rdp({ message: stripBuildPaths(raw), detail: raw, rdpKind: 0 }));

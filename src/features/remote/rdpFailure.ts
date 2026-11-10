@@ -25,6 +25,8 @@ const WSA_TIMED_OUT = 10060;
 const WSA_CONN_REFUSED = 10061;
 const WSA_HOST_UNREACHABLE = 10065;
 const WSA_HOST_NOT_FOUND = 11001;
+// The relay reports a host that offers only TLS 1.0/1.1 as the protocol_version alert.
+const TLS_ALERT_PROTOCOL_VERSION = 70;
 
 const NSTATUS_PATTERN = /NSTATUS code 0x([0-9a-f]{1,8})/i;
 const CJK = /[\u3000-\u9fff\uff00-\uffef]/;
@@ -144,6 +146,15 @@ export function describeRdpFailure(failure: EngineFailure): FailureText {
       if (failure.httpStatus === 401) return withDetail({ title: t("连接票据已失效"), advice: t("请重新连接。") }, failure);
       const relay = relayFailure(failure);
       if (relay) return withDetail(relay, failure);
+      if (failure.tlsAlert === TLS_ALERT_PROTOCOL_VERSION) {
+        return withDetail(
+          {
+            title: t("远程主机只支持旧版 TLS（1.0/1.1）"),
+            advice: t("请优先为主机安装更新以启用 TLS 1.2。若是无法升级的旧系统（如未打补丁的 Windows 7 或 Server 2008 R2），可在资产设置中开启“允许旧版 TLS（1.0/1.1）”后重新连接。"),
+          },
+          failure,
+        );
+      }
       if (failure.tlsAlert !== undefined || /tls/i.test(raw)) {
         return withDetail({ title: t("与远程主机的 TLS 握手失败"), advice: t("主机可能未启用 TLS，或证书、协议版本不被接受。请检查主机的远程桌面安全设置后重试。") }, failure);
       }
