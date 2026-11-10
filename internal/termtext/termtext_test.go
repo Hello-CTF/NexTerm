@@ -75,6 +75,12 @@ func TestRendererConvertsTerminalOutput(t *testing.T) {
 		{name: "insert chars before a wide character shifts it", chunks: []string{"a中b\r\x1b[C\x1b[1@\r\n"}, want: "a 中b\n"},
 		{name: "delete chars before a wide character shifts it", chunks: []string{"ab中c\r\x1b[C\x1b[P\r\n"}, want: "a中c\n"},
 		{name: "vertical move from a pending wrap stays on the last column", cols: 4, chunks: []string{"abcd\x1bMx\r\n"}, want: "abcd\n   x\n"},
+		{name: "restore cursor after a status line drawn on another row", chunks: []string{"Get:1 x\r\n\x1b7\x1b[24;0f\x1b[42mProgress: [ 10%]\x1b[49m\x1b8line2\r\n"}, want: "Get:1 x\nProgress: [ 10%]\nline2\n"},
+		{name: "erase whole line keeps the other screen rows", cols: 10, chunks: []string{"aaaaaaaaaaaaaaa\r\x1b[2Kbb\r\n"}, want: "aaaaaaaaaabb\n"},
+		{name: "erase to line start keeps the other screen rows", cols: 10, chunks: []string{"aaaaaaaaaaaaaaa\r\x1b[2C\x1b[1K\r\n"}, want: "aaaaaaaaaa   aa\n"},
+		{name: "erase to line end only clears the cursor row", cols: 4, chunks: []string{"abcdefghij\r\x1b[K"}, want: "abcdefgh\n"},
+		{name: "erase on a pending wrap includes the last cell", cols: 4, chunks: []string{"abcd\x1b[K\r\n"}, want: "abc\n"},
+		{name: "erase leaves a wide character after the range", cols: 4, chunks: []string{"ab中\r\x1b[C\x1b[1K\r\n"}, want: "  中\n"},
 		{name: "unterminated last line", chunks: []string{"$ "}, want: "$\n"},
 		{name: "empty", chunks: nil, want: ""},
 	}

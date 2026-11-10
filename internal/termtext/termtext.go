@@ -104,10 +104,13 @@ type Renderer struct {
 
 	// DEC special graphics (line drawing) designations and the active set (SO/SI).
 	g0dec, g1dec, glG1 bool
-	// savedCol and savedLines hold the cursor saved by DECSC or CSI s and the line count at that moment.
-	savedCol   int
-	savedLines int64
-	saved      bool
+	// savedCol and savedRow hold the cursor saved by DECSC or CSI s.
+	savedCol int
+	savedRow int64
+	saved    bool
+	// row counts the screen rows the cursor has been moved to: every finished line and every vertical move, even onto a
+	// blank row, starts a new one.
+	row int64
 }
 
 type countingWriter struct {
@@ -371,17 +374,17 @@ func (r *Renderer) saveCursor() {
 		return
 	}
 	r.savedCol = min(r.col-r.rowStart(), r.width()-1)
-	r.savedLines = r.result.Lines
+	r.savedRow = r.row
 	r.saved = true
 }
 
-// restoreCursor returns to the saved column. When lines were finished since the save the cursor moves to another row, which
-// continues on a new line like any vertical move.
+// restoreCursor returns to the saved column. When the cursor moved to another row since the save (a finished line or a
+// vertical move such as a status line drawn at the bottom), it continues on a new line like any vertical move.
 func (r *Renderer) restoreCursor() {
 	if r.alt || !r.saved {
 		return
 	}
-	if r.result.Lines != r.savedLines {
+	if r.row != r.savedRow {
 		r.verticalMove(r.savedCol)
 		return
 	}
@@ -561,7 +564,7 @@ func (r *Renderer) print(value rune) {
 	}
 	width := 1
 	if value >= 0x80 {
-		width = runewidth.RuneWidth(value)
+		width = cellWidth(value)
 		if width <= 0 {
 			r.addMark(value)
 			return
@@ -633,20 +636,36 @@ func (r *Renderer) clearPair(c int) {
 	}
 }
 
+// eraseLine erases part of the cursor's screen row; the other rows of a soft-wrapped line stay.
 func (r *Renderer) eraseLine(mode int) {
+	start, end := r.rowStart(), r.rowEnd()
+	// With a pending wrap the cursor still sits on the row's last cell.
+	cursor := min(r.col, end-1)
 	switch mode {
 	case 0:
-		if r.col < len(r.line) {
-			r.clearPair(r.col)
-			r.line = r.line[:r.col]
-		}
+		r.blank(cursor, end)
 	case 1:
-		r.clearPair(r.col)
-		for c := 0; c <= r.col && c < len(r.line); c++ {
-			r.line[c] = textCell{r: ' ', width: 1}
-		}
+		r.blank(start, cursor+1)
 	case 2:
-		r.line = r.line[:0]
+		r.blank(start, end)
+	}
+}
+
+// blank erases the cells in [from, to); a range reaching the end of the line shortens it.
+func (r *Renderer) blank(from, to int) {
+	if from >= len(r.line) || from >= to {
+		return
+	}
+	r.clearPair(from)
+	if to >= len(r.line) {
+		r.line = r.line[:from]
+		return
+	}
+	if r.line[to].width == 0 {
+		r.clearPair(to) // a wide character cut by the end of the range
+	}
+	for c := from; c < to; c++ {
+		r.line[c] = textCell{r: ' ', width: 1}
 	}
 }
 
@@ -724,6 +743,7 @@ func (r *Renderer) verticalMove(col int) {
 	}
 	r.col = max(0, min(col, r.width()-1))
 	r.wrapPending = false
+	r.row++
 }
 
 func (r *Renderer) lineBlank() bool {
@@ -788,6 +808,7 @@ func (r *Renderer) finishLine() {
 	r.col = 0
 	r.dirty = false
 	r.wrapPending = false
+	r.row++
 }
 
 // FixedOffset returns a fixed zone for a UTC offset in minutes.
@@ -802,6 +823,11 @@ func FixedOffset(minutes int) *time.Location {
 		name += ":" + strconv.Itoa(value%60)
 	}
 	return time.FixedZone(name, minutes*60)
+}
+
+// cellWidth is the number of screen cells a non-ASCII rune takes; zero marks a combining rune.
+func cellWidth(value rune) int {
+	return runewidth.RuneWidth(value)
 }
 
 // decGraphics maps the DEC special graphics set to Unicode, as the terminal emulator does.

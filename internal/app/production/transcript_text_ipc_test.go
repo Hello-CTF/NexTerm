@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	// The server binary embeds the zone database; the test does too so it does not depend on the host's.
+	_ "time/tzdata"
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"

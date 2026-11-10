@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"io"
 	"time"
-	// The browser reports an IANA zone; server hosts (containers, minimal images) may not ship a zone database.
-	_ "time/tzdata"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -102,6 +100,8 @@ func (s *terminalCommandService) exportTranscriptText(ctx context.Context, input
 	}, nil
 }
 
+// transcriptTextLocation resolves the viewer's zone. Only browser mode sends one; the server binary embeds the zone database
+// (cmd/nexterm-server), and a zone this build cannot load falls back to the reported offset.
 func transcriptTextLocation(input transcriptExportTextRequest) (*time.Location, error) {
 	if input.TimeZone != "" && len(input.TimeZone) <= maxTimeZoneNameBytes {
 		if location, err := time.LoadLocation(input.TimeZone); err == nil {
