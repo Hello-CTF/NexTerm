@@ -13,7 +13,8 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-const testTimeout = 5 * time.Second
+// testTimeout bounds every wait; it is generous because the race detector on a loaded machine slows the bulk tests.
+const testTimeout = 30 * time.Second
 
 // fakeServer is a Telnet peer the test drives byte by byte.
 type fakeServer struct {
@@ -446,10 +447,105 @@ func TestSendCRLF(t *testing.T) {
 	config := server.config()
 	config.SendCRLF = true
 	channel, peer := openTerminalWith(t, server, config, 80, 24)
+	output := pump(channel)
 	if _, err := channel.Write([]byte("GET /\rHost: x\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	expectBytes(t, peer, []byte("GET /\r\nHost: x\r\n"))
+
+	// The option also applies in binary mode, where CR is otherwise sent alone.
+	send(t, peer, cmdIAC, cmdDO, optBinary, '.')
+	expectBytes(t, peer, []byte{cmdIAC, cmdWILL, optBinary})
+	expectOutput(t, output, ".")
+	if _, err := channel.Write([]byte("QUIT\r")); err != nil {
+		t.Fatal(err)
+	}
+	expectBytes(t, peer, []byte("QUIT\r\n"))
+}
+
+func TestNegotiationIsAnsweredWhileNothingReads(t *testing.T) {
+	server := newFakeServer(t)
+	channel, peer := openTerminal(t, server, 80, 24)
+
+	send(t, peer, cmdIAC, cmdDO, optNAWS)
+	expectBytes(t, peer, []byte{cmdIAC, cmdSB, optNAWS, 0, 80, 0, 24, cmdIAC, cmdSE})
+
+	// Past the pending limit the reader stops taking data, so the server feels the terminal's backpressure; the
+	// request behind that data is answered once the terminal reads again, and no data is lost.
+	payload := bytes.Repeat([]byte("x"), maxPending+64<<10)
+	sent := make(chan error, 1)
+	go func() {
+		_, err := peer.Write(append(append([]byte(nil), payload...), cmdIAC, cmdDO, optSGA, cmdIAC, cmdDO, optTTYPE, cmdIAC, cmdSB, optTTYPE, ttypeSEND, cmdIAC, cmdSE))
+		sent <- err
+	}()
+	output := pump(channel)
+	expectOutput(t, output, string(payload))
+	expectBytes(t, peer, append(append([]byte{cmdIAC, cmdSB, optTTYPE, ttypeIS}, "xterm-256color"...), cmdIAC, cmdSE))
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRepliesDoNotWaitBehindABlockedWrite(t *testing.T) {
+	server := newFakeServer(t)
+	channel, peer := openTerminal(t, server, 80, 24)
+	output := pump(channel)
+
+	// The server does not read while it sends; the paste fills the socket buffers and blocks. The reader must keep
+	// reading and queue its reply instead of waiting for the paste.
+	paste := bytes.Repeat([]byte("p"), 32<<20)
+	written := make(chan error, 1)
+	go func() {
+		_, err := channel.Write(paste)
+		written <- err
+	}()
+	send(t, peer, cmdIAC, cmdDO, optNAWS, 'o', 'k')
+	expectOutput(t, output, "ok")
+	select {
+	case err := <-written:
+		t.Fatalf("the paste was not blocked by the server (err %v); the test needs a larger paste", err)
+	default:
+	}
+
+	_ = peer.SetReadDeadline(time.Now().Add(testTimeout * 4))
+	got, err := io.ReadAll(io.LimitReader(peer, int64(len(paste)+9)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Frames are never split: the reply comes before the paste when it was queued first, otherwise after it.
+	naws := []byte{cmdIAC, cmdSB, optNAWS, 0, 80, 0, 24, cmdIAC, cmdSE}
+	before := bytes.Equal(got[:len(naws)], naws) && bytes.Equal(got[len(naws):], paste)
+	after := bytes.Equal(got[:len(paste)], paste) && bytes.Equal(got[len(paste):], naws)
+	if !before && !after {
+		t.Fatalf("server received %d bytes starting %v, ending %v", len(got), got[:12], got[max(0, len(got)-12):])
+	}
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloseWakesABlockedRead(t *testing.T) {
+	server := newFakeServer(t)
+	channel, _ := openTerminal(t, server, 80, 24)
+	result := make(chan error, 1)
+	go func() {
+		_, err := channel.Read(make([]byte, 16))
+		result <- err
+	}()
+	if err := channel.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("Read after Close: %v", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("Read stayed blocked after Close")
+	}
+	if _, err := channel.Write([]byte("x")); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Write after Close: %v", err)
+	}
 }
 
 func TestCanceledOpenDoesNotHandOutTheConnection(t *testing.T) {

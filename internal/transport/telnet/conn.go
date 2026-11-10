@@ -70,6 +70,12 @@ type connOptions struct {
 	crlf bool
 }
 
+type sendItem struct {
+	data []byte
+	// done receives the write result; nil for a reply nobody waits for.
+	done chan error
+}
+
 type echoState uint8
 
 const (
@@ -117,11 +123,17 @@ type Conn struct {
 	generation uint64
 	onClose    func()
 
-	// writeMu orders every write to the connection; Write also holds it while it queues the local echo, so echo
-	// and input stay in the same order.
+	// writeMu serializes Write, which also queues the local echo, so echo and input stay in the same order.
 	writeMu   sync.Mutex
 	echoParse echoState
 	echoCR    bool
+
+	// Outgoing frames, written in order by writeLoop. Negotiation replies are queued without waiting, so the reader
+	// keeps reading while a large paste is blocked on a server that is itself waiting to send.
+	sendMu    sync.Mutex
+	sendCond  *sync.Cond
+	sendQueue []sendItem
+	sendErr   error
 
 	mu         sync.Mutex
 	local      [256]optionState
@@ -154,6 +166,7 @@ func newConn(raw net.Conn, options connOptions, cols, rows uint16, generation ui
 		id: "telnet-" + strconv.FormatUint(nextConnID.Add(1), 10), generation: generation, done: make(chan struct{}),
 	}
 	conn.outCond = sync.NewCond(&conn.outMu)
+	conn.sendCond = sync.NewCond(&conn.sendMu)
 	return conn
 }
 
@@ -175,7 +188,7 @@ func (c *Conn) start(ctx context.Context) error {
 		_ = c.raw.SetWriteDeadline(deadline)
 	}
 	stop := context.AfterFunc(ctx, func() { _ = c.raw.SetWriteDeadline(time.Unix(1, 0)) })
-	err := c.writeRaw(out)
+	_, err := c.raw.Write(out)
 	// When the cancel callback already ran or is running, it may set the past deadline after any reset here, so
 	// the connection is unusable: report the cancellation instead of handing it out.
 	if !stop() {
@@ -187,18 +200,69 @@ func (c *Conn) start(ctx context.Context) error {
 	if err := c.raw.SetWriteDeadline(time.Time{}); err != nil {
 		return err
 	}
+	go c.writeLoop()
 	go c.readLoop()
 	return nil
 }
 
-func (c *Conn) writeRaw(data []byte) error {
+// send queues one frame for writeLoop. With wait it returns the write result; without it returns at once.
+func (c *Conn) send(data []byte, wait bool) error {
 	if len(data) == 0 {
 		return nil
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	_, err := c.raw.Write(data)
-	return err
+	item := sendItem{data: data}
+	if wait {
+		item.done = make(chan error, 1)
+	}
+	c.sendMu.Lock()
+	if c.sendErr != nil {
+		err := c.sendErr
+		c.sendMu.Unlock()
+		return err
+	}
+	c.sendQueue = append(c.sendQueue, item)
+	c.sendCond.Signal()
+	c.sendMu.Unlock()
+	if !wait {
+		return nil
+	}
+	select {
+	case err := <-item.done:
+		return err
+	case <-c.done:
+		return base.ErrClosed
+	}
+}
+
+func (c *Conn) writeLoop() {
+	for {
+		c.sendMu.Lock()
+		for len(c.sendQueue) == 0 && c.sendErr == nil {
+			c.sendCond.Wait()
+		}
+		if c.sendErr != nil {
+			failed := c.sendQueue
+			c.sendQueue = nil
+			err := c.sendErr
+			c.sendMu.Unlock()
+			for _, item := range failed {
+				if item.done != nil {
+					item.done <- err
+				}
+			}
+			return
+		}
+		item := c.sendQueue[0]
+		c.sendQueue = c.sendQueue[1:]
+		c.sendMu.Unlock()
+		_, err := c.raw.Write(item.data)
+		if item.done != nil {
+			item.done <- err
+		}
+		if err != nil {
+			c.finish(err)
+		}
+	}
 }
 
 // Read returns server data with Telnet commands removed, followed in order by any local echo. It blocks until data
@@ -231,8 +295,8 @@ func (c *Conn) readLoop() {
 	for {
 		n, reply, err := c.decode(buf)
 		if len(reply) > 0 {
-			if writeErr := c.writeRaw(reply); writeErr != nil && err == nil {
-				err = writeErr
+			if sendErr := c.send(reply, false); sendErr != nil && err == nil {
+				err = sendErr
 			}
 		}
 		if n > 0 {
@@ -442,8 +506,8 @@ func escapeIAC(data []byte) []byte {
 	return out
 }
 
-// Write sends user input. A data byte 255 is doubled, and outside binary mode a carriage return that is not part of
-// CR LF is sent as CR NUL, as NVT requires, or as CR LF when the asset asks for it.
+// Write sends user input. A data byte 255 is doubled, and a carriage return that is not part of CR LF is sent as
+// CR LF when the asset asks for it, or else outside binary mode as CR NUL, as NVT requires.
 func (c *Conn) Write(p []byte) (int, error) {
 	if err := c.closedErr(); err != nil {
 		return 0, err
@@ -455,17 +519,17 @@ func (c *Conn) Write(p []byte) (int, error) {
 		switch {
 		case b == cmdIAC:
 			out = append(out, cmdIAC)
-		case b == '\r' && !binary && (i+1 >= len(p) || p[i+1] != '\n'):
+		case b == '\r' && (i+1 >= len(p) || p[i+1] != '\n'):
 			if c.options.crlf {
 				out = append(out, '\n')
-			} else {
+			} else if !binary {
 				out = append(out, 0)
 			}
 		}
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if _, err := c.raw.Write(out); err != nil {
+	if err := c.send(out, true); err != nil {
 		return 0, err
 	}
 	if c.localEcho() {
@@ -547,7 +611,7 @@ func (c *Conn) Resize(ctx context.Context, cols, rows uint32) error {
 		frame = nawsFrame(c.cols, c.rows)
 	}
 	c.mu.Unlock()
-	return c.writeRaw(frame)
+	return c.send(frame, true)
 }
 
 func (c *Conn) closedErr() error {
@@ -572,6 +636,12 @@ func (c *Conn) finish(err error) {
 	}
 	c.outCond.Broadcast()
 	c.outMu.Unlock()
+	c.sendMu.Lock()
+	if c.sendErr == nil {
+		c.sendErr = base.ErrClosed
+	}
+	c.sendCond.Broadcast()
+	c.sendMu.Unlock()
 	c.closeOnce.Do(func() {
 		close(c.done)
 		_ = c.raw.Close()
