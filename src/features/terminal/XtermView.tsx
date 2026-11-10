@@ -50,6 +50,7 @@ import {
   type TerminalLinkMenuRequest,
 } from "./terminalLinks";
 import { terminalLinkDeps } from "./terminalLinkActions";
+import { attachTerminalTargets } from "./terminalTargets";
 import { extractTerminalLinks, type DetectedTarget, type ExtractedLink } from "./terminalLinkProvider";
 import { measureTerminalGeometry, resizeTerminalToGridPreservingSelection } from "./terminalGeometry";
 import { TerminalGridCoordinator, type TerminalGrid } from "./terminalGrid";
@@ -410,6 +411,14 @@ export function XtermView(props: XtermViewProps) {
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
 
+    // Path links register before the URL provider so they take precedence over its host:port targets.
+    const terminalTargets = attachTerminalTargets(term, hostRef.current, {
+      sessionId,
+      containerId,
+      viewKey: () => viewKeyRef.current,
+      insert: (text) => pasteText(text),
+    });
+
     let kernelTabId = "";
     let disposed = false;
     const search = attachLazyAddons(
@@ -509,6 +518,13 @@ export function XtermView(props: XtermViewProps) {
       });
     };
     const scrollDisposable = term.onScroll(scheduleUiFlush);
+    const pasteText = (text: string, submit = false) => {
+      if (copyMode.isActive()) return;
+      // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
+      touchScroll.stop();
+      term.scrollToBottom();
+      sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
+    };
     onHandleRef.current?.({
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
@@ -518,13 +534,7 @@ export function XtermView(props: XtermViewProps) {
       getSelection: () => term.getSelection(),
       focus: () => term.focus(),
       fit: () => fitIfSized(),
-      paste: (text, submit = false) => {
-        if (copyMode.isActive()) return;
-        // Like typed input (xterm's scrollOnUserInput), text sent from the composer or key bar returns to the bottom.
-        touchScroll.stop();
-        term.scrollToBottom();
-        sendInput(quickCommandBytes(text, submit, term.modes.bracketedPasteMode), submit ? `${text}\r` : text);
-      },
+      paste: pasteText,
       bracketedPasteMode: () => term.modes.bracketedPasteMode,
       copyModeActive: () => copyMode.isActive(),
       dimensions: () => ({ cols: term.cols, rows: term.rows }),
@@ -1641,6 +1651,7 @@ export function XtermView(props: XtermViewProps) {
       if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
       followerTimerRef.current = undefined;
       osc7Disposable.dispose();
+      terminalTargets.dispose();
       links.dispose();
       dataDisposable.dispose();
       detachTerminalInput();

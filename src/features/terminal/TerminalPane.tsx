@@ -21,6 +21,7 @@ import type { FollowerScale, FollowerZoom } from "./followerScale";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { takeTapForComposer } from "./terminalInputMode";
 import { Cwd } from "./Cwd";
+import { startTerminalQuickSelect } from "./terminalTargets";
 import { PersistenceHintBar } from "./PersistenceHintBar";
 import { PortDiscoveryBanner } from "../preview/PortDiscoveryBanner";
 import { persistenceHint, persistenceHintFailure, persistenceHintKey, persistenceHintMessage, persistenceHintNote } from "./persistenceHint";
@@ -1972,6 +1973,13 @@ export function TerminalPane({
         setSearchOpen(next);
         if (next) window.setTimeout(() => searchInputRef.current?.focus(), 0);
       },
+    },
+    {
+      kind: "item",
+      label: tr("快速选择"),
+      accel: formatBinding(bindings.terminalQuickSelect),
+      // After the menu closes, so the overlay's keyboard handling starts with the terminal focused.
+      onSelect: () => window.setTimeout(() => startTerminalQuickSelect(storeTabId), 0),
     },
     ...(previewShareEnabled && kernelTabId
       ? ([

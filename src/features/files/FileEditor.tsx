@@ -22,6 +22,7 @@ import {
   IconUndo,
 } from "../../ui/icons";
 import { fileVisual } from "./fileTypes";
+import { revealOffset, subscribeFileReveal, takeFileReveal } from "./fileReveal";
 import { bytesFromBase64, bytesToBase64, decodeContent, type EncChoice } from "./fileCodec";
 import {
   beginFileEditorLoad,
@@ -133,6 +134,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const language = useRef(new Compartment()).current;
   const languageRequestRef = useRef(0);
   const languageAppliedRef = useRef(false);
+  const revealRef = useRef<() => void>(() => undefined);
   // The editor opens as plain text; highlighting is applied when the language pack arrives. A load
   // failure leaves plain text in place, and a newer request or a replaced view discards stale results.
   const applyLanguage = useCallback(
@@ -162,6 +164,21 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   onCloseRef.current = onClose;
   caseInsensitiveRef.current = caseInsensitive;
   languageChoiceRef.current = languageChoice;
+
+  // A terminal path link asks for a line; it applies once the document is loaded, or now when it already is.
+  useEffect(() => {
+    const reveal = () => {
+      const view = viewRef.current;
+      if (!view) return;
+      const position = takeFileReveal(locatorRef.current.sessionId, locatorRef.current.path);
+      if (!position) return;
+      const offset = revealOffset(view.state.doc, position);
+      view.dispatch({ selection: { anchor: offset }, effects: EditorView.scrollIntoView(offset, { y: "center" }) });
+      view.focus();
+    };
+    revealRef.current = reveal;
+    return subscribeFileReveal(reveal);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -306,6 +323,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           });
           languageAppliedRef.current = false;
           applyLanguage(viewRef.current, locatorRef.current.path, languageChoiceRef.current);
+          revealRef.current();
         }
       } catch (e) {
         if (!cancelled) {
