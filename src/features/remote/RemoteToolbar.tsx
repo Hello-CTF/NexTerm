@@ -108,7 +108,7 @@ function ComboPopover({ onPick, onClose }: { onPick: (combo: KeyCombo) => void; 
       ref={rootRef}
       role="dialog"
       aria-label={t("发送组合键")}
-      className="absolute top-full left-1/2 z-30 mt-1 w-[min(18rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-md border border-[var(--nx-border-strong)] bg-[var(--nx-bg-raised)] p-2 shadow-lg"
+      className="nx-popover absolute top-full left-1/2 z-30 mt-1 w-[min(18rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-md border border-[var(--nx-border-strong)] bg-[var(--nx-bg-raised)] p-2 shadow-lg"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();

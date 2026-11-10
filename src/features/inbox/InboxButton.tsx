@@ -265,7 +265,7 @@ export function InboxButton() {
           tabIndex={-1}
           onPointerDownCapture={() => setHeld(ordered)}
           style={wailsNoDragRegionStyle}
-          className="nx-inbox-panel fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
+          className="nx-inbox-panel nx-popover fixed inset-x-2 top-[calc(var(--nx-inset-top,0px)+42px)] z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-[30px] sm:w-[360px]"
         >
           {!guidanceDismissed && <InboxGuidance onNavigate={() => setOpen(false)} />}
           <div className="flex items-center gap-2 px-2 pb-1 pt-0.5">

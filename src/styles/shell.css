@@ -117,11 +117,28 @@
   justify-content: flex-end;
 }
 
-.nx-toasts > * {
+.nx-toasts > *,
+.nx-toast {
   max-width: 100%;
 }
 
-.nx-toasts > * > span,
+.nx-toast-region {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nx-toasts > :not(:empty) ~ .nx-toast-region:not(:empty) {
+  margin-top: 8px;
+}
+
+.nx-toast-warning {
+  border-color: color-mix(in srgb, var(--color-amber-500) 34%, transparent);
+  background: color-mix(in srgb, var(--color-amber-500) 10%, var(--nx-bg-pane));
+  color: var(--nx-fg-warning);
+}
+
+.nx-toast span,
 .nx-modal-body,
 .nx-modal-header {
   overflow-wrap: anywhere;

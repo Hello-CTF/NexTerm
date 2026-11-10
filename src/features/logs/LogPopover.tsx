@@ -4,7 +4,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 // click or Escape, and renders nothing while closed. On phone widths it becomes a full-width sheet pinned above the
 // soft keyboard and the home indicator, so it can never overflow the screen or sit under the keyboard.
 export const SHEET_CLASS = [
-  "absolute top-full z-30 mt-1 max-h-[60vh] overflow-y-auto overscroll-contain rounded-md border border-neutral-700/80 bg-neutral-900 p-3 shadow-xl",
+  "nx-popover absolute top-full z-30 mt-1 max-h-[60vh] overflow-y-auto overscroll-contain rounded-md border border-neutral-700/80 bg-neutral-900 p-3 shadow-xl",
   "max-[560px]:fixed max-[560px]:inset-x-0 max-[560px]:top-auto max-[560px]:bottom-[var(--nx-kb-inset,0px)] max-[560px]:mt-0",
   "max-[560px]:max-h-[min(70dvh,calc(100dvh-var(--nx-kb-inset,0px)-var(--nx-safe-top,0px)-3rem))] max-[560px]:w-auto",
   "max-[560px]:rounded-b-none max-[560px]:pb-[calc(0.75rem+var(--nx-safe-bottom,0px))] max-[560px]:shadow-[0_-8px_24px_rgb(0_0_0/0.45)]",
