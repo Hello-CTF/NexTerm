@@ -1023,14 +1023,17 @@ export const assetApi = {
   knownHostRemove: (id: string) => call("known_host_remove", { id }) as Promise<void>,
 };
 
-// Backslashes are separators only on a Windows target; a POSIX filename may contain one. Until fs_roots has
-// answered for a session its style is unknown and paths keep the Windows-tolerant normalization.
-function normFsPath(path: string, posix: boolean): string {
-  return posix ? path : path.replace(/\\/g, "/");
+// Backslashes are separators only on a Windows target; a POSIX filename may contain one. Before fs_roots has
+// answered, a path rooted at "/" or "~/" is taken as POSIX and any other (drive, UNC) as Windows, like norm() in
+// the file manager.
+function normFsPath(path: string, pathStyle: string | undefined): string {
+  if (pathStyle === "posix") return path;
+  if (pathStyle !== "windows" && (path.startsWith("/") || path === "~" || path.startsWith("~/"))) return path;
+  return path.replace(/\\/g, "/");
 }
 
-function normEntryPath<T extends { path: string }>(e: T, posix = false): T {
-  return { ...e, path: normFsPath(e.path, posix) };
+function normEntryPath<T extends { path: string }>(e: T, pathStyle: string | undefined): T {
+  return { ...e, path: normFsPath(e.path, pathStyle) };
 }
 
 export type FileRootDto = import("./generated/types").FSRootDTO;
@@ -1043,12 +1046,11 @@ export const fsApi = {
   roots: async (sessionId: string) => {
     const result = await call("fs_roots", { sessionId });
     noteFsRoots(sessionId, result);
-    const posix = result.pathStyle === "posix";
     return {
       ...result,
       pathStyle: result.pathStyle as FileRootsDto["pathStyle"],
-      roots: result.roots.map((root) => normEntryPath(root, posix)),
-      homePath: result.homePath == null ? null : normFsPath(result.homePath, posix),
+      roots: result.roots.map((root) => normEntryPath(root, result.pathStyle)),
+      homePath: result.homePath == null ? null : normFsPath(result.homePath, result.pathStyle),
     };
   },
   list: async (sessionId: string, path: string) => {
@@ -1056,8 +1058,8 @@ export const fsApi = {
       sessionId,
       path,
     });
-    const posix = cachedFsRoots(sessionId)?.pathStyle === "posix";
-    return list.map((entry) => normEntryPath(entry, posix));
+    const pathStyle = cachedFsRoots(sessionId)?.pathStyle;
+    return list.map((entry) => normEntryPath(entry, pathStyle));
   },
   read: (sessionId: string, path: string, maxBytes?: number) =>
     call("fs_read", {

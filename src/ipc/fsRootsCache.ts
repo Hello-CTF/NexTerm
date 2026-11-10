@@ -12,6 +12,7 @@ export function cachedFsRoots(sessionId: string): FSRootsDTO | undefined {
   return rootsBySession.get(sessionId);
 }
 
-export function forgetFsRootsForTest(): void {
+// clearFsRoots forgets every session's answer when the session list is reset (account switch, logout).
+export function clearFsRoots(): void {
   rootsBySession.clear();
 }

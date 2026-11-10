@@ -782,11 +782,11 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       setRoot(null);
       return;
     }
-    const normalized = norm(next);
+    const normalized = norm(next, pathStyle);
     const prefix = normalized.endsWith("/") ? normalized : `${normalized}/`;
     setExpanded((prev) =>
       prev.filter((path) => {
-        const candidate = norm(path);
+        const candidate = norm(path, pathStyle);
         return candidate === normalized || candidate.startsWith(prefix);
       }),
     );
@@ -830,7 +830,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   const newFileIn = async (dir: string) => {
     const name = await promptText(t("新建文件名"), "");
     if (name === null) return;
-    const problem = validateEntryName(name);
+    const problem = validateEntryName(name, pathStyle);
     if (problem) {
       pushToast("error", t("无法创建：{problem}", { problem }));
       return;
@@ -1150,19 +1150,23 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
   };
 
   const remapAfterRename = (from: string, to: string) => {
-    const fromN = norm(from);
-    const toN = norm(to);
+    const fromN = norm(from, pathStyle);
+    const toN = norm(to, pathStyle);
+    // A backslash in a path written with Windows separators is kept in that style; on POSIX it is part of a name.
+    const windowsWritten = (p: string) =>
+      p.includes("\\") && norm(p, pathStyle) !== p;
     const styled = (target: string, styleOf: string) =>
-      styleOf.includes("\\") ? target.replace(/\//g, "\\") : target;
+      windowsWritten(styleOf) ? target.replace(/\//g, "\\") : target;
     const remap = (p: string) => {
-      const pn = norm(p);
+      const pn = norm(p, pathStyle);
       if (pn === fromN) return styled(toN, p);
       if (pn.startsWith(`${fromN}/`)) return styled(`${toN}${pn.slice(fromN.length)}`, p);
       return p;
     };
     multi.remap(remap);
     setExpanded((prev) => prev.map(remap));
-    if (root && (norm(root) === fromN || norm(root).startsWith(`${fromN}/`))) {
+    const rootN = root ? norm(root, pathStyle) : null;
+    if (root && rootN !== null && (rootN === fromN || rootN.startsWith(`${fromN}/`))) {
       setRoot(remap(root));
     }
   };
@@ -1321,7 +1325,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         disabled: fileOps.busy !== null,
         onSelect: () => void fileOps.chmodEntry(entry, listKey),
       });
-    } else if (chmodMode === "readonly") {
+    } else if (chmodMode === "readonly" && entry.kind !== "symlink") {
+      // The attribute change would follow a link to its target, so links get no read-only toggle.
       items.push({
         kind: "item",
         label: readOnly ? t("取消只读") : t("设为只读"),

@@ -178,6 +178,8 @@ export interface TerminalLinkEntry {
   name: string;
   path: string;
   kind: string;
+  // targetKind is what a symlink resolves to; a link to a directory opens as one.
+  targetKind?: string;
 }
 
 export interface TerminalLinkDeps {
@@ -232,7 +234,7 @@ async function openFileLink(path: string, deps: TerminalLinkDeps): Promise<void>
     deps.notify("error", t("找不到 {path}", { path }));
     return;
   }
-  if (entry.kind === "dir") {
+  if (entry.kind === "dir" || (entry.kind === "symlink" && entry.targetKind === "dir")) {
     deps.openDirectory(deps.sessionId, entry.path || trimmed);
     return;
   }

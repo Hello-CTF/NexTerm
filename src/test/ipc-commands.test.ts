@@ -676,6 +676,8 @@ describe("desktop command envelopes", () => {
     await fsApi.roots("session-posix");
     await expect(fsApi.list("session-posix", "/srv")).resolves.toEqual([expect.objectContaining({ path: "/srv/a\\b" })]);
     await expect(fsApi.list("session-unknown", "C:/srv")).resolves.toEqual([expect.objectContaining({ path: "C:/srv/b" })]);
+    runtime.Call.ByName.mockResolvedValueOnce({ ok: true, data: listing });
+    await expect(fsApi.list("session-unknown", "/srv")).resolves.toEqual([expect.objectContaining({ path: "/srv/a\\b" })]);
   });
 });
 

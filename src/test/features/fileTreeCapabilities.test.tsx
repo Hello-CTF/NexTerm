@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   remove: vi.fn(),
   chmod: vi.fn(),
+  rename: vi.fn(),
   listenEvent: vi.fn(),
   toast: vi.fn(),
 }));
@@ -22,7 +23,7 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    fsApi: { roots: mocks.roots, list: mocks.list, delete: mocks.remove, chmod: mocks.chmod },
+    fsApi: { roots: mocks.roots, list: mocks.list, delete: mocks.remove, chmod: mocks.chmod, rename: mocks.rename },
   });
 });
 vi.mock("../../ipc/events", async (importOriginal) => {
@@ -41,7 +42,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 
 import { useUi } from "../../app/store";
 import { setMacPlatform } from "../../app/platform";
-import { forgetFsRootsForTest } from "../../ipc/fsRootsCache";
+import { clearFsRoots } from "../../ipc/fsRootsCache";
 import type { FileEntryDto } from "../../ipc/types";
 import { FileTree } from "../../features/files/FileTree";
 import { sessionConflictCaseInsensitive } from "../../features/files/transferActions";
@@ -66,6 +67,7 @@ function entry(name: string, kind: string, extra: Partial<FileEntryDto> = {}): F
 const HOME_ENTRIES: FileEntryDto[] = [
   entry("a.zip", "file"),
   entry("sub", "dir"),
+  entry("a\\b", "dir"),
   entry("linkdir", "symlink", { symlinkTarget: "/srv/data", targetKind: "dir" }),
   entry("broken", "symlink", { symlinkTarget: "/missing" }),
   entry(".secret", "file", { hidden: true }),
@@ -116,7 +118,7 @@ async function mountWith(capabilities: typeof POSIX_CAPS | null, pathStyle = "po
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
-  forgetFsRootsForTest();
+  clearFsRoots();
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   mocks.ask.mockResolvedValue(true);
   mocks.promptText.mockResolvedValue(null);
@@ -125,6 +127,7 @@ beforeEach(() => {
   );
   mocks.remove.mockResolvedValue(undefined);
   mocks.chmod.mockResolvedValue(undefined);
+  mocks.rename.mockResolvedValue(undefined);
   mocks.listenEvent.mockReturnValue(Promise.resolve(() => {}));
   useUi.setState({
     pushToast: mocks.toast,
@@ -210,6 +213,24 @@ describe("FileTree capability-gated actions", () => {
     expect(menuLabels().some((l) => l.includes("打包下载当前目录"))).toBe(false);
   });
 
+  it("offers no read-only toggle on a link, whose attribute change would reach the target", async () => {
+    await mountWith({ chmod: "readonly", pack: false, extract: false, caseInsensitive: true });
+    await openMenu("linkdir");
+    expect(menuLabels().some((l) => l.includes("设为只读") || l.includes("取消只读"))).toBe(false);
+  });
+
+  it("forgets the declared capabilities when the session list is reset", async () => {
+    await mountWith({ ...POSIX_CAPS, caseInsensitive: true });
+    expect(sessionConflictCaseInsensitive(SID)).toBe(true);
+    mounted!.unmount();
+    mounted = undefined;
+    act(() => useUi.getState().resetSessions());
+    useUi.setState({
+      sessions: [{ id: SID, assetId: null, name: "host", kind: "ssh", status: "connected", tabs: [], createdAt: 0 }],
+    });
+    expect(sessionConflictCaseInsensitive(SID)).toBe(false);
+  });
+
   it("offers no permission action when the backend cannot change permissions", async () => {
     await mountWith({ chmod: "none", pack: false, extract: true, caseInsensitive: false });
     await openMenu("a.zip");
@@ -255,6 +276,22 @@ describe("FileTree keyboard navigation", () => {
     act(() => target.focus());
     keyDown(target, "ArrowUp", { altKey: true });
     await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "/"));
+  });
+
+  it("keeps POSIX separators when a name with a backslash is renamed", async () => {
+    await mountWith(POSIX_CAPS);
+    const target = row("a\\b");
+    click(target.querySelector("button.nx-tree-caret")!);
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/a\\b"));
+    mocks.promptText.mockResolvedValueOnce("c");
+    await act(async () => {
+      target.dispatchEvent(new KeyboardEvent("keydown", { key: "F2", bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await waitForRendered(() => expect(mocks.rename).toHaveBeenCalledWith(SID, "~/a\\b", "~/c"));
+    await waitForRendered(() => expect(mocks.list).toHaveBeenCalledWith(SID, "~/c"));
+    expect(mocks.list).not.toHaveBeenCalledWith(SID, "~\\c");
+    await flush();
   });
 
   it("renames with F2 and refreshes with F5", async () => {

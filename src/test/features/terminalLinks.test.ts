@@ -136,6 +136,7 @@ function fakeDeps(overrides: Partial<TerminalLinkDeps> = {}) {
     "/home/me": [
       { name: "notes.md", path: "/home/me/notes.md", kind: "file" },
       { name: "src", path: "/home/me/src", kind: "dir" },
+      { name: "data", path: "/home/me/data", kind: "symlink", targetKind: "dir" },
       { name: "photo.png", path: "/home/me/photo.png", kind: "file" },
     ],
   };
@@ -198,8 +199,9 @@ describe("opening terminal links", () => {
     await openTerminalLink("file://web01.example.com/home/me/src", deps);
     await openTerminalLink("file:///home/me/", deps);
     await openTerminalLink("file://localhost/", deps);
+    await openTerminalLink("file://web01/home/me/data", deps);
     expect(calls.files).toEqual(["/home/me/notes.md"]);
-    expect(calls.dirs).toEqual(["/home/me/src", "/home/me/", "/"]);
+    expect(calls.dirs).toEqual(["/home/me/src", "/home/me/", "/", "/home/me/data"]);
     expect(calls.notices).toEqual([]);
   });
 
