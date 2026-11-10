@@ -17,6 +17,14 @@ func TestPowerShellArgsQuotePath(t *testing.T) {
 	}
 }
 
+func TestPowerShellArgsQuoteTypographicApostrophe(t *testing.T) {
+	args := PowerShellArgs("C:\\Users\\O\u2019Brien\\nexterm.ps1")
+	want := "ReadAllText('C:\\Users\\O\u2019\u2019Brien\\nexterm.ps1')"
+	if !strings.Contains(args[3], want) {
+		t.Fatalf("command = %q; want it to contain %q", args[3], want)
+	}
+}
+
 func TestWrapPowerShell(t *testing.T) {
 	path := `C:\Program Files\PowerShell\7\pwsh.exe`
 	launch, err := Wrap(ShellPowerShell, path)

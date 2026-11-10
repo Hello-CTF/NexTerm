@@ -1,6 +1,6 @@
 package shellintegr
 
-import "strings"
+import "github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 
 // PowerShellIntegrationFile is the PowerShell hooks file written into the wrapper directory.
 const PowerShellIntegrationFile = "nexterm.ps1"
@@ -11,7 +11,7 @@ const PowerShellIntegrationFile = "nexterm.ps1"
 // neither blocks the integration nor changes which of the user's own scripts may run. A failure inside the
 // hooks is swallowed so the shell always starts.
 func PowerShellArgs(path string) []string {
-	quoted := "'" + strings.ReplaceAll(path, "'", "''") + "'"
+	quoted := psquote.Quote(path)
 	return []string{"-NoLogo", "-NoExit", "-Command",
 		"try { . ([scriptblock]::Create([System.IO.File]::ReadAllText(" + quoted + "))) } catch { }"}
 }
@@ -26,6 +26,10 @@ if (Test-Path Variable:global:__NexTermIntegration) { return }
 $global:__NexTermIntegration = $true
 $global:__NexTermOriginalPrompt = $function:prompt
 $global:__NexTermLastHistoryId = -1
+try {
+    $nexTermEntry = Get-History -Count 1
+    if ($null -ne $nexTermEntry) { $global:__NexTermLastHistoryId = $nexTermEntry.Id }
+} catch { }
 $global:__NexTermHost = $env:COMPUTERNAME
 try { $global:__NexTermHost = [System.Net.Dns]::GetHostName() } catch { }
 

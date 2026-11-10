@@ -4,10 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Hello-CTF/NexTerm/internal/terminal/shellintegr"
 )
+
+// hostGOOS is a variable so tests can exercise the Windows branch on any host.
+var hostGOOS = runtime.GOOS
 
 type shellLaunch struct {
 	command []string
@@ -25,6 +29,11 @@ func wrapShellIntegration(command, env []string) (shellLaunch, bool) {
 	}
 	if shell == shellintegr.ShellPowerShell {
 		return wrapPowerShell(command, env)
+	}
+	// Follow-up: the bash wrapper passes Windows backslash rcfile paths to msys bash.exe, which is untested
+	// there, so Windows bash (Git Bash) keeps launching unwrapped.
+	if shell == shellintegr.ShellBash && hostGOOS == "windows" {
+		return shellLaunch{}, false
 	}
 	if !interactiveShellArgs(command[1:]) {
 		return shellLaunch{}, false
