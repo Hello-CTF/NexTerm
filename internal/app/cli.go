@@ -307,6 +307,14 @@ nexterm-desktop warns and uses the default):
   NEXTERM_ACCESS_LOG  1 logs one record per HTTP request on nexterm-server: method, path,
                       status, bytes, duration, and client IP (trusted-proxy aware); query
                       strings, request bodies, and share-link tokens are never logged
+
+Browser file staging (serve only, environment variables, sizes in bytes):
+  NEXTERM_BLOB_MAX_BYTES           One browser upload (default 268435456 = 256 MiB)
+  NEXTERM_BLOB_PERSIST_MAX_BYTES   All persisted uploads together (default 1073741824 = 1 GiB)
+  NEXTERM_BLOB_STAGE_MAX_BYTES     One account's temporary staged files together (default 2147483648 = 2 GiB)
+  NEXTERM_BLOB_DOWNLOAD_MAX_BYTES  One file the server writes for the browser: file and folder downloads,
+                                   terminal recordings and log exports (default 2147483648 = 2 GiB)
+  NEXTERM_BLOB_DISK_MAX_PERCENT    Refuse new staged files once the data disk is this full (default 90)
 `, program, defaultCommand, serverSubcommands(defaultCommand))
 }
 

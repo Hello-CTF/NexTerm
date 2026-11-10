@@ -594,6 +594,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}На хосте {hostName} будет выполнено действие «{value}» для процесса {name} (PID {pid}), команда:\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}На хосте {hostName} будет выполнено:\n{script}{command}",
   "{what}失败（HTTP {status}）": "Не удалось выполнить действие «{what}» (HTTP {status})",
+  "{what}失败（HTTP {status}）：{reason}": "Не удалось выполнить действие «{what}» (HTTP {status}): {reason}",
   "{what}失败：服务端未返回 id / path": "Не удалось выполнить действие «{what}»: сервер не вернул id / path",
   "{what}已复制": "Скопировано: {what}",
   "~/.ssh 目录": "Каталог ~/.ssh",

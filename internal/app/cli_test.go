@@ -147,7 +147,7 @@ func TestParseCLIAuthMode(t *testing.T) {
 
 func TestUsageIncludesSharedServerFlags(t *testing.T) {
 	usage := Usage("nexterm-server", CommandServe)
-	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault", "--pprof-addr", "NEXTERM_PPROF_ADDR", "NEXTERM_LOG_LEVEL", "NEXTERM_LOG_FORMAT", "NEXTERM_LOG_FILE", "NEXTERM_ACCESS_LOG"} {
+	for _, want := range []string{"NEXTERM_MASTER_KEY_FILE", "platform", "--require-vault", "--pprof-addr", "NEXTERM_PPROF_ADDR", "NEXTERM_LOG_LEVEL", "NEXTERM_LOG_FORMAT", "NEXTERM_LOG_FILE", "NEXTERM_ACCESS_LOG", "NEXTERM_BLOB_STAGE_MAX_BYTES", "NEXTERM_BLOB_DOWNLOAD_MAX_BYTES"} {
 		if !strings.Contains(usage, want) {
 			t.Fatalf("usage missing %q: %q", want, usage)
 		}

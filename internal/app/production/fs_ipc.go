@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"path/filepath"
 	"sync"
 	"time"
@@ -31,6 +32,10 @@ const (
 // and localPath values of fs_upload/fs_download etc. are real local paths chosen by the user via system dialogs, used as-is.
 type StagedBlobResolver interface {
 	ResolveStagedPath(rel, userID string) (string, error)
+	// ReserveStagedWrite grants and holds the byte budget for a server-side write into a resolved staged path until
+	// release is called, or returns a user-facing error when the owner's staging quota or the disk threshold leaves
+	// no room.
+	ReserveStagedWrite(path, userID string) (budget int64, release func(), err error)
 }
 
 // resolveStagedLocalPath resolves localPath as a staged reference to a server staged file in the server-side assembly.
@@ -57,6 +62,28 @@ func resolveStagedLocalPath(ctx context.Context, staged StagedBlobResolver, path
 		})
 	}
 	return resolved, nil
+}
+
+// resolveStagedWriteTarget resolves a path the server is about to write to and returns its byte budget with the
+// release of that budget, which the caller must call once the write is over; release is always non-nil and safe to
+// call more than once. A zero budget means unlimited, which is always the case on desktop where the path is the
+// user's own choice.
+func resolveStagedWriteTarget(ctx context.Context, staged StagedBlobResolver, path string) (string, int64, func(), error) {
+	resolved, err := resolveStagedLocalPath(ctx, staged, path)
+	if err != nil || staged == nil {
+		return resolved, 0, func() {}, err
+	}
+	userID, _ := ipc.UserIDFromContext(ctx)
+	limit, release, err := staged.ReserveStagedWrite(resolved, userID)
+	if err != nil {
+		return "", 0, func() {}, ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{
+			"resource": "local_staging", "reason": "staging_quota",
+		})
+	}
+	if release == nil {
+		release = func() {}
+	}
+	return resolved, limit, release, nil
 }
 
 type fsTransferAttemptState uint8
@@ -672,17 +699,20 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return 0, fsIPCError("", err)
 				}
 				defer finish()
-				localPath, err := resolveStagedLocalPath(transferCtx, staged, input.LocalPath)
+				localPath, maxBytes, release, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
+				defer release()
 				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Download(transferCtx, filesystem, input.RemotePath, localPath, productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
+				options := productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
 					transfers.touch(transferCtx, taskID, transferAttemptID(taskID, input.AttemptID))
-				}))
+				})
+				options.MaxBytes = maxBytes
+				value, err := fslocal.Download(transferCtx, filesystem, input.RemotePath, localPath, options)
 				return value, fsIPCError(kind, err)
 			})
 		},
@@ -693,10 +723,11 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return 0, fsIPCError("", err)
 				}
 				defer finish()
-				localPath, err := resolveStagedLocalPath(transferCtx, staged, input.LocalPath)
+				localPath, maxBytes, release, err := resolveStagedWriteTarget(transferCtx, staged, input.LocalPath)
 				if err != nil {
 					return 0, err
 				}
+				defer release()
 				filesystem, kind, err := filesystem(transferCtx, input.SessionID)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
@@ -706,7 +737,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return 0, terminalIPCError(base.ErrUnsupported)
 				}
 				var last sshfs.Progress
-				value, err := provider.PackDownload(transferCtx, input.RemotePath, localPath, sshfs.TransferOptions{Progress: func(progress sshfs.Progress) {
+				value, err := provider.PackDownload(transferCtx, input.RemotePath, localPath, sshfs.TransferOptions{MaxBytes: maxBytes, Progress: func(progress sshfs.Progress) {
 					last = progress
 					_ = ipc.Emit(transferCtx, call.Events, ipc.TopicFSProgress, fslocal.Progress{TaskID: taskID, Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 				}})
@@ -771,6 +802,11 @@ func fsIPCError(transportKind string, err error) error {
 	if errors.Is(err, fslocal.ErrResumeMismatch) {
 		return ipc.WrapError(ipc.Code("conflict"), err.Error(), err).WithDetail(map[string]any{
 			"resource": "partial", "reason": "resume_mismatch",
+		})
+	}
+	if errors.Is(err, base.ErrTransferTooLarge) {
+		return ipc.WrapError(ipc.CodeIO, base.ErrTransferTooLarge.Error(), err).WithDetail(map[string]any{
+			"resource": "local_staging", "reason": "too_large",
 		})
 	}
 	if errors.Is(err, base.ErrNoMedia) {
@@ -841,4 +877,16 @@ func productionFSEntry(entry base.FileEntry) fsEntryDTO {
 		Owner: nullableProductionString(entry.Owner), Group: nullableProductionString(entry.Group), Mtime: entry.ModTime.UnixMilli(),
 		SymlinkTarget: nullableProductionString(entry.SymlinkTarget), TargetKind: string(entry.TargetKind), Hidden: entry.Hidden,
 	}
+}
+
+// exportLogMaxBytes clamps a log export to the staging write budget; requested <= 0 asks for the whole buffer
+// and limit == 0 means unlimited.
+func exportLogMaxBytes(requested int, limit int64) int {
+	if limit <= 0 || limit > int64(math.MaxInt) {
+		return requested
+	}
+	if requested <= 0 || int64(requested) > limit {
+		return int(limit)
+	}
+	return requested
 }

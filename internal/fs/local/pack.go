@@ -16,6 +16,8 @@ import (
 // PackDownload writes the directory tree at remotePath as a gzipped tar to
 // localPath. Both sides are local, so the archive is staged in the system
 // temp dir, moved through the shared download path, and removed afterwards.
+// options.MaxBytes also caps the temporary archive, so an oversized tree is
+// abandoned while it is being packed.
 func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
 	root := real(remotePath)
 	info, err := os.Stat(root)
@@ -25,12 +27,13 @@ func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 	if !info.IsDir() {
 		return 0, fmt.Errorf("pack source %s is not a directory", root)
 	}
-	temporary, err := createPackArchive(ctx, root)
+	temporary, err := createPackArchive(ctx, root, options.MaxBytes)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = os.Remove(temporary) }()
 	return Download(ctx, f, temporary, localPath, TransferOptions{
+		MaxBytes: options.MaxBytes,
 		Progress: func(progress Progress) {
 			if options.Progress != nil {
 				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
@@ -41,8 +44,8 @@ func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 
 // createPackArchive tars root (entries prefixed with its base name, matching
 // tar -C <parent> -czf <out> -- <base>) into a fresh temp file and returns
-// its path; any failure removes the partial archive.
-func createPackArchive(ctx context.Context, root string) (string, error) {
+// its path; any failure, including exceeding maxBytes, removes the partial archive.
+func createPackArchive(ctx context.Context, root string, maxBytes int64) (string, error) {
 	file, err := os.CreateTemp("", "nexterm-pack-*.tar.gz")
 	if err != nil {
 		return "", err
@@ -55,7 +58,7 @@ func createPackArchive(ctx context.Context, root string) (string, error) {
 			_ = os.Remove(name)
 		}
 	}()
-	compressed := gzip.NewWriter(file)
+	compressed := gzip.NewWriter(LimitWriter(file, maxBytes))
 	writer := tar.NewWriter(compressed)
 	parent := filepath.Dir(root)
 	walkErr := filepath.WalkDir(root, func(current string, entry fs.DirEntry, err error) error {

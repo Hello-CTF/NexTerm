@@ -555,6 +555,7 @@
   "{warning}将在 {hostName} 上{value}进程 {name}（PID {pid}），执行：\n{command}{note}": "{warning}{value} le processus {name} (PID {pid}) sur {hostName} avec la commande :\n{command}{note}",
   "{warning}将在 {hostName} 上执行：\n{script}{command}": "{warning}Exécution sur {hostName} :\n{script}{command}",
   "{what}失败（HTTP {status}）": "Échec de {what} (HTTP {status})",
+  "{what}失败（HTTP {status}）：{reason}": "Échec de {what} (HTTP {status}) : {reason}",
   "{what}失败：服务端未返回 id / path": "Échec de {what} : le serveur n'a pas renvoyé id / path",
   "{what}已复制": "{what} copié",
   "~/.ssh 目录": "Dossier ~/.ssh",

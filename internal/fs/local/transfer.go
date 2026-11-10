@@ -35,6 +35,9 @@ type TransferOptions struct {
 	TaskID           string
 	ProgressInterval time.Duration
 	Progress         func(Progress)
+	// MaxBytes caps the size of a downloaded file; zero means unlimited. Download writes at most the size the
+	// source reports, so a source larger than the cap is refused before anything is written.
+	MaxBytes int64
 }
 
 type localPathMapper interface {
@@ -300,6 +303,9 @@ func Download(ctx context.Context, source base.FileSystem, remotePath, localPath
 		return 0, fmt.Errorf("download source %s has a negative size", remotePath)
 	}
 	total = size
+	if options.MaxBytes > 0 && size > options.MaxBytes {
+		return 0, base.ErrTransferTooLarge
+	}
 	var offset int64
 	targetExists := false
 	var initialSource base.FileEntry

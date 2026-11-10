@@ -298,6 +298,7 @@ func (f *fileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 		return 0, fmt.Errorf("create device archive: command output exceeded safety limit")
 	}
 	return fslocal.Download(ctx, f, temporary, localPath, fslocal.TransferOptions{
+		MaxBytes: options.MaxBytes,
 		Progress: func(progress fslocal.Progress) {
 			if options.Progress != nil {
 				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})

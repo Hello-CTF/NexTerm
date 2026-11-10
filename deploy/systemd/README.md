@@ -400,6 +400,31 @@ rotates at 10 MB and keeps five backups (`nexterm.log.1` to `nexterm.log.5`).
 An invalid value for any of these stops the server at startup with exit
 code 2 and names the variable.
 
+## File staging limits
+
+In the browser, uploads, downloads, terminal recordings and log exports pass
+through temporary files under `NEXTERM_DATA_DIR/blobs`. A temporary file is
+removed two hours after it was last written, but not while a download,
+recording or export is still writing it. A write in progress counts against
+the account's quota with its whole allowance until it ends, so parallel
+transfers cannot add up past the quota. These settings bound them (sizes in
+bytes):
+
+- `NEXTERM_BLOB_MAX_BYTES`: one browser upload, default 256 MiB;
+- `NEXTERM_BLOB_STAGE_MAX_BYTES`: all temporary files of one account
+  together, default 2 GiB; each account may also hold at most 1000 staged
+  entries at a time;
+- `NEXTERM_BLOB_DOWNLOAD_MAX_BYTES`: one file the server writes for the
+  browser (file and folder downloads, terminal recordings, log and recording
+  exports), default 2 GiB. A larger download is refused before anything is
+  written, and a recording stops with an error once it reaches the limit;
+- `NEXTERM_BLOB_PERSIST_MAX_BYTES`: all persisted uploads together,
+  default 1 GiB;
+- `NEXTERM_BLOB_DISK_MAX_PERCENT`: new staged or persisted files are refused
+  once the data disk is this full, default 90.
+
+The desktop app does not use these limits.
+
 ## Multi-user limits
 
 With accounts enabled (the default `NEXTERM_AUTH=on`, and the platform mode
