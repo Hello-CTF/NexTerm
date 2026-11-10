@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/Hello-CTF/NexTerm/internal/atomicfile"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
@@ -57,9 +58,46 @@ type localFileReadRangeRequest struct {
 	MaxBytes int64  `json:"maxBytes"`
 }
 
+type localDirsRequest struct {
+	Paths []string `json:"paths"`
+}
+
+// localDirEntryDTO is one entry of a local download target folder. Kind is "file", "dir",
+// "symlink" or "other"; a symlink is reported as such and never followed.
+type localDirEntryDTO struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	Size    int64  `json:"size"`
+	MtimeMs int64  `json:"mtimeMs"`
+}
+
+type localDirListingDTO struct {
+	Path string `json:"path"`
+	// Kind is "missing" when nothing is at Path, "dir" for a readable folder, or the kind of the
+	// non-folder entry occupying Path.
+	Kind    string             `json:"kind"`
+	Entries []localDirEntryDTO `json:"entries"`
+}
+
+type localDirsListDTO struct {
+	Dirs []localDirListingDTO `json:"dirs"`
+}
+
+type localDirCreateFailureDTO struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
+}
+
+type localDirsCreateDTO struct {
+	Failed []localDirCreateFailureDTO `json:"failed"`
+}
+
+// localDirsMaxPaths bounds one local_folder_entries/local_folder_create request.
+const localDirsMaxPaths = 20000
+
 // registerLocalFolderCommands serves the desktop folder-upload flow: the webview cannot expose OS
 // paths of picked files, so the native folder dialog returns the picked folder path and these
-// commands walk/read it locally. The same desktop-only set saves files and images a remote
+// commands walk/read it locally. The same desktop-only set prepares folder downloads and saves files and images a remote
 // desktop copied. Registered only in the desktop assembly; on the server they would
 // turn /rpc into an arbitrary server-filesystem listing/read channel.
 func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
@@ -77,6 +115,16 @@ func registerLocalFolderCommands(dispatcher *ipc.Dispatcher) error {
 		func() error {
 			return ipc.Register(dispatcher, "local_file_write", func(_ context.Context, _ *ipc.Call, input localFileWriteRequest) (localFileWriteDTO, error) {
 				return saveLocalFile(input.Path, input.ContentBase64)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_folder_entries", func(ctx context.Context, _ *ipc.Call, input localDirsRequest) (localDirsListDTO, error) {
+				return listLocalDirs(ctx, input.Paths)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "local_folder_create", func(ctx context.Context, _ *ipc.Call, input localDirsRequest) (localDirsCreateDTO, error) {
+				return createLocalDirs(ctx, input.Paths)
 			})
 		},
 		func() error {
@@ -249,6 +297,99 @@ func readLocalFileRange(path string, offset, maxBytes int64) (fsRangeReadDTO, er
 		Path: path, Offset: offset, Size: info.Size(), ContentBase64: base64.StdEncoding.EncodeToString(data),
 		Truncated: offset+int64(len(data)) < info.Size(),
 	}, nil
+}
+
+func validateLocalDirPaths(paths []string) error {
+	if len(paths) > localDirsMaxPaths {
+		return ipc.BadParam(fmt.Errorf("一次最多处理 %d 个本地目录", localDirsMaxPaths))
+	}
+	for _, path := range paths {
+		if path == "" || !filepath.IsAbs(path) {
+			return ipc.BadParam(fmt.Errorf("本地目录路径必须是绝对路径: %q", path))
+		}
+	}
+	return nil
+}
+
+func localEntryKind(mode fs.FileMode) string {
+	switch {
+	case mode.IsDir():
+		return "dir"
+	case mode&fs.ModeSymlink != 0:
+		return "symlink"
+	case mode.IsRegular():
+		return "file"
+	default:
+		return "other"
+	}
+}
+
+// listLocalDirs reports the entries of local folders a download writes into, so the frontend can
+// detect conflicts and pick free names before queueing. A missing folder is not an error.
+func listLocalDirs(ctx context.Context, paths []string) (localDirsListDTO, error) {
+	if err := validateLocalDirPaths(paths); err != nil {
+		return localDirsListDTO{}, err
+	}
+	result := localDirsListDTO{Dirs: make([]localDirListingDTO, 0, len(paths))}
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return localDirsListDTO{}, err
+		}
+		listing := localDirListingDTO{Path: path, Kind: "missing", Entries: []localDirEntryDTO{}}
+		info, err := os.Lstat(path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR):
+			// ENOTDIR: a parent is a file, so nothing can be at this path either.
+			result.Dirs = append(result.Dirs, listing)
+			continue
+		case err != nil:
+			return localDirsListDTO{}, localFolderError(err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			if target, statErr := os.Stat(path); statErr == nil && target.IsDir() {
+				info = target
+			}
+		}
+		listing.Kind = localEntryKind(info.Mode())
+		if listing.Kind == "dir" {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return localDirsListDTO{}, localFolderError(err)
+			}
+			for _, entry := range entries {
+				entryInfo, err := entry.Info()
+				if err != nil {
+					if errors.Is(err, fs.ErrNotExist) {
+						continue
+					}
+					return localDirsListDTO{}, localFolderError(err)
+				}
+				listing.Entries = append(listing.Entries, localDirEntryDTO{
+					Name: entry.Name(), Kind: localEntryKind(entryInfo.Mode()), Size: entryInfo.Size(), MtimeMs: entryInfo.ModTime().UnixMilli(),
+				})
+			}
+		}
+		result.Dirs = append(result.Dirs, listing)
+	}
+	return result, nil
+}
+
+// createLocalDirs creates download target folders with their parents. Each failure is reported
+// per path so the files below it can be marked failed while the rest of the batch proceeds.
+func createLocalDirs(ctx context.Context, paths []string) (localDirsCreateDTO, error) {
+	if err := validateLocalDirPaths(paths); err != nil {
+		return localDirsCreateDTO{}, err
+	}
+	result := localDirsCreateDTO{Failed: []localDirCreateFailureDTO{}}
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return localDirsCreateDTO{}, err
+		}
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			result.Failed = append(result.Failed, localDirCreateFailureDTO{Path: path, Error: err.Error()})
+		}
+	}
+	return result, nil
 }
 
 func localFolderError(err error) error {

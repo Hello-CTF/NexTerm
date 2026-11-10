@@ -1908,6 +1908,36 @@ export type Listener = {
   program: string;
 };
 
+export type LocalDirCreateFailureDTO = {
+  path: string;
+  error: string;
+};
+
+export type LocalDirEntryDTO = {
+  name: string;
+  kind: string;
+  size: number;
+  mtimeMs: number;
+};
+
+export type LocalDirListingDTO = {
+  path: string;
+  kind: string;
+  entries: LocalDirEntryDTO[];
+};
+
+export type LocalDirsCreateDTO = {
+  failed: LocalDirCreateFailureDTO[];
+};
+
+export type LocalDirsListDTO = {
+  dirs: LocalDirListingDTO[];
+};
+
+export type LocalDirsRequest = {
+  paths: string[];
+};
+
 export type LocalFileReadRangeRequest = {
   path: string;
   offset: number;

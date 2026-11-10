@@ -46,6 +46,7 @@ import { packDownloadSupported, validateEntryName } from "./fileOps";
 import { checkUploadOverwrite } from "./uploadConfirm";
 import { useCwdFollow, type CwdFollowControl } from "./cwdFollow";
 import { dropFolderUpload, pickFolderUpload } from "./folderUpload";
+import { downloadToFolder, folderDownloadAvailable } from "./folderDownload";
 import { noteHtml5Drop, useNativeFileDrop } from "./nativeDrop";
 import { enqueueDownload, enqueuePackDownload, enqueueUploads, subscribeTransferSettled } from "./transferStore";
 import {
@@ -1108,6 +1109,16 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
           disabled: hasDir || sessionGone,
           onSelect: () => void batchDownload(items),
         },
+        ...(folderDownloadAvailable()
+          ? [{
+              kind: "item" as const,
+              label: t("下载到文件夹…"),
+              icon: <IconDownload size={13} />,
+              hint: t("保留目录结构"),
+              disabled: sessionGone,
+              onSelect: () => void downloadToFolder({ sessionId, entries: items }),
+            }]
+          : []),
         { kind: "separator" },
         { kind: "group", label: t("危险操作") },
         {
@@ -1170,6 +1181,15 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       { kind: "group", label: isDir ? t("目录") : t("文件") },
     ];
     if (isDir) {
+      if (folderDownloadAvailable()) {
+        items.push({
+          kind: "item",
+          label: t("下载到文件夹…"),
+          icon: <IconDownload size={13} />,
+          hint: t("保留目录结构"),
+          onSelect: () => void downloadToFolder({ sessionId, entries: [entry] }),
+        });
+      }
       if (!packHidden) {
         items.push({
           kind: "item",

@@ -276,6 +276,8 @@ describe("FileTree desktop multi-select", () => {
     contextMenu(row("sub"));
     expect(menuItem("下载 2 个文件").disabled).toBe(true);
     expect(menuItem("下载 2 个文件").textContent).toContain("目录请单独打包下载");
+    // Browser mode has no writable local folder, so folder downloads stay on tar.gz and per-file saves.
+    expect(menuLabels().join("|")).not.toContain("下载到文件夹…");
 
     contextMenu(row("c.txt"));
     expect(selectedNames()).toEqual(["c.txt"]);

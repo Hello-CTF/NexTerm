@@ -187,7 +187,7 @@ export async function pickSavePath(defaultName: string): Promise<string | null> 
 // The Wails mobile shells have no save dialog; the backend maps this marker to the app download directory.
 const MOBILE_DOWNLOAD_PREFIX = "nexterm-mobile-download:";
 
-function isNativeMobileShell(): boolean {
+export function isNativeMobileShell(): boolean {
   if (TRANSPORT === "web" || typeof navigator === "undefined") return false;
   const ua = navigator.userAgent;
   return /Android|iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
