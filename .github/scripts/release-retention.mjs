@@ -6,8 +6,9 @@
 //
 // Kept: drafts, releases whose tag is not a vX.Y.Z or vX.Y.Z-rc.N release version, the ids passed with --keep (the
 // GitHub latest release and the one just published), the newest patch of every major.minor line, the newest
-// KEEP_RECENT stable releases, stable releases published within KEEP_DAYS, and release candidates newer than the
-// newest stable release. Everything else, which is older stable patches and superseded release candidates, is pruned.
+// KEEP_RECENT stable releases, stable releases published within KEEP_DAYS, and the newest release candidate while it is
+// newer than the newest stable release. Everything else is pruned: older stable patches, every release candidate once a
+// stable release of the same or a newer version ships, and earlier release candidates once a newer one is published.
 //
 // Input on stdin: the releases as one JSON array or as one JSON object per line with id, tag_name, draft and
 // published_at. Output on stdout: the ids to delete, one per line. Each decision is logged on stderr.
@@ -57,6 +58,7 @@ export function planRetention(releases, { keepIds = [], now = Date.now(), keepRe
 
   const stable = versioned.filter((release) => release.version.rc === null);
   const newestStable = stable[0]?.version;
+  const newestCandidate = versioned.find((release) => release.version.rc !== null);
   const recent = new Set(stable.slice(0, keepRecent));
   const lineHeads = new Set();
   const seenLines = new Set();
@@ -74,7 +76,9 @@ export function planRetention(releases, { keepIds = [], now = Date.now(), keepRe
     let reason = null;
     if (pinned.has(String(release.id))) reason = "latest or just published";
     else if (version.rc !== null) {
-      if (!newestStable || compareCore(version, newestStable) > 0) reason = "release candidate newer than the latest stable";
+      if (release === newestCandidate && (!newestStable || compareCore(version, newestStable) > 0)) {
+        reason = "newest release candidate, newer than the latest stable";
+      }
     } else if (lineHeads.has(release)) reason = "newest patch of its minor line";
     else if (recent.has(release)) reason = `one of the newest ${keepRecent} stable releases`;
     else if (!Number.isFinite(published) || published >= cutoff) reason = `published within ${keepDays} days`;

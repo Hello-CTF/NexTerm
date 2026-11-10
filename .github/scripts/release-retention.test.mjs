@@ -43,7 +43,7 @@ test("stable releases published within the retention window survive", () => {
   assert.deepEqual(tagsOf(remove), ["v3.0.0"]);
 });
 
-test("release candidates newer than the latest stable survive and older ones are pruned", () => {
+test("only the newest release candidate newer than the latest stable survives", () => {
   const releases = [
     release("v1.2.0-rc.1", 50),
     release("v1.2.0-rc.2", 45),
@@ -52,20 +52,36 @@ test("release candidates newer than the latest stable survive and older ones are
     release("v1.3.0-rc.2", 2),
   ];
   const { keep, remove } = plan(releases);
-  assert.deepEqual(tagsOf(remove), ["v1.2.0-rc.1", "v1.2.0-rc.2"]);
-  assert.deepEqual(tagsOf(keep), ["v1.2.0", "v1.3.0-rc.1", "v1.3.0-rc.2"]);
+  assert.deepEqual(tagsOf(remove), ["v1.2.0-rc.1", "v1.2.0-rc.2", "v1.3.0-rc.1"]);
+  assert.deepEqual(tagsOf(keep), ["v1.2.0", "v1.3.0-rc.2"]);
 });
 
-test("publishing a release candidate does not delete the previous one", () => {
+test("publishing a release candidate deletes the previous release candidate only", () => {
   const releases = [release("v1.0.0", 30), release("v1.1.0-rc.1", 3), release("v1.1.0-rc.2", 0)];
   const current = releases[2].id;
-  const { remove } = plan(releases, { keepIds: [String(current)] });
-  assert.deepEqual(remove, []);
+  const { keep, remove } = plan(releases, { keepIds: [String(current)] });
+  assert.deepEqual(tagsOf(remove), ["v1.1.0-rc.1"]);
+  assert.deepEqual(tagsOf(keep), ["v1.0.0", "v1.1.0-rc.2"]);
 });
 
-test("release candidates are all kept before any stable release exists", () => {
-  const { remove } = plan([release("v0.1.0-rc.1", 500), release("v0.1.0-rc.2", 400)]);
-  assert.deepEqual(remove, []);
+test("publishing a stable release deletes its release candidates and keeps older stable releases", () => {
+  const releases = [
+    release("v1.0.0", 60),
+    release("v1.0.1", 30),
+    release("v1.1.0-rc.1", 10),
+    release("v1.1.0-rc.2", 5),
+    release("v1.1.0", 0),
+  ];
+  const current = releases[4].id;
+  const { keep, remove } = plan(releases, { keepIds: [String(current)] });
+  assert.deepEqual(tagsOf(remove), ["v1.1.0-rc.1", "v1.1.0-rc.2"]);
+  assert.deepEqual(tagsOf(keep), ["v1.0.0", "v1.0.1", "v1.1.0"]);
+});
+
+test("only the newest release candidate is kept before any stable release exists", () => {
+  const { keep, remove } = plan([release("v0.1.0-rc.1", 500), release("v0.1.0-rc.2", 400)]);
+  assert.deepEqual(tagsOf(remove), ["v0.1.0-rc.1"]);
+  assert.deepEqual(tagsOf(keep), ["v0.1.0-rc.2"]);
 });
 
 test("pinned ids, drafts and unrecognised tags are never deleted", () => {
