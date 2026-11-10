@@ -26,6 +26,14 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_command_generate": {
+      scope: "ai-command",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.aiCommandGenerateRequest", ts: "AiCommandGenerateRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.aiCommandGenerateDTO", ts: "AiCommandGenerateDTO" },
+    },
     "ai_confirm": {
       nested: false,
       channel: true,
@@ -3234,6 +3242,10 @@ export type IPCTypedCommandName = Exclude<keyof typeof ipcContractManifest.comma
 export type IPCCommandName = keyof typeof ipcContractManifest.commands;
 
 export interface IPCCommandTypeMap {
+  "ai_command_generate": {
+    input: contractTypes.AiCommandGenerateRequest;
+    output: contractTypes.AiCommandGenerateDTO;
+  };
   "ai_grant_list": {
     input: Record<string, never>;
     output: contractTypes.DeviceGrant[];

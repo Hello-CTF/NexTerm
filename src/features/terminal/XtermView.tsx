@@ -32,6 +32,7 @@ import {
 } from "../../app/preferences";
 import { TERMINAL_FONT_STACKS, xtermThemeFor } from "./xtermTheme";
 import { CommandBlockManager, type CommandBlock } from "./commandBlocks";
+import { commandShortcutActive } from "./commandShortcuts";
 import {
   createTerminalStreamWriter,
   STREAM_HIGH_WATER_BYTES,
@@ -104,6 +105,10 @@ export interface TerminalHandle {
   copyBlock: (index: number) => string;
   scrollToBlock: (index: number) => void;
   navigateBlock: (dir: "prev" | "next") => number | null;
+  // Selects the output of the most recent finished command and returns it; null when none is left in the buffer.
+  selectLastOutput?: () => { index: number; text: string } | null;
+  // Which buffer is in front: "alternate" while a full-screen program (vim, less, tmux) runs.
+  bufferType?: () => "normal" | "alternate";
   clearBlocks: () => void;
   clear: () => void;
   getSelection: () => string;
@@ -175,6 +180,8 @@ export interface XtermViewProps {
   registerSearch?: (api: { findNext: (t: string) => void; findPrevious: (t: string) => void }) => void;
   onData?: (data: string) => void;
   onBlocks?: (blocks: CommandBlock[]) => void;
+  // The block whose command line scrolled above the viewport while its output still fills the top, or null.
+  onStickyBlock?: (index: number | null) => void;
   onHandle?: (h: TerminalHandle) => void;
   onTitle?: (title: string) => void;
   onClipboard?: (payload: string) => void;
@@ -235,6 +242,7 @@ export function XtermView(props: XtermViewProps) {
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
   const onBlocksRef = useRef(props.onBlocks);
+  const onStickyBlockRef = useRef(props.onStickyBlock);
   const onHandleRef = useRef(props.onHandle);
   const onAttachRef = useRef(props.onAttach);
   const onAttachInfoRef = useRef(props.onAttachInfo);
@@ -270,6 +278,7 @@ export function XtermView(props: XtermViewProps) {
   const winrmRef = useRef(props.winrm);
   const lastFitViewportRef = useRef<{ widthPx: number; heightPx: number } | null>(null);
   onBlocksRef.current = props.onBlocks;
+  onStickyBlockRef.current = props.onStickyBlock;
   onHandleRef.current = props.onHandle;
   onAttachRef.current = props.onAttach;
   onAttachInfoRef.current = props.onAttachInfo;
@@ -409,7 +418,14 @@ export function XtermView(props: XtermViewProps) {
     });
     setCopyMode({ controller: copyMode, term });
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
-    const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
+    const detachTerminalInput = attachTerminalInput(term, hostRef.current, {
+      kittyKeyboard,
+      withholds: (action) =>
+        commandShortcutActive(action, {
+          normalBuffer: term.buffer.active.type === "normal",
+          blocks: onBlocksRef.current !== undefined,
+        }),
+    });
 
     // Path links register before the URL provider so they take precedence over its host:port targets.
     const terminalTargets = attachTerminalTargets(term, hostRef.current, {
@@ -458,7 +474,9 @@ export function XtermView(props: XtermViewProps) {
     gridRef.current = coordinator;
     fitIfSized();
 
-    const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list));
+    const blocks = new CommandBlockManager(term, (list) => onBlocksRef.current?.(list), {
+      onSticky: (index) => onStickyBlockRef.current?.(index),
+    });
     // Input goes over the channel socket when the server supports it (small ordered frames, bursts merged). The
     // channel is created later in this effect; it is only read when input is actually sent.
     const writeTabInput = (data: string) => {
@@ -529,6 +547,8 @@ export function XtermView(props: XtermViewProps) {
       copyBlock: (index) => blocks.getBlockText(index),
       scrollToBlock: (index) => blocks.scrollTo(index),
       navigateBlock: (dir) => blocks.navigate(dir),
+      selectLastOutput: () => blocks.selectLastOutput(),
+      bufferType: () => term.buffer.active.type,
       clearBlocks: () => blocks.clear(),
       clear: () => term.clear(),
       getSelection: () => term.getSelection(),

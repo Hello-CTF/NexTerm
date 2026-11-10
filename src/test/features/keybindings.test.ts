@@ -444,3 +444,24 @@ describe("session sidebar shortcut", () => {
     expect(bindingConflicts().filter((c) => c.actions.some((a) => a.id === "sessionSidebar"))).toEqual([]);
   });
 });
+
+describe("command block and AI command shortcuts", () => {
+  it("are withheld from a focused terminal off macOS", () => {
+    const cases: Array<[Partial<KeyEventLike> & { key: string }, string]> = [
+      [{ key: "ArrowUp", code: "ArrowUp", ctrlKey: true, shiftKey: true }, "previousPrompt"],
+      [{ key: "ArrowDown", code: "ArrowDown", ctrlKey: true, shiftKey: true }, "nextPrompt"],
+      [{ key: "O", code: "KeyO", ctrlKey: true, shiftKey: true }, "copyLastOutput"],
+      [{ key: "G", code: "KeyG", ctrlKey: true, shiftKey: true }, "generateCommand"],
+    ];
+    for (const [event, action] of cases) {
+      expect(matchTerminalWithheldKeybinding(keyEvent(event))).toEqual({ action, digit: null });
+    }
+    // Plain Ctrl+I stays Tab for the shell.
+    expect(matchTerminalWithheldKeybinding(keyEvent({ key: "i", code: "KeyI", ctrlKey: true }))).toBeNull();
+  });
+
+  it("do not conflict with another default action", () => {
+    const ids = ["previousPrompt", "nextPrompt", "copyLastOutput", "generateCommand"];
+    expect(bindingConflicts().filter((c) => c.actions.some((a) => ids.includes(a.id)))).toEqual([]);
+  });
+});

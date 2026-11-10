@@ -53,6 +53,13 @@ import { ProductionConfirmationDialog } from "../execbatch/ProductionConfirmatio
 import { ProductionWriteRiskNotice } from "../production/ProductionWarning";
 import { useAssetProductionClassification } from "../production/productionSettings";
 import type { CommandBlock } from "./commandBlocks";
+import { StickyCommandHeader } from "./StickyCommandHeader";
+import { FailedCommandChip, failedCommandBlock } from "./FailedCommandChip";
+import { AiCommandPrompt, type AiCommandContext } from "./AiCommandPrompt";
+import { insertCommandAtPrompt, registerTerminalBufferProbe, type CommandInsertTarget } from "./insertCommand";
+import { explainCommandBlock } from "./commandBlockActions";
+import { commandShortcutActive } from "./commandShortcuts";
+import { localSessionIsMac, localSessionIsWindows } from "../../app/platform";
 import {
   terminalApi,
   fsApi,
@@ -118,6 +125,7 @@ import {
   IconRefresh,
   IconSave,
   IconSearch,
+  IconSparkles,
   IconSplitH,
   IconSplitV,
   IconZap,
@@ -322,6 +330,10 @@ export function TerminalPane({
   const [encoding, setEncoding] = useState("utf-8");
   const [blocks, setBlocks] = useState<CommandBlock[]>([]);
   const [blocksOpen, setBlocksOpen] = useState(false);
+  // The block pinned at the top while its command line is scrolled away, and the failed block whose chip was closed.
+  const [stickyBlockIndex, setStickyBlockIndex] = useState<number | null>(null);
+  const [dismissedFailure, setDismissedFailure] = useState<number | null>(null);
+  const [aiCommandOpen, setAiCommandOpen] = useState(false);
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [assetDraft, setAssetDraft] = useState<{ kind: "ssh"; name: string; host: string; port: number } | null>(null);
   const [control, setControl] = useState<{
@@ -459,6 +471,7 @@ export function TerminalPane({
   );
   const helperOperation = useUi((s) => s.helperOperations.operations[storeTabId]);
   const regularReason = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.regularReason);
+  const tabShell = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.shell);
   const helperRetryPending = useUi((s) => s.helperRetries[sessionId]?.tabId === storeTabId);
   const sessionName = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.name) ?? title;
   const recording = useUi((s) => (kernelTabId ? s.recordings[kernelTabId] : undefined));
@@ -1099,6 +1112,56 @@ export function TerminalPane({
     pane.addEventListener("keydown", onKey, true);
     return () => pane.removeEventListener("keydown", onKey, true);
   }, [openLinkPanel]);
+
+  const copyLastOutput = useCallback(() => {
+    const output = handleRef.current?.selectLastOutput?.();
+    if (!output) {
+      pushToast("info", tr("没有可复制的命令输出"));
+      return;
+    }
+    void copyText(output.text).then(
+      () => pushToast("success", tr("已复制命令 #{index} 的输出", { index: output.index })),
+      (e: unknown) => pushToast("error", tr("复制失败：{value}", { value: describeError(e) })),
+    );
+  }, [pushToast]);
+
+  const blockKeysRef = useRef({ blocksSupported, copyLastOutput });
+  blockKeysRef.current = { blocksSupported, copyLastOutput };
+  // Command navigation and AI generation shortcuts act only while the terminal itself has focus.
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isImeKeyEvent(e)) return;
+      if (!(e.target instanceof Element) || !e.target.closest(".xterm")) return;
+      if (e.target.closest(`[${EARLIER_HISTORY_PANEL_ATTRIBUTE}]`)) return;
+      const { blocksSupported: supported, copyLastOutput: copyOutput } = blockKeysRef.current;
+      const actions = {
+        generateCommand: () => setAiCommandOpen(true),
+        previousPrompt: () => handleRef.current?.navigateBlock("prev"),
+        nextPrompt: () => handleRef.current?.navigateBlock("next"),
+        copyLastOutput: copyOutput,
+      } as const;
+      const action = (Object.keys(actions) as Array<keyof typeof actions>).find((id) => matchKeybinding(e, id));
+      if (!action) return;
+      // An alternate-screen program, or a terminal without command blocks, keeps the chord.
+      const state = { normalBuffer: handleRef.current?.bufferType?.() !== "alternate", blocks: supported };
+      if (!commandShortcutActive(action, state)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Holding the chord repeats prompt navigation only.
+      if (e.repeat && action !== "previousPrompt" && action !== "nextPrompt") return;
+      actions[action]();
+    };
+    pane.addEventListener("keydown", onKey, true);
+    return () => pane.removeEventListener("keydown", onKey, true);
+  }, []);
+
+  // Lets command insertion from outside the pane (AI code blocks) see a full-screen program in front.
+  useEffect(() => {
+    if (!kernelTabId) return;
+    return registerTerminalBufferProbe(kernelTabId, () => handleRef.current?.bufferType?.());
+  }, [kernelTabId]);
 
   useEffect(
     () =>
@@ -2001,6 +2064,7 @@ export function TerminalPane({
             label: tr("上一条命令"),
             icon: <IconArrowUp size={13} />,
             disabled: !blocks.length,
+            hint: formatBinding(bindings.previousPrompt) || undefined,
             onSelect: () => handleRef.current?.navigateBlock("prev"),
           },
           {
@@ -2008,7 +2072,24 @@ export function TerminalPane({
             label: tr("下一条命令"),
             icon: <IconArrowDown size={13} />,
             disabled: !blocks.length,
+            hint: formatBinding(bindings.nextPrompt) || undefined,
             onSelect: () => handleRef.current?.navigateBlock("next"),
+          },
+          {
+            kind: "item",
+            label: tr("复制上一条命令的输出"),
+            icon: <IconCopy size={13} />,
+            disabled: !blocks.some((b) => b.endedAt !== null),
+            hint: formatBinding(bindings.copyLastOutput) || undefined,
+            onSelect: copyLastOutput,
+          },
+          {
+            kind: "item",
+            label: tr("用 AI 生成命令"),
+            icon: <IconSparkles size={13} />,
+            disabled: !kernelTabId,
+            hint: formatBinding(bindings.generateCommand) || undefined,
+            onSelect: () => setAiCommandOpen(true),
           },
           {
             kind: "item",
@@ -2299,6 +2380,36 @@ export function TerminalPane({
           : buildTerminalMenu(),
     });
   };
+
+  const aiCommandContext: AiCommandContext = {
+    cwd: cwd ?? undefined,
+    host: sessionName,
+    shell: tabShell && tabShell !== "unknown" ? tabShell : undefined,
+    os:
+      tabShell === "powershell" || tabShell === "cmd"
+        ? "windows"
+        : sessionKind === "local"
+          ? localSessionIsWindows()
+            ? "windows"
+            : localSessionIsMac()
+              ? "macos"
+              : "linux"
+          : undefined,
+  };
+  const aiCommandTarget: CommandInsertTarget | null =
+    kernelTabId && !attachDead && !control?.exited
+      ? {
+          tabId: kernelTabId,
+          hostLabel: sessionName,
+          productionEnvironment: productionClassification?.production ? productionClassification.environment : null,
+        }
+      : null;
+  const closeAiCommand = () => {
+    setAiCommandOpen(false);
+    window.setTimeout(() => handleRef.current?.focus(), 0);
+  };
+  const stickyBlock = blocksSupported && stickyBlockIndex !== null ? blocks.find((b) => b.index === stickyBlockIndex) : undefined;
+  const failedBlock = blocksSupported && !aiCommandOpen ? failedCommandBlock(blocks, dismissedFailure) : null;
 
   const commandBlockProps = {
     kernelTabId,
@@ -2752,6 +2863,7 @@ export function TerminalPane({
                 void refreshControl(id);
               }}
               onBlocks={blocksSupported ? setBlocks : undefined}
+              onStickyBlock={blocksSupported ? setStickyBlockIndex : undefined}
               onTitle={handleOscTitle}
               onClipboard={osc52Handler}
               onStreamBacklog={setStreamBacklog}
@@ -2771,6 +2883,29 @@ export function TerminalPane({
               }}
             />
           </div>
+
+          {stickyBlock && (
+            <StickyCommandHeader block={stickyBlock} onLocate={(index) => handleRef.current?.scrollToBlock(index)} />
+          )}
+          {failedBlock && (
+            <FailedCommandChip
+              block={failedBlock}
+              onDismiss={(block) => setDismissedFailure(block.index)}
+              onExplain={(block) => {
+                if (explainCommandBlock(block, handleRef.current?.copyBlock(block.index) ?? "", title)) {
+                  setDismissedFailure(block.index);
+                }
+              }}
+            />
+          )}
+          {aiCommandOpen && (
+            <AiCommandPrompt
+              context={aiCommandContext}
+              target={aiCommandTarget}
+              onClose={closeAiCommand}
+              onInsert={(command) => (aiCommandTarget ? insertCommandAtPrompt(aiCommandTarget, command) : Promise.resolve(false))}
+            />
+          )}
 
           {/* Overlays at the top of the screen: taking layout height would resize the PTY. */}
           {controlSupported && !control?.exited && (

@@ -5,8 +5,8 @@ import { createElement } from "react";
 import { click, flush, flushUntil, mount, type MountedView } from "./reactTestUtils";
 
 vi.mock("../../app/store", () => ({
-  useUi: (selector: (state: { pushToast: () => void }) => unknown) =>
-    selector({ pushToast: () => undefined }),
+  useUi: (selector: (state: { pushToast: () => void; workspaces: never[]; activeWorkspaceId: null }) => unknown) =>
+    selector({ pushToast: () => undefined, workspaces: [], activeWorkspaceId: null }),
 }));
 
 import { Markdown, parseBlocks } from "../../features/ai/Markdown";

@@ -12,18 +12,54 @@ export interface CommandBlock {
   exitCode: number | null;
 }
 
-const OVERVIEW_RULER_COLOR = "#4f9cf9";
+export type CommandBlockStatus = "running" | "success" | "failure" | "done";
+
+// Overview ruler colors by block state: running, exit 0, non-zero exit, and finished without a reported exit code.
+export const COMMAND_BLOCK_MARK_COLORS: Record<CommandBlockStatus, string> = {
+  running: "#4f9cf9",
+  success: "#3fb950",
+  failure: "#f85149",
+  done: "#6e7681",
+};
 const MAX_BLOCK_LINES = 2000;
 export const MAX_ACTIVE_COMMAND_BLOCKS = 200;
+
+export function commandBlockStatus(block: Pick<CommandBlock, "endedAt" | "exitCode">): CommandBlockStatus {
+  if (block.endedAt === null) return "running";
+  if (block.exitCode === null) return "done";
+  return block.exitCode === 0 ? "success" : "failure";
+}
 
 interface MarkerSlot {
   marker: IMarker;
   decoration?: IDisposable;
+  status?: CommandBlockStatus;
+  // Set when OSC 133 D reported the end: the line the cursor was on, and whether output reached that line.
+  endMarker?: IMarker;
+  endInclusive?: boolean;
 }
 
 function disposeSlot(slot: MarkerSlot): void {
   slot.decoration?.dispose();
   slot.marker.dispose();
+  slot.endMarker?.dispose();
+}
+
+export interface CommandBlockManagerOptions {
+  // Reports the block whose output fills the top of the viewport while its command line is scrolled out of view.
+  onSticky?: (index: number | null) => void;
+  // Schedules the sticky update after scrolling, so a burst of output lines costs one update per frame. Defaults to
+  // requestAnimationFrame; returns a cancel function.
+  scheduleFrame?: (callback: () => void) => () => void;
+}
+
+function defaultScheduleFrame(callback: () => void): () => void {
+  if (typeof requestAnimationFrame === "function") {
+    const id = requestAnimationFrame(callback);
+    return () => cancelAnimationFrame(id);
+  }
+  const id = setTimeout(callback, 16);
+  return () => clearTimeout(id);
 }
 
 export class CommandBlockManager {
@@ -37,10 +73,18 @@ export class CommandBlockManager {
   private osc133 = false;
   private submitted = "";
   private disposed = false;
+  private readonly onSticky?: (index: number | null) => void;
+  private sticky: number | null = null;
+  private readonly scrollListener?: IDisposable;
+  private readonly scheduleFrame: (callback: () => void) => () => void;
+  private cancelStickyFrame: (() => void) | null = null;
 
-  constructor(term: Terminal, onUpdate: (blocks: CommandBlock[]) => void) {
+  constructor(term: Terminal, onUpdate: (blocks: CommandBlock[]) => void, options: CommandBlockManagerOptions = {}) {
     this.term = term;
     this.onUpdate = onUpdate;
+    this.onSticky = options.onSticky;
+    this.scheduleFrame = options.scheduleFrame ?? defaultScheduleFrame;
+    if (this.onSticky) this.scrollListener = term.onScroll?.(() => this.scheduleSticky());
   }
 
   feedInput(data: string): void {
@@ -107,16 +151,7 @@ export class CommandBlockManager {
       return;
     }
     const slot: MarkerSlot = { marker };
-    try {
-      slot.decoration = this.term.registerDecoration({
-        marker,
-        width: 1,
-        height: 1,
-        overviewRulerOptions: { color: OVERVIEW_RULER_COLOR, position: "full" },
-      });
-    } catch {
-      slot.decoration = undefined;
-    }
+    this.decorate(slot, "running");
     this.slots.push(slot);
 
     this.blocks.push({
@@ -151,16 +186,7 @@ export class CommandBlockManager {
           return;
         }
         const slot: MarkerSlot = { marker };
-        try {
-          slot.decoration = this.term.registerDecoration({
-            marker,
-            width: 1,
-            height: 1,
-            overviewRulerOptions: { color: OVERVIEW_RULER_COLOR, position: "full" },
-          });
-        } catch {
-          slot.decoration = undefined;
-        }
+        this.decorate(slot, "running");
         this.slots.push(slot);
         this.blocks.push({
           index: this.nextBlockIndex++,
@@ -180,6 +206,7 @@ export class CommandBlockManager {
         if (last && last.endedAt === null) {
           last.endedAt = now;
           last.exitCode = exitCode;
+          this.markOutputEnd(this.slots[this.slots.length - 1]);
           this.emit();
         }
         break;
@@ -234,6 +261,91 @@ export class CommandBlockManager {
     }
   }
 
+  // decorate (re)registers the block's overview ruler mark in the color of its state. xterm cannot recolor a
+  // decoration, so a state change replaces it.
+  private decorate(slot: MarkerSlot, status: CommandBlockStatus): void {
+    if (slot.status === status) return;
+    slot.decoration?.dispose();
+    slot.decoration = undefined;
+    slot.status = status;
+    if (slot.marker.isDisposed) return;
+    try {
+      slot.decoration = this.term.registerDecoration({
+        marker: slot.marker,
+        width: 1,
+        height: 1,
+        overviewRulerOptions: { color: COMMAND_BLOCK_MARK_COLORS[status], position: "full" },
+      });
+    } catch {
+      slot.decoration = undefined;
+    }
+  }
+
+  // markOutputEnd records where the output stopped when OSC 133 D arrives, before the next prompt is drawn.
+  private markOutputEnd(slot: MarkerSlot | undefined): void {
+    if (!slot || slot.endMarker) return;
+    try {
+      slot.endMarker = this.term.registerMarker(0);
+    } catch {
+      slot.endMarker = undefined;
+    }
+    slot.endInclusive = this.term.buffer.active.cursorX > 0;
+  }
+
+  // outputRange is the buffer lines of a block's output, after its command line; null when it has none.
+  private outputRange(position: number): { from: number; to: number } | null {
+    const b = this.blocks[position];
+    if (!b || b.startLine < 0) return null;
+    const slot = this.slots[position];
+    const buf = this.term.buffer.active;
+    const cursor = buf.baseY + buf.cursorY;
+    const start = slot?.marker.line ?? b.startLine;
+    if (start < 0) return null;
+    // Read live from the markers: a block ends where the next one starts, the last one at the cursor.
+    const next = position + 1 < this.blocks.length ? (this.slots[position + 1]?.marker.line ?? this.blocks[position + 1].startLine) : null;
+    let to = next === null ? cursor : Math.max(start, next - 1);
+    if (slot?.endMarker && !slot.endMarker.isDisposed && slot.endMarker.line >= 0) {
+      to = Math.min(to, slot.endMarker.line - (slot.endInclusive ? 0 : 1));
+    } else if (position === this.blocks.length - 1 && b.endedAt !== null) {
+      // The cursor line of a finished last block already holds the next prompt.
+      to = Math.min(to, cursor - 1);
+    }
+    const from = start + 1;
+    if (to < from) return null;
+    return { from, to: Math.min(to, from + MAX_BLOCK_LINES) };
+  }
+
+  private scheduleSticky(): void {
+    if (this.cancelStickyFrame || this.disposed) return;
+    this.cancelStickyFrame = this.scheduleFrame(() => {
+      this.cancelStickyFrame = null;
+      this.updateSticky();
+    });
+  }
+
+  private updateSticky(): void {
+    if (!this.onSticky || this.disposed) return;
+    const next = this.computeSticky();
+    if (next === this.sticky) return;
+    this.sticky = next;
+    this.onSticky(next);
+  }
+
+  private computeSticky(): number | null {
+    const buf = this.term.buffer.active;
+    if (buf.type !== undefined && buf.type !== "normal") return null;
+    const top = buf.viewportY;
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+      const start = this.slots[i]?.marker.line ?? this.blocks[i].startLine;
+      if (start < 0 || start >= top) continue;
+      // The latest block that starts above the viewport is sticky only while its output still reaches the top. The
+      // scan stops there, so at the bottom of a long output it reads only the last block.
+      const range = this.outputRange(i);
+      return range && range.to >= top ? this.blocks[i].index : null;
+    }
+    return null;
+  }
+
   private syncEndLines(): void {
     const buf = this.term.buffer.active;
     const cursor = buf.baseY + buf.cursorY;
@@ -253,15 +365,16 @@ export class CommandBlockManager {
       if (slot) disposeSlot(slot);
     }
     this.syncEndLines();
+    this.blocks.forEach((b, i) => {
+      const slot = this.slots[i];
+      if (slot) this.decorate(slot, commandBlockStatus(b));
+    });
     this.onUpdate(this.blocks.map((b) => ({ ...b })));
+    this.updateSticky();
   }
 
-  getBlockText(index: number): string {
-    const b = this.blocks.find((x) => x.index === index);
-    if (!b) return "";
+  private linesText(from: number, to: number): string {
     const buf = this.term.buffer.active;
-    const from = Math.max(0, b.startLine);
-    const to = Math.min(Math.max(from, b.endLine), from + MAX_BLOCK_LINES);
     const lines: string[] = [];
     for (let i = from; i <= to; i += 1) {
       const line = buf.getLine(i);
@@ -270,6 +383,35 @@ export class CommandBlockManager {
     while (lines.length && lines[0] === "") lines.shift();
     while (lines.length && lines[lines.length - 1] === "") lines.pop();
     return lines.join("\n");
+  }
+
+  getBlockText(index: number): string {
+    const b = this.blocks.find((x) => x.index === index);
+    if (!b) return "";
+    const from = Math.max(0, b.startLine);
+    const to = Math.min(Math.max(from, b.endLine), from + MAX_BLOCK_LINES);
+    return this.linesText(from, to);
+  }
+
+  // selectLastOutput selects the output of the most recent finished command (iTerm2 "select output of last
+  // command") and returns it with its block index; null when that block has no output left in the buffer.
+  selectLastOutput(): { index: number; text: string } | null {
+    if (this.disposed) return null;
+    this.syncEndLines();
+    for (let i = this.blocks.length - 1; i >= 0; i -= 1) {
+      if (this.blocks[i].endedAt === null) continue;
+      const range = this.outputRange(i);
+      if (!range) return null;
+      const text = this.linesText(range.from, range.to);
+      if (!text) return null;
+      try {
+        this.term.selectLines?.(range.from, range.to);
+      } catch {
+        // The selection is only a visual aid; the text is still returned.
+      }
+      return { index: this.blocks[i].index, text };
+    }
+    return null;
   }
 
   scrollTo(index: number): void {
@@ -307,7 +449,10 @@ export class CommandBlockManager {
   }
 
   dispose(): void {
-    this.disposed = true;
     this.clear();
+    this.disposed = true;
+    this.scrollListener?.dispose();
+    this.cancelStickyFrame?.();
+    this.cancelStickyFrame = null;
   }
 }

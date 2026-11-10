@@ -61,6 +61,18 @@ export type AggregateSession = {
   attached?: boolean;
 };
 
+export type AiCommandGenerateDTO = {
+  command: string;
+};
+
+export type AiCommandGenerateRequest = {
+  prompt: string;
+  cwd?: string;
+  host?: string;
+  os?: string;
+  shell?: string;
+};
+
 export type AnswerNote = {
   stepNumber: number;
   sessionId: string;

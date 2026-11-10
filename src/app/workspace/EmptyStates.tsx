@@ -11,7 +11,8 @@ import { useConnectHistory } from "../../features/explorer/connectHistory";
 import { relativeTime } from "../../features/fleet/format";
 import { Lazy } from "../../ui/LazyBoundary";
 import { AssetEditor } from "../lazyPanels";
-import { IconCommand, IconPlus, IconSearch, IconTerminal, Logo, assetIcon } from "../../ui/icons";
+import { SshImportDialog } from "../../features/explorer/SshImportDialog";
+import { IconCommand, IconDownload, IconPlus, IconSearch, IconTerminal, Logo, assetIcon } from "../../ui/icons";
 import { assetKindName, recentConnections } from "./recentConnections";
 import { t } from "../../i18n";
 
@@ -182,6 +183,9 @@ export function WelcomePage({
   const history = useConnectHistory((s) => s.entries);
   const hiddenIds = useAssetVisibility((s) => s.hiddenIds);
   const [creating, setCreating] = useState(false);
+  const [importing, setImporting] = useState(false);
+  // Importing reads ~/.ssh/config on this machine, which only the desktop app can do.
+  const canImportSsh = !WEB && !mobile;
 
   const list = assets.data ?? [];
   const recent = recentConnections(list, history, { hiddenIds, mobile });
@@ -244,6 +248,15 @@ export function WelcomePage({
             <p className="mt-2 text-[12px] text-neutral-400">
               {onQuickConnect && !WEB ? t("新建资产后立即连接；临时连接可用「快速连接」输入 user@host。") : t("新建资产后立即连接。")}
             </p>
+            {canImportSsh && (
+              <div className="mt-3 flex flex-col items-start gap-1.5">
+                <button className="nx-btn nx-btn-primary nx-btn-sm" onClick={() => setImporting(true)}>
+                  <IconDownload size={13} />
+                  {t("从 SSH 配置导入")}
+                </button>
+                <span className="text-[11px] text-neutral-500">{t("把 ~/.ssh/config 里的主机导入为资产。")}</span>
+              </div>
+            )}
           </section>
         ) : (
           <section aria-label={t("最近连接")} className="w-full">
@@ -293,6 +306,7 @@ export function WelcomePage({
           <AssetEditor kind="asset" onClose={() => setCreating(false)} onSaved={onSaved} />
         </Lazy>
       )}
+      {importing && <SshImportDialog onClose={() => setImporting(false)} />}
     </div>
   );
 }

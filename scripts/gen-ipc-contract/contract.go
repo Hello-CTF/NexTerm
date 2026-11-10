@@ -128,6 +128,7 @@ var contractScopes = []scopeSpec{
 	{name: "ai-watch", prefixes: []string{"ai_watch_"}},
 	{name: "ai-run", commands: []string{"ai_run_history", "ai_run_recovery_summary"}},
 	{name: "ai-skills", prefixes: []string{"ai_skills_"}},
+	{name: "ai-command", commands: []string{"ai_command_generate"}},
 	{name: "ai-grant", prefixes: []string{"ai_grant_"}},
 	{name: "host-processes", commands: []string{"host_process_kill", "host_processes_list"}},
 	{name: "docker", prefixes: []string{"docker_"}},
