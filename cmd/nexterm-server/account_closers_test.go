@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/db"
+	fleetserver "github.com/Hello-CTF/NexTerm/internal/fleet/server"
 )
 
 type userCloseProbe struct{ user, except string }
@@ -21,6 +22,12 @@ func (sessionOnlyCloser) CloseAccountSession(string) error { return nil }
 
 // The database service takes part in user-level revocation like the remote desktop service.
 var _ interface{ CloseAccountUser(string, string) } = (*db.Service)(nil)
+
+// Owner device bridge relays close with the login session that opened them.
+var _ interface {
+	CloseAccountSession(string) error
+	CloseAccountUser(string, string)
+} = (*fleetserver.Service)(nil)
 
 func TestAccountConnectionClosersFanOutUserRevocation(t *testing.T) {
 	probe := &userCloseProbe{}

@@ -46,6 +46,7 @@ func newHTTPFixture(t *testing.T, authOff bool, options ...Option) *httpFixture 
 }
 
 type httpSession struct {
+	id     string
 	cookie *http.Cookie
 	csrf   string
 	user   *account.User
@@ -58,6 +59,7 @@ func (f *httpFixture) session(t *testing.T, user *account.User) *httpSession {
 		t.Fatal(err)
 	}
 	return &httpSession{
+		id:     session.ID,
 		cookie: &http.Cookie{Name: sessionCookieName, Value: token},
 		csrf:   fleetCSRFToken(session.ID),
 		user:   user,

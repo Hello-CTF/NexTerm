@@ -377,7 +377,7 @@ func run(args []string) int {
 		Previews:              previewService,
 		Spectator:             application.Services.Sessions,
 		DB:                    healthDB,
-		AccountConnections:    accountConnectionClosersFor(application.Services),
+		AccountConnections:    accountConnectionClosersFor(application.Services, fleetService),
 		RemoteDesktop:         remoteDesktopServer(application.Services.RemoteDesktop),
 		AccountCleanup:        application.CleanupAccount,
 		AccountCleanupPrepare: application.PrepareAccountCleanup,
@@ -748,13 +748,16 @@ func openInitAdminStore(ctx context.Context, options initAdminOptions, dataDir s
 // accountConnectionClosers releases the per-login-session resources of every service that holds connections.
 type accountConnectionClosers []interface{ CloseAccountSession(string) error }
 
-func accountConnectionClosersFor(services production.ProductionServices) accountConnectionClosers {
+func accountConnectionClosersFor(services production.ProductionServices, fleet *fleetserver.Service) accountConnectionClosers {
 	var closers accountConnectionClosers
 	if services.Database != nil {
 		closers = append(closers, services.Database)
 	}
 	if services.RemoteDesktop != nil {
 		closers = append(closers, services.RemoteDesktop)
+	}
+	if fleet != nil {
+		closers = append(closers, fleet)
 	}
 	return closers
 }
