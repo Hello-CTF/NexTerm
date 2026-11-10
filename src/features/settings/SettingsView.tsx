@@ -10,6 +10,7 @@ import {
   setTerminalConfirmMultilinePaste,
   setTerminalDurableHistoryMiB,
   setTerminalScrollback,
+  setTerminalTrzsz,
   normalizeMultilinePasteConfirm,
   normalizeTerminalScrollback,
   terminalDefaultUsesAccount,
@@ -830,6 +831,25 @@ export function SettingsView({ active = true }: { active?: boolean }) {
                 <p className="nx-hint mt-1.5">{t("仅影响 http/https 链接；无法嵌入时改用系统浏览器。")}</p>
               </div>
             )}
+          </Subsection>
+
+          <Subsection title={t("文件传输")}>
+            <label className="flex cursor-pointer items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 text-[12.5px] text-neutral-200" data-setting="terminal-trzsz">
+                  {t("trzsz 文件传输")}
+                  <SyncScopeBadge scope="local" />
+                </div>
+                <p className="nx-hint mt-0.5">{t("在远端运行 trz 上传、tsz 下载，可穿过 tmux 和跳板机。每次传输都需在本机确认，回放的历史输出不会触发。")}</p>
+              </div>
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 shrink-0"
+                aria-label={t("trzsz 文件传输")}
+                checked={terminalPrefs.trzsz}
+                onChange={(event) => setTerminalTrzsz(event.target.checked)}
+              />
+            </label>
           </Subsection>
 
           <Subsection title={t("端口转发")}>

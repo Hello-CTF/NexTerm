@@ -106,6 +106,7 @@ export function installTerminalViewHooks(): void {
     harness.channels.length = 0;
     harness.reopenCb = null;
     harness.emitReplies = false;
+    harness.terminalPrefs = {};
     harness.attach.mockResolvedValue({
       tabId: "kernel-1",
       cols: 80,

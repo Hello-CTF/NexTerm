@@ -13,6 +13,7 @@ import {
   type BroadcastProductionChallenge,
 } from "../production/productionChallenge";
 import { t } from "../../i18n";
+import { isTrzszTransferActive } from "./trzsz/trzszActivity";
 
 export interface BroadcastCandidate {
   storeTabId: string;
@@ -58,6 +59,9 @@ function candidateOf(
   } else if (!tab.tabId) {
     eligible = false;
     ineligibleReason = t("终端尚未连接");
+  } else if (isTrzszTransferActive(tab.tabId)) {
+    eligible = false;
+    ineligibleReason = t("正在通过 trzsz 传输文件");
   }
   return {
     storeTabId: tab.id,
