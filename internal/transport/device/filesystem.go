@@ -27,6 +27,8 @@ const archiveExecTimeout = 10 * time.Minute
 type fileSystem struct {
 	dial func(ctx context.Context) (net.Conn, error)
 	exec func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error)
+	// platform is the agent's GOOS when known; empty means a POSIX agent.
+	platform string
 }
 
 // FileSystem returns the device filesystem surface. It does not probe: each
@@ -40,8 +42,18 @@ func (t *Transport) FileSystem(ctx context.Context) (base.FileSystem, error) {
 		dial: func(ctx context.Context) (net.Conn, error) {
 			return t.dial(ctx, deviceproto.PurposeFile)
 		},
-		exec: t.Exec,
+		exec:     t.Exec,
+		platform: t.platform,
 	}, nil
+}
+
+// capabilities derives the device filesystem surface from the agent platform rather than the agent's reply, so
+// agents that predate capability reporting get the same answer. Archives run POSIX tar through the device shell.
+func (f *fileSystem) capabilities() base.FileCapabilities {
+	capabilities := fslocal.Capabilities(f.platform)
+	capabilities.Pack = f.platform != "windows"
+	capabilities.Extract = f.platform != "windows"
+	return capabilities
 }
 
 // client dials one operation bridge; done releases it.
@@ -59,7 +71,12 @@ func (f *fileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 		return base.FileSystemRoots{}, err
 	}
 	defer done()
-	return client.Roots(ctx)
+	roots, err := client.Roots(ctx)
+	if err != nil {
+		return base.FileSystemRoots{}, err
+	}
+	roots.Capabilities = f.capabilities()
+	return roots, nil
 }
 
 func (f *fileSystem) List(ctx context.Context, path string) ([]base.FileEntry, error) {
@@ -68,7 +85,14 @@ func (f *fileSystem) List(ctx context.Context, path string) ([]base.FileEntry, e
 		return nil, err
 	}
 	defer done()
-	return client.List(ctx, path)
+	entries, err := client.List(ctx, path)
+	if f.platform != "windows" {
+		// Agents that predate the hidden flag still follow the POSIX dot convention.
+		for index := range entries {
+			entries[index].Hidden = entries[index].Hidden || base.DotHidden(entries[index].Name)
+		}
+	}
+	return entries, err
 }
 
 func (f *fileSystem) ReadFile(ctx context.Context, path string, maxBytes int64) ([]byte, error) {

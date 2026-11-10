@@ -264,9 +264,10 @@ func TestRootsWithoutHomePOSIX(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := base.FileSystemRoots{
-		PathStyle: base.PathStylePOSIX,
-		Roots:     []base.FileRoot{{Path: "/", Label: "/"}},
-		Supported: true,
+		PathStyle:    base.PathStylePOSIX,
+		Roots:        []base.FileRoot{{Path: "/", Label: "/"}},
+		Supported:    true,
+		Capabilities: Capabilities(runtime.GOOS),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Roots() = %#v, want %#v", got, want)

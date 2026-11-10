@@ -456,6 +456,9 @@ func TestSSHPOSIXRootsComeFromTargetSFTP(t *testing.T) {
 	if roots.PathStyle != base.PathStylePOSIX || !roots.Supported || len(roots.Roots) != 1 || roots.Roots[0].Path != "/" || roots.HomePath == "" {
 		t.Fatalf("POSIX roots = %+v", roots)
 	}
+	if want := (base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true}); roots.Capabilities != want {
+		t.Fatalf("POSIX capabilities = %+v, want %+v", roots.Capabilities, want)
+	}
 }
 
 type targetExecutor struct {
@@ -548,6 +551,9 @@ func TestSSHWindowsRootsAndSFTPPathStyles(t *testing.T) {
 			}
 			if roots.PathStyle != base.PathStyleWindows || !roots.Supported || roots.HomePath != `C:\Users\alice` || len(roots.Roots) != 2 || roots.Roots[0].Path != `C:\` || roots.Roots[1].Path != `D:\` {
 				t.Fatalf("Windows roots = %+v", roots)
+			}
+			if want := (base.FileCapabilities{Chmod: base.ChmodReadOnly, CaseInsensitive: true}); roots.Capabilities != want {
+				t.Fatalf("Windows capabilities = %+v, want %+v", roots.Capabilities, want)
 			}
 			if got := filesystem.sftpPath(`D:\work\file.txt`); got != prefix+"D:/work/file.txt" {
 				t.Fatalf("drive path = %q", got)

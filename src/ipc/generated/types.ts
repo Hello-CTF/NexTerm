@@ -1311,6 +1311,13 @@ export type FSCancelRequest = {
   attemptId?: string;
 };
 
+export type FSCapabilitiesDTO = {
+  chmod: string;
+  pack: boolean;
+  extract: boolean;
+  caseInsensitive: boolean;
+};
+
 export type FSChunkUploadBeginDTO = {
   uploadId: string;
   chunkSize: number;
@@ -1331,6 +1338,8 @@ export type FSEntryDTO = {
   group: string | null;
   mtime: number;
   symlinkTarget: string | null;
+  targetKind?: string;
+  hidden?: boolean;
 };
 
 export type FSRangeReadDTO = {
@@ -1357,6 +1366,7 @@ export type FSRootsDTO = {
   roots: FSRootDTO[];
   homePath: string | null;
   supported: boolean;
+  capabilities?: FSCapabilitiesDTO | null;
 };
 
 export type FindRequest = {
