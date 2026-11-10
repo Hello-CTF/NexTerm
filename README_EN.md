@@ -69,7 +69,7 @@ On a glibc-based Linux with systemd (amd64 / arm64), run:
 curl -fsSL https://nexterm.work/install.sh | sudo bash
 ```
 
-The installer prints the initial password of the `admin` super-admin once. The service listens on `127.0.0.1:8080` by default: run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`. See the [server guide](deploy/systemd/README.md) for upgrades, rollback, reverse proxies, external databases, and multi-user limits.
+The installer prints the initial password of the `admin` super-admin once. The service listens on `127.0.0.1:8080` by default: run `ssh -L 8080:127.0.0.1:8080 user@server` and open `http://localhost:8080`. See the [server guide](deploy/systemd/README.md) for upgrades, rollback, backup and restore, reverse proxies, external databases, and multi-user limits.
 
 ## More documentation
 
