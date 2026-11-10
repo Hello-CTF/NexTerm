@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/Hello-CTF/NexTerm/internal/account"
 	"io"
 	"log/slog"
 	"math"
@@ -381,5 +382,11 @@ func TestRetentionRunnerPrunesSessionsWithRetentionDisabled(t *testing.T) {
 	}
 	if err := runner.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUserSessionRetentionFollowsLoginSessionLifetime(t *testing.T) {
+	if loginSessionAbsoluteTTL != account.SessionAbsoluteTTL {
+		t.Fatalf("loginSessionAbsoluteTTL = %v, want account.SessionAbsoluteTTL %v", loginSessionAbsoluteTTL, account.SessionAbsoluteTTL)
 	}
 }

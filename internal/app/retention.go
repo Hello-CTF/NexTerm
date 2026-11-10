@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
 
@@ -156,7 +155,13 @@ func TranscriptRetentionPolicy(ctx context.Context, database *store.Store) (stor
 
 // UserSessionRetentionMaxAge deletes login sessions created more than a week
 // past their absolute lifetime; it applies whatever the retention setting is.
-const UserSessionRetentionMaxAge = account.SessionAbsoluteTTL + 7*24*time.Hour
+//
+// The login session lifetime is repeated here instead of importing internal/account, which would pull the vault
+// into this package and make vault's tests an import cycle; a test pins it to account.SessionAbsoluteTTL.
+const (
+	loginSessionAbsoluteTTL    = 7 * 24 * time.Hour
+	UserSessionRetentionMaxAge = loginSessionAbsoluteTTL + 7*24*time.Hour
+)
 
 func StoreRetentionPolicy(database *store.Store) RetentionPolicySource {
 	return RetentionPolicySourceFunc(func(ctx context.Context) (store.RetentionPolicy, error) {

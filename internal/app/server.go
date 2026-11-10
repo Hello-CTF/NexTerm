@@ -10,9 +10,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"time"
-
-	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 // transportCloseTimeout bounds how long shutdown waits for open WebSockets to
@@ -206,16 +205,22 @@ func (a *Application) health(ctx context.Context, config ServeConfig) Health {
 	}
 }
 
-// VaultUnlocked reports whether a vault status value describes an unlocked vault.
+// VaultUnlocked reports whether a vault status value (vault.Status or a pointer to it) describes an unlocked vault.
+// It reads the Unlocked field by reflection so this package does not import internal/vault, which would make
+// vault's own tests (which reach this package through internal/upgrade) an import cycle.
 func VaultUnlocked(status any) bool {
-	switch typed := status.(type) {
-	case vault.Status:
-		return typed.Unlocked
-	case *vault.Status:
-		return typed != nil && typed.Unlocked
-	default:
+	value := reflect.ValueOf(status)
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return false
+		}
+		value = value.Elem()
+	}
+	if value.Kind() != reflect.Struct {
 		return false
 	}
+	field := value.FieldByName("Unlocked")
+	return field.IsValid() && field.Kind() == reflect.Bool && field.Bool()
 }
 
 // directLoopbackPeer reports a loopback peer that did not relay another caller.
