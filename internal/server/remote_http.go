@@ -136,12 +136,13 @@ func (s *Server) serveRemoteSessionFeed(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	conn.SetReadLimit(remoteFeedReadLimit)
-	ctx, release, err := s.sockets.track(r.Context(), socketKindRemoteSession, conn)
+	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), socketKindRemoteSession, conn, identity)
 	if err != nil {
 		_ = conn.CloseNow()
 		return
 	}
 	defer release()
+	defer s.superviseAccountSocket(ctx, conn, r, identity, revoked)()
 	s.pumpRemoteFeed(ctx, conn, tabID)
 }
 
