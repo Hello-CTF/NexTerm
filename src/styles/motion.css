@@ -21,6 +21,16 @@
     animation: nx-pop-in var(--nx-dur-fast) var(--nx-ease-out);
   }
 
+  .nx-submenu.is-flip,
+  .nx-popover.right-0,
+  .nx-inbox-panel.nx-popover {
+    transform-origin: top right;
+  }
+
+  .nx-popover.left-1\/2 {
+    transform-origin: center top;
+  }
+
   .nx-toast {
     animation: nx-toast-in var(--nx-dur-base) var(--nx-ease-out);
   }

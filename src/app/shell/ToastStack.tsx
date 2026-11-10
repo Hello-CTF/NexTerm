@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useUi, type ToastItem } from "../store";
 import { IconAlert, IconCheckCircle, IconClose, IconInfo, IconXCircle } from "../../ui/icons";
 import { t as tr } from "../../i18n";
@@ -20,12 +20,16 @@ function prefersReducedMotion(): boolean {
 function mergeShown(prev: ShownToast[], toasts: ToastItem[], keepLeaving: boolean): ShownToast[] {
   const current = new Map(toasts.map((t) => [t.id, t]));
   const next: ShownToast[] = [];
+  const known = new Set(prev.map((entry) => entry.toast.id));
+  // A same-kind same-text toast that replaces a removed one takes its place at once, without a leaving copy.
+  const replacements = toasts.filter((t) => !known.has(t.id));
   for (const entry of prev) {
     const live = current.get(entry.toast.id);
     if (live) next.push({ toast: live, leaving: false });
-    else if (keepLeaving) next.push({ toast: entry.toast, leaving: true });
+    else if (keepLeaving && !replacements.some((t) => t.kind === entry.toast.kind && t.text === entry.toast.text)) {
+      next.push({ toast: entry.toast, leaving: true });
+    }
   }
-  const known = new Set(prev.map((entry) => entry.toast.id));
   for (const t of toasts) if (!known.has(t.id)) next.push({ toast: t, leaving: false });
   return next;
 }
@@ -77,27 +81,65 @@ export function ToastStack({ children }: { children?: ReactNode }) {
     };
   }, []);
 
+  // Dismissing the toast that holds focus makes it inert, so focus returns to where it was before the toast took it,
+  // or to the next toast's close button when that element is gone.
+  const stackRef = useRef<HTMLDivElement>(null);
+  const lastOutside = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && !stackRef.current?.contains(target)) lastOutside.current = target;
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, []);
+  const restoreFocus = useCallback((toastEl: HTMLElement | null) => {
+    if (!toastEl || !toastEl.contains(document.activeElement)) return;
+    const previous = lastOutside.current;
+    if (previous && previous.isConnected) {
+      previous.focus();
+      return;
+    }
+    const others = [...(stackRef.current?.querySelectorAll<HTMLElement>(".nx-toast:not(.is-leaving)") ?? [])].filter((el) => el !== toastEl);
+    others.at(-1)?.querySelector<HTMLElement>("button[data-toast-close]")?.focus();
+  }, []);
+
   const alerts = shown.filter((e) => e.toast.kind === "error");
   const statuses = shown.filter((e) => e.toast.kind !== "error");
   return (
-    <div className="nx-toasts pointer-events-none fixed right-4 flex flex-col">
+    <div ref={stackRef} className="nx-toasts pointer-events-none fixed right-4 flex flex-col">
       {children}
-      <div className="nx-toast-region" role="status" aria-live="polite" aria-label={tr("通知")}>
+      <div className="nx-toast-region" role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions" aria-label={tr("通知")}>
         {statuses.map((e) => (
-          <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} />
+          <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} restoreFocus={restoreFocus} />
         ))}
       </div>
-      <div className="nx-toast-region" role="alert" aria-live="assertive" aria-label={tr("错误通知")}>
+      <div className="nx-toast-region" role="alert" aria-live="assertive" aria-atomic="false" aria-relevant="additions" aria-label={tr("错误通知")}>
         {alerts.map((e) => (
-          <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} />
+          <Toast key={e.toast.id} toast={e.toast} leaving={e.leaving} restoreFocus={restoreFocus} />
         ))}
       </div>
     </div>
   );
 }
 
-function Toast({ toast: t, leaving }: { toast: ToastItem; leaving: boolean }) {
+function Toast({
+  toast: t,
+  leaving,
+  restoreFocus,
+}: {
+  toast: ToastItem;
+  leaving: boolean;
+  restoreFocus: (toastEl: HTMLElement | null) => void;
+}) {
   const dismissToast = useUi((s) => s.dismissToast);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dismiss = () => {
+    const el = rootRef.current;
+    const focused = !!el && el.contains(document.activeElement);
+    dismissToast(t.id);
+    if (focused) restoreFocus(el);
+  };
   const holdToast = useUi((s) => s.holdToast);
   const releaseToast = useUi((s) => s.releaseToast);
   const Icon = ICONS[t.kind];
@@ -108,6 +150,7 @@ function Toast({ toast: t, leaving }: { toast: ToastItem; leaving: boolean }) {
       : null;
   return (
     <div
+      ref={rootRef}
       data-toast-kind={t.kind}
       data-held={t.held ? "" : undefined}
       aria-hidden={leaving || undefined}
@@ -135,7 +178,7 @@ function Toast({ toast: t, leaving }: { toast: ToastItem; leaving: boolean }) {
           type="button"
           className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
           onClick={() => {
-            dismissToast(t.id);
+            dismiss();
             t.action?.onSelect();
           }}
         >
@@ -147,7 +190,8 @@ function Toast({ toast: t, leaving }: { toast: ToastItem; leaving: boolean }) {
         className="nx-btn nx-btn-ghost nx-btn-sm shrink-0"
         aria-label={tr("关闭通知")}
         title={tr("关闭")}
-        onClick={() => dismissToast(t.id)}
+        data-toast-close=""
+        onClick={dismiss}
       >
         <IconClose size={12} />
       </button>

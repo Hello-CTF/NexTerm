@@ -175,3 +175,69 @@ describe("ToastStack", () => {
     }
   });
 });
+
+describe("ToastStack accessibility and focus", () => {
+  it("announces only additions in both live regions", () => {
+    const view = mount(createElement(ToastStack));
+    try {
+      for (const selector of ['[role="status"]', '[role="alert"]']) {
+        const region = view.container.querySelector(selector)!;
+        expect(region.getAttribute("aria-atomic")).toBe("false");
+        expect(region.getAttribute("aria-relevant")).toBe("additions");
+      }
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("returns focus to the previously focused element when the focused toast is dismissed", () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    const view = mount(createElement(ToastStack));
+    try {
+      act(() => outside.focus());
+      act(() => useUi.getState().pushToast("info", "focus-me"));
+      const close = view.container.querySelector<HTMLButtonElement>('button[aria-label="关闭通知"]')!;
+      act(() => close.focus());
+      expect(document.activeElement).toBe(close);
+      act(() => close.click());
+      expect(document.activeElement).toBe(outside);
+    } finally {
+      view.unmount();
+      outside.remove();
+    }
+  });
+
+  it("moves focus to the next toast's close button when the previous element is gone", () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    const view = mount(createElement(ToastStack));
+    try {
+      act(() => outside.focus());
+      act(() => {
+        useUi.getState().pushToast("info", "one");
+        useUi.getState().pushToast("info", "two");
+      });
+      const closes = view.container.querySelectorAll<HTMLButtonElement>('button[aria-label="关闭通知"]');
+      act(() => closes[0].focus());
+      outside.remove();
+      act(() => closes[0].click());
+      const remaining = view.container.querySelector<HTMLButtonElement>('.nx-toast:not(.is-leaving) button[aria-label="关闭通知"]')!;
+      expect(document.activeElement).toBe(remaining);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it("replaces a duplicate toast without keeping a leaving copy", () => {
+    const view = mount(createElement(ToastStack));
+    try {
+      act(() => useUi.getState().pushToast("info", "dup"));
+      act(() => useUi.getState().pushToast("info", "dup"));
+      expect(view.container.querySelectorAll(".nx-toast").length).toBe(1);
+      expect(view.container.querySelector(".is-leaving")).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+});
