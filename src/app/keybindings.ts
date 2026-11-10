@@ -26,6 +26,7 @@ export type KeybindingActionId =
   | "restoreClosedTab"
   | "terminalSearch"
   | "terminalLinks"
+  | "terminalCopyMode"
   | "sessionSidebar"
   | "reclaimTakeover"
   | "openSettings"
@@ -68,6 +69,8 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
+  // WezTerm's copy mode chord; Ctrl+Shift+X sends nothing to the program in the terminal.
+  { id: "terminalCopyMode", label: t("终端复制模式"), defaultBinding: "Mod+Shift+x" },
   { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },
@@ -581,7 +584,7 @@ export function matchAppKeybinding(event: KeyEventLike): AppKeybindingHit | null
  * Actions whose chords a focused terminal never receives: the app-level shortcuts, plus terminal search, which the
  * terminal pane intercepts before xterm. Listed in match precedence order.
  */
-export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks", "sessionSidebar"];
+export const TERMINAL_WITHHELD_ACTIONS: readonly KeybindingActionId[] = [...APP_ACTION_ORDER, "terminalSearch", "terminalLinks", "terminalCopyMode", "sessionSidebar"];
 
 /** matchAppKeybinding widened to every chord a focused terminal withholds from the program running in it. */
 export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybindingHit | null {
@@ -590,6 +593,7 @@ export function matchTerminalWithheldKeybinding(event: KeyEventLike): AppKeybind
   if (isAltGraph(event)) return null;
   if (matchActionBinding(event, "terminalSearch")) return { action: "terminalSearch", digit: null };
   if (matchActionBinding(event, "terminalLinks")) return { action: "terminalLinks", digit: null };
+  if (matchActionBinding(event, "terminalCopyMode")) return { action: "terminalCopyMode", digit: null };
   return matchActionBinding(event, "sessionSidebar") ? { action: "sessionSidebar", digit: null } : null;
 }
 

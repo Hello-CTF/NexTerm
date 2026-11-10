@@ -13,6 +13,8 @@ const harness = vi.hoisted(() => ({
   prepareBroadcast: vi.fn(),
   write: vi.fn(),
   ask: vi.fn(),
+  keysBar: null as { onSend: (data: string) => void } | null,
+  copyActive: false,
 }));
 
 vi.mock("../app/platform", () => ({
@@ -78,7 +80,12 @@ vi.mock("../ui/dialogs", () => ({
 }));
 
 vi.mock("../features/terminal/CommandBlockPanel", () => ({ CommandBlockPanel: () => null }));
-vi.mock("../features/terminal/TerminalKeysBar", () => ({ TerminalKeysBar: () => null }));
+vi.mock("../features/terminal/TerminalKeysBar", () => ({
+  TerminalKeysBar: (props: { onSend: (data: string) => void }) => {
+    harness.keysBar = props;
+    return null;
+  },
+}));
 
 vi.mock("../features/terminal/XtermView", async () => {
   const { useEffect, useRef } = await import("react");
@@ -99,6 +106,7 @@ vi.mock("../features/terminal/XtermView", async () => {
           focus: () => {},
           fit: () => {},
           paste: () => {},
+          copyModeActive: () => harness.copyActive,
           dimensions: () => ({ cols: 80, rows: 24 }),
         });
         const suffix = String(current.sessionId).replace(/\D/g, "") || "1";
@@ -261,6 +269,7 @@ beforeEach(() => {
   harness.listLive.mockResolvedValue([]);
   harness.listSessions.mockImplementation(() => Promise.resolve(useUi.getState().sessions));
   harness.prepareBroadcast.mockResolvedValue(undefined);
+  harness.copyActive = false;
   harness.write.mockResolvedValue(undefined);
   harness.ask.mockResolvedValue(true);
   seedWorkspace();
@@ -279,6 +288,19 @@ describe("terminal command broadcast", () => {
     await flush();
     expect(writtenTabIds()).toEqual(["kernel-1"]);
     expect(bodyText()).not.toContain("广播");
+  });
+
+  it("withholds key bar input while keyboard copy mode is active", async () => {
+    mounted = mountPane();
+    await flush();
+    harness.copyActive = true;
+    act(() => harness.keysBar?.onSend("\x03"));
+    await flush();
+    expect(harness.write).not.toHaveBeenCalled();
+    harness.copyActive = false;
+    act(() => harness.keysBar?.onSend("\x03"));
+    await flush();
+    expect(writtenTabIds()).toEqual(["kernel-1"]);
   });
 
   it("fans input out across two workspaces and lists persistent per-target status", async () => {
