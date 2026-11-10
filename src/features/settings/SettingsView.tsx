@@ -82,6 +82,7 @@ import {
   IconChevronRight,
   IconCommand,
   IconInfo,
+  IconLayers,
   IconLock,
   IconMonitor,
   IconRefresh,

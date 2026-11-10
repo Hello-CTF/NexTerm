@@ -42,6 +42,12 @@ const ACTION_AREAS: Record<KeybindingActionId, ShortcutArea> = {
   equalizeSplits: "panes",
   terminalSearch: "terminal",
   terminalLinks: "terminal",
+  terminalCopyMode: "terminal",
+  terminalQuickSelect: "terminal",
+  previousPrompt: "terminal",
+  nextPrompt: "terminal",
+  copyLastOutput: "terminal",
+  generateCommand: "terminal",
   terminalFontIncrease: "terminal",
   terminalFontDecrease: "terminal",
   terminalFontReset: "terminal",
@@ -51,6 +57,7 @@ const ACTION_AREAS: Record<KeybindingActionId, ShortcutArea> = {
   sessionSidebar: "sidebars",
   focusAiInput: "sidebars",
   lockVault: "security",
+  lockApp: "security",
 };
 
 export interface ShortcutRow {
