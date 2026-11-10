@@ -57,8 +57,9 @@ var LoginIPThrottlePolicy = ThrottlePolicy{
 // username from all addresses. It counts failures only, so refused or
 // successful attempts never spend it, and its backoff is capped short. The
 // caller exempts clients holding a device token from an earlier login to the
-// account, so an attacker can delay logins from new devices but not lock the
-// user out.
+// account. An attacker can therefore refuse logins from clients without a
+// device cookie for as long as the attack lasts; a device with the cookie, or
+// a server restart (throttle state is in memory), recovers access.
 var LoginUserThrottlePolicy = ThrottlePolicy{
 	FreeFailures: 10, BackoffBase: loginBackoffBase, BackoffMax: 5 * time.Minute,
 	FailureDecay: loginGuardIdleTTL,

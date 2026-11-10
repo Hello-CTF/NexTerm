@@ -303,14 +303,15 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountError(w, http.StatusForbidden, ipc.NewError(ipc.CodeForbidden, "账号状态已变更，请重新登录"))
 		return
 	}
+	// Stamp the login first so a store error leaves no orphaned session behind.
+	if err := s.accounts.RecordLogin(r.Context(), user); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
 	token, session, err := s.accounts.IssueSessionWithMetadata(r.Context(), user.ID, deviceID, account.SessionMetadata{
 		ClientName: sessionClientName(r), Origin: clientIP(r),
 	})
 	if err != nil {
-		writeAccountFailure(w, err)
-		return
-	}
-	if err := s.accounts.RecordLogin(r.Context(), user); err != nil {
 		writeAccountFailure(w, err)
 		return
 	}
