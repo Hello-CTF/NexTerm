@@ -23,6 +23,7 @@ export interface PathOpenDeps {
   openFile: (sessionId: string, path: string, position?: { line: number; col?: number }) => void;
   openDirectory: (sessionId: string, path: string) => void;
   notify: (kind: "info" | "error", text: string) => void;
+  confirm: (message: string, title: string) => Promise<boolean>;
   describeError: (error: unknown) => string;
 }
 
@@ -53,6 +54,13 @@ export async function openTerminalPath(target: PathTarget, deps: PathOpenDeps): 
     if (matches === false) {
       deps.notify("info", t("终端当前位于其他主机 {host}，未打开：{shown}", { host: target.cwdHost, shown }));
       return;
+    }
+    if (matches === null) {
+      const ok = await deps.confirm(
+        t("终端当前位于主机 {host}，无法确认它就是当前会话的主机。\n\n{shown}\n\n要在当前会话中打开它吗？", { host: target.cwdHost, shown }),
+        t("打开文件路径"),
+      );
+      if (!ok) return;
     }
   }
   const needsHome = target.path === "~" || /^~[\\/]/.test(target.path);

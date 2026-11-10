@@ -5,6 +5,7 @@ import {
   resolveTerminalPath,
   type PathDetectOptions,
 } from "../../features/terminal/terminalPathLinks";
+import { quoteForShell } from "../../features/terminal/quickSelect";
 import { openTerminalPath, type PathOpenDeps, type PathTarget } from "../../features/terminal/terminalPathOpen";
 import type { TextRow } from "../../features/terminal/terminalLinkProvider";
 
@@ -104,6 +105,18 @@ describe("path links in terminal rows", () => {
   });
 });
 
+describe("quoting for the shell", () => {
+  it("leaves plain words and quotes the rest", () => {
+    expect(quoteForShell("/etc/nginx/nginx.conf:12:5", "posix")).toBe("/etc/nginx/nginx.conf:12:5");
+    expect(quoteForShell("~/a.ts", "posix")).toBe("~/a.ts");
+    expect(quoteForShell("/tmp/my file $x.txt", "posix")).toBe("'/tmp/my file $x.txt'");
+    expect(quoteForShell("/tmp/it's&.txt", "posix")).toBe("'/tmp/it'\\''s&.txt'");
+    expect(quoteForShell("C:\\src\\a b.cs", "powershell")).toBe("'C:\\src\\a b.cs'");
+    expect(quoteForShell("C:\\src\\a.cs", "powershell")).toBe("C:\\src\\a.cs");
+    expect(quoteForShell("C:\\a&b\\x.cs", "cmd")).toBe('"C:\\a&b\\x.cs"');
+  });
+});
+
 describe("path resolution", () => {
   it("resolves relative paths against the working directory and normalizes dots", () => {
     expect(resolveTerminalPath("./src/a.ts", { cwd: "/home/u/proj", windows: false })).toBe("/home/u/proj/src/a.ts");
@@ -136,6 +149,7 @@ describe("opening a path", () => {
       openFile: vi.fn(),
       openDirectory: vi.fn(),
       notify: vi.fn(),
+      confirm: vi.fn(async () => true),
       describeError: String,
       ...overrides,
     }) as never;
@@ -167,6 +181,19 @@ describe("opening a path", () => {
     await openTerminalPath(target("src/a.ts", { cwdHost: "db-2" }), d);
     expect(d.listDirectory).not.toHaveBeenCalled();
     expect(d.notify).toHaveBeenCalledWith("info", expect.stringContaining("db-2"));
+  });
+
+  it("confirms when the shell's host cannot be compared with the session's", async () => {
+    const declined = deps({ sessionHost: () => null, confirm: vi.fn(async () => false) });
+    await openTerminalPath(target("src/a.ts"), declined);
+    expect(declined.confirm).toHaveBeenCalledTimes(1);
+    expect(declined.listDirectory).not.toHaveBeenCalled();
+    const accepted = deps({ sessionHost: () => null });
+    await openTerminalPath(target("src/a.ts"), accepted);
+    expect(accepted.openFile).toHaveBeenCalledWith("s1", "/home/u/proj/src/a.ts", undefined);
+    const same = deps();
+    await openTerminalPath(target("src/a.ts"), same);
+    expect(same.confirm).not.toHaveBeenCalled();
   });
 
   it("matches Windows names without case", async () => {

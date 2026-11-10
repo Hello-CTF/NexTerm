@@ -67,7 +67,7 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   // Ctrl+F is readline's forward-char, so off macOS the search takes Ctrl+Shift+F and leaves Ctrl+F to the shell.
   { id: "terminalSearch", label: t("终端内搜索"), defaultBinding: "Ctrl+Shift+f", macBinding: "Primary+f" },
   { id: "terminalLinks", label: t("终端链接面板"), defaultBinding: "Mod+Shift+u" },
-  { id: "terminalQuickSelect", label: t("终端快速选择（复制或插入屏幕上的路径、链接、哈希）"), defaultBinding: "Mod+Shift+Space" },
+  { id: "terminalQuickSelect", label: t("终端快速选择（复制或插入屏幕上的路径、链接、哈希）"), defaultBinding: "Mod+Shift+y" },
   { id: "sessionSidebar", label: t("收起 / 展开会话侧栏"), defaultBinding: "Mod+Shift+b" },
   // A bare Escape also closes dialogs and menus and is a terminal key (vim, readline), so the default is a chord.
   { id: "reclaimTakeover", label: t("AI 接管时收回控制权"), defaultBinding: "Mod+Shift+e" },

@@ -1,4 +1,4 @@
-import type { IDisposable, Terminal } from "@xterm/xterm";
+import type { IDisposable, IMarker, Terminal } from "@xterm/xterm";
 import { findTab, openFileTab, useUi } from "../../app/store";
 import { matchKeybinding } from "../../app/keybindings";
 import { getTerminalPrefs } from "../../app/preferences";
@@ -20,6 +20,8 @@ import {
   createQuickSelectInput,
   findQuickSelectMatches,
   labelQuickSelectMatches,
+  quoteForShell,
+  type QuickSelectShell,
   type LabeledMatch,
 } from "./quickSelect";
 import "./quickSelect.css";
@@ -52,6 +54,7 @@ export function startTerminalQuickSelect(viewKey: string): boolean {
 }
 
 const MAX_REMEMBERED_TARGETS = 64;
+const MAX_CWD_MARKS = 200;
 
 function terminalIsWindows(sessionId: string, viewKey: string): boolean {
   if (useUi.getState().sessions.find((session) => session.id === sessionId)?.kind === "winrm") return true;
@@ -78,6 +81,31 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
       () => undefined,
     );
   };
+  // The directory in force where each OSC 7 report was printed, so a relative
+  // path resolves against where it was printed, not where the shell is now.
+  const cwdMarks: Array<{ marker: IMarker; cwd: string | null; cwdHost: string | null }> = [];
+  const markCwd = () => {
+    if (typeof term.registerMarker !== "function") return;
+    const marker = term.registerMarker(0);
+    if (!marker) return;
+    const last = cwdMarks[cwdMarks.length - 1];
+    if (last && last.marker.line === marker.line) {
+      last.marker.dispose();
+      cwdMarks.pop();
+    }
+    cwdMarks.push({ marker, cwd, cwdHost });
+    while (cwdMarks.length > MAX_CWD_MARKS) cwdMarks.shift()!.marker.dispose();
+  };
+  /** The directory and host in force at a buffer row; unknown when the row predates every report still tracked. */
+  const cwdAt = (row: number): { cwd: string | null; cwdHost: string | null } => {
+    if (cwdMarks.length === 0) return { cwd, cwdHost };
+    let found: { cwd: string | null; cwdHost: string | null } = { cwd: null, cwdHost: null };
+    for (const mark of cwdMarks) {
+      if (mark.marker.isDisposed || mark.marker.line < 0) continue;
+      if (mark.marker.line <= row) found = mark;
+    }
+    return found;
+  };
   const osc7: IDisposable = term.parser.registerOscHandler(7, (data) => {
     try {
       const url = new URL(data);
@@ -85,6 +113,7 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
         const path = decodeURIComponent(url.pathname);
         cwd = path ? normalizeCwd(path) : null;
         cwdHost = url.hostname || null;
+        markCwd();
         firstHost ??= cwdHost;
         if (cwdHost) learnSessionHost();
       }
@@ -94,13 +123,19 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
     return false;
   });
 
+  const shellKind = (): QuickSelectShell => {
+    const shell = findTab(options.viewKey())?.tab.shell;
+    if (shell === "cmd") return "cmd";
+    if (shell === "powershell" || useUi.getState().sessions.find((session) => session.id === options.sessionId)?.kind === "winrm") return "powershell";
+    return "posix";
+  };
   const windows = () => terminalIsWindows(options.sessionId, options.viewKey());
   // The session's file service cannot open a container's files, and paths
   // printed on another host (a nested ssh) do not name this host's files.
   const pathOptions = (): PathDetectOptions | null => {
     if (options.containerId) return null;
     if (cwdHost && knownSessionHost && fileLinkHostMatches(cwdHost, knownSessionHost) === false) return null;
-    return { windows: windows(), relative: cwd !== null };
+    return { windows: windows(), relative: cwd !== null || cwdMarks.length > 0 };
   };
 
   const pathDeps: PathOpenDeps = {
@@ -115,13 +150,15 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
     },
     openDirectory: (id, path) => linkDeps().openDirectory(id, path),
     notify: (kind, text) => linkDeps().notify(kind, text),
+    confirm: (message, title) => linkDeps().confirm(message, title),
     describeError,
   };
 
   const targets = new Map<string, PathTarget>();
-  const remember = (link: PathLink): string => {
-    const target: PathTarget = { path: link.path, line: link.line, col: link.col, cwd, cwdHost, windows: windows() };
-    const resolved = resolveTerminalPath(link.path, { cwd, windows: target.windows }) ?? link.path;
+  const remember = (link: PathLink, row: number): string => {
+    const at = cwdAt(row);
+    const target: PathTarget = { path: link.path, line: link.line, col: link.col, cwd: at.cwd, cwdHost: at.cwdHost, windows: windows() };
+    const resolved = resolveTerminalPath(link.path, { cwd: at.cwd, windows: target.windows }) ?? link.path;
     const key = describePathTarget(resolved, link.line, link.col);
     targets.delete(key);
     targets.set(key, target);
@@ -145,9 +182,11 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
       ? term.registerLinkProvider(
           createTerminalPathLinkProvider(term, {
             options: pathOptions,
-            activate: (event, link) => controller.webLinkHandler(event, remember(link)),
-            hover: (event, link) => controller.webLinkOptions.hover(event, remember(link)),
-            leave: (event, link) => controller.webLinkOptions.leave(event, remember(link)),
+            // A relative path needs the directory in force where it was printed.
+            accept: (link, row) => resolveTerminalPath(link.path, { cwd: cwdAt(row).cwd, home: "/", windows: windows() }) !== null,
+            activate: (event, link, row) => controller.webLinkHandler(event, remember(link, row)),
+            hover: (event, link, row) => controller.webLinkOptions.hover(event, remember(link, row)),
+            leave: (event, link, row) => controller.webLinkOptions.leave(event, remember(link, row)),
           }),
         )
       : null;
@@ -188,7 +227,7 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
       useUi.getState().pushToast("info", t("内容包含换行或控制字符，未填入终端"));
       return;
     }
-    options.insert(text);
+    options.insert(quoteForShell(text, shellKind()));
   };
   const copyMatch = (text: string) => {
     void copyText(text).then(
@@ -218,6 +257,8 @@ export function attachTerminalTargets(term: Terminal, host: HTMLElement, options
       scroll.dispose();
       resize?.dispose();
       osc7.dispose();
+      for (const mark of cwdMarks) mark.marker.dispose();
+      cwdMarks.length = 0;
       provider?.dispose();
       controller.dispose();
       if (quickSelectStarters.get(starterKey) === startQuickSelect) quickSelectStarters.delete(starterKey);

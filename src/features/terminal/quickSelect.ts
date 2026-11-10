@@ -148,3 +148,26 @@ export function createQuickSelectInput(matches: LabeledMatch[]) {
     },
   };
 }
+
+export type QuickSelectShell = "posix" | "powershell" | "cmd";
+
+const POSIX_SPECIAL = /[\s$&#!;|<>*?'"`\\()[\]{}~^%]/;
+const CMD_SPECIAL = /[\s&|<>^%()!,;=]/;
+
+/**
+ * Text for inserting a match at the prompt: left as is when the shell reads it
+ * as one plain word, otherwise quoted for the session's shell.
+ */
+export function quoteForShell(text: string, shell: QuickSelectShell): string {
+  if (shell === "cmd") {
+    if (!CMD_SPECIAL.test(text) && !text.includes('"')) return text;
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  if (shell === "powershell") {
+    if (!POSIX_SPECIAL.test(text.replace(/\\/g, ""))) return text;
+    return `'${text.replace(/'/g, "''")}'`;
+  }
+  // A leading ~ is expanded by the shell, so it stays unquoted only when the rest is plain.
+  if (!POSIX_SPECIAL.test(text.startsWith("~/") ? text.slice(1) : text)) return text;
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}

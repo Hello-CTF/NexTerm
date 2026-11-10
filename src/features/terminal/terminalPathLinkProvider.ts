@@ -5,9 +5,11 @@ import { findPathLinksInRows, type PathDetectOptions, type PathLink } from "./te
 export interface PathLinkProviderHandlers {
   /** Detection settings for the current moment, or null while path links are off for this terminal. */
   options: () => PathDetectOptions | null;
-  activate(event: MouseEvent, link: PathLink): void;
-  hover(event: MouseEvent, link: PathLink): void;
-  leave(event: MouseEvent, link: PathLink): void;
+  /** Whether the link at this buffer row (0-based, where it starts) can be offered. */
+  accept?(link: PathLink, row: number): boolean;
+  activate(event: MouseEvent, link: PathLink, row: number): void;
+  hover(event: MouseEvent, link: PathLink, row: number): void;
+  leave(event: MouseEvent, link: PathLink, row: number): void;
 }
 
 /**
@@ -43,6 +45,8 @@ export function createTerminalPathLinkProvider(term: Terminal, handlers: PathLin
       };
       const result: ILink[] = [];
       for (const link of findPathLinksInRows(rows, term.cols, options)) {
+        const linkRow = first + link.segments[0].row;
+        if (handlers.accept && !handlers.accept(link, linkRow)) continue;
         for (const run of softRuns(link.segments)) {
           if (!run.some((seg) => seg.row === idx)) continue;
           const head = run[0];
@@ -54,9 +58,9 @@ export function createTerminalPathLinkProvider(term: Terminal, handlers: PathLin
             },
             text: link.text,
             decorations: { underline: true, pointerCursor: true },
-            activate: (event) => handlers.activate(event, link),
-            hover: (event) => handlers.hover(event, link),
-            leave: (event) => handlers.leave(event, link),
+            activate: (event) => handlers.activate(event, link, linkRow),
+            hover: (event) => handlers.hover(event, link, linkRow),
+            leave: (event) => handlers.leave(event, link, linkRow),
           });
         }
       }

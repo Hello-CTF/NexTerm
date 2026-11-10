@@ -100,6 +100,39 @@ describe("quick select overlay", () => {
     expect(pushToast).toHaveBeenCalledWith("info", expect.any(String));
   });
 
+  it("quotes inserted text for the session's shell", async () => {
+    await write("pull 192.168.0.7\r\nsee https://example.com/x?a=1&b=2\r\n");
+    targets.startQuickSelect();
+    const url = labels().find((l) => l.title.startsWith("https"))!;
+    key({ key: url.dataset.label!, shiftKey: true });
+    expect(insert).toHaveBeenLastCalledWith("'https://example.com/x?a=1&b=2'");
+    targets.startQuickSelect();
+    key({ key: labels().find((l) => l.title.startsWith("192"))!.dataset.label!, shiftKey: true });
+    expect(insert).toHaveBeenLastCalledWith("192.168.0.7");
+  });
+
+  it("resolves a relative path against the directory in force where it was printed", async () => {
+    const providers: Array<{ provideLinks(y: number, cb: (links: Array<{ hover?: (e: MouseEvent, t: string) => void; text: string }> | undefined) => void): void }> = [];
+    const register = term.registerLinkProvider.bind(term);
+    vi.spyOn(term, "registerLinkProvider").mockImplementation((provider) => {
+      providers.push(provider as never);
+      return register(provider);
+    });
+    targets.dispose();
+    targets = attachTerminalTargets(term, host, { sessionId: "s1", viewKey: () => "tab-1", insert });
+    await write("\x1b]7;file:///work/one\x07edit src/a.ts:3\r\n\x1b]7;file:///work/two\x07edit src/b.ts:4\r\n");
+    const tip = (y: number) => {
+      let text = "";
+      providers[providers.length - 1].provideLinks(y, (links) => {
+        links![0].hover!(new MouseEvent("mousemove"), links![0].text);
+        text = host.textContent ?? "";
+      });
+      return text;
+    };
+    expect(tip(1)).toContain("/work/one/src/a.ts:3");
+    expect(tip(2)).toContain("/work/two/src/b.ts:4");
+  });
+
   it("offers relative paths once the shell reports its directory", async () => {
     await write("edit src/a.ts:3\r\n");
     targets.startQuickSelect();
