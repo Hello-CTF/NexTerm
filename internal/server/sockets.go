@@ -18,6 +18,7 @@ const shutdownCloseReason = "server shutting down"
 // socketEntry is one tracked connection. The account fields stay empty for
 // open-access and gateway connections, which never close per user or session.
 type socketEntry struct {
+	kind     string
 	cancel   context.CancelFunc
 	conn     *websocket.Conn
 	userID   string
@@ -37,8 +38,19 @@ type socketTracker struct {
 	wg      sync.WaitGroup
 }
 
-func (t *socketTracker) track(parent context.Context, conn *websocket.Conn) (context.Context, func(), error) {
-	ctx, _, release, err := t.trackAccount(parent, conn, nil)
+// Socket kinds label the live connection gauge; the set is closed.
+const (
+	socketKindEvents        = "events"
+	socketKindChannel       = "channel"
+	socketKindRemoteDesktop = "remote_desktop"
+	socketKindPreview       = "preview"
+	socketKindRemoteSession = "remote_session"
+)
+
+var socketKinds = []string{socketKindEvents, socketKindChannel, socketKindRemoteDesktop, socketKindPreview, socketKindRemoteSession}
+
+func (t *socketTracker) track(parent context.Context, kind string, conn *websocket.Conn) (context.Context, func(), error) {
+	ctx, _, release, err := t.trackAccount(parent, kind, conn, nil)
 	return ctx, release, err
 }
 
@@ -47,7 +59,7 @@ func (t *socketTracker) track(parent context.Context, conn *websocket.Conn) (con
 // close the socket with a close code instead of just dropping it, so the
 // context is deliberately not cancelled by a revocation. A non-nil conn
 // receives a going-away close frame when the tracker shuts down.
-func (t *socketTracker) trackAccount(parent context.Context, conn *websocket.Conn, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
+func (t *socketTracker) trackAccount(parent context.Context, kind string, conn *websocket.Conn, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -56,7 +68,7 @@ func (t *socketTracker) trackAccount(parent context.Context, conn *websocket.Con
 	t.nextID++
 	id := t.nextID
 	ctx, cancel := context.WithCancel(parent)
-	entry := &socketEntry{cancel: cancel, conn: conn, revoked: make(chan struct{})}
+	entry := &socketEntry{kind: kind, cancel: cancel, conn: conn, revoked: make(chan struct{})}
 	if identity != nil {
 		entry.userID, entry.session, entry.deviceID = identity.UserID, identity.SessionID, identity.DeviceID
 	}
@@ -77,6 +89,20 @@ func (t *socketTracker) trackAccount(parent context.Context, conn *websocket.Con
 			t.wg.Done()
 		})
 	}, nil
+}
+
+// countByKind returns the live connections per kind, with every known kind present.
+func (t *socketTracker) countByKind() map[string]int {
+	counts := make(map[string]int, len(socketKinds))
+	for _, kind := range socketKinds {
+		counts[kind] = 0
+	}
+	t.mu.Lock()
+	for _, entry := range t.entries {
+		counts[entry.kind]++
+	}
+	t.mu.Unlock()
+	return counts
 }
 
 func (t *socketTracker) revokeMatching(match func(*socketEntry) bool) {

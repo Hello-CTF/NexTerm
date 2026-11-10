@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 )
@@ -30,6 +31,7 @@ type EventBroker struct {
 	bufferHead  int
 	bufferCount int
 	closed      bool
+	slowDrops   atomic.Uint64
 
 	QueueSize        int
 	BufferSize       int
@@ -470,7 +472,11 @@ func (b *EventBroker) deliver(subscriber *eventSubscription, delivery *eventDeli
 	return result
 }
 
+// SlowSubscriberDrops counts subscribers dropped because they fell behind.
+func (b *EventBroker) SlowSubscriberDrops() uint64 { return b.slowDrops.Load() }
+
 func (b *EventBroker) notifySlowSubscriber() {
+	b.slowDrops.Add(1)
 	if b.OnSlowSubscriber == nil {
 		return
 	}

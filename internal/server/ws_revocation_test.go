@@ -21,13 +21,13 @@ func TestSocketTrackerCloseSessionAndUser(t *testing.T) {
 	identity := func(user, session, device string) *account.Identity {
 		return &account.Identity{UserID: user, SessionID: session, DeviceID: device}
 	}
-	_, aRevoked, aRelease, err := tracker.trackAccount(ctx, nil, identity("u1", "s1", "d1"))
+	_, aRevoked, aRelease, err := tracker.trackAccount(ctx, socketKindEvents, nil, identity("u1", "s1", "d1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, bRevoked, bRelease, _ := tracker.trackAccount(ctx, nil, identity("u1", "s2", ""))
-	_, cRevoked, cRelease, _ := tracker.trackAccount(ctx, nil, identity("u2", "s3", "d1"))
-	_, openRevoked, openRelease, _ := tracker.trackAccount(ctx, nil, nil)
+	_, bRevoked, bRelease, _ := tracker.trackAccount(ctx, socketKindEvents, nil, identity("u1", "s2", ""))
+	_, cRevoked, cRelease, _ := tracker.trackAccount(ctx, socketKindEvents, nil, identity("u2", "s3", "d1"))
+	_, openRevoked, openRelease, _ := tracker.trackAccount(ctx, socketKindEvents, nil, nil)
 	defer openRelease()
 	defer cRelease()
 	closed := func(ch <-chan struct{}) bool {
@@ -76,7 +76,7 @@ func TestSocketTrackerCloseSessionAndUser(t *testing.T) {
 
 func TestSocketTrackerRejectsAfterClose(t *testing.T) {
 	var tracker socketTracker
-	_, _, release, err := tracker.trackAccount(context.Background(), nil, &account.Identity{UserID: "u", SessionID: "s"})
+	_, _, release, err := tracker.trackAccount(context.Background(), socketKindEvents, nil, &account.Identity{UserID: "u", SessionID: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSocketTrackerRejectsAfterClose(t *testing.T) {
 		defer tracker.mu.Unlock()
 		return tracker.closed
 	})
-	if _, _, _, err := tracker.trackAccount(context.Background(), nil, nil); err == nil {
+	if _, _, _, err := tracker.trackAccount(context.Background(), socketKindEvents, nil, nil); err == nil {
 		t.Fatal("track after close must fail")
 	}
 	release()
@@ -354,7 +354,7 @@ func newAccountFixtureWithChannels(t *testing.T, channels ChannelBinder) *accoun
 
 func TestSocketTrackerCloseAndWaitHonoursDeadline(t *testing.T) {
 	var tracker socketTracker
-	trackedCtx, _, release, err := tracker.trackAccount(context.Background(), nil, nil)
+	trackedCtx, _, release, err := tracker.trackAccount(context.Background(), socketKindEvents, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -430,6 +430,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 			s.accountThrottle.loginIP.Allow(ipKey) && s.accountThrottle.login.Allow(key)
 	}
 	if !admitted {
+		s.metrics.login(loginStepPassword, loginThrottled)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
 		return
 	}
@@ -443,6 +444,7 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		s.accountThrottle.login.RecordFailure(key)
 		s.accountThrottle.loginIP.RecordFailure(ipKey)
 		s.accountThrottle.loginUser.RecordFailure(userKey)
+		s.metrics.login(loginStepPassword, passwordLoginResult(err))
 		writeAccountFailure(w, err)
 		s.auditPasswordLoginFailure(r, request.Username, err)
 		return
@@ -457,11 +459,13 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	defer s.accountRevocationMu.Unlock()
 	user, err := s.accounts.ConfirmAuthenticated(r.Context(), authenticated)
 	if err != nil {
+		s.metrics.login(loginStepPassword, loginError)
 		writeAccountFailure(w, err)
 		return
 	}
 	mfaEnabled, err := s.accounts.TOTPEnabled(r.Context(), user.ID)
 	if err != nil {
+		s.metrics.login(loginStepPassword, loginError)
 		writeAccountFailure(w, err)
 		return
 	}
@@ -472,12 +476,14 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 			writeAccountError(w, http.StatusInternalServerError, ipc.NewError(ipc.CodeInternal, "登录票据签发失败"))
 			return
 		}
+		s.metrics.login(loginStepPassword, loginMFARequired)
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
 	// The per-username streak is left alone: one success must not let an
 	// attacker who shares the account's name restart guessing.
 	s.accountThrottle.login.RecordSuccess(key)
+	s.metrics.login(loginStepPassword, loginSuccess)
 	audits.loginSuccess(user.ID, s.writeAccountSession(w, r, user, request.DeviceID, epoch), "password")
 }
 

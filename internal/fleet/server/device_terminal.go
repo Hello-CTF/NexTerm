@@ -152,6 +152,14 @@ func (s *Service) DeviceStateDigest(deviceID string) (string, bool) {
 	return s.registry.StateDigest(deviceID)
 }
 
+// OnlineAgents reports how many device agents hold a live control channel.
+func (s *Service) OnlineAgents() int {
+	if s == nil || s.registry == nil {
+		return 0
+	}
+	return s.registry.OnlineCount()
+}
+
 // DevicePlatform returns the agent's enrolled platform (GOOS) for the exec wrapper selection.
 func (s *Service) DevicePlatform(ctx context.Context, deviceID string) (string, error) {
 	deviceAgent := query.Use(s.db).DeviceAgent

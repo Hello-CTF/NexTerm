@@ -344,10 +344,12 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	key := mfaThrottleKey(r, request.Ticket)
 	if !s.accountThrottle.mfa.Allow(key) {
+		s.metrics.login(loginStepTOTP, loginThrottled)
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "验证尝试过于频繁，请稍后再试"))
 		return
 	}
 	if !s.mfaLock.begin(entry.userID) {
+		s.metrics.login(loginStepTOTP, loginLocked)
 		writeMFALocked(w)
 		return
 	}
@@ -355,11 +357,13 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	valid, err := s.accounts.VerifyTOTPLoginCode(verifyCtx, entry.userID, request.Code)
 	if err != nil {
 		s.mfaLock.release(entry.userID)
+		s.metrics.login(loginStepTOTP, loginError)
 		writeAccountFailure(w, err)
 		return
 	}
 	if !valid {
 		s.accountThrottle.mfa.RecordFailure(key)
+		s.metrics.login(loginStepTOTP, loginFailure)
 		if fails, until, level, locked := s.mfaLock.failure(entry.userID); locked {
 			s.auditMFALockout(r, entry.userID, fails, until, level)
 		}
@@ -380,11 +384,13 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	s.mfaTickets.delete(request.Ticket)
 	user, err := s.accounts.GetUser(r.Context(), entry.userID)
 	if err != nil {
+		s.metrics.login(loginStepTOTP, loginError)
 		writeAccountFailure(w, err)
 		return
 	}
 	audits := s.newAuditQueue(r)
 	defer audits.flush()
+	s.metrics.login(loginStepTOTP, loginSuccess)
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	audits.loginSuccess(user.ID, s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch), method)

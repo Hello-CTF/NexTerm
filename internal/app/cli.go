@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/metrics"
 	"github.com/Hello-CTF/NexTerm/internal/pprof"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 )
@@ -41,6 +42,11 @@ type Invocation struct {
 	DebugCapture   bool
 	Help           bool
 	Version        bool
+
+	// MetricsAddr serves Prometheus metrics (nexterm-server only);
+	// MetricsAllowRemote lets it bind a non-loopback host.
+	MetricsAddr        string
+	MetricsAllowRemote bool
 }
 
 func ParseCLI(args []string, defaultCommand Command, getenv func(string) string) (Invocation, error) {
@@ -57,7 +63,13 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 		DBDSN:          getenv("NEXTERM_DB_DSN"),
 		DBPasswordFile: getenv("NEXTERM_DB_PASSWORD_FILE"),
 		PprofAddr:      getenv(pprof.EnvAddr),
+		MetricsAddr:    getenv(metrics.EnvAddr),
 	}
+	allowRemote, err := metrics.ParseAllowRemote(getenv(metrics.EnvAllowRemote))
+	if err != nil {
+		return Invocation{}, err
+	}
+	invocation.MetricsAllowRemote = allowRemote
 	if raw := strings.TrimSpace(getenv("NEXTERM_DEBUG_CAPTURE")); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -158,6 +170,8 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 				invocation.DBMaxOpenConns = parsed
 			case "--pprof-addr":
 				invocation.PprofAddr = value
+			case "--metrics-addr":
+				invocation.MetricsAddr = value
 			}
 			continue
 		}
@@ -184,6 +198,9 @@ func ParseCLI(args []string, defaultCommand Command, getenv func(string) string)
 			return Invocation{}, err
 		}
 		if _, err := pprof.NormalizeAddr(invocation.PprofAddr); err != nil {
+			return Invocation{}, err
+		}
+		if _, err := metrics.NormalizeAddr(invocation.MetricsAddr, invocation.MetricsAllowRemote); err != nil {
 			return Invocation{}, err
 		}
 		switch invocation.Auth {
@@ -257,6 +274,9 @@ Flags:
   --pprof-addr ADDR   Serve pprof debug endpoints on ADDR (env NEXTERM_PPROF_ADDR);
                       disabled by default, loopback only (a bare ":PORT" binds 127.0.0.1)
                       unless an explicit wildcard like 0.0.0.0 is given
+  --metrics-addr ADDR Serve Prometheus metrics at /metrics on ADDR, nexterm-server only
+                      (env NEXTERM_METRICS_ADDR); disabled by default, loopback only
+                      (a bare ":PORT" binds 127.0.0.1) unless NEXTERM_METRICS_ALLOW_REMOTE=1
   --debug-capture     Record profiles and verbose redacted logs for this run only
                       (env NEXTERM_DEBUG_CAPTURE=1); output goes to <data-dir>/logs/debug-capture
   --version           Print the version
@@ -293,7 +313,7 @@ nexterm-desktop warns and uses the default):
 func isStringFlag(name string) bool {
 	switch name {
 	case "--listen", "--data-dir", "--web-root", "--master-key-file", "--auth",
-		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns", "--pprof-addr":
+		"--db", "--db-dsn", "--db-password-file", "--db-max-open-conns", "--pprof-addr", "--metrics-addr":
 		return true
 	default:
 		return false

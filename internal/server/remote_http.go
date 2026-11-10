@@ -136,7 +136,7 @@ func (s *Server) serveRemoteSessionFeed(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	conn.SetReadLimit(remoteFeedReadLimit)
-	ctx, release, err := s.sockets.track(r.Context(), conn)
+	ctx, release, err := s.sockets.track(r.Context(), socketKindRemoteSession, conn)
 	if err != nil {
 		_ = conn.CloseNow()
 		return
