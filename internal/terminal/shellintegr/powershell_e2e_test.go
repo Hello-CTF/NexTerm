@@ -3,11 +3,11 @@ package shellintegr
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -41,7 +41,7 @@ func TestWrappedPowerShellReportsCWDAndCommands(t *testing.T) {
 			if err := os.Mkdir(target, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 			session, err := pty.Start(ctx, pty.Config{
 				Path: launch.Path,
@@ -56,19 +56,14 @@ func TestWrappedPowerShellReportsCWDAndCommands(t *testing.T) {
 			}
 			defer session.Close()
 
-			enter := "\n"
-			if runtime.GOOS == "windows" {
-				enter = "\r"
-			}
+			// A terminal sends CR for Enter; PSReadLine inserts a literal newline for LF.
+			const enter = "\r"
 			script := "Set-Location -LiteralPath '" + strings.ReplaceAll(target, "'", "''") + "'" + enter +
 				"& (Get-Process -Id $PID).Path -NoLogo -NoProfile -Command 'exit 3'" + enter +
 				"exit" + enter
-			if _, err := session.Write([]byte(script)); err != nil {
-				t.Fatal(err)
-			}
-			output, err := io.ReadAll(session)
-			if err != nil && len(output) == 0 {
-				t.Fatal(err)
+			output, err := driveShell(ctx, session, []byte(script))
+			if err != nil {
+				t.Fatalf("%v\noutput:\n%q", err, output)
 			}
 
 			tracker := NewTracker()
@@ -87,7 +82,9 @@ func TestWrappedPowerShellReportsCWDAndCommands(t *testing.T) {
 					letters = append(letters, letter)
 				}
 			}
-			if got := filepath.Clean(filepath.FromSlash(tracker.CWD())); !strings.EqualFold(got, filepath.Clean(target)) {
+			// The shell reports the long form; t.TempDir() may hold 8.3 short names on Windows.
+			target = filepath.Clean(longPath(t, target))
+			if got := filepath.Clean(filepath.FromSlash(tracker.CWD())); !strings.EqualFold(got, target) {
 				t.Fatalf("CWD() = %q; want %q\noutput:\n%q", got, target, output)
 			}
 			sequence := strings.Join(letters, " ")
@@ -98,5 +95,57 @@ func TestWrappedPowerShellReportsCWDAndCommands(t *testing.T) {
 				t.Fatalf("the default prompt text does not follow the prompt mark\noutput:\n%q", output)
 			}
 		})
+	}
+}
+
+// driveShell plays the terminal for a shell on a PTY. PSReadLine asks for the cursor position (DSR, ESC[6n) and
+// stalls until it is answered, and a script typed before the first prompt is echoed instead of run, so the script is
+// written only after the first OSC 133;A prompt mark. One goroutine owns every read and write; the output is handed
+// back over a channel when the shell exits or ctx ends.
+func driveShell(ctx context.Context, session io.ReadWriteCloser, script []byte) ([]byte, error) {
+	type result struct {
+		output []byte
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		var output []byte
+		var failure error
+		answered, sent := 0, false
+		chunk := make([]byte, 4096)
+		for {
+			n, err := session.Read(chunk)
+			output = append(output, chunk[:n]...)
+			if n > 0 {
+				requests := bytes.Count(output, []byte("\x1b[6n"))
+				for ; answered < requests; answered++ {
+					if _, werr := session.Write([]byte("\x1b[1;1R")); werr != nil {
+						failure = werr
+					}
+				}
+				if !sent && bytes.Contains(output, []byte("\x1b]133;A")) {
+					sent = true
+					if _, werr := session.Write(script); werr != nil {
+						failure = werr
+					}
+				}
+			}
+			if err != nil || failure != nil {
+				done <- result{output, failure}
+				return
+			}
+		}
+	}()
+	select {
+	case r := <-done:
+		return r.output, r.err
+	case <-ctx.Done():
+		session.Close()
+		select {
+		case r := <-done:
+			return r.output, fmt.Errorf("shell did not finish: %w", ctx.Err())
+		case <-time.After(5 * time.Second):
+			return nil, fmt.Errorf("shell did not finish: %w", ctx.Err())
+		}
 	}
 }
