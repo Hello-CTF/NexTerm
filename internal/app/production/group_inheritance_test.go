@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/cron"
+	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -98,7 +99,9 @@ func TestGroupInheritanceJumpCycleIsDetected(t *testing.T) {
 	}
 	response := dispatchHostKeyTest(t, production, "session_connect", `{"args":{"assetId":"`+a+`"}}`)
 	text, _ := json.Marshal(response)
-	if response.OK || !strings.Contains(string(text), "jump asset cycle") {
+	// The cycle error names the chain it walked, so both assets appear in it.
+	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeBadParam ||
+		!strings.Contains(response.Error.Message, a) || !strings.Contains(response.Error.Message, b) {
 		t.Fatalf("an inherited jump cycle was not detected: %s", text)
 	}
 }

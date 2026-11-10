@@ -92,10 +92,10 @@ func (s *terminalCommandService) registerSSHDiagnostics(dispatcher *ipc.Dispatch
 					return hostKeyProbeDTO{}, err
 				}
 				if kind != session.KindSSH && kind != session.KindDocker {
-					return hostKeyProbeDTO{}, ipc.BadParam(fmt.Errorf("asset kind %s does not use SSH host keys", kind))
+					return hostKeyProbeDTO{}, ipc.BadParam(fmt.Errorf("%s 类型的资产不使用 SSH 主机指纹", kind))
 				}
 				if s.hostKeys == nil || s.sshConnector == nil {
-					return hostKeyProbeDTO{}, ipc.NewError(ipc.CodeUnsupported, "SSH host key diagnostics are unavailable")
+					return hostKeyProbeDTO{}, ipc.NewError(ipc.CodeUnsupported, "SSH 主机指纹诊断不可用")
 				}
 				options, err := productionAssetOptionsFromRow(row)
 				if err != nil {
@@ -137,7 +137,7 @@ func (s *terminalCommandService) registerSSHDiagnostics(dispatcher *ipc.Dispatch
 
 func (s *terminalCommandService) sshProbeAsset(ctx context.Context, assetID string) (store.ResolvedAsset, string, error) {
 	if assetID == "" {
-		return store.ResolvedAsset{}, "", ipc.BadParam(fmt.Errorf("asset id is required"))
+		return store.ResolvedAsset{}, "", ipc.BadParam(errors.New("资产 ID 不能为空"))
 	}
 	row, err := s.database.AssetGetLiveResolved(ctx, assetID)
 	if err != nil {
@@ -165,10 +165,10 @@ func probeTimeout(timeoutMS, assetTimeoutSeconds int64, fallback time.Duration) 
 
 func (s *terminalCommandService) probeAssetBatch(ctx context.Context, input assetProbeBatchRequest) (assetProbeBatchDTO, error) {
 	if len(input.AssetIDs) == 0 {
-		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("asset probe batch requires at least one asset id"))
+		return assetProbeBatchDTO{}, ipc.BadParam(errors.New("资产检测至少需要一个资产 ID"))
 	}
 	if len(input.AssetIDs) > maxAssetProbeBatch {
-		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("asset probe batch is limited to %d assets", maxAssetProbeBatch))
+		return assetProbeBatchDTO{}, ipc.BadParam(fmt.Errorf("单次资产检测最多 %d 个资产", maxAssetProbeBatch))
 	}
 	timeout := clampProbeTimeout(input.TimeoutMS, 5*time.Second)
 	limit := input.MaxConcurrent
@@ -225,7 +225,7 @@ func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, as
 	target := assetProbeTarget{assetID: assetID}
 	live, err := s.database.AssetGetLive(ctx, assetID)
 	if err != nil {
-		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "not_found", Error: "asset not found"}
+		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "not_found", Error: "资产不存在或已删除"}
 		return target
 	}
 	row, err := s.database.ResolveAsset(ctx, live)
@@ -237,7 +237,7 @@ func (s *terminalCommandService) resolveAssetProbeTarget(ctx context.Context, as
 	target.kind = row.Kind
 	options, err := productionAssetOptionsFromRow(row)
 	if err != nil {
-		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "config", Error: "asset options are invalid"}
+		target.failure = &assetProbeResultDTO{AssetID: assetID, Kind: "config", Error: "资产连接选项无效"}
 		return target
 	}
 	target.options = options
@@ -297,12 +297,12 @@ func (s *terminalCommandService) probeAssetTarget(ctx context.Context, target as
 	case session.KindSSH, session.KindDocker, session.KindWinRM, session.KindRDP, session.KindVNC, "mysql", "postgres", "redis":
 	default:
 		result.Kind = "unsupported"
-		result.Error = fmt.Sprintf("asset kind %s cannot be probed", target.kind)
+		result.Error = fmt.Sprintf("%s 类型的资产不支持连通性检测", target.kind)
 		return result
 	}
 	if target.options.Host == "" {
 		result.Kind = "config"
-		result.Error = "asset host is required"
+		result.Error = "资产缺少主机地址"
 		return result
 	}
 	err := s.probeReachability(ctx, target, timeout)
@@ -346,7 +346,7 @@ func probeFailureKind(err error) string {
 func (s *terminalCommandService) probeSSHReachability(ctx context.Context, target assetProbeTarget, timeout time.Duration) error {
 	if target.options.JumpAssetID != "" {
 		if s.sshConnector == nil {
-			return ipc.NewError(ipc.CodeUnsupported, "SSH jump chain diagnostics are unavailable")
+			return ipc.NewError(ipc.CodeUnsupported, "SSH 跳板链诊断不可用")
 		}
 		config, err := s.sshConnector.sshConfig(ctx, target.options, 0, []string{target.assetID})
 		if err != nil {
@@ -384,7 +384,7 @@ func (s *terminalCommandService) probeSSHReachability(ctx context.Context, targe
 }
 
 func canceledAssetProbeResult(assetID string) assetProbeResultDTO {
-	return assetProbeResultDTO{AssetID: assetID, Kind: "canceled", Error: "asset probe canceled"}
+	return assetProbeResultDTO{AssetID: assetID, Kind: "canceled", Error: "资产检测已取消"}
 }
 
 func dedupeAssetIDs(assetIDs []string) []string {

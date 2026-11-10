@@ -340,7 +340,7 @@ func resolveMaskedProfileKey(ctx context.Context, manager *profiles.Manager, dat
 	// The stored key may only be sent to the endpoint it was saved for; otherwise a caller could
 	// exfiltrate it by pairing the masked placeholder with an arbitrary baseUrl.
 	if normalizeBaseURL(baseURL) != normalizeBaseURL(stored.BaseURL) {
-		return "", ipc.WrapError(ipc.CodeBadParam, "baseUrl differs from the saved profile; re-enter the API key to use a different endpoint", profiles.ErrProfileKeyUnavailable)
+		return "", ipc.WrapError(ipc.CodeBadParam, "接口地址与已保存的配置不同；如需改用其他地址，请重新输入 API Key", profiles.ErrProfileKeyUnavailable)
 	}
 	return resolveStoredProfileKey(ctx, database, stored.APIKey)
 }
