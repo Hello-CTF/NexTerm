@@ -1,10 +1,14 @@
 FROM --platform=linux/amd64 registry.lazycat.cloud/u0642568667/library/debian:07c67640965241be
 
+# The base image is pinned by its tag above; these packages float within
+# Debian 12 on purpose. Exact versions vanish from the archive after each point
+# release and break the build, and a snapshot.debian.org pin would freeze
+# openssh-client and ca-certificates without security updates.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates=20250419~deb12u1 \
-        openssh-client=1:9.2p1-2+deb12u10 \
-        tzdata=2026c-0+deb12u1 \
+        ca-certificates \
+        openssh-client \
+        tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 nexterm \
     && useradd --uid 10001 --gid nexterm --no-create-home \

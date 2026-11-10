@@ -81,7 +81,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), identity)
+	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), connection, identity)
 	if err != nil {
 		_ = connection.CloseNow()
 		return
@@ -273,7 +273,7 @@ func (s *Server) serveChannel(w http.ResponseWriter, r *http.Request) {
 		// Input frames are tiny keystroke bundles; the default 32KiB read limit already bounds them.
 		connection.SetReadLimit(channelInputMaxData + 512)
 	}
-	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), identity)
+	ctx, revoked, release, err := s.sockets.trackAccount(r.Context(), connection, identity)
 	if err != nil {
 		_ = connection.CloseNow()
 		return

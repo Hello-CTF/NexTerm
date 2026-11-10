@@ -16,6 +16,7 @@ ExecStart=/opt/nexterm/nexterm-server
 
 Restart=on-failure
 RestartSec=3
+TimeoutStopSec=60
 # KillMode stays at the default (control-group) on purpose. Without accounts
 # (NEXTERM_AUTH=off) the server runs local terminals in a detached local
 # helper; stopping or restarting this service ends that helper and its
@@ -26,15 +27,24 @@ Environment=HOME=/var/lib/nexterm
 WorkingDirectory=/var/lib/nexterm
 StateDirectory=nexterm
 StateDirectoryMode=0700
-PrivateTmp=true
-ProtectSystem=full
-ProtectKernelModules=true
-ProtectKernelTunables=true
-ProtectKernelLogs=true
-ProtectControlGroups=true
-LockPersonality=true
 UMask=0077
 LimitNOFILE=1048576
+
+# Sandboxing stops at what open-access local terminals and sshfs mounts keep
+# working with, because terminal programs inherit it: a read-only filesystem,
+# hidden /dev/pts or /dev/fuse, a blocked setuid fusermount3 or sudo, no
+# W+X memory for JIT runtimes, no setgid bits (chmod g+s, shared git
+# repositories) or no realtime scheduling would break them.
+# deploy/systemd/README.md lists a stricter drop-in for servers with accounts
+# on.
+ProtectSystem=full
+PrivateTmp=yes
+ProtectHostname=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+LockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target

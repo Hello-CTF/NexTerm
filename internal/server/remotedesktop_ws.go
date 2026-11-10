@@ -73,7 +73,7 @@ func (s *Server) serveRemoteDesktop(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	ctx, release, err := s.sockets.track(r.Context())
+	ctx, release, err := s.sockets.track(r.Context(), connection)
 	if err != nil {
 		_ = connection.CloseNow()
 		return

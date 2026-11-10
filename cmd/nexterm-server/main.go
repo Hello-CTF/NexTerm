@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,6 +89,20 @@ func trustedProxyCIDRs() []string {
 		}
 	}
 	return cidrs
+}
+
+// trustForwardedFor reads NEXTERM_TRUST_FORWARDED_FOR as a boolean; an unrecognized value fails startup instead of
+// silently leaving X-Forwarded-For untrusted.
+func trustForwardedFor(getenv func(string) string) (bool, error) {
+	raw := strings.TrimSpace(getenv("NEXTERM_TRUST_FORWARDED_FOR"))
+	if raw == "" {
+		return false, nil
+	}
+	trust, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("invalid NEXTERM_TRUST_FORWARDED_FOR value %q (want 1 or 0)", raw)
+	}
+	return trust, nil
 }
 
 func run(args []string) int {
@@ -186,6 +201,11 @@ func run(args []string) int {
 
 	ctx, stop := platform.NotifyContext(context.Background())
 	defer stop()
+	trustXFF, err := trustForwardedFor(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
 	webSocket, err := server.ParseWebSocketEnv(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
@@ -359,7 +379,7 @@ func run(args []string) int {
 			Auth:              invocation.Auth,
 			AllowedOrigins:    allowedOrigins(),
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
-			TrustForwardedFor: os.Getenv("NEXTERM_TRUST_FORWARDED_FOR") == "1",
+			TrustForwardedFor: trustXFF,
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,

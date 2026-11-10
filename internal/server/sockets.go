@@ -4,16 +4,22 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
+	"github.com/coder/websocket"
 )
 
 var errServerClosed = errors.New("server is closed")
+
+// shutdownCloseReason accompanies the 1001 going-away close frame sent on shutdown.
+const shutdownCloseReason = "server shutting down"
 
 // socketEntry is one tracked connection. The account fields stay empty for
 // open-access and gateway connections, which never close per user or session.
 type socketEntry struct {
 	cancel   context.CancelFunc
+	conn     *websocket.Conn
 	userID   string
 	session  string
 	deviceID string
@@ -31,16 +37,17 @@ type socketTracker struct {
 	wg      sync.WaitGroup
 }
 
-func (t *socketTracker) track(parent context.Context) (context.Context, func(), error) {
-	ctx, _, release, err := t.trackAccount(parent, nil)
+func (t *socketTracker) track(parent context.Context, conn *websocket.Conn) (context.Context, func(), error) {
+	ctx, _, release, err := t.trackAccount(parent, conn, nil)
 	return ctx, release, err
 }
 
 // trackAccount registers a connection. The returned channel closes when the
 // connection's login session or device is revoked; the owner is expected to
 // close the socket with a close code instead of just dropping it, so the
-// context is deliberately not cancelled by a revocation.
-func (t *socketTracker) trackAccount(parent context.Context, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
+// context is deliberately not cancelled by a revocation. A non-nil conn
+// receives a going-away close frame when the tracker shuts down.
+func (t *socketTracker) trackAccount(parent context.Context, conn *websocket.Conn, identity *account.Identity) (context.Context, <-chan struct{}, func(), error) {
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -49,7 +56,7 @@ func (t *socketTracker) trackAccount(parent context.Context, identity *account.I
 	t.nextID++
 	id := t.nextID
 	ctx, cancel := context.WithCancel(parent)
-	entry := &socketEntry{cancel: cancel, revoked: make(chan struct{})}
+	entry := &socketEntry{cancel: cancel, conn: conn, revoked: make(chan struct{})}
 	if identity != nil {
 		entry.userID, entry.session, entry.deviceID = identity.UserID, identity.SessionID, identity.DeviceID
 	}
@@ -112,22 +119,54 @@ func (t *socketTracker) closeDevice(userID, deviceID string) {
 	t.revokeMatching(func(e *socketEntry) bool { return e.userID == userID && e.deviceID == deviceID })
 }
 
+// goingAwayGrace is how long closeAndWait lets connections finish the close
+// handshake after their going-away frame before it cancels them.
+var goingAwayGrace = time.Second
+
+// closeAndWait stops accepting connections, sends every tracked WebSocket a
+// 1001 going-away close frame instead of dropping the connection, and waits until
+// all connections are released or ctx ends. Contexts are cancelled only after
+// the close handshake or goingAwayGrace, because a cancelled read drops the
+// TCP connection and could cut the frame off.
 func (t *socketTracker) closeAndWait(ctx context.Context) error {
 	t.mu.Lock()
 	t.closed = true
-	cancels := make([]context.CancelFunc, 0, len(t.entries))
+	entries := make([]*socketEntry, 0, len(t.entries))
 	for _, entry := range t.entries {
-		cancels = append(cancels, entry.cancel)
+		entries = append(entries, entry)
 	}
 	t.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
+	for _, entry := range entries {
+		if entry.conn == nil {
+			entry.cancel()
+			continue
+		}
+		go func(entry *socketEntry) {
+			_ = entry.conn.Close(websocket.StatusGoingAway, shutdownCloseReason)
+			entry.cancel()
+		}(entry)
 	}
 	done := make(chan struct{})
 	go func() {
 		t.wg.Wait()
 		close(done)
 	}()
+	grace := time.NewTimer(goingAwayGrace)
+	defer grace.Stop()
+	cancelAll := func() {
+		for _, entry := range entries {
+			entry.cancel()
+		}
+	}
+	select {
+	case <-done:
+		return nil
+	case <-grace.C:
+		cancelAll()
+	case <-ctx.Done():
+		cancelAll()
+		return ctx.Err()
+	}
 	select {
 	case <-done:
 		return nil
