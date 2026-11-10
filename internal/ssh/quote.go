@@ -1,10 +1,7 @@
 package ssh
 
 import (
-	"encoding/base64"
-	"encoding/binary"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 )
@@ -18,12 +15,7 @@ func quotePowerShell(value string) string {
 }
 
 func powerShellCommand(shell, script string) string {
-	units := utf16.Encode([]rune(script))
-	encoded := make([]byte, len(units)*2)
-	for index, unit := range units {
-		binary.LittleEndian.PutUint16(encoded[index*2:], unit)
-	}
-	return shell + " -NoLogo -NoProfile -NonInteractive -EncodedCommand " + base64.StdEncoding.EncodeToString(encoded)
+	return psquote.Command(shell, script)
 }
 
 func quoteWindowsArgument(value string) string {
