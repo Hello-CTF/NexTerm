@@ -610,7 +610,10 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
       sendBarKey(code);
       return;
     }
-    void withLatches(() => client.sendText(text));
+    void withLatches(() => {
+      const skipped = client.sendText(text);
+      if (skipped > 0) showNotice(t("{count} 个字符无法发送到远程桌面，已跳过", { count: skipped }));
+    });
   };
 
   const openSoftKeyboard = () => {

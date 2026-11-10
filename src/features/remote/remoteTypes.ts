@@ -104,7 +104,8 @@ export interface RemoteClient {
   blur(): void;
   sendKey(code: string, down: boolean): void;
   sendCombo(codes: readonly string[]): Promise<void>;
-  sendText(text: string): void;
+  // Returns how many characters could not be sent.
+  sendText(text: string): number;
   releaseAllKeys(): void;
   // Moves the local clipboard (text, and PNG images or files over RDP) to the remote side. When `data` is supplied
   // from a native paste/drop event, its payload is sent directly without calling navigator.clipboard.read().
