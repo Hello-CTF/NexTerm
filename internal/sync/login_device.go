@@ -15,6 +15,27 @@ type persistedDevice struct {
 	Token    string `json:"token"`
 }
 
+// deviceIdentity normalizes the link identity a device token is bound to.
+func deviceIdentity(config RemoteConfig) (string, string) {
+	base, err := normalizeBase(config.URL)
+	if err != nil {
+		base = strings.TrimSpace(config.URL)
+	}
+	return base, strings.ToLower(strings.TrimSpace(config.Username))
+}
+
+// clearDevice drops the saved login device token, in memory and in settings.
+func (e *Engine) clearDevice(ctx context.Context) {
+	e.sessionMu.Lock()
+	e.device = nil
+	e.sessionMu.Unlock()
+	if e.store != nil {
+		if err := e.store.SettingDelete(ctx, settingLinkDevice); err != nil {
+			e.logger.Warn("sync login device clear failed", "error", err)
+		}
+	}
+}
+
 // newLoginClient builds a client for a password login, carrying the saved login device token for this link.
 func (e *Engine) newLoginClient(ctx context.Context, config RemoteConfig) (*remoteClient, error) {
 	client, err := newRemoteClient(config)
@@ -40,7 +61,8 @@ func (e *Engine) loadDeviceToken(ctx context.Context, config RemoteConfig) strin
 			}
 		}
 	}
-	if device == nil || device.URL != config.URL || device.Username != config.Username {
+	base, username := deviceIdentity(config)
+	if device == nil || device.URL != base || device.Username != username {
 		return ""
 	}
 	return device.Token
@@ -51,7 +73,9 @@ func (e *Engine) rememberDevice(ctx context.Context, config RemoteConfig, token 
 	if token == "" {
 		return
 	}
-	device := &persistedDevice{URL: config.URL, Username: config.Username, Token: token}
+	// The device slot is single: it is overwritten when switching account or URL.
+	base, username := deviceIdentity(config)
+	device := &persistedDevice{URL: base, Username: username, Token: token}
 	e.sessionMu.Lock()
 	e.device = device
 	e.sessionMu.Unlock()

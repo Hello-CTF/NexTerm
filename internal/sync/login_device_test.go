@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +41,24 @@ func TestLoginDeviceTokenSurvivesSessionLossAndRestart(t *testing.T) {
 	// Another account on the same link slot must not receive alice's token.
 	if got := engine.loadDeviceToken(ctx, RemoteConfig{URL: fixture.URL, Username: "bob"}); got != "" {
 		t.Fatal("device token leaked to another username")
+	}
+
+	// Equivalent spellings of the link match; a different scheme or host does not.
+	for _, same := range []RemoteConfig{
+		{URL: fixture.URL + "/", Username: "alice"},
+		{URL: fixture.URL, Username: "  Alice "},
+	} {
+		if engine.loadDeviceToken(ctx, same) == "" {
+			t.Fatalf("device token not matched for %+v", same)
+		}
+	}
+	for _, other := range []string{
+		strings.Replace(fixture.URL, "http://", "https://", 1),
+		strings.Replace(fixture.URL, "127.0.0.1", "localhost", 1),
+	} {
+		if engine.loadDeviceToken(ctx, RemoteConfig{URL: other, Username: "alice"}) != "" {
+			t.Fatalf("device token matched a different endpoint %s", other)
+		}
 	}
 
 	// Without the token the backed-off username refuses the login.

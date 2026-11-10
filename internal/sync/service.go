@@ -563,6 +563,9 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 		// account or old password's cookie available to desktop commands.
 		s.engine.resetSession()
 		s.engine.clearPersistedSession(ctx)
+		if secret.URL != previous.URL || secret.Username != previous.Username {
+			s.engine.clearDevice(ctx)
+		}
 	}
 	notifyStatus = true
 	s.wake()
