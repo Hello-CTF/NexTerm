@@ -7,3 +7,6 @@
 *.woff2 binary
 
 pnpm-lock.yaml -diff
+
+# Session exports of other clients keep their Windows line endings and encodings.
+testdata/sshconfig/clients/** -text

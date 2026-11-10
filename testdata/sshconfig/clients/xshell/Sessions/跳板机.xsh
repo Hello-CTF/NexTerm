@@ -1,0 +1,24 @@
+[SessionInfo]
+Version=7.0
+Description=Xshell session file
+[CONNECTION]
+Port=22
+Host=jump.example.com
+Protocol=SSH
+[CONNECTION:PROXY]
+Proxy=corp-proxy
+StartUp=0
+[CONNECTION:AUTHENTICATION]
+Pkcs11Pin=
+Library=0
+Passphrase=
+Delegation=0
+UseInitScript=0
+TelnetLoginPrompt=ogin:
+Password=Vb7vNG4mO9pqWQ==
+RloginPasswordPrompt=assword:
+UserKey=
+Method=0
+UserName=ops
+[TERMINAL]
+Type=xterm

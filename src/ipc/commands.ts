@@ -1701,7 +1701,8 @@ export const vaultApi = {
     }) as Promise<import("./types").GeneratedKeyDto>,
 };
 
-export type SshImportSource = "ssh-config" | "termius" | "ssh-home";
+export type SshImportClientSource = "putty" | "mobaxterm" | "xshell" | "securecrt";
+export type SshImportSource = "ssh-config" | "termius" | "ssh-home" | SshImportClientSource;
 export type SshImportItemAction = "import" | "overwrite" | "skip";
 
 export const sshImportApi = {

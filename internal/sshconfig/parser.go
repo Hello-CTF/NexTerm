@@ -41,6 +41,12 @@ type Host struct {
 	IdentityFiles []string
 	ProxyJump     string
 	Source        string
+	// Group, AuthMethod and Warnings are only set by the parsers of other clients' session files: the session's
+	// folder path, "password" when the session authenticates with a password that is never imported, and notes
+	// about settings the import drops.
+	Group      string
+	AuthMethod string
+	Warnings   []string
 }
 
 type Diagnostic struct {

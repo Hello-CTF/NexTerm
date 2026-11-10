@@ -2960,6 +2960,7 @@ export type SshImportApplyDTO = {
   assetsUpdated: number;
   credentialsCreated: number;
   credentialsUpdated: number;
+  groupsCreated: number;
   skipped: number;
   warnings: string[];
 };
@@ -2991,6 +2992,7 @@ export type SshImportHostDTO = {
   keyFingerprint: string;
   proxyJump: string;
   authMethod: string;
+  group: string;
   source: string;
   action: string;
   warnings: string[];

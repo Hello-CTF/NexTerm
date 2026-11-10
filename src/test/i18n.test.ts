@@ -1,5 +1,7 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyLocale, formatDateTime, formatNumber, getLocale, initI18n, setLocale, t, translateMessage } from "../i18n";
+import { compileServerCatalog, translateServer } from "../i18n/server";
 import { matchLocale, resolveLocale, systemLocale } from "../i18n/locales";
 
 afterEach(() => applyLocale("zh-CN", {}, {}));
@@ -122,5 +124,35 @@ describe("loading and choosing a language", () => {
   it("formats dates for the interface language", () => {
     applyLocale("en", {}, {});
     expect(formatDateTime(Date.UTC(2026, 0, 2), { timeZone: "UTC", month: "long" })).toBe("January");
+  });
+});
+
+describe("server catalog argument order", () => {
+  const root = new URL("../i18n/locales/", import.meta.url);
+  const VERB = /%(?:\[\d+\])?[-+# 0]*\d*(?:\.\d+)?[sdvqwxXfgtT]/g;
+  const catalogs = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => [entry.name, JSON.parse(readFileSync(new URL(`${entry.name}/server.json`, root), "utf8")) as Record<string, string>] as const);
+
+  it("renders the default-template notice with the session name first in English", () => {
+    const en = catalogs.find(([name]) => name === "en")![1];
+    const catalog = compileServerCatalog(en);
+    expect(translateServer(catalog, '/tmp/MobaXterm.ini 中的 "Default" 是新会话的默认模板，不作为主机导入')).toBe(
+      '"Default" in /tmp/MobaXterm.ini is the default template for new sessions and is not imported as a host',
+    );
+  });
+
+  it("never reuses unindexed verbs in a different order than the Chinese source", () => {
+    const bad: string[] = [];
+    for (const [locale, catalog] of catalogs) {
+      for (const [source, target] of Object.entries(catalog)) {
+        const sourceVerbs = source.match(VERB) ?? [];
+        const targetVerbs = target.match(VERB) ?? [];
+        if (sourceVerbs.length < 2 || targetVerbs.every((verb) => verb.includes("["))) continue;
+        const kinds = (verbs: string[]) => verbs.map((verb) => verb.at(-1)).join("");
+        if (targetVerbs.some((verb) => verb.includes("[")) || kinds(sourceVerbs) !== kinds(targetVerbs)) bad.push(`${locale}: ${source}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 });

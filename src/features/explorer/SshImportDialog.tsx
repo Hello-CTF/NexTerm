@@ -1,6 +1,12 @@
 import { useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { assetApi, sshImportApi, type SshImportItemAction, type SshImportSource } from "../../ipc/commands";
+import {
+  assetApi,
+  sshImportApi,
+  type SshImportClientSource,
+  type SshImportItemAction,
+  type SshImportSource,
+} from "../../ipc/commands";
 import type {
   SshImportApplyDto,
   SshImportHostDto,
@@ -10,7 +16,8 @@ import type {
 import { describeError, describeErrorSource } from "../../ui/errorText";
 import { notifyAssetDataChanged } from "../../ipc/assetEvents";
 import { WEB } from "../../ipc/env";
-import { isMac } from "../../app/platform";
+import { isMac, isWindows } from "../../app/platform";
+import { openWailsFile, openWailsFolder } from "../../ipc/wails";
 import { useShell } from "../../app/shell";
 import { useUi } from "../../app/store";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
@@ -53,7 +60,55 @@ const DIAGNOSTIC_LABELS: Record<string, string> = {
   "termius-key-unparsed": t("Termius 密钥无法解析"),
   "unsupported-file": t("不支持的文件类型"),
   "encrypted-key-unreadable": t("加密私钥无法读取"),
+  "session-protocol-skipped": t("非 SSH 会话已跳过"),
+  "session-host-missing": t("会话缺少主机地址"),
+  "template-skipped": t("默认模板已跳过"),
+  "password-not-imported": t("密码未导入"),
+  "file-unreadable": t("文件无法读取"),
 };
+
+type ClientSourceInfo = {
+  label: string;
+  pick: "file" | "folder";
+  extensions?: string[];
+  pathLabel: string;
+  hint: string;
+};
+
+const CLIENT_SOURCES: Record<SshImportClientSource, ClientSourceInfo> = {
+  putty: {
+    label: "PuTTY",
+    pick: "file",
+    extensions: ["reg"],
+    pathLabel: t("PuTTY 会话导出文件（.reg）"),
+    hint: t("在 Windows 上用 regedit 导出 HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions，然后选择该 .reg 文件。"),
+  },
+  mobaxterm: {
+    label: "MobaXterm",
+    pick: "file",
+    extensions: ["ini"],
+    pathLabel: t("MobaXterm.ini 文件"),
+    hint: t("位于 MobaXterm 程序目录（便携版）或 %APPDATA%\\MobaXterm；书签文件夹会映射为分组。"),
+  },
+  xshell: {
+    label: "Xshell",
+    pick: "folder",
+    pathLabel: t("Xshell 会话文件夹"),
+    hint: t("通常位于“文档\\NetSarang Computer\\<版本>\\Xshell\\Sessions”；子文件夹会映射为分组。"),
+  },
+  securecrt: {
+    label: "SecureCRT",
+    pick: "folder",
+    pathLabel: t("SecureCRT Sessions 文件夹"),
+    hint: t("通常位于 %APPDATA%\\VanDyke\\Config\\Sessions；子文件夹会映射为分组。"),
+  },
+};
+
+const CLIENT_SOURCE_IDS = Object.keys(CLIENT_SOURCES) as SshImportClientSource[];
+
+function isClientSource(source: SshImportSource): source is SshImportClientSource {
+  return source in CLIENT_SOURCES;
+}
 
 function defaultAction(action: string): SshImportItemAction {
   return action === "add" ? "import" : "skip";
@@ -90,6 +145,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   });
   const [source, setSource] = useState<SshImportSource>("ssh-config");
   const [path, setPath] = useState("");
+  const [clientPath, setClientPath] = useState("");
   const [groupId, setGroupId] = useState("");
   const [tags, setTags] = useState("");
   const [confirmed, setConfirmed] = useState(false);
@@ -116,11 +172,40 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
   const mobile = useShell() === "mobile";
   const termiusSupported = !WEB && !mobile && isMac();
   const termiusUnsupported = !WEB && !mobile && !isMac();
+  // Other clients' session files live on the user's computer, which only the desktop app can read.
+  const clientSupported = !WEB && !mobile;
+  const client = isClientSource(source) ? CLIENT_SOURCES[source] : null;
+  // PuTTY without a file reads the Windows registry.
+  const puttyRegistry = source === "putty" && isWindows();
   // ssh-home always scans the default ~/.ssh, without the hidden paths filled in on other source pages
-  const effectivePath = source === "ssh-home" ? undefined : path.trim() || undefined;
+  const effectivePath =
+    source === "ssh-home"
+      ? undefined
+      : client
+        ? clientPath.trim() || undefined
+        : path.trim() || undefined;
+  const clientPathMissing = client !== null && !effectivePath && !puttyRegistry;
+
+  const chooseSource = (next: SshImportSource) => {
+    if (isClientSource(next) && next !== source) setClientPath("");
+    setSource(next);
+  };
+
+  const pickClientPath = async () => {
+    if (!client) return;
+    try {
+      const picked =
+        client.pick === "folder"
+          ? await openWailsFolder()
+          : await openWailsFile([{ name: client.pathLabel, extensions: client.extensions ?? ["*"] }]);
+      if (picked) setClientPath(picked);
+    } catch (e) {
+      setError(describeError(e));
+    }
+  };
 
   const runPreview = async () => {
-    if (serverLimited) return;
+    if (client ? !clientSupported || clientPathMissing : serverLimited) return;
     if (termius && !termiusSupported) {
       setError(t("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。"));
       return;
@@ -194,6 +279,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
       void qc.invalidateQueries({ queryKey: ["assets"] });
       void qc.invalidateQueries({ queryKey: ["asset-search"] });
       void qc.invalidateQueries({ queryKey: ["credentials"] });
+      if (result.groupsCreated) void qc.invalidateQueries({ queryKey: ["groups"] });
       notifyAssetDataChanged();
       pushToast(
         "success",
@@ -288,7 +374,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       className={`nx-segment-item ${source === "ssh-config" ? "is-active" : ""}`}
                       disabled={serverLimited}
                       title={serverLimited ? serverText.importSshServerPath : undefined}
-                      onClick={() => setSource("ssh-config")}
+                      onClick={() => chooseSource("ssh-config")}
                     >
                       {t("OpenSSH 配置")}
                     </button>
@@ -297,7 +383,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                       className={`nx-segment-item ${source === "ssh-home" ? "is-active" : ""}`}
                       disabled={serverLimited}
                       title={serverLimited ? serverText.importSshServerPath : undefined}
-                      onClick={() => setSource("ssh-home")}
+                      onClick={() => chooseSource("ssh-home")}
                     >
                       {t("~/.ssh 目录")}
                     </button>
@@ -308,7 +394,7 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                         disabled={!termiusSupported}
                         title={termiusSupported ? t("从本机 Termius 导入") : t("Termius 导入目前仅支持 macOS")}
                         onClick={() => {
-                          if (termiusSupported) setSource("termius");
+                          if (termiusSupported) chooseSource("termius");
                         }}
                       >
                         Termius
@@ -319,6 +405,29 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   {termiusUnsupported && (
                     <div className="nx-hint mt-1.5" role="note">
                       {t("当前平台不支持 Termius 导入：读取系统钥匙串目前仅支持 macOS。")}
+                    </div>
+                  )}
+                </div>
+
+                <div className="nx-form-row">
+                  <span className="nx-label">{t("从其他客户端导入")}</span>
+                  <div className="nx-segment mb-2" role="group" aria-label={t("从其他客户端导入")}>
+                    {CLIENT_SOURCE_IDS.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`nx-segment-item ${source === id ? "is-active" : ""}`}
+                        disabled={!clientSupported}
+                        title={clientSupported ? t("从 {client} 导入", { client: CLIENT_SOURCES[id].label }) : t("从其他客户端导入仅支持桌面版")}
+                        onClick={() => chooseSource(id)}
+                      >
+                        {CLIENT_SOURCES[id].label}
+                      </button>
+                    ))}
+                  </div>
+                  {!clientSupported && (
+                    <div className="nx-hint mt-1.5">
+                      {t("从 PuTTY、MobaXterm、Xshell 和 SecureCRT 导入仅支持桌面版：需要读取本机上的会话文件，浏览器和移动端无法读取。")}
                     </div>
                   )}
                 </div>
@@ -346,7 +455,11 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                     onChange={(e) => setTags(e.target.value)}
                     placeholder={t("可选，用逗号分隔")}
                   />
-                  <div className="nx-hint mt-1.5">{t("仅为本次导入的主机添加统一标签；不读取来源分组信息。")}</div>
+                  <div className="nx-hint mt-1.5">
+                    {client
+                      ? t("仅为本次导入的主机添加统一标签；来源中的文件夹会在所选分组下创建为同名分组。")
+                      : t("仅为本次导入的主机添加统一标签；不读取来源分组信息。")}
+                  </div>
                 </div>
 
                 {source === "ssh-config" && (
@@ -376,6 +489,37 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   <div className="nx-form-row">
                     <span className="nx-hint block">
                       {t("{value}：自动发现受支持的私钥并按 config 关联到 Host；只读取，不修改任何原始文件。", { value: WEB ? t("将扫描服务器上的 ~/.ssh 目录") : t("将扫描 ~/.ssh 目录") })}
+                    </span>
+                  </div>
+                )}
+
+                {client && (
+                  <div className="nx-form-row">
+                    <label className="nx-label" htmlFor={pathId}>
+                      {client.pathLabel}
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        key={`client-path-${source}`}
+                        id={pathId}
+                        ref={pathInputRef}
+                        className="nx-input min-w-0 flex-1 font-mono text-[12px]"
+                        value={clientPath}
+                        onChange={(e) => setClientPath(e.target.value)}
+                        placeholder={puttyRegistry ? t("留空读取本机注册表") : undefined}
+                        autoComplete="off"
+                      />
+                      <button type="button" className="nx-btn nx-btn-ghost shrink-0" onClick={() => void pickClientPath()}>
+                        {client.pick === "folder" ? t("选择文件夹…") : t("选择文件…")}
+                      </button>
+                    </div>
+                    <span className="nx-hint mt-1.5 block">
+                      {puttyRegistry
+                        ? t("留空直接读取本机注册表中的 PuTTY 会话，也可选择 regedit 导出的 .reg 文件。")
+                        : client.hint}
+                    </span>
+                    <span className="nx-hint mt-1 block">
+                      {t("不会导入密码：这些客户端保存的密码经过加密或混淆，导入后需重新输入；只读取，不修改原始文件。")}
                     </span>
                   </div>
                 )}
@@ -434,6 +578,9 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
                   <span className="nx-badge">{t("覆盖主机 {assetsUpdated}", { assetsUpdated: applyResult.assetsUpdated })}</span>
                   <span className="nx-badge nx-badge-green">{t("新增密钥 {credentialsCreated}", { credentialsCreated: applyResult.credentialsCreated })}</span>
                   <span className="nx-badge">{t("覆盖密钥 {credentialsUpdated}", { credentialsUpdated: applyResult.credentialsUpdated })}</span>
+                  {(applyResult.groupsCreated ?? 0) > 0 && (
+                    <span className="nx-badge nx-badge-green">{t("新建分组 {groupsCreated}", { groupsCreated: applyResult.groupsCreated ?? 0 })}</span>
+                  )}
                   <span className="nx-badge">{t("跳过 {skipped}", { skipped: applyResult.skipped })}</span>
                 </div>
                 {applyResult.warnings.length > 0 && (
@@ -464,7 +611,9 @@ export function SshImportDialog({ onClose }: { onClose: () => void }) {
             {phase === "form" && (
               <button
                 className="nx-btn nx-btn-primary"
-                disabled={serverLimited || (termius && !confirmed)}
+                disabled={
+                  client ? !clientSupported || clientPathMissing : serverLimited || (termius && !confirmed)
+                }
                 onClick={() => void runPreview()}
               >
                 {t("预览")}
@@ -650,6 +799,11 @@ function HostRow({
             {host.hostname}:{host.port}
           </span>
         </span>
+        {host.group && (
+          <span className="nx-badge shrink-0" title={t("导入到分组 {group}", { group: host.group })}>
+            {host.group}
+          </span>
+        )}
         {host.proxyJump && (
           <span className="nx-badge shrink-0" title={`ProxyJump ${host.proxyJump}`}>
             {t("跳板 {proxyJump}", { proxyJump: host.proxyJump })}
