@@ -17,11 +17,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/idleread"
 	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
@@ -36,16 +36,29 @@ const (
 	maxChecksumsBytes         = 1 << 20
 	maxChecksumSignatureBytes = 16 << 10
 	maxReleaseVersionLength   = 64
-	upgradeDownloadTimeout    = 10 * time.Minute
 	defaultUpgradeMaxAttempts = 3
 	defaultUpgradeBackoff     = 5 * time.Second
+	// replaceScriptDelaySeconds is the delay the update command announces before the swap; the replace script waits
+	// for the upgrading process to exit rather than sleeping a fixed time.
 	replaceScriptDelaySeconds = 3
-	// replaceWaitTimeoutSeconds bounds how long the Windows replace script waits for the upgrading process to exit.
+	// replaceWaitTimeoutSeconds bounds how long the replace script waits for the upgrading process to exit.
 	replaceWaitTimeoutSeconds = 60
+	// replaceHealthTimeoutSeconds bounds how long the replace script waits for the restarted agent to report a
+	// successful control-channel connection before it restores the previous binary.
+	replaceHealthTimeoutSeconds = 120
 	// upgradeLogName is the file under the data dir where the replace script records its restart outcome.
 	upgradeLogName = "upgrade.log"
 	// upgradeLogRestartExit prefixes the recorded exit code of the restart command in the upgrade log.
 	upgradeLogRestartExit = "restart exit code"
+)
+
+// upgradeDownloadIdleTimeout fails a release download that receives no data for this long, and
+// upgradeDownloadMaxDuration caps one download however steadily it progresses; these are vars for tests.
+var (
+	upgradeDownloadIdleTimeout = 60 * time.Second
+	upgradeDownloadMaxDuration = 2 * time.Hour
+	// stagedVersionTimeout bounds running the staged binary's version command.
+	stagedVersionTimeout = 10 * time.Second
 )
 
 // maxUpgradeDownloadBytes caps one release download (archive or checksum list) so a misbehaving host cannot fill the disk; it is a var for tests.
@@ -75,7 +88,9 @@ type Upgrader struct {
 	// LogPath is the file the deferred replace script appends its outcome to; empty disables the script log.
 	LogPath string
 
-	sleep           func(ctx context.Context, d time.Duration) bool
+	sleep func(ctx context.Context, d time.Duration) bool
+	// verifyStaged replaces checkStagedVersion in tests whose staged binary cannot run.
+	verifyStaged    func(ctx context.Context, path, targetVersion string) error
 	scheduleReplace func(newPath, targetPath string) error
 	// scheduleReplaceDetached replaces scheduleReplace in tests that need to control whether the script left the caller's job.
 	scheduleReplaceDetached func(newPath, targetPath string) (bool, error)
@@ -230,6 +245,17 @@ func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
 	if err := extractAgentBinary(archivePath, staged, agentBinaryName(runtime.GOOS)); err != nil {
 		return err
 	}
+	verify := u.verifyStaged
+	if verify == nil {
+		verify = checkStagedVersion
+	}
+	if err := verify(ctx, staged, targetVersion); err != nil {
+		_ = os.Remove(staged)
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		return err
+	}
 	schedule := u.scheduleReplaceDetached
 	if schedule == nil {
 		logPath := u.LogPath
@@ -237,7 +263,7 @@ func (u *Upgrader) attempt(ctx context.Context, targetVersion string) error {
 			if u.scheduleReplace != nil {
 				return false, u.scheduleReplace(newPath, targetPath)
 			}
-			return scheduleDeferredReplace(newPath, targetPath, logPath)
+			return scheduleDeferredReplace(newReplacePlan(newPath, targetPath, targetVersion, logPath, os.Getpid()))
 		}
 	}
 	detached, err := schedule(staged, target)
@@ -257,37 +283,48 @@ type downloadStatusError struct {
 
 func (e *downloadStatusError) Error() string { return fmt.Sprintf("download %s: %s", e.url, e.text) }
 
-func (u *Upgrader) open(ctx context.Context, ref string) (*http.Response, error) {
+// get requests one release file and hands its body to read. The request fails when no data arrives for
+// upgradeDownloadIdleTimeout (waiting for the response headers included) or after upgradeDownloadMaxDuration overall,
+// so a slow but steady link still completes while a stalled one fails promptly.
+func (u *Upgrader) get(ctx context.Context, ref string, read func(body io.Reader) error) error {
 	client := u.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: upgradeDownloadTimeout}
+		client = http.DefaultClient
 	}
 	url := strings.TrimRight(u.BaseURL, "/") + "/" + ref
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	capped, cancelCap := context.WithTimeout(ctx, upgradeDownloadMaxDuration)
+	defer cancelCap()
+	idleCtx, watchdog, cancelIdle := idleread.WithIdleTimeout(capped, upgradeDownloadIdleTimeout)
+	defer cancelIdle()
+	request, err := http.NewRequestWithContext(idleCtx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("download %s: %w", url, err)
+		return fmt.Errorf("download %s: %w", url, idleread.Cause(idleCtx, err))
 	}
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		_ = response.Body.Close()
-		return nil, &downloadStatusError{url: url, status: response.StatusCode, text: response.Status}
+		return &downloadStatusError{url: url, status: response.StatusCode, text: response.Status}
 	}
-	return response, nil
+	watchdog.Touch()
+	return idleread.Cause(idleCtx, read(watchdog.Reader(response.Body)))
 }
 
 // fetch reads a small release file into memory, failing when it exceeds limit bytes.
 func (u *Upgrader) fetch(ctx context.Context, ref string, limit int64) ([]byte, error) {
-	response, err := u.open(ctx, ref)
+	var content []byte
+	err := u.get(ctx, ref, func(body io.Reader) error {
+		var readErr error
+		content, readErr = io.ReadAll(io.LimitReader(body, limit+1))
+		if readErr != nil {
+			return fmt.Errorf("read %s: %w", ref, readErr)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
-	content, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", ref, err)
 	}
 	if int64(len(content)) > limit {
 		return nil, fmt.Errorf("%s exceeds %d bytes", ref, limit)
@@ -296,25 +333,22 @@ func (u *Upgrader) fetch(ctx context.Context, ref string, limit int64) ([]byte, 
 }
 
 func (u *Upgrader) download(ctx context.Context, ref, dest string) error {
-	response, err := u.open(ctx, ref)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-	out, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	written, copyErr := io.Copy(out, io.LimitReader(response.Body, maxUpgradeDownloadBytes+1))
-	if copyErr == nil && written > maxUpgradeDownloadBytes {
-		copyErr = fmt.Errorf("response exceeds %d bytes", maxUpgradeDownloadBytes)
-	}
-	closeErr := out.Close()
-	if copyErr != nil {
-		_ = os.Remove(dest)
-		return fmt.Errorf("write %s: %w", dest, copyErr)
-	}
-	return closeErr
+	return u.get(ctx, ref, func(body io.Reader) error {
+		out, err := os.Create(dest)
+		if err != nil {
+			return err
+		}
+		written, copyErr := io.Copy(out, io.LimitReader(body, maxUpgradeDownloadBytes+1))
+		if copyErr == nil && written > maxUpgradeDownloadBytes {
+			copyErr = fmt.Errorf("response exceeds %d bytes", maxUpgradeDownloadBytes)
+		}
+		closeErr := out.Close()
+		if copyErr != nil {
+			_ = os.Remove(dest)
+			return fmt.Errorf("write %s: %w", dest, copyErr)
+		}
+		return closeErr
+	})
 }
 
 func validateReleaseVersion(value string) error {
@@ -462,130 +496,6 @@ func shQuote(value string) string {
 
 func psQuote(value string) string {
 	return psquote.Quote(value)
-}
-
-// unixRestartCommand is the command the script runs explicitly to restart the service after a successful replacement (darwin=launchctl
-// kickstart, linux=systemctl --user restart); the rollback path does not restart, staying in the pending-manual state,
-// so the service manager never forms a restart loop. The script records its output and exit code in the upgrade log and
-// never fails on it, so a missing service only leaves a log line and the next manual start is the new binary.
-func unixRestartCommand(goos string) string {
-	if goos == "darwin" {
-		return `launchctl kickstart "gui/$(id -u)/` + launchdLabel + `"`
-	}
-	return "systemctl --user restart " + systemdUnitName
-}
-
-// renderReplaceScriptUnix generates the deferred replacement script: a running process cannot overwrite itself, so the script
-// swaps the new binary into the target path after the process exits (sleep). target->backup and new->target
-// are both same-directory renames; if the swap-in fails it rolls back from backup, and no path is ever left without a binary.
-// restartCmd runs only after a successful swap-in (see unixRestartCommand); logPath receives the outcome lines (empty discards them).
-func renderReplaceScriptUnix(newPath, targetPath string, delaySeconds int, restartCmd, logPath string) string {
-	backup := targetPath + ".nexterm-old"
-	if logPath == "" {
-		logPath = os.DevNull
-	}
-	var b strings.Builder
-	b.WriteString("#!/bin/sh\n")
-	b.WriteString("NX_LOG=" + shQuote(logPath) + "\n")
-	// A failed redirection on a compound command skips the whole command, so probe the log in a subshell (a failed redirect on a special builtin exits the shell) and fall back to /dev/null.
-	b.WriteString("( : >>\"$NX_LOG\" ) 2>/dev/null || NX_LOG=/dev/null\n")
-	b.WriteString("sleep " + strconv.Itoa(delaySeconds) + "\n")
-	b.WriteString("mv -f " + shQuote(targetPath) + " " + shQuote(backup) + " 2>/dev/null || true\n")
-	b.WriteString("if mv -f " + shQuote(newPath) + " " + shQuote(targetPath) + "; then\n")
-	b.WriteString("  chmod 0755 " + shQuote(targetPath) + "\n")
-	b.WriteString("  rm -f " + shQuote(backup) + "\n")
-	b.WriteString("  echo \"$(date) replaced binary\" >>\"$NX_LOG\" 2>&1\n")
-	b.WriteString("  { " + restartCmd + "\n  } >>\"$NX_LOG\" 2>&1\n")
-	b.WriteString("  nx_rc=$?\n")
-	b.WriteString("  echo \"$(date) " + upgradeLogRestartExit + " $nx_rc\" >>\"$NX_LOG\" 2>&1\n")
-	b.WriteString("else\n")
-	b.WriteString("  mv -f " + shQuote(backup) + " " + shQuote(targetPath) + " 2>/dev/null || true\n")
-	b.WriteString("  echo \"$(date) swap failed; rolled back to the previous binary\" >>\"$NX_LOG\" 2>&1\n")
-	b.WriteString("fi\n")
-	b.WriteString("rm -f \"$0\"\n")
-	return b.String()
-}
-
-// windowsReplaceScript describes one deferred replace script for Windows.
-type windowsReplaceScript struct {
-	NewPath, TargetPath string
-	// WaitPID is the process the script waits for before swapping; 0 skips the wait.
-	WaitPID            int
-	WaitTimeoutSeconds int
-	// LogPath receives outcome lines; empty disables logging.
-	LogPath string
-	// RestartBlock runs only after a successful swap-in (see windowsRestartBlock).
-	RestartBlock string
-}
-
-// windowsRestartBlock restarts the scheduled task after a successful swap-in: the agent exits with ExitOK, which the task's
-// RestartOnFailure policy does not restart. The task uses MultipleInstancesPolicy=IgnoreNew, so /Run is silently dropped while
-// the old instance is still tracked as running; the block therefore waits (up to ~30s) for the task to leave Running, then
-// records /Run's exit code and the resulting state. Every failure is swallowed so the script still cleans up after itself.
-func windowsRestartBlock(taskName string) string {
-	task := psQuote(taskName)
-	lines := []string{
-		"function nxTaskState { try { (Get-ScheduledTask -TaskName " + task + " -ErrorAction Stop).State.ToString() } catch { 'Unknown' } }",
-		"try {",
-		"  $nxDeadline = (Get-Date).AddSeconds(30)",
-		"  $nxState = nxTaskState",
-		"  while ($nxState -eq 'Running' -and (Get-Date) -lt $nxDeadline) { Start-Sleep -Milliseconds 500; $nxState = nxTaskState }",
-		"  nxLog \"task state before /Run: $nxState\"",
-		"  $nxOut = (& schtasks.exe /Run /TN " + task + " 2>&1 | Out-String).Trim()",
-		"  nxLog \"schtasks /Run exit code $($LASTEXITCODE): $nxOut\"",
-		"  Start-Sleep -Seconds 1",
-		"  nxLog \"task state after /Run: $(nxTaskState)\"",
-		"} catch { nxLog \"restart failed: $_\" }",
-	}
-	return strings.Join(lines, "\n")
-}
-
-// windowsScriptBOM makes Windows PowerShell 5.1 read the script as UTF-8 instead of the ANSI code page.
-const windowsScriptBOM = "\xEF\xBB\xBF"
-
-// writeReplaceScriptFile writes the script to a new temp file in dir, prefixed with a UTF-8 BOM, and returns its path.
-func writeReplaceScriptFile(dir, body string) (string, error) {
-	script, err := os.CreateTemp(dir, ".nexterm-replace-*.ps1")
-	if err != nil {
-		return "", err
-	}
-	path := script.Name()
-	if _, err := script.WriteString(windowsScriptBOM + body); err != nil {
-		_ = script.Close()
-		_ = os.Remove(path)
-		return "", err
-	}
-	if err := script.Close(); err != nil {
-		_ = os.Remove(path)
-		return "", err
-	}
-	return path, nil
-}
-
-// renderReplaceScriptWindows is the windows counterpart of renderReplaceScriptUnix:
-// powershell deferred replacement, rolling back to the old binary on failure. RestartBlock runs only after a successful swap-in.
-func renderReplaceScriptWindows(p windowsReplaceScript) string {
-	var b strings.Builder
-	b.WriteString("$nxLogPath = " + psQuote(p.LogPath) + "\n")
-	b.WriteString("function nxLog($m) { if ($nxLogPath) { try { Add-Content -LiteralPath $nxLogPath -Encoding UTF8 -Value ((Get-Date -Format o) + ' ' + $m) -ErrorAction Stop } catch {} } }\n")
-	if p.WaitPID > 0 {
-		b.WriteString("try { Wait-Process -Id " + strconv.Itoa(p.WaitPID) + " -Timeout " + strconv.Itoa(p.WaitTimeoutSeconds) + " -ErrorAction SilentlyContinue } catch {}\n")
-	}
-	b.WriteString("$nxTarget = " + psQuote(filepath.Clean(p.TargetPath)) + "\n")
-	b.WriteString("$nxNew = " + psQuote(filepath.Clean(p.NewPath)) + "\n")
-	b.WriteString("$nxBak = " + psQuote(filepath.Clean(p.TargetPath)+".nexterm-old") + "\n")
-	b.WriteString("try { Move-Item -LiteralPath $nxTarget -Destination $nxBak -Force -ErrorAction Stop } catch {}\n")
-	b.WriteString("try {\n")
-	b.WriteString("  Move-Item -LiteralPath $nxNew -Destination $nxTarget -Force -ErrorAction Stop\n")
-	b.WriteString("  Remove-Item -LiteralPath $nxBak -Force -ErrorAction SilentlyContinue\n")
-	b.WriteString("  nxLog 'replaced binary'\n")
-	b.WriteString(p.RestartBlock + "\n")
-	b.WriteString("} catch {\n")
-	b.WriteString("  try { Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force -ErrorAction Stop } catch {}\n")
-	b.WriteString("  nxLog 'swap failed; rolled back to the previous binary'\n")
-	b.WriteString("}\n")
-	b.WriteString("Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue\n")
-	return b.String()
 }
 
 // appendUpgradeLog best-effort appends one line to the upgrade log; logging must never fail an upgrade.
