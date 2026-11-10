@@ -91,6 +91,11 @@ interface AuthState {
   changePassword: (oldPassword: string, newPassword: string) => Promise<RecoveryKeyIssue>;
   recoveryReset: (username: string, recoveryKey: string, newPassword: string) => Promise<void>;
   unlockDEK: (password: string) => Promise<void>;
+  /**
+   * Proves the signed-in user knows the account password by opening the account's data key envelope locally; the
+   * password never leaves the browser. A data key opened this way is adopted when none was unlocked yet.
+   */
+  verifyPassword: (password: string) => Promise<void>;
   lockDEK: () => void;
   clearPendingRecoveryKey: () => void;
   clearError: () => void;
@@ -519,6 +524,17 @@ export const useAuth = create<AuthState>((set, get) => ({
       set({ error: toAppError(e) });
       throw e;
     }
+  },
+
+  verifyPassword: async (password) => {
+    const dek = await fetchAndUnwrapDEK(password);
+    if (get().dek !== null) {
+      zeroize(dek);
+      return;
+    }
+    set({ dek });
+    const userId = get().user?.id;
+    if (userId) persistDek(userId, dek);
   },
 
   lockDEK: () => {

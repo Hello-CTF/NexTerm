@@ -10,6 +10,7 @@ import {
 import { keybindingRepeats, matchAppKeybinding } from "../keybindings";
 import { hideMobileHome } from "./mobileHome";
 import { isKeyboardCaptured } from "../inputCapture";
+import { requestAppLock } from "../appLock";
 
 export interface AppKeybindingHandlers {
   leftDockOpen: boolean;
@@ -145,6 +146,10 @@ export function useAppKeybindings({
           void lockVault();
           return;
         }
+        case "lockApp":
+          e.preventDefault();
+          void requestAppLock();
+          return;
         case "switchTab": {
           if (hit.digit === null) return;
           const st = useUi.getState();

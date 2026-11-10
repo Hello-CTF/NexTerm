@@ -152,7 +152,7 @@ describe("Settings section navigation", () => {
     expect(groupShown("security")).toBe(true);
     expect(groupShown("appearance")).toBe(false);
     expect(localStorage.getItem("nexterm.settingsGroup.v1")).toBe("security");
-    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "安全", "凭据保护", "已知主机", "生产安全", "账号与数据", "关于"]);
+    expect(tocButtons().map((c) => c.textContent?.trim())).toEqual(["外观", "终端", "通知", "快捷键与快捷命令", "AI", "安全", "凭据保护", "锁定 NexTerm", "已知主机", "生产安全", "账号与数据", "关于"]);
 
     mounted.unmount();
     mounted = withClient(createElement(SettingsView));

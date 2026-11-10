@@ -41,6 +41,7 @@ import { ModelManager } from "../ai/ModelPanel";
 import { PrivacyCard } from "./PrivacyCard";
 import { AiRulesCard } from "./AiRulesCard";
 import { VaultCard } from "./VaultCard";
+import { AppLockCard } from "./AppLockCard";
 import { AppearanceCard } from "./AppearanceCard";
 import { LocalHelperSettings } from "./LocalHelperSettings";
 import { NotificationSettings } from "../inbox/NotificationSettings";
@@ -130,6 +131,7 @@ const ALL_SETTINGS_SECTIONS = [
   { id: "settings-ai-skills", label: t("技能"), icon: IconLayers, group: "ai" },
   { id: "settings-memory", label: t("记忆"), icon: IconBot, group: "ai" },
   { id: "settings-vault", label: t("凭据保护"), icon: IconLock, group: "security" },
+  { id: "settings-app-lock", label: t("锁定 NexTerm"), icon: IconLock, group: "security" },
   { id: "settings-known-hosts", label: t("已知主机"), icon: IconShieldCheck, group: "security" },
   { id: "settings-production", label: t("生产安全"), icon: IconAlert, group: "security" },
   { id: "settings-account", label: t("账号与同步"), icon: IconServer, group: "account" },
@@ -1038,6 +1040,8 @@ export function SettingsView({ active = true }: { active?: boolean }) {
         </div>
         <div className="flex flex-col gap-4" hidden={group !== "security"} data-settings-group="security">
         <VaultCard />
+
+        <AppLockCard />
 
         <div id="settings-known-hosts" className="scroll-mt-12">
           <KnownHostsCard />

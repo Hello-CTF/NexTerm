@@ -30,12 +30,14 @@ export type KeybindingActionId =
   | "reclaimTakeover"
   | "openSettings"
   | "focusAiInput"
-  | "lockVault";
+  | "lockVault"
+  | "lockApp";
 
 export interface KeybindingAction {
   id: KeybindingActionId;
   label: string;
-  defaultBinding: string;
+  /** null leaves the action unbound until the user assigns a chord. */
+  defaultBinding: string | null;
   /** An extra chord that also triggers the action on macOS desktop while the default binding is in effect. */
   macDefaultBinding?: string;
   /** The default on macOS (desktop and web) in place of defaultBinding. */
@@ -72,6 +74,8 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "openSettings", label: t("打开设置"), defaultBinding: "Mod+," },
   { id: "focusAiInput", label: t("聚焦 AI 输入框"), defaultBinding: "Mod+Shift+a" },
   { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
+  // Mod+Shift+L already locks the vault, so locking the whole app has no default chord.
+  { id: "lockApp", label: t("锁定 NexTerm"), defaultBinding: null },
 ];
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
@@ -97,6 +101,7 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "openSettings",
   "focusAiInput",
   "lockVault",
+  "lockApp",
 ];
 
 // Actions that repeat while held: moving between tabs, workspaces and panes. Every other app shortcut runs once per
@@ -117,7 +122,7 @@ export function keybindingRepeats(id: KeybindingActionId): boolean {
 }
 
 /** The built-in default binding of an action on the current (or given) platform. */
-export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string {
+export function defaultBindingFor(action: KeybindingAction, mac = isMac()): string | null {
   return mac && action.macBinding ? action.macBinding : action.defaultBinding;
 }
 
@@ -354,7 +359,7 @@ export type KeybindingSnapshot = Readonly<Record<KeybindingActionId, string | nu
 const ACTION_IDS = new Set<string>(KEYBINDING_ACTIONS.map((a) => a.id));
 const ACTIONS_BY_ID = new Map(KEYBINDING_ACTIONS.map((a) => [a.id, a]));
 
-function builtinDefault(id: KeybindingActionId): string | undefined {
+function builtinDefault(id: KeybindingActionId): string | null | undefined {
   const action = ACTIONS_BY_ID.get(id);
   return action ? defaultBindingFor(action) : undefined;
 }

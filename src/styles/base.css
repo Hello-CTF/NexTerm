@@ -98,3 +98,8 @@
     background: transparent;
   }
 }
+
+/* App lock: everything outside the lock screen stays hidden (not only covered) until NexTerm is unlocked. */
+[data-nx-app-locked] {
+  visibility: hidden !important;
+}
