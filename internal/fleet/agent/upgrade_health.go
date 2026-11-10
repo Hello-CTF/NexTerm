@@ -44,7 +44,7 @@ func resolvedExecutable(executable string) string {
 
 // markUpgradeHealthy writes the health marker the replace script waits for. It only writes while a replacement is in
 // progress, which the kept backup of the previous binary shows, so a regular start leaves no files behind. It also
-// drops the failure records of the now healthy version. It reports whether the marker was written.
+// drops the failure records of the now healthy version and the backup of the previous binary. It reports whether the marker was written.
 func markUpgradeHealthy(executable, version string) (bool, error) {
 	target := resolvedExecutable(executable)
 	if _, err := os.Stat(target + upgradeBackupSuffix); err != nil {
@@ -69,6 +69,9 @@ func markUpgradeHealthy(executable, version string) (bool, error) {
 		return false, err
 	}
 	forgetUpgradeFailures(target, version)
+	// The new binary is confirmed, so the backup is no longer needed; removing it here keeps a reboot while the
+	// script waits from leaving a stale backup behind.
+	_ = os.Remove(target + upgradeBackupSuffix)
 	return true, nil
 }
 

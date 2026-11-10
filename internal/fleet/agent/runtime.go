@@ -962,11 +962,18 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 		return
 	}
 	// A version whose new binary never reported healthy is not retried at once: the rollback restarted this binary,
-	// which would otherwise download it again and form a replace-rollback loop.
-	if retryAt, failure, failed := upgradeRetryAfter(readUpgradeFailures(r.upgrader.Executable), serverVersion); failed && r.now().Before(retryAt) {
+	// which would otherwise download it again and form a replace-rollback loop. The process stays alive (exiting would
+	// not be restarted by the service manager), keeps syncing the rollback to the server and retries once the backoff ends.
+	for {
+		retryAt, failure, failed := upgradeRetryAfter(readUpgradeFailures(r.upgrader.Executable), serverVersion)
+		if !failed || !r.now().Before(retryAt) {
+			break
+		}
 		r.logger.Error("control channel protocol mismatch; the server-reported version was rolled back recently, postponing self-upgrade", "target_version", serverVersion, "retry_after", retryAt)
-		r.fatal(&selfUpgradeFailedError{cause: fmt.Errorf("%s；%s 后才会再次自动升级到该版本，可执行 agent update --version %s 手动重试", failure.describe(), retryAt.Local().Format(time.DateTime), serverVersion)})
-		return
+		r.setUpgradeFailure(fmt.Sprintf("%s；%s 后会再次自动升级到该版本，也可执行 agent update --version %s 手动重试", failure.describe(), retryAt.Local().Format(time.DateTime), serverVersion))
+		if !r.sleepFor(ctx, retryAt.Sub(r.now())) {
+			return
+		}
 	}
 	r.logger.Info("control channel protocol mismatch; attempting self-upgrade from the official release source", "target_version", serverVersion)
 	if err := r.upgrader.Upgrade(ctx, serverVersion); err != nil {

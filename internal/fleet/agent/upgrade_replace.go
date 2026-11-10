@@ -115,8 +115,7 @@ func unixRestartCommand(goos string) string {
 }
 
 // renderReplaceScriptUnix generates the deferred replacement script. A running process cannot overwrite itself, so the
-// script waits for WaitPID to exit, then swaps the new binary in with same-directory renames, keeping the previous
-// binary as a backup. When restartCmd succeeds it waits up to HealthTimeoutSeconds for the new agent's health marker;
+// script waits for WaitPID to exit, then keeps the previous binary as a backup link and swaps the new binary in with one atomic same-directory rename. When restartCmd succeeds it waits up to HealthTimeoutSeconds for the new agent's health marker;
 // without it the backup is restored, the failure recorded and restartCmd run again. When restartCmd fails (no service
 // installed) nothing can confirm health, so the new binary stays, as before health checks existed. No path is ever
 // left without a binary.
@@ -151,7 +150,10 @@ func renderReplaceScriptUnix(p replacePlan, restartCmd string) string {
 	}
 	lines = append(lines,
 		"rm -f "+marker,
-		"mv -f "+target+" "+backup+" 2>/dev/null || true",
+		// Keep the previous binary as a hard link (a copy across filesystems) and replace the target with one atomic
+		// rename, so the target path always holds a binary even if the machine reboots mid-swap.
+		"rm -f "+backup,
+		"ln -f "+target+" "+backup+" 2>/dev/null || cp -p "+target+" "+backup+" 2>/dev/null || true",
 		"if mv -f "+shQuote(p.NewPath)+" "+target+"; then",
 		"  chmod 0755 "+target,
 		`  nx_log "replaced binary"`,
@@ -178,7 +180,7 @@ func renderReplaceScriptUnix(p replacePlan, restartCmd string) string {
 		`    nx_log "restart failed; health check skipped, keeping the new binary"`,
 		"  fi",
 		"else",
-		"  mv -f "+backup+" "+target+" 2>/dev/null || true",
+		"  rm -f "+backup,
 		`  nx_log "swap failed; rolled back to the previous binary"`,
 		"fi",
 		`rm -f "$0"`,
@@ -272,6 +274,8 @@ func renderReplaceScriptWindows(p windowsReplaceScript) string {
 	b.WriteString("$nxVersion = " + psQuote(p.Version) + "\n")
 	b.WriteString("function nxHealthy { try { (Get-Content -LiteralPath $nxMarker -Raw -ErrorAction Stop).Trim() -eq $nxVersion } catch { $false } }\n")
 	b.WriteString("Remove-Item -LiteralPath $nxMarker -Force -ErrorAction SilentlyContinue\n")
+	// A failed rollback cleanup can leave a moved-aside binary behind; remove those before this run starts.
+	b.WriteString("try { Get-ChildItem -LiteralPath (Split-Path -Parent $nxTarget) -Filter ((Split-Path -Leaf $nxTarget) + '.nexterm-bad*') -Force -ErrorAction Stop | Remove-Item -Force -ErrorAction SilentlyContinue } catch {}\n")
 	b.WriteString("try { Move-Item -LiteralPath $nxTarget -Destination $nxBak -Force -ErrorAction Stop } catch {}\n")
 	b.WriteString("$nxSwapped = $false\n")
 	b.WriteString("try {\n")
@@ -298,7 +302,7 @@ func renderReplaceScriptWindows(p windowsReplaceScript) string {
 	b.WriteString("    } elseif (Test-Path -LiteralPath $nxBak) {\n")
 	b.WriteString("      nxLog 'new agent did not report a control channel connection within " + strconv.Itoa(p.HealthTimeoutSeconds) + "s; restoring the previous binary'\n")
 	b.WriteString("      nxStop\n")
-	b.WriteString("      $nxBad = $nxTarget + '.nexterm-bad'\n")
+	b.WriteString("      $nxBad = $nxTarget + '.nexterm-bad-' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()\n")
 	b.WriteString("      try {\n")
 	b.WriteString("        Move-Item -LiteralPath $nxTarget -Destination $nxBad -Force -ErrorAction Stop\n")
 	b.WriteString("        Move-Item -LiteralPath $nxBak -Destination $nxTarget -Force -ErrorAction Stop\n")

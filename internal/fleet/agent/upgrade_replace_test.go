@@ -93,6 +93,7 @@ func TestMarkUpgradeHealthyOnlyDuringAReplacement(t *testing.T) {
 	if err != nil || string(content) != "1.2.3" {
 		t.Fatalf("marker = %q, %v", content, err)
 	}
+	requireMissing(t, plan.BackupPath(), "the backup is dropped once the new binary is confirmed")
 	failures := readUpgradeFailures(target)
 	if len(failures) != 1 || failures[0].Version != "1.2.2" {
 		t.Fatalf("only the healthy version's failures are forgotten, got %+v", failures)
