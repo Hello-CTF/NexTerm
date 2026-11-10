@@ -10,23 +10,26 @@ import (
 )
 
 // scheduleDeferredReplace starts the deferred replacement script via powershell with a hidden window: the script waits for
-// this process to exit, then completes the binary switch, and automatically rolls back to the old binary on failure.
-func scheduleDeferredReplace(newPath, targetPath, logPath string) (bool, error) {
-	body := renderReplaceScriptWindows(windowsReplaceScript{
-		NewPath: newPath, TargetPath: targetPath, WaitPID: os.Getpid(), WaitTimeoutSeconds: replaceWaitTimeoutSeconds,
-		LogPath: logPath, RestartBlock: windowsRestartBlock(windowsTaskName),
-	})
-	scriptPath, err := writeReplaceScriptFile(filepath.Dir(newPath), body)
+// this process to exit, completes the binary switch, restarts the task and waits for the new agent to report healthy,
+// rolling back to the old binary otherwise.
+func scheduleDeferredReplace(plan replacePlan) (bool, error) {
+	body := renderReplaceScriptWindows(newWindowsReplaceScript(plan, windowsTaskName))
+	scriptPath, err := writeReplaceScriptFile(filepath.Dir(plan.NewPath), body)
 	if err != nil {
 		return false, err
 	}
-	cmd, detached, err := startReplaceScript(scriptPath, logPath)
+	cmd, detached, err := startReplaceScript(scriptPath, plan.LogPath)
 	if err != nil {
 		_ = os.Remove(scriptPath)
 		return false, err
 	}
 	go func() { _ = cmd.Wait() }()
 	return detached, nil
+}
+
+// prepareStagedCommand keeps the staged binary's self-check from opening a console window.
+func prepareStagedCommand(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
 }
 
 const (

@@ -44,6 +44,8 @@ type taskStopper interface {
 const (
 	updateNoticeTaskRestart = "约 %d 秒后替换程序文件并重新启动计划任务"
 	updateNoticeTaskManual  = "约 %d 秒后替换程序文件；随后请重启设备代理的计划任务或服务，以载入新版本"
+	// updateNoticeHealth follows a notice that the service restarts on its own: the replace script then waits for the new agent.
+	updateNoticeHealth = "新版本须在启动后 %d 秒内连上服务端，否则会自动恢复当前版本；结果记录在数据目录的 " + upgradeLogName
 )
 
 // latestReleaseURL derives the "latest release" page from the fixed release download base.
@@ -213,12 +215,14 @@ func cliUpdate(args []string, getenv func(string) string, stdout, stderr io.Writ
 		}
 		if stopErr == nil {
 			fmt.Fprintf(stdout, updateNoticeTaskRestart+"\n", replaceScriptDelaySeconds)
+			fmt.Fprintf(stdout, updateNoticeHealth+"\n", replaceHealthTimeoutSeconds)
 			break
 		}
 		printCLIError(stderr, "agent update: 无法结束正在运行的计划任务：", stopErr)
 		fmt.Fprintf(stdout, updateNoticeTaskManual+"\n", replaceScriptDelaySeconds)
 	case state.Installed:
 		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件并自动重启后台服务\n", replaceScriptDelaySeconds)
+		fmt.Fprintf(stdout, updateNoticeHealth+"\n", replaceHealthTimeoutSeconds)
 	default:
 		fmt.Fprintf(stdout, "约 %d 秒后替换程序文件；后台服务未安装，如设备代理正在手动运行，请自行重启\n", replaceScriptDelaySeconds)
 	}

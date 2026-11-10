@@ -292,7 +292,7 @@ func TestCLIRunSelfUpgradeStagedExitsOK(t *testing.T) {
 	stubCLIRuntimeWithUpgrader(t, &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: target,
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	})
 	dataDir := t.TempDir()
 	getenv := func(key string) string {
@@ -325,7 +325,7 @@ func TestCLIRunProtocolMismatchExitCode(t *testing.T) {
 	stubCLIRuntimeWithUpgrader(t, &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	})
 	dataDir := t.TempDir()
 	getenv := func(key string) string {

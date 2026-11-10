@@ -10,13 +10,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/idleread"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
-const (
-	apiTimeout      = 20 * time.Second
-	downloadTimeout = 10 * time.Minute
+const apiTimeout = 20 * time.Second
+
+// An update download fails once it receives no data for downloadIdleTimeout, and after downloadMaxDuration however
+// steadily it progresses, so a slow link still completes; these are vars for tests.
+var (
+	downloadIdleTimeout = 60 * time.Second
+	downloadMaxDuration = 2 * time.Hour
 )
 
 type Status struct {
@@ -229,7 +234,9 @@ func (m *Manager) resolveAsset(ctx context.Context, version string, channel Rele
 }
 
 func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string) error {
-	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
+	capped, cancelCap := context.WithTimeout(ctx, downloadMaxDuration)
+	defer cancelCap()
+	ctx, watchdog, cancel := idleread.WithIdleTimeout(capped, downloadIdleTimeout)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
 	if err != nil {
@@ -238,8 +245,10 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 	request.Header.Set("User-Agent", "NexTerm-updater")
 	response, err := m.httpClient().Do(request)
 	if err != nil {
-		return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, err)
+		return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, idleread.Cause(ctx, err))
 	}
+	watchdog.Touch()
+	body := watchdog.Reader(response.Body)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return userErrorf(UserErrorIO, "下载 %s 返回 %s", asset.Name, response.Status)
@@ -257,7 +266,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 	var transferred int64
 	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Total: total})
 	for {
-		count, readErr := response.Body.Read(buffer)
+		count, readErr := body.Read(buffer)
 		if count > 0 {
 			if _, err := file.Write(buffer[:count]); err != nil {
 				return userErrorf(UserErrorIO, "写入 %s 失败: %w", asset.Name, err)
@@ -269,7 +278,7 @@ func (m *Manager) download(ctx context.Context, asset Asset, dest, taskID string
 			break
 		}
 		if readErr != nil {
-			return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, readErr)
+			return userErrorf(UserErrorIO, "下载 %s 失败: %w", asset.Name, idleread.Cause(ctx, readErr))
 		}
 	}
 	m.emit(ctx, Progress{TaskID: taskID, Phase: PhaseDownload, Transferred: transferred, Total: total, Done: true})

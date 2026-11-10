@@ -523,7 +523,7 @@ func TestRuntimeSelfUpgradeOnProtocolMismatch(t *testing.T) {
 	upgrader := &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: target,
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: captureReplace(&replaced),
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: captureReplace(&replaced),
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 
@@ -560,7 +560,7 @@ func TestRuntimeSelfUpgradeExhaustsRetries(t *testing.T) {
 	upgrader := &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), "nexterm-agent"),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 
@@ -589,7 +589,7 @@ func TestRuntimeSelfUpgradeCancelDuringDownloadStopsCleanly(t *testing.T) {
 	writeRuntimeConfig(t, dataDir, entries, true)
 	upgrader := &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
-		MaxAttempts: 1, scheduleReplace: func(string, string) error { return nil },
+		MaxAttempts: 1, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 
@@ -644,7 +644,7 @@ func TestRuntimeSelfUpgradeSkipsCurrentVersion(t *testing.T) {
 	upgrader := &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 
@@ -671,7 +671,7 @@ func TestRuntimeSelfUpgradeRefusesDowngrade(t *testing.T) {
 	upgrader := &Upgrader{
 		PublicKey: testReleaseKey.PublicKeyFile(), BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 
@@ -989,7 +989,7 @@ func TestRuntimeSelfUpgradeRefusalKeepsReason(t *testing.T) {
 	upgrader := &Upgrader{
 		BaseURL: release.URL, Executable: filepath.Join(t.TempDir(), agentBinaryName(runtime.GOOS)),
 		MaxAttempts: 3, Backoff: time.Millisecond,
-		sleep: instantSleep, scheduleReplace: func(string, string) error { return nil },
+		sleep: instantSleep, verifyStaged: skipStagedCheck, scheduleReplace: func(string, string) error { return nil },
 	}
 	agentRuntime := newUpgradeTestRuntime(t, dataDir, entries, upgrader)
 

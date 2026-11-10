@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -138,6 +140,11 @@ type Runtime struct {
 	desired      ConfigUpdate
 	serviceState ServiceState
 	currentURL   string
+	// upgradeFailure describes the last failed or rolled-back self-upgrade; it is appended to the reported
+	// service state error so the server shows why the device still runs the old version.
+	upgradeFailure string
+	// healthyOnce writes the upgrade health marker once, on the first successful control-channel connection.
+	healthyOnce sync.Once
 	// purposeHandlers serves non-terminal bridge purposes; terminal is built in and never enters the map.
 	purposeHandlers map[string]PurposeHandler
 
@@ -378,6 +385,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	}
 	r.currentURL = config.CurrentURL
 	r.mu.Unlock()
+	r.loadUpgradeFailure()
 	if r.desiredSnapshot().TerminalEnabled {
 		r.settleStateDir(ctx)
 	}
@@ -428,6 +436,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 		case err := <-r.fatalCh:
 			cancel()
 			r.loopWg.Wait()
+			var failed *selfUpgradeFailedError
+			if errors.As(err, &failed) && ctx.Err() == nil {
+				// The control channel stays refused, so the sync endpoint is the only way to tell the server why.
+				r.setUpgradeFailure(failed.cause.Error())
+				r.syncOnce(ctx)
+			}
 			return err
 		case <-r.reconfigCh:
 			if r.desiredSnapshot().TerminalEnabled {
@@ -535,7 +549,45 @@ func (r *Runtime) serviceStateSnapshot() *ServiceState {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	snapshot := r.serviceState
+	if r.upgradeFailure != "" {
+		snapshot.LastError = strings.TrimPrefix(snapshot.LastError+"; "+r.upgradeFailure, "; ")
+	}
 	return &snapshot
+}
+
+// loadUpgradeFailure picks up a rollback the replace script recorded, so the next sync reports it to the server.
+func (r *Runtime) loadUpgradeFailure() {
+	if r.upgrader == nil {
+		return
+	}
+	// Only a recent rollback is reported, so an old record does not stay on the device list for good.
+	if failure, ok := latestUpgradeFailure(readUpgradeFailures(r.upgrader.Executable)); ok && r.now().Sub(failure.At) < upgradeFailureMaxBackoff {
+		r.logger.Warn("a previous self-upgrade was rolled back", "target_version", failure.Version, "reason", failure.Reason, "at", failure.At)
+		r.setUpgradeFailure(failure.describe())
+	}
+}
+
+func (r *Runtime) setUpgradeFailure(text string) {
+	r.mu.Lock()
+	r.upgradeFailure = text
+	r.mu.Unlock()
+}
+
+// confirmUpgradeHealthy tells a waiting replace script that this binary connected, so it keeps it instead of rolling back.
+func (r *Runtime) confirmUpgradeHealthy() {
+	if r.upgrader == nil {
+		return
+	}
+	r.healthyOnce.Do(func() {
+		written, err := markUpgradeHealthy(r.upgrader.Executable, version.Version)
+		switch {
+		case err != nil:
+			r.logger.Warn("write self-upgrade health marker failed; the replace script will roll back", "error", err)
+		case written:
+			r.logger.Info("self-upgrade confirmed after the first control channel connection", "version", version.Version)
+			r.setUpgradeFailure("")
+		}
+	})
 }
 
 func (r *Runtime) revoke() {
@@ -814,6 +866,7 @@ func (r *Runtime) channelLoop(ctx context.Context) {
 			continue
 		}
 		r.prober.ReportSuccess(client)
+		r.confirmUpgradeHealthy()
 		r.ownerRecovered()
 		r.notifyCurrentURL(ctx, client)
 		backoff = retrySleep
@@ -906,6 +959,13 @@ func (r *Runtime) selfUpgrade(ctx context.Context, serverVersion string) {
 	if cmp, ok := compareReleaseVersions(version.Version, serverVersion); ok && cmp > 0 {
 		r.logger.Error("control channel protocol mismatch but the server-reported version is lower than the running version; refusing a server-driven downgrade, use 'nexterm-agent update --force' to downgrade manually", "current_version", version.Version, "target_version", serverVersion)
 		r.fatal(ErrProtocolMismatch)
+		return
+	}
+	// A version whose new binary never reported healthy is not retried at once: the rollback restarted this binary,
+	// which would otherwise download it again and form a replace-rollback loop.
+	if retryAt, failure, failed := upgradeRetryAfter(readUpgradeFailures(r.upgrader.Executable), serverVersion); failed && r.now().Before(retryAt) {
+		r.logger.Error("control channel protocol mismatch; the server-reported version was rolled back recently, postponing self-upgrade", "target_version", serverVersion, "retry_after", retryAt)
+		r.fatal(&selfUpgradeFailedError{cause: fmt.Errorf("%s；%s 后才会再次自动升级到该版本，可执行 agent update --version %s 手动重试", failure.describe(), retryAt.Local().Format(time.DateTime), serverVersion)})
 		return
 	}
 	r.logger.Info("control channel protocol mismatch; attempting self-upgrade from the official release source", "target_version", serverVersion)
