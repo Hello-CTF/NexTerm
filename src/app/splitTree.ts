@@ -233,6 +233,29 @@ export function setSplitRatio(tree: SplitNode, splitId: string, ratio: number): 
   return replaceAt(tree, path, { ...node, ratio: next });
 }
 
+// Panes a node lines up along `dir`: a run of same-direction splits adds up, a perpendicular split counts its wider side.
+function spanAlong(node: SplitNode, dir: SplitDir): number {
+  if (node.type === "leaf") return 1;
+  const a = spanAlong(node.a, dir);
+  const b = spanAlong(node.b, dir);
+  return node.dir === dir ? a + b : Math.max(a, b);
+}
+
+/**
+ * Sets every split's ratio so panes lined up in the same direction get equal shares, e.g. three side-by-side
+ * panes each take a third. Ratios stay within [SPLIT_RATIO_MIN, SPLIT_RATIO_MAX]; the shape and ids are kept,
+ * and the same reference comes back when nothing changes.
+ */
+export function equalizeRatios(tree: SplitNode): SplitNode {
+  if (tree.type === "leaf") return tree;
+  const a = equalizeRatios(tree.a);
+  const b = equalizeRatios(tree.b);
+  const spanA = spanAlong(tree.a, tree.dir);
+  const ratio = clampRatio(spanA / (spanA + spanAlong(tree.b, tree.dir)));
+  if (a === tree.a && b === tree.b && Math.abs(ratio - tree.ratio) < EPSILON) return tree;
+  return { ...tree, ratio, a, b };
+}
+
 /** Exchanges the panes shown in two leaves; leaf ids and the shape stay put. */
 export function swapPanes(tree: SplitNode, first: string, second: string): SplitNode {
   if (first === second) return tree;

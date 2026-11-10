@@ -37,7 +37,13 @@ export type KeybindingActionId =
   | "openSettings"
   | "focusAiInput"
   | "lockVault"
-  | "lockApp";
+  | "lockApp"
+  | "terminalFontIncrease"
+  | "terminalFontDecrease"
+  | "terminalFontReset"
+  | "toggleZoomPane"
+  | "equalizeSplits"
+  | "showShortcuts";
 
 export interface KeybindingAction {
   id: KeybindingActionId;
@@ -48,6 +54,8 @@ export interface KeybindingAction {
   macDefaultBinding?: string;
   /** The default on macOS (desktop and web) in place of defaultBinding. */
   macBinding?: string;
+  /** Extra desktop chords that also trigger the action while the default binding is in effect. */
+  desktopExtraBindings?: string[];
 }
 
 export const KEYBINDING_ACTIONS: KeybindingAction[] = [
@@ -90,6 +98,21 @@ export const KEYBINDING_ACTIONS: KeybindingAction[] = [
   { id: "lockVault", label: t("锁定凭据库"), defaultBinding: "Mod+Shift+l" },
   // Mod+Shift+L already locks the vault, so locking the whole app has no default chord.
   { id: "lockApp", label: t("锁定 NexTerm"), defaultBinding: null },
+  // Browsers keep Ctrl+= / Ctrl+- / Ctrl+0 for page zoom, so the web build adds Alt.
+  // Mod+Shift+= is Ctrl/Cmd+Plus on most layouts. The web build adds none: there Ctrl+Shift+Alt+= equalizes the splits.
+  {
+    id: "terminalFontIncrease",
+    label: t("增大终端字号"),
+    defaultBinding: WEB ? "Ctrl+Alt+=" : "Mod+=",
+    desktopExtraBindings: ["Mod+Shift+="],
+  },
+  { id: "terminalFontDecrease", label: t("减小终端字号"), defaultBinding: WEB ? "Ctrl+Alt+-" : "Mod+-" },
+  { id: "terminalFontReset", label: t("重置终端字号"), defaultBinding: WEB ? "Ctrl+Alt+0" : "Mod+0" },
+  { id: "toggleZoomPane", label: t("最大化 / 还原当前窗格"), defaultBinding: "Mod+Shift+Enter" },
+  { id: "equalizeSplits", label: t("均分所有窗格"), defaultBinding: WEB ? "Ctrl+Shift+Alt+=" : "Mod+Alt+=" },
+  // Not withheld from a focused terminal: Ctrl+/ is readline's undo, so the terminal keeps any chord it encodes and
+  // the cheat sheet opens only where the chord reaches the app (elsewhere, or as Cmd+/ on macOS).
+  { id: "showShortcuts", label: t("快捷键速查"), defaultBinding: "Mod+/" },
 ];
 
 const APP_ACTION_ORDER: KeybindingActionId[] = [
@@ -116,10 +139,15 @@ const APP_ACTION_ORDER: KeybindingActionId[] = [
   "focusAiInput",
   "lockVault",
   "lockApp",
+  "terminalFontIncrease",
+  "terminalFontDecrease",
+  "terminalFontReset",
+  "toggleZoomPane",
+  "equalizeSplits",
 ];
 
-// Actions that repeat while held: moving between tabs, workspaces and panes. Every other app shortcut runs once per
-// press, so holding it cannot open, close or split repeatedly.
+// Actions that repeat while held: moving between tabs, workspaces and panes, and stepping the terminal font size.
+// Every other app shortcut runs once per press, so holding it cannot open, close or split repeatedly.
 const REPEATABLE_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingActionId>([
   "nextTab",
   "previousTab",
@@ -129,6 +157,8 @@ const REPEATABLE_ACTIONS: ReadonlySet<KeybindingActionId> = new Set<KeybindingAc
   "focusPaneRight",
   "focusPaneUp",
   "focusPaneDown",
+  "terminalFontIncrease",
+  "terminalFontDecrease",
 ]);
 
 export function keybindingRepeats(id: KeybindingActionId): boolean {
@@ -212,6 +242,11 @@ function logicalEventKey(event: KeyEventLike): string | null {
   if (code === "BracketRight") return "]";
   // Shift turns the key into "|" on most layouts; the physical key keeps Mod+Shift+\ bindable.
   if (code === "Backslash") return "\\";
+  // The physical keys keep Mod+= and Mod+- bindable on layouts that put other characters there.
+  if (code === "Equal") return "=";
+  if (code === "Minus") return "-";
+  // The keypad plus types "+", which cannot be bound; it stands for "=", the unshifted plus key (Mod+= zooms in).
+  if (code === "NumpadAdd") return "=";
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (event.key === " ") return "Space";
   if (NAMED_KEYS.has(event.key)) return event.key;
@@ -304,13 +339,21 @@ export function formatBindingAria(binding: string | null): string | null {
   return parts.join("+");
 }
 
+/**
+ * Whether Mod means Cmd alone. On macOS desktop Ctrl stays with the terminal (tmux prefix, readline), so Mod is Cmd;
+ * the web build keeps the Ctrl fallback because the browser reserves many Cmd chords.
+ */
+export function modIsMetaOnly(mac = isMac(), web = WEB): boolean {
+  return mac && !web;
+}
+
 export function matchBinding(event: KeyEventLike, binding: string): boolean {
   const parsed = parseBinding(binding);
   if (!parsed) return false;
   if (event.shiftKey !== parsed.shift) return false;
   if (event.altKey !== parsed.alt) return false;
   if (parsed.mod) {
-    if (!event.ctrlKey && !event.metaKey) return false;
+    if (modIsMetaOnly() ? !event.metaKey : !event.ctrlKey && !event.metaKey) return false;
   } else if (parsed.primary) {
     const primaryDown = isMac() ? event.metaKey : event.ctrlKey;
     const otherDown = isMac() ? event.ctrlKey : event.metaKey;
@@ -337,13 +380,17 @@ export function captureBinding(event: KeyEventLike): CaptureResult {
   if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return { kind: "modifier" };
   const key = logicalEventKey(event);
   if (key === null) return { kind: "invalid", reason: t("无法识别按键 {key}", { key: event.key }) };
-  const mod = event.ctrlKey || event.metaKey;
+  // On macOS desktop a captured Ctrl stays a literal Ctrl, since Mod there matches Cmd only.
+  const metaOnly = modIsMetaOnly();
+  const mod = metaOnly ? event.metaKey : event.ctrlKey || event.metaKey;
+  const ctrl = metaOnly && event.ctrlKey && !event.metaKey;
   const named = NAMED_KEYS.has(key) || /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
-  if (!mod && !event.shiftKey && !event.altKey && !named) {
+  if (!mod && !ctrl && !event.shiftKey && !event.altKey && !named) {
     return { kind: "invalid", reason: t("单个按键需要至少一个修饰键（Ctrl / Shift / Alt）") };
   }
   const parts: string[] = [];
   if (mod) parts.push("Mod");
+  else if (ctrl) parts.push("Ctrl");
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
   parts.push(key);
@@ -546,17 +593,20 @@ export function useKeybindings(): KeybindingSnapshot {
   return useSyncExternalStore(subscribeKeybindings, getKeybindings);
 }
 
+/**
+ * The chords that trigger `action` besides `binding`: the macOS desktop tab chords and the desktop extras, all only
+ * while the default binding is in effect.
+ */
+export function defaultExtraBindings(action: KeybindingAction, binding: string | null, mac = isMac(), web = WEB): string[] {
+  if (web || binding === null || binding !== action.defaultBinding) return [];
+  return [...(mac && action.macDefaultBinding ? [action.macDefaultBinding] : []), ...(action.desktopExtraBindings ?? [])];
+}
+
 function matchActionBinding(event: KeyEventLike, id: KeybindingActionId): boolean {
   const binding = currentSnapshot()[id];
   if (binding !== null && matchBinding(event, binding)) return true;
-  const action = KEYBINDING_ACTIONS.find((candidate) => candidate.id === id);
-  return Boolean(
-    action?.macDefaultBinding &&
-    binding === action.defaultBinding &&
-    !WEB &&
-    isMac() &&
-    matchBinding(event, action.macDefaultBinding),
-  );
+  const action = ACTIONS_BY_ID.get(id);
+  return action ? defaultExtraBindings(action, binding).some((extra) => matchBinding(event, extra)) : false;
 }
 
 export function matchKeybinding(event: KeyEventLike, id: KeybindingActionId): boolean {
@@ -638,7 +688,8 @@ function modifiersOverlap(a: ParsedBinding, b: ParsedBinding, mac: boolean): boo
   if (ka === kb) return true;
   const pair = new Set([ka, kb]);
   if (pair.has("none")) return false;
-  if (pair.has("mod")) return true;
+  // On macOS desktop Mod is Cmd only, so it shares chords with Meta and Primary but not with Ctrl.
+  if (pair.has("mod")) return !(modIsMetaOnly(mac) && pair.has("ctrl"));
   if (pair.has("primary") && pair.has("ctrl")) return !mac;
   if (pair.has("primary") && pair.has("meta")) return mac;
   if (pair.has("ctrl") && pair.has("meta")) return true;
@@ -665,10 +716,7 @@ export function bindingConflicts(
 ): KeybindingConflict[] {
   const parsed = KEYBINDING_ACTIONS.flatMap((action) => {
     const binding = bindings[action.id];
-    const candidates = [
-      binding,
-      !WEB && mac && binding === action.defaultBinding ? action.macDefaultBinding : undefined,
-    ];
+    const candidates = [binding, ...defaultExtraBindings(action, binding, mac)];
     return candidates
       .filter((candidate): candidate is string => Boolean(candidate))
       .map((candidate) => ({ action, binding: candidate }));

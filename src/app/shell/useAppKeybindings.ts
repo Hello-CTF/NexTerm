@@ -7,7 +7,9 @@ import {
   requestCloseTab,
   restoreClosedTab,
 } from "../store";
-import { keybindingRepeats, matchAppKeybinding } from "../keybindings";
+import { keybindingRepeats, matchAppKeybinding, matchKeybinding } from "../keybindings";
+import { resetTerminalFontSize, stepTerminalFontSize } from "../preferences";
+import { toggleShortcutsOverlay } from "./ShortcutsOverlay";
 import { hideMobileHome } from "./mobileHome";
 import { isKeyboardCaptured } from "../inputCapture";
 import { requestAppLock } from "../appLock";
@@ -55,7 +57,14 @@ export function useAppKeybindings({
       // A focused remote desktop owns every key; its release chord is handled by the pane, not here.
       if (isKeyboardCaptured()) return;
       const hit = matchAppKeybinding(e);
-      if (!hit) return;
+      if (!hit) {
+        // The cheat sheet is not withheld from terminals or editors: a chord they already handled stays theirs.
+        if (!e.defaultPrevented && !e.repeat && matchKeybinding(e, "showShortcuts")) {
+          e.preventDefault();
+          toggleShortcutsOverlay();
+        }
+        return;
+      }
       // Only navigation repeats while held; the same rule applies when a terminal has focus (terminalInput).
       if (e.repeat && !keybindingRepeats(hit.action)) {
         e.preventDefault();
@@ -140,6 +149,21 @@ export function useAppKeybindings({
           if (!activeTabId) return;
           e.preventDefault();
           void requestCloseTab(activeTabId);
+          return;
+        case "terminalFontIncrease":
+        case "terminalFontDecrease":
+          e.preventDefault();
+          stepTerminalFontSize(hit.action === "terminalFontIncrease" ? 1 : -1);
+          return;
+        case "terminalFontReset":
+          e.preventDefault();
+          resetTerminalFontSize();
+          return;
+        case "toggleZoomPane":
+          if (useUi.getState().toggleZoomPane()) e.preventDefault();
+          return;
+        case "equalizeSplits":
+          if (useUi.getState().equalizeSplits()) e.preventDefault();
           return;
         case "lockVault": {
           e.preventDefault();

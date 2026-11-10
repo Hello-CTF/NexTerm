@@ -39,14 +39,28 @@ function byChord(conflicts: TerminalShortcutConflict[], chord: string): Terminal
   return conflicts.find((conflict) => conflict.chord === chord);
 }
 
-const KEY_CODES: Record<string, number> = { "\\": 220, "[": 219, "]": 221, Tab: 9, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+const KEY_CODES: Record<string, number> = {
+  "\\": 220,
+  "[": 219,
+  "]": 221,
+  "=": 187,
+  "-": 189,
+  "/": 191,
+  Tab: 9,
+  Enter: 13,
+  ArrowLeft: 37,
+  ArrowUp: 38,
+  ArrowRight: 39,
+  ArrowDown: 40,
+};
 
 function domKey(chord: TerminalChord): KeyboardEventInit & { keyCode: number } {
   const { key } = chord;
   if (/^[a-z]$/.test(key)) {
     return { key: chord.shift ? key.toUpperCase() : key, code: `Key${key.toUpperCase()}`, keyCode: key.toUpperCase().charCodeAt(0) };
   }
-  const named = { "\\": "Backslash", "[": "BracketLeft", "]": "BracketRight" }[key];
+  if (/^[0-9]$/.test(key)) return { key, code: `Digit${key}`, keyCode: key.charCodeAt(0) };
+  const named = { "\\": "Backslash", "[": "BracketLeft", "]": "BracketRight", "=": "Equal", "-": "Minus", "/": "Slash" }[key];
   return { key, code: named ?? key, keyCode: KEY_CODES[key] ?? key.charCodeAt(0) };
 }
 
@@ -96,13 +110,31 @@ describe("terminal shortcut conflict table", () => {
     expect(byChord(conflicts, "Ctrl+Alt+L")).toMatchObject({ bytes: "\x1b\x0c", action: { id: "lockVault" } });
   });
 
-  it("lists Mod chords as Ctrl on macOS and leaves Cmd-only chords out", () => {
+  it("leaves Mod chords to the terminal on macOS desktop, where Mod is Cmd only", () => {
     const conflicts = terminalShortcutConflicts(getKeybindings(), true, false);
-    expect(byChord(conflicts, "Ctrl+W")).toMatchObject({ action: { id: "closeTab" } });
-    expect(byChord(conflicts, "Ctrl+Shift+]")).toMatchObject({ action: { id: "nextTab" } });
+    for (const chord of ["Ctrl+W", "Ctrl+B", "Ctrl+T", "Ctrl+J", "Ctrl+\\", "Ctrl+1…9", "Ctrl+Shift+]", "Ctrl+Alt+→", "Ctrl+="]) {
+      expect(byChord(conflicts, chord)).toBeUndefined();
+    }
     // terminalSearch is Primary+F, which is Cmd+F on macOS and never reaches the terminal as input.
     expect(byChord(conflicts, "Ctrl+F")).toBeUndefined();
-    expect(byChord(conflicts, "Ctrl+Alt+→")).toMatchObject({ bytes: "\x1b[1;7C", action: { id: "nextWorkspace" } });
+    // Literal Ctrl bindings still withhold their chord.
+    expect(byChord(conflicts, "Ctrl+Tab")).toMatchObject({ action: { id: "nextTab" } });
+  });
+
+  it("lists Mod chords as Ctrl on the macOS web build, which keeps the Ctrl fallback", () => {
+    const conflicts = terminalShortcutConflicts(getKeybindings(), true, true);
+    expect(byChord(conflicts, "Ctrl+W")).toMatchObject({ action: { id: "closeTab" } });
+    expect(byChord(conflicts, "Ctrl+B")).toMatchObject({ action: { id: "toggleSidebar" } });
+  });
+
+  it("lists the terminal font size chords and leaves the cheat sheet chord to the terminal", () => {
+    const conflicts = terminalShortcutConflicts(getKeybindings(), false, false);
+    expect(byChord(conflicts, "Ctrl+=")).toMatchObject({ action: { id: "terminalFontIncrease" } });
+    expect(byChord(conflicts, "Ctrl+-")).toMatchObject({ action: { id: "terminalFontDecrease" } });
+    expect(byChord(conflicts, "Ctrl+0")).toMatchObject({ action: { id: "terminalFontReset" } });
+    expect(byChord(conflicts, "Ctrl+Shift+Enter")).toMatchObject({ action: { id: "toggleZoomPane" } });
+    // Ctrl+/ is readline's undo: the cheat sheet does not take it from a focused terminal.
+    expect(byChord(conflicts, "Ctrl+/")).toBeUndefined();
   });
 
   it("keeps the first action when two share a chord, as the runtime match does", () => {

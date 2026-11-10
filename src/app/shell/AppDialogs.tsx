@@ -11,6 +11,7 @@ import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
 import { AssetEditor, JumpPalette } from "../lazyPanels";
 import type { JumpScope } from "../JumpPalette";
 import { jumpAttentionOf } from "../jump/jumpAttention";
+import { ShortcutsOverlayHost } from "./ShortcutsOverlay";
 
 // LazyAuthGate loads the account gate only under WEB, so the desktop does not pull the auth store into env mocks of terminal tests.
 function LazyAuthGate() {
@@ -42,7 +43,7 @@ export interface AppDialogsProps {
 }
 
 // AppDialogs hosts the app-level overlays: the jump palette, the palette's asset editor,
-// the workspace switcher menu, the account gate and the prompt/dialog hosts.
+// the workspace switcher menu, the shortcut cheat sheet, the account gate and the prompt/dialog hosts.
 export function AppDialogs({
   jumpScope,
   setJumpScope,
@@ -83,6 +84,7 @@ export function AppDialogs({
         </Lazy>
       )}
       <ContextMenu state={workspaceMenu} onClose={onCloseWorkspaceMenu} />
+      <ShortcutsOverlayHost />
       <LazyAuthGate />
       <PromptModal />
       <DialogHost />

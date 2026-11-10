@@ -10,7 +10,7 @@ import { createSessionSlice } from "./sessionSlice";
 import { createTabSlice } from "./tabSlice";
 import type { UiState } from "./types";
 import { createUiSlice } from "./uiSlice";
-import { createWorkspaceSlice } from "./workspaceSlice";
+import { createWorkspaceSlice, pruneZoomedPanes } from "./workspaceSlice";
 
 // The UI store is composed from domain slices; each slice owns a disjoint set of UiState keys.
 export const useUi = create<UiState>((set, get) => ({
@@ -34,6 +34,13 @@ useUi.subscribe((state, previous) => {
   }
   const activeWorkspaceId = reconcileActiveWorkspaceForFocus(state);
   if (activeWorkspaceId !== state.activeWorkspaceId) useUi.setState({ activeWorkspaceId });
+});
+
+// A pane zoom lapses when focus leaves its pane by any path; drop it then, so it does not return with the focus.
+useUi.subscribe((state, previous) => {
+  if (state.workspaces === previous.workspaces && state.zoomedPanes === previous.zoomedPanes) return;
+  const zoomedPanes = pruneZoomedPanes(state.workspaces, state.zoomedPanes);
+  if (zoomedPanes !== state.zoomedPanes) useUi.setState({ zoomedPanes });
 });
 
 useUi.subscribe((state, previous) => {
