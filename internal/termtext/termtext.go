@@ -23,7 +23,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/Hello-CTF/NexTerm/internal/terminal"
 )
 
 const (
@@ -827,7 +827,7 @@ func FixedOffset(minutes int) *time.Location {
 
 // cellWidth is the number of screen cells a non-ASCII rune takes; zero marks a combining rune.
 func cellWidth(value rune) int {
-	return runewidth.RuneWidth(value)
+	return terminal.RuneWidth(value)
 }
 
 // decGraphics maps the DEC special graphics set to Unicode, as the terminal emulator does.
