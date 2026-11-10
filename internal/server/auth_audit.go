@@ -83,7 +83,8 @@ func (s *Server) auditLoginSuccess(r *http.Request, userID, sessionID, method st
 }
 
 // auditLoginFailure records a rejected password or second-factor step,
-// aggregated per account (or attempted name) and client address.
+// aggregated per account (or attempted name) and the client address the login
+// throttles key on (IPv6 grouped by /64); the record keeps the full address.
 func (s *Server) auditLoginFailure(r *http.Request, stage, username, userID, reason string) {
 	if s.audit == nil || s.loginFailureAudit == nil {
 		return
@@ -93,14 +94,14 @@ func (s *Server) auditLoginFailure(r *http.Request, stage, username, userID, rea
 	var key string
 	if userID != "" {
 		owner = userID
-		key = "u|" + userID + "|" + clientIP(r)
+		key = "u|" + userID + "|" + throttleAddress(r)
 		payload["target_user_id"] = userID
 	} else {
 		pseudonym := ""
 		if s.accounts != nil {
 			pseudonym = s.accounts.AuditPseudonym(username)
 		}
-		key = "n|" + pseudonym + "|" + clientIP(r)
+		key = "n|" + pseudonym + "|" + throttleAddress(r)
 		payload["username_hash"] = pseudonym
 		payload["username_length"] = utf8.RuneCountInString(username)
 	}

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -367,5 +368,36 @@ func TestAuthAuditFailedLoginsDoNotFloodAudit(t *testing.T) {
 	rows := fixture.rows(t)
 	if got := countKind(rows, "login_failure"); got != loginFailureAuditPerKey {
 		t.Fatalf("login_failure rows = %d, want %d", got, loginFailureAuditPerKey)
+	}
+}
+
+func TestLoginFailureAuditGroupsIPv6ByNetwork(t *testing.T) {
+	fixture := newAuthAuditFixture(t)
+	fixture.createUser(t, "frank", "password-frank1")
+	for i := 0; i < loginFailureAuditPerKey+3; i++ {
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		request.RemoteAddr = fmt.Sprintf("[2001:db8:1:2::%x]:4000", i+1)
+		fixture.server.auditPasswordLoginFailure(request, "frank")
+	}
+	rows := fixture.rows(t)
+	if got := countKind(rows, "login_failure"); got != loginFailureAuditPerKey {
+		t.Fatalf("rotating addresses in one /64 wrote %d failure rows, want %d", got, loginFailureAuditPerKey)
+	}
+	if ip := rows[len(rows)-1].payload["client_ip"]; ip != "2001:db8:1:2::5" {
+		t.Fatalf("record client_ip = %v, want the full address", ip)
+	}
+	key := func(remote string) string {
+		request := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		request.RemoteAddr = remote
+		return throttleAddress(request)
+	}
+	if key("[2001:db8:1:2::1]:4000") != key("[2001:db8:1:2:ffff::9]:4001") {
+		t.Fatal("addresses in one /64 must share an aggregation key")
+	}
+	if key("[2001:db8:1:2::1]:4000") == key("[2001:db8:1:3::1]:4000") {
+		t.Fatal("different /64 networks must not share an aggregation key")
+	}
+	if key("192.0.2.1:4000") == key("192.0.2.2:4000") {
+		t.Fatal("IPv4 addresses must stay distinct")
 	}
 }
