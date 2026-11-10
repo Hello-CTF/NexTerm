@@ -1,7 +1,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { hasCustomTitle, useUi, type AppTab } from "../store";
 import { useTabUnread } from "../unreadStore";
-import { awarenessBadge, useTabAwareness, type AwarenessBadge } from "../sessionAwarenessStore";
+import {
+  awarenessBadge,
+  progressLabel,
+  useTabAwareness,
+  useTabProgress,
+  type AwarenessBadge,
+  type TerminalProgress,
+} from "../sessionAwarenessStore";
 import { useTerminalTabTitle } from "../terminalViewStore";
 import { fileVisual } from "../../features/files/fileTypes";
 import { useAssetProductionClassification } from "../../features/production/productionSettings";
@@ -154,6 +161,64 @@ export function TabAttentionBadge({ badge }: { badge: AwarenessBadge | null }) {
         </span>
       );
   }
+}
+
+const PROGRESS_RADIUS = 4.5;
+const PROGRESS_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_RADIUS;
+const PROGRESS_COLOR: Record<TerminalProgress["state"], string> = {
+  normal: "text-sky-500",
+  indeterminate: "text-sky-500",
+  paused: "text-amber-500",
+  error: "text-red-400",
+};
+
+// ProgressRing draws a program's OSC 9;4 progress as a ring the size of the attention badge: filled to the value, a
+// quarter arc that turns while the progress is unknown (still under prefers-reduced-motion), amber when paused and
+// red on error. It shows on the active tab too, as other terminals show it.
+export function ProgressRing({ progress }: { progress: TerminalProgress | undefined }) {
+  if (!progress) return null;
+  const label = progressLabel(progress);
+  const indeterminate = progress.state === "indeterminate";
+  const fraction = indeterminate ? 0.25 : (progress.value ?? 0) / 100;
+  return (
+    <span
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={indeterminate || progress.value === undefined ? undefined : progress.value}
+      title={label}
+      data-progress={progress.state}
+      className={`flex shrink-0 items-center ${PROGRESS_COLOR[progress.state]}`}
+    >
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 12 12"
+        aria-hidden="true"
+        className={indeterminate ? "motion-safe:animate-spin" : undefined}
+      >
+        <circle cx="6" cy="6" r={PROGRESS_RADIUS} fill="none" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.75" />
+        <circle
+          cx="6"
+          cy="6"
+          r={PROGRESS_RADIUS}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeDasharray={`${fraction * PROGRESS_CIRCUMFERENCE} ${PROGRESS_CIRCUMFERENCE}`}
+          transform="rotate(-90 6 6)"
+        />
+      </svg>
+    </span>
+  );
+}
+
+// TabProgress follows one backend terminal's progress; it subscribes to the progress alone, so a tab re-renders only
+// when its own progress changes.
+export function TabProgress({ tabId }: { tabId: string | undefined | null }) {
+  return <ProgressRing progress={useTabProgress(tabId ?? undefined)} />;
 }
 
 // ATTENTION_HOLD_MS: a needs_me or just_finished badge appears only after the state held this long, so a state that

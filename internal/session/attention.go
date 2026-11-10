@@ -52,6 +52,9 @@ type AttentionEvent struct {
 	// state with reason notify.
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+	// Progress is the program's OSC 9;4 progress, independent of State;
+	// absent when none is shown.
+	Progress *base.SessionProgress `json:"progress,omitempty"`
 	// LastInputClient is the client that last typed into the tab, empty when
 	// none is known. It is read when the event is emitted or listed and is
 	// not part of the state's identity.
@@ -66,7 +69,7 @@ func (e AttentionEvent) sameAs(other AttentionEvent) bool {
 	sameExit := (e.ExitCode == nil) == (other.ExitCode == nil) && (e.ExitCode == nil || *e.ExitCode == *other.ExitCode)
 	return e.State == other.State && e.Confidence == other.Confidence && e.Source == other.Source &&
 		e.Reason == other.Reason && e.Since == other.Since && e.Seen == other.Seen && e.Notable == other.Notable && sameExit &&
-		e.Title == other.Title && e.Body == other.Body
+		e.Title == other.Title && e.Body == other.Body && e.Progress.Equal(other.Progress)
 }
 
 // attentionRegistry holds the attention state of every tab whose output
@@ -363,7 +366,7 @@ func explicitStateOnly(state *base.SessionState) *base.SessionState {
 	explicit := state.Confidence == base.ConfidenceSignal || state.Confidence == base.ConfidenceRule
 	if state.State == base.SessionNeedsMe {
 		switch state.Reason {
-		case "bell", "notify", "rule":
+		case "bell", "notify", "progress_error", "rule":
 		default:
 			explicit = false
 		}
@@ -385,6 +388,7 @@ func attentionFromState(state *base.SessionState, source string) AttentionEvent 
 	event := AttentionEvent{
 		State: state.State, Confidence: state.Confidence, Source: source, Reason: state.Reason,
 		Seen: state.Seen, Notable: state.Notable, Title: state.Title, Body: state.Body,
+		Progress: state.Progress.Clone(),
 	}
 	if !state.Since.IsZero() {
 		event.Since = state.Since.UTC().Format(time.RFC3339Nano)
