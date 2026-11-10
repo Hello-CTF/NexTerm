@@ -123,7 +123,8 @@ export function looksLikePath(text: string): boolean {
 }
 
 export type TerminalShell = "powershell" | "cmd" | "posix" | "unknown";
-export type DirectoryCommandFailure = "control" | "unsupported" | "unknown";
+// "unquotable" is a path cmd.exe cannot take safely inside double quotes: it contains `"` or `%`.
+export type DirectoryCommandFailure = "control" | "unquotable" | "unknown";
 
 export function directoryCommandFor(
   path: string,
@@ -136,6 +137,14 @@ export function directoryCommandFor(
   if (shell === "posix") {
     return { command: `cd '${path.replace(/'/g, "'\\''")}'`, failure: null };
   }
-  return { command: null, failure: shell === "cmd" ? "unsupported" : "unknown" };
+  if (shell === "cmd") {
+    // Inside double quotes cmd.exe still expands %VAR% and a quote would end the argument.
+    if (/["%]/.test(path)) return { command: null, failure: "unquotable" };
+    const native = path.replace(/\//g, "\\");
+    // cmd.exe cannot make a UNC path current with cd; pushd maps it to a drive letter first.
+    if (native.startsWith("\\\\")) return { command: `pushd "${native}"`, failure: null };
+    return { command: `cd /d "${native}"`, failure: null };
+  }
+  return { command: null, failure: "unknown" };
 }
 

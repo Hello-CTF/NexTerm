@@ -403,6 +403,8 @@ type liveTabDTO struct {
 	DetachedSinceOpen bool   `json:"detachedSinceOpen,omitempty"`
 	Durable           bool   `json:"durable,omitempty"`
 	State             string `json:"state,omitempty"`
+	// Shell is the tab's command language as the backend knows it now, which an SSH tab can learn after it opened.
+	Shell string `json:"shell,omitempty"`
 }
 
 func newTerminalCommandService(database *store.Store, sessions *session.Manager, dockerService *docker.Service, bridge *terminalBridge, hostKeys *productionHostKeyStore, sshConnector *productionConnector, events ipc.Emitter, stagedBlobs StagedBlobResolver, desktop bool) *terminalCommandService {
@@ -957,6 +959,7 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						Subscribers: info.Subscribers, Viewers: info.Viewers, Exited: info.Exited,
 						LastOutputAt: info.LastOutputAt, LastOutputMSAgo: info.LastOutputMSAgo, Title: info.Title, TitleCustom: info.TitleCustom, WindowTitle: info.WindowTitle, TitleChangedAt: info.TitleChangedAt,
 						CreatedAt: info.CreatedAt, DetachedAt: info.DetachedAt, DetachedMSAgo: info.DetachedMSAgo, DetachedSinceOpen: info.DetachedSinceOpen, Durable: info.Durable, State: info.State,
+						Shell: string(info.Shell),
 					})
 				}
 				return result, nil

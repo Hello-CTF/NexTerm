@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   packDownload: vi.fn(),
   extract: vi.fn(),
   termWrite: vi.fn(),
+  listLive: vi.fn(async (): Promise<Array<{ tabId: string; shell?: string }>> => []),
   copy: vi.fn(),
   lineExec: vi.fn(),
   connect: vi.fn(),
@@ -70,7 +71,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
       connectDevice: mocks.connectDevice,
       lineExec: mocks.lineExec,
     },
-    terminalApi: { write: mocks.termWrite },
+    terminalApi: { write: mocks.termWrite, listLive: mocks.listLive as never },
     assetApi: { knownHostAccept: mocks.knownHostAccept },
   });
 });
@@ -818,6 +819,7 @@ describe("FileTree shell-aware terminal navigation", () => {
   it.each([
     { shell: "powershell" as const, dir: "D:/Project [x]/child's dir", command: "Set-Location -LiteralPath 'D:/Project [x]/child''s dir'\n" },
     { shell: "posix" as const, dir: "/tmp/child's [x]", command: String.raw`cd '/tmp/child'\''s [x]'` + "\n" },
+    { shell: "cmd" as const, dir: "D:/Project [x]/a & b", command: 'cd /d "D:\\Project [x]\\a & b"\n' },
   ])("uses the existing terminal's $shell command", async ({ shell, dir, command }) => {
     seedWorkspace({ assetId: "asset-1" });
     useUi.getState().updateTab("t1", { tabId: "k1", shell });
@@ -830,8 +832,8 @@ describe("FileTree shell-aware terminal navigation", () => {
     expect(mocks.lineExec).not.toHaveBeenCalled();
   });
 
-  it.each(["cmd", "unknown"] as const)("does not inject into a %s terminal", async (shell) => {
-    const dir = shell === "cmd" ? "//server/share/Project [x]" : "D:/Project [x]";
+  it.each(["cmd", "unknown"] as const)("does not inject into a %s terminal it cannot address safely", async (shell) => {
+    const dir = shell === "cmd" ? "//server/share/100%" : "D:/Project [x]";
     seedWorkspace({ assetId: "asset-1" });
     useUi.getState().updateTab("t1", { tabId: "k1", shell });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
@@ -843,10 +845,24 @@ describe("FileTree shell-aware terminal navigation", () => {
     await waitForRendered(() => expect(toastTexts()).toContain("路径已复制"));
   });
 
+  it("asks the backend for the shell an SSH terminal learned after it opened", async () => {
+    const dir = "C:/Users/alice";
+    seedWorkspace({ assetId: "asset-1" });
+    useUi.getState().updateTab("t1", { tabId: "k1", shell: "unknown" });
+    mocks.listLive.mockResolvedValueOnce([{ tabId: "k1", shell: "cmd" }]);
+    mocks.list.mockResolvedValue([windowsEntry(dir)]);
+    mounted = mountTree();
+    await waitForRendered(() => expect(treeItem(dir)).toBeDefined());
+    await openCurrentAt(dir);
+    await waitForRendered(() => expect(mocks.termWrite).toHaveBeenCalledTimes(1));
+    expect(new TextDecoder().decode(mocks.termWrite.mock.calls[0][1])).toBe('cd /d "C:\\Users\\alice"\n');
+    expect(useUi.getState().workspaces[0]?.panes[0]?.tabs.find((tab) => tab.id === "t1")?.shell).toBe("cmd");
+  });
+
   it("surfaces a copy failure without injecting into the terminal", async () => {
     const dir = "D:/Project [x]";
     seedWorkspace({ assetId: "asset-1" });
-    useUi.getState().updateTab("t1", { tabId: "k1", shell: "cmd" });
+    useUi.getState().updateTab("t1", { tabId: "k1", shell: "unknown" });
     mocks.list.mockResolvedValue([windowsEntry(dir)]);
     mocks.copy.mockRejectedValueOnce(new Error("clipboard denied"));
     mounted = mountTree();

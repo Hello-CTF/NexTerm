@@ -32,6 +32,7 @@ import {
   crumbsOf,
   directoryCommandFor,
   type DirectoryCommandFailure,
+  type TerminalShell,
   fsErrorResource,
   isRoot,
   joinPath,
@@ -962,8 +963,8 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     const reason =
       failure === "control"
         ? t("目录包含控制字符")
-        : failure === "unsupported"
-          ? t("当前终端 Shell 暂不支持自动切换目录")
+        : failure === "unquotable"
+          ? t("目录包含 cmd 无法安全引用的字符（\" 或 %）")
           : t("无法确认当前终端 Shell");
     void copyText(dir)
       .then(() => {
@@ -1046,7 +1047,28 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
       .catch((e) => pushToast("error", t("打开终端失败：{value}", { value: describeError(e) })));
   };
 
-  const cdTerminalTo = (dir: string) => {
+  // An SSH terminal opened before the file browser probed its host does not know its shell yet; the backend may know
+  // it by now, so ask once before giving up.
+  const currentShell = async (target: { tabId: string; shell: TerminalShell }): Promise<TerminalShell> => {
+    if (target.shell !== "unknown" || sessionKind !== "ssh") return target.shell;
+    let shell: TerminalShell = "unknown";
+    try {
+      shell = (await terminalApi.listLive()).find((tab) => tab.tabId === target.tabId)?.shell ?? "unknown";
+    } catch {
+      // Without the listing the shell stays unknown and the path is copied instead.
+    }
+    if (shell !== "unknown") {
+      const storeTab = useUi
+        .getState()
+        .workspaces.flatMap((workspace) => workspace.panes)
+        .flatMap((pane) => pane.tabs)
+        .find((tab) => tab.tabId === target.tabId);
+      if (storeTab) useUi.getState().updateTab(storeTab.id, { shell });
+    }
+    return shell;
+  };
+
+  const cdTerminalTo = async (dir: string) => {
     const target = findWritableTerminal(sessionId);
     if (!target) {
       pushToast("info", t("当前工作区没有可用终端，已新建一个"));
@@ -1055,7 +1077,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     }
     const { command, failure } = directoryCommandFor(
       dir,
-      sessionKind === "winrm" ? "powershell" : target.shell,
+      sessionKind === "winrm" ? "powershell" : await currentShell(target),
     );
     if (!command) {
       notifyDirectoryFailure(dir, failure);
@@ -1157,7 +1179,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         label: t("在当前终端打开"),
         icon: <IconTerminal size={13} />,
         hint: t("已有终端"),
-        onSelect: () => cdTerminalTo(dir),
+        onSelect: () => void cdTerminalTo(dir),
       },
       {
         kind: "item",

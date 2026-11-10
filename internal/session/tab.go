@@ -120,6 +120,9 @@ type Tab struct {
 	// regularRemote marks an SSH tab on a plain PTY: it ends with its connection, so it can never run in the background.
 	regularRemote bool
 	shell         Shell
+	// detectShell, set while an SSH tab's shell is unknown, asks the connection again: the file browser's probe of the
+	// host may have learned its default shell after the tab opened.
+	detectShell func() Shell
 
 	mu           sync.Mutex
 	cols         uint32
@@ -278,6 +281,11 @@ func (t *Tab) listInfo() TabInfo {
 }
 
 func (t *Tab) infoLocked() TabInfo {
+	if t.shell == ShellUnknown && t.detectShell != nil {
+		if detected := t.detectShell(); detected != ShellUnknown {
+			t.shell, t.detectShell = detected, nil
+		}
+	}
 	viewers := make(map[string]struct{})
 	for _, subscriber := range t.subscribers {
 		viewers[subscriber.client] = struct{}{}
@@ -585,7 +593,9 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 
 	tabCtx, cancel := context.WithCancel(m.ctx)
 	shell := ShellUnknown
-	if kind == KindLocal {
+	var detectShell func() Shell
+	switch kind {
+	case KindLocal:
 		if local, ok := transport.Transport.(interface{ Shell() string }); ok {
 			classified := Shell(local.Shell())
 			switch classified {
@@ -593,14 +603,23 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				shell = classified
 			}
 		}
+	case KindSSH:
+		shell = ClassifyShellProgram(assetShellOption(session.asset.Options))
+		if detector, ok := transport.Transport.(remoteShellDetector); ok && shell == ShellUnknown {
+			detectShell = func() Shell { return ClassifyShellProgram(detector.DetectedShell()) }
+			shell = detectShell()
+		}
+	}
+	if shell != ShellUnknown {
+		detectShell = nil
 	}
 	tab := &Tab{
 		ID: tabID, SessionID: session.ID, session: session, terminal: terminal, fanout: m.newOutputFanout(),
 		ephemeral: options.Ephemeral, retainable: options.Retainable, regularRemote: kind == KindSSH && options.Durable == nil, cols: cols, rows: rows, encoding: canonicalEncoding(encoding),
 		channel: channel, durable: durableAttachment, generation: generation, subscribers: make(map[string]subscriber),
 		exited: options.Durable != nil && options.Durable.Recover && options.Durable.RecoveredExited,
-		shell:  shell,
-		ctx:    tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
+		shell:  shell, detectShell: detectShell,
+		ctx: tabCtx, cancel: cancel, responses: newResponseQueue(generation), feedGate: make(chan struct{}, 1),
 		writeGate:  make(chan struct{}, 1),
 		cwdTracker: shellintegr.NewTracker(), commandTrack: shellintegr.NewCommandTracker(),
 		durableIdentity: durableIdentity, metadataRevision: metadataRevision,
