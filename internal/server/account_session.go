@@ -16,8 +16,13 @@ import (
 
 const (
 	sessionCookieName = "nexterm_session"
-	csrfHeaderName    = "X-NexTerm-CSRF"
-	maxAccountBody    = 64 << 10
+	// loginDeviceCookieName marks a client that completed a login; it only
+	// exempts the client from the per-username login backoff.
+	loginDeviceCookieName = "nexterm_login_device"
+	loginDeviceCookiePath = "/auth"
+	loginDeviceCookieTTL  = 180 * 24 * time.Hour
+	csrfHeaderName        = "X-NexTerm-CSRF"
+	maxAccountBody        = 64 << 10
 
 	// Session and CSRF failures uniformly give the next step (refresh or re-login); wording stays consistent across server and fleet.
 	// The CSRF text must keep the "CSRF" keyword: the frontend isCsrfRejection (src/ipc/commands.ts, webFiles.ts) relies on it to detect and auto-refresh/retry.
@@ -80,6 +85,28 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token 
 		MaxAge:   int(account.SessionAbsoluteTTL / time.Second),
 	}
 	http.SetCookie(w, cookie)
+}
+
+func (s *Server) setLoginDeviceCookie(w http.ResponseWriter, r *http.Request, user *account.User) {
+	token, err := s.accounts.LoginDeviceToken(user, loginDeviceCookieTTL)
+	if err != nil {
+		s.logger.Warn("login device token issue failed", "error", err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     loginDeviceCookieName,
+		Value:    token,
+		Path:     loginDeviceCookiePath,
+		HttpOnly: true,
+		Secure:   s.requestTLS(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(loginDeviceCookieTTL / time.Second),
+	})
+}
+
+func (s *Server) loginDeviceKnown(r *http.Request, username string) bool {
+	cookie, err := r.Cookie(loginDeviceCookieName)
+	return err == nil && cookie.Value != "" && s.accounts.LoginDeviceKnown(cookie.Value, username)
 }
 
 func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {

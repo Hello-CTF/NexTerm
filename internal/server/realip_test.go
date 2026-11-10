@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/account"
 	"github.com/Hello-CTF/NexTerm/internal/store"
@@ -201,8 +202,14 @@ func TestRealIPForwardedProtoStillTrustedWithoutForwardedForOptIn(t *testing.T) 
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("login status = %d", response.StatusCode)
 	}
-	if len(response.Cookies()) != 1 || !response.Cookies()[0].Secure {
-		t.Fatalf("cookie = %+v, want Secure", response.Cookies())
+	cookies := response.Cookies()
+	if len(cookies) == 0 {
+		t.Fatal("login set no cookies")
+	}
+	for _, cookie := range cookies {
+		if !cookie.Secure {
+			t.Fatalf("cookie %s = %+v, want Secure", cookie.Name, cookie)
+		}
 	}
 }
 
@@ -234,40 +241,130 @@ func TestLoginThrottlePerAddressAcrossUsernames(t *testing.T) {
 	}
 }
 
-// Failures against one username from many addresses back the username off
-// for addresses it has not logged in from, so distributed guessing cannot
-// bypass the per-address buckets; an address that already logged in to the
-// account is exempt, so the guessing cannot lock the user out.
-func TestLoginThrottlePerUsernameAcrossAddresses(t *testing.T) {
-	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
-	fixture.createUser(t, "root", "password-a1")
-	fixture.createUser(t, "other", "password-b1")
-	if call := fixture.loginVia(t, "password-a1", "198.51.100.10"); call.status != http.StatusOK {
-		t.Fatalf("usual address login status = %d body = %v", call.status, call.body)
+func loginDeviceCookie(t *testing.T, call accountCall) string {
+	t.Helper()
+	for _, cookie := range call.cookies {
+		if cookie.Name == loginDeviceCookieName {
+			return cookie.Value
+		}
 	}
-	throttled := false
-	for i := 0; i < 100 && !throttled; i++ {
-		call := fixture.loginVia(t, "wrong-password", "203.0.113."+strconv.Itoa(i+1))
+	t.Fatalf("login response is missing the login device cookie: %v", call.cookies)
+	return ""
+}
+
+func (f *accountFixture) loginWithDevice(t *testing.T, password, xff, device string) accountCall {
+	t.Helper()
+	headers := map[string]string{"X-Forwarded-For": xff}
+	if device != "" {
+		headers["Cookie"] = loginDeviceCookieName + "=" + device
+	}
+	return f.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": password}, nil, "", headers)
+}
+
+// backOffRoot spreads failed guesses for root over many addresses until the
+// per-username bucket backs it off.
+func (f *accountFixture) backOffRoot(t *testing.T, third int) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		call := f.loginVia(t, "wrong-password", "203.0."+strconv.Itoa(third)+"."+strconv.Itoa(i+1))
 		switch call.status {
 		case http.StatusTooManyRequests:
-			throttled = true
+			return
 		case http.StatusForbidden:
 		default:
 			t.Fatalf("distributed login status = %d body = %v", call.status, call.body)
 		}
 	}
-	if !throttled {
-		t.Fatal("a username guessed from many addresses was never throttled")
+	t.Fatal("a username guessed from many addresses was never throttled")
+}
+
+// Failures against one username from many addresses back the username off for
+// clients without a login device token, so distributed guessing cannot bypass
+// the per-address buckets. A client holding the token from an earlier login
+// is exempt from any address, so the guessing cannot lock the user out even
+// after an address change.
+func TestLoginThrottlePerUsernameAcrossAddresses(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	fixture.createUser(t, "other", "password-b1")
+	first := fixture.loginVia(t, "password-a1", "198.51.100.10")
+	if first.status != http.StatusOK {
+		t.Fatalf("first login status = %d body = %v", first.status, first.body)
 	}
-	if call := fixture.loginVia(t, "password-a1", "198.51.100.4"); call.status != http.StatusTooManyRequests {
-		t.Fatalf("backed-off username login from a fresh address status = %d", call.status)
+	device := loginDeviceCookie(t, first)
+
+	fixture.backOffRoot(t, 113)
+	if call := fixture.loginWithDevice(t, "password-a1", "198.51.100.4", ""); call.status != http.StatusTooManyRequests {
+		t.Fatalf("backed-off username login without a device token status = %d", call.status)
 	}
-	if call := fixture.loginVia(t, "password-a1", "198.51.100.10"); call.status != http.StatusOK {
-		t.Fatalf("login from an address that logged in before status = %d body = %v", call.status, call.body)
+	if call := fixture.loginWithDevice(t, "password-a1", "192.0.2.77", device); call.status != http.StatusOK {
+		t.Fatalf("login with a device token from a new address status = %d body = %v", call.status, call.body)
 	}
+	// The success leaves the per-username streak in place for strangers.
+	if call := fixture.loginWithDevice(t, "password-a1", "198.51.100.5", ""); call.status != http.StatusTooManyRequests {
+		t.Fatalf("a successful login reset the per-username backoff: status = %d", call.status)
+	}
+	// A token is bound to its username.
 	other := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "other", "password": "password-b1"}, nil, "", map[string]string{"X-Forwarded-For": "198.51.100.4"})
 	if other.status != http.StatusOK {
 		t.Fatalf("unrelated username login status = %d body = %v", other.status, other.body)
+	}
+	otherDevice := loginDeviceCookie(t, other)
+	if call := fixture.loginWithDevice(t, "password-a1", "198.51.100.6", otherDevice); call.status != http.StatusTooManyRequests {
+		t.Fatalf("another account's device token exempted root: status = %d", call.status)
+	}
+	if call := fixture.loginWithDevice(t, "password-a1", "198.51.100.6", device+"x"); call.status != http.StatusTooManyRequests {
+		t.Fatalf("a tampered device token exempted root: status = %d", call.status)
+	}
+}
+
+// Regression for the sustained username backoff: a trickle of failures from a
+// dozen addresses keeps root backed off for a day, yet root logs in with its
+// device token from an address it never used.
+func TestLoginThrottleSustainedUsernameBackoffSparesDeviceToken(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	first := fixture.loginVia(t, "password-a1", "198.51.100.10")
+	if first.status != http.StatusOK {
+		t.Fatalf("first login status = %d body = %v", first.status, first.body)
+	}
+	device := loginDeviceCookie(t, first)
+	now := time.Now()
+	fixture.server.accountThrottle.loginUser.SetNowForTest(func() time.Time { return now })
+	for round := 0; round < 24*12; round++ {
+		if round > 0 {
+			now = now.Add(5 * time.Minute)
+		}
+		for i := 0; i < 12; i++ {
+			fixture.loginVia(t, "wrong-password", "10."+strconv.Itoa(round/200)+"."+strconv.Itoa(round%200)+"."+strconv.Itoa(i+1))
+		}
+	}
+	if call := fixture.loginWithDevice(t, "password-a1", "192.0.2.200", ""); call.status != http.StatusTooManyRequests {
+		t.Fatalf("sustained guessing did not back the username off: status = %d", call.status)
+	}
+	if call := fixture.loginWithDevice(t, "password-a1", "192.0.2.201", device); call.status != http.StatusOK {
+		t.Fatalf("device token login during sustained guessing status = %d body = %v", call.status, call.body)
+	}
+}
+
+// The login device cookie only marks the client for the throttle: it is
+// scoped to /auth, HttpOnly and Lax, and authenticates nothing.
+func TestLoginDeviceCookieGrantsNoAccess(t *testing.T) {
+	fixture := newRealIPFixture(t, []string{"127.0.0.1/32"}, true)
+	fixture.createUser(t, "root", "password-a1")
+	login := fixture.loginVia(t, "password-a1", "198.51.100.10")
+	var device *http.Cookie
+	for _, cookie := range login.cookies {
+		if cookie.Name == loginDeviceCookieName {
+			device = cookie
+		}
+	}
+	if device == nil || device.Path != "/auth" || !device.HttpOnly || device.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("login device cookie = %+v", device)
+	}
+	me := fixture.call(t, http.MethodGet, "/auth/me", nil, nil, "", map[string]string{"Cookie": loginDeviceCookieName + "=" + device.Value})
+	if me.status != http.StatusUnauthorized {
+		t.Fatalf("/auth/me with only the device cookie status = %d", me.status)
 	}
 }
 

@@ -75,7 +75,7 @@ func TestDatabaseAccountCoreFlows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("case-insensitive login failed: %v", err)
 	}
-	if _, err := a.ConfirmAuthenticated(ctx, authenticated); err != nil {
+	if err := a.RecordLogin(ctx, authenticated); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := a.GetUser(ctx, alice.ID)

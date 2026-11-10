@@ -241,8 +241,7 @@ func (a *Accounts) Authenticate(ctx context.Context, username, password string) 
 // ConfirmAuthenticated re-reads a user returned by Authenticate and fails
 // closed when its password, state or reset flag changed since the password was
 // verified, so a login verified before a password change, reset or disable
-// cannot issue a session afterwards. Only a confirmed login stamps
-// last_login_at.
+// cannot issue a session afterwards.
 func (a *Accounts) ConfirmAuthenticated(ctx context.Context, authenticated *User) (*User, error) {
 	current, err := a.GetUser(ctx, authenticated.ID)
 	if err != nil {
@@ -255,11 +254,17 @@ func (a *Accounts) ConfirmAuthenticated(ctx context.Context, authenticated *User
 		current.State != authenticated.State || current.MustChangePassword != authenticated.MustChangePassword {
 		return nil, ipc.NewError(ipc.CodeForbidden, accountChangedMessage)
 	}
+	return current, nil
+}
+
+// RecordLogin stamps last_login_at once a login has issued a session, after
+// every factor passed.
+func (a *Accounts) RecordLogin(ctx context.Context, user *User) error {
 	now := a.now()
 	appUser := query.Use(a.db).AppUser
-	if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(current.ID)).UpdateColumns(map[string]any{"last_login_at": now}); err != nil {
-		return nil, dbError(err)
+	if _, err := appUser.WithContext(ctx).Where(appUser.ID.Eq(user.ID)).UpdateColumns(map[string]any{"last_login_at": now}); err != nil {
+		return dbError(err)
 	}
-	current.LastLoginAt = now
-	return current, nil
+	user.LastLoginAt = now
+	return nil
 }

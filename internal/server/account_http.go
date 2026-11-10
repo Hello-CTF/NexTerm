@@ -310,6 +310,11 @@ func (s *Server) writeAccountSession(w http.ResponseWriter, r *http.Request, use
 		writeAccountFailure(w, err)
 		return
 	}
+	if err := s.accounts.RecordLogin(r.Context(), user); err != nil {
+		writeAccountFailure(w, err)
+		return
+	}
+	s.setLoginDeviceCookie(w, r, user)
 	view, err := s.newAccountSessionView(r, user, session.ID)
 	if err != nil {
 		writeAccountFailure(w, err)
@@ -405,14 +410,17 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 	ipKey := ipThrottleKey(r, "login-ip")
 	userKey := loginUserThrottleKey(request.Username)
 	// Every bucket is checked before any spends an attempt, so a request one
-	// bucket refuses costs the others nothing. A client that already logged in
-	// to this account from this address is exempt from the per-username
-	// backoff, which only exists to slow guessing spread over many addresses.
-	knownClient := s.knownLoginClients.Contains(key)
-	admitted := s.accountThrottle.loginIP.Peek(ipKey) && s.accountThrottle.login.Peek(key) &&
-		(knownClient || s.accountThrottle.loginUser.Peek(userKey))
-	if admitted {
-		admitted = s.accountThrottle.loginIP.Allow(ipKey) && s.accountThrottle.login.Allow(key)
+	// bucket refuses costs the others nothing. A client holding a login device
+	// token for this account is exempt from the per-username backoff, which
+	// only exists to slow guessing spread over many addresses, and from the
+	// shared overflow guards of full tables; its own guards still apply.
+	var admitted bool
+	if s.loginDeviceKnown(r, request.Username) {
+		admitted = s.accountThrottle.loginIP.PeekOwn(ipKey) && s.accountThrottle.login.PeekOwn(key) &&
+			s.accountThrottle.loginIP.AllowOwn(ipKey) && s.accountThrottle.login.AllowOwn(key)
+	} else {
+		admitted = s.accountThrottle.loginIP.Peek(ipKey) && s.accountThrottle.login.Peek(key) && s.accountThrottle.loginUser.Peek(userKey) &&
+			s.accountThrottle.loginIP.Allow(ipKey) && s.accountThrottle.login.Allow(key)
 	}
 	if !admitted {
 		writeAccountError(w, http.StatusTooManyRequests, ipc.NewError(ipc.CodeForbidden, "登录尝试过于频繁，请稍后再试"))
@@ -457,9 +465,9 @@ func (s *Server) serveAccountLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountJSON(w, http.StatusOK, accountMFABeginView{MFARequired: true, Ticket: ticket, ExpiresAt: expiresAt.UnixMilli()})
 		return
 	}
+	// The per-username streak is left alone: one success must not let an
+	// attacker who shares the account's name restart guessing.
 	s.accountThrottle.login.RecordSuccess(key)
-	s.accountThrottle.loginUser.RecordSuccess(userKey)
-	s.knownLoginClients.Add(key)
 	s.writeAccountSession(w, r, user, request.DeviceID, epoch)
 }
 

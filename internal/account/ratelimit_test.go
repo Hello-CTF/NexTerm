@@ -167,25 +167,6 @@ func TestLoginUserThrottlePolicyBacksOffWithShortCap(t *testing.T) {
 	}
 }
 
-func TestKnownClientsExpireAndEvictOldest(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	known := NewKnownClients(2, time.Hour)
-	known.now = func() time.Time { return now }
-	known.Add("a")
-	known.Add("b")
-	if !known.Contains("a") || !known.Contains("b") || known.Contains("c") {
-		t.Fatal("known set lookup wrong")
-	}
-	known.Add("c")
-	if known.Contains("a") {
-		t.Fatal("oldest key kept beyond capacity")
-	}
-	now = now.Add(time.Hour)
-	if known.Contains("b") || known.Contains("c") {
-		t.Fatal("expired key still known")
-	}
-}
-
 func TestLoginIPThrottlePolicyAdmitsMoreThanPerCredential(t *testing.T) {
 	policy := LoginIPThrottlePolicy
 	throttle, now := testPolicyThrottle(policy)

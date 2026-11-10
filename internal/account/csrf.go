@@ -53,25 +53,39 @@ func csrfMAC(key []byte, sessionID string) []byte {
 }
 
 func (a *Accounts) csrfKey() ([]byte, error) {
+	return a.serverKey(csrfKeyDerivation)
+}
+
+// serverKey derives a purpose-specific server secret from the out-of-database
+// TOTP storage key file, or from a random per-process root without one. Keys
+// are cached per label.
+func (a *Accounts) serverKey(label string) ([]byte, error) {
 	a.csrfMu.Lock()
 	defer a.csrfMu.Unlock()
-	if a.csrfSecret != nil {
-		return a.csrfSecret, nil
+	if key, ok := a.serverKeys[label]; ok {
+		return key, nil
 	}
-	if a.totpKeyPath == "" {
-		secret := make([]byte, csrfKeyBytes)
-		if _, err := rand.Read(secret); err != nil {
-			return nil, ipc.WrapError(ipc.CodeCrypto, "加密错误: CSRF 密钥生成失败", err)
+	if a.csrfSecret == nil {
+		if a.totpKeyPath == "" {
+			secret := make([]byte, csrfKeyBytes)
+			if _, err := rand.Read(secret); err != nil {
+				return nil, ipc.WrapError(ipc.CodeCrypto, "加密错误: CSRF 密钥生成失败", err)
+			}
+			a.csrfSecret = secret
+		} else {
+			root, err := a.totpKey()
+			if err != nil {
+				return nil, err
+			}
+			a.csrfSecret = root
 		}
-		a.csrfSecret = secret
-		return secret, nil
 	}
-	root, err := a.totpKey()
-	if err != nil {
-		return nil, err
+	mac := hmac.New(sha256.New, a.csrfSecret)
+	mac.Write([]byte(label))
+	key := mac.Sum(nil)
+	if a.serverKeys == nil {
+		a.serverKeys = make(map[string][]byte)
 	}
-	mac := hmac.New(sha256.New, root)
-	mac.Write([]byte(csrfKeyDerivation))
-	a.csrfSecret = mac.Sum(nil)
-	return a.csrfSecret, nil
+	a.serverKeys[label] = key
+	return key, nil
 }

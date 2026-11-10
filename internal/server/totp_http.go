@@ -368,7 +368,6 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 	s.accountThrottle.mfa.RecordSuccess(key)
 	if entry.loginKey != "" {
 		s.accountThrottle.login.RecordSuccess(entry.loginKey)
-		s.knownLoginClients.Add(entry.loginKey)
 	}
 	s.mfaTickets.delete(request.Ticket)
 	user, err := s.accounts.GetUser(r.Context(), entry.userID)
@@ -376,7 +375,6 @@ func (s *Server) serveAccountTOTPLogin(w http.ResponseWriter, r *http.Request) {
 		writeAccountFailure(w, err)
 		return
 	}
-	s.accountThrottle.loginUser.RecordSuccess(loginUserThrottleKey(user.Username))
 	s.accountRevocationMu.Lock()
 	defer s.accountRevocationMu.Unlock()
 	s.writeAccountSession(w, r, user, entry.deviceID, entry.epoch)

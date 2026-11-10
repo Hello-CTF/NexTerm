@@ -286,3 +286,30 @@ func TestTOTPCodeReplayRejected(t *testing.T) {
 		t.Fatalf("TOTP enabled=%v err=%v after replay", enabled, err)
 	}
 }
+
+// last_login_at records issued sessions only: the password step of a
+// two-step login leaves it alone, and the second factor stamps it.
+func TestLastLoginStampedOnlyWhenTheSessionIsIssued(t *testing.T) {
+	fixture := newAccountFixture(t, AuthOn)
+	userID, secret, _, _ := fixture.mfaUserSession(t, "root")
+	before, err := fixture.accounts.GetUser(context.Background(), userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := fixture.call(t, http.MethodPost, "/auth/login", map[string]any{"username": "root", "password": "password-a1"}, nil, "", nil)
+	ticket, _ := begin.body["ticket"].(string)
+	if begin.status != http.StatusOK || ticket == "" {
+		t.Fatalf("password step status=%d body=%v", begin.status, begin.body)
+	}
+	afterPassword, err := fixture.accounts.GetUser(context.Background(), userID)
+	if err != nil || afterPassword.LastLoginAt != before.LastLoginAt {
+		t.Fatalf("password step changed last_login_at: %d -> %d, %v", before.LastLoginAt, afterPassword.LastLoginAt, err)
+	}
+	if call := fixture.totpLogin(t, ticket, testTOTPCode(t, secret, time.Now().Unix())); call.status != http.StatusOK {
+		t.Fatalf("second factor status=%d body=%v", call.status, call.body)
+	}
+	afterSession, err := fixture.accounts.GetUser(context.Background(), userID)
+	if err != nil || afterSession.LastLoginAt <= before.LastLoginAt {
+		t.Fatalf("issued session did not stamp last_login_at: %d -> %d, %v", before.LastLoginAt, afterSession.LastLoginAt, err)
+	}
+}

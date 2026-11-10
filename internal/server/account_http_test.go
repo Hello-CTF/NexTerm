@@ -383,8 +383,13 @@ func TestAccountHTTPCookieSecurityAttributes(t *testing.T) {
 	if proxyResponse.StatusCode != http.StatusOK {
 		t.Fatalf("proxy login status=%d", proxyResponse.StatusCode)
 	}
-	if len(proxyResponse.Cookies()) != 1 || !proxyResponse.Cookies()[0].Secure {
-		t.Fatalf("trusted HTTPS proxy login cookie = %+v", proxyResponse.Cookies())
+	if len(proxyResponse.Cookies()) == 0 {
+		t.Fatal("trusted HTTPS proxy login set no cookies")
+	}
+	for _, cookie := range proxyResponse.Cookies() {
+		if !cookie.Secure {
+			t.Fatalf("trusted HTTPS proxy login cookie %s = %+v, want Secure", cookie.Name, cookie)
+		}
 	}
 }
 

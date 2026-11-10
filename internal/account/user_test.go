@@ -93,7 +93,14 @@ func TestAuthenticate(t *testing.T) {
 	if loaded.LastLoginAt != 0 {
 		t.Fatal("last_login_at stamped before the login was confirmed")
 	}
-	if _, err := a.ConfirmAuthenticated(ctx, authenticated); err != nil {
+	confirmed, err := a.ConfirmAuthenticated(ctx, authenticated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded, err = a.GetUser(ctx, user.ID); err != nil || loaded.LastLoginAt != 0 {
+		t.Fatalf("last_login_at stamped before a session was issued: %d, %v", loaded.LastLoginAt, err)
+	}
+	if err := a.RecordLogin(ctx, confirmed); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err = a.GetUser(ctx, user.ID)
@@ -101,7 +108,7 @@ func TestAuthenticate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if loaded.LastLoginAt == 0 {
-		t.Fatal("last_login_at not stamped by a confirmed login")
+		t.Fatal("last_login_at not stamped by a recorded login")
 	}
 
 	// A login confirmed after a password change fails and leaves the stamp.

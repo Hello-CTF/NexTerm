@@ -108,31 +108,28 @@ type Server struct {
 	environment     ipc.Environment
 	accounts        *account.Accounts
 	accountThrottle accountThrottles
-	// knownLoginClients holds username+address keys that completed a login;
-	// they are exempt from the per-username backoff.
-	knownLoginClients *account.KnownClients
-	mfaTickets        *mfaTicketStore
-	mfaLock           *mfaLockout
-	gatewayAuthKey    string
-	authRequired      bool
-	events            *EventBroker
-	channels          ChannelBinder
-	channelStats      ChannelStatsFunc
-	version           string
-	vaultStatus       func(context.Context) (any, error)
-	retention         *RetentionConfig
-	handler           http.Handler
-	logger            *slog.Logger
-	sockets           socketTracker
-	closeOnce         sync.Once
-	closeErr          error
-	webSocket         WebSocketConfig
-	preferences       *account.Preferences
-	audit             AuditFunc
-	assetOwner        AssetOwnerFunc
-	fleet             *fleetserver.Service
-	previews          *sharing.Service
-	spectator         PreviewSpectator
+	mfaTickets      *mfaTicketStore
+	mfaLock         *mfaLockout
+	gatewayAuthKey  string
+	authRequired    bool
+	events          *EventBroker
+	channels        ChannelBinder
+	channelStats    ChannelStatsFunc
+	version         string
+	vaultStatus     func(context.Context) (any, error)
+	retention       *RetentionConfig
+	handler         http.Handler
+	logger          *slog.Logger
+	sockets         socketTracker
+	closeOnce       sync.Once
+	closeErr        error
+	webSocket       WebSocketConfig
+	preferences     *account.Preferences
+	audit           AuditFunc
+	assetOwner      AssetOwnerFunc
+	fleet           *fleetserver.Service
+	previews        *sharing.Service
+	spectator       PreviewSpectator
 	// remoteSessions is obtained by asserting Spectator (the same instance); when non-nil, remote session shell endpoints are mounted.
 	remoteSessions RemoteSessionRegistry
 	previewResolve *account.LoginThrottle
@@ -155,11 +152,6 @@ type Server struct {
 
 	readGate func()
 }
-
-const (
-	knownLoginClientsMax = 16384
-	knownLoginClientsTTL = 30 * 24 * time.Hour
-)
 
 type accountThrottles struct {
 	// login is keyed by username and client address; loginIP and loginUser
@@ -305,10 +297,9 @@ func New(config Config) (*Server, error) {
 			register:  account.NewLoginThrottle(),
 			mfa:       account.NewLoginThrottle(),
 		},
-		knownLoginClients: account.NewKnownClients(knownLoginClientsMax, knownLoginClientsTTL),
-		mfaTickets:        newMFATicketStore(),
-		mfaLock:           newMFALockout(),
-		gatewayAuthKey:    config.GatewayAuthKey, authRequired: authRequired,
+		mfaTickets:     newMFATicketStore(),
+		mfaLock:        newMFALockout(),
+		gatewayAuthKey: config.GatewayAuthKey, authRequired: authRequired,
 		events: config.Events, channels: config.Channels,
 		channelStats: config.ChannelStats, version: config.Version, vaultStatus: config.VaultStatus,
 		retention: config.Retention, logger: config.Logger, webSocket: config.WebSocket.withDefaults(),
