@@ -25,6 +25,7 @@
 - **AI 助手**：读取终端、文件和容器排查问题，写操作经你确认
 - **日常运维**：远程文件、Docker、MySQL / PostgreSQL / Redis、端口转发
 - **所有连接**：SSH、WinRM、本机终端、受管设备、RDP / VNC
+- **迁移方便**：从 OpenSSH 配置、Termius、PuTTY、MobaXterm、Xshell、SecureCRT 导入主机
 - **自托管**：多用户、双因素认证、审计日志、加密同步
 - **多语言界面**：简体中文、繁體中文、English、日本語、한국어、Deutsch、Français、Español、Русский
 

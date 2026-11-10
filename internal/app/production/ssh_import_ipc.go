@@ -55,6 +55,7 @@ type sshImportHostDTO struct {
 	KeyFingerprint string   `json:"keyFingerprint"`
 	ProxyJump      string   `json:"proxyJump"`
 	AuthMethod     string   `json:"authMethod"`
+	Group          string   `json:"group"`
 	Source         string   `json:"source"`
 	Action         string   `json:"action"`
 	Warnings       []string `json:"warnings"`
@@ -91,6 +92,7 @@ type sshImportApplyDTO struct {
 	AssetsUpdated      int      `json:"assetsUpdated"`
 	CredentialsCreated int      `json:"credentialsCreated"`
 	CredentialsUpdated int      `json:"credentialsUpdated"`
+	GroupsCreated      int      `json:"groupsCreated"`
 	Skipped            int      `json:"skipped"`
 	Warnings           []string `json:"warnings"`
 }
@@ -189,6 +191,7 @@ func sshImportPreviewDTOFromPlan(plan *sshImportPlan) sshImportPreviewDTO {
 			KeyFingerprint: host.KeyFingerprint,
 			ProxyJump:      host.ProxyJump,
 			AuthMethod:     host.AuthMethod,
+			Group:          host.Group,
 			Source:         host.Source,
 			Action:         string(host.Action),
 			Warnings:       nonNilStrings(host.Warnings),
@@ -274,6 +277,9 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		case "termius":
 			return nil, ipc.NewError(ipc.CodeUnsupported, "多用户服务端不支持从服务器路径导入：它会读取服务器上的 Termius 数据")
 		}
+	}
+	if _, ok := sshImportClientNames[source]; ok && (!p.desktop || p.multiUser || ipc.OwnerID(ctx) != "") {
+		return nil, ipc.NewError(ipc.CodeUnsupported, "从其他客户端导入仅支持桌面版：服务端无法读取浏览器所在电脑上的会话文件")
 	}
 	existing, err := p.loadExisting(ctx)
 	if err != nil {
@@ -369,11 +375,64 @@ func (p *sshImportPlanner) derive(ctx context.Context, source, path string, conf
 		}
 		plan.preview = preview
 		plan.path = effectiveDBPath
+	case sshconfig.SourcePuTTY, sshconfig.SourceMobaXterm, sshconfig.SourceXshell, sshconfig.SourceSecureCRT:
+		preview, effective, err := previewClientSource(source, strings.TrimSpace(path), existing)
+		if err != nil {
+			return nil, err
+		}
+		plan.preview = preview
+		plan.path = effective
 	default:
 		return nil, ipc.BadParam(fmt.Errorf("未知的导入来源 %q", source))
 	}
 	blockUnmappableJumps(plan.preview)
 	return plan, nil
+}
+
+var sshImportClientNames = map[string]string{
+	sshconfig.SourcePuTTY:     "PuTTY",
+	sshconfig.SourceMobaXterm: "MobaXterm",
+	sshconfig.SourceXshell:    "Xshell",
+	sshconfig.SourceSecureCRT: "SecureCRT",
+}
+
+// previewClientSource reads the sessions of another client from the file or folder the user picked; PuTTY without a
+// path reads the Windows registry.
+func previewClientSource(source, path string, existing sshImportExisting) (*sshconfig.ImportPreview, string, error) {
+	client := sshImportClientNames[source]
+	if path == "" && source != sshconfig.SourcePuTTY {
+		return nil, "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("请选择要导入的 %s 会话文件或文件夹", client))
+	}
+	var (
+		preview *sshconfig.ImportPreview
+		err     error
+	)
+	switch source {
+	case sshconfig.SourcePuTTY:
+		preview, err = sshconfig.PreviewPuTTY(path, existing.assets, existing.keys, sshconfig.Limits{})
+	case sshconfig.SourceMobaXterm:
+		preview, err = sshconfig.PreviewMobaXterm(path, existing.assets, existing.keys, sshconfig.Limits{})
+	case sshconfig.SourceXshell:
+		preview, err = sshconfig.PreviewXshell(path, existing.assets, existing.keys, sshconfig.Limits{})
+	case sshconfig.SourceSecureCRT:
+		preview, err = sshconfig.PreviewSecureCRT(path, existing.assets, existing.keys, sshconfig.Limits{})
+	}
+	effective := path
+	if effective == "" {
+		effective = `HKCU\` + sshconfig.PuTTYSessionsKey
+	}
+	switch {
+	case err == nil:
+		return preview, effective, nil
+	case errors.Is(err, sshconfig.ErrPuTTYRegistryUnsupported):
+		return nil, "", ipc.NewError(ipc.CodeUnsupported, "当前平台没有 PuTTY 注册表，请在 Windows 上用 regedit 导出 HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions 后选择该 .reg 文件")
+	case errors.Is(err, sshconfig.ErrNoClientSessions):
+		return nil, "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("%s 中没有找到 %s 会话", effective, client))
+	case os.IsNotExist(err):
+		return nil, "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("找不到 %s", effective))
+	default:
+		return nil, "", ipc.NewError(ipc.CodeBadParam, fmt.Sprintf("读取 %s 会话失败: %s", client, err.Error()))
+	}
 }
 
 // guardServerImportPath restricts import paths to the current user's home .ssh directory in the server-side assembly
@@ -664,8 +723,12 @@ func (p *sshImportPlanner) apply(ctx context.Context, input sshImportApplyReques
 	if err := validateImportSelections(plan.preview, input); err != nil {
 		return result, err
 	}
+	groups, err := p.loadImportGroups(ctx, plan.preview, input.GroupID)
+	if err != nil {
+		return result, err
+	}
 	if err := p.database.GORM().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return p.applyWrites(ctx, tx, plan, input, &result)
+		return p.applyWrites(ctx, tx, plan, input, groups, &result)
 	}); err != nil {
 		if errors.Is(err, store.ErrWriteConflict) {
 			return result, sshImportPreviewChangedError()
@@ -780,7 +843,10 @@ func (p *sshImportPlanner) validateOverwriteTargets(ctx context.Context, tx *gor
 	return nil
 }
 
-func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *sshImportPlan, input sshImportApplyRequest, result *sshImportApplyDTO) error {
+func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *sshImportPlan, input sshImportApplyRequest, groups *sshImportGroups, result *sshImportApplyDTO) error {
+	if groups == nil {
+		groups = newSSHImportGroups(p.database, input.GroupID)
+	}
 	preview := plan.preview
 	hostIDs, keyIDs := sshImportPreviewIDs(preview)
 	keyByID := map[string]*sshconfig.KeyPreview{}
@@ -898,7 +964,11 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 		outcome := hostOutcome{Alias: item.Alias}
 		switch {
 		case selection.Action == "import" && item.Action == sshconfig.PlanAdd:
-			id, err := p.importHost(ctx, tx, plan, item, credIDByKeyFP, result, input.GroupID, input.Tags)
+			groupID, err := groups.resolve(ctx, tx, item.Group)
+			if err != nil {
+				return fmt.Errorf("第 %d 条主机 %q 的分组 %q 创建失败: %w", index+1, item.Alias, item.Group, err)
+			}
+			id, err := p.importHost(ctx, tx, plan, item, credIDByKeyFP, result, groupID, input.Tags)
 			if err != nil {
 				return fmt.Errorf("第 %d 条主机 %q 写入失败: %w", index+1, item.Alias, err)
 			}
@@ -928,7 +998,15 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 			if err := p.validateAssetTarget(ctx, tx, item); err != nil {
 				return fmt.Errorf("第 %d 条主机 %q 的冲突目标校验失败: %w", index+1, item.Alias, err)
 			}
-			if err := p.overwriteHost(ctx, tx, plan, item, id, credIDByKeyFP, result, input.GroupID, input.Tags); err != nil {
+			// An overwrite keeps the asset's group unless a destination group was chosen.
+			groupID := input.GroupID
+			if groupID != nil {
+				var err error
+				if groupID, err = groups.resolve(ctx, tx, item.Group); err != nil {
+					return fmt.Errorf("第 %d 条主机 %q 的分组 %q 创建失败: %w", index+1, item.Alias, item.Group, err)
+				}
+			}
+			if err := p.overwriteHost(ctx, tx, plan, item, id, credIDByKeyFP, result, groupID, input.Tags); err != nil {
 				return fmt.Errorf("第 %d 条主机 %q 写入失败: %w", index+1, item.Alias, err)
 			}
 			overwrittenAssetIDs[id] = true
@@ -954,8 +1032,10 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 		}
 	}
 
+	result.GroupsCreated = groups.created
 	auditPayload := map[string]any{
 		"source":             input.Source,
+		"groupsCreated":      groups.created,
 		"groupId":            input.GroupID,
 		"tags":               input.Tags,
 		"assetsCreated":      result.AssetsCreated,
@@ -970,6 +1050,74 @@ func (p *sshImportPlanner) applyWrites(ctx context.Context, tx *gorm.DB, plan *s
 		return fmt.Errorf("导入审计写入失败: %w", err)
 	}
 	return nil
+}
+
+// sshImportGroups files hosts under the folders of their source client: each folder path becomes a chain of groups
+// below the destination group, reusing a same-named group (case-insensitive) at each level and creating the rest.
+type sshImportGroups struct {
+	database *store.Store
+	base     *string
+	children map[string]map[string]string
+	resolved map[string]*string
+	created  int
+}
+
+// loadImportGroups indexes the existing groups when the preview files any host in a folder; it reads them before the
+// import transaction starts.
+func (p *sshImportPlanner) loadImportGroups(ctx context.Context, preview *sshconfig.ImportPreview, base *string) (*sshImportGroups, error) {
+	groups := newSSHImportGroups(p.database, base)
+	if !slices.ContainsFunc(preview.Hosts, func(host sshconfig.HostPreview) bool { return host.Group != "" }) {
+		return groups, nil
+	}
+	rows, err := p.database.GroupList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		groups.remember(stringValue(row.ParentID), row.Name, row.ID)
+	}
+	return groups, nil
+}
+
+func newSSHImportGroups(database *store.Store, base *string) *sshImportGroups {
+	return &sshImportGroups{database: database, base: base, children: map[string]map[string]string{}, resolved: map[string]*string{}}
+}
+
+func (g *sshImportGroups) remember(parentID, name, id string) {
+	if g.children[parentID] == nil {
+		g.children[parentID] = map[string]string{}
+	}
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if _, ok := g.children[parentID][lower]; !ok {
+		g.children[parentID][lower] = id
+	}
+}
+
+func (g *sshImportGroups) resolve(ctx context.Context, tx *gorm.DB, folder string) (*string, error) {
+	if folder == "" {
+		return g.base, nil
+	}
+	key := strings.ToLower(folder)
+	if id, ok := g.resolved[key]; ok {
+		return id, nil
+	}
+	parent := g.base
+	for _, segment := range strings.Split(folder, "/") {
+		parentID := stringValue(parent)
+		id, ok := g.children[parentID][strings.ToLower(segment)]
+		if !ok {
+			row, err := g.database.GroupCreateTx(ctx, tx, parent, segment)
+			if err != nil {
+				return nil, err
+			}
+			id = row.ID
+			g.remember(parentID, segment, id)
+			g.created++
+		}
+		parent = &id
+	}
+	g.resolved[key] = parent
+	return parent, nil
 }
 
 func (p *sshImportPlanner) importKeyPayload(ctx context.Context, plan *sshImportPlan, item *sshconfig.KeyPreview) (string, error) {
@@ -1027,6 +1175,10 @@ func (p *sshImportPlanner) hostAuth(plan *sshImportPlan, item *sshconfig.HostPre
 	if len(item.IdentityFiles) > 0 {
 		warnings = append(warnings, fmt.Sprintf("主机 %q 的 IdentityFile 无法检查，已直接引用文件；若私钥有口令请绑定凭据", item.Alias))
 		return "key", "", item.IdentityFiles[0], warnings
+	}
+	if item.AuthMethod == "password" {
+		warnings = append(warnings, fmt.Sprintf("主机 %q 使用密码认证，请手动绑定凭据", item.Alias))
+		return "password", "", "", warnings
 	}
 	return "agent", "", "", nil
 }

@@ -66,6 +66,16 @@ describe("SSH import dialog on a multi-user server", () => {
     expect(mocks.preview).not.toHaveBeenCalled();
   });
 
+  it("keeps the other-client sources desktop-only in the browser", async () => {
+    mounted = open();
+    await flush();
+    const c = mounted.container;
+    for (const label of ["PuTTY", "MobaXterm", "Xshell", "SecureCRT"]) {
+      expect(button(c, label).disabled).toBe(true);
+    }
+    expect(c.textContent).toContain("仅支持桌面版");
+  });
+
   it("keeps the sources usable without an account", async () => {
     mounted = open();
     await flush();

@@ -34,15 +34,18 @@ type ExistingKey struct {
 }
 
 type HostPreview struct {
-	Alias           string
-	Hostname        string
-	Port            int
-	Username        string
-	IdentityFiles   []string
-	KeyName         string
-	KeyFingerprint  string
-	ProxyJump       string
-	AuthMethod      string
+	Alias          string
+	Hostname       string
+	Port           int
+	Username       string
+	IdentityFiles  []string
+	KeyName        string
+	KeyFingerprint string
+	ProxyJump      string
+	AuthMethod     string
+	// Group is the slash-separated folder path the source client filed the
+	// session under; empty for OpenSSH and Termius imports.
+	Group           string
 	Source          string
 	Action          PlanAction
 	Warnings        []string
@@ -81,8 +84,14 @@ type endpoint struct {
 }
 
 func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []ExistingKey, limits Limits) *ImportPreview {
+	return previewHosts("ssh-config", result, existing, existingKeys, limits)
+}
+
+// previewHosts plans hosts that reference private keys by file path: OpenSSH config and the session files of other
+// clients, which share the duplicate, conflict, key and jump planning.
+func previewHosts(source string, result *Result, existing []ExistingAsset, existingKeys []ExistingKey, limits Limits) *ImportPreview {
 	limits = withDefaultLimits(limits)
-	preview := &ImportPreview{Source: "ssh-config", Diagnostics: result.Diagnostics}
+	preview := &ImportPreview{Source: source, Diagnostics: result.Diagnostics}
 	existingByName, existingByEndpoint := indexExistingAssets(existing)
 	batchNames := map[string]endpoint{}
 	batchEndpoints := map[endpoint]string{}
@@ -96,11 +105,16 @@ func PreviewSSHConfig(result *Result, existing []ExistingAsset, existingKeys []E
 			Username:      host.Username,
 			IdentityFiles: preview.usableIdentityFiles(host.IdentityFiles, reportedIdentities),
 			ProxyJump:     host.ProxyJump,
+			Group:         host.Group,
 			Source:        host.Source,
 			Action:        PlanAdd,
+			Warnings:      slices.Clone(host.Warnings),
 		}
-		if len(item.IdentityFiles) > 0 {
+		switch {
+		case len(item.IdentityFiles) > 0:
 			item.AuthMethod = "key"
+		case host.AuthMethod == "password":
+			item.AuthMethod = "password"
 		}
 		planHostAction(&item, existingByName, existingByEndpoint, batchNames, batchEndpoints)
 		ep := endpointOf(item.Hostname, item.Port, item.Username)
@@ -211,7 +225,7 @@ func planConfigKeys(preview *ImportPreview, hosts []HostPreview, existingKeys []
 			Fingerprint: info.Fingerprint,
 			KeyType:     info.KeyType,
 			Path:        path,
-			Source:      "ssh-config",
+			Source:      preview.Source,
 			Action:      PlanAdd,
 		}
 		decideKeyAction(&item, seenFingerprints, existingByName, existingFPNames, batchNames)

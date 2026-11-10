@@ -25,6 +25,7 @@
 - **AI assistant**: diagnoses from terminal, files, and containers; writes wait for you
 - **Everyday ops**: remote files, Docker, MySQL / PostgreSQL / Redis, port forwarding
 - **Every connection**: SSH, WinRM, local shells, managed devices, RDP / VNC
+- **Easy migration**: import hosts from OpenSSH config, Termius, PuTTY, MobaXterm, Xshell, SecureCRT
 - **Self-hosted**: multi-user, two-factor auth, audit logs, encrypted sync
 - **Nine interface languages**: Simplified and Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Russian
 
