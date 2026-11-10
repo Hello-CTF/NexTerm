@@ -32,6 +32,8 @@ type Options struct {
 	TrustForwardedFor bool
 	// RequireVault makes /healthz report unavailable (503) while the vault is locked.
 	RequireVault bool
+	// AccessLog writes one record per request (NEXTERM_ACCESS_LOG); query strings and bodies are never logged.
+	AccessLog bool
 }
 
 func ResolveMasterKey(masterKeyFile string) (string, error) {

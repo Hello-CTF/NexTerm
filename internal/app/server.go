@@ -114,6 +114,8 @@ func (a *Application) Serve(ctx context.Context, config ServeConfig) (returnErr 
 		Handler:           withRequestTimeouts(readIdle, writeIdle, handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// net/http reports accept failures, handler panics and protocol misuse here; keep them in the app log.
+		ErrorLog: slog.NewLogLogger(a.logger.With("component", "http").Handler(), slog.LevelWarn),
 		// Requests outlive ctx until the transport has closed its WebSockets: a hijacked connection whose read
 		// context is cancelled is dropped without a close frame, so the going-away close would never arrive.
 		BaseContext: func(net.Listener) context.Context {

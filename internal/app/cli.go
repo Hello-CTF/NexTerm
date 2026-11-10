@@ -275,6 +275,18 @@ Server environment (serve only):
                       Per-subscriber event queue and replay buffer length (defaults 64, 256)
   NEXTERM_PPROF_CONTENTION  With pprof enabled, sample block/mutex profiles at rate N
                       (1 records every event; default 0 = off)
+
+Logging environment (an invalid value stops nexterm-server with exit code 2;
+nexterm-desktop warns and uses the default):
+  NEXTERM_LOG_LEVEL   debug, info, warn, or error (default info)
+  NEXTERM_LOG_FORMAT  text or json (default text)
+  NEXTERM_LOG_FILE    auto, on, or off (default auto): writes <data-dir>/logs/nexterm.log,
+                      rotated at 10 MB with 5 backups (nexterm.log.1 ... .5); auto skips
+                      the file for nexterm-server when stderr is the systemd journal
+                      (JOURNAL_STREAM), so records are stored once
+  NEXTERM_ACCESS_LOG  1 logs one record per HTTP request on nexterm-server: method, path,
+                      status, bytes, duration, and client IP (trusted-proxy aware); query
+                      strings, request bodies, and share-link tokens are never logged
 `, program, defaultCommand)
 }
 

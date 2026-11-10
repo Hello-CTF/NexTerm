@@ -165,9 +165,17 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 1
 	}
-	logger, logErr := applog.NewLogger(paths, os.Stderr)
+	logOptions, err := applog.ParseEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
+	logOptions.SkipFileUnderJournal = true
+	logger, logErr := applog.NewLoggerWithOptions(paths, os.Stderr, logOptions)
 	if logErr != nil {
 		logger.Warn("file logging is unavailable; using console only", "error", logErr)
+	} else if logger.FilePath() == "" {
+		logger.Info("file logging is off; records go to stderr only", "logFile", logOptions.File)
 	}
 	defer func() {
 		if err := logger.Close(); err != nil {
@@ -234,6 +242,11 @@ func run(args []string) int {
 		return 2
 	}
 	bufferSize, err := server.ParseEventBufferEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
+		return 2
+	}
+	accessLog, err := server.ParseAccessLogEnv(os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nexterm-server:", applog.RedactText(err.Error()))
 		return 2
@@ -398,6 +411,7 @@ func run(args []string) int {
 			TrustedProxyCIDRs: trustedProxyCIDRs(),
 			TrustForwardedFor: trustXFF,
 			RequireVault:      invocation.RequireVault,
+			AccessLog:         accessLog,
 		},
 		Blobs:                 blobs,
 		Dispatcher:            application.Dispatcher,
