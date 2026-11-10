@@ -130,6 +130,20 @@ func TestUnicodeWidthSamplesAdvanceCursor(t *testing.T) {
 	}
 }
 
+var benchWidthText = []rune("用户@主机 ~/项目 😀 ① é ok ─│┌ αβ 가 Ａ ｶ ⌚👍🏽🇨🇳 Привет мир")
+
+func BenchmarkRuneWidth(b *testing.B) {
+	sum := 0
+	for b.Loop() {
+		for _, r := range benchWidthText {
+			sum += RuneWidth(r)
+		}
+	}
+	if sum == 0 {
+		b.Fatal("no width")
+	}
+}
+
 func TestUnicodeWidthScreenSnapshot(t *testing.T) {
 	fixture := readUnicodeWidthFixture(t)
 	sc := fixture.Screen

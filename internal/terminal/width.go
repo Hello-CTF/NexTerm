@@ -1,7 +1,5 @@
 package terminal
 
-import "sort"
-
 // The screen model measures characters with the same per-code-point table as the frontend's xterm.js, which
 // activates the Unicode 11 provider from @xterm/addon-unicode11 (src/features/terminal/xtermAddons.ts). Keeping
 // the two identical lets cursor columns in snapshots, reattach and replay match the live view, and keeps widths
@@ -13,27 +11,55 @@ type widthRange struct{ first, last rune }
 type widthTable []widthRange
 
 func (t widthTable) contains(r rune) bool {
-	i := sort.Search(len(t), func(i int) bool { return t[i].last >= r })
-	return i < len(t) && t[i].first <= r
+	lo, hi := 0, len(t)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		switch {
+		case r > t[mid].last:
+			lo = mid + 1
+		case r < t[mid].first:
+			hi = mid
+		default:
+			return true
+		}
+	}
+	return false
 }
+
+// bmpWidths holds the width of every BMP code point, built once like the addon's lookup table: combining ranges
+// first, then wide ranges, so wide wins where they overlap.
+var bmpWidths = func() *[0x10000]uint8 {
+	var t [0x10000]uint8
+	for i := range t {
+		t[i] = 1
+	}
+	for i := 0; i < 0x20; i++ {
+		t[i] = 0
+	}
+	for i := 0x7F; i < 0xA0; i++ {
+		t[i] = 0
+	}
+	for _, table := range []struct {
+		ranges widthTable
+		width  uint8
+	}{{bmpCombining, 0}, {bmpWide, 2}} {
+		for _, rg := range table.ranges {
+			for r := rg.first; r <= rg.last; r++ {
+				t[r] = table.width
+			}
+		}
+	}
+	return &t
+}()
 
 // RuneWidth returns the number of cells r occupies: 0 for combining and other zero-width code points, 2 for wide
 // ones, 1 otherwise. C0 and C1 controls report 0.
 func RuneWidth(r rune) int {
 	switch {
-	case r < 0x20 || r >= 0x7F && r < 0xA0:
-		return 0
-	case r < 0x7F:
+	case r < 0:
 		return 1
 	case r < 0x10000:
-		// Wide wins where the BMP tables overlap, as in the addon's lookup table.
-		if bmpWide.contains(r) {
-			return 2
-		}
-		if bmpCombining.contains(r) {
-			return 0
-		}
-		return 1
+		return int(bmpWidths[r])
 	case highCombining.contains(r):
 		return 0
 	case highWide.contains(r):

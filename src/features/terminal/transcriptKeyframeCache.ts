@@ -2,8 +2,11 @@ import type { ReplayKeyframe } from "./transcriptReplay";
 
 const DB_NAME = "nexterm-replay-keyframes";
 const STORE = "frames";
-// Bump when the serialized state format or the build parameters change.
+// The IndexedDB schema version; it only changes with the object store layout.
 const CACHE_VERSION = 1;
+// Bump when the serialized state format or the build parameters change. Entries of another format are ignored.
+// 2: keyframes are built with Unicode 11 character widths.
+const FRAME_FORMAT = 2;
 const MAX_ENTRIES = 20;
 
 interface CacheEntry {
@@ -53,7 +56,7 @@ export async function loadCachedKeyframes(id: string, fingerprint: string): Prom
     const entry = (await requestResult(db.transaction(STORE, "readonly").objectStore(STORE).get(id))) as
       | CacheEntry
       | undefined;
-    if (!entry || entry.version !== CACHE_VERSION || entry.fingerprint !== fingerprint) return null;
+    if (!entry || entry.version !== FRAME_FORMAT || entry.fingerprint !== fingerprint) return null;
     return entry.frames;
   } catch {
     return null;
@@ -67,7 +70,7 @@ export async function saveCachedKeyframes(id: string, fingerprint: string, frame
   if (!db) return;
   try {
     const store = db.transaction(STORE, "readwrite").objectStore(STORE);
-    await requestResult(store.put({ id, fingerprint, version: CACHE_VERSION, savedAt: Date.now(), frames } satisfies CacheEntry));
+    await requestResult(store.put({ id, fingerprint, version: FRAME_FORMAT, savedAt: Date.now(), frames } satisfies CacheEntry));
     const all = ((await requestResult(store.getAll())) as CacheEntry[] | undefined) ?? [];
     const stale = all.sort((a, b) => b.savedAt - a.savedAt).slice(MAX_ENTRIES);
     for (const entry of stale) store.delete(entry.id);
