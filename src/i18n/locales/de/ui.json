@@ -2355,6 +2355,7 @@
   "尚未配置模型": "Noch kein Modell konfiguriert",
   "尚未配置模型，AI 暂时无法回答。": "Es ist noch kein Modell konfiguriert, daher kann die KI vorerst nicht antworten.",
   "尝试次数": "Versuche",
+  "尝试过于频繁，请 {seconds} 秒后再试": "Zu viele Versuche. Bitte in {seconds} s erneut versuchen",
   "屏幕上没有文字，请手动填写匹配模式。": "Auf dem Bildschirm ist kein Text vorhanden. Geben Sie das Suchmuster manuell ein.",
   "屏幕与滚动历史": "Bildschirm und Scrollback",
   "屏幕底部": "Unterer Bildschirmrand",

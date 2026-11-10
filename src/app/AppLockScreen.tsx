@@ -21,6 +21,17 @@ import { t } from "../i18n";
 
 const HIDDEN_MARK = "data-nx-app-locked";
 
+// Back-off against guessing: after this many wrong passwords each further attempt waits twice as long as the
+// previous wait (1s, 2s, 4s ... up to the cap). Server mode verifies locally, so the screen itself must slow it.
+const FREE_ATTEMPTS = 3;
+const BACKOFF_BASE_MS = 1000;
+const BACKOFF_MAX_MS = 30_000;
+
+function backoffDelay(failures: number): number {
+  if (failures < FREE_ATTEMPTS) return 0;
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - FREE_ATTEMPTS));
+}
+
 // hideAppContent keeps every top-level node except the lock screen invisible (visibility: hidden in base.css) and
 // inert while locked, including dialogs and menus portaled to the body later. Content is hidden, not just covered,
 // so terminal canvases, previews and remote desktop frames never show through or take focus.
@@ -98,6 +109,31 @@ function AppLockScreen() {
   const [error, setError] = useState<string | null>(null);
   const [biometric, setBiometric] = useState<{ label: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const failures = useRef(0);
+  const [waitUntil, setWaitUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const waitSeconds = waitUntil > now ? Math.ceil((waitUntil - now) / 1000) : 0;
+  const waiting = waitSeconds > 0;
+
+  useEffect(() => {
+    if (waitUntil <= Date.now()) return;
+    setNow(Date.now());
+    const timer = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= waitUntil) clearInterval(timer);
+    }, 250);
+    return () => clearInterval(timer);
+  }, [waitUntil]);
+
+  const noteFailure = () => {
+    failures.current += 1;
+    const delay = backoffDelay(failures.current);
+    if (delay > 0) {
+      setNow(Date.now());
+      setWaitUntil(Date.now() + delay);
+    }
+  };
 
   useEffect(() => {
     // In browser server mode the account gate decides: while it is still loading nothing is known yet.
@@ -153,7 +189,7 @@ function AppLockScreen() {
   };
 
   const submit = async () => {
-    if (busy || method.kind !== "ready" || !password) return;
+    if (busy || waiting || method.kind !== "ready" || !password) return;
     const value = password;
     setBusy(true);
     setError(null);
@@ -161,6 +197,7 @@ function AppLockScreen() {
       await unlockAppWithPassword(method.method, value);
       afterUnlock();
     } catch (e) {
+      noteFailure();
       setError(t("解锁失败：{value}", { value: describeError(e) }));
       setPassword("");
       inputRef.current?.focus();
@@ -170,7 +207,7 @@ function AppLockScreen() {
   };
 
   const unlockWithBiometric = async () => {
-    if (busy || !biometric) return;
+    if (busy || waiting || !biometric) return;
     setBusy(true);
     setError(null);
     try {
@@ -265,14 +302,19 @@ function AppLockScreen() {
                 <span className="min-w-0 flex-1 break-words">{error}</span>
               </div>
             )}
-            <button type="submit" className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || !password}>
+            {waiting && (
+              <p className="nx-hint mt-3" role="status">
+                {t("尝试过于频繁，请 {seconds} 秒后再试", { seconds: waitSeconds })}
+              </p>
+            )}
+            <button type="submit" className="nx-btn nx-btn-primary mt-4 w-full" disabled={busy || waiting || !password}>
               {busy ? t("解锁中…") : t("解锁")}
             </button>
             {biometric && (
               <button
                 type="button"
                 className="nx-btn nx-btn-outline mt-2 w-full"
-                disabled={busy}
+                disabled={busy || waiting}
                 onClick={() => void unlockWithBiometric()}
               >
                 {t("用{bioLabel}解锁", { bioLabel: biometric.label })}

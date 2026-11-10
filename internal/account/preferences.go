@@ -124,6 +124,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"keybinding.terminalSearch":         {kind: preferenceKindBinding},
 	"keybinding.reclaimTakeover":        {kind: preferenceKindBinding},
 	"keybinding.lockVault":              {kind: preferenceKindBinding},
+	"keybinding.lockApp":                {kind: preferenceKindBinding},
 	"keybinding.openSettings":           {kind: preferenceKindBinding},
 	"keybinding.focusAiInput":           {kind: preferenceKindBinding},
 }

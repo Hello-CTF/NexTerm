@@ -2355,6 +2355,7 @@
   "尚未配置模型": "No model configured yet",
   "尚未配置模型，AI 暂时无法回答。": "No model is configured, so the AI cannot answer for now.",
   "尝试次数": "Attempts",
+  "尝试过于频繁，请 {seconds} 秒后再试": "Too many attempts. Try again in {seconds} s",
   "屏幕上没有文字，请手动填写匹配模式。": "There is no text on the screen. Enter the match pattern manually.",
   "屏幕与滚动历史": "Screen and scrollback",
   "屏幕底部": "Bottom of screen",

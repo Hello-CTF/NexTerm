@@ -2364,6 +2364,7 @@
   "尚未配置模型": "Aún no hay ningún modelo configurado",
   "尚未配置模型，AI 暂时无法回答。": "No hay ningún modelo configurado, por lo que la IA no puede responder por ahora.",
   "尝试次数": "Intentos",
+  "尝试过于频繁，请 {seconds} 秒后再试": "Demasiados intentos. Vuelve a intentarlo en {seconds} s",
   "屏幕上没有文字，请手动填写匹配模式。": "No hay texto en la pantalla. Rellena el patrón de coincidencia manualmente.",
   "屏幕与滚动历史": "Pantalla e historial de desplazamiento",
   "屏幕底部": "Parte inferior de la pantalla",

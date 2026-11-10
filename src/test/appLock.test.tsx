@@ -173,6 +173,31 @@ describe("app lock screen", () => {
     expect(window.localStorage.getItem("nexterm.appLock.v1")).toBe("1");
   });
 
+  it("backs off with a visible countdown after repeated wrong passwords", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    mountApp();
+    act(() => lockApp());
+    await flushUntil(() => lockPassword() !== null);
+    const attemptWrong = async () => {
+      setInputValue(lockPassword()!, "wrong");
+      clickButton(document.body, "解锁");
+      await flushUntil(() => lockAlert().includes("保护密码错误"));
+    };
+    for (let i = 0; i < 3; i++) await attemptWrong();
+    await flushUntil(() => (lockScreen()?.textContent ?? "").includes("1 秒"));
+    expect(mocks.vaultUnlock).toHaveBeenCalledTimes(3);
+
+    setInputValue(lockPassword()!, "correct horse");
+    const submit = Array.from(lockScreen()!.querySelectorAll("button")).find((b) => b.textContent === "解锁")!;
+    expect(submit.disabled).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(lockScreen()!.textContent).not.toContain("秒后再试");
+    expect(submit.disabled).toBe(false);
+    expect(mocks.vaultUnlock).toHaveBeenCalledTimes(3);
+  });
+
   it("unlocks with mobile biometrics through the vault password check", async () => {
     mocks.platform.mockResolvedValue("ios");
     mountApp();

@@ -8,6 +8,12 @@ import { t } from "../i18n";
 // The locked flag lives in localStorage so a reload, a second browser tab or a restart of the desktop app opens
 // locked again. The password is never stored: unlocking verifies it against the credential vault (desktop and
 // mobile) or the account's data key envelope (browser server mode) and then forgets it.
+//
+// Threat model: this stops a casual bystander at an unattended screen, not an attacker with control of the
+// device or browser profile. The flag is plain localStorage state that can be cleared by anyone with devtools
+// access; in browser server mode the account data key stays in sessionStorage while locked; and the app lock
+// does not lock the credential vault (use the vault lock for that). The lock screen only slows password guessing
+// with a back-off.
 
 const LOCK_KEY = "nexterm.appLock.v1";
 const IDLE_KEY = "nexterm.appLock.idleMinutes.v1";

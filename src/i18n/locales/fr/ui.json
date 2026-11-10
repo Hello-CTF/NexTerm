@@ -2358,6 +2358,7 @@
   "尚未配置模型": "Aucun modèle configuré",
   "尚未配置模型，AI 暂时无法回答。": "Aucun modèle n'est configuré ; l'IA ne peut pas répondre pour le moment.",
   "尝试次数": "Nombre de tentatives",
+  "尝试过于频繁，请 {seconds} 秒后再试": "Trop de tentatives. Réessayez dans {seconds} s",
   "屏幕上没有文字，请手动填写匹配模式。": "Aucun texte à l'écran. Saisissez manuellement le motif de correspondance.",
   "屏幕与滚动历史": "Écran et historique de défilement",
   "屏幕底部": "Bas de l'écran",
