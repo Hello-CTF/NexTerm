@@ -306,6 +306,7 @@ export type AttentionEvent = {
   exitCode?: number | null;
   title?: string;
   body?: string;
+  progress?: SessionProgress | null;
   lastInputClient?: string;
   version: number;
 };
@@ -2985,6 +2986,11 @@ export type SessionInfoDTO = {
   nextRetryAt?: string | null;
   liveness?: string;
   staleConfig: boolean;
+};
+
+export type SessionProgress = {
+  state: string;
+  value?: number | null;
 };
 
 export type ShellProfile = {
