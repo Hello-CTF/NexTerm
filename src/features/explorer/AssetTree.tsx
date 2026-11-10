@@ -3360,10 +3360,10 @@ export function AssetEditor({
                     options={[
                       { value: "auto", label: tr("自动（服务器不回显时本地显示）") },
                       { value: "on", label: tr("始终本地显示") },
-                      { value: "off", label: tr("关闭") },
+                      { value: "off", label: tr("不本地显示") },
                     ]}
                   />
-                  <div className="nx-hint mt-1.5">{tr("↳ 输入的字符看不到时选「始终本地显示」，出现两遍时选「关闭」。")}</div>
+                  <div className="nx-hint mt-1.5">{tr("↳ 输入的字符看不到时选「始终本地显示」，出现两遍时选「不本地显示」。")}</div>
                 </div>
               )}
 

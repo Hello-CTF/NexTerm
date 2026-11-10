@@ -17,6 +17,8 @@ vi.mock("../../app/lazyPanels", async () => (await import("../helpers/splitViewH
 import { useUi, type Workspace } from "../../app/store";
 import { WorkspaceBody } from "../../app/shell/WorkspaceBody";
 import { resolveLeftView } from "../../app/shell/leftView";
+import { AppRail } from "../../app/shell/AppRail";
+import type { WorkspaceActions } from "../../app/shell/useWorkspaceActions";
 
 let view: MountedView | null = null;
 
@@ -67,5 +69,37 @@ describe("terminal-only hosts have no file tree", () => {
     expect(resolveLeftView(telnet, "credentials", null)).toBe("credentials");
     expect(resolveLeftView(telnet, "assets", "credentials")).toBe("credentials");
     expect(resolveLeftView(workspace("ssh"), "assets", null)).toBe("files");
+  });
+});
+
+describe("terminal-only hosts have no host tools in the rail", () => {
+  function railLabels(assetKind: string): string[] {
+    const ws = workspace(assetKind);
+    useUi.setState({ workspaces: [ws], activeWorkspaceId: "ws", sessions: [], toasts: [] });
+    const actions = new Proxy({}, { get: () => vi.fn() }) as unknown as WorkspaceActions;
+    view = mount(
+      createElement(AppRail, {
+        overlaySidebars: false,
+        setOverlayDock: vi.fn(),
+        setLeftOpen: vi.fn(),
+        leftDockOpen: true,
+        backgroundAvailable: false,
+        workspace: ws,
+        hasDbAssets: false,
+        actions,
+      }),
+    );
+    return [...view.container.querySelectorAll("button[aria-label]")].map((button) => button.getAttribute("aria-label") ?? "");
+  }
+
+  it("offers no containers, mounts, forwarding or logs on a Telnet host", () => {
+    const labels = railLabels("telnet");
+    for (const label of ["容器", "磁盘挂载", "端口转发", "日志"]) expect(labels).not.toContain(label);
+    expect(labels).toContain("终端历史");
+  });
+
+  it("keeps them on an SSH host", () => {
+    const labels = railLabels("ssh");
+    for (const label of ["容器", "端口转发", "日志"]) expect(labels).toContain(label);
   });
 });
