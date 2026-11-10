@@ -189,6 +189,30 @@ func TestProgressErrorAsksOncePerProgress(t *testing.T) {
 	}
 }
 
+func TestProgressClearErrorLoopIsCoalesced(t *testing.T) {
+	h := newHarness(t)
+	h.running()
+	h.out(time.Second, "\x1b]9;4;2;1\x07")
+	if h.state().State != base.SessionNeedsMe || h.changes != 1 {
+		t.Fatalf("state %+v after %d changes", h.state(), h.changes)
+	}
+	h.clock.advance(time.Second)
+	h.changes = 0
+	for i := 2; i <= 50; i++ {
+		h.out(time.Millisecond, "\x1b]9;4;0\x07\x1b]9;4;2;"+strconv.Itoa(i)+"\x07")
+	}
+	if h.changes > 1 {
+		t.Fatalf("a clear and error loop within the interval reported %d changes", h.changes)
+	}
+	if state := h.state(); state.State != base.SessionNeedsMe || progressOf(state) != "error:50" {
+		t.Fatalf("state %+v progress %s", state, progressOf(state))
+	}
+	h.tracker.progressTick(h.clock.advance(progressInterval))
+	if h.changes > 2 {
+		t.Fatalf("changes %d", h.changes)
+	}
+}
+
 func TestProgressRealTimerReportsTheHeldChange(t *testing.T) {
 	changes := make(chan struct{}, 16)
 	tracker := newStateTracker(stateOptions{

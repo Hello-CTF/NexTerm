@@ -330,13 +330,18 @@ func (t *stateTracker) progressLocked(event signals.Event, now time.Time) bool {
 		// One request for attention per progress: a program that keeps
 		// reporting its error, or flips between error and normal, does not
 		// ask again until the progress is cleared.
+		asking := t.state == base.SessionNeedsMe && t.reason == "progress_error" && !t.seen
 		t.progressErrorRaised = true
 		t.signalPending, t.finishedPending, t.seen = true, false, false
-		t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "progress_error", now)
+		moved := t.setLocked(base.SessionNeedsMe, base.ConfidenceSignal, "progress_error", now)
 		t.reason, t.notifyTitle, t.notifyBody = "progress_error", "", ""
-		t.progressSentLocked(now)
-		t.armProgressLocked(now)
-		return true
+		if moved || !asking {
+			t.progressSentLocked(now)
+			t.armProgressLocked(now)
+			return true
+		}
+		// Still asking for the same unseen error (a clear and error loop):
+		// only the progress changed, which is coalesced like any other.
 	}
 	if !changed {
 		// A repeated report only keeps the progress from going stale.

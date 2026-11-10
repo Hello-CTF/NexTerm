@@ -5,7 +5,8 @@ import { useSyncExternalStore } from "react";
 export interface NotificationPrefs {
   // system lets this device show operating system notifications at all.
   system: boolean;
-  // needsMe: a session rang the bell, sent a notification or matched a state rule that asks for the user.
+  // needsMe: a session rang the bell, sent a notification, reported a progress error or matched a state rule that
+  // asks for the user.
   needsMe: boolean;
   // finished: a long command (the helper's notable threshold) finished.
   finished: boolean;
