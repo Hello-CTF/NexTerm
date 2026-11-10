@@ -1125,6 +1125,7 @@
   "前端性能数据包含无效数字": "Los datos de rendimiento del frontend contienen números no válidos",
   "前端性能数据已达上限": "Los datos de rendimiento del frontend alcanzaron el límite",
   "加密错误: ": "Error de cifrado: ",
+  "加密错误: CSRF 密钥生成失败": "Error de cifrado: falló la generación de la clave CSRF",
   "加密错误: DPAPI protect 失败: ": "Error de cifrado: falló DPAPI protect: ",
   "加密错误: DPAPI unprotect 失败: ": "Error de cifrado: falló DPAPI unprotect: ",
   "加密错误: DPAPI 信封为空": "Error de cifrado: el sobre DPAPI está vacío",

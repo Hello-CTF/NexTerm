@@ -1125,6 +1125,7 @@
   "前端性能数据包含无效数字": "The frontend performance data contains an invalid number",
   "前端性能数据已达上限": "The frontend performance data has reached its limit",
   "加密错误: ": "Encryption error: ",
+  "加密错误: CSRF 密钥生成失败": "Encryption error: failed to generate the CSRF key",
   "加密错误: DPAPI protect 失败: ": "Encryption error: DPAPI protect failed: ",
   "加密错误: DPAPI unprotect 失败: ": "Encryption error: DPAPI unprotect failed: ",
   "加密错误: DPAPI 信封为空": "Encryption error: the DPAPI envelope is empty",

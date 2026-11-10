@@ -58,7 +58,9 @@ func (f *remoteTestAccounts) bindTOTP(t *testing.T, username, password string) s
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, remoteTestTOTPCode(t, secret, time.Now())); err != nil {
+	// Confirm with the previous step's code: accepted codes are single-use, so the
+	// current step stays free for the login that follows.
+	if _, err := f.accounts.ConfirmTOTPSetup(ctx, user.ID, remoteTestTOTPCode(t, secret, time.Now().Add(-30*time.Second))); err != nil {
 		t.Fatal(err)
 	}
 	return secret
