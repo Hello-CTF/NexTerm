@@ -15,6 +15,7 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
 
 import { KeywordHighlightCard } from "../../features/settings/KeywordHighlightCard";
 import { registerAccountPreferenceStore } from "../../app/preferences";
+import { loadRegexEngine } from "../../features/terminal/keywordHighlightRules";
 
 const STORAGE_KEY = "nexterm.keywordHighlights.v1";
 let mounted: MountedView | undefined;
@@ -40,6 +41,7 @@ function patterns(): string[] {
 }
 
 async function render() {
+  await loadRegexEngine();
   mounted = mountWithClient(createElement(KeywordHighlightCard));
   await flush();
 }
@@ -103,11 +105,11 @@ describe("KeywordHighlightCard", () => {
     expect(patterns()).toEqual(["WARN"]);
   });
 
-  it("refuses a regular expression that could backtrack catastrophically", async () => {
+  it("refuses a regular expression RE2 does not support", async () => {
     await render();
-    await addRule("(a+)+", { regex: true });
+    await addRule("foo(?=bar)", { regex: true });
     const alert = mounted!.container.querySelector('form [role="alert"]');
-    expect(alert?.textContent).toContain("嵌套");
+    expect(alert?.textContent).toContain("正则表达式无效");
     expect(stored()).toBeNull();
   });
 

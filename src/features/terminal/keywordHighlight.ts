@@ -4,6 +4,8 @@ import { cellMap } from "./terminalLinkProvider";
 import {
   compileKeywordHighlights,
   getKeywordHighlights,
+  loadedRegexEngine,
+  loadRegexEngine,
   subscribeKeywordHighlights,
   type KeywordHighlightSettings,
   highlightBackground,
@@ -340,18 +342,36 @@ export function attachSessionKeywordHighlight(
 ): KeywordHighlighter {
   let source: KeywordHighlightSettings | null = null;
   let compiled: CompiledHighlight[] = [];
+  let changed: (() => void) | null = null;
+  let loading = false;
   return attachKeywordHighlight(term, {
     rules: () => {
       const settings = getKeywordHighlights();
+      if (settings.presets.length === 0 && !settings.rules.some((rule) => rule.enabled)) return [];
+      const engine = loadedRegexEngine();
+      if (!engine) {
+        // The engine is fetched only once a rule is on; the terminal is scanned again when it arrives.
+        if (!loading) {
+          loading = true;
+          void loadRegexEngine().then(
+            () => changed?.(),
+            () => {
+              loading = false;
+            },
+          );
+        }
+        return [];
+      }
       if (settings !== source) {
         source = settings;
-        compiled = compileKeywordHighlights(settings, session.assetId);
+        compiled = compileKeywordHighlights(engine, settings, session.assetId);
       }
       return compiled;
     },
     theme: getResolvedTerminalTheme,
     visible: session.visible,
     subscribe: (listener) => {
+      changed = listener;
       const offRules = subscribeKeywordHighlights(listener);
       let theme = getResolvedTerminalTheme();
       const offTheme = subscribeAppearancePrefs(() => {
@@ -361,6 +381,7 @@ export function attachSessionKeywordHighlight(
         listener();
       });
       return () => {
+        changed = null;
         offRules();
         offTheme();
       };

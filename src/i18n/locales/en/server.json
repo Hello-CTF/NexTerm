@@ -2019,7 +2019,6 @@
   "模式已出现，终端已安静 %dms（要求 %dms）": "Pattern appeared, and the terminal has been quiet for %dms (required: %dms)",
   "正则无效: %v": "Invalid regular expression: %v",
   "正则无效: %w": "Invalid regular expression: %w",
-  "正则表达式含有嵌套的无限重复，匹配可能极慢": "The regular expression nests unbounded repeats and could match extremely slowly",
   "正则表达式无效: %v": "Invalid regular expression: %v",
   "正则表达式过于复杂: 编译后 %d 条指令，超出上限 %d": "The regular expression is too complex: it compiles to %d instructions, over the limit of %d",
   "正在从官方 release 下载 %s 并校验 Minisign 签名与 SHA256SUMS...\n": "Downloading %s from the official release and verifying the Minisign signature and SHA256SUMS...\n",

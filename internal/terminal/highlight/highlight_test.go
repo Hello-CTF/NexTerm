@@ -66,24 +66,21 @@ func TestNormalizeRejects(t *testing.T) {
 		many[i] = rule(fmt.Sprintf("r%d", i), "x")
 	}
 	cases := map[string][]byte{
-		"not json":           []byte(`[`),
-		"unknown field":      []byte(`{"presets":[],"rules":[],"extra":1}`),
-		"bad preset":         encode(t, Settings{Presets: []string{"Bad Preset"}}),
-		"duplicate preset":   encode(t, Settings{Presets: []string{"errors", "errors"}}),
-		"bad id":             encode(t, Settings{Rules: []Rule{rule("bad id", "x")}}),
-		"duplicate id":       encode(t, Settings{Rules: []Rule{rule("a", "x"), rule("a", "y")}}),
-		"empty pattern":      encode(t, Settings{Rules: []Rule{rule("a", "  ")}}),
-		"long pattern":       encode(t, Settings{Rules: []Rule{rule("a", strings.Repeat("x", MaxPatternBytes+1))}}),
-		"control char":       encode(t, Settings{Rules: []Rule{rule("a", "a\tb")}}),
-		"invalid regex":      encode(t, Settings{Rules: []Rule{regexRule(`(`)}}),
-		"empty match":        encode(t, Settings{Rules: []Rule{regexRule(`x*`)}}),
-		"nested repeat":      encode(t, Settings{Rules: []Rule{regexRule(`(a+)+b`)}}),
-		"repeat alternation": encode(t, Settings{Rules: []Rule{regexRule(`(?:foo|bar)+`)}}),
-		"huge program":       encode(t, Settings{Rules: []Rule{regexRule(`(?:abc){400}`)}}),
-		"no style":           encode(t, Settings{Rules: []Rule{noStyle}}),
-		"bad color":          encode(t, Settings{Rules: []Rule{badColor}}),
-		"bad asset":          encode(t, Settings{Rules: []Rule{badAsset}}),
-		"too many rules":     encode(t, Settings{Rules: many}),
+		"not json":         []byte(`[`),
+		"bad preset":       encode(t, Settings{Presets: []string{"Bad Preset"}}),
+		"duplicate preset": encode(t, Settings{Presets: []string{"errors", "errors"}}),
+		"bad id":           encode(t, Settings{Rules: []Rule{rule("bad id", "x")}}),
+		"duplicate id":     encode(t, Settings{Rules: []Rule{rule("a", "x"), rule("a", "y")}}),
+		"empty pattern":    encode(t, Settings{Rules: []Rule{rule("a", "  ")}}),
+		"long pattern":     encode(t, Settings{Rules: []Rule{rule("a", strings.Repeat("x", MaxPatternBytes+1))}}),
+		"control char":     encode(t, Settings{Rules: []Rule{rule("a", "a\tb")}}),
+		"invalid regex":    encode(t, Settings{Rules: []Rule{regexRule(`(`)}}),
+		"empty match":      encode(t, Settings{Rules: []Rule{regexRule(`x*`)}}),
+		"huge program":     encode(t, Settings{Rules: []Rule{regexRule(`(?:abc){400}`)}}),
+		"no style":         encode(t, Settings{Rules: []Rule{noStyle}}),
+		"bad color":        encode(t, Settings{Rules: []Rule{badColor}}),
+		"bad asset":        encode(t, Settings{Rules: []Rule{badAsset}}),
+		"too many rules":   encode(t, Settings{Rules: many}),
 	}
 	for name, raw := range cases {
 		if got, err := Normalize(raw); err == nil {
@@ -119,5 +116,27 @@ func TestPlainTextIsQuoted(t *testing.T) {
 	plain.CaseSensitive = true
 	if got := EffectivePattern(plain); got != `a\+\(b` {
 		t.Fatalf("EffectivePattern = %q", got)
+	}
+}
+
+func TestNormalizeDropsUnknownFields(t *testing.T) {
+	got, err := Normalize([]byte(`{"presets":[],"rules":[{"id":"r1","pattern":"x","foreground":"red","enabled":true,"blink":true}],"extra":1}`))
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if strings.Contains(got, "blink") || strings.Contains(got, "extra") {
+		t.Fatalf("unknown fields kept: %s", got)
+	}
+}
+
+// RE2 matches in linear time, so shapes that backtrack catastrophically in a
+// backtracking engine are ordinary patterns here.
+func TestNormalizeAcceptsBacktrackingShapes(t *testing.T) {
+	for _, pattern := range []string{`(a+)+b`, `(?:foo|bar)+`, `\d+\d+\d+x`, `(.*a){5}x`, `.*.*.*x`, `(.*,){10}x`, `[a-z]+[a-z]+[a-z]+[a-z]+x`} {
+		r := rule("r1", pattern)
+		r.Regex = true
+		if _, err := Normalize(encode(t, Settings{Rules: []Rule{r}})); err != nil {
+			t.Errorf("%s: %v", pattern, err)
+		}
 	}
 }

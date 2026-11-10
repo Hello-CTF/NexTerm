@@ -120,87 +120,58 @@ export const KEYWORD_HIGHLIGHT_PRESETS: readonly KeywordHighlightPreset[] = [
 const encoder = new TextEncoder();
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
-export function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+// Patterns are RE2, the syntax internal/terminal/highlight validates with Go's regexp, and are matched with re2js,
+// which runs in time linear in the text: no pattern can stall the terminal the way a backtracking JavaScript
+// RegExp can. The engine is loaded on first use.
+export type RegexEngine = typeof import("re2js").RE2JS;
+type CompiledPattern = ReturnType<RegexEngine["compile"]>;
+
+let regexEngine: RegexEngine | null = null;
+let regexEngineLoad: Promise<RegexEngine> | null = null;
+
+export function loadRegexEngine(): Promise<RegexEngine> {
+  regexEngineLoad ??= import("re2js").then(
+    (module) => (regexEngine = module.RE2JS),
+    (cause: unknown) => {
+      regexEngineLoad = null;
+      throw cause;
+    },
+  );
+  return regexEngineLoad;
 }
 
-// Lookaround and backreferences are JavaScript-only; inline flags such as (?i) and RE2's (?P<…>) groups do not
-// compile in JavaScript. A pattern must work in both engines, so these are refused here.
-const NON_RE2 = /\(\?<?[=!]|\\[1-9]|\\k<|\(\?[A-Za-z]/;
-
-/**
- * Whether the pattern repeats without bound a group that itself repeats without bound or alternates, the shape
- * of catastrophic backtracking ((a+)+, (ab|a)*). internal/terminal/highlight refuses the same shape.
- */
-export function hasNestedRepeat(pattern: string): boolean {
-  // Each open group records whether it holds an unbounded repeat or an alternation.
-  const stack: boolean[] = [false];
-  const unboundedAt = (i: number): boolean => {
-    const ch = pattern[i];
-    return ch === "*" || ch === "+" || (ch === "{" && /^\{\d+,\}/.test(pattern.slice(i)));
-  };
-  // An atom ending at i is followed by an unbounded repeat: the enclosing group now holds one.
-  const repeated = (i: number) => {
-    if (!unboundedAt(i + 1)) return false;
-    stack[stack.length - 1] = true;
-    return true;
-  };
-  for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
-    if (ch === "\\") {
-      i++;
-      repeated(i);
-    } else if (ch === "[") {
-      let j = i + 1;
-      if (pattern[j] === "^") j++;
-      if (pattern[j] === "]") j++;
-      for (; j < pattern.length && pattern[j] !== "]"; j++) if (pattern[j] === "\\") j++;
-      i = j;
-      repeated(i);
-    } else if (ch === "(") {
-      stack.push(false);
-    } else if (ch === "|") {
-      stack[stack.length - 1] = true;
-    } else if (ch === ")") {
-      const inner = stack.length > 1 ? stack.pop()! : false;
-      if (unboundedAt(i + 1) && inner) return true;
-      if (!repeated(i) && inner) stack[stack.length - 1] = true;
-    } else if (ch !== "*" && ch !== "+" && ch !== "?" && ch !== "}") {
-      repeated(i);
-    }
-  }
-  return false;
+export function loadedRegexEngine(): RegexEngine | null {
+  return regexEngine;
 }
 
-export function effectivePattern(rule: Pick<KeywordHighlightRule, "pattern" | "regex">): string {
-  return rule.regex ? rule.pattern : escapeRegExp(rule.pattern);
+function compilePattern(engine: RegexEngine, rule: Pick<KeywordHighlightRule, "pattern" | "regex" | "caseSensitive">): CompiledPattern {
+  const source = rule.regex ? rule.pattern : engine.quote(rule.pattern);
+  return engine.compile(source, rule.caseSensitive ? 0 : engine.CASE_INSENSITIVE);
 }
 
-/** Returns why a rule's pattern cannot be used, or null when it is valid. */
-export function highlightPatternError(rule: Pick<KeywordHighlightRule, "pattern" | "regex" | "caseSensitive">): string | null {
+/** Returns why a rule's pattern cannot be used, or null when it is valid. Go also caps the compiled program size. */
+export function highlightPatternError(
+  engine: RegexEngine,
+  rule: Pick<KeywordHighlightRule, "pattern" | "regex" | "caseSensitive">,
+): string | null {
   if (!rule.pattern.trim()) return t("请填写匹配内容");
   if (encoder.encode(rule.pattern).length > KEYWORD_HIGHLIGHT_LIMITS.patternBytes) {
     return t("匹配内容不能超过 {bytes} 字节", { bytes: KEYWORD_HIGHLIGHT_LIMITS.patternBytes });
   }
   if (CONTROL_CHARS.test(rule.pattern)) return t("匹配内容不能包含换行或控制字符");
-  if (!rule.regex) return null;
-  if (NON_RE2.test(rule.pattern)) {
-    return t("不支持环视、反向引用和内联标志，请使用两端都支持的正则写法");
-  }
-  if (hasNestedRepeat(rule.pattern)) return t("正则表达式含有嵌套的无限重复，匹配可能极慢");
-  let re: RegExp;
+  let compiled: CompiledPattern;
   try {
-    re = new RegExp(rule.pattern, rule.caseSensitive ? "u" : "iu");
+    compiled = compilePattern(engine, rule);
   } catch (cause) {
     return t("正则表达式无效：{error}", { error: cause instanceof Error ? cause.message : String(cause) });
   }
-  if (re.test("")) return t("匹配内容不能匹配空文本");
+  if (compiled.matcher("").find()) return t("匹配内容不能匹配空文本");
   return null;
 }
 
 /** Returns why a rule cannot be saved, or null when it is valid. */
-export function highlightRuleError(rule: KeywordHighlightRule): string | null {
-  const patternError = highlightPatternError(rule);
+export function highlightRuleError(engine: RegexEngine, rule: KeywordHighlightRule): string | null {
+  const patternError = highlightPatternError(engine, rule);
   if (patternError) return patternError;
   if (!rule.foreground && !rule.background && !rule.underline) return t("请至少选择一种样式");
   if ((rule.assetIds?.length ?? 0) > KEYWORD_HIGHLIGHT_LIMITS.assets) {
@@ -209,12 +180,12 @@ export function highlightRuleError(rule: KeywordHighlightRule): string | null {
   return null;
 }
 
-export function highlightSettingsError(settings: KeywordHighlightSettings): string | null {
+export function highlightSettingsError(engine: RegexEngine, settings: KeywordHighlightSettings): string | null {
   if (settings.rules.length > KEYWORD_HIGHLIGHT_LIMITS.rules) {
     return t("最多保存 {count} 条高亮规则", { count: KEYWORD_HIGHLIGHT_LIMITS.rules });
   }
   for (const rule of settings.rules) {
-    const error = highlightRuleError(rule);
+    const error = highlightRuleError(engine, rule);
     if (error) return `「${rule.pattern}」：${error}`;
   }
   if (encoder.encode(JSON.stringify(settings)).length > KEYWORD_HIGHLIGHT_LIMITS.totalBytes) {
@@ -292,7 +263,7 @@ export function useKeywordHighlights(): KeywordHighlightSettings {
 
 /** Saves to the account (or the device without one); rejects an invalid value or a failed account write. */
 export async function saveKeywordHighlights(settings: KeywordHighlightSettings): Promise<void> {
-  const error = highlightSettingsError(settings);
+  const error = highlightSettingsError(await loadRegexEngine(), settings);
   if (error) throw new Error(error);
   await store().set({
     presets: [...settings.presets],
@@ -308,7 +279,7 @@ export function newHighlightRuleId(): string {
 }
 
 export interface CompiledHighlight {
-  re: RegExp;
+  re: CompiledPattern;
   wholeWord: boolean;
   style: HighlightStyle;
 }
@@ -321,33 +292,29 @@ function styleOf(rule: Pick<KeywordHighlightRule, "foreground" | "background" | 
   };
 }
 
-function compileRule(rule: Omit<KeywordHighlightRule, "id" | "enabled">): CompiledHighlight | null {
-  if (highlightPatternError(rule) !== null) return null;
+function compileRule(engine: RegexEngine, rule: Omit<KeywordHighlightRule, "id" | "enabled">): CompiledHighlight | null {
+  if (highlightPatternError(engine, rule) !== null) return null;
   if (!rule.foreground && !rule.background && !rule.underline) return null;
-  try {
-    return {
-      re: new RegExp(effectivePattern(rule), rule.caseSensitive ? "gu" : "giu"),
-      wholeWord: rule.wholeWord,
-      style: styleOf(rule),
-    };
-  } catch {
-    return null;
-  }
+  return { re: compilePattern(engine, rule), wholeWord: rule.wholeWord, style: styleOf(rule) };
 }
 
 /** The rules that apply to a session of assetId, in priority order: the user's enabled rules, then the presets. */
-export function compileKeywordHighlights(settings: KeywordHighlightSettings, assetId?: string): CompiledHighlight[] {
+export function compileKeywordHighlights(
+  engine: RegexEngine,
+  settings: KeywordHighlightSettings,
+  assetId?: string,
+): CompiledHighlight[] {
   const out: CompiledHighlight[] = [];
   for (const rule of settings.rules) {
     if (!rule.enabled) continue;
     if (rule.assetIds && rule.assetIds.length > 0 && (!assetId || !rule.assetIds.includes(assetId))) continue;
-    const compiled = compileRule(rule);
+    const compiled = compileRule(engine, rule);
     if (compiled) out.push(compiled);
   }
   for (const preset of KEYWORD_HIGHLIGHT_PRESETS) {
     if (!settings.presets.includes(preset.id)) continue;
     for (const rule of preset.rules) {
-      const compiled = compileRule(rule);
+      const compiled = compileRule(engine, rule);
       if (compiled) out.push(compiled);
     }
   }
@@ -363,13 +330,15 @@ export interface HighlightMatch {
 /** Text beyond this many UTF-16 units of a logical line is not matched. */
 export const MAX_HIGHLIGHT_LINE_CHARS = 2000;
 export const MAX_MATCHES_PER_LINE = 64;
+/** Searches one rule makes on one line at most, counting matches refused as partial words. */
+const MAX_SEARCHES_PER_RULE = 128;
 
 const WORD = /[A-Za-z0-9_]/;
 const isWord = (ch: string | undefined) => ch !== undefined && WORD.test(ch);
 
 /**
  * Matches the rules on one logical line. An earlier rule wins where matches overlap. Whole-word matching only
- * checks boundaries at letters, digits and underscores, so a CJK keyword matches inside CJK text.
+ * checks boundaries at letters, numbers and underscores, so a CJK keyword matches inside CJK text.
  */
 export function matchKeywordHighlights(
   text: string,
@@ -380,24 +349,25 @@ export function matchKeywordHighlights(
   const found: HighlightMatch[] = [];
   if (!line.trim()) return found;
   const overlaps = (start: number, end: number) => found.some((m) => start < m.end && m.start < end);
+  const after = (at: number) => at + ((line.codePointAt(at) ?? 0) > 0xffff ? 2 : 1);
   for (const rule of rules) {
-    const re = rule.re;
-    re.lastIndex = 0;
-    for (let m = re.exec(line); m; m = re.exec(line)) {
-      const start = m.index;
-      const end = start + m[0].length;
-      if (end === start) {
-        re.lastIndex = start + 1;
+    const matcher = rule.re.matcher(line);
+    for (let from = 0, searches = 0; from <= line.length && searches < MAX_SEARCHES_PER_RULE && matcher.find(from); searches++) {
+      const start = matcher.start();
+      const end = matcher.end();
+      if (end <= start) {
+        from = after(start);
         continue;
       }
       if (rule.wholeWord && ((isWord(line[start]) && isWord(line[start - 1])) || (isWord(line[end - 1]) && isWord(line[end])))) {
-        re.lastIndex = start + 1;
+        from = after(start);
         continue;
       }
       if (!overlaps(start, end)) {
         found.push({ start, end, style: rule.style });
         if (found.length >= limit) return found.sort((a, b) => a.start - b.start);
       }
+      from = end;
     }
   }
   return found.sort((a, b) => a.start - b.start);

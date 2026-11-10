@@ -2,12 +2,9 @@
 // in the account preference terminal.keywordHighlights. The frontend renders
 // the highlights; this package only bounds what may be stored and synced.
 //
-// Patterns run in the browser's backtracking regular expression engine, so
-// besides the RE2 program size caps shared with state rules, a regular
-// expression may not repeat without bound a sub-expression that itself
-// repeats without bound or alternates (the shape of catastrophic
-// backtracking, such as (a+)+ or (ab|a)*). The frontend applies the same
-// check before saving.
+// Patterns are RE2. The frontend matches them with an RE2 engine too, so
+// matching runs in time linear in the text; the program size caps shared with
+// state rules bound the work per character.
 package highlight
 
 import (
@@ -72,10 +69,10 @@ type Settings struct {
 }
 
 // Normalize validates a stored or submitted value and returns its canonical
-// JSON text.
+// JSON text. Fields this version does not know are dropped rather than
+// refused, so a value written by a newer client can still be saved.
 func Normalize(raw []byte) (string, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var settings Settings
 	if err := decoder.Decode(&settings); err != nil || decoder.More() {
 		return "", errors.New("关键词高亮设置格式无效")
@@ -197,9 +194,6 @@ func ProgramSize(rule Rule) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("正则表达式无效: %v", err)
 	}
-	if nestedRepeat(parsed, false) {
-		return 0, errors.New("正则表达式含有嵌套的无限重复，匹配可能极慢")
-	}
 	program, err := syntax.Compile(parsed.Simplify())
 	if err != nil {
 		return 0, fmt.Errorf("正则表达式无效: %v", err)
@@ -215,29 +209,4 @@ func ProgramSize(rule Rule) (int, error) {
 		return 0, errors.New("匹配模式不能匹配空文本")
 	}
 	return len(program.Inst), nil
-}
-
-func unbounded(re *syntax.Regexp) bool {
-	switch re.Op {
-	case syntax.OpStar, syntax.OpPlus:
-		return true
-	case syntax.OpRepeat:
-		return re.Max < 0
-	}
-	return false
-}
-
-// nestedRepeat reports whether an unbounded repeat contains another unbounded
-// repeat or an alternation. inside is set below an unbounded repeat.
-func nestedRepeat(re *syntax.Regexp, inside bool) bool {
-	if inside && (unbounded(re) || re.Op == syntax.OpAlternate) {
-		return true
-	}
-	inside = inside || unbounded(re)
-	for _, sub := range re.Sub {
-		if nestedRepeat(sub, inside) {
-			return true
-		}
-	}
-	return false
 }

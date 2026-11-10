@@ -1,19 +1,27 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { attachKeywordHighlight, BURST_LINES, BURST_QUIET_MS, type KeywordHighlighter } from "../../features/terminal/keywordHighlight";
 import {
-  compileKeywordHighlights,
-  hasNestedRepeat,
+  compileKeywordHighlights as compileWith,
   highlightForeground,
-  highlightPatternError,
+  highlightPatternError as patternErrorWith,
   KEYWORD_HIGHLIGHT_PRESETS,
+  loadRegexEngine,
   matchKeywordHighlights,
   parseKeywordHighlights,
   type KeywordHighlightRule,
   type KeywordHighlightSettings,
+  type RegexEngine,
 } from "../../features/terminal/keywordHighlightRules";
+
+let engine: RegexEngine;
+beforeAll(async () => {
+  engine = await loadRegexEngine();
+});
+const compileKeywordHighlights = (value: KeywordHighlightSettings, assetId?: string) => compileWith(engine, value, assetId);
+const highlightPatternError = (rule: Parameters<typeof patternErrorWith>[1]) => patternErrorWith(engine, rule);
 
 function stubMatchMedia(): void {
   window.matchMedia = (() => ({
@@ -74,10 +82,10 @@ describe("keyword highlight matching", () => {
     const value = settings(
       rule("one", { enabled: false }),
       rule("two", { assetIds: ["asset-a"] }),
-      rule("(a+)+", { regex: true }),
+      rule("(?=x)", { regex: true }),
       rule("four"),
     );
-    const text = "one two (a+)+ four";
+    const text = "one two (?=x) four";
     const forOther = compileKeywordHighlights(value, "asset-b");
     expect(matchKeywordHighlights(text, forOther).map((m) => text.slice(m.start, m.end))).toEqual(["four"]);
     const forA = compileKeywordHighlights(value, "asset-a");
@@ -105,30 +113,41 @@ describe("keyword highlight validation", () => {
     }
   });
 
-  it("refuses patterns one of the two engines cannot run safely", () => {
+  it("accepts RE2 syntax and refuses what RE2 does not support", () => {
     const regex = (pattern: string) => highlightPatternError({ pattern, regex: true, caseSensitive: false });
-    expect(regex("\\d+\\.\\d+")).toBeNull();
-    expect(regex("(?:\\d{1,3}\\.){3}\\d{1,3}")).toBeNull();
-    for (const pattern of ["foo(?=bar)", "(?<!x)y", "(a)\\1", "(?i)foo", "(?P<n>x)", "(", "x*", "(a+)+", "(ab|a)*", "", "a\nb"]) {
+    for (const pattern of ["\\d+\\.\\d+", "(?:\\d{1,3}\\.){3}\\d{1,3}", "\\pL+", "[[:alpha:]]+", "x\\z", "(?i)foo", "(?P<n>x)", "\\x{41}"]) {
+      expect(regex(pattern), pattern).toBeNull();
+    }
+    for (const pattern of ["foo(?=bar)", "(?<!x)y", "(a)\\1", "\\cA", "\\u{41}", "(", "x*", "", "a\nb"]) {
       expect(regex(pattern), pattern).not.toBeNull();
     }
-    expect(highlightPatternError({ pattern: "(a+)+", regex: false, caseSensitive: false })).toBeNull();
+    expect(highlightPatternError({ pattern: "(?=x", regex: false, caseSensitive: false })).toBeNull();
   });
 
-  it("detects nested unbounded repeats", () => {
-    expect(hasNestedRepeat("(a+)+")).toBe(true);
-    expect(hasNestedRepeat("((a*))*")).toBe(true);
-    expect(hasNestedRepeat("(?:x|y){2,}")).toBe(true);
-    expect(hasNestedRepeat("[(+]+")).toBe(false);
-    expect(hasNestedRepeat("\\(a+\\)+")).toBe(false);
-    expect(hasNestedRepeat("(a+){3}")).toBe(false);
-    expect(hasNestedRepeat("(?:ab)+c+")).toBe(false);
+  it("matches patterns that backtrack catastrophically in a JavaScript RegExp in linear time", () => {
+    const cases: [string, string][] = [
+      ["\\d+\\d+\\d+x", "1".repeat(500)],
+      ["(.*a){5}x", "a".repeat(2000)],
+      [".*.*.*x", "y".repeat(2000)],
+      ["(.*,){10}x", ",".repeat(2000)],
+      ["(?:a+){1,100}b", "a".repeat(2000)],
+      ["[a-z]+[a-z]+[a-z]+[a-z]+x", "q".repeat(2000)],
+      ["(a+)+b", "a".repeat(2000)],
+    ];
+    const started = performance.now();
+    for (const [pattern, text] of cases) {
+      expect(highlightPatternError({ pattern, regex: true, caseSensitive: false }), pattern).toBeNull();
+      const rules = compileKeywordHighlights(settings(rule(pattern, { regex: true })));
+      expect(matchKeywordHighlights(text, rules), pattern).toEqual([]);
+    }
+    // Each case backtracks for well over ten seconds in a JavaScript RegExp.
+    expect(performance.now() - started).toBeLessThan(3000);
   });
 
   it("keeps rules with a known shape when reading a stored value", () => {
     const parsed = parseKeywordHighlights({
       presets: ["errors", "errors", 3],
-      rules: [{ id: "a", pattern: "(a+)+", regex: true, foreground: "red", enabled: true }, { id: "b", pattern: 1 }, { id: "c", pattern: "x", foreground: "pink" }],
+      rules: [{ id: "a", pattern: "(?=x)", regex: true, foreground: "red", enabled: true }, { id: "b", pattern: 1 }, { id: "c", pattern: "x", foreground: "pink" }],
     });
     expect(parsed?.presets).toEqual(["errors"]);
     expect(parsed?.rules.map((r) => r.id)).toEqual(["a"]);

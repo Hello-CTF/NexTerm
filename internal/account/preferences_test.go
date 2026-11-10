@@ -524,7 +524,7 @@ func TestTerminalKeywordHighlightsPreference(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("keyword highlights=(%q,%v) want %q", got, err, want)
 	}
-	for _, raw := range []string{`null`, `[]`, `{"rules":[{"id":"r1","pattern":"(a+)+","regex":true,"foreground":"red","enabled":true}]}`} {
+	for _, raw := range []string{`null`, `[]`, `{"rules":[{"id":"r1","pattern":"(","regex":true,"foreground":"red","enabled":true}]}`} {
 		if got, err := validatePreferenceValue("terminal.keywordHighlights", json.RawMessage(raw)); err == nil {
 			t.Fatalf("keyword highlights %s accepted as %q", raw, got)
 		}

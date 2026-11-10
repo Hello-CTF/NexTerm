@@ -2019,7 +2019,6 @@
   "模式已出现，终端已安静 %dms（要求 %dms）": "Muster ist aufgetreten, Terminal war %d ms ruhig (erforderlich: %d ms)",
   "正则无效: %v": "Ungültiger regulärer Ausdruck: %v",
   "正则无效: %w": "Ungültiger regulärer Ausdruck: %w",
-  "正则表达式含有嵌套的无限重复，匹配可能极慢": "Der reguläre Ausdruck verschachtelt unbegrenzte Wiederholungen und könnte extrem langsam sein",
   "正则表达式无效: %v": "Ungültiger regulärer Ausdruck: %v",
   "正则表达式过于复杂: 编译后 %d 条指令，超出上限 %d": "Der reguläre Ausdruck ist zu komplex: %d Anweisungen, mehr als %d",
   "正在从官方 release 下载 %s 并校验 Minisign 签名与 SHA256SUMS...\n": "%s wird vom offiziellen Release heruntergeladen, Minisign-Signatur und SHA256SUMS werden geprüft...\n",

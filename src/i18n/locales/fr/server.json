@@ -2019,7 +2019,6 @@
   "模式已出现，终端已安静 %dms（要求 %dms）": "Le motif est apparu et le terminal est calme depuis %d ms (%d ms requises)",
   "正则无效: %v": "Expression régulière invalide : %v",
   "正则无效: %w": "Expression régulière invalide : %w",
-  "正则表达式含有嵌套的无限重复，匹配可能极慢": "L'expression régulière imbrique des répétitions illimitées et pourrait être extrêmement lente",
   "正则表达式无效: %v": "Expression régulière invalide : %v",
   "正则表达式过于复杂: 编译后 %d 条指令，超出上限 %d": "L'expression régulière est trop complexe : %d instructions, au-delà de la limite de %d",
   "正在从官方 release 下载 %s 并校验 Minisign 签名与 SHA256SUMS...\n": "Téléchargement de %s depuis la release officielle et vérification de la signature Minisign et de SHA256SUMS...\n",

@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { assetApi } from "../../ipc/commands";
 import { getResolvedTerminalTheme, subscribeAppearancePrefs } from "../../app/preferences";
@@ -15,6 +15,8 @@ import {
   highlightRuleError,
   KEYWORD_HIGHLIGHT_LIMITS,
   KEYWORD_HIGHLIGHT_PRESETS,
+  loadedRegexEngine,
+  loadRegexEngine,
   matchKeywordHighlights,
   newHighlightRuleId,
   saveKeywordHighlights,
@@ -23,6 +25,7 @@ import {
   type HighlightStyle,
   type KeywordHighlightRule,
   type KeywordHighlightSettings,
+  type RegexEngine,
 } from "../terminal/keywordHighlightRules";
 import { SyncScopeBadge } from "./SyncScopeBadge";
 import { t } from "../../i18n";
@@ -34,6 +37,25 @@ const SAMPLE_TEXT = [
   "request 123e4567-e89b-12d3-a456-426614174000 OK",
   "部署完成，测试全部 passed",
 ].join("\n");
+
+// The RE2 engine arrives lazily; until then the preview shows plain text and rules are not checked.
+function useRegexEngine(): RegexEngine | null {
+  const [engine, setEngine] = useState(loadedRegexEngine);
+  useEffect(() => {
+    if (engine) return;
+    let alive = true;
+    loadRegexEngine().then(
+      (loaded) => {
+        if (alive) setEngine(() => loaded);
+      },
+      () => undefined,
+    );
+    return () => {
+      alive = false;
+    };
+  }, [engine]);
+  return engine;
+}
 
 function useTerminalTheme(): "dark" | "light" {
   return useSyncExternalStore(subscribeAppearancePrefs, getResolvedTerminalTheme);
@@ -48,8 +70,18 @@ function styleCss(style: HighlightStyle, theme: "dark" | "light"): CSSProperties
 }
 
 /** Renders sample text with the highlights the given settings produce, as a terminal would show them. */
-function HighlightPreview({ settings, text, theme }: { settings: KeywordHighlightSettings; text: string; theme: "dark" | "light" }) {
-  const rules = useMemo(() => compileKeywordHighlights(settings), [settings]);
+function HighlightPreview({
+  engine,
+  settings,
+  text,
+  theme,
+}: {
+  engine: RegexEngine | null;
+  settings: KeywordHighlightSettings;
+  text: string;
+  theme: "dark" | "light";
+}) {
+  const rules = useMemo(() => (engine ? compileKeywordHighlights(engine, settings) : []), [engine, settings]);
   return (
     <pre
       className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md border border-[var(--nx-border)] p-2 font-mono text-[12px] leading-5"
@@ -237,6 +269,7 @@ function ruleSummary(rule: KeywordHighlightRule): string {
 export function KeywordHighlightCard() {
   const settings = useKeywordHighlights();
   const theme = useTerminalTheme();
+  const engine = useRegexEngine();
   const hostName = useHostLabeler();
   const assetsQuery = useQuery({ queryKey: ["assets"], queryFn: () => assetApi.list(), retry: false });
   const hosts = useMemo(() => (assetsQuery.data ?? []).map((asset) => ({ id: asset.id, name: asset.name })), [assetsQuery.data]);
@@ -274,7 +307,7 @@ export function KeywordHighlightCard() {
   const submitDraft = async () => {
     if (!draft) return;
     const rule = { ...draft.rule };
-    const invalid = highlightRuleError(rule);
+    const invalid = highlightRuleError(await loadRegexEngine(), rule);
     if (invalid) {
       setDraftError(invalid);
       return;
@@ -343,7 +376,7 @@ export function KeywordHighlightCard() {
       {settings.rules.length > 0 && (
         <ol className="mb-2 flex flex-col gap-1" aria-label={t("高亮规则")}>
           {settings.rules.map((rule, index) => {
-            const invalid = highlightRuleError(rule);
+            const invalid = engine ? highlightRuleError(engine, rule) : null;
             return (
               <li key={rule.id} className="flex items-center gap-2 rounded-md border border-neutral-800/60 px-2 py-1.5" data-rule-id={rule.id}>
                 <input
@@ -451,7 +484,7 @@ export function KeywordHighlightCard() {
           spellCheck={false}
           onChange={(event) => setSample(event.target.value)}
         />
-        <HighlightPreview settings={previewSettings} text={sample} theme={theme} />
+        <HighlightPreview engine={engine} settings={previewSettings} text={sample} theme={theme} />
       </div>
     </section>
   );
