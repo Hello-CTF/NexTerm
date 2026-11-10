@@ -211,7 +211,7 @@ export const eventsModule = () => ({
 
 export const envModule = () => ({ WEB: false, clientId: () => "me" });
 
-export const keybindingsModule = () => ({ matchAppKeybinding: () => null });
+export const keybindingsModule = () => ({ matchAppKeybinding: () => null, matchKeybinding: () => false });
 
 export const storeModule = () => ({
   useUi: {

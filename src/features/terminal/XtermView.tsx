@@ -63,6 +63,9 @@ import { attachFollowerGestures } from "./followerGestures";
 import { applyFollowerFont, type FollowerView } from "./followerFont";
 import { FOLLOWER_SETTLE_MS, type FollowerScale, type FollowerZoom } from "./followerScale";
 import { t as tr } from "../../i18n";
+import { copyModePassesInput, createCopyMode, type CopyModeController } from "./copyMode";
+import { CopyModeOverlay } from "./CopyModeOverlay";
+import { isTouchShell } from "../../app/shell";
 
 export { XTERM_DARK_THEME, XTERM_LIGHT_THEME, xtermThemeFor } from "./xtermTheme";
 
@@ -216,6 +219,7 @@ export function XtermView(props: XtermViewProps) {
   const viewKeyRef = useRef(viewKey);
   viewKeyRef.current = viewKey;
   const [selectionBar, setSelectionBar] = useState<{ x: number; y: number } | null>(null);
+  const [copyMode, setCopyMode] = useState<{ controller: CopyModeController; term: Terminal } | null>(null);
   const reattachRef = useRef<(() => void) | null>(null);
   const previousSessionConnected = useRef(props.sessionConnected === true);
   const onBlocksRef = useRef(props.onBlocks);
@@ -378,6 +382,17 @@ export function XtermView(props: XtermViewProps) {
     });
     // One-finger vertical swipes scroll like the wheel; a touch that stops a fling is not a tap.
     const touchScroll = attachTouchScroll(term, hostRef.current);
+    // Created before the keyboard input below: its capture listeners on the host must run first to withhold keys.
+    const copyMode = createCopyMode(term, hostRef.current, {
+      copy: (text) =>
+        copyText(text).then(
+          () => onSelectionCopyRef.current?.(text, null),
+          (error: unknown) => onSelectionCopyRef.current?.("", error),
+        ),
+      available: () => !isTouchShell(),
+      focus: () => term.focus(),
+    });
+    setCopyMode({ controller: copyMode, term });
     // Keyboard, IME and app shortcuts share one precedence order (terminalInput/resolveKey).
     const detachTerminalInput = attachTerminalInput(term, hostRef.current, { kittyKeyboard });
 
@@ -1408,6 +1423,8 @@ export function XtermView(props: XtermViewProps) {
       // A reply xterm produced while parsing replayed output answers a query
       // the live shell is not asking now: drop it.
       if (parseMode !== "live" && !userInput.active() && isAutomaticTerminalReply(raw)) return;
+      // Copy mode freezes input: only automatic replies and focus reports reach the program.
+      if (copyMode.isActive() && !copyModePassesInput(raw) && (userInput.active() || !isAutomaticTerminalReply(raw))) return;
       // Input in a visible pane switches hidden panes to the conservative drain tier.
       if (visibleRef.current !== false) terminalOutputScheduler.noteForegroundActivity();
       blocks.feedInput(data);
@@ -1420,7 +1437,8 @@ export function XtermView(props: XtermViewProps) {
       scheduleUiFlush();
     });
     const autoCopy = createSelectionAutoCopy({
-      isEnabled: () => getInputPrefs().selectionAutoCopy,
+      // Copy mode selects as the cursor moves; it copies on y only.
+      isEnabled: () => getInputPrefs().selectionAutoCopy && !copyMode.isActive(),
       getSelection: () => term.getSelection(),
       onCopied: (text) => onSelectionCopyRef.current?.(text, null),
       onError: (error) => onSelectionCopyRef.current?.("", error),
@@ -1596,6 +1614,8 @@ export function XtermView(props: XtermViewProps) {
       pasteHost.removeEventListener("touchend", onTapEnd, true);
       pasteHost.removeEventListener("touchcancel", onTapCancel, true);
       detachLinkLongPress();
+      copyMode.dispose();
+      setCopyMode(null);
       touchScroll.dispose();
       detachFollowerGestures();
       if (followerTimerRef.current !== undefined) clearTimeout(followerTimerRef.current);
@@ -1738,6 +1758,7 @@ export function XtermView(props: XtermViewProps) {
         />
       )}
       <LinesBelowBadge tabId={viewKey} onJump={scrollToBottom} />
+      {copyMode && <CopyModeOverlay controller={copyMode.controller} term={copyMode.term} />}
     </div>
   );
 }
