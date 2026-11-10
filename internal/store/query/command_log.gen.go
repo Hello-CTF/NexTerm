@@ -33,6 +33,7 @@ func newCommandLog(db *gorm.DB, opts ...gen.DOOption) commandLog {
 	_commandLog.AssetID = field.NewString(tableName, "asset_id")
 	_commandLog.UserID = field.NewString(tableName, "user_id")
 	_commandLog.Command = field.NewString(tableName, "command")
+	_commandLog.Cwd = field.NewString(tableName, "cwd")
 	_commandLog.Source = field.NewString(tableName, "source")
 	_commandLog.ExitCode = field.NewInt32(tableName, "exit_code")
 	_commandLog.StartedAt = field.NewInt64(tableName, "started_at")
@@ -53,6 +54,7 @@ type commandLog struct {
 	AssetID    field.String
 	UserID     field.String
 	Command    field.String
+	Cwd        field.String
 	Source     field.String
 	ExitCode   field.Int32
 	StartedAt  field.Int64
@@ -79,6 +81,7 @@ func (c *commandLog) updateTableName(table string) *commandLog {
 	c.AssetID = field.NewString(table, "asset_id")
 	c.UserID = field.NewString(table, "user_id")
 	c.Command = field.NewString(table, "command")
+	c.Cwd = field.NewString(table, "cwd")
 	c.Source = field.NewString(table, "source")
 	c.ExitCode = field.NewInt32(table, "exit_code")
 	c.StartedAt = field.NewInt64(table, "started_at")
@@ -109,13 +112,14 @@ func (c *commandLog) GetFieldByName(fieldName string) (field.OrderExpr, bool) {
 }
 
 func (c *commandLog) fillFieldMap() {
-	c.fieldMap = make(map[string]field.Expr, 10)
+	c.fieldMap = make(map[string]field.Expr, 11)
 	c.fieldMap["id"] = c.ID
 	c.fieldMap["session_id"] = c.SessionID
 	c.fieldMap["tab_id"] = c.TabID
 	c.fieldMap["asset_id"] = c.AssetID
 	c.fieldMap["user_id"] = c.UserID
 	c.fieldMap["command"] = c.Command
+	c.fieldMap["cwd"] = c.Cwd
 	c.fieldMap["source"] = c.Source
 	c.fieldMap["exit_code"] = c.ExitCode
 	c.fieldMap["started_at"] = c.StartedAt

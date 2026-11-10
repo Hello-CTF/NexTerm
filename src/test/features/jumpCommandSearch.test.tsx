@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   search: vi.fn(),
   copyText: vi.fn(),
   toast: vi.fn(),
+  cwds: new Map<string, string>(),
 }));
 
 vi.mock("../../ipc/commands", async (importOriginal) => {
@@ -42,6 +43,10 @@ vi.mock("../../ipc/searchApi", () => ({
   transcriptHostSearchApi: { search: vi.fn() },
 }));
 vi.mock("../../ui/clipboard", () => ({ copyText: mocks.copyText }));
+vi.mock("../../features/files/cwdFollow", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../features/files/cwdFollow")>();
+  return { ...actual, useTerminalCwd: (tabId: string | null | undefined) => (tabId ? (mocks.cwds.get(tabId) ?? null) : null) };
+});
 
 import { JumpPalette } from "../../app/JumpPalette";
 import { COMMAND_SEARCH_DEBOUNCE_MS } from "../../app/jump/commandHistorySearch";
@@ -79,6 +84,7 @@ function item(id: number, overrides: Record<string, unknown> = {}) {
     tabId: "tab",
     assetId: "a1",
     command: `docker ps ${id}`,
+    cwd: "",
     source: "shell",
     exitCode: 0,
     startedAt: Date.now() - 60_000,
@@ -122,6 +128,12 @@ function rowTexts(view: MountedView): string[] {
   return [...view.container.querySelectorAll('[data-testid="command-history-row"]')].map((row) => row.textContent ?? "");
 }
 
+function cwdToggle(view: MountedView): HTMLButtonElement {
+  const button = [...view.container.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find((b) => b.textContent === "仅当前目录");
+  if (!button) throw new Error("directory toggle not found");
+  return button;
+}
+
 let mounted: MountedView | undefined;
 const onClose = vi.fn();
 
@@ -154,6 +166,7 @@ beforeEach(() => {
   mocks.write.mockResolvedValue(undefined);
   mocks.copyText.mockResolvedValue(undefined);
   mocks.search.mockResolvedValue({ items: [item(1)], hasMore: false });
+  mocks.cwds.clear();
   useUi.setState({
     sessions: [],
     workspaces: [workspace()],
@@ -371,5 +384,61 @@ describe("jump palette command history search", () => {
     await flush();
     expect(rowTexts(view)).toHaveLength(1);
     expect(rowTexts(view)[0]).toContain("fresh result");
+  });
+
+  it("filters by the active terminal directory and host only while the toggle is on", async () => {
+    mocks.cwds.set("kernel-t-build", "/srv/app");
+    const view = await mountPalette();
+    await typeCommand(view, ">make");
+    expect(mocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ text: "make", assetId: null, cwd: null }));
+
+    const toggle = cwdToggle(view);
+    expect(toggle.textContent).toContain("仅当前目录");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitForRendered(() =>
+      expect(mocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ text: "make", assetId: "a1", cwd: "/srv/app" })),
+    );
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="命令历史主机"]')?.disabled).toBe(true);
+
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitForRendered(() =>
+      expect(mocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ text: "make", assetId: null, cwd: null })),
+    );
+  });
+
+  it("disables the directory toggle while the active terminal has not reported a directory", async () => {
+    const view = await mountPalette();
+    await typeCommand(view, ">make");
+    const toggle = cwdToggle(view);
+    expect(toggle.disabled).toBe(true);
+    expect(mocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ cwd: null }));
+  });
+
+  it("shows each command's directory and lifts commands from the current directory slightly", async () => {
+    mocks.cwds.set("kernel-t-build", "/srv/app");
+    mocks.search.mockResolvedValue({
+      items: [
+        item(1, { command: "newest", cwd: "/tmp" }),
+        item(2, { command: "second" }),
+        item(3, { command: "third", cwd: "/srv/app", assetId: "other" }),
+        item(4, { command: "fourth" }),
+        item(5, { command: "here far", cwd: "/srv/app" }),
+        item(6, { command: "here near", cwd: "/srv/app" }),
+      ],
+      hasMore: false,
+    });
+    const view = await mountPalette();
+    await typeCommand(view, ">x");
+    await waitForRendered(() => expect(rowTexts(view)).toHaveLength(6));
+    const order = rowTexts(view).map((row) => ["newest", "second", "third", "fourth", "here far", "here near"].find((c) => row.startsWith(c)));
+    expect(order).toEqual(["newest", "here far", "second", "here near", "third", "fourth"]);
+    const shown = [...view.container.querySelectorAll('[data-testid="command-history-cwd"]')].map((node) => node.textContent);
+    expect(shown).toEqual(["/tmp", "/srv/app", "/srv/app", "/srv/app"]);
   });
 });

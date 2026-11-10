@@ -32,16 +32,18 @@ type HostShare struct {
 func (HostShare) TableName() string { return "host_share" }
 
 type CommandLog struct {
-	ID         int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	SessionID  string  `gorm:"column:session_id;not null;index:idx_command_log_session" json:"sessionId"`
-	TabID      string  `gorm:"column:tab_id;not null" json:"tabId"`
-	AssetID    string  `gorm:"column:asset_id;not null;index:idx_command_log_asset" json:"assetId"`
-	UserID     *string `gorm:"size:191;column:user_id;index:idx_command_log_user" json:"userId"`
-	Command    string  `gorm:"column:command;not null" json:"command"`
-	Source     string  `gorm:"column:source;not null" json:"source"`
-	ExitCode   *int32  `gorm:"column:exit_code" json:"exitCode"`
-	StartedAt  int64   `gorm:"column:started_at;not null;index:idx_command_log_started,sort:desc" json:"startedAt"`
-	FinishedAt int64   `gorm:"column:finished_at;not null" json:"finishedAt"`
+	ID        int64   `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	SessionID string  `gorm:"column:session_id;not null;index:idx_command_log_session" json:"sessionId"`
+	TabID     string  `gorm:"column:tab_id;not null" json:"tabId"`
+	AssetID   string  `gorm:"column:asset_id;not null;index:idx_command_log_asset" json:"assetId"`
+	UserID    *string `gorm:"size:191;column:user_id;index:idx_command_log_user" json:"userId"`
+	Command   string  `gorm:"column:command;not null" json:"command"`
+	// Cwd is the OSC 7 working directory when the command started; empty when the shell never reported one.
+	Cwd        string `gorm:"size:1024;column:cwd;not null;default:''" json:"cwd"`
+	Source     string `gorm:"column:source;not null" json:"source"`
+	ExitCode   *int32 `gorm:"column:exit_code" json:"exitCode"`
+	StartedAt  int64  `gorm:"column:started_at;not null;index:idx_command_log_started,sort:desc" json:"startedAt"`
+	FinishedAt int64  `gorm:"column:finished_at;not null" json:"finishedAt"`
 }
 
 func (CommandLog) TableName() string { return "command_log" }

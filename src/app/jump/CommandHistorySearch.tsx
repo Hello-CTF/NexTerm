@@ -10,13 +10,16 @@ import { copyText } from "../../ui/clipboard";
 import { describeError } from "../../ui/errorText";
 import { IconLoader } from "../../ui/icons";
 import { Select } from "../../ui/Select";
+import { useTerminalCwd } from "../../features/files/cwdFollow";
 import { useUi } from "../store";
 import {
+  activeTerminal,
   COMMAND_RANGE_OPTIONS,
   COMMAND_SEARCH_DEBOUNCE_MS,
   COMMAND_SEARCH_PAGE,
   hostLabelFor,
   rangeStart,
+  rankByCwd,
   type CommandRange,
 } from "./commandHistorySearch";
 import { t } from "../../i18n";
@@ -45,6 +48,20 @@ export function CommandHistorySearch({
   onClose: () => void;
 }) {
   const [hostId, setHostId] = useState("");
+  const [cwdOnly, setCwdOnly] = useState(false);
+  const activeTabId = useUi((s) => activeTerminal(s)?.tabId ?? null);
+  const activeAssetId = useUi((s) => activeTerminal(s)?.assetId ?? null);
+  const activeCwd = useTerminalCwd(activeTabId);
+  // The directory filter applies only while the active terminal has reported where it is; it scopes to that
+  // terminal's host because the same path on another host is a different directory.
+  const here = activeAssetId && activeCwd ? { assetId: activeAssetId, cwd: activeCwd } : null;
+  const cwdFilter = cwdOnly && here ? here : null;
+  const queryAssetId = cwdFilter ? cwdFilter.assetId : hostId || null;
+  const queryCwd = cwdFilter ? cwdFilter.cwd : null;
+  const boostAssetId = cwdFilter ? null : (here?.assetId ?? null);
+  const boostCwd = cwdFilter ? null : (here?.cwd ?? null);
+  const boost = (page: CommandSearchItem[]) =>
+    boostAssetId && boostCwd ? rankByCwd(page, { assetId: boostAssetId, cwd: boostCwd }) : page;
   const [range, setRange] = useState<CommandRange>("all");
   const [items, setItems] = useState<CommandSearchItem[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -65,7 +82,8 @@ export function CommandHistorySearch({
       void commandSearchApi
         .search({
           text,
-          assetId: hostId || null,
+          assetId: queryAssetId,
+          cwd: queryCwd,
           startedFrom: rangeStart(range),
           startedTo: null,
           limit: COMMAND_SEARCH_PAGE,
@@ -73,7 +91,7 @@ export function CommandHistorySearch({
         })
         .then((result) => {
           if (generation !== generationRef.current) return;
-          setItems(result.items);
+          setItems(boost(result.items));
           setHasMore(result.hasMore);
           setCursor(0);
           setLoading(false);
@@ -90,7 +108,9 @@ export function CommandHistorySearch({
       window.clearTimeout(timer);
       generationRef.current += 1;
     };
-  }, [text, hostId, range]);
+    // boost only depends on boostAssetId and boostCwd.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, queryAssetId, queryCwd, range, boostAssetId, boostCwd]);
 
   const loadMore = useCallback(() => {
     if (loading || loadingMore || !hasMore) return;
@@ -99,7 +119,8 @@ export function CommandHistorySearch({
     void commandSearchApi
       .search({
         text,
-        assetId: hostId || null,
+        assetId: queryAssetId,
+        cwd: queryCwd,
         startedFrom: rangeStart(range),
         startedTo: null,
         limit: COMMAND_SEARCH_PAGE,
@@ -109,7 +130,7 @@ export function CommandHistorySearch({
         if (generation !== generationRef.current) return;
         setItems((prev) => {
           const seen = new Set(prev.map((entry) => entry.id));
-          return [...prev, ...result.items.filter((entry) => !seen.has(entry.id))];
+          return [...prev, ...boost(result.items.filter((entry) => !seen.has(entry.id)))];
         });
         setHasMore(result.hasMore);
       })
@@ -119,7 +140,9 @@ export function CommandHistorySearch({
       .finally(() => {
         if (generation === generationRef.current) setLoadingMore(false);
       });
-  }, [loading, loadingMore, hasMore, text, hostId, range, items.length]);
+    // boost only depends on boostAssetId and boostCwd.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, loadingMore, hasMore, text, queryAssetId, queryCwd, range, items.length, boostAssetId, boostCwd]);
 
   const openReplay = (entry: CommandSearchItem) => {
     if (!entry.transcriptId) {
@@ -197,9 +220,10 @@ export function CommandHistorySearch({
         <Select
           className="w-[180px] max-w-full"
           ariaLabel={t("命令历史主机")}
-          value={hostId}
+          value={cwdFilter ? cwdFilter.assetId : hostId}
           options={hostOptions}
           onChange={setHostId}
+          disabled={cwdFilter !== null}
         />
         <Select
           className="w-[150px] max-w-full"
@@ -208,6 +232,17 @@ export function CommandHistorySearch({
           options={COMMAND_RANGE_OPTIONS}
           onChange={(value) => setRange(value as CommandRange)}
         />
+        <button
+          type="button"
+          className={`nx-btn nx-btn-sm ${cwdFilter ? "nx-btn-primary" : "nx-btn-outline"}`}
+          aria-pressed={cwdFilter !== null}
+          disabled={!here}
+          title={here ? here.cwd : t("当前终端没有报告工作目录")}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setCwdOnly((value) => !value)}
+        >
+          {t("仅当前目录")}
+        </button>
       </div>
       <div ref={listRef} id={listId} className="max-h-[340px] overflow-y-auto p-1.5" role="listbox" aria-label={t("命令历史结果")} tabIndex={-1}>
         {items.map((entry, index) => (
@@ -225,8 +260,15 @@ export function CommandHistorySearch({
             onMouseDown={(event) => event.preventDefault()}
             onClick={(event) => (event.shiftKey ? fillTerminal(entry) : openReplay(entry))}
           >
-            <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={entry.command}>
-              {entry.command}
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate font-mono text-[12px]" title={entry.command}>
+                {entry.command}
+              </span>
+              {entry.cwd && (
+                <span className="nx-command-hint truncate font-mono text-[10.5px]" title={entry.cwd} data-testid="command-history-cwd">
+                  {entry.cwd}
+                </span>
+              )}
             </span>
             <span className="nx-command-hint max-w-[120px] shrink-0 truncate text-[11px]">
               {hostLabelFor(entry.assetId, assets)}

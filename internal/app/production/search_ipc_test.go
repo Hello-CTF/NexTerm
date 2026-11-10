@@ -33,7 +33,7 @@ func TestSearchCommandsRoundTrip(t *testing.T) {
 	}
 
 	transcriptID := seedTranscript(t, database, asset.ID, 1000, "build ok\r\n", "deploy needle done\r\n")
-	if err := database.CommandLogInsert(ctx, store.CommandLogInput{SessionID: "session-seed", TabID: "tab-seed", AssetID: asset.ID, Command: "Make Build", Source: "terminal", StartedAt: 1500, FinishedAt: 1600}); err != nil {
+	if err := database.CommandLogInsert(ctx, store.CommandLogInput{SessionID: "session-seed", TabID: "tab-seed", AssetID: asset.ID, Command: "Make Build", Cwd: "/srv/app", Source: "terminal", StartedAt: 1500, FinishedAt: 1600}); err != nil {
 		t.Fatal(err)
 	}
 	var found commandSearchResult
@@ -42,11 +42,22 @@ func TestSearchCommandsRoundTrip(t *testing.T) {
 		found.Items[0].TranscriptID == nil || *found.Items[0].TranscriptID != transcriptID {
 		t.Fatalf("unexpected command search: %+v", found)
 	}
+	if found.Items[0].Cwd != "/srv/app" {
+		t.Fatalf("command search must return the start directory: %+v", found.Items[0])
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "command_search", `{"text":"make","cwd":"/srv/app"}`), &found)
+	if len(found.Items) != 1 {
+		t.Fatalf("cwd filter must keep the command from that directory: %+v", found)
+	}
+	requireStoreTestResponse(t, dispatchStoreTest(dispatcher, "command_search", `{"text":"make","cwd":"/srv"}`), &found)
+	if len(found.Items) != 0 {
+		t.Fatalf("cwd filter must match the exact directory: %+v", found)
+	}
 	var keys map[string]json.RawMessage
 	var items []map[string]json.RawMessage
 	_ = json.Unmarshal(dispatchStoreTest(dispatcher, "command_search", `{}`).Data, &keys)
 	_ = json.Unmarshal(keys["items"], &items)
-	for _, key := range []string{"id", "sessionId", "tabId", "assetId", "command", "source", "exitCode", "startedAt", "finishedAt", "transcriptId"} {
+	for _, key := range []string{"id", "sessionId", "tabId", "assetId", "command", "cwd", "source", "exitCode", "startedAt", "finishedAt", "transcriptId"} {
 		if _, ok := items[0][key]; !ok {
 			t.Errorf("item is missing field %q", key)
 		}
