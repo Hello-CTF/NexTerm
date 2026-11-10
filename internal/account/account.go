@@ -83,6 +83,8 @@ func New(db *gorm.DB, options ...Option) *Accounts {
 	for _, option := range options {
 		option(a)
 	}
+	// Build the unknown-user hash now so the first such login is not slower.
+	dummyPasswordHash()
 	return a
 }
 

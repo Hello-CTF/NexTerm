@@ -71,8 +71,12 @@ func TestDatabaseAccountCoreFlows(t *testing.T) {
 	if _, err := a.GetUserByUsername(ctx, "ALICE"); err != nil {
 		t.Fatalf("case-insensitive lookup failed: %v", err)
 	}
-	if _, err := a.Authenticate(ctx, "aLiCe", "synthetic-password-1"); err != nil {
+	authenticated, err := a.Authenticate(ctx, "aLiCe", "synthetic-password-1")
+	if err != nil {
 		t.Fatalf("case-insensitive login failed: %v", err)
+	}
+	if _, err := a.ConfirmAuthenticated(ctx, authenticated); err != nil {
+		t.Fatal(err)
 	}
 	loaded, err := a.GetUser(ctx, alice.ID)
 	if err != nil {

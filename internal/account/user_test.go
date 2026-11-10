@@ -68,7 +68,7 @@ func TestCreateUserIsOrdinaryAndUnique(t *testing.T) {
 }
 
 func TestAuthenticate(t *testing.T) {
-	a, _ := testAccounts(t)
+	a, now := testAccounts(t)
 	ctx := context.Background()
 	user, err := a.CreateUser(ctx, "carol", "", "synthetic-password-1")
 	if err != nil {
@@ -82,15 +82,46 @@ func TestAuthenticate(t *testing.T) {
 	if _, err := a.GetUserByUsername(ctx, "CAROL"); err != nil {
 		t.Fatal("NOCASE lookup failed")
 	}
-	if _, err := a.Authenticate(ctx, "carol", "synthetic-password-1"); err != nil {
+	authenticated, err := a.Authenticate(ctx, "carol", "synthetic-password-1")
+	if err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := a.GetUser(ctx, user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if loaded.LastLoginAt != 0 {
+		t.Fatal("last_login_at stamped before the login was confirmed")
+	}
+	if _, err := a.ConfirmAuthenticated(ctx, authenticated); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = a.GetUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if loaded.LastLoginAt == 0 {
-		t.Fatal("last_login_at not stamped")
+		t.Fatal("last_login_at not stamped by a confirmed login")
+	}
+
+	// A login confirmed after a password change fails and leaves the stamp.
+	stale, err := a.Authenticate(ctx, "carol", "synthetic-password-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := loaded.LastLoginAt
+	*now += 1000
+	if err := a.db.Exec("UPDATE app_user SET password_hash = ? WHERE id = ?", dummyPasswordHash(), user.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ConfirmAuthenticated(ctx, stale); err == nil {
+		t.Fatal("login confirmed after a password change")
+	}
+	if loaded, err = a.GetUser(ctx, user.ID); err != nil || loaded.LastLoginAt != stamped {
+		t.Fatalf("failed confirmation changed last_login_at: %d -> %d, %v", stamped, loaded.LastLoginAt, err)
+	}
+	if err := a.db.Exec("UPDATE app_user SET password_hash = ? WHERE id = ?", user.PasswordHash(), user.ID).Error; err != nil {
+		t.Fatal(err)
 	}
 	if err := a.db.Exec("UPDATE app_user SET state = ? WHERE id = ?", string(StateDisabled), user.ID).Error; err != nil {
 		t.Fatal(err)
