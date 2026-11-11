@@ -20,6 +20,7 @@ import { buildStatusWall, WALL_GROUPS } from "../../features/mobile/statusWallMo
 import { aggregateRows, applyAggregateList, applyAggregateUpdate, resetSessionAggregateForTest } from "../../app/sessionAggregate";
 import { applyAwareness, resetAwarenessStore, toAwareness, type SessionAwareness } from "../../app/sessionAwarenessStore";
 import { useUi, type AppTab, type Workspace } from "../../app/store";
+import { setSessionMuted } from "../../app/mutedSessions";
 import { flush, mount, waitForRendered, type MountedView } from "./reactTestUtils";
 import type { SessionInfo } from "../../ipc/commands";
 import type { AggregateHostStatus, AggregateList, AggregateSession, AttentionEvent } from "../../ipc/generated/types";
@@ -129,6 +130,23 @@ describe("status wall model", () => {
     expect(model.groups.finished[0].badge).toMatchObject({ kind: "just_finished", outcome: "failed" });
     // An offline host is expected and is not listed.
     expect(model.hosts).toEqual([]);
+  });
+});
+
+describe("status wall muted sessions", () => {
+  it("files a muted needs_me session among the running ones without a badge", async () => {
+    const quiet = "d".repeat(32);
+    await setSessionMuted(quiet, true);
+    try {
+      const hosts = new Map([["device:box", host("device:box", { name: "build box", deviceId: "box" })]]);
+      const rows = aggregateRows({ hosts, sessionsByHost: new Map([["device:box", [item("device:box", quiet, "needs_me", 5)]]]) });
+      const model = buildStatusWall(new Map(), [], rows, hosts);
+      expect(model.groups.needs_me).toEqual([]);
+      expect(model.groups.running.map((card) => card.tabId)).toEqual([quiet]);
+      expect(model.groups.running[0]).toMatchObject({ stateLabel: "需要处理", badge: null });
+    } finally {
+      await setSessionMuted(quiet, false);
+    }
   });
 });
 

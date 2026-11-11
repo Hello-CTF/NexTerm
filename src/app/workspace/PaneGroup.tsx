@@ -49,7 +49,7 @@ import { PaneForTab } from "./PaneForTab";
 import { WorkspaceEmpty } from "./EmptyStates";
 import { beginTabDrag, currentTabDrag, endTabDrag, TAB_DRAG_MIME, tabDragFrom, useTabDrag } from "./tabDrag";
 import { isTouchShell } from "../shell/shellMode";
-import { stateMarkItems } from "../../features/session/stateMarkMenu";
+import { muteItem, stateMarkItems } from "../../features/session/stateMarkMenu";
 import { t as tr } from "../../i18n";
 
 function handleTablistKeyDown(
@@ -334,8 +334,7 @@ export function PaneGroup({
       }
     }
     if (running && t.tabId) {
-      const marks = stateMarkItems(t, t.tabId);
-      if (marks.length > 0) items.push({ kind: "separator" }, ...marks);
+      items.push({ kind: "separator" }, muteItem(t.tabId), ...stateMarkItems(t, t.tabId));
     }
     if (running) {
       items.push({ kind: "separator" });

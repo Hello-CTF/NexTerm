@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { TerminalAttentionEvent } from "../ipc/events";
 import { t } from "../i18n";
+import { isSessionMuted, subscribeMutedSessions } from "./mutedSessions";
 
 // The attention state of a terminal tab, as the backend reports it. Helper tabs carry the helper's state; other tabs
 // a state the backend derived from their output (source "observed"). "unknown" is never a guess: the tab is not
@@ -20,6 +21,8 @@ export interface SessionAwareness {
   body?: string;
   // The progress the program reports with OSC 9;4, independent of the state.
   progress?: TerminalProgress;
+  // The user muted the session: its needs_me and just_finished states ask for nobody (see mutedSessions).
+  muted?: boolean;
   version: number;
 }
 
@@ -62,6 +65,11 @@ function isGuessedAttention(event: TerminalAttentionEvent): boolean {
 }
 
 export function toAwareness(event: TerminalAttentionEvent): SessionAwareness {
+  const awareness = toRawAwareness(event);
+  return isSessionMuted(event.tabId) ? { ...awareness, muted: true } : awareness;
+}
+
+function toRawAwareness(event: TerminalAttentionEvent): SessionAwareness {
   if (isGuessedAttention(event)) {
     return {
       state: "running",
@@ -119,6 +127,20 @@ export function markAwarenessSeenLocally(tabId: string, since: string): void {
   });
 }
 
+// Muting or unmuting (here or on another device) restyles the states already known.
+subscribeMutedSessions(() => {
+  useAwarenessStore.setState((current) => {
+    let next: Map<string, SessionAwareness> | undefined;
+    for (const [tabId, known] of current.byTabId) {
+      const muted = isSessionMuted(tabId);
+      if ((known.muted === true) === muted) continue;
+      next ??= new Map(current.byTabId);
+      next.set(tabId, { ...known, muted: muted || undefined });
+    }
+    return next ? { byTabId: next } : current;
+  });
+});
+
 export function resetAwarenessStore(): void {
   useAwarenessStore.setState((current) => (current.byTabId.size === 0 ? current : { byTabId: new Map() }));
 }
@@ -150,11 +172,12 @@ export function progressLabel(progress: TerminalProgress): string {
   }
 }
 
-// needsAttention: the user has not yet seen a state that asks for them.
+// needsAttention: the user has not yet seen a state that asks for them, and did not mute the session.
 export function needsAttention(awareness: SessionAwareness | undefined): boolean {
   return (
     awareness !== undefined &&
     !awareness.seen &&
+    !awareness.muted &&
     (awareness.state === "needs_me" || awareness.state === "just_finished")
   );
 }
@@ -169,9 +192,10 @@ export interface AwarenessBadge {
 }
 
 // awarenessBadge decides what a tab shows. Idle and exited tabs show nothing (an exited tab is marked already), and a
-// needs_me or just_finished state that was seen on any device shows nothing either.
+// needs_me or just_finished state that was seen on any device, or belongs to a muted session, shows nothing either.
 export function awarenessBadge(awareness: SessionAwareness | undefined): AwarenessBadge | null {
   if (!awareness) return null;
+  if (awareness.muted && (awareness.state === "needs_me" || awareness.state === "just_finished")) return null;
   switch (awareness.state) {
     case "needs_me":
       if (awareness.seen) return null;

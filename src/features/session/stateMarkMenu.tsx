@@ -1,7 +1,10 @@
 import type { AppTab } from "../../app/store";
 import { tabAwareness } from "../../app/sessionAwarenessStore";
 import type { MenuItem } from "../../ui/ContextMenu";
-import { IconFlag } from "../../ui/icons";
+import { IconBell, IconBellOff, IconFlag } from "../../ui/icons";
+import { isSessionMuted, setSessionMuted } from "../../app/mutedSessions";
+import { useUi } from "../../app/store";
+import { describeError } from "../../ui/errorText";
 import { requestStateMark, stateMarkIntents } from "./stateMarkRequests";
 import { t } from "../../i18n";
 
@@ -26,4 +29,21 @@ export function stateMarkItems(tab: AppTab, tabId: string): MenuItem[] {
     onSelect: () =>
       requestStateMark({ appTabId: tab.id, tabId, assetId: tab.assetId, title: tab.title, intent, current: awareness.state }),
   }));
+}
+
+// muteItem toggles whether the session's needs_me and just_finished states notify and show; the choice follows the
+// account to every device.
+export function muteItem(tabId: string): MenuItem {
+  const muted = isSessionMuted(tabId);
+  return {
+    kind: "item",
+    label: muted ? t("取消静音") : t("静音此会话"),
+    icon: muted ? <IconBell size={12} /> : <IconBellOff size={12} />,
+    hint: muted ? t("恢复该会话的通知和提示") : t("不再为该会话弹通知，也不在收件箱和标签页上提示；在所有设备上生效"),
+    onSelect: () => {
+      setSessionMuted(tabId, !muted).catch((cause) =>
+        useUi.getState().pushToast("error", t("未能保存静音设置：{value}", { value: describeError(cause) })),
+      );
+    },
+  };
 }

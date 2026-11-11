@@ -37,6 +37,8 @@ import {
 } from "../../features/inbox/inboxNotifications";
 import { dismissInboxGuidance, resetInboxGuidanceForTest } from "../../features/inbox/firstRunGuidance";
 import { resetNotificationPrefsForTest, setNotificationPrefs } from "../../features/inbox/notificationPrefs";
+import { awarenessBadge, aggregateAttention } from "../../app/sessionAwarenessStore";
+import { setSessionMuted } from "../../app/mutedSessions";
 import { createBrowserNotifier, type SystemNotificationInput, type SystemNotifier } from "../../features/inbox/systemNotifications";
 import type { NotificationClickEvent } from "../../ipc/events";
 
@@ -280,6 +282,56 @@ describe("system notifications", () => {
     await vi.advanceTimersByTimeAsync(NOTIFY_GRACE_MS * 2);
     expect(notifier.shown).toEqual([]);
     expect(toasts).toEqual([]);
+  });
+});
+
+describe("muted sessions", () => {
+  const LOUD = "a".repeat(32);
+  const QUIET = "b".repeat(32);
+
+  beforeEach(() => {
+    useUi.setState({
+      workspaces: [workspace("ws1", "web-01", [terminal("build", "T1")]), workspace("ws2", "db-01", [terminal("loud", LOUD), terminal("tracelog", QUIET)])],
+      activeWorkspaceId: "ws1",
+    });
+  });
+
+  it("hides a muted session from notifications, the inbox and badges, and shows it again once unmuted", async () => {
+    await setSessionMuted(QUIET, true);
+    live(attention({ tabId: QUIET, reason: "notify", body: "noise" }));
+    live(attention({ tabId: LOUD, reason: "notify", body: "real" }));
+    await grace();
+    expect(notifier.shown.map((n) => n.tabId)).toEqual([LOUD]);
+    expect(toasts).toEqual([]);
+    const byTabId = () => useAwarenessStore.getState().byTabId;
+    expect(buildInbox(byTabId(), useUi.getState().workspaces).map((entry) => entry.tabId)).toEqual([LOUD]);
+    expect(awarenessBadge(byTabId().get(QUIET))).toBeNull();
+    expect(aggregateAttention(byTabId(), [QUIET])).toBeNull();
+
+    await setSessionMuted(QUIET, false);
+    expect(buildInbox(byTabId(), useUi.getState().workspaces).map((entry) => entry.tabId).sort()).toEqual([LOUD, QUIET]);
+    expect(awarenessBadge(byTabId().get(QUIET))?.kind).toBe("needs_me");
+    // Unmuting does not replay the state that waited while muted.
+    await grace();
+    expect(notifier.shown.map((n) => n.tabId)).toEqual([LOUD]);
+  });
+
+  it("takes back the notification on screen and the one waiting when the session is muted", async () => {
+    live(attention({ tabId: QUIET }));
+    await grace();
+    expect(notifier.shown.map((n) => n.tabId)).toEqual([QUIET]);
+    live(attention({ tabId: LOUD }));
+    await setSessionMuted(QUIET, true);
+    await setSessionMuted(LOUD, true);
+    expect(notifier.removed).toEqual([`attention:${QUIET}`]);
+    await grace();
+    expect(notifier.shown.map((n) => n.tabId)).toEqual([QUIET]);
+  });
+
+  it("keeps running and unknown states visible for a muted session", async () => {
+    await setSessionMuted(QUIET, true);
+    applyAwareness([attention({ tabId: QUIET, state: "running", reason: "output" })]);
+    expect(awarenessBadge(useAwarenessStore.getState().byTabId.get(QUIET))?.kind).toBe("running");
   });
 });
 

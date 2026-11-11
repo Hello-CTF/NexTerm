@@ -69,6 +69,7 @@ const (
 	preferenceKindSchemeID
 	preferenceKindCustomSchemes
 	preferenceKindLayoutTemplates
+	preferenceKindSessionIDs
 )
 
 type preferenceSpec struct {
@@ -109,6 +110,7 @@ var preferenceSpecs = map[string]preferenceSpec{
 	"terminal.keyBar":                   {kind: preferenceKindKeyBar},
 	"terminal.quickCommands":            {kind: preferenceKindQuickCommands},
 	"terminal.keywordHighlights":        {kind: preferenceKindKeywordHighlights},
+	"terminal.mutedSessions":            {kind: preferenceKindSessionIDs},
 	"workspace.layoutTemplates":         {kind: preferenceKindLayoutTemplates},
 	"keybinding.commandPalette":         {kind: preferenceKindBinding},
 	"keybinding.quickConnect":           {kind: preferenceKindBinding},
@@ -319,6 +321,10 @@ func validatePreferenceValue(key string, raw json.RawMessage) (string, error) {
 		if canonical, ok := normalizeLayoutTemplates(raw); ok {
 			return canonical, nil
 		}
+	case preferenceKindSessionIDs:
+		if canonical, ok := normalizeSessionIDs(raw); ok {
+			return canonical, nil
+		}
 	}
 	return "", invalidPreferenceValue(key)
 }
@@ -389,6 +395,37 @@ func normalizeQuickCommands(raw json.RawMessage) (string, bool) {
 	}
 	return canonical, true
 }
+
+// maxMutedSessions bounds terminal.mutedSessions; the client drops the oldest entries to stay within it.
+const maxMutedSessions = 200
+
+// normalizeSessionIDs accepts a list of terminal tab ids (32 lowercase hex characters) and drops repeats, keeping the
+// first occurrence so the client's oldest-first order survives.
+func normalizeSessionIDs(raw json.RawMessage) (string, bool) {
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil || ids == nil || len(ids) > maxMutedSessions {
+		return "", false
+	}
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !terminalTabIDPattern.MatchString(id) {
+			return "", false
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
+}
+
+var terminalTabIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func validQuickCommandLabel(label string) bool {
 	if strings.TrimSpace(label) == "" || !utf8.ValidString(label) || utf8.RuneCountInString(label) > maxQuickCommandLabel {

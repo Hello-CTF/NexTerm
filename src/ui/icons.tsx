@@ -498,6 +498,15 @@ export const IconBell = (p: IconProps) => (
   </Svg>
 );
 
+export const IconBellOff = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8.2 4.6A6 6 0 0 1 18 9c0 3 .7 4.9 1.4 6" />
+    <path d="M16.5 16.5h-13C4.5 15.5 6 13.5 6 9c0-.6.1-1.2.3-1.8" />
+    <path d="M10 19.5a2 2 0 0 0 4 0" />
+    <path d="m3.5 3.5 17 17" />
+  </Svg>
+);
+
 export const IconCheck = (p: IconProps) => (
   <Svg {...p}>
     <path d="m5 12.5 4.6 4.6L19 7.5" />

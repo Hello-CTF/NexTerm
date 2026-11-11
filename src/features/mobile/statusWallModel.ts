@@ -127,7 +127,8 @@ function card(input: {
     title: input.title,
     hostName: input.hostName,
     state,
-    group: wallGroupOf(state),
+    // A muted session's needs_me state does not ask for the user, so it waits among the running sessions.
+    group: awareness?.muted && state === "needs_me" ? "running" : wallGroupOf(state),
     stateLabel: STATE_LABELS[state],
     badge: wallBadge(awareness, state),
     detail,

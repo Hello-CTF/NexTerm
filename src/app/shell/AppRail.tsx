@@ -55,7 +55,7 @@ export function AppRail({
   // Sessions waiting on the user, counted from this client's own awareness so the badge works without the listing.
   const needsMe = useAwarenessStore((s) => {
     let count = 0;
-    for (const awareness of s.byTabId.values()) if (awareness.state === "needs_me") count += 1;
+    for (const awareness of s.byTabId.values()) if (awareness.state === "needs_me" && !awareness.muted) count += 1;
     return count;
   });
   const leftMode = useUi((s) => s.leftMode);
