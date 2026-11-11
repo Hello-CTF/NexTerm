@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -631,5 +632,30 @@ func TestTerminalQuickCommandsRoundTrip(t *testing.T) {
 	read, err := preferences.UserOverrides(ctx, "alice")
 	if err != nil || string(read["terminal.quickCommands"]) != string(value) {
 		t.Fatalf("rejected write must keep the stored list: %v %v", read, err)
+	}
+}
+
+func TestTerminalMutedSessionsPreference(t *testing.T) {
+	a, b := strings.Repeat("a", 32), strings.Repeat("0", 31)+"f"
+	got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(`["`+a+`","`+b+`","`+a+`"]`))
+	if want := `["` + a + `","` + b + `"]`; err != nil || got != want {
+		t.Fatalf("muted sessions=(%q,%v) want %q", got, err, want)
+	}
+	if got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(`[]`)); err != nil || got != `[]` {
+		t.Fatalf("empty muted sessions=(%q,%v)", got, err)
+	}
+	full := make([]string, maxMutedSessions)
+	for i := range full {
+		full[i] = fmt.Sprintf("%032x", i)
+	}
+	encoded, _ := json.Marshal(full)
+	if _, err := validatePreferenceValue("terminal.mutedSessions", encoded); err != nil {
+		t.Fatalf("full muted sessions rejected: %v", err)
+	}
+	over, _ := json.Marshal(append(full, fmt.Sprintf("%032x", maxMutedSessions)))
+	for _, raw := range []string{`null`, `"` + a + `"`, `["` + strings.ToUpper(a) + `"]`, `["abc"]`, `[1]`, string(over)} {
+		if got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(raw)); err == nil {
+			t.Fatalf("muted sessions %.40s accepted as %q", raw, got)
+		}
 	}
 }

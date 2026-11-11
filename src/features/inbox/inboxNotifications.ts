@@ -5,6 +5,7 @@ import { clientId } from "../../ipc/env";
 import { EVENTS, listenEvent, type TerminalAttentionEvent } from "../../ipc/events";
 import { attentionDetail, openInboxTab, uiTabForBackendTab } from "./inbox";
 import { getNotificationPrefs } from "./notificationPrefs";
+import { isSessionMuted, subscribeMutedSessions } from "../../app/mutedSessions";
 import {
   notificationErrorText,
   systemNotifier,
@@ -182,6 +183,10 @@ export function startInboxNotifications(override?: Partial<InboxNotificationDeps
   });
   if (started) return;
   started = true;
+  // Muting a session takes back its notification on screen and the one waiting for its grace period.
+  subscribeMutedSessions(() => {
+    for (const tabId of new Set([...pending.keys(), ...shown])) if (isSessionMuted(tabId)) withdraw(tabId);
+  });
   void listenEvent<TerminalAttentionEvent>(EVENTS.terminalAttention, considerAttention);
 }
 

@@ -24,6 +24,7 @@ import {
 } from "./backgroundSessionsAccess";
 import { TabAttentionBadge } from "../../app/workspace/tabStrip";
 import type { AwarenessBadge } from "../../app/sessionAwarenessStore";
+import { setSessionMuted, useMutedSessionSet } from "../../app/mutedSessions";
 import type { AggregateHostStatus } from "../../ipc/generated/types";
 import type { SessionInfo } from "../../ipc/commands";
 import {
@@ -47,6 +48,8 @@ import "./backgroundSessions.css";
 import { localDurableEnabled, useLocalHelperStatus } from "./localHelperStatus";
 import {
   IconActivity,
+  IconBell,
+  IconBellOff,
   IconGamepad,
   IconRefresh,
   IconTerminal,
@@ -103,13 +106,13 @@ interface StatusView {
   tone: "accent" | "muted" | "normal";
 }
 
-function statusView(tab: BackgroundTab): StatusView {
+function statusView(tab: BackgroundTab, muted: boolean): StatusView {
   const state = tab.state;
   if (state && Object.hasOwn(STATE_LABELS, state)) {
     return {
-      label: STATE_LABELS[state],
-      hint: STATE_HINTS[state],
-      tone: state === "needs_me" ? "accent" : state === "exited" ? "muted" : "normal",
+      label: muted ? tr("{label}（已静音）", { label: STATE_LABELS[state] }) : STATE_LABELS[state],
+      hint: muted ? tr("已静音：不弹通知，也不在收件箱和标签页上提示") : STATE_HINTS[state],
+      tone: state === "needs_me" && !muted ? "accent" : state === "exited" ? "muted" : "normal",
     };
   }
   // A state a newer helper added is reported, just not understood here.
@@ -126,7 +129,8 @@ function statusView(tab: BackgroundTab): StatusView {
 
 // backgroundBadge is the tab strip's badge for a row's state, so a session reads the same in both places. Unlike a
 // tab, a row keeps its needs_me or just_finished badge after the state was seen: the list shows the state itself.
-export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "exitCode">): AwarenessBadge | null {
+export function backgroundBadge(tab: Pick<BackgroundTab, "state" | "exitCode">, muted = false): AwarenessBadge | null {
+  if (muted && (tab.state === "needs_me" || tab.state === "just_finished")) return null;
   switch (tab.state) {
     case "needs_me":
       return { kind: "needs_me", label: tr("需要处理") };
@@ -299,6 +303,7 @@ export function BackgroundSessions({
   sessionId?: string;
 }) {
   const pushToast = useUi((s) => s.pushToast);
+  const mutedSessions = useMutedSessionSet();
   const runtimeEpoch = useUi((s) => s.workspaceRuntimeEpoch);
   const webUserId = useAuth((s) => s.user?.id ?? null);
   const [desktopScope, setDesktopScope] = useState<{ epoch: number; value: string | null } | null>(null);
@@ -746,7 +751,8 @@ export function BackgroundSessions({
     const rowBusy = action !== undefined;
     const name = backgroundTabName(t);
     const windowTitle = backgroundWindowTitle(t);
-    const status = statusView(t);
+    const muted = mutedSessions.has(t.tabId);
+    const status = statusView(t, muted);
     const time = timeView(t, now);
     const terminable = t.aggregateHost ? aggregateTerminatePath(t.aggregateHost, sessions) !== null : Boolean(t.sessionId);
     return (
@@ -763,7 +769,7 @@ export function BackgroundSessions({
         </td>
         <td className={`nx-bg-status ${STATUS_TONE_CLASS[status.tone]}`} title={status.hint} data-testid="background-status" data-state={t.state ?? "none"}>
           <span className="inline-flex items-center gap-1.5">
-            <TabAttentionBadge badge={backgroundBadge(t)} />
+            <TabAttentionBadge badge={backgroundBadge(t, muted)} />
             <span data-testid="background-status-label">{status.label}</span>
           </span>
         </td>
@@ -788,6 +794,18 @@ export function BackgroundSessions({
                 <IconGamepad size={11} />
               )}
               {tr("接管")}
+            </button>
+            <button
+              className="nx-btn nx-btn-ghost nx-btn-xs"
+              aria-pressed={muted}
+              data-testid="background-mute"
+              title={muted ? tr("恢复该会话的通知和提示") : tr("不再为该会话弹通知，也不在收件箱和标签页上提示；在所有设备上生效")}
+              onClick={() => {
+                setSessionMuted(t.tabId, !muted).catch((cause) => pushToast("error", tr("未能保存静音设置：{value}", { value: describeError(cause) })));
+              }}
+            >
+              {muted ? <IconBell size={11} /> : <IconBellOff size={11} />}
+              {muted ? tr("取消静音") : tr("静音")}
             </button>
             <button
               className="nx-btn nx-btn-danger nx-btn-xs"
@@ -955,7 +973,7 @@ export function BackgroundSessions({
       </div>
 
       <div className="shrink-0 border-t border-neutral-800/60 px-3 py-2 text-[11px] leading-relaxed text-[var(--nx-fg-soft)]">
-        {list.some((t) => t.state === "needs_me") && (
+        {list.some((t) => t.state === "needs_me" && !mutedSessions.has(t.tabId)) && (
           <p className="mb-1" data-testid="background-needs-me-note">{NEEDS_ME_NOTE}</p>
         )}
         <IconTerminal size={11} className="mr-1 inline align-[-1px]" />

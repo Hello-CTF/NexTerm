@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyAwareness, resetAwarenessStore } from "../../app/sessionAwarenessStore";
 import type { AppTab } from "../../app/store";
 import type { TerminalAttentionEvent } from "../../ipc/events";
-import { stateMarkItems } from "../../features/session/stateMarkMenu";
+import { muteItem, stateMarkItems } from "../../features/session/stateMarkMenu";
+import { isSessionMuted, setSessionMuted } from "../../app/mutedSessions";
 import { onStateMarkRequest } from "../../features/session/stateMarkRequests";
 
 const tab: AppTab = { id: "app-1", kind: "terminal", title: "agent", tabId: "backend-1", assetId: "A1", closable: true };
@@ -39,5 +40,20 @@ describe("state marking menu items", () => {
     expect(stateMarkItems(tab, "backend-1")).toEqual([]);
     resetAwarenessStore();
     expect(stateMarkItems(tab, "backend-1")).toEqual([]);
+  });
+});
+
+describe("mute menu item", () => {
+  it("toggles the session's mute", async () => {
+    const tabId = "e".repeat(32);
+    const first = muteItem(tabId);
+    expect(first).toMatchObject({ kind: "item", label: "静音此会话" });
+    if (first.kind === "item") first.onSelect?.();
+    await vi.waitFor(() => expect(isSessionMuted(tabId)).toBe(true));
+    const second = muteItem(tabId);
+    expect(second).toMatchObject({ kind: "item", label: "取消静音" });
+    if (second.kind === "item") second.onSelect?.();
+    await vi.waitFor(() => expect(isSessionMuted(tabId)).toBe(false));
+    await setSessionMuted(tabId, false);
   });
 });

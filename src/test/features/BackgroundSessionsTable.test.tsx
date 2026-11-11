@@ -170,6 +170,33 @@ describe("BackgroundSessions table", () => {
     }
   });
 
+  it("mutes a needs_me session from its row and unmutes it again", async () => {
+    seedHost({ ...s1, kind: "local", assetId: null }, "local");
+    const tabId = "c".repeat(32);
+    mocks.listLive.mockResolvedValue([liveTab({ tabId, title: "tracelog", durable: true, state: "needs_me" })]);
+    const view = await mountLoaded({ workspaceId: "ws-host" }, (v) => expect(rows(v)).toHaveLength(1));
+    try {
+      const mute = () => cell(row(view, tabId), "background-mute");
+      const attention = () => row(view, tabId).querySelector("[data-attention]")?.getAttribute("data-attention") ?? null;
+      expect(mute().getAttribute("aria-pressed")).toBe("false");
+      expect(attention()).toBe("needs_me");
+      expect(view.container.querySelector('[data-testid="background-needs-me-note"]')).not.toBeNull();
+
+      await act(async () => mute().click());
+      expect(mute().getAttribute("aria-pressed")).toBe("true");
+      expect(mute().textContent?.trim()).toBe("取消静音");
+      expect(attention()).toBeNull();
+      expect(cell(row(view, tabId), "background-status-label").textContent).toBe("需要处理（已静音）");
+      expect(view.container.querySelector('[data-testid="background-needs-me-note"]')).toBeNull();
+
+      await act(async () => mute().click());
+      expect(mute().getAttribute("aria-pressed")).toBe("false");
+      expect(attention()).toBe("needs_me");
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("groups the all-hosts view under host headings", async () => {
     seedAllHosts();
     mocks.listDurable.mockImplementation(async (sessionId: string) =>
