@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -460,7 +461,7 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	cleanup := func() error {
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
-			killErr = durableAttachment.Kill(context.Background())
+			killErr = m.killDurable(durableAttachment)
 			m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
 		}
 		if channel != nil {
@@ -1954,6 +1955,18 @@ func (m *Manager) KillTab(id string) error {
 	return m.closeTab(tab, true)
 }
 
+// killDurable ends a durable process within durableKillTimeout. A kill that runs out of time is reported as an
+// unreachable helper: the request may still reach the host, but the caller must not treat the process as ended.
+func (m *Manager) killDurable(attachment base.DurableAttachment) error {
+	ctx, cancel := context.WithTimeout(context.Background(), m.durableKillTimeout)
+	defer cancel()
+	err := attachment.Kill(ctx)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, durable.ErrUnavailable) {
+		return fmt.Errorf("%w: ending the process did not finish within %s: %v", durable.ErrUnavailable, m.durableKillTimeout, err)
+	}
+	return err
+}
+
 func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 	if tab == nil {
 		return nil
@@ -1975,7 +1988,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 		// A different client may have already ended the durable process. The
 		// remote not-found result means there is nothing left to kill, so the
 		// local attachment can still be closed normally.
-		if err := tab.durable.Kill(context.Background()); err != nil && !errors.Is(err, durable.ErrNotFound) {
+		if err := m.killDurable(tab.durable); err != nil && !errors.Is(err, durable.ErrNotFound) {
 			tab.mu.Lock()
 			tab.destroying = false
 			tab.mu.Unlock()
