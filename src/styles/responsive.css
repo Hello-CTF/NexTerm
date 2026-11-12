@@ -290,9 +290,12 @@
     height: 44px;
   }
 
+  /* Touch has no hover: every tab shows its close button, and no hover rule changes visibility, which iOS would
+     otherwise treat as a hover menu and spend the first tap on. */
   .nx-tab-close {
     width: 44px;
     height: 44px;
+    visibility: visible;
   }
 
   .nx-tab,

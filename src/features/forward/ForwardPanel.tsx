@@ -662,7 +662,7 @@ function ForwardPanelInner({ sessionId }: { sessionId?: string }) {
         </div>
       )}
       <div
-        className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${compact ? "overscroll-contain [padding-bottom:calc(0.75rem+var(--nx-kb-inset,0px)+var(--nx-safe-bottom,0px))]" : ""} ${showForm || unavailable ? "" : "hidden"}`}
+        className={`max-h-[45%] shrink-0 overflow-auto border-t border-neutral-800/60 bg-neutral-950/40 p-3 ${compact ? "overscroll-contain [padding-bottom:calc(0.75rem+var(--nx-safe-bottom,0px))]" : ""} ${showForm || unavailable ? "" : "hidden"}`}
         onFocus={compact ? keepFocusedFieldVisible : undefined}
       >
         {unavailable ? (

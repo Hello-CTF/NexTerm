@@ -78,10 +78,13 @@ type Manager struct {
 	hookMu        sync.RWMutex
 	userInputHook func(string)
 
-	idleTimeout      time.Duration
-	sweepInterval    time.Duration
-	reconnectMax     int
-	reconnectBackoff []time.Duration
+	idleTimeout time.Duration
+	// durableKillTimeout bounds ending a durable process on close, so a host that stopped answering
+	// cannot hold the tab's lifecycle lock forever.
+	durableKillTimeout time.Duration
+	sweepInterval      time.Duration
+	reconnectMax       int
+	reconnectBackoff   []time.Duration
 	// failedRetryMax caps the delay between background retries of a Failed
 	// session that still holds durable terminals.
 	failedRetryMax time.Duration
@@ -157,6 +160,9 @@ func NewManager(config Config) *Manager {
 	}
 	if manager.idleTimeout == 0 {
 		manager.idleTimeout = 30 * time.Minute
+	}
+	if manager.durableKillTimeout <= 0 {
+		manager.durableKillTimeout = defaultDurableKillTimeout
 	}
 	if manager.sweepInterval <= 0 {
 		manager.sweepInterval = time.Minute
@@ -998,6 +1004,10 @@ func (m *Manager) SweepIdle(ctx context.Context) error {
 // durableIdleCheckTimeout bounds the host query that decides whether an idle
 // session still carries persistent terminals.
 const durableIdleCheckTimeout = 5 * time.Second
+
+// defaultDurableKillTimeout is how long a close waits for the host to end a durable process before it reports the
+// helper as unreachable; the client then detaches the tab and the process stays in the background sessions.
+const defaultDurableKillTimeout = 15 * time.Second
 
 // holdsDurable reports whether the idle sweep must keep session connected
 // because persistent terminals still live on its host. A persistent terminal

@@ -6,7 +6,7 @@ export function AiChatTopBar({ ctx }: { ctx: AiChatCtx }) {
   const { searchOpen, setSearchOpen, backgroundTaskTotal, tasksOpen, setTasksOpen, historyOpen, toggleHistory, searchQuery, setSearchQuery, jumpToMatch, searchMatches, matchCursor, historyStatus, historyError, loadConversations, conversations, openConversation, runStatusByConv, deleteConversation } = ctx;
   return (
     <>
-      <div className="flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 [@media(max-height:480px)]:h-7">
+      <div className="nx-panel-head flex h-[32px] shrink-0 items-center gap-1 border-b border-neutral-800/60 px-2 [@media(max-height:480px)]:h-7">
         <div className="nx-spacer" />
         <button
           className={`nx-icon-btn nx-icon-btn-sm ${searchOpen ? "is-active" : ""}`}

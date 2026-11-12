@@ -112,7 +112,7 @@ export function SessionSidebar({ workspaceId, storeTabId, kernelTabId, title, vi
       aria-label={t("会话侧栏")}
       className="flex h-full w-[280px] min-w-0 shrink-0 flex-col overflow-x-hidden border-l border-neutral-800/60 bg-neutral-950 @max-[560px]:hidden"
     >
-      <div className="flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
+      <div className="nx-panel-head flex h-[31px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2.5">
         <span className="min-w-0 truncate text-[11.5px] font-semibold text-neutral-200" title={hostName}>
           {t("会话侧栏")}
         </span>

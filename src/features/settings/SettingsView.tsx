@@ -11,6 +11,7 @@ import {
   setTerminalDurableHistoryMiB,
   setTerminalScrollback,
   setTerminalTrzsz,
+  setTerminalMacOptionMeta,
   normalizeMultilinePasteConfirm,
   normalizeTerminalScrollback,
   terminalDefaultUsesAccount,
@@ -42,7 +43,7 @@ import {
 } from "./settingsIndex";
 import "./settingsSearch.css";
 import { isEditableTarget } from "../../ui/DialogHost";
-import { isWindows } from "../../app/platform";
+import { isMac, isWindows } from "../../app/platform";
 import { isTouchShell } from "../../app/shell";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { ModelManager } from "../ai/ModelPanel";
@@ -816,6 +817,35 @@ export function SettingsView({ active = true }: { active?: boolean }) {
               </div>
             )}
           </Subsection>
+
+          {isMac() && (
+            <Subsection title={t("键盘")}>
+              <div>
+                <div className="nx-setting-label mb-1.5 flex items-center gap-2" data-setting="terminal-option-meta">
+                  {t("Option 键作为 Meta 键")}
+                  <SyncScopeBadge scope="local" />
+                </div>
+                <div className="nx-segment" role="group" aria-label={t("Option 键作为 Meta 键")}>
+                  {([
+                    ["left", t("左 Option")],
+                    ["both", t("两侧 Option")],
+                    ["off", t("关闭")],
+                  ] as const).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`nx-segment-item ${terminalPrefs.macOptionMeta === value ? "is-active" : ""}`}
+                      aria-pressed={terminalPrefs.macOptionMeta === value}
+                      onClick={() => setTerminalMacOptionMeta(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <p className="nx-hint mt-1.5">{t("作为 Meta 的 Option 键在终端里发送 ESC 前缀（如 Option+S 发送 ESC s），供 tmux、Emacs 等使用；其余 Option 键照常输入特殊字符。")}</p>
+              </div>
+            </Subsection>
+          )}
 
           <Subsection title={t("文件传输")}>
             <label className="flex cursor-pointer items-start gap-3">

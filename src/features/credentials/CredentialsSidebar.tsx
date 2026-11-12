@@ -74,7 +74,7 @@ export function CredentialsSidebar() {
       className="flex h-full shrink-0 flex-col border-r border-neutral-800/60 bg-neutral-950"
       style={{ width: leftWidth }}
     >
-      <div className="flex h-[34px] shrink-0 items-center gap-1.5 px-2.5">
+      <div className="nx-panel-head flex h-[34px] shrink-0 items-center gap-1.5 px-2.5">
         <span className="text-xs font-semibold tracking-wide text-neutral-200">{t("凭据")}</span>
         <span className="nx-count">{all.length}</span>
         <div className="nx-spacer" />

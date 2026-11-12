@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/durable"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -27,6 +28,8 @@ type fakeDurableProvider struct {
 	createErr     error
 	attachErr     error
 	killErr       error
+	// killHang makes a kill wait for its context, like a stalled link to an offline device.
+	killHang bool
 }
 
 type fakeDurableRecord struct {
@@ -225,7 +228,14 @@ func (a *fakeDurableAttachment) Identity() supervisor.Identity {
 	return supervisor.Identity{Incarnation: fakeIncarnation(a.identity)}
 }
 
-func (a *fakeDurableAttachment) Kill(context.Context) error {
+func (a *fakeDurableAttachment) Kill(ctx context.Context) error {
+	a.provider.mu.Lock()
+	hang := a.provider.killHang
+	a.provider.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	a.provider.mu.Lock()
 	defer a.provider.mu.Unlock()
 	if a.provider.killErr != nil {
@@ -705,6 +715,40 @@ func TestDurableCloseUnreachableKeepsTabAndDetachStillSucceeds(t *testing.T) {
 	}
 	if _, err := manager.Tab(info.ID); err != nil {
 		t.Fatalf("detach on a connected session dropped the background tab: %v", err)
+	}
+}
+
+// A kill on a link that stalls (a device that dropped off the network without closing its connection) must give
+// up and report the helper as unreachable, so the client can still detach the tab instead of waiting forever.
+func TestDurableCloseStalledKillTimesOutAsUnreachable(t *testing.T) {
+	provider := newFakeDurableProvider()
+	manager, _, _, connected := newDurableTestManager(t, provider)
+	manager.durableKillTimeout = 50 * time.Millisecond
+	info := openDurableTestTab(t, manager, connected, "stalled", "a-1", false)
+	provider.mu.Lock()
+	provider.killHang = true
+	provider.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- manager.KillTab(info.ID) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("kill on a stalled link did not return")
+	}
+	if got := IPCError(err); !errors.Is(err, durable.ErrUnavailable) || got.Code != ipc.CodeDisconnected {
+		t.Fatalf("stalled kill = %v (code %s), want durable.ErrUnavailable with a disconnected code", err, got.Code)
+	}
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
+		t.Fatalf("timed-out kill unregistered the tab: %v", err)
+	}
+	if err := manager.BackgroundTab(context.Background(), info.ID, "client-a"); err != nil {
+		t.Fatalf("detach after a timed-out kill = %v, want nil", err)
+	}
+	if subscribers := tab.Info().Subscribers; subscribers != 0 {
+		t.Fatalf("detached tab keeps %d subscribers", subscribers)
 	}
 }
 

@@ -60,7 +60,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
     : [];
   return (
     <>
-      <div className="shrink-0 border-t border-neutral-800/60 p-2.5 [padding-bottom:calc(0.625rem+var(--nx-kb-inset,0px))]">
+      <div className="shrink-0 border-t border-neutral-800/60 p-2.5">
         {planMode && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-blue-300">
             <IconList size={10} className="shrink-0" />

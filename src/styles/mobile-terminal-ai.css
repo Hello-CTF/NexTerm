@@ -131,4 +131,26 @@
     flex: 1 1 0;
   }
 }
+@media (pointer: coarse) {
+  /* The remove buttons of reference chips and pasted images are icon-sized; the pseudo-element widens the hit area
+     (the image tile clips it to its own 46px box). */
+  .nx-chip-x {
+    position: relative;
+  }
+  .nx-chip-x::after {
+    content: "";
+    position: absolute;
+    inset: -12px -6px;
+  }
+  .nx-attach-x {
+    width: 22px;
+    height: 22px;
+  }
+  .nx-attach-x::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+
 /* end mobile: terminal-ai */

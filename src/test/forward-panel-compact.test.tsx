@@ -93,12 +93,13 @@ describe("ForwardPanel phone form and rows", () => {
     expect(mounted!.container.textContent).toContain("目标端口");
   });
 
-  it("keeps the form clear of the soft keyboard and the home indicator", async () => {
+  it("keeps the form clear of the home indicator without counting the soft keyboard twice", async () => {
     mountForward();
     await flushUntil(() => (mounted!.container.textContent ?? "").includes("db.internal:3306"));
     clickButton(mounted!.container, "+ 新建转发");
     const form = mounted!.container.querySelector("input[aria-label='目标主机']")!.closest(".overflow-auto")!;
-    expect(form.className).toContain("var(--nx-kb-inset");
+    // The app root already ends above the soft keyboard; adding its height again would push the form out of view.
+    expect(form.className).not.toContain("var(--nx-kb-inset");
     expect(form.className).toContain("var(--nx-safe-bottom");
   });
 

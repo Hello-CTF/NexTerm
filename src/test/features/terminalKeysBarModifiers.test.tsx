@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { click, mount, type MountedView } from "./reactTestUtils";
 import { TerminalKeysBar } from "../../features/terminal/TerminalKeysBar";
 import { TERMINAL_KEY_CATALOG, terminalKeySequence } from "../../features/terminal/terminalKeys";
 import { ctrlByte, encodeWithModifiers } from "../../features/terminal/terminalInput/keyEncoding";
 import {
+  STICKY_MODIFIER_DOUBLE_TAP_MS,
   applyStickyModifiersToTyped,
   clearStickyModifiers,
   getStickyModifiers,
@@ -39,6 +40,7 @@ afterEach(() => {
   mounted?.unmount();
   mounted = null;
   clearStickyModifiers();
+  vi.useRealTimers();
 });
 
 describe("key bar sticky modifiers", () => {
@@ -92,12 +94,15 @@ describe("key bar sticky modifiers", () => {
   });
 
   it("encodes bar keys with the same encoder as typed characters", () => {
+    vi.useFakeTimers();
     renderBar();
     click(button("Ctrl 修饰键"));
     click(button("C"));
     click(button("Alt 修饰键"));
     click(button("上方向键"));
     click(button("Ctrl 修饰键"));
+    // A second tap after the double-tap window releases the latch instead of locking it.
+    vi.advanceTimersByTime(STICKY_MODIFIER_DOUBLE_TAP_MS + 1);
     click(button("Ctrl 修饰键"));
     click(button("D"));
     expect(sent).toEqual([encodeWithModifiers("c", { ctrl: true, alt: false }), "\x1b\x1b[A", "d"]);
