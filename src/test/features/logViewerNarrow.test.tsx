@@ -79,7 +79,8 @@ describe("LogViewer on narrow screens", () => {
     const c = await open(true);
     const pager = c.querySelector<HTMLElement>('[data-testid="log-pager"]')!;
     expect(pager.className).toContain("--nx-safe-bottom");
-    expect(pager.className).toContain("--nx-kb-inset");
+    // The app root already ends above the soft keyboard; adding its height again would leave a blank band.
+    expect(pager.className).not.toContain("--nx-kb-inset");
     expect(c.querySelector('[data-testid="log-subbar"]')!.contains(pager)).toBe(false);
     expect(pager.closest(".nx-toolbar")).toBeNull();
   });

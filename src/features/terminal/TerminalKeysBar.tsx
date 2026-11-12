@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -18,16 +19,21 @@ import {
   useTerminalKeyConfig,
   type TerminalKeySpec,
 } from "./terminalKeys";
-import { IconArrowDown, IconArrowUp, IconClose, IconSettings } from "../../ui/icons";
+import { IconArrowDown, IconArrowUp, IconClose, IconKeyboardHide, IconSettings } from "../../ui/icons";
 import { isImeKeyEvent, trapOverlayTab, useOverlayFocus } from "../../ui/DialogHost";
+import { dismissSoftKeyboard, isSoftKeyboardOpen } from "../../ui/softKeyboard";
 import { describeError } from "../../ui/errorText";
 import { useUi } from "../../app/store";
 import {
   clearStickyModifiers,
   getStickyModifiers,
-  toggleStickyModifier,
+  releaseStickyModifiers,
+  tapStickyModifier,
+  useLockedStickyModifiers,
   useStickyModifiers,
 } from "./terminalInput/stickyModifiers";
+import type { KeyModifiers } from "./terminalInput/keyEncoding";
+import { useKeyAutoRepeat } from "./useKeyAutoRepeat";
 import { setTerminalInputMode, useTerminalInputMode } from "./terminalInputMode";
 import { confirmQuickCommand, useQuickCommands, type QuickCommand } from "./quickCommands";
 import { QuickCommandsEditor } from "./QuickCommandsEditor";
@@ -51,15 +57,21 @@ type ConfigFocusRequest = { id: string; control: "toggle" | "up" | "down" };
 // Bar buttons must not take focus from the terminal or the buffered input, or the soft keyboard closes.
 const keepFocus = (event: { preventDefault: () => void }) => event.preventDefault();
 
+// Keys that a held press repeats, like a hardware keyboard: cursor movement and paging.
+const REPEATABLE_KEY_IDS = new Set(["up", "down", "left", "right", "pageup", "pagedown"]);
+
 function BarDialog({
   label,
   onClose,
+  skipReturnFocus = false,
   initialFocus,
   footer,
   children,
 }: {
   label: string;
   onClose: () => void;
+  /** Set when the caller moves focus itself on close, so the dialog does not return it to the bar button. */
+  skipReturnFocus?: boolean;
   initialFocus?: RefObject<HTMLElement | null>;
   footer?: ReactNode;
   children: ReactNode;
@@ -68,6 +80,10 @@ function BarDialog({
   const layer = useOverlayFocus(true, modalRef, {
     initialFocus: initialFocus ? () => initialFocus.current : undefined,
   });
+
+  useLayoutEffect(() => {
+    if (skipReturnFocus) layer.setReturnFocus(null);
+  }, [layer, skipReturnFocus]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -120,6 +136,11 @@ function BarDialog({
 export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broadcastCount }: TerminalKeysBarProps) {
   // Ctrl/Alt latch for the next key: a key on this bar or a character typed on the system keyboard.
   const { ctrl: ctrlActive, alt: altActive } = useStickyModifiers();
+  const { ctrl: ctrlLocked, alt: altLocked } = useLockedStickyModifiers();
+  const autoRepeat = useKeyAutoRepeat();
+  const heldModifiers = useRef<KeyModifiers>({ ctrl: false, alt: false });
+  // Whether the soft keyboard was open when a bar dialog opened; the bar button takes focus then, closing it.
+  const [keyboardOpenAtDialog, setKeyboardOpenAtDialog] = useState(false);
   const pushToast = useUi((s) => s.pushToast);
   const inputMode = useTerminalInputMode();
   const buffered = inputMode === "buffered";
@@ -137,7 +158,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   const enabledSet = new Set(enabledIds);
   const disabledKeys = TERMINAL_KEY_CATALOG.filter((key) => !enabledSet.has(key.id));
 
-  const clearModifiers = clearStickyModifiers;
+  // Bar actions other than keys drop a one-shot latch; a locked modifier stays until its key is tapped again.
+  const clearModifiers = releaseStickyModifiers;
 
   const sendText = (text: string, submit: boolean) => {
     if (onSendText) onSendText(text, submit);
@@ -146,8 +168,17 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
 
   const sendKey = (key: TerminalKeySpec) => {
     const modifiers = getStickyModifiers();
-    clearStickyModifiers();
+    releaseStickyModifiers();
     onSend(terminalKeySequence(key, modifiers));
+  };
+
+  // A held key keeps the modifiers latched at its first send for every repeat.
+  const repeatKey = (key: TerminalKeySpec) => (first: boolean) => {
+    if (first) {
+      heldModifiers.current = getStickyModifiers();
+      releaseStickyModifiers();
+    }
+    onSend(terminalKeySequence(key, heldModifiers.current));
   };
 
   // A latch left behind by an unmounted bar must not alter later typing.
@@ -206,6 +237,25 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   // Focus moves synchronously inside the tap, which is what lets iOS and Android open the soft keyboard.
   const focusComposer = () => composer.current?.focus({ preventScroll: true });
 
+  const restoreInput = () => {
+    if (buffered) focusComposer();
+    else onFocus();
+  };
+
+  const rememberKeyboard = () => setKeyboardOpenAtDialog(isSoftKeyboardOpen());
+
+  // With the soft keyboard open before the dialog, closing it focuses the terminal input again inside the closing
+  // tap, so the keyboard comes back; the dialog must be gone first, or its focus trap pulls focus back.
+  const closeBarDialog = (close: () => void) => {
+    if (!keyboardOpenAtDialog) {
+      close();
+      return;
+    }
+    flushSync(close);
+    restoreInput();
+  };
+  const closeConfig = () => closeBarDialog(() => setConfigOpen(false));
+
   const toggleInputMode = () => {
     clearModifiers();
     if (buffered) {
@@ -224,7 +274,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   };
 
   const runQuickCommand = async (command: QuickCommand) => {
-    setQuickOpen(null);
+    closeBarDialog(() => setQuickOpen(null));
     if (!(await confirmQuickCommand(command))) return;
     sendText(command.text, command.appendEnter);
   };
@@ -274,7 +324,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   const configDialog = configOpen ? (
     <BarDialog
       label={t("终端按键配置")}
-      onClose={() => setConfigOpen(false)}
+      onClose={closeConfig}
+      skipReturnFocus={keyboardOpenAtDialog}
       initialFocus={doneButtonRef}
       footer={
         <>
@@ -289,7 +340,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             ref={doneButtonRef}
             type="button"
             className="nx-btn nx-btn-primary"
-            onClick={() => setConfigOpen(false)}
+            onClick={closeConfig}
           >
             {t("完成")}
           </button>
@@ -322,7 +373,8 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
   const quickDialog = quickOpen ? (
     <BarDialog
       label={t("快捷命令")}
-      onClose={() => setQuickOpen(null)}
+      onClose={() => closeBarDialog(() => setQuickOpen(null))}
+      skipReturnFocus={keyboardOpenAtDialog}
       footer={
         <button
           type="button"
@@ -416,39 +468,49 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
         )}
         <button
           type="button"
-          className={`nx-terminal-key ${ctrlActive ? "is-active" : ""}`}
-          title={t("下一个按键使用 Ctrl 修饰")}
-          aria-label={t("Ctrl 修饰键")}
+          className={`nx-terminal-key ${ctrlActive ? "is-active" : ""} ${ctrlLocked ? "is-locked" : ""}`}
+          title={ctrlLocked ? t("Ctrl 已锁定：单击解除") : t("下一个按键使用 Ctrl 修饰；双击锁定")}
+          aria-label={ctrlLocked ? t("Ctrl 修饰键（已锁定）") : t("Ctrl 修饰键")}
           aria-pressed={ctrlActive}
           onPointerDown={keepFocus}
-          onClick={() => toggleStickyModifier("ctrl")}
+          onClick={() => tapStickyModifier("ctrl")}
         >
           Ctrl
         </button>
         <button
           type="button"
-          className={`nx-terminal-key ${altActive ? "is-active" : ""}`}
-          title={t("下一个按键使用 Alt 修饰")}
-          aria-label={t("Alt 修饰键")}
+          className={`nx-terminal-key ${altActive ? "is-active" : ""} ${altLocked ? "is-locked" : ""}`}
+          title={altLocked ? t("Alt 已锁定：单击解除") : t("下一个按键使用 Alt 修饰；双击锁定")}
+          aria-label={altLocked ? t("Alt 修饰键（已锁定）") : t("Alt 修饰键")}
           aria-pressed={altActive}
           onPointerDown={keepFocus}
-          onClick={() => toggleStickyModifier("alt")}
+          onClick={() => tapStickyModifier("alt")}
         >
           Alt
         </button>
-        {keys.map((key) => (
-          <button
-            type="button"
-            key={key.id}
-            className="nx-terminal-key"
-            title={key.title}
-            aria-label={key.title}
-            onPointerDown={keepFocus}
-            onClick={() => sendKey(key)}
-          >
-            {key.label}
-          </button>
-        ))}
+        {keys.map((key) => {
+          const repeat = REPEATABLE_KEY_IDS.has(key.id) ? autoRepeat.bind(repeatKey(key)) : null;
+          return (
+            <button
+              type="button"
+              key={key.id}
+              className="nx-terminal-key"
+              title={key.title}
+              aria-label={key.title}
+              {...repeat}
+              onPointerDown={(event) => {
+                keepFocus(event);
+                repeat?.onPointerDown(event);
+              }}
+              onClick={() => {
+                if (repeat && autoRepeat.consumeClick()) return;
+                sendKey(key);
+              }}
+            >
+              {key.label}
+            </button>
+          );
+        })}
         <button
           type="button"
           className="nx-terminal-key"
@@ -458,6 +520,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           aria-expanded={quickOpen !== null}
           onPointerDown={keepFocus}
           onClick={(event) => {
+            rememberKeyboard();
             event.currentTarget.focus({ preventScroll: true });
             clearModifiers();
             setQuickOpen((open) => (open ? null : "send"));
@@ -474,6 +537,7 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
           aria-expanded={configOpen}
           onPointerDown={keepFocus}
           onClick={(event) => {
+            rememberKeyboard();
             event.currentTarget.focus({ preventScroll: true });
             clearModifiers();
             setConfigOpen((open) => !open);
@@ -506,6 +570,19 @@ export function TerminalKeysBar({ onSend, onFocus, onSendText, composerRef, broa
             }}
           >
             {t("键盘")}
+          </button>
+          <button
+            type="button"
+            className="nx-terminal-key nx-terminal-keyboard"
+            title={t("收起系统键盘")}
+            aria-label={t("收起系统键盘")}
+            onPointerDown={keepFocus}
+            onClick={() => {
+              clearModifiers();
+              dismissSoftKeyboard();
+            }}
+          >
+            <IconKeyboardHide size={15} />
           </button>
         </div>
         {configDialog}

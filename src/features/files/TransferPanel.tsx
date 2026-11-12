@@ -126,7 +126,7 @@ function TransferRow({ task, showTarget }: { task: ScopedTransferTask; showTarge
         </div>
       )}
       {task.error && (
-        <div className="truncate pl-5 text-[11px] text-red-300" title={task.error}>
+        <div className="nx-xfer-error truncate pl-5 text-[11px] text-red-300" title={task.error}>
           {task.error}
         </div>
       )}

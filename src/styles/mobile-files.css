@@ -40,6 +40,12 @@
     width: 32px;
     height: 32px;
   }
+  /* A failed transfer's reason is otherwise cut off with only a hover tooltip holding the rest. */
+  .nx-xfer-panel .nx-xfer-error {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 @media (max-width: 640px) {
   .nx-toolbar.nx-files-editor-bar > .nx-toolbar-title {
@@ -51,6 +57,10 @@
   .nx-files-editor-bar .nx-icon-btn {
     width: 36px;
     height: 36px;
+  }
+  /* The text buttons (language, encoding) in the same bar follow the 36px icons instead of the generic 44px rule. */
+  .nx-files-editor-bar .nx-btn-xs {
+    min-height: 36px;
   }
 }
 /* end mobile: files */

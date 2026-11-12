@@ -184,7 +184,7 @@ export function AiSidebar({ sessionId, tabId }: { sessionId?: string; tabId?: st
       className="flex h-full shrink-0 flex-col overflow-y-auto border-l border-neutral-800/60 bg-neutral-950"
       style={{ width: rightWidth }}
     >
-      <div className="flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
+      <div className="nx-panel-head flex h-[38px] shrink-0 items-center gap-1.5 border-b border-neutral-800/60 px-2 pl-3 [@media(max-height:480px)]:h-8">
         <span className="text-[12.5px] font-semibold text-neutral-100">{tr("AI 助手")}</span>
         <span className="min-w-0 truncate text-[11px] text-neutral-500" title={scopeLabel}>
           {scopeLabel}

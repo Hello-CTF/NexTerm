@@ -34,7 +34,8 @@ export function RemoteKeysBar({
   latched: ReadonlySet<ModifierKey>;
   onToggleLatch: (key: ModifierKey) => void;
   onKey: (code: string) => void;
-  // Called inside the tap handler so the browser still counts it as a user gesture and opens the soft keyboard.
+  // Called inside the tap handler so the browser still counts it as a user gesture and opens the soft keyboard; a tap
+  // while the keyboard is open closes it.
   onKeyboard: () => void;
   keyboardActive: boolean;
 }) {
@@ -77,6 +78,8 @@ export function RemoteKeysBar({
         type="button"
         className={`nx-terminal-key nx-terminal-keyboard ${keyboardActive ? "is-active" : ""}`}
         aria-label={t("键盘")}
+        title={keyboardActive ? t("收起系统键盘") : t("打开系统键盘")}
+        aria-pressed={keyboardActive}
         onMouseDown={keepFocus}
         onClick={onKeyboard}
       >

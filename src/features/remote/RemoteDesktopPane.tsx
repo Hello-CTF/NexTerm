@@ -8,6 +8,7 @@ import { IconLoader } from "../../ui/icons";
 import { parseResolutionInput } from "./resolution";
 import type { KeyCombo } from "./keys";
 import { RemoteKeysBar } from "./RemoteKeysBar";
+import { dismissSoftKeyboard } from "../../ui/softKeyboard";
 import { RemoteToolbar, type ResolutionChoice } from "./RemoteToolbar";
 import { RemoteTouchLayer } from "./RemoteTouchLayer";
 import { useRemoteSession } from "./useRemoteSession";
@@ -621,7 +622,7 @@ export function RemoteDesktopPane({ tabId, assetId, visible }: { tabId: string; 
     if (!input) return;
     // Focus inside the tap itself: browsers only open the soft keyboard for focus that a gesture caused.
     if (document.activeElement === input) {
-      input.blur();
+      dismissSoftKeyboard();
       setKeyboardOpen(false);
       return;
     }

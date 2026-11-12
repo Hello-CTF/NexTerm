@@ -68,6 +68,53 @@ describe("coarse pointer hit areas", () => {
     }
   });
 
+  it("panel header text and icon buttons share one touch height", () => {
+    // The asset sidebar header mixes a text button (New) with icon buttons; both must override the generic 44px rule.
+    for (const selector of [".nx-panel-head .nx-btn-sm", ".nx-panel-head .nx-btn-xs", ".nx-panel-head .nx-icon-btn-sm"]) {
+      expect(coarse(selector, "height"), selector).toBe("40px");
+      expect(coarse(selector, "min-height"), selector).toBe("40px");
+    }
+    expect(coarse(".nx-panel-head .nx-icon-btn-sm", "width")).toBe("40px");
+    expect(base(".nx-panel-head .nx-btn-sm", "height")).toBeUndefined();
+  });
+
+  it("terminal keys cannot be selected by a long press and a locked modifier differs from a latched one", () => {
+    expect(base(".nx-terminal-key", "user-select")).toBe("none");
+    const locked = base(".nx-terminal-key.is-locked", "background");
+    expect(locked).toBeTruthy();
+    expect(locked).not.toBe(base(".nx-terminal-key.is-active", "background"));
+    expect(base(".nx-terminal-key.is-locked", "box-shadow")).toContain("inset");
+  });
+
+  it("panel headers grow to fit their touch buttons instead of a fixed desktop height", () => {
+    expect(coarse(".nx-panel-head", "height")).toBe("auto");
+    expect(coarse(".nx-panel-head", "min-height")).toBe("44px");
+    expect(base(".nx-panel-head", "height")).toBeUndefined();
+  });
+
+  it("tab close buttons are visible on every tab on touch and still hover-revealed on desktop", () => {
+    expect(coarse(".nx-tab-close", "visibility")).toBe("visible");
+    expect(base(".nx-tab-close", "visibility")).toBe("hidden");
+    expect(base(".nx-tab:hover .nx-tab-close", "visibility")).toBe("visible");
+  });
+
+  it("composer chip and image remove buttons get a wider touch hit area", () => {
+    for (const selector of [".nx-chip-x::after", ".nx-attach-x::after"]) {
+      expect(coarse(selector, "position"), selector).toBe("absolute");
+      expect(coarse(selector, "content"), selector).toBeTruthy();
+    }
+    expect(coarse(".nx-chip-x", "position")).toBe("relative");
+    expect(coarse(".nx-attach-x", "width")).toBe("22px");
+    expect(base(".nx-attach-x", "width")).toBe("15px");
+    expect(base(".nx-chip-x::after", "content")).toBeUndefined();
+  });
+
+  it("transfer errors wrap on touch and the file editor bar text buttons match its 36px icons", () => {
+    expect(coarse(".nx-xfer-panel .nx-xfer-error", "white-space")).toBe("normal");
+    expect(coarse(".nx-files-editor-bar .nx-btn-xs", "min-height")).toBe("36px");
+    expect(coarse(".nx-files-editor-bar .nx-icon-btn-sm", "height")).toBe("36px");
+  });
+
   it("desktop keeps the compact 34px rail", () => {
     expect(base(".nx-rail-btn", "width")).toBe("34px");
     expect(base(".nx-rail-btn", "height")).toBe("34px");

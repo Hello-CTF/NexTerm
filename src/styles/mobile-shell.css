@@ -1,8 +1,21 @@
 /* mobile: shell */
 @media (pointer: coarse) {
+  /* Panel headers grow to fit touch-size buttons instead of letting them spill over the row below. */
+  .nx-panel-head {
+    height: auto;
+    min-height: 44px;
+  }
+
+  /* Panel header buttons share one height: the generic touch rule would leave a text button at 44px beside 40px icons. */
+  .nx-panel-head .nx-icon-btn-sm,
+  .nx-panel-head .nx-btn-sm,
+  .nx-panel-head .nx-btn-xs {
+    height: 40px;
+    min-height: 40px;
+  }
+
   .nx-panel-head .nx-icon-btn-sm {
     width: 40px;
-    height: 40px;
   }
 
   .nx-app-header {

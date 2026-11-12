@@ -226,7 +226,7 @@ export function ForwardRules({
         {t("已保存规则")}
       </button>
       {expanded && (
-        <div id={panelId} className={`overflow-auto overscroll-contain border-t border-neutral-800/60 px-3 py-2 ${compact ? "max-h-[min(60dvh,32rem)] [padding-bottom:calc(0.5rem+var(--nx-kb-inset,0px)+var(--nx-safe-bottom,0px))]" : "max-h-72"}`}>
+        <div id={panelId} className={`overflow-auto overscroll-contain border-t border-neutral-800/60 px-3 py-2 ${compact ? "max-h-[min(60dvh,32rem)] [padding-bottom:calc(0.5rem+var(--nx-safe-bottom,0px))]" : "max-h-72"}`}>
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-[11px] text-neutral-500">{t("仅 local 固定端口；只监听 127.0.0.1，不自动启动。")}</span>
             <div className="nx-spacer" />

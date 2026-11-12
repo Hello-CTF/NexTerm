@@ -240,7 +240,7 @@ export function LogViewer({ sessionId, path, onClose }: LogViewerProps) {
     <div
       className={
         narrow
-          ? "flex shrink-0 items-center justify-center gap-1 border-t border-neutral-800/60 px-2 py-1 [padding-bottom:calc(0.25rem+max(var(--nx-kb-inset,0px),var(--nx-safe-bottom,0px)))]"
+          ? "flex shrink-0 items-center justify-center gap-1 border-t border-neutral-800/60 px-2 py-1 [padding-bottom:calc(0.25rem+var(--nx-safe-bottom,0px))]"
           : "flex shrink-0 items-center gap-0.5"
       }
       role="group"

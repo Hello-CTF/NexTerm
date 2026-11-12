@@ -160,6 +160,48 @@ describe("TerminalKeysBar default keys", () => {
     expect(buttonByAria("Ctrl 修饰键").getAttribute("aria-pressed")).toBe("false");
     expect(buttonByAria("Alt 修饰键").getAttribute("aria-pressed")).toBe("false");
   });
+
+  it("dismiss button blurs the focused terminal input and later bar keys do not refocus it", () => {
+    renderBar();
+    const textarea = document.createElement("textarea");
+    document.body.appendChild(textarea);
+    try {
+      textarea.focus();
+      expect(document.activeElement).toBe(textarea);
+
+      const dismiss = buttonByAria("收起系统键盘");
+      const pointerDown = new Event("pointerdown", { bubbles: true, cancelable: true });
+      act(() => {
+        dismiss.dispatchEvent(pointerDown);
+      });
+      // The press itself must not move focus; only the click handler dismisses the keyboard.
+      expect(pointerDown.defaultPrevented).toBe(true);
+      click(dismiss);
+      expect(document.activeElement).not.toBe(textarea);
+      expect(focused).toBe(0);
+      expect(sent).toEqual([]);
+
+      click(keyButton("Esc"));
+      expect(sent).toEqual(["\x1b"]);
+      expect(document.activeElement).not.toBe(textarea);
+      expect(focused).toBe(0);
+    } finally {
+      textarea.remove();
+    }
+  });
+
+  it("dismiss button leaves focus alone when no editable element has it", () => {
+    renderBar();
+    const other = document.createElement("button");
+    document.body.appendChild(other);
+    try {
+      other.focus();
+      click(buttonByAria("收起系统键盘"));
+      expect(document.activeElement).toBe(other);
+    } finally {
+      other.remove();
+    }
+  });
 });
 
 describe("TerminalKeysBar configuration", () => {

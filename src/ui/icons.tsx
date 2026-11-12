@@ -602,6 +602,14 @@ export const IconCommand = (p: IconProps) => (
   </Svg>
 );
 
+export const IconKeyboardHide = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="3.5" width="18" height="11" rx="2" />
+    <path d="M7 7.5h.01M10.3 7.5h.01M13.7 7.5h.01M17 7.5h.01M8 11h8" />
+    <path d="m9 18 3 2.5 3-2.5" />
+  </Svg>
+);
+
 export const IconGamepad = (p: IconProps) => (
   <Svg {...p}>
     <path d="M7.5 7.5h9a5 5 0 0 1 4.8 6.4l-.7 2.4a2.3 2.3 0 0 1-3.9 1L15 15.5H9l-1.7 1.8a2.3 2.3 0 0 1-3.9-1l-.7-2.4A5 5 0 0 1 7.5 7.5Z" />

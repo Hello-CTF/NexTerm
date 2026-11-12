@@ -265,6 +265,8 @@ describe("transfer task scheduling and progress", () => {
     pending.reject(new Error("real failure"));
     await waitFor(() => expect(useTransferStore.getState().tasks[0].status).toBe("failed"));
     expect(useTransferStore.getState().tasks[0].error).toBe("real failure");
+    // The reason is rendered as text in the row that wraps on touch screens, not only as a tooltip.
+    await waitFor(() => expect(mounted!.container.querySelector(".nx-xfer-error")?.textContent).toBe("real failure"));
   });
 
   it("shows a persistent result when an accepted cancellation does not settle", async () => {

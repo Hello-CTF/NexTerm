@@ -217,12 +217,23 @@
   font-family: var(--font-mono);
   font-size: calc(12px * var(--nx-ui-text-factor));
   touch-action: manipulation;
+  /* A held key repeats; a long press must not select the label or open the system callout. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .nx-terminal-key.is-active {
   border-color: var(--color-accent);
   background: color-mix(in srgb, var(--color-accent) 24%, var(--color-neutral-800));
   color: var(--color-blue-300);
+}
+
+/* A locked modifier (double tap) is filled and underlined so it reads differently from a one-shot latch. */
+.nx-terminal-key.is-locked {
+  background: var(--color-blue-600);
+  color: #fff;
+  box-shadow: inset 0 -3px 0 rgb(255 255 255 / 0.7);
 }
 
 .nx-terminal-keyboard {

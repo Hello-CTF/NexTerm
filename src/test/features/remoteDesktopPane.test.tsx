@@ -842,6 +842,20 @@ describe("RemoteDesktopPane", () => {
       expect(pane().querySelector("[data-testid='remote-clipboard-notice']")?.textContent).toBe("1 个字符无法发送到远程桌面，已跳过");
     });
 
+    it("the keyboard button opens the soft keyboard and a second tap dismisses it", async () => {
+      await mountPane();
+      const input = document.querySelector<HTMLInputElement>("input[aria-label='远程键盘输入']")!;
+      const keyboard = document.querySelector<HTMLButtonElement>("[data-testid='remote-keys-bar'] button[aria-label='键盘']")!;
+      expect(keyboard.getAttribute("aria-pressed")).toBe("false");
+      act(() => keyboard.click());
+      expect(document.activeElement).toBe(input);
+      expect(keyboard.getAttribute("aria-pressed")).toBe("true");
+      expect(keyboard.title).toBe("收起系统键盘");
+      act(() => keyboard.click());
+      expect(document.activeElement).not.toBe(input);
+      expect(keyboard.getAttribute("aria-pressed")).toBe("false");
+    });
+
     it("offers Enter and Backspace on the key bar", async () => {
       await mountPane();
       const labels = [...document.querySelectorAll("[data-testid='remote-keys-bar'] button")].map((button) => button.textContent);

@@ -1327,7 +1327,7 @@ function PullBar({ sessionId, compact }: { sessionId: string; compact: boolean }
   }
 
   return (
-    <div className="nx-docker-pullbar flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-2 [padding-bottom:calc(0.5rem+max(var(--nx-kb-inset,0px),var(--nx-safe-bottom,0px)))]">
+    <div className="nx-docker-pullbar flex shrink-0 items-center gap-2 border-t border-neutral-800/60 bg-neutral-950/40 px-2.5 py-2 [padding-bottom:calc(0.5rem+var(--nx-safe-bottom,0px))]">
       <div className="nx-field min-w-0 flex-1">
         <span className="nx-field-icon">
           <IconDownload size={13} />
