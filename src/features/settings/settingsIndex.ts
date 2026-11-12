@@ -5,7 +5,7 @@
 // highlighted through the element carrying data-setting="<item id>", and falls
 // back to its section when that element is not rendered.
 
-import { isWindows } from "../../app/platform";
+import { isMac, isWindows } from "../../app/platform";
 import { isMobileShell } from "../../app/shell/shellMode";
 import { terminalDefaultUsesAccount } from "../../app/preferences";
 import { DESKTOP } from "../../ipc/env";
@@ -240,6 +240,7 @@ export const SETTINGS_ITEMS: readonly SettingsItem[] = [
   { id: "terminal-link-activation", section: "settings-terminal", label: t("链接打开方式"), description: t("Ctrl/Cmd+单击或单击打开终端中的链接"), keywords: ["link", "url", "hyperlink", "osc8", "click", "ctrl", "cmd", t("链接"), t("超链接"), t("单击")] },
   { id: "terminal-link-open-mode", section: "settings-terminal", label: t("链接打开位置"), description: t("http/https 链接在系统浏览器、NexTerm 内打开，或每次询问"), keywords: ["link", "url", "browser", "preview", "iframe", "open", t("链接"), t("浏览器"), t("预览"), t("内置"), t("打开位置")], available: () => !isMobileShell() },
   { id: "terminal-trzsz", section: "settings-terminal", label: t("trzsz 文件传输"), description: t("远端运行 trz / tsz 时在终端内上传或下载文件"), keywords: ["trzsz", "trz", "tsz", "rz", "sz", "zmodem", "upload", "download", "transfer", t("上传"), t("下载"), t("文件传输")] },
+  { id: "terminal-option-meta", section: "settings-terminal", label: t("Option 键作为 Meta 键"), description: t("macOS 上让 Option 键在终端里发送 ESC 前缀"), keywords: ["option", "meta", "alt", "esc", "tmux", "emacs", t("键盘")], available: isMac },
   { id: "terminal-port-discovery", section: "settings-terminal", label: t("端口发现"), description: t("检测远端新监听的端口，并提示一键转发"), keywords: ["port", "discovery", "forward", "listen", "ss", "netstat", t("端口"), t("发现"), t("转发"), t("监听")] },
   { id: "terminal-gpu-acceleration", section: "settings-terminal", label: t("终端 GPU 加速"), description: t("自动、开启或关闭 WebGL 渲染"), keywords: ["gpu", "webgl", "render", "renderer", "acceleration", t("硬件加速"), t("渲染")], panel: "terminal-advanced" },
   { id: "terminal-scrollback", section: "settings-terminal", label: t("终端回滚行数"), description: t("每个终端在本机保留的滚动历史行数"), keywords: ["scrollback", "history", "buffer", "lines", t("滚动"), t("回滚"), t("历史"), t("行数")], panel: "terminal-advanced" },

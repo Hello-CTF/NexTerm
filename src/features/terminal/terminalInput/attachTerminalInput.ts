@@ -1,6 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import { matchTerminalWithheldKeybinding, type AppKeybindingHit, type KeyEventLike, type KeybindingActionId } from "../../../app/keybindings";
-import { getCtrlVPaste } from "../../../app/preferences";
+import { getCtrlVPaste, getTerminalPrefs, type TerminalMacOptionMeta } from "../../../app/preferences";
 import { isMac, isWindows } from "../../../app/platform";
 import { attachImeTextInput } from "../imeTextInput";
 import { kittyKeyboardActive } from "./kittyKeyboard";
@@ -26,6 +26,17 @@ export interface TerminalInputOptions {
  */
 export function isWebKitEngine(userAgent: string): boolean {
   return /AppleWebKit\//.test(userAgent) && !/Chrome|Chromium|Android/.test(userAgent);
+}
+
+/**
+ * Whether the held Alt key acts as Meta. Outside macOS Alt is always Meta (AltGr is excluded by the encoder). On macOS
+ * the setting chooses: both Option keys, only the left one (the right one keeps typing the layout's characters), or
+ * neither. `side` is the Option key last pressed while the terminal was focused; unknown counts as left.
+ */
+export function altActsAsMeta(mac: boolean, setting: TerminalMacOptionMeta, side: "left" | "right" | null): boolean {
+  if (!mac || setting === "both") return true;
+  if (setting === "off") return false;
+  return side !== "right";
 }
 
 /**
@@ -90,7 +101,15 @@ export function attachTerminalInput(
     }
   };
 
+  // The Option key held down, from its own keydown (location 2 is the right-hand key).
+  let altSide: "left" | "right" | null = null;
+
   term.attachCustomKeyEventHandler((event) => {
+    if (event.key === "Alt") {
+      altSide = event.type === "keyup" ? null : event.location === 2 ? "right" : "left";
+    } else if (!event.altKey) {
+      altSide = null;
+    }
     const pending = commitEnterPending(event);
     const resolution = resolveKey(event, {
       mac: isMac(),
@@ -99,6 +118,7 @@ export function attachTerminalInput(
       kittyKeyboard: kittyKeyboardActive(term, options.kittyKeyboard),
       windows: isWindows(),
       ctrlVPaste: getCtrlVPaste(),
+      altMeta: altActsAsMeta(isMac(), getTerminalPrefs().macOptionMeta, altSide),
     });
     if (event.type === "keydown") {
       const swallowed = pending && event.key === "Enter" && resolution.kind === "ime" && !resolution.toXterm;

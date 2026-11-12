@@ -99,3 +99,23 @@ export function terminalKeyOverride(event: KeyLike, mac: boolean): string | null
   }
   return null;
 }
+
+export type MetaKeyLike = KeyLike & { code?: string; getModifierState?: (key: string) => boolean };
+
+// altMetaBytes encodes Alt (or a macOS Option key used as Meta) plus a character key as ESC followed by that
+// character, the way native terminals send Meta chords. The character comes from the physical key where the layout
+// or an input method would change it: Option types another character on macOS, and an IME on Windows reports the key
+// as keyCode 229. Returns null when the chord is not a Meta character chord.
+export function altMetaBytes(event: MetaKeyLike): string | null {
+  if (!event.altKey || event.ctrlKey || event.metaKey) return null;
+  // AltGr types a character of the layout; it is never Meta.
+  if (event.getModifierState?.("AltGraph") === true) return null;
+  const code = event.code ?? "";
+  const letter = /^Key([A-Z])$/.exec(code);
+  if (letter) return ESC + (event.shiftKey ? letter[1] : letter[1].toLowerCase());
+  const digit = /^Digit([0-9])$/.exec(code);
+  if (digit && !event.shiftKey) return ESC + digit[1];
+  if (code === "Space") return `${ESC} `;
+  if (/^[\x21-\x7e]$/.test(event.key)) return ESC + event.key;
+  return null;
+}

@@ -1,6 +1,6 @@
 import { keybindingRepeats, type AppKeybindingHit, type KeyEventLike } from "../../../app/keybindings";
 import { isImeKeyEvent } from "../../../ui/imeKeyEvent";
-import { terminalKeyOverride } from "./keyEncoding";
+import { altMetaBytes, terminalKeyOverride } from "./keyEncoding";
 
 export type TerminalKeyEvent = KeyEventLike & Pick<KeyboardEvent, "type" | "repeat" | "isComposing" | "keyCode">;
 
@@ -20,6 +20,11 @@ export interface ResolveKeyContext {
   windows: boolean;
   /** The local "Ctrl+V pastes" setting (Windows only). */
   ctrlVPaste: boolean;
+  /**
+   * The held Alt key acts as Meta: Alt+character sends ESC and the character. Always on outside macOS; on macOS it
+   * follows the Option-as-Meta setting and which Option key is held.
+   */
+  altMeta: boolean;
 }
 
 export type KeyResolution =
@@ -52,20 +57,22 @@ export const COMPOSITION_COMMIT_WINDOW_MS = 50;
 
 /**
  * The single precedence order for a key event aimed at a terminal:
- *   1. IME composition (isComposing, keyCode 229, the one Enter WebKit delivers after committing)
+ *   1. IME composition (isComposing, keyCode 229, the one Enter WebKit delivers after committing); a Meta chord
+ *      outside a composition is not IME input even when an input method reports it as keyCode 229
  *   2. app shortcut (current keymap, web or desktop, including user rebinding)
  *   3. Ctrl+V paste on Windows (also while kitty keyboard reporting is active)
- *   4. terminal override bytes (terminalKeyOverride; skipped while kitty keyboard reporting is active)
+ *   4. terminal override bytes (terminalKeyOverride, then Meta chords; skipped while kitty keyboard reporting is active)
  *   5. xterm's default encoding
  */
 export function resolveKey(event: TerminalKeyEvent, ctx: ResolveKeyContext): KeyResolution {
-  if (isImeKeyEvent(event)) return { kind: "ime", toXterm: event.keyCode === 229 };
+  const metaBytes = ctx.altMeta && !event.isComposing ? altMetaBytes(event) : null;
+  if (isImeKeyEvent(event) && metaBytes === null) return { kind: "ime", toXterm: event.keyCode === 229 };
   if (event.key === "Enter" && ctx.commitEnterPending) return { kind: "ime", toXterm: false };
   const hit = ctx.matchAppShortcut(event);
   if (hit) return { kind: "app-shortcut", hit, dropRepeat: event.repeat && !keybindingRepeats(hit.action) };
   if (ctx.windows && ctx.ctrlVPaste && isPlainCtrlV(event)) return { kind: "native-paste" };
   if (!ctx.kittyKeyboard) {
-    const bytes = terminalKeyOverride(event, ctx.mac);
+    const bytes = terminalKeyOverride(event, ctx.mac) ?? metaBytes;
     if (bytes !== null) return { kind: "terminal-bytes", bytes };
   }
   return { kind: "pass" };

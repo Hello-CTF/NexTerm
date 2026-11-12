@@ -313,7 +313,12 @@ export interface TerminalPrefs {
   // Answers trz / tsz (trzsz) transfer requests in live output; every transfer is still confirmed. A device
   // setting: it decides what this device's file system takes part in, so it is never synced.
   trzsz: boolean;
+  // Which macOS Option key sends Meta (ESC + key) in the terminal; the other types the layout's characters. A device
+  // setting: it follows this machine's keyboard, so it is never synced.
+  macOptionMeta: TerminalMacOptionMeta;
 }
+
+export type TerminalMacOptionMeta = "left" | "both" | "off";
 
 const TERMINAL_CLOSE_STORAGE_KEY = "nexterm.terminalClose.v1";
 const TERMINAL_CLOSE_ACTION_KEY = "terminal.closeAction";
@@ -339,6 +344,7 @@ const TERMINAL_DEFAULTS: TerminalPrefs = {
   scrollback: 10_000,
   durableHistoryMiB: null,
   trzsz: true,
+  macOptionMeta: "left",
 };
 
 // Any value that is not one of the options, including a missing one, is the default.
@@ -400,6 +406,7 @@ function loadTerminal(): TerminalPrefs {
     scrollback: normalizeTerminalScrollback(local.scrollback),
     durableHistoryMiB: normalizeDurableHistoryMiB(durableHistory),
     trzsz: local.trzsz !== false,
+    macOptionMeta: local.macOptionMeta === "both" || local.macOptionMeta === "off" ? local.macOptionMeta : TERMINAL_DEFAULTS.macOptionMeta,
   };
 }
 
@@ -552,6 +559,18 @@ export function setTerminalTrzsz(value: boolean): void {
     const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
     const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
     localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, trzsz: value }));
+  } catch {
+  }
+  for (const listener of terminalListeners) listener();
+}
+
+export function setTerminalMacOptionMeta(value: TerminalMacOptionMeta): void {
+  if (terminalPrefs.macOptionMeta === value) return;
+  terminalPrefs = { ...terminalPrefs, macOptionMeta: value };
+  try {
+    const stored = localStorage.getItem(TERMINAL_CLOSE_STORAGE_KEY);
+    const local = stored ? JSON.parse(stored) as Partial<TerminalPrefs> : {};
+    localStorage.setItem(TERMINAL_CLOSE_STORAGE_KEY, JSON.stringify({ ...local, macOptionMeta: value }));
   } catch {
   }
   for (const listener of terminalListeners) listener();

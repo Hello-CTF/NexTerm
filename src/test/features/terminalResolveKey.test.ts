@@ -17,6 +17,7 @@ import {
   type ResolveKeyContext,
   type TerminalKeyEvent,
 } from "../../features/terminal/terminalInput/resolveKey";
+import { altActsAsMeta } from "../../features/terminal/terminalInput/attachTerminalInput";
 
 type Mods = Partial<Pick<TerminalKeyEvent, "shiftKey" | "ctrlKey" | "altKey" | "metaKey" | "repeat" | "isComposing">>;
 
@@ -45,6 +46,7 @@ function ctx(overrides: Partial<ResolveKeyContext> = {}): ResolveKeyContext {
     kittyKeyboard: false,
     windows: false,
     ctrlVPaste: true,
+    altMeta: false,
     ...overrides,
   };
 }
@@ -259,5 +261,64 @@ describe("resolveKey Ctrl+V on Windows", () => {
     expect(resolveKey({ ...ctrlV(), type: "keypress" }, c)).toEqual(NATIVE);
     expect(resolveKey({ ...ctrlV(), type: "keyup" }, c)).toEqual(NATIVE);
     expect(resolveKey(ctrlV({ repeat: true }), c)).toEqual(NATIVE);
+  });
+});
+
+describe("Alt / Option as Meta", () => {
+  beforeEach(() => {
+    harness.mac = false;
+    resetAllKeybindings();
+  });
+
+  it("sends ESC and the physical key's character for an Alt chord", () => {
+    expect(resolveKey(ev("s", "KeyS", { altKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1bs" });
+    expect(resolveKey(ev("S", "KeyS", { altKey: true, shiftKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1bS" });
+    expect(resolveKey(ev("1", "Digit1", { altKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1b1" });
+  });
+
+  it("uses the physical key when macOS Option changes the character", () => {
+    harness.mac = true;
+    expect(resolveKey(ev("ß", "KeyS", { altKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1bs" });
+  });
+
+  it("leaves the Option character to the layout when Option is not Meta", () => {
+    harness.mac = true;
+    expect(resolveKey(ev("ß", "KeyS", { altKey: true }), ctx({ altMeta: false }))).toEqual({ kind: "pass" });
+  });
+
+  it("treats an Alt chord an input method reports as keyCode 229 as Meta, but not a real composition", () => {
+    expect(resolveKey(ev("Process", "KeyS", { altKey: true }, { keyCode: 229 }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1bs" });
+    expect(resolveKey(ev("Process", "KeyS", { altKey: true, isComposing: true }, { keyCode: 229 }), ctx({ altMeta: true }))).toEqual({ kind: "ime", toXterm: true });
+  });
+
+  it("never treats AltGr or Ctrl+Alt as Meta", () => {
+    const altGr = ev("@", "KeyQ", { altKey: true, ctrlKey: true }, { getModifierState: (key: string) => key === "AltGraph" });
+    expect(resolveKey(altGr, ctx({ altMeta: true }))).toEqual({ kind: "pass" });
+    expect(resolveKey(ev("s", "KeyS", { altKey: true, ctrlKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "pass" });
+  });
+
+  it("keeps an app shortcut on Alt ahead of Meta", () => {
+    setKeybinding("terminalSearch", "Alt+S");
+    expect(resolveKey(ev("s", "KeyS", { altKey: true }), ctx({ altMeta: true }))).toMatchObject({ kind: "app-shortcut" });
+  });
+
+  it("keeps the macOS Option word moves", () => {
+    harness.mac = true;
+    expect(resolveKey(ev("ArrowLeft", "ArrowLeft", { altKey: true }), ctx({ altMeta: true }))).toEqual({ kind: "terminal-bytes", bytes: "\x1bb" });
+  });
+
+  it("leaves Meta chords to xterm while kitty keyboard reporting is active", () => {
+    expect(resolveKey(ev("s", "KeyS", { altKey: true }), ctx({ altMeta: true, kittyKeyboard: true }))).toEqual({ kind: "pass" });
+  });
+});
+
+describe("altActsAsMeta", () => {
+  it("follows the macOS setting and the held Option key", () => {
+    expect(altActsAsMeta(false, "off", "right")).toBe(true);
+    expect(altActsAsMeta(true, "left", "left")).toBe(true);
+    expect(altActsAsMeta(true, "left", null)).toBe(true);
+    expect(altActsAsMeta(true, "left", "right")).toBe(false);
+    expect(altActsAsMeta(true, "both", "right")).toBe(true);
+    expect(altActsAsMeta(true, "off", "left")).toBe(false);
   });
 });

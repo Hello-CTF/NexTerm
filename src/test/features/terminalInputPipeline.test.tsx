@@ -276,6 +276,15 @@ describe("XtermView input pipeline bytes", () => {
     expect(sent).toEqual(["\x1bb", "\x1bf", "\x01", "\x05"]);
   });
 
+  // macOS Option as Meta is covered by the resolveKey tests: under jsdom xterm does not detect macOS and encodes
+  // Option chords itself, so a pipeline test there could not tell the two apart.
+  it("sends ESC s for Alt+S on Windows when a Chinese input method reports the key as keyCode 229", async () => {
+    harness.windows = true;
+    const textarea = await show();
+    stroke(textarea, { key: "Process", code: "KeyS", keyCode: 229, altKey: true });
+    expect(sent).toEqual(["\x1bs"]);
+  });
+
   it("keeps xterm's modified arrow encoding for Alt+arrows off macOS", async () => {
     const textarea = await show();
     stroke(textarea, { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37, altKey: true });
