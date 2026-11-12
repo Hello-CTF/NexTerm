@@ -155,19 +155,20 @@ function watchAssetIdentityWidth(nodes: Element[], measure: () => void): () => v
   };
 }
 
+// Declaration order is the order of the kind picker: terminals, remote desktops, databases, then containers.
 const KIND_LABEL: Record<string, string> = {
   ssh: "SSH",
-  winrm: "WinRM",
+  telnet: "Telnet",
   local: tr("本地终端"),
-  docker: tr("Docker 主机"),
-  "docker-context": tr("Docker context（仅清单）"),
-  kubernetes: tr("Kubernetes（仅清单）"),
+  winrm: "WinRM",
+  rdp: "RDP",
+  vnc: "VNC",
   mysql: "MySQL / MariaDB",
   postgres: "PostgreSQL",
   redis: "Redis",
-  rdp: "RDP",
-  vnc: "VNC",
-  telnet: "Telnet",
+  docker: tr("Docker 主机"),
+  "docker-context": tr("Docker context（仅清单）"),
+  kubernetes: tr("Kubernetes（仅清单）"),
 };
 
 
