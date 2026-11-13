@@ -762,8 +762,42 @@ func (m *Manager) CurrentDialerFor(ctx context.Context, id string) (base.Dialer,
 	return m.CurrentDialer(ctx, id)
 }
 
+// Disconnect ends a session's connection. A session whose connection is
+// already gone and that holds no terminal is removed instead: nothing is left
+// to reconnect for, and a client that still wants the host connects again.
 func (m *Manager) Disconnect(id string) error {
+	if removed, err := m.removeDeadSession(id); removed {
+		return err
+	}
 	return m.disconnect(id, nil)
+}
+
+// removeDeadSession reaps a Failed or Disconnected session once the records
+// of durable terminals nobody watches are released, if no terminal remains.
+func (m *Manager) removeDeadSession(id string) (bool, error) {
+	m.mu.Lock()
+	session := m.sessions[id]
+	m.mu.Unlock()
+	if session == nil {
+		return false, nil
+	}
+	dead := func() bool {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		return reconnectable(session.asset.Kind) && !session.closed && !session.reconnecting &&
+			(session.status == StatusFailed || session.status == StatusDisconnected)
+	}
+	if !dead() {
+		return false, nil
+	}
+	m.releaseUnwatchedDurables(session)
+	session.mu.Lock()
+	empty := len(session.tabs) == 0
+	session.mu.Unlock()
+	if !empty || !dead() {
+		return false, nil
+	}
+	return true, m.reap(id)
 }
 
 func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {

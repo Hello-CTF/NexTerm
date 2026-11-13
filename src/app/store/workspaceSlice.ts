@@ -1,4 +1,5 @@
 import { dirtyFileEditors } from "../../features/files/editorGuards";
+import { sessionApi } from "../../ipc/commands";
 import { aiTabRunControls, confirmAiRunCancellation, runningAiTabs as getRunningAiTabs, clearAiTabRuns } from "../../features/ai/runOwnership";
 import {
   SPLIT_MIN_COLS,
@@ -118,6 +119,28 @@ function withoutZoom(zoomedPanes: Record<string, string>, ...workspaceIds: (stri
   const next = { ...zoomedPanes };
   for (const id of workspaceIds) if (id) delete next[id];
   return next;
+}
+
+// releaseDeadSession asks the backend to drop the session of a closed workspace when its connection is already
+// gone and no other workspace uses it. The backend removes it only when it holds no terminal, so a session still
+// carrying watched terminals is left as it is.
+function releaseDeadSession(
+  sessionId: string | undefined,
+  workspaces: Workspace[],
+  sessions: UiState["sessions"],
+  get: UiGet,
+): void {
+  if (!sessionId) return;
+  const status = sessions.find((session) => session.id === sessionId)?.status;
+  if (status !== "failed" && status !== "disconnected") return;
+  const used = workspaces.some((workspace) =>
+    workspace.sessionId === sessionId ||
+    workspace.panes.some((pane) => pane.tabs.some((tab) => tab.sessionId === sessionId)));
+  if (used) return;
+  void sessionApi
+    .disconnect(sessionId)
+    .then(() => get().resyncSessions({ silent: true }))
+    .catch(() => undefined);
 }
 
 export function createWorkspaceSlice(set: UiSet, get: UiGet) {
@@ -366,6 +389,7 @@ export function createWorkspaceSlice(set: UiSet, get: UiGet) {
         }
         const board = latest.aiBoards[id];
         if (board) clearAiTabRuns(board.tabs.map((tab) => tab.id));
+        releaseDeadSession(latestTarget.sessionId, nextWorkspaces, latest.sessions, get);
       }
       if (outcome.failed === 0) pushWorkspaceCloseToast(target.title, outcome, deleteWorkspace);
       return deleteWorkspace;
