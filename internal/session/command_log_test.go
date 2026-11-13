@@ -307,3 +307,57 @@ func TestCommandLogWrappedCommandJoinsRows(t *testing.T) {
 		t.Fatalf("wrapped command = %q, want %q", got, long)
 	}
 }
+
+// TestCommandLogReadsCommandLineAtStartWhenOutputSharesTheChunk: a fast command's
+// output, finish and next prompt often arrive in the same chunk as its start;
+// the command line is still the one on screen when the command started.
+func TestCommandLogReadsCommandLineAtStartWhenOutputSharesTheChunk(t *testing.T) {
+	const start = "\r\n\x1b]133;B\x1b\\\x1b]133;C\x1b\\"
+	const next = "\x1b]133;D;0\x1b\\\x1b]133;A\x1b\\user@host:~$ "
+	cases := map[string]string{
+		"output":     start + "a.txt  b.txt\r\n" + next,
+		"no output":  start + next,
+		"clear":      start + "\x1b[H\x1b[2J\x1b[3J" + next,
+		"alt screen": start + "\x1b[?1049h\x1b[Htop - 10:00\r\nTasks: 1\x1b[?1049l" + next,
+	}
+	for name, chunk := range cases {
+		t.Run(name, func(t *testing.T) {
+			sink := &fakeCommandSink{}
+			_, tab, channel, _ := openCommandTestTab(t, sink, "")
+			if err := channel.emit([]byte("user@host:~$ ls")); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, func() bool { return tab.commandLine() == "user@host:~$ ls" })
+			if err := channel.emit([]byte(chunk)); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, func() bool { return len(sink.snapshot()) == 1 })
+			if got := sink.snapshot()[0].Command; got != "user@host:~$ ls" {
+				t.Fatalf("command = %q, want the line on screen at the start", got)
+			}
+		})
+	}
+}
+
+// TestCommandLogReadsEachCommandOfOneChunk: several commands completing in one
+// chunk each record their own line and start directory.
+func TestCommandLogReadsEachCommandOfOneChunk(t *testing.T) {
+	sink := &fakeCommandSink{}
+	_, _, channel, _ := openCommandTestTab(t, sink, "")
+	chunk := "$ cd /etc\r\n\x1b]133;B\x1b\\\x1b]133;D;0\x1b\\\x1b]7;file://h/etc\x1b\\\x1b]133;A\x1b\\" +
+		"$ cat x\r\n\x1b]133;B\x1b\\hello\r\n\x1b]133;D;1\x1b\\\x1b]133;A\x1b\\$ "
+	if err := channel.emit([]byte(chunk)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.snapshot()) == 2 })
+	records := sink.snapshot()
+	if records[0].Command != "$ cd /etc" || records[1].Command != "$ cat x" {
+		t.Fatalf("commands = %q, %q", records[0].Command, records[1].Command)
+	}
+	if records[1].Cwd != "/etc" {
+		t.Fatalf("second command cwd = %q, want /etc", records[1].Cwd)
+	}
+	if records[1].ExitCode == nil || *records[1].ExitCode != 1 {
+		t.Fatalf("second command exit = %v, want 1", records[1].ExitCode)
+	}
+}

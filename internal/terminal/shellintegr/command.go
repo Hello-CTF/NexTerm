@@ -82,7 +82,7 @@ func (t *CommandTracker) ObserveReports(p []byte) ([]Report, CommandState, bool)
 	before := t.state
 	var reports []Report
 	cwd, hasCWD := "", false
-	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
+	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte, _ int) {
 		if report, ok := t.ObservePayload(payload); ok {
 			report.CWD, report.HasCWD = cwd, hasCWD
 			reports = append(reports, report)
@@ -92,6 +92,23 @@ func (t *CommandTracker) ObserveReports(p []byte) ([]Report, CommandState, bool)
 	})
 	t.pending = append(t.pending[:0], tail...)
 	return reports, t.state, t.state != before
+}
+
+// StartBoundaries returns the offsets in p just past each OSC 133;B
+// terminator, in stream order, without changing the tracker. A start marker
+// that began in an earlier chunk counts where its terminator lands in p.
+// Feeding a screen up to each boundary before observing lets a consumer read
+// the command line as it stood when the command started, before output that
+// arrived in the same chunk moved the cursor.
+func (t *CommandTracker) StartBoundaries(p []byte) []int {
+	var boundaries []int
+	skip := len(t.pending)
+	scanOSC(pendingJoin(t.pending, p), func(payload []byte, end int) {
+		if letter, _, _, ok := parseOSC133(payload); ok && letter == 'B' && end > skip {
+			boundaries = append(boundaries, end-skip)
+		}
+	})
+	return boundaries
 }
 
 // ObservePayload applies one complete OSC payload (the bytes between the

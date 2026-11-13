@@ -334,3 +334,27 @@ func TestParseOSC133ExitCodeWithExtraParams(t *testing.T) {
 		t.Fatalf("code=%d has=%v ok=%v", code, has, ok)
 	}
 }
+
+func TestCommandTrackerStartBoundaries(t *testing.T) {
+	tr := NewCommandTracker()
+	chunk := []byte("ls\r\n\x1b]133;B\x1b\\out\x1b]133;D;0\x1b\\\x1b]133;B\x07tail")
+	first := bytes.Index(chunk, []byte("out"))
+	second := len(chunk) - len("tail")
+	got := tr.StartBoundaries(chunk)
+	if len(got) != 2 || got[0] != first || got[1] != second {
+		t.Fatalf("boundaries = %v, want [%d %d]", got, first, second)
+	}
+	if tr.State().Sequence != 0 {
+		t.Fatalf("StartBoundaries must not change the tracker, sequence = %d", tr.State().Sequence)
+	}
+}
+
+func TestCommandTrackerStartBoundaryAcrossChunks(t *testing.T) {
+	tr := NewCommandTracker()
+	tr.Observe([]byte("ls\r\n\x1b]13"))
+	rest := []byte("3;B\x1b\\out")
+	got := tr.StartBoundaries(rest)
+	if want := len("3;B\x1b\\"); len(got) != 1 || got[0] != want {
+		t.Fatalf("boundaries = %v, want [%d]", got, want)
+	}
+}

@@ -33,7 +33,7 @@ func (t *Tracker) CWD() string { return t.cwd }
 func (t *Tracker) Observe(p []byte) (string, bool) {
 	latest := ""
 	found := false
-	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte) {
+	tail := scanOSC(pendingJoin(t.pending, p), func(payload []byte, _ int) {
 		if cwd, ok := parseOSC7(payload); ok {
 			t.cwd = cwd
 			latest, found = cwd, true
@@ -56,21 +56,23 @@ func pendingJoin(pending, p []byte) []byte {
 }
 
 // scanOSC consumes data, invoking handle with the payload of each complete
-// OSC sequence. It returns the trailing bytes of an incomplete sequence for
-// the caller to buffer, or nil when the tail is dropped because an overlong
-// sequence overflowed maxPending.
-func scanOSC(data []byte, handle func(payload []byte)) []byte {
-	for len(data) > 0 {
-		i := bytes.IndexByte(data, 0x1b)
+// OSC sequence and the index in data just past its terminator. It returns the
+// trailing bytes of an incomplete sequence for the caller to buffer, or nil
+// when the tail is dropped because an overlong sequence overflowed maxPending.
+func scanOSC(data []byte, handle func(payload []byte, end int)) []byte {
+	offset := 0
+	for offset < len(data) {
+		i := bytes.IndexByte(data[offset:], 0x1b)
 		if i < 0 {
 			return nil
 		}
-		seq := data[i:]
+		start := offset + i
+		seq := data[start:]
 		if len(seq) < 2 {
 			return seq
 		}
 		if seq[1] != ']' {
-			data = seq[2:]
+			offset = start + 2
 			continue
 		}
 		end, next := oscSequenceEnd(seq[2:])
@@ -80,8 +82,8 @@ func scanOSC(data []byte, handle func(payload []byte)) []byte {
 			}
 			return seq
 		}
-		handle(seq[2 : 2+end])
-		data = seq[next:]
+		handle(seq[2:2+end], start+next)
+		offset = start + next
 	}
 	return nil
 }

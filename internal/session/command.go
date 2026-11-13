@@ -71,9 +71,16 @@ const maxCommandWrapRows = 8
 // subscriber bytes are untouched. cwdBefore is the tab directory known before
 // data was observed: a command takes the last OSC 7 report preceding its
 // start in stream order, so a fast "cd" whose next prompt arrives in the same
-// chunk still records the directory it ran in.
-func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool, cwdBefore string) {
+// chunk still records the directory it ran in. It returns the directory known
+// after the last report in data, for observing the data that follows.
+func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool, cwdBefore string) string {
 	reports, state, _ := tab.commandTrack.ObserveReports(data)
+	cwdAfter := cwdBefore
+	for _, report := range reports {
+		if report.HasCWD {
+			cwdAfter = report.CWD
+		}
+	}
 	// Replayed history keeps the lifecycle snapshot current but never records
 	// commands: they were recorded when they ran.
 	if len(reports) > 0 && !replay {
@@ -102,6 +109,7 @@ func (m *Manager) observeCommand(tab *Tab, data []byte, replay bool, cwdBefore s
 	tab.mu.Lock()
 	tab.commandState = state
 	tab.mu.Unlock()
+	return cwdAfter
 }
 
 func (m *Manager) startCommand(tab *Tab, sequence uint64, now time.Time, cwd string) {

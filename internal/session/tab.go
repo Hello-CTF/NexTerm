@@ -2243,20 +2243,32 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 			answeredFrame, _ = json.Marshal(streamClassFrame{Type: streamClassType, classSpan: classSpan{From: from, To: to, Kind: classAnswered}})
 		}
 	}
+	cwdBefore := tab.cwd
 	tab.mu.Unlock()
-	if source, ok := tab.terminal.(interface {
-		FeedWith([]byte, terminal.FeedOptions)
-	}); ok {
-		source.FeedWith(data, terminal.FeedOptions{Replay: replay, Unanswered: clientAnswers})
-	} else {
-		tab.terminal.Feed(data)
+	// The screen is fed up to each command start before its reports are
+	// observed, so the command line is read as it stood when the command
+	// started, not after output that arrived in the same chunk.
+	feed := func(part []byte) {
+		if source, ok := tab.terminal.(interface {
+			FeedWith([]byte, terminal.FeedOptions)
+		}); ok {
+			source.FeedWith(part, terminal.FeedOptions{Replay: replay, Unanswered: clientAnswers})
+		} else {
+			tab.terminal.Feed(part)
+		}
+	}
+	cwd, start := cwdBefore, 0
+	for _, end := range append(tab.commandTrack.StartBoundaries(data), len(data)) {
+		if end <= start {
+			continue
+		}
+		feed(data[start:end])
+		cwd = m.observeCommand(tab, data[start:end], replay, cwd)
+		start = end
 	}
 	if transcript {
 		m.transcriptOutput(feedCtx, tab, data)
 	}
-	tab.mu.Lock()
-	cwdBefore := tab.cwd
-	tab.mu.Unlock()
 	if _, changed := tab.observeCWD(data, generation); changed {
 		tab.mu.Lock()
 		event := tab.controlEventLocked()
@@ -2282,7 +2294,6 @@ func (m *Manager) feedWith(ctx context.Context, tab *Tab, generation uint64, dat
 			m.emit(withCoalescibleControl(feedCtx), TopicTerminalControl, titleEvent)
 		}
 	}
-	m.observeCommand(tab, data, replay, cwdBefore)
 	type outputTarget struct {
 		channelID  string
 		subscriber subscriber
