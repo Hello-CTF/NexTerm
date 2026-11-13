@@ -5127,7 +5127,7 @@
   "留空使用默认路径。": "Leave empty to use the default path.",
   "留空则不修改已保存的密码": "Leave empty to keep the saved password",
   "留空则不设置": "Leave empty to leave unset",
-  "留空则使用系统代理。": "Leave empty to use the system proxy.",
+  "留空时使用 HTTPS_PROXY、HTTP_PROXY 或 ALL_PROXY 环境变量；macOS 上未设置时使用系统代理。": "Leave empty to use the HTTPS_PROXY, HTTP_PROXY or ALL_PROXY environment variable; on macOS the system proxy applies when none is set.",
   "留空时使用匹配模式": "Leave empty to use the match pattern",
   "留空直接读取本机注册表中的 PuTTY 会话，也可选择 regedit 导出的 .reg 文件。": "Leave empty to read the PuTTY sessions from this computer's registry, or choose a .reg file exported with regedit.",
   "留空读取本机注册表": "Leave empty to read the registry",

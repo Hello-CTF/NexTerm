@@ -12,6 +12,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/idleread"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/platform"
 )
 
@@ -81,11 +82,16 @@ func (m *Manager) releasesAPI() string {
 	return DefaultReleasesAPI
 }
 
+// defaultClient checks and downloads updates through the environment's
+// proxy, or the system's on macOS where an app started from the Dock has no
+// proxy variables.
+var defaultClient = &http.Client{Transport: netproxy.Transport()}
+
 func (m *Manager) httpClient() *http.Client {
 	if m.HTTPClient != nil {
 		return m.HTTPClient
 	}
-	return http.DefaultClient
+	return defaultClient
 }
 
 func (m *Manager) emit(ctx context.Context, progress Progress) {

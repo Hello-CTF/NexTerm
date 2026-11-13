@@ -5145,7 +5145,7 @@
   "留空使用默认路径。": "Leer lassen, um den Standardpfad zu verwenden.",
   "留空则不修改已保存的密码": "Leer lassen, um das gespeicherte Passwort nicht zu ändern",
   "留空则不设置": "Leer lassen, um nichts festzulegen",
-  "留空则使用系统代理。": "Leer lassen, um den System-Proxy zu verwenden.",
+  "留空时使用 HTTPS_PROXY、HTTP_PROXY 或 ALL_PROXY 环境变量；macOS 上未设置时使用系统代理。": "Leer lassen, um die Umgebungsvariable HTTPS_PROXY, HTTP_PROXY oder ALL_PROXY zu verwenden; unter macOS gilt ohne diese der System-Proxy.",
   "留空时使用匹配模式": "Leer lassen, um das Übereinstimmungsmuster zu verwenden",
   "留空直接读取本机注册表中的 PuTTY 会话，也可选择 regedit 导出的 .reg 文件。": "Leer lassen, um die PuTTY-Sitzungen aus der Registry dieses Computers zu lesen, oder eine mit regedit exportierte .reg-Datei wählen.",
   "留空读取本机注册表": "Leer lassen, um die Registry zu lesen",

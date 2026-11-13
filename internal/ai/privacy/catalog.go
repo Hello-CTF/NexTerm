@@ -20,6 +20,7 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy/inference"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 )
 
 const modelRepository = "QuantumNous/astrlink-guard"
@@ -100,7 +101,7 @@ type Catalog struct {
 // NewCatalog bounds the wait for response headers and for each stretch without
 // progress instead of the whole transfer, so slow but steady links complete.
 func NewCatalog() *Catalog {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := netproxy.Transport()
 	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	return &Catalog{client: &http.Client{Transport: transport}, baseURL: "https://huggingface.co", idleTimeout: defaultIdleTimeout}
 }

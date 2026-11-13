@@ -17,6 +17,7 @@ import (
 	"golang.org/x/mod/semver"
 
 	"github.com/Hello-CTF/NexTerm/internal/applog"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
@@ -58,6 +59,7 @@ func latestReleaseURL(baseURL string) string {
 func resolveLatestVersion(ctx context.Context, baseURL string) (string, error) {
 	client := &http.Client{
 		Timeout:       cliTimeout,
+		Transport:     netproxy.Transport(),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, latestReleaseURL(baseURL), nil)

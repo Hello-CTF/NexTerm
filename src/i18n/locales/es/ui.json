@@ -5184,7 +5184,7 @@
   "留空使用默认路径。": "Déjalo vacío para usar la ruta por defecto.",
   "留空则不修改已保存的密码": "Déjalo vacío para no cambiar la contraseña guardada",
   "留空则不设置": "Déjalo vacío para no definirlo",
-  "留空则使用系统代理。": "Déjalo vacío para usar el proxy del sistema.",
+  "留空时使用 HTTPS_PROXY、HTTP_PROXY 或 ALL_PROXY 环境变量；macOS 上未设置时使用系统代理。": "Déjalo vacío para usar la variable de entorno HTTPS_PROXY, HTTP_PROXY o ALL_PROXY; en macOS, si no hay ninguna, se usa el proxy del sistema.",
   "留空时使用匹配模式": "Si lo dejas vacío, se usa el patrón de coincidencia",
   "留空直接读取本机注册表中的 PuTTY 会话，也可选择 regedit 导出的 .reg 文件。": "Déjelo vacío para leer las sesiones de PuTTY del registro de este equipo, o elija un archivo .reg exportado con regedit.",
   "留空读取本机注册表": "Vacío para leer el registro",

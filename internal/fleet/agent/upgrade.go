@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/idleread"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/platform/psquote"
 	"github.com/Hello-CTF/NexTerm/internal/releasesig"
 )
@@ -283,13 +284,17 @@ type downloadStatusError struct {
 
 func (e *downloadStatusError) Error() string { return fmt.Sprintf("download %s: %s", e.url, e.text) }
 
+// upgradeClient downloads releases through the environment's proxy, or the
+// system's on macOS, where a launchd service has no proxy variables.
+var upgradeClient = &http.Client{Transport: netproxy.Transport()}
+
 // get requests one release file and hands its body to read. The request fails when no data arrives for
 // upgradeDownloadIdleTimeout (waiting for the response headers included) or after upgradeDownloadMaxDuration overall,
 // so a slow but steady link still completes while a stalled one fails promptly.
 func (u *Upgrader) get(ctx context.Context, ref string, read func(body io.Reader) error) error {
 	client := u.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = upgradeClient
 	}
 	url := strings.TrimRight(u.BaseURL, "/") + "/" + ref
 	capped, cancelCap := context.WithTimeout(ctx, upgradeDownloadMaxDuration)

@@ -713,7 +713,7 @@ export function ModelManager({
                         value={draft.proxy ?? ""}
                         onChange={(e) => patch({ proxy: e.target.value || null })}
                       />
-                      <div className="nx-hint mt-1 text-[10.5px]">{t("留空则使用系统代理。")}</div>
+                      <div className="nx-hint mt-1 text-[10.5px]">{t("留空时使用 HTTPS_PROXY、HTTP_PROXY 或 ALL_PROXY 环境变量；macOS 上未设置时使用系统代理。")}</div>
                     </Field>
 
                     <label className="flex cursor-pointer items-center gap-2 text-[12px] text-neutral-300">

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 )
 
 const maxErrorBody = 64 << 10
@@ -109,7 +110,9 @@ func NewClient(config Config, options ...Option) (*Client, error) {
 	}
 
 	dialer := &net.Dialer{Timeout: settings.timeouts.Connect, KeepAlive: 30 * time.Second}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Without a configured proxy the environment's applies, or the system's
+	// on macOS.
+	transport := netproxy.Transport()
 	transport.DialContext = dialer.DialContext
 	transport.ResponseHeaderTimeout = settings.timeouts.ResponseHeader
 	if config.Proxy != nil {
