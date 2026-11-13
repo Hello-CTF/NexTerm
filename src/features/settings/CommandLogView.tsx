@@ -6,7 +6,7 @@ import { useAuth } from "../auth/store";
 import { describeError } from "../../ui/errorText";
 import { Select } from "../../ui/Select";
 import { IconRefresh, IconTerminal } from "../../ui/icons";
-import { useCompactWidth } from "./useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { t } from "../../i18n";
 
 interface CommandEntry {

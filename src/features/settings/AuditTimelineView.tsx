@@ -19,7 +19,7 @@ import { IconDownload, IconHistory, IconRefresh } from "../../ui/icons";
 import { useAuth } from "../auth/store";
 import { KIND_LABELS } from "./auditLabels";
 import { collectTimelineExport, timelineToCsv, timelineToJson, TIMELINE_EXPORT_MAX } from "./auditTimelineExport";
-import { useCompactWidth } from "./useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { t } from "../../i18n";
 
 const PAGE_SIZE = 100;

@@ -23,7 +23,7 @@ import {
   IconTrash,
 } from "../../ui/icons";
 import { ContextMenu, type ContextMenuState, type MenuItem } from "../../ui/ContextMenu";
-import { useCompactWidth } from "./useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { ContainerInsight } from "./ContainerInsight";
 import { parsePublishedPorts } from "./containerPorts";
 import { forwardAndOpen, targetHostFor } from "../preview/forwardAndOpen";

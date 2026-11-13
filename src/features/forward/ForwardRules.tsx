@@ -4,7 +4,7 @@ import { useUi, useSessionList } from "../../app/store";
 import { forwardRuleApi, type ForwardRule, type ForwardRuleInput } from "../../ipc/forwardRuleApi";
 import { ask } from "../../ui/dialogs";
 import { ContextMenu, type ContextMenuState } from "../../ui/ContextMenu";
-import { useCompactWidth } from "../docker/useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { describeError } from "../../ui/errorText";
 import { describeForwardError } from "./forwardErrors";
 import {

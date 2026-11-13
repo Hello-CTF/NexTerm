@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCompactWidth } from "./useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   dockerApi,
