@@ -24,12 +24,12 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-var winRMBanner = []byte("[NexTerm] WinRM line mode; each command runs in a new shell.\r\nPS> ")
+var winRMBanner = []byte("[NexTerm] WinRM 行模式：每条命令都在新的 shell 中运行。\r\nPS> ")
 
 // durableUnrecoverableBanner tells the user why a durable tab ended at reconnect
 // instead of silently attaching to an unverified helper session.
-var durableUnrecoverableBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal cannot be recovered: it has no recorded incarnation\x1b[0m\r\n")
-var durableHelperRestartedBanner = []byte("\r\n\x1b[31m[NexTerm] durable terminal ended: its helper restarted since the last attach\x1b[0m\r\n")
+var durableUnrecoverableBanner = []byte("\r\n\x1b[31m[NexTerm] 无法恢复此持久终端：没有记录到它的运行实例\x1b[0m\r\n")
+var durableHelperRestartedBanner = []byte("\r\n\x1b[31m[NexTerm] 持久终端已结束：上次接入后，持久终端组件已重启\x1b[0m\r\n")
 var replayClear = []byte("\x1b[2J\x1b[3J\x1b[H")
 
 const sshFallbackNotice = "持久终端不可用，已切换为临时 SSH 终端；关闭或断开后无法恢复此终端"

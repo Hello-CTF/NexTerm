@@ -121,7 +121,7 @@ func TestReconnectDurableWithoutIncarnationExitsWithVisibleReason(t *testing.T) 
 		return status.Status == StatusConnected && status.Generation == 2
 	})
 	waitFor(t, func() bool { return infoExited(manager, info.ID) })
-	waitForTabMarker(t, manager, info.ID, "cannot be recovered")
+	waitForTabMarker(t, manager, info.ID, "无法恢复此持久终端")
 	if _, attach, killed := underlying.counts(); attach != 0 || killed != 0 {
 		t.Fatalf("unrecoverable reconnect: attach=%d killed=%d; want 0, 0", attach, killed)
 	}
@@ -218,7 +218,7 @@ func TestReconnectMixedTabsIsolatesUnrecoverableDurableTab(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return infoExited(manager, legacy.ID) })
-	waitForTabMarker(t, manager, legacy.ID, "cannot be recovered")
+	waitForTabMarker(t, manager, legacy.ID, "无法恢复此持久终端")
 	waitForTabMarker(t, manager, checked.ID, "checked-during")
 	for _, marker := range []string{"checked-before", "checked-during"} {
 		if got := tabRawCount(t, manager, checked.ID, marker); got != 1 {
@@ -292,5 +292,5 @@ func TestReconnectDurableAfterHelperRestartExitsWithVisibleReason(t *testing.T) 
 		return status.Status == StatusConnected && status.Generation == 2
 	})
 	waitFor(t, func() bool { return infoExited(manager, info.ID) })
-	waitForTabMarker(t, manager, info.ID, "helper restarted")
+	waitForTabMarker(t, manager, info.ID, "持久终端组件已重启")
 }

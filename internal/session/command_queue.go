@@ -164,7 +164,7 @@ func (s *asyncCommandSink) flushGaps() {
 	s.gapMu.Unlock()
 	for _, gap := range pending {
 		record := gap.record
-		record.Command = fmt.Sprintf("[NexTerm] command log gap: omitted %d terminal command record(s) because the persistence queue was saturated", gap.count)
+		record.Command = fmt.Sprintf("[NexTerm] 命令记录缺口：持久化队列已满，省略了 %d 条终端命令记录", gap.count)
 		record.Source = CommandSourceTerminalGap
 		record.ExitCode = nil
 		record.StartedAt = gap.first
