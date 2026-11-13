@@ -389,7 +389,7 @@ func (c *Client) AttachWithOptions(ctx context.Context, id string, expect *Ident
 	if err != nil {
 		return nil, err
 	}
-	msg := attachMsg{ID: id, Offset: options.Offset, Tail: options.Tail, Retain: options.Retain}
+	msg := attachMsg{ID: id, Offset: options.Offset, Tail: options.Tail}
 	if expect != nil {
 		msg.ExpectCreatedAt = expect.CreatedAt.UnixNano()
 		msg.ExpectIncarnation = expect.Incarnation
@@ -656,7 +656,7 @@ func (c *clientConn) awaitAttached(ctx context.Context) (attachedMsg, error) {
 		return attachedMsg{}, err
 	}
 	replay := reply.Replay
-	if replay.HistoryBase > replay.ReplayFrom || replay.ReplayFrom > replay.DisplayFrom || replay.DisplayFrom > replay.HistoryNext {
+	if replay.HistoryBase > replay.ReplayFrom || replay.ReplayFrom > replay.HistoryNext {
 		return attachedMsg{}, fmt.Errorf("%w: inconsistent attach replay offsets", ErrProtocol)
 	}
 	return reply, nil

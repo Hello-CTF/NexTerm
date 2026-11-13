@@ -14,7 +14,7 @@ type durableTranscriptOffsets struct {
 // The session owner carried in the context isolates rows per account on
 // multi-user servers; an empty owner keeps desktop and open-access rows
 // ownerless.
-func (o durableTranscriptOffsets) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
+func (o durableTranscriptOffsets) DurableTranscriptOffsetContext(ctx context.Context, tabID string) int64 {
 	offset, err := o.database.DurableTranscriptOffsetGet(ctx, tabID)
 	if err != nil {
 		return 0

@@ -197,7 +197,7 @@ func TestDurableTranscriptAdaptersEmptyOwnerRoundtrip(t *testing.T) {
 	const tabID = "desktop-open-tab"
 
 	offsets.PersistDurableTranscriptOffsetContext(ctx, tabID, 41)
-	if got := offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID); got != 41 {
+	if got := offsets.DurableTranscriptOffsetContext(ctx, tabID); got != 41 {
 		t.Fatalf("empty-owner offset = %d, want 41", got)
 	}
 	var offsetRow store.DurableTranscriptOffset
@@ -209,7 +209,7 @@ func TestDurableTranscriptAdaptersEmptyOwnerRoundtrip(t *testing.T) {
 	}
 
 	offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
-	if got := offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID); got != 0 {
+	if got := offsets.DurableTranscriptOffsetContext(ctx, tabID); got != 0 {
 		t.Fatalf("empty-owner offset after delete = %d, want 0", got)
 	}
 }

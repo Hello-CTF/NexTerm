@@ -357,9 +357,9 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 	transport := session.transport
 	session.mu.Unlock()
 	if status == StatusFailed {
-		// The network may be back: a Failed session holding durable
-		// terminals retries now instead of waiting for its background retry.
-		if sessionHoldsDurable(session) {
+		// The network may be back: a Failed session whose durable terminals
+		// a client watches retries now instead of waiting for its retry.
+		if sessionWatchesDurable(session) {
 			_ = m.startReconnectImmediate(session.ID, 0)
 		}
 		return session.Info(), nil

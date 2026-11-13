@@ -141,40 +141,6 @@ func TestIPCAttachReportsTruncationAndTail(t *testing.T) {
 	}
 	_ = tail.Close()
 
-	retainFrom := info.HistoryNext - 20000
-	retained, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Tail: 4096, Offset: retainFrom, Retain: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay = retained.Replay()
-	if replay.ReplayFrom != retainFrom || replay.DisplayFrom < info.HistoryNext-4096 || replay.Truncated {
-		t.Fatalf("retained tail attach = %+v", replay)
-	}
-	if got := readToEOF(t, retained); !bytes.Equal(got, recording[retainFrom-info.HistoryBase:]) {
-		t.Fatal("retained tail does not stream from the retained offset")
-	}
-	_ = retained.Close()
-
-	lost, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Tail: 4096, Offset: 5, Retain: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay := lost.Replay(); !replay.Truncated || replay.ReplayFrom != info.HistoryBase {
-		t.Fatalf("retain below the base = %+v, want truncated from the base", replay)
-	}
-	_ = lost.Close()
-
-	// A retained offset beyond the recording (a transcript that ran ahead of
-	// output lost in a host crash) is clamped instead of failing the attach.
-	ahead, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Tail: 4096, Offset: info.HistoryNext + 5000, Retain: true})
-	if err != nil {
-		t.Fatalf("retain beyond the recording = %v", err)
-	}
-	if replay := ahead.Replay(); replay.Truncated || replay.ReplayFrom != replay.DisplayFrom || replay.HistoryNext != info.HistoryNext {
-		t.Fatalf("retain beyond the recording = %+v, want a plain tail", replay)
-	}
-	_ = ahead.Close()
-
 	if _, err := client.AttachWithOptions(ctx, session.ID(), &identity, AttachOptions{Offset: info.HistoryNext + 1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("attach beyond the recording = %v", err)
 	}

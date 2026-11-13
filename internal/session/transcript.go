@@ -72,37 +72,51 @@ func (m *Manager) transcriptStarted(ctx context.Context, session *Session) {
 }
 
 // transcriptOutput receives the session's own output, never replay preludes
-// or notices, so it also drives the observed attention state.
+// or notices, so it also drives the observed attention state. Only output a
+// client is watching is recorded: output produced while the tab is in the
+// background, and the history a recovered durable tab replays, is left out
+// and marked by one notice when recording resumes.
 func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 	m.observeAttentionOutput(tab, data)
 	if m.transcripts == nil {
 		return
 	}
 	tab.mu.Lock()
-	remaining := tab.catchUpRemaining
-	catchUpDone := false
-	if remaining > 0 {
-		if int64(len(data)) <= remaining {
-			tab.catchUpRemaining = remaining - int64(len(data))
-			tab.mu.Unlock()
-			return
-		}
-		tab.catchUpRemaining = 0
-		data = data[remaining:]
-		catchUpDone = true
+	if skip := min(int64(len(data)), tab.transcriptSkip); skip > 0 {
+		tab.transcriptSkip -= skip
+		data = data[skip:]
+	}
+	if len(data) > 0 && !tab.hasInteractiveSubscriberLocked() {
+		tab.unrecorded += int64(len(data))
+		data = nil
+	}
+	var unrecorded int64
+	if len(data) > 0 {
+		unrecorded, tab.unrecorded = tab.unrecorded, 0
 	}
 	durableID := ""
 	if tab.durable != nil {
 		durableID = tab.ID
 	}
 	tab.mu.Unlock()
-	if catchUpDone {
-		m.logger.Info("durable transcript catch-up complete", "tab", tab.ID)
-	}
 	if len(data) == 0 {
 		return
 	}
+	m.transcriptUnrecorded(ctx, tab, durableID, unrecorded)
 	m.transcripts.SessionOutput(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, data)
+}
+
+func (m *Manager) transcriptUnrecorded(ctx context.Context, tab *Tab, durableID string, skipped int64) {
+	if sink, ok := m.transcripts.(TranscriptUnrecordedSink); ok && skipped > 0 {
+		sink.SessionOutputUnrecorded(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, skipped)
+	}
+}
+
+// TranscriptUnrecordedSink is implemented by transcript sinks that mark where
+// output was left out of the transcript; a durable tab's recorded offset
+// advances past it so it keeps matching the helper's absolute offsets.
+type TranscriptUnrecordedSink interface {
+	SessionOutputUnrecorded(ctx context.Context, durableID, sessionID, tabID string, skipped int64)
 }
 
 func (m *Manager) transcriptEnded(session *Session) {
@@ -140,11 +154,11 @@ func ownerCtx(parent context.Context, userID string) context.Context {
 	return ipc.WithUserID(parent, userID)
 }
 
-func (m *Manager) durableTranscriptCatchUpBytes(ctx context.Context, tabID string) int64 {
+func (m *Manager) durableTranscriptOffset(ctx context.Context, tabID string) int64 {
 	if m.offsets == nil {
 		return 0
 	}
-	return m.offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID)
+	return m.offsets.DurableTranscriptOffsetContext(ctx, tabID)
 }
 
 func (m *Manager) persistDurableTranscriptOffset(ctx context.Context, tabID string, offset int64) {

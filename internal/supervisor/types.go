@@ -95,13 +95,11 @@ type Info struct {
 
 // AttachOptions selects where an attach starts streaming recorded output.
 type AttachOptions struct {
-	// Offset is the absolute offset to resume from. With Tail and Retain it is
-	// the earliest offset the caller still needs streamed.
+	// Offset is the absolute offset to resume from.
 	Offset uint64
-	// Tail, when non-zero, requests a fresh open: the display starts at a safe
+	// Tail, when non-zero, requests a fresh open: the replay starts at a safe
 	// boundary within the last Tail bytes instead of at Offset.
-	Tail   uint64
-	Retain bool
+	Tail uint64
 }
 
 // ReplayInfo reports where an attach started.
@@ -110,13 +108,13 @@ type ReplayInfo struct {
 	HistoryNext uint64 `json:"history_next"`
 	// ReplayFrom is the offset of the first streamed byte.
 	ReplayFrom uint64 `json:"replay_from"`
-	// DisplayFrom is the offset from which the stream should be rendered;
-	// bytes before it were streamed only because Retain asked for them.
+	// DisplayFrom always equals ReplayFrom. It stays on the wire because
+	// released clients reject a reply whose DisplayFrom precedes ReplayFrom.
 	DisplayFrom uint64 `json:"display_from"`
 	// Truncated reports that the requested offset was no longer retained.
 	Truncated bool `json:"truncated,omitempty"`
 	// Prelude restores the screen buffer and input modes in effect at
-	// DisplayFrom; feed it to the renderer before the stream. It occupies no
+	// ReplayFrom; feed it to the renderer before the stream. It occupies no
 	// offsets.
 	Prelude []byte `json:"prelude,omitempty"`
 }

@@ -47,19 +47,28 @@ func (m *Manager) transcriptGap(ctx context.Context, tab *Tab, skipped int64) {
 }
 
 // startDurableReplay runs when a pump starts on a durable channel: it reports
-// output dropped before this attach to the transcript and renders the mode
-// prelude of a tail replay.
+// output dropped or left unrecorded before this attach to the transcript and
+// renders the mode prelude of a tail replay.
 func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation uint64) {
 	tab.mu.Lock()
 	prelude := tab.historyPrelude
 	gap := tab.pendingGap
 	banner := tab.pendingBanner
+	unrecorded := tab.unrecorded
+	durableID := ""
+	if tab.durable != nil {
+		durableID = tab.ID
+	}
 	tab.historyPrelude = nil
 	tab.pendingGap = 0
 	tab.pendingBanner = false
+	tab.unrecorded = 0
 	tab.mu.Unlock()
 	if gap > 0 {
 		m.transcriptGap(ctx, tab, gap)
+	}
+	if m.transcripts != nil {
+		m.transcriptUnrecorded(ctx, tab, durableID, unrecorded)
 	}
 	if len(prelude) > 0 {
 		// The prelude restores the replayed tail's modes: it is replay too.
@@ -76,14 +85,12 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 }
 
 // feedDurable feeds one chunk read from a durable attachment whose next
-// offset after the chunk is end. Output before the tab's display start goes
-// only to the transcript; a jump past the previous end is output the helper
-// dropped before streaming it.
+// offset after the chunk is end. A jump past the previous end is output the
+// helper dropped before streaming it.
 func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, chunk []byte, end int64) error {
 	start := end - int64(len(chunk))
 	tab.mu.Lock()
 	fed := tab.durableFed
-	displayFrom := tab.displayFrom
 	replayUntil := tab.replayUntil
 	var control ControlEvent
 	gap := start - fed
@@ -95,16 +102,8 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	if gap > 0 {
 		m.logger.Warn("durable output dropped by the history limit before it was streamed", "tab", tab.ID, "from", fed, "to", start)
 		m.transcriptGap(ctx, tab, gap)
-		if start >= displayFrom {
-			_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil})
-		}
+		_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil})
 		m.emit(context.Background(), TopicTerminalControl, control)
-	}
-	hidden := min(max(displayFrom-start, 0), int64(len(chunk)))
-	if hidden > 0 {
-		m.transcriptOutput(ctx, tab, chunk[:hidden])
-		chunk = chunk[hidden:]
-		start += hidden
 	}
 	// The recovered tail before replayUntil is history, not new output. A
 	// sequence straddling replayUntil belongs to the live part: whatever its
@@ -155,7 +154,6 @@ func (t *Tab) noteDurableReplacementLocked(attachment base.DurableAttachment) {
 		t.pendingBanner = true
 	}
 	t.durableFed = int64(replay.ReplayFrom)
-	t.displayFrom = int64(replay.DisplayFrom)
 }
 
 // DurableHistoryChunk is recorded output of a durable tab read without
@@ -279,7 +277,7 @@ func (t *Tab) durableHistoryFrom(seq uint64) *uint64 {
 		// Nothing rendered yet at or after seq: the stream starts with the
 		// next helper byte that will be rendered.
 		next, _ := t.durableSeqs.next()
-		offset = max(next, uint64(max(t.durableFed, t.displayFrom, 0)))
+		offset = max(next, uint64(max(t.durableFed, 0)))
 	}
 	return &offset
 }

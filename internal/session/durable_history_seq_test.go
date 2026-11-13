@@ -37,8 +37,7 @@ func TestAttachAnchorReportsTheHelperOffsetOfTheViewStart(t *testing.T) {
 	tab.mu.Lock()
 	tab.terminal = seqFakeTerminal{fakeTerminal: &fakeTerminal{cols: 80, rows: 24}}
 	generation := tab.generation
-	tab.displayFrom = 1000
-	tab.durableFed = 990
+	tab.durableFed = 1000
 	tab.mu.Unlock()
 
 	// A prelude rendered before any helper output maps to the next helper byte.
@@ -50,8 +49,8 @@ func TestAttachAnchorReportsTheHelperOffsetOfTheViewStart(t *testing.T) {
 		t.Fatalf("before helper output the view starts at %d, want 1000", got)
 	}
 
-	// Ten bytes before displayFrom stay hidden; "abcdef" is helper [1000, 1006).
-	if err := manager.feedDurable(ctx, tab, generation, []byte("0123456789abcdef"), 1006); err != nil {
+	// "abcdef" is helper [1000, 1006).
+	if err := manager.feedDurable(ctx, tab, generation, []byte("abcdef"), 1006); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.feedDisplay(ctx, tab, generation, []byte("NOTICE")); err != nil {

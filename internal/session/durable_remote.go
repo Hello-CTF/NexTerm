@@ -870,11 +870,11 @@ func findDurableDescriptor(ctx context.Context, provider base.DurableProvider, t
 // attachRecoveredDurable opens a durable tab this process has no resume
 // offset for, replaying only the recent tail; retain, when set, also streams
 // the output after that offset for the transcript.
-func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity, retain *uint64) (base.DurableAttachment, error) {
+func attachRecoveredDurable(ctx context.Context, provider base.DurableProvider, tabID string, identity *base.DurableIdentity) (base.DurableAttachment, error) {
 	if identity == nil || identity.Incarnation == "" {
 		return nil, ErrDurableUnrecoverable
 	}
-	return provider.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes, Retain: retain})
+	return provider.AttachTailWithIdentity(ctx, tabID, *identity, base.DurableTailOptions{Tail: base.DurableFreshTailBytes})
 }
 
 func durableReplayOf(attachment base.DurableAttachment) (base.DurableReplay, bool) {

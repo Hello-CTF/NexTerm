@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,20 @@ type fakeDurableAttachment struct {
 	provider *fakeDurableProvider
 	tabID    string
 	identity int
+	replay   base.DurableReplay
+	consumed atomic.Uint64
+}
+
+func (a *fakeDurableAttachment) DurableReplay() base.DurableReplay { return a.replay }
+
+func (a *fakeDurableAttachment) DurableOffset() uint64 {
+	return a.replay.ReplayFrom + a.consumed.Load()
+}
+
+func (a *fakeDurableAttachment) Read(p []byte) (int, error) {
+	count, err := a.fakeChannel.Read(p)
+	a.consumed.Add(uint64(count))
+	return count, err
 }
 
 func newFakeDurableProvider() *fakeDurableProvider {
@@ -106,7 +121,9 @@ func (p *fakeDurableProvider) AttachFromWithIdentity(_ context.Context, id strin
 		return nil, durable.ErrIdentity
 	}
 	attachment := p.newAttachmentLocked(id, record)
-	if offset < uint64(len(record.output)) {
+	next := uint64(len(record.output))
+	attachment.replay = base.DurableReplay{ReplayFrom: min(offset, next), HistoryNext: next}
+	if offset < next {
 		attachment.reads <- append([]byte(nil), record.output[offset:]...)
 	}
 	return attachment, nil
@@ -190,7 +207,7 @@ func (p *fakeDurableProvider) currentDurableIdentity(id string) (base.DurableIde
 	return base.DurableIdentity{Incarnation: fakeIncarnation(record.identity)}, true
 }
 
-func (p *fakeDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
+func (p *fakeDurableProvider) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	record := p.records[tabID]

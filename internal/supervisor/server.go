@@ -412,7 +412,7 @@ func (c *serverConn) handleAttach(payload []byte) bool {
 	if msg.ExpectIncarnation != "" || msg.ExpectCreatedAt != 0 {
 		expected = &Identity{CreatedAt: time.Unix(0, msg.ExpectCreatedAt), Incarnation: msg.ExpectIncarnation}
 	}
-	options := AttachOptions{Offset: msg.Offset, Tail: msg.Tail, Retain: msg.Retain}
+	options := AttachOptions{Offset: msg.Offset, Tail: msg.Tail}
 	attachment, err := c.server.supervisor.attachFrom(context.Background(), msg.ID, options, expected, msg.ExpectGeneration)
 	if err != nil {
 		c.server.supervisor.log.event("attach_error", "id", msg.ID, "error", err)

@@ -55,7 +55,6 @@ func recoveredTab(t *testing.T, tab *Tab, tailEnd int) uint64 {
 	defer tab.mu.Unlock()
 	tab.durable = replayAttachment{}
 	tab.durableFed = 0
-	tab.displayFrom = 0
 	tab.replayUntil = int64(tailEnd)
 	return tab.generation
 }

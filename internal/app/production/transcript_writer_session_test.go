@@ -225,15 +225,15 @@ func TestDurableTranscriptAdaptersIsolateOwners(t *testing.T) {
 	const tabID = "shared-tab"
 
 	offsets.PersistDurableTranscriptOffsetContext(ownerA, tabID, 100)
-	if got := offsets.DurableTranscriptCatchUpBytesContext(ownerB, tabID); got != 0 {
+	if got := offsets.DurableTranscriptOffsetContext(ownerB, tabID); got != 0 {
 		t.Fatalf("owner-b catch-up = %d, want 0 on a shared tab id", got)
 	}
 	offsets.PersistDurableTranscriptOffsetContext(ownerB, tabID, 7)
-	if got := offsets.DurableTranscriptCatchUpBytesContext(ownerA, tabID); got != 100 {
+	if got := offsets.DurableTranscriptOffsetContext(ownerA, tabID); got != 100 {
 		t.Fatalf("owner-b's write touched owner-a's offset: %d", got)
 	}
 	offsets.DeleteDurableTranscriptOffsetContext(ownerB, tabID)
-	if got := offsets.DurableTranscriptCatchUpBytesContext(ownerA, tabID); got != 100 {
+	if got := offsets.DurableTranscriptOffsetContext(ownerA, tabID); got != 100 {
 		t.Fatalf("owner-b's delete removed owner-a's offset: %d", got)
 	}
 }

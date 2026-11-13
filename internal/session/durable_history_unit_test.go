@@ -14,7 +14,7 @@ type memoryTranscriptOffsets struct {
 	offsets map[string]int64
 }
 
-func (o *memoryTranscriptOffsets) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
+func (o *memoryTranscriptOffsets) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.offsets[tabID]
@@ -39,8 +39,9 @@ func (o *memoryTranscriptOffsets) DeleteDurableTranscriptOffsetContext(_ context
 // dropped before it could be transcribed.
 type gapRecorder struct {
 	*transcriptRecorder
-	gapMu sync.Mutex
-	gaps  []int64
+	gapMu      sync.Mutex
+	gaps       []int64
+	unrecorded []int64
 }
 
 func (r *gapRecorder) SessionOutputGap(ctx context.Context, durableID, _, _ string, skipped int64) {
@@ -51,8 +52,30 @@ func (r *gapRecorder) SessionOutputGap(ctx context.Context, durableID, _, _ stri
 	offsets := r.offsets
 	r.mu.Unlock()
 	if durableID != "" && offsets != nil {
-		offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, offsets.DurableTranscriptCatchUpBytesContext(ctx, durableID)+skipped)
+		offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, offsets.DurableTranscriptOffsetContext(ctx, durableID)+skipped)
 	}
+}
+
+func (r *gapRecorder) SessionOutputUnrecorded(ctx context.Context, durableID, _, _ string, skipped int64) {
+	r.gapMu.Lock()
+	r.unrecorded = append(r.unrecorded, skipped)
+	r.gapMu.Unlock()
+	r.mu.Lock()
+	offsets := r.offsets
+	r.mu.Unlock()
+	if durableID != "" && offsets != nil {
+		offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, offsets.DurableTranscriptOffsetContext(ctx, durableID)+skipped)
+	}
+}
+
+func (r *gapRecorder) unrecordedBytes() int64 {
+	r.gapMu.Lock()
+	defer r.gapMu.Unlock()
+	var total int64
+	for _, skipped := range r.unrecorded {
+		total += skipped
+	}
+	return total
 }
 
 func (r *gapRecorder) skipped() int64 {
@@ -89,32 +112,31 @@ func historyTestTab(t *testing.T) (*Manager, *Tab, *gapRecorder) {
 	return manager, tab, recorder
 }
 
-func TestFeedDurableSeparatesHiddenOutputAndReportsGaps(t *testing.T) {
+func TestFeedDurableReportsGaps(t *testing.T) {
 	manager, tab, recorder := historyTestTab(t)
 	ctx := context.Background()
 	tab.mu.Lock()
 	generation := tab.generation
-	tab.displayFrom = 15
 	tab.mu.Unlock()
 
-	if err := manager.feedDurable(ctx, tab, generation, []byte("hidden-aaashown"), 15); err != nil {
+	if err := manager.feedDurable(ctx, tab, generation, []byte("shown"), 5); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.feedDurable(ctx, tab, generation, []byte("after-gap"), 109); err != nil {
 		t.Fatal(err)
 	}
 	shown := tab.terminal.Dump(1 << 20)
-	if bytes.Contains(shown, []byte("hidden-aaa")) || !bytes.Contains(shown, []byte("after-gap")) {
+	if !bytes.Contains(shown, []byte("shown")) || !bytes.Contains(shown, []byte("after-gap")) {
 		t.Fatalf("rendered %q", shown)
 	}
 	if !bytes.Contains(shown, durableHistoryGapBanner) {
 		t.Fatalf("the dropped output is not shown as a notice: %q", shown)
 	}
-	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("hidden-aaashownafter-gap")) {
+	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("shownafter-gap")) {
 		t.Fatalf("transcript = %q", got)
 	}
-	if skipped := recorder.skipped(); skipped != 85 {
-		t.Fatalf("transcript gap = %d, want 85", skipped)
+	if skipped := recorder.skipped(); skipped != 95 {
+		t.Fatalf("transcript gap = %d, want 95", skipped)
 	}
 	tab.mu.Lock()
 	fed, truncated := tab.durableFed, tab.historyTruncated
@@ -129,7 +151,7 @@ func TestReconnectReplacementBelowBaseMarksTruncation(t *testing.T) {
 	tab.mu.Lock()
 	tab.durableFed = 300
 	tab.noteDurableReplacementLocked(replayAttachment{replay: base.DurableReplay{
-		HistoryBase: 450, HistoryNext: 900, ReplayFrom: 500, DisplayFrom: 500, Truncated: true,
+		HistoryBase: 450, HistoryNext: 900, ReplayFrom: 500, Truncated: true,
 	}})
 	generation := tab.generation
 	fed, truncated, historyBase := tab.durableFed, tab.historyTruncated, tab.historyBase
@@ -146,7 +168,7 @@ func TestReconnectReplacementBelowBaseMarksTruncation(t *testing.T) {
 	}
 
 	tab.mu.Lock()
-	tab.noteDurableReplacementLocked(replayAttachment{replay: base.DurableReplay{HistoryNext: 900, ReplayFrom: 600, DisplayFrom: 600}})
+	tab.noteDurableReplacementLocked(replayAttachment{replay: base.DurableReplay{HistoryNext: 900, ReplayFrom: 600}})
 	fed = tab.durableFed
 	pending := tab.pendingGap
 	tab.mu.Unlock()

@@ -774,7 +774,7 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 	retryDelay := m.failedRetryDelay(session.failedRetries)
 	session.mu.Unlock()
 	m.mu.Unlock()
-	if status == StatusFailed && !isNonRetryableReconnectError(reconnectErr) && sessionHoldsDurable(session) {
+	if status == StatusFailed && !isNonRetryableReconnectError(reconnectErr) && sessionWatchesDurable(session) {
 		m.scheduleFailedRetry(failedCtx, session, generation, retryDelay)
 	}
 	if status == StatusFailed && !errors.Is(reconnectErr, context.Canceled) {
@@ -799,8 +799,20 @@ func (m *Manager) failedRetryDelay(retries int) time.Duration {
 }
 
 // sessionHoldsDurable reports whether the session still has a live durable
-// terminal, which Failed must not strand: its host process keeps running.
+// terminal, whose host process keeps running.
 func sessionHoldsDurable(session *Session) bool {
+	return sessionDurableTab(session, false)
+}
+
+// sessionWatchesDurable reports whether a client watches a live durable
+// terminal of the session, which Failed must not strand. Terminals left in the
+// background are not retried for: their host processes keep running, and the
+// session reconnects when a client opens one or asks to reconnect.
+func sessionWatchesDurable(session *Session) bool {
+	return sessionDurableTab(session, true)
+}
+
+func sessionDurableTab(session *Session, watched bool) bool {
 	session.mu.Lock()
 	tabs := make([]*Tab, 0, len(session.tabs))
 	for _, tab := range session.tabs {
@@ -809,7 +821,8 @@ func sessionHoldsDurable(session *Session) bool {
 	session.mu.Unlock()
 	for _, tab := range tabs {
 		tab.mu.Lock()
-		held := tab.durable != nil && !tab.closed && !tab.destroying && !tab.durableLost
+		held := tab.durable != nil && !tab.closed && !tab.destroying && !tab.durableLost &&
+			(!watched || tab.hasInteractiveSubscriberLocked())
 		tab.mu.Unlock()
 		if held {
 			return true
@@ -840,7 +853,7 @@ func (m *Manager) scheduleFailedRetry(ctx context.Context, session *Session, gen
 			session.failedRetries++
 		}
 		session.mu.Unlock()
-		if current {
+		if current && sessionWatchesDurable(session) {
 			_ = m.startReconnectImmediate(session.ID, 0)
 		}
 	})

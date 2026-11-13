@@ -102,9 +102,8 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     abnormalDisconnectNotices.delete(p.sessionId);
     return;
   }
-  // A session no open workspace shows is held only by background durable terminals; the backend keeps
-  // retrying it for as long as they live, so a toast per round would repeat with nothing on screen.
-  // Its state stays visible in the background sessions panel.
+  // A session no open workspace shows is held only by background durable terminals: a toast would report
+  // a drop with nothing on screen. Its state stays visible in the background sessions panel.
   if (!sessionShownInWorkspace(state.workspaces, p.sessionId)) return;
   if (abnormalDisconnectNotices.has(p.sessionId)) return;
   abnormalDisconnectNotices.add(p.sessionId);

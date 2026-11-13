@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +35,7 @@ func (p *continuityDurableProvider) Create(_ context.Context, options base.Durab
 	p.mu.Lock()
 	p.records[options.ID] = &continuityDurableRecord{channel: channel}
 	p.mu.Unlock()
-	return continuityDurableAttachment{channel}, nil
+	return continuityDurableAttachment{transcriptFeedChannel: channel, consumed: new(atomic.Uint64)}, nil
 }
 
 // continuityDurableIdentity is the single incarnation this fake reports; these
@@ -58,10 +60,12 @@ func (p *continuityDurableProvider) AttachFromWithIdentity(_ context.Context, id
 	record.channel = channel
 	replay := append([][]byte(nil), record.replay...)
 	p.mu.Unlock()
+	attachment := continuityDurableAttachment{transcriptFeedChannel: channel, consumed: new(atomic.Uint64)}
 	for _, data := range replay {
 		channel.reads <- bytes.Clone(data)
+		attachment.replay.HistoryNext += uint64(len(data))
 	}
-	return continuityDurableAttachment{channel}, nil
+	return attachment, nil
 }
 
 func (p *continuityDurableProvider) AttachTailWithIdentity(ctx context.Context, id string, identity base.DurableIdentity, _ base.DurableTailOptions) (base.DurableAttachment, error) {
@@ -84,7 +88,7 @@ func (p *continuityDurableProvider) ReadDurableHistory(context.Context, string, 
 	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
-func (p *continuityDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
+func (p *continuityDurableProvider) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
 	_, _, offsets, _ := p.offsets.snapshot()
 	return offsets[tabID]
 }
@@ -115,7 +119,25 @@ func (p *continuityDurableProvider) setReplay(tabID string, replay ...[]byte) {
 	}
 }
 
-type continuityDurableAttachment struct{ *transcriptFeedChannel }
+// continuityDurableAttachment reports its queued replay as the supervisor
+// provider does.
+type continuityDurableAttachment struct {
+	*transcriptFeedChannel
+	replay   base.DurableReplay
+	consumed *atomic.Uint64
+}
+
+func (a continuityDurableAttachment) DurableReplay() base.DurableReplay { return a.replay }
+
+func (a continuityDurableAttachment) DurableOffset() uint64 {
+	return a.replay.ReplayFrom + a.consumed.Load()
+}
+
+func (a continuityDurableAttachment) Read(p []byte) (int, error) {
+	count, err := a.transcriptFeedChannel.Read(p)
+	a.consumed.Add(uint64(count))
+	return count, err
+}
 
 func (a continuityDurableAttachment) Kill(context.Context) error { return nil }
 
@@ -169,7 +191,10 @@ func TestTranscriptWriterDurableGapAdvancesOffset(t *testing.T) {
 	}
 }
 
-func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
+// TestTranscriptWriterDurableRecoveryMarksUnrecordedReplay: a block that failed
+// to persist is not recorded again from the recovery replay; the transcript
+// marks the bytes it lacks and the offset moves past them.
+func TestTranscriptWriterDurableRecoveryMarksUnrecordedReplay(t *testing.T) {
 	ctx := context.Background()
 	database := newDelayedTranscriptStore()
 	database.failDurableAppends = 1
@@ -244,7 +269,7 @@ func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("continuous replay did not persist: offset=%d", offsets[opened.ID])
+			t.Fatalf("unrecorded replay did not move the offset: offset=%d", offsets[opened.ID])
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -264,8 +289,8 @@ func TestTranscriptWriterDurableRecoveryDoesNotSkipOrDuplicate(t *testing.T) {
 			replayed = append(replayed, chunk.Data)
 		}
 	}
-	if len(replayed) != 2 || !bytes.Equal(replayed[0], a) || !bytes.Equal(replayed[1], b) {
-		t.Fatalf("recovery skipped or duplicated replay data: %+v", replayed)
+	if len(replayed) != 1 || !bytes.Contains(replayed[0], []byte("101 字节输出未录制")) {
+		t.Fatalf("recovery must mark the unrecorded replay once: %q", replayed)
 	}
 }
 
@@ -350,8 +375,8 @@ func TestTranscriptWriterDurableRecoveryMultipleIDsStayIndependent(t *testing.T)
 	deadline = time.Now().Add(5 * time.Second)
 	for {
 		_, _, offsets, _ = database.snapshot()
-		tab, err := second.Tab(recoveredB.ID)
-		if err == nil && offsets[recoveredA.ID] == 3 && offsets[recoveredB.ID] == 2 && tab.Info().LastOutputAt != 0 {
+		screen, err := second.ScreenText(recoveredB.ID)
+		if err == nil && offsets[recoveredA.ID] == 3 && offsets[recoveredB.ID] == 2 && strings.Contains(screen, "by") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -381,8 +406,8 @@ func TestTranscriptWriterDurableRecoveryMultipleIDsStayIndependent(t *testing.T)
 			replayedB = append(replayedB, chunk.Data)
 		}
 	}
-	if len(replayedA) != 2 || !bytes.Equal(replayedA[0], a1) || !bytes.Equal(replayedA[1], a2) {
-		t.Fatalf("failed durable ID replay was skipped or duplicated: %+v", replayedA)
+	if len(replayedA) != 1 || !bytes.Contains(replayedA[0], []byte("3 字节输出未录制")) {
+		t.Fatalf("failed durable ID must be marked unrecorded once: %q", replayedA)
 	}
 	if len(replayedB) != 0 {
 		t.Fatalf("continuous durable ID replay was recorded again: %+v", replayedB)

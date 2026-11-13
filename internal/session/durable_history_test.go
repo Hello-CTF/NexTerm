@@ -98,8 +98,9 @@ func openRecordingManager(t *testing.T, provider base.DurableProvider, offsets *
 	return manager, connected
 }
 
-// A fresh open renders only the recent tail, while the transcript still gets
-// every byte after its recorded offset exactly once.
+// A fresh open renders only the recent tail. Output produced while no client
+// watched the tab is left out of the transcript and marked once when
+// recording resumes, keeping the transcript offset aligned with the helper.
 func TestSupervisorDurableFreshOpenReplaysTailAndKeepsTranscript(t *testing.T) {
 	provider := supervisorRemoteProvider(t)
 	offsets := &memoryTranscriptOffsets{}
@@ -141,22 +142,20 @@ func TestSupervisorDurableFreshOpenReplaysTailAndKeepsTranscript(t *testing.T) {
 	if strings.Contains(shown, "away-0000001\r") || len(shown) > int(base.DurableFreshTailBytes)+4096 {
 		t.Fatalf("fresh open rendered %d bytes including the start of the output", len(shown))
 	}
-	waitForLong(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("after-marker")) })
-	// The shell may print its prompt after the marker; compare once the
-	// transcript caught up with whatever the helper recorded last.
-	var transcribed []byte
-	waitForLong(t, func() bool {
-		descriptor, found, err := findDurableDescriptor(ctx, provider, tabID)
-		if err != nil || !found {
-			return false
-		}
-		recording, _ = readWholeHistory(t, provider, tabID, identity, descriptor.HistoryNext)
-		transcribed = append(firstRecorder.outputBytes(), secondRecorder.outputBytes()...)
-		return len(transcribed) >= len(recording)
-	})
-	if !bytes.Equal(transcribed, recording) {
-		t.Fatalf("transcript has %d bytes across the restart, the helper recorded %d", len(transcribed), len(recording))
+	if err := second.Write(ctx, tabID, "client-a", []byte("echo live-mark''er\n")); err != nil {
+		t.Fatal(err)
 	}
+	waitForLong(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("live-marker")) })
+	if bytes.Contains(secondRecorder.outputBytes(), []byte("after-marker")) {
+		t.Fatal("output produced while the tab was detached was recorded")
+	}
+	if secondRecorder.unrecordedBytes() == 0 {
+		t.Fatal("transcript was not told about the unrecorded output")
+	}
+	waitForLong(t, func() bool {
+		current, found, err := findDurableDescriptor(ctx, provider, tabID)
+		return err == nil && found && offsets.DurableTranscriptOffsetContext(ctx, tabID) == int64(current.HistoryNext)
+	})
 	if gaps := secondRecorder.skipped(); gaps != 0 {
 		t.Fatalf("transcript reported %d dropped bytes with the whole history retained", gaps)
 	}
@@ -223,11 +222,15 @@ func TestSupervisorDurableRecoverReportsDroppedTranscriptOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForTabOutput(t, second, tabID, "after-marker")
+	// The offset catches up once recording resumes with watched output.
+	if err := second.Write(ctx, tabID, "client-a", []byte("echo live-mark''er\n")); err != nil {
+		t.Fatal(err)
+	}
 	waitForLong(t, func() bool {
 		current, found, err := findDurableDescriptor(ctx, provider, tabID)
-		return err == nil && found && current.HistoryNext >= next && offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID) == int64(current.HistoryNext)
+		return err == nil && found && current.HistoryNext >= next && offsets.DurableTranscriptOffsetContext(ctx, tabID) == int64(current.HistoryNext)
 	})
-	if secondRecorder.skipped() == 0 {
+	if secondRecorder.unrecordedBytes() == 0 {
 		t.Fatal("transcript was not told about the dropped output")
 	}
 	tab, err := second.Tab(tabID)
@@ -285,7 +288,7 @@ func TestSupervisorDurableRecoverRealignsTranscriptOffsetAheadOfRecording(t *tes
 	waitForHelperOutput(t, provider, tabID, identity, "after-marker")
 	waitForLong(t, func() bool {
 		descriptor, found, err := findDurableDescriptor(ctx, provider, tabID)
-		return err == nil && found && offsets.DurableTranscriptCatchUpBytesContext(ctx, tabID) == int64(descriptor.HistoryNext)
+		return err == nil && found && offsets.DurableTranscriptOffsetContext(ctx, tabID) == int64(descriptor.HistoryNext)
 	})
 }
 

@@ -197,16 +197,18 @@ type Tab struct {
 	outputWake       chan struct{}
 	recovery         *recoveryRing
 
-	catchUpRemaining int64
+	// transcriptSkip is the rest of a recovered durable tab's replay, which is
+	// history and never recorded again; unrecorded counts output left out of
+	// the transcript, while no client watched the tab, since recording last ran.
+	transcriptSkip int64
+	unrecorded     int64
 
 	// History of a durable tab, in the helper's absolute offsets.
-	// displayFrom is the first offset rendered: earlier streamed bytes reach
-	// only the transcript. historyPrelude restores the modes in effect at
-	// displayFrom and is rendered when the pump starts; pendingGap is output
-	// the helper dropped before this process recorded it, reported to the
-	// transcript when the pump starts. historyFrom, historyBase and
-	// historyTruncated are reported in control events.
-	displayFrom      int64
+	// historyPrelude restores the modes in effect where the replay starts and
+	// is rendered when the pump starts; pendingGap is output the helper
+	// dropped before this process streamed it, reported to the transcript when
+	// the pump starts. historyFrom, historyBase and historyTruncated are
+	// reported in control events.
 	historyPrelude   []byte
 	pendingGap       int64
 	pendingBanner    bool
@@ -473,18 +475,10 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		return killErr
 	}
 	var err error
-	var transcriptRecorded *uint64
-	if options.Durable != nil && options.Durable.Recover && m.offsets != nil && m.transcripts != nil {
-		recorded := m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
-		if recorded >= 0 {
-			value := uint64(recorded)
-			transcriptRecorded = &value
-		}
-	}
 	if options.Durable != nil {
 		var opened base.DurableAttachment
 		if options.Durable.Recover {
-			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity, transcriptRecorded)
+			opened, err = attachRecoveredDurable(ctx, provider, tabID, options.Durable.Identity)
 		} else {
 			env := make([]string, 0, len(environment)+len(options.Durable.Env))
 			for key, value := range environment {
@@ -634,50 +628,34 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Ephemeral {
 		tab.recovery = newRecoveryRing(recoveryRingBytes)
 	}
-	if options.Durable != nil {
-		if m.offsets != nil {
-			if options.Durable.Recover {
-				if transcriptRecorded != nil {
-					tab.catchUpRemaining = int64(*transcriptRecorded)
-				} else {
-					tab.catchUpRemaining = m.durableTranscriptCatchUpBytes(ownerCtx(context.Background(), session.userID), tabID)
-				}
-				if replay, ok := durableReplayOf(durableAttachment); ok {
-					if next := int64(replay.HistoryNext); tab.catchUpRemaining > next {
-						// The transcript offset ran ahead of the helper's
-						// recording (output lost in a host crash): realign it
-						// instead of swallowing the next output as catch-up.
-						m.logger.Warn("durable transcript offset beyond the helper recording; realigning", "tab", tabID, "offset", tab.catchUpRemaining, "recorded", next)
-						tab.catchUpRemaining = next
-						m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, next)
-					}
-					// The stream starts at ReplayFrom, not at offset zero.
-					start := int64(replay.ReplayFrom)
-					if tab.catchUpRemaining < start {
-						tab.pendingGap = start - tab.catchUpRemaining
-						tab.catchUpRemaining = 0
-					} else {
-						tab.catchUpRemaining -= start
-					}
-				}
-				if tab.catchUpRemaining > 0 {
-					m.logger.Info("durable transcript catch-up armed; skipping already-recorded replay bytes", "tab", tabID, "bytes", tab.catchUpRemaining)
-				}
-			} else {
-				m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, 0)
-			}
-		}
+	if options.Durable != nil && !options.Durable.Recover && m.offsets != nil {
+		m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, 0)
 	}
 	if options.Durable != nil && options.Durable.Recover {
 		if replay, ok := durableReplayOf(durableAttachment); ok {
 			tab.durableFed = int64(replay.ReplayFrom)
-			tab.displayFrom = int64(replay.DisplayFrom)
 			tab.historyPrelude = replay.Prelude
-			tab.historyFrom = replay.DisplayFrom
+			tab.historyFrom = replay.ReplayFrom
 			tab.historyBase = replay.HistoryBase
 			tab.historyTruncated = replay.HistoryBase > 0
-			if replay.HistoryNext > replay.DisplayFrom {
+			if replay.HistoryNext > replay.ReplayFrom {
 				tab.replayUntil = int64(replay.HistoryNext)
+			}
+			// The replay is output from before this attach: it is never
+			// recorded, and what the transcript lacks of it is marked once.
+			tab.transcriptSkip = int64(replay.HistoryNext - replay.ReplayFrom)
+			if m.offsets != nil {
+				owner := ownerCtx(context.Background(), session.userID)
+				next := int64(replay.HistoryNext)
+				recorded := m.durableTranscriptOffset(owner, tabID)
+				if recorded > next {
+					// Output lost in a host crash left the offset ahead of
+					// the helper's recording.
+					m.logger.Warn("durable transcript offset beyond the helper recording; realigning", "tab", tabID, "offset", recorded, "recorded", next)
+					m.persistDurableTranscriptOffset(owner, tabID, next)
+					recorded = next
+				}
+				tab.unrecorded = next - recorded
 			}
 		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {

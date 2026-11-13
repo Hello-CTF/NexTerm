@@ -183,9 +183,8 @@ type attachMsg struct {
 	// dropped by the history limit resumes after the history base and the
 	// reply reports truncated.
 	Offset uint64 `json:"offset,omitempty"`
-	// Tail and Retain request a fresh open; see AttachOptions.
-	Tail   uint64 `json:"tail,omitempty"`
-	Retain bool   `json:"retain,omitempty"`
+	// Tail requests a fresh open; see AttachOptions.
+	Tail uint64 `json:"tail,omitempty"`
 }
 
 // attachedMsg answers frameAttach: the session info and where the stream

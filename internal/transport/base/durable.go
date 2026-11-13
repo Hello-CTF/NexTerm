@@ -115,10 +115,6 @@ func (e *DurableMetadataConflictError) Unwrap() error {
 type DurableTailOptions struct {
 	// Tail is how much of the most recent output to display.
 	Tail uint64
-	// Retain, when set, is the earliest offset the caller still needs
-	// streamed, such as a transcript catch-up point; bytes before the
-	// displayed tail are streamed but should not be rendered.
-	Retain *uint64
 }
 
 // DurableReplay reports where a durable attachment started streaming.
@@ -127,14 +123,11 @@ type DurableReplay struct {
 	HistoryNext uint64
 	// ReplayFrom is the offset of the first streamed byte.
 	ReplayFrom uint64
-	// DisplayFrom is where rendering starts; earlier streamed bytes were
-	// requested through DurableTailOptions.Retain only.
-	DisplayFrom uint64
 	// Truncated reports that the requested offset was dropped by the history
 	// limit and the stream resumed after the history base.
 	Truncated bool
 	// Prelude restores the screen buffer and input modes in effect at
-	// DisplayFrom; it is rendered before the stream and occupies no offsets.
+	// ReplayFrom; it is rendered before the stream and occupies no offsets.
 	Prelude []byte
 }
 

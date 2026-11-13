@@ -5,9 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,13 +15,14 @@ import (
 )
 
 type transcriptRecorder struct {
-	mu      sync.Mutex
-	started []TranscriptInfo
-	outputs []recorderOutput
-	inputs  []recorderOutput
-	resizes []recorderResize
-	ended   []string
-	offsets durableTranscriptOffsetSource
+	mu              sync.Mutex
+	started         []TranscriptInfo
+	outputs         []recorderOutput
+	inputs          []recorderOutput
+	resizes         []recorderResize
+	ended           []string
+	offsets         durableTranscriptOffsetSource
+	unrecordedTotal int64
 }
 
 type recorderOutput struct {
@@ -55,8 +55,25 @@ func (r *transcriptRecorder) SessionOutput(ctx context.Context, durableID, sessi
 	defer r.mu.Unlock()
 	r.outputs = append(r.outputs, recorderOutput{sessionID: sessionID, tabID: tabID, data: append([]byte(nil), data...)})
 	if durableID != "" && r.offsets != nil {
-		r.offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, r.offsets.DurableTranscriptCatchUpBytesContext(ctx, durableID)+int64(len(data)))
+		r.offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, r.offsets.DurableTranscriptOffsetContext(ctx, durableID)+int64(len(data)))
 	}
+}
+
+// SessionOutputUnrecorded mirrors the production writer: the notice advances
+// a durable tab's offset past the output it stands for.
+func (r *transcriptRecorder) SessionOutputUnrecorded(ctx context.Context, durableID, _, _ string, skipped int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unrecordedTotal += skipped
+	if durableID != "" && r.offsets != nil {
+		r.offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, r.offsets.DurableTranscriptOffsetContext(ctx, durableID)+skipped)
+	}
+}
+
+func (r *transcriptRecorder) unrecorded() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.unrecordedTotal
 }
 
 func (r *transcriptRecorder) SessionInput(_ context.Context, sessionID, tabID string, data []byte) {
@@ -354,6 +371,8 @@ func (p *transcriptDurableProvider) AttachWithIdentity(ctx context.Context, id s
 	return p.AttachFromWithIdentity(ctx, id, identity, 0)
 }
 
+// AttachFromWithIdentity replays every queued read from offset zero and
+// reports it as the attach's replay, as the supervisor provider does.
 func (p *transcriptDurableProvider) AttachFromWithIdentity(_ context.Context, id string, identity base.DurableIdentity, _ uint64) (base.DurableAttachment, error) {
 	if identity.Incarnation != transcriptDurableIdentity.Incarnation {
 		return nil, durable.ErrIdentity
@@ -371,6 +390,7 @@ func (p *transcriptDurableProvider) AttachFromWithIdentity(_ context.Context, id
 	attachment := &transcriptDurableAttachment{fakeChannel: channel}
 	for _, read := range reads {
 		channel.reads <- append([]byte(nil), read...)
+		attachment.replay.HistoryNext += uint64(len(read))
 	}
 	return attachment, nil
 }
@@ -396,7 +416,7 @@ func (p *transcriptDurableProvider) ReadDurableHistory(context.Context, string, 
 	return base.DurableHistoryChunk{}, base.ErrUnsupported
 }
 
-func (p *transcriptDurableProvider) DurableTranscriptCatchUpBytesContext(_ context.Context, tabID string) int64 {
+func (p *transcriptDurableProvider) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if record := p.records[tabID]; record != nil {
@@ -432,11 +452,28 @@ func (p *transcriptDurableProvider) channel(id string) *fakeChannel {
 
 type transcriptDurableAttachment struct {
 	*fakeChannel
+	replay   base.DurableReplay
+	consumed atomic.Uint64
+}
+
+func (a *transcriptDurableAttachment) DurableReplay() base.DurableReplay { return a.replay }
+
+func (a *transcriptDurableAttachment) DurableOffset() uint64 {
+	return a.replay.ReplayFrom + a.consumed.Load()
+}
+
+func (a *transcriptDurableAttachment) Read(p []byte) (int, error) {
+	count, err := a.fakeChannel.Read(p)
+	a.consumed.Add(uint64(count))
+	return count, err
 }
 
 func (a *transcriptDurableAttachment) Kill(context.Context) error { return nil }
 
-func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
+// TestTranscriptDurableRecoveryRecordsOnlyLiveOutput: the replay of a
+// recovered durable tab is never recorded; what the transcript lacks of it is
+// marked once, and output after the attach is recorded.
+func TestTranscriptDurableRecoveryRecordsOnlyLiveOutput(t *testing.T) {
 	provider := newTranscriptDurableProvider()
 	firstRecorder := &transcriptRecorder{}
 	first := NewManager(Config{
@@ -497,74 +534,19 @@ func TestTranscriptDurableRecoveryCatchUpNotRecorded(t *testing.T) {
 	waitFor(t, func() bool {
 		return bytes.Contains(recoveredTab.terminal.Dump(1<<20), []byte("durable-replay-marker"))
 	})
-	waitFor(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("live-after-boundary")) })
+	waitFor(t, func() bool {
+		return bytes.Contains(recoveredTab.terminal.Dump(1<<20), []byte("live-after-boundary"))
+	})
+	if err := provider.channel(info.ID).emit([]byte("live-after-attach\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("live-after-attach")) })
 	recorded := secondRecorder.outputBytes()
-	if bytes.Contains(recorded, []byte("durable-replay-marker")) {
-		t.Fatalf("recovery catch-up must not be transcribed again: %q", recorded)
+	if !bytes.Equal(recorded, []byte("live-after-attach\r\n")) {
+		t.Fatalf("only output after the attach may be recorded: %q", recorded)
 	}
-	if !bytes.Contains(recorded, []byte("live-after-boundary\r\n")) {
-		t.Fatalf("output after the catch-up boundary must be recorded: %q", recorded)
-	}
-	if bytes.Contains(recorded, []byte("ker\r\n")) {
-		t.Fatalf("replay tail inside a straddling read must be suppressed: %q", recorded)
-	}
-}
-
-func TestTranscriptDurableRecoveryCatchUpLogsPrefixSkip(t *testing.T) {
-	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
-	provider := newTranscriptDurableProvider()
-	firstRecorder := &transcriptRecorder{}
-	first := NewManager(Config{
-		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, TranscriptOffsets: provider, Transcripts: firstRecorder, Logger: logger,
-	})
-	connected, err := first.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
-	if err != nil {
-		t.Fatal(err)
-	}
-	info, err := first.OpenTab(context.Background(), OpenTabOptions{
-		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := provider.channel(info.ID).emit([]byte("recorded-prefix\r\n")); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return bytes.Contains(firstRecorder.outputBytes(), []byte("recorded-prefix")) })
-	if err := first.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	provider.mu.Lock()
-	provider.records[info.ID].reads = [][]byte{[]byte("recorded-prefix\r\nlive-tail\r\n")}
-	provider.mu.Unlock()
-
-	secondRecorder := &transcriptRecorder{}
-	second := NewManager(Config{
-		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, TranscriptOffsets: provider, Transcripts: secondRecorder, Logger: logger,
-	})
-	t.Cleanup(func() { _ = second.Close() })
-	recovered, err := second.Connect(context.Background(), Asset{ID: "asset-local", Name: "当前设备", Kind: KindLocal})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := second.OpenTab(context.Background(), OpenTabOptions{
-		TabID: info.ID, SessionID: recovered.ID, ClientID: "client-b", ChannelID: "channel-b",
-		Cols: 80, Rows: 24, Durable: &DurableTabOptions{Recover: true, Identity: &transcriptDurableIdentity},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return bytes.Contains(secondRecorder.outputBytes(), []byte("live-tail")) })
-	logs := logBuf.String()
-	if !strings.Contains(logs, "catch-up armed") || !strings.Contains(logs, "bytes=17") {
-		t.Fatalf("catch-up arm log must carry the persisted offset: %q", logs)
-	}
-	if !strings.Contains(logs, "catch-up complete") {
-		t.Fatalf("catch-up completion log missing: %q", logs)
+	if got, want := secondRecorder.unrecorded(), int64(len("live-after-boundary\r\n")); got != want {
+		t.Fatalf("unrecorded = %d, want %d: the replay beyond the recorded offset", got, want)
 	}
 }
 
@@ -654,12 +636,12 @@ func TestTranscriptDurableOffsetDeletedOnKill(t *testing.T) {
 	if err := provider.channel(info.ID).emit([]byte("recorded-before-kill\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID) > 0 })
+	waitFor(t, func() bool { return provider.DurableTranscriptOffsetContext(context.Background(), info.ID) > 0 })
 
 	if err := manager.CloseTab(info.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID); got != 0 {
+	if got := provider.DurableTranscriptOffsetContext(context.Background(), info.ID); got != 0 {
 		t.Fatalf("kill must clear the durable transcript offset, got %d", got)
 	}
 }
@@ -693,7 +675,7 @@ func TestTranscriptDurableOffsetDeletedWhenGoneOnReconnect(t *testing.T) {
 	if err := attachment.emit([]byte("recorded-before-drop\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID) > 0 })
+	waitFor(t, func() bool { return provider.DurableTranscriptOffsetContext(context.Background(), info.ID) > 0 })
 
 	provider.mu.Lock()
 	provider.records[info.ID].killed = 1
@@ -701,7 +683,7 @@ func TestTranscriptDurableOffsetDeletedWhenGoneOnReconnect(t *testing.T) {
 	if err := manager.Reconnect(context.Background(), connected.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := provider.DurableTranscriptCatchUpBytesContext(context.Background(), info.ID); got != 0 {
+	if got := provider.DurableTranscriptOffsetContext(context.Background(), info.ID); got != 0 {
 		t.Fatalf("a durable confirmed gone on reconnect must clear the transcript offset, got %d", got)
 	}
 }

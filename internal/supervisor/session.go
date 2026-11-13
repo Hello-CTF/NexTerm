@@ -457,9 +457,7 @@ func (s *Session) attach(options AttachOptions) (*Attachment, error) {
 // planReplay chooses where an attach starts streaming. A resume (no Tail)
 // starts at the requested offset, or at the first safe boundary at or after
 // the history base when that offset was evicted (Truncated). A tail attach
-// displays from a safe boundary within the last Tail bytes; with Retain it
-// streams from the earlier requested offset (clamped to the base) so the
-// caller can record the bytes it does not display.
+// starts at a safe boundary within the last Tail bytes.
 //
 // A tail starts at a line boundary, so a shell's scrollback renders as it
 // would after a full replay. The prelude restores the screen buffer, input
@@ -474,14 +472,6 @@ func (s *Session) planReplay(options AttachOptions) (ReplayInfo, error) {
 	base, next := s.history.bounds()
 	if options.Tail == 0 && options.Offset > next {
 		return ReplayInfo{}, fmt.Errorf("%w: attach offset %d beyond supervisor recording size %d", ErrInvalidInput, options.Offset, next)
-	}
-	if options.Retain && options.Offset > next {
-		// A retained offset is the caller's bookkeeping (a transcript
-		// offset), which can run ahead of the recording, for example after
-		// a host crash lost unsynced output. Nothing beyond next can be
-		// streamed; the caller sees ReplayFrom and HistoryNext and corrects
-		// its offset.
-		options.Offset = next
 	}
 	replay := ReplayInfo{HistoryBase: base, HistoryNext: next}
 	if options.Tail == 0 {
@@ -507,10 +497,6 @@ func (s *Session) planReplay(options AttachOptions) (ReplayInfo, error) {
 	}
 	replay.DisplayFrom = display
 	replay.ReplayFrom = display
-	if options.Retain && options.Offset < display {
-		replay.ReplayFrom = max(options.Offset, base)
-		replay.Truncated = options.Offset < base
-	}
 	if display > 0 {
 		prelude, err := s.history.modesPreludeAt(display)
 		if err != nil {

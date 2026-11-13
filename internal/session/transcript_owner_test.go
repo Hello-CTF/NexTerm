@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
@@ -38,7 +39,7 @@ func (s *ownerScopedStore) ownerCalls(op, owner string) int {
 	return count
 }
 
-func (s *ownerScopedStore) DurableTranscriptCatchUpBytesContext(ctx context.Context, tabID string) int64 {
+func (s *ownerScopedStore) DurableTranscriptOffsetContext(ctx context.Context, tabID string) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	owner := userIDFromContext(ctx)
@@ -120,6 +121,9 @@ func TestDurableOffsetCatchUpIsOwnerScoped(t *testing.T) {
 	}
 	// Simulate the offset recorded during the tab's earlier life; the recover
 	// on a fresh manager must read it back under owner-a only.
+	if err := provider.attachment(tabID, 0).emit(bytes.Repeat([]byte("x"), 100)); err != nil {
+		t.Fatal(err)
+	}
 	store.mu.Lock()
 	store.offsets["owner-a"] = map[string]int64{tabID: 100}
 	store.mu.Unlock()

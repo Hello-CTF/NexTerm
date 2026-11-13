@@ -326,6 +326,20 @@ func (w *transcriptWriter) SessionOutputGap(ctx context.Context, durableID, sess
 	})
 }
 
+// SessionOutputUnrecorded records that skipped bytes of output were left out
+// of the transcript, such as output produced while no client watched the tab.
+// A durable tab's offset advances past them like a history gap.
+func (w *transcriptWriter) SessionOutputUnrecorded(ctx context.Context, durableID, sessionID, tabID string, skipped int64) {
+	if skipped <= 0 {
+		return
+	}
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
+		ts: time.Now().UnixMilli(), durableSkip: skipped,
+		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出未录制\x1b[0m\r\n", skipped)),
+	})
+}
+
 func (w *transcriptWriter) SessionInput(ctx context.Context, sessionID, tabID string, data []byte) {
 	if len(data) == 0 {
 		return
@@ -779,4 +793,7 @@ func (w *transcriptWriter) retentionPolicy(ctx context.Context) (store.Transcrip
 	return core.TranscriptRetentionPolicy(ctx, w.retentionDatabase)
 }
 
-var _ session.TranscriptGapSink = (*transcriptWriter)(nil)
+var (
+	_ session.TranscriptGapSink        = (*transcriptWriter)(nil)
+	_ session.TranscriptUnrecordedSink = (*transcriptWriter)(nil)
+)

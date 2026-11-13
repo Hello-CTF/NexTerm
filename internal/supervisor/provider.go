@@ -165,12 +165,7 @@ func tailAttachOptions(options base.DurableTailOptions) AttachOptions {
 	if tail == 0 {
 		tail = DefaultTailBytes
 	}
-	attach := AttachOptions{Tail: tail}
-	if options.Retain != nil {
-		attach.Offset = *options.Retain
-		attach.Retain = true
-	}
-	return attach
+	return AttachOptions{Tail: tail}
 }
 
 func durableHistoryChunk(chunk HistoryChunk) base.DurableHistoryChunk {
@@ -183,7 +178,7 @@ func durableHistoryChunk(chunk HistoryChunk) base.DurableHistoryChunk {
 func durableReplay(replay ReplayInfo) base.DurableReplay {
 	return base.DurableReplay{
 		HistoryBase: replay.HistoryBase, HistoryNext: replay.HistoryNext, ReplayFrom: replay.ReplayFrom,
-		DisplayFrom: replay.DisplayFrom, Truncated: replay.Truncated, Prelude: replay.Prelude,
+		Truncated: replay.Truncated, Prelude: replay.Prelude,
 	}
 }
 
