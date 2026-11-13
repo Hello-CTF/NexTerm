@@ -56,4 +56,18 @@ describe("mute menu item", () => {
     await vi.waitFor(() => expect(isSessionMuted(tabId)).toBe(false));
     await setSessionMuted(tabId, false);
   });
+
+  it("mutes a durable terminal, whose tab id is the 26-character backend id", async () => {
+    const tabId = "01JCZ8Q4V7M3N5P6R8S9T0VWXY";
+    const item = muteItem(tabId);
+    if (item.kind === "item") item.onSelect?.();
+    await vi.waitFor(() => expect(isSessionMuted(tabId)).toBe(true));
+    await setSessionMuted(tabId, false);
+    expect(isSessionMuted(tabId)).toBe(false);
+  });
+
+  it("rejects a tab id it cannot store instead of doing nothing", async () => {
+    await expect(setSessionMuted("not-a-tab-id", true)).rejects.toThrow();
+    expect(isSessionMuted("not-a-tab-id")).toBe(false);
+  });
 });

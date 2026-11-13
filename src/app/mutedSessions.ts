@@ -11,7 +11,9 @@ const STORAGE_KEY = "nexterm.mutedSessions.v1";
 // sessions that ended long ago.
 export const MUTED_SESSIONS_LIMIT = 200;
 
-const TAB_ID = /^[0-9a-f]{32}$/;
+// A temporary terminal's tab id is 32 lowercase hex characters; a durable terminal's is the 26-character id the backend
+// generates with ids.New, the same on every device. internal/account/preferences.go accepts exactly these two forms.
+const TAB_ID = /^(?:[0-9a-f]{32}|[0-9A-Za-z]{26})$/;
 
 export function parseMutedSessions(value: unknown): string[] | null {
   if (!Array.isArray(value)) return null;
@@ -53,9 +55,10 @@ export function useSessionMuted(tabId: string | undefined): boolean {
   return useSyncExternalStore(mutedSessions.subscribe, () => isSessionMuted(tabId));
 }
 
-// setSessionMuted rejects when the account write fails; the previous list is shown again then.
+// setSessionMuted rejects when the tab id cannot be stored or the account write fails; the previous list is shown
+// again then.
 export async function setSessionMuted(tabId: string, muted: boolean): Promise<void> {
-  if (!TAB_ID.test(tabId)) return;
+  if (!TAB_ID.test(tabId)) throw new Error(`unsupported terminal tab id: ${tabId}`);
   const current = mutedSessions.get().filter((id) => id !== tabId);
   if (muted) current.push(tabId);
   await mutedSessions.set(current.slice(-MUTED_SESSIONS_LIMIT));

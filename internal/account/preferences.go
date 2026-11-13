@@ -399,8 +399,9 @@ func normalizeQuickCommands(raw json.RawMessage) (string, bool) {
 // maxMutedSessions bounds terminal.mutedSessions; the client drops the oldest entries to stay within it.
 const maxMutedSessions = 200
 
-// normalizeSessionIDs accepts a list of terminal tab ids (32 lowercase hex characters) and drops repeats, keeping the
-// first occurrence so the client's oldest-first order survives.
+// normalizeSessionIDs accepts a list of terminal tab ids and drops repeats, keeping the first occurrence so the client's
+// oldest-first order survives. A temporary terminal's id is 32 lowercase hex characters; a durable terminal's id is the
+// 26-character form of ids.New, the id that names it on every device.
 func normalizeSessionIDs(raw json.RawMessage) (string, bool) {
 	var ids []string
 	if err := json.Unmarshal(raw, &ids); err != nil || ids == nil || len(ids) > maxMutedSessions {
@@ -425,7 +426,7 @@ func normalizeSessionIDs(raw json.RawMessage) (string, bool) {
 	return string(encoded), true
 }
 
-var terminalTabIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var terminalTabIDPattern = regexp.MustCompile(`^(?:[0-9a-f]{32}|[0-9A-Za-z]{26})$`)
 
 func validQuickCommandLabel(label string) bool {
 	if strings.TrimSpace(label) == "" || !utf8.ValidString(label) || utf8.RuneCountInString(label) > maxQuickCommandLabel {

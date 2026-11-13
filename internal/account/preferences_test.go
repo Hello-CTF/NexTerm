@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/dbtest"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 )
 
 func testPreferences(t *testing.T) *Preferences {
@@ -636,9 +637,10 @@ func TestTerminalQuickCommandsRoundTrip(t *testing.T) {
 }
 
 func TestTerminalMutedSessionsPreference(t *testing.T) {
-	a, b := strings.Repeat("a", 32), strings.Repeat("0", 31)+"f"
-	got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(`["`+a+`","`+b+`","`+a+`"]`))
-	if want := `["` + a + `","` + b + `"]`; err != nil || got != want {
+	// a and b name temporary terminals, durable a durable one (ids.New).
+	a, b, durable := strings.Repeat("a", 32), strings.Repeat("0", 31)+"f", ids.New()
+	got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(`["`+a+`","`+durable+`","`+b+`","`+a+`"]`))
+	if want := `["` + a + `","` + durable + `","` + b + `"]`; err != nil || got != want {
 		t.Fatalf("muted sessions=(%q,%v) want %q", got, err, want)
 	}
 	if got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(`[]`)); err != nil || got != `[]` {
@@ -653,7 +655,7 @@ func TestTerminalMutedSessionsPreference(t *testing.T) {
 		t.Fatalf("full muted sessions rejected: %v", err)
 	}
 	over, _ := json.Marshal(append(full, fmt.Sprintf("%032x", maxMutedSessions)))
-	for _, raw := range []string{`null`, `"` + a + `"`, `["` + strings.ToUpper(a) + `"]`, `["abc"]`, `[1]`, string(over)} {
+	for _, raw := range []string{`null`, `"` + a + `"`, `["` + strings.ToUpper(a) + `"]`, `["abc"]`, `["` + durable + `x"]`, `["` + durable[:25] + `-"]`, `[1]`, string(over)} {
 		if got, err := validatePreferenceValue("terminal.mutedSessions", json.RawMessage(raw)); err == nil {
 			t.Fatalf("muted sessions %.40s accepted as %q", raw, got)
 		}
