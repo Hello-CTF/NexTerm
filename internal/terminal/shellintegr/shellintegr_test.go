@@ -139,7 +139,7 @@ func TestWrapZsh(t *testing.T) {
 		if err != nil {
 			t.Fatalf("wrapper file %s: %v", name, err)
 		}
-		if !strings.Contains(string(body), "source $HOME/"+name) {
+		if !strings.Contains(string(body), "source ${ZDOTDIR:-$HOME}/"+name) {
 			t.Errorf("%s does not pass through the user file:\n%s", name, body)
 		}
 	}

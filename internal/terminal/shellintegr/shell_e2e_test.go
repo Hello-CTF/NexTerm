@@ -301,3 +301,76 @@ func TestBashWrapperPreservesUserDebugTrap(t *testing.T) {
 		t.Fatalf("wrapper stopped emitting OSC 133:\n%s", output)
 	}
 }
+
+// TestWrappedZshKeepsHooksWhenUserMovesZDOTDIR: a user .zshenv that moves
+// ZDOTDIR (an XDG layout) still gets the hooks, its own startup files run
+// from that directory with ZDOTDIR pointing there, and the interactive shell
+// keeps the user's ZDOTDIR.
+func TestWrappedZshKeepsHooksWhenUserMovesZDOTDIR(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a real shell")
+	}
+	path, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	for _, login := range []bool{false, true} {
+		t.Run(map[bool]string{false: "interactive", true: "login"}[login], func(t *testing.T) {
+			launch, err := Wrap(ShellZsh, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer launch.Cleanup()
+
+			home := t.TempDir()
+			config := filepath.Join(home, ".config", "zsh")
+			if err := os.MkdirAll(config, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{
+				filepath.Join(home, ".zshenv"):  "export ZDOTDIR=$HOME/.config/zsh\n",
+				filepath.Join(config, ".zshrc"): "print -r -- \"RC-ZDOTDIR=$ZDOTDIR\"\nPROMPT='$ '\n",
+			}
+			for name, content := range files {
+				if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := launch.Args
+			if login {
+				args = append([]string{"-l"}, args...)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			session, err := pty.Start(ctx, pty.Config{
+				Path: launch.Path,
+				Args: args,
+				Dir:  t.TempDir(),
+				Env: append([]string{
+					"HOME=" + home,
+					"PATH=" + os.Getenv("PATH"),
+					"TERM=xterm-256color",
+					"skip_global_compinit=1",
+				}, launch.Env...),
+				Cols: 80,
+				Rows: 24,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer session.Close()
+			if _, err := session.Write([]byte("print -r -- \"SHELL-ZDOTDIR=$ZDOTDIR\"; false\nexit\n")); err != nil {
+				t.Fatal(err)
+			}
+			output, err := io.ReadAll(session)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"RC-ZDOTDIR=" + config, "SHELL-ZDOTDIR=" + config, "\x1b]133;B", "\x1b]133;D;1"} {
+				if !bytes.Contains(output, []byte(want)) {
+					t.Fatalf("output lacks %q:\n%q", want, output)
+				}
+			}
+		})
+	}
+}

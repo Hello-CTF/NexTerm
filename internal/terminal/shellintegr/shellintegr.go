@@ -99,10 +99,10 @@ func Wrap(shell Shell, path string) (*Launch, error) {
 		launch.Args = []string{"--rcfile", filepath.Join(dir, "bashrc"), "-i"}
 	case ShellZsh:
 		files := [][2]string{
-			{".zshenv", zshPassthrough(".zshenv")},
+			{".zshenv", zshWrapperInit + zshPassthrough(".zshenv")},
 			{".zprofile", zshPassthrough(".zprofile")},
-			{".zshrc", zshPassthrough(".zshrc") + zshIntegration},
-			{".zlogin", zshPassthrough(".zlogin")},
+			{".zshrc", zshPassthrough(".zshrc") + zshIntegration + "[[ -o login ]] || " + zshRestoreUserZDOTDIR},
+			{".zlogin", zshPassthrough(".zlogin") + zshRestoreUserZDOTDIR},
 		}
 		for _, f := range files {
 			if err := write(f[0], f[1]); err != nil {
@@ -127,9 +127,26 @@ func Wrap(shell Shell, path string) (*Launch, error) {
 	return launch, nil
 }
 
+// zsh reads each startup file from $ZDOTDIR as it stands at that moment, so a
+// user .zshenv that moves ZDOTDIR (an XDG layout) would make zsh skip the
+// wrapper's remaining files and the hooks with them. Each wrapper file sources
+// the user's file with the user's ZDOTDIR in place (unset when they set none,
+// so their files come from $HOME), remembers any change and points zsh back at
+// the wrapper directory for the next file.
+const zshWrapperInit = "# nexterm shell integration\n__nexterm_wrap=$ZDOTDIR\n__nexterm_user_zdotdir_set=0\n__nexterm_user_zdotdir=\n"
+
 func zshPassthrough(name string) string {
-	return "# nexterm shell integration\n[[ -r $HOME/" + name + " ]] && source $HOME/" + name + "\n"
+	user := "${ZDOTDIR:-$HOME}/" + name
+	return "# nexterm shell integration\n" +
+		"if (( __nexterm_user_zdotdir_set )); then export ZDOTDIR=$__nexterm_user_zdotdir; else unset ZDOTDIR; fi\n" +
+		"[[ -r " + user + " ]] && source " + user + "\n" +
+		"if (( ${+ZDOTDIR} )); then __nexterm_user_zdotdir=$ZDOTDIR; __nexterm_user_zdotdir_set=1; else __nexterm_user_zdotdir_set=0; fi\n" +
+		"export ZDOTDIR=$__nexterm_wrap\n"
 }
+
+// zshRestoreUserZDOTDIR runs after the last startup file: a ZDOTDIR the user
+// set stays in effect for the interactive shell.
+const zshRestoreUserZDOTDIR = "if (( __nexterm_user_zdotdir_set )); then export ZDOTDIR=$__nexterm_user_zdotdir; fi\n"
 
 // BashIntegrationFile is the hooks-only bash file written next to the
 // wrapper rcfile.
