@@ -44,6 +44,22 @@ function session(
   };
 }
 
+function showSessionInWorkspace(): void {
+  useUi.setState({
+    workspaces: [{
+      id: "ws1",
+      kind: "session",
+      title: "web-01",
+      sessionId: "s1",
+      assetId: "a1",
+      assetKind: "ssh",
+      panes: [{ id: "p1", tabs: [], activeTabId: null }],
+      activePaneId: "p1",
+      closable: true,
+    }],
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   useUi.getState().resetSessions();
@@ -131,6 +147,7 @@ describe("session reconnect status", () => {
   });
 
   it("notifies once for an abnormal disconnect and provides a working reconnect action", async () => {
+    showSessionInWorkspace();
     applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 1 });
     applySessionStatusEvent({
       sessionId: "s1",
@@ -160,6 +177,7 @@ describe("session reconnect status", () => {
   it.each(["ssh", "timeout", "disconnected"])(
     "notifies once per reconnect cycle for retryable %s failure and reconnects from the action",
     async (errorCode) => {
+      showSessionInWorkspace();
       const fail = (version: number) => applySessionStatusEvent({
         sessionId: "s1",
         status: "failed",
@@ -191,7 +209,28 @@ describe("session reconnect status", () => {
     },
   );
 
+  it("does not toast background retries of a session no open workspace shows", () => {
+    // Closing a workspace whose durable terminals moved to the background leaves the host session
+    // retrying for as long as they live; each round must not raise a toast.
+    for (let round = 0; round < 3; round += 1) {
+      applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: round * 2 + 1 });
+      applySessionStatusEvent({
+        sessionId: "s1",
+        status: "failed",
+        error: "dial tcp: i/o timeout",
+        errorCode: "timeout",
+        attempt: 6,
+        nextRetryAt: null,
+        version: round * 2 + 2,
+      });
+    }
+
+    expect(useUi.getState().toasts).toHaveLength(0);
+    expect(useUi.getState().sessions[0]?.status).toBe("failed");
+  });
+
   it("uses a positive attempt to offer the action when the reconnecting event was missed", () => {
+    showSessionInWorkspace();
     applySessionStatusEvent({
       sessionId: "s1",
       status: "failed",

@@ -102,6 +102,10 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     abnormalDisconnectNotices.delete(p.sessionId);
     return;
   }
+  // A session no open workspace shows is held only by background durable terminals; the backend keeps
+  // retrying it for as long as they live, so a toast per round would repeat with nothing on screen.
+  // Its state stays visible in the background sessions panel.
+  if (!sessionShownInWorkspace(state.workspaces, p.sessionId)) return;
   if (abnormalDisconnectNotices.has(p.sessionId)) return;
   abnormalDisconnectNotices.add(p.sessionId);
   const name = current?.name ?? p.sessionId;
@@ -112,6 +116,12 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     label: t("重新连接"),
     onSelect: () => void reconnectSessionAfterDisconnect(p.sessionId),
   });
+}
+
+function sessionShownInWorkspace(workspaces: UiState["workspaces"], sessionId: string): boolean {
+  return workspaces.some((workspace) =>
+    workspace.sessionId === sessionId ||
+    workspace.panes.some((pane) => pane.tabs.some((tab) => tab.sessionId === sessionId)));
 }
 
 async function reconnectSessionAfterDisconnect(sessionId: string): Promise<void> {
