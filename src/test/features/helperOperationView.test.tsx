@@ -166,6 +166,24 @@ describe("HelperOperationView", () => {
     expect(view.container.textContent).not.toContain("有可用更新");
   });
 
+  it("compares a device agent with this app's version without flagging the digest only the agent has", () => {
+    const view = renderView({
+      deviceAgent: true,
+      localVersion: { known: true, release: "1.4.3", commit: "app-commit", protocol: 7 },
+      runningVersion: { known: true, release: "1.4.2", commit: "agent-commit", protocol: 7, sha256: RUNNING_SHA },
+      compatibility: "compatible",
+    });
+
+    expect(() => sectionByLabel(view.container, "本地携带版本")).toThrow();
+    const local = sectionByLabel(view.container, "本机 NexTerm 版本");
+    const running = sectionByLabel(view.container, "设备代理版本");
+    expect(definition(local, "发布版本")).toBe("1.4.3");
+    expect(definition(running, "发布版本")).toBe("1.4.2");
+    expect(differs(local, "发布版本")).toBe(true);
+    expect(differs(running, "SHA-256")).toBe(false);
+    expect(differs(local, "协议")).toBe(false);
+  });
+
   it("offers copy buttons for differing commits and digests and announces the result", async () => {
     clipboard.copyText.mockReset().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
     const view = renderView({

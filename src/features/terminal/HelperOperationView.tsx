@@ -106,6 +106,8 @@ export interface HelperOperationViewProps {
   update?: HelperUpdatePresentation | null;
   legacy?: LegacyHelperPresentation | null;
   replaceFailure?: HelperReplaceFailurePresentation | null;
+  /** A managed device: its agent is the helper, compared with this app's own version rather than a carried copy. */
+  deviceAgent?: boolean;
   onRetryPersistent?: () => void;
   onContinueOrdinary?: () => void;
   onCancel?: () => void;
@@ -203,7 +205,11 @@ function versionFieldDiffers(
   running: HelperVersionPresentation | null | undefined,
   key: VersionField,
 ): boolean {
-  return comparableValue(key, versionValue(local, key)) !== comparableValue(key, versionValue(running, key));
+  const localValue = versionValue(local, key);
+  const runningValue = versionValue(running, key);
+  // A side with no executable to hash (a device agent compared with this app) has no SHA-256; that is not a difference.
+  if (key === "sha256" && (localValue === null || runningValue === null)) return false;
+  return comparableValue(key, localValue) !== comparableValue(key, runningValue);
 }
 
 function versionsIdentical(
@@ -502,6 +508,7 @@ function VersionComparison({
   update,
   failed,
   legacy,
+  deviceAgent,
 }: {
   local: HelperVersionPresentation | null | undefined;
   running: HelperVersionPresentation | null | undefined;
@@ -509,6 +516,7 @@ function VersionComparison({
   update: HelperUpdatePresentation | null | undefined;
   failed: boolean;
   legacy: boolean;
+  deviceAgent: boolean;
 }) {
   if (local?.known === true && versionsIdentical(local, running)) return <IdenticalVersion version={local} />;
   const anyKnown = local?.known === true || running?.known === true;
@@ -516,8 +524,8 @@ function VersionComparison({
     <div className="flex flex-col gap-2">
       {anyKnown ? (
         <div className="grid gap-2 md:grid-cols-2">
-          <VersionSection label={t("本地携带版本")} version={local} other={running} />
-          <VersionSection label={t("远端运行版本")} version={running} other={local} />
+          <VersionSection label={deviceAgent ? t("本机 NexTerm 版本") : t("本地携带版本")} version={local} other={running} />
+          <VersionSection label={deviceAgent ? t("设备代理版本") : t("远端运行版本")} version={running} other={local} />
         </div>
       ) : (
         <p className="text-neutral-500">{t("本地与主机上的组件版本均无法确认。")}</p>
@@ -554,6 +562,7 @@ export function HelperOperationView({
   update,
   legacy,
   replaceFailure,
+  deviceAgent,
   onRetryPersistent,
   onContinueOrdinary,
   onCancel,
@@ -639,6 +648,7 @@ export function HelperOperationView({
                 update={update}
                 failed={failed}
                 legacy={Boolean(legacy)}
+                deviceAgent={Boolean(deviceAgent)}
               />
             )}
           </div>

@@ -3248,6 +3248,7 @@ export function TerminalPane({
             deadline={helperOperation ? new Date(helperOperation.deadline).toISOString() : null}
             path={helperOperation?.path}
             transport={helperOperation?.transport}
+            deviceAgent={sessionKind === "device"}
             localVersion={helperDetails?.local}
             runningVersion={helperDetails?.running}
             compatibility={helperDetails?.compatibility}

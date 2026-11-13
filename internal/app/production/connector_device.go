@@ -20,6 +20,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 	"github.com/Hello-CTF/NexTerm/internal/transport/device"
 	transportssh "github.com/Hello-CTF/NexTerm/internal/transport/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/version"
 )
 
 // DeviceBridgeDialFunc opens one bridge of the given purpose to a device, keyed by device ID:
@@ -409,15 +410,32 @@ func (s *productionHelperService) ensureDevice(ctx context.Context, sessionID, a
 		}
 		return helperOperationDTO{}, err
 	}
-	running := helperRuntimeVersion(metadata, known)
-	result := helperOperationDTO{
-		SessionID: sessionID, Action: action, Local: helperVersionDTO{Known: false}, Running: running,
-		Compatibility: helperCompatibility(running), Update: &helperUpdateDTO{Status: "unknown"},
-	}
+	result := deviceHelperDTO(sessionID, action, metadata, known)
 	if action == "replace_legacy" {
 		result.Update = replacedUpdateDTO(consentToken, replaced)
 	}
 	return result, nil
+}
+
+// deviceHelperDTO reports a managed device's helper. The device agent is the
+// helper there and this app never deploys one to it, so the local side is this
+// app's own release, commit and protocol: whether the agent runs the same
+// release. There is no local executable to hash, so no SHA-256 is compared.
+func deviceHelperDTO(sessionID, action string, metadata supervisor.RuntimeMetadata, known bool) helperOperationDTO {
+	running := helperRuntimeVersion(metadata, known)
+	return helperOperationDTO{
+		SessionID: sessionID, Action: action, Local: appHelperVersion(version.Version, version.Commit), Running: running,
+		Compatibility: helperCompatibility(running), Update: &helperUpdateDTO{Status: "unknown"},
+	}
+}
+
+func appHelperVersion(release, commit string) helperVersionDTO {
+	protocol := supervisor.ProtocolVersion
+	local := helperVersionDTO{Known: true, Release: release, Protocol: &protocol}
+	if commit != "" && commit != "unknown" {
+		local.Commit = commit
+	}
+	return local
 }
 
 // replacedUpdateDTO describes a replacement the device bridge completed.
