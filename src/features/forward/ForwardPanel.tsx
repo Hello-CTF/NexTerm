@@ -8,7 +8,7 @@ import { useUi, useSessionList } from "../../app/store";
 import { describeError } from "../../ui/errorText";
 import { describeForwardError } from "./forwardErrors";
 import { ForwardRules } from "./ForwardRules";
-import { useCompactWidth } from "../docker/useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { ForwardSettingsSection } from "./ForwardSettingsSection";
 import {
   IconDownload,

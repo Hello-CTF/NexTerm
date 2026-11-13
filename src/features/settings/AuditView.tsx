@@ -10,7 +10,7 @@ import { IconHistory, IconRefresh } from "../../ui/icons";
 import { KIND_LABELS } from "./auditLabels";
 import { AuditTimelineView } from "./AuditTimelineView";
 import { CommandLogView } from "./CommandLogView";
-import { useCompactWidth } from "./useCompactWidth";
+import { useCompactWidth } from "../../lib/useCompactWidth";
 import { t } from "../../i18n";
 
 interface AuditEntry {
