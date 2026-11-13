@@ -2342,6 +2342,12 @@
       "channel": false,
       "stream": "none"
     },
+    "transcript_keyframes": {
+      "scope": "transcript",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "transcript_list": {
       "scope": "transcript",
       "nested": false,

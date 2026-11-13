@@ -89,6 +89,7 @@ var contractScopes = []scopeSpec{
 		"transcript_export_cast",
 		"transcript_export_text",
 		"transcript_hosts",
+		"transcript_keyframes",
 		"transcript_list",
 		"transcript_purge",
 		"transcript_read",

@@ -842,6 +842,8 @@ export const transcriptApi = {
       starred: summary.starred,
     }));
   },
+  // Seek keyframes the server built while the transcript was recorded; empty for older transcripts.
+  keyframes: (id: string) => call("transcript_keyframes", { id }),
   read: async (id: string, afterSeq = 0, maxBytes?: number): Promise<TranscriptReadResult> => {
     const result = await call("transcript_read", { id, afterSeq, maxBytes });
     return {

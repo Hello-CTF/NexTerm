@@ -91,6 +91,22 @@ type TranscriptTSIndex struct {
 
 func (TranscriptTSIndex) TableName() string { return "transcript_ts_index" }
 
+// TranscriptKeyframe is a seek keyframe of a transcript built while it was
+// recorded: State, compressed, rebuilds the replay terminal as it stood after
+// every chunk before NextSeq. A content replacement deletes them.
+type TranscriptKeyframe struct {
+	TranscriptID string        `gorm:"column:transcript_id;primaryKey" json:"transcriptId"`
+	NextSeq      int64         `gorm:"column:next_seq;primaryKey" json:"nextSeq"`
+	TS           int64         `gorm:"column:ts;not null" json:"ts"`
+	Cols         int           `gorm:"column:cols;not null" json:"cols"`
+	Rows         int           `gorm:"column:rows;not null" json:"rows"`
+	State        []byte        `gorm:"column:state;not null" json:"state"`
+	OwnerID      string        `gorm:"size:191;column:owner_id;not null;default:'';index:idx_transcript_keyframe_owner" json:"owner_id"`
+	Transcript   TranscriptRow `gorm:"foreignKey:TranscriptID;references:ID;constraint:OnDelete:CASCADE" json:"-"`
+}
+
+func (TranscriptKeyframe) TableName() string { return "transcript_keyframe" }
+
 type DurableTranscriptOffset struct {
 	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
 	Offset    int64  `gorm:"column:offset;not null" json:"offset"`

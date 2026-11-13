@@ -11,11 +11,13 @@ import { KeyframeBuilder } from "./transcriptKeyframes";
 import { loadCachedKeyframes, saveCachedKeyframes, transcriptFingerprint } from "./transcriptKeyframeCache";
 import {
   formatReplayClock,
+  REPLAY_IDLE_CAP_MS,
   REPLAY_SPEEDS as SPEEDS,
   REPLAY_THEME,
   REPLAY_TICK_MS as TICK_MS,
   toReplayChunk,
   TranscriptReplay,
+  type ReplayChunk,
   type ReplaySink,
 } from "./transcriptReplay";
 import { t } from "../../i18n";
@@ -36,6 +38,27 @@ interface FitState {
 }
 
 const NO_FIT: FitState = { scale: 1, width: 0, height: 0 };
+
+// Skipping idle time is a per-viewer preference, kept in this browser only.
+const SKIP_IDLE_KEY = "nexterm.replay.skipIdle";
+
+function loadSkipIdle(): boolean {
+  try {
+    return localStorage.getItem(SKIP_IDLE_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function saveSkipIdle(value: boolean): void {
+  try {
+    localStorage.setItem(SKIP_IDLE_KEY, value ? "1" : "0");
+  } catch {
+    // Without storage the choice lasts until the view closes.
+  }
+}
+
+const idleCap = (skipIdle: boolean) => (skipIdle ? REPLAY_IDLE_CAP_MS : Infinity);
 
 // Phone-width viewports (<= 560px) use a smaller font so a recorded 80-column screen needs less horizontal scrolling.
 const NARROW_VIEWPORT_PX = 560;
@@ -71,6 +94,8 @@ export function TranscriptReplayView({
   const [duration, setDuration] = useState(0);
   const [indexPercent, setIndexPercent] = useState<number | null>(null);
   const [seekBusy, setSeekBusy] = useState(false);
+  const [skipIdle, setSkipIdle] = useState(loadSkipIdle);
+  const skipIdleRef = useRef(skipIdle);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
@@ -152,7 +177,7 @@ export function TranscriptReplayView({
     setDuration(0);
     setIndexPercent(null);
     positionRef.current = 0;
-    const engine = new TranscriptReplay([]);
+    const engine = new TranscriptReplay([], { idleCapMs: idleCap(skipIdleRef.current) });
     engineRef.current = engine;
     engine.onSettled = clearBusy;
     const builder = new KeyframeBuilder({
@@ -172,6 +197,11 @@ export function TranscriptReplayView({
     }
     void (async () => {
       try {
+        // Keyframes built while the transcript was recorded make the index ready at once; older or synced
+        // transcripts have none and are indexed here as before.
+        const serverFrames = await transcriptApi.keyframes(transcriptId).catch(() => []);
+        if (cancelled) return;
+        const buildFromStart = serverFrames.length === 0;
         let afterSeq = 0;
         let lastSeq = 0;
         for (;;) {
@@ -181,7 +211,7 @@ export function TranscriptReplayView({
           if (page.length > 0) {
             const first = engine.chunkCount() === 0;
             engine.append(page);
-            builder.feed(page);
+            if (buildFromStart) builder.feed(page);
             lastSeq = page[page.length - 1].seq;
             setDuration(engine.durationMs());
             if (first) {
@@ -208,6 +238,15 @@ export function TranscriptReplayView({
           firstTs: engine.firstTs(),
           lastTs: engine.firstTs() + engine.durationMs(),
         });
+        engine.addKeyframes(
+          serverFrames.map((frame) => ({
+            nextIndex: engine.indexOfSeq(frame.nextSeq),
+            positionMs: 0,
+            cols: frame.cols,
+            rows: frame.rows,
+            state: frame.state,
+          })),
+        );
         const cached = await loadCachedKeyframes(transcriptId, fingerprint);
         if (cancelled) return;
         if (cached) {
@@ -215,6 +254,21 @@ export function TranscriptReplayView({
           engine.addKeyframes(cached);
           setIndexPercent(null);
           return;
+        }
+        if (!buildFromStart) {
+          // Only the output after the last server keyframe is left to index.
+          const frames = engine.keyframeList();
+          const last = frames[frames.length - 1];
+          const before = last ? engine.chunkAt(last.nextIndex - 1) : undefined;
+          if (!last || !before || last.nextIndex >= count) {
+            builder.dispose();
+            setIndexPercent(null);
+            return;
+          }
+          builder.startFrom(last, before.ts);
+          const tail: ReplayChunk[] = [];
+          for (let index = last.nextIndex; index < count; index++) tail.push(engine.chunkAt(index)!);
+          builder.feed(tail);
         }
         setIndexPercent(Math.floor((builder.processedChunks() / count) * 100));
         builder.finish();
@@ -302,10 +356,7 @@ export function TranscriptReplayView({
     if (!engine || !terminal || engine.chunkCount() === 0) return;
     appliedInitialRef.current = { transcriptId, ts: initialTs };
     setPlaying(false);
-    positionRef.current = engine.seek(
-      terminalSink(terminal),
-      Math.min(Math.max(0, initialTs - engine.firstTs()), engine.durationMs()),
-    );
+    positionRef.current = engine.seek(terminalSink(terminal), engine.positionOfTs(initialTs));
     setPosition(positionRef.current);
   }, [initialTs, loadPhase, transcriptId]);
 
@@ -321,6 +372,17 @@ export function TranscriptReplayView({
   const changeSpeed = (value: number) => {
     speedRef.current = value;
     setSpeed(value);
+  };
+
+  const changeSkipIdle = (value: boolean) => {
+    skipIdleRef.current = value;
+    setSkipIdle(value);
+    saveSkipIdle(value);
+    const engine = engineRef.current;
+    if (!engine) return;
+    positionRef.current = engine.setIdleCap(idleCap(value), positionRef.current);
+    setPosition(positionRef.current);
+    setDuration(engine.durationMs());
   };
 
   const interactive = hasChunks || loadPhase === "ready";
@@ -353,6 +415,20 @@ export function TranscriptReplayView({
           onChange={(value) => changeSpeed(Number(value))}
           options={SPEEDS.map((value) => ({ value: String(value), label: `${value}x` }))}
         />
+        <label
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap text-[11px] text-neutral-400"
+          title={t("超过 {seconds} 秒的停顿按 {seconds} 秒播放", { seconds: REPLAY_IDLE_CAP_MS / 1000 })}
+        >
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5"
+            data-testid="replay-skip-idle"
+            checked={skipIdle}
+            disabled={!interactive || loadError !== null}
+            onChange={(event) => changeSkipIdle(event.target.checked)}
+          />
+          {t("跳过空闲")}
+        </label>
         <input
           type="range"
           // The thumb owns horizontal drags; vertical pans still scroll the page. On phones the slider gets its own full-width row.

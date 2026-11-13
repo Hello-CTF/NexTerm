@@ -69,6 +69,7 @@ func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 		SyncTombstone:           newSyncTombstone(db, opts...),
 		TranscriptChunkRow:      newTranscriptChunkRow(db, opts...),
 		TranscriptChunkTS:       newTranscriptChunkTS(db, opts...),
+		TranscriptKeyframe:      newTranscriptKeyframe(db, opts...),
 		TranscriptRow:           newTranscriptRow(db, opts...),
 		TranscriptTSIndex:       newTranscriptTSIndex(db, opts...),
 		UserDEK:                 newUserDEK(db, opts...),
@@ -136,6 +137,7 @@ type Query struct {
 	SyncTombstone           syncTombstone
 	TranscriptChunkRow      transcriptChunkRow
 	TranscriptChunkTS       transcriptChunkTS
+	TranscriptKeyframe      transcriptKeyframe
 	TranscriptRow           transcriptRow
 	TranscriptTSIndex       transcriptTSIndex
 	UserDEK                 userDEK
@@ -206,6 +208,7 @@ func (q *Query) clone(db *gorm.DB) *Query {
 		SyncTombstone:           q.SyncTombstone.clone(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.clone(db),
 		TranscriptChunkTS:       q.TranscriptChunkTS.clone(db),
+		TranscriptKeyframe:      q.TranscriptKeyframe.clone(db),
 		TranscriptRow:           q.TranscriptRow.clone(db),
 		TranscriptTSIndex:       q.TranscriptTSIndex.clone(db),
 		UserDEK:                 q.UserDEK.clone(db),
@@ -281,6 +284,7 @@ func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 		SyncTombstone:           q.SyncTombstone.replaceDB(db),
 		TranscriptChunkRow:      q.TranscriptChunkRow.replaceDB(db),
 		TranscriptChunkTS:       q.TranscriptChunkTS.replaceDB(db),
+		TranscriptKeyframe:      q.TranscriptKeyframe.replaceDB(db),
 		TranscriptRow:           q.TranscriptRow.replaceDB(db),
 		TranscriptTSIndex:       q.TranscriptTSIndex.replaceDB(db),
 		UserDEK:                 q.UserDEK.replaceDB(db),
@@ -346,6 +350,7 @@ type queryCtx struct {
 	SyncTombstone           *syncTombstoneDo
 	TranscriptChunkRow      *transcriptChunkRowDo
 	TranscriptChunkTS       *transcriptChunkTSDo
+	TranscriptKeyframe      *transcriptKeyframeDo
 	TranscriptRow           *transcriptRowDo
 	TranscriptTSIndex       *transcriptTSIndexDo
 	UserDEK                 *userDEKDo
@@ -411,6 +416,7 @@ func (q *Query) WithContext(ctx context.Context) *queryCtx {
 		SyncTombstone:           q.SyncTombstone.WithContext(ctx),
 		TranscriptChunkRow:      q.TranscriptChunkRow.WithContext(ctx),
 		TranscriptChunkTS:       q.TranscriptChunkTS.WithContext(ctx),
+		TranscriptKeyframe:      q.TranscriptKeyframe.WithContext(ctx),
 		TranscriptRow:           q.TranscriptRow.WithContext(ctx),
 		TranscriptTSIndex:       q.TranscriptTSIndex.WithContext(ctx),
 		UserDEK:                 q.UserDEK.WithContext(ctx),

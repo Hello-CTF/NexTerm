@@ -7,6 +7,9 @@ export const TRANSCRIPT_KIND_RESIZE = 2;
 // Playback speeds the replay view offers; the website demo offers the same.
 export const REPLAY_SPEEDS = [1, 2, 5, 10] as const;
 export const REPLAY_TICK_MS = 50;
+// With idle skipping on, a pause longer than this plays as this long: a terminal left alone for an hour (or recorded
+// with gaps while it was in the background) does not replay as an hour of nothing.
+export const REPLAY_IDLE_CAP_MS = 2000;
 export const REPLAY_THEME = {
   background: "#101217",
   foreground: "#c6cbd6",
@@ -35,8 +38,8 @@ export interface ReplaySink {
 }
 
 // A serialized terminal screen at one point of the recording. nextIndex is the first chunk the state does not
-// include, and positionMs is the timestamp (relative to the first chunk) of the last chunk it includes, so a seek
-// target at or after positionMs can start from the frame.
+// include, and positionMs is the replay position of the last chunk it includes, so a seek target at or after
+// positionMs can start from the frame. The engine sets positionMs from nextIndex when the frame is added.
 export interface ReplayKeyframe {
   positionMs: number;
   nextIndex: number;
@@ -95,8 +98,11 @@ function findKeyframe(frames: readonly ReplayKeyframe[], position: number): Repl
 
 export class TranscriptReplay {
   private chunks: ReplayChunk[];
+  // positions[i] is chunk i's place on the replay timeline: its offset from the first chunk with every pause longer
+  // than idleCapMs shortened to idleCapMs.
+  private positions: number[] = [];
+  private idleCapMs: number;
   private startTs: number;
-  private endTs: number;
   private keyframes: ReplayKeyframe[] = [];
   private nextIndex = 0;
   private activeSink: ReplaySink | null = null;
@@ -113,14 +119,76 @@ export class TranscriptReplay {
   // Fires whenever the replay has caught up with the requested position (a finished seek or an idle playback tick).
   onSettled: (() => void) | null = null;
 
-  constructor(chunks: ReplayChunk[]) {
+  constructor(chunks: ReplayChunk[], options?: { idleCapMs?: number }) {
     this.chunks = [...chunks].sort((a, b) => a.seq - b.seq);
+    this.idleCapMs = options?.idleCapMs ?? Infinity;
     this.startTs = this.chunks.length > 0 ? this.chunks[0].ts : 0;
-    this.endTs = this.chunks.length > 0 ? this.chunks[this.chunks.length - 1].ts : this.startTs;
+    this.computePositions(0);
+  }
+
+  private computePositions(from: number): void {
+    this.positions.length = from;
+    for (let i = from; i < this.chunks.length; i++) {
+      if (i === 0) {
+        this.positions.push(0);
+        continue;
+      }
+      const pause = Math.max(0, this.chunks[i].ts - this.chunks[i - 1].ts);
+      this.positions.push(this.positions[i - 1] + Math.min(pause, this.idleCapMs));
+    }
   }
 
   durationMs(): number {
-    return this.endTs - this.startTs;
+    return this.positions.length > 0 ? this.positions[this.positions.length - 1] : 0;
+  }
+
+  // setIdleCap changes how long pauses play and returns where the replay at position now sits on the new timeline;
+  // the keyframes move with it.
+  setIdleCap(idleCapMs: number, position: number): number {
+    const index = this.lastIndexAt(position);
+    const offset = index >= 0 ? position - this.positions[index] : 0;
+    this.idleCapMs = idleCapMs;
+    this.computePositions(0);
+    for (const frame of this.keyframes) frame.positionMs = this.positions[frame.nextIndex - 1] ?? 0;
+    if (index < 0) return 0;
+    const next = this.positions[index + 1] ?? this.positions[index];
+    return Math.min(this.positions[index] + offset, next);
+  }
+
+  // lastIndexAt returns the last chunk at or before position, or -1.
+  private lastIndexAt(position: number): number {
+    let low = 0;
+    let high = this.positions.length - 1;
+    let found = -1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (this.positions[mid] <= position) {
+        found = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return found;
+  }
+
+  // positionOfTs returns the position of the first chunk recorded at or after the absolute timestamp ts.
+  positionOfTs(ts: number): number {
+    const index = this.chunks.findIndex((chunk) => chunk.ts >= ts);
+    if (index < 0) return this.durationMs();
+    return this.positions[index];
+  }
+
+  // indexOfSeq returns the index of the first chunk whose sequence is at least seq.
+  indexOfSeq(seq: number): number {
+    let low = 0;
+    let high = this.chunks.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (this.chunks[mid].seq < seq) low = mid + 1;
+      else high = mid;
+    }
+    return low;
   }
 
   chunkCount(): number {
@@ -134,6 +202,7 @@ export class TranscriptReplay {
     const lastSeq = this.chunks.length > 0 ? this.chunks[this.chunks.length - 1].seq : -Infinity;
     const ordered = [...chunks].sort((a, b) => a.seq - b.seq);
     let reordered = false;
+    const appendedFrom = this.chunks.length;
     if (ordered[0].seq <= lastSeq) {
       // An out-of-order page invalidates every index into the chunk list.
       reordered = true;
@@ -143,7 +212,7 @@ export class TranscriptReplay {
       for (const chunk of ordered) this.chunks.push(chunk);
     }
     if (wasEmpty || reordered) this.startTs = this.chunks[0].ts;
-    this.endTs = Math.max(this.endTs, this.chunks[this.chunks.length - 1].ts);
+    this.computePositions(reordered ? 0 : appendedFrom);
     const sink = this.idleSink;
     if (sink && !this.pendingSeek && !this.writePending && !this.activeSink) {
       this.activeSink = sink;
@@ -160,12 +229,15 @@ export class TranscriptReplay {
     return this.startTs;
   }
 
-  // Keyframes arrive in ascending order while the index builds in the background.
+  // Keyframes arrive in ascending order (from the server, the cache or the background builder); each one is placed
+  // on the timeline by the chunks it includes, and only frames past the last one and within the loaded chunks count.
   addKeyframes(frames: ReplayKeyframe[]): void {
     if (this.disposed) return;
     for (const frame of frames) {
       const last = this.keyframes[this.keyframes.length - 1];
-      if (!last || frame.positionMs > last.positionMs) this.keyframes.push(frame);
+      if (frame.nextIndex < 1 || frame.nextIndex > this.chunks.length) continue;
+      if (last && frame.nextIndex <= last.nextIndex) continue;
+      this.keyframes.push({ ...frame, positionMs: this.positions[frame.nextIndex - 1] });
     }
   }
 
@@ -283,9 +355,8 @@ export class TranscriptReplay {
         !this.writePending &&
         this.activeSink === sink
       ) {
-        const cutoff = this.startTs + this.activePosition;
         const chunk = this.chunks[this.nextIndex];
-        if (!chunk || chunk.ts > cutoff) {
+        if (!chunk || this.positions[this.nextIndex] > this.activePosition) {
           this.idleSink = sink;
           this.idlePosition = this.activePosition;
           this.activeSink = null;
@@ -293,7 +364,7 @@ export class TranscriptReplay {
           break;
         }
         if (chunk.kind === TRANSCRIPT_KIND_OUTPUT) {
-          this.write(sink, this.takeOutputBatch(cutoff));
+          this.write(sink, this.takeOutputBatch(this.activePosition));
           continue;
         }
         this.nextIndex += 1;
@@ -308,13 +379,13 @@ export class TranscriptReplay {
     if (this.pendingSeek && !this.writePending) this.scheduleSeek();
   }
 
-  private takeOutputBatch(cutoff: number): Uint8Array {
+  private takeOutputBatch(position: number): Uint8Array {
     const parts: Uint8Array[] = [];
     let total = 0;
     while (this.nextIndex < this.chunks.length) {
       const chunk = this.chunks[this.nextIndex];
       if (
-        chunk.ts > cutoff ||
+        this.positions[this.nextIndex] > position ||
         chunk.kind !== TRANSCRIPT_KIND_OUTPUT ||
         (total > 0 && total + chunk.data.byteLength > REPLAY_WRITE_BATCH_BYTES)
       ) {

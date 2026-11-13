@@ -62,6 +62,8 @@ export class KeyframeBuilder {
   private readonly yieldToUi: () => Promise<void>;
   private source: KeyframeSource | null = null;
   private queue: ReplayChunk[] = [];
+  // A keyframe the source starts from before the first fed chunk.
+  private base: ReplayKeyframe | null = null;
   private fed = 0;
   private applied = 0;
   private startTs = 0;
@@ -86,9 +88,20 @@ export class KeyframeBuilder {
     return this.applied;
   }
 
+  // startFrom builds on top of a keyframe instead of the start of the recording: the chunks fed next are the ones
+  // from frame.nextIndex on, and lastTs is the timestamp of the chunk before them.
+  startFrom(frame: ReplayKeyframe, lastTs: number): void {
+    if (this.fed > 0 || this.disposed) return;
+    this.base = frame;
+    this.fed = frame.nextIndex;
+    this.applied = frame.nextIndex;
+    this.startTs = lastTs;
+    this.lastFrameTs = lastTs;
+  }
+
   feed(chunks: ReplayChunk[]): void {
     if (this.disposed || chunks.length === 0) return;
-    if (this.fed === 0) {
+    if (this.fed === 0 && !this.base) {
       this.startTs = chunks[0].ts;
       this.lastFrameTs = chunks[0].ts;
     }
@@ -130,7 +143,15 @@ export class KeyframeBuilder {
     if (this.running || this.disposed) return;
     this.running = true;
     try {
-      this.source ??= this.createSource();
+      if (!this.source) {
+        this.source = this.createSource();
+        const base = this.base;
+        if (base) {
+          const source = this.source;
+          source.resize(base.cols, base.rows);
+          await new Promise<void>((resolve) => source.write(new TextEncoder().encode(base.state), resolve));
+        }
+      }
       while (!this.disposed && this.queue.length > 0) {
         await this.applyBatch(this.source);
         await this.yieldToUi();

@@ -57,6 +57,9 @@ type transcriptWriterConfig struct {
 	// BatchLinger is how long the writer waits after the first queued item for more to join its batch.
 	// Zero flushes as soon as an item is queued.
 	BatchLinger time.Duration
+	// KeyframeIntervalBytes overrides the output between keyframes; tests
+	// use it to build keyframes without recording 8 MiB.
+	KeyframeIntervalBytes int64
 }
 
 type transcriptItemKind int
@@ -180,6 +183,10 @@ type transcriptWriter struct {
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
 	retentionWg sync.WaitGroup
+
+	// keyframer builds seek keyframes from the stored chunks; nil when the
+	// database cannot store them.
+	keyframer *transcriptKeyframer
 }
 
 var _ session.TranscriptSink = (*transcriptWriter)(nil)
@@ -199,7 +206,15 @@ func newTranscriptWriter(config transcriptWriterConfig) *transcriptWriter {
 		config.RetentionInterval = transcriptRetentionInterval
 	}
 	retentionDatabase, _ := config.Database.(*store.Store)
+	var keyframer *transcriptKeyframer
+	if keyframes, ok := config.Database.(keyframeStore); ok {
+		keyframer = newTranscriptKeyframer(keyframes, logger)
+		if config.KeyframeIntervalBytes > 0 {
+			keyframer.intervalBytes = config.KeyframeIntervalBytes
+		}
+	}
 	return &transcriptWriter{
+		keyframer:         keyframer,
 		database:          config.Database,
 		retentionDatabase: retentionDatabase,
 		logger:            logger,
@@ -236,6 +251,9 @@ func (w *transcriptWriter) Start(ctx context.Context) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
+	if w.keyframer != nil {
+		w.keyframer.start()
+	}
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
@@ -296,8 +314,14 @@ func (w *transcriptWriter) Shutdown(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
+		if w.keyframer != nil {
+			w.keyframer.close(ctx)
+		}
 		return nil
 	case <-ctx.Done():
+		if w.keyframer != nil {
+			w.keyframer.close(ctx)
+		}
 		return ctx.Err()
 	}
 }
@@ -695,6 +719,9 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 	}
 	chunks := len(period.pending)
 	if err := w.database.TranscriptAppendChunks(period.writeCtx, period.transcriptID, period.pending, period.durableBytes); err != nil {
+		if w.keyframer != nil {
+			w.keyframer.control(period.transcriptID, false)
+		}
 		period.truncated = true
 		for durableID := range period.durableBytes {
 			period.freezeDurable(durableID)
@@ -702,6 +729,9 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 		w.stats.flushErrors.Add(1)
 		w.logger.Error("transcript chunk flush failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "chunks", chunks, "error", err)
 	} else {
+		if w.keyframer != nil {
+			w.keyframer.chunks(period.writeCtx, period.transcriptID, period.pending)
+		}
 		period.batches++
 		period.flushedChunks += int64(chunks)
 		batches := w.stats.batches.Add(1)
@@ -714,6 +744,9 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	w.flushPending(period)
+	if w.keyframer != nil {
+		defer w.keyframer.control(period.transcriptID, true)
+	}
 	if !period.hasOutput && !period.truncated {
 		// A connection period nobody produced watched output in (a reconnect
 		// of terminals left in the background) would only crowd real

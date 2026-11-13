@@ -434,6 +434,7 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 		output string
 	}{
 		{name: "transcript_hosts", input: "Record<string, never>", output: "TranscriptHostDTO[]"},
+		{name: "transcript_keyframes", input: "TranscriptIDRequest", output: "TranscriptKeyframeDTO[]"},
 		{name: "transcript_list", input: "TranscriptListRequest", output: "TranscriptSummaryDTO[]"},
 		{name: "transcript_read", input: "TranscriptReadRequest", output: "TranscriptReadResult"},
 		{name: "transcript_search", input: "TranscriptSearchRequest", output: "TranscriptMatchDTO[]"},
@@ -479,8 +480,8 @@ func TestTranscriptVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 14 {
-		t.Fatalf("selected transcript command count = %d, want 14", len(selected))
+	if len(selected) != 15 {
+		t.Fatalf("selected transcript command count = %d, want 15", len(selected))
 	}
 	for name, command := range commands {
 		if strings.HasPrefix(name, "transcript_") && !selected[name] {

@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { flush, flushUntil, mount, setInputValue, chooseSelectOption, type MountedView } from "./reactTestUtils";
 
-const mocks = vi.hoisted(() => ({ transcriptRead: vi.fn() }));
+const mocks = vi.hoisted(() => ({ transcriptRead: vi.fn(), transcriptKeyframes: vi.fn() }));
 
-const terminalMocks = vi.hoisted(() => ({ instances: [] as FakeTerminal[] }));
+const terminalMocks = vi.hoisted(() => ({ instances: [] as FakeTerminal[], offscreen: [] as FakeTerminal[] }));
 
 interface FakeTerminal {
   options?: unknown;
@@ -35,13 +35,16 @@ vi.mock("@xterm/xterm", () => ({
       // The offscreen terminal that builds the seek index is not the view's terminal.
       if ((options as { disableStdin?: boolean } | undefined)?.disableStdin) {
         terminalMocks.instances.push(this as unknown as FakeTerminal);
+      } else {
+        terminalMocks.offscreen.push(this as unknown as FakeTerminal);
       }
     }
     open() {}
     loadAddon() {}
     write(data: Uint8Array, callback?: () => void) {
       this.writes.push(data);
-      this.content += new TextDecoder().decode(data);
+      // A keyframe restore writes its state as a string, as xterm allows.
+      this.content += typeof data === "string" ? data : new TextDecoder().decode(data);
       if (!callback) return;
       if (this.deferWrites) this.callbacks.push(callback);
       else callback();
@@ -76,7 +79,7 @@ vi.mock("@xterm/addon-serialize", () => ({
 }));
 
 vi.mock("../../ipc/commands", () => ({
-  transcriptApi: { read: mocks.transcriptRead },
+  transcriptApi: { read: mocks.transcriptRead, keyframes: mocks.transcriptKeyframes },
 }));
 
 import { TranscriptReplayView } from "../../features/terminal/TranscriptReplayView";
@@ -112,8 +115,10 @@ let mounted: MountedView | undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   terminalMocks.instances.length = 0;
+  terminalMocks.offscreen.length = 0;
   document.body.replaceChildren();
   mocks.transcriptRead.mockResolvedValue(readResult());
+  mocks.transcriptKeyframes.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -367,5 +372,53 @@ describe("TranscriptReplayView", () => {
     await flush();
     const seekEnd = mounted.container.querySelector<HTMLInputElement>("[data-testid='replay-seek']")!;
     expect(seekEnd.value).toBe("1500");
+  });
+});
+
+describe("TranscriptReplayView with server keyframes and idle skipping", () => {
+  it("seeks through keyframes recorded on the server instead of indexing from the start", async () => {
+    mocks.transcriptKeyframes.mockResolvedValue([{ nextSeq: 4, ts: 2000, cols: 80, rows: 24, state: "SERVER-STATE" }]);
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    await flush();
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    });
+    expect(mocks.transcriptKeyframes).toHaveBeenCalledWith("t-1");
+    const [view] = terminalMocks.instances;
+    // Only the chunk after the server keyframe is left to index, starting from that keyframe.
+    expect(terminalMocks.offscreen).toHaveLength(1);
+    const builder = terminalMocks.offscreen[0];
+    expect(builder.content.startsWith("SERVER-STATE")).toBe(true);
+    expect(builder.content).not.toContain("hello");
+    const range = mounted.container.querySelector("input[aria-label='回放进度']") as HTMLInputElement;
+    setInputValue(range, "1000");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.writes).toContain("SERVER-STATE" as unknown as Uint8Array);
+  });
+
+  it("plays long pauses short while idle skipping is on and restores the real timeline when it is off", async () => {
+    mocks.transcriptRead.mockResolvedValue({
+      chunks: [
+        { seq: 0, tabId: "tab-1", ts: 1000, kind: 2, dataBase64: RESIZE_80 },
+        { seq: 1, tabId: "tab-1", ts: 1000, kind: 0, dataBase64: b64("before ") },
+        { seq: 2, tabId: "tab-1", ts: 601_000, kind: 0, dataBase64: b64("after") },
+      ],
+      nextSeq: 3,
+      done: true,
+      totalBytes: 32,
+    });
+    mounted = mount(<TranscriptReplayView transcriptId="t-1" />);
+    await flush();
+    const clock = () => mounted!.container.querySelector("[data-testid='replay-clock']")?.textContent;
+    expect(clock()).toBe("00:00 / 00:02");
+    const toggle = mounted.container.querySelector<HTMLInputElement>("[data-testid='replay-skip-idle']")!;
+    expect(toggle.checked).toBe(true);
+    await act(async () => {
+      toggle.click();
+    });
+    expect(clock()).toBe("00:00 / 10:00");
+    expect(localStorage.getItem("nexterm.replay.skipIdle")).toBe("0");
   });
 });

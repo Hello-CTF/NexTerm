@@ -57,6 +57,17 @@ type transcriptReadResult struct {
 	TotalBytes int64                `json:"totalBytes"`
 }
 
+// transcriptKeyframeDTO is a seek keyframe built while the transcript was
+// recorded: State, written into a fresh terminal of Cols x Rows, rebuilds
+// the replay after every chunk before NextSeq.
+type transcriptKeyframeDTO struct {
+	NextSeq int64  `json:"nextSeq"`
+	TS      int64  `json:"ts"`
+	Cols    int    `json:"cols"`
+	Rows    int    `json:"rows"`
+	State   string `json:"state"`
+}
+
 type transcriptSearchRequest struct {
 	ID    string `json:"id"`
 	Query string `json:"query"`
@@ -122,6 +133,22 @@ func (s *terminalCommandService) registerTranscripts(dispatcher *ipc.Dispatcher)
 				result := make([]transcriptSummaryDTO, 0, len(rows))
 				for _, row := range rows {
 					result = append(result, s.transcriptSummary(ctx, row, assetDeleted))
+				}
+				return result, nil
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "transcript_keyframes", func(ctx context.Context, _ *ipc.Call, input transcriptIDRequest) ([]transcriptKeyframeDTO, error) {
+				if err := store.EnsureID(input.ID); err != nil {
+					return nil, err
+				}
+				frames, err := s.database.TranscriptKeyframes(ctx, input.ID)
+				if err != nil {
+					return nil, err
+				}
+				result := make([]transcriptKeyframeDTO, 0, len(frames))
+				for _, frame := range frames {
+					result = append(result, transcriptKeyframeDTO{NextSeq: frame.NextSeq, TS: frame.TS, Cols: frame.Cols, Rows: frame.Rows, State: frame.State})
 				}
 				return result, nil
 			})

@@ -3005,6 +3005,14 @@ export const ipcContractManifest = {
       input: { go: "struct{}", ts: "Record<string, never>" },
       output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptHostDTO", ts: "TranscriptHostDTO[]" },
     },
+    "transcript_keyframes": {
+      scope: "transcript",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.transcriptIDRequest", ts: "TranscriptIDRequest" },
+      output: { go: "[]github.com/Hello-CTF/NexTerm/internal/app/production.transcriptKeyframeDTO", ts: "TranscriptKeyframeDTO[]" },
+    },
     "transcript_list": {
       scope: "transcript",
       nested: false,
@@ -4777,6 +4785,10 @@ export interface IPCCommandTypeMap {
   "transcript_hosts": {
     input: Record<string, never>;
     output: contractTypes.TranscriptHostDTO[];
+  };
+  "transcript_keyframes": {
+    input: contractTypes.TranscriptIDRequest;
+    output: contractTypes.TranscriptKeyframeDTO[];
   };
   "transcript_list": {
     input: contractTypes.TranscriptListRequest;

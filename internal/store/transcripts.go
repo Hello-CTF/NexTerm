@@ -521,6 +521,9 @@ func (s *Store) TranscriptReplaceContent(ctx context.Context, transcriptID strin
 			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
 			return err
 		}
+		if err := deleteTranscriptKeyframesTx(ctx, tx, transcriptID); err != nil {
+			return err
+		}
 		gen, err := s.transcriptContentGen(ctx, tx, transcriptID)
 		if err != nil {
 			return err
@@ -700,6 +703,9 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 		if err := tx.WithContext(ctx).
 			Where("transcript_id = ?", row.ID).
 			Delete(&model.TranscriptChunkTS{}).Error; err != nil {
+			return err
+		}
+		if err := deleteTranscriptKeyframesTx(ctx, tx, row.ID); err != nil {
 			return err
 		}
 		gen, err := s.transcriptContentGen(ctx, tx, row.ID)

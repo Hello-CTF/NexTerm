@@ -3610,6 +3610,14 @@ export type TranscriptIDRequest = {
   id: string;
 };
 
+export type TranscriptKeyframeDTO = {
+  nextSeq: number;
+  ts: number;
+  cols: number;
+  rows: number;
+  state: string;
+};
+
 export type TranscriptListRequest = {
   assetId: string;
   starredOnly?: boolean;

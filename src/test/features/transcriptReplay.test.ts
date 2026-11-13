@@ -237,3 +237,47 @@ describe("formatReplayClock", () => {
     expect(formatReplayClock(-5)).toBe("00:00");
   });
 });
+
+describe("idle skipping", () => {
+  const out = (seq: number, ts: number, text: string) => ({ seq, ts, kind: TRANSCRIPT_KIND_OUTPUT, data: new TextEncoder().encode(text) });
+  const chunks = () => [out(0, 1000, "a"), out(1, 1500, "b"), out(2, 3_601_500, "c"), out(3, 3_602_000, "d")];
+
+  it("plays a pause longer than the cap as the cap", () => {
+    expect(new TranscriptReplay(chunks()).durationMs()).toBe(3_601_000);
+    const engine = new TranscriptReplay(chunks(), { idleCapMs: 2000 });
+    expect(engine.durationMs()).toBe(500 + 2000 + 500);
+    const sink = new RecordingSink();
+    engine.seek(sink, 2600);
+    return Promise.resolve().then(() => expect(sink.content).toBe("abc"));
+  });
+
+  it("keeps the replay on the same chunk when the cap changes", () => {
+    const engine = new TranscriptReplay(chunks(), { idleCapMs: 2000 });
+    // 2700 lies 200 ms after "c"; without the cap that chunk sits at 3 600 500.
+    expect(engine.setIdleCap(Infinity, 2700)).toBe(3_600_700);
+    expect(engine.durationMs()).toBe(3_601_000);
+    expect(engine.setIdleCap(2000, 3_600_700)).toBe(2700);
+  });
+
+  it("places keyframes by the chunks they include, on either timeline", () => {
+    const engine = new TranscriptReplay(chunks(), { idleCapMs: 2000 });
+    engine.addKeyframes([{ nextIndex: 3, positionMs: 123, cols: 80, rows: 24, state: "abc" }]);
+    expect(engine.keyframeList()[0].positionMs).toBe(2500);
+    engine.setIdleCap(Infinity, 0);
+    expect(engine.keyframeList()[0].positionMs).toBe(3_600_500);
+    // Frames past the loaded chunks or behind the last frame are ignored.
+    engine.addKeyframes([
+      { nextIndex: 2, positionMs: 0, cols: 80, rows: 24, state: "ab" },
+      { nextIndex: 9, positionMs: 0, cols: 80, rows: 24, state: "?" },
+    ]);
+    expect(engine.keyframeList().map((frame) => frame.nextIndex)).toEqual([3]);
+  });
+
+  it("maps sequences and absolute timestamps onto the chunk list", () => {
+    const engine = new TranscriptReplay(chunks(), { idleCapMs: 2000 });
+    expect(engine.indexOfSeq(2)).toBe(2);
+    expect(engine.indexOfSeq(9)).toBe(4);
+    expect(engine.positionOfTs(3_601_000)).toBe(2500);
+    expect(engine.positionOfTs(99_999_999)).toBe(engine.durationMs());
+  });
+});
