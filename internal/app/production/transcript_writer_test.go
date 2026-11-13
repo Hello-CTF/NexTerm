@@ -244,7 +244,7 @@ func TestTranscriptWriterBackpressureDropsWithoutBlocking(t *testing.T) {
 		t.Fatalf("four accepted chunks and one degradation marker must be persisted: %+v", rows)
 	}
 	chunks := readTranscriptAll(t, database, rows[0].ID)
-	if !bytes.Contains(chunks[4].Data, []byte("omitted 60 chunk(s)")) {
+	if !bytes.Contains(chunks[4].Data, []byte("省略了 60 段输出")) {
 		t.Fatalf("degradation marker must describe the loss: %+v", chunks[4])
 	}
 }
@@ -284,7 +284,7 @@ func TestTranscriptWriterTruncatesAtSessionCap(t *testing.T) {
 	payloadChunks := 0
 	var recorded []byte
 	for _, chunk := range chunks {
-		if bytes.Contains(chunk.Data, []byte("size limit reached")) {
+		if bytes.Contains(chunk.Data, []byte("录制已达大小上限")) {
 			markers++
 			continue
 		}
@@ -592,7 +592,7 @@ func TestTranscriptWriterBackpressureEndFollowsQueuedOutputAndDropMarker(t *test
 			t.Fatalf("accepted output changed order at %d: %+v", index, chunks[index])
 		}
 	}
-	if !bytes.Contains(chunks[4].Data, []byte("omitted 1 chunk(s)")) || bytes.Contains(chunks[4].Data, []byte("tail-output")) {
+	if !bytes.Contains(chunks[4].Data, []byte("省略了 1 段输出")) || bytes.Contains(chunks[4].Data, []byte("tail-output")) {
 		t.Fatalf("the dropped tail must be represented by its marker before End: %+v", chunks[4])
 	}
 }
@@ -806,7 +806,6 @@ func TestTranscriptWriterShutdownDrainsEnqueuedChunks(t *testing.T) {
 	})
 	writer.SessionStarted(ctx, transcriptIdentity("session-drain"))
 	writer.SessionOutput(ctx, "", "session-drain", "tab-1", []byte("queued-one\r\n"))
-	writer.SessionInput(ctx, "session-drain", "tab-1", []byte("typed\r"))
 	writer.SessionResize(ctx, "session-drain", "tab-1", 120, 40)
 	writer.SessionOutput(ctx, "", "session-drain", "tab-1", []byte("queued-two\r\n"))
 	if err := writer.Start(ctx); err != nil {
@@ -826,23 +825,22 @@ func TestTranscriptWriterShutdownDrainsEnqueuedChunks(t *testing.T) {
 		t.Fatalf("expected one transcript, got %+v", rows)
 	}
 	row := rows[0]
-	if row.Chunks != 4 || row.EndedAt == nil {
+	if row.Chunks != 3 || row.EndedAt == nil {
 		t.Fatalf("shutdown must drain queued chunks and end the session: %+v", row)
 	}
 	chunks := readTranscriptAll(t, database, row.ID)
-	if len(chunks) != 4 {
-		t.Fatalf("expected 4 drained chunks, got %+v", chunks)
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 drained chunks, got %+v", chunks)
 	}
 	wantKinds := []int{
-		store.TranscriptChunkKindOutput, store.TranscriptChunkKindInput,
-		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
+		store.TranscriptChunkKindOutput, store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
 	}
 	for index, chunk := range chunks {
 		if chunk.Seq != int64(index) || chunk.Kind != wantKinds[index] {
 			t.Fatalf("chunk %d = seq %d kind %d, want kind %d", index, chunk.Seq, chunk.Kind, wantKinds[index])
 		}
 	}
-	if string(chunks[0].Data) != "queued-one\r\n" || string(chunks[3].Data) != "queued-two\r\n" {
+	if string(chunks[0].Data) != "queued-one\r\n" || string(chunks[2].Data) != "queued-two\r\n" {
 		t.Fatalf("drained content mismatch: %q %q", chunks[0].Data, chunks[3].Data)
 	}
 }
@@ -896,7 +894,6 @@ func TestTranscriptWriterRecordsInputAndResizeInOrder(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-kinds"))
 	writer.SessionResize(ctx, "session-kinds", "tab-1", 80, 24)
 	writer.SessionOutput(ctx, "tab-1", "session-kinds", "tab-1", []byte("output-one\r\n"))
-	writer.SessionInput(ctx, "session-kinds", "tab-1", []byte("ls -la\r"))
 	writer.SessionResize(ctx, "session-kinds", "tab-1", 120, 40)
 	writer.SessionOutput(ctx, "tab-1", "session-kinds", "tab-1", []byte("output-two\r\n"))
 	writer.SessionEnded(ctx, "session-kinds")
@@ -914,11 +911,11 @@ func TestTranscriptWriterRecordsInputAndResizeInOrder(t *testing.T) {
 		t.Fatalf("expected one transcript, got %+v", rows)
 	}
 	chunks := readTranscriptAll(t, database, rows[0].ID)
-	if len(chunks) != 5 {
-		t.Fatalf("expected 5 chunks, got %+v", chunks)
+	if len(chunks) != 4 {
+		t.Fatalf("expected 4 chunks, got %+v", chunks)
 	}
 	wantKinds := []int{
-		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput, store.TranscriptChunkKindInput,
+		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
 		store.TranscriptChunkKindResize, store.TranscriptChunkKindOutput,
 	}
 	for index, chunk := range chunks {
@@ -926,11 +923,8 @@ func TestTranscriptWriterRecordsInputAndResizeInOrder(t *testing.T) {
 			t.Fatalf("chunk %d = seq %d kind %d, want kind %d", index, chunk.Seq, chunk.Kind, wantKinds[index])
 		}
 	}
-	if string(chunks[0].Data) != `{"cols":80,"rows":24}` || string(chunks[3].Data) != `{"cols":120,"rows":40}` {
-		t.Fatalf("resize payload must encode the geometry: %q %q", chunks[0].Data, chunks[3].Data)
-	}
-	if string(chunks[2].Data) != "ls -la\r" {
-		t.Fatalf("input chunk payload: %q", chunks[2].Data)
+	if string(chunks[0].Data) != `{"cols":80,"rows":24}` || string(chunks[2].Data) != `{"cols":120,"rows":40}` {
+		t.Fatalf("resize payload must encode the geometry: %q %q", chunks[0].Data, chunks[2].Data)
 	}
 	offset, err := database.DurableTranscriptOffsetGet(ctx, "tab-1")
 	if err != nil {
@@ -941,7 +935,7 @@ func TestTranscriptWriterRecordsInputAndResizeInOrder(t *testing.T) {
 	}
 }
 
-func TestTranscriptWriterTruncationStopsInputAndResize(t *testing.T) {
+func TestTranscriptWriterTruncationStopsResize(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
 	if err != nil {
@@ -952,7 +946,7 @@ func TestTranscriptWriterTruncationStopsInputAndResize(t *testing.T) {
 	writer.SessionStarted(ctx, transcriptIdentity("session-cap-kinds"))
 	payload := bytes.Repeat([]byte("z"), 1024)
 	writer.SessionOutput(ctx, "", "session-cap-kinds", "tab-1", payload)
-	writer.SessionInput(ctx, "session-cap-kinds", "tab-1", payload)
+	writer.SessionOutput(ctx, "", "session-cap-kinds", "tab-1", payload)
 	writer.SessionResize(ctx, "session-cap-kinds", "tab-1", 120, 40)
 	writer.SessionOutput(ctx, "", "session-cap-kinds", "tab-1", []byte("after-cap"))
 	writer.SessionEnded(ctx, "session-cap-kinds")
@@ -973,11 +967,52 @@ func TestTranscriptWriterTruncationStopsInputAndResize(t *testing.T) {
 	if len(chunks) != 3 {
 		t.Fatalf("expected 2 payload chunks plus one marker, got %+v", chunks)
 	}
-	if chunks[0].Kind != store.TranscriptChunkKindOutput || chunks[1].Kind != store.TranscriptChunkKindInput {
+	if chunks[0].Kind != store.TranscriptChunkKindOutput || chunks[1].Kind != store.TranscriptChunkKindOutput {
 		t.Fatalf("payload kinds before the cap: %+v", chunks)
 	}
 	marker := chunks[2]
-	if marker.Kind != store.TranscriptChunkKindOutput || !bytes.Contains(marker.Data, []byte("size limit reached")) {
+	if marker.Kind != store.TranscriptChunkKindOutput || !bytes.Contains(marker.Data, []byte("录制已达大小上限")) {
 		t.Fatalf("truncation marker must be an output chunk: %+v", marker)
+	}
+}
+
+// A connection period without session output, such as a reconnect of
+// terminals left in the background that records only geometry and a notice,
+// leaves no transcript; one with output is kept.
+func TestTranscriptWriterDeletesPeriodsWithoutOutput(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	writer := startTestWriter(t, database, transcriptWriterConfig{})
+	writer.SessionStarted(ctx, transcriptIdentity("session-empty"))
+	writer.SessionResize(ctx, "session-empty", "tab-1", 80, 24)
+	writer.SessionOutputUnrecorded(ctx, "tab-1", "session-empty", "tab-1", 42)
+	writer.SessionEnded(ctx, "session-empty")
+	writer.SessionStarted(ctx, transcriptIdentity("session-output"))
+	writer.SessionResize(ctx, "session-output", "tab-2", 80, 24)
+	writer.SessionOutput(ctx, "", "session-output", "tab-2", []byte("watched\r\n"))
+	writer.SessionEnded(ctx, "session-output")
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := writer.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := database.TranscriptListByAsset(ctx, "asset-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].SessionID != "session-output" || rows[0].EndedAt == nil {
+		t.Fatalf("transcripts = %+v, want only the period with output", rows)
+	}
+	offset, err := database.DurableTranscriptOffsetGet(ctx, "tab-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if offset != 42 {
+		t.Fatalf("durable offset = %d, want the unrecorded bytes counted although the period was dropped", offset)
 	}
 }

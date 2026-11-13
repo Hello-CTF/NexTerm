@@ -34,12 +34,13 @@ const (
 // committing each chunk on its own; a full batch or shutdown flushes without waiting.
 const transcriptBatchLinger = 250 * time.Millisecond
 
-var transcriptTruncationMarker = []byte("\r\n\x1b[33m[NexTerm] transcript size limit reached; further output not recorded\x1b[0m\r\n")
+var transcriptTruncationMarker = []byte("\r\n\x1b[33m[NexTerm] 录制已达大小上限，之后的输出不再录制\x1b[0m\r\n")
 
 type transcriptStore interface {
 	TranscriptStart(context.Context, store.TranscriptRow) error
 	TranscriptAppendChunks(context.Context, string, []store.TranscriptChunkRow, ...map[string]int64) error
 	TranscriptEnd(context.Context, string, int64, bool) error
+	TranscriptDelete(context.Context, string) error
 }
 
 type transcriptWriterConfig struct {
@@ -123,6 +124,9 @@ type transcriptPeriod struct {
 	durableFrozen map[string]bool
 	nextSeq       int64
 	bytes         int64
+	// hasOutput reports that the period recorded session output, not only
+	// geometry or notices; a period without it is deleted when it ends.
+	hasOutput     bool
 	truncated     bool
 	capped        bool
 	pending       []store.TranscriptChunkRow
@@ -322,7 +326,7 @@ func (w *transcriptWriter) SessionOutputGap(ctx context.Context, durableID, sess
 	w.enqueue(ctx, transcriptItem{
 		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
 		ts: time.Now().UnixMilli(), durableSkip: skipped,
-		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] %d byte(s) of output were dropped by the durable history limit before they could be recorded\x1b[0m\r\n", skipped)),
+		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出超出持久终端历史上限，在录制前已被丢弃\x1b[0m\r\n", skipped)),
 	})
 }
 
@@ -337,16 +341,6 @@ func (w *transcriptWriter) SessionOutputUnrecorded(ctx context.Context, durableI
 		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
 		ts: time.Now().UnixMilli(), durableSkip: skipped,
 		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出未录制\x1b[0m\r\n", skipped)),
-	})
-}
-
-func (w *transcriptWriter) SessionInput(ctx context.Context, sessionID, tabID string, data []byte) {
-	if len(data) == 0 {
-		return
-	}
-	w.enqueue(ctx, transcriptItem{
-		kind: transcriptItemChunk, chunkKind: store.TranscriptChunkKindInput,
-		sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli(), data: bytes.Clone(data),
 	})
 }
 
@@ -626,6 +620,9 @@ func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, def
 				}
 				period.durableBytes[item.durableID] += advance
 			}
+			if item.chunkKind == store.TranscriptChunkKindOutput && item.durableSkip == 0 {
+				period.hasOutput = true
+			}
 			period.pending = append(period.pending, store.TranscriptChunkRow{
 				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Kind: item.chunkKind, Data: item.data,
 			})
@@ -674,7 +671,7 @@ func (w *transcriptWriter) applyTranscriptDrop(period *transcriptPeriod, drop tr
 	if period.capped {
 		return
 	}
-	marker := []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] transcript queue full; omitted %d chunk(s) (%d bytes)\x1b[0m\r\n", drop.chunks, drop.bytes))
+	marker := []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 录制队列已满，此处省略了 %d 段输出（%d 字节）\x1b[0m\r\n", drop.chunks, drop.bytes))
 	period.pending = append(period.pending, store.TranscriptChunkRow{
 		Seq: period.nextSeq, TabID: drop.tabID, TS: drop.ts, Data: marker,
 	})
@@ -717,6 +714,16 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	w.flushPending(period)
+	if !period.hasOutput && !period.truncated {
+		// A connection period nobody produced watched output in (a reconnect
+		// of terminals left in the background) would only crowd real
+		// recordings out of retention.
+		if err := w.database.TranscriptDelete(period.writeCtx, period.transcriptID); err != nil {
+			w.stats.flushErrors.Add(1)
+			w.logger.Error("empty transcript delete failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "error", err)
+		}
+		return
+	}
 	if err := w.database.TranscriptEnd(period.writeCtx, period.transcriptID, endedAt, period.truncated); err != nil {
 		w.stats.flushErrors.Add(1)
 		w.logger.Error("transcript end failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "error", err)

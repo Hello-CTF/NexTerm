@@ -31,13 +31,14 @@ import {
   type Workspace,
 } from "../../app/store";
 
-function session(status: SessionRuntimeInfo["status"], kind = "ssh"): SessionRuntimeInfo {
-  return { id: "s1", assetId: "a1", name: "s1", kind, status, tabs: [], createdAt: 1 } as SessionRuntimeInfo;
+// A dropped or failed session carries the error that ended it; a disconnect the user asked for carries none.
+function session(status: SessionRuntimeInfo["status"], kind = "ssh", error: string | null = "connection reset"): SessionRuntimeInfo {
+  return { id: "s1", assetId: "a1", name: "s1", kind, status, tabs: [], createdAt: 1, error } as SessionRuntimeInfo;
 }
 
-function setup(status: SessionRuntimeInfo["status"], kind = "ssh") {
+function setup(status: SessionRuntimeInfo["status"], kind = "ssh", error: string | null = "connection reset") {
   const ws = { id: "w1", kind: "session", title: "w1", sessionId: "s1", panes: [], activePaneId: "p", closable: true } as unknown as Workspace;
-  useUi.setState({ sessions: [session(status, kind)], workspaces: [ws], activeWorkspaceId: "w1" });
+  useUi.setState({ sessions: [session(status, kind, error)], workspaces: [ws], activeWorkspaceId: "w1" });
 }
 
 beforeEach(() => {
@@ -104,10 +105,17 @@ describe("foreground reconnect of dropped sessions", () => {
     expect(mocks.reconnect).toHaveBeenCalledTimes(AUTO_RECONNECT_MAX_FAILURES);
   });
 
-  it("does not reconnect when the user declines the ordinary-terminal confirmation", async () => {
+  it("leaves a disconnect the user asked for alone", async () => {
+    setup("disconnected", "ssh", null);
+    expect(await reconnectDroppedWorkspaces()).toBe(false);
+    expect(mocks.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("reconnects a dropped connection without asking first", async () => {
     setup("disconnected");
     mocks.confirm.mockResolvedValue(false);
-    await reconnectDroppedWorkspaces();
-    expect(mocks.reconnect).not.toHaveBeenCalled();
+    expect(await reconnectDroppedWorkspaces()).toBe(true);
+    expect(mocks.reconnect).toHaveBeenCalledWith("w1");
+    expect(mocks.confirm).not.toHaveBeenCalled();
   });
 });

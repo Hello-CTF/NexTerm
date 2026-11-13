@@ -34,6 +34,10 @@ describe("host key status events", () => {
   it("keeps the toast when an established session is blocked by a host key", () => {
     useUi.setState({
       sessions: [{ id: "s1", assetId: "a1", name: "jump", kind: "ssh", status: "reconnecting", tabs: [], createdAt: 1 }],
+      workspaces: [{
+        id: "w1", kind: "session", title: "jump", sessionId: "s1",
+        panes: [{ id: "p1", tabs: [], activeTabId: null }], activePaneId: "p1", closable: true,
+      }],
     });
     applySessionStatusEvent({ sessionId: "s1", status: "failed", error: pendingMessage, errorCode: "host_key_pending", version: 2 });
     expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual([`会话失败：${pendingMessage}`]);

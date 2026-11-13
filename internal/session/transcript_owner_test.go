@@ -284,10 +284,6 @@ func (s *ownerRecordingSink) SessionOutput(ctx context.Context, _, _, _ string, 
 	s.record("output", ctx)
 }
 
-func (s *ownerRecordingSink) SessionInput(ctx context.Context, _, _ string, _ []byte) {
-	s.record("input", ctx)
-}
-
 func (s *ownerRecordingSink) SessionResize(ctx context.Context, _, _ string, _, _ uint32) {
 	s.record("resize", ctx)
 }
@@ -338,10 +334,6 @@ func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
-	if err := manager.Write(ownerA, info.ID, "client-a", []byte("owner-input\r")); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return len(sink.calls("input")) > 0 })
 	if err := manager.Resize(ownerA, info.ID, "client-a", 120, 40); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +348,7 @@ func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
 	}
 	waitFor(t, func() bool { return len(sink.calls("started")) == 2 })
 
-	for _, method := range []string{"started", "output", "input", "resize", "ended"} {
+	for _, method := range []string{"started", "output", "resize", "ended"} {
 		sink.assertEveryCallCarries(t, method, "owner-a")
 	}
 }
@@ -377,21 +369,16 @@ func TestTranscriptSinkOwnerComesFromSessionNotCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := manager.OpenTab(context.Background(), OpenTabOptions{
+	if _, err := manager.OpenTab(context.Background(), OpenTabOptions{
 		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a", Cols: 80, Rows: 24,
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := connector.transport(0).channel(0).emit([]byte("open-output\r\n")); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
-	if err := manager.Write(context.Background(), info.ID, "client-a", []byte("open-input\r")); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return len(sink.calls("input")) > 0 })
-	for _, method := range []string{"started", "output", "input"} {
+	for _, method := range []string{"started", "output"} {
 		sink.assertEveryCallCarries(t, method, "owner-a")
 	}
 

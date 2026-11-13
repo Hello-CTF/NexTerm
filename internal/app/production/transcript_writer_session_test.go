@@ -430,7 +430,7 @@ func TestTranscriptWriterDropMarkerInheritsOwner(t *testing.T) {
 		chunks := readTranscriptAll(t, database, row.ID)
 		marker, postRetry := false, false
 		for _, chunk := range chunks {
-			if bytes.Contains(chunk.Data, []byte("omitted 60 chunk(s)")) {
+			if bytes.Contains(chunk.Data, []byte("省略了 60 段输出")) {
 				marker = true
 			}
 			if bytes.Contains(chunk.Data, []byte("post-retry-output")) {
@@ -471,7 +471,7 @@ func TestTranscriptWriterDropMarkerInheritsOwner(t *testing.T) {
 			t.Fatalf("deferred transcript state = %+v, want owner-a, truncated, ended", row)
 		}
 		chunks := readTranscriptAll(t, database, row.ID)
-		if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("omitted 60 chunk(s)")) {
+		if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("省略了 60 段输出")) {
 			t.Fatalf("the deferred transcript must carry exactly its omission marker: %+v", chunks)
 		}
 		if offset, err := database.DurableTranscriptOffsetGet(ownerA, "durable-tab"); err != nil || offset != 0 {

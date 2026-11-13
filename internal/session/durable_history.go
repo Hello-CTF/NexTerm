@@ -54,22 +54,14 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 	prelude := tab.historyPrelude
 	gap := tab.pendingGap
 	banner := tab.pendingBanner
-	unrecorded := tab.unrecorded
-	durableID := ""
-	if tab.durable != nil {
-		durableID = tab.ID
-	}
 	tab.historyPrelude = nil
 	tab.pendingGap = 0
 	tab.pendingBanner = false
-	tab.unrecorded = 0
 	tab.mu.Unlock()
 	if gap > 0 {
 		m.transcriptGap(ctx, tab, gap)
 	}
-	if m.transcripts != nil {
-		m.transcriptUnrecorded(ctx, tab, durableID, unrecorded)
-	}
+	m.flushUnrecorded(ctx, tab)
 	if len(prelude) > 0 {
 		// The prelude restores the replayed tail's modes: it is replay too.
 		_ = m.feedWith(ctx, tab, generation, prelude, feedOptions{replay: true})
@@ -94,14 +86,16 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	replayUntil := tab.replayUntil
 	var control ControlEvent
 	gap := start - fed
+	var unreported int64
 	if gap > 0 {
 		tab.historyTruncated = true
 		control = tab.controlEventLocked()
+		unreported = tab.gapPastReplayLocked(fed, start, replayUntil)
 	}
 	tab.mu.Unlock()
 	if gap > 0 {
 		m.logger.Warn("durable output dropped by the history limit before it was streamed", "tab", tab.ID, "from", fed, "to", start)
-		m.transcriptGap(ctx, tab, gap)
+		m.transcriptGap(ctx, tab, unreported)
 		_ = m.feedWith(ctx, tab, generation, durableHistoryGapBanner, feedOptions{replay: start < replayUntil})
 		m.emit(context.Background(), TopicTerminalControl, control)
 	}
@@ -136,6 +130,19 @@ func (m *Manager) feedDurable(ctx context.Context, tab *Tab, generation uint64, 
 	return nil
 }
 
+// gapPastReplayLocked accounts for helper offsets [from, to) that will never
+// be streamed. The part inside a recovered replay was already reported as
+// unrecorded when the tab recovered, so it only shortens the replay still to
+// be skipped; the rest is returned as a gap to report. t.mu must be held.
+func (t *Tab) gapPastReplayLocked(from, to, replayUntil int64) int64 {
+	if to <= from {
+		return 0
+	}
+	inReplay := min(max(min(to, replayUntil)-from, 0), t.transcriptSkip)
+	t.transcriptSkip -= inReplay
+	return to - from - inReplay
+}
+
 // noteDurableReplacement records where a reconnect's replacement attachment
 // resumed. A resume offset the helper no longer kept leaves a gap that is
 // reported to the transcript and marks the tab's history truncated. Callers
@@ -146,9 +153,7 @@ func (t *Tab) noteDurableReplacementLocked(attachment base.DurableAttachment) {
 		return
 	}
 	if replay.Truncated {
-		if gap := int64(replay.ReplayFrom) - t.durableFed; gap > 0 {
-			t.pendingGap += gap
-		}
+		t.pendingGap += t.gapPastReplayLocked(t.durableFed, int64(replay.ReplayFrom), t.replayUntil)
 		t.historyTruncated = true
 		t.historyBase = replay.HistoryBase
 		t.pendingBanner = true

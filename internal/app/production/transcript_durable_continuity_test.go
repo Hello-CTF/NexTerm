@@ -186,7 +186,7 @@ func TestTranscriptWriterDurableGapAdvancesOffset(t *testing.T) {
 	for _, chunk := range chunks {
 		recorded = append(recorded, chunk.Data...)
 	}
-	if !bytes.Contains(recorded, []byte("1000 byte(s) of output were dropped")) || !bytes.HasSuffix(recorded, []byte("tail")) {
+	if !bytes.Contains(recorded, []byte("1000 字节输出超出持久终端历史上限")) || !bytes.HasSuffix(recorded, []byte("tail")) {
 		t.Fatalf("transcript = %q", recorded)
 	}
 }

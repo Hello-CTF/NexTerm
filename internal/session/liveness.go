@@ -356,14 +356,6 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 	generation := session.generation
 	transport := session.transport
 	session.mu.Unlock()
-	if status == StatusFailed {
-		// The network may be back: a Failed session whose durable terminals
-		// a client watches retries now instead of waiting for its retry.
-		if sessionWatchesDurable(session) {
-			_ = m.startReconnectImmediate(session.ID, 0)
-		}
-		return session.Info(), nil
-	}
 	if status != StatusConnected {
 		return session.Info(), nil
 	}
@@ -392,8 +384,8 @@ func (m *Manager) ProbeLivenessFor(ctx context.Context, id string) (SessionInfo,
 
 // RetryReconnectNowFor is the user's "retry now" on a reconnecting session: it
 // ends the current backoff whatever earlier probes did, so the next attempt
-// dials at once. An attempt already dialing answers it. A Failed session that
-// holds durable terminals starts reconnecting immediately.
+// dials at once. An attempt already dialing answers it. A Failed session
+// starts reconnecting immediately.
 func (m *Manager) RetryReconnectNowFor(ctx context.Context, id string) (SessionInfo, error) {
 	session, err := m.SessionFor(ctx, id)
 	if err != nil {
@@ -412,7 +404,7 @@ func (m *Manager) RetryReconnectNowFor(ctx context.Context, id string) (SessionI
 	}
 	status := session.status
 	session.mu.Unlock()
-	if status == StatusFailed && sessionHoldsDurable(session) {
+	if status == StatusFailed {
 		_ = m.startReconnectImmediate(session.ID, 0)
 	}
 	return session.Info(), nil

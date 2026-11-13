@@ -101,6 +101,7 @@ describe("session reconnect status", () => {
   });
 
   it("shows one success toast when a reconnect completes", () => {
+    showSessionInWorkspace();
     applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 1 });
     expect(useUi.getState().toasts).toEqual([]);
 
@@ -175,7 +176,7 @@ describe("session reconnect status", () => {
   });
 
   it.each(["ssh", "timeout", "disconnected"])(
-    "notifies once per reconnect cycle for retryable %s failure and reconnects from the action",
+    "notifies once per outage for retryable %s failure and reconnects from the action",
     async (errorCode) => {
       showSessionInWorkspace();
       const fail = (version: number) => applySessionStatusEvent({
@@ -193,21 +194,43 @@ describe("session reconnect status", () => {
       expect(firstToast.text).toContain("自动重新连接失败");
       expect(firstToast.action?.label).toBe("重新连接");
 
-      fail(3);
+      // Later retry rounds of the same outage do not repeat it.
+      applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 3 });
+      fail(4);
       expect(useUi.getState().toasts).toHaveLength(1);
       expect(useUi.getState().toasts[0].id).toBe(firstToast.id);
 
-      applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 4 });
-      fail(5);
-      const secondToast = useUi.getState().toasts[0];
-      expect(useUi.getState().toasts).toHaveLength(1);
-      expect(secondToast.id).not.toBe(firstToast.id);
+      // A new outage after a reconnect is reported again.
+      applySessionStatusEvent({ sessionId: "s1", status: "connected", error: null, version: 5 });
+      applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 6 });
+      fail(7);
+      const latest = useUi.getState().toasts.filter((toast) => toast.action?.label === "重新连接");
+      expect(latest).toHaveLength(1);
+      expect(latest[0].id).not.toBe(firstToast.id);
 
-      secondToast.action?.onSelect();
+      latest[0].action?.onSelect();
       await vi.waitFor(() => expect(mocks.sessionReconnect).toHaveBeenCalledWith("s1"));
       await vi.waitFor(() => expect(useUi.getState().sessions[0]?.status).toBe("connected"));
     },
   );
+
+  it("leaves the outcome of a reconnect this client started to that reconnect", async () => {
+    showSessionInWorkspace();
+    useUi.setState({ sessions: [session("failed")] });
+    const pending = reconnectSessionAndWait(session("failed"));
+    applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 1 });
+    applySessionStatusEvent({
+      sessionId: "s1",
+      status: "failed",
+      error: "temporary failure",
+      errorCode: "timeout",
+      attempt: 3,
+      nextRetryAt: null,
+      version: 2,
+    });
+    expect(useUi.getState().toasts).toHaveLength(0);
+    await pending.catch(() => undefined);
+  });
 
   it("does not toast background retries of a session no open workspace shows", () => {
     // Closing a workspace whose durable terminals moved to the background leaves the host session
@@ -253,6 +276,7 @@ describe("session reconnect status", () => {
     "vault_locked",
     "vault_not_init",
   ])("keeps permanent %s failure on the plain error path", (errorCode) => {
+    showSessionInWorkspace();
     applySessionStatusEvent({ sessionId: "s1", status: "reconnecting", error: null, version: 1 });
     applySessionStatusEvent({
       sessionId: "s1",

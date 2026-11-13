@@ -24,6 +24,7 @@ type delayedTranscriptStore struct {
 	chunks         []store.TranscriptChunkRow
 	ended          []bool
 	endedByID      map[string]bool
+	deleted        []string
 	durableOffsets map[string]int64
 	events         []string
 	startFailures  int
@@ -108,6 +109,14 @@ func (s *delayedTranscriptStore) TranscriptEnd(_ context.Context, transcriptID s
 	s.events = append(s.events, "end")
 	s.mu.Unlock()
 	s.endOnce.Do(func() { close(s.endCalled) })
+	return nil
+}
+
+func (s *delayedTranscriptStore) TranscriptDelete(_ context.Context, transcriptID string) error {
+	s.mu.Lock()
+	s.deleted = append(s.deleted, transcriptID)
+	s.events = append(s.events, "delete")
+	s.mu.Unlock()
 	return nil
 }
 
@@ -219,7 +228,7 @@ func TestTranscriptWriterSlowStoreInteractiveOutputP99(t *testing.T) {
 			t.Fatalf("chunk %d has seq %d", index, chunk.Seq)
 		}
 	}
-	if !bytes.Contains(chunks[len(chunks)-1].Data, []byte("omitted 192")) {
+	if !bytes.Contains(chunks[len(chunks)-1].Data, []byte("省略了 192 段输出")) {
 		t.Fatalf("last chunk must describe the degraded tail: %+v", chunks[len(chunks)-1])
 	}
 	if got, want := offsets["tab-1"], int64(65*len(payload)); got != want {
@@ -238,7 +247,7 @@ func TestTranscriptWriterSessionEndFlushesTailWithoutShutdown(t *testing.T) {
 	}
 	writer.SessionStarted(ctx, transcriptIdentity("session-end-flush"))
 	writer.SessionOutput(ctx, "", "session-end-flush", "tab-1", []byte("first\r\n"))
-	writer.SessionInput(ctx, "session-end-flush", "tab-1", []byte("tail-input\r"))
+	writer.SessionOutput(ctx, "", "session-end-flush", "tab-1", []byte("tail-output\r\n"))
 	writer.SessionEnded(ctx, "session-end-flush")
 	select {
 	case <-database.endCalled:
@@ -246,7 +255,7 @@ func TestTranscriptWriterSessionEndFlushesTailWithoutShutdown(t *testing.T) {
 		t.Fatal("SessionEnded did not flush the critical tail")
 	}
 	chunks, ended, _, events := database.snapshot()
-	if len(chunks) != 2 || string(chunks[1].Data) != "tail-input\r" || len(ended) != 1 {
+	if len(chunks) != 2 || string(chunks[1].Data) != "tail-output\r\n" || len(ended) != 1 {
 		t.Fatalf("tail was not persisted before End: chunks=%+v ended=%+v", chunks, ended)
 	}
 	if len(events) == 0 || events[len(events)-1] != "end" {
@@ -688,7 +697,7 @@ func TestTranscriptWriterDurableOffsetStopsAtDroppedChunk(t *testing.T) {
 	}
 	chunks := database.chunksForTranscript(started[0].ID)
 	if len(chunks) != 4 || string(chunks[0].Data) != "a" || string(chunks[2].Data) != "b" ||
-		!bytes.Contains(chunks[1].Data, []byte("omitted 1 chunk(s)")) || !bytes.Contains(chunks[3].Data, []byte("omitted 1 chunk(s)")) {
+		!bytes.Contains(chunks[1].Data, []byte("省略了 1 段输出")) || !bytes.Contains(chunks[3].Data, []byte("省略了 1 段输出")) {
 		t.Fatalf("accepted output and drop markers lost causal order: %+v", chunks)
 	}
 	_, _, offsets, _ := database.snapshot()
@@ -744,7 +753,7 @@ func TestTranscriptWriterDropMarkersPreserveSessionCausality(t *testing.T) {
 	}
 	for _, row := range started {
 		chunks := database.chunksForTranscript(row.ID)
-		if len(chunks) == 0 || !bytes.Contains(chunks[len(chunks)-1].Data, []byte("omitted 1 chunk(s)")) {
+		if len(chunks) == 0 || !bytes.Contains(chunks[len(chunks)-1].Data, []byte("省略了 1 段输出")) {
 			t.Fatalf("%s is missing its own drop marker: %+v", row.SessionID, chunks)
 		}
 		if truncated, ended := database.endedTruncated(row.ID); !ended || !truncated {
@@ -799,7 +808,7 @@ func TestTranscriptWriterStartFailureKeepsDeferredBounded(t *testing.T) {
 		t.Fatalf("successful retry rows = %+v", started)
 	}
 	chunks := database.chunksForTranscript(started[0].ID)
-	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("omitted 6 chunk(s) (6 bytes)")) {
+	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("省略了 6 段输出（6 字节）")) {
 		t.Fatalf("retry must persist one aggregate marker: %+v", chunks)
 	}
 	if truncated, ended := database.endedTruncated(started[0].ID); !ended || !truncated {
@@ -824,7 +833,7 @@ func TestTranscriptWriterShutdownFlushesAggregatedDeferred(t *testing.T) {
 		t.Fatalf("Shutdown aggregate rows = %+v", started)
 	}
 	chunks := database.chunksForTranscript(started[0].ID)
-	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("omitted 2 chunk(s) (2 bytes)")) {
+	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("省略了 2 段输出（2 字节）")) {
 		t.Fatalf("Shutdown must persist one aggregate marker: %+v", chunks)
 	}
 	if truncated, ended := database.endedTruncated(started[0].ID); !ended || !truncated {

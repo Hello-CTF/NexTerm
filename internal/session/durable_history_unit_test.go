@@ -176,3 +176,32 @@ func TestReconnectReplacementBelowBaseMarksTruncation(t *testing.T) {
 		t.Fatalf("exact resume fed=%d pending gap=%d", fed, pending)
 	}
 }
+
+// Output the helper dropped inside a recovered tab's replay was reported as
+// unrecorded when the tab recovered: it is not reported again as a gap, and
+// the live output after the replay is still recorded.
+func TestFeedDurableGapInsideReplayIsNotCountedTwice(t *testing.T) {
+	manager, tab, recorder := historyTestTab(t)
+	ctx := context.Background()
+	tab.mu.Lock()
+	generation := tab.generation
+	tab.replayUntil = 10
+	tab.transcriptSkip = 10
+	tab.mu.Unlock()
+
+	if err := manager.feedDurable(ctx, tab, generation, []byte("live"), 14); err != nil {
+		t.Fatal(err)
+	}
+	if skipped := recorder.skipped(); skipped != 0 {
+		t.Fatalf("transcript gap = %d, want none inside the replay", skipped)
+	}
+	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("live")) {
+		t.Fatalf("transcript = %q, want the live output after the replay", got)
+	}
+	tab.mu.Lock()
+	skip := tab.transcriptSkip
+	tab.mu.Unlock()
+	if skip != 0 {
+		t.Fatalf("replay still to skip = %d, want 0", skip)
+	}
+}

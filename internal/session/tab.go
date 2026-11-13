@@ -1063,6 +1063,13 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	registered := false
 	var registeredDetaches uint64
 	var co *outCoalescer
+	// Recording resumes with this client: the notice for output left out
+	// meanwhile is written under the feed gate, ahead of any later output.
+	defer func() {
+		if attached {
+			m.flushUnrecorded(ctx, tab)
+		}
+	}()
 	defer func() {
 		if !attached {
 			if registered {
@@ -1384,6 +1391,23 @@ func (m *Manager) BackgroundTab(ctx context.Context, tabID, client string) error
 		return err
 	}
 	return m.releaseUnreachableDurable(tab)
+}
+
+// releaseUnwatchedDurables applies releaseUnreachableDurable to every tab of a
+// session that stopped reconnecting, so records of terminals left in the
+// background do not outlive the connection.
+func (m *Manager) releaseUnwatchedDurables(session *Session) {
+	session.mu.Lock()
+	tabs := make([]*Tab, 0, len(session.tabs))
+	for _, tab := range session.tabs {
+		tabs = append(tabs, tab)
+	}
+	session.mu.Unlock()
+	for _, tab := range tabs {
+		if err := m.releaseUnreachableDurable(tab); err != nil {
+			m.logger.Warn("release background durable record", "tab", tab.ID, "error", err)
+		}
+	}
 }
 
 // releaseUnreachableDurable drops the local record of a durable tab nobody
@@ -1757,7 +1781,7 @@ func (m *Manager) writeInputBatch(ctx context.Context, tab *Tab, batch []*queued
 		finish(accepted, err)
 		return
 	}
-	m.transcriptInput(ctx, tab, data)
+	m.noteInput(tab, data)
 	finish(accepted, nil)
 }
 

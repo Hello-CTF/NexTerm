@@ -55,6 +55,10 @@ func TestTranscriptRecordsOnlyWhileAClientWatches(t *testing.T) {
 	if _, err := manager.AttachTab(ctx, info.ID, AttachOptions{ClientID: "client-a", ChannelID: "channel-b", ReplayBytes: -1}); err != nil {
 		t.Fatal(err)
 	}
+	// The notice is written as soon as a client watches again.
+	if got, want := recorder.unrecorded(), int64(len("background\r\n")); got != want {
+		t.Fatalf("unrecorded after the attach = %d, want %d", got, want)
+	}
 	emit("watched-2\r\n")
 	waitFor(t, func() bool { return bytes.Contains(recorder.outputBytes(), []byte("watched-2")) })
 
@@ -70,7 +74,8 @@ func TestTranscriptRecordsOnlyWhileAClientWatches(t *testing.T) {
 }
 
 // A Failed session whose durable terminals are all in the background is not
-// retried on its own; the user's retry still reconnects it.
+// retried on its own and drops their records; the user's retry still
+// reconnects it.
 func TestFailedSessionDoesNotRetryForBackgroundTerminals(t *testing.T) {
 	connector := newFakeConnector()
 	var mu sync.Mutex
@@ -95,6 +100,12 @@ func TestFailedSessionDoesNotRetryForBackgroundTerminals(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForSessionStatus(t, manager, connected.ID, StatusFailed)
+	// The record of the background terminal does not outlive the connection:
+	// its process keeps running on the host and a later connection lists it.
+	waitFor(t, func() bool {
+		_, err := manager.Tab(info.ID)
+		return err != nil
+	})
 	mu.Lock()
 	atFailure := attempts
 	mu.Unlock()
@@ -117,6 +128,42 @@ func TestFailedSessionDoesNotRetryForBackgroundTerminals(t *testing.T) {
 	if probed != later {
 		t.Fatal("an automatic probe reconnected a session nobody watches")
 	}
+	if _, err := manager.RetryReconnectNowFor(ctx, connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionStatus(t, manager, connected.ID, StatusConnected)
+}
+
+// The user's retry reconnects a Failed session whatever terminals it holds.
+func TestRetryNowReconnectsAFailedSessionWithoutDurableTerminals(t *testing.T) {
+	connector := newFakeConnector()
+	var mu sync.Mutex
+	offline := true
+	connector.connect = func(_ context.Context, asset Asset, _ uint64, call int) (base.Transport, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if call > 1 && offline {
+			return nil, ipc.NewError(ipc.CodeDisconnected, "offline")
+		}
+		return newFakeTransport(asset.Kind, uint64(call)+1000), nil
+	}
+	manager := NewManager(Config{
+		Connector: connector, Terminals: newFakeTerminalFactory(),
+		ReconnectBackoff: []time.Duration{10 * time.Millisecond}, ReconnectMax: 2, OpenAccess: true,
+	})
+	t.Cleanup(func() { _ = manager.Close() })
+	ctx := context.Background()
+	connected, err := manager.Connect(ctx, Asset{ID: "retry-now", Kind: KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.StartReconnect(connected.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitForSessionStatus(t, manager, connected.ID, StatusFailed)
+	mu.Lock()
+	offline = false
+	mu.Unlock()
 	if _, err := manager.RetryReconnectNowFor(ctx, connected.ID); err != nil {
 		t.Fatal(err)
 	}

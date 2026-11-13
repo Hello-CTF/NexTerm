@@ -781,6 +781,7 @@ func (m *Manager) finishReconnect(session *Session, generation uint64, reconnect
 		m.logger.Warn("session reconnect failed", "session", session.ID, "error", reconnectErr)
 	}
 	m.emit(context.Background(), TopicSessionStatus, finishedEvent)
+	m.releaseUnwatchedDurables(session)
 	return reconnectErr
 }
 
@@ -798,21 +799,11 @@ func (m *Manager) failedRetryDelay(retries int) time.Duration {
 	return delay
 }
 
-// sessionHoldsDurable reports whether the session still has a live durable
-// terminal, whose host process keeps running.
-func sessionHoldsDurable(session *Session) bool {
-	return sessionDurableTab(session, false)
-}
-
 // sessionWatchesDurable reports whether a client watches a live durable
 // terminal of the session, which Failed must not strand. Terminals left in the
 // background are not retried for: their host processes keep running, and the
 // session reconnects when a client opens one or asks to reconnect.
 func sessionWatchesDurable(session *Session) bool {
-	return sessionDurableTab(session, true)
-}
-
-func sessionDurableTab(session *Session, watched bool) bool {
 	session.mu.Lock()
 	tabs := make([]*Tab, 0, len(session.tabs))
 	for _, tab := range session.tabs {
@@ -821,10 +812,9 @@ func sessionDurableTab(session *Session, watched bool) bool {
 	session.mu.Unlock()
 	for _, tab := range tabs {
 		tab.mu.Lock()
-		held := tab.durable != nil && !tab.closed && !tab.destroying && !tab.durableLost &&
-			(!watched || tab.hasInteractiveSubscriberLocked())
+		watched := tab.durable != nil && !tab.closed && !tab.destroying && !tab.durableLost && tab.hasInteractiveSubscriberLocked()
 		tab.mu.Unlock()
-		if held {
+		if watched {
 			return true
 		}
 	}

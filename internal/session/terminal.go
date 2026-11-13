@@ -895,7 +895,7 @@ func (m *Manager) writeInternalLocked(ctx context.Context, tab *Tab, data []byte
 	if err := writeChannelContext(ctx, channel, data); err != nil {
 		return err
 	}
-	m.transcriptInput(ctx, tab, data)
+	m.noteInput(tab, data)
 	return nil
 }
 

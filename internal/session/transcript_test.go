@@ -18,7 +18,6 @@ type transcriptRecorder struct {
 	mu              sync.Mutex
 	started         []TranscriptInfo
 	outputs         []recorderOutput
-	inputs          []recorderOutput
 	resizes         []recorderResize
 	ended           []string
 	offsets         durableTranscriptOffsetSource
@@ -76,12 +75,6 @@ func (r *transcriptRecorder) unrecorded() int64 {
 	return r.unrecordedTotal
 }
 
-func (r *transcriptRecorder) SessionInput(_ context.Context, sessionID, tabID string, data []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.inputs = append(r.inputs, recorderOutput{sessionID: sessionID, tabID: tabID, data: append([]byte(nil), data...)})
-}
-
 func (r *transcriptRecorder) SessionResize(_ context.Context, sessionID, tabID string, cols, rows uint32) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -108,16 +101,6 @@ func (r *transcriptRecorder) outputBytes() []byte {
 	var combined []byte
 	for _, output := range outputs {
 		combined = append(combined, output.data...)
-	}
-	return combined
-}
-
-func (r *transcriptRecorder) inputBytes() []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var combined []byte
-	for _, input := range r.inputs {
-		combined = append(combined, input.data...)
 	}
 	return combined
 }
@@ -688,7 +671,7 @@ func TestTranscriptDurableOffsetDeletedWhenGoneOnReconnect(t *testing.T) {
 	}
 }
 
-func TestTranscriptRecordsInputAndResize(t *testing.T) {
+func TestTranscriptRecordsResize(t *testing.T) {
 	connector := newFakeConnector()
 	recorder := &transcriptRecorder{}
 	manager := newTranscriptTestManager(connector, recorder)
@@ -706,25 +689,13 @@ func TestTranscriptRecordsInputAndResize(t *testing.T) {
 		t.Fatalf("open tab must record the initial geometry: %+v", resizes)
 	}
 
+	// Input is not recorded: nothing replays it and it can carry passwords.
 	if err := manager.Write(context.Background(), tab.ID, "client-a", []byte("ls -la\r")); err != nil {
 		t.Fatal(err)
 	}
 	if err := manager.WriteInternal(context.Background(), tab.ID, []byte("internal-input")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool {
-		inputs := recorder.inputBytes()
-		return bytes.Contains(inputs, []byte("ls -la\r")) && bytes.Contains(inputs, []byte("internal-input"))
-	})
-	if bytes.Contains(recorder.outputBytes(), []byte("ls -la")) || bytes.Contains(recorder.outputBytes(), []byte("internal-input")) {
-		t.Fatal("input must not leak into recorded output")
-	}
-
-	// Another client's input is recorded like the first one's.
-	if err := manager.Write(context.Background(), tab.ID, "client-b", []byte("second-client")); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, func() bool { return bytes.Contains(recorder.inputBytes(), []byte("second-client")) })
 
 	if err := manager.Resize(context.Background(), tab.ID, "client-a", 120, 40); err != nil {
 		t.Fatal(err)

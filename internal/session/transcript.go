@@ -16,7 +16,6 @@ type TranscriptInfo struct {
 type TranscriptSink interface {
 	SessionStarted(ctx context.Context, info TranscriptInfo)
 	SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte)
-	SessionInput(ctx context.Context, sessionID, tabID string, data []byte)
 	SessionResize(ctx context.Context, sessionID, tabID string, cols, rows uint32)
 	SessionEnded(ctx context.Context, sessionID string)
 }
@@ -24,7 +23,6 @@ type TranscriptSink interface {
 type TranscriptSinkFuncs struct {
 	StartedFunc func(ctx context.Context, info TranscriptInfo)
 	OutputFunc  func(ctx context.Context, durableID, sessionID, tabID string, data []byte)
-	InputFunc   func(ctx context.Context, sessionID, tabID string, data []byte)
 	ResizeFunc  func(ctx context.Context, sessionID, tabID string, cols, rows uint32)
 	EndedFunc   func(ctx context.Context, sessionID string)
 }
@@ -38,12 +36,6 @@ func (f TranscriptSinkFuncs) SessionStarted(ctx context.Context, info Transcript
 func (f TranscriptSinkFuncs) SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte) {
 	if f.OutputFunc != nil {
 		f.OutputFunc(ctx, durableID, sessionID, tabID, data)
-	}
-}
-
-func (f TranscriptSinkFuncs) SessionInput(ctx context.Context, sessionID, tabID string, data []byte) {
-	if f.InputFunc != nil {
-		f.InputFunc(ctx, sessionID, tabID, data)
 	}
 }
 
@@ -106,6 +98,27 @@ func (m *Manager) transcriptOutput(ctx context.Context, tab *Tab, data []byte) {
 	m.transcripts.SessionOutput(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, data)
 }
 
+// flushUnrecorded writes the notice for output left out of the transcript once
+// a client watches the tab again.
+func (m *Manager) flushUnrecorded(ctx context.Context, tab *Tab) {
+	if m.transcripts == nil {
+		return
+	}
+	tab.mu.Lock()
+	if !tab.hasInteractiveSubscriberLocked() || tab.unrecorded == 0 {
+		tab.mu.Unlock()
+		return
+	}
+	skipped := tab.unrecorded
+	tab.unrecorded = 0
+	durableID := ""
+	if tab.durable != nil {
+		durableID = tab.ID
+	}
+	tab.mu.Unlock()
+	m.transcriptUnrecorded(ctx, tab, durableID, skipped)
+}
+
 func (m *Manager) transcriptUnrecorded(ctx context.Context, tab *Tab, durableID string, skipped int64) {
 	if sink, ok := m.transcripts.(TranscriptUnrecordedSink); ok && skipped > 0 {
 		sink.SessionOutputUnrecorded(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, skipped)
@@ -123,18 +136,26 @@ func (m *Manager) transcriptEnded(session *Session) {
 	if m.transcripts == nil {
 		return
 	}
+	// A regular terminal's next connection runs a new shell: output its
+	// previous one produced unwatched is not that period's to report.
+	session.mu.Lock()
+	for _, tab := range session.tabs {
+		tab.mu.Lock()
+		if tab.durable == nil {
+			tab.unrecorded = 0
+		}
+		tab.mu.Unlock()
+	}
+	session.mu.Unlock()
 	m.transcripts.SessionEnded(ownerCtx(m.ctx, session.userID), session.ID)
 }
 
-// transcriptInput receives every input written to the session.
-func (m *Manager) transcriptInput(ctx context.Context, tab *Tab, data []byte) {
+// noteInput receives every input written to the session. Input is not
+// recorded: nothing replays it and it can carry passwords.
+func (m *Manager) noteInput(tab *Tab, data []byte) {
 	if len(data) > 0 {
 		m.observeAttentionInput(tab)
 	}
-	if m.transcripts == nil || len(data) == 0 {
-		return
-	}
-	m.transcripts.SessionInput(ownerCtx(ctx, tab.session.userID), tab.SessionID, tab.ID, data)
 }
 
 func (m *Manager) transcriptResize(ctx context.Context, tab *Tab, cols, rows uint32) {

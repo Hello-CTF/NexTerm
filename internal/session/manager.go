@@ -817,6 +817,7 @@ func (m *Manager) disconnect(id string, expectedIdle *time.Time) error {
 	}
 	m.emit(context.Background(), TopicSessionStatus, disconnectedEvent)
 	m.transcriptEnded(session)
+	m.releaseUnwatchedDurables(session)
 	return closeErr
 }
 

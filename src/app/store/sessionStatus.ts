@@ -2,8 +2,8 @@ import { sessionApi, type SessionInfo } from "../../ipc/commands";
 import type { ConnectProgressEvent } from "../../ipc/events";
 import { describeError } from "../../ui/errorText";
 import { formatTime } from "../../ui/format";
-import { confirmSuspectReconnect, reconnectWorkspaceConnection, workspaceConnectionState } from "./workspaceReconnect";
-import { reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
+import { reconnectWorkspaceConnection, workspaceConnectionState } from "./workspaceReconnect";
+import { isSessionReconnectPending, reconnectSessionAndWait, reconnectWorkspaceSession } from "./reconnect";
 import type { SessionRuntimeInfo, SessionStatusEvent, SessionStatusEvidence, UiState } from "./types";
 import { useUi } from "./useUi";
 import { t } from "../../i18n";
@@ -80,16 +80,22 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
         liveness: p.liveness ?? null,
       }
     : session));
-  if (p.status === "connected" && current?.status === "reconnecting") {
+  // A session no open workspace shows is held only by background durable terminals: its drops and reconnects
+  // are not on screen, and its state stays visible in the background sessions panel. A reconnect this client
+  // started reports its own outcome.
+  const quiet = !sessionShownInWorkspace(state.workspaces, p.sessionId) || isSessionReconnectPending(p.sessionId);
+  if (p.status === "connected" && current?.status === "reconnecting" && !quiet) {
     state.pushToast("success", t("会话「{name}」已重新连接", { name: current.name }));
   }
   if (p.status !== "connecting" && p.status !== "reconnecting" && current?.assetId) {
     state.setConnectProgress(current.assetId, null);
   }
-  if (p.status === "connecting" || p.status === "reconnecting" || p.status === "connected") {
+  // The notice stands for the whole outage: retry rounds do not repeat it, only a reconnect ends it.
+  if (p.status === "connected") {
     abnormalDisconnectNotices.delete(p.sessionId);
   }
   if (p.status === "failed" && !retryableFailed) {
+    if (quiet && (current?.status === "reconnecting" || attempt > 0)) return;
     // A first connect that stops at an unconfirmed host key is answered by the confirmation dialog and an
     // automatic second attempt (connectWithHostKeyConfirm), so a toast here would only be noise.
     const awaitingHostKeyDialog = (p.errorCode === "host_key_pending" || p.errorCode === "host_key_changed") &&
@@ -102,9 +108,7 @@ export function applySessionStatusEvent(p: SessionStatusEvent): void {
     abnormalDisconnectNotices.delete(p.sessionId);
     return;
   }
-  // A session no open workspace shows is held only by background durable terminals: a toast would report
-  // a drop with nothing on screen. Its state stays visible in the background sessions panel.
-  if (!sessionShownInWorkspace(state.workspaces, p.sessionId)) return;
+  if (quiet) return;
   if (abnormalDisconnectNotices.has(p.sessionId)) return;
   abnormalDisconnectNotices.add(p.sessionId);
   const name = current?.name ?? p.sessionId;
@@ -206,9 +210,9 @@ export function resetAutoReconnectState(): void {
   autoReconnects.clear();
 }
 
-// reconnectDroppedWorkspaces reconnects the active workspace's host session when it is failed or disconnected.
-// Only ssh and device sessions are reconnected. Durable-only workspaces reconnect silently; with ordinary
-// terminals the usual confirmation applies. Returns whether an attempt was started.
+// reconnectDroppedWorkspaces reconnects the active workspace's host session when it failed or dropped. Only ssh
+// and device sessions are reconnected, and a disconnect the user asked for is left alone. The connection is
+// already gone, so nothing is confirmed first. Returns whether an attempt was started.
 export async function reconnectDroppedWorkspaces(): Promise<boolean> {
   const state = useUi.getState();
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId);
@@ -220,7 +224,9 @@ export async function reconnectDroppedWorkspaces(): Promise<boolean> {
     return false;
   }
   if (status !== "disconnected" && status !== "failed") return false;
-  const kind = state.sessions.find((item) => item.id === sessionId)?.kind ?? workspace.assetKind;
+  const session = state.sessions.find((item) => item.id === sessionId);
+  if (session?.status === "disconnected" && !session.error && !session.errorCode) return false;
+  const kind = session?.kind ?? workspace.assetKind;
   if (kind !== "ssh" && kind !== "device") return false;
   const now = Date.now();
   const entry = autoReconnects.get(sessionId) ?? { lastAt: Number.NEGATIVE_INFINITY, failures: 0 };
@@ -230,7 +236,7 @@ export async function reconnectDroppedWorkspaces(): Promise<boolean> {
   autoReconnects.set(sessionId, { lastAt: now, failures: entry.failures });
   let ok = false;
   try {
-    ok = (await confirmSuspectReconnect(workspace.id)) && (await reconnectWorkspaceConnection(workspace.id));
+    ok = await reconnectWorkspaceConnection(workspace.id);
   } catch {
     ok = false;
   }
