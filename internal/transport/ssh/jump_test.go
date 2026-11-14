@@ -102,6 +102,37 @@ func TestSSHJumpHostChainEndToEnd(t *testing.T) {
 	}
 }
 
+// A target connection that ends without the client closing it releases the
+// jump hop's connection at once: nothing else holds that login open.
+func TestSSHJumpHopClosesWhenTargetConnectionEnds(t *testing.T) {
+	jump := newTestSSHServer(t, nil)
+	target := newTestSSHServer(t, nil)
+	store := NewMemoryHostKeyStore()
+	jumpCfg := testClientConfig(t, jump, AuthConfig{Method: AuthPassword, Password: "secret"})
+	jumpCfg.HostKeys = store
+	targetCfg := testClientConfig(t, target, AuthConfig{Method: AuthPassword, Password: "secret"})
+	targetCfg.HostKeys = store
+	targetCfg.Jump = &jumpCfg
+	client, err := Connect(context.Background(), targetCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jump.active.Load() != 1 {
+		t.Fatalf("jump connections = %d, want 1", jump.active.Load())
+	}
+	_, _ = client.Exec(context.Background(), "drop-connection", base.ExecOptions{Timeout: 5 * time.Second})
+	deadline := time.Now().Add(5 * time.Second)
+	for (client.IsAlive() || jump.active.Load() != 0) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if client.IsAlive() || jump.active.Load() != 0 {
+		t.Fatalf("after the target dropped: alive=%v jump connections=%d", client.IsAlive(), jump.active.Load())
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("close after the connection ended = %v", err)
+	}
+}
+
 func TestSSHJumpChainThreeHops(t *testing.T) {
 	first := newTestSSHServer(t, nil)
 	second := newTestSSHServer(t, nil)

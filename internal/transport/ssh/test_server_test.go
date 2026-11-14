@@ -196,6 +196,12 @@ func (s *testSSHServer) handleSession(conn *gossh.ServerConn, channel gossh.Chan
 				<-s.blockExec
 				return
 			}
+			if payload.Command == "drop-connection" {
+				// The server end of the connection goes away without
+				// the client asking, like a target that rebooted.
+				_ = conn.Close()
+				return
+			}
 			request.Reply(true, nil)
 			s.execute(channel, payload.Command)
 			return

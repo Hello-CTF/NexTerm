@@ -250,6 +250,12 @@ func (c *Client) IsAlive() bool {
 }
 
 func (c *Client) Close() error {
+	return c.close(true)
+}
+
+// close releases the connection and what hangs off it. report is false when
+// the connection already ended, so a later Close has nothing to report.
+func (c *Client) close(report bool) error {
 	c.closeOnce.Do(func() {
 		c.stateOnce.Do(func() { close(c.done) })
 		c.closeErr = c.ssh.Close()
@@ -258,7 +264,7 @@ func (c *Client) Close() error {
 		for index := len(c.closers) - 1; index >= 0; index-- {
 			c.closers[index].Close()
 		}
-		if errors.Is(c.closeErr, net.ErrClosed) || errors.Is(c.closeErr, context.Canceled) {
+		if !report || errors.Is(c.closeErr, net.ErrClosed) || errors.Is(c.closeErr, context.Canceled) {
 			c.closeErr = nil
 		}
 	})
@@ -347,9 +353,12 @@ func (c *Client) check(ctx context.Context, generation uint64) error {
 	return nil
 }
 
+// watch releases the client once its connection ends on its own: the jump
+// hop's connection and the SFTP session would otherwise stay open until an
+// owner noticed and closed the client.
 func (c *Client) watch(conn gossh.Conn) {
 	conn.Wait()
-	c.stateOnce.Do(func() { close(c.done) })
+	_ = c.close(false)
 }
 
 // keepalive is the transport's own death detector, also used by connections
