@@ -8,8 +8,9 @@
 //	go run ./scripts/archive extract ARCHIVE DESTINATION
 //
 // tar writes SOURCE/MEMBER (a file or directory tree) as a gzip-compressed tar
-// whose entries are sorted by path, owned by 0:0 and stamped with EPOCH, so the
-// same input always yields the same bytes. zip stores one regular file the same
+// (uncompressed when ARTIFACT ends in .tar) whose entries are sorted by path,
+// owned by 0:0 and stamped with EPOCH, so the same input always yields the same
+// bytes. zip stores one regular file the same
 // way. Symbolic links and other non-regular files are rejected.
 package main
 
@@ -125,11 +126,16 @@ func createTar(artifact, source, member string, epoch time.Time) error {
 		return err
 	}
 	defer file.Close()
-	compressed, err := gzip.NewWriterLevel(file, gzip.BestCompression)
-	if err != nil {
-		return err
+	// An ARTIFACT ending in .tar is written uncompressed, for a caller that compresses it with another tool.
+	var compressed io.WriteCloser = nopWriteCloser{file}
+	if !strings.HasSuffix(artifact, ".tar") {
+		gz, err := gzip.NewWriterLevel(file, gzip.BestCompression)
+		if err != nil {
+			return err
+		}
+		gz.ModTime = epoch
+		compressed = gz
 	}
-	compressed.ModTime = epoch
 	writer := tar.NewWriter(compressed)
 	for _, relative := range paths {
 		local := filepath.Join(source, filepath.FromSlash(relative))
@@ -173,6 +179,10 @@ func createTar(artifact, source, member string, epoch time.Time) error {
 	}
 	return os.Chmod(artifact, 0o644)
 }
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 func copyFileInto(writer io.Writer, local string, size int64) error {
 	input, err := os.Open(local)

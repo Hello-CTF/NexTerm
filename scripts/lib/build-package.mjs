@@ -96,11 +96,13 @@ function packageLinuxDesktop(binary, goarch) {
   fs.chmodSync(path.join(dataDir, "usr/bin/nexterm-desktop"), 0o755);
   for (const target of helperTargets()) fs.chmodSync(path.join(dataDir, "usr/bin", target.name), 0o755);
   run(archiveTool(), ["tar", path.join(work, "control.tar.gz"), path.join(work, "control"), "control", String(SOURCE_DATE_EPOCH)]);
-  run(archiveTool(), ["tar", path.join(work, "data.tar.gz"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
+  // xz (LZMA2) shrinks the payload about 40% against gzip. One thread and fixed options keep the bytes reproducible.
+  run(archiveTool(), ["tar", path.join(work, "data.tar"), dataDir, "usr", String(SOURCE_DATE_EPOCH)]);
+  run("xz", ["--format=xz", "--check=crc64", "-9e", "--threads=1", "--force", path.join(work, "data.tar")]);
   fs.writeFileSync(path.join(work, "debian-binary"), "2.0\n");
   const deb = path.join(assets, `${name}.deb`);
   fs.rmSync(deb, { force: true });
-  run("ar", ["rD", deb, path.join(work, "debian-binary"), path.join(work, "control.tar.gz"), path.join(work, "data.tar.gz")]);
+  run("ar", ["rD", deb, path.join(work, "debian-binary"), path.join(work, "control.tar.gz"), path.join(work, "data.tar.xz")]);
   fs.chmodSync(deb, 0o644);
   return deb;
 }
@@ -146,7 +148,8 @@ function packageDarwin(binary, goarch) {
   fs.mkdirSync(assets, { recursive: true });
   const dmg = path.join(assets, `nexterm-desktop_macos_${goarch}_${VERSION}.dmg`);
   fs.rmSync(dmg, { force: true });
-  run("hdiutil", ["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "UDZO", dmg]);
+  // ULMO is LZMA (macOS 10.15+, below the app's 12.0 floor), markedly smaller than zlib UDZO.
+  run("hdiutil", ["create", "-volname", "NexTerm", "-srcfolder", work, "-ov", "-format", "ULMO", dmg]);
   run("hdiutil", ["verify", dmg]);
   notarizeDmg(dmg);
   return dmg;

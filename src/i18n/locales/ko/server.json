@@ -591,7 +591,7 @@
   "curl 将错误输出写入文件": "curl이 오류 출력을 파일에 씁니다",
   "curl 配置文件可指定任意选项": "curl 구성 파일은 임의의 옵션을 지정할 수 있습니다",
   "cursor 与 since_seq 不能同时使用": "cursor와 since_seq는 함께 사용할 수 없습니다",
-  "deb 包中没有 data.tar.gz": "deb 패키지에 data.tar.gz가 없습니다",
+  "deb 包中没有 data.tar.xz 或 data.tar.gz": "deb 패키지에 data.tar.xz 또는 data.tar.gz가 없습니다",
   "deb 成员大小非法: %q": "deb 멤버 크기가 올바르지 않습니다: %q",
   "deb 成员头损坏": "deb 멤버 헤더가 손상되었습니다",
   "delay_minutes 不能为负数": "delay_minutes는 음수일 수 없습니다",

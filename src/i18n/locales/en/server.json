@@ -591,7 +591,7 @@
   "curl 将错误输出写入文件": "curl writes error output to a file",
   "curl 配置文件可指定任意选项": "A curl config file can specify arbitrary options",
   "cursor 与 since_seq 不能同时使用": "cursor and since_seq cannot be used together",
-  "deb 包中没有 data.tar.gz": "The deb package has no data.tar.gz",
+  "deb 包中没有 data.tar.xz 或 data.tar.gz": "The deb package has no data.tar.xz or data.tar.gz",
   "deb 成员大小非法: %q": "Invalid deb member size: %q",
   "deb 成员头损坏": "The deb member header is corrupted",
   "delay_minutes 不能为负数": "delay_minutes cannot be negative",

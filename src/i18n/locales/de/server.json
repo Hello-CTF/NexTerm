@@ -591,7 +591,7 @@
   "curl 将错误输出写入文件": "curl schreibt Fehlerausgaben in eine Datei",
   "curl 配置文件可指定任意选项": "Eine curl-Konfigurationsdatei kann beliebige Optionen angeben",
   "cursor 与 since_seq 不能同时使用": "cursor und since_seq dürfen nicht gleichzeitig verwendet werden",
-  "deb 包中没有 data.tar.gz": "Das deb-Paket enthält kein data.tar.gz",
+  "deb 包中没有 data.tar.xz 或 data.tar.gz": "Das deb-Paket enthält weder data.tar.xz noch data.tar.gz",
   "deb 成员大小非法: %q": "Ungültige Größe des deb-Members: %q",
   "deb 成员头损坏": "Der Header des deb-Members ist beschädigt",
   "delay_minutes 不能为负数": "delay_minutes darf nicht negativ sein",

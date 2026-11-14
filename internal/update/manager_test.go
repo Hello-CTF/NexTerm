@@ -9,7 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +17,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Hello-CTF/NexTerm/internal/releasesig/releasesigtest"
+	"github.com/ulikunitz/xz"
 )
 
 type releaseFixture struct {
@@ -88,9 +91,30 @@ func tarGz(t *testing.T, name, content string, extra ...payloadEntry) []byte {
 	return buffer.Bytes()
 }
 
+// tarXz recompresses a tarGz payload with xz, the compression release debs use for data.tar.
+func tarXz(t *testing.T, name, content string, extra ...payloadEntry) []byte {
+	t.Helper()
+	plain, err := gzip.NewReader(bytes.NewReader(tarGz(t, name, content, extra...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buffer bytes.Buffer
+	writer, err := xz.NewWriter(&buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(writer, plain); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
 func debArchive(t *testing.T, version, content string) []byte {
 	t.Helper()
-	dataTarGz := tarGz(t, "usr/bin/nexterm-desktop", content, payloadEntry{name: "usr/bin/ai-runtime/runtime.json", body: `{"unavailable":"test"}`})
+	dataTarXz := tarXz(t, "usr/bin/nexterm-desktop", content, payloadEntry{name: "usr/bin/ai-runtime/runtime.json", body: `{"unavailable":"test"}`})
 	controlTarGz := tarGz(t, "control", "Package: nexterm\nVersion: "+version+"\n")
 	var buffer bytes.Buffer
 	buffer.WriteString("!<arch>\n")
@@ -103,7 +127,7 @@ func debArchive(t *testing.T, version, content string) []byte {
 	}
 	writeMember("debian-binary", []byte("2.0\n"))
 	writeMember("control.tar.gz", controlTarGz)
-	writeMember("data.tar.gz", dataTarGz)
+	writeMember("data.tar.xz", dataTarXz)
 	return buffer.Bytes()
 }
 

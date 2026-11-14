@@ -213,14 +213,14 @@ export function packageAssertions(kind, file, goos, goarch) {
           control.includes("Package: nexterm\n") && control.includes(`Version: ${debVersion(VERSION)}\n`) && control.includes(`Architecture: ${goarch}\n`),
           "control file must carry the package name, release version and architecture",
       ));
-      const listing = output(resolveTar(), ["-tzf", path.join(work, "data.tar.gz")], { allowFailure: true });
+      const listing = output(resolveTar(), ["-tJf", path.join(work, "data.tar.xz")], { allowFailure: true });
       const members = new Set(listing?.split(/\r?\n/) || []);
       const required = ["usr/bin/nexterm-desktop", LINUX_DESKTOP_ENTRY, "usr/share/icons/hicolor/256x256/apps/nexterm.png", "usr/share/doc/nexterm/copyright"];
       const missingHelpers = missingHelperArchiveMembers(members, "usr/bin/");
       checks.push(assertion("linux-desktop-deb-members", goos === "linux" && listing !== null && missingHelpers.length === 0 && required.every((member) => members.has(member)), `required members: ${[...required, ...helperArchiveMembers("usr/bin/")].join(", ")}; missing helpers: ${missingHelpers.join(", ") || "none"}`));
-      const unpacked = output(resolveTar(), ["-xzf", path.join(work, "data.tar.gz"), "-C", work,
+      const unpacked = output(resolveTar(), ["-xJf", path.join(work, "data.tar.xz"), "-C", work,
         ...helperArchiveMembers("usr/bin/"), "usr/bin/ai-runtime", "usr/bin/nexterm-desktop"], { allowFailure: true });
-      checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all nine helpers must extract from data.tar.gz"));
+      checks.push(assertion("linux-desktop-deb-helper-extract", unpacked !== null, "all helpers must extract from data.tar.xz"));
       if (unpacked !== null) {
         const depends = linuxDesktopDepends(path.join(work, "usr/bin/nexterm-desktop"));
         checks.push(assertion("linux-desktop-deb-depends", control.includes(`\nDepends: ${depends}\n`), `control Depends must match the packaged binary: ${depends}`));

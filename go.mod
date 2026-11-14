@@ -32,6 +32,7 @@ require (
 	github.com/pkg/sftp v1.13.12
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
+	github.com/ulikunitz/xz v0.5.17
 	github.com/wailsapp/wails/v3 v3.0.0-beta.27
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.58.0
