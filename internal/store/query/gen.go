@@ -17,137 +17,135 @@ import (
 
 func Use(db *gorm.DB, opts ...gen.DOOption) *Query {
 	return &Query{
-		db:                      db,
-		AgentEvidenceAnchorRow:  newAgentEvidenceAnchorRow(db, opts...),
-		AgentEvidenceKeyRow:     newAgentEvidenceKeyRow(db, opts...),
-		AgentOutcomeRow:         newAgentOutcomeRow(db, opts...),
-		AgentRosterRow:          newAgentRosterRow(db, opts...),
-		AgentWatchOutboxRow:     newAgentWatchOutboxRow(db, opts...),
-		AgentWatchRow:           newAgentWatchRow(db, opts...),
-		AgentWatchTargetRow:     newAgentWatchTargetRow(db, opts...),
-		AlertEvaluatorState:     newAlertEvaluatorState(db, opts...),
-		AppUser:                 newAppUser(db, opts...),
-		AssetGroupRow:           newAssetGroupRow(db, opts...),
-		AssetRow:                newAssetRow(db, opts...),
-		AuditRow:                newAuditRow(db, opts...),
-		CheckpointRow:           newCheckpointRow(db, opts...),
-		CommandLog:              newCommandLog(db, opts...),
-		ConversationRow:         newConversationRow(db, opts...),
-		CredentialRow:           newCredentialRow(db, opts...),
-		CredentialTombstone:     newCredentialTombstone(db, opts...),
-		CronJob:                 newCronJob(db, opts...),
-		DeviceAgent:             newDeviceAgent(db, opts...),
-		DeviceAlertEvent:        newDeviceAlertEvent(db, opts...),
-		DeviceAlertSettings:     newDeviceAlertSettings(db, opts...),
-		DeviceAlertState:        newDeviceAlertState(db, opts...),
-		DeviceEnrollCode:        newDeviceEnrollCode(db, opts...),
-		DeviceMetrics:           newDeviceMetrics(db, opts...),
-		DeviceMetricsHourly:     newDeviceMetricsHourly(db, opts...),
-		DurableTranscriptOffset: newDurableTranscriptOffset(db, opts...),
-		ExecBatchResultRow:      newExecBatchResultRow(db, opts...),
-		ExecBatchRow:            newExecBatchRow(db, opts...),
-		ExecTargetSetItemRow:    newExecTargetSetItemRow(db, opts...),
-		ExecTargetSetRow:        newExecTargetSetRow(db, opts...),
-		ForwardRuleRow:          newForwardRuleRow(db, opts...),
-		HitlRunRow:              newHitlRunRow(db, opts...),
-		HostShare:               newHostShare(db, opts...),
-		KnownHostRow:            newKnownHostRow(db, opts...),
-		MemoryEntry:             newMemoryEntry(db, opts...),
-		MemorySettings:          newMemorySettings(db, opts...),
-		MessageRow:              newMessageRow(db, opts...),
-		OutcomeRecord:           newOutcomeRecord(db, opts...),
-		RecordingRow:            newRecordingRow(db, opts...),
-		RunEventRow:             newRunEventRow(db, opts...),
-		RunRow:                  newRunRow(db, opts...),
-		RunbookTemplateRow:      newRunbookTemplateRow(db, opts...),
-		Setting:                 newSetting(db, opts...),
-		SharePreviewLink:        newSharePreviewLink(db, opts...),
-		SnippetRow:              newSnippetRow(db, opts...),
-		StateRuleRow:            newStateRuleRow(db, opts...),
-		SyncCredential:          newSyncCredential(db, opts...),
-		SyncState:               newSyncState(db, opts...),
-		SyncTombstone:           newSyncTombstone(db, opts...),
-		TranscriptChunkRow:      newTranscriptChunkRow(db, opts...),
-		TranscriptChunkTS:       newTranscriptChunkTS(db, opts...),
-		TranscriptKeyframe:      newTranscriptKeyframe(db, opts...),
-		TranscriptRow:           newTranscriptRow(db, opts...),
-		TranscriptTSIndex:       newTranscriptTSIndex(db, opts...),
-		UserDEK:                 newUserDEK(db, opts...),
-		UserDevice:              newUserDevice(db, opts...),
-		UserSession:             newUserSession(db, opts...),
-		UserSetting:             newUserSetting(db, opts...),
-		UserSyncHead:            newUserSyncHead(db, opts...),
-		UserSyncObject:          newUserSyncObject(db, opts...),
-		UserTOTP:                newUserTOTP(db, opts...),
-		UserTOTPRecoveryCode:    newUserTOTPRecoveryCode(db, opts...),
+		db:                     db,
+		AgentEvidenceAnchorRow: newAgentEvidenceAnchorRow(db, opts...),
+		AgentEvidenceKeyRow:    newAgentEvidenceKeyRow(db, opts...),
+		AgentOutcomeRow:        newAgentOutcomeRow(db, opts...),
+		AgentRosterRow:         newAgentRosterRow(db, opts...),
+		AgentWatchOutboxRow:    newAgentWatchOutboxRow(db, opts...),
+		AgentWatchRow:          newAgentWatchRow(db, opts...),
+		AgentWatchTargetRow:    newAgentWatchTargetRow(db, opts...),
+		AlertEvaluatorState:    newAlertEvaluatorState(db, opts...),
+		AppUser:                newAppUser(db, opts...),
+		AssetGroupRow:          newAssetGroupRow(db, opts...),
+		AssetRow:               newAssetRow(db, opts...),
+		AuditRow:               newAuditRow(db, opts...),
+		CheckpointRow:          newCheckpointRow(db, opts...),
+		CommandLog:             newCommandLog(db, opts...),
+		ConversationRow:        newConversationRow(db, opts...),
+		CredentialRow:          newCredentialRow(db, opts...),
+		CredentialTombstone:    newCredentialTombstone(db, opts...),
+		CronJob:                newCronJob(db, opts...),
+		DeviceAgent:            newDeviceAgent(db, opts...),
+		DeviceAlertEvent:       newDeviceAlertEvent(db, opts...),
+		DeviceAlertSettings:    newDeviceAlertSettings(db, opts...),
+		DeviceAlertState:       newDeviceAlertState(db, opts...),
+		DeviceEnrollCode:       newDeviceEnrollCode(db, opts...),
+		DeviceMetrics:          newDeviceMetrics(db, opts...),
+		DeviceMetricsHourly:    newDeviceMetricsHourly(db, opts...),
+		ExecBatchResultRow:     newExecBatchResultRow(db, opts...),
+		ExecBatchRow:           newExecBatchRow(db, opts...),
+		ExecTargetSetItemRow:   newExecTargetSetItemRow(db, opts...),
+		ExecTargetSetRow:       newExecTargetSetRow(db, opts...),
+		ForwardRuleRow:         newForwardRuleRow(db, opts...),
+		HitlRunRow:             newHitlRunRow(db, opts...),
+		HostShare:              newHostShare(db, opts...),
+		KnownHostRow:           newKnownHostRow(db, opts...),
+		MemoryEntry:            newMemoryEntry(db, opts...),
+		MemorySettings:         newMemorySettings(db, opts...),
+		MessageRow:             newMessageRow(db, opts...),
+		OutcomeRecord:          newOutcomeRecord(db, opts...),
+		RecordingRow:           newRecordingRow(db, opts...),
+		RunEventRow:            newRunEventRow(db, opts...),
+		RunRow:                 newRunRow(db, opts...),
+		RunbookTemplateRow:     newRunbookTemplateRow(db, opts...),
+		Setting:                newSetting(db, opts...),
+		SharePreviewLink:       newSharePreviewLink(db, opts...),
+		SnippetRow:             newSnippetRow(db, opts...),
+		StateRuleRow:           newStateRuleRow(db, opts...),
+		SyncCredential:         newSyncCredential(db, opts...),
+		SyncState:              newSyncState(db, opts...),
+		SyncTombstone:          newSyncTombstone(db, opts...),
+		TranscriptChunkRow:     newTranscriptChunkRow(db, opts...),
+		TranscriptChunkTS:      newTranscriptChunkTS(db, opts...),
+		TranscriptKeyframe:     newTranscriptKeyframe(db, opts...),
+		TranscriptRow:          newTranscriptRow(db, opts...),
+		TranscriptTSIndex:      newTranscriptTSIndex(db, opts...),
+		UserDEK:                newUserDEK(db, opts...),
+		UserDevice:             newUserDevice(db, opts...),
+		UserSession:            newUserSession(db, opts...),
+		UserSetting:            newUserSetting(db, opts...),
+		UserSyncHead:           newUserSyncHead(db, opts...),
+		UserSyncObject:         newUserSyncObject(db, opts...),
+		UserTOTP:               newUserTOTP(db, opts...),
+		UserTOTPRecoveryCode:   newUserTOTPRecoveryCode(db, opts...),
 	}
 }
 
 type Query struct {
 	db *gorm.DB
 
-	AgentEvidenceAnchorRow  agentEvidenceAnchorRow
-	AgentEvidenceKeyRow     agentEvidenceKeyRow
-	AgentOutcomeRow         agentOutcomeRow
-	AgentRosterRow          agentRosterRow
-	AgentWatchOutboxRow     agentWatchOutboxRow
-	AgentWatchRow           agentWatchRow
-	AgentWatchTargetRow     agentWatchTargetRow
-	AlertEvaluatorState     alertEvaluatorState
-	AppUser                 appUser
-	AssetGroupRow           assetGroupRow
-	AssetRow                assetRow
-	AuditRow                auditRow
-	CheckpointRow           checkpointRow
-	CommandLog              commandLog
-	ConversationRow         conversationRow
-	CredentialRow           credentialRow
-	CredentialTombstone     credentialTombstone
-	CronJob                 cronJob
-	DeviceAgent             deviceAgent
-	DeviceAlertEvent        deviceAlertEvent
-	DeviceAlertSettings     deviceAlertSettings
-	DeviceAlertState        deviceAlertState
-	DeviceEnrollCode        deviceEnrollCode
-	DeviceMetrics           deviceMetrics
-	DeviceMetricsHourly     deviceMetricsHourly
-	DurableTranscriptOffset durableTranscriptOffset
-	ExecBatchResultRow      execBatchResultRow
-	ExecBatchRow            execBatchRow
-	ExecTargetSetItemRow    execTargetSetItemRow
-	ExecTargetSetRow        execTargetSetRow
-	ForwardRuleRow          forwardRuleRow
-	HitlRunRow              hitlRunRow
-	HostShare               hostShare
-	KnownHostRow            knownHostRow
-	MemoryEntry             memoryEntry
-	MemorySettings          memorySettings
-	MessageRow              messageRow
-	OutcomeRecord           outcomeRecord
-	RecordingRow            recordingRow
-	RunEventRow             runEventRow
-	RunRow                  runRow
-	RunbookTemplateRow      runbookTemplateRow
-	Setting                 setting
-	SharePreviewLink        sharePreviewLink
-	SnippetRow              snippetRow
-	StateRuleRow            stateRuleRow
-	SyncCredential          syncCredential
-	SyncState               syncState
-	SyncTombstone           syncTombstone
-	TranscriptChunkRow      transcriptChunkRow
-	TranscriptChunkTS       transcriptChunkTS
-	TranscriptKeyframe      transcriptKeyframe
-	TranscriptRow           transcriptRow
-	TranscriptTSIndex       transcriptTSIndex
-	UserDEK                 userDEK
-	UserDevice              userDevice
-	UserSession             userSession
-	UserSetting             userSetting
-	UserSyncHead            userSyncHead
-	UserSyncObject          userSyncObject
-	UserTOTP                userTOTP
-	UserTOTPRecoveryCode    userTOTPRecoveryCode
+	AgentEvidenceAnchorRow agentEvidenceAnchorRow
+	AgentEvidenceKeyRow    agentEvidenceKeyRow
+	AgentOutcomeRow        agentOutcomeRow
+	AgentRosterRow         agentRosterRow
+	AgentWatchOutboxRow    agentWatchOutboxRow
+	AgentWatchRow          agentWatchRow
+	AgentWatchTargetRow    agentWatchTargetRow
+	AlertEvaluatorState    alertEvaluatorState
+	AppUser                appUser
+	AssetGroupRow          assetGroupRow
+	AssetRow               assetRow
+	AuditRow               auditRow
+	CheckpointRow          checkpointRow
+	CommandLog             commandLog
+	ConversationRow        conversationRow
+	CredentialRow          credentialRow
+	CredentialTombstone    credentialTombstone
+	CronJob                cronJob
+	DeviceAgent            deviceAgent
+	DeviceAlertEvent       deviceAlertEvent
+	DeviceAlertSettings    deviceAlertSettings
+	DeviceAlertState       deviceAlertState
+	DeviceEnrollCode       deviceEnrollCode
+	DeviceMetrics          deviceMetrics
+	DeviceMetricsHourly    deviceMetricsHourly
+	ExecBatchResultRow     execBatchResultRow
+	ExecBatchRow           execBatchRow
+	ExecTargetSetItemRow   execTargetSetItemRow
+	ExecTargetSetRow       execTargetSetRow
+	ForwardRuleRow         forwardRuleRow
+	HitlRunRow             hitlRunRow
+	HostShare              hostShare
+	KnownHostRow           knownHostRow
+	MemoryEntry            memoryEntry
+	MemorySettings         memorySettings
+	MessageRow             messageRow
+	OutcomeRecord          outcomeRecord
+	RecordingRow           recordingRow
+	RunEventRow            runEventRow
+	RunRow                 runRow
+	RunbookTemplateRow     runbookTemplateRow
+	Setting                setting
+	SharePreviewLink       sharePreviewLink
+	SnippetRow             snippetRow
+	StateRuleRow           stateRuleRow
+	SyncCredential         syncCredential
+	SyncState              syncState
+	SyncTombstone          syncTombstone
+	TranscriptChunkRow     transcriptChunkRow
+	TranscriptChunkTS      transcriptChunkTS
+	TranscriptKeyframe     transcriptKeyframe
+	TranscriptRow          transcriptRow
+	TranscriptTSIndex      transcriptTSIndex
+	UserDEK                userDEK
+	UserDevice             userDevice
+	UserSession            userSession
+	UserSetting            userSetting
+	UserSyncHead           userSyncHead
+	UserSyncObject         userSyncObject
+	UserTOTP               userTOTP
+	UserTOTPRecoveryCode   userTOTPRecoveryCode
 }
 
 func (q *Query) Available() bool { return q.db != nil }
@@ -156,69 +154,68 @@ func (q *Query) UnderlyingDB() *gorm.DB { return q.db }
 
 func (q *Query) clone(db *gorm.DB) *Query {
 	return &Query{
-		db:                      db,
-		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.clone(db),
-		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.clone(db),
-		AgentOutcomeRow:         q.AgentOutcomeRow.clone(db),
-		AgentRosterRow:          q.AgentRosterRow.clone(db),
-		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.clone(db),
-		AgentWatchRow:           q.AgentWatchRow.clone(db),
-		AgentWatchTargetRow:     q.AgentWatchTargetRow.clone(db),
-		AlertEvaluatorState:     q.AlertEvaluatorState.clone(db),
-		AppUser:                 q.AppUser.clone(db),
-		AssetGroupRow:           q.AssetGroupRow.clone(db),
-		AssetRow:                q.AssetRow.clone(db),
-		AuditRow:                q.AuditRow.clone(db),
-		CheckpointRow:           q.CheckpointRow.clone(db),
-		CommandLog:              q.CommandLog.clone(db),
-		ConversationRow:         q.ConversationRow.clone(db),
-		CredentialRow:           q.CredentialRow.clone(db),
-		CredentialTombstone:     q.CredentialTombstone.clone(db),
-		CronJob:                 q.CronJob.clone(db),
-		DeviceAgent:             q.DeviceAgent.clone(db),
-		DeviceAlertEvent:        q.DeviceAlertEvent.clone(db),
-		DeviceAlertSettings:     q.DeviceAlertSettings.clone(db),
-		DeviceAlertState:        q.DeviceAlertState.clone(db),
-		DeviceEnrollCode:        q.DeviceEnrollCode.clone(db),
-		DeviceMetrics:           q.DeviceMetrics.clone(db),
-		DeviceMetricsHourly:     q.DeviceMetricsHourly.clone(db),
-		DurableTranscriptOffset: q.DurableTranscriptOffset.clone(db),
-		ExecBatchResultRow:      q.ExecBatchResultRow.clone(db),
-		ExecBatchRow:            q.ExecBatchRow.clone(db),
-		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.clone(db),
-		ExecTargetSetRow:        q.ExecTargetSetRow.clone(db),
-		ForwardRuleRow:          q.ForwardRuleRow.clone(db),
-		HitlRunRow:              q.HitlRunRow.clone(db),
-		HostShare:               q.HostShare.clone(db),
-		KnownHostRow:            q.KnownHostRow.clone(db),
-		MemoryEntry:             q.MemoryEntry.clone(db),
-		MemorySettings:          q.MemorySettings.clone(db),
-		MessageRow:              q.MessageRow.clone(db),
-		OutcomeRecord:           q.OutcomeRecord.clone(db),
-		RecordingRow:            q.RecordingRow.clone(db),
-		RunEventRow:             q.RunEventRow.clone(db),
-		RunRow:                  q.RunRow.clone(db),
-		RunbookTemplateRow:      q.RunbookTemplateRow.clone(db),
-		Setting:                 q.Setting.clone(db),
-		SharePreviewLink:        q.SharePreviewLink.clone(db),
-		SnippetRow:              q.SnippetRow.clone(db),
-		StateRuleRow:            q.StateRuleRow.clone(db),
-		SyncCredential:          q.SyncCredential.clone(db),
-		SyncState:               q.SyncState.clone(db),
-		SyncTombstone:           q.SyncTombstone.clone(db),
-		TranscriptChunkRow:      q.TranscriptChunkRow.clone(db),
-		TranscriptChunkTS:       q.TranscriptChunkTS.clone(db),
-		TranscriptKeyframe:      q.TranscriptKeyframe.clone(db),
-		TranscriptRow:           q.TranscriptRow.clone(db),
-		TranscriptTSIndex:       q.TranscriptTSIndex.clone(db),
-		UserDEK:                 q.UserDEK.clone(db),
-		UserDevice:              q.UserDevice.clone(db),
-		UserSession:             q.UserSession.clone(db),
-		UserSetting:             q.UserSetting.clone(db),
-		UserSyncHead:            q.UserSyncHead.clone(db),
-		UserSyncObject:          q.UserSyncObject.clone(db),
-		UserTOTP:                q.UserTOTP.clone(db),
-		UserTOTPRecoveryCode:    q.UserTOTPRecoveryCode.clone(db),
+		db:                     db,
+		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.clone(db),
+		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.clone(db),
+		AgentOutcomeRow:        q.AgentOutcomeRow.clone(db),
+		AgentRosterRow:         q.AgentRosterRow.clone(db),
+		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.clone(db),
+		AgentWatchRow:          q.AgentWatchRow.clone(db),
+		AgentWatchTargetRow:    q.AgentWatchTargetRow.clone(db),
+		AlertEvaluatorState:    q.AlertEvaluatorState.clone(db),
+		AppUser:                q.AppUser.clone(db),
+		AssetGroupRow:          q.AssetGroupRow.clone(db),
+		AssetRow:               q.AssetRow.clone(db),
+		AuditRow:               q.AuditRow.clone(db),
+		CheckpointRow:          q.CheckpointRow.clone(db),
+		CommandLog:             q.CommandLog.clone(db),
+		ConversationRow:        q.ConversationRow.clone(db),
+		CredentialRow:          q.CredentialRow.clone(db),
+		CredentialTombstone:    q.CredentialTombstone.clone(db),
+		CronJob:                q.CronJob.clone(db),
+		DeviceAgent:            q.DeviceAgent.clone(db),
+		DeviceAlertEvent:       q.DeviceAlertEvent.clone(db),
+		DeviceAlertSettings:    q.DeviceAlertSettings.clone(db),
+		DeviceAlertState:       q.DeviceAlertState.clone(db),
+		DeviceEnrollCode:       q.DeviceEnrollCode.clone(db),
+		DeviceMetrics:          q.DeviceMetrics.clone(db),
+		DeviceMetricsHourly:    q.DeviceMetricsHourly.clone(db),
+		ExecBatchResultRow:     q.ExecBatchResultRow.clone(db),
+		ExecBatchRow:           q.ExecBatchRow.clone(db),
+		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.clone(db),
+		ExecTargetSetRow:       q.ExecTargetSetRow.clone(db),
+		ForwardRuleRow:         q.ForwardRuleRow.clone(db),
+		HitlRunRow:             q.HitlRunRow.clone(db),
+		HostShare:              q.HostShare.clone(db),
+		KnownHostRow:           q.KnownHostRow.clone(db),
+		MemoryEntry:            q.MemoryEntry.clone(db),
+		MemorySettings:         q.MemorySettings.clone(db),
+		MessageRow:             q.MessageRow.clone(db),
+		OutcomeRecord:          q.OutcomeRecord.clone(db),
+		RecordingRow:           q.RecordingRow.clone(db),
+		RunEventRow:            q.RunEventRow.clone(db),
+		RunRow:                 q.RunRow.clone(db),
+		RunbookTemplateRow:     q.RunbookTemplateRow.clone(db),
+		Setting:                q.Setting.clone(db),
+		SharePreviewLink:       q.SharePreviewLink.clone(db),
+		SnippetRow:             q.SnippetRow.clone(db),
+		StateRuleRow:           q.StateRuleRow.clone(db),
+		SyncCredential:         q.SyncCredential.clone(db),
+		SyncState:              q.SyncState.clone(db),
+		SyncTombstone:          q.SyncTombstone.clone(db),
+		TranscriptChunkRow:     q.TranscriptChunkRow.clone(db),
+		TranscriptChunkTS:      q.TranscriptChunkTS.clone(db),
+		TranscriptKeyframe:     q.TranscriptKeyframe.clone(db),
+		TranscriptRow:          q.TranscriptRow.clone(db),
+		TranscriptTSIndex:      q.TranscriptTSIndex.clone(db),
+		UserDEK:                q.UserDEK.clone(db),
+		UserDevice:             q.UserDevice.clone(db),
+		UserSession:            q.UserSession.clone(db),
+		UserSetting:            q.UserSetting.clone(db),
+		UserSyncHead:           q.UserSyncHead.clone(db),
+		UserSyncObject:         q.UserSyncObject.clone(db),
+		UserTOTP:               q.UserTOTP.clone(db),
+		UserTOTPRecoveryCode:   q.UserTOTPRecoveryCode.clone(db),
 	}
 }
 
@@ -232,201 +229,198 @@ func (q *Query) WriteDB() *Query {
 
 func (q *Query) ReplaceDB(db *gorm.DB) *Query {
 	return &Query{
-		db:                      db,
-		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.replaceDB(db),
-		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.replaceDB(db),
-		AgentOutcomeRow:         q.AgentOutcomeRow.replaceDB(db),
-		AgentRosterRow:          q.AgentRosterRow.replaceDB(db),
-		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.replaceDB(db),
-		AgentWatchRow:           q.AgentWatchRow.replaceDB(db),
-		AgentWatchTargetRow:     q.AgentWatchTargetRow.replaceDB(db),
-		AlertEvaluatorState:     q.AlertEvaluatorState.replaceDB(db),
-		AppUser:                 q.AppUser.replaceDB(db),
-		AssetGroupRow:           q.AssetGroupRow.replaceDB(db),
-		AssetRow:                q.AssetRow.replaceDB(db),
-		AuditRow:                q.AuditRow.replaceDB(db),
-		CheckpointRow:           q.CheckpointRow.replaceDB(db),
-		CommandLog:              q.CommandLog.replaceDB(db),
-		ConversationRow:         q.ConversationRow.replaceDB(db),
-		CredentialRow:           q.CredentialRow.replaceDB(db),
-		CredentialTombstone:     q.CredentialTombstone.replaceDB(db),
-		CronJob:                 q.CronJob.replaceDB(db),
-		DeviceAgent:             q.DeviceAgent.replaceDB(db),
-		DeviceAlertEvent:        q.DeviceAlertEvent.replaceDB(db),
-		DeviceAlertSettings:     q.DeviceAlertSettings.replaceDB(db),
-		DeviceAlertState:        q.DeviceAlertState.replaceDB(db),
-		DeviceEnrollCode:        q.DeviceEnrollCode.replaceDB(db),
-		DeviceMetrics:           q.DeviceMetrics.replaceDB(db),
-		DeviceMetricsHourly:     q.DeviceMetricsHourly.replaceDB(db),
-		DurableTranscriptOffset: q.DurableTranscriptOffset.replaceDB(db),
-		ExecBatchResultRow:      q.ExecBatchResultRow.replaceDB(db),
-		ExecBatchRow:            q.ExecBatchRow.replaceDB(db),
-		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.replaceDB(db),
-		ExecTargetSetRow:        q.ExecTargetSetRow.replaceDB(db),
-		ForwardRuleRow:          q.ForwardRuleRow.replaceDB(db),
-		HitlRunRow:              q.HitlRunRow.replaceDB(db),
-		HostShare:               q.HostShare.replaceDB(db),
-		KnownHostRow:            q.KnownHostRow.replaceDB(db),
-		MemoryEntry:             q.MemoryEntry.replaceDB(db),
-		MemorySettings:          q.MemorySettings.replaceDB(db),
-		MessageRow:              q.MessageRow.replaceDB(db),
-		OutcomeRecord:           q.OutcomeRecord.replaceDB(db),
-		RecordingRow:            q.RecordingRow.replaceDB(db),
-		RunEventRow:             q.RunEventRow.replaceDB(db),
-		RunRow:                  q.RunRow.replaceDB(db),
-		RunbookTemplateRow:      q.RunbookTemplateRow.replaceDB(db),
-		Setting:                 q.Setting.replaceDB(db),
-		SharePreviewLink:        q.SharePreviewLink.replaceDB(db),
-		SnippetRow:              q.SnippetRow.replaceDB(db),
-		StateRuleRow:            q.StateRuleRow.replaceDB(db),
-		SyncCredential:          q.SyncCredential.replaceDB(db),
-		SyncState:               q.SyncState.replaceDB(db),
-		SyncTombstone:           q.SyncTombstone.replaceDB(db),
-		TranscriptChunkRow:      q.TranscriptChunkRow.replaceDB(db),
-		TranscriptChunkTS:       q.TranscriptChunkTS.replaceDB(db),
-		TranscriptKeyframe:      q.TranscriptKeyframe.replaceDB(db),
-		TranscriptRow:           q.TranscriptRow.replaceDB(db),
-		TranscriptTSIndex:       q.TranscriptTSIndex.replaceDB(db),
-		UserDEK:                 q.UserDEK.replaceDB(db),
-		UserDevice:              q.UserDevice.replaceDB(db),
-		UserSession:             q.UserSession.replaceDB(db),
-		UserSetting:             q.UserSetting.replaceDB(db),
-		UserSyncHead:            q.UserSyncHead.replaceDB(db),
-		UserSyncObject:          q.UserSyncObject.replaceDB(db),
-		UserTOTP:                q.UserTOTP.replaceDB(db),
-		UserTOTPRecoveryCode:    q.UserTOTPRecoveryCode.replaceDB(db),
+		db:                     db,
+		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.replaceDB(db),
+		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.replaceDB(db),
+		AgentOutcomeRow:        q.AgentOutcomeRow.replaceDB(db),
+		AgentRosterRow:         q.AgentRosterRow.replaceDB(db),
+		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.replaceDB(db),
+		AgentWatchRow:          q.AgentWatchRow.replaceDB(db),
+		AgentWatchTargetRow:    q.AgentWatchTargetRow.replaceDB(db),
+		AlertEvaluatorState:    q.AlertEvaluatorState.replaceDB(db),
+		AppUser:                q.AppUser.replaceDB(db),
+		AssetGroupRow:          q.AssetGroupRow.replaceDB(db),
+		AssetRow:               q.AssetRow.replaceDB(db),
+		AuditRow:               q.AuditRow.replaceDB(db),
+		CheckpointRow:          q.CheckpointRow.replaceDB(db),
+		CommandLog:             q.CommandLog.replaceDB(db),
+		ConversationRow:        q.ConversationRow.replaceDB(db),
+		CredentialRow:          q.CredentialRow.replaceDB(db),
+		CredentialTombstone:    q.CredentialTombstone.replaceDB(db),
+		CronJob:                q.CronJob.replaceDB(db),
+		DeviceAgent:            q.DeviceAgent.replaceDB(db),
+		DeviceAlertEvent:       q.DeviceAlertEvent.replaceDB(db),
+		DeviceAlertSettings:    q.DeviceAlertSettings.replaceDB(db),
+		DeviceAlertState:       q.DeviceAlertState.replaceDB(db),
+		DeviceEnrollCode:       q.DeviceEnrollCode.replaceDB(db),
+		DeviceMetrics:          q.DeviceMetrics.replaceDB(db),
+		DeviceMetricsHourly:    q.DeviceMetricsHourly.replaceDB(db),
+		ExecBatchResultRow:     q.ExecBatchResultRow.replaceDB(db),
+		ExecBatchRow:           q.ExecBatchRow.replaceDB(db),
+		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.replaceDB(db),
+		ExecTargetSetRow:       q.ExecTargetSetRow.replaceDB(db),
+		ForwardRuleRow:         q.ForwardRuleRow.replaceDB(db),
+		HitlRunRow:             q.HitlRunRow.replaceDB(db),
+		HostShare:              q.HostShare.replaceDB(db),
+		KnownHostRow:           q.KnownHostRow.replaceDB(db),
+		MemoryEntry:            q.MemoryEntry.replaceDB(db),
+		MemorySettings:         q.MemorySettings.replaceDB(db),
+		MessageRow:             q.MessageRow.replaceDB(db),
+		OutcomeRecord:          q.OutcomeRecord.replaceDB(db),
+		RecordingRow:           q.RecordingRow.replaceDB(db),
+		RunEventRow:            q.RunEventRow.replaceDB(db),
+		RunRow:                 q.RunRow.replaceDB(db),
+		RunbookTemplateRow:     q.RunbookTemplateRow.replaceDB(db),
+		Setting:                q.Setting.replaceDB(db),
+		SharePreviewLink:       q.SharePreviewLink.replaceDB(db),
+		SnippetRow:             q.SnippetRow.replaceDB(db),
+		StateRuleRow:           q.StateRuleRow.replaceDB(db),
+		SyncCredential:         q.SyncCredential.replaceDB(db),
+		SyncState:              q.SyncState.replaceDB(db),
+		SyncTombstone:          q.SyncTombstone.replaceDB(db),
+		TranscriptChunkRow:     q.TranscriptChunkRow.replaceDB(db),
+		TranscriptChunkTS:      q.TranscriptChunkTS.replaceDB(db),
+		TranscriptKeyframe:     q.TranscriptKeyframe.replaceDB(db),
+		TranscriptRow:          q.TranscriptRow.replaceDB(db),
+		TranscriptTSIndex:      q.TranscriptTSIndex.replaceDB(db),
+		UserDEK:                q.UserDEK.replaceDB(db),
+		UserDevice:             q.UserDevice.replaceDB(db),
+		UserSession:            q.UserSession.replaceDB(db),
+		UserSetting:            q.UserSetting.replaceDB(db),
+		UserSyncHead:           q.UserSyncHead.replaceDB(db),
+		UserSyncObject:         q.UserSyncObject.replaceDB(db),
+		UserTOTP:               q.UserTOTP.replaceDB(db),
+		UserTOTPRecoveryCode:   q.UserTOTPRecoveryCode.replaceDB(db),
 	}
 }
 
 type queryCtx struct {
-	AgentEvidenceAnchorRow  *agentEvidenceAnchorRowDo
-	AgentEvidenceKeyRow     *agentEvidenceKeyRowDo
-	AgentOutcomeRow         *agentOutcomeRowDo
-	AgentRosterRow          *agentRosterRowDo
-	AgentWatchOutboxRow     *agentWatchOutboxRowDo
-	AgentWatchRow           *agentWatchRowDo
-	AgentWatchTargetRow     *agentWatchTargetRowDo
-	AlertEvaluatorState     *alertEvaluatorStateDo
-	AppUser                 *appUserDo
-	AssetGroupRow           *assetGroupRowDo
-	AssetRow                *assetRowDo
-	AuditRow                *auditRowDo
-	CheckpointRow           *checkpointRowDo
-	CommandLog              *commandLogDo
-	ConversationRow         *conversationRowDo
-	CredentialRow           *credentialRowDo
-	CredentialTombstone     *credentialTombstoneDo
-	CronJob                 *cronJobDo
-	DeviceAgent             *deviceAgentDo
-	DeviceAlertEvent        *deviceAlertEventDo
-	DeviceAlertSettings     *deviceAlertSettingsDo
-	DeviceAlertState        *deviceAlertStateDo
-	DeviceEnrollCode        *deviceEnrollCodeDo
-	DeviceMetrics           *deviceMetricsDo
-	DeviceMetricsHourly     *deviceMetricsHourlyDo
-	DurableTranscriptOffset *durableTranscriptOffsetDo
-	ExecBatchResultRow      *execBatchResultRowDo
-	ExecBatchRow            *execBatchRowDo
-	ExecTargetSetItemRow    *execTargetSetItemRowDo
-	ExecTargetSetRow        *execTargetSetRowDo
-	ForwardRuleRow          *forwardRuleRowDo
-	HitlRunRow              *hitlRunRowDo
-	HostShare               *hostShareDo
-	KnownHostRow            *knownHostRowDo
-	MemoryEntry             *memoryEntryDo
-	MemorySettings          *memorySettingsDo
-	MessageRow              *messageRowDo
-	OutcomeRecord           *outcomeRecordDo
-	RecordingRow            *recordingRowDo
-	RunEventRow             *runEventRowDo
-	RunRow                  *runRowDo
-	RunbookTemplateRow      *runbookTemplateRowDo
-	Setting                 *settingDo
-	SharePreviewLink        *sharePreviewLinkDo
-	SnippetRow              *snippetRowDo
-	StateRuleRow            *stateRuleRowDo
-	SyncCredential          *syncCredentialDo
-	SyncState               *syncStateDo
-	SyncTombstone           *syncTombstoneDo
-	TranscriptChunkRow      *transcriptChunkRowDo
-	TranscriptChunkTS       *transcriptChunkTSDo
-	TranscriptKeyframe      *transcriptKeyframeDo
-	TranscriptRow           *transcriptRowDo
-	TranscriptTSIndex       *transcriptTSIndexDo
-	UserDEK                 *userDEKDo
-	UserDevice              *userDeviceDo
-	UserSession             *userSessionDo
-	UserSetting             *userSettingDo
-	UserSyncHead            *userSyncHeadDo
-	UserSyncObject          *userSyncObjectDo
-	UserTOTP                *userTOTPDo
-	UserTOTPRecoveryCode    *userTOTPRecoveryCodeDo
+	AgentEvidenceAnchorRow *agentEvidenceAnchorRowDo
+	AgentEvidenceKeyRow    *agentEvidenceKeyRowDo
+	AgentOutcomeRow        *agentOutcomeRowDo
+	AgentRosterRow         *agentRosterRowDo
+	AgentWatchOutboxRow    *agentWatchOutboxRowDo
+	AgentWatchRow          *agentWatchRowDo
+	AgentWatchTargetRow    *agentWatchTargetRowDo
+	AlertEvaluatorState    *alertEvaluatorStateDo
+	AppUser                *appUserDo
+	AssetGroupRow          *assetGroupRowDo
+	AssetRow               *assetRowDo
+	AuditRow               *auditRowDo
+	CheckpointRow          *checkpointRowDo
+	CommandLog             *commandLogDo
+	ConversationRow        *conversationRowDo
+	CredentialRow          *credentialRowDo
+	CredentialTombstone    *credentialTombstoneDo
+	CronJob                *cronJobDo
+	DeviceAgent            *deviceAgentDo
+	DeviceAlertEvent       *deviceAlertEventDo
+	DeviceAlertSettings    *deviceAlertSettingsDo
+	DeviceAlertState       *deviceAlertStateDo
+	DeviceEnrollCode       *deviceEnrollCodeDo
+	DeviceMetrics          *deviceMetricsDo
+	DeviceMetricsHourly    *deviceMetricsHourlyDo
+	ExecBatchResultRow     *execBatchResultRowDo
+	ExecBatchRow           *execBatchRowDo
+	ExecTargetSetItemRow   *execTargetSetItemRowDo
+	ExecTargetSetRow       *execTargetSetRowDo
+	ForwardRuleRow         *forwardRuleRowDo
+	HitlRunRow             *hitlRunRowDo
+	HostShare              *hostShareDo
+	KnownHostRow           *knownHostRowDo
+	MemoryEntry            *memoryEntryDo
+	MemorySettings         *memorySettingsDo
+	MessageRow             *messageRowDo
+	OutcomeRecord          *outcomeRecordDo
+	RecordingRow           *recordingRowDo
+	RunEventRow            *runEventRowDo
+	RunRow                 *runRowDo
+	RunbookTemplateRow     *runbookTemplateRowDo
+	Setting                *settingDo
+	SharePreviewLink       *sharePreviewLinkDo
+	SnippetRow             *snippetRowDo
+	StateRuleRow           *stateRuleRowDo
+	SyncCredential         *syncCredentialDo
+	SyncState              *syncStateDo
+	SyncTombstone          *syncTombstoneDo
+	TranscriptChunkRow     *transcriptChunkRowDo
+	TranscriptChunkTS      *transcriptChunkTSDo
+	TranscriptKeyframe     *transcriptKeyframeDo
+	TranscriptRow          *transcriptRowDo
+	TranscriptTSIndex      *transcriptTSIndexDo
+	UserDEK                *userDEKDo
+	UserDevice             *userDeviceDo
+	UserSession            *userSessionDo
+	UserSetting            *userSettingDo
+	UserSyncHead           *userSyncHeadDo
+	UserSyncObject         *userSyncObjectDo
+	UserTOTP               *userTOTPDo
+	UserTOTPRecoveryCode   *userTOTPRecoveryCodeDo
 }
 
 func (q *Query) WithContext(ctx context.Context) *queryCtx {
 	return &queryCtx{
-		AgentEvidenceAnchorRow:  q.AgentEvidenceAnchorRow.WithContext(ctx),
-		AgentEvidenceKeyRow:     q.AgentEvidenceKeyRow.WithContext(ctx),
-		AgentOutcomeRow:         q.AgentOutcomeRow.WithContext(ctx),
-		AgentRosterRow:          q.AgentRosterRow.WithContext(ctx),
-		AgentWatchOutboxRow:     q.AgentWatchOutboxRow.WithContext(ctx),
-		AgentWatchRow:           q.AgentWatchRow.WithContext(ctx),
-		AgentWatchTargetRow:     q.AgentWatchTargetRow.WithContext(ctx),
-		AlertEvaluatorState:     q.AlertEvaluatorState.WithContext(ctx),
-		AppUser:                 q.AppUser.WithContext(ctx),
-		AssetGroupRow:           q.AssetGroupRow.WithContext(ctx),
-		AssetRow:                q.AssetRow.WithContext(ctx),
-		AuditRow:                q.AuditRow.WithContext(ctx),
-		CheckpointRow:           q.CheckpointRow.WithContext(ctx),
-		CommandLog:              q.CommandLog.WithContext(ctx),
-		ConversationRow:         q.ConversationRow.WithContext(ctx),
-		CredentialRow:           q.CredentialRow.WithContext(ctx),
-		CredentialTombstone:     q.CredentialTombstone.WithContext(ctx),
-		CronJob:                 q.CronJob.WithContext(ctx),
-		DeviceAgent:             q.DeviceAgent.WithContext(ctx),
-		DeviceAlertEvent:        q.DeviceAlertEvent.WithContext(ctx),
-		DeviceAlertSettings:     q.DeviceAlertSettings.WithContext(ctx),
-		DeviceAlertState:        q.DeviceAlertState.WithContext(ctx),
-		DeviceEnrollCode:        q.DeviceEnrollCode.WithContext(ctx),
-		DeviceMetrics:           q.DeviceMetrics.WithContext(ctx),
-		DeviceMetricsHourly:     q.DeviceMetricsHourly.WithContext(ctx),
-		DurableTranscriptOffset: q.DurableTranscriptOffset.WithContext(ctx),
-		ExecBatchResultRow:      q.ExecBatchResultRow.WithContext(ctx),
-		ExecBatchRow:            q.ExecBatchRow.WithContext(ctx),
-		ExecTargetSetItemRow:    q.ExecTargetSetItemRow.WithContext(ctx),
-		ExecTargetSetRow:        q.ExecTargetSetRow.WithContext(ctx),
-		ForwardRuleRow:          q.ForwardRuleRow.WithContext(ctx),
-		HitlRunRow:              q.HitlRunRow.WithContext(ctx),
-		HostShare:               q.HostShare.WithContext(ctx),
-		KnownHostRow:            q.KnownHostRow.WithContext(ctx),
-		MemoryEntry:             q.MemoryEntry.WithContext(ctx),
-		MemorySettings:          q.MemorySettings.WithContext(ctx),
-		MessageRow:              q.MessageRow.WithContext(ctx),
-		OutcomeRecord:           q.OutcomeRecord.WithContext(ctx),
-		RecordingRow:            q.RecordingRow.WithContext(ctx),
-		RunEventRow:             q.RunEventRow.WithContext(ctx),
-		RunRow:                  q.RunRow.WithContext(ctx),
-		RunbookTemplateRow:      q.RunbookTemplateRow.WithContext(ctx),
-		Setting:                 q.Setting.WithContext(ctx),
-		SharePreviewLink:        q.SharePreviewLink.WithContext(ctx),
-		SnippetRow:              q.SnippetRow.WithContext(ctx),
-		StateRuleRow:            q.StateRuleRow.WithContext(ctx),
-		SyncCredential:          q.SyncCredential.WithContext(ctx),
-		SyncState:               q.SyncState.WithContext(ctx),
-		SyncTombstone:           q.SyncTombstone.WithContext(ctx),
-		TranscriptChunkRow:      q.TranscriptChunkRow.WithContext(ctx),
-		TranscriptChunkTS:       q.TranscriptChunkTS.WithContext(ctx),
-		TranscriptKeyframe:      q.TranscriptKeyframe.WithContext(ctx),
-		TranscriptRow:           q.TranscriptRow.WithContext(ctx),
-		TranscriptTSIndex:       q.TranscriptTSIndex.WithContext(ctx),
-		UserDEK:                 q.UserDEK.WithContext(ctx),
-		UserDevice:              q.UserDevice.WithContext(ctx),
-		UserSession:             q.UserSession.WithContext(ctx),
-		UserSetting:             q.UserSetting.WithContext(ctx),
-		UserSyncHead:            q.UserSyncHead.WithContext(ctx),
-		UserSyncObject:          q.UserSyncObject.WithContext(ctx),
-		UserTOTP:                q.UserTOTP.WithContext(ctx),
-		UserTOTPRecoveryCode:    q.UserTOTPRecoveryCode.WithContext(ctx),
+		AgentEvidenceAnchorRow: q.AgentEvidenceAnchorRow.WithContext(ctx),
+		AgentEvidenceKeyRow:    q.AgentEvidenceKeyRow.WithContext(ctx),
+		AgentOutcomeRow:        q.AgentOutcomeRow.WithContext(ctx),
+		AgentRosterRow:         q.AgentRosterRow.WithContext(ctx),
+		AgentWatchOutboxRow:    q.AgentWatchOutboxRow.WithContext(ctx),
+		AgentWatchRow:          q.AgentWatchRow.WithContext(ctx),
+		AgentWatchTargetRow:    q.AgentWatchTargetRow.WithContext(ctx),
+		AlertEvaluatorState:    q.AlertEvaluatorState.WithContext(ctx),
+		AppUser:                q.AppUser.WithContext(ctx),
+		AssetGroupRow:          q.AssetGroupRow.WithContext(ctx),
+		AssetRow:               q.AssetRow.WithContext(ctx),
+		AuditRow:               q.AuditRow.WithContext(ctx),
+		CheckpointRow:          q.CheckpointRow.WithContext(ctx),
+		CommandLog:             q.CommandLog.WithContext(ctx),
+		ConversationRow:        q.ConversationRow.WithContext(ctx),
+		CredentialRow:          q.CredentialRow.WithContext(ctx),
+		CredentialTombstone:    q.CredentialTombstone.WithContext(ctx),
+		CronJob:                q.CronJob.WithContext(ctx),
+		DeviceAgent:            q.DeviceAgent.WithContext(ctx),
+		DeviceAlertEvent:       q.DeviceAlertEvent.WithContext(ctx),
+		DeviceAlertSettings:    q.DeviceAlertSettings.WithContext(ctx),
+		DeviceAlertState:       q.DeviceAlertState.WithContext(ctx),
+		DeviceEnrollCode:       q.DeviceEnrollCode.WithContext(ctx),
+		DeviceMetrics:          q.DeviceMetrics.WithContext(ctx),
+		DeviceMetricsHourly:    q.DeviceMetricsHourly.WithContext(ctx),
+		ExecBatchResultRow:     q.ExecBatchResultRow.WithContext(ctx),
+		ExecBatchRow:           q.ExecBatchRow.WithContext(ctx),
+		ExecTargetSetItemRow:   q.ExecTargetSetItemRow.WithContext(ctx),
+		ExecTargetSetRow:       q.ExecTargetSetRow.WithContext(ctx),
+		ForwardRuleRow:         q.ForwardRuleRow.WithContext(ctx),
+		HitlRunRow:             q.HitlRunRow.WithContext(ctx),
+		HostShare:              q.HostShare.WithContext(ctx),
+		KnownHostRow:           q.KnownHostRow.WithContext(ctx),
+		MemoryEntry:            q.MemoryEntry.WithContext(ctx),
+		MemorySettings:         q.MemorySettings.WithContext(ctx),
+		MessageRow:             q.MessageRow.WithContext(ctx),
+		OutcomeRecord:          q.OutcomeRecord.WithContext(ctx),
+		RecordingRow:           q.RecordingRow.WithContext(ctx),
+		RunEventRow:            q.RunEventRow.WithContext(ctx),
+		RunRow:                 q.RunRow.WithContext(ctx),
+		RunbookTemplateRow:     q.RunbookTemplateRow.WithContext(ctx),
+		Setting:                q.Setting.WithContext(ctx),
+		SharePreviewLink:       q.SharePreviewLink.WithContext(ctx),
+		SnippetRow:             q.SnippetRow.WithContext(ctx),
+		StateRuleRow:           q.StateRuleRow.WithContext(ctx),
+		SyncCredential:         q.SyncCredential.WithContext(ctx),
+		SyncState:              q.SyncState.WithContext(ctx),
+		SyncTombstone:          q.SyncTombstone.WithContext(ctx),
+		TranscriptChunkRow:     q.TranscriptChunkRow.WithContext(ctx),
+		TranscriptChunkTS:      q.TranscriptChunkTS.WithContext(ctx),
+		TranscriptKeyframe:     q.TranscriptKeyframe.WithContext(ctx),
+		TranscriptRow:          q.TranscriptRow.WithContext(ctx),
+		TranscriptTSIndex:      q.TranscriptTSIndex.WithContext(ctx),
+		UserDEK:                q.UserDEK.WithContext(ctx),
+		UserDevice:             q.UserDevice.WithContext(ctx),
+		UserSession:            q.UserSession.WithContext(ctx),
+		UserSetting:            q.UserSetting.WithContext(ctx),
+		UserSyncHead:           q.UserSyncHead.WithContext(ctx),
+		UserSyncObject:         q.UserSyncObject.WithContext(ctx),
+		UserTOTP:               q.UserTOTP.WithContext(ctx),
+		UserTOTPRecoveryCode:   q.UserTOTPRecoveryCode.WithContext(ctx),
 	}
 }
 

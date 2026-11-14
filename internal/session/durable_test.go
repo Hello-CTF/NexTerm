@@ -36,7 +36,6 @@ type fakeDurableProvider struct {
 type fakeDurableRecord struct {
 	identity    int
 	output      []byte
-	transcribed int64
 	killed      int
 	exitCode    *int
 	attachments []*fakeDurableAttachment
@@ -207,32 +206,6 @@ func (p *fakeDurableProvider) currentDurableIdentity(id string) (base.DurableIde
 	return base.DurableIdentity{Incarnation: fakeIncarnation(record.identity)}, true
 }
 
-func (p *fakeDurableProvider) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	record := p.records[tabID]
-	if record == nil {
-		return 0
-	}
-	return record.transcribed
-}
-
-func (p *fakeDurableProvider) PersistDurableTranscriptOffsetContext(_ context.Context, tabID string, offset int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if record := p.records[tabID]; record != nil {
-		record.transcribed = offset
-	}
-}
-
-func (p *fakeDurableProvider) DeleteDurableTranscriptOffsetContext(_ context.Context, tabID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if record := p.records[tabID]; record != nil {
-		record.transcribed = 0
-	}
-}
-
 func (p *fakeDurableProvider) newAttachmentLocked(id string, record *fakeDurableRecord) *fakeDurableAttachment {
 	channel := newFakeChannel(0)
 	channel.id = id
@@ -379,11 +352,7 @@ func newDurableTestManager(t *testing.T, provider base.DurableProvider) (*Manage
 	t.Helper()
 	connector := newFakeConnector()
 	terminals := newFakeTerminalFactory()
-	config := Config{Connector: connector, Terminals: terminals, Durable: provider}
-	if store, ok := provider.(OwnerScopedDurableTranscriptOffsetStore); ok {
-		config.TranscriptOffsets = store
-	}
-	manager := NewManager(config)
+	manager := NewManager(Config{Connector: connector, Terminals: terminals, Durable: provider})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: ids.New(), Kind: KindLocal})
 	if err != nil {

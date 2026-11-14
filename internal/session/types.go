@@ -171,7 +171,6 @@ type Config struct {
 	// DurableHistoryLimit returns the recorded output limit for new durable
 	// tabs of the context's owner; nil or zero uses the helper default.
 	DurableHistoryLimit func(context.Context) uint64
-	TranscriptOffsets   OwnerScopedDurableTranscriptOffsetStore
 	Hub                 *hub.Hub
 	Emitter             Emitter
 	Transcripts         TranscriptSink

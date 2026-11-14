@@ -673,7 +673,16 @@ export const terminalApi = {
       clientId: clientId(),
       ...(durable === undefined ? {} : { durable }),
     }) as Promise<AttachedTabInfo>,
-  attachTab: (tabId: string, channel: unknown, replayBytes?: number, resume?: StreamResumeAnchor, sessionId?: string) =>
+  // attachTab attaches a tab; durable says whether the tab is known as a persistent terminal (undefined when not
+  // known), which decides whether a tab missing in this run is looked for on its host.
+  attachTab: (
+    tabId: string,
+    channel: unknown,
+    replayBytes?: number,
+    resume?: StreamResumeAnchor,
+    sessionId?: string,
+    durable?: boolean,
+  ) =>
     call<AttachedTabInfo>("terminal_attach_tab", {
       tabId,
       replayBytes,
@@ -681,6 +690,7 @@ export const terminalApi = {
       clientId: clientId(),
       ...(resume ? { fromSeq: resume.seq, fromEpoch: resume.epoch } : {}),
       ...(sessionId === undefined ? {} : { sessionId }),
+      ...(durable === undefined ? {} : { durable }),
     }),
   prepareBroadcast: (
     tabIds: readonly string[],
@@ -769,6 +779,8 @@ export const terminalApi = {
 };
 
 export interface TranscriptSummary {
+  // tabTitle names the terminal tab the recording follows; empty for recordings from older versions or other devices.
+  tabTitle?: string;
   id: string;
   sessionId: string;
   assetId: string;

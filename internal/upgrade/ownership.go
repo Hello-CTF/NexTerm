@@ -14,7 +14,6 @@ var directOwnershipModels = []any{
 	&store.ConversationRow{},
 	&store.TranscriptRow{},
 	&store.TranscriptChunkRow{},
-	&store.DurableTranscriptOffset{},
 	&store.RecordingRow{},
 	&store.AuditRow{},
 }

@@ -12,15 +12,15 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-// Output is recorded only while a client watches the tab: output produced in
-// the background is left out, marked once when recording resumes, and the
-// durable offset still counts it.
+// A durable tab sent to the background stops recording its output; a client
+// that comes back within the grace keeps the recording, which redraws the
+// screen the background output left.
 func TestTranscriptRecordsOnlyWhileAClientWatches(t *testing.T) {
 	provider := newTranscriptDurableProvider()
 	recorder := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		Durable: provider, TranscriptOffsets: provider, Transcripts: recorder,
+		Durable: provider, Transcripts: recorder,
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	ctx := context.Background()
@@ -41,10 +41,7 @@ func TestTranscriptRecordsOnlyWhileAClientWatches(t *testing.T) {
 	}
 	emit := func(data string) {
 		t.Helper()
-		if err := provider.channel(info.ID).emit([]byte(data)); err != nil {
-			t.Fatal(err)
-		}
-		waitFor(t, func() bool { return bytes.Contains(tab.terminal.Dump(1<<20), []byte(data)) })
+		emitShown(t, tab, provider.channel(info.ID), data)
 	}
 
 	emit("watched-1\r\n")
@@ -55,21 +52,20 @@ func TestTranscriptRecordsOnlyWhileAClientWatches(t *testing.T) {
 	if _, err := manager.AttachTab(ctx, info.ID, AttachOptions{ClientID: "client-a", ChannelID: "channel-b", ReplayBytes: -1}); err != nil {
 		t.Fatal(err)
 	}
-	// The notice is written as soon as a client watches again.
-	if got, want := recorder.unrecorded(), int64(len("background\r\n")); got != want {
-		t.Fatalf("unrecorded after the attach = %d, want %d", got, want)
+	// The screen is redrawn as soon as a client watches again.
+	screens := recorder.of(recScreen, info.ID)
+	if len(screens) != 1 {
+		t.Fatalf("screens = %+v, want one redraw after the background output", screens)
 	}
+	assertRecordingScreen(t, screens[0], "background")
 	emit("watched-2\r\n")
 	waitFor(t, func() bool { return bytes.Contains(recorder.outputBytes(), []byte("watched-2")) })
 
 	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("watched-1\r\nwatched-2\r\n")) {
 		t.Fatalf("recorded %q, want only the watched output", got)
 	}
-	if got, want := recorder.unrecorded(), int64(len("background\r\n")); got != want {
-		t.Fatalf("unrecorded = %d, want %d", got, want)
-	}
-	if got, want := provider.DurableTranscriptOffsetContext(ctx, info.ID), int64(len("watched-1\r\nbackground\r\nwatched-2\r\n")); got != want {
-		t.Fatalf("durable offset = %d, want %d", got, want)
+	if started, ended := recorder.of(recStarted, ""), recorder.of(recEnded, ""); len(started) != 1 || len(ended) != 0 {
+		t.Fatalf("started %d ended %d recordings, want one recording across the background stretch", len(started), len(ended))
 	}
 }
 

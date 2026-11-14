@@ -186,34 +186,6 @@ func TestConcreteProductionSessionOpenAccessDefaults(t *testing.T) {
 	}
 }
 
-func TestDurableTranscriptAdaptersEmptyOwnerRoundtrip(t *testing.T) {
-	ctx := context.Background()
-	database, err := store.OpenInMemory(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = database.Close() })
-	offsets := durableTranscriptOffsets{database: database}
-	const tabID = "desktop-open-tab"
-
-	offsets.PersistDurableTranscriptOffsetContext(ctx, tabID, 41)
-	if got := offsets.DurableTranscriptOffsetContext(ctx, tabID); got != 41 {
-		t.Fatalf("empty-owner offset = %d, want 41", got)
-	}
-	var offsetRow store.DurableTranscriptOffset
-	if err := database.GORM().Where("durable_id = ?", tabID).Take(&offsetRow).Error; err != nil {
-		t.Fatal(err)
-	}
-	if offsetRow.OwnerID != "" {
-		t.Fatalf("empty-owner offset row owner = %q, want empty", offsetRow.OwnerID)
-	}
-
-	offsets.DeleteDurableTranscriptOffsetContext(ctx, tabID)
-	if got := offsets.DurableTranscriptOffsetContext(ctx, tabID); got != 0 {
-		t.Fatalf("empty-owner offset after delete = %d, want 0", got)
-	}
-}
-
 func TestConcreteProductionChannelOwnerLifecycle(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	production, err := NewProduction(t.Context(), ProductionConfig{
@@ -731,9 +703,12 @@ func TestConcreteProductionTranscriptOwnerlessSessionFailsClosed(t *testing.T) {
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "anomaly-asset", Kind: session.KindSSH}); err != nil {
+	connected, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "anomaly-asset", Kind: session.KindSSH})
+	if err != nil {
 		t.Fatal(err)
 	}
+	// A recording starts once a client watches a tab.
+	openTranscriptTestTab(t, production.Services.Sessions, context.Background(), connected.ID, "client-anomaly", "channel-anomaly")
 	waitForLogCount(t, &logs, "failing closed instead of ownerless", 1)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -767,7 +742,14 @@ func TestConcreteProductionDesktopOwnerlessSessionWritesLegacyRow(t *testing.T) 
 	if err := production.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "legacy-asset", Kind: session.KindSSH}); err != nil {
+	connected, err := production.Services.Sessions.Connect(context.Background(), session.Asset{ID: "legacy-asset", Kind: session.KindSSH})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A recording starts once a client watches a tab and is kept once it
+	// records output.
+	tabID := openTranscriptTestTab(t, production.Services.Sessions, context.Background(), connected.ID, "client-legacy", "channel-legacy")
+	if err := production.Services.Sessions.Write(context.Background(), tabID, "client-legacy", []byte("echo legacy-marker\n")); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(10 * time.Second)

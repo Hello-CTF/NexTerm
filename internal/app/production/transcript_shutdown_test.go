@@ -17,7 +17,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
+func TestProductionShutdownDrainsTranscriptEnd(t *testing.T) {
 	fixture := newRemoteDaemonFixture(t)
 	resolver := &recordingDurableResolver{provider: fixture.provider}
 	dataDir := durableTestDataDir(t)
@@ -29,11 +29,10 @@ func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	transcripts := newTranscriptWriter(transcriptWriterConfig{Database: database, Logger: logger})
 	manager := session.NewManager(session.Config{
-		Connector:         fakeSSHConnector{},
-		DurableResolver:   resolver,
-		TranscriptOffsets: durableTranscriptOffsets{database: database},
-		Transcripts:       transcripts,
-		OpenAccess:        true,
+		Connector:       fakeSSHConnector{},
+		DurableResolver: resolver,
+		Transcripts:     transcripts,
+		OpenAccess:      true,
 	})
 	production, err := NewProductionWithServices(Config{
 		Logger:  logger,
@@ -91,7 +90,7 @@ func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
 		t.Fatalf("expected exactly one transcript after shutdown, got %+v", rows)
 	}
 	if rows[0].EndedAt == nil {
-		t.Fatal("session end must be drained into the transcript before the writer closes")
+		t.Fatal("the recording's end must be drained into the transcript before the writer closes")
 	}
 	if rows[0].Chunks == 0 {
 		t.Fatal("recorded output must be flushed before shutdown completes")
@@ -102,12 +101,5 @@ func TestProductionShutdownDrainsTranscriptEndAndOffset(t *testing.T) {
 	}
 	if len(matches) == 0 {
 		t.Fatal("recorded output must survive the shutdown drain")
-	}
-	offset, err := reopened.DurableTranscriptOffsetGet(ctx, tabID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset <= 0 {
-		t.Fatalf("durable transcribed offset must persist across shutdown, got %d", offset)
 	}
 }

@@ -2,8 +2,6 @@ package session
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/hub"
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -64,7 +63,6 @@ type Manager struct {
 	resolver             DurableResolver
 	terminalModeResolver func(context.Context, string) (string, error)
 	historyLimit         func(context.Context) uint64
-	offsets              OwnerScopedDurableTranscriptOffsetStore
 	bus                  *hub.Hub
 	ownsBus              bool
 	emitter              Emitter
@@ -193,7 +191,6 @@ func NewManager(config Config) *Manager {
 	} else {
 		manager.bus = config.Hub
 	}
-	manager.offsets = config.TranscriptOffsets
 	manager.logger = config.Logger
 	if manager.logger == nil {
 		manager.logger = slog.Default()
@@ -201,11 +198,6 @@ func NewManager(config Config) *Manager {
 	if config.Commands != nil {
 		manager.commandQueue = newAsyncCommandSink(config.Commands, manager.logger, commandLogQueueSize, manager.now)
 		manager.commands = manager.commandQueue
-	}
-	if binder, ok := config.Transcripts.(interface {
-		BindTranscriptOffsetSource(durableTranscriptOffsetSource)
-	}); ok && manager.offsets != nil {
-		binder.BindTranscriptOffsetSource(manager.offsets)
 	}
 	return manager
 }
@@ -434,7 +426,7 @@ func (m *Manager) Connect(ctx context.Context, asset Asset) (*Session, error) {
 	generation := uint64(1)
 	sessionCtx, cancel := context.WithCancel(ownerCtx(m.ctx, requester))
 	session := &Session{
-		ID:          newID(),
+		ID:          ids.New(),
 		CreatedAt:   m.now(),
 		asset:       asset,
 		userID:      requester,
@@ -1313,10 +1305,4 @@ func (m *Manager) eventOwner(topic string, payload any) (ownerID, resourceID str
 		return ownerID, tabID, false
 	}
 	return m.tabOwners[tabID], tabID, true
-}
-
-func newID() string {
-	var data [16]byte
-	rand.Read(data[:])
-	return hex.EncodeToString(data[:])
 }
