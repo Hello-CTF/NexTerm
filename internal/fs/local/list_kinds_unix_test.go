@@ -61,7 +61,7 @@ func TestRootsReportLocalCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, CaseInsensitive: runtime.GOOS == "darwin" || runtime.GOOS == "ios"}
+	want := base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true, CaseInsensitive: runtime.GOOS == "darwin" || runtime.GOOS == "ios"}
 	if roots.Capabilities != want {
 		t.Fatalf("capabilities = %+v, want %+v", roots.Capabilities, want)
 	}

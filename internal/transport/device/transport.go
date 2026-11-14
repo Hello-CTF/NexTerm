@@ -46,12 +46,15 @@ type Transport struct {
 	lost atomic.Bool
 	// inbound counts bytes read from every bridge this transport dialed.
 	inbound atomic.Uint64
+	// files multiplexes file operations over one bridge.
+	files *fileDialer
 }
 
 // New builds the device transport; platform is the agent's GOOS when known ("windows" selects the
 // PowerShell exec wrapper, everything else defaults to POSIX sh).
 func New(deviceID, digest string, dial DialFunc, generation uint64, platform ...string) *Transport {
 	t := &Transport{deviceID: deviceID, digest: digest, dial: dial, generation: generation}
+	t.files = newFileDialer(dial)
 	if len(platform) > 0 {
 		t.platform = platform[0]
 	}
@@ -168,6 +171,7 @@ func (c countingConn) Read(p []byte) (int, error) {
 
 func (t *Transport) Close() error {
 	t.closed.Store(true)
+	t.files.close()
 	return nil
 }
 

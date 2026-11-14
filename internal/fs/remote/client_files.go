@@ -18,7 +18,7 @@ func (f *FileSystem) WriteFileVersion(ctx context.Context, path string, data []b
 		return err
 	}
 	defer done()
-	return unsupportedRequest(client.WriteFileVersion(ctx, path, data, backup, expected))
+	return f.unsupportedRequest(client.WriteFileVersion(ctx, path, data, backup, expected), "安全条件写入")
 }
 
 // AtomicRename replaces the destination in one step. A server that predates
@@ -43,7 +43,7 @@ func (f *FileSystem) statInfo(ctx context.Context, path string) (deviceproto.Sta
 	}
 	defer done()
 	info, err := client.StatInfo(ctx, path)
-	return info, unsupportedRequest(err)
+	return info, f.unsupportedRequest(err, "读取文件信息")
 }
 
 func (f *FileSystem) FileMode(ctx context.Context, path string) (fs.FileMode, error) {
@@ -64,17 +64,26 @@ func (f *FileSystem) Watch(ctx context.Context, sink func(base.WatchEvent), done
 	}
 	stream, err := deviceproto.NewClient(conn).Watch(ctx, nil, sink, done)
 	if err != nil {
-		return nil, unsupportedRequest(err)
+		return nil, f.unsupportedRequest(err, "实时监视文件变化")
 	}
 	return stream, nil
 }
 
-// unsupportedRequest reports a request the server predates as base.ErrUnsupported.
-func unsupportedRequest(err error) error {
-	if deviceproto.UnsupportedRequest(err) {
-		return fmt.Errorf("%w: 文件服务版本过旧，不支持该操作: %w", base.ErrUnsupported, err)
+// unsupportedRequest reports a request the server predates as
+// base.ErrUnsupported, naming what to upgrade for this channel.
+func (f *FileSystem) unsupportedRequest(err error, what string) error {
+	if !deviceproto.UnsupportedRequest(err) {
+		return err
 	}
-	return err
+	server := "文件服务"
+	remedy := "升级后重试"
+	switch f.channel {
+	case base.FileChannelDevice:
+		server, remedy = "设备代理", "请在设备上升级设备代理后重试"
+	case base.FileChannelHelper:
+		server, remedy = "主机上的持久终端组件", "组件更新后重试"
+	}
+	return fmt.Errorf("%w: %s版本过旧，不支持%s，%s: %w", base.ErrUnsupported, server, what, remedy, err)
 }
 
 var (

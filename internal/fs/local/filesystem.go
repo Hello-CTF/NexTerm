@@ -52,7 +52,7 @@ func (f *FileSystem) Roots(ctx context.Context) (base.FileSystemRoots, error) {
 // Capabilities describes the local filesystem of a goos host: Windows maps chmod to the read-only attribute, and
 // Windows and macOS default to case-insensitive names. PackDownload is implemented here; extraction is not.
 func Capabilities(goos string) base.FileCapabilities {
-	capabilities := base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true}
+	capabilities := base.FileCapabilities{Chmod: base.ChmodPOSIX, Pack: true, Extract: true}
 	switch goos {
 	case "windows":
 		capabilities.Chmod = base.ChmodReadOnly

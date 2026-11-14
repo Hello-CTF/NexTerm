@@ -67,7 +67,7 @@ func TestWindowsListClassifiesJunctionsAndHiddenAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (base.FileCapabilities{Chmod: base.ChmodReadOnly, Pack: true, CaseInsensitive: true}); roots.Capabilities != want {
+	if want := (base.FileCapabilities{Chmod: base.ChmodReadOnly, Pack: true, Extract: true, CaseInsensitive: true}); roots.Capabilities != want {
 		t.Fatalf("capabilities = %+v, want %+v", roots.Capabilities, want)
 	}
 }

@@ -51,13 +51,12 @@ func (f *FileSystem) FileChannel() string {
 	return f.channel
 }
 
-// capabilities derives the device filesystem surface from the agent platform rather than the agent's reply, so
-// agents that predate capability reporting get the same answer. Archives run POSIX tar through the device shell.
+// capabilities derives the filesystem surface from the server platform rather than the server's reply, so
+// agents that predate capability reporting get the same answer.
 func (f *FileSystem) capabilities() base.FileCapabilities {
-	capabilities := fslocal.Capabilities(f.platform)
-	capabilities.Pack = f.platform != "windows"
-	capabilities.Extract = f.platform != "windows"
-	return capabilities
+	// Archives are packed and unpacked by the server in Go; servers that
+	// predate it fall back to tar through the shell on POSIX hosts.
+	return fslocal.Capabilities(f.platform)
 }
 
 // client dials one operation bridge; done releases it.
@@ -136,10 +135,8 @@ func (f *FileSystem) CreateFile(ctx context.Context, path string) error {
 	}
 	defer done()
 	err = client.CreateFile(ctx, path)
-	if deviceproto.UnsupportedRequest(err) {
-		return fmt.Errorf("%w: 该设备代理版本过旧，无法安全新建文件（不会覆盖同名文件），请在设备上升级设备代理后重试: %w", base.ErrUnsupported, err)
-	}
-	return err
+	// Never fall back to a truncating write: an old server cannot create safely.
+	return f.unsupportedRequest(err, "安全新建文件（不会覆盖同名文件）")
 }
 
 func (f *FileSystem) Mkdir(ctx context.Context, path string) error {
@@ -230,7 +227,7 @@ func (f *FileSystem) OpenWrite(ctx context.Context, path string, appendMode bool
 // Extract unpacks a tar archive into its own directory through the device
 // shell (agents are linux/darwin, so POSIX sh and tar are present) and
 // returns that directory; a non-zero tar exit surfaces its stderr.
-func (f *FileSystem) Extract(ctx context.Context, archivePath string) (string, error) {
+func (f *FileSystem) extractWithShell(ctx context.Context, archivePath string) (string, error) {
 	if archivePath == "" || strings.ContainsRune(archivePath, 0) {
 		return "", fmt.Errorf("archive path is empty or contains NUL")
 	}
@@ -273,7 +270,7 @@ func shellQuoteHome(path string) string {
 // PackDownload tars a directory through the device shell into a random temp
 // archive, downloads it through the regular transfer path, and removes the
 // temp archive on both success and failure.
-func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
+func (f *FileSystem) packDownloadWithShell(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
 	parent, name, err := splitArchivePath(remotePath)
 	if err != nil {
 		return 0, err

@@ -11,6 +11,10 @@ package deviceproto
 const (
 	// PurposeFile serves filesystem operations on the device.
 	PurposeFile = "file"
+	// PurposeFileMux carries the file channel: one bridge multiplexing a
+	// filesystem operation per stream, so file browsing does not pair a new
+	// bridge for every operation. Agents that predate it serve PurposeFile only.
+	PurposeFileMux = "file-mux"
 	// PurposeForward dials a TCP/unix target from the device and pipes bytes.
 	PurposeForward = "forward"
 	// PurposeListen binds one TCP/unix listener on the device per bridge and

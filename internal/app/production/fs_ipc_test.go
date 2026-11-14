@@ -3,6 +3,8 @@
 package production
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -782,7 +784,9 @@ func TestProductionFSExtract(t *testing.T) {
 	}
 }
 
-func TestProductionFSExtractUnsupportedForLocal(t *testing.T) {
+// A local session unpacks archives in Go, like the file servers of hosts and
+// devices, into a directory named after the archive.
+func TestProductionFSExtractUnpacksForLocal(t *testing.T) {
 	events := &fsEventRecorder{}
 	connector := session.ConnectorFunc(func(_ context.Context, _ session.Asset, _ uint64) (base.Transport, error) {
 		return local.NewWithConfig(local.Config{Shell: "/bin/sh"}), nil
@@ -800,9 +804,29 @@ func TestProductionFSExtractUnsupportedForLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_extract", Args: json.RawMessage(`{"sessionId":"` + connected.ID + `","path":"/tmp/bundle.tar"}`)}, production.Environment(""))
-	if response.OK || response.Error == nil || response.Error.Code != ipc.CodeUnsupported {
-		t.Fatalf("local fs_extract = %+v, want unsupported", response)
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "bundle.tar")
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	if err := writer.WriteHeader(&tar.Header{Name: "note.txt", Mode: 0o644, Size: 5, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, buffer.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{"sessionId": connected.ID, "path": archive})
+	response := production.Dispatcher.Dispatch(t.Context(), ipc.Request{Command: "fs_extract", Args: args}, production.Environment(""))
+	if !response.OK {
+		t.Fatalf("local fs_extract = %+v", response)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "bundle", "note.txt")); err != nil || string(data) != "hello" {
+		t.Fatalf("extracted content = %q, %v", data, err)
 	}
 }
 

@@ -29,6 +29,16 @@ func (s *FileServer) Serve(ctx context.Context, bridgeID string) error {
 	return s.ServeConn(ctx, conn)
 }
 
+// ServeMux claims a file-mux bridge and serves an operation per stream on it
+// until the client closes it.
+func (s *FileServer) ServeMux(ctx context.Context, bridgeID string) error {
+	conn, err := s.bridge.DialBridge(ctx, bridgeID, deviceproto.PurposeFileMux)
+	if err != nil {
+		return err
+	}
+	return remote.ServeMux(ctx, conn)
+}
+
 // ServeConn serves the single operation requested on conn and closes conn.
 func (s *FileServer) ServeConn(ctx context.Context, conn net.Conn) error {
 	return s.server.ServeConn(ctx, conn)

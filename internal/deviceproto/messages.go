@@ -139,3 +139,9 @@ type StatInfoReply struct {
 type WatchMsg struct {
 	Dirs []string `json:"dirs"`
 }
+
+// ExtractedMsg answers FrameExtract with the directory the archive was
+// unpacked into, in the request's path style.
+type ExtractedMsg struct {
+	Dir string `json:"dir"`
+}

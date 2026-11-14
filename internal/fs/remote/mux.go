@@ -51,11 +51,19 @@ func (c stdioConn) Close() error {
 // closes the channel or stops answering keepalives; every operation still
 // running is cancelled then.
 func ServeStdio(ctx context.Context, stdin io.ReadCloser, stdout io.WriteCloser) error {
-	if _, err := io.WriteString(stdout, Preamble); err != nil {
+	return ServeMux(ctx, stdioConn{Reader: stdin, Writer: stdout, closers: []io.Closer{stdin, stdout}})
+}
+
+// ServeMux serves the file channel on one connection, an operation per
+// stream, until the client closes it or stops answering keepalives.
+func ServeMux(ctx context.Context, conn io.ReadWriteCloser) error {
+	if _, err := io.WriteString(conn, Preamble); err != nil {
+		_ = conn.Close()
 		return err
 	}
-	session, err := yamux.Server(stdioConn{Reader: stdin, Writer: stdout, closers: []io.Closer{stdin, stdout}}, muxConfig())
+	session, err := yamux.Server(conn, muxConfig())
 	if err != nil {
+		_ = conn.Close()
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
