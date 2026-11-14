@@ -13,14 +13,14 @@ function sharedListener<T>(topic: string) {
   return (listener: Listener<T>): (() => void) => {
     listeners.add(listener);
     if (!unlisten) {
-      unlisten = listenEvent<T>(topic, (event) => listeners.forEach((each) => each(event)));
+      unlisten = Promise.resolve(listenEvent<T>(topic, (event) => listeners.forEach((each) => each(event))));
     }
     return () => {
       listeners.delete(listener);
       if (listeners.size === 0 && unlisten) {
         const pending = unlisten;
         unlisten = null;
-        void pending.then((off) => off()).catch(() => undefined);
+        void pending.then((off) => off?.()).catch(() => undefined);
       }
     };
   };

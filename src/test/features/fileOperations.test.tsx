@@ -43,6 +43,11 @@ const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
   listenEvent: vi.fn(),
 }));
+// writeTargets lists the session and path of every save, whatever version the editor expected.
+function writeTargets(): unknown[][] {
+  return mocks.write.mock.calls.map((call) => [call[0], call[1]]);
+}
+
 vi.mock("../../ui/dialogs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../ui/dialogs")>();
   mocks.realAsk = actual.ask;
@@ -814,8 +819,8 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.py", expect.any(String));
-    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
+    expect(writeTargets()).toContainEqual([SID, "~/c.py"]);
+    expect(writeTargets()).not.toContainEqual([SID, "~/a.txt"]);
   });
 
   it("migrates a clean editor without rereading, then saves later edits to the new locator", async () => {
@@ -837,7 +842,7 @@ describe("R2 rename editor locator migration", () => {
     });
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String));
+    expect(writeTargets()).toContainEqual([SID, "~/c.txt"]);
   });
 
   it("rejects rename while a save is in flight and allows it after that save settles", async () => {
@@ -852,7 +857,7 @@ describe("R2 rename editor locator migration", () => {
     const pending = deferred<void>();
     mocks.write.mockReturnValueOnce(pending.promise);
     click(saveButton());
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String)));
+    await waitFor(() => expect(writeTargets()).toContainEqual([SID, "~/a.txt"]));
 
     await triggerRename("c.txt");
     expect(mocks.rename).not.toHaveBeenCalled();
@@ -1077,7 +1082,7 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
+    expect(writeTargets()).toContainEqual([SID, "~/a.txt"]);
   });
 
   it("keeps the original locator and blocks old-path saves when the rename outcome is unknown", async () => {
@@ -1168,8 +1173,8 @@ describe("R2 rename editor locator migration", () => {
 
     click(saveButton());
     await waitFor(() => expect(mocks.write).toHaveBeenCalledTimes(1));
-    expect(mocks.write).toHaveBeenCalledWith(SID, "~/c.txt", expect.any(String));
-    expect(mocks.write).not.toHaveBeenCalledWith(SID, "~/a.txt", expect.any(String));
+    expect(writeTargets()).toContainEqual([SID, "~/c.txt"]);
+    expect(writeTargets()).not.toContainEqual([SID, "~/a.txt"]);
     setFileEditorDirty(SID, "~/c.txt", false);
   });
 
@@ -1187,7 +1192,7 @@ describe("R2 rename editor locator migration", () => {
     expect(storedTab(tab.id).path).toBe("/a/file.txt");
 
     click(saveButton());
-    await waitFor(() => expect(mocks.write).toHaveBeenCalledWith(SID, "/a/file.txt", expect.any(String)));
+    await waitFor(() => expect(writeTargets()).toContainEqual([SID, "/a/file.txt"]));
     await triggerRename("c", "/a");
     expect(mocks.rename).toHaveBeenCalledTimes(2);
     expect(mocks.rename).toHaveBeenLastCalledWith(SID, "/a", "/c");

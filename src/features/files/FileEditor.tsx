@@ -158,8 +158,9 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
   const originalRef = useRef("");
-  // versionRef is the host version the editor content started from; null when unknown or the file is gone.
-  const versionRef = useRef<FileVersion | null>(null);
+  // versionRef resolves to the host version the editor content started from; null when unknown or the file is gone.
+  // It is hashed in the background so loading and saving never wait for it.
+  const versionRef = useRef<Promise<FileVersion | null>>(Promise.resolve(null));
   // applyingDiskRef keeps a reload from the host from marking the editor dirty.
   const applyingDiskRef = useRef(false);
   const [diskChange, setDiskChange] = useState<DiskChange | null>(null);
@@ -326,10 +327,8 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (cancelled) return;
         const bin = bytesFromBase64(res.contentBase64);
         const { text, encoding } = decodeContent(bin, reloadEnc);
-        const version = await fileVersionOf(bin).catch(() => null);
-        if (cancelled) return;
         originalRef.current = text;
-        versionRef.current = version;
+        versionRef.current = fileVersionOf(bin).catch(() => null);
         setDiskChange(null);
         setShowDiff(false);
         setMeta({ encoding, size: res.size });
@@ -477,6 +476,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       const text = view.state.doc.toString();
       const savedVersion = editVersionRef.current;
       const bytes = new TextEncoder().encode(text);
+      const savedHostVersion = fileVersionOf(bytes).catch(() => null);
       const b64 = bytesToBase64(bytes);
       const writeLocator = locatorRef.current;
       if (saveFile) {
@@ -489,17 +489,10 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         });
         if (!(await saveFile(change))) return;
       } else {
-        await fsApi.write(
-          writeLocator.sessionId,
-          writeLocator.path,
-          b64,
-          undefined,
-          undefined,
-          undefined,
-          versionRef.current ?? undefined,
-        );
+        const expected = await versionRef.current;
+        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64, undefined, undefined, undefined, expected ?? undefined);
       }
-      versionRef.current = await fileVersionOf(bytes).catch(() => null);
+      versionRef.current = savedHostVersion;
       originalRef.current = text;
       if (mountedRef.current) {
         setDiskChange(null);
@@ -539,21 +532,25 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     const view = viewRef.current;
     if (!view || (reason === "changed" && saveInFlightRef.current)) return;
     const locator = locatorRef.current;
+    // The locator object is rebuilt on every render; only a different file makes the result stale.
+    const stale = () =>
+      locatorRef.current.sessionId !== locator.sessionId || locatorRef.current.path !== locator.path || !mountedRef.current;
     let res: Awaited<ReturnType<typeof fsApi.read>>;
     try {
       res = await fsApi.read(locator.sessionId, locator.path);
     } catch (e) {
-      if (locator !== locatorRef.current || !mountedRef.current) return;
+      if (stale()) return;
       if (fsErrorIsMissing(e)) {
-        versionRef.current = null;
+        versionRef.current = Promise.resolve(null);
         setDiskChange({ kind: "deleted" });
       }
       return;
     }
-    if (locator !== locatorRef.current || !mountedRef.current || viewRef.current !== view) return;
+    if (stale() || viewRef.current !== view) return;
     const bin = bytesFromBase64(res.contentBase64);
     const version = await fileVersionOf(bin);
-    const known = versionRef.current;
+    const known = await versionRef.current;
+    if (stale() || viewRef.current !== view) return;
     if (known && known.size === version.size && known.sha256 === version.sha256) {
       if (reason === "changed") setDiskChange((current) => (current?.kind === "deleted" ? null : current));
       return;
@@ -580,7 +577,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     }
     view.scrollDOM.scrollTop = scrollTop;
     originalRef.current = text;
-    versionRef.current = version;
+    versionRef.current = Promise.resolve(version);
     dirtyRef.current = false;
     const current = locatorRef.current;
     setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
@@ -618,7 +615,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   // keepMine accepts the host version as the base the editor content replaces, so the next save overwrites it.
   const keepMine = (thenSave: boolean) => {
     if (!diskChange) return;
-    versionRef.current = diskChange.kind === "deleted" ? null : diskChange.version;
+    versionRef.current = Promise.resolve(diskChange.kind === "deleted" ? null : diskChange.version);
     setDiskChange(null);
     setShowDiff(false);
     if (thenSave) saveRef.current();

@@ -113,6 +113,11 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 
+// settleUntil keeps act open in short steps until the condition holds, so async state lands inside act.
+async function settleUntil(condition: () => boolean): Promise<void> {
+  for (let step = 0; step < 30 && !condition(); step++) await settle(100);
+}
+
 async function settle(ms: number): Promise<void> {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -204,7 +209,7 @@ describe("FileEditor follows changes made on the host", () => {
       );
     });
     // The refused save reads the file again and hashes it; keep act open while that settles.
-    await settle(300);
+    await settleUntil(() => banner()?.dataset.kind === "conflict");
     expect(mocks.write).toHaveBeenCalledOnce();
     expect(mocks.write.mock.calls[0]?.[6]).toEqual(
       await fileVersionOf(new TextEncoder().encode("port: 80\n")),
@@ -213,7 +218,8 @@ describe("FileEditor follows changes made on the host", () => {
     await act(async () => {
       click(button("用我的版本覆盖"));
     });
-    await settle(300);
+    await settleUntil(() => banner() === null && mocks.write.mock.calls.length === 2);
+    await settle(50);
     expect(mocks.write).toHaveBeenCalledTimes(2);
     expect(mocks.write.mock.calls[1]?.[6]).toEqual(
       await fileVersionOf(new TextEncoder().encode("port: 81\n")),
