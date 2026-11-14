@@ -324,7 +324,7 @@ export function AiChatComposer({ ctx }: { ctx: AiChatCtx }) {
 
         <div className="nx-ai-composer-actions mt-1.5 flex items-center gap-1">
           <div className="flex min-w-0 flex-1 items-center gap-1">
-            <ModelSelector onManage={() => setModelPanelOpen(true)} />
+            <ModelSelector tabKey={ctx.tabKey} onManage={() => setModelPanelOpen(true)} />
             <input
               ref={imageInputRef}
               type="file"

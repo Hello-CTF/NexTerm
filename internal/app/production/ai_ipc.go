@@ -37,6 +37,12 @@ type aiCircuitStatusDTO struct {
 	OpenUntil           *int64 `json:"openUntil"`
 }
 
+// aiModelDuplicateRequest names the profile to copy and the copy's name.
+type aiModelDuplicateRequest struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type aiConversationRequest struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
@@ -256,6 +262,12 @@ func registerAICommands(dispatcher *ipc.Dispatcher, manager *profiles.Manager, d
 			return ipc.Register(dispatcher, "ai_model_delete", func(ctx context.Context, _ *ipc.Call, input aiConversationRequest) (any, error) {
 				_, err := manager.Delete(ctx, input.ID)
 				return nil, aiIPCError(err)
+			})
+		},
+		func() error {
+			return ipc.Register(dispatcher, "ai_model_duplicate", func(ctx context.Context, _ *ipc.Call, input aiModelDuplicateRequest) (profiles.Profile, error) {
+				copied, err := manager.Duplicate(ctx, input.ID, input.Name)
+				return copied, aiIPCError(err)
 			})
 		},
 		func() error {

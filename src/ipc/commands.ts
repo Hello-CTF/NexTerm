@@ -1560,6 +1560,8 @@ export const aiApi = {
       images?: string[];
       refs?: { kind: string; id: string; label: string; path?: string; sessionId?: string; text?: string }[];
       planMode?: boolean;
+      // modelProfileId runs this message with a profile other than the default one.
+      modelProfileId?: string;
       channel: unknown;
     },
   ) => {
@@ -1647,6 +1649,8 @@ export const modelApi = {
   save: (profile: ModelProfile) => call<ModelProfile>("ai_model_save", { profile }),
   remove: (id: string) => call<void>("ai_model_delete", { id }),
   activate: (id: string) => call<void>("ai_model_activate", { id }),
+  // duplicate saves a copy of a profile, its API key included, and returns the copy.
+  duplicate: (id: string, name: string) => call<ModelProfile>("ai_model_duplicate", { id, name }),
   test: (id: string) => call<import("./types").ProviderTestResult>("ai_test_provider", { id }),
   refresh: (profile: ModelProfile) =>
     call<import("./types").ModelListDto>("ai_model_refresh", { profile }),

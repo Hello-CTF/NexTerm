@@ -152,6 +152,11 @@ export const ipcContractManifest = {
       channel: false,
       stream: "none",
     },
+    "ai_model_duplicate": {
+      nested: false,
+      channel: false,
+      stream: "none",
+    },
     "ai_model_preset": {
       nested: false,
       channel: false,
@@ -3233,6 +3238,7 @@ export const ipcContractManifest = {
     "ai_messages",
     "ai_model_activate",
     "ai_model_delete",
+    "ai_model_duplicate",
     "ai_model_preset",
     "ai_model_profiles",
     "ai_model_refresh",

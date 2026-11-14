@@ -371,6 +371,45 @@ func (m *Manager) Save(ctx context.Context, profile Profile) (Overview, error) {
 	return entry.state.overview(), nil
 }
 
+// Duplicate saves a copy of a profile under a new ID and name, its API key
+// included, so the key never has to leave the backend to be reused. It
+// returns the copy as the overview shows it, with the key masked.
+func (m *Manager) Duplicate(ctx context.Context, id, name string) (Profile, error) {
+	ownerID, err := owner.ID(ctx, m.shared)
+	if err != nil {
+		return Profile{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry, err := m.stateForLocked(ctx, ownerID)
+	if err != nil {
+		return Profile{}, err
+	}
+	source, ok := entry.state.find(id)
+	if !ok {
+		return Profile{}, fmt.Errorf("%w: %s", ErrProfileNotFound, id)
+	}
+	copied := cloneProfile(source)
+	copied.ID = ids.New()
+	if name = strings.TrimSpace(name); name != "" {
+		copied.Name = name
+	}
+	copied = copied.Normalized()
+	next := entry.state.clone()
+	next.Profiles = append(next.Profiles, copied)
+	saved, err := save(ctx, m.settings, m.protector, ownerID, next)
+	if err != nil {
+		return Profile{}, err
+	}
+	entry.state = saved
+	for _, profile := range saved.overview().Profiles {
+		if profile.ID == copied.ID {
+			return profile, nil
+		}
+	}
+	return Profile{}, fmt.Errorf("%w: %s", ErrProfileNotFound, copied.ID)
+}
+
 func (m *Manager) Activate(ctx context.Context, id string) (Overview, error) {
 	ownerID, err := owner.ID(ctx, m.shared)
 	if err != nil {

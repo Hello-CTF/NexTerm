@@ -14,6 +14,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/ai/guard"
 	"github.com/Hello-CTF/NexTerm/internal/ai/hitl"
 	"github.com/Hello-CTF/NexTerm/internal/ai/privacy"
+	"github.com/Hello-CTF/NexTerm/internal/ai/profiles"
 	"github.com/Hello-CTF/NexTerm/internal/ai/steer"
 	"github.com/Hello-CTF/NexTerm/internal/ai/tools"
 	"github.com/Hello-CTF/NexTerm/internal/ai/usage"
@@ -205,6 +206,13 @@ func (r *Runner) Start(ctx context.Context, args ChatArgs, factory StreamFactory
 		args.Scope = resolved
 	}
 	args.ConversationID = conversationID
+	if args.ModelProfileID != "" && r.config.Profiles != nil {
+		if _, ok, err := r.config.Profiles.Profile(executionCtx, args.ModelProfileID); err != nil {
+			return StartResponse{}, err
+		} else if !ok {
+			return StartResponse{}, fmt.Errorf("%w: %s", profiles.ErrProfileNotFound, args.ModelProfileID)
+		}
+	}
 	if args.ModelProfileID == "" && r.config.Profiles != nil {
 		profile, ok, err := r.config.Profiles.ActiveProfile(executionCtx)
 		if err != nil {

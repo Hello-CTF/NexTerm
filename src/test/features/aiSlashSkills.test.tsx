@@ -155,7 +155,7 @@ describe("slash command menu", () => {
     expect(mocks.toast).toHaveBeenCalledWith("info", "已开启计划模式");
   });
 
-  it("switches the model through /model with arrow keys", async () => {
+  it("switches this conversation's model through /model without changing the default", async () => {
     setInputValue(composer(), "/model ");
     await flush();
     await flush();
@@ -163,8 +163,11 @@ describe("slash command menu", () => {
     press("ArrowDown");
     press("Enter");
     await flush();
-    expect(mocks.activate).toHaveBeenCalledWith("p2");
-    expect(mocks.toast).toHaveBeenCalledWith("success", "已切换模型：Kimi");
+    // The default profile only changes in the model settings.
+    expect(mocks.activate).not.toHaveBeenCalled();
+    expect(mocks.toast).toHaveBeenCalledWith("success", "本对话改用模型：Kimi");
+    await flush();
+    expect(view!.container.querySelector("button.nx-chip[aria-haspopup=menu]")?.textContent).toContain("Kimi");
   });
 
   it("explains that /compact needs a conversation first", async () => {

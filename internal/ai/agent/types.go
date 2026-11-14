@@ -140,7 +140,10 @@ type ChatArgs struct {
 	Refs           []RefArg    `json:"refs,omitempty"`
 	PlanMode       bool        `json:"planMode,omitempty"`
 	Source         string      `json:"-"`
-	ModelProfileID string      `json:"-"`
+	// ModelProfileID picks the model profile of this run; empty uses the
+	// default profile. The AI panel sends it so a model chosen there applies
+	// to its conversation without changing the default.
+	ModelProfileID string `json:"modelProfileId,omitempty"`
 }
 
 type RefArg struct {

@@ -2,16 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { modelApi, type ModelProfilesView } from "../../ipc/commands";
 import { useUi } from "../../app/store";
 import { describeError } from "../../ui/errorText";
-import { IconCheck, IconChevronUp, IconLoader, IconPlus, IconSettings } from "../../ui/icons";
+import { IconCheck, IconChevronUp, IconPlus, IconSettings } from "../../ui/icons";
 import { t } from "../../i18n";
+import { setChatModelChoice, useChatModelChoice } from "./chatModelChoice";
 
-export function ModelSelector({ onManage }: { onManage: () => void }) {
+// ModelSelector picks the model of one AI chat tab. The default model stays as the model settings set it; a tab
+// without a choice of its own follows it.
+export function ModelSelector({ onManage, tabKey = "" }: { onManage: () => void; tabKey?: string }) {
   const pushToast = useUi((s) => s.pushToast);
   const profilesRevision = useUi((s) => s.modelProfilesRevision);
   const [view, setView] = useState<ModelProfilesView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const choice = useChatModelChoice(tabKey);
   const boxRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
   const [dropdownWidth, setDropdownWidth] = useState(248);
@@ -61,21 +64,25 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
     }
   };
 
-  const choose = async (id: string, name: string) => {
+  // A chosen profile that was deleted meanwhile no longer applies; the tab follows the default again.
+  useEffect(() => {
+    if (view && choice && !view.profiles.some((p) => p.id === choice)) setChatModelChoice(tabKey, null);
+  }, [view, choice, tabKey]);
+
+  const choose = (id: string, name: string) => {
     setOpen(false);
-    setBusy(true);
-    try {
-      await modelApi.activate(id);
-      useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", t("当前模型已切换为「{name}」", { name }));
-    } catch (e) {
-      pushToast("error", t("切换失败：{value}", { value: describeError(e) }));
-    } finally {
-      setBusy(false);
-    }
+    const isDefault = id === view?.activeId;
+    setChatModelChoice(tabKey, isDefault ? null : id);
+    pushToast(
+      "info",
+      isDefault
+        ? t("本对话改用默认模型「{name}」", { name })
+        : t("本对话改用「{name}」，默认模型不变", { name }),
+    );
   };
 
-  const active = view?.profiles.find((p) => p.id === view.activeId) ?? null;
+  const effectiveId = (choice && view?.profiles.some((p) => p.id === choice) ? choice : null) ?? view?.activeId ?? null;
+  const active = view?.profiles.find((p) => p.id === effectiveId) ?? null;
 
   return (
     <div className="relative flex min-w-0 max-w-[220px]" ref={boxRef}>
@@ -87,9 +94,7 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
         aria-expanded={open}
         onClick={toggle}
       >
-        {busy ? (
-          <IconLoader size={11} className="animate-spin" />
-        ) : active ? (
+        {active ? (
           <IconCheck size={11} className="text-green-300" />
         ) : (
           <IconPlus size={11} />
@@ -119,17 +124,19 @@ export function ModelSelector({ onManage }: { onManage: () => void }) {
                 key={p.id}
                 className="nx-menu-item w-full"
                 title={p.model || p.baseUrl}
-                onClick={() => void choose(p.id, p.name)}
+                onClick={() => choose(p.id, p.name)}
               >
                 <span className="nx-menu-icon">
-                  {view.activeId === p.id ? (
+                  {effectiveId === p.id ? (
                     <IconCheck size={12} className="text-green-300" />
                   ) : (
                     <span className="nx-dot" />
                   )}
                 </span>
                 <span className="nx-menu-label">{p.name}</span>
-                <span className="nx-menu-hint">{p.model}</span>
+                <span className="nx-menu-hint">
+                  {view.activeId === p.id ? t("默认") : p.model}
+                </span>
               </button>
             ))
           ) : (

@@ -31,6 +31,7 @@ import {
 import { formatTokens } from "./UsageRing";
 import {
   IconCheck,
+  IconCopy,
   IconChevronDown,
   IconChevronRight,
   IconClose,
@@ -259,15 +260,36 @@ export function ModelManager({
 
   const activate = async () => {
     if (!draft || !savedProfile) return;
-    if (!(await guardDiscard(t("设为当前")))) return;
+    if (!(await guardDiscard(t("设为默认")))) return;
     const target = savedProfile;
     setBusy(true);
     try {
       await modelApi.activate(target.id);
       useUi.getState().bumpModelProfilesRevision();
-      pushToast("info", t("当前模型已切换为「{name}」", { name: target.name }));
+      pushToast("info", t("默认模型已改为「{name}」", { name: target.name }));
     } catch (e) {
       pushToast("error", t("未能切换模型：{value}", { value: describeError(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // duplicate copies the saved profile, its API key included, and opens the copy for editing.
+  const duplicate = async () => {
+    if (!savedProfile) return;
+    if (!(await guardDiscard(t("复制档案")))) return;
+    const source = savedProfile;
+    setBusy(true);
+    try {
+      const copied = await modelApi.duplicate(source.id, t("{name} 副本", { name: source.name || source.model }));
+      setDraft({ ...copied });
+      setModels([]);
+      setModelsOpen(false);
+      setTestResult(null);
+      useUi.getState().bumpModelProfilesRevision();
+      pushToast("info", t("已复制为「{name}」，修改后保存即可", { name: copied.name }));
+    } catch (e) {
+      pushToast("error", t("未能复制档案：{value}", { value: describeError(e) }));
     } finally {
       setBusy(false);
     }
@@ -410,7 +432,7 @@ export function ModelManager({
                       </span>
                       <span className="nx-menu-label">{p.name}</span>
                       {view.activeId === p.id && (
-                        <span className="nx-menu-hint text-green-400/80">{t("当前")}</span>
+                        <span className="nx-menu-hint text-green-400/80">{t("默认")}</span>
                       )}
                     </button>
                   ))
@@ -771,7 +793,7 @@ export function ModelManager({
         {draft ? (
           <>
             <span className="nx-hint mr-auto self-center text-[10.5px]">
-              {isNew ? t("新档案（尚未保存）") : isActive ? t("当前") : `${draft.name}`}
+              {isNew ? t("新档案（尚未保存）") : isActive ? t("默认") : `${draft.name}`}
               {dirty && <span className="ml-1 text-[var(--nx-fg-warning)]">{t("· 有未保存的修改")}</span>}
             </span>
             <button
@@ -800,12 +822,27 @@ export function ModelManager({
             </button>
             <button
               className="nx-btn nx-btn-outline nx-btn-sm"
-              title={isNew ? t("保存后才能设为当前") : isActive ? t("已是当前档案") : t("切换为此档案")}
+              title={
+                isNew
+                  ? t("保存后才能设为默认")
+                  : isActive
+                    ? t("已是默认档案")
+                    : t("设为默认档案：新对话和未单独选择模型的对话都会使用它")
+              }
               disabled={busy || isNew || isActive}
               onClick={() => void activate()}
             >
               <IconCheck size={12} />
-              {t("设为当前")}
+              {t("设为默认")}
+            </button>
+            <button
+              className="nx-btn nx-btn-outline nx-btn-sm"
+              title={isNew ? t("保存后才能复制") : t("复制此档案，包括接口地址和 API 密钥，再单独修改副本")}
+              disabled={busy || isNew}
+              onClick={() => void duplicate()}
+            >
+              <IconCopy size={12} />
+              {t("复制档案")}
             </button>
             <button
               className="nx-btn nx-btn-danger nx-btn-sm"

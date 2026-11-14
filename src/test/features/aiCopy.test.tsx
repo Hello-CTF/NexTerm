@@ -176,11 +176,11 @@ describe("M134 AI copy", () => {
     selector.unmount();
   });
 
-  it("labels the active profile as current and keeps the key-storage hint free of internal cross-references", async () => {
+  it("labels the default profile and keeps the key-storage hint free of internal cross-references", async () => {
     const manager = mount(createElement(ModelManager, {}));
     await flush();
     const label = manager.container.querySelector("span.nx-hint.mr-auto");
-    expect(label?.textContent).toBe("当前");
+    expect(label?.textContent).toBe("默认");
     const text = manager.container.textContent ?? "";
     expect(text).not.toContain("当前激活");
     expect(text).toContain("API 密钥由当前 NexTerm 实例加密保存；模型请求仅发送到所填写的接口地址。");

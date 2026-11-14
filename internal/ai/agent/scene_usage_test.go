@@ -1007,3 +1007,57 @@ func TestParkForShutdownPropagatesSubagentWriteFailure(t *testing.T) {
 		t.Fatalf("repeated Close must keep reporting the drain error, got %v", err)
 	}
 }
+
+// A model chosen for a conversation runs that conversation without becoming
+// the default; an unknown profile is refused before anything runs.
+func TestStartUsesTheChosenProfileWithoutChangingTheDefault(t *testing.T) {
+	ctx := context.Background()
+	storage, err := store.OpenInMemory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = storage.Close() })
+	manager, err := profiles.NewManager(ctx, storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Save(ctx, profiles.Profile{Name: "A", BaseURL: "https://a.example/v1", APIKey: "ka", Model: "ma"}); err != nil {
+		t.Fatal(err)
+	}
+	overview, err := manager.Save(ctx, profiles.Profile{Name: "B", BaseURL: "https://b.example/v1", APIKey: "kb", Model: "mb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultID := *overview.ActiveID
+	chosen := overview.Profiles[len(overview.Profiles)-1].ID
+	resolved := make(chan string, 4)
+	runner := NewRunner(Config{
+		Profiles: manager,
+		ModelForProfile: func(_ context.Context, profileID string) (model.BaseChatModel, uint64, error) {
+			resolved <- profileID
+			return sequenceModel(schema.AssistantMessage("done", nil)), 32768, nil
+		},
+		Tools: tools.NewRegistry(tools.Dependencies{}), Store: storage, Runs: storage,
+		Checkpoints: NewStoreCheckpoints(storage),
+	})
+	t.Cleanup(func() { _ = runner.Close() })
+	if _, err := runner.Start(ctx, ChatArgs{Message: "go", ModelProfileID: "missing"}, StaticStream(&SliceStream{})); !errors.Is(err, profiles.ErrProfileNotFound) {
+		t.Fatalf("start with an unknown profile = %v", err)
+	}
+	stream := &SliceStream{}
+	response, err := runner.Start(ctx, ChatArgs{Message: "go", ModelProfileID: chosen}, StaticStream(stream))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitClosed(t, stream)
+	if got := <-resolved; got != chosen {
+		t.Fatalf("model profile = %q, want the chosen %q", got, chosen)
+	}
+	row, err := storage.RunGet(ctx, response.JobID)
+	if err != nil || row.ProfileID != chosen {
+		t.Fatalf("run profile = %q, %v", row.ProfileID, err)
+	}
+	if after, _ := manager.Overview(ctx); after.ActiveID == nil || *after.ActiveID != defaultID {
+		t.Fatalf("default profile = %v, want it unchanged %q", after.ActiveID, defaultID)
+	}
+}

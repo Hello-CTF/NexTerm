@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
+import { setChatModelChoice } from "../chatModelChoice";
 import type { AgentRosterEntry } from "../agentTypes";
 import { useUi, nextTabId, type TakeoverState } from "../../../app/store";
-import { terminalApi, aiApi, modelApi } from "../../../ipc/commands";
+import { terminalApi, aiApi } from "../../../ipc/commands";
 import { describeError } from "../../../ui/errorText";
 import { aiTabBusyIds, aiTabRunControls, setAiTabBusy, clearAiTabRun, aiRunBlocksStart, type AiRunSlot, isCurrentAiRun, bindAiRunJob, createAiRun, registerAiRunGeneration, finishAiRunSpawn, settleAiRun } from "../runOwnership";
 import { RUN_RESTORE_LIMIT } from "../runRestore";
@@ -335,15 +336,11 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
     }
   };
 
-  const switchModel = async (profile: { id: string; name: string }) => {
+  // switchModel changes the model of this chat tab only; the default model stays as the settings chose it.
+  const switchModel = (profile: { id: string; name: string }) => {
     setInput("");
-    try {
-      await modelApi.activate(profile.id);
-      useUi.getState().bumpModelProfilesRevision();
-      pushToast("success", t("已切换模型：{name}", { name: profile.name }));
-    } catch (e) {
-      pushToast("error", t("未能切换模型：{value}", { value: describeError(e) }));
-    }
+    setChatModelChoice(tabKey, profile.id);
+    pushToast("success", t("本对话改用模型：{name}", { name: profile.name }));
   };
 
   const slashCommands: SlashItem[] = [
@@ -379,7 +376,7 @@ export function useChatAgentsAndHistory(p: AiChatBase & UseChatRunSessionOut & U
             key: `model:${profile.id}`,
             label: profile.name,
             hint: profile.active ? t("{model} · 当前", { model: profile.model }) : profile.model,
-            run: () => void switchModel(profile),
+            run: () => switchModel(profile),
           }))
       : slashQuery !== null
         ? [
