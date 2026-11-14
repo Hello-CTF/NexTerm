@@ -43,7 +43,9 @@ func init() {
 	fleetagent.PurposeHandlerWirer = func(r *fleetagent.Runtime) {
 		dial := purpose.BridgeDialerFunc(r.DialPurposeBridge)
 		hub := purpose.NewListenHub()
-		r.RegisterPurposeHandler(deviceproto.PurposeFile, purpose.NewFileServer(dial).Serve)
+		files := purpose.NewFileServer(dial)
+		r.RegisterPurposeHandler(deviceproto.PurposeFile, files.Serve)
+		r.RegisterPurposeHandler(deviceproto.PurposeFileMux, files.ServeMux)
 		r.RegisterPurposeHandler(deviceproto.PurposeForward, purpose.NewDialServer(dial).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeListen, purpose.NewListenServer(dial, hub).Serve)
 		r.RegisterPurposeHandler(deviceproto.PurposeAccept, purpose.NewAcceptServer(dial, hub).Serve)

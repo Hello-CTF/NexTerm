@@ -32,7 +32,7 @@ func TestFileSystemPackDownloadCommandExpandsHome(t *testing.T) {
 		{"/~", ` -C '/' -- '~'`},
 		{"-weird", ` -C '.' -- './-weird'`},
 	} {
-		if _, err := filesystem.PackDownload(context.Background(), testCase.path, filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+		if _, err := filesystem.packDownloadWithShell(context.Background(), testCase.path, filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 			t.Fatalf("PackDownload(%q) unexpectedly succeeded without a file bridge", testCase.path)
 		}
 		command := commands[len(commands)-1]
@@ -63,7 +63,7 @@ func TestFileSystemExtractExpandsHome(t *testing.T) {
 		{"~", ".", `tar -xf "$HOME" -C '.'`},
 		{"/data/x.tar", "/data", `tar -xf '/data/x.tar' -C '/data'`},
 	} {
-		target, err := filesystem.Extract(context.Background(), testCase.path)
+		target, err := filesystem.extractWithShell(context.Background(), testCase.path)
 		if err != nil {
 			t.Fatalf("Extract(%q) = %v", testCase.path, err)
 		}

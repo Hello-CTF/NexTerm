@@ -55,6 +55,9 @@ const (
 	FrameWatch
 	FrameWatchSet
 	FrameWatchEvent
+	FramePack
+	FrameExtract
+	FrameExtracted
 )
 
 const (

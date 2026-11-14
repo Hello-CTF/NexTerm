@@ -46,7 +46,7 @@ func (r *Resolver) OpenFileChannel(ctx context.Context, client *transportssh.Cli
 	if err != nil {
 		_ = mux.Close()
 		if strings.Contains(err.Error(), "unknown option "+supervisor.FilesOption) {
-			return nil, errors.New("主机上运行的 helper 版本较旧，不支持文件通道；helper 更新后自动启用")
+			return nil, errors.New("主机上的持久终端组件版本较旧，不支持文件通道，组件更新后自动启用")
 		}
 		return nil, err
 	}

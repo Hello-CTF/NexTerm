@@ -101,6 +101,10 @@ func (s *Server) ServeConn(ctx context.Context, conn net.Conn) error {
 		return s.serveStatInfo(conn, payload)
 	case deviceproto.FrameWatch:
 		return s.serveWatch(ctx, conn, payload)
+	case deviceproto.FramePack:
+		return s.servePack(ctx, conn, payload)
+	case deviceproto.FrameExtract:
+		return s.serveExtract(ctx, conn, payload)
 	default:
 		return deviceproto.WriteError(conn, fmt.Errorf("%w: unexpected request frame %d", deviceproto.ErrProtocol, byte(kind)))
 	}

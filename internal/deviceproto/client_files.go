@@ -161,3 +161,51 @@ func nonNil(dirs []string) []string {
 }
 
 var _ base.WatchHandle = (*WatchStream)(nil)
+
+// Pack opens a stream of the directory as a gzipped tar; the client owns the
+// conn in every outcome. The stream's size is unknown (-1).
+func (c *Client) Pack(ctx context.Context, path string) (*ReadStream, error) {
+	ex, err := c.begin(ctx, FramePack, PathMsg{Path: path})
+	if err != nil {
+		_ = c.conn.Close()
+		return nil, err
+	}
+	fail := func(err error) (*ReadStream, error) {
+		ex.finish()
+		_ = c.conn.Close()
+		return nil, err
+	}
+	kind, payload, err := ex.next()
+	if err != nil {
+		return fail(err)
+	}
+	if kind != FrameOpened {
+		return fail(ex.unexpected(kind))
+	}
+	var opened OpenedMsg
+	if err := UnmarshalPayload(payload, &opened); err != nil {
+		return fail(err)
+	}
+	return &ReadStream{exchange: ex, size: opened.Size}, nil
+}
+
+// Extract unpacks an archive next to it and returns the directory it went to.
+func (c *Client) Extract(ctx context.Context, path string) (string, error) {
+	ex, err := c.begin(ctx, FrameExtract, PathMsg{Path: path})
+	if err != nil {
+		return "", err
+	}
+	defer ex.finish()
+	kind, payload, err := ex.next()
+	if err != nil {
+		return "", err
+	}
+	if kind != FrameExtracted {
+		return "", ex.unexpected(kind)
+	}
+	var reply ExtractedMsg
+	if err := UnmarshalPayload(payload, &reply); err != nil {
+		return "", err
+	}
+	return reply.Dir, nil
+}

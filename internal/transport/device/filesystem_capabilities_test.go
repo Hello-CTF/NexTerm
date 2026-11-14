@@ -13,10 +13,10 @@ func TestFileSystemCapabilitiesFollowAgentPlatform(t *testing.T) {
 		"":        {Chmod: base.ChmodPOSIX, Pack: true, Extract: true},
 		"linux":   {Chmod: base.ChmodPOSIX, Pack: true, Extract: true},
 		"darwin":  {Chmod: base.ChmodPOSIX, Pack: true, Extract: true, CaseInsensitive: true},
-		"windows": {Chmod: base.ChmodReadOnly, CaseInsensitive: true},
+		"windows": {Chmod: base.ChmodReadOnly, Pack: true, Extract: true, CaseInsensitive: true},
 	} {
 		script := scriptedFileSystem{
-			// The agent's own reply does not decide archive support, which runs through the device shell.
+			// The agent's own reply does not decide archive support: the file server packs and unpacks in Go.
 			roots: base.FileSystemRoots{PathStyle: base.PathStylePOSIX, Supported: true, Capabilities: base.FileCapabilities{Chmod: base.ChmodNone}},
 		}
 		filesystem := remote.NewFileSystem(remote.Options{Dial: script.dial, Platform: platform})

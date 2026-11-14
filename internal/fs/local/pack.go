@@ -58,7 +58,20 @@ func createPackArchive(ctx context.Context, root string, maxBytes int64) (string
 			_ = os.Remove(name)
 		}
 	}()
-	compressed := gzip.NewWriter(LimitWriter(file, maxBytes))
+	if err := writePackArchive(ctx, root, LimitWriter(file, maxBytes)); err != nil {
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	committed = true
+	return name, nil
+}
+
+// writePackArchive writes root as a gzipped tar to out, entries prefixed
+// with root's base name.
+func writePackArchive(ctx context.Context, root string, out io.Writer) error {
+	compressed := gzip.NewWriter(out)
 	writer := tar.NewWriter(compressed)
 	parent := filepath.Dir(root)
 	walkErr := filepath.WalkDir(root, func(current string, entry fs.DirEntry, err error) error {
@@ -105,18 +118,24 @@ func createPackArchive(ctx context.Context, root string, maxBytes int64) (string
 		}
 		return closeErr
 	})
-	if walkErr == nil {
-		if err := writer.Close(); err != nil {
-			walkErr = err
-		} else if err := compressed.Close(); err != nil {
-			walkErr = err
-		} else if err := file.Close(); err != nil {
-			walkErr = err
-		}
-	}
 	if walkErr != nil {
-		return "", walkErr
+		return walkErr
 	}
-	committed = true
-	return name, nil
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	return compressed.Close()
+}
+
+// WritePack streams the directory tree at remotePath to out as a gzipped tar.
+func (f *FileSystem) WritePack(ctx context.Context, remotePath string, out io.Writer) error {
+	root := real(remotePath)
+	info, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("pack source %s is not a directory", root)
+	}
+	return writePackArchive(ctx, root, out)
 }

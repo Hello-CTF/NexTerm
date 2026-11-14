@@ -123,3 +123,80 @@ func (s *Server) serveWatch(ctx context.Context, conn net.Conn, payload []byte) 
 		return writeErr
 	}
 }
+
+// servePack streams a directory as a gzipped tar: FrameOpened, data frames,
+// then FrameEnd, or an error frame when packing fails midway.
+func (s *Server) servePack(ctx context.Context, conn net.Conn, payload []byte) error {
+	var msg deviceproto.PathMsg
+	if err := deviceproto.UnmarshalPayload(payload, &msg); err != nil {
+		return deviceproto.WriteError(conn, err)
+	}
+	info, err := os.Stat(s.files.LocalPath(msg.Path))
+	if err != nil {
+		return deviceproto.WriteError(conn, err)
+	}
+	if !info.IsDir() {
+		return deviceproto.WriteError(conn, fmt.Errorf("%w: pack source is not a directory", deviceproto.ErrInvalid))
+	}
+	if err := deviceproto.WriteMessage(conn, deviceproto.FrameOpened, deviceproto.OpenedMsg{Size: -1}); err != nil {
+		return err
+	}
+	out := &frameWriter{conn: conn}
+	if err := s.files.WritePack(ctx, msg.Path, out); err != nil {
+		if out.err != nil {
+			return out.err
+		}
+		return deviceproto.WriteError(conn, err)
+	}
+	if err := out.flush(); err != nil {
+		return err
+	}
+	return deviceproto.WriteFrame(conn, deviceproto.FrameEnd, nil)
+}
+
+func (s *Server) serveExtract(ctx context.Context, conn net.Conn, payload []byte) error {
+	var msg deviceproto.PathMsg
+	if err := deviceproto.UnmarshalPayload(payload, &msg); err != nil {
+		return deviceproto.WriteError(conn, err)
+	}
+	dir, err := s.files.Extract(ctx, msg.Path)
+	if err != nil {
+		return deviceproto.WriteError(conn, err)
+	}
+	return deviceproto.WriteMessage(conn, deviceproto.FrameExtracted, deviceproto.ExtractedMsg{Dir: dir})
+}
+
+// frameWriter buffers written bytes into data frames.
+type frameWriter struct {
+	conn   net.Conn
+	buffer []byte
+	err    error
+}
+
+func (w *frameWriter) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+	written := len(p)
+	for len(p) > 0 {
+		room := deviceproto.DataChunkSize - len(w.buffer)
+		take := min(room, len(p))
+		w.buffer = append(w.buffer, p[:take]...)
+		p = p[take:]
+		if len(w.buffer) == deviceproto.DataChunkSize {
+			if err := w.flush(); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return written, nil
+}
+
+func (w *frameWriter) flush() error {
+	if w.err != nil || len(w.buffer) == 0 {
+		return w.err
+	}
+	w.err = deviceproto.WriteFrame(w.conn, deviceproto.FrameData, w.buffer)
+	w.buffer = w.buffer[:0]
+	return w.err
+}

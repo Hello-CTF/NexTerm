@@ -789,10 +789,11 @@ func TestTransportFileSystemExtract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target != rig.root {
-		t.Fatalf("Extract target = %q, want the archive's own directory %q", target, rig.root)
+	// Like the SSH host's extract, an archive unpacks into a directory named after it.
+	if want := filepath.Join(rig.root, "bundle"); target != want {
+		t.Fatalf("Extract target = %q, want %q", target, want)
 	}
-	if data, err := os.ReadFile(filepath.Join(rig.root, "inner", "note.txt")); err != nil || string(data) != "extract me" {
+	if data, err := os.ReadFile(filepath.Join(rig.root, "bundle", "inner", "note.txt")); err != nil || string(data) != "extract me" {
 		t.Fatalf("extracted content = %q, %v", data, err)
 	}
 
@@ -800,8 +801,8 @@ func TestTransportFileSystemExtract(t *testing.T) {
 	if err := os.WriteFile(bogus, []byte("not a tar archive"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := extractor.Extract(ctx, bogus); err == nil || !strings.Contains(err.Error(), "exited") {
-		t.Fatalf("corrupt archive error = %v, want the tar exit status", err)
+	if _, err := extractor.Extract(ctx, bogus); err == nil {
+		t.Fatal("a corrupt archive extracted")
 	}
 	if _, err := extractor.Extract(ctx, filepath.Join(rig.root, "missing.tar")); err == nil {
 		t.Fatal("missing archive must fail")
@@ -813,7 +814,7 @@ func TestTransportFileSystemExtract(t *testing.T) {
 
 func TestTransportFileSystemPackDownload(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("device pack download requires a POSIX shell and tar on the agent")
+		t.Skip("the check unpacks the archive with the host tar")
 	}
 	rig := newPurposeRig(t)
 	transport := New("dev-1", rig.digest, rig.dial, 1)
@@ -822,36 +823,12 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := filesystem.(interface {
+	packer, ok := filesystem.(interface {
 		PackDownload(context.Context, string, string, sshfs.TransferOptions) (int64, error)
-	}); !ok {
+	})
+	if !ok {
 		t.Fatal("device filesystem must expose PackDownload for folder archive downloads")
 	}
-	execDevice := transport.Exec
-	var temporaryArchives []string
-	packer := remote.NewFileSystem(remote.Options{Dial: func(ctx context.Context) (net.Conn, error) {
-		return transport.dial(ctx, deviceproto.PurposeFile)
-	}, Exec: func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
-		const marker = "/tmp/nexterm-pack-"
-		if start := strings.Index(command, marker); start >= 0 {
-			archive := command[start:]
-			if end := strings.Index(archive, ".tar.gz"); end >= 0 {
-				temporaryArchives = append(temporaryArchives, archive[:end+len(".tar.gz")])
-			}
-		}
-		return execDevice(ctx, command, options)
-	}})
-	assertNoTempArchive := func(call int) {
-		t.Helper()
-		if len(temporaryArchives) != call {
-			t.Fatalf("tracked temp archives = %v after call %d; want one exact path per pack", temporaryArchives, call)
-		}
-		temporary := temporaryArchives[call-1]
-		if _, err := os.Stat(temporary); !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("temporary archive %q after call %d: stat error = %v; want no leftover", temporary, call, err)
-		}
-	}
-
 	source := filepath.Join(rig.root, "bundle")
 	if err := os.MkdirAll(filepath.Join(source, "inner"), 0o755); err != nil {
 		t.Fatal(err)
@@ -884,12 +861,9 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(unpacked, "bundle", "inner", "note.txt")); err != nil || string(data) != "pack me" {
 		t.Fatalf("packed content = %q, %v", data, err)
 	}
-	assertNoTempArchive(1)
-
-	if _, err := packer.PackDownload(ctx, filepath.Join(rig.root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil || !strings.Contains(err.Error(), "create device archive") {
-		t.Fatalf("packing a missing directory = %v, want the tar failure", err)
+	if _, err := packer.PackDownload(ctx, filepath.Join(rig.root, "missing"), filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
+		t.Fatal("packing a missing directory succeeded")
 	}
-	assertNoTempArchive(2)
 	if _, err := packer.PackDownload(ctx, "", filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 		t.Fatal("empty source path must fail")
 	}
