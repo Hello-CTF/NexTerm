@@ -3,89 +3,16 @@ package session
 import (
 	"bytes"
 	"context"
-	"sync"
+	"fmt"
 	"testing"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-type memoryTranscriptOffsets struct {
-	mu      sync.Mutex
-	offsets map[string]int64
-}
-
-func (o *memoryTranscriptOffsets) DurableTranscriptOffsetContext(_ context.Context, tabID string) int64 {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.offsets[tabID]
-}
-
-func (o *memoryTranscriptOffsets) PersistDurableTranscriptOffsetContext(_ context.Context, tabID string, offset int64) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.offsets == nil {
-		o.offsets = make(map[string]int64)
-	}
-	o.offsets[tabID] = offset
-}
-
-func (o *memoryTranscriptOffsets) DeleteDurableTranscriptOffsetContext(_ context.Context, tabID string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	delete(o.offsets, tabID)
-}
-
-// gapRecorder is a transcript sink that also records the output the helper
-// dropped before it could be transcribed.
-type gapRecorder struct {
-	*transcriptRecorder
-	gapMu      sync.Mutex
-	gaps       []int64
-	unrecorded []int64
-}
-
-func (r *gapRecorder) SessionOutputGap(ctx context.Context, durableID, _, _ string, skipped int64) {
-	r.gapMu.Lock()
-	r.gaps = append(r.gaps, skipped)
-	r.gapMu.Unlock()
-	r.mu.Lock()
-	offsets := r.offsets
-	r.mu.Unlock()
-	if durableID != "" && offsets != nil {
-		offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, offsets.DurableTranscriptOffsetContext(ctx, durableID)+skipped)
-	}
-}
-
-func (r *gapRecorder) SessionOutputUnrecorded(ctx context.Context, durableID, _, _ string, skipped int64) {
-	r.gapMu.Lock()
-	r.unrecorded = append(r.unrecorded, skipped)
-	r.gapMu.Unlock()
-	r.mu.Lock()
-	offsets := r.offsets
-	r.mu.Unlock()
-	if durableID != "" && offsets != nil {
-		offsets.PersistDurableTranscriptOffsetContext(ctx, durableID, offsets.DurableTranscriptOffsetContext(ctx, durableID)+skipped)
-	}
-}
-
-func (r *gapRecorder) unrecordedBytes() int64 {
-	r.gapMu.Lock()
-	defer r.gapMu.Unlock()
-	var total int64
-	for _, skipped := range r.unrecorded {
-		total += skipped
-	}
-	return total
-}
-
-func (r *gapRecorder) skipped() int64 {
-	r.gapMu.Lock()
-	defer r.gapMu.Unlock()
-	var total int64
-	for _, gap := range r.gaps {
-		total += gap
-	}
-	return total
+// gapNotice is the part of the notice a recording carries where the helper
+// dropped skipped bytes of output before this process saw them.
+func gapNotice(skipped int) []byte {
+	return []byte(fmt.Sprintf("此处有 %d 字节输出", skipped))
 }
 
 type replayAttachment struct {
@@ -96,9 +23,9 @@ type replayAttachment struct {
 func (a replayAttachment) DurableReplay() base.DurableReplay { return a.replay }
 func (a replayAttachment) DurableOffset() uint64             { return a.replay.ReplayFrom }
 
-func historyTestTab(t *testing.T) (*Manager, *Tab, *gapRecorder) {
+func historyTestTab(t *testing.T) (*Manager, *Tab, *transcriptRecorder) {
 	t.Helper()
-	recorder := &gapRecorder{transcriptRecorder: &transcriptRecorder{}}
+	recorder := &transcriptRecorder{}
 	manager := NewManager(Config{Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(), Transcripts: recorder})
 	t.Cleanup(func() { _ = manager.Close() })
 	connected, err := manager.Connect(context.Background(), Asset{ID: "history-unit", Kind: KindSSH})
@@ -132,11 +59,11 @@ func TestFeedDurableReportsGaps(t *testing.T) {
 	if !bytes.Contains(shown, durableHistoryGapBanner) {
 		t.Fatalf("the dropped output is not shown as a notice: %q", shown)
 	}
-	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("shownafter-gap")) {
-		t.Fatalf("transcript = %q", got)
-	}
-	if skipped := recorder.skipped(); skipped != 95 {
-		t.Fatalf("transcript gap = %d, want 95", skipped)
+	// The recording marks the dropped output where it was dropped.
+	recorded := recorder.outputBytes()
+	shownAt, noticeAt, afterAt := bytes.Index(recorded, []byte("shown")), bytes.Index(recorded, gapNotice(95)), bytes.Index(recorded, []byte("after-gap"))
+	if shownAt < 0 || noticeAt < shownAt || afterAt < noticeAt {
+		t.Fatalf("recording = %q, want the output with a notice of 95 dropped bytes between", recorded)
 	}
 	tab.mu.Lock()
 	fed, truncated := tab.durableFed, tab.historyTruncated
@@ -160,8 +87,8 @@ func TestReconnectReplacementBelowBaseMarksTruncation(t *testing.T) {
 		t.Fatalf("after replacement fed=%d truncated=%v base=%d", fed, truncated, historyBase)
 	}
 	manager.startDurableReplay(context.Background(), tab, generation)
-	if skipped := recorder.skipped(); skipped != 200 {
-		t.Fatalf("transcript gap = %d, want 200", skipped)
+	if recorded := recorder.outputBytes(); !bytes.Contains(recorded, gapNotice(200)) {
+		t.Fatalf("recording = %q, want a notice of 200 dropped bytes", recorded)
 	}
 	if shown := tab.terminal.Dump(1 << 20); !bytes.Contains(shown, durableHistoryGapBanner) {
 		t.Fatalf("truncated resume is not shown: %q", shown)
@@ -177,9 +104,9 @@ func TestReconnectReplacementBelowBaseMarksTruncation(t *testing.T) {
 	}
 }
 
-// Output the helper dropped inside a recovered tab's replay was reported as
-// unrecorded when the tab recovered: it is not reported again as a gap, and
-// the live output after the replay is still recorded.
+// Output the helper dropped inside a recovered tab's replay is history from
+// before the recording: it is not marked as a gap, and the live output after
+// the replay is still recorded.
 func TestFeedDurableGapInsideReplayIsNotCountedTwice(t *testing.T) {
 	manager, tab, recorder := historyTestTab(t)
 	ctx := context.Background()
@@ -191,9 +118,6 @@ func TestFeedDurableGapInsideReplayIsNotCountedTwice(t *testing.T) {
 
 	if err := manager.feedDurable(ctx, tab, generation, []byte("live"), 14); err != nil {
 		t.Fatal(err)
-	}
-	if skipped := recorder.skipped(); skipped != 0 {
-		t.Fatalf("transcript gap = %d, want none inside the replay", skipped)
 	}
 	if got := recorder.outputBytes(); !bytes.Equal(got, []byte("live")) {
 		t.Fatalf("transcript = %q, want the live output after the replay", got)

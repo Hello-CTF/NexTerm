@@ -17,8 +17,8 @@ import (
 // killed the fresh shell moments after Reconnect returned — the next Write
 // failed with "terminal tab closed" or its output never reached the
 // transcript. Waiting past that window makes the interleaving deterministic:
-// the replacement channel must still carry output into the second period
-// under the same owner.
+// the replacement channel must still carry output into the tab's second
+// recording under the same owner.
 func TestTranscriptWriterReconnectKeepsReplacementChannelAlive(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.OpenInMemory(ctx)
@@ -63,7 +63,6 @@ func TestTranscriptWriterReconnectKeepsReplacementChannelAlive(t *testing.T) {
 	if err := manager.Reconnect(ownerA, sessionA.ID); err != nil {
 		t.Fatal(err)
 	}
-	rowsA = waitForTranscriptRows(t, database, ownerA, "shared-asset", 2)
 
 	// The replacement channel must survive past the reconnect call: when it is
 	// bound to the reconnect attempt's context it is closed asynchronously
@@ -73,5 +72,7 @@ func TestTranscriptWriterReconnectKeepsReplacementChannelAlive(t *testing.T) {
 	if err := manager.Write(ownerA, tabA, "client-a", []byte("echo owner-a-second-marker\n")); err != nil {
 		t.Fatalf("write on the reconnected tab: %v", err)
 	}
+	// The second recording's row appears with its first output.
+	rowsA = waitForTranscriptRows(t, database, ownerA, "shared-asset", 2)
 	waitForTranscriptMarker(t, database, ownerA, rowsA[0].ID, "owner-a-second-marker")
 }

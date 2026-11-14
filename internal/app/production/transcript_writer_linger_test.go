@@ -44,9 +44,9 @@ func TestTranscriptWriterLingerCoalescesChunksAndShutdownDoesNotWait(t *testing.
 	ctx := context.Background()
 	database := openLingerTestStore(t)
 	writer := startTestWriter(t, database, transcriptWriterConfig{BatchLinger: time.Hour})
-	writer.SessionStarted(ctx, transcriptIdentity("session-1"))
+	startTestRecording(ctx, writer, "session-1", "tab-1")
 	for index := 0; index < 20; index++ {
-		writer.SessionOutput(ctx, "", "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%02d", index)))
+		writer.RecordingOutput(ctx, "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%02d", index)))
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -54,11 +54,11 @@ func TestTranscriptWriterLingerCoalescesChunksAndShutdownDoesNotWait(t *testing.
 		t.Fatalf("shutdown waited for the linger window: %v", err)
 	}
 	stats := writer.statsSnapshot()
-	if stats.batches != 1 || stats.flushedChunks != 20 {
-		t.Fatalf("expected the 20 chunks in one append, got %+v", stats)
+	if stats.batches != 1 || stats.flushedChunks != 21 {
+		t.Fatalf("expected the start resize and the 20 chunks in one append, got %+v", stats)
 	}
 	rows := lingerTranscriptRows(t, database, ctx)
-	if rows[0].Chunks != 20 || rows[0].EndedAt == nil {
+	if rows[0].Chunks != 21 || rows[0].EndedAt == nil {
 		t.Fatalf("transcript not complete after shutdown: %+v", rows[0])
 	}
 }
@@ -67,11 +67,12 @@ func TestTranscriptWriterLingerFlushesFullBatchWithoutWaiting(t *testing.T) {
 	ctx := context.Background()
 	database := openLingerTestStore(t)
 	writer := startTestWriter(t, database, transcriptWriterConfig{BatchLinger: time.Hour})
-	writer.SessionStarted(ctx, transcriptIdentity("session-1"))
+	startTestRecording(ctx, writer, "session-1", "tab-1")
 	for index := 0; index < transcriptBatchMaxItems+10; index++ {
-		writer.SessionOutput(ctx, "", "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d", index)))
+		writer.RecordingOutput(ctx, "session-1", "tab-1", []byte(fmt.Sprintf("chunk-%03d", index)))
 	}
 	rows := lingerTranscriptRows(t, database, ctx)
-	// The start item takes one slot of the first full batch.
-	waitForTranscriptChunks(t, database, rows[0].ID, transcriptBatchMaxItems-1)
+	// The start item takes one slot of the first full batch and records the
+	// start resize in place of an output chunk.
+	waitForTranscriptChunks(t, database, rows[0].ID, transcriptBatchMaxItems)
 }

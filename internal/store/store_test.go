@@ -62,7 +62,7 @@ func TestMigrationCreatesCompleteSchema(t *testing.T) {
 	for _, name := range []string{"asset_group", "asset", "credential", "setting", "audit_log",
 		"ai_conversation", "ai_message", "ai_run", "ai_run_event", "ai_checkpoint", "ai_hitl_run",
 		"snippet", "known_host", "terminal_recording", "outcome_record", "cron_job",
-		"transcript", "transcript_chunk", "durable_transcript_offset"} {
+		"transcript", "transcript_chunk"} {
 		if !tables[name] {
 			t.Errorf("missing table %s", name)
 		}

@@ -21,15 +21,16 @@ func TestTranscriptWriterBuildsKeyframesWhileRecording(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	writer := startTestWriter(t, database, transcriptWriterConfig{KeyframeIntervalBytes: 64})
-	writer.SessionStarted(ctx, transcriptIdentity("session-keyframes"))
-	writer.SessionResize(ctx, "session-keyframes", "tab-1", 40, 5)
+	// The row is created lazily with the first output; its first chunk is
+	// still the starting geometry at seq 0, which the keyframes build on.
+	writer.RecordingStarted(ctx, transcriptIdentity("session-keyframes", "tab-1"), 40, 5, nil)
 	var replay []string
 	for i := 0; i < 20; i++ {
 		line := "\x1b[1;32mline\x1b[0m " + strings.Repeat("x", i) + "\r\n"
 		replay = append(replay, line)
-		writer.SessionOutput(ctx, "", "session-keyframes", "tab-1", []byte(line))
+		writer.RecordingOutput(ctx, "session-keyframes", "tab-1", []byte(line))
 	}
-	writer.SessionEnded(ctx, "session-keyframes")
+	writer.RecordingEnded(ctx, "session-keyframes", "tab-1")
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {

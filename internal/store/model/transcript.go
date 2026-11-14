@@ -1,11 +1,15 @@
 package model
 
 type TranscriptRow struct {
-	ID             string `gorm:"column:id;primaryKey" json:"id"`
-	SessionID      string `gorm:"column:session_id;not null;index:idx_transcript_session" json:"sessionId"`
-	AssetID        string `gorm:"column:asset_id;not null;index:idx_transcript_asset_started,priority:1" json:"assetId"`
-	AssetName      string `gorm:"column:asset_name;not null;default:''" json:"assetName"`
-	AssetKind      string `gorm:"column:asset_kind;not null;default:''" json:"assetKind"`
+	ID        string `gorm:"column:id;primaryKey" json:"id"`
+	SessionID string `gorm:"column:session_id;not null;index:idx_transcript_session" json:"sessionId"`
+	AssetID   string `gorm:"column:asset_id;not null;index:idx_transcript_asset_started,priority:1" json:"assetId"`
+	AssetName string `gorm:"column:asset_name;not null;default:''" json:"assetName"`
+	AssetKind string `gorm:"column:asset_kind;not null;default:''" json:"assetKind"`
+	// TabID and TabTitle name the terminal tab a recording follows; each
+	// recording is one tab watched once. They stay local and do not sync.
+	TabID          string `gorm:"column:tab_id;not null;default:''" json:"tabId"`
+	TabTitle       string `gorm:"column:tab_title;not null;default:''" json:"tabTitle"`
 	StartedAt      int64  `gorm:"column:started_at;not null;index:idx_transcript_asset_started,priority:2,sort:desc" json:"startedAt"`
 	EndedAt        *int64 `gorm:"column:ended_at" json:"endedAt"`
 	Bytes          int64  `gorm:"column:bytes;not null;default:0" json:"bytes"`
@@ -106,15 +110,6 @@ type TranscriptKeyframe struct {
 }
 
 func (TranscriptKeyframe) TableName() string { return "transcript_keyframe" }
-
-type DurableTranscriptOffset struct {
-	DurableID string `gorm:"column:durable_id;primaryKey" json:"durableId"`
-	Offset    int64  `gorm:"column:offset;not null" json:"offset"`
-	UpdatedAt int64  `gorm:"column:updated_at;not null" json:"updatedAt"`
-	OwnerID   string `gorm:"size:191;column:owner_id;not null;default:'';index:idx_durable_transcript_offset_owner" json:"owner_id"`
-}
-
-func (DurableTranscriptOffset) TableName() string { return "durable_transcript_offset" }
 
 type CredentialTombstone struct {
 	ID        string `gorm:"column:id;primaryKey" json:"id"`

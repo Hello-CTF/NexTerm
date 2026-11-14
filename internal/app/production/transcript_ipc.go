@@ -17,6 +17,7 @@ type transcriptSummaryDTO struct {
 	AssetID        string `json:"assetId"`
 	AssetName      string `json:"assetName"`
 	AssetKind      string `json:"assetKind"`
+	TabTitle       string `json:"tabTitle,omitempty"`
 	AssetDeleted   bool   `json:"assetDeleted"`
 	StartedAt      int64  `json:"startedAt"`
 	EndedAt        *int64 `json:"endedAt"`
@@ -283,6 +284,7 @@ func (s *terminalCommandService) transcriptSummary(ctx context.Context, row stor
 		AssetID:        row.AssetID,
 		AssetName:      row.AssetName,
 		AssetKind:      row.AssetKind,
+		TabTitle:       row.TabTitle,
 		AssetDeleted:   assetDeleted,
 		StartedAt:      row.StartedAt,
 		EndedAt:        row.EndedAt,

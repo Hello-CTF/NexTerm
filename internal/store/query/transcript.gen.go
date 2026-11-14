@@ -32,6 +32,8 @@ func newTranscriptRow(db *gorm.DB, opts ...gen.DOOption) transcriptRow {
 	_transcriptRow.AssetID = field.NewString(tableName, "asset_id")
 	_transcriptRow.AssetName = field.NewString(tableName, "asset_name")
 	_transcriptRow.AssetKind = field.NewString(tableName, "asset_kind")
+	_transcriptRow.TabID = field.NewString(tableName, "tab_id")
+	_transcriptRow.TabTitle = field.NewString(tableName, "tab_title")
 	_transcriptRow.StartedAt = field.NewInt64(tableName, "started_at")
 	_transcriptRow.EndedAt = field.NewInt64(tableName, "ended_at")
 	_transcriptRow.Bytes = field.NewInt64(tableName, "bytes")
@@ -58,6 +60,8 @@ type transcriptRow struct {
 	AssetID        field.String
 	AssetName      field.String
 	AssetKind      field.String
+	TabID          field.String
+	TabTitle       field.String
 	StartedAt      field.Int64
 	EndedAt        field.Int64
 	Bytes          field.Int64
@@ -90,6 +94,8 @@ func (t *transcriptRow) updateTableName(table string) *transcriptRow {
 	t.AssetID = field.NewString(table, "asset_id")
 	t.AssetName = field.NewString(table, "asset_name")
 	t.AssetKind = field.NewString(table, "asset_kind")
+	t.TabID = field.NewString(table, "tab_id")
+	t.TabTitle = field.NewString(table, "tab_title")
 	t.StartedAt = field.NewInt64(table, "started_at")
 	t.EndedAt = field.NewInt64(table, "ended_at")
 	t.Bytes = field.NewInt64(table, "bytes")
@@ -129,12 +135,14 @@ func (t *transcriptRow) GetFieldByName(fieldName string) (field.OrderExpr, bool)
 }
 
 func (t *transcriptRow) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 16)
+	t.fieldMap = make(map[string]field.Expr, 18)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["session_id"] = t.SessionID
 	t.fieldMap["asset_id"] = t.AssetID
 	t.fieldMap["asset_name"] = t.AssetName
 	t.fieldMap["asset_kind"] = t.AssetKind
+	t.fieldMap["tab_id"] = t.TabID
+	t.fieldMap["tab_title"] = t.TabTitle
 	t.fieldMap["started_at"] = t.StartedAt
 	t.fieldMap["ended_at"] = t.EndedAt
 	t.fieldMap["bytes"] = t.Bytes

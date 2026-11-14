@@ -1,72 +1,12 @@
 package session
 
 import (
-	"bytes"
 	"context"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
-
-// ownerScopedStore records which owner every call carried and keeps per-owner
-// rows to prove no cross-owner leak.
-type ownerScopedStore struct {
-	mu      sync.Mutex
-	offsets map[string]map[string]int64
-	calls   []string
-}
-
-func newOwnerScopedStore() *ownerScopedStore {
-	return &ownerScopedStore{
-		offsets: make(map[string]map[string]int64),
-	}
-}
-
-func (s *ownerScopedStore) record(op, owner string) {
-	s.calls = append(s.calls, op+":"+owner)
-}
-
-func (s *ownerScopedStore) ownerCalls(op, owner string) int {
-	count := 0
-	for _, call := range s.calls {
-		if call == op+":"+owner {
-			count++
-		}
-	}
-	return count
-}
-
-func (s *ownerScopedStore) DurableTranscriptOffsetContext(ctx context.Context, tabID string) int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("catchup", owner)
-	return s.offsets[owner][tabID]
-}
-
-func (s *ownerScopedStore) PersistDurableTranscriptOffsetContext(ctx context.Context, tabID string, offset int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("persist", owner)
-	if s.offsets[owner] == nil {
-		s.offsets[owner] = make(map[string]int64)
-	}
-	s.offsets[owner][tabID] = offset
-}
-
-func (s *ownerScopedStore) DeleteDurableTranscriptOffsetContext(ctx context.Context, tabID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	owner := userIDFromContext(ctx)
-	s.record("delete", owner)
-	delete(s.offsets[owner], tabID)
-}
-
-var _ OwnerScopedDurableTranscriptOffsetStore = (*ownerScopedStore)(nil)
 
 // ListDurableDescriptors reports each live record with the incarnation a
 // helper listing carries, so recovery can use checked attach.
@@ -84,84 +24,15 @@ func (p *fakeDurableProvider) ListDurableDescriptors(context.Context) ([]base.Du
 	return descriptors, nil
 }
 
-func TestDurableOffsetCatchUpIsOwnerScoped(t *testing.T) {
+// An open deployment recovers a durable tab with no owner and keeps its
+// metadata, such as the title, across managers.
+func TestEmptyOwnerDurableRecoveryKeepsTitle(t *testing.T) {
 	provider := newFakeDurableProvider()
-	store := newOwnerScopedStore()
 	newManager := func() *Manager {
 		manager := NewManager(Config{
 			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-			DurableResolver:   &countingResolver{provider: provider},
-			TranscriptOffsets: store,
-		})
-		t.Cleanup(func() { _ = manager.Close() })
-		return manager
-	}
-	managerA := newManager()
-	managerA2 := newManager()
-	managerB := newManager()
-	sessionA, err := managerA.Connect(requestTestUser("owner-a"), Asset{ID: "shared-asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionA2, err := managerA2.Connect(requestTestUser("owner-a"), Asset{ID: "shared-asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionB, err := managerB.Connect(requestTestUser("owner-b"), Asset{ID: "shared-asset", Kind: KindSSH})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const tabID = "shared-durable-offset"
-	if _, err := managerA.OpenTab(requestTestUser("owner-a"), OpenTabOptions{
-		TabID: tabID, SessionID: sessionA.ID, ClientID: "client-a", ChannelID: "a-1", Cols: 80, Rows: 24,
-		Durable: &DurableTabOptions{Command: []string{"/bin/sh"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate the offset recorded during the tab's earlier life; the recover
-	// on a fresh manager must read it back under owner-a only.
-	if err := provider.attachment(tabID, 0).emit(bytes.Repeat([]byte("x"), 100)); err != nil {
-		t.Fatal(err)
-	}
-	store.mu.Lock()
-	store.offsets["owner-a"] = map[string]int64{tabID: 100}
-	store.mu.Unlock()
-	// A fresh manager for owner-a recovers the tab: the catch-up read carries
-	// owner-a and returns their own pre-seeded offset.
-	if _, err := managerA2.RecoverRemoteDurable(requestTestUser("owner-a"), tabID, OpenTabOptions{
-		SessionID: sessionA2.ID, ClientID: "client-a", ChannelID: "a-2", Cols: 80, Rows: 24,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("catchup", "owner-a"); got == 0 {
-		t.Fatal("catch-up read did not carry owner-a")
-	}
-	if got := store.offsets["owner-a"][tabID]; got == 0 {
-		t.Fatal("owner-a catch-up read lost the pre-seeded offset")
-	}
-	if _, err := managerB.RecoverRemoteDurable(requestTestUser("owner-b"), tabID, OpenTabOptions{
-		SessionID: sessionB.ID, ClientID: "client-b", ChannelID: "b-1", Cols: 80, Rows: 24,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.ownerCalls("catchup", "owner-b"); got == 0 {
-		t.Fatal("catch-up read did not carry owner-b")
-	}
-	if got := store.offsets["owner-b"][tabID]; got != 0 {
-		t.Fatalf("owner-b catch-up read owner-a's offset %d", got)
-	}
-}
-
-func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
-	provider := newFakeDurableProvider()
-	store := newOwnerScopedStore()
-	newManager := func() *Manager {
-		manager := NewManager(Config{
-			Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-			DurableResolver:   &countingResolver{provider: provider},
-			TranscriptOffsets: store,
-			OpenAccess:        true,
+			DurableResolver: &countingResolver{provider: provider},
+			OpenAccess:      true,
 		})
 		t.Cleanup(func() { _ = manager.Close() })
 		return manager
@@ -199,25 +70,17 @@ func TestContextDurableStoreWorksWithEmptyOwner(t *testing.T) {
 	if recovered.Title != "open-title" {
 		t.Fatalf("empty-owner recovered title = %q, want open-title", recovered.Title)
 	}
-	if store.ownerCalls("catchup", "") == 0 {
-		t.Fatalf("empty-owner recovery did not use Context reads: %v", store.calls)
-	}
 	if err := recoveredManager.CloseTab(tabID); err != nil {
 		t.Fatal(err)
-	}
-	if _, ok := store.offsets[""][tabID]; ok {
-		t.Fatal("empty-owner offset survived durable close")
 	}
 }
 
 func TestReconnectSecondPeriodCarriesOwner(t *testing.T) {
 	provider := newFakeDurableProvider()
-	store := newOwnerScopedStore()
 	manager := NewManager(Config{
 		Connector: newFakeConnector(), Terminals: newFakeTerminalFactory(),
-		DurableResolver:   &countingResolver{provider: provider},
-		TranscriptOffsets: store,
-		ReconnectBackoff:  []time.Duration{0},
+		DurableResolver:  &countingResolver{provider: provider},
+		ReconnectBackoff: []time.Duration{0},
 	})
 	t.Cleanup(func() { _ = manager.Close() })
 	session, err := manager.Connect(requestTestUser("owner-a"), Asset{ID: "asset", Kind: KindSSH})
@@ -258,62 +121,10 @@ func TestReconnectSecondPeriodCarriesOwner(t *testing.T) {
 
 var _ base.DurableProvider = (*fakeDurableProvider)(nil)
 
-// ownerRecordingSink records the owner every sink call carried so tests can
-// prove the manager stamps the trusted session owner onto the transcript
-// context, independent of what the caller's context carried.
-type ownerRecordingSink struct {
-	mu     sync.Mutex
-	owners map[string][]string
-}
-
-func newOwnerRecordingSink() *ownerRecordingSink {
-	return &ownerRecordingSink{owners: make(map[string][]string)}
-}
-
-func (s *ownerRecordingSink) record(method string, ctx context.Context) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.owners[method] = append(s.owners[method], ipc.OwnerID(ctx))
-}
-
-func (s *ownerRecordingSink) SessionStarted(ctx context.Context, _ TranscriptInfo) {
-	s.record("started", ctx)
-}
-
-func (s *ownerRecordingSink) SessionOutput(ctx context.Context, _, _, _ string, _ []byte) {
-	s.record("output", ctx)
-}
-
-func (s *ownerRecordingSink) SessionResize(ctx context.Context, _, _ string, _, _ uint32) {
-	s.record("resize", ctx)
-}
-
-func (s *ownerRecordingSink) SessionEnded(ctx context.Context, _ string) {
-	s.record("ended", ctx)
-}
-
-func (s *ownerRecordingSink) calls(method string) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.owners[method]...)
-}
-
-func (s *ownerRecordingSink) assertEveryCallCarries(t *testing.T, method, want string) {
-	t.Helper()
-	calls := s.calls(method)
-	if len(calls) == 0 {
-		t.Fatalf("sink recorded no %s calls", method)
-	}
-	for index, owner := range calls {
-		if owner != want {
-			t.Fatalf("%s call %d owner = %q, want %q (all calls: %v)", method, index, owner, want, calls)
-		}
-	}
-}
-
+// Every sink call carries the trusted session owner, whatever path makes it.
 func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
 	connector := newFakeConnector()
-	sink := newOwnerRecordingSink()
+	sink := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector: connector, Terminals: newFakeTerminalFactory(),
 		Transcripts: sink, ReconnectBackoff: []time.Duration{0},
@@ -330,26 +141,42 @@ func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := connector.transport(0).channel(0).emit([]byte("owner-output\r\n")); err != nil {
+	tab, err := manager.Tab(info.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
+	channel := connector.transport(0).channel(0)
+	if err := channel.emit([]byte("owner-output\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.of(recOutput, "")) > 0 })
 	if err := manager.Resize(ownerA, info.ID, "client-a", 120, 40); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("resize")) >= 2 })
+	waitFor(t, func() bool { return len(sink.of(recResize, "")) > 0 })
+	if err := manager.DetachChannel("channel-a"); err != nil {
+		t.Fatal(err)
+	}
+	emitShown(t, tab, channel, "unwatched\r\n")
+	if _, err := manager.AttachTab(context.Background(), info.ID, AttachOptions{ClientID: "client-a", ChannelID: "channel-b"}); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := manager.Disconnect(connected.ID); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("ended")) == 1 })
+	waitFor(t, func() bool { return len(sink.of(recEnded, "")) == 1 })
 	if err := manager.Reconnect(ownerA, connected.ID); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("started")) == 2 })
+	waitFor(t, func() bool { return len(sink.of(recStarted, "")) == 2 })
+	if err := manager.CloseTab(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return len(sink.of(recEnded, "")) == 2 })
 
-	for _, method := range []string{"started", "output", "resize", "ended"} {
-		sink.assertEveryCallCarries(t, method, "owner-a")
+	for _, kind := range []string{recStarted, recScreen, recOutput, recResize, recEnded} {
+		sink.assertEveryCallCarries(t, kind, "owner-a")
 	}
 }
 
@@ -359,7 +186,7 @@ func TestTranscriptSinkCallsCarryTrustedSessionOwner(t *testing.T) {
 // open deployments keep the legacy ownerless behavior.
 func TestTranscriptSinkOwnerComesFromSessionNotCaller(t *testing.T) {
 	connector := newFakeConnector()
-	sink := newOwnerRecordingSink()
+	sink := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector: connector, Terminals: newFakeTerminalFactory(),
 		Transcripts: sink, OpenAccess: true,
@@ -377,23 +204,25 @@ func TestTranscriptSinkOwnerComesFromSessionNotCaller(t *testing.T) {
 	if err := connector.transport(0).channel(0).emit([]byte("open-output\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("output")) > 0 })
-	for _, method := range []string{"started", "output"} {
-		sink.assertEveryCallCarries(t, method, "owner-a")
+	waitFor(t, func() bool { return len(sink.of(recOutput, "")) > 0 })
+	for _, kind := range []string{recStarted, recOutput} {
+		sink.assertEveryCallCarries(t, kind, "owner-a")
 	}
 
-	if _, err := manager.Connect(context.Background(), Asset{ID: "asset-open", Kind: KindSSH}); err != nil {
+	open, err := manager.Connect(context.Background(), Asset{ID: "asset-open", Kind: KindSSH})
+	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return len(sink.calls("started")) == 2 })
-	if got := sink.calls("started")[1]; got != "" {
-		t.Fatalf("ownerless open-deployment session sink owner = %q, want legacy ownerless", got)
+	openTab := openTestTab(t, manager, open, "client-b", "channel-b")
+	started := sink.of(recStarted, openTab.ID)
+	if len(started) != 1 || started[0].owner != "" {
+		t.Fatalf("ownerless open-deployment session recording start = %+v, want one legacy ownerless start", started)
 	}
 }
 
 func TestReconnectOnceSecondPeriodCarriesOwner(t *testing.T) {
 	connector := newFakeConnector()
-	sink := newOwnerRecordingSink()
+	sink := &transcriptRecorder{}
 	manager := NewManager(Config{
 		Connector: connector, Terminals: newFakeTerminalFactory(),
 		Transcripts: sink, ReconnectBackoff: []time.Duration{0},
@@ -402,6 +231,11 @@ func TestReconnectOnceSecondPeriodCarriesOwner(t *testing.T) {
 	ownerA := requestTestUser("owner-a")
 	connected, err := manager.Connect(ownerA, Asset{ID: "asset", Kind: KindSSH})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.OpenTab(ownerA, OpenTabOptions{
+		SessionID: connected.ID, ClientID: "client-a", ChannelID: "channel-a", Cols: 80, Rows: 24,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -414,8 +248,8 @@ func TestReconnectOnceSecondPeriodCarriesOwner(t *testing.T) {
 	if owner != "owner-a" {
 		t.Fatalf("reconnect-once second period ctx owner = %q, want owner-a", owner)
 	}
-	waitFor(t, func() bool { return len(sink.calls("started")) == 2 && len(sink.calls("ended")) == 1 })
-	for _, method := range []string{"started", "ended"} {
-		sink.assertEveryCallCarries(t, method, "owner-a")
+	waitFor(t, func() bool { return len(sink.of(recStarted, "")) == 2 && len(sink.of(recEnded, "")) == 1 })
+	for _, kind := range []string{recStarted, recEnded} {
+		sink.assertEveryCallCarries(t, kind, "owner-a")
 	}
 }

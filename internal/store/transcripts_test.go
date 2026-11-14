@@ -463,57 +463,6 @@ func TestTranscriptSearchCharsetEscapeInsideWord(t *testing.T) {
 	}
 }
 
-func TestDurableTranscriptOffsetRoundtrip(t *testing.T) {
-	ctx := context.Background()
-	db := testStore(t)
-	offset, err := db.DurableTranscriptOffsetGet(ctx, "tab-missing")
-	if err != nil || offset != 0 {
-		t.Fatalf("missing offset = %d err=%v", offset, err)
-	}
-	if err := db.DurableTranscriptOffsetSet(ctx, "tab-1", 4096); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DurableTranscriptOffsetSet(ctx, "tab-1", 8192); err != nil {
-		t.Fatal(err)
-	}
-	offset, err = db.DurableTranscriptOffsetGet(ctx, "tab-1")
-	if err != nil || offset != 8192 {
-		t.Fatalf("offset = %d err=%v", offset, err)
-	}
-	if err := db.DurableTranscriptOffsetDelete(ctx, "tab-1"); err != nil {
-		t.Fatal(err)
-	}
-	offset, err = db.DurableTranscriptOffsetGet(ctx, "tab-1")
-	if err != nil || offset != 0 {
-		t.Fatalf("offset after delete = %d err=%v", offset, err)
-	}
-}
-
-func TestDurableTranscriptOffsetAppendAccumulates(t *testing.T) {
-	ctx := context.Background()
-	db := testStore(t)
-	id := startTranscript(t, db, "asset-1", 1000)
-	if err := db.TranscriptAppendChunks(ctx, id,
-		[]TranscriptChunkRow{{Seq: 1, TabID: "tab-1", TS: 1001, Data: []byte("abcd")}},
-		map[string]int64{"durable-1": 4}); err != nil {
-		t.Fatal(err)
-	}
-	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 4 {
-		t.Fatalf("offset after insert = %d err=%v", offset, err)
-	}
-	if err := db.TranscriptAppendChunks(ctx, id,
-		[]TranscriptChunkRow{{Seq: 2, TabID: "tab-1", TS: 1002, Data: []byte("efgh")}},
-		map[string]int64{"durable-1": 4, "durable-2": 3}); err != nil {
-		t.Fatal(err)
-	}
-	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 8 {
-		t.Fatalf("offset after conflict accumulate = %d err=%v", offset, err)
-	}
-	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-2"); err != nil || offset != 3 {
-		t.Fatalf("offset for second durable = %d err=%v", offset, err)
-	}
-}
-
 func TestTranscriptSearchControlStrings(t *testing.T) {
 	ctx := context.Background()
 	db := testStore(t)
@@ -889,28 +838,6 @@ func requireNoOwnerlessTombstones(t *testing.T, db *Store) {
 	}
 }
 
-func requireDurableOffsetRow(t *testing.T, db *Store, durableID, owner string, offset int64) {
-	t.Helper()
-	var row DurableTranscriptOffset
-	if err := db.GORM().Model(&DurableTranscriptOffset{}).Where("durable_id = ?", durableID).First(&row).Error; err != nil {
-		t.Fatalf("durable offset row %s: %v", durableID, err)
-	}
-	if row.OwnerID != owner || row.Offset != offset {
-		t.Fatalf("durable offset row %s = owner %q offset %d, want owner %q offset %d", durableID, row.OwnerID, row.Offset, owner, offset)
-	}
-}
-
-func requireNoDurableOffsetRow(t *testing.T, db *Store, durableID string) {
-	t.Helper()
-	var count int64
-	if err := db.GORM().Model(&DurableTranscriptOffset{}).Where("durable_id = ?", durableID).Count(&count).Error; err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("unexpected durable offset row for %s", durableID)
-	}
-}
-
 func requireTranscriptTombstoneOwner(t *testing.T, db *Store, id, owner string, want bool) {
 	t.Helper()
 	var count int64
@@ -1051,61 +978,4 @@ BEGIN SELECT RAISE(ABORT, 'injected background transcript batch failure'); END`)
 	requireTranscriptRetentionOwnerCounts(t, db, "owner-b", 0, wantTombstonesB)
 	requireTranscriptTombstoneOwner(t, db, "r129-b", "owner-b", true)
 	requireNoOwnerlessTombstones(t, db)
-}
-
-func TestDurableTranscriptOffsetGuardedSeedAndDeleteRace(t *testing.T) {
-	// A row claimed between owner resolution and the guarded write must not be
-	// reset or deleted by the stale resolution: the guard is atomic in the
-	// UPDATE/DELETE and the legacy fallback is explicitly owner_id = ''.
-	ctx := context.Background()
-	ctxA := ipc.WithUserID(ctx, "owner-a")
-	db := testStore(t)
-	now := ids.NowMS()
-	if err := db.GORM().Create(&DurableTranscriptOffset{DurableID: "race-durable", Offset: 7, UpdatedAt: now, OwnerID: ""}).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	// Resolution observes the legacy ownerless row...
-	resolved, err := db.DurableTranscriptOffsetOwner(ctx, "race-durable")
-	if err != nil || resolved != "" {
-		t.Fatalf("resolved owner = %q, %v", resolved, err)
-	}
-	// ...then the writer claims it under owner-a.
-	transcriptID := ids.New()
-	if err := db.TranscriptStart(ctxA, TranscriptRow{ID: transcriptID, SessionID: "sess-race", AssetID: "asset-1", StartedAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.TranscriptAppendChunks(ctxA, transcriptID,
-		[]TranscriptChunkRow{{Seq: 0, TabID: "race-durable", TS: now, Data: []byte("bb")}},
-		map[string]int64{"race-durable": 2}); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
-
-	// The stale ownerless resolution must not reset the claimed row.
-	reset, err := db.DurableTranscriptOffsetSeed(ctx, "race-durable", resolved, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reset {
-		t.Fatal("stale ownerless resolution must not reset a claimed row")
-	}
-	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
-
-	// Nor may it delete it.
-	if err := db.DurableTranscriptOffsetDeleteIfOwned(ctx, "race-durable", resolved); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 9)
-
-	// The current owner's resolution resets and deletes atomically.
-	reset, err = db.DurableTranscriptOffsetSeed(ctx, "race-durable", "owner-a", 0)
-	if err != nil || !reset {
-		t.Fatalf("owner seed = %v, %v", reset, err)
-	}
-	requireDurableOffsetRow(t, db, "race-durable", "owner-a", 0)
-	if err := db.DurableTranscriptOffsetDeleteIfOwned(ctx, "race-durable", "owner-a"); err != nil {
-		t.Fatal(err)
-	}
-	requireNoDurableOffsetRow(t, db, "race-durable")
 }

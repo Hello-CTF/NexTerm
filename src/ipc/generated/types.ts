@@ -3697,6 +3697,7 @@ export type TranscriptSummaryDTO = {
   assetId: string;
   assetName: string;
   assetKind: string;
+  tabTitle?: string;
   assetDeleted: boolean;
   startedAt: number;
   endedAt: number | null;

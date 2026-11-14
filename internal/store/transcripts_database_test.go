@@ -15,32 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestTranscriptAppendChunksDurableOffsetDatabase(t *testing.T) {
-	ctx := context.Background()
-	db := dbtest.NewFixture(t).OpenStore(t)
-
-	transcript := store.TranscriptRow{ID: "pg-durable-transcript", SessionID: "sess-1", AssetID: "asset-1", StartedAt: 1000}
-	if err := db.TranscriptStart(ctx, transcript); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.TranscriptAppendChunks(ctx, transcript.ID,
-		[]store.TranscriptChunkRow{{Seq: 1, TabID: "tab-1", TS: 1001, Data: []byte("abcd")}},
-		map[string]int64{"durable-1": 4}); err != nil {
-		t.Fatal(err)
-	}
-	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 4 {
-		t.Fatalf("offset after insert = %d, %v", offset, err)
-	}
-	if err := db.TranscriptAppendChunks(ctx, transcript.ID,
-		[]store.TranscriptChunkRow{{Seq: 2, TabID: "tab-1", TS: 1002, Data: []byte("efgh")}},
-		map[string]int64{"durable-1": 4}); err != nil {
-		t.Fatal(err)
-	}
-	if offset, err := db.DurableTranscriptOffsetGet(ctx, "durable-1"); err != nil || offset != 8 {
-		t.Fatalf("offset after conflict accumulate = %d, %v", offset, err)
-	}
-}
-
 func TestTranscriptHostsGroupByDatabase(t *testing.T) {
 	ctx := context.Background()
 	db := dbtest.NewFixture(t).OpenStore(t)
@@ -185,81 +159,6 @@ func TestTranscriptRetentionBackgroundOwnersDatabase(t *testing.T) {
 	requireTranscriptRetentionDatabaseCounts(t, db, "owner-a", 1, 3)
 	requireTranscriptRetentionDatabaseCounts(t, db, "owner-b", 1, 2)
 	requireTranscriptRetentionDatabaseCounts(t, db, "owner-c", 1, 0)
-}
-
-func requireDurableOffsetRowState(t *testing.T, db *store.Store, durableID, owner string, offset int64) {
-	t.Helper()
-	var row store.DurableTranscriptOffset
-	if err := db.GORM().Model(&store.DurableTranscriptOffset{}).
-		Where("durable_id = ?", durableID).
-		First(&row).Error; err != nil {
-		t.Fatalf("durable offset row %s: %v", durableID, err)
-	}
-	if row.OwnerID != owner || row.Offset != offset {
-		t.Fatalf("durable offset row %s = owner %q offset %d, want owner %q offset %d", durableID, row.OwnerID, row.Offset, owner, offset)
-	}
-}
-
-func TestTranscriptAppendChunksDurableOffsetOwnerIsolationDatabase(t *testing.T) {
-	// The offset advance is a guarded UPDATE, not ON CONFLICT ... WHERE (which
-	// MySQL and MariaDB ignore): a foreign-owned row must never move.
-	db := dbtest.NewFixture(t).OpenStore(t)
-	ctxA := ipc.WithUserID(context.Background(), "owner-a")
-	ctxB := ipc.WithUserID(context.Background(), "owner-b")
-	now := time.Now().UnixMilli()
-
-	transcriptA := store.TranscriptRow{ID: "iso-transcript-a", SessionID: "sess-a", AssetID: "asset", StartedAt: now}
-	if err := db.TranscriptStart(ctxA, transcriptA); err != nil {
-		t.Fatal(err)
-	}
-	transcriptB := store.TranscriptRow{ID: "iso-transcript-b", SessionID: "sess-b", AssetID: "asset", StartedAt: now}
-	if err := db.TranscriptStart(ctxB, transcriptB); err != nil {
-		t.Fatal(err)
-	}
-
-	// owner-b owns the existing offset row for the shared durable ID.
-	if err := db.GORM().Create(&store.DurableTranscriptOffset{DurableID: "shared-durable", Offset: 10, UpdatedAt: now, OwnerID: "owner-b"}).Error; err != nil {
-		t.Fatal(err)
-	}
-
-	// owner-a's append referencing the same durable ID persists chunks but
-	// must not move the foreign-owned offset on any backend.
-	if err := db.TranscriptAppendChunks(ctxA, transcriptA.ID,
-		[]store.TranscriptChunkRow{{Seq: 0, TabID: "shared-durable", TS: now, Data: []byte("aaaaa")}},
-		map[string]int64{"shared-durable": 5}); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRowState(t, db, "shared-durable", "owner-b", 10)
-	if row, err := db.TranscriptGet(ctxA, transcriptA.ID); err != nil || row.Chunks != 1 {
-		t.Fatalf("owner-a chunks must persist: row=%+v err=%v", row, err)
-	}
-
-	// owner-b's own append accumulates under owner-b.
-	if err := db.TranscriptAppendChunks(ctxB, transcriptB.ID,
-		[]store.TranscriptChunkRow{{Seq: 0, TabID: "shared-durable", TS: now, Data: []byte("bbbbb")}},
-		map[string]int64{"shared-durable": 5}); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRowState(t, db, "shared-durable", "owner-b", 15)
-
-	// A fresh durable ID is created and accumulated under the appending owner.
-	if err := db.TranscriptAppendChunks(ctxA, transcriptA.ID,
-		[]store.TranscriptChunkRow{{Seq: 1, TabID: "fresh-durable", TS: now, Data: []byte("cccc")}},
-		map[string]int64{"fresh-durable": 4}); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRowState(t, db, "fresh-durable", "owner-a", 4)
-
-	// A legacy ownerless row is claimed and accumulated by the appending owner.
-	if err := db.GORM().Create(&store.DurableTranscriptOffset{DurableID: "legacy-durable", Offset: 3, UpdatedAt: now, OwnerID: ""}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := db.TranscriptAppendChunks(ctxA, transcriptA.ID,
-		[]store.TranscriptChunkRow{{Seq: 2, TabID: "legacy-durable", TS: now, Data: []byte("dd")}},
-		map[string]int64{"legacy-durable": 2}); err != nil {
-		t.Fatal(err)
-	}
-	requireDurableOffsetRowState(t, db, "legacy-durable", "owner-a", 5)
 }
 
 func TestTranscriptInsertSyncedForeignOwnerRejectedDatabase(t *testing.T) {
@@ -1082,5 +981,122 @@ func TestTranscriptRetentionOptOutFlipSkipsDeleteUntilNextRoundDatabase(t *testi
 	}
 	if tombstones != 1 {
 		t.Fatalf("tombstones for the opted-out row = %d, want only the flip's own tombstone", tombstones)
+	}
+}
+
+// TranscriptCloseAbandoned settles what an earlier run left behind, for every
+// owner: an open recording ends at its last chunk, marked truncated; a
+// recording without chunks is deleted (with its sync tombstone under its own
+// owner) unless it is starred or a synced copy whose content was left out.
+func TestTranscriptCloseAbandonedDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := dbtest.NewFixture(t).OpenStore(t)
+	ownerA := ipc.WithUserID(ctx, "owner-a")
+	ownerB := ipc.WithUserID(ctx, "owner-b")
+
+	start := func(ownerCtx context.Context, id string, startedAt int64, chunkTS ...int64) {
+		t.Helper()
+		if err := db.TranscriptStart(ownerCtx, store.TranscriptRow{ID: id, SessionID: "sess-" + id, TabID: "tab-" + id, AssetID: "asset-1", StartedAt: startedAt}); err != nil {
+			t.Fatal(err)
+		}
+		if len(chunkTS) == 0 {
+			return
+		}
+		chunks := make([]store.TranscriptChunkRow, 0, len(chunkTS))
+		for seq, ts := range chunkTS {
+			chunks = append(chunks, store.TranscriptChunkRow{Seq: int64(seq), TabID: "tab-" + id, TS: ts, Data: []byte("output")})
+		}
+		if err := db.TranscriptAppendChunks(ownerCtx, id, chunks); err != nil {
+			t.Fatal(err)
+		}
+	}
+	end := func(ownerCtx context.Context, id string, endedAt int64) {
+		t.Helper()
+		if err := db.TranscriptEnd(ownerCtx, id, endedAt, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set := func(id, column string) {
+		t.Helper()
+		if err := db.GORM().Model(&store.TranscriptRow{}).Where("id = ?", id).Update(column, true).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	start(ownerA, "a-open-chunks", 1000, 1100, 1250)
+	start(ownerB, "b-open-chunks", 2000, 2100)
+	start(ctx, "ownerless-open-chunks", 3000, 3300)
+	start(ownerB, "b-open-starred-empty", 4000)
+	set("b-open-starred-empty", "starred")
+	start(ownerA, "a-ended-empty", 5000)
+	end(ownerA, "a-ended-empty", 5100)
+	set("a-ended-empty", "sync_opt_in")
+	start(ownerB, "b-open-empty", 6000)
+	start(ownerA, "a-ended-starred-empty", 7000)
+	end(ownerA, "a-ended-starred-empty", 7100)
+	set("a-ended-starred-empty", "starred")
+	start(ownerB, "b-ended-omitted-empty", 8000)
+	end(ownerB, "b-ended-omitted-empty", 8100)
+	set("b-ended-omitted-empty", "content_omitted")
+	start(ownerA, "a-ended-chunks", 9000, 9100)
+	end(ownerA, "a-ended-chunks", 9200)
+
+	ended, deleted, err := db.TranscriptCloseAbandoned(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ended != 4 || deleted != 2 {
+		t.Fatalf("settled ended=%d deleted=%d, want 4 ended and 2 deleted", ended, deleted)
+	}
+
+	rows := map[string]store.TranscriptRow{}
+	var all []store.TranscriptRow
+	if err := db.GORM().Find(&all).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range all {
+		rows[row.ID] = row
+	}
+	for _, id := range []string{"a-ended-empty", "b-open-empty"} {
+		if _, ok := rows[id]; ok {
+			t.Fatalf("%s holds no chunk and must be deleted", id)
+		}
+	}
+	for id, want := range map[string]struct {
+		owner     string
+		endedAt   int64
+		truncated bool
+	}{
+		"a-open-chunks":         {"owner-a", 1250, true},
+		"b-open-chunks":         {"owner-b", 2100, true},
+		"ownerless-open-chunks": {"", 3300, true},
+		"b-open-starred-empty":  {"owner-b", 4000, true},
+		"a-ended-starred-empty": {"owner-a", 7100, false},
+		"b-ended-omitted-empty": {"owner-b", 8100, false},
+		"a-ended-chunks":        {"owner-a", 9200, false},
+	} {
+		row, ok := rows[id]
+		if !ok {
+			t.Fatalf("%s must be kept", id)
+		}
+		if row.OwnerID != want.owner || row.EndedAt == nil || *row.EndedAt != want.endedAt || row.Truncated != want.truncated {
+			t.Fatalf("%s = owner %q ended %v truncated %v, want owner %q ended %d truncated %v",
+				id, row.OwnerID, row.EndedAt, row.Truncated, want.owner, want.endedAt, want.truncated)
+		}
+	}
+	if len(rows) != 7 {
+		t.Fatalf("remaining transcripts = %d, want 7", len(rows))
+	}
+	var tombstones []store.SyncTombstone
+	if err := db.GORM().Where("kind = ?", "transcript").Find(&tombstones).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(tombstones) != 1 || tombstones[0].ID != "a-ended-empty" || tombstones[0].OwnerID != "owner-a" {
+		t.Fatalf("tombstones = %+v, want the opted-in deleted row's under owner-a", tombstones)
+	}
+
+	ended, deleted, err = db.TranscriptCloseAbandoned(ctx)
+	if err != nil || ended != 0 || deleted != 0 {
+		t.Fatalf("a second pass must find nothing: ended=%d deleted=%d err=%v", ended, deleted, err)
 	}
 }

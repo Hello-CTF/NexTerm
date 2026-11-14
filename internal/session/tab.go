@@ -198,10 +198,9 @@ type Tab struct {
 	recovery         *recoveryRing
 
 	// transcriptSkip is the rest of a recovered durable tab's replay, which is
-	// history and never recorded again; unrecorded counts output left out of
-	// the transcript, while no client watched the tab, since recording last ran.
+	// history and never recorded again.
 	transcriptSkip int64
-	unrecorded     int64
+	recording      tabRecording
 
 	// History of a durable tab, in the helper's absolute offsets.
 	// historyPrelude restores the modes in effect where the replay starts and
@@ -370,10 +369,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		}
 	}
 	tabID := options.TabID
-	if tabID == "" && options.Durable != nil {
+	if tabID == "" {
 		tabID = ids.New()
-	} else if tabID == "" {
-		tabID = newID()
 	}
 
 	m.mu.Lock()
@@ -464,7 +461,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 		var killErr error
 		if destroyOnFailure && durableAttachment != nil {
 			killErr = m.killDurable(durableAttachment)
-			m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
 		}
 		if channel != nil {
 			_ = channel.Close()
@@ -628,9 +624,6 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 	if options.Ephemeral {
 		tab.recovery = newRecoveryRing(recoveryRingBytes)
 	}
-	if options.Durable != nil && !options.Durable.Recover && m.offsets != nil {
-		m.persistDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID, 0)
-	}
 	if options.Durable != nil && options.Durable.Recover {
 		if replay, ok := durableReplayOf(durableAttachment); ok {
 			tab.durableFed = int64(replay.ReplayFrom)
@@ -642,21 +635,8 @@ func (m *Manager) OpenTab(ctx context.Context, options OpenTabOptions) (TabInfo,
 				tab.replayUntil = int64(replay.HistoryNext)
 			}
 			// The replay is output from before this attach: it is never
-			// recorded, and what the transcript lacks of it is marked once.
+			// recorded, a recording starts with the screen instead.
 			tab.transcriptSkip = int64(replay.HistoryNext - replay.ReplayFrom)
-			if m.offsets != nil {
-				owner := ownerCtx(context.Background(), session.userID)
-				next := int64(replay.HistoryNext)
-				recorded := m.durableTranscriptOffset(owner, tabID)
-				if recorded > next {
-					// Output lost in a host crash left the offset ahead of
-					// the helper's recording.
-					m.logger.Warn("durable transcript offset beyond the helper recording; realigning", "tab", tabID, "offset", recorded, "recorded", next)
-					m.persistDurableTranscriptOffset(owner, tabID, next)
-					recorded = next
-				}
-				tab.unrecorded = next - recorded
-			}
 		}
 		if store, ok := durableAttachment.(durableVersionFloor); ok {
 			if eventVersion, gridRevision, err := store.DurableVersions(); err == nil {
@@ -1063,11 +1043,11 @@ func (m *Manager) attach(ctx context.Context, tab *Tab, options AttachOptions, c
 	registered := false
 	var registeredDetaches uint64
 	var co *outCoalescer
-	// Recording resumes with this client: the notice for output left out
-	// meanwhile is written under the feed gate, ahead of any later output.
+	// Recording starts or resumes with this client under the feed gate, so
+	// the screen it starts with precedes any later output.
 	defer func() {
 		if attached {
-			m.flushUnrecorded(ctx, tab)
+			m.recordingWatched(ctx, tab)
 		}
 	}()
 	defer func() {
@@ -1330,6 +1310,7 @@ func (m *Manager) detachChannelLocked(channelID string, incarnation uint64, clos
 	tab.signalOutputWakeLocked()
 	tab.mu.Unlock()
 	return tabID, func() {
+		m.recordingLeft(tab)
 		if attached {
 			if tab.fanout != nil {
 				tab.fanout.Detach(channelID)
@@ -1515,6 +1496,9 @@ func (m *Manager) detachMatching(tab *Tab, match func(string) bool, background b
 	}
 	if throttleRecovered {
 		m.emit(context.Background(), TopicTerminalThrottled, ThrottleEvent{TabID: tab.ID, ChannelID: throttleChannel, Recovered: true, Version: throttleVersion})
+	}
+	if len(detached) > 0 {
+		m.recordingLeft(tab)
 	}
 	if !background && len(detached) > 0 && empty && ephemeral {
 		return m.reapEphemeralTab(tab, generation)
@@ -1996,7 +1980,6 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 			tab.mu.Unlock()
 			return err
 		}
-		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), tab.session.userID), id)
 	} else {
 		m.mu.Unlock()
 		if err := m.closeTabResources(tab, false); err != nil {
@@ -2029,6 +2012,7 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 }
 
 func (m *Manager) closeTabResources(tab *Tab, bestEffortChannel bool, afterClose ...func()) error {
+	m.recordingStop(tab)
 	tab.closeMu.Lock()
 	defer tab.closeMu.Unlock()
 	tab.mu.Lock()

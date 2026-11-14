@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/terminal"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -169,7 +170,7 @@ type fakeChannel struct {
 }
 
 func newFakeChannel(generation uint64) *fakeChannel {
-	return &fakeChannel{generation: generation, id: newID(), reads: make(chan []byte, 256), closed: make(chan struct{})}
+	return &fakeChannel{generation: generation, id: ids.New(), reads: make(chan []byte, 256), closed: make(chan struct{})}
 }
 
 func (c *fakeChannel) Read(buffer []byte) (int, error) {

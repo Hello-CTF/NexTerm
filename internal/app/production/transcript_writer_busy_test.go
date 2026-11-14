@@ -35,13 +35,13 @@ type gatedAppendStore struct {
 	endDone    bool
 }
 
-func (s *gatedAppendStore) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []store.TranscriptChunkRow, durableBytes ...map[string]int64) error {
+func (s *gatedAppendStore) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []store.TranscriptChunkRow) error {
 	gated := s.armed.CompareAndSwap(true, false)
 	if gated {
 		close(s.entered)
 		<-s.release
 	}
-	err := s.Store.TranscriptAppendChunks(ctx, transcriptID, chunks, durableBytes...)
+	err := s.Store.TranscriptAppendChunks(ctx, transcriptID, chunks)
 	if gated {
 		// Only the gated call's outcome is recorded: earlier flushes (the
 		// prefix) must not latch the result the test asserts on.
@@ -142,14 +142,14 @@ func lockStoreExclusively(t *testing.T, path string) (*store.Store, *sql.Conn) {
 	return locker, conn
 }
 
-// flushPrefixAndLock flushes the prefix chunk, takes the exclusive lock, and
+// flushPrefixAndLock flushes the start resize and the prefix chunk, takes the exclusive lock, and
 // returns the locker pieces.
 func flushPrefixAndLock(t *testing.T, writer *transcriptWriter, database *store.Store, path string) (*store.Store, *sql.Conn) {
 	t.Helper()
 	ctx := context.Background()
-	writer.SessionStarted(ctx, transcriptIdentity("session-inflight"))
-	writer.SessionOutput(ctx, "tab-1", "session-inflight", "tab-1", []byte("flushed-prefix\r\n"))
-	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 1)
+	startTestRecording(ctx, writer, "session-inflight", "tab-1")
+	writer.RecordingOutput(ctx, "session-inflight", "tab-1", []byte("flushed-prefix\r\n"))
+	waitForTranscriptChunks(t, database, mustTranscriptID(t, database), 2)
 	return lockStoreExclusively(t, path)
 }
 
@@ -159,7 +159,7 @@ func startGatedTailFlush(t *testing.T, writer *transcriptWriter, gated *gatedApp
 	t.Helper()
 	ctx := context.Background()
 	gated.armed.Store(true)
-	writer.SessionOutput(ctx, "tab-1", "session-inflight", "tab-1", []byte("unflushed-tail\r\n"))
+	writer.RecordingOutput(ctx, "session-inflight", "tab-1", []byte("unflushed-tail\r\n"))
 	select {
 	case <-gated.entered:
 	case <-time.After(10 * time.Second):
@@ -188,15 +188,8 @@ func assertOnlyPrefixPersisted(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-	offset, err := reopened.DurableTranscriptOffsetGet(ctx, "tab-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset != int64(len("flushed-prefix\r\n")) {
-		t.Fatalf("the failed in-flight flush must not advance the offset, got %d", offset)
-	}
 	chunks := readTranscriptAll(t, reopened, mustTranscriptID(t, reopened))
-	if len(chunks) != 1 || !bytes.Contains(chunks[0].Data, []byte("flushed-prefix")) {
+	if len(chunks) != 2 || !bytes.Contains(chunks[1].Data, []byte("flushed-prefix")) {
 		t.Fatalf("only the flushed prefix may be persisted: %+v", chunks)
 	}
 }
@@ -212,7 +205,7 @@ func assertOnlyPrefixPersisted(t *testing.T, path string) {
 // deterministically returned context.DeadlineExceeded in M91's forced-race
 // diagnostic. Closing the store afterwards, in the production order, is a
 // no-op for the already-finished flush. The data outcome is unchanged: the
-// unflushed tail stays suppressed and the durable offset does not advance.
+// unflushed tail stays suppressed.
 func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 	ctx := context.Background()
 	writer, database, gated, path := newInflightFlushFixture(t, 600*time.Millisecond)
@@ -246,9 +239,8 @@ func TestTranscriptWriterShutdownJoinsInflightFlushUnderLock(t *testing.T) {
 // Contention and recovery, proven on driver verdicts alone: the gated tail
 // flush meets the held lock and fails with the busy handler's terminal
 // error — the only engagement evidence this driver stack exposes — which
-// also freezes its durable advance. Once the lock clears, the writer
-// persists the next output, ends the transcript, and the durable offset
-// still covers only flushed bytes. Whether a flush already waiting when the
+// marks the recording truncated. Once the lock clears, the writer persists
+// the next output and ends the transcript. Whether a flush already waiting when the
 // lock clears goes on to commit cannot be asserted from Go on this stack:
 // the busy handler's engagement is not observable before its terminal
 // result without a driver-internal seam that glebarez/modernc do not
@@ -265,7 +257,7 @@ func TestTranscriptWriterRecoversAfterContentionClears(t *testing.T) {
 		t.Fatalf("the contended tail flush must fail with the driver busy error, got %v", appendErr)
 	}
 	rollbackLocker(t, locker, lockConn)
-	writer.SessionOutput(ctx, "tab-1", "session-inflight", "tab-1", []byte("post-clear-tail\r\n"))
+	writer.RecordingOutput(ctx, "session-inflight", "tab-1", []byte("post-clear-tail\r\n"))
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := writer.Shutdown(shutdownCtx); err != nil {
@@ -288,15 +280,8 @@ func TestTranscriptWriterRecoversAfterContentionClears(t *testing.T) {
 		t.Fatalf("the recovery must end the transcript and keep the contention failure marked truncated: %+v", rows)
 	}
 	chunks := readTranscriptAll(t, reopened, rows[0].ID)
-	if len(chunks) != 2 || !bytes.Contains(chunks[0].Data, []byte("flushed-prefix")) || !bytes.Contains(chunks[1].Data, []byte("post-clear-tail")) {
-		t.Fatalf("the recovery must persist the prefix and the post-clear output, got %+v", chunks)
-	}
-	offset, err := reopened.DurableTranscriptOffsetGet(ctx, "tab-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if offset != int64(len("flushed-prefix\r\n")) {
-		t.Fatalf("the durable offset must stay frozen at the flushed prefix after the failed flush, got %d", offset)
+	if len(chunks) != 3 || !bytes.Contains(chunks[1].Data, []byte("flushed-prefix")) || !bytes.Contains(chunks[2].Data, []byte("post-clear-tail")) {
+		t.Fatalf("the recovery must persist the start resize, the prefix and the post-clear output, got %+v", chunks)
 	}
 }
 
@@ -313,8 +298,7 @@ func TestTranscriptWriterRecoversAfterContentionClears(t *testing.T) {
 // deterministic close-first ordering — Close does not prevent a contended
 // wait started afterwards on a pre-acquired connection — and M91's probes
 // supply the behavioral contract for the uncovered half. Shutdown still
-// joins here and the data outcome is identical: the tail stays suppressed
-// and the offset does not advance.
+// joins here and the data outcome is identical: the tail stays suppressed.
 func TestTranscriptWriterShutdownJoinsFlushStartedAfterClose(t *testing.T) {
 	ctx := context.Background()
 	writer, database, gated, path := newInflightFlushFixture(t, 2*time.Second)

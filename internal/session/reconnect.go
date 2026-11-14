@@ -590,7 +590,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 		}
 	}()
 	var retired []base.DurableAttachment
-	var goneOffsets []string
 	for tab, replacement := range opened {
 		tab.mu.Lock()
 		if !tab.closed && m.tabs[tab.ID] == tab && session.tabs[tab.ID] == tab {
@@ -649,7 +648,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 			if tab.durable != nil {
 				retired = append(retired, tab.durable)
 				tab.durable = nil
-				goneOffsets = append(goneOffsets, tab.ID)
 			}
 			tab.durableLost = true
 			tab.exited = true
@@ -702,9 +700,6 @@ func (m *Manager) commitReconnect(session *Session, transport *transportHandle, 
 	}
 	for _, attachment := range retired {
 		_ = attachment.Close()
-	}
-	for _, tabID := range goneOffsets {
-		m.deleteDurableTranscriptOffset(ownerCtx(context.Background(), session.userID), tabID)
 	}
 	m.transcriptStarted(reconnectCtx, session)
 	for _, resize := range resizes {

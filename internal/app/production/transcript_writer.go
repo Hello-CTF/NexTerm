@@ -38,9 +38,8 @@ var transcriptTruncationMarker = []byte("\r\n\x1b[33m[NexTerm] 录制已达大�
 
 type transcriptStore interface {
 	TranscriptStart(context.Context, store.TranscriptRow) error
-	TranscriptAppendChunks(context.Context, string, []store.TranscriptChunkRow, ...map[string]int64) error
+	TranscriptAppendChunks(context.Context, string, []store.TranscriptChunkRow) error
 	TranscriptEnd(context.Context, string, int64, bool) error
-	TranscriptDelete(context.Context, string) error
 }
 
 type transcriptWriterConfig struct {
@@ -72,63 +71,46 @@ const (
 )
 
 type transcriptDrop struct {
-	tabID      string
-	ts         int64
-	chunks     int64
-	bytes      int64
-	durableIDs map[string]struct{}
-}
-
-func (d *transcriptDrop) merge(other transcriptDrop) {
-	if d.chunks == 0 {
-		d.tabID = other.tabID
-		d.ts = other.ts
-	}
-	d.chunks += other.chunks
-	d.bytes += other.bytes
-	if d.durableIDs == nil {
-		d.durableIDs = make(map[string]struct{})
-	}
-	for durableID := range other.durableIDs {
-		d.durableIDs[durableID] = struct{}{}
-	}
-}
-
-type deferredTranscript struct {
-	info      session.TranscriptInfo
-	startedAt int64
-	ownerID   string
-	writeCtx  context.Context
-	drop      transcriptDrop
+	ts     int64
+	chunks int64
+	bytes  int64
+	// output is set when a dropped chunk was session output, not only the
+	// starting screen or a resize.
+	output bool
 }
 
 type transcriptItem struct {
 	kind      transcriptItemKind
 	sessionID string
 	tabID     string
-	durableID string
 	ownerID   string
 	ts        int64
 	chunkKind int
 	data      []byte
-	// durableSkip, when positive, marks a gap chunk: data is a notice and the
-	// durable offset advances by durableSkip instead of len(data).
-	durableSkip int64
-	info        session.TranscriptInfo
-	drop        transcriptDrop
+	// screen marks the screen a recording starts with or redraws: it is
+	// state, not output the session produced while recorded.
+	screen bool
+	// cols and rows are the start item's terminal size.
+	cols, rows uint32
+	info       session.TranscriptInfo
+	drop       transcriptDrop
 }
 
+// transcriptPeriod is one tab's recording. Its row is written once the
+// recording holds session output, so a recording nothing happened in never
+// reaches the database, not even after a crash.
 type transcriptPeriod struct {
-	sessionID     string
-	transcriptID  string
-	ownerID       string
-	writeCtx      context.Context
-	durableBytes  map[string]int64
-	durableFrozen map[string]bool
-	nextSeq       int64
-	bytes         int64
-	// hasOutput reports that the period recorded session output, not only
-	// geometry or notices; a period without it is deleted when it ends.
+	info         session.TranscriptInfo
+	startedAt    int64
+	transcriptID string
+	ownerID      string
+	writeCtx     context.Context
+	created      bool
+	failed       bool
+	nextSeq      int64
+	bytes        int64
+	// hasOutput reports that the recording holds session output, not only
+	// its starting screen, geometry or notices.
 	hasOutput     bool
 	truncated     bool
 	capped        bool
@@ -249,6 +231,15 @@ func (w *transcriptWriter) Start(ctx context.Context) error {
 	if w.database == nil {
 		return fmt.Errorf("transcript writer requires a database")
 	}
+	if w.retentionDatabase != nil {
+		// Nothing records yet: whatever is still open was cut off by an
+		// earlier run.
+		if ended, deleted, err := w.retentionDatabase.TranscriptCloseAbandoned(context.WithoutCancel(ctx)); err != nil {
+			w.logger.Warn("settling abandoned transcripts failed", "error", err)
+		} else if ended > 0 || deleted > 0 {
+			w.logger.Info("settled abandoned transcripts", "ended", ended, "deleted", deleted)
+		}
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	w.cancel = cancel
 	if w.keyframer != nil {
@@ -326,58 +317,53 @@ func (w *transcriptWriter) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (w *transcriptWriter) SessionStarted(ctx context.Context, info session.TranscriptInfo) {
-	w.enqueue(ctx, transcriptItem{kind: transcriptItemStart, sessionID: info.SessionID, ts: time.Now().UnixMilli(), info: info})
+func (w *transcriptWriter) RecordingStarted(ctx context.Context, info session.TranscriptInfo, cols, rows uint32, screen []byte) {
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemStart, sessionID: info.SessionID, tabID: info.TabID, ts: time.Now().UnixMilli(),
+		info: info, cols: cols, rows: rows, data: bytes.Clone(screen),
+	})
 }
 
-func (w *transcriptWriter) SessionOutput(ctx context.Context, durableID, sessionID, tabID string, data []byte) {
+func (w *transcriptWriter) RecordingScreen(ctx context.Context, sessionID, tabID string, cols, rows uint32, screen []byte) {
+	w.RecordingResize(ctx, sessionID, tabID, cols, rows)
+	if len(screen) == 0 {
+		return
+	}
+	w.enqueue(ctx, transcriptItem{
+		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli(),
+		data: bytes.Clone(screen), screen: true,
+	})
+}
+
+func (w *transcriptWriter) RecordingOutput(ctx context.Context, sessionID, tabID string, data []byte) {
 	if len(data) == 0 {
 		return
 	}
 	w.enqueue(ctx, transcriptItem{
-		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
+		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID,
 		ts: time.Now().UnixMilli(), data: bytes.Clone(data),
 	})
 }
 
-// SessionOutputGap records that the durable helper dropped skipped bytes of
-// output before this process could record them. The durable offset advances
-// past them so it keeps matching the helper's absolute offsets.
-func (w *transcriptWriter) SessionOutputGap(ctx context.Context, durableID, sessionID, tabID string, skipped int64) {
-	if skipped <= 0 {
-		return
-	}
-	w.enqueue(ctx, transcriptItem{
-		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
-		ts: time.Now().UnixMilli(), durableSkip: skipped,
-		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出超出持久终端历史上限，在录制前已被丢弃\x1b[0m\r\n", skipped)),
-	})
-}
-
-// SessionOutputUnrecorded records that skipped bytes of output were left out
-// of the transcript, such as output produced while no client watched the tab.
-// A durable tab's offset advances past them like a history gap.
-func (w *transcriptWriter) SessionOutputUnrecorded(ctx context.Context, durableID, sessionID, tabID string, skipped int64) {
-	if skipped <= 0 {
-		return
-	}
-	w.enqueue(ctx, transcriptItem{
-		kind: transcriptItemChunk, sessionID: sessionID, tabID: tabID, durableID: durableID,
-		ts: time.Now().UnixMilli(), durableSkip: skipped,
-		data: []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出未录制\x1b[0m\r\n", skipped)),
-	})
-}
-
-func (w *transcriptWriter) SessionResize(ctx context.Context, sessionID, tabID string, cols, rows uint32) {
+func (w *transcriptWriter) RecordingResize(ctx context.Context, sessionID, tabID string, cols, rows uint32) {
 	w.enqueue(ctx, transcriptItem{
 		kind: transcriptItemChunk, chunkKind: store.TranscriptChunkKindResize,
 		sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli(),
-		data: []byte(fmt.Sprintf(`{"cols":%d,"rows":%d}`, cols, rows)),
+		data: resizePayload(cols, rows),
 	})
 }
 
-func (w *transcriptWriter) SessionEnded(ctx context.Context, sessionID string) {
-	w.enqueue(ctx, transcriptItem{kind: transcriptItemEnd, sessionID: sessionID, ts: time.Now().UnixMilli()})
+func (w *transcriptWriter) RecordingEnded(ctx context.Context, sessionID, tabID string) {
+	w.enqueue(ctx, transcriptItem{kind: transcriptItemEnd, sessionID: sessionID, tabID: tabID, ts: time.Now().UnixMilli()})
+}
+
+// isOutput reports a chunk of session output, not the starting screen or a resize.
+func (item transcriptItem) isOutput() bool {
+	return item.kind == transcriptItemChunk && item.chunkKind == store.TranscriptChunkKindOutput && !item.screen
+}
+
+func resizePayload(cols, rows uint32) []byte {
+	return []byte(fmt.Sprintf(`{"cols":%d,"rows":%d}`, cols, rows))
 }
 
 func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
@@ -423,7 +409,7 @@ func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
 	} else {
 		w.queuedControls++
 	}
-	delete(w.activeDrops, item.sessionID)
+	delete(w.activeDrops, item.tabID)
 	w.queueMu.Unlock()
 	w.signal()
 }
@@ -431,25 +417,20 @@ func (w *transcriptWriter) enqueue(ctx context.Context, item transcriptItem) {
 func (w *transcriptWriter) dropChunkLocked(item transcriptItem) bool {
 	w.stats.droppedChunks.Add(1)
 	w.stats.droppedBytes.Add(uint64(len(item.data)))
-	if index, ok := w.activeDrops[item.sessionID]; ok && index >= 0 && index < len(w.queue) {
+	if index, ok := w.activeDrops[item.tabID]; ok && index >= 0 && index < len(w.queue) {
 		marker := &w.queue[index]
-		if marker.kind == transcriptItemDrop && marker.sessionID == item.sessionID {
+		if marker.kind == transcriptItemDrop && marker.tabID == item.tabID {
 			marker.drop.chunks++
 			marker.drop.bytes += int64(len(item.data))
-			if item.durableID != "" {
-				marker.drop.durableIDs[item.durableID] = struct{}{}
-			}
+			marker.drop.output = marker.drop.output || item.isOutput()
 			return false
 		}
 	}
-	drop := transcriptDrop{
-		tabID: item.tabID, ts: item.ts, chunks: 1, bytes: int64(len(item.data)), durableIDs: make(map[string]struct{}),
-	}
-	if item.durableID != "" {
-		drop.durableIDs[item.durableID] = struct{}{}
-	}
-	w.queue = append(w.queue, transcriptItem{kind: transcriptItemDrop, sessionID: item.sessionID, ownerID: item.ownerID, drop: drop})
-	w.activeDrops[item.sessionID] = len(w.queue) - 1
+	w.queue = append(w.queue, transcriptItem{
+		kind: transcriptItemDrop, sessionID: item.sessionID, tabID: item.tabID, ownerID: item.ownerID,
+		drop: transcriptDrop{ts: item.ts, chunks: 1, bytes: int64(len(item.data)), output: item.isOutput()},
+	})
+	w.activeDrops[item.tabID] = len(w.queue) - 1
 	return true
 }
 
@@ -485,8 +466,7 @@ func (w *transcriptWriter) notifySpaceLocked() {
 }
 
 func (w *transcriptWriter) run() {
-	sessions := make(map[string]*transcriptPeriod)
-	deferredDrops := make(map[string]*deferredTranscript)
+	periods := make(map[string]*transcriptPeriod)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			w.queueMu.Lock()
@@ -506,11 +486,10 @@ func (w *transcriptWriter) run() {
 	for {
 		batch, open := w.takeBatch()
 		if !open {
-			w.endRemainingSessions(sessions)
-			w.endDeferredSessions(deferredDrops)
+			w.endRemainingPeriods(periods)
 			return
 		}
-		w.flushBatch(sessions, deferredDrops, batch)
+		w.flushBatch(periods, batch)
 	}
 }
 
@@ -564,11 +543,11 @@ func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 				w.queuedControls--
 			}
 		}
-		for sessionID, index := range w.activeDrops {
+		for tabID, index := range w.activeDrops {
 			if index < count {
-				delete(w.activeDrops, sessionID)
+				delete(w.activeDrops, tabID)
 			} else {
-				w.activeDrops[sessionID] = index - count
+				w.activeDrops[tabID] = index - count
 			}
 		}
 		remaining := len(w.queue) - count
@@ -583,151 +562,126 @@ func (w *transcriptWriter) takeBatch() ([]transcriptItem, bool) {
 	}
 }
 
-func (w *transcriptWriter) flushBatch(sessions map[string]*transcriptPeriod, deferredDrops map[string]*deferredTranscript, batch []transcriptItem) {
+func (w *transcriptWriter) flushBatch(periods map[string]*transcriptPeriod, batch []transcriptItem) {
 	for _, item := range batch {
 		switch item.kind {
 		case transcriptItemStart:
-			if _, exists := sessions[item.sessionID]; exists {
-				w.logger.Warn("transcript start for session with an open transcript", "sessionId", item.sessionID)
-				continue
+			if previous := periods[item.tabID]; previous != nil {
+				w.logger.Warn("transcript start for a tab with an open recording; ending the previous one", "sessionId", item.sessionID, "tabId", item.tabID)
+				w.flushPeriod(previous, item.ts)
 			}
 			writeCtx, ok := w.transcriptOwnerContext(item.ownerID)
 			if !ok {
 				w.failClosedOwnerless(item.sessionID, "start")
+				delete(periods, item.tabID)
 				continue
 			}
-			transcriptID := ids.New()
-			if err := w.database.TranscriptStart(writeCtx, store.TranscriptRow{
-				ID:        transcriptID,
-				SessionID: item.info.SessionID,
-				AssetID:   item.info.AssetID,
-				AssetName: item.info.AssetName,
-				AssetKind: item.info.AssetKind,
-				StartedAt: item.ts,
-			}); err != nil {
-				if deferredDrops[item.sessionID] == nil {
-					deferredDrops[item.sessionID] = &deferredTranscript{info: item.info, startedAt: item.ts, ownerID: item.ownerID, writeCtx: writeCtx}
-				}
-				w.stats.flushErrors.Add(1)
-				w.logger.Error("transcript start failed; session output will not be recorded", "sessionId", item.sessionID, "error", err)
-				continue
+			period := &transcriptPeriod{info: item.info, startedAt: item.ts, ownerID: item.ownerID, writeCtx: writeCtx}
+			periods[item.tabID] = period
+			w.appendChunk(period, store.TranscriptChunkRow{TabID: item.tabID, TS: item.ts, Kind: store.TranscriptChunkKindResize, Data: resizePayload(item.cols, item.rows)})
+			if len(item.data) > 0 {
+				w.appendChunk(period, store.TranscriptChunkRow{TabID: item.tabID, TS: item.ts, Data: item.data})
 			}
-			period := &transcriptPeriod{sessionID: item.sessionID, transcriptID: transcriptID, ownerID: item.ownerID, writeCtx: writeCtx}
-			sessions[item.sessionID] = period
-			if deferred := deferredDrops[item.sessionID]; deferred != nil && deferred.drop.chunks > 0 {
-				w.applyTranscriptDrop(period, deferred.drop)
-			}
-			delete(deferredDrops, item.sessionID)
 		case transcriptItemChunk:
-			period := sessions[item.sessionID]
-			if period == nil || period.capped {
+			period := periods[item.tabID]
+			if period == nil {
 				continue
 			}
-			if period.bytes+int64(len(item.data)) > w.maxSessionBytes {
-				period.pending = append(period.pending, store.TranscriptChunkRow{
-					Seq: period.nextSeq, TabID: item.tabID, TS: item.ts,
-					Data: transcriptTruncationMarker,
-				})
-				period.nextSeq++
-				period.bytes += int64(len(transcriptTruncationMarker))
-				period.truncated = true
-				period.capped = true
-				continue
-			}
-			if item.durableID != "" && !period.durableFrozen[item.durableID] {
-				if period.durableBytes == nil {
-					period.durableBytes = make(map[string]int64)
-				}
-				advance := int64(len(item.data))
-				if item.durableSkip > 0 {
-					advance = item.durableSkip
-				}
-				period.durableBytes[item.durableID] += advance
-			}
-			if item.chunkKind == store.TranscriptChunkKindOutput && item.durableSkip == 0 {
+			if item.isOutput() {
 				period.hasOutput = true
 			}
-			period.pending = append(period.pending, store.TranscriptChunkRow{
-				Seq: period.nextSeq, TabID: item.tabID, TS: item.ts, Kind: item.chunkKind, Data: item.data,
-			})
-			period.nextSeq++
-			period.bytes += int64(len(item.data))
+			w.appendChunk(period, store.TranscriptChunkRow{TabID: item.tabID, TS: item.ts, Kind: item.chunkKind, Data: item.data})
 		case transcriptItemDrop:
-			period := sessions[item.sessionID]
+			period := periods[item.tabID]
 			if period == nil {
-				writeCtx, ok := w.transcriptOwnerContext(item.ownerID)
-				if !ok {
-					w.failClosedOwnerless(item.sessionID, "drop marker")
-					continue
-				}
-				deferred := deferredDrops[item.sessionID]
-				if deferred == nil {
-					deferred = &deferredTranscript{info: session.TranscriptInfo{SessionID: item.sessionID}, startedAt: item.drop.ts, ownerID: item.ownerID, writeCtx: writeCtx}
-					deferredDrops[item.sessionID] = deferred
-				}
-				deferred.drop.merge(item.drop)
 				continue
 			}
-			w.applyTranscriptDrop(period, item.drop)
+			w.applyTranscriptDrop(period, item.tabID, item.drop)
 		case transcriptItemEnd:
-			period := sessions[item.sessionID]
+			period := periods[item.tabID]
 			if period == nil {
-				w.flushDeferred(deferredDrops[item.sessionID], item.ts)
-				delete(deferredDrops, item.sessionID)
 				continue
 			}
 			w.flushPeriod(period, item.ts)
-			delete(sessions, item.sessionID)
+			delete(periods, item.tabID)
 		}
 	}
-	for _, period := range sessions {
+	for _, period := range periods {
 		w.flushPending(period)
 	}
 }
 
-func (w *transcriptWriter) applyTranscriptDrop(period *transcriptPeriod, drop transcriptDrop) {
-	for durableID := range drop.durableIDs {
-		period.freezeDurable(durableID)
+// appendChunk queues a chunk for the period's next flush, ending the
+// recording with a marker once it reaches the size cap.
+func (w *transcriptWriter) appendChunk(period *transcriptPeriod, chunk store.TranscriptChunkRow) {
+	if period.capped || period.failed {
+		return
 	}
+	if period.bytes+int64(len(chunk.Data)) > w.maxSessionBytes {
+		chunk.Kind = store.TranscriptChunkKindOutput
+		chunk.Data = transcriptTruncationMarker
+		period.truncated = true
+		period.capped = true
+	}
+	chunk.Seq = period.nextSeq
+	period.pending = append(period.pending, chunk)
+	period.nextSeq++
+	period.bytes += int64(len(chunk.Data))
+}
+
+func (w *transcriptWriter) applyTranscriptDrop(period *transcriptPeriod, tabID string, drop transcriptDrop) {
+	if !drop.output {
+		// Only the starting screen or a resize was lost: nothing the session
+		// produced is missing from the recording.
+		return
+	}
+	period.hasOutput = true
 	period.truncated = true
 	period.droppedChunks += drop.chunks
 	period.droppedBytes += drop.bytes
-	if period.capped {
-		return
-	}
 	marker := []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 录制队列已满，此处省略了 %d 段输出（%d 字节）\x1b[0m\r\n", drop.chunks, drop.bytes))
-	period.pending = append(period.pending, store.TranscriptChunkRow{
-		Seq: period.nextSeq, TabID: drop.tabID, TS: drop.ts, Data: marker,
-	})
-	period.nextSeq++
-	period.bytes += int64(len(marker))
+	w.appendChunk(period, store.TranscriptChunkRow{TabID: tabID, TS: drop.ts, Data: marker})
 }
 
-func (p *transcriptPeriod) freezeDurable(durableID string) {
-	if durableID == "" {
-		return
-	}
-	if p.durableFrozen == nil {
-		p.durableFrozen = make(map[string]bool)
-	}
-	p.durableFrozen[durableID] = true
-}
-
+// flushPending writes the period's queued chunks, creating its row with the
+// first chunks that hold session output.
 func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
-	if len(period.pending) == 0 {
+	if len(period.pending) == 0 || period.failed {
+		period.pending = nil
 		return
+	}
+	if !period.created {
+		if !period.hasOutput && !period.truncated {
+			return
+		}
+		transcriptID := ids.New()
+		if err := w.database.TranscriptStart(period.writeCtx, store.TranscriptRow{
+			ID:        transcriptID,
+			SessionID: period.info.SessionID,
+			TabID:     period.info.TabID,
+			TabTitle:  period.info.TabTitle,
+			AssetID:   period.info.AssetID,
+			AssetName: period.info.AssetName,
+			AssetKind: period.info.AssetKind,
+			StartedAt: period.startedAt,
+		}); err != nil {
+			period.failed = true
+			period.pending = nil
+			w.stats.flushErrors.Add(1)
+			w.logger.Error("transcript start failed; this recording is not kept", "sessionId", period.info.SessionID, "tabId", period.info.TabID, "error", err)
+			return
+		}
+		period.transcriptID = transcriptID
+		period.created = true
 	}
 	chunks := len(period.pending)
-	if err := w.database.TranscriptAppendChunks(period.writeCtx, period.transcriptID, period.pending, period.durableBytes); err != nil {
+	if err := w.database.TranscriptAppendChunks(period.writeCtx, period.transcriptID, period.pending); err != nil {
 		if w.keyframer != nil {
 			w.keyframer.control(period.transcriptID, false)
 		}
 		period.truncated = true
-		for durableID := range period.durableBytes {
-			period.freezeDurable(durableID)
-		}
 		w.stats.flushErrors.Add(1)
-		w.logger.Error("transcript chunk flush failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "chunks", chunks, "error", err)
+		w.logger.Error("transcript chunk flush failed", "sessionId", period.info.SessionID, "transcriptId", period.transcriptID, "chunks", chunks, "error", err)
 	} else {
 		if w.keyframer != nil {
 			w.keyframer.chunks(period.writeCtx, period.transcriptID, period.pending)
@@ -736,71 +690,35 @@ func (w *transcriptWriter) flushPending(period *transcriptPeriod) {
 		period.flushedChunks += int64(chunks)
 		batches := w.stats.batches.Add(1)
 		flushedChunks := w.stats.flushedChunks.Add(uint64(chunks))
-		w.logger.Debug("transcript batch flushed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "chunks", chunks, "batches", batches, "flushedChunks", flushedChunks)
+		w.logger.Debug("transcript batch flushed", "sessionId", period.info.SessionID, "transcriptId", period.transcriptID, "chunks", chunks, "batches", batches, "flushedChunks", flushedChunks)
 	}
 	period.pending = nil
-	period.durableBytes = nil
 }
 
+// flushPeriod ends a recording. One that never held session output was never
+// written and leaves nothing behind.
 func (w *transcriptWriter) flushPeriod(period *transcriptPeriod, endedAt int64) {
 	w.flushPending(period)
+	if !period.created {
+		return
+	}
 	if w.keyframer != nil {
 		defer w.keyframer.control(period.transcriptID, true)
 	}
-	if !period.hasOutput && !period.truncated {
-		// A connection period nobody produced watched output in (a reconnect
-		// of terminals left in the background) would only crowd real
-		// recordings out of retention.
-		if err := w.database.TranscriptDelete(period.writeCtx, period.transcriptID); err != nil {
-			w.stats.flushErrors.Add(1)
-			w.logger.Error("empty transcript delete failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "error", err)
-		}
-		return
-	}
 	if err := w.database.TranscriptEnd(period.writeCtx, period.transcriptID, endedAt, period.truncated); err != nil {
 		w.stats.flushErrors.Add(1)
-		w.logger.Error("transcript end failed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "error", err)
+		w.logger.Error("transcript end failed", "sessionId", period.info.SessionID, "transcriptId", period.transcriptID, "error", err)
 		return
 	}
 	w.stats.sessionFlushes.Add(1)
-	w.logger.Info("transcript session flushed", "sessionId", period.sessionID, "transcriptId", period.transcriptID, "batches", period.batches, "flushedChunks", period.flushedChunks, "droppedChunks", period.droppedChunks, "droppedBytes", period.droppedBytes)
+	w.logger.Info("transcript recording flushed", "sessionId", period.info.SessionID, "tabId", period.info.TabID, "transcriptId", period.transcriptID, "batches", period.batches, "flushedChunks", period.flushedChunks, "droppedChunks", period.droppedChunks, "droppedBytes", period.droppedBytes)
 }
 
-func (w *transcriptWriter) flushDeferred(deferred *deferredTranscript, endedAt int64) {
-	if deferred == nil || deferred.drop.chunks == 0 {
-		return
-	}
-	transcriptID := ids.New()
-	if err := w.database.TranscriptStart(deferred.writeCtx, store.TranscriptRow{
-		ID:        transcriptID,
-		SessionID: deferred.info.SessionID,
-		AssetID:   deferred.info.AssetID,
-		AssetName: deferred.info.AssetName,
-		AssetKind: deferred.info.AssetKind,
-		StartedAt: deferred.startedAt,
-	}); err != nil {
-		w.stats.flushErrors.Add(1)
-		w.logger.Error("deferred transcript flush failed; releasing gap state", "sessionId", deferred.info.SessionID, "droppedChunks", deferred.drop.chunks, "droppedBytes", deferred.drop.bytes, "error", err)
-		return
-	}
-	period := &transcriptPeriod{sessionID: deferred.info.SessionID, transcriptID: transcriptID, ownerID: deferred.ownerID, writeCtx: deferred.writeCtx}
-	w.applyTranscriptDrop(period, deferred.drop)
-	w.flushPeriod(period, endedAt)
-}
-
-func (w *transcriptWriter) endDeferredSessions(deferredDrops map[string]*deferredTranscript) {
+func (w *transcriptWriter) endRemainingPeriods(periods map[string]*transcriptPeriod) {
 	now := time.Now().UnixMilli()
-	for sessionID, deferred := range deferredDrops {
-		w.flushDeferred(deferred, now)
-		delete(deferredDrops, sessionID)
-	}
-}
-
-func (w *transcriptWriter) endRemainingSessions(sessions map[string]*transcriptPeriod) {
-	now := time.Now().UnixMilli()
-	for sessionID, period := range sessions {
+	for tabID, period := range periods {
 		w.flushPeriod(period, now)
-		delete(sessions, sessionID)
+		delete(periods, tabID)
 	}
 }
 
@@ -832,8 +750,3 @@ func (w *transcriptWriter) enforceRetention(ctx context.Context) {
 func (w *transcriptWriter) retentionPolicy(ctx context.Context) (store.TranscriptRetentionPolicy, error) {
 	return core.TranscriptRetentionPolicy(ctx, w.retentionDatabase)
 }
-
-var (
-	_ session.TranscriptGapSink        = (*transcriptWriter)(nil)
-	_ session.TranscriptUnrecordedSink = (*transcriptWriter)(nil)
-)

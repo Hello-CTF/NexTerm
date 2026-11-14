@@ -55,7 +55,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 	now := m.now()
 	sessionCtx, sessionCancel := context.WithCancel(ownerCtx(m.ctx, options.OwnerID))
 	session := &Session{
-		ID:          newID(),
+		ID:          ids.New(),
 		CreatedAt:   now,
 		asset:       Asset{ID: options.AssetID, Name: options.Title, Kind: KindRemote},
 		userID:      options.OwnerID,
@@ -72,7 +72,7 @@ func (m *Manager) RegisterRemoteSession(ctx context.Context, options RemoteSessi
 	session.finishConnectLocked(nil)
 	session.remoteActivity = now
 
-	tabID := newID()
+	tabID := ids.New()
 	terminal, err := m.terminals.NewTerminal(TerminalConfig{TabID: tabID, SessionID: session.ID, Cols: cols, Rows: rows})
 	if err != nil {
 		sessionCancel()

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
@@ -18,13 +19,6 @@ const MaxDurableHistoryRead = 192 << 10
 // to the newest output this process received from the helper.
 const DurableHistoryLatest = ^uint64(0)
 
-// TranscriptGapSink is implemented by transcript sinks that record where a
-// durable tab's output was dropped by the helper before this process saw it,
-// so the recorded offset keeps matching the helper's absolute offsets.
-type TranscriptGapSink interface {
-	SessionOutputGap(ctx context.Context, durableID, sessionID, tabID string, skipped int64)
-}
-
 func (m *Manager) durableHistoryLimit(ctx context.Context) uint64 {
 	if m.historyLimit == nil {
 		return 0
@@ -32,23 +26,18 @@ func (m *Manager) durableHistoryLimit(ctx context.Context) uint64 {
 	return m.historyLimit(ctx)
 }
 
+// transcriptGap marks in the tab's recording where the helper dropped output
+// before this process saw it.
 func (m *Manager) transcriptGap(ctx context.Context, tab *Tab, skipped int64) {
-	sink, ok := m.transcripts.(TranscriptGapSink)
-	if !ok || skipped <= 0 {
+	if skipped <= 0 {
 		return
 	}
-	tab.mu.Lock()
-	durableID := ""
-	if tab.durable != nil {
-		durableID = tab.ID
-	}
-	tab.mu.Unlock()
-	sink.SessionOutputGap(ownerCtx(ctx, tab.session.userID), durableID, tab.SessionID, tab.ID, skipped)
+	m.transcriptNotice(ctx, tab, []byte(fmt.Sprintf("\r\n\x1b[33m[NexTerm] 此处有 %d 字节输出超出持久终端历史上限，在录制前已被丢弃\x1b[0m\r\n", skipped)))
 }
 
 // startDurableReplay runs when a pump starts on a durable channel: it reports
-// output dropped or left unrecorded before this attach to the transcript and
-// renders the mode prelude of a tail replay.
+// output the helper dropped to the recording and renders the mode prelude of
+// a tail replay.
 func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation uint64) {
 	tab.mu.Lock()
 	prelude := tab.historyPrelude
@@ -61,7 +50,6 @@ func (m *Manager) startDurableReplay(ctx context.Context, tab *Tab, generation u
 	if gap > 0 {
 		m.transcriptGap(ctx, tab, gap)
 	}
-	m.flushUnrecorded(ctx, tab)
 	if len(prelude) > 0 {
 		// The prelude restores the replayed tail's modes: it is replay too.
 		_ = m.feedWith(ctx, tab, generation, prelude, feedOptions{replay: true})

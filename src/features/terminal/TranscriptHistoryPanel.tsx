@@ -678,6 +678,9 @@ export function TranscriptHistoryPanel({
                     <td>
                       <div className="text-[12.5px] font-medium text-neutral-200">
                         {formatTranscriptTime(summary.startedAt)}
+                        {summary.tabTitle && (
+                          <span className="ml-1.5 font-normal text-neutral-400">{summary.tabTitle}</span>
+                        )}
                       </div>
                       <div className="mt-0.5 text-[11px] text-neutral-500">
                         {formatTranscriptDuration(summary.startedAt, summary.endedAt)} ·{" "}

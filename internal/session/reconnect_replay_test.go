@@ -44,8 +44,7 @@ func TestReconnectDurableReplayContinuity(t *testing.T) {
 	provider := supervisor.NewRemoteProvider(client)
 	resolver := &countingResolver{provider: provider}
 
-	var transcriptMu sync.Mutex
-	var transcript strings.Builder
+	recorder := &transcriptRecorder{}
 	tabID := ""
 	connector := newFakeConnector()
 	connector.connect = func(ctx context.Context, asset Asset, generation uint64, call int) (base.Transport, error) {
@@ -59,11 +58,7 @@ func TestReconnectDurableReplayContinuity(t *testing.T) {
 		Terminals:        newFakeTerminalFactory(),
 		DurableResolver:  resolver,
 		ReconnectBackoff: []time.Duration{10 * time.Millisecond},
-		Transcripts: TranscriptSinkFuncs{OutputFunc: func(_ context.Context, _, _, _ string, data []byte) {
-			transcriptMu.Lock()
-			defer transcriptMu.Unlock()
-			transcript.Write(data)
-		}},
+		Transcripts:      recorder,
 	})
 	ctx := context.Background()
 	connected, err := manager.Connect(ctx, Asset{ID: "ssh-replay", Kind: KindSSH})
@@ -98,14 +93,20 @@ func TestReconnectDurableReplayContinuity(t *testing.T) {
 	if count := strings.Count(string(raw), "during-marker"); count != 1 {
 		t.Fatalf("disconnect-window marker appears %d times in the terminal; want 1: %q", count, raw)
 	}
-	transcriptMu.Lock()
-	transcribed := transcript.String()
-	transcriptMu.Unlock()
-	if count := strings.Count(transcribed, "before-marker"); count != 1 {
-		t.Fatalf("pre-reconnect marker transcribed %d times; want 1: %q", count, transcribed)
+	// The connection's recording holds the marker once; the reconnect starts
+	// a new recording whose screen and later output hold each marker once.
+	waitForLong(t, func() bool {
+		return len(recordingAfterStart(recorder, 1)) > 0 && strings.Contains(string(recordingAfterStart(recorder, 1)), "during-marker")
+	})
+	if count := strings.Count(string(recordingAfterStart(recorder, 0)), "before-marker"); count != 1 {
+		t.Fatalf("pre-reconnect marker recorded %d times in the first recording; want 1", count)
 	}
-	if count := strings.Count(transcribed, "during-marker"); count != 1 {
-		t.Fatalf("disconnect-window marker transcribed %d times; want 1: %q", count, transcribed)
+	second := string(recordingAfterStart(recorder, 1))
+	if count := strings.Count(second, "before-marker"); count != 1 {
+		t.Fatalf("pre-reconnect marker recorded %d times in the reconnect recording; want 1: %q", count, second)
+	}
+	if count := strings.Count(second, "during-marker"); count != 1 {
+		t.Fatalf("disconnect-window marker recorded %d times in the reconnect recording; want 1: %q", count, second)
 	}
 	if err := manager.CloseTab(tabID); err != nil {
 		t.Fatal(err)
@@ -242,4 +243,29 @@ func TestReconnectDurableAttachUsesConsumedOffset(t *testing.T) {
 	if err := manager.CloseTab(tabID); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// recordingAfterStart is the content of the index-th recording: the screen it
+// started with followed by its output, up to its end.
+func recordingAfterStart(recorder *transcriptRecorder, index int) []byte {
+	var content []byte
+	started := -1
+	for _, event := range recorder.snapshot() {
+		switch event.kind {
+		case recStarted:
+			started++
+			if started == index {
+				content = append(content, event.data...)
+			}
+		case recScreen, recOutput:
+			if started == index {
+				content = append(content, event.data...)
+			}
+		case recEnded:
+			if started == index {
+				return content
+			}
+		}
+	}
+	return content
 }

@@ -16,7 +16,6 @@ import (
 
 type TranscriptRow = model.TranscriptRow
 type TranscriptChunkRow = model.TranscriptChunkRow
-type DurableTranscriptOffset = model.DurableTranscriptOffset
 
 const (
 	TranscriptChunkKindOutput = 0
@@ -94,7 +93,7 @@ func (s *Store) TranscriptStart(ctx context.Context, row TranscriptRow) error {
 	return nil
 }
 
-func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow, durableBytes ...map[string]int64) error {
+func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string, chunks []TranscriptChunkRow) error {
 	if len(chunks) == 0 {
 		return nil
 	}
@@ -175,39 +174,6 @@ func (s *Store) TranscriptAppendChunks(ctx context.Context, transcriptID string,
 				"chunks":       gorm.Expr("chunks + ?", totalChunks),
 			}); err != nil {
 			return err
-		}
-		if len(durableBytes) > 0 {
-			now := ids.NowMS()
-			ownerID := ipc.OwnerID(ctx)
-			for durableID, count := range durableBytes[0] {
-				if count <= 0 {
-					continue
-				}
-				// The insert never touches an existing row and the guarded UPDATE
-				// advances only this owner's row or a legacy ownerless one. The
-				// guard lives in the UPDATE's WHERE because MySQL and MariaDB
-				// ignore ON CONFLICT ... WHERE, so every backend isolates owners
-				// identically.
-				if err := tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "durable_id"}},
-					DoNothing: true,
-				}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: 0, UpdatedAt: now, OwnerID: ownerID}).Error; err != nil {
-					return err
-				}
-				advance := tx.Model(&DurableTranscriptOffset{}).
-					Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-					Updates(map[string]any{
-						"offset":     gorm.Expr("? + ?", clause.Column{Name: "offset"}, count),
-						"updated_at": now,
-						"owner_id":   ownerID,
-					})
-				if advance.Error != nil {
-					return advance.Error
-				}
-				if advance.RowsAffected == 0 {
-					s.logger.Warn("durable transcript offset advance skipped: row belongs to another owner", "durableId", durableID, "ownerId", ownerID)
-				}
-			}
 		}
 		return nil
 	})
@@ -732,91 +698,6 @@ func (s *Store) TranscriptInsertSynced(ctx context.Context, row TranscriptRow, c
 	return nil
 }
 
-func (s *Store) DurableTranscriptOffsetGet(ctx context.Context, durableID string) (int64, error) {
-	offset := query.Use(s.db).DurableTranscriptOffset
-	row, err := offset.WithContext(ctx).
-		Where(offset.DurableID.Eq(durableID)).
-		Where(ownerConditions(ctx, offset.TableName())...).
-		First()
-	if isNoRows(err) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, dbError(err)
-	}
-	return row.Offset, nil
-}
-
-func (s *Store) DurableTranscriptOffsetSet(ctx context.Context, durableID string, value int64) error {
-	now := ids.NowMS()
-	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "durable_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"offset", "updated_at"}),
-		Where:     clause.Where{Exprs: []clause.Expression{clause.Eq{Column: clause.Column{Name: "owner_id"}, Value: ipc.OwnerID(ctx)}}},
-	}).Create(&DurableTranscriptOffset{DurableID: durableID, Offset: value, UpdatedAt: now, OwnerID: ipc.OwnerID(ctx)}).Error
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
-// DurableTranscriptOffsetSeed resets a durable offset under an atomic owner
-// guard; it reports whether a row was reset. The guard passes for rows owned by
-// ownerID and for legacy ownerless rows (explicit owner_id = ”), so a stale
-// resolution never touches a row the transcript writer claimed in between.
-// Ownership is established by the writer when session output flushes, so a
-// seed for a tab with no recorded output is a no-op rather than an insert.
-func (s *Store) DurableTranscriptOffsetSeed(ctx context.Context, durableID, ownerID string, value int64) (bool, error) {
-	now := ids.NowMS()
-	info := s.db.WithContext(ctx).Model(&DurableTranscriptOffset{}).
-		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-		Updates(map[string]any{"offset": value, "updated_at": now})
-	if info.Error != nil {
-		return false, dbError(info.Error)
-	}
-	return info.RowsAffected > 0, nil
-}
-
-// DurableTranscriptOffsetOwner resolves the owner recorded on a durable
-// offset row; an empty string means the row is legacy ownerless or absent.
-func (s *Store) DurableTranscriptOffsetOwner(ctx context.Context, durableID string) (string, error) {
-	var ownerID string
-	err := s.db.WithContext(ctx).Model(&DurableTranscriptOffset{}).
-		Select("owner_id").
-		Where("durable_id = ?", durableID).
-		Limit(1).
-		Scan(&ownerID).Error
-	if err != nil {
-		return "", dbError(err)
-	}
-	return ownerID, nil
-}
-
-// DurableTranscriptOffsetDeleteIfOwned removes a durable offset only while the
-// row is still owned by ownerID or still legacy ownerless, so a delete racing
-// a claim never removes a freshly claimed row.
-func (s *Store) DurableTranscriptOffsetDeleteIfOwned(ctx context.Context, durableID, ownerID string) error {
-	info := s.db.WithContext(ctx).
-		Where("durable_id = ? AND (owner_id = ? OR owner_id = '')", durableID, ownerID).
-		Delete(&DurableTranscriptOffset{})
-	if info.Error != nil {
-		return dbError(info.Error)
-	}
-	return nil
-}
-
-func (s *Store) DurableTranscriptOffsetDelete(ctx context.Context, durableID string) error {
-	offset := query.Use(s.db).DurableTranscriptOffset
-	_, err := offset.WithContext(ctx).
-		Where(offset.DurableID.Eq(durableID)).
-		Where(ownerConditions(ctx, offset.TableName())...).
-		Delete()
-	if err != nil {
-		return dbError(err)
-	}
-	return nil
-}
-
 func (s *Store) EnforceTranscriptRetention(ctx context.Context, policy TranscriptRetentionPolicy) (TranscriptRetentionResult, error) {
 	var result TranscriptRetentionResult
 	if err := policy.validate(); err != nil {
@@ -948,4 +829,46 @@ func (s *Store) transcriptRetentionDeleteRows(ctx context.Context, tx *gorm.DB, 
 		}
 	}
 	return deleted, nil
+}
+
+// TranscriptCloseAbandoned settles what an earlier run left behind before
+// recording starts, when no recording is open: a recording still open was cut
+// off by a crash and ends at its last chunk, marked truncated; a recording
+// without a single chunk holds nothing to replay and is deleted unless it is
+// starred or a synced copy whose content was left out. It covers every owner.
+func (s *Store) TranscriptCloseAbandoned(ctx context.Context) (ended, deleted int64, err error) {
+	var rows []TranscriptRow
+	if err := s.db.WithContext(ctx).
+		Where("ended_at IS NULL OR (chunks = 0 AND starred = ? AND content_omitted = ?)", false, false).
+		Find(&rows).Error; err != nil {
+		return 0, 0, dbError(err)
+	}
+	for _, row := range rows {
+		ownerCtx := ctx
+		if row.OwnerID != "" {
+			ownerCtx = ipc.WithUserID(ctx, row.OwnerID)
+		}
+		if row.Chunks == 0 && !row.Starred && !row.ContentOmitted {
+			if err := s.TranscriptDelete(ownerCtx, row.ID); err != nil {
+				return ended, deleted, err
+			}
+			deleted++
+			continue
+		}
+		var last *int64
+		if err := s.db.WithContext(ctx).Model(&TranscriptChunkRow{}).
+			Where("transcript_id = ?", row.ID).
+			Select("MAX(ts)").Scan(&last).Error; err != nil {
+			return ended, deleted, dbError(err)
+		}
+		endedAt := row.StartedAt
+		if last != nil && *last > endedAt {
+			endedAt = *last
+		}
+		if err := s.TranscriptEnd(ownerCtx, row.ID, endedAt, true); err != nil {
+			return ended, deleted, err
+		}
+		ended++
+	}
+	return ended, deleted, nil
 }
