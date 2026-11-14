@@ -24,9 +24,9 @@ func TestDescribeHelperBuildReportsStaleHelperWithSessions(t *testing.T) {
 		Local: supervisor.RuntimeMetadata{Version: "1.3.2", SHA256: strings.Repeat("a", 64)},
 		Stale: true, Sessions: 3, SessionsKnown: true,
 	}
-	text := strings.Join(describeHelperBuild(build, "Mon Oct 26 09:00:00 2026"), "\n")
+	text := strings.Join(describeHelperBuildIn(build, "Mon Oct 26 09:00:00 2026", false, true), "\n")
 	for _, want := range []string{
-		"进程=4242", "启动时间=Mon Oct 26 09:00:00 2026", "版本=1.3.0", "持久终端=3",
+		"组件进程：4242，启动于 Mon Oct 26 09:00:00 2026", "版本 1.3.0", "运行中的持久终端 3 个",
 		"主机端组件版本较旧（1.3.0，当前 1.3.2），仍有 3 个持久终端在运行；全部结束后将自动更新。",
 	} {
 		if !strings.Contains(text, want) {
@@ -82,7 +82,7 @@ func TestDescribeHelperBuildEnvStaleSaysNothing(t *testing.T) {
 			Activity: supervisor.ActivitySnapshot{PTY: 2}},
 		Stale: true, StaleReason: "env", StartShell: "/bin/bash", ExpectedShell: "/bin/zsh", Sessions: 2, SessionsKnown: true,
 	}
-	if text := strings.Join(describeHelperBuild(build, ""), "\n"); strings.Contains(text, "运行环境较早") || strings.Contains(text, "bash") {
+	if text := strings.Join(describeHelperBuild(build), "\n"); strings.Contains(text, "运行环境较早") || strings.Contains(text, "bash") {
 		t.Fatalf("an environment-stale helper is replaced silently and prints nothing about shells:\n%s", text)
 	}
 }
@@ -93,10 +93,10 @@ func TestDescribeHelperBuildEnvStaleInSharedDirTellsTheUser(t *testing.T) {
 		Stale:  true, StaleReason: "env",
 	}
 	notice := supervisor.HelperBuild{EnvKept: true}.Notice()
-	if text := strings.Join(describeHelperBuildIn(build, "", true), "\n"); !strings.Contains(text, "提示: "+notice) {
+	if text := strings.Join(describeHelperBuildIn(build, "", true, false), "\n"); !strings.Contains(text, "提示: "+notice) {
 		t.Fatalf("shared dir status lacks the notice:\n%s", text)
 	}
-	if text := strings.Join(describeHelperBuildIn(build, "", false), "\n"); strings.Contains(text, "提示") {
+	if text := strings.Join(describeHelperBuildIn(build, "", false, false), "\n"); strings.Contains(text, "提示") {
 		t.Fatalf("non-shared dir status must stay silent:\n%s", text)
 	}
 }
@@ -107,7 +107,7 @@ func TestDescribeHelperBuildKeepsEnvStaleNoticeOnlyForDesktopSpawnedHelpers(t *t
 			Helper: supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 7, SpawnedBy: spawnedBy},
 			Stale:  true, StaleReason: "env",
 		}
-		if text := strings.Join(describeHelperBuildIn(build, "", true), "\n"); strings.Contains(text, "提示") {
+		if text := strings.Join(describeHelperBuildIn(build, "", true, false), "\n"); strings.Contains(text, "提示") {
 			t.Fatalf("helper spawned by %q is replaced, so no keep notice is due:\n%s", spawnedBy, text)
 		}
 	}
@@ -151,5 +151,65 @@ func TestCheckHelperBuildLogsTheSameNoticeOncePerHelper(t *testing.T) {
 	agentRuntime.checkHelperBuild(context.Background())
 	if got := handler.count(); got != 2 {
 		t.Fatalf("log records after the helper changed = %d, want 2", got)
+	}
+}
+
+func TestHelperBuildLoopRechecksSoonWhileAStaleHelperWaitsForItsTerminals(t *testing.T) {
+	agentRuntime := newStateRuntime(t, Options{DataDir: t.TempDir()})
+	agentRuntime.desired.TerminalEnabled = true
+	agentRuntime.helperBuildEvery = time.Hour
+	agentRuntime.helperBuildWaitingEvery = time.Millisecond
+	checks := make(chan int, 8)
+	count := 0
+	agentRuntime.checkBuild = func(context.Context) (supervisor.HelperBuild, error) {
+		count++
+		checks <- count
+		if count < 3 {
+			// An older build that still runs one terminal.
+			return supervisor.HelperBuild{Helper: supervisor.RunningHelper{PID: 9}, Stale: true, StaleReason: "build", Sessions: 1, SessionsKnown: true}, nil
+		}
+		return supervisor.HelperBuild{Stale: true, Replaced: true}, nil
+	}
+	// The startup check found the waiting helper.
+	agentRuntime.checkHelperBuild(context.Background())
+	<-checks
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		agentRuntime.helperBuildLoop(ctx)
+	}()
+	deadline := time.After(10 * time.Second)
+	for want := 2; want <= 3; want++ {
+		select {
+		case got := <-checks:
+			if got != want {
+				t.Fatalf("check %d, want %d", got, want)
+			}
+		case <-deadline:
+			t.Fatalf("check %d did not run while the stale helper waited", want)
+		}
+	}
+	// Once replaced the loop is back on the long interval.
+	select {
+	case got := <-checks:
+		t.Fatalf("check %d ran after the helper was replaced", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	cancel()
+	<-done
+}
+
+func TestDescribeHelperBuildKeepsProcessDetailsForVerbose(t *testing.T) {
+	build := supervisor.HelperBuild{
+		Helper:        supervisor.RunningHelper{Protocol: supervisor.ProtocolVersion, PID: 31, Runtime: &supervisor.RuntimeMetadata{Version: "1.4.3"}},
+		SessionsKnown: true,
+	}
+	plain := strings.Join(describeHelperBuild(build), "\n")
+	if plain != "持久终端组件：正常，版本 1.4.3，运行中的持久终端 0 个" {
+		t.Fatalf("default status = %q", plain)
+	}
+	if verbose := strings.Join(describeHelperBuildIn(build, "", false, true), "\n"); !strings.Contains(verbose, "组件进程：31") {
+		t.Fatalf("verbose status lacks the process line:\n%s", verbose)
 	}
 }

@@ -374,13 +374,13 @@ func cliServiceChange(command string, args []string, getenv func(string) string,
 	if status.LastError != "" {
 		fmt.Fprintf(stdout, "注意：%s\n", applog.RedactText(status.LastError))
 	}
-	printServiceEnvironment(stdout, manager)
 	return ExitOK
 }
 
 func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
 	set := newFlagSet("status", stderr)
 	dataDir := set.String("data-dir", "", dataDirUsage)
+	verbose := set.Bool("verbose", false, "同时显示诊断信息（shell 与环境解析、组件目录和进程）")
 	if err := set.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -395,75 +395,115 @@ func cliStatus(args []string, getenv func(string) string, stdout, stderr io.Writ
 	}
 	store := StoreAt(dir)
 	config, err := store.Load()
-	if errors.Is(err, ErrNotEnrolled) {
-		fmt.Fprintf(stdout, "配置：未注册（配置路径 %s）\n", store.Path())
-	} else if err != nil {
-		fmt.Fprintf(stdout, "配置：读取失败：%s\n", applog.RedactText(err.Error()))
-	} else {
-		fmt.Fprintf(stdout, "配置：device_id=%s name=%s platform=%s app_version=%s\n", config.DeviceID, config.Name, config.Platform, config.AppVersion)
-		fmt.Fprintf(stdout, "接入地址：当前=%s 已配置=%d metrics_interval=%ds desired_autostart=%t terminal=%s\n",
-			applog.RedactText(orNone(config.CurrentURL)), len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, enabledText(config.TerminalEnabled))
+	switch {
+	case errors.Is(err, ErrNotEnrolled):
+		fmt.Fprintf(stdout, "设备：未注册\n")
+	case err != nil:
+		fmt.Fprintf(stdout, "设备：配置读取失败（%s）\n", applog.RedactText(err.Error()))
+	default:
+		fmt.Fprintf(stdout, "设备：%s（%s）\n", config.Name, config.DeviceID)
+		fmt.Fprintf(stdout, "服务器：%s\n", applog.RedactText(orNone(config.CurrentURL)))
+		fmt.Fprintf(stdout, "远程终端：%s\n", enabledText(config.TerminalEnabled))
+		if *verbose {
+			fmt.Fprintf(stdout, "配置：platform=%s app_version=%s 接入地址=%d metrics_interval=%ds desired_autostart=%t 路径=%s\n",
+				config.Platform, config.AppVersion, len(config.BaseURLs), config.MetricsIntervalMS/1000, config.DesiredAutostart, store.Path())
+		}
 	}
 	if since, waiting := ReadOwnerWait(dir); waiting {
-		fmt.Fprintf(stdout, "状态: 所属账号暂不可用，正在等待恢复 (自 %s)\n", since.Local().Format(time.RFC3339))
+		fmt.Fprintf(stdout, "状态：所属账号暂不可用，正在等待恢复（自 %s）\n", since.Local().Format(time.RFC3339))
 	}
 	manager := cliNewManager(getenv)
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
 	status := manager.Status(ctx)
-	fmt.Fprintf(stdout, "服务：installed=%t enabled=%t active=%t\n", status.Installed, status.Enabled, status.Active)
-	if status.LastError != "" {
+	fmt.Fprintf(stdout, "服务：%s\n", serviceStateText(status))
+	// A service that is not installed reports the manager's lookup failure, which says nothing new.
+	if status.LastError != "" && (status.Installed || *verbose) {
 		fmt.Fprintf(stdout, "服务错误：%s\n", applog.RedactText(status.LastError))
 	}
-	printServiceEnvironment(stdout, manager)
-	printRuntimeShell(stdout, dir, getenv, 8*time.Second)
+	if *verbose {
+		fmt.Fprintf(stdout, "服务详情：installed=%t enabled=%t active=%t\n", status.Installed, status.Enabled, status.Active)
+		printRuntimeShell(stdout, dir, getenv, 8*time.Second)
+	}
 	stateDir, stateNote := statusStateDir(ctx, dir)
-	fmt.Fprintf(stdout, "持久终端组件目录：%s（%s）\n", stateDir, stateNote)
+	if *verbose {
+		if stateNote != "" {
+			fmt.Fprintf(stdout, "持久终端组件目录：%s（%s）\n", stateDir, stateNote)
+		} else {
+			fmt.Fprintf(stdout, "持久终端组件目录：%s\n", stateDir)
+		}
+	}
 	if endpoint, err := supervisor.HelperEndpoint(stateDir); err == nil {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 3*time.Second)
 		_, probeErr := supervisor.NewClient(endpoint, stateDir).List(probeCtx)
 		probeCancel()
-		if probeErr != nil {
+		switch {
+		case probeErr != nil && *verbose:
 			fmt.Fprintf(stdout, "持久终端组件：未运行（%s）\n", applog.RedactText(probeErr.Error()))
-		} else {
-			fmt.Fprintf(stdout, "持久终端组件：正常（%s）\n", endpoint)
+		case probeErr != nil:
+			fmt.Fprintln(stdout, "持久终端组件：未运行")
+		default:
 			shared, ok := sharedHelperDir(dir)
-			printHelperBuild(ctx, stdout, stateDir, ok && filepath.Clean(shared) == filepath.Clean(stateDir))
+			printHelperBuild(ctx, stdout, stateDir, endpoint, ok && filepath.Clean(shared) == filepath.Clean(stateDir), *verbose)
 		}
 	}
 	collector := NewCollector(dir, time.Now)
 	if _, err := collector.Collect(); err != nil {
 		fmt.Fprintf(stdout, "指标采集：不可用（%s）\n", applog.RedactText(err.Error()))
-	} else {
+	} else if *verbose {
 		fmt.Fprintln(stdout, "指标采集：正常")
 	}
 	return ExitOK
 }
 
-// printHelperBuild reports which process owns new terminals and whether it runs an older build.
+// serviceStateText is the one-word state of the background service.
+func serviceStateText(status ServiceState) string {
+	switch {
+	case !status.Installed:
+		return "未安装"
+	case status.Active:
+		return "运行中"
+	case status.Enabled:
+		return "已安装，未运行"
+	default:
+		return "已安装，未启用"
+	}
+}
+
+// printHelperBuild reports the host component that owns new terminals and whether it waits for an update.
 // inSharedDir is true when stateDir is the helper directory shared with the desktop app.
-func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir string, inSharedDir bool) {
+func printHelperBuild(ctx context.Context, stdout io.Writer, stateDir, endpoint string, inSharedDir, verbose bool) {
 	inspectCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	build, err := supervisor.InspectHelperBuild(inspectCtx, stateDir)
 	if err != nil {
-		fmt.Fprintf(stdout, "主机端组件: 无法读取详情 (%s)\n", applog.RedactText(err.Error()))
+		fmt.Fprintln(stdout, "持久终端组件：正常")
+		if verbose {
+			fmt.Fprintf(stdout, "组件详情：无法读取（%s）\n", applog.RedactText(err.Error()))
+		}
 		return
 	}
-	started := helperStartedAt(inspectCtx, build.Helper.PID)
-	for _, line := range describeHelperBuildIn(build, started, inSharedDir) {
+	started := ""
+	if verbose {
+		started = helperStartedAt(inspectCtx, build.Helper.PID)
+	}
+	for _, line := range describeHelperBuildIn(build, started, inSharedDir, verbose) {
 		fmt.Fprintln(stdout, line)
+	}
+	if verbose {
+		fmt.Fprintf(stdout, "组件地址：%s\n", endpoint)
 	}
 }
 
-// describeHelperBuild lists the status lines about the host component that owns new terminals.
-func describeHelperBuild(build supervisor.HelperBuild, started string) []string {
-	return describeHelperBuildIn(build, started, false)
+// describeHelperBuild lists the default status lines about the host component that owns new terminals.
+func describeHelperBuild(build supervisor.HelperBuild) []string {
+	return describeHelperBuildIn(build, "", false, false)
 }
 
 // describeHelperBuildIn is describeHelperBuild for a helper in the directory shared with the desktop app when
 // inSharedDir is set: the agent keeps an environment-stale helper there instead of replacing it, so it says so.
-func describeHelperBuildIn(build supervisor.HelperBuild, started string, inSharedDir bool) []string {
+// verbose adds the process line with its start time.
+func describeHelperBuildIn(build supervisor.HelperBuild, started string, inSharedDir, verbose bool) []string {
 	if inSharedDir && build.Stale && build.StaleReason == "env" && build.Helper.SpawnedBy == supervisor.SpawnedByDesktop {
 		build.EnvKept = true
 	}
@@ -471,15 +511,16 @@ func describeHelperBuildIn(build supervisor.HelperBuild, started string, inShare
 	if build.Helper.Runtime != nil && build.Helper.Runtime.Version != "" {
 		release = build.Helper.Runtime.Version
 	}
-	if started == "" {
-		started = "未知"
-	}
 	sessions := "未知"
 	if build.SessionsKnown {
 		sessions = fmt.Sprintf("%d", build.Sessions)
 	}
-	lines := []string{
-		fmt.Sprintf("主机端组件: 进程=%d 启动时间=%s 版本=%s 持久终端=%s", build.Helper.PID, started, release, sessions),
+	lines := []string{fmt.Sprintf("持久终端组件：正常，版本 %s，运行中的持久终端 %s 个", release, sessions)}
+	if verbose {
+		if started == "" {
+			started = "未知"
+		}
+		lines = append(lines, fmt.Sprintf("组件进程：%d，启动于 %s", build.Helper.PID, started))
 	}
 	switch {
 	case build.Notice() != "":
@@ -527,20 +568,6 @@ func orNone(value string) string {
 	return value
 }
 
-func printServiceEnvironment(stdout io.Writer, manager ServiceManager) {
-	reporter, ok := manager.(EnvironmentReporter)
-	if !ok {
-		return
-	}
-	env, installed := reporter.RecordedEnvironment()
-	if !installed {
-		return
-	}
-	for _, line := range env.describe() {
-		fmt.Fprintln(stdout, applog.RedactText(line))
-	}
-}
-
 // statusStateDir is the helper directory `status` inspects: the one the running agent would use, with why. It never
 // stops a helper, so an idle helper in the previous directory is reported where it runs.
 func statusStateDir(ctx context.Context, dataDir string) (string, string) {
@@ -553,14 +580,9 @@ func statusStateDir(ctx context.Context, dataDir string) (string, string) {
 		return errors.New("status does not stop helpers")
 	}}
 	choice := supervisor.SettleStateDir(ctx, shared, own, readOnly)
-	switch {
-	case !choice.Legacy:
+	if !choice.Legacy {
 		return choice.Dir, "与桌面应用共用"
-	case choice.Err != nil:
-		return choice.Dir, "上一版目录：其中的组件暂无法确认会话（" + applog.RedactText(choice.Err.Error()) + "），继续使用它"
-	case choice.LegacyKnown:
-		return choice.Dir, fmt.Sprintf("上一版目录：其中仍有 %d 个会话，结束后将自动切换到共享目录", choice.LegacySessions)
-	default:
-		return choice.Dir, "上一版目录：其中的会话数量未知，继续使用它"
 	}
+	// A directory left by an earlier version is used until its terminals end; it is shown without a note.
+	return choice.Dir, ""
 }

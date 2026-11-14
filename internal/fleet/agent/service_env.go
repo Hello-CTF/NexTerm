@@ -26,20 +26,6 @@ type EnvironmentReporter interface {
 	RecordedEnvironment() (ServiceEnvironment, bool)
 }
 
-func (e ServiceEnvironment) describe() []string {
-	if e.Shell == "" && e.Path == "" {
-		return []string{"服务定义环境: 未记录 SHELL/PATH (运行时解析)"}
-	}
-	lines := make([]string, 0, 2)
-	if e.Shell != "" {
-		lines = append(lines, "服务定义 SHELL="+e.Shell+" (旧版安装记录, 不再采用; 重新执行 install 可清除)")
-	}
-	if e.Path != "" {
-		lines = append(lines, "服务定义 PATH="+e.Path+" (旧版安装记录, 仅作为解析失败时的补充; 重新执行 install 可清除)")
-	}
-	return lines
-}
-
 // shellFile is the explicit shell setting inside the data directory.
 func shellFile(dataDir string) string { return filepath.Join(dataDir, shellenv.ShellFileName) }
 

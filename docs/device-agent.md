@@ -16,7 +16,7 @@ Release 提供 Linux（amd64 / arm64）、macOS（amd64 / arm64）和 Windows（
 
 ## Shell 与环境变量
 
-设备代理在运行时解析账户的登录 shell 及其环境（先以交互式登录 shell 读取，失败时退回登录 shell），不在服务定义里记录安装时的 `SHELL` 或 `PATH`。安装时可用 `--shell <绝对路径>` 指定终端使用的 shell，`--shell auto` 清除设置并改回账户登录 shell。`nexterm-agent status` 显示当前使用的 shell 和解析结果；旧版安装曾在服务定义中记录 `SHELL`/`PATH`，重新执行安装命令即可清除。
+设备代理在运行时解析账户的登录 shell 及其环境（先以交互式登录 shell 读取，失败时退回登录 shell），不在服务定义里记录安装时的 `SHELL` 或 `PATH`。安装时可用 `--shell <绝对路径>` 指定终端使用的 shell，`--shell auto` 清除设置并改回账户登录 shell。`nexterm-agent status` 显示设备、服务和持久终端组件的状态，加 `--verbose` 时还显示当前使用的 shell 和解析结果；旧版安装曾在服务定义中记录 `SHELL`/`PATH`，重新执行安装命令即可清除。
 
 ## 自升级
 
