@@ -1083,6 +1083,7 @@ export const fsApi = {
       offset,
       maxBytes,
     }),
+  // write replaces the file; with expected it only replaces the version the caller read and fails with a conflict otherwise.
   write: (
     sessionId: string,
     path: string,
@@ -1090,7 +1091,22 @@ export const fsApi = {
     backup = false,
     taskId?: string,
     attemptId?: string,
-  ) => call("fs_write", { args: { sessionId, path, contentBase64, backup, taskId, attemptId } }) as Promise<void>,
+    expected?: { size: number; sha256: string },
+  ) =>
+    call("fs_write", {
+      args: {
+        sessionId,
+        path,
+        contentBase64,
+        backup,
+        taskId,
+        attemptId,
+        ...(expected ? { expectedSize: expected.size, expectedSha256: expected.sha256 } : {}),
+      },
+    }) as Promise<void>,
+  // watch replaces the directories one watcher follows and renews its lease; unwatch drops the watcher.
+  watch: (sessionId: string, watcherId: string, dirs: string[]) => call("fs_watch", { sessionId, watcherId, dirs }),
+  unwatch: (sessionId: string, watcherId: string) => call("fs_unwatch", { sessionId, watcherId }) as Promise<unknown>,
   // create makes one empty file and fails with a conflict when anything already exists at the path.
   create: (sessionId: string, path: string) =>
     call("fs_create", { sessionId, path }) as Promise<void>,

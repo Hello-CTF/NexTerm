@@ -1795,6 +1795,7 @@
   "文件写入": "File write",
   "文件写入规则必须限定路径范围": "A file write rule must be limited to a path scope",
   "文件名 glob 无效: %v": "The file name glob is invalid: %v",
+  "文件在打开后已被修改": "The file was changed after it was opened",
   "文件在读取或确认后已变化，请重新读取并生成差异": "The file changed after it was read or confirmed; read it again and regenerate the diff",
   "文件大小 %d 字节超过写入上限 %d 字节": "The file is %d bytes, over the write limit of %d bytes",
   "文件无法检查": "The file cannot be inspected",

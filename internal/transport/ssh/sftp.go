@@ -102,8 +102,9 @@ func (f *sftpFileSystem) detectedShell() string {
 	return f.target.terminalShell
 }
 
-func (c *Client) FileSystem(ctx context.Context) (base.FileSystem, error) {
-	return c.sftpFilesystem(ctx)
+// FileChannel names SFTP as the channel serving this file system.
+func (f *sftpFileSystem) FileChannel() string {
+	return base.FileChannelSFTP
 }
 
 func (c *Client) SFTP(ctx context.Context) (*sshfs.FS, error) {

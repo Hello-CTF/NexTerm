@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    fsApi: { roots: mocks.roots, list: mocks.list },
+    fsApi: {
+      watch: () => new Promise<never>(() => undefined),
+      unwatch: async () => ({}), roots: mocks.roots, list: mocks.list },
     sessionApi: { connectLocal: mocks.connectLocal },
   });
 });

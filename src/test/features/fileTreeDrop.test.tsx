@@ -55,6 +55,8 @@ vi.mock("../../ipc/commands", async (importOriginal) => {
   return {
     ...actual,
     fsApi: {
+      watch: () => new Promise<never>(() => undefined),
+      unwatch: async () => ({}),
       roots: mocks.roots,
       list: mocks.list,
       write: mocks.write,

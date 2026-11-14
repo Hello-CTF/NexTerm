@@ -45,6 +45,7 @@ type Client struct {
 	closeErr     error
 	sftpMu       sync.Mutex
 	sftp         *sftpState
+	files        fileChannel
 	closers      []io.Closer
 	forwardAgent bool
 	env          map[string]string
@@ -253,6 +254,7 @@ func (c *Client) Close() error {
 		c.stateOnce.Do(func() { close(c.done) })
 		c.closeErr = c.ssh.Close()
 		c.closeSFTP()
+		c.files.close()
 		for index := len(c.closers) - 1; index >= 0; index-- {
 			c.closers[index].Close()
 		}

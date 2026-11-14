@@ -1063,6 +1063,12 @@
       "channel": false,
       "stream": "none"
     },
+    "fs_unwatch": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
     "fs_upload": {
       "scope": "fs",
       "nested": false,
@@ -1088,6 +1094,12 @@
       "stream": "none"
     },
     "fs_upload_commit": {
+      "scope": "fs",
+      "nested": false,
+      "channel": false,
+      "stream": "none"
+    },
+    "fs_watch": {
       "scope": "fs",
       "nested": false,
       "channel": false,

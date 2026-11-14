@@ -198,6 +198,7 @@ const SSH_OPTION_KEYS = [
   "pasteTerminalDir",
   "pasteNoRandomDir",
   "backupBeforeOverwrite",
+  "fileChannel",
 ];
 const TELNET_OPTION_KEYS = ["localEcho", "sendCrlf"];
 export const TELNET_LOCAL_ECHO = ["auto", "on", "off"] as const;

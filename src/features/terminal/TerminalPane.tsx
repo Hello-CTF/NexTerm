@@ -1906,6 +1906,11 @@ export function TerminalPane({
           return;
         }
         pasteDirs = resolved.settings;
+        // The NexTerm file channel sees the host as the shell does, so a chrooted SFTP view does not apply to it.
+        if (pasteDirs.terminalDir !== pasteDirs.uploadDir && typeof fsApi.roots === "function") {
+          const channel = await fsApi.roots(sessionId).then((roots) => roots.channel, () => undefined);
+          if (channel === "helper") pasteDirs = { ...pasteDirs, uploadDir: pasteDirs.terminalDir };
+        }
       }
       const run: PasteUploadRun = { cancelled: false, transfer: null };
       pasteUploadRef.current = run;

@@ -289,6 +289,9 @@ func RunHelper(ctx context.Context, config HelperConfig) error {
 }
 
 func RunHelperCLI(args []string) int {
+	if len(args) == 1 && args[0] == FilesOption {
+		return runFileChannel()
+	}
 	config, err := parseHelperArgs(args, os.Getenv)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, HelperCommand+":", err)

@@ -24,6 +24,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent/purpose"
 	"github.com/Hello-CTF/NexTerm/internal/forward"
 	"github.com/Hello-CTF/NexTerm/internal/fs/local"
+	"github.com/Hello-CTF/NexTerm/internal/fs/remote"
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/supervisor"
@@ -164,8 +165,8 @@ func (s scriptedFileSystem) dial(context.Context) (net.Conn, error) {
 	return clientConn, nil
 }
 
-func (s scriptedFileSystem) filesystem() *fileSystem {
-	return &fileSystem{dial: s.dial}
+func (s scriptedFileSystem) filesystem() *remote.FileSystem {
+	return remote.NewFileSystem(remote.Options{Dial: s.dial})
 }
 
 func TestTransportKindGenerationAndLifecycle(t *testing.T) {
@@ -451,7 +452,7 @@ func TestFileSystemRootsDriveErrors(t *testing.T) {
 func TestFileSystemRootsNamespaceIsolation(t *testing.T) {
 	testCases := []struct {
 		name       string
-		filesystem *fileSystem
+		filesystem *remote.FileSystem
 		wantRoots  base.FileSystemRoots
 		wantEntry  base.FileEntry
 	}{
@@ -821,19 +822,16 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	packer, ok := filesystem.(interface {
+	if _, ok := filesystem.(interface {
 		PackDownload(context.Context, string, string, sshfs.TransferOptions) (int64, error)
-	})
-	if !ok {
+	}); !ok {
 		t.Fatal("device filesystem must expose PackDownload for folder archive downloads")
 	}
-	deviceFilesystem, ok := filesystem.(*fileSystem)
-	if !ok {
-		t.Fatal("device filesystem must retain its exec bridge for archive cleanup verification")
-	}
-	execDevice := deviceFilesystem.exec
+	execDevice := transport.Exec
 	var temporaryArchives []string
-	deviceFilesystem.exec = func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
+	packer := remote.NewFileSystem(remote.Options{Dial: func(ctx context.Context) (net.Conn, error) {
+		return transport.dial(ctx, deviceproto.PurposeFile)
+	}, Exec: func(ctx context.Context, command string, options base.ExecOptions) (base.ExecResult, error) {
 		const marker = "/tmp/nexterm-pack-"
 		if start := strings.Index(command, marker); start >= 0 {
 			archive := command[start:]
@@ -842,7 +840,7 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 			}
 		}
 		return execDevice(ctx, command, options)
-	}
+	}})
 	assertNoTempArchive := func(call int) {
 		t.Helper()
 		if len(temporaryArchives) != call {
@@ -894,70 +892,6 @@ func TestTransportFileSystemPackDownload(t *testing.T) {
 	assertNoTempArchive(2)
 	if _, err := packer.PackDownload(ctx, "", filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
 		t.Fatal("empty source path must fail")
-	}
-}
-
-func TestFileSystemPackDownloadCommandExpandsHome(t *testing.T) {
-	var commands []string
-	filesystem := &fileSystem{
-		dial: func(context.Context) (net.Conn, error) { return nil, errors.New("no bridge") },
-		exec: func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
-			commands = append(commands, command)
-			code := 0
-			return base.ExecResult{ExitCode: &code}, nil
-		},
-	}
-	for _, testCase := range []struct {
-		path   string
-		suffix string
-	}{
-		{"~/packs", ` -C "$HOME" -- 'packs'`},
-		{"~", ` -C "$HOME" -- '.'`},
-		{"/data/dir", ` -C '/data' -- 'dir'`},
-		{"/~", ` -C '/' -- '~'`},
-		{"-weird", ` -C '.' -- './-weird'`},
-	} {
-		if _, err := filesystem.PackDownload(context.Background(), testCase.path, filepath.Join(t.TempDir(), "x.tar.gz"), sshfs.TransferOptions{}); err == nil {
-			t.Fatalf("PackDownload(%q) unexpectedly succeeded without a file bridge", testCase.path)
-		}
-		command := commands[len(commands)-1]
-		cut := strings.Index(command, " -C ")
-		if !strings.HasPrefix(command, "umask 077 && tar -czf '/tmp/nexterm-pack-") || cut < 0 {
-			t.Fatalf("PackDownload(%q) command = %q, want a random /tmp tar target", testCase.path, command)
-		}
-		if command[cut:] != testCase.suffix {
-			t.Errorf("PackDownload(%q) command tail = %q, want %q", testCase.path, command[cut:], testCase.suffix)
-		}
-	}
-}
-
-func TestFileSystemExtractExpandsHome(t *testing.T) {
-	var commands []string
-	filesystem := &fileSystem{exec: func(_ context.Context, command string, _ base.ExecOptions) (base.ExecResult, error) {
-		commands = append(commands, command)
-		code := 0
-		return base.ExecResult{ExitCode: &code}, nil
-	}}
-	for _, testCase := range []struct {
-		path    string
-		target  string
-		command string
-	}{
-		{"~/x.tar", "~", `tar -xf "$HOME"'/x.tar' -C "$HOME"`},
-		{"~/packs/x.tar", "~/packs", `tar -xf "$HOME"'/packs/x.tar' -C "$HOME"'/packs'`},
-		{"~", ".", `tar -xf "$HOME" -C '.'`},
-		{"/data/x.tar", "/data", `tar -xf '/data/x.tar' -C '/data'`},
-	} {
-		target, err := filesystem.Extract(context.Background(), testCase.path)
-		if err != nil {
-			t.Fatalf("Extract(%q) = %v", testCase.path, err)
-		}
-		if target != testCase.target {
-			t.Errorf("Extract(%q) target = %q, want %q", testCase.path, target, testCase.target)
-		}
-		if commands[len(commands)-1] != testCase.command {
-			t.Errorf("Extract(%q) command = %q, want %q", testCase.path, commands[len(commands)-1], testCase.command)
-		}
 	}
 }
 

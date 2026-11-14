@@ -11,6 +11,10 @@ export const PASTE_NO_RANDOM_DIR_KEY = "pasteNoRandomDir";
 // an existing file (validated as a boolean by internal/store; off by default).
 export const BACKUP_BEFORE_OVERWRITE_KEY = "backupBeforeOverwrite";
 
+// FILE_CHANNEL_KEY keeps an SSH host's files on SFTP when set to "sftp"; unset serves them through the NexTerm file
+// channel when the host allows it (validated by internal/store).
+export const FILE_CHANNEL_KEY = "fileChannel";
+
 // DEFAULT_PASTE_DIR is used when the asset configures no upload directory.
 export const DEFAULT_PASTE_DIR = "/tmp";
 

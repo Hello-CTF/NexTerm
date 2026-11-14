@@ -29,6 +29,8 @@ type productionConnector struct {
 	hostKeys *productionHostKeyStore
 	events   ipc.Emitter
 	device   atomic.Pointer[DeviceConnectorConfig]
+	// files serves SSH host files through the helper file channel.
+	files *productionFileChannels
 	// multiUser is set for account-based servers. Background reconnects can lose the owner in ctx, so the
 	// restriction on server-side commands and files must not depend on it alone.
 	multiUser bool
@@ -209,6 +211,9 @@ func (c *productionConnector) Connect(ctx context.Context, asset session.Asset, 
 	}
 	if err != nil {
 		return nil, err
+	}
+	if client, ok := transport.(*ssh.Client); ok && asset.Kind == session.KindSSH {
+		c.files.attach(ctx, asset.ID, client)
 	}
 	if options.InitialCommand != "" {
 		execCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

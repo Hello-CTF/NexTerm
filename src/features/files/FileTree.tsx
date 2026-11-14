@@ -79,6 +79,7 @@ import {
   IconXCircle,
 } from "../../ui/icons";
 import { t } from "../../i18n";
+import { subscribeFsChanged, useFsWatch, type FsWatchStatus } from "./fsWatch";
 
 // localeCompare with locale options builds a collator per comparison, which costs hundreds of milliseconds on
 // directories with thousands of entries; one shared collator gives the same order.
@@ -472,6 +473,42 @@ export interface FileTreeProps {
   embedded?: boolean;
 }
 
+// FsWatchBadge tells whether changes made on the host show up by themselves or on a timer, and through which channel.
+function FsWatchBadge({ status }: { status: FsWatchStatus }) {
+  const live = status.mode === "push";
+  const channel = fileChannelLabel(status.channel);
+  const mode = live ? t("实时同步文件变化") : t("定时检查文件变化");
+  const title = [channel, mode].filter(Boolean).join(" · ") + (status.reason ? `\n${status.reason}` : "");
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 px-1 text-[10px] leading-4 text-neutral-500"
+      title={title}
+      data-testid="fs-watch-badge"
+      data-mode={status.mode}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${live ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
+      {live ? t("实时") : t("定时")}
+    </span>
+  );
+}
+
+function fileChannelLabel(channel: string | undefined): string {
+  switch (channel) {
+    case "helper":
+      return t("NexTerm 文件通道");
+    case "sftp":
+      return "SFTP";
+    case "device":
+      return t("设备代理");
+    case "local":
+      return t("本机");
+    case "winrm":
+      return "WinRM";
+    default:
+      return "";
+  }
+}
+
 export function FileTree(props: FileTreeProps) {
   return <FileTreeInner {...props} />;
 }
@@ -620,6 +657,28 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
     })),
     combine: combineListings,
   });
+
+  // Directories the tree shows are followed while the panel is open; a change refetches that listing.
+  const watchStatus = useFsWatch(sessionId, dirs, embedded || leftOpen);
+  const changedTimers = useRef(new Map<string, number>());
+  useEffect(() => {
+    const timers = changedTimers.current;
+    const off = subscribeFsChanged((event) => {
+      if (event.sessionId !== sessionId || timers.has(event.dir)) return;
+      timers.set(
+        event.dir,
+        window.setTimeout(() => {
+          timers.delete(event.dir);
+          void qc.invalidateQueries({ queryKey: ["fs", sessionId, event.dir], exact: true });
+        }, 150),
+      );
+    });
+    return () => {
+      off();
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers.clear();
+    };
+  }, [qc, sessionId]);
 
   const dirMap = useMemo(() => {
     const map = new Map<string, FileEntryDto[]>();
@@ -1748,6 +1807,7 @@ function FileTreeInner({ sessionId, follow: followControl, embedded = false }: F
         >
           <IconFolderPlus size={14} />
         </button>
+        {watchStatus && !sessionGone && <FsWatchBadge status={watchStatus} />}
         <button
           className="nx-icon-btn nx-icon-btn-sm"
           title={sessionGone ? goneHint : t("刷新")}

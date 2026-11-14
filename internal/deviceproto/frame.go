@@ -46,6 +46,15 @@ const (
 	FrameRootsReply
 	// FrameCreateFile creates an empty file exclusively; agents that predate it answer with a protocol error.
 	FrameCreateFile
+	// The frames below serve the helper file channel and newer agents; older
+	// agents answer them with a protocol error naming an unexpected request.
+	FrameWriteVersion
+	FrameAtomicRename
+	FrameStatInfo
+	FrameStatInfoReply
+	FrameWatch
+	FrameWatchSet
+	FrameWatchEvent
 )
 
 const (

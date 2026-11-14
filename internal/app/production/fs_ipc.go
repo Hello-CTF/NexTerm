@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
 	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
@@ -384,6 +385,10 @@ type fsRequest struct {
 	TaskID        string `json:"taskId"`
 	AttemptID     string `json:"attemptId"`
 	Resume        bool   `json:"resume"`
+	// ExpectedSize and ExpectedSHA256 make fs_write conditional: the file is
+	// replaced only while it still has this size and SHA-256 digest.
+	ExpectedSize   *int64 `json:"expectedSize,omitempty"`
+	ExpectedSHA256 string `json:"expectedSha256,omitempty"`
 }
 
 type fsCancelRequest struct {
@@ -425,6 +430,10 @@ type fsRootsDTO struct {
 	HomePath     *string            `json:"homePath"`
 	Supported    bool               `json:"supported"`
 	Capabilities *fsCapabilitiesDTO `json:"capabilities,omitempty"`
+	// Channel names the protocol serving the files; ChannelReason says why an
+	// SSH host uses SFTP although the helper file channel is enabled.
+	Channel       string `json:"channel,omitempty"`
+	ChannelReason string `json:"channelReason,omitempty"`
 }
 
 type fsReadDTO struct {
@@ -491,6 +500,9 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 					return fsRootsDTO{}, fsIPCError(kind, err)
 				}
 				result.Capabilities = productionFSCapabilities(base.FileCapabilities{})
+				if transport, err := sessions.TransportFor(productionSessionRequestContext(ctx), input.SessionID); err == nil {
+					result.Channel, result.ChannelReason = fileChannelStatus(ctx, filesystem, transport)
+				}
 				provider, ok := filesystem.(base.RootsProvider)
 				if !ok {
 					return result, nil
@@ -589,6 +601,9 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				if err != nil {
 					return nil, fsIPCError(kind, err)
 				}
+				if input.ExpectedSHA256 != "" || input.ExpectedSize != nil {
+					return nil, fsIPCError(kind, writeFileExpected(transferCtx, filesystem, input, data))
+				}
 				return nil, fsIPCError(kind, filesystem.WriteFile(transferCtx, input.Path, data, input.Backup))
 			})
 		},
@@ -626,7 +641,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 						options = current
 					}
 				}
-				return nil, privateDirIPCError(kind, mkdirPrivate(ctx, filesystem, input.Path, privateDirParentFor(options)))
+				return nil, privateDirIPCError(kind, mkdirPrivate(ctx, filesystem, input.Path, privateDirParentForPath(options, input.Path)))
 			})
 		},
 		func() error {
@@ -686,7 +701,7 @@ func registerFSCommandsWithAssets(dispatcher *ipc.Dispatcher, sessions *session.
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}
-				value, err := fslocal.Upload(transferCtx, localPath, fsAtomicUploadFilesystem(filesystem, kind), input.RemotePath, productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
+				value, err := fslocal.Upload(transferCtx, localPath, filesystem, input.RemotePath, productionTransferOptions(transferCtx, call, taskID, input.Resume, func() {
 					transfers.touch(transferCtx, taskID, transferAttemptID(taskID, input.AttemptID))
 				}))
 				return value, fsIPCError(kind, err)
@@ -811,6 +826,11 @@ func fsIPCError(transportKind string, err error) error {
 	}
 	if errors.Is(err, base.ErrNoMedia) {
 		return ipc.WrapError(ipc.CodeIO, err.Error(), err).WithDetail(map[string]any{"resource": "path", "reason": "no_media"})
+	}
+	if errors.Is(err, conditional.ErrVersionMismatch) {
+		return ipc.WrapError(ipc.Code("conflict"), "文件在打开后已被修改", err).WithDetail(map[string]any{
+			"resource": "path", "reason": "changed",
+		})
 	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return ipc.WrapError(ipc.CodeNotFound, err.Error(), err).WithDetail(map[string]any{"resource": "path"})

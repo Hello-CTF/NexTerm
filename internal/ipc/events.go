@@ -17,16 +17,20 @@ const (
 	// TopicTerminalAttention carries a tab's attention state after each change.
 	TopicTerminalAttention Topic = "terminal://attention"
 	TopicFSProgress        Topic = "fs://progress"
-	TopicDockerStats       Topic = "docker://stats"
-	TopicAIEvent           Topic = "ai://event"
-	TopicSyncStatus        Topic = "sync://status"
-	TopicAppError          Topic = "app://error"
-	TopicLayoutChanged     Topic = "layout://changed"
-	TopicDeviceStatus      Topic = "device://status"
-	TopicUpdateProgress    Topic = "update://progress"
-	TopicAINotification    Topic = "ai://notification"
-	TopicAIWatchToolData   Topic = "ai://watch-tool-data"
-	TopicInventoryChanged  Topic = "inventory://changed"
+	// TopicFSChanged reports changes inside directories the file manager watches.
+	TopicFSChanged Topic = "fs://changed"
+	// TopicFSWatch reports how a session's watched directories are followed.
+	TopicFSWatch          Topic = "fs://watch"
+	TopicDockerStats      Topic = "docker://stats"
+	TopicAIEvent          Topic = "ai://event"
+	TopicSyncStatus       Topic = "sync://status"
+	TopicAppError         Topic = "app://error"
+	TopicLayoutChanged    Topic = "layout://changed"
+	TopicDeviceStatus     Topic = "device://status"
+	TopicUpdateProgress   Topic = "update://progress"
+	TopicAINotification   Topic = "ai://notification"
+	TopicAIWatchToolData  Topic = "ai://watch-tool-data"
+	TopicInventoryChanged Topic = "inventory://changed"
 	// TopicLocalHelperStatus carries the local helper status after each change.
 	TopicLocalHelperStatus Topic = "local://helper-status"
 	// TopicTerminalSessions carries one host's durable sessions after a

@@ -96,6 +96,7 @@ type ProductionServices struct {
 	previewRelay        *previewRelayManager
 	terminalCommands    *terminalCommandService
 	fsUploads           *fsChunkUploadRegistry
+	fsWatches           *fsWatchHub
 	hostKeys            *productionHostKeyStore
 	sshConnector        *productionConnector
 	stagedBlobs         StagedBlobResolver
@@ -151,6 +152,13 @@ func NewProductionWithServices(config Config, services ProductionServices) (*Pro
 	}
 	if services.fsUploads == nil {
 		services.fsUploads = newFSChunkUploadRegistry(config.Logger)
+	}
+	if services.fsWatches == nil && services.Sessions != nil {
+		services.fsWatches = newSessionFSWatchHub(services.Sessions, services.Events, config.Logger)
+	}
+	if services.fsWatches != nil && services.sshConnector != nil && services.sshConnector.files != nil {
+		changed := services.fsWatches.transportChanged
+		services.sshConnector.files.changed.Store(&changed)
 	}
 	if services.terminalCommands == nil {
 		services.terminalCommands = newTerminalCommandService(services.Store, services.Sessions, services.Docker, services.channelBridge, services.hostKeys, services.sshConnector, services.Events, services.stagedBlobs, services.desktop)
@@ -356,6 +364,14 @@ func productionModules(services ProductionServices) []Module {
 	}
 	if services.fsUploads != nil {
 		modules = append(modules, Module{Name: "fs-chunk-uploads", Component: services.fsUploads})
+	}
+	if services.fsWatches != nil {
+		watches := services.fsWatches
+		modules = append(modules, Module{
+			Name:             "fs-watches",
+			RegisterCommands: watches.register,
+			Component:        ComponentFuncs{ShutdownFunc: watches.shutdown},
+		})
 	}
 	if services.stateRules != nil {
 		if services.Profiles != nil {

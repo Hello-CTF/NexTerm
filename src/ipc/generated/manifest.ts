@@ -1344,6 +1344,14 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"}", ts: "{\n  sessionId: string;\n}" },
       output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsRootsDTO", ts: "FSRootsDTO" },
     },
+    "fs_unwatch": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsUnwatchRequest", ts: "FsUnwatchRequest" },
+      output: { go: "struct{}", ts: "Record<string, never>" },
+    },
     "fs_upload": {
       scope: "fs",
       nested: false,
@@ -1384,12 +1392,20 @@ export const ipcContractManifest = {
       input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; UploadID string \"json:\\\"uploadId\\\"\"; TaskID string \"json:\\\"taskId\\\"\"; AttemptID string \"json:\\\"attemptId\\\"\"}", ts: "{\n  sessionId: string;\n  uploadId: string;\n  taskId: string;\n  attemptId: string;\n}" },
       output: { go: "int64", ts: "number" },
     },
+    "fs_watch": {
+      scope: "fs",
+      nested: false,
+      channel: false,
+      stream: "none",
+      input: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsWatchRequest", ts: "FsWatchRequest" },
+      output: { go: "github.com/Hello-CTF/NexTerm/internal/app/production.fsWatchStatusDTO", ts: "FsWatchStatusDTO" },
+    },
     "fs_write": {
       scope: "fs",
       nested: true,
       channel: false,
       stream: "none",
-      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; Backup bool \"json:\\\"backup\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  contentBase64: string;\n  backup: boolean;\n  taskId?: string;\n  attemptId?: string;\n}" },
+      input: { go: "struct{SessionID string \"json:\\\"sessionId\\\"\"; Path string \"json:\\\"path\\\"\"; ContentBase64 string \"json:\\\"contentBase64\\\"\"; Backup bool \"json:\\\"backup\\\"\"; TaskID string \"json:\\\"taskId,omitempty\\\"\"; AttemptID string \"json:\\\"attemptId,omitempty\\\"\"; ExpectedSize *int64 \"json:\\\"expectedSize,omitempty\\\"\"; ExpectedSHA256 string \"json:\\\"expectedSha256,omitempty\\\"\"}", ts: "{\n  sessionId: string;\n  path: string;\n  contentBase64: string;\n  backup: boolean;\n  taskId?: string;\n  attemptId?: string;\n  expectedSize?: number | null;\n  expectedSha256?: string;\n}" },
       output: { go: "any", ts: "unknown" },
     },
     "group_create": {
@@ -3988,6 +4004,10 @@ export interface IPCCommandTypeMap {
 };
     output: contractTypes.FSRootsDTO;
   };
+  "fs_unwatch": {
+    input: contractTypes.FsUnwatchRequest;
+    output: Record<string, never>;
+  };
   "fs_upload": {
     input: {
   sessionId: string;
@@ -4041,6 +4061,10 @@ export interface IPCCommandTypeMap {
 };
     output: number;
   };
+  "fs_watch": {
+    input: contractTypes.FsWatchRequest;
+    output: contractTypes.FsWatchStatusDTO;
+  };
   "fs_write": {
     input: {
   sessionId: string;
@@ -4049,6 +4073,8 @@ export interface IPCCommandTypeMap {
   backup: boolean;
   taskId?: string;
   attemptId?: string;
+  expectedSize?: number | null;
+  expectedSha256?: string;
 };
     output: unknown;
   };

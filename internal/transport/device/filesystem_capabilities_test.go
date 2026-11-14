@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/remote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -18,8 +19,7 @@ func TestFileSystemCapabilitiesFollowAgentPlatform(t *testing.T) {
 			// The agent's own reply does not decide archive support, which runs through the device shell.
 			roots: base.FileSystemRoots{PathStyle: base.PathStylePOSIX, Supported: true, Capabilities: base.FileCapabilities{Chmod: base.ChmodNone}},
 		}
-		filesystem := script.filesystem()
-		filesystem.platform = platform
+		filesystem := remote.NewFileSystem(remote.Options{Dial: script.dial, Platform: platform})
 		roots, err := filesystem.Roots(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -36,8 +36,7 @@ func TestFileSystemListMarksDotEntriesHiddenForPOSIXAgents(t *testing.T) {
 		{Name: "notes", Path: "/home/a/notes", Kind: base.FileFile},
 	}
 	for platform, wantDotHidden := range map[string]bool{"linux": true, "windows": false} {
-		filesystem := (scriptedFileSystem{entries: entries}).filesystem()
-		filesystem.platform = platform
+		filesystem := remote.NewFileSystem(remote.Options{Dial: (scriptedFileSystem{entries: entries}).dial, Platform: platform})
 		got, err := filesystem.List(context.Background(), "/home/a")
 		if err != nil {
 			t.Fatal(err)

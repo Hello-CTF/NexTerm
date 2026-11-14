@@ -2,7 +2,9 @@ package deviceproto
 
 import (
 	"io/fs"
+	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -111,4 +113,29 @@ type InboundMsg struct {
 // client claims.
 type AcceptMsg struct {
 	ConnID string `json:"connId"`
+}
+
+// WriteVersionMsg heads a conditional write: like WriteMsg, and the server
+// replaces the file only while it still matches Expected.
+type WriteVersionMsg struct {
+	Path     string                  `json:"path"`
+	Backup   bool                    `json:"backup"`
+	Size     int64                   `json:"size"`
+	Expected conditional.Expectation `json:"expected"`
+}
+
+// StatInfoReply describes one path without following a final symlink's
+// target for Kind; ModTime is the modification time.
+type StatInfoReply struct {
+	Size    int64         `json:"size"`
+	Mode    fs.FileMode   `json:"mode"`
+	ModTime time.Time     `json:"modTime"`
+	Kind    base.FileKind `json:"kind"`
+}
+
+// WatchMsg names the directories a watch stream holds; FrameWatch starts the
+// stream and each FrameWatchSet replaces the set. The server answers
+// FrameOK once, then sends FrameWatchEvent frames carrying base.WatchEvent.
+type WatchMsg struct {
+	Dirs []string `json:"dirs"`
 }

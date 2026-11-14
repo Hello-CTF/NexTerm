@@ -197,7 +197,7 @@ var consumerCommandRequestProjections = map[string][]consumerRequestField{
 	"fs_upload_begin":                 {{name: "SessionID"}, {name: "RemotePath"}, {name: "TotalSize"}, {name: "ChunkSize", optional: true}, {name: "TaskID"}, {name: "AttemptID"}},
 	"fs_upload_chunk":                 {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}, {name: "Index"}, {name: "Size"}, {name: "SHA256"}, {name: "ContentBase64"}},
 	"fs_upload_commit":                {{name: "SessionID"}, {name: "UploadID"}, {name: "TaskID"}, {name: "AttemptID"}},
-	"fs_write":                        {{name: "SessionID"}, {name: "Path"}, {name: "ContentBase64"}, {name: "Backup"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}},
+	"fs_write":                        {{name: "SessionID"}, {name: "Path"}, {name: "ContentBase64"}, {name: "Backup"}, {name: "TaskID", optional: true}, {name: "AttemptID", optional: true}, {name: "ExpectedSize", optional: true}, {name: "ExpectedSHA256", optional: true}},
 	"snippet_delete":                  {{name: "ID"}},
 }
 

@@ -33,7 +33,7 @@ import { restrictTemplateForServer, useConnectTemplates, type ConnectTemplate } 
 import { formatSshCommand, sshCommandCopyable } from "./sshCommand";
 import { useGroupCollapse } from "./groupCollapse";
 import { normalizeAssetTags } from "./assetSearch";
-import { BACKUP_BEFORE_OVERWRITE_KEY, PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
+import { BACKUP_BEFORE_OVERWRITE_KEY, FILE_CHANNEL_KEY, PASTE_NO_RANDOM_DIR_KEY, PASTE_TERMINAL_DIR_KEY, PASTE_UPLOAD_DIR_KEY, validatePasteDirOptions } from "../terminal/pasteUploadDir";
 import {
   ASSET_ICON_NAMES,
   assetIcon,
@@ -2385,6 +2385,9 @@ export function AssetEditor({
   );
   const [pasteNoRandomDir, setPasteNoRandomDir] = useState(initial?.options?.[PASTE_NO_RANDOM_DIR_KEY] === true);
   const [backupBeforeOverwrite, setBackupBeforeOverwrite] = useState(initial?.options?.[BACKUP_BEFORE_OVERWRITE_KEY] === true);
+  const [fileChannel, setFileChannel] = useState<"auto" | "sftp">(
+    initial?.options?.[FILE_CHANNEL_KEY] === "sftp" ? "sftp" : "auto",
+  );
   const [terminalMode, setTerminalMode] = useState<"auto" | "durable" | "regular">(
     initial?.options?.terminalMode === "regular" || initial?.options?.terminalMode === "durable"
       ? initial.options.terminalMode
@@ -2433,6 +2436,7 @@ export function AssetEditor({
   const pasteUploadDirId = useId();
   const pasteTerminalDirId = useId();
   const terminalModeId = useId();
+  const fileChannelId = useId();
   const IconPreview = assetIcon(groupKind, icon);
   const hostInputId = useId();
   const portInputId = useId();
@@ -2710,6 +2714,8 @@ export function AssetEditor({
       delete options[PASTE_UPLOAD_DIR_KEY];
       delete options[PASTE_TERMINAL_DIR_KEY];
     }
+    if (groupKind === "ssh" && fileChannel === "sftp") options[FILE_CHANNEL_KEY] = "sftp";
+    else delete options[FILE_CHANNEL_KEY];
     if (groupKind === "ssh" && pasteNoRandomDir) options[PASTE_NO_RANDOM_DIR_KEY] = true;
     else delete options[PASTE_NO_RANDOM_DIR_KEY];
     if ((groupKind === "ssh" || groupKind === "docker") && backupBeforeOverwrite) options[BACKUP_BEFORE_OVERWRITE_KEY] = true;
@@ -3748,6 +3754,24 @@ export function AssetEditor({
                             ]}
                           />
                           <div className="nx-hint mt-1.5">{tr("首次连接会自动安装持久终端组件，期间使用临时终端；只影响新开的终端。")}</div>
+                        </div>
+                      )}
+                      {groupKind === "ssh" && (
+                        <div className="nx-form-row">
+                          <label className="nx-label" htmlFor={fileChannelId}>{tr("文件通道")}</label>
+                          <Select
+                            id={fileChannelId}
+                            ariaLabel={tr("文件通道")}
+                            value={fileChannel}
+                            onChange={(value) => setFileChannel(value === "sftp" ? "sftp" : "auto")}
+                            options={[
+                              { value: "auto", label: tr("自动（优先使用 NexTerm 文件通道）") },
+                              { value: "sftp", label: tr("始终使用 SFTP") },
+                            ]}
+                          />
+                          <div className="nx-hint mt-1.5">
+                            {tr("NexTerm 文件通道由持久终端组件提供，以登录用户的权限访问文件，并能实时同步文件变化；主机不支持时自动改用 SFTP。修改后无需重新连接。")}
+                          </div>
                         </div>
                       )}
                       <div className="nx-form-row">

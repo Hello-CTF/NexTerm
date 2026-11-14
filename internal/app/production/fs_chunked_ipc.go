@@ -443,8 +443,7 @@ func (r *fsChunkUploadRegistry) cleanupEntry(key fsChunkUploadKey, entry *fsChun
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(entry.transferCtx), 10*time.Second)
 	defer cancel()
-	remote, kind, err := r.filesystem(ctx, key.sessionID)
-	remote = fsAtomicUploadFilesystem(remote, kind)
+	remote, _, err := r.filesystem(ctx, key.sessionID)
 	if err != nil {
 		return err
 	}
@@ -524,22 +523,6 @@ func (r *fsChunkUploadRegistry) Start(context.Context) error { return nil }
 
 func (r *fsChunkUploadRegistry) Shutdown(ctx context.Context) error { return r.Close(ctx) }
 
-// Device agents are Unix-only, so their local rename atomically replaces the destination.
-type atomicDeviceRenameFS struct {
-	base.FileSystem
-}
-
-func (f atomicDeviceRenameFS) AtomicRename(ctx context.Context, from, to string) error {
-	return f.FileSystem.Rename(ctx, from, to)
-}
-
-func fsAtomicUploadFilesystem(remote base.FileSystem, kind string) base.FileSystem {
-	if kind == "device" && remote != nil {
-		return atomicDeviceRenameFS{FileSystem: remote}
-	}
-	return remote
-}
-
 type fsFilesystemResolver func(context.Context, string) (base.FileSystem, string, error)
 
 func registerFSChunkedCommands(dispatcher *ipc.Dispatcher, filesystem fsFilesystemResolver, transfers *fsTransferRegistry, uploads *fsChunkUploadRegistry) error {
@@ -575,7 +558,6 @@ func registerFSChunkedCommands(dispatcher *ipc.Dispatcher, filesystem fsFilesyst
 					return fsChunkUploadProgressDTO{}, ipc.BadParam(fmt.Errorf("块内容不是有效的 Base64: %w", err))
 				}
 				remote, kind, err := filesystem(entry.transferCtx, input.SessionID)
-				remote = fsAtomicUploadFilesystem(remote, kind)
 				if err != nil {
 					return fsChunkUploadProgressDTO{}, fsIPCError(kind, err)
 				}
@@ -602,7 +584,6 @@ func registerFSChunkedCommands(dispatcher *ipc.Dispatcher, filesystem fsFilesyst
 				done := entry.enter()
 				defer done()
 				remote, kind, err := filesystem(entry.transferCtx, input.SessionID)
-				remote = fsAtomicUploadFilesystem(remote, kind)
 				if err != nil {
 					return 0, fsIPCError(kind, err)
 				}

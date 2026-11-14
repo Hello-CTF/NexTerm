@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"strings"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/conditional"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -23,6 +25,8 @@ const (
 	CodeProtocol    = "protocol"
 	CodeUnsupported = "unsupported"
 	CodeNoMedia     = "no_media"
+	// CodeVersionMismatch reports a conditional write whose file changed.
+	CodeVersionMismatch = "version_mismatch"
 )
 
 // ErrorCode maps a server-side failure to its wire code, preserving the
@@ -37,6 +41,8 @@ func ErrorCode(err error) string {
 		return CodeUnsupported
 	case errors.Is(err, base.ErrNoMedia):
 		return CodeNoMedia
+	case errors.Is(err, conditional.ErrVersionMismatch):
+		return CodeVersionMismatch
 	case errors.Is(err, fs.ErrNotExist):
 		return CodeNotFound
 	case errors.Is(err, fs.ErrPermission):
@@ -70,6 +76,8 @@ func errorSentinel(code string) error {
 		return base.ErrUnsupported
 	case CodeNoMedia:
 		return base.ErrNoMedia
+	case CodeVersionMismatch:
+		return conditional.ErrVersionMismatch
 	default:
 		return fmt.Errorf("%w (%s)", ErrProtocol, code)
 	}
@@ -88,4 +96,10 @@ func ReadError(payload []byte) error {
 		return err
 	}
 	return CodedError(msg.Code, msg.Message)
+}
+
+// UnsupportedRequest reports an error from a server that predates the request
+// frame, which answers with a protocol error naming it unexpected.
+func UnsupportedRequest(err error) bool {
+	return errors.Is(err, ErrProtocol) && strings.Contains(err.Error(), "unexpected request frame")
 }

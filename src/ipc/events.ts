@@ -34,6 +34,8 @@ export const EVENTS = {
   terminalAttention: "terminal://attention",
   terminalSessions: "terminal://sessions",
   fsProgress: "fs://progress",
+  fsChanged: "fs://changed",
+  fsWatch: "fs://watch",
   updateProgress: "update://progress",
   dockerStats: "docker://stats",
   aiEvent: "ai://event",
@@ -58,6 +60,15 @@ export interface TerminalSessionsEvent {
   host: AggregateHostStatus;
   sessions: AggregateSession[];
 }
+
+// Entries changed inside a directory the file manager watches; no names means the whole directory.
+export interface FsChangedEvent {
+  sessionId: string;
+  dir: string;
+  names?: string[];
+}
+
+export type { FsWatchStatusDTO as FsWatchStatusEvent } from "./generated/types";
 
 // A click on a system notification the desktop showed; tabId is the backend tab it was about.
 export interface NotificationClickEvent {

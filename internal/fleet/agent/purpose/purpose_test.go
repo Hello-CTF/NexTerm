@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
+	"github.com/Hello-CTF/NexTerm/internal/fs/remote"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -241,7 +242,7 @@ func TestFileServerMkdirListRenameDelete(t *testing.T) {
 func TestFileServerListChunks(t *testing.T) {
 	h := newFileHarness(t)
 	ctx := h.ctx
-	total := listChunkEntries + 20
+	total := remote.ListChunkEntries + 20
 	for i := 0; i < total; i++ {
 		name := filepath.Join(h.root, fmt.Sprintf("f%04d", i))
 		if err := os.WriteFile(name, []byte("x"), 0o600); err != nil {

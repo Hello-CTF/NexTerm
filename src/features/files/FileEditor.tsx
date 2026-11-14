@@ -48,6 +48,9 @@ import {
   type FileLanguageChoice,
 } from "./fileLanguages";
 import { describeError } from "../../ui/errorText";
+import { diffLineText, simpleDiff } from "../ai/diff";
+import { subscribeFsChanged, useFsWatch } from "./fsWatch";
+import { baseName, parentOf } from "./pathUtils";
 import { Select } from "../../ui/Select";
 import { t } from "../../i18n";
 
@@ -95,6 +98,36 @@ const ENC_LABEL: Record<EncChoice, string> = {
 
 const ZOOM_STEPS = [11, 12, 13, 14.5, 16, 18];
 
+// A file version as the host stores it: what a conditional save expects to replace.
+export interface FileVersion {
+  size: number;
+  sha256: string;
+}
+
+export async function fileVersionOf(bytes: Uint8Array): Promise<FileVersion> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+  return {
+    size: bytes.length,
+    sha256: Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, "0")).join(""),
+  };
+}
+
+// The file on the host changed while the editor had it open: "changed" while it holds unsaved edits, "conflict"
+// after a save was refused because of it, "deleted" once it is gone.
+type DiskChange =
+  | { kind: "changed" | "conflict"; text: string; version: FileVersion; encoding: string; size: number }
+  | { kind: "deleted" };
+
+function fsErrorIsMissing(error: unknown): boolean {
+  return !!error && typeof error === "object" && (error as { code?: unknown }).code === "not_found";
+}
+
+function isVersionConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { code, detail } = error as { code?: unknown; detail?: unknown };
+  return code === "conflict" && !!detail && typeof detail === "object" && (detail as { reason?: unknown }).reason === "changed";
+}
+
 export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorProps) {
   const qc = useQueryClient();
   const pushToast = useUi((state) => state.pushToast);
@@ -125,6 +158,12 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
   const editVersionRef = useRef(0);
   const dirtyRef = useRef(false);
   const originalRef = useRef("");
+  // versionRef is the host version the editor content started from; null when unknown or the file is gone.
+  const versionRef = useRef<FileVersion | null>(null);
+  // applyingDiskRef keeps a reload from the host from marking the editor dirty.
+  const applyingDiskRef = useRef(false);
+  const [diskChange, setDiskChange] = useState<DiskChange | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
   const mountedRef = useRef(true);
   const locatorRef = useRef({ sessionId, path });
   const loadLocksRef = useRef(new Map<string, { token: number; users: number }>());
@@ -287,7 +326,12 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         if (cancelled) return;
         const bin = bytesFromBase64(res.contentBase64);
         const { text, encoding } = decodeContent(bin, reloadEnc);
+        const version = await fileVersionOf(bin).catch(() => null);
+        if (cancelled) return;
         originalRef.current = text;
+        versionRef.current = version;
+        setDiskChange(null);
+        setShowDiff(false);
         setMeta({ encoding, size: res.size });
         setEol(text.includes("\r\n") ? "CRLF" : "LF");
         dirtyRef.current = false;
@@ -307,7 +351,7 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
                 keymap.of([indentWithTab]),
                 nxHighlight,
                 EditorView.updateListener.of((u) => {
-                  if (u.docChanged) {
+                  if (u.docChanged && !applyingDiskRef.current) {
                     editVersionRef.current += 1;
                     dirtyRef.current = true;
                     const latest = locatorRef.current;
@@ -445,9 +489,22 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
         });
         if (!(await saveFile(change))) return;
       } else {
-        await fsApi.write(writeLocator.sessionId, writeLocator.path, b64);
+        await fsApi.write(
+          writeLocator.sessionId,
+          writeLocator.path,
+          b64,
+          undefined,
+          undefined,
+          undefined,
+          versionRef.current ?? undefined,
+        );
       }
+      versionRef.current = await fileVersionOf(bytes).catch(() => null);
       originalRef.current = text;
+      if (mountedRef.current) {
+        setDiskChange(null);
+        setShowDiff(false);
+      }
       if (mountedRef.current) {
         setMeta({ encoding: "utf-8", size: bytes.length });
         if (meta && meta.encoding !== "utf-8") setEnc("utf-8");
@@ -462,7 +519,11 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
       }
       pushToast("success", t("已保存 {path}", { path: writeLocator.path }));
     } catch (e) {
-      pushToast("error", t("保存失败：{value}", { value: describeError(e) }));
+      if (isVersionConflict(e)) {
+        void checkDisk("conflict");
+      } else {
+        pushToast("error", t("保存失败：{value}", { value: describeError(e) }));
+      }
     } finally {
       endFileEditorOperation(guard);
       saveInFlightRef.current = false;
@@ -470,6 +531,98 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
     }
   };
   saveRef.current = () => void save();
+
+  // checkDisk reads the file again after the host reported a change, or after a save was refused because of one.
+  // An unchanged editor takes the new content in place; one with unsaved edits asks first.
+  const checkDiskRef = useRef<(reason: "changed" | "conflict") => Promise<void>>(async () => undefined);
+  checkDiskRef.current = async (reason) => {
+    const view = viewRef.current;
+    if (!view || (reason === "changed" && saveInFlightRef.current)) return;
+    const locator = locatorRef.current;
+    let res: Awaited<ReturnType<typeof fsApi.read>>;
+    try {
+      res = await fsApi.read(locator.sessionId, locator.path);
+    } catch (e) {
+      if (locator !== locatorRef.current || !mountedRef.current) return;
+      if (fsErrorIsMissing(e)) {
+        versionRef.current = null;
+        setDiskChange({ kind: "deleted" });
+      }
+      return;
+    }
+    if (locator !== locatorRef.current || !mountedRef.current || viewRef.current !== view) return;
+    const bin = bytesFromBase64(res.contentBase64);
+    const version = await fileVersionOf(bin);
+    const known = versionRef.current;
+    if (known && known.size === version.size && known.sha256 === version.sha256) {
+      if (reason === "changed") setDiskChange((current) => (current?.kind === "deleted" ? null : current));
+      return;
+    }
+    const { text, encoding } = decodeContent(bin, reloadEnc);
+    if (reason === "changed" && !dirtyRef.current) {
+      applyDiskText(view, text, version, encoding, res.size);
+      pushToast("info", t("{path} 已在主机上被修改，已重新读取", { path: baseName(locator.path) }));
+      return;
+    }
+    setDiskChange({ kind: reason, text, version, encoding, size: res.size });
+  };
+  const checkDisk = (reason: "changed" | "conflict") => checkDiskRef.current(reason);
+
+  // applyDiskText replaces the document with the host content, keeping the cursor and scroll position where they fit.
+  const applyDiskText = (view: EditorView, text: string, version: FileVersion, encoding: string, size: number) => {
+    const head = Math.min(view.state.selection.main.head, text.length);
+    const scrollTop = view.scrollDOM.scrollTop;
+    applyingDiskRef.current = true;
+    try {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: head } });
+    } finally {
+      applyingDiskRef.current = false;
+    }
+    view.scrollDOM.scrollTop = scrollTop;
+    originalRef.current = text;
+    versionRef.current = version;
+    dirtyRef.current = false;
+    const current = locatorRef.current;
+    setFileEditorDirty(current.sessionId, current.path, false, caseInsensitive);
+    setDirty(false);
+    setMeta({ encoding, size });
+    setEol(text.includes("\r\n") ? "CRLF" : "LF");
+    setDiskChange(null);
+    setShowDiff(false);
+  };
+
+  const parentDir = parentOf(path);
+  useFsWatch(sessionId, parentDir ? [parentDir] : [], meta !== null);
+  useEffect(() => {
+    if (!parentDir) return;
+    const name = baseName(path);
+    let timer = 0;
+    const off = subscribeFsChanged((event) => {
+      if (event.sessionId !== sessionId || event.dir !== parentDir) return;
+      if (event.names?.length && !event.names.includes(name)) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => void checkDiskRef.current("changed"), 300);
+    });
+    return () => {
+      off();
+      window.clearTimeout(timer);
+    };
+  }, [sessionId, path, parentDir]);
+
+  const takeDiskVersion = () => {
+    const view = viewRef.current;
+    if (!view || !diskChange || diskChange.kind === "deleted") return;
+    applyDiskText(view, diskChange.text, diskChange.version, diskChange.encoding, diskChange.size);
+  };
+
+  // keepMine accepts the host version as the base the editor content replaces, so the next save overwrites it.
+  const keepMine = (thenSave: boolean) => {
+    if (!diskChange) return;
+    versionRef.current = diskChange.kind === "deleted" ? null : diskChange.version;
+    setDiskChange(null);
+    setShowDiff(false);
+    if (thenSave) saveRef.current();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -710,6 +863,52 @@ export function FileEditor({ sessionId, path, onClose, saveFile }: FileEditorPro
           <span>{meta.encoding.toUpperCase()}</span>
           <span className="text-neutral-700">|</span>
           <span>{eol}</span>
+        </div>
+      )}
+
+      {diskChange && (
+        <div
+          className="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11.5px] text-amber-300"
+          role="alert"
+          data-testid="file-disk-change"
+          data-kind={diskChange.kind}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="min-w-0 flex-1">
+              {diskChange.kind === "deleted"
+                ? t("此文件已在主机上被删除或移走，保存会重新创建它。")
+                : diskChange.kind === "conflict"
+                  ? t("保存被拒绝：文件在打开后已在主机上被修改。")
+                  : t("此文件已在主机上被修改，而编辑器中有未保存的改动。")}
+            </span>
+            {diskChange.kind === "deleted" ? (
+              <button className="nx-btn nx-btn-sm" onClick={() => keepMine(false)}>
+                {t("知道了")}
+              </button>
+            ) : (
+              <>
+                <button className="nx-btn nx-btn-sm" onClick={() => setShowDiff((v) => !v)}>
+                  {showDiff ? t("隐藏差异") : t("对比差异")}
+                </button>
+                <button className="nx-btn nx-btn-sm" onClick={takeDiskVersion}>
+                  {t("使用主机上的版本")}
+                </button>
+                <button className="nx-btn nx-btn-sm" onClick={() => keepMine(diskChange.kind === "conflict")}>
+                  {diskChange.kind === "conflict" ? t("用我的版本覆盖") : t("保留我的修改")}
+                </button>
+              </>
+            )}
+          </div>
+          {showDiff && diskChange.kind !== "deleted" && (
+            <pre
+              className="mt-1.5 max-h-48 overflow-auto rounded bg-black/30 p-2 font-mono text-[11px] leading-4 text-neutral-300"
+              data-testid="file-disk-diff"
+            >
+              {simpleDiff(diskChange.text, viewRef.current?.state.doc.toString() ?? "")
+                .map((line) => diffLineText(line))
+                .join("\n") || t("内容相同")}
+            </pre>
+          )}
         </div>
       )}
 

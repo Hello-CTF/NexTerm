@@ -112,7 +112,7 @@ func TestGeneratedContractMetadata(t *testing.T) {
 		"appError": "app://error", "deepLink": "app://deep-link",
 		"connectProgress": "session://connect-progress", "deviceStatus": "device://status",
 		"dockerStats": "docker://stats", "filesDropped": "files://dropped",
-		"fsProgress": "fs://progress", "helperProgress": "session://helper-progress",
+		"fsProgress": "fs://progress", "fsChanged": "fs://changed", "fsWatch": "fs://watch", "helperProgress": "session://helper-progress",
 		"layoutChanged": "layout://changed", "sessionStatus": "session://status",
 		"notificationClick": "app://notification-click", "terminalAttention": "terminal://attention",
 		"inventoryChanged": "inventory://changed", "localHelperStatus": "local://helper-status",
@@ -1027,7 +1027,9 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 		{name: "fs_upload_begin", scope: "fs", input: structType("sessionId: string;", "remotePath: string;", "totalSize: number;", "chunkSize?: number;", "taskId: string;", "attemptId: string;"), output: "FSChunkUploadBeginDTO"},
 		{name: "fs_upload_chunk", scope: "fs", input: structType("sessionId: string;", "uploadId: string;", "taskId: string;", "attemptId: string;", "index: number;", "size: number;", "sha256: string;", "contentBase64: string;"), output: "FSChunkUploadProgressDTO"},
 		{name: "fs_upload_commit", scope: "fs", input: structType("sessionId: string;", "uploadId: string;", "taskId: string;", "attemptId: string;"), output: "number"},
-		{name: "fs_write", scope: "fs", nested: true, input: structType("sessionId: string;", "path: string;", "contentBase64: string;", "backup: boolean;", "taskId?: string;", "attemptId?: string;"), output: "unknown"},
+		{name: "fs_unwatch", scope: "fs", input: "FsUnwatchRequest", output: "Record<string, never>"},
+		{name: "fs_watch", scope: "fs", input: "FsWatchRequest", output: "FsWatchStatusDTO"},
+		{name: "fs_write", scope: "fs", nested: true, input: structType("sessionId: string;", "path: string;", "contentBase64: string;", "backup: boolean;", "taskId?: string;", "attemptId?: string;", "expectedSize?: number | null;", "expectedSha256?: string;"), output: "unknown"},
 		{name: "local_file_read", scope: "local-file", input: "LocalFileReadRequest", output: "FSReadDTO"},
 		{name: "local_file_read_range", scope: "local-file", input: "LocalFileReadRangeRequest", output: "FSRangeReadDTO"},
 		{name: "local_file_write", scope: "local-file", input: "LocalFileWriteRequest", output: "LocalFileWriteDTO"},
@@ -1075,8 +1077,8 @@ func TestFSLocalMountVerticalContracts(t *testing.T) {
 			selected[test.name] = true
 		})
 	}
-	if len(selected) != 33 {
-		t.Fatalf("selected fs/local-file/local-shell/mount command count = %d, want 33", len(selected))
+	if len(selected) != 35 {
+		t.Fatalf("selected fs/local-file/local-shell/mount command count = %d, want 35", len(selected))
 	}
 	for name, command := range commands {
 		inventory := strings.HasPrefix(name, "fs_") || strings.HasPrefix(name, "local_file_") || strings.HasPrefix(name, "local_folder_") || strings.HasPrefix(name, "local_shell_") || strings.HasPrefix(name, "mount_")

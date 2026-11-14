@@ -26,6 +26,22 @@ const privateDirPrefix = "nexterm-paste-"
 // configured on its asset, which is how the file channel sees the host (a chrooted SFTP account may expose the shell's
 // /tmp as /), or the host temp root when none is configured.
 func privateDirParentFor(assetOptions any) string {
+	return configuredPrivateDir(assetOptions, store.AssetOptionPasteUploadDir)
+}
+
+// privateDirParentForPath also accepts the shell's view of the paste upload
+// directory as the parent of dir: the helper file channel sees the host as the
+// shell does, where a chrooted SFTP account would not.
+func privateDirParentForPath(assetOptions any, dir string) string {
+	parent := privateDirParentFor(assetOptions)
+	terminal := configuredPrivateDir(assetOptions, store.AssetOptionPasteTerminalDir)
+	if terminal != privateDirParent && path.Dir(dir) == terminal {
+		return terminal
+	}
+	return parent
+}
+
+func configuredPrivateDir(assetOptions any, key string) string {
 	raw, err := json.Marshal(assetOptions)
 	if err != nil {
 		return privateDirParent
@@ -34,7 +50,7 @@ func privateDirParentFor(assetOptions any) string {
 	if json.Unmarshal(raw, &options) != nil {
 		return privateDirParent
 	}
-	configured, _ := options[store.AssetOptionPasteUploadDir].(string)
+	configured, _ := options[key].(string)
 	configured = strings.TrimSpace(configured)
 	if configured == "" || !path.IsAbs(configured) {
 		return privateDirParent

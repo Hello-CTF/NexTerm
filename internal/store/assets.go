@@ -102,6 +102,9 @@ func (s *Store) assetCreate(ctx context.Context, db *gorm.DB, input AssetInput) 
 	if err := checkServerSSHAssetInput(ctx, input.Kind, &input.OptionsJSON, input.AuthKind, input.KeyPath); err != nil {
 		return AssetRow{}, err
 	}
+	if err := validateAssetFileChannel(input.OptionsJSON); err != nil {
+		return AssetRow{}, err
+	}
 	if err := validateAssetPasteOptions(input.OptionsJSON); err != nil {
 		return AssetRow{}, err
 	}
@@ -226,6 +229,9 @@ func (s *Store) assetUpdate(ctx context.Context, db *gorm.DB, id string, patch A
 			return AssetRow{}, err
 		}
 		if patch.OptionsJSON != nil {
+			if err := validateAssetFileChannel(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}
@@ -315,6 +321,9 @@ func (s *Store) assetUpdateCAS(ctx context.Context, db *gorm.DB, id string, expe
 			return AssetRow{}, err
 		}
 		if patch.OptionsJSON != nil {
+			if err := validateAssetFileChannel(*patch.OptionsJSON); err != nil {
+				return AssetRow{}, err
+			}
 			if err := validateAssetPasteOptions(*patch.OptionsJSON); err != nil {
 				return AssetRow{}, err
 			}

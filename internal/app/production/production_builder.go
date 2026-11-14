@@ -192,6 +192,10 @@ func NewProduction(ctx context.Context, config ProductionConfig) (_ *Production,
 		localTerminalMode = newProductionLocalTerminalMode(database)
 	}
 	helperService := &productionHelperService{ssh: sshResolver}
+	fileChannels := &productionFileChannels{database: database, resolver: sshResolver, helpers: helperService}
+	if sshConnector != nil {
+		sshConnector.files = fileChannels
+	}
 	durableResolver = productionDurableResolver{ssh: sshResolver, events: config.Config.Events, helpers: helperService, rules: stateRules}
 	sessionManager = session.NewManager(session.Config{
 		Connector:            connector,

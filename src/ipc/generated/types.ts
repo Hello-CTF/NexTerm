@@ -1382,6 +1382,8 @@ export type FSRootsDTO = {
   homePath: string | null;
   supported: boolean;
   capabilities?: FSCapabilitiesDTO | null;
+  channel?: string;
+  channelReason?: string;
 };
 
 export type FindRequest = {
@@ -1513,6 +1515,24 @@ export type ForwardRuleSettingsDTO = {
 export type ForwardRuleStartRequest = {
   id: string;
   sessionId: string;
+};
+
+export type FsUnwatchRequest = {
+  sessionId: string;
+  watcherId: string;
+};
+
+export type FsWatchRequest = {
+  sessionId: string;
+  watcherId: string;
+  dirs: string[];
+};
+
+export type FsWatchStatusDTO = {
+  sessionId: string;
+  mode: string;
+  channel: string;
+  reason?: string;
 };
 
 export type GeneratedKeyDTO = {

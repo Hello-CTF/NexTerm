@@ -23,7 +23,9 @@ vi.mock("../../ui/dialogs", async (importOriginal) => {
 vi.mock("../../ipc/commands", async (importOriginal) => {
   const { createCommandsMock } = await import("../helpers/mockCommands");
   return createCommandsMock(await importOriginal<typeof import("../../ipc/commands")>(), {
-    fsApi: { roots: mocks.roots, list: mocks.list, delete: mocks.remove, chmod: mocks.chmod, rename: mocks.rename },
+    fsApi: {
+      watch: () => new Promise<never>(() => undefined),
+      unwatch: async () => ({}), roots: mocks.roots, list: mocks.list, delete: mocks.remove, chmod: mocks.chmod, rename: mocks.rename },
   });
 });
 vi.mock("../../ipc/events", async (importOriginal) => {

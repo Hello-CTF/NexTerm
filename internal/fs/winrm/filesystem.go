@@ -331,3 +331,8 @@ var (
 	_ base.RootsProvider = (*FileSystem)(nil)
 	_ base.FileCreator   = (*FileSystem)(nil)
 )
+
+// FileChannel names WinRM as the channel serving this file system.
+func (f *FileSystem) FileChannel() string {
+	return base.FileChannelWinRM
+}
