@@ -16,7 +16,7 @@ Releases ship the device agent for Linux (amd64 / arm64), macOS (amd64 / arm64),
 
 ## Shell and environment
 
-The agent resolves the account's login shell and its environment at runtime (through an interactive login shell, falling back to a login shell) and does not record the installing process's `SHELL` or `PATH` in the service definition. Pass `--shell <absolute path>` at install time to choose the shell terminals use, or `--shell auto` to clear it and use the account's login shell. `nexterm-agent status` shows the shell in use and the resolved environment; older installs recorded `SHELL`/`PATH` in the service definition, and re-running the install command clears them.
+The agent resolves the account's login shell and its environment at runtime (through an interactive login shell, falling back to a login shell) and does not record the installing process's `SHELL` or `PATH` in the service definition. Pass `--shell <absolute path>` at install time to choose the shell terminals use, or `--shell auto` to clear it and use the account's login shell. `nexterm-agent status` shows the device, service and persistent terminal component state, and `--verbose` adds the shell in use and the resolved environment; older installs recorded `SHELL`/`PATH` in the service definition, and re-running the install command clears them.
 
 ## Self-upgrade
 

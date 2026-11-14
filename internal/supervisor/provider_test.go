@@ -1091,3 +1091,17 @@ func awaitFrame(t *testing.T, conn net.Conn, kind frameType) []byte {
 		}
 	}
 }
+
+func TestRemoteProviderUpdateWaitingSurvivesStateRules(t *testing.T) {
+	provider := NewRemoteProvider(NewClient("unused", t.TempDir()))
+	if provider.UpdateWaiting() {
+		t.Fatal("a new provider has no waiting update")
+	}
+	waiting := provider.WithUpdateWaiting()
+	if provider.UpdateWaiting() || !waiting.UpdateWaiting() {
+		t.Fatal("WithUpdateWaiting must mark only the copy")
+	}
+	if !waiting.WithStateRules(nil).UpdateWaiting() {
+		t.Fatal("the state rules wrapper dropped the waiting update")
+	}
+}

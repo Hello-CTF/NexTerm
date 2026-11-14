@@ -978,6 +978,7 @@ func (r *Resolver) updateRunningDaemon(ctx context.Context, host Host, location 
 		return nil, err
 	}
 	if !idle {
+		current.daemon.Update.WaitingForIdle = true
 		return deferUpdate(reason)
 	}
 	process, err := inspectHelperProcess(ctx, host, location.target, location.paths.StateDir)
@@ -999,6 +1000,7 @@ func (r *Resolver) updateRunningDaemon(ctx context.Context, host Host, location 
 		return nil, err
 	}
 	if !idle {
+		current.daemon.Update.WaitingForIdle = true
 		return deferUpdate(reason)
 	}
 	current.daemon.Update.Interrupted = options.InterruptActive && strings.Contains(reason, "active")

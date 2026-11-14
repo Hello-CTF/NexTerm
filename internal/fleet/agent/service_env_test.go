@@ -61,9 +61,6 @@ func TestLaunchdReinstallOverwritesPollutedEnvironment(t *testing.T) {
 	if !ok || before.Shell != "/bin/bash" || before.Path != "/polluted/bin:/usr/bin" {
 		t.Fatalf("fixture not read: %+v", before)
 	}
-	if lines := strings.Join(before.describe(), "\n"); !strings.Contains(lines, "不再采用") {
-		t.Fatalf("legacy values must be labelled non-authoritative: %s", lines)
-	}
 	if err := manager.Install(context.Background(), "/bin/nexterm", "/data"); err != nil {
 		t.Fatal(err)
 	}

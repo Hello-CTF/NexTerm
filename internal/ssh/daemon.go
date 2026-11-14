@@ -52,10 +52,13 @@ type Host interface {
 // HelperUpdateStatus describes an update attempted while ensuring a daemon.
 // RolledBack never implies that interrupted shells are alive again.
 type HelperUpdateStatus struct {
-	Deferred    bool
-	Updated     bool
-	Interrupted bool
-	RolledBack  bool
+	Deferred bool
+	// WaitingForIdle is set when the update was deferred only because the helper still runs processes: it can
+	// proceed once they end.
+	WaitingForIdle bool
+	Updated        bool
+	Interrupted    bool
+	RolledBack     bool
 	// ReplacedLegacy reports that an older-protocol helper was ended with
 	// consent; EndedSessions is how many sessions the user agreed to end.
 	ReplacedLegacy bool
@@ -200,6 +203,9 @@ func (r *Resolver) ResolveDurable(ctx context.Context, transport base.Transport)
 	daemon, err := r.EnsureDaemon(ctx, client)
 	if err != nil {
 		return nil, err
+	}
+	if daemon.Update.WaitingForIdle {
+		return daemon.Provider().WithUpdateWaiting(), nil
 	}
 	return daemon.Provider(), nil
 }

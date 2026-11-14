@@ -110,8 +110,15 @@ type Runtime struct {
 	// noticePID and noticeText are the helper build hint last logged, so it is not repeated every cycle.
 	noticePID  int
 	noticeText string
-	logger     *slog.Logger
-	now        func() time.Time
+	// buildWaiting and settleWaiting (guarded by mu) report a stale helper, or a helper in the previous
+	// directory, that waits only for its terminals to end; the build loop then checks often.
+	buildWaiting  bool
+	settleWaiting bool
+	// helperBuildEvery and helperBuildWaitingEvery pace helperBuildLoop; tests shorten them.
+	helperBuildEvery        time.Duration
+	helperBuildWaitingEvery time.Duration
+	logger                  *slog.Logger
+	now                     func() time.Time
 	// jitter returns a uniform value in [0,1) used to spread reconnect delays; tests inject a fixed source.
 	jitter func() float64
 	// sleep waits between owner_unavailable retries; tests inject a fake that records the delay.
@@ -222,28 +229,30 @@ func New(options Options) (*Runtime, error) {
 		upgrader.LogPath = upgradeLogPathIn(options.DataDir)
 	}
 	*runtimeState = Runtime{
-		store:           options.Store,
-		dataDir:         options.DataDir,
-		prober:          options.Prober,
-		manager:         options.Manager,
-		collector:       collector,
-		ensureHelper:    ensureHelper,
-		checkBuild:      checkBuild,
-		bridge:          bridge,
-		upgrader:        upgrader,
-		onChannel:       options.OnChannel,
-		stateDir:        stateDir,
-		stateSource:     options.StateDirSource,
-		sharedDir:       sharedDir,
-		legacyDir:       legacyDir,
-		executable:      executable,
-		logger:          logger,
-		now:             now,
-		sleep:           options.Sleep,
-		purposeHandlers: make(map[string]PurposeHandler),
-		revokeCh:        make(chan struct{}),
-		fatalCh:         make(chan error, 1),
-		reconfigCh:      make(chan struct{}, 1),
+		store:                   options.Store,
+		dataDir:                 options.DataDir,
+		prober:                  options.Prober,
+		manager:                 options.Manager,
+		collector:               collector,
+		ensureHelper:            ensureHelper,
+		checkBuild:              checkBuild,
+		bridge:                  bridge,
+		upgrader:                upgrader,
+		onChannel:               options.OnChannel,
+		stateDir:                stateDir,
+		stateSource:             options.StateDirSource,
+		sharedDir:               sharedDir,
+		legacyDir:               legacyDir,
+		executable:              executable,
+		helperBuildEvery:        helperBuildInterval,
+		helperBuildWaitingEvery: helperBuildWaitingInterval,
+		logger:                  logger,
+		now:                     now,
+		sleep:                   options.Sleep,
+		purposeHandlers:         make(map[string]PurposeHandler),
+		revokeCh:                make(chan struct{}),
+		fatalCh:                 make(chan error, 1),
+		reconfigCh:              make(chan struct{}, 1),
 	}
 	return runtimeState, nil
 }
@@ -302,6 +311,9 @@ func (r *Runtime) settleStateDir(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
+	r.mu.Lock()
+	r.settleWaiting = choice.Legacy && choice.Err == nil && choice.LegacyKnown && choice.LegacySessions > 0
+	r.mu.Unlock()
 	if choice.Legacy {
 		r.logger.Info("terminals keep running in the previous supervisor helper until they end",
 			"dir", choice.Dir, "sessions", choice.LegacySessions, "sessions_known", choice.LegacyKnown, "error", choice.Err)
@@ -780,27 +792,46 @@ func (r *Runtime) ensureHelperOnce(ctx context.Context) {
 	}
 }
 
-// helperBuildInterval is how often a stale helper that still runs terminals is re-checked, so it is
-// replaced once the last of them has ended.
-var helperBuildInterval = 5 * time.Minute
+// helperBuildInterval is how often the helper is checked for a newer build of this agent.
+// helperBuildWaitingInterval applies while a stale helper (or one in the previous directory) waits only for its
+// terminals to end, so it is replaced within seconds of the last one closing; a check is one local socket call.
+const (
+	helperBuildInterval        = 5 * time.Minute
+	helperBuildWaitingInterval = 10 * time.Second
+)
 
 func (r *Runtime) helperBuildLoop(ctx context.Context) {
 	if r.checkBuild == nil && r.sharedDir == "" {
 		return
 	}
-	ticker := time.NewTicker(helperBuildInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(r.helperBuildDelay())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if r.desiredSnapshot().TerminalEnabled {
 				r.settleStateDir(ctx)
 				r.checkHelperBuild(ctx)
 			}
+			timer.Reset(r.helperBuildDelay())
 		}
 	}
+}
+
+// helperBuildDelay is the wait before the next helper check.
+func (r *Runtime) helperBuildDelay() time.Duration {
+	if !r.desiredSnapshot().TerminalEnabled {
+		return r.helperBuildEvery
+	}
+	r.mu.Lock()
+	waiting := r.buildWaiting || r.settleWaiting
+	r.mu.Unlock()
+	if waiting {
+		return r.helperBuildWaitingEvery
+	}
+	return r.helperBuildEvery
 }
 
 // checkHelperBuild replaces a helper of an older build only while it runs no session. One that still
@@ -812,6 +843,9 @@ func (r *Runtime) checkHelperBuild(ctx context.Context) {
 	checkCtx, cancel := context.WithTimeout(ctx, 2*helperEnsureTimeout)
 	defer cancel()
 	build, err := r.checkBuild(checkCtx)
+	r.mu.Lock()
+	r.buildWaiting = err == nil && build.Stale && !build.Replaced && !build.EnvKept && build.SessionsKnown && build.Sessions > 0
+	r.mu.Unlock()
 	switch {
 	case err != nil:
 		r.logger.Warn("supervisor helper build check failed", "error", err)

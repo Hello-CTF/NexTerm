@@ -213,6 +213,8 @@ describe("FileTree follows changes on the host", () => {
     expect(badge.dataset.mode).toBe("poll");
     expect(badge.title).toContain("SFTP");
     expect(badge.title).toContain("helper 版本较旧");
+    expect(badge.textContent).toBe("");
+    expect(badge.getAttribute("aria-label")).toContain("定时检查文件变化");
 
     const listsBefore = mocks.list.mock.calls.length;
     mocks.list.mockImplementation(() =>

@@ -473,21 +473,24 @@ export interface FileTreeProps {
   embedded?: boolean;
 }
 
-// FsWatchBadge tells whether changes made on the host show up by themselves or on a timer, and through which channel.
+// FsWatchBadge is a dot telling whether changes made on the host show up by themselves (green) or on a
+// timer (amber); the hover text names the channel and why.
 function FsWatchBadge({ status }: { status: FsWatchStatus }) {
   const live = status.mode === "push";
   const channel = fileChannelLabel(status.channel);
   const mode = live ? t("实时同步文件变化") : t("定时检查文件变化");
-  const title = [channel, mode].filter(Boolean).join(" · ") + (status.reason ? `\n${status.reason}` : "");
+  const summary = [channel, mode].filter(Boolean).join(" · ");
+  const title = summary + (status.reason ? `\n${status.reason}` : "");
   return (
     <span
-      className="flex shrink-0 items-center gap-1 px-1 text-[10px] leading-4 text-neutral-500"
+      className="flex shrink-0 items-center px-1.5 py-1"
       title={title}
+      role="img"
+      aria-label={summary}
       data-testid="fs-watch-badge"
       data-mode={status.mode}
     >
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${live ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
-      {live ? t("实时") : t("定时")}
+      <span className={`inline-block h-2 w-2 rounded-full ${live ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
     </span>
   );
 }

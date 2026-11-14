@@ -2008,6 +2008,9 @@ func (m *Manager) closeTab(tab *Tab, destroyDurable bool) error {
 	if err := m.closeTabResources(tab, true); err != nil {
 		m.logger.Warn("close terminal channel after removing the tab", "tab", id, "error", err)
 	}
+	if tab.durable != nil {
+		m.retryWaitingHelperUpdate(tab.session)
+	}
 	return nil
 }
 
@@ -2563,9 +2566,11 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	current = !tab.closed && !tab.destroying && tab.generation == generation
 	var exitEvent ExitEvent
 	var control ControlEvent
+	durableEnded := false
 	if current {
 		tab.exited = true
 		tab.exitConfirmed = hasExitCode || durableTab && !durableFault
+		durableEnded = durableTab && tab.exitConfirmed
 		if tab.channel == channel {
 			tab.channel = nil
 		}
@@ -2589,6 +2594,9 @@ func (m *Manager) runPump(ctx context.Context, tab *Tab, channel *channelHandle,
 	}
 	m.emit(context.Background(), TopicTerminalExit, exitEvent)
 	m.emit(context.Background(), TopicTerminalControl, control)
+	if durableEnded {
+		m.retryWaitingHelperUpdate(tab.session)
+	}
 }
 
 func (m *Manager) OpenTabFor(ctx context.Context, options OpenTabOptions) (TabInfo, error) {
