@@ -3,7 +3,9 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,5 +50,28 @@ func TestDialHelperBridgeReconnectsToRestartedEndpoint(t *testing.T) {
 			_ = conn.Close()
 		}
 		t.Fatalf("dial stopped helper = %v, want ErrUnavailable", err)
+	}
+}
+
+// A bridge ends when the helper drops its connection even though sshd never
+// closes its stdin, which is how a helper releases the bridge of a client
+// whose SSH connection died.
+func TestBridgeEndsWhenHelperDropsConnection(t *testing.T) {
+	stdin, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdinWriter.Close() }()
+	helperSide, bridgeSide := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- bridgeIO(stdin, io.Discard, bridgeSide) }()
+	_ = helperSide.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("bridge kept running after the helper dropped its connection")
 	}
 }

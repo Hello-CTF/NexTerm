@@ -26,6 +26,8 @@ type Server struct {
 	endpoint        endpointIdentity
 	listener        net.Listener
 	unlock          func()
+	// keepalive is keepaliveTimeout when the server started; zero disables it.
+	keepalive time.Duration
 
 	mu     sync.Mutex
 	conns  map[*serverConn]struct{}
@@ -68,6 +70,7 @@ func newServer(supervisor *Supervisor, socketPath, spawnedBy string) (*Server, e
 		unlock:          unlock,
 		conns:           make(map[*serverConn]struct{}),
 		shutdownDone:    make(chan struct{}),
+		keepalive:       keepaliveTimeout,
 	}
 	server.wg.Add(1)
 	go server.acceptLoop()
@@ -183,6 +186,9 @@ type serverConn struct {
 	sizePush bool
 	// rulesOwner is the hello's state rule owner key; empty for none.
 	rulesOwner string
+	// keepalive is how long the connection may stay silent before it is
+	// dropped; zero when the client did not promise keepalives.
+	keepalive time.Duration
 
 	// done closes with the connection so goroutines parked on input or credit
 	// stop without waiting for the peer.
@@ -218,10 +224,16 @@ func (c *serverConn) serve() {
 		c.reply(frameError, errorMsg{Code: codeProtocol, Message: "peer is not authorized"})
 		return
 	}
+	// Every client says hello as soon as it connects, so a connection whose
+	// client vanished before that is not kept for good either.
+	if c.server.keepalive > 0 {
+		_ = c.conn.SetReadDeadline(time.Now().Add(c.server.keepalive))
+	}
 	kind, payload, err := readFrame(c.conn)
 	if err != nil {
 		return
 	}
+	_ = c.conn.SetReadDeadline(time.Time{})
 	if kind != frameHello {
 		c.replyError(frameError, errorMsg{Code: codeProtocol, Message: "expected hello frame"})
 		return
@@ -241,6 +253,9 @@ func (c *serverConn) serve() {
 	}
 	c.compress = hello.CompressOutput
 	c.sizePush = hello.SizePush
+	if hello.Keepalive {
+		c.keepalive = c.server.keepalive
+	}
 	if hello.StateRulesOwner != "" && !validStateRulesOwner(hello.StateRulesOwner) {
 		c.replyError(frameError, errorMsg{Code: codeInvalidInput, Message: "malformed state rule owner key"})
 		return
@@ -254,17 +269,26 @@ func (c *serverConn) serve() {
 	startEnv := c.server.startEnv
 	ack := helloMsg{
 		Version: ProtocolVersion, Generation: c.server.supervisor.generation, Runtime: c.server.runtimeMetadata, Activity: &activity, StartEnv: &startEnv, SpawnedBy: c.server.spawnedBy,
-		StateRules: &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
+		StateRules:  &stateRulesAck{Revision: c.server.supervisor.stateRulesSeen(c.rulesOwner)},
+		KeepaliveMS: c.server.keepalive.Milliseconds(),
 	}
 	if err := c.reply(frameHelloAck, ack); err != nil {
 		return
 	}
 	for {
+		if c.keepalive > 0 {
+			_ = c.conn.SetReadDeadline(time.Now().Add(c.keepalive))
+		}
 		kind, payload, err := readFrame(c.conn)
 		if err != nil {
+			var netErr net.Error
+			if c.keepalive > 0 && errors.As(err, &netErr) && netErr.Timeout() {
+				c.server.supervisor.log.event("keepalive_timeout", "after", c.keepalive.String())
+			}
 			return
 		}
 		switch kind {
+		case frameKeepalive:
 		case frameCreate:
 			c.handleCreate(payload)
 		case frameList:

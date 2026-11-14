@@ -278,6 +278,11 @@ func (c *Client) ExecStream(ctx context.Context, spec ExecSpec, onOutput func(st
 	}
 	stopWatch := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stopWatch()
+	stopKeepalive := make(chan struct{})
+	defer close(stopKeepalive)
+	go conn.keepAlive(stopKeepalive, func() error {
+		return conn.send(context.Background(), frameKeepalive, nil)
+	})
 	for {
 		kind, payload, readErr := readFrame(conn.conn)
 		if readErr != nil {
@@ -471,6 +476,11 @@ func (c *Client) newStream(conn *clientConn, reply attachedMsg) *Stream {
 	}
 	go stream.readLoop()
 	go stream.creditLoop()
+	go conn.keepAlive(stream.closed, func() error {
+		stream.writeMu.Lock()
+		defer stream.writeMu.Unlock()
+		return writeFrame(conn.conn, frameKeepalive, nil)
+	})
 	return stream
 }
 
@@ -535,7 +545,7 @@ func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) 
 		}
 	}
 	conn := &clientConn{conn: netConn, compress: c.compressOutput}
-	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner, SizePush: true})
+	kind, payload, err := conn.request(ctx, frameHello, helloMsg{Version: ProtocolVersion, StateDigest: digest, CompressOutput: conn.compress, StateRulesOwner: owner, SizePush: true, Keepalive: true})
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -580,6 +590,9 @@ func (c *Client) dialHello(ctx context.Context, push bool) (*clientConn, error) 
 		return nil, fmt.Errorf("%w: hello acknowledgement lacks the state rule revision", ErrProtocol)
 	}
 	conn.stateRules = ack.StateRules.Revision
+	if ack.KeepaliveMS > 0 {
+		conn.keepalive = keepaliveInterval(time.Duration(ack.KeepaliveMS) * time.Millisecond)
+	}
 	if push && owner != "" {
 		// A rejected push keeps the connection usable; a failed exchange
 		// leaves it broken.
@@ -616,7 +629,31 @@ type clientConn struct {
 	// stateRules is the helper's state rule revision for the hello's owner,
 	// empty for none.
 	stateRules string
-	writeMu    sync.Mutex
+	// keepalive is how often a connection kept open sends frameKeepalive;
+	// zero for a helper that does not drop silent connections.
+	keepalive time.Duration
+	writeMu   sync.Mutex
+}
+
+// keepAlive sends frameKeepalive through write until stop closes or a write
+// fails, so the helper keeps a connection that is open but quiet. It returns
+// at once for a helper that did not ask for keepalives.
+func (c *clientConn) keepAlive(stop <-chan struct{}, write func() error) {
+	if c.keepalive <= 0 {
+		return
+	}
+	ticker := time.NewTicker(c.keepalive)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+		case <-stop:
+			return
+		}
+		if write() != nil {
+			return
+		}
+	}
 }
 
 func (c *clientConn) request(ctx context.Context, kind frameType, message any) (frameType, []byte, error) {

@@ -86,7 +86,26 @@ const (
 	// another client resized it. Only connections whose hello set SizePush
 	// receive it; an older peer neither asks for nor sends it.
 	frameSize frameType = 35
+	// frameKeepalive tells the helper that the client of a connection is
+	// still there. It has no payload and no reply. A client sends it only to
+	// a helper whose hello acknowledgement set KeepaliveMS.
+	frameKeepalive frameType = 36
 )
+
+// keepaliveTimeout is how long a helper waits for the next frame on a
+// connection whose client promised keepalives before it drops the
+// connection. A client whose SSH connection died without a close (a network
+// change, a sleeping laptop, a NAT that forgot the flow) cannot say goodbye,
+// and the target's sshd keeps the dead session and its bridge process until
+// TCP gives up hours later; dropping the connection detaches the attachment
+// and ends the bridge. A variable so tests can shorten it.
+var keepaliveTimeout = 30 * time.Minute
+
+// keepaliveInterval is how often a client sends frameKeepalive to a helper
+// that drops silent connections after timeout.
+func keepaliveInterval(timeout time.Duration) time.Duration {
+	return max(timeout/6, 10*time.Millisecond)
+}
 
 // Every connection uses windowed input and credited output. The client may keep
 // several frameInput frames in flight; the server acknowledges each one in
@@ -133,6 +152,15 @@ type helloMsg struct {
 	// SizePush is sent by a client only: it understands frameSize. An older
 	// helper ignores it and pushes nothing.
 	SizePush bool `json:"size_push,omitempty"`
+	// Keepalive is sent by a client only: it sends frameKeepalive on every
+	// connection it keeps open when the helper's acknowledgement sets
+	// KeepaliveMS. Only then does the helper drop the connection after
+	// KeepaliveMS without a frame; an older peer neither asks nor drops.
+	Keepalive bool `json:"keepalive,omitempty"`
+	// KeepaliveMS is sent by the helper only: it accepts frameKeepalive and
+	// drops a connection whose client set Keepalive after this many
+	// milliseconds without a frame.
+	KeepaliveMS int64 `json:"keepalive_ms,omitempty"`
 	// Generation, Runtime and Activity are sent by the helper in its
 	// acknowledgement. Generation identifies the helper process.
 	Generation string `json:"generation,omitempty"`
