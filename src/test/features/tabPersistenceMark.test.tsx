@@ -26,7 +26,7 @@ describe("tab persistence mark", () => {
   it("marks only a live terminal that is explicitly not durable", () => {
     const icon = mark(terminal({ durable: false }));
     expect(icon?.getAttribute("aria-label")).toBe("临时终端：关闭标签页或断开连接后进程会结束");
-    expect(icon?.querySelector("svg")?.getAttribute("width")).toBe("12");
+    expect(icon?.textContent).toBe("临时");
     expect(mark(terminal({ durable: false, exited: true }))).toBeNull();
     expect(mark(terminal({ durable: false, dead: true }))).toBeNull();
   });

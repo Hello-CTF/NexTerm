@@ -663,12 +663,6 @@ export const IconZap = (p: IconProps) => (
 );
 
 // Marks a temporary terminal whose process ends with the tab or connection (dashed ring, drawn in currentColor).
-export const IconEphemeral = (p: IconProps) => (
-  <Svg {...p}>
-    <circle cx="12" cy="12" r="8.5" strokeDasharray="3 3.2" />
-  </Svg>
-);
-
 export const KIND_ICON_MAP = {
   ssh: IconServer,
   winrm: IconGrid,

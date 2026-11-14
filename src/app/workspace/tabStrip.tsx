@@ -35,7 +35,6 @@ import {
   IconList,
   IconMonitor,
   IconNetwork,
-  IconEphemeral,
   IconServer,
   IconSettings,
   IconTerminal,
@@ -91,7 +90,8 @@ export function tabTooltip(
 const EPHEMERAL_NOTE = tr("临时终端：关闭标签页或断开连接后进程会结束");
 
 // Durable terminals (the common case) show no mark, only a tooltip note. A terminal known to be non-durable
-// (durable === false, still alive) carries a small dashed-ring mark before its title; unknown durability, a tab
+// (durable === false, still alive) carries a small neutral "临时" tag before its title, readable at a glance
+// without a warning colour; unknown durability, a tab
 // that is still connecting and non-terminal tabs carry none. A failure
 // hint the user dismissed while it still applies leaves a red dot that names it and shows the hint again; its hit
 // area extends past the dot without taking layout space. The tab bar renders the icon before the title and the
@@ -102,8 +102,13 @@ export function TabPersistenceMark({ tab, part = "all" }: { tab: AppTab; part?: 
   return (
     <>
       {part !== "failure" && tab.durable === false && !tab.dead && !tab.exited && (
-        <span className="flex shrink-0 items-center text-[var(--nx-fg-tertiary)]" role="img" aria-label={EPHEMERAL_NOTE} title={EPHEMERAL_NOTE}>
-          <IconEphemeral size={12} />
+        <span
+          className="shrink-0 rounded-[3px] border border-[var(--nx-border-strong)] bg-[var(--nx-bg-raised)] px-1 text-[10px] leading-[14px] font-medium text-[var(--nx-fg-soft)]"
+          role="img"
+          aria-label={EPHEMERAL_NOTE}
+          title={EPHEMERAL_NOTE}
+        >
+          {tr("临时")}
         </span>
       )}
       {part !== "icon" && failure && (
