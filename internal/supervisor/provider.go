@@ -324,6 +324,21 @@ type RemoteProvider struct {
 	// createAttach, when set, creates and attaches on one connection. Tests
 	// that replace create or attach clear it so Create attaches separately.
 	createAttach func(context.Context, *Client, CreateOptions) (Info, *Stream, error)
+	// updateWaiting reports a helper whose update to this build waits only for its processes to end.
+	updateWaiting bool
+}
+
+// WithUpdateWaiting returns a copy of the provider marked as serving a helper whose update waits only for its
+// processes to end, so the client can resolve the helper again once its own terminals are gone.
+func (p *RemoteProvider) WithUpdateWaiting() *RemoteProvider {
+	copied := *p
+	copied.updateWaiting = true
+	return &copied
+}
+
+// UpdateWaiting reports a provider marked by WithUpdateWaiting.
+func (p *RemoteProvider) UpdateWaiting() bool {
+	return p != nil && p.updateWaiting
 }
 
 // ReplaceLegacyHelper asks the helper's host to end the older helper the

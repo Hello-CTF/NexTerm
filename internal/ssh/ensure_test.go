@@ -1751,6 +1751,9 @@ func TestEnsureDaemonWithOptionsDefersDiscoveredContentAddressedUpdate(t *testin
 	if daemon.Binary != h.oldBinary || !daemon.Update.Deferred || !h.oldRunning || h.newRunning {
 		t.Fatalf("active update was not deferred: daemon=%+v old=%v new=%v", daemon, h.oldRunning, h.newRunning)
 	}
+	if !daemon.Update.WaitingForIdle {
+		t.Fatalf("an update deferred for running processes must wait for idle: %+v", daemon.Update)
+	}
 	if h.host.sawCommand("kill -TERM") {
 		t.Fatal("active processes were interrupted without explicit permission")
 	}
