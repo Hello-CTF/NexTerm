@@ -393,8 +393,15 @@ describe("XtermView production grid lifecycle", () => {
   it("still resumes an existing attachment of a tab that requested a regular shell", async () => {
     await show(props({ requestRegular: true, resumeTabId: "tab-existing" }));
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session");
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session", undefined);
     expect(harness.attach).not.toHaveBeenCalled();
+  });
+
+  // The tab's kind travels with the attach; the backend no longer reads it from the ID's shape.
+  it("tells the backend whether a resumed tab is a persistent terminal", async () => {
+    await show(props({ resumeTabId: "tab-existing", resumeDurable: false }));
+
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session", false);
   });
 
   it("reports the durable fallback notice with the attach info", async () => {
@@ -480,7 +487,7 @@ describe("XtermView production grid lifecycle", () => {
 
   it("applies authoritative observer grids without submitting local resize", async () => {
     await show(props({ resumeTabId: "tab-existing", canResize: false }));
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session");
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, "session", undefined);
     const term = harness.terminals[0];
     term.resize.mockClear();
     harness.resize.mockClear();
@@ -513,18 +520,18 @@ describe("XtermView production grid lifecycle", () => {
     harness.reopen?.();
     await flushWork();
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session");
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session", undefined);
     expect(harness.resize).toHaveBeenCalledWith("tab-new", { cols: 36, rows: 20 });
     expect(harness.attach).toHaveBeenCalledTimes(1);
   });
 
   it("keeps Docker resume scoped to its existing backend tab", async () => {
     await show(props({ containerId: "container", resumeTabId: "tab-existing" }));
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, undefined);
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-existing", expect.anything(), -1, undefined, undefined, undefined);
     expect(harness.execAttach).not.toHaveBeenCalled();
     harness.reopen?.();
     await flushWork();
-    expect(harness.attachTab).toHaveBeenLastCalledWith("tab-existing", expect.anything(), -1, undefined, undefined);
+    expect(harness.attachTab).toHaveBeenLastCalledWith("tab-existing", expect.anything(), -1, undefined, undefined, undefined);
   });
 
   it("detaches a reopened channel that finishes after unmount", async () => {
@@ -778,7 +785,7 @@ describe("XtermView stream anchors", () => {
     expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, {
       seq: 150,
       epoch: "e1",
-    }, "session");
+    }, "session", undefined);
   });
 
   it("does not duplicate in-flight bytes rendered before the resumed stream arrives", async () => {
@@ -840,7 +847,7 @@ describe("XtermView stream anchors", () => {
     harness.reopen?.();
     await flushWork();
 
-    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session");
+    expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, undefined, "session", undefined);
   });
 
   it("single-flights connected and channel reattach with the original tab and resume anchor", async () => {
@@ -865,7 +872,7 @@ describe("XtermView stream anchors", () => {
     expect(harness.attachTab).toHaveBeenCalledWith("tab-new", expect.anything(), -1, {
       seq: 150,
       epoch: "e1",
-    }, "session");
+    }, "session", undefined);
     finish?.(attachedInfo);
     await flushWork();
 

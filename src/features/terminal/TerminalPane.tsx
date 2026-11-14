@@ -495,6 +495,7 @@ export function TerminalPane({
   const wasVisibleRef = useRef(visible !== false);
   const pushToast = useUi((s) => s.pushToast);
   const sessionKind = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.kind);
+  const storeTabDurable = useUi((s) => findStoreTab(s.workspaces, storeTabId)?.durable);
   const localHelper = useLocalHelperStatus(sessionKind === "local" && !WEB);
   const sessionAssetId = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.assetId);
   const sessionStatus = useUi((s) => s.sessions.find((x) => x.id === sessionId)?.status);
@@ -2916,6 +2917,7 @@ export function TerminalPane({
               winrm={effectiveWinrm}
               containerId={containerId}
               resumeTabId={resumeRef.current}
+              resumeDurable={storeTabDurable}
               forceRegular={forceRegular}
               requestRegular={regularReason !== undefined}
               sessionConnected={sessionStatus === "connected"}

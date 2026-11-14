@@ -49,3 +49,22 @@ func Valid(id string) bool {
 	}
 	return true
 }
+
+// ValidTerminal reports a terminal tab or session ID: a ULID, or the 32-digit
+// lowercase hex form earlier versions generated, which saved layouts and
+// preferences synced from older devices still carry.
+func ValidTerminal(id string) bool {
+	if Valid(id) {
+		return true
+	}
+	if len(id) != 32 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
