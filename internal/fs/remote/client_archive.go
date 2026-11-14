@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
-	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -35,7 +35,7 @@ func (f *FileSystem) Extract(ctx context.Context, archivePath string) (string, e
 // PackDownload downloads a directory as a gzipped tar packed by the server
 // as it streams; a server that predates it falls back to tar through the
 // shell on POSIX hosts.
-func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
+func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options transfer.Options) (int64, error) {
 	conn, err := f.dial(ctx)
 	if err != nil {
 		return 0, err
@@ -53,7 +53,7 @@ func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 
 // writeDownload writes a stream of unknown size to localPath through a
 // temporary file, reporting progress and keeping to options.MaxBytes.
-func writeDownload(localPath string, source io.Reader, options sshfs.TransferOptions) (int64, error) {
+func writeDownload(localPath string, source io.Reader, options transfer.Options) (int64, error) {
 	dir := filepath.Dir(localPath)
 	file, err := os.CreateTemp(dir, "."+filepath.Base(localPath)+".part-*")
 	if err != nil {
@@ -80,7 +80,7 @@ func writeDownload(localPath string, source io.Reader, options sshfs.TransferOpt
 			}
 			written += int64(count)
 			if options.Progress != nil {
-				options.Progress(sshfs.Progress{Transferred: written})
+				options.Progress(transfer.Progress{Transferred: written})
 			}
 		}
 		if errors.Is(readErr, io.EOF) {
@@ -98,7 +98,7 @@ func writeDownload(localPath string, source io.Reader, options sshfs.TransferOpt
 	}
 	committed = true
 	if options.Progress != nil {
-		options.Progress(sshfs.Progress{Transferred: written, Total: written, Done: true})
+		options.Progress(transfer.Progress{Transferred: written, Total: written, Done: true})
 	}
 	return written, nil
 }

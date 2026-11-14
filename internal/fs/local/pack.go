@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 )
 
 // PackDownload writes the directory tree at remotePath as a gzipped tar to
@@ -18,7 +18,7 @@ import (
 // temp dir, moved through the shared download path, and removed afterwards.
 // options.MaxBytes also caps the temporary archive, so an oversized tree is
 // abandoned while it is being packed.
-func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
+func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath string, options transfer.Options) (int64, error) {
 	root := real(remotePath)
 	info, err := os.Stat(root)
 	if err != nil {
@@ -36,7 +36,7 @@ func (f *FileSystem) PackDownload(ctx context.Context, remotePath, localPath str
 		MaxBytes: options.MaxBytes,
 		Progress: func(progress Progress) {
 			if options.Progress != nil {
-				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
+				options.Progress(transfer.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 			}
 		},
 	})

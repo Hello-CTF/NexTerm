@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -31,7 +31,7 @@ var ErrUnsafeArchive = errors.New("archive entry is unsafe to extract")
 func (f *FileSystem) Extract(ctx context.Context, archivePath string) (string, error) {
 	source := real(archivePath)
 	name := filepath.Base(source)
-	baseName := sshfs.StripArchiveExtension(name)
+	baseName := transfer.StripArchiveExtension(name)
 	if baseName == "" || baseName == "." || baseName == ".." || baseName == name {
 		return "", fmt.Errorf("unsupported archive format %q", name)
 	}

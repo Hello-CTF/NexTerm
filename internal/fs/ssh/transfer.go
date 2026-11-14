@@ -9,27 +9,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
-type Progress struct {
-	Transferred int64
-	Total       int64
-	Done        bool
-}
+type Progress = transfer.Progress
 
-type TransferOptions struct {
-	Resume           bool
-	ProgressInterval time.Duration
-	BufferSize       int
-	Progress         func(Progress)
-	// MaxBytesPerSecond caps the upload rate so a background transfer cannot starve
-	// interactive traffic sharing the same SSH connection. Zero means unlimited.
-	MaxBytesPerSecond int64
-	// MaxBytes caps the size of a downloaded file; zero means unlimited. A source larger than the cap is
-	// refused before anything is written.
-	MaxBytes int64
-}
+type TransferOptions = transfer.Options
 
 // PaceWriter limits the sustained write rate of w. A non-positive rate returns w unchanged.
 func PaceWriter(ctx context.Context, w io.Writer, bytesPerSecond int64) io.Writer {
@@ -64,7 +50,7 @@ func (p *pacedWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (o TransferOptions) normalized() (TransferOptions, error) {
+func normalizedOptions(o TransferOptions) (TransferOptions, error) {
 	if o.ProgressInterval == 0 {
 		o.ProgressInterval = 200 * time.Millisecond
 	}
@@ -108,7 +94,7 @@ func uploadBufferSize(options TransferOptions) int {
 
 func (f *FS) Upload(ctx context.Context, localPath, remotePath string, options TransferOptions) (int64, error) {
 	bufferSize := uploadBufferSize(options)
-	options, err := options.normalized()
+	options, err := normalizedOptions(options)
 	if err != nil {
 		return 0, err
 	}
@@ -226,7 +212,7 @@ func (f *FS) verifiedUploadPrefix(ctx context.Context, remotePath string, local 
 }
 
 func (f *FS) Download(ctx context.Context, remotePath, localPath string, options TransferOptions) (int64, error) {
-	options, err := options.normalized()
+	options, err := normalizedOptions(options)
 	if err != nil {
 		return 0, err
 	}

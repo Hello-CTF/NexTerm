@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -57,15 +58,7 @@ func ExtractCommand(remotePath string) (string, string, error) {
 	return fmt.Sprintf("mkdir -p %s && %s", quotedTarget, command), target, nil
 }
 
-func StripArchiveExtension(name string) string {
-	lower := strings.ToLower(name)
-	for _, extension := range []string{".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".tbz", ".txz", ".tar", ".zip"} {
-		if strings.HasSuffix(lower, extension) {
-			return name[:len(name)-len(extension)]
-		}
-	}
-	return name
-}
+func StripArchiveExtension(name string) string { return transfer.StripArchiveExtension(name) }
 
 func (f *FS) PackDownload(ctx context.Context, remotePath, localPath string, options TransferOptions) (int64, error) {
 	if f.executor == nil {

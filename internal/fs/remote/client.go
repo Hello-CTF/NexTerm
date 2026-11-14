@@ -14,7 +14,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/deviceproto"
 	fslocal "github.com/Hello-CTF/NexTerm/internal/fs/local"
-	sshfs "github.com/Hello-CTF/NexTerm/internal/fs/ssh"
+	"github.com/Hello-CTF/NexTerm/internal/fs/transfer"
 	"github.com/Hello-CTF/NexTerm/internal/transport/base"
 )
 
@@ -270,7 +270,7 @@ func shellQuoteHome(path string) string {
 // PackDownload tars a directory through the device shell into a random temp
 // archive, downloads it through the regular transfer path, and removes the
 // temp archive on both success and failure.
-func (f *FileSystem) packDownloadWithShell(ctx context.Context, remotePath, localPath string, options sshfs.TransferOptions) (int64, error) {
+func (f *FileSystem) packDownloadWithShell(ctx context.Context, remotePath, localPath string, options transfer.Options) (int64, error) {
 	parent, name, err := splitArchivePath(remotePath)
 	if err != nil {
 		return 0, err
@@ -302,7 +302,7 @@ func (f *FileSystem) packDownloadWithShell(ctx context.Context, remotePath, loca
 		MaxBytes: options.MaxBytes,
 		Progress: func(progress fslocal.Progress) {
 			if options.Progress != nil {
-				options.Progress(sshfs.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
+				options.Progress(transfer.Progress{Transferred: progress.Transferred, Total: progress.Total, Done: progress.Done})
 			}
 		},
 	})
