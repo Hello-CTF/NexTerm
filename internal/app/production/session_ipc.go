@@ -207,6 +207,11 @@ type attachTerminalRequest struct {
 	ReplayBytes int    `json:"replayBytes"`
 	FromSeq     uint64 `json:"fromSeq,omitempty"`
 	FromEpoch   string `json:"fromEpoch,omitempty"`
+	// Durable says whether the client knows the tab as a persistent
+	// terminal; a tab missing here is looked for on its host only when it
+	// is, or when the client does not know (a layout saved by an older
+	// version). The ID itself no longer tells the kind.
+	Durable *bool `json:"durable,omitempty"`
 }
 
 type attachedTabDTO struct {
@@ -750,7 +755,10 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return s.attachDocker(ctx, call, input.TabID)
 					}
 				}
-				if ids.Valid(input.TabID) {
+				if !ids.ValidTerminal(input.TabID) {
+					return attachedTabDTO{}, ipc.BadParam(errors.New("终端标签页 ID 无效"))
+				}
+				if ids.Valid(input.TabID) && (input.Durable == nil || *input.Durable) {
 					recovered, recoveryErr := s.recoverRemoteDurable(ctx, call, input.TabID, input.SessionID)
 					if recoveryErr == nil {
 						return recovered, nil
@@ -759,9 +767,6 @@ func (s *terminalCommandService) registerSession(dispatcher *ipc.Dispatcher) err
 						return attachedTabDTO{}, terminalIPCError(recoveryErr)
 					}
 					return attachedTabDTO{}, terminalIPCError(durable.ErrNotFound)
-				}
-				if !validTabID(input.TabID) {
-					return attachedTabDTO{}, ipc.BadParam(errors.New("终端标签页 ID 无效"))
 				}
 				return attachedTabDTO{}, terminalIPCError(session.ErrTabNotFound)
 			})
@@ -1573,19 +1578,6 @@ func gridRequestClient(environmentClient, requestClient string) string {
 		return requestClient
 	}
 	return environmentClient
-}
-
-func validTabID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for index := 0; index < len(id); index++ {
-		char := id[index]
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func (s *terminalCommandService) closeDockerSession(ctx context.Context, sessionID string) {

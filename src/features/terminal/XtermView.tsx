@@ -160,6 +160,9 @@ export interface XtermViewProps {
   winrm?: boolean;
   containerId?: string;
   resumeTabId?: string;
+  // resumeDurable is whether the tab is known as a persistent terminal (undefined when not known); a tab missing in
+  // this run is looked for on its host only when it is or may be one.
+  resumeDurable?: boolean;
   forceRegular?: boolean;
   // requestRegular opens a fresh shell as a regular terminal (the durable helper was not ready when the tab opened);
   // unlike forceRegular it still resumes an existing attachment.
@@ -244,6 +247,8 @@ function LinesBelowBadge({ tabId, onJump }: { tabId: string; onJump: () => void 
 
 export function XtermView(props: XtermViewProps) {
   const { sessionId, containerId, resumeTabId } = props;
+  const resumeDurableRef = useRef(props.resumeDurable);
+  resumeDurableRef.current = props.resumeDurable;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const gridRef = useRef<TerminalGridCoordinator | null>(null);
@@ -1311,7 +1316,14 @@ export function XtermView(props: XtermViewProps) {
         let id: string;
         let fallbackNotice: string | undefined;
         if (resume) {
-          const info = await terminalApi.attachTab(resume, channel, -1, undefined, containerId ? undefined : sessionId);
+          const info = await terminalApi.attachTab(
+            resume,
+            channel,
+            -1,
+            undefined,
+            containerId ? undefined : sessionId,
+            resumeDurableRef.current,
+          );
           id = info.tabId;
           if (disposed) {
             void terminalApi.detach(id, channelIdOf(channel)).catch(() => undefined);
@@ -1483,8 +1495,8 @@ export function XtermView(props: XtermViewProps) {
             replayRemaining = 0;
           }
           const info = resume
-            ? await terminalApi.attachTab(id, channel, -1, resume, containerId ? undefined : sessionId)
-            : await terminalApi.attachTab(id, channel, -1, undefined, containerId ? undefined : sessionId);
+            ? await terminalApi.attachTab(id, channel, -1, resume, containerId ? undefined : sessionId, resumeDurableRef.current)
+            : await terminalApi.attachTab(id, channel, -1, undefined, containerId ? undefined : sessionId, resumeDurableRef.current);
           if (disposed) {
             void terminalApi.detach(info.tabId, channelIdOf(channel)).catch(() => undefined);
             return;

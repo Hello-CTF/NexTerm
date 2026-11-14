@@ -165,6 +165,7 @@ describe("XtermView stream wiring", () => {
       -1,
       { seq: 4 * (4 << 20), epoch: "e1" },
       "session-1",
+      undefined,
     );
     feedControl({ type: "nexterm.stream-anchor", epoch: "e1", streamSeq: 4 * (4 << 20), controlBytes: 0, attachmentId: 12 });
     // The replay redelivers the refused chunk: accepted and rendered in order.
@@ -253,7 +254,7 @@ describe("XtermView stream wiring", () => {
     expect(t.writeLog.reduce((total, entry) => total + entry.length, 0)).toBe(4 * chunk.length);
     expect(harness.attachTab).toHaveBeenNthCalledWith(
       2, "kernel-1", expect.anything(), -1,
-      { seq: 4 * chunk.length, epoch: "e1" }, "session-1",
+      { seq: 4 * chunk.length, epoch: "e1" }, "session-1", undefined,
     );
 
     // The next ordered anchor restores the refused suffix first; the late
@@ -776,7 +777,7 @@ describe("XtermView stream wiring", () => {
       await flushMacrotask();
       await flushMacrotask();
     });
-    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined);
+    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined, undefined);
     const replay = new Uint8Array(4 << 20).fill(0x62);
     act(() => harness.channel?.onBytes?.(replay));
     act(() => t.drainWrites());
@@ -793,7 +794,7 @@ describe("XtermView stream wiring", () => {
     expect(harness.attachTab).not.toHaveBeenCalled();
     act(() => term().drainWrites());
     await act(async () => { await flushMacrotask(); });
-    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined);
+    expect(harness.attachTab).toHaveBeenCalledWith("kernel-1", expect.anything(), -1, undefined, undefined, undefined);
   });
 
   it.each([false, true])("waits for a pending detach before drain/reopen can replace the subscription (Docker=%s)", async (docker) => {
@@ -821,6 +822,7 @@ describe("XtermView stream wiring", () => {
       "kernel-1", expect.anything(), -1,
       docker ? undefined : { seq: 4 * chunk.length, epoch: "e1" },
       docker ? undefined : "session-1",
+      undefined,
     );
   });
 
