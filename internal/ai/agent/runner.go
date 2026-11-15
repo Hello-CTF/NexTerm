@@ -889,12 +889,14 @@ func (r *Runner) cleanup(current *job) {
 	if deleter, ok := r.checkpoints.(adk.CheckPointDeleter); ok {
 		_ = deleter.Delete(context.Background(), current.id)
 	}
-	current.markDone()
+	// Unregister before signalling done, so a Wait that returns never sees the
+	// job still registered; a later Wait falls back to the finished run row.
 	r.mu.Lock()
 	if r.jobs[current.id] == current {
 		delete(r.jobs, current.id)
 	}
 	r.mu.Unlock()
+	current.markDone()
 	r.wg.Done()
 }
 
