@@ -20,6 +20,10 @@ var (
 	ErrInvalidOwner     = errors.New("定时任务所有者信息无效")
 	ErrForeignScope     = errors.New("定时任务会话不属于任务所有者")
 	ErrForeignDevice    = errors.New("定时任务绑定在其他设备上，只能在该设备上修改；可在同步设置中删除")
+	// ErrRunSkipped marks a run that did not start because its conversation
+	// still had a task running or waiting for confirmation. It is recorded
+	// and reported but does not count as a failure.
+	ErrRunSkipped = errors.New("会话仍有任务在运行或等待确认，本次定时运行已跳过")
 )
 
 // ErrOpenJobUnattributed marks Open-mode jobs disabled after switching to

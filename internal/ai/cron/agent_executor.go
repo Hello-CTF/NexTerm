@@ -53,6 +53,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, trigger Trigger) error {
 		args.Scope = scope
 	}
 	response, err := e.Runner.Start(guard.WithUnattended(ctx), args, agent.StaticStream(stream))
+	if agent.IsConversationBusy(err) {
+		return ErrRunSkipped
+	}
 	if err != nil {
 		return fmt.Errorf("cron: start unattended agent run: %w", err)
 	}

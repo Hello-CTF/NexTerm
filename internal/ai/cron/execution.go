@@ -103,6 +103,12 @@ func (s *Scheduler) finishExecution(ctx context.Context, job Job, executionErr e
 	finishContext := context.WithoutCancel(ctx)
 	if _, err := s.finish(finishContext, job, executionErr, s.now()); err != nil {
 		s.reportOwnershipOrStorage(job.ID, err)
+		return
+	}
+	if errors.Is(executionErr, ErrRunSkipped) {
+		// A skipped run leaves no conversation output; report it so the
+		// skip is not only visible in the job list.
+		s.notify(fmt.Errorf("cron job %s: %w", job.ID, executionErr))
 	}
 }
 
@@ -122,7 +128,17 @@ func (s *Scheduler) finish(ctx context.Context, job Job, executionErr error, now
 	job.LastScheduledFor = run.ScheduledFor
 	job.LastCoalesced = run.Coalesced
 	job.UpdatedAt = now
-	if executionErr == nil {
+	switch {
+	case errors.Is(executionErr, ErrRunSkipped):
+		// A skip is not a failure: the job keeps its failure count and the
+		// next occurrence runs on schedule. A one-shot job has no next
+		// occurrence, so it tries again after the failure backoff.
+		job.LastError = boundedError(executionErr)
+		job.RetryAt = time.Time{}
+		if OneShot(job.Schedule) {
+			job.RetryAt = now.Add(s.options.FailureBackoff)
+		}
+	case executionErr == nil:
 		job.LastError = ""
 		job.ConsecutiveFailures = 0
 		job.RetryAt = time.Time{}
@@ -131,7 +147,7 @@ func (s *Scheduler) finish(ctx context.Context, job Job, executionErr error, now
 			job.Enabled = false
 			job.NextRunAt = time.Time{}
 		}
-	} else {
+	default:
 		job.LastError = boundedError(executionErr)
 		job.ConsecutiveFailures++
 		delay := s.failureDelay(job.ConsecutiveFailures)
