@@ -208,6 +208,7 @@ type requestSafety struct {
 type attemptState struct {
 	request        *requestSafety
 	frameSeen      atomic.Bool
+	identitySent   atomic.Bool
 	streaming      bool
 	runID          string
 	callID         string

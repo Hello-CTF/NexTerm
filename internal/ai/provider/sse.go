@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -19,6 +20,29 @@ type streamState struct {
 	reasoning  strings.Builder
 	pending    map[uint64]*pendingToolCall
 	sawPayload bool
+	// lastIndex is the call that fragments without an index continue.
+	lastIndex uint64
+	hasLast   bool
+}
+
+// resolveToolIndex picks the call a fragment belongs to. Gateways that omit
+// the index on parallel calls are told apart by ID: a new non-empty ID opens
+// a call, while a fragment without an ID continues the latest one.
+func (s *streamState) resolveToolIndex(fragment schema.ToolCall) uint64 {
+	if fragment.Index != nil {
+		return uint64(max(*fragment.Index, 0))
+	}
+	if s.hasLast {
+		current := s.pending[s.lastIndex]
+		if fragment.ID == "" || current == nil || current.id == "" || current.id == fragment.ID {
+			return s.lastIndex
+		}
+	}
+	next := uint64(0)
+	for index := range s.pending {
+		next = max(next, index+1)
+	}
+	return next
 }
 
 func (s *streamState) consumeMessage(message *schema.Message) {
@@ -37,11 +61,20 @@ func (s *streamState) consumeMessage(message *schema.Message) {
 	if message.Content != "" {
 		s.content.WriteString(message.Content)
 	}
-	for _, fragment := range message.ToolCalls {
-		index := uint64(0)
-		if fragment.Index != nil {
-			index = uint64(max(*fragment.Index, 0))
+	cloned := false
+	for position, fragment := range message.ToolCalls {
+		index := s.resolveToolIndex(fragment)
+		if fragment.Index == nil {
+			// Downstream schema.ConcatMessages keeps index-less chunks as
+			// separate calls, so publish the resolved index.
+			if !cloned {
+				message.ToolCalls = slices.Clone(message.ToolCalls)
+				cloned = true
+			}
+			resolved := int(index)
+			message.ToolCalls[position].Index = &resolved
 		}
+		s.lastIndex, s.hasLast = index, true
 		pending := s.pending[index]
 		if pending == nil {
 			pending = &pendingToolCall{}
