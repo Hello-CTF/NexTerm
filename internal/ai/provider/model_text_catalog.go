@@ -548,7 +548,8 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "未知待办状态 %s", target: "unknown todo status %s"},
 	{source: "读取 %s 历史失败: %w", target: "failed to read %s history: %w"},
 	{source: "未找到本机 shell 历史文件（已尝试: %s）", target: "no local shell history file found (tried: %s)"},
-	{source: "未知控制键 <%s>", target: "unknown control key <%s>"},
+	{source: "未知控制键 <%s>；ctrl+ 仅支持字母与 [ \\ ] ^ _ ?，字面文本请用 <lt> 代替 <，或设置 paste=true 按字面发送", target: "unknown control key <%s>; ctrl+ supports only letters and [ \\ ] ^ _ ?; for literal text write <lt> instead of <, or set paste=true to send it literally"},
+	{source: "不支持的按键 <%s>；请使用 send_keys 说明中列出的按键名，字面文本请用 <lt> 代替 <，或设置 paste=true 按字面发送", target: "unsupported key <%s>; use a key name listed in the send_keys description; for literal text write <lt> instead of <, or set paste=true to send it literally"},
 	{source: "工具 %s 执行时崩溃：%s", target: "tool %s panicked during execution: %s"},
 	{source: "提醒内容过长或不是有效 UTF-8（上限 %d 字符）", target: "reminder content is too long or is not valid UTF-8 (maximum %d characters)"},
 	{source: "delay_minutes 超过 30 天上限（%d 分钟）", target: "delay_minutes exceeds the 30-day limit (%d minutes)"},
@@ -570,6 +571,7 @@ var modelTextTemplateSpecs = []modelTextTemplateSpec{
 	{source: "命令状态：%s，序号 %d", target: "command state: %s, sequence %d"},
 	{source: "新输出（序号 %d → %d，最新 %d）", target: "new output (sequence %d -> %d, latest %d)"},
 	{source: "已发送（屏幕序号 %d）", target: "sent (screen sequence %d)"},
+	{source: "since_seq=%d 超过该终端的最新序号 %d；它可能是另一个终端的锚点，请先 read_screen 获取该终端的屏幕序号", target: "since_seq=%d is beyond this terminal's latest sequence %d; it may be an anchor from another terminal, so read_screen this terminal for its screen sequence first"},
 	{source: "已发送（屏幕序号 %d）；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出", target: "sent (screen sequence %d); this terminal does not support OSC 133 command tracking, so command completion cannot be confirmed; use wait_for to verify new output"},
 	{source: "模式已出现（新输出，屏幕序号 %d）", target: "pattern appeared (new output, screen sequence %d)"},
 	{source: "发送按键超时：%s 内终端未接受输入，终端可能无响应；按键可能稍后仍会送达，请先读取屏幕确认再决定是否重试: %w", target: "sending keys timed out: the terminal accepted no input within %s and may be unresponsive; the keys may still be delivered later, so read the screen before deciding whether to retry: %w"},
@@ -1066,4 +1068,7 @@ var modelAdditionalStaticText = map[string]string{
 	"开启 AI 授权同步需要先登录账号":   "enabling AI grant sync requires signing in",
 	"AI 运行不存在":            "AI run not found",
 	"数据库清理被读事务阻塞":         "database cleanup is blocked by a read transaction",
+
+	"该终端正处于终端接管中，AI 对话不能同时向其写入；请等待接管结束，或改用其他终端":                                  "this terminal is under a terminal takeover, so the AI chat cannot write to it at the same time; wait for the takeover to end or use another terminal",
+	"history_lines 不能与 since_seq、cursor 或 max_bytes 同时使用；按序号翻页请去掉 history_lines": "history_lines cannot be combined with since_seq, cursor, or max_bytes; drop history_lines to page by sequence",
 }

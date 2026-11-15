@@ -83,6 +83,15 @@ func (m *Manager) operationLock(tabID string) *sync.Mutex {
 	return lock
 }
 
+// Active reports whether a takeover currently owns tabID. Other AI writers
+// use it to stay out of a tab while a takeover is typing into it.
+func (m *Manager) Active(tabID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owner := m.owners[tabID]
+	return !m.closed && owner != nil && owner.ctx.Err() == nil
+}
+
 func (m *Manager) Enter(ctx context.Context, tabID string) (string, error) {
 	owner, err := m.enter(ctx, tabID)
 	if err != nil {

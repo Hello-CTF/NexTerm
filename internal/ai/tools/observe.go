@@ -20,17 +20,19 @@ const (
 
 // renderOutputDiff replays raw terminal bytes through a throwaway screen
 // emulator so anchored reads and waits see clean text instead of escape
-// sequences. The anchor may cut mid-sequence; the leading fragment renders
-// verbatim, which is bounded and cosmetic.
+// sequences. Every line the bytes produce is kept: the history is sized to
+// the input, since each scrolled line costs at least one byte. The anchor
+// may cut mid-sequence; the leading fragment renders verbatim, which is
+// bounded and cosmetic.
 func renderOutputDiff(data []byte, cols, rows int) []string {
-	scrollback, screen := renderOutputDiffSplit(data, cols, rows)
+	scrollback, screen := renderOutputDiffSplit(data, cols, rows, len(data)+1)
 	return append(scrollback, screen...)
 }
 
-// renderOutputDiffSplit renders like renderOutputDiff but keeps the
-// scrollback lines and the visible screen lines separate, so callers can
-// address deep history without guessing where the screen begins.
-func renderOutputDiffSplit(data []byte, cols, rows int) ([]string, []string) {
+// renderOutputDiffSplit renders like renderOutputDiff but keeps up to
+// historyLines scrollback lines separate from the visible screen lines, so
+// callers can address deep history without guessing where the screen begins.
+func renderOutputDiffSplit(data []byte, cols, rows, historyLines int) ([]string, []string) {
 	if len(data) == 0 {
 		return nil, nil
 	}
@@ -40,9 +42,9 @@ func renderOutputDiffSplit(data []byte, cols, rows int) ([]string, []string) {
 	if rows <= 0 {
 		rows = 24
 	}
-	tab := terminal.NewTab("diff", "", cols, rows, terminal.UTF8, terminal.WithScreenHistory(diffHistoryLines))
+	tab := terminal.NewTab("diff", "", cols, rows, terminal.UTF8, terminal.WithScreenHistory(historyLines))
 	tab.Feed(data)
-	return trimRenderedLines(tab.ScreenHistory(diffHistoryLines)), trimRenderedLines(strings.Split(tab.ScreenText(), "\n"))
+	return trimRenderedLines(tab.ScreenHistory(historyLines)), trimRenderedLines(strings.Split(tab.ScreenText(), "\n"))
 }
 
 func trimRenderedLines(lines []string) []string {

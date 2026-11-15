@@ -543,7 +543,7 @@ func (e *actionExecution) tools() ([]tool.BaseTool, error) {
 	if err != nil {
 		return nil, err
 	}
-	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command.", func(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
+	sendKeys, err := utils.InferTool("send_keys", "Send keys; enter or <enter> really submits the command. "+tools.SendKeysTagHelp, func(ctx context.Context, input takeoverSendKeysArgs) (tools.Output, error) {
 		return tools.Guarded(ctx, "send_keys", func() (tools.Output, error) {
 			return e.sendKeys(ctx, input)
 		})
@@ -642,6 +642,9 @@ func (e *actionExecution) sendKeys(ctx context.Context, input takeoverSendKeysAr
 	}
 	if !e.runtime.allowWrite {
 		return tools.Fail(ErrWriteDisabled), nil
+	}
+	if _, err := tools.EncodeKeys(input.Keys, input.Enter); err != nil {
+		return tools.Fail(err), nil
 	}
 	screen, err := e.manager.deps.Snapshot(ctx, e.state.args.TabID)
 	if err != nil {

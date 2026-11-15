@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ai/agent"
@@ -869,6 +870,13 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 		return err
 	}
 	toolsDeps.Grants = grantsManager
+	// The takeover manager is built after the registry; recovered runs may
+	// call tools before it exists, so it is published atomically.
+	var activeTakeover atomic.Pointer[takeover.Manager]
+	toolsDeps.TakeoverActive = func(tabID string) bool {
+		manager := activeTakeover.Load()
+		return manager != nil && manager.Active(tabID)
+	}
 
 	registry := tools.NewRegistry(toolsDeps)
 
@@ -923,6 +931,7 @@ func composeAIRuntime(ctx context.Context, services *ProductionServices) error {
 	}
 	takeoverDeps = takeover.WithSession(takeoverDeps, services.Sessions)
 	takeoverManager := takeover.NewManager(takeoverDeps)
+	activeTakeover.Store(takeoverManager)
 
 	services.Guard = guardManager
 	if services.Sync != nil {

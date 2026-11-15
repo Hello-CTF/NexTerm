@@ -1036,6 +1036,9 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if err := decode(raw, &args); err != nil {
 		return Fail(err)
 	}
+	if args.HistoryLines > 0 && (args.SinceSeq > 0 || args.Cursor != "" || args.MaxBytes != 0) {
+		return Fail(invalid("history_lines 不能与 since_seq、cursor 或 max_bytes 同时使用；按序号翻页请去掉 history_lines"))
+	}
 	if args.MaxBytes == 0 {
 		args.MaxBytes = defaultDiffBytes
 	}
@@ -1104,14 +1107,14 @@ func (r *Registry) readScreen(ctx context.Context, jobID string, scope Scope, ra
 	if err != nil {
 		return Fail(err)
 	}
-	buffered, cursor := terminalInputOf(screen)
-	r.state(jobID).observeInput(tabID, buffered, cursor)
+	state, stateErr := r.commandState(ctx, tabID)
+	r.observeArbitrationInput(jobID, tabID, screen, stateErr == nil && state.Running)
 	header := r.screenIdentityHeader(ctx, tabID) +
 		fmt.Sprintf("光标 (%d, %d)，空闲 %dms，屏幕序号 %d", screen.CursorRow, screen.CursorCol, screen.IdleMS, screen.Seq)
 	if screen.AltScreen {
 		header += "，AltScreen"
 	}
-	if state, stateErr := r.commandState(ctx, tabID); stateErr == nil && state.Sequence > 0 {
+	if stateErr == nil && state.Sequence > 0 {
 		status := "空闲"
 		if state.Running {
 			status = "运行中"
@@ -1152,11 +1155,6 @@ func (r *Registry) screenIdentityHeader(ctx context.Context, tabID string) strin
 	return line + "\n"
 }
 
-// terminalInputOf extracts the observable input buffer state from a screen.
-func terminalInputOf(screen Screen) (string, int) {
-	return TerminalInputCursor(screen)
-}
-
 // readScreenHistory returns up to maxLines rendered scrollback lines
 // directly above the visible screen, replayed from a bounded raw tail
 // window. It reports the exact raw anchors of the window and the earliest
@@ -1179,7 +1177,7 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 	if err != nil {
 		return Fail(err)
 	}
-	rendered, _ := renderOutputDiffSplit(data, cols, rows)
+	rendered, _ := renderOutputDiffSplit(data, cols, rows, diffHistoryLines)
 	scrollback := rendered
 	if len(scrollback) > maxLines {
 		scrollback = scrollback[len(scrollback)-maxLines:]
@@ -1211,6 +1209,9 @@ func (r *Registry) readScreenHistory(ctx context.Context, tabID string, maxLines
 func (r *Registry) readScreenSince(ctx context.Context, tabID string, sinceSeq uint64, maxBytes int, unwrap bool, cols, rows int) Output {
 	data, start, latest, err := r.outputSince(ctx, tabID, sinceSeq, maxBytes)
 	if err != nil {
+		return Fail(err)
+	}
+	if err := anchorBeyondLatest(sinceSeq, latest); err != nil {
 		return Fail(err)
 	}
 	lines := renderOutputDiff(data, cols, rows)
@@ -1284,6 +1285,9 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if err != nil {
 		return Fail(err)
 	}
+	if err := r.takeoverWriteError(tabID); err != nil {
+		return Fail(err)
+	}
 	var encoded []byte
 	if !args.Paste {
 		encoded, err = EncodeKeys(args.Keys, args.Enter)
@@ -1291,18 +1295,24 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 			return Fail(err)
 		}
 	}
-	// User-input arbitration: refuse to write when the input buffer changed
-	// after this job last observed it, unless the call forces through with
-	// full knowledge. A failed snapshot degrades to an explicit note instead
-	// of silently skipping the check.
-	arbitrationNote := ""
-	buffered, cursor := "", 0
+	// User-input arbitration: refuse to write when the shell input line
+	// changed after this job last observed it, unless the call forces
+	// through with full knowledge. Screens without a comparable input line
+	// (a running command, the alternate screen, program output) are not
+	// checked. A failed snapshot degrades to an explicit note instead of
+	// silently skipping the check.
 	screen, snapshotErr := r.deps.Terminal.Snapshot(ctx, tabID)
+	before, err := r.commandState(ctx, tabID)
+	if err != nil {
+		return Fail(err)
+	}
+	arbitrationNote := ""
+	buffered, cursor, predictable := "", 0, false
 	if snapshotErr != nil {
 		arbitrationNote = "；终端输入状态无法校验（快照失败），已直接写入"
 	} else {
-		buffered, cursor = TerminalInputCursor(screen)
-		if changed, observed := r.state(jobID).inputChanged(tabID, buffered, cursor); observed && changed {
+		buffered, cursor, predictable = arbitrationInput(screen, before.Running)
+		if predictable && r.state(jobID).pendingInput(tabID, buffered, cursor) {
 			if !args.Force {
 				return Fail(ErrUserInputPending)
 			}
@@ -1315,10 +1325,6 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	// failed snapshot fails closed (mode unconfirmed).
 	if args.Paste && strings.Contains(args.Keys, "\n") && (snapshotErr != nil || !screen.BracketedPaste) {
 		return Fail(invalid("当前终端未开启 bracketed-paste 模式，paste 中的换行会被编码为回车并提前提交；请拆分为多条 send_keys（或开启 bracketed paste 后再试）"))
-	}
-	before, err := r.commandState(ctx, tabID)
-	if err != nil {
-		return Fail(err)
 	}
 	sameLockSubmit := true
 	literalGuarded := false
@@ -1368,17 +1374,23 @@ func (r *Registry) sendKeys(ctx context.Context, jobID string, scope Scope, call
 	if r.deps.Audit != nil {
 		_ = r.deps.Audit(context.WithoutCancel(ctx), AuditEntry{SessionID: scope.SessionID, AssetID: scope.AssetID, Kind: "takeover", Payload: map[string]any{"keys": "<redacted>", "enter": args.Enter, "paste": args.Paste, "tab": tabID}})
 	}
-	r.observePostWriteInput(jobID, tabID, buffered, cursor, args, encoded)
+	r.observePostWriteInput(jobID, tabID, buffered, cursor, predictable, args, encoded)
 	var proofScreen Screen
 	var proofErr error
 	if args.Paste {
 		proofScreen, proofErr = r.deps.Terminal.Snapshot(ctx, tabID)
 	}
+	// The anchor is the sequence read before the write, so output the keys
+	// produce immediately can never land before it.
+	anchor := ""
+	if snapshotErr == nil && screen.Seq > 0 {
+		anchor = fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
+	}
 	var result Output
 	if args.WaitMS == 0 {
-		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID))
+		result = OK("已发送" + anchor)
 	} else if _, ok := r.deps.Terminal.(CommandStateTerminal); !ok {
-		result = OK("已发送" + screenAnchorSuffix(ctx, r.deps.Terminal, tabID) + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
+		result = OK("已发送" + anchor + "；该终端不支持 OSC 133 命令跟踪，无法确认命令是否完成，请用 wait_for 校验新输出")
 	} else {
 		result = r.waitCommandFinish(ctx, tabID, before, args.WaitMS)
 	}
@@ -1442,24 +1454,27 @@ func (r *Registry) writePasteSplit(ctx context.Context, tabID, text string, ente
 // write: deterministic text/paste writes predict the resulting buffer, and
 // unpredictable control keys fall back to the live post-write screen so new
 // user input still trips the next arbitration check.
-func (r *Registry) observePostWriteInput(jobID, tabID, buffered string, cursor int, args sendKeysArgs, encoded []byte) {
+func (r *Registry) observePostWriteInput(jobID, tabID, buffered string, cursor int, predictable bool, args sendKeysArgs, encoded []byte) {
 	state := r.state(jobID)
-	if args.Paste {
-		if args.Enter {
-			state.observeInput(tabID, "", 0)
-			return
-		}
-		if predicted, predictedCursor, ok := predictedInput(buffered, cursor, []byte(args.Keys)); ok {
+	if predictable {
+		if args.Paste {
+			if args.Enter {
+				state.observeInput(tabID, "", 0)
+				return
+			}
+			if predicted, predictedCursor, ok := predictedInput(buffered, cursor, []byte(args.Keys)); ok {
+				state.observeInput(tabID, predicted, predictedCursor)
+				return
+			}
+		} else if predicted, predictedCursor, ok := predictedInput(buffered, cursor, encoded); ok {
 			state.observeInput(tabID, predicted, predictedCursor)
 			return
 		}
-	} else if predicted, predictedCursor, ok := predictedInput(buffered, cursor, encoded); ok {
-		state.observeInput(tabID, predicted, predictedCursor)
-		return
 	}
-	if screen, err := r.deps.Terminal.Snapshot(context.Background(), tabID); err == nil {
-		observed, observedCursor := TerminalInputCursor(screen)
-		state.observeInput(tabID, observed, observedCursor)
+	ctx := context.Background()
+	if screen, err := r.deps.Terminal.Snapshot(ctx, tabID); err == nil {
+		commandState, stateErr := r.commandState(ctx, tabID)
+		r.observeArbitrationInput(jobID, tabID, screen, stateErr == nil && commandState.Running)
 	}
 }
 
@@ -1478,14 +1493,22 @@ func withSubmissionProof(screen Screen, snapshotErr error, result Output) Output
 	return result
 }
 
-// screenAnchorSuffix reports the post-write screen sequence so the caller can
-// anchor a wait_for since_seq read; it degrades to empty when unavailable.
-func screenAnchorSuffix(ctx context.Context, terminal Terminal, tabID string) string {
-	screen, err := terminal.Snapshot(ctx, tabID)
-	if err != nil || screen.Seq == 0 {
-		return ""
+// takeoverWriteError refuses a chat-agent terminal write while a takeover
+// owns the tab, so the two never type into the same input line at once.
+func (r *Registry) takeoverWriteError(tabID string) error {
+	if r.deps.TakeoverActive != nil && r.deps.TakeoverActive(tabID) {
+		return ErrTakeoverActive
 	}
-	return fmt.Sprintf("（屏幕序号 %d）", screen.Seq)
+	return nil
+}
+
+// anchorBeyondLatest rejects an output anchor newer than the tab's latest
+// sequence: the stream would clamp it and silently read nothing.
+func anchorBeyondLatest(sinceSeq, latest uint64) error {
+	if sinceSeq > latest {
+		return invalid("since_seq=%d 超过该终端的最新序号 %d；它可能是另一个终端的锚点，请先 read_screen 获取该终端的屏幕序号", sinceSeq, latest)
+	}
+	return nil
 }
 
 func (r *Registry) terminalCreate(ctx context.Context, jobID string, scope Scope, call Call) Output {
@@ -2037,7 +2060,7 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 	if args.Mode != "" && args.Mode != "any" && args.Mode != "all" {
 		return Fail(invalid("mode 必须为 any 或 all"))
 	}
-	if args.Pattern == nil && args.QuietMS == 0 && args.Lines == 0 {
+	if (args.Pattern == nil || *args.Pattern == "") && args.QuietMS == 0 && args.Lines == 0 {
 		return Fail(invalid("pattern 不能为空；仅 quiet_ms 大于 0 或 lines 大于 0 时可以省略"))
 	}
 	if args.TabID != "" && len(args.TabIDs) > 0 {
@@ -2072,7 +2095,12 @@ func (r *Registry) waitFor(ctx context.Context, jobID string, scope Scope, raw [
 		if pattern != "" {
 			matcher = regex
 		}
-		return r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
+		result := r.waitForTabs(waitContext, jobID, scope, tabIDs, matcher, pattern, args.Lines, args.QuietMS, mode, args.SinceSeq)
+		if matcher != nil && result.Wait != nil {
+			result.Notes += "; the pattern was matched only against output produced after each tab's anchor, not against text already on screen"
+			result.Text += "；pattern 仅匹配各标签锚点之后的新输出，不匹配已在屏幕上的内容"
+		}
+		return result
 	}
 	tabID, err := r.waitResolveTab(waitContext, jobID, scope, args.TabID)
 	if err != nil {
@@ -2199,6 +2227,7 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 	gap := false
 	matched := false
 	toSeq := sinceSeq
+	first := true
 	for {
 		data, start, latest, err := r.waitOutputSince(waitContext, tabID, scanPos, waitScanBytes)
 		if err != nil {
@@ -2206,6 +2235,11 @@ func (r *Registry) waitForNewOutput(waitContext context.Context, tabID string, r
 				return Fail(err)
 			}
 			data, start, latest = nil, scanPos, toSeq
+		} else if first {
+			if err := anchorBeyondLatest(sinceSeq, latest); err != nil {
+				return Fail(err)
+			}
+			first = false
 		}
 		toSeq = latest
 		if start > scanPos {
