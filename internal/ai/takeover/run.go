@@ -273,11 +273,17 @@ func (m *Manager) initializeEino(state *runState) error {
 	if err != nil {
 		return err
 	}
+	toolNames, err := tools.ToolNames(state.ctx, einoTools)
+	if err != nil {
+		return err
+	}
+	toolSafety, unknownTool := tools.NewToolSafety(toolNames, ErrResumeMismatch, ErrStaleOwnership)
 	chatAgent, err := adk.NewChatModelAgent(state.ctx, &adk.ChatModelAgentConfig{
 		Name: "nexterm-takeover", Description: "Terminal takeover assistant",
 		Instruction: "Act on the fresh terminal screen provided before each model call; do not repeat stale screens back.",
 		Model:       chatModel, MaxIterations: state.args.MaxSteps,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: map[string]bool{"done": true}},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: map[string]bool{"done": true}},
+		Handlers:    []adk.ChatModelAgentMiddleware{toolSafety},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(ctx context.Context, agentState *adk.ChatModelAgentState) error {
 			m.waitIdle(ctx, state.args.TabID)
 			screen, err := m.deps.Snapshot(ctx, state.args.TabID)
@@ -685,7 +691,10 @@ func (e *actionExecution) writeKeys(ctx context.Context, callID string, input ta
 		return tools.Output{}, ErrStaleOwnership
 	}
 	if err := e.manager.verifyJobAsset(ctx, e.state); err != nil {
-		return tools.Output{}, err
+		if errors.Is(err, ErrResumeMismatch) {
+			return tools.Output{}, err
+		}
+		return tools.Output{}, fmt.Errorf("%w: %w", ErrResumeMismatch, err)
 	}
 	records, err := e.manager.loadExecRecords(ctx, e.state.id)
 	if err != nil {

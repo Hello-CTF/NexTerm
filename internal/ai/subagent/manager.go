@@ -364,13 +364,25 @@ func (m *Manager) execute(current *task, request Request, scope Scope, allowed m
 		return "", 0, usage.Usage{}, err
 	}
 	instruction := strings.TrimSpace(strings.Join([]string{m.config.Instruction, request.Persona}, "\n"))
+	toolsConfig := compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}
+	var handlers []adk.ChatModelAgentMiddleware
+	if m.config.ToolSafety != nil {
+		names := make([]string, 0, len(allowed))
+		for name := range allowed {
+			names = append(names, name)
+		}
+		var guard adk.ChatModelAgentMiddleware
+		guard, toolsConfig.UnknownToolsHandler = m.config.ToolSafety(names)
+		handlers = append(handlers, guard)
+	}
 	agent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
 		Name:          current.handle.ID,
 		Description:   "Bounded isolated task",
 		Instruction:   instruction,
 		Model:         chatModel,
 		MaxIterations: m.config.MaxIterations,
-		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools, ExecuteSequentially: true}},
+		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: toolsConfig},
+		Handlers:      handlers,
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
 			visible := make([]*schema.ToolInfo, 0, len(allowed))
 			for _, info := range state.ToolInfos {

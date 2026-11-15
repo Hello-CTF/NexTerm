@@ -287,9 +287,20 @@ func TestPlanMode(t *testing.T) {
 		if called.Load() {
 			t.Fatal("plan mode resolved command transport")
 		}
+		// An unadvertised tool is answered with a failed result naming the
+		// plan-mode tools, and the run continues instead of ending.
 		done, failed := terminalCounts(events)
-		if done != 0 || failed != 1 {
-			t.Fatalf("unadvertised plan-mode tool was not rejected: %+v", events)
+		if done != 1 || failed != 0 {
+			t.Fatalf("run should continue after an unadvertised plan-mode tool: %+v", events)
+		}
+		rejected := false
+		for _, event := range events {
+			if event.Type == "toolResult" && event.ID == "exec" && !event.OK && strings.Contains(event.Text, "read_file") && !strings.Contains(event.Text, "write_file") {
+				rejected = true
+			}
+		}
+		if !rejected {
+			t.Fatalf("unadvertised plan-mode tool was not rejected with the available tools: %+v", events)
 		}
 	})
 }

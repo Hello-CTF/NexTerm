@@ -336,9 +336,14 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 	if current.args.PlanMode {
 		returnDirectly["exit_plan_mode"] = true
 	}
+	toolNames, err := tools.ToolNames(current.ctx, einoTools)
+	if err != nil {
+		return err
+	}
+	toolSafety, unknownTool := tools.NewToolSafety(toolNames)
 	chatAgent, err := adk.NewChatModelAgent(current.ctx, &adk.ChatModelAgentConfig{
 		Name: "nexterm-ai", Description: "NexTerm ops assistant", Instruction: instruction, Model: chatModel, MaxIterations: runtime.maxTurns,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true}, ReturnDirectly: returnDirectly},
+		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: einoTools, ExecuteSequentially: true, UnknownToolsHandler: unknownTool}, ReturnDirectly: returnDirectly},
 		Middlewares: []adk.AgentMiddleware{{BeforeChatModel: func(_ context.Context, state *adk.ChatModelAgentState) error {
 			pending, err := r.deliverSteers(current, state)
 			if err != nil {
@@ -348,7 +353,9 @@ func (r *Runner) setupEino(current *job, assembleInput bool) error {
 			current.queueTurnEmits(pending...)
 			return nil
 		}}},
-		Handlers: []adk.ChatModelAgentMiddleware{compaction},
+		// The safety layer stays last so it wraps tool calls innermost and never
+		// swallows an interrupt raised by an outer layer.
+		Handlers: []adk.ChatModelAgentMiddleware{compaction, toolSafety},
 	})
 	if err != nil {
 		return err

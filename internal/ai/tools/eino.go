@@ -15,6 +15,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/execbatch"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/store"
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
@@ -599,6 +600,10 @@ func (e *Execution) subagentSpawnTool() (tool.InvokableTool, error) {
 	limits.NewModelForProfile = e.Subagents.ModelForProfile
 	limits.ResolveDefaultProfileID = e.Subagents.ActiveProfileID
 	limits.OnFinish = e.persistSubagentRun
+	limits.ToolSafety = func(allowed []string) (adk.ChatModelAgentMiddleware, func(context.Context, string, string) (string, error)) {
+		handler, unknown := NewToolSafety(allowed)
+		return handler, unknown
+	}
 	var manager *subagent.Manager
 	limits.NewTools = func(ctx context.Context, _ subagent.Scope) ([]tool.BaseTool, error) {
 		return e.scopedSubagentTools(ctx, manager)
