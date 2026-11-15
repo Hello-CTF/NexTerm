@@ -12,18 +12,21 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
 type exposureLink struct {
-	link syncservice.Link
-	err  error
+	link  syncservice.Link
+	proxy netproxy.Manual
+	err   error
 }
 
-func (l exposureLink) LinkGet(context.Context) (syncservice.Link, error) { return l.link, l.err }
-func (exposureLink) Remote() *syncservice.RemoteProxy                    { return nil }
+func (l exposureLink) LinkGet(context.Context) (syncservice.Link, error)  { return l.link, l.err }
+func (l exposureLink) LinkProxy(context.Context) (netproxy.Manual, error) { return l.proxy, l.err }
+func (exposureLink) Remote() *syncservice.RemoteProxy                     { return nil }
 
 func newExposureHostFixture(t *testing.T) (*localHelperExposureHost, *store.Store, *vault.Vault) {
 	t.Helper()
@@ -111,9 +114,10 @@ func TestLocalHelperExposureAccount(t *testing.T) {
 	if _, err := host.Account(ctx); !errors.Is(err, exposure.ErrLocked) {
 		t.Fatalf("Account with a locked vault = %v, want ErrLocked", err)
 	}
-	host.account = exposureLink{link: syncservice.Link{URL: "https://nexterm.example.com", Username: "alice", HasPassword: true, Insecure: true}}
+	proxy := netproxy.Manual{Type: netproxy.TypeSOCKS5, Host: "proxy.internal", Port: 1080, Username: "u", Password: "p"}
+	host.account = exposureLink{link: syncservice.Link{URL: "https://nexterm.example.com", Username: "alice", HasPassword: true, Insecure: true}, proxy: proxy}
 	account, err := host.Account(ctx)
-	if err != nil || account != (exposure.Account{URL: "https://nexterm.example.com", Username: "alice", Insecure: true}) {
+	if err != nil || account != (exposure.Account{URL: "https://nexterm.example.com", Username: "alice", Insecure: true, Proxy: proxy}) {
 		t.Fatalf("Account = %+v %v", account, err)
 	}
 }

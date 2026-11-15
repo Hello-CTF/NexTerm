@@ -13,6 +13,7 @@ import (
 	"github.com/Hello-CTF/NexTerm/internal/fleet/exposure"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
 	"github.com/Hello-CTF/NexTerm/internal/localhelper"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	syncservice "github.com/Hello-CTF/NexTerm/internal/sync"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -45,6 +46,7 @@ type localHelperExposureSecrets interface {
 
 type localHelperExposureAccount interface {
 	LinkGet(ctx context.Context) (syncservice.Link, error)
+	LinkProxy(ctx context.Context) (netproxy.Manual, error)
 	Remote() *syncservice.RemoteProxy
 }
 
@@ -96,7 +98,11 @@ func (h *localHelperExposureHost) Account(ctx context.Context) (exposure.Account
 	if !link.IsConfigured() {
 		return exposure.Account{}, exposure.ErrNoAccount
 	}
-	return exposure.Account{URL: link.URL, Username: link.Username, Insecure: link.Insecure}, nil
+	proxy, err := h.account.LinkProxy(vault.WithBackground(ctx))
+	if err != nil {
+		return exposure.Account{}, exposureVaultError(err)
+	}
+	return exposure.Account{URL: link.URL, Username: link.Username, Insecure: link.Insecure, Proxy: proxy}, nil
 }
 
 func exposureVaultError(err error) error {
@@ -154,7 +160,7 @@ func (h *localHelperExposureHost) Enroll(ctx context.Context, account exposure.A
 	if current, err := h.Account(ctx); err != nil || !current.Same(account) {
 		return nil, errors.New("注册期间同步账号已变更，已放弃这次注册")
 	}
-	client, err := agent.NewEndpointClient(agent.BaseURLEntry{URL: account.URL, Insecure: account.Insecure})
+	client, err := agent.NewEndpointClient(agent.BaseURLEntry{URL: account.URL, Insecure: account.Insecure, Proxy: account.Proxy})
 	if err != nil {
 		return nil, err
 	}

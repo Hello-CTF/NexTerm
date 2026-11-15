@@ -19,7 +19,7 @@ func TestDirectHelperBridgeCarriesSupervisorProtocol(t *testing.T) {
 	client := supervisor.NewRemoteClient(func(ctx context.Context) (net.Conn, error) {
 		hello := testHello()
 		hello.BridgeID = "direct-bridge"
-		conn, err := DialBridge(ctx, wsURL(harness.server.server.URL), hello, false)
+		conn, err := DialBridge(ctx, wsURL(harness.server.server.URL), hello, DialPolicy{})
 		if err != nil {
 			return nil, err
 		}

@@ -15,9 +15,11 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	stdsync "sync"
 	"time"
 
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
 
@@ -37,6 +39,7 @@ var errSessionExpired = errors.New("sync session expired")
 type remoteClient struct {
 	base        string
 	insecure    bool
+	proxy       netproxy.Manual
 	cookieToken string
 	csrfToken   string
 	// deviceToken is the login device token; it outlives the session cookie across logout and expiry.
@@ -49,6 +52,7 @@ type RemoteConfig struct {
 	Username string
 	Password string
 	Insecure bool
+	Proxy    netproxy.Manual
 }
 
 func newRemoteClient(config RemoteConfig) (*remoteClient, error) {
@@ -56,7 +60,11 @@ func newRemoteClient(config RemoteConfig) (*remoteClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &remoteClient{base: base, insecure: config.Insecure}, nil
+	proxy, err := config.Proxy.Normalize()
+	if err != nil {
+		return nil, ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+	}
+	return &remoteClient{base: base, insecure: config.Insecure, proxy: proxy}, nil
 }
 
 type accountSessionView struct {
@@ -93,7 +101,7 @@ func (c *remoteClient) login(ctx context.Context, username, password string) (*l
 	if c.deviceToken != "" {
 		request.AddCookie(&http.Cookie{Name: loginDeviceCookieName, Value: c.deviceToken})
 	}
-	response, err := syncHTTPClient(c.insecure).Do(request)
+	response, err := c.httpClient().Do(request)
 	if err != nil {
 		return nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
 	}
@@ -134,7 +142,7 @@ func (c *remoteClient) loginTOTP(ctx context.Context, ticket, code string) error
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("X-NexTerm-Client", "desktop")
-	response, err := syncHTTPClient(c.insecure).Do(request)
+	response, err := c.httpClient().Do(request)
 	if err != nil {
 		return ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
 	}
@@ -487,7 +495,7 @@ func (c *remoteClient) doOnce(request *http.Request, out any, csrf bool) (int, h
 	if csrf && c.csrfToken != "" {
 		request.Header.Set(csrfHeaderName, c.csrfToken)
 	}
-	response, err := syncHTTPClient(c.insecure).Do(request)
+	response, err := c.httpClient().Do(request)
 	if err != nil {
 		return 0, nil, nil, ipc.WrapError(ipc.CodeDisconnected, "无法连接远端同步服务: "+err.Error(), err)
 	}
@@ -586,8 +594,8 @@ func isLocalOrPrivate(hostname string) bool {
 
 // Sync HTTP clients are cached and reused by insecure: the Transport holds a connection pool; creating one per request would exhaust ports and lose keep-alive.
 var (
-	secureSyncHTTPClient   = newSyncHTTPClient(false)
-	insecureSyncHTTPClient = newSyncHTTPClient(true)
+	secureSyncHTTPClient   = mustSyncHTTPClient(false)
+	insecureSyncHTTPClient = mustSyncHTTPClient(true)
 )
 
 func syncHTTPClient(insecure bool) *http.Client {
@@ -597,9 +605,62 @@ func syncHTTPClient(insecure bool) *http.Client {
 	return secureSyncHTTPClient
 }
 
-func newSyncHTTPClient(insecure bool) *http.Client {
+type proxiedClientKey struct {
+	insecure bool
+	proxy    netproxy.Manual
+}
+
+// proxiedSyncHTTPClients holds the clients of the manual proxy in use. A
+// changed proxy replaces the earlier entries, so a dropped proxy password does
+// not stay in memory.
+var proxiedSyncHTTPClients = struct {
+	stdsync.Mutex
+	clients map[proxiedClientKey]*http.Client
+}{clients: map[proxiedClientKey]*http.Client{}}
+
+// httpClient returns the client of this connection: the shared direct client,
+// or the one routed through its manual proxy. A proxy that cannot be applied
+// fails every request instead of silently connecting directly.
+func (c *remoteClient) httpClient() *http.Client {
+	if !c.proxy.Enabled() {
+		return syncHTTPClient(c.insecure)
+	}
+	key := proxiedClientKey{insecure: c.insecure, proxy: c.proxy}
+	proxiedSyncHTTPClients.Lock()
+	defer proxiedSyncHTTPClients.Unlock()
+	if client, ok := proxiedSyncHTTPClients.clients[key]; ok {
+		return client
+	}
+	client, err := newSyncHTTPClient(c.insecure, c.proxy)
+	if err != nil {
+		return &http.Client{Transport: failingTransport{err: ipc.WrapError(ipc.CodeBadParam, err.Error(), err)}}
+	}
+	for other, stale := range proxiedSyncHTTPClients.clients {
+		if other.proxy != key.proxy {
+			stale.CloseIdleConnections()
+			delete(proxiedSyncHTTPClients.clients, other)
+		}
+	}
+	proxiedSyncHTTPClients.clients[key] = client
+	return client
+}
+
+type failingTransport struct{ err error }
+
+func (t failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, t.err }
+
+func mustSyncHTTPClient(insecure bool) *http.Client {
+	client, err := newSyncHTTPClient(insecure, netproxy.Manual{})
+	if err != nil {
+		panic(err)
+	}
+	return client
+}
+
+func newSyncHTTPClient(insecure bool, proxy netproxy.Manual) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.DialContext = (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	transport.DialContext = dialer.DialContext
 	transport.TLSHandshakeTimeout = 10 * time.Second
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = &tls.Config{}
@@ -607,11 +668,14 @@ func newSyncHTTPClient(insecure bool) *http.Client {
 		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
 	}
 	transport.TLSClientConfig.InsecureSkipVerify = insecure
+	if err := proxy.Apply(transport, dialer); err != nil {
+		return nil, err
+	}
 	return &http.Client{
 		Transport: transport,
 		Timeout:   120 * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-	}
+	}, nil
 }

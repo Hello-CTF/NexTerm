@@ -118,7 +118,7 @@ func startShareTestAgent(t *testing.T, f *httpFixture, owner *account.User, name
 func (a *shareTestAgent) handleBridge(bridgeID string) {
 	conn, err := agent.DialBridge(a.ctx, "ws"+strings.TrimPrefix(a.fixture.http.URL, "http")+agent.PathDeviceWS, agent.HelloMessage{
 		Type: "hello", Protocol: agent.ProtocolVersion, DeviceID: a.deviceID, Secret: a.secret, BridgeID: bridgeID,
-	}, false)
+	}, agent.DialPolicy{})
 	if err != nil {
 		return
 	}

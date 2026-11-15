@@ -177,7 +177,7 @@ func (c *remoteClient) dialRemoteWSWith(ctx context.Context, path, endpoint stri
 		header.Set(csrfHeaderName, c.csrfToken)
 	}
 	wsClient := &http.Client{
-		Transport:     syncHTTPClient(c.insecure).Transport,
+		Transport:     c.httpClient().Transport,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	conn, response, err := websocket.Dial(ctx, c.base+path, wscompress.Dial(compression, &websocket.DialOptions{HTTPClient: wsClient, HTTPHeader: header}))

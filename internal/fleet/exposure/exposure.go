@@ -26,6 +26,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/fleet/agent"
 	"github.com/Hello-CTF/NexTerm/internal/ids"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 )
 
 // State is the exposure state shown to the user.
@@ -63,6 +64,13 @@ type Account struct {
 	URL      string `json:"url"`
 	Username string `json:"username"`
 	Insecure bool   `json:"insecure,omitempty"`
+	// Proxy is the link's manual proxy; it is read from the link for each run and never saved with an enrollment.
+	Proxy netproxy.Manual `json:"-"`
+}
+
+// sameConnection reports whether two accounts reach the server with the same certificate and proxy settings.
+func (a Account) sameConnection(other Account) bool {
+	return a.Insecure == other.Insecure && a.Proxy == other.Proxy
 }
 
 // Same reports whether two accounts name the same user on the same server.
@@ -431,8 +439,13 @@ func (c *Controller) reconcile() {
 	if c.running != nil {
 		if !c.running.enrollment.Account.Same(account) {
 			c.forget(accountChangedReason)
+			return
 		}
-		return
+		if c.running.enrollment.Account.sameConnection(account) {
+			return
+		}
+		// The certificate or proxy setting of the link changed: reconnect with it.
+		c.stopAgent()
 	}
 	if c.failure != "" {
 		c.setStatus(Status{Enabled: true, State: StateFailed, Reason: c.failure})
@@ -461,7 +474,7 @@ func (c *Controller) reconcile() {
 			return
 		}
 	}
-	c.startAgent(enrollment)
+	c.startAgent(enrollment, account)
 }
 
 // accountChangedReason explains a stop after the linked account changed; the
@@ -472,7 +485,7 @@ const accountChangedReason = "已更换同步账号，本机终端不再向原�
 // linked account's server, never an address the enroll response or the agent
 // itself advertises.
 func pinnedBaseURLs(account Account) []agent.BaseURLEntry {
-	return []agent.BaseURLEntry{{URL: account.URL, Insecure: account.Insecure}}
+	return []agent.BaseURLEntry{{URL: account.URL, Insecure: account.Insecure, Proxy: account.Proxy}}
 }
 
 // failClosed revokes a device that must not stay enrolled. When the revoke
@@ -540,8 +553,10 @@ func (c *Controller) enroll(account Account) (*Enrollment, error) {
 	return enrollment, nil
 }
 
-func (c *Controller) startAgent(enrollment *Enrollment) {
-	// An enrollment saved by an earlier build may carry other addresses.
+func (c *Controller) startAgent(enrollment *Enrollment, account Account) {
+	// The agent follows the link's current certificate and proxy settings, and an enrollment saved by an
+	// earlier build may carry other addresses.
+	enrollment.Account.Insecure, enrollment.Account.Proxy = account.Insecure, account.Proxy
 	enrollment.Config.BaseURLs = pinnedBaseURLs(enrollment.Account)
 	store := &enrollmentStore{host: c.config.Host, enrollment: *enrollment, logger: c.config.Logger}
 	connected := make(chan bool, 1)

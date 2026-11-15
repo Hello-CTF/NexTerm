@@ -154,7 +154,17 @@ export type SyncBundleSnippet = { id: string, groupId: string | null, name: stri
 
 export type SyncBundle = { protocol: number, origin: string, exportedAt: number, groups: Array<SyncBundleGroup>, assets: Array<SyncBundleAsset>, creds: Array<SyncBundleCredential>, credTombstones?: Array<SyncCredentialTombstone>, snippets?: Array<SyncBundleSnippet>, warnings?: Array<string>, };
 
-export type AccountLink = { url: string, username: string, insecure: boolean, hasPassword: boolean,
+export type AccountLinkProxyType = "" | "http" | "socks4" | "socks5";
+
+// AccountLinkProxy is the manual proxy of the account connection without its password; an empty type means none.
+export type AccountLinkProxy = { type: AccountLinkProxyType, host: string, port: number, username: string, hasPassword: boolean, };
+
+// AccountLinkProxyPatch replaces the manual proxy; an omitted password keeps the saved one.
+export type AccountLinkProxyPatch = { type: AccountLinkProxyType, host: string, port: number, username: string, password?: string, };
+
+export type AccountLinkPatch = { url?: string, username?: string, password?: string, insecure?: boolean, proxy?: AccountLinkProxyPatch, };
+
+export type AccountLink = { url: string, username: string, insecure: boolean, proxy?: AccountLinkProxy, hasPassword: boolean,
 verifiedAt: number, lastError: string, };
 
 export type SyncTokenDto = { id: string, clientId: string, purpose: string, createdAt: number, expiresAt: number, revokedAt: number | null, lastUsedAt: number | null, };

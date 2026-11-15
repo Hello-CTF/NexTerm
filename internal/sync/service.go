@@ -13,6 +13,7 @@ import (
 
 	"github.com/Hello-CTF/NexTerm/internal/ids"
 	"github.com/Hello-CTF/NexTerm/internal/ipc"
+	"github.com/Hello-CTF/NexTerm/internal/netproxy"
 	"github.com/Hello-CTF/NexTerm/internal/store"
 	"github.com/Hello-CTF/NexTerm/internal/vault"
 )
@@ -452,12 +453,32 @@ func (s *Service) ObjectHandler() *ObjectHandler {
 }
 
 type Link struct {
-	URL         string `json:"url"`
+	URL         string    `json:"url"`
+	Username    string    `json:"username"`
+	Insecure    bool      `json:"insecure"`
+	Proxy       LinkProxy `json:"proxy"`
+	HasPassword bool      `json:"hasPassword"`
+	VerifiedAt  int64     `json:"verifiedAt"`
+	LastError   string    `json:"lastError"`
+}
+
+// LinkProxy is the manual proxy of the account connection without its password. An empty Type means none:
+// the connection then follows the proxy environment variables.
+type LinkProxy struct {
+	Type        string `json:"type"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
 	Username    string `json:"username"`
-	Insecure    bool   `json:"insecure"`
 	HasPassword bool   `json:"hasPassword"`
-	VerifiedAt  int64  `json:"verifiedAt"`
-	LastError   string `json:"lastError"`
+}
+
+// LinkProxyPatch replaces the manual proxy. A nil Password keeps the saved one, so the form need not echo it back.
+type LinkProxyPatch struct {
+	Type     string  `json:"type"`
+	Host     string  `json:"host"`
+	Port     int     `json:"port"`
+	Username string  `json:"username"`
+	Password *string `json:"password"`
 }
 
 func (l Link) IsConfigured() bool {
@@ -465,19 +486,30 @@ func (l Link) IsConfigured() bool {
 }
 
 type LinkPatch struct {
-	URL      *string `json:"url"`
-	Username *string `json:"username"`
-	Password *string `json:"password"`
-	Insecure *bool   `json:"insecure"`
+	URL      *string         `json:"url"`
+	Username *string         `json:"username"`
+	Password *string         `json:"password"`
+	Insecure *bool           `json:"insecure"`
+	Proxy    *LinkProxyPatch `json:"proxy"`
 }
 
 type linkSecret struct {
-	URL        string `json:"url"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Insecure   bool   `json:"insecure"`
-	VerifiedAt int64  `json:"verifiedAt"`
-	LastError  string `json:"lastError"`
+	URL        string          `json:"url"`
+	Username   string          `json:"username"`
+	Password   string          `json:"password"`
+	Insecure   bool            `json:"insecure"`
+	Proxy      netproxy.Manual `json:"proxy,omitzero"`
+	VerifiedAt int64           `json:"verifiedAt"`
+	LastError  string          `json:"lastError"`
+}
+
+// linkURLWithScheme completes an address typed without a scheme as HTTPS; plain HTTP has to be chosen explicitly.
+func linkURLWithScheme(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.Contains(raw, "://") {
+		return raw
+	}
+	return "https://" + strings.TrimLeft(raw, "/")
 }
 
 func (s *Service) LinkGet(ctx context.Context) (Link, error) {
@@ -500,6 +532,7 @@ func (s *Service) LinkGet(ctx context.Context) (Link, error) {
 	link.URL = strings.TrimSpace(secret.URL)
 	link.Username = strings.TrimSpace(secret.Username)
 	link.Insecure = secret.Insecure
+	link.Proxy = linkProxyView(secret.Proxy)
 	link.HasPassword = secret.Password != ""
 	link.VerifiedAt = secret.VerifiedAt
 	link.LastError = secret.LastError
@@ -533,7 +566,7 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	}
 	previous := secret
 	if patch.URL != nil {
-		secret.URL = strings.TrimSpace(*patch.URL)
+		secret.URL = linkURLWithScheme(*patch.URL)
 	}
 	if patch.Username != nil {
 		secret.Username = strings.TrimSpace(*patch.Username)
@@ -544,8 +577,22 @@ func (s *Service) LinkSet(ctx context.Context, patch LinkPatch) (LinkResult, err
 	if patch.Insecure != nil {
 		secret.Insecure = *patch.Insecure
 	}
-	changed := secret.URL != previous.URL || secret.Username != previous.Username ||
-		secret.Password != previous.Password || secret.Insecure != previous.Insecure
+	if patch.Proxy != nil {
+		proxy := netproxy.Manual{Type: patch.Proxy.Type, Host: patch.Proxy.Host, Port: patch.Proxy.Port, Username: patch.Proxy.Username, Password: secret.Proxy.Password}
+		if patch.Proxy.Password != nil {
+			proxy.Password = *patch.Proxy.Password
+		} else if strings.TrimSpace(proxy.Username) == "" || strings.EqualFold(strings.TrimSpace(proxy.Type), netproxy.TypeSOCKS4) {
+			// A kept password needs a username and a proxy that takes one (SOCKS4 does not): otherwise it is
+			// dropped, and only an entered one is rejected.
+			proxy.Password = ""
+		}
+		normalized, err := proxy.Normalize()
+		if err != nil {
+			return LinkResult{}, ipc.WrapError(ipc.CodeBadParam, err.Error(), err)
+		}
+		secret.Proxy = normalized
+	}
+	changed := !sameLinkTarget(secret, previous)
 	encoded, err := json.Marshal(secret)
 	if err != nil {
 		return LinkResult{}, ipc.WrapError(ipc.CodeInternal, "无法编码同步链接设置", err)
@@ -615,7 +662,7 @@ func (r *LinkResult) applyConnect(connect LinkConnectResult) {
 }
 
 func remoteConfigFromSecret(secret linkSecret) RemoteConfig {
-	return RemoteConfig{URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure}
+	return RemoteConfig{URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure, Proxy: secret.Proxy}
 }
 
 // LinkMFA submits a TOTP code to complete two-step login onboarding; the ticket is issued by the previous LinkSet's mfa_required return.
@@ -690,13 +737,17 @@ func (s *Service) wake() {
 func (s *Service) linkView(secret linkSecret) Link {
 	return Link{
 		URL: strings.TrimSpace(secret.URL), Username: strings.TrimSpace(secret.Username),
-		Insecure: secret.Insecure, HasPassword: secret.Password != "",
+		Insecure: secret.Insecure, Proxy: linkProxyView(secret.Proxy), HasPassword: secret.Password != "",
 		VerifiedAt: secret.VerifiedAt, LastError: secret.LastError,
 	}
 }
 
+func linkProxyView(proxy netproxy.Manual) LinkProxy {
+	return LinkProxy{Type: proxy.Type, Host: proxy.Host, Port: proxy.Port, Username: proxy.Username, HasPassword: proxy.Password != ""}
+}
+
 func sameLinkTarget(a, b linkSecret) bool {
-	return a.URL == b.URL && a.Username == b.Username && a.Password == b.Password && a.Insecure == b.Insecure
+	return a.URL == b.URL && a.Username == b.Username && a.Password == b.Password && a.Insecure == b.Insecure && a.Proxy == b.Proxy
 }
 
 func (s *Service) saveLinkSecret(ctx context.Context, secret linkSecret) error {
@@ -746,6 +797,16 @@ func (s *Service) recordProbe(ctx context.Context, probeErr error) {
 	if err := s.saveLinkSecretNotify(ctx, secret, !sameLinkTarget(previous, secret)); err != nil {
 		s.engine.logger.Warn("sync probe result not recorded", "error", err)
 	}
+}
+
+// LinkProxy returns the manual proxy of the saved link with its password, for other connections to the
+// linked server.
+func (s *Service) LinkProxy(ctx context.Context) (netproxy.Manual, error) {
+	secret, err := s.linkSecret(ctx)
+	if err != nil {
+		return netproxy.Manual{}, err
+	}
+	return secret.Proxy, nil
 }
 
 func (s *Service) linkSecret(ctx context.Context) (linkSecret, error) {
@@ -803,9 +864,7 @@ func (s *Service) Sync(ctx context.Context) (report SyncReport, returnErr error)
 	if secret.URL == "" || secret.Username == "" || secret.Password == "" {
 		return SyncReport{}, ipc.NewError(ipc.CodeBadParam, "同步链接需要同时配置 URL、用户名和口令")
 	}
-	report, syncErr := s.engine.Sync(ctx, RemoteConfig{
-		URL: secret.URL, Username: secret.Username, Password: secret.Password, Insecure: secret.Insecure,
-	})
+	report, syncErr := s.engine.Sync(ctx, remoteConfigFromSecret(secret))
 	s.afterKindsChanged(ctx, report.changedKinds)
 	if syncReportChanged(report) {
 		if s.profilesReload != nil {
