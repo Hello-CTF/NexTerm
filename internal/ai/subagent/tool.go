@@ -22,9 +22,9 @@ const spawnToolDescription = "Run an isolated subtask with a fresh context. The 
 	"A model profile can be specified via modelProfileId; the currently active profile is used by default."
 
 type SpawnInput struct {
-	Task           string `json:"task" jsonschema:"required"`
-	Persona        string `json:"persona,omitempty"`
-	ModelProfileID string `json:"modelProfileId,omitempty"`
+	Task           string `json:"task" jsonschema:"required" jsonschema_description:"Complete, self-contained description of the subtask; the subagent sees nothing else from this conversation"`
+	Persona        string `json:"persona,omitempty" jsonschema_description:"Optional extra instruction describing the role or style the subagent should take"`
+	ModelProfileID string `json:"modelProfileId,omitempty" jsonschema_description:"Model profile id to run the subagent with (default the active profile)"`
 }
 
 // SpawnOutput uses the tool result envelope shared with the other AI tools:

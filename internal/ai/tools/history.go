@@ -23,7 +23,7 @@ const (
 const shellHistoryKind = "shell_history"
 
 type ShellHistoryArgs struct {
-	Limit int `json:"limit,omitempty"`
+	Limit int `json:"limit,omitempty" jsonschema_description:"Number of newest entries to return (1-500; default 50)"`
 }
 
 var (

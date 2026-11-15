@@ -27,21 +27,21 @@ const (
 )
 
 type memorySaveArgs struct {
-	Topic   string `json:"topic" jsonschema:"required"`
-	Content string `json:"content" jsonschema:"required"`
+	Topic   string `json:"topic" jsonschema:"required" jsonschema_description:"Topic the memory is filed under"`
+	Content string `json:"content" jsonschema:"required" jsonschema_description:"The memory text; must not contain secrets"`
 }
 
 type memoryListArgs struct {
-	Topic string `json:"topic,omitempty"`
+	Topic string `json:"topic,omitempty" jsonschema_description:"Only list memories filed under this topic (default all topics)"`
 }
 
 type memoryRecallArgs struct {
-	IDs []string `json:"ids" jsonschema:"required"`
+	IDs []string `json:"ids" jsonschema:"required" jsonschema_description:"Memory IDs from memory_list to read in full"`
 }
 
 type memoryForgetArgs struct {
-	ID              string `json:"id" jsonschema:"required"`
-	ExpectedVersion uint64 `json:"expectedVersion" jsonschema:"required"`
+	ID              string `json:"id" jsonschema:"required" jsonschema_description:"Memory ID to delete"`
+	ExpectedVersion uint64 `json:"expectedVersion" jsonschema:"required" jsonschema_description:"Version of that memory as last listed or recalled; a mismatch rejects the delete"`
 }
 
 func (r *Runner) memoryScope(ctx context.Context) (memory.Scope, error) {

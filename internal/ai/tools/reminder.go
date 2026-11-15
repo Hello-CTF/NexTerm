@@ -30,9 +30,9 @@ type ReminderScheduler interface {
 }
 
 type SendReminderArgs struct {
-	Message      string `json:"message" jsonschema:"required"`
-	DelayMinutes int64  `json:"delay_minutes,omitempty"`
-	At           string `json:"at,omitempty"`
+	Message      string `json:"message" jsonschema:"required" jsonschema_description:"Reminder text (at most 500 characters)"`
+	DelayMinutes int64  `json:"delay_minutes,omitempty" jsonschema_description:"Minutes from now (1-43200, up to 30 days); use this or at, not both"`
+	At           string `json:"at,omitempty" jsonschema_description:"Absolute time in RFC3339, e.g. 2026-01-02T15:04:05+08:00, within 30 days; use this or delay_minutes, not both"`
 }
 
 func ValidateReminderArgs(now time.Time, args SendReminderArgs) (Reminder, error) {

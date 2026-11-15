@@ -248,8 +248,8 @@ func Fail(err error) Output {
 }
 
 type TodoItem struct {
-	Content string `json:"content"`
-	Status  string `json:"status"`
+	Content string `json:"content" jsonschema_description:"What the item is"`
+	Status  string `json:"status" jsonschema:"enum=pending,enum=in_progress,enum=completed" jsonschema_description:"Progress of the item"`
 }
 
 type Question struct {

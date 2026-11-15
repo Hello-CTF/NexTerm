@@ -525,19 +525,19 @@ type actionExecution struct {
 }
 
 type TakeoverDoneArgs struct {
-	Summary string `json:"summary" jsonschema:"required"`
-	Success bool   `json:"success" jsonschema:"required"`
+	Summary string `json:"summary" jsonschema:"required" jsonschema_description:"What was done and the final state, for the user"`
+	Success bool   `json:"success" jsonschema:"required" jsonschema_description:"True when the task was completed"`
 }
 
 type takeoverSendKeysArgs struct {
-	Keys  string `json:"keys" jsonschema:"required"`
-	Enter bool   `json:"enter,omitempty"`
-	TabID string `json:"tab_id,omitempty"`
+	Keys  string `json:"keys" jsonschema:"required" jsonschema_description:"Text to type; may include key tags such as <enter> and <ctrl+c>"`
+	Enter bool   `json:"enter,omitempty" jsonschema_description:"Press Enter after the keys"`
+	TabID string `json:"tab_id,omitempty" jsonschema_description:"Leave empty; keys always go to the taken-over terminal and a tab_id is rejected"`
 }
 
 type takeoverWaitForArgs struct {
-	Pattern   string `json:"pattern" jsonschema:"required"`
-	TimeoutMS int64  `json:"timeout_ms,omitempty"`
+	Pattern   string `json:"pattern" jsonschema:"required" jsonschema_description:"Regular expression to match against the recent terminal output"`
+	TimeoutMS int64  `json:"timeout_ms,omitempty" jsonschema_description:"Maximum wait in milliseconds (1-60000; default 10000)"`
 }
 
 func (e *actionExecution) tools() ([]tool.BaseTool, error) {
